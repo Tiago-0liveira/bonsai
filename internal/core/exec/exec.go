@@ -5,6 +5,7 @@ package exec
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -103,6 +104,9 @@ func (m *Manager) Spawn(path, label, command string) (*Process, error) {
 	cmd.Dir = path
 	cmd.Stdout = buf
 	cmd.Stderr = buf
+	// Coax color out of tools even though stdout is a pipe, not a TTY. Many CLIs
+	// honor these; the viewport renders the ANSI.
+	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
 
 	m.mu.Lock()
 	m.nextID++
@@ -159,6 +163,43 @@ func (m *Manager) Latest(path string) (*Process, bool) {
 		return nil, false
 	}
 	return list[len(list)-1], true
+}
+
+// KillByID terminates the process with id under path, if running.
+func (m *Manager) KillByID(path string, id int) {
+	if p, ok := m.GetByID(path, id); ok {
+		p.Kill()
+	}
+}
+
+// Restart kills the process with id (if running) and spawns a fresh one with the
+// same label and command, returning the new process.
+func (m *Manager) Restart(path string, id int) (*Process, error) {
+	p, ok := m.GetByID(path, id)
+	if !ok {
+		return nil, fmt.Errorf("no process #%d for %s", id, path)
+	}
+	p.Kill()
+	return m.Spawn(path, p.Label, p.Command)
+}
+
+// Remove drops the process with id from path's list. It kills the process first
+// if still running so no goroutine is left orphaned.
+func (m *Manager) Remove(path string, id int) {
+	if p, ok := m.GetByID(path, id); ok {
+		p.Kill()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	list := m.proc[path]
+	out := list[:0]
+	for _, p := range list {
+		if p.ID == id {
+			continue
+		}
+		out = append(out, p)
+	}
+	m.proc[path] = out
 }
 
 // KillAll terminates every managed process.

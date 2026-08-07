@@ -14,12 +14,13 @@ type PR struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
 	Head   string `json:"headRefName"`
+	Base   string `json:"baseRefName"`
 }
 
 // ListPRs returns open pull requests for the repo containing dir via
 // `gh pr list --json`. Requires the gh CLI to be installed and authenticated.
 func ListPRs(dir string) ([]PR, error) {
-	cmd := exec.Command("gh", "pr", "list", "--json", "number,title,headRefName", "--limit", "50")
+	cmd := exec.Command("gh", "pr", "list", "--json", "number,title,headRefName,baseRefName", "--limit", "50")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

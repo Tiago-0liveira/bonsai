@@ -4,6 +4,8 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -20,12 +22,57 @@ type Hooks struct {
 	OnWorktreeDelete []string `mapstructure:"on_worktree_delete"`
 }
 
+// Worktree controls where new worktrees are created on disk.
+type Worktree struct {
+	// Root is the base directory new worktrees are created under. Empty defaults
+	// to the parent of the main repo. Relative paths resolve against the repo.
+	Root string `mapstructure:"root"`
+	// PathTemplate names the worktree directory. Supports {repo} and {branch}
+	// (branch slashes flattened to '-'). Empty defaults to "{repo}-{branch}".
+	PathTemplate string `mapstructure:"path_template"`
+}
+
 // Config is the parsed .bonsai.yaml.
 type Config struct {
 	// Upstream is the ref ahead/behind metrics compare against, e.g. origin/main.
-	Upstream string  `mapstructure:"upstream"`
-	Hooks    Hooks   `mapstructure:"hooks"`
-	Aliases  []Alias `mapstructure:"aliases"`
+	Upstream string   `mapstructure:"upstream"`
+	Hooks    Hooks    `mapstructure:"hooks"`
+	Aliases  []Alias  `mapstructure:"aliases"`
+	Worktree Worktree `mapstructure:"worktree"`
+}
+
+// WorktreePath resolves the filesystem path for a branch's worktree from the
+// configured template and root. With defaults it matches git.WorktreePath: a
+// sibling of the repo named "<repo>-<branch>".
+func (c *Config) WorktreePath(repoDir, branch string) string {
+	tmpl := c.Worktree.PathTemplate
+	if tmpl == "" {
+		tmpl = "{repo}-{branch}"
+	}
+	safe := strings.ReplaceAll(branch, "/", "-")
+	name := strings.ReplaceAll(tmpl, "{repo}", filepath.Base(repoDir))
+	name = strings.ReplaceAll(name, "{branch}", safe)
+
+	if filepath.IsAbs(name) {
+		return filepath.Clean(name)
+	}
+
+	root := c.Worktree.Root
+	if root == "" {
+		root = filepath.Dir(repoDir)
+	} else if !filepath.IsAbs(root) {
+		root = filepath.Join(repoDir, root)
+	}
+	return filepath.Join(root, name)
+}
+
+// RemoteOf returns the remote portion of an upstream ref: "origin" for
+// "origin/main". Falls back to "origin" when no remote is present.
+func RemoteOf(upstream string) string {
+	if i := strings.Index(upstream, "/"); i > 0 {
+		return upstream[:i]
+	}
+	return "origin"
 }
 
 // Load reads .bonsai.yaml from dir. A missing file yields defaults, not an error.

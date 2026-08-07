@@ -94,22 +94,28 @@ func cmdCreate(repoDir string, args []string, out, errOut io.Writer) error {
 	)
 	switch {
 	case *prNum > 0:
-		path = git.WorktreePath(repoDir, fmt.Sprintf("pr-%d", *prNum))
-		branch, err = git.CreateWorktreeFromPR(repoDir, path, *prNum)
+		path = cfg.WorktreePath(repoDir, fmt.Sprintf("pr-%d", *prNum))
+		if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+			branch, err = git.CreateWorktreeFromPR(repoDir, path, *prNum)
+		}
 	case *existing:
 		branch = fs.Arg(0)
 		if branch == "" {
 			return fmt.Errorf("create --existing requires a branch name")
 		}
-		path = git.WorktreePath(repoDir, branch)
-		err = git.AddWorktreeExisting(repoDir, path, branch)
+		path = cfg.WorktreePath(repoDir, branch)
+		if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+			err = git.AddWorktreeExisting(repoDir, path, branch)
+		}
 	default:
 		branch = fs.Arg(0)
 		if branch == "" {
 			return fmt.Errorf("create requires a branch name")
 		}
-		path = git.WorktreePath(repoDir, branch)
-		err = git.AddWorktreeNewBranch(repoDir, path, branch)
+		path = cfg.WorktreePath(repoDir, branch)
+		if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+			err = git.AddWorktreeNewBranch(repoDir, path, branch)
+		}
 	}
 	if err != nil {
 		return err

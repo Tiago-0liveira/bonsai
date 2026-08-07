@@ -18,13 +18,14 @@ import (
 type Kind string
 
 const (
-	KindNone     Kind = ""
-	KindCopyFile Kind = "copy_file"
-	KindScripts  Kind = "scripts"
-	KindAliases  Kind = "aliases"
-	KindBranches Kind = "branches"
-	KindCommit   Kind = "commit"
-	KindPrune    Kind = "prune"
+	KindNone        Kind = ""
+	KindCopyFile    Kind = "copy_file"
+	KindScripts     Kind = "scripts"
+	KindRunCommand  Kind = "run_command" // free-text ad-hoc command from the scripts modal
+	KindAliases     Kind = "aliases"
+	KindBranches    Kind = "branches"
+	KindCommit      Kind = "commit"
+	KindPrune       Kind = "prune"
 	KindNewAlias    Kind = "new_alias"     // enter new alias name
 	KindNewAliasCmd Kind = "new_alias_cmd" // enter new alias command
 
@@ -66,6 +67,7 @@ type Model struct {
 	kind   Kind
 	mode   mode
 	title  string
+	body   string // optional read-only text shown above an input (e.g. commit preview)
 	input  textinput.Model
 	items  []string
 	cursor int
@@ -129,6 +131,9 @@ func (m Model) Kind() Kind { return m.kind }
 
 // SetSize records the available screen size for centering.
 func (m *Model) SetSize(w, h int) { m.width, m.height = w, h }
+
+// SetBody sets read-only text rendered above the input field (input mode only).
+func (m *Model) SetBody(s string) { m.body = s }
 
 func (m Model) submit(value string) tea.Cmd {
 	k := m.kind
@@ -250,6 +255,10 @@ func (m Model) View() string {
 	case modePrune:
 		b.WriteString(m.renderPrune())
 	case modeInput:
+		if m.body != "" {
+			b.WriteString(m.body) // may carry its own ANSI color (git status)
+			b.WriteString("\n\n")
+		}
 		b.WriteString(m.input.View())
 		b.WriteString("\n")
 	case modeFuzzy:

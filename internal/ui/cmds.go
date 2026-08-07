@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -39,7 +40,9 @@ type fileIndexMsg struct {
 }
 
 type scriptsMsg struct {
-	scripts []string
+	manager string            // detected package manager name, "" if none
+	scripts []string          // selectable script/target names
+	runCmd  map[string]string // script name -> full shell command
 	err     error
 }
 
@@ -107,9 +110,14 @@ func loadScripts(path string) tea.Cmd {
 			return scriptsMsg{err: err}
 		}
 		if pm == nil {
-			return scriptsMsg{scripts: nil}
+			return scriptsMsg{} // no manager: modal still offers the ad-hoc entry
 		}
-		return scriptsMsg{scripts: pm.GetScripts()}
+		names := pm.GetScripts()
+		runCmd := make(map[string]string, len(names))
+		for _, n := range names {
+			runCmd[n] = pm.RunCommand(n)
+		}
+		return scriptsMsg{manager: pm.Name(), scripts: names, runCmd: runCmd}
 	}
 }
 
@@ -189,9 +197,9 @@ func fetchPRs(repoDir string) tea.Cmd {
 //   - "existing": check out existing branch `branch` in a new worktree
 //   - "pr":       fetch pull request `prNumber` into a worktree
 //
-// createHooks run in the new worktree on success. upstream feeds the
-// {base_branch} hook variable.
-func createWorktree(repoDir, mode, branch, upstream string, prNumber int, createHooks []string) tea.Cmd {
+// The path comes from cfg.WorktreePath (template + root); create hooks run in the
+// new worktree on success and cfg.Upstream feeds the {base_branch} hook variable.
+func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Config) tea.Cmd {
 	return func() tea.Msg {
 		var (
 			path string
@@ -199,25 +207,53 @@ func createWorktree(repoDir, mode, branch, upstream string, prNumber int, create
 		)
 		switch mode {
 		case "new":
-			path = git.WorktreePath(repoDir, branch)
-			err = git.AddWorktreeNewBranch(repoDir, path, branch)
+			path = cfg.WorktreePath(repoDir, branch)
+			err = ensureParent(path)
+			if err == nil {
+				err = git.AddWorktreeNewBranch(repoDir, path, branch)
+			}
 		case "existing":
-			path = git.WorktreePath(repoDir, branch)
-			err = git.AddWorktreeExisting(repoDir, path, branch)
+			path = cfg.WorktreePath(repoDir, branch)
+			err = ensureParent(path)
+			if err == nil {
+				err = git.AddWorktreeExisting(repoDir, path, branch)
+			}
 		case "pr":
-			path = git.WorktreePath(repoDir, fmt.Sprintf("pr-%d", prNumber))
-			branch, err = git.CreateWorktreeFromPR(repoDir, path, prNumber)
+			path = cfg.WorktreePath(repoDir, fmt.Sprintf("pr-%d", prNumber))
+			if err = ensureParent(path); err == nil {
+				branch, err = git.CreateWorktreeFromPR(repoDir, path, prNumber)
+			}
 		default:
 			return opDoneMsg{label: "create", err: fmt.Errorf("unknown create mode %q", mode)}
 		}
 		if err != nil {
 			return opDoneMsg{label: "create", err: err}
 		}
-		vars := config.HookVars(repoDir, path, branch, upstream, prNumber)
-		if hookErr := coreexec.RunHooks(path, createHooks, vars); hookErr != nil {
+		vars := config.HookVars(repoDir, path, branch, cfg.Upstream, prNumber)
+		if hookErr := coreexec.RunHooks(path, cfg.CreateHooks(), vars); hookErr != nil {
 			return opDoneMsg{label: "create hook", err: hookErr}
 		}
 		return opDoneMsg{label: "create " + branch, err: nil}
+	}
+}
+
+// ensureParent creates the parent directory of a worktree path so a custom
+// worktree root/template can nest under not-yet-existing directories.
+func ensureParent(path string) error {
+	return os.MkdirAll(filepath.Dir(path), 0o755)
+}
+
+// commitPreviewMsg carries the git status shown in the commit modal.
+type commitPreviewMsg struct {
+	status string
+	err    error
+}
+
+// loadCommitPreview fetches the short status for the commit modal preview.
+func loadCommitPreview(path string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := git.Status(path)
+		return commitPreviewMsg{status: s, err: err}
 	}
 }
 

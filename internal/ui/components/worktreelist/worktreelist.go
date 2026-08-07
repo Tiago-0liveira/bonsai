@@ -74,9 +74,9 @@ var (
 // independently so it survives selection highlighting.
 type itemDelegate struct{}
 
-func (itemDelegate) Height() int                             { return 2 }
-func (itemDelegate) Spacing() int                            { return 1 }
-func (itemDelegate) Update(tea.Msg, *list.Model) tea.Cmd     { return nil }
+func (itemDelegate) Height() int                         { return 2 }
+func (itemDelegate) Spacing() int                        { return 1 }
+func (itemDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 
 func (itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	it, ok := listItem.(Item)
@@ -144,6 +144,10 @@ func (m Model) Selected() (Item, bool) {
 	it, ok := m.list.SelectedItem().(Item)
 	return it, ok
 }
+
+// SettingFilter reports whether the filter text input is currently active, in
+// which case the list should own every keystroke.
+func (m Model) SettingFilter() bool { return m.list.SettingFilter() }
 
 // Update forwards messages to the underlying list.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {

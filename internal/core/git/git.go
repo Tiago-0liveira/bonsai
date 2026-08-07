@@ -212,9 +212,16 @@ func Commit(dir, msg string) error {
 	return err
 }
 
-// Log returns a compact commit graph for the right pane.
+// Log returns a compact, colorized commit graph for the right pane. Color is
+// forced on (output isn't a TTY) so the viewport can render it.
 func Log(dir string) (string, error) {
-	return run(dir, "log", "--oneline", "--graph", "--decorate", "-n", "50")
+	return run(dir, "log", "--oneline", "--graph", "--decorate", "--color=always", "-n", "50")
+}
+
+// Status returns `git status --short` with color forced on, for the commit
+// modal preview.
+func Status(dir string) (string, error) {
+	return run(dir, "-c", "color.status=always", "status", "--short")
 }
 
 // RebaseCmd builds an *exec.Cmd for `git rebase target` in dir, suitable for

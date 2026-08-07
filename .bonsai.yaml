@@ -7,7 +7,20 @@
 #   1. the ↑ahead / ↓behind counts next to each worktree
 #   2. the branch shown as the merge target when pruning a PR worktree
 # Format: <remote>/<branch>. Default: origin/main
+# Note: for a worktree connected to a GitHub PR, ahead/behind counts and the
+# prune "merge to <base>" label use the PR's real base branch (from gh), not this.
 upstream: origin/main
+
+# ── Worktree location ────────────────────────────────────────────────────────
+# Where new worktrees are created. Both fields optional.
+#   root          base directory (default: the repo's parent dir).
+#                 relative paths resolve against the repo root.
+#   path_template directory name; supports {repo} and {branch}
+#                 (branch slashes flattened to '-'). Default: "{repo}-{branch}"
+# Default layout is a sibling of the repo, e.g. ../myrepo-feature-login
+worktree:
+  root: ""
+  path_template: "{repo}-{branch}"
 
 # ── Lifecycle hooks ──────────────────────────────────────────────────────────
 # Shell commands run with `sh -c`, in the worktree's directory.

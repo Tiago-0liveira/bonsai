@@ -23,6 +23,14 @@ const (
 	focusTerminal
 )
 
+// rightTab identifies which tab the right pane is showing.
+type rightTab int
+
+const (
+	tabLog rightTab = iota
+	tabProcs
+)
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	// Dependencies (core layer handles).
@@ -54,9 +62,15 @@ type Model struct {
 	// pendingAlias holds a new alias name between the name and command prompts.
 	pendingAlias string
 
+	// scriptRun maps a script name to its full shell command for the last-opened
+	// scripts modal.
+	scriptRun map[string]string
+
 	// Layout / status.
 	width, height int
 	focus         focusArea
+	rightTab      rightTab
+	logContent    string // last-loaded git log, shown on the Git Log tab
 	status        string
 	err           error
 	ready         bool
@@ -65,14 +79,14 @@ type Model struct {
 // New constructs the root model with its core-layer dependencies injected.
 func New(repoDir string, cfg *config.Config, state *config.State) Model {
 	m := Model{
-		repoDir: repoDir,
-		cfg:     cfg,
-		state:   state,
-		procs:   coreexec.NewManager(),
-		keys:    newKeyMap(),
-		help:    help.New(),
-		list:    worktreelist.New(),
-		term:    terminal.New(),
+		repoDir:    repoDir,
+		cfg:        cfg,
+		state:      state,
+		procs:      coreexec.NewManager(),
+		keys:       newKeyMap(),
+		help:       help.New(),
+		list:       worktreelist.New(),
+		term:       terminal.New(),
 		focus:      focusList,
 		metrics:    map[string]git.Metrics{},
 		activeProc: map[string]int{},

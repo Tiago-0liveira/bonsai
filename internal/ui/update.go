@@ -40,22 +40,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logMsg:
 		// Log failures (e.g. a branch with no commits yet) are non-fatal: show a
 		// note in the output pane rather than flooding the help bar.
-		m.term.SetTitle("Git Log")
+		m.logContent = msg.content
 		if msg.err != nil || msg.content == "" {
-			m.term.SetContent("(no commits yet)")
-		} else {
-			m.term.SetContent(msg.content)
+			m.logContent = "(no commits yet)"
+		}
+		if m.rightTab == tabLog {
+			m.term.SetTitle("Git Log")
+			m.term.SetContent(m.logContent)
 		}
 		return m, nil
 
 	case scriptsMsg:
 		return m.onScripts(msg)
 
+	case commitPreviewMsg:
+		return m.onCommitPreview(msg)
+
 	case prsMsg:
 		return m.onPRs(msg)
 
 	case prMapMsg:
-		return m.onPRMap(msg), nil
+		return m.onPRMap(msg)
 
 	case opDoneMsg:
 		return m.onOpDone(msg)
@@ -123,17 +128,39 @@ func (m Model) onMetrics(msg metricsMsg) Model {
 }
 
 // onPRMap records open PRs keyed by head branch and redecorates rows. gh errors
-// are silent — no gh, no badges.
-func (m Model) onPRMap(msg prMapMsg) Model {
+// are silent — no gh, no badges. Because a PR carries its real base branch,
+// ahead/behind metrics for PR-backed branches are recomputed here against that
+// base rather than the global upstream.
+func (m Model) onPRMap(msg prMapMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		return m
+		return m, nil
 	}
 	m.prByBranch = make(map[string]gh.PR, len(msg.prs))
 	for _, pr := range msg.prs {
 		m.prByBranch[pr.Head] = pr
 	}
 	m.rebuildItems()
-	return m
+
+	var cmds []tea.Cmd
+	for _, t := range m.worktrees {
+		if t.Branch == "" || t.Branch == "(detached)" {
+			continue
+		}
+		if pr, ok := m.prByBranch[t.Branch]; ok && pr.Base != "" {
+			cmds = append(cmds, loadMetrics(t.Path, t.Branch, m.upstreamFor(t.Branch)))
+		}
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// upstreamFor returns the ref a branch's ahead/behind metrics and base-branch
+// label should compare against: a connected PR's real base (as <remote>/<base>)
+// when known, otherwise the configured global upstream.
+func (m Model) upstreamFor(branch string) string {
+	if pr, ok := m.prByBranch[branch]; ok && pr.Base != "" {
+		return config.RemoteOf(m.cfg.Upstream) + "/" + pr.Base
+	}
+	return m.cfg.Upstream
 }
 
 // rebuildItems repopulates the list from the current worktrees plus any known
@@ -154,16 +181,36 @@ func (m *Model) rebuildItems() {
 	m.list.SetItems(items)
 }
 
+// runCommandLabel is the sentinel scripts-modal entry that starts the ad-hoc
+// "run any command" flow.
+const runCommandLabel = "＋ run command…"
+
 func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.status = "scripts: " + msg.err.Error()
 		return m, nil
 	}
-	if len(msg.scripts) == 0 {
-		m.status = "no package.json scripts found"
-		return m, nil
+	m.scriptRun = msg.runCmd
+
+	names := msg.scripts
+	// The sentinel entry is always present (even with no manager) so any command
+	// can be run; typed text filters the detected scripts below it.
+	filter := func(q string) []string {
+		out := []string{runCommandLabel}
+		q = strings.ToLower(strings.TrimSpace(q))
+		for _, n := range names {
+			if q == "" || strings.Contains(strings.ToLower(n), q) {
+				out = append(out, n)
+			}
+		}
+		return out
 	}
-	modal := modals.NewSelect(modals.KindScripts, "Run script", msg.scripts)
+
+	title := "Run script"
+	if msg.manager != "" {
+		title = "Run " + msg.manager + " script"
+	}
+	modal := modals.NewFuzzy(modals.KindScripts, title, filter, filter(""))
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -180,11 +227,8 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) onProcTick() (tea.Model, tea.Cmd) {
-	if wt, ok := m.selectedWorktree(); ok {
-		if p, shown := m.activeProcess(wt.Path); shown {
-			m.term.SetTitle(fmt.Sprintf("[#%d] %s (%s)", p.ID, p.Label, p.Status()))
-			m.term.SetContent(p.Output())
-		}
+	if m.rightTab == tabProcs {
+		m.refreshProcPane()
 	}
 	return m, tickProc()
 }
@@ -200,8 +244,85 @@ func (m Model) activeProcess(path string) (*coreexec.Process, bool) {
 	return m.procs.Latest(path)
 }
 
+// refreshProcPane renders the Processes tab: a colored process list for the
+// selected worktree followed by the selected process's output.
+func (m *Model) refreshProcPane() {
+	m.term.SetTitle("Processes")
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		m.term.SetContent("(no worktree selected)")
+		return
+	}
+	procs := m.procs.List(wt.Path)
+	if len(procs) == 0 {
+		m.term.SetContent(procEmptyHint)
+		return
+	}
+
+	sel, selOK := m.activeProcess(wt.Path)
+	if selOK {
+		m.activeProc[wt.Path] = sel.ID
+	}
+
+	var b strings.Builder
+	for _, p := range procs {
+		cursor := "  "
+		if selOK && p.ID == sel.ID {
+			cursor = procAccent.Render("› ")
+		}
+		b.WriteString(cursor + procLine(p) + "\n")
+	}
+	b.WriteString("\n" + procDim.Render(procHint) + "\n\n")
+	if selOK {
+		b.WriteString(sel.Output())
+	}
+	m.term.SetContent(b.String())
+}
+
+// selectedProcID returns the selected process id for path.
+func (m Model) selectedProcID(path string) (int, bool) {
+	if p, ok := m.activeProcess(path); ok {
+		return p.ID, true
+	}
+	return 0, false
+}
+
+// moveProcSel moves the process selection for path by delta.
+func (m *Model) moveProcSel(path string, delta int) {
+	procs := m.procs.List(path)
+	if len(procs) == 0 {
+		return
+	}
+	idx := 0
+	cur := m.activeProc[path]
+	for i, p := range procs {
+		if p.ID == cur {
+			idx = i
+		}
+	}
+	idx += delta
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(procs) {
+		idx = len(procs) - 1
+	}
+	m.activeProc[path] = procs[idx].ID
+}
+
 // onKey handles global keybindings when no modal is open.
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While the worktree filter input is active, the list owns every key.
+	if m.focus == focusList && m.list.SettingFilter() {
+		return m.forwardToPane(msg)
+	}
+	// On the Processes tab (focused), process-control keys win over the globals.
+	if m.rightTab == tabProcs && m.focus == focusTerminal {
+		if handled, nm, cmd := m.procTabKey(msg); handled {
+			return nm, cmd
+		}
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		m.procs.KillAll()
@@ -226,7 +347,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openCreateSourceModal()
 
 	case key.Matches(msg, m.keys.ViewProcs):
-		return m.openProcessModal()
+		return m.toggleProcsTab()
 
 	case key.Matches(msg, m.keys.CopyFile):
 		return m.openCopyModal()
@@ -348,10 +469,25 @@ func (m Model) openAliasModal() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) openCommitModal() (tea.Model, tea.Cmd) {
-	if _, ok := m.selectedWorktree(); !ok {
+	wt, ok := m.selectedWorktree()
+	if !ok {
 		return m, nil
 	}
+	// Fetch the status first; the modal opens when commitPreviewMsg arrives.
+	return m, loadCommitPreview(wt.Path)
+}
+
+// onCommitPreview opens the commit modal seeded with the working-tree status.
+func (m Model) onCommitPreview(msg commitPreviewMsg) (tea.Model, tea.Cmd) {
+	body := msg.status
+	switch {
+	case msg.err != nil:
+		body = "(status unavailable: " + msg.err.Error() + ")"
+	case strings.TrimSpace(body) == "":
+		body = "(working tree clean)"
+	}
 	modal := modals.NewInput(modals.KindCommit, "Commit message", "describe your change")
+	modal.SetBody(body)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -388,24 +524,77 @@ func (m Model) openCreateSourceModal() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) openProcessModal() (tea.Model, tea.Cmd) {
+// toggleProcsTab switches the right pane between the Git Log and Processes tabs.
+// Selecting Processes moves focus to the right pane.
+func (m Model) toggleProcsTab() (tea.Model, tea.Cmd) {
+	if m.rightTab == tabProcs {
+		m.rightTab = tabLog
+		m.term.SetTitle("Git Log")
+		m.term.SetContent(m.logContent)
+		return m, nil
+	}
+	m.rightTab = tabProcs
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
+	m.refreshProcPane()
+	return m, nil
+}
+
+// procTabKey handles process-control keys while the Processes tab is focused.
+// The bool reports whether the key was consumed.
+func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		return m, nil
+		return false, m, nil
 	}
-	procs := m.procs.List(wt.Path)
-	if len(procs) == 0 {
-		m.status = "no processes for this worktree"
-		return m, nil
+
+	switch {
+	case key.Matches(msg, m.keys.Kill):
+		if id, ok := m.selectedProcID(wt.Path); ok {
+			m.procs.KillByID(wt.Path, id)
+			m.refreshProcPane()
+		}
+		return true, m, nil
+
+	case key.Matches(msg, m.keys.Restart):
+		if id, ok := m.selectedProcID(wt.Path); ok {
+			if p, err := m.procs.Restart(wt.Path, id); err == nil {
+				m.activeProc[wt.Path] = p.ID
+			} else {
+				m.status = "restart: " + err.Error()
+			}
+			m.refreshProcPane()
+		}
+		return true, m, nil
+
+	case key.Matches(msg, m.keys.Prune): // x removes a finished process
+		if id, ok := m.selectedProcID(wt.Path); ok {
+			m.procs.Remove(wt.Path, id)
+			if p, ok := m.procs.Latest(wt.Path); ok {
+				m.activeProc[wt.Path] = p.ID
+			} else {
+				delete(m.activeProc, wt.Path)
+			}
+			m.refreshProcPane()
+		}
+		return true, m, nil
+
+	case key.Matches(msg, m.keys.Create): // n starts a new command
+		return true, m, loadScripts(wt.Path)
+
+	case msg.String() == "up" || msg.String() == "ctrl+k":
+		m.moveProcSel(wt.Path, -1)
+		m.refreshProcPane()
+		return true, m, nil
+
+	case msg.String() == "down" || msg.String() == "ctrl+j":
+		m.moveProcSel(wt.Path, 1)
+		m.refreshProcPane()
+		return true, m, nil
 	}
-	items := make([]string, len(procs))
-	for i, p := range procs {
-		items[i] = fmt.Sprintf("#%d  %s  (%s)", p.ID, p.Label, p.Status())
-	}
-	modal := modals.NewSelect(modals.KindProcesses, "View process", items)
-	modal.SetSize(m.width, m.height)
-	m.modal = &modal
-	return m, nil
+
+	return false, m, nil
 }
 
 func (m Model) onPRs(msg prsMsg) (tea.Model, tea.Cmd) {
@@ -439,7 +628,7 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 	}
 
 	prNum, isPR := m.prForBranch(wt.Branch)
-	mergeLabel := fmt.Sprintf("merge PR #%d to %s", prNum, config.BaseBranch(m.cfg.Upstream))
+	mergeLabel := fmt.Sprintf("merge PR #%d to %s", prNum, config.BaseBranch(m.upstreamFor(wt.Branch)))
 
 	steps := []string{}
 	if len(m.cfg.DeleteHooks()) > 0 {
@@ -467,14 +656,14 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = "creating " + msg.Value
-		return m, createWorktree(m.repoDir, "new", msg.Value, m.cfg.Upstream, 0, m.cfg.CreateHooks())
+		return m, createWorktree(m.repoDir, "new", msg.Value, 0, m.cfg)
 	case modals.KindCreateExisting:
 		m.status = "creating worktree for " + msg.Value
-		return m, createWorktree(m.repoDir, "existing", msg.Value, m.cfg.Upstream, 0, m.cfg.CreateHooks())
+		return m, createWorktree(m.repoDir, "existing", msg.Value, 0, m.cfg)
 	case modals.KindCreatePR:
 		num := parseLeadingNum(msg.Value)
 		m.status = fmt.Sprintf("creating worktree for PR #%d", num)
-		return m, createWorktree(m.repoDir, "pr", "", m.cfg.Upstream, num, m.cfg.CreateHooks())
+		return m, createWorktree(m.repoDir, "pr", "", num, m.cfg)
 
 	case modals.KindNewAlias:
 		if msg.Value == "" {
@@ -512,7 +701,24 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		return m, copyFile(m.repoDir, wt.Path, msg.Value, m.state.RecordCopy)
 
 	case modals.KindScripts:
-		return m.spawn(wt.Path, msg.Value, "npm run "+msg.Value), nil
+		if msg.Value == runCommandLabel {
+			modal := modals.NewInput(modals.KindRunCommand, "Run command in "+wt.Branch, "zed .")
+			modal.SetSize(m.width, m.height)
+			m.modal = &modal
+			return m, nil
+		}
+		cmd := m.scriptRun[msg.Value]
+		if cmd == "" {
+			cmd = msg.Value // fallback: run the entry literally
+		}
+		return m.spawn(wt.Path, msg.Value, cmd), nil
+
+	case modals.KindRunCommand:
+		if msg.Value == "" {
+			m.status = "empty command"
+			return m, nil
+		}
+		return m.spawn(wt.Path, msg.Value, msg.Value), nil
 
 	case modals.KindAliases:
 		if msg.Value == addAliasLabel {
@@ -523,17 +729,9 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		}
 		if cmd := m.aliasCommand(msg.Value); cmd != "" {
 			prNum, _ := m.prForBranch(wt.Branch)
-			vars := config.HookVars(m.repoDir, wt.Path, wt.Branch, m.cfg.Upstream, prNum)
+			vars := config.HookVars(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), prNum)
 			return m.spawn(wt.Path, msg.Value, coreexec.ExpandVars(cmd, vars)), nil
 		}
-		return m, nil
-
-	case modals.KindProcesses:
-		id := parseLeadingNum(msg.Value)
-		m.activeProc[wt.Path] = id
-		m.focus = focusTerminal
-		m.list.Blur()
-		m.term.Focus()
 		return m, nil
 
 	case modals.KindBranches:
@@ -558,7 +756,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "pruning " + wt.Branch
 		}
-		return m, pruneWorktree(m.repoDir, wt.Path, wt.Branch, m.cfg.Upstream, m.cfg.DeleteHooks(), merge, prNum)
+		return m, pruneWorktree(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), m.cfg.DeleteHooks(), merge, prNum)
 	}
 	return m, nil
 }
