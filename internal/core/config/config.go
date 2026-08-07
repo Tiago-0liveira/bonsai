@@ -4,10 +4,13 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 )
 
 // Alias is a user-defined command runnable against a worktree.
@@ -34,8 +37,8 @@ type Worktree struct {
 
 // Theme selects and customizes the UI color palette.
 type Theme struct {
-	// Preset names a built-in palette (bonsai / dracula / nord / mono). Empty
-	// defaults to bonsai.
+	// Preset names a built-in palette (bonsai / sakura / dracula / nord / mono).
+	// Empty defaults to bonsai.
 	Preset string `mapstructure:"preset"`
 	// Overrides maps a theme role (accent, danger, …) to a lipgloss color string.
 	Overrides map[string]string `mapstructure:"overrides"`
@@ -113,6 +116,46 @@ func Load(dir string) (*Config, error) {
 		if _, notFound := err.(viper.ConfigFileNotFoundError); !notFound {
 			return nil, fmt.Errorf("read config: %w", err)
 		}
+	}
+
+	cfg := &Config{}
+	if err := v.Unmarshal(cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	if cfg.Upstream == "" {
+		cfg.Upstream = "origin/main"
+	}
+	return cfg, nil
+}
+
+// LoadFor loads the config for a repo anchored at mainRoot. If the worktree the
+// process runs in has its own .bonsai.yaml, that file wins; otherwise the main
+// worktree's is used (a missing file yields defaults, not an error).
+func LoadFor(mainRoot string) (*Config, error) {
+	dir := mainRoot
+	if cwd, err := os.Getwd(); err == nil {
+		if root, err := git.RepoRoot(cwd); err == nil {
+			if _, statErr := os.Stat(filepath.Join(root, ".bonsai.yaml")); statErr == nil {
+				dir = root
+			}
+		}
+	}
+	return Load(dir)
+}
+
+// LoadFile reads config from an explicit file path. Unlike Load, a missing or
+// unreadable file is an error, since the user asked for it by name.
+func LoadFile(path string) (*Config, error) {
+	v := viper.New()
+	v.SetConfigFile(path)
+	v.SetDefault("upstream", "origin/main")
+	v.SetDefault("confirm_destructive", true)
+	v.SetDefault("notifications.process", true)
+	v.SetDefault("notifications.ci", false)
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
 	cfg := &Config{}

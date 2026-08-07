@@ -83,6 +83,7 @@ func (i Item) prNumber() (int, bool) {
 }
 
 var (
+	titleStyle    lipgloss.Style
 	prBadgeStyle  lipgloss.Style
 	normalTitle   lipgloss.Style
 	selectedTitle lipgloss.Style
@@ -95,10 +96,14 @@ var (
 	checkPending  lipgloss.Style
 )
 
+// titleIcon decorates the pane header, sitting in the app's top-left corner.
+const titleIcon = "🪴"
+
 func init() { SetTheme(theme.Current) }
 
 // SetTheme rebuilds the list styles from a palette.
 func SetTheme(p theme.Palette) {
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(p.Accent)
 	prBadgeStyle = lipgloss.NewStyle().Foreground(p.PRBadge).Bold(true)
 	normalTitle = lipgloss.NewStyle().Foreground(p.Text)
 	selectedTitle = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
@@ -167,7 +172,8 @@ type Model struct {
 // New builds an empty worktree list.
 func New() Model {
 	l := list.New(nil, itemDelegate{}, 0, 0)
-	l.Title = "Worktrees"
+	l.Title = titleIcon + " Worktrees"
+	l.Styles.Title = titleStyle
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
 	return Model{list: l}
@@ -186,7 +192,7 @@ func (m *Model) SetItems(items []Item) {
 func (m *Model) SetSize(w, h int) { m.list.SetSize(w, h) }
 
 // SetTitle sets the list header (e.g. to show the active sort mode).
-func (m *Model) SetTitle(s string) { m.list.Title = s }
+func (m *Model) SetTitle(s string) { m.list.Title = titleIcon + " " + s }
 
 // Focus / Blur toggle the focused style flag.
 func (m *Model) Focus() { m.focused = true }
@@ -209,8 +215,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// View renders the list.
-func (m Model) View() string { return m.list.View() }
+// View renders the list, re-applying the title style in case the theme changed
+// after the list was constructed.
+func (m Model) View() string {
+	l := m.list
+	l.Styles.Title = titleStyle
+	return l.View()
+}
 
 // Focused reports focus state (used by the parent for border color).
 func (m Model) Focused() bool { return m.focused }

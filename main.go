@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -15,23 +16,39 @@ import (
 )
 
 func main() {
-	// Any argument selects a non-interactive subcommand; bare invocation runs
-	// the TUI.
-	if len(os.Args) > 1 {
-		if err := cli.Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	args := os.Args[1:]
+
+	// --config <file> (or --config=<file>) overrides config discovery for the
+	// TUI. It must come before any subcommand.
+	var cfgPath string
+	switch {
+	case len(args) >= 2 && (args[0] == "--config" || args[0] == "-c"):
+		cfgPath, args = args[1], args[2:]
+	case len(args) >= 1 && strings.HasPrefix(args[0], "--config="):
+		cfgPath, args = strings.TrimPrefix(args[0], "--config="), args[1:]
+	}
+
+	// Any remaining argument selects a non-interactive subcommand; bare
+	// invocation runs the TUI.
+	if len(args) > 0 {
+		if cfgPath != "" {
+			fmt.Fprintln(os.Stderr, "bonsai: --config applies to the TUI only, not subcommands")
+			os.Exit(1)
+		}
+		if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	if err := run(); err != nil {
+	if err := run(cfgPath); err != nil {
 		fmt.Fprintln(os.Stderr, "bonsai:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(cfgPath string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -44,7 +61,12 @@ func run() error {
 		return fmt.Errorf("not inside a git repository: %w", err)
 	}
 
-	cfg, err := config.Load(repoDir)
+	var cfg *config.Config
+	if cfgPath != "" {
+		cfg, err = config.LoadFile(cfgPath)
+	} else {
+		cfg, err = config.LoadFor(repoDir)
+	}
 	if err != nil {
 		return err
 	}

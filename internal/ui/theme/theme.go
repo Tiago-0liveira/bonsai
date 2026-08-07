@@ -19,7 +19,13 @@ type Palette struct {
 
 // presets are the built-in palettes.
 var presets = map[string]Palette{
+	// bonsai: bark-brown base with leaf-green accents.
 	"bonsai": {
+		Accent: "#8db84c", BorderFocus: "#8db84c", Border: "#5a4632", Dim: "#9c8265",
+		Text: "#e9e2d5", Success: "#9fc96b", Danger: "#d1604f", Warning: "#dba54c", PRBadge: "#c99a5b",
+	},
+	// sakura: the original pink bonsai look.
+	"sakura": {
 		Accent: "205", BorderFocus: "205", Border: "240", Dim: "240",
 		Text: "252", Success: "42", Danger: "203", Warning: "208", PRBadge: "212",
 	},
