@@ -98,3 +98,23 @@ func TestCreateListCopyPath(t *testing.T) {
 		t.Fatalf("copied content = %q", data)
 	}
 }
+
+func TestHelpAndShellInitOutsideRepo(t *testing.T) {
+	noRepo := t.TempDir()
+
+	out, err := runIn(t, noRepo, "help")
+	if err != nil {
+		t.Fatalf("help outside repo: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "bonsai") {
+		t.Errorf("help output looks wrong: %q", out)
+	}
+
+	out, err = runIn(t, noRepo, "shell-init")
+	if err != nil {
+		t.Fatalf("shell-init outside repo: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "bcd") {
+		t.Errorf("shell-init output looks wrong: %q", out)
+	}
+}

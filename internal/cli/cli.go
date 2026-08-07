@@ -24,6 +24,15 @@ func Run(args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("no subcommand")
 	}
 
+	// help and shell-init do not touch a repo, so they must work outside one.
+	switch args[0] {
+	case "help", "-h", "--help":
+		printUsage(out)
+		return nil
+	case "shell-init":
+		return cmdShellInit(out)
+	}
+
 	// Anchor to the main worktree regardless of the current directory, so copy
 	// sources and worktree paths resolve consistently.
 	repoDir, err := git.MainRoot(".")
@@ -44,11 +53,6 @@ func Run(args []string, out, errOut io.Writer) error {
 		return cmdX(repoDir, args[1:], out, errOut)
 	case "alias", "aliases":
 		return cmdAlias(repoDir, args[1:], out, errOut)
-	case "shell-init":
-		return cmdShellInit(out)
-	case "help", "-h", "--help":
-		printUsage(out)
-		return nil
 	default:
 		printUsage(errOut)
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -298,15 +302,15 @@ func mergedAliases(repoDir string) []config.Alias {
 
 // resolveAlias finds an alias command by name (user aliases shadow config ones).
 func resolveAlias(repoDir, name string) (string, bool) {
-	var command string
-	var found bool
-	for _, a := range mergedAliases(repoDir) {
-		if a.Name == name {
-			command = a.Command
-			found = true // keep scanning: later (user) entries win
-		}
+	var configAliases []config.Alias
+	if cfg, err := config.LoadFor(repoDir); err == nil {
+		configAliases = cfg.Aliases
 	}
-	return command, found
+	var stateAliases []config.Alias
+	if st, err := config.LoadState(); err == nil {
+		stateAliases = st.SortedAliases()
+	}
+	return config.ResolveAlias(name, configAliases, stateAliases)
 }
 
 // printAliases writes every alias as "name<TAB>command".

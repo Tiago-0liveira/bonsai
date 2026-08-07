@@ -4,12 +4,20 @@ package git
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// gitTimeout bounds every non-interactive git subprocess so a hung fetch or
+// lock can't block a tea.Cmd goroutine forever. A var (not const) as a seam
+// for future injection.
+var gitTimeout = 120 * time.Second
 
 // Worktree describes a single entry from `git worktree list`.
 type Worktree struct {
@@ -26,9 +34,13 @@ type Metrics struct {
 	Behind int
 }
 
-// run executes a git command in dir and returns trimmed stdout.
+// run executes a git command in dir and returns trimmed stdout. Bounded by
+// gitTimeout. Interactive commands (RebaseCmd/MergeCmd) are built separately
+// and deliberately untimed.
 func run(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -143,10 +155,34 @@ func ListBranches(dir string) ([]string, error) {
 	return strings.Split(out, "\n"), nil
 }
 
-// RemoveWorktree removes the worktree at path (forcing to drop dirty state).
+// ErrWorktreeDirty is returned by RemoveWorktree when git refuses to remove a
+// worktree that still has modified or untracked files.
+var ErrWorktreeDirty = errors.New("worktree contains uncommitted changes")
+
+// RemoveWorktree removes the worktree at path. It fails with ErrWorktreeDirty
+// if the worktree has uncommitted changes, so stale dirty-state can never
+// silently destroy work — use ForceRemoveWorktree for the explicit opt-in.
 func RemoveWorktree(dir, path string) error {
+	_, err := run(dir, "worktree", "remove", path)
+	if err != nil && isDirtyRemoveErr(err) {
+		return fmt.Errorf("%w: %s", ErrWorktreeDirty, path)
+	}
+	return err
+}
+
+// ForceRemoveWorktree removes the worktree at path even if it is dirty.
+// Only use when the user explicitly opted into discarding uncommitted changes.
+func ForceRemoveWorktree(dir, path string) error {
 	_, err := run(dir, "worktree", "remove", "--force", path)
 	return err
+}
+
+// isDirtyRemoveErr reports whether a worktree-remove failure is git refusing
+// because of modified or untracked files.
+func isDirtyRemoveErr(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "use --force") ||
+		strings.Contains(msg, "contains modified or untracked files")
 }
 
 // DeleteBranch force-deletes a local branch.

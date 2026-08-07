@@ -98,6 +98,7 @@ type Model struct {
 	// Prune-mode fields.
 	canMerge   bool
 	mergeOn    bool
+	forceOn    bool
 	mergeLabel string
 	tailSteps  []string
 
@@ -154,6 +155,10 @@ func NewPrune(kind Kind, title, mergeLabel string, tailSteps []string, canMerge 
 
 // MergeEnabled reports whether the merge step is toggled on.
 func (m Model) MergeEnabled() bool { return m.mergeOn }
+
+// ForceEnabled reports whether the force (discard uncommitted changes) option
+// is toggled on.
+func (m Model) ForceEnabled() bool { return m.forceOn }
 
 // Kind returns the modal kind.
 func (m Model) Kind() Kind { return m.kind }
@@ -254,6 +259,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+	case "f":
+		// Toggle force only in prune mode.
+		if m.mode == modePrune {
+			m.forceOn = !m.forceOn
+			return m, nil
+		}
+
 	case "enter":
 		return m, m.onEnter()
 	}
@@ -294,10 +306,16 @@ func (m Model) onEnter() tea.Cmd {
 		}
 		return m.cancel()
 	case modePrune:
-		if m.mergeOn {
+		switch {
+		case m.mergeOn && m.forceOn:
+			return m.submit("merge,force")
+		case m.mergeOn:
 			return m.submit("merge")
+		case m.forceOn:
+			return m.submit("force")
+		default:
+			return m.submit("confirm")
 		}
-		return m.submit("confirm")
 	default: // select, fuzzy
 		if m.cursor >= 0 && m.cursor < len(m.items) {
 			return m.submit(m.items[m.cursor])
@@ -376,7 +394,8 @@ func (m Model) View() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
-// renderPrune draws the merge toggle and the ordered pipeline as an arrow flow.
+// renderPrune draws the merge/force toggles and the ordered pipeline as an
+// arrow flow.
 func (m Model) renderPrune() string {
 	var b strings.Builder
 
@@ -388,6 +407,12 @@ func (m Model) renderPrune() string {
 		fmt.Fprintf(&b, "%s %s\n\n", box, label)
 	}
 
+	forceBox := "[ ]"
+	if m.forceOn {
+		forceBox = "[x]"
+	}
+	fmt.Fprintf(&b, "%s %s\n\n", forceBox, dangerStyle.Render("force (discard uncommitted changes)"))
+
 	arrow := arrowStyle.Render(" → ")
 	steps := make([]string, 0, len(m.tailSteps)+1)
 	if m.mergeOn && m.canMerge {
@@ -397,7 +422,7 @@ func (m Model) renderPrune() string {
 	b.WriteString(strings.Join(steps, arrow))
 	b.WriteString("\n\n")
 
-	hint := "enter confirm · esc cancel"
+	hint := "f toggle force · enter confirm · esc cancel"
 	if m.canMerge {
 		hint = "space toggle merge · " + hint
 	}

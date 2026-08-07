@@ -62,6 +62,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prsMsg:
 		return m.onPRs(msg)
 
+	case branchesMsg:
+		return m.onBranches(msg)
+
+	case pruneCandidatesMsg:
+		return m.onPruneCandidates(msg)
+
 	case prMapMsg:
 		return m.onPRMap(msg)
 
@@ -707,12 +713,26 @@ func (m Model) openRebaseModal() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	branches, err := git.ListBranches(wt.Path)
-	if err != nil {
-		m.status = "branches: " + err.Error()
+	m.status = "loading branches…"
+	return m, loadBranches(branchesForRebase, wt.Path)
+}
+
+// onBranches opens the branch select modal for the flow that requested the
+// list once the branches arrive.
+func (m Model) onBranches(msg branchesMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "branches: " + msg.err.Error()
 		return m, nil
 	}
-	modal := modals.NewSelect(modals.KindBranches, "Rebase onto", branches)
+	var modal modals.Model
+	switch msg.kind {
+	case branchesForRebase:
+		modal = modals.NewSelect(modals.KindBranches, "Rebase onto", msg.branches)
+	case branchesForCreateExisting:
+		modal = modals.NewSelect(modals.KindCreateExisting, "Existing branch", msg.branches)
+	default:
+		return m, nil
+	}
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -1070,9 +1090,21 @@ func (m Model) openCreatePR() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// openBulkPruneModal finds merged worktrees and confirms removing them all.
+// openBulkPruneModal kicks off an async scan for merged worktrees; the confirm
+// appears when the candidates arrive (onPruneCandidates).
 func (m Model) openBulkPruneModal() (tea.Model, tea.Cmd) {
-	targets := m.mergedTargets()
+	m.status = "scanning for merged worktrees…"
+	return m, loadPruneCandidates(m.repoDir, config.BaseBranch(m.cfg.Upstream))
+}
+
+// onPruneCandidates filters the scan result against live model state and
+// confirms removal of the merged targets.
+func (m Model) onPruneCandidates(msg pruneCandidatesMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "prune scan: " + msg.err.Error()
+		return m, nil
+	}
+	targets := m.mergedTargetsFrom(msg.merged)
 	if len(targets) == 0 {
 		m.status = "no merged worktrees to prune"
 		return m, nil
@@ -1082,25 +1114,12 @@ func (m Model) openBulkPruneModal() (tea.Model, tea.Cmd) {
 		b.WriteString("• " + t.branch + "\n")
 	}
 	action := bulkPrune(m.repoDir, targets, m.cfg.DeleteHooks())
-	nm, cmd := m.confirm(fmt.Sprintf("Prune %d merged worktree(s)?", len(targets)), strings.TrimRight(b.String(), "\n"), action)
-	return nm, cmd
+	return m.confirm(fmt.Sprintf("Prune %d merged worktree(s)?", len(targets)), strings.TrimRight(b.String(), "\n"), action)
 }
 
-// mergedTargets returns non-main, clean worktrees whose branch is merged — either
-// via a merged PR (gh) or `git branch --merged base`.
-func (m Model) mergedTargets() []pruneTarget {
-	merged := map[string]bool{}
-	if mprs, err := gh.ListMergedPRs(m.repoDir); err == nil {
-		for _, pr := range mprs {
-			merged[pr.Head] = true
-		}
-	}
-	base := config.BaseBranch(m.cfg.Upstream)
-	if locals, err := git.MergedBranches(m.repoDir, base); err == nil {
-		for _, b := range locals {
-			merged[b] = true
-		}
-	}
+// mergedTargetsFrom returns non-main, clean worktrees whose branch appears in
+// merged (the union of merged PR heads and locally-merged branches).
+func (m Model) mergedTargetsFrom(merged map[string]bool) []pruneTarget {
 	var targets []pruneTarget
 	for _, t := range m.worktrees {
 		if t.IsMain || t.Branch == "" || t.Branch == "(detached)" {
@@ -1360,14 +1379,15 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		return m, gitCommit(wt.Path, msg.Value)
 
 	case modals.KindPrune:
-		merge := msg.Value == "merge"
+		merge := strings.Contains(msg.Value, "merge")
+		force := strings.Contains(msg.Value, "force")
 		prNum, _ := m.prForBranch(wt.Branch)
 		if merge {
 			m.status = fmt.Sprintf("merging PR #%d then pruning %s", prNum, wt.Branch)
 		} else {
 			m.status = "pruning " + wt.Branch
 		}
-		return m, pruneWorktree(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), m.cfg.DeleteHooks(), merge, prNum)
+		return m, pruneWorktree(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), m.cfg.DeleteHooks(), merge, force, prNum)
 
 	case modals.KindPRBody:
 		base := config.BaseBranch(m.upstreamFor(wt.Branch))
@@ -1441,15 +1461,8 @@ func (m Model) onCreateSource(choice string) (tea.Model, tea.Cmd) {
 		m.modal = &modal
 		return m, nil
 	case createSourceExisting:
-		branches, err := git.ListBranches(m.repoDir)
-		if err != nil {
-			m.status = "branches: " + err.Error()
-			return m, nil
-		}
-		modal := modals.NewSelect(modals.KindCreateExisting, "Existing branch", branches)
-		modal.SetSize(m.width, m.height)
-		m.modal = &modal
-		return m, nil
+		m.status = "loading branches…"
+		return m, loadBranches(branchesForCreateExisting, m.repoDir)
 	case createSourcePR:
 		m.status = "loading pull requests…"
 		return m, loadPRs(m.repoDir)
@@ -1492,17 +1505,12 @@ func prNumberOfBranch(branch string) (int, bool) {
 	return 0, false
 }
 
-// aliasCommand resolves an alias name to its command from config then state.
+// aliasCommand resolves an alias name to its command from config then state;
+// user (state) aliases shadow config-file aliases of the same name.
 func (m Model) aliasCommand(name string) string {
-	for _, a := range m.cfg.Aliases {
-		if a.Name == name {
-			return a.Command
-		}
+	command, ok := config.ResolveAlias(name, m.cfg.Aliases, m.state.SortedAliases())
+	if !ok {
+		return ""
 	}
-	for _, a := range m.state.Aliases {
-		if a.Name == name {
-			return a.Command
-		}
-	}
-	return ""
+	return command
 }

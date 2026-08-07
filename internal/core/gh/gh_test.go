@@ -56,6 +56,20 @@ func TestRollup(t *testing.T) {
 	}
 }
 
+func TestParseChecks(t *testing.T) {
+	valid := `[{"name":"build","state":"COMPLETED","bucket":"pass","link":"http://x"}]`
+	checks, err := parseChecks([]byte(valid))
+	if err != nil {
+		t.Fatalf("valid fixture: %v", err)
+	}
+	if len(checks) != 1 || checks[0].Name != "build" || checks[0].Bucket != "pass" {
+		t.Errorf("parsed wrong: %+v", checks)
+	}
+	if _, err := parseChecks([]byte("not json")); err == nil {
+		t.Error("invalid JSON: want error, got nil")
+	}
+}
+
 func TestParseTrailingNumber(t *testing.T) {
 	cases := map[string]int{
 		"https://github.com/o/r/pull/42\n":     42,

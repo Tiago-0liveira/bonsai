@@ -2,12 +2,38 @@
 package gh
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// ghTimeout bounds every gh subprocess so a hung network call can't block a
+// tea.Cmd goroutine forever. A var (not const) as a seam for future injection.
+var ghTimeout = 30 * time.Second
+
+// runGHOutput executes a gh subcommand in dir bounded by ghTimeout, returning
+// stdout (like cmd.Output).
+func runGHOutput(dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = dir
+	return cmd.Output()
+}
+
+// runGHCombined executes a gh subcommand in dir bounded by ghTimeout, returning
+// combined stdout+stderr (like cmd.CombinedOutput).
+func runGHCombined(dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = dir
+	return cmd.CombinedOutput()
+}
 
 // PR states as reported by GitHub.
 const (
@@ -35,9 +61,7 @@ func ListPRs(dir, state string) ([]PR, error) {
 	if state == "all" {
 		args = append(args, "--search", "sort:updated-desc")
 	}
-	cmd := exec.Command("gh", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := runGHOutput(dir, args...)
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("gh pr list: %s", strings.TrimSpace(string(ee.Stderr)))
@@ -158,9 +182,7 @@ const prViewFields = "number,title,state,isDraft,author,baseRefName,headRefName,
 // ViewPR fetches the full detail of pull request number via a single
 // `gh pr view --json` call, including the comment/review timeline.
 func ViewPR(dir string, number int) (PRDetail, error) {
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(number), "--json", prViewFields)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := runGHOutput(dir, "pr", "view", strconv.Itoa(number), "--json", prViewFields)
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return PRDetail{}, fmt.Errorf("gh pr view: %s", strings.TrimSpace(string(ee.Stderr)))
@@ -236,11 +258,10 @@ func mergeArgs(number int, strat string) []string {
 }
 
 // runGH executes a gh subcommand in dir, returning a trimmed combined-output
-// error on failure. Used by the fire-and-check action wrappers.
+// error on failure. Used by the fire-and-check action wrappers. Bounded by
+// ghTimeout via runGHCombined.
 func runGH(dir string, args ...string) error {
-	cmd := exec.Command("gh", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	out, err := runGHCombined(dir, args...)
 	if err != nil {
 		return fmt.Errorf("gh %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
 	}
@@ -296,9 +317,7 @@ func CreatePR(dir, title, body, base string, draft bool) (int, error) {
 	if draft {
 		args = append(args, "--draft")
 	}
-	cmd := exec.Command("gh", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	out, err := runGHCombined(dir, args...)
 	if err != nil {
 		return 0, fmt.Errorf("gh pr create: %s", strings.TrimSpace(string(out)))
 	}
@@ -334,12 +353,8 @@ type Check struct {
 // exits non-zero when checks are failing or pending, so a non-zero exit whose
 // output still parses as JSON is treated as success.
 func Checks(dir string, number int) ([]Check, error) {
-	cmd := exec.Command("gh", "pr", "checks", strconv.Itoa(number), "--json", "name,state,bucket,link")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if perr := parseChecks(out); perr == nil {
-		var checks []Check
-		_ = json.Unmarshal(out, &checks)
+	out, err := runGHOutput(dir, "pr", "checks", strconv.Itoa(number), "--json", "name,state,bucket,link")
+	if checks, perr := parseChecks(out); perr == nil {
 		return checks, nil
 	}
 	// Output did not parse — surface the real error (gh missing, no checks, etc.).
@@ -352,10 +367,11 @@ func Checks(dir string, number int) ([]Check, error) {
 	return nil, nil
 }
 
-// parseChecks reports whether out is a parseable checks JSON array.
-func parseChecks(out []byte) error {
+// parseChecks parses out as a checks JSON array.
+func parseChecks(out []byte) ([]Check, error) {
 	var checks []Check
-	return json.Unmarshal(out, &checks)
+	err := json.Unmarshal(out, &checks)
+	return checks, err
 }
 
 // Rollup reduces a set of checks to a single state: "fail" if any failed,
@@ -382,9 +398,7 @@ func Rollup(checks []Check) string {
 // ListMergedPRs returns recently merged pull requests (head branch + number),
 // used to detect worktrees whose branch has already been merged.
 func ListMergedPRs(dir string) ([]PR, error) {
-	cmd := exec.Command("gh", "pr", "list", "--state", "merged", "--json", "number,title,headRefName,baseRefName", "--limit", "100")
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := runGHOutput(dir, "pr", "list", "--state", "merged", "--json", "number,title,headRefName,baseRefName", "--limit", "100")
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("gh pr list --state merged: %s", strings.TrimSpace(string(ee.Stderr)))

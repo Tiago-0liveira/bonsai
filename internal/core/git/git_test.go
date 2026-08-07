@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,5 +71,50 @@ func TestRepoRoot(t *testing.T) {
 	want, _ := filepath.EvalSymlinks(main)
 	if got != want {
 		t.Errorf("RepoRoot = %q, want %q", got, want)
+	}
+}
+
+func TestRemoveWorktreeClean(t *testing.T) {
+	main := gitInit(t)
+	wtPath := filepath.Join(t.TempDir(), "feature")
+	runGit(t, main, "worktree", "add", "-b", "feature", wtPath)
+
+	if err := RemoveWorktree(main, wtPath); err != nil {
+		t.Fatalf("clean removal failed: %v", err)
+	}
+	trees, err := ListWorktrees(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trees) != 1 {
+		t.Errorf("worktree still listed after removal: %+v", trees)
+	}
+}
+
+func TestRemoveWorktreeDirty(t *testing.T) {
+	main := gitInit(t)
+	wtPath := filepath.Join(t.TempDir(), "feature")
+	runGit(t, main, "worktree", "add", "-b", "feature", wtPath)
+	if err := os.WriteFile(filepath.Join(wtPath, "f.txt"), []byte("modified"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RemoveWorktree(main, wtPath)
+	if !errors.Is(err, ErrWorktreeDirty) {
+		t.Fatalf("dirty removal: err = %v, want ErrWorktreeDirty", err)
+	}
+	if _, statErr := os.Stat(wtPath); statErr != nil {
+		t.Errorf("worktree should still exist after refused removal: %v", statErr)
+	}
+
+	if err := ForceRemoveWorktree(main, wtPath); err != nil {
+		t.Fatalf("force removal of dirty worktree failed: %v", err)
+	}
+	trees, listErr := ListWorktrees(main)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(trees) != 1 {
+		t.Errorf("worktree still listed after force removal: %+v", trees)
 	}
 }

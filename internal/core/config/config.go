@@ -19,6 +19,25 @@ type Alias struct {
 	Command string `mapstructure:"command"`
 }
 
+// ResolveAlias finds an alias command by name, scanning config-file aliases
+// first and then user (state) aliases; the last match wins, so user aliases
+// shadow config-file aliases of the same name.
+func ResolveAlias(name string, configAliases, stateAliases []Alias) (string, bool) {
+	var command string
+	found := false
+	for _, a := range configAliases {
+		if a.Name == name {
+			command, found = a.Command, true
+		}
+	}
+	for _, a := range stateAliases {
+		if a.Name == name {
+			command, found = a.Command, true
+		}
+	}
+	return command, found
+}
+
 // Hooks holds shell commands fired on worktree lifecycle events.
 type Hooks struct {
 	OnWorktreeCreate []string `mapstructure:"on_worktree_create"`

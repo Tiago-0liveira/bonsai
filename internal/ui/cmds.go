@@ -190,8 +190,10 @@ func gitCommit(path, msg string) tea.Cmd {
 
 // pruneWorktree optionally merges a PR, runs delete hooks in the worktree,
 // removes it, then deletes its branch. When merge is true and prNumber > 0 the
-// merge happens first and aborts the prune on failure.
-func pruneWorktree(repoDir, path, branch, upstream string, deleteHooks []string, merge bool, prNumber int) tea.Cmd {
+// merge happens first and aborts the prune on failure. When force is true the
+// removal discards uncommitted changes; otherwise a dirty worktree aborts the
+// prune with git.ErrWorktreeDirty.
+func pruneWorktree(repoDir, path, branch, upstream string, deleteHooks []string, merge, force bool, prNumber int) tea.Cmd {
 	return func() tea.Msg {
 		if merge && prNumber > 0 {
 			if err := gh.MergePR(repoDir, prNumber); err != nil {
@@ -202,7 +204,13 @@ func pruneWorktree(repoDir, path, branch, upstream string, deleteHooks []string,
 		if err := coreexec.RunHooks(path, deleteHooks, vars); err != nil {
 			return opDoneMsg{label: "delete hook", err: err}
 		}
-		if err := git.RemoveWorktree(repoDir, path); err != nil {
+		var err error
+		if force {
+			err = git.ForceRemoveWorktree(repoDir, path)
+		} else {
+			err = git.RemoveWorktree(repoDir, path)
+		}
+		if err != nil {
 			return opDoneMsg{label: "prune", err: err}
 		}
 		if branch != "" {
@@ -235,6 +243,61 @@ func loadPRs(repoDir string) tea.Cmd {
 	return func() tea.Msg {
 		prs, err := gh.ListPRs(repoDir, "open")
 		return prsMsg{prs: prs, err: err}
+	}
+}
+
+// branchesKind distinguishes which flow a loaded branch list belongs to.
+type branchesKind int
+
+const (
+	branchesForRebase branchesKind = iota
+	branchesForCreateExisting
+)
+
+// branchesMsg carries a loaded branch list for a select modal.
+type branchesMsg struct {
+	kind     branchesKind
+	branches []string
+	err      error
+}
+
+// loadBranches fetches local branch names for a select modal so the UI event
+// loop is never blocked by the git call.
+func loadBranches(kind branchesKind, dir string) tea.Cmd {
+	return func() tea.Msg {
+		branches, err := git.ListBranches(dir)
+		return branchesMsg{kind: kind, branches: branches, err: err}
+	}
+}
+
+// pruneCandidatesMsg carries the union of merged branch heads for the
+// bulk-prune scan.
+type pruneCandidatesMsg struct {
+	merged map[string]bool
+	err    error
+}
+
+// loadPruneCandidates unions merged PR heads (gh) with locally-merged branches
+// (git) in a goroutine. err is set only when both sources fail.
+func loadPruneCandidates(repoDir, base string) tea.Cmd {
+	return func() tea.Msg {
+		merged := map[string]bool{}
+		mprs, ghErr := gh.ListMergedPRs(repoDir)
+		if ghErr == nil {
+			for _, pr := range mprs {
+				merged[pr.Head] = true
+			}
+		}
+		locals, gitErr := git.MergedBranches(repoDir, base)
+		if gitErr == nil {
+			for _, b := range locals {
+				merged[b] = true
+			}
+		}
+		if ghErr != nil && gitErr != nil {
+			return pruneCandidatesMsg{err: ghErr}
+		}
+		return pruneCandidatesMsg{merged: merged}
 	}
 }
 
@@ -342,21 +405,32 @@ func createPR(repoDir, path, title, body, base string, draft bool) tea.Cmd {
 }
 
 // bulkPrune removes each merged worktree in sequence, aggregating the result.
+// Targets whose delete hooks or removal fail (including dirty worktrees) are
+// skipped, and the first error is reported alongside the success count.
 func bulkPrune(repoDir string, targets []pruneTarget, deleteHooks []string) tea.Cmd {
 	return func() tea.Msg {
+		var firstErr error
 		n := 0
 		for _, t := range targets {
 			vars := config.HookVars(repoDir, t.path, t.branch, t.upstream, t.prNumber)
-			_ = coreexec.RunHooks(t.path, deleteHooks, vars)
+			if err := coreexec.RunHooks(t.path, deleteHooks, vars); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
 			if err := git.RemoveWorktree(repoDir, t.path); err != nil {
-				return opDoneMsg{label: "bulk prune", err: err}
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
 			if t.branch != "" {
 				_ = git.DeleteBranch(repoDir, t.branch)
 			}
 			n++
 		}
-		return opDoneMsg{label: fmt.Sprintf("bulk prune (%d)", n), err: nil}
+		return opDoneMsg{label: fmt.Sprintf("bulk prune (%d/%d)", n, len(targets)), err: firstErr}
 	}
 }
 

@@ -122,3 +122,35 @@ func TestRemoteOf(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveAlias(t *testing.T) {
+	configAliases := []Alias{
+		{Name: "build", Command: "cfg-build"},
+		{Name: "only-config", Command: "cfg-only"},
+		{Name: "dup", Command: "cfg-first"},
+		{Name: "dup", Command: "cfg-second"},
+	}
+	stateAliases := []Alias{
+		{Name: "build", Command: "user-build"},
+		{Name: "only-user", Command: "user-only"},
+	}
+
+	cases := []struct {
+		name      string
+		wantCmd   string
+		wantFound bool
+	}{
+		{"build", "user-build", true},       // user shadows config
+		{"only-config", "cfg-only", true},   // config-only
+		{"only-user", "user-only", true},    // state-only
+		{"missing", "", false},              // not found
+		{"dup", "cfg-second", true},         // same list: last wins
+	}
+	for _, c := range cases {
+		cmd, found := ResolveAlias(c.name, configAliases, stateAliases)
+		if cmd != c.wantCmd || found != c.wantFound {
+			t.Errorf("ResolveAlias(%q) = (%q, %v), want (%q, %v)",
+				c.name, cmd, found, c.wantCmd, c.wantFound)
+		}
+	}
+}
