@@ -9,18 +9,33 @@ import (
 	"strings"
 )
 
-// PR is an open pull request.
+// PR states as reported by GitHub.
+const (
+	StateOpen   = "OPEN"
+	StateMerged = "MERGED"
+	StateClosed = "CLOSED"
+)
+
+// PR is a pull request with its current state.
 type PR struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
+	State  string `json:"state"`
 	Head   string `json:"headRefName"`
 	Base   string `json:"baseRefName"`
 }
 
-// ListPRs returns open pull requests for the repo containing dir via
-// `gh pr list --json`. Requires the gh CLI to be installed and authenticated.
-func ListPRs(dir string) ([]PR, error) {
-	cmd := exec.Command("gh", "pr", "list", "--json", "number,title,headRefName,baseRefName", "--limit", "50")
+// ListPRs returns pull requests for the repo containing dir via
+// `gh pr list --json`. state is an `--state` filter such as "open" or "all";
+// with "all" results are sorted by most recently updated so recent merges are
+// never pushed out of the window by older PRs. Requires the gh CLI to be
+// installed and authenticated.
+func ListPRs(dir, state string) ([]PR, error) {
+	args := []string{"pr", "list", "--state", state, "--json", "number,title,state,headRefName,baseRefName", "--limit", "50"}
+	if state == "all" {
+		args = append(args, "--search", "sort:updated-desc")
+	}
+	cmd := exec.Command("gh", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

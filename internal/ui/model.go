@@ -88,7 +88,7 @@ type Model struct {
 	metrics   map[string]git.Metrics
 	fileIndex []string
 	prs       []gh.PR
-	// prByBranch maps a branch (PR head ref) to its open PR, for row badges.
+	// prByBranch maps a branch (PR head ref) to its PR (any state), for row badges.
 	prByBranch map[string]gh.PR
 	// prDetail caches the full detail of PRs whose tab has been opened, keyed by
 	// PR number. prPaneErr holds the last PR-detail load error for display.
@@ -189,7 +189,7 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadWorktrees(m.repoDir), indexFiles(m.repoDir), tickProc())
+	return tea.Batch(loadWorktrees(m.repoDir), indexFiles(m.repoDir), tickProc(), tickPRs())
 }
 
 // selectedWorktree returns the highlighted worktree, if any.

@@ -109,6 +109,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case procTickMsg:
 		return m.onProcTick()
 
+	case prTickMsg:
+		return m.onPRTick()
+
 	case modals.SubmitMsg:
 		return m.onModalSubmit(msg)
 
@@ -171,16 +174,20 @@ func (m Model) onMetrics(msg metricsMsg) Model {
 	return m
 }
 
-// onPRMap records open PRs keyed by head branch and redecorates rows. gh errors
-// are silent — no gh, no badges. Because a PR carries its real base branch,
-// ahead/behind metrics for PR-backed branches are recomputed here against that
-// base rather than the global upstream.
+// onPRMap records PRs (any state) keyed by head branch and redecorates rows.
+// gh errors are silent — no gh, no badges. When a branch carries several PRs
+// an open one wins over merged/closed ones. Because a PR carries its real base
+// branch, ahead/behind metrics for PR-backed branches are recomputed here
+// against that base rather than the global upstream.
 func (m Model) onPRMap(msg prMapMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		return m, nil
 	}
 	m.prByBranch = make(map[string]gh.PR, len(msg.prs))
 	for _, pr := range msg.prs {
+		if cur, ok := m.prByBranch[pr.Head]; ok && cur.State == gh.StateOpen && pr.State != gh.StateOpen {
+			continue
+		}
 		m.prByBranch[pr.Head] = pr
 	}
 	m.rebuildItems()
@@ -256,6 +263,7 @@ func (m *Model) rebuildItems() {
 		}
 		if pr, ok := m.prByBranch[t.Branch]; ok {
 			it.PR = pr.Number
+			it.PRState = pr.State
 		}
 		it.Dirty = m.dirty[t.Path]
 		it.Checks = m.checkRollup[t.Path]
@@ -392,6 +400,12 @@ func (m *Model) checkProcTransitions() {
 
 // notify is a thin wrapper over the core notify package.
 func notify(title, body string) { corenotify.Send(title, body) }
+
+// onPRTick re-checks PR states periodically so a merge done outside bonsai
+// flips the row badge to MERGED without a restart or manual refresh.
+func (m Model) onPRTick() (tea.Model, tea.Cmd) {
+	return m, tea.Batch(fetchPRs(m.repoDir), tickPRs())
+}
 
 // activeProcess returns the process currently selected for display under path,
 // falling back to the most recently spawned one.
@@ -1203,6 +1217,9 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 	}
 
 	prNum, isPR := m.prForBranch(wt.Branch)
+	if pr, ok := m.prByBranch[wt.Branch]; ok && pr.State != gh.StateOpen {
+		isPR = false // already merged or closed: nothing left to merge
+	}
 	mergeLabel := fmt.Sprintf("merge PR #%d to %s", prNum, config.BaseBranch(m.upstreamFor(wt.Branch)))
 
 	steps := []string{}

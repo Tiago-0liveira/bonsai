@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
@@ -22,8 +23,11 @@ type Item struct {
 	WT         git.Worktree
 	Metrics    git.Metrics
 	HasMetrics bool
-	// PR is the number of an open PR whose head is this branch (0 = none).
+	// PR is the number of a PR whose head is this branch (0 = none).
 	PR int
+	// PRState is the connected PR's state (gh.StateOpen / StateMerged /
+	// StateClosed). Empty when the PR number came from a "pr-N" branch name.
+	PRState string
 	// Dirty is true when the worktree has uncommitted changes.
 	Dirty bool
 	// Checks is the CI rollup for the connected PR: "pass"/"fail"/"pending"/"".
@@ -83,17 +87,19 @@ func (i Item) prNumber() (int, bool) {
 }
 
 var (
-	titleStyle    lipgloss.Style
-	prBadgeStyle  lipgloss.Style
-	normalTitle   lipgloss.Style
-	selectedTitle lipgloss.Style
-	descStyle     lipgloss.Style
-	accentStyle   lipgloss.Style
-	dirtyStyle    lipgloss.Style
-	runningStyle  lipgloss.Style
-	checkPass     lipgloss.Style
-	checkFail     lipgloss.Style
-	checkPending  lipgloss.Style
+	titleStyle       lipgloss.Style
+	prBadgeStyle     lipgloss.Style
+	mergedBadgeStyle lipgloss.Style
+	closedBadgeStyle lipgloss.Style
+	normalTitle      lipgloss.Style
+	selectedTitle    lipgloss.Style
+	descStyle        lipgloss.Style
+	accentStyle      lipgloss.Style
+	dirtyStyle       lipgloss.Style
+	runningStyle     lipgloss.Style
+	checkPass        lipgloss.Style
+	checkFail        lipgloss.Style
+	checkPending     lipgloss.Style
 )
 
 // titleIcon decorates the pane header, sitting in the app's top-left corner.
@@ -105,6 +111,8 @@ func init() { SetTheme(theme.Current) }
 func SetTheme(p theme.Palette) {
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(p.Accent)
 	prBadgeStyle = lipgloss.NewStyle().Foreground(p.PRBadge).Bold(true)
+	mergedBadgeStyle = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
+	closedBadgeStyle = lipgloss.NewStyle().Foreground(p.Dim)
 	normalTitle = lipgloss.NewStyle().Foreground(p.Text)
 	selectedTitle = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
 	descStyle = lipgloss.NewStyle().Foreground(p.Dim)
@@ -114,6 +122,24 @@ func SetTheme(p theme.Palette) {
 	checkPass = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
 	checkFail = lipgloss.NewStyle().Foreground(p.Danger).Bold(true)
 	checkPending = lipgloss.NewStyle().Foreground(p.Warning).Bold(true)
+}
+
+// prBadge renders the connected PR badge: colored "#N" while open,
+// "#N merged" once merged, dimmed "#N closed" when closed without merging.
+// Branches named "pr-N" without a known state render the plain badge.
+func (i Item) prBadge() string {
+	n, ok := i.prNumber()
+	if !ok {
+		return ""
+	}
+	switch i.PRState {
+	case gh.StateMerged:
+		return mergedBadgeStyle.Render(fmt.Sprintf("#%d merged ", n))
+	case gh.StateClosed:
+		return closedBadgeStyle.Render(fmt.Sprintf("#%d closed ", n))
+	default:
+		return prBadgeStyle.Render(fmt.Sprintf("#%d ", n))
+	}
 }
 
 // itemDelegate renders a two-line row, coloring a leading "#N" PR badge
@@ -143,9 +169,7 @@ func (itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.I
 	if dot := checkDot(it.Checks); dot != "" {
 		title += dot + " "
 	}
-	if n, isPR := it.prNumber(); isPR {
-		title += prBadgeStyle.Render(fmt.Sprintf("#%d ", n))
-	}
+	title += it.prBadge()
 	title += nameStyle.Render(it.Title())
 	if it.Dirty {
 		title += " " + dirtyStyle.Render("●")

@@ -55,14 +55,19 @@ type opDoneMsg struct {
 // procTickMsg drives periodic refresh of the process-output viewport.
 type procTickMsg struct{}
 
+// prTickMsg drives periodic re-check of pull-request states so merges made
+// outside bonsai show up without a restart or manual refresh.
+type prTickMsg struct{}
+
 // prsMsg carries the loaded pull-request list for the create-from-PR modal.
 type prsMsg struct {
 	prs []gh.PR
 	err error
 }
 
-// prMapMsg carries open PRs used to decorate worktree rows with badges. Errors
-// are handled silently (gh missing/unauthenticated simply means no badges).
+// prMapMsg carries pull requests (any state) used to decorate worktree rows
+// with badges. Errors are handled silently (gh missing/unauthenticated simply
+// means no badges).
 type prMapMsg struct {
 	prs []gh.PR
 	err error
@@ -228,15 +233,16 @@ func copyFile(repoDir, worktreePath, rel string, record func(string) error) tea.
 // loadPRs fetches open pull requests via the gh CLI for the create-from-PR modal.
 func loadPRs(repoDir string) tea.Cmd {
 	return func() tea.Msg {
-		prs, err := gh.ListPRs(repoDir)
+		prs, err := gh.ListPRs(repoDir, "open")
 		return prsMsg{prs: prs, err: err}
 	}
 }
 
-// fetchPRs fetches open PRs to decorate worktree rows. Runs quietly.
+// fetchPRs fetches PRs in any state to decorate worktree rows (open, merged,
+// and closed all get a badge). Runs quietly.
 func fetchPRs(repoDir string) tea.Cmd {
 	return func() tea.Msg {
-		prs, err := gh.ListPRs(repoDir)
+		prs, err := gh.ListPRs(repoDir, "all")
 		return prMapMsg{prs: prs, err: err}
 	}
 }
@@ -428,4 +434,9 @@ func loadCommitPreview(path string) tea.Cmd {
 // tickProc schedules the next process-output refresh.
 func tickProc() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return procTickMsg{} })
+}
+
+// tickPRs schedules the next pull-request state re-check.
+func tickPRs() tea.Cmd {
+	return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })
 }
