@@ -70,6 +70,50 @@ func TestParseTrailingNumber(t *testing.T) {
 	}
 }
 
+func TestRunBucket(t *testing.T) {
+	cases := []struct {
+		name string
+		run  Run
+		want string
+	}{
+		{"in progress", Run{Status: "in_progress", Conclusion: ""}, "pending"},
+		{"queued", Run{Status: "queued"}, "pending"},
+		{"success", Run{Status: "completed", Conclusion: "success"}, "pass"},
+		{"skipped passes", Run{Status: "completed", Conclusion: "skipped"}, "pass"},
+		{"failure", Run{Status: "completed", Conclusion: "failure"}, "fail"},
+		{"cancelled fails", Run{Status: "completed", Conclusion: "cancelled"}, "fail"},
+		{"unknown conclusion", Run{Status: "completed", Conclusion: "stale"}, "pending"},
+	}
+	for _, c := range cases {
+		if got := c.run.Bucket(); got != c.want {
+			t.Errorf("%s: Bucket = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestListRunsUnmarshal(t *testing.T) {
+	raw := `[
+      {"databaseId": 1, "displayTitle": "fix: thing", "workflowName": "ci",
+       "headBranch": "feat", "event": "push", "status": "completed",
+       "conclusion": "success", "createdAt": "2026-08-01T10:00:00Z",
+       "url": "https://github.com/o/r/actions/runs/1"},
+      {"databaseId": 2, "displayTitle": "wip", "workflowName": "ci",
+       "headBranch": "feat", "event": "pull_request", "status": "in_progress",
+       "conclusion": "", "createdAt": "2026-08-02T10:00:00Z",
+       "url": "https://github.com/o/r/actions/runs/2"}
+    ]`
+	var runs []Run
+	if err := json.Unmarshal([]byte(raw), &runs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(runs) != 2 || runs[0].ID != 1 || runs[0].Workflow != "ci" || runs[0].Branch != "feat" {
+		t.Fatalf("runs wrong: %+v", runs)
+	}
+	if runs[0].Bucket() != "pass" || runs[1].Bucket() != "pending" {
+		t.Errorf("buckets wrong: %q %q", runs[0].Bucket(), runs[1].Bucket())
+	}
+}
+
 func TestViewPRUnmarshal(t *testing.T) {
 	// A representative gh pr view --json payload.
 	raw := `{

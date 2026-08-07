@@ -23,6 +23,7 @@ type PR struct {
 	State  string `json:"state"`
 	Head   string `json:"headRefName"`
 	Base   string `json:"baseRefName"`
+	URL    string `json:"url"`
 }
 
 // ListPRs returns pull requests for the repo containing dir via
@@ -31,7 +32,7 @@ type PR struct {
 // never pushed out of the window by older PRs. Requires the gh CLI to be
 // installed and authenticated.
 func ListPRs(dir, state string) ([]PR, error) {
-	args := []string{"pr", "list", "--state", state, "--json", "number,title,state,headRefName,baseRefName", "--limit", "50"}
+	args := []string{"pr", "list", "--state", state, "--json", "number,title,state,headRefName,baseRefName,url", "--limit", "50"}
 	if state == "all" {
 		args = append(args, "--search", "sort:updated-desc")
 	}
@@ -382,7 +383,7 @@ func Rollup(checks []Check) string {
 // ListMergedPRs returns recently merged pull requests (head branch + number),
 // used to detect worktrees whose branch has already been merged.
 func ListMergedPRs(dir string) ([]PR, error) {
-	cmd := exec.Command("gh", "pr", "list", "--state", "merged", "--json", "number,title,headRefName,baseRefName", "--limit", "100")
+	cmd := exec.Command("gh", "pr", "list", "--state", "merged", "--json", "number,title,headRefName,baseRefName,url", "--limit", "100")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -396,4 +397,56 @@ func ListMergedPRs(dir string) ([]PR, error) {
 		return nil, fmt.Errorf("parse gh output: %w", err)
 	}
 	return prs, nil
+}
+
+// Run is a single GitHub Actions workflow run on a branch.
+type Run struct {
+	ID         int64  `json:"databaseId"`
+	Name       string `json:"displayTitle"`
+	Workflow   string `json:"workflowName"`
+	Branch     string `json:"headBranch"`
+	Event      string `json:"event"`
+	Status     string `json:"status"`     // queued / in_progress / completed
+	Conclusion string `json:"conclusion"` // success / failure / cancelled / ""
+	CreatedAt  string `json:"createdAt"`
+	URL        string `json:"url"`
+}
+
+// Bucket reduces a run's status+conclusion to the same pass/fail/pending buckets
+// used by PR checks, so the Checks tab and row dots share one glyph path.
+func (r Run) Bucket() string {
+	if r.Status != "completed" {
+		return "pending"
+	}
+	switch r.Conclusion {
+	case "success", "neutral", "skipped":
+		return "pass"
+	case "failure", "cancelled", "timed_out", "action_required":
+		return "fail"
+	default:
+		return "pending"
+	}
+}
+
+const runListFields = "databaseId,displayTitle,workflowName,headBranch,event,status,conclusion,createdAt,url"
+
+// ListRuns returns the most recent workflow runs for branch via
+// `gh run list --branch --json`. Like Checks, gh may exit non-zero while still
+// printing parseable JSON, so parseable output wins.
+func ListRuns(dir, branch string, limit int) ([]Run, error) {
+	cmd := exec.Command("gh", "run", "list", "--branch", branch,
+		"--json", runListFields, "--limit", strconv.Itoa(limit))
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	var runs []Run
+	if perr := json.Unmarshal(out, &runs); perr == nil {
+		return runs, nil
+	}
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("gh run list: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("gh run list (is gh installed?): %w", err)
+	}
+	return nil, fmt.Errorf("gh run list: unparseable output")
 }

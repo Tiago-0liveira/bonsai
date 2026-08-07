@@ -26,6 +26,7 @@ const (
 	KindScripts     Kind = "scripts"
 	KindRunCommand  Kind = "run_command" // free-text ad-hoc command from the scripts modal
 	KindAliases     Kind = "aliases"
+	KindYank        Kind = "yank" // pick what to copy to the clipboard
 	KindBranches    Kind = "branches"
 	KindCommit      Kind = "commit"
 	KindPrune       Kind = "prune"

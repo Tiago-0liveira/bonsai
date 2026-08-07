@@ -3,12 +3,14 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
+	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
@@ -96,13 +98,14 @@ func (m Model) renderProcFooter() string {
 		if selOK && p.ID == sel.ID {
 			cursor = procAccent.Render("› ")
 		}
-		b.WriteString(cursor + procLine(p) + "\n")
+		b.WriteString(cursor + ansi.Truncate(procLine(p), m.termInnerWidth(), "…") + "\n")
 	}
 	b.WriteString(procDim.Render(procHint))
 	return b.String()
 }
 
-// procLine renders one process row with a color-coded status.
+// procLine renders one process row with a color-coded status, plus any local
+// URL the process has printed (e.g. a dev server's address).
 func procLine(p *coreexec.Process) string {
 	status := p.Status()
 	var st string
@@ -114,7 +117,11 @@ func procLine(p *coreexec.Process) string {
 	default:
 		st = procDone.Render(status)
 	}
-	return fmt.Sprintf("#%d %s (%s)", p.ID, p.Label, st)
+	line := fmt.Sprintf("#%d %s (%s)", p.ID, p.Label, st)
+	if u := p.LastURL(); u != "" {
+		line += "  " + procDim.Render(u)
+	}
+	return line
 }
 
 const prPaneHint = "enter desc · t commits · a approve · c changes · m merge · x close · O reopen · y ready"
@@ -290,6 +297,163 @@ func (m Model) renderDiff() string {
 	return b.String()
 }
 
+// inspectPaneHint is the footer hint shown at the bottom of the Inspector tab.
+const inspectPaneHint = "worktree detail · R refresh"
+
+// renderInspect builds the Inspector tab body: working-tree status, last
+// commit, diff-vs-base summary, and disk/stash stats for the selected worktree.
+func (m Model) renderInspect() string {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return prMeta.Render("(no worktree selected)")
+	}
+	d := m.inspect
+	w := m.termInnerWidth()
+	var b strings.Builder
+
+	// ── Header: branch + path ──────────────────────────────────────────────
+	b.WriteString(prSection.Render(wt.Branch) + prMeta.Render("  "+wt.Path) + "\n")
+	b.WriteString(rule(w) + "\n")
+
+	// ── Working tree ───────────────────────────────────────────────────────
+	b.WriteString(prSection.Render("Working tree") + "\n")
+	if !d.status.Dirty() {
+		b.WriteString("  " + procRunning.Render("✓ clean") + "\n")
+	} else {
+		var parts []string
+		if d.status.Staged > 0 {
+			parts = append(parts, fmt.Sprintf("%d staged", d.status.Staged))
+		}
+		if d.status.Modified > 0 {
+			parts = append(parts, fmt.Sprintf("%d modified", d.status.Modified))
+		}
+		if d.status.Untracked > 0 {
+			parts = append(parts, fmt.Sprintf("%d untracked", d.status.Untracked))
+		}
+		b.WriteString("  " + prWarn.Render("● "+strings.Join(parts, " · ")) + "\n")
+	}
+	b.WriteString(rule(w) + "\n")
+
+	// ── Last commit ────────────────────────────────────────────────────────
+	b.WriteString(prSection.Render("Last commit") + "\n")
+	if d.commitOK {
+		b.WriteString("  " + diffPathSt.Render(d.commit.Subject) + "\n")
+		meta := d.commit.Author
+		if !d.commit.When.IsZero() {
+			meta += " · " + ago(d.commit.When)
+		}
+		b.WriteString("  " + prMeta.Render(meta) + "\n")
+	} else {
+		b.WriteString("  " + prMeta.Render("(no commits yet)") + "\n")
+	}
+	b.WriteString(rule(w) + "\n")
+
+	// ── Diff vs base ───────────────────────────────────────────────────────
+	if d.base != "" {
+		b.WriteString(prSection.Render("Diff vs "+config.BaseBranch(d.base)) + "\n")
+		if len(d.files) == 0 {
+			b.WriteString("  " + prMeta.Render("(no changes)") + "\n")
+		} else {
+			totA, totD := 0, 0
+			for _, f := range d.files {
+				if f.Add > 0 {
+					totA += f.Add
+				}
+				if f.Del > 0 {
+					totD += f.Del
+				}
+			}
+			b.WriteString(fmt.Sprintf("  %s %s %s %s\n",
+				prMeta.Render(fmt.Sprintf("%d files", len(d.files))),
+				prMeta.Render("·"),
+				diffAdd.Render(fmt.Sprintf("+%d", totA)),
+				diffDel.Render(fmt.Sprintf("−%d", totD))))
+		}
+		b.WriteString(rule(w) + "\n")
+	}
+
+	// ── Disk & stash ───────────────────────────────────────────────────────
+	var stats []string
+	if d.diskOK {
+		stats = append(stats, fs.HumanSize(d.diskKB)+" on disk")
+	}
+	if d.stashes > 0 {
+		stats = append(stats, fmt.Sprintf("%d stash(es)", d.stashes))
+	}
+	if len(stats) > 0 {
+		b.WriteString(prSection.Render("Stats") + "\n")
+		b.WriteString("  " + prMeta.Render(strings.Join(stats, " · ")) + "\n")
+	}
+
+	b.WriteString("\n" + prMeta.Render(inspectPaneHint) + "\n")
+	return b.String()
+}
+
+// ago renders a coarse relative time ("3m", "2h", "5d ago") for the inspector.
+func ago(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+const checksPaneHint = "branch workflow runs · R refresh"
+
+// renderChecks builds the Checks tab body: the selected branch's recent GitHub
+// Actions runs, newest first, with pass/fail/pending glyphs.
+func (m Model) renderChecks() string {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return prMeta.Render("(no worktree selected)")
+	}
+	w := m.termInnerWidth()
+	var b strings.Builder
+
+	b.WriteString(prSection.Render("Runs · "+wt.Branch) + "\n")
+	if n, isPR := m.prForBranch(wt.Branch); isPR {
+		b.WriteString(prMeta.Render("connected: ") + prLabel.Render("PR #"+itoa(n)) + "\n")
+	}
+	b.WriteString(rule(w) + "\n")
+
+	if m.ciErr != "" {
+		b.WriteString(prMeta.Render("(gh unavailable: "+m.ciErr+")") + "\n")
+	} else if len(m.ciRuns) == 0 {
+		b.WriteString(prMeta.Render("no workflow runs for branch "+wt.Branch) + "\n")
+	} else {
+		for _, r := range m.ciRuns {
+			line := "  " + checkMark(r.Bucket()) + " " + diffPathSt.Render(r.Name)
+			meta := r.Workflow
+			if r.Event != "" {
+				meta += " · " + r.Event
+			}
+			if when := runWhen(r.CreatedAt); when != "" {
+				meta += " · " + when
+			}
+			line += "  " + prMeta.Render(meta)
+			b.WriteString(ansi.Truncate(line, w, "…") + "\n")
+		}
+	}
+
+	b.WriteString("\n" + prMeta.Render(checksPaneHint) + "\n")
+	return b.String()
+}
+
+// runWhen renders a run's createdAt as a relative time, falling back to the
+// date when the timestamp doesn't parse.
+func runWhen(ts string) string {
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		return ago(t)
+	}
+	return shortTime(ts)
+}
+
 // stateBadge renders a colored PR state badge.
 func stateBadge(state string) string {
 	switch state {
@@ -449,19 +613,26 @@ func tabLabel(t rightTab) string {
 		return " Diff (d) "
 	case tabPR:
 		return " PR (P) "
+	case tabInspect:
+		return " Inspect (i) "
+	case tabChecks:
+		return " Checks (b) "
 	default:
 		return " Git Log "
 	}
 }
 
 // visibleTabs returns the right-pane tabs available for the current selection:
-// Log and Processes always; Diff for non-main worktrees; PR when the selection
-// has a connected PR.
+// Log, Processes and Inspect always; Diff for non-main worktrees; Checks when
+// the selection is on a branch; PR when the selection has a connected PR.
 func (m Model) visibleTabs() []rightTab {
-	tabs := []rightTab{tabLog, tabProcs}
+	tabs := []rightTab{tabLog, tabProcs, tabInspect}
 	if wt, ok := m.selectedWorktree(); ok {
 		if !wt.IsMain {
 			tabs = append(tabs, tabDiff)
+		}
+		if wt.Branch != "" && wt.Branch != "(detached)" {
+			tabs = append(tabs, tabChecks)
 		}
 		if _, isPR := m.prForBranch(wt.Branch); isPR {
 			tabs = append(tabs, tabPR)

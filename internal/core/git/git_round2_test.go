@@ -6,16 +6,91 @@ import (
 	"testing"
 )
 
-func TestDirty(t *testing.T) {
+func TestStatusSummary(t *testing.T) {
 	dir := gitInit(t)
-	if d, err := Dirty(dir); err != nil || d {
-		t.Fatalf("clean repo: Dirty = %v, err %v", d, err)
+	s, err := StatusSummaryOf(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if s.Dirty() || s.Total() != 0 {
+		t.Fatalf("clean repo: %+v", s)
+	}
+
+	// Untracked file.
 	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("y"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if d, err := Dirty(dir); err != nil || !d {
-		t.Fatalf("after write: Dirty = %v, err %v", d, err)
+	// Modified tracked file.
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err = StatusSummaryOf(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Untracked != 1 || s.Modified != 1 || s.Staged != 0 {
+		t.Errorf("want 1 untracked + 1 modified, got %+v", s)
+	}
+
+	// Stage both.
+	runGit(t, dir, "add", "-A")
+	s, err = StatusSummaryOf(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Staged != 2 || s.Modified != 0 || s.Untracked != 0 {
+		t.Errorf("want 2 staged, got %+v", s)
+	}
+	if len(s.Lines) != 2 {
+		t.Errorf("want 2 raw lines, got %v", s.Lines)
+	}
+}
+
+func TestLastCommit(t *testing.T) {
+	dir := gitInit(t)
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-m", "fix: subject with colon: and spaces")
+
+	c, err := LastCommit(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Subject != "fix: subject with colon: and spaces" {
+		t.Errorf("subject = %q", c.Subject)
+	}
+	if c.Author != "t" {
+		t.Errorf("author = %q, want t", c.Author)
+	}
+	if c.When.IsZero() || c.When.Unix() <= 0 {
+		t.Errorf("When = %v, want a real time", c.When)
+	}
+
+	// A repo with no commits errors.
+	empty := t.TempDir()
+	runGit(t, empty, "init", "-b", "main")
+	if _, err := LastCommit(empty); err == nil {
+		t.Errorf("expected error on repo without commits")
+	}
+}
+
+func TestStashCount(t *testing.T) {
+	dir := gitInit(t)
+	n, err := StashCount(dir)
+	if err != nil || n != 0 {
+		t.Fatalf("StashCount = %d, err %v; want 0", n, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte{byte('a' + i)}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, dir, "stash", "push", "-m", "s")
+	}
+	n, err = StashCount(dir)
+	if err != nil || n != 2 {
+		t.Fatalf("StashCount = %d, err %v; want 2", n, err)
 	}
 }
 

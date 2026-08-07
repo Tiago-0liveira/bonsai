@@ -7,8 +7,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/sahilm/fuzzy"
 )
@@ -79,6 +82,34 @@ func Search(files []string, query string, rank Ranker) []string {
 		out[i] = m.Str
 	}
 	return out
+}
+
+// DiskUsageKB returns the on-disk size of dir in KiB via `du -sk` (a single
+// fast process, unlike walking possibly millions of files from Go).
+func DiskUsageKB(dir string) (int64, error) {
+	cmd := exec.Command("du", "-sk", dir)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("du -sk: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("du -sk: empty output")
+	}
+	return strconv.ParseInt(fields[0], 10, 64)
+}
+
+// HumanSize renders a KiB count in human-readable form (1024-based, one decimal
+// from MB up).
+func HumanSize(kb int64) string {
+	switch {
+	case kb < 1024:
+		return fmt.Sprintf("%d KB", kb)
+	case kb < 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(kb)/1024)
+	default:
+		return fmt.Sprintf("%.1f GB", float64(kb)/(1024*1024))
+	}
 }
 
 // Copy copies the file at absolute src to absolute dst, creating parent dirs and

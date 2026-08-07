@@ -60,6 +60,42 @@ func TestCopy(t *testing.T) {
 	}
 }
 
+func TestDiskUsageKB(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "big.bin"), string(make([]byte, 10*1024)))
+
+	kb, err := DiskUsageKB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kb < 10 {
+		t.Errorf("DiskUsageKB = %d, want >= 10", kb)
+	}
+
+	if _, err := DiskUsageKB(filepath.Join(dir, "nope")); err == nil {
+		t.Errorf("expected error for nonexistent dir")
+	}
+}
+
+func TestHumanSize(t *testing.T) {
+	cases := []struct {
+		kb   int64
+		want string
+	}{
+		{0, "0 KB"},
+		{512, "512 KB"},
+		{1024, "1.0 MB"},
+		{1536, "1.5 MB"},
+		{10 * 1024, "10.0 MB"},
+		{1234 * 1024, "1.2 GB"},
+	}
+	for _, c := range cases {
+		if got := HumanSize(c.kb); got != c.want {
+			t.Errorf("HumanSize(%d) = %q, want %q", c.kb, got, c.want)
+		}
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

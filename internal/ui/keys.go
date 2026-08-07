@@ -9,33 +9,36 @@ import (
 // keyMap holds every global binding. Modal-local and tab-local keys are handled
 // inside their components / the focused-tab key routers.
 type keyMap struct {
-	Tab       key.Binding
-	ShiftTab  key.Binding
-	Enter     key.Binding
-	Create    key.Binding
-	CreatePR  key.Binding
-	ViewProcs key.Binding
-	LogTab    key.Binding
-	PRTab     key.Binding
-	DiffTab   key.Binding
-	Filter    key.Binding
-	Sort      key.Binding
-	CopyFile  key.Binding
-	Scripts   key.Binding
-	Aliases   key.Binding
-	Pull      key.Binding
-	Push      key.Binding
-	Fetch     key.Binding
-	Commit    key.Binding
-	Rebase    key.Binding
-	Update    key.Binding
-	Prune     key.Binding
-	BulkPrune key.Binding
-	Refresh   key.Binding
-	Kill      key.Binding
-	Restart   key.Binding
-	Help      key.Binding
-	Quit      key.Binding
+	Tab        key.Binding
+	ShiftTab   key.Binding
+	Enter      key.Binding
+	Create     key.Binding
+	CreatePR   key.Binding
+	ViewProcs  key.Binding
+	LogTab     key.Binding
+	PRTab      key.Binding
+	DiffTab    key.Binding
+	InspectTab key.Binding
+	ChecksTab  key.Binding
+	Filter     key.Binding
+	Sort       key.Binding
+	CopyFile   key.Binding
+	Yank       key.Binding
+	Scripts    key.Binding
+	Aliases    key.Binding
+	Pull       key.Binding
+	Push       key.Binding
+	Fetch      key.Binding
+	Commit     key.Binding
+	Rebase     key.Binding
+	Update     key.Binding
+	Prune      key.Binding
+	BulkPrune  key.Binding
+	Refresh    key.Binding
+	Kill       key.Binding
+	Restart    key.Binding
+	Help       key.Binding
+	Quit       key.Binding
 }
 
 // bindingSpec is the default key(s) and help text for one action. The action
@@ -57,9 +60,12 @@ var defaultBindings = map[string]bindingSpec{
 	"log_tab":      {[]string{"l"}, "git log"},
 	"pr_tab":       {[]string{"P"}, "PR detail"},
 	"diff_tab":     {[]string{"d"}, "diff vs base"},
+	"inspect_tab":  {[]string{"i"}, "inspect"},
+	"checks_tab":   {[]string{"b"}, "CI runs"},
 	"filter":       {[]string{"/"}, "filter"},
 	"sort":         {[]string{"o"}, "sort"},
 	"copy_file":    {[]string{"c"}, "copy file"},
+	"yank":         {[]string{"y"}, "yank/copy"},
 	"scripts":      {[]string{"s"}, "scripts"},
 	"aliases":      {[]string{"p"}, "aliases"},
 	"pull":         {[]string{"ctrl+p"}, "pull"},
@@ -132,33 +138,36 @@ func keyCollisions(overrides map[string]string) []string {
 func newKeyMap(overrides map[string]string) keyMap {
 	b := func(a string) key.Binding { return binding(a, overrides) }
 	return keyMap{
-		Tab:       b("focus_next"),
-		ShiftTab:  b("focus_prev"),
-		Enter:     b("shell"),
-		Create:    b("new_worktree"),
-		CreatePR:  b("create_pr"),
-		ViewProcs: b("processes"),
-		LogTab:    b("log_tab"),
-		PRTab:     b("pr_tab"),
-		DiffTab:   b("diff_tab"),
-		Filter:    b("filter"),
-		Sort:      b("sort"),
-		CopyFile:  b("copy_file"),
-		Scripts:   b("scripts"),
-		Aliases:   b("aliases"),
-		Pull:      b("pull"),
-		Push:      b("push"),
-		Fetch:     b("fetch"),
-		Commit:    b("commit"),
-		Rebase:    b("rebase"),
-		Update:    b("update_base"),
-		Prune:     b("prune"),
-		BulkPrune: b("bulk_prune"),
-		Refresh:   b("refresh"),
-		Kill:      b("kill_proc"),
-		Restart:   b("restart_proc"),
-		Help:      b("help"),
-		Quit:      b("quit"),
+		Tab:        b("focus_next"),
+		ShiftTab:   b("focus_prev"),
+		Enter:      b("shell"),
+		Create:     b("new_worktree"),
+		CreatePR:   b("create_pr"),
+		ViewProcs:  b("processes"),
+		LogTab:     b("log_tab"),
+		PRTab:      b("pr_tab"),
+		DiffTab:    b("diff_tab"),
+		InspectTab: b("inspect_tab"),
+		ChecksTab:  b("checks_tab"),
+		Filter:     b("filter"),
+		Sort:       b("sort"),
+		CopyFile:   b("copy_file"),
+		Yank:       b("yank"),
+		Scripts:    b("scripts"),
+		Aliases:    b("aliases"),
+		Pull:       b("pull"),
+		Push:       b("push"),
+		Fetch:      b("fetch"),
+		Commit:     b("commit"),
+		Rebase:     b("rebase"),
+		Update:     b("update_base"),
+		Prune:      b("prune"),
+		BulkPrune:  b("bulk_prune"),
+		Refresh:    b("refresh"),
+		Kill:       b("kill_proc"),
+		Restart:    b("restart_proc"),
+		Help:       b("help"),
+		Quit:       b("quit"),
 	}
 }
 
@@ -171,8 +180,8 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Tab, k.ShiftTab, k.Enter, k.Create, k.CreatePR, k.Refresh},
-		{k.ViewProcs, k.LogTab, k.PRTab, k.DiffTab, k.Filter, k.Sort},
-		{k.CopyFile, k.Scripts, k.Aliases},
+		{k.ViewProcs, k.LogTab, k.PRTab, k.DiffTab, k.InspectTab, k.ChecksTab, k.Filter, k.Sort},
+		{k.CopyFile, k.Yank, k.Scripts, k.Aliases},
 		{k.Pull, k.Push, k.Fetch, k.Commit, k.Rebase, k.Update},
 		{k.Prune, k.BulkPrune},
 		{k.Kill, k.Restart, k.Help, k.Quit},
