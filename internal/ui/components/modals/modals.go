@@ -9,8 +9,11 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
 // Kind identifies which feature opened the modal so the parent can route the
@@ -29,6 +32,19 @@ const (
 	KindNewAlias    Kind = "new_alias"     // enter new alias name
 	KindNewAliasCmd Kind = "new_alias_cmd" // enter new alias command
 
+	// PR actions.
+	KindMergeStrategy Kind = "merge_strategy" // pick merge/squash/rebase
+	KindReviewApprove Kind = "review_approve" // optional body for approve
+	KindReviewChanges Kind = "review_changes" // body for request-changes
+	KindReviewComment Kind = "review_comment" // body for review comment
+	KindPRTitle       Kind = "pr_title"       // new PR title
+	KindPRBody        Kind = "pr_body"        // new PR body
+	KindUpdateBase    Kind = "update_base"    // pick rebase/merge for update-from-base
+
+	// Generic confirmation for destructive ops.
+	KindConfirm   Kind = "confirm"
+	KindBulkPrune Kind = "bulk_prune"
+
 	// Worktree creation flow.
 	KindCreateSource   Kind = "create_source"   // pick new/existing/PR
 	KindCreateNew      Kind = "create_new"      // enter new branch name
@@ -37,6 +53,9 @@ const (
 
 	// Process viewer.
 	KindProcesses Kind = "processes"
+
+	// Scrollable read-only diff of a single file.
+	KindDiffFile Kind = "diff_file"
 )
 
 // mode is the interaction style of the modal.
@@ -48,6 +67,7 @@ const (
 	modeFuzzy
 	modeConfirm
 	modePrune
+	modeScroll
 )
 
 // SubmitMsg is emitted when the user confirms a choice.
@@ -80,6 +100,10 @@ type Model struct {
 	mergeOn    bool
 	mergeLabel string
 	tailSteps  []string
+
+	// Scroll-mode fields.
+	vp      viewport.Model
+	content string
 }
 
 // NewInput builds a free-text modal (e.g. commit message).
@@ -102,6 +126,11 @@ func NewFuzzy(kind Kind, title string, filter FilterFunc, initial []string) Mode
 	ti.Placeholder = "type to filter…"
 	ti.Focus()
 	return Model{kind: kind, mode: modeFuzzy, title: title, input: ti, items: initial, filter: filter}
+}
+
+// NewScroll builds a read-only scrollable modal (e.g. a single file's diff).
+func NewScroll(kind Kind, title, content string) Model {
+	return Model{kind: kind, mode: modeScroll, title: title, content: content}
 }
 
 // NewConfirm builds a yes/no modal.
@@ -129,8 +158,44 @@ func (m Model) MergeEnabled() bool { return m.mergeOn }
 // Kind returns the modal kind.
 func (m Model) Kind() Kind { return m.kind }
 
-// SetSize records the available screen size for centering.
-func (m *Model) SetSize(w, h int) { m.width, m.height = w, h }
+// SetSize records the available screen size for centering. In scroll mode it also
+// sizes the inner viewport to most of the screen and (re)wraps the content.
+func (m *Model) SetSize(w, h int) {
+	m.width, m.height = w, h
+	if m.mode == modeScroll {
+		vw := w * 3 / 4
+		if vw < 20 {
+			vw = w - 8
+		}
+		vh := h * 3 / 4
+		if vh < 5 {
+			vh = h - 8
+		}
+		if vw < 1 {
+			vw = 1
+		}
+		if vh < 1 {
+			vh = 1
+		}
+		m.vp = viewport.New(vw, vh)
+		m.setScrollContent()
+	}
+}
+
+// SetScrollContent replaces the scroll modal's body (e.g. once an async diff
+// load completes).
+func (m *Model) SetScrollContent(s string) {
+	m.content = s
+	m.setScrollContent()
+}
+
+func (m *Model) setScrollContent() {
+	s := m.content
+	if m.vp.Width > 0 {
+		s = lipgloss.NewStyle().Width(m.vp.Width).Render(s)
+	}
+	m.vp.SetContent(s)
+}
 
 // SetBody sets read-only text rendered above the input field (input mode only).
 func (m *Model) SetBody(s string) { m.body = s }
@@ -150,6 +215,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
+	}
+
+	// Scroll mode: esc/q close, everything else drives the viewport.
+	if m.mode == modeScroll {
+		switch key.String() {
+		case "esc", "ctrl+c", "q":
+			return m, m.cancel()
+		}
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
 	}
 
 	switch key.String() {
@@ -231,19 +307,31 @@ func (m Model) onEnter() tea.Cmd {
 }
 
 var (
-	boxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("205")).
-			Padding(1, 2)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	arrowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	onStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	offStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	dangerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	boxStyle      lipgloss.Style
+	titleStyle    lipgloss.Style
+	cursorStyle   lipgloss.Style
+	selectedStyle lipgloss.Style
+	dimStyle      lipgloss.Style
+	arrowStyle    lipgloss.Style
+	onStyle       lipgloss.Style
+	offStyle      lipgloss.Style
+	dangerStyle   lipgloss.Style
 )
+
+func init() { SetTheme(theme.Current) }
+
+// SetTheme rebuilds modal styles from a palette.
+func SetTheme(p theme.Palette) {
+	boxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(p.Accent).Padding(1, 2)
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(p.Accent)
+	cursorStyle = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
+	selectedStyle = lipgloss.NewStyle().Foreground(p.Accent)
+	dimStyle = lipgloss.NewStyle().Foreground(p.Dim)
+	arrowStyle = lipgloss.NewStyle().Foreground(p.Accent)
+	onStyle = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
+	offStyle = lipgloss.NewStyle().Foreground(p.Dim)
+	dangerStyle = lipgloss.NewStyle().Foreground(p.Danger)
+}
 
 // View renders the centered overlay.
 func (m Model) View() string {
@@ -252,6 +340,10 @@ func (m Model) View() string {
 	b.WriteString("\n\n")
 
 	switch m.mode {
+	case modeScroll:
+		b.WriteString(m.vp.View())
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("↑/↓ scroll · esc close"))
 	case modePrune:
 		b.WriteString(m.renderPrune())
 	case modeInput:
@@ -268,6 +360,10 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("↑/↓ move · enter select · esc cancel"))
 	default:
+		if m.body != "" {
+			b.WriteString(m.body)
+			b.WriteString("\n\n")
+		}
 		b.WriteString(m.renderList())
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("↑/↓ move · enter select · esc cancel"))

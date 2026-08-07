@@ -1,24 +1,36 @@
 package ui
 
-import "github.com/charmbracelet/bubbles/key"
+import (
+	"sort"
 
-// keyMap holds every global binding. Modal-local keys are handled inside the
-// modal component.
+	"github.com/charmbracelet/bubbles/key"
+)
+
+// keyMap holds every global binding. Modal-local and tab-local keys are handled
+// inside their components / the focused-tab key routers.
 type keyMap struct {
 	Tab       key.Binding
 	ShiftTab  key.Binding
 	Enter     key.Binding
 	Create    key.Binding
+	CreatePR  key.Binding
 	ViewProcs key.Binding
+	LogTab    key.Binding
+	PRTab     key.Binding
+	DiffTab   key.Binding
 	Filter    key.Binding
+	Sort      key.Binding
 	CopyFile  key.Binding
 	Scripts   key.Binding
 	Aliases   key.Binding
 	Pull      key.Binding
 	Push      key.Binding
+	Fetch     key.Binding
 	Commit    key.Binding
 	Rebase    key.Binding
+	Update    key.Binding
 	Prune     key.Binding
+	BulkPrune key.Binding
 	Refresh   key.Binding
 	Kill      key.Binding
 	Restart   key.Binding
@@ -26,41 +38,143 @@ type keyMap struct {
 	Quit      key.Binding
 }
 
-func newKeyMap() keyMap {
+// bindingSpec is the default key(s) and help text for one action. The action
+// name is the config key users override under `keys:` in .bonsai.yaml.
+type bindingSpec struct {
+	keys []string
+	desc string
+}
+
+// defaultBindings maps each action name to its default keys + help text. Order
+// here is not significant; help ordering is defined by ShortHelp/FullHelp.
+var defaultBindings = map[string]bindingSpec{
+	"focus_next":   {[]string{"tab"}, "focus"},
+	"focus_prev":   {[]string{"shift+tab"}, "focus"},
+	"shell":        {[]string{"enter"}, "shell"},
+	"new_worktree": {[]string{"n"}, "new worktree"},
+	"create_pr":    {[]string{"ctrl+n"}, "create PR"},
+	"processes":    {[]string{"v"}, "processes"},
+	"log_tab":      {[]string{"l"}, "git log"},
+	"pr_tab":       {[]string{"P"}, "PR detail"},
+	"diff_tab":     {[]string{"d"}, "diff vs base"},
+	"filter":       {[]string{"/"}, "filter"},
+	"sort":         {[]string{"o"}, "sort"},
+	"copy_file":    {[]string{"c"}, "copy file"},
+	"scripts":      {[]string{"s"}, "scripts"},
+	"aliases":      {[]string{"p"}, "aliases"},
+	"pull":         {[]string{"ctrl+p"}, "pull"},
+	"push":         {[]string{"ctrl+u"}, "push"},
+	"fetch":        {[]string{"f"}, "fetch"},
+	"commit":       {[]string{"C"}, "commit"},
+	"rebase":       {[]string{"r"}, "rebase"},
+	"update_base":  {[]string{"u"}, "update from base"},
+	"prune":        {[]string{"x"}, "prune"},
+	"bulk_prune":   {[]string{"X"}, "prune merged"},
+	"refresh":      {[]string{"R"}, "refresh"},
+	"kill_proc":    {[]string{"k"}, "kill proc"},
+	"restart_proc": {[]string{"r"}, "restart proc"},
+	"help":         {[]string{"?"}, "help"},
+	"quit":         {[]string{"q", "ctrl+c"}, "quit"},
+}
+
+// binding builds a key.Binding for an action, applying a config override to the
+// key(s) while preserving the default help description.
+func binding(action string, overrides map[string]string) key.Binding {
+	spec := defaultBindings[action]
+	keys := spec.keys
+	if ov, ok := overrides[action]; ok && ov != "" {
+		keys = []string{ov}
+	}
+	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(keys[0], spec.desc))
+}
+
+// keyCollisions reports user-introduced key conflicts: an override whose key
+// lands on another action's key. It ignores the intentional overlaps in the
+// defaults (tab-local keys such as restart vs the global rebase share a letter),
+// only flagging a collision when at least one side was overridden by the user.
+func keyCollisions(overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return nil
+	}
+	primary := func(action string) string {
+		if ov, ok := overrides[action]; ok && ov != "" {
+			return ov
+		}
+		return defaultBindings[action].keys[0]
+	}
+	names := make([]string, 0, len(defaultBindings))
+	for n := range defaultBindings {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var collisions []string
+	for _, a := range names {
+		ov, overridden := overrides[a]
+		if !overridden || ov == "" {
+			continue
+		}
+		for _, b := range names {
+			if b == a {
+				continue
+			}
+			if primary(a) == primary(b) {
+				collisions = append(collisions, a+" vs "+b+" ("+ov+")")
+				break
+			}
+		}
+	}
+	return collisions
+}
+
+// newKeyMap builds the binding set from defaults, applying any config overrides
+// (action name -> key). A nil map yields the defaults.
+func newKeyMap(overrides map[string]string) keyMap {
+	b := func(a string) key.Binding { return binding(a, overrides) }
 	return keyMap{
-		Tab:       key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "focus")),
-		ShiftTab:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "focus")),
-		Enter:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "shell")),
-		Create:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new worktree")),
-		ViewProcs: key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "processes")),
-		Filter:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
-		CopyFile:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy file")),
-		Scripts:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "scripts")),
-		Aliases:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "aliases")),
-		Pull:      key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("ctrl+p", "pull")),
-		Push:      key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "push")),
-		Commit:    key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "commit")),
-		Rebase:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebase")),
-		Prune:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "prune")),
-		Refresh:   key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "refresh")),
-		Kill:      key.NewBinding(key.WithKeys("k"), key.WithHelp("k", "kill proc")),
-		Restart:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restart proc")),
-		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Tab:       b("focus_next"),
+		ShiftTab:  b("focus_prev"),
+		Enter:     b("shell"),
+		Create:    b("new_worktree"),
+		CreatePR:  b("create_pr"),
+		ViewProcs: b("processes"),
+		LogTab:    b("log_tab"),
+		PRTab:     b("pr_tab"),
+		DiffTab:   b("diff_tab"),
+		Filter:    b("filter"),
+		Sort:      b("sort"),
+		CopyFile:  b("copy_file"),
+		Scripts:   b("scripts"),
+		Aliases:   b("aliases"),
+		Pull:      b("pull"),
+		Push:      b("push"),
+		Fetch:     b("fetch"),
+		Commit:    b("commit"),
+		Rebase:    b("rebase"),
+		Update:    b("update_base"),
+		Prune:     b("prune"),
+		BulkPrune: b("bulk_prune"),
+		Refresh:   b("refresh"),
+		Kill:      b("kill_proc"),
+		Restart:   b("restart_proc"),
+		Help:      b("help"),
+		Quit:      b("quit"),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab, k.Enter, k.Create, k.Filter, k.CopyFile, k.Commit, k.Prune, k.Help, k.Quit}
+	return []key.Binding{k.Tab, k.Enter, k.Create, k.Filter, k.Commit, k.Prune, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab, k.ShiftTab, k.Enter, k.Create, k.ViewProcs, k.Filter, k.Refresh},
+		{k.Tab, k.ShiftTab, k.Enter, k.Create, k.CreatePR, k.Refresh},
+		{k.ViewProcs, k.LogTab, k.PRTab, k.DiffTab, k.Filter, k.Sort},
 		{k.CopyFile, k.Scripts, k.Aliases},
-		{k.Pull, k.Push, k.Commit, k.Rebase, k.Prune},
+		{k.Pull, k.Push, k.Fetch, k.Commit, k.Rebase, k.Update},
+		{k.Prune, k.BulkPrune},
 		{k.Kill, k.Restart, k.Help, k.Quit},
 	}
 }

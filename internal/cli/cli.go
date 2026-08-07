@@ -83,7 +83,7 @@ func cmdCreate(repoDir string, args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	cfg, err := config.Load(repoDir)
+	cfg, err := config.LoadFor(repoDir)
 	if err != nil {
 		return err
 	}
@@ -205,7 +205,7 @@ func cmdX(repoDir string, args []string, out, errOut io.Writer) error {
 
 	// Expand {vars} in the alias command using the target worktree's context.
 	upstream := "origin/main"
-	if cfg, err := config.Load(repoDir); err == nil {
+	if cfg, err := config.LoadFor(repoDir); err == nil {
 		upstream = cfg.Upstream
 	}
 	vars := config.HookVars(repoDir, dir, branchForPath(repoDir, dir), upstream, 0)
@@ -287,7 +287,7 @@ func cmdAlias(repoDir string, args []string, out, errOut io.Writer) error {
 // mergedAliases returns config-file aliases followed by user (state) aliases.
 func mergedAliases(repoDir string) []config.Alias {
 	var all []config.Alias
-	if cfg, err := config.Load(repoDir); err == nil {
+	if cfg, err := config.LoadFor(repoDir); err == nil {
 		all = append(all, cfg.Aliases...)
 	}
 	if st, err := config.LoadState(); err == nil {
@@ -360,6 +360,7 @@ bonsai — git worktree manager
 
 Usage:
   bonsai                          launch the interactive TUI
+  bonsai --config <file>          launch the TUI with a specific .bonsai.yaml
   bonsai list                     list worktrees (branch, path)
   bonsai create <branch>          create a worktree on a new branch
   bonsai create --existing <br>   create a worktree on an existing branch

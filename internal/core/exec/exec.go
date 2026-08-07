@@ -156,6 +156,17 @@ func (m *Manager) List(path string) []*Process {
 	return out
 }
 
+// All returns every tracked process across all paths.
+func (m *Manager) All() []*Process {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*Process
+	for _, ps := range m.proc {
+		out = append(out, ps...)
+	}
+	return out
+}
+
 // GetByID returns the process with id under path, if present.
 func (m *Manager) GetByID(path string, id int) (*Process, bool) {
 	m.mu.Lock()

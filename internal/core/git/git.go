@@ -231,3 +231,128 @@ func RebaseCmd(dir, target string) *exec.Cmd {
 	cmd.Dir = dir
 	return cmd
 }
+
+// MergeCmd builds an *exec.Cmd for `git merge target` in dir, for interactive
+// conflict resolution via tea.ExecProcess.
+func MergeCmd(dir, target string) *exec.Cmd {
+	cmd := exec.Command("git", "merge", target)
+	cmd.Dir = dir
+	return cmd
+}
+
+// Dirty reports whether the worktree has uncommitted changes (staged, unstaged,
+// or untracked) via `git status --porcelain`.
+func Dirty(dir string) (bool, error) {
+	out, err := run(dir, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+// LastCommitUnix returns the HEAD commit's author time as a unix timestamp.
+func LastCommitUnix(dir string) (int64, error) {
+	out, err := run(dir, "log", "-1", "--format=%ct")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+}
+
+// DiffBase returns a colored stat summary plus the full diff of the worktree's
+// HEAD against base, using the merge-base (base...HEAD) form so it shows only
+// what the branch adds.
+func DiffBase(dir, base string) (string, error) {
+	spec := base + "...HEAD"
+	stat, err := run(dir, "-c", "color.ui=always", "diff", "--stat", spec)
+	if err != nil {
+		return "", err
+	}
+	full, err := run(dir, "-c", "color.ui=always", "diff", spec)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(stat) == "" {
+		return "(no changes vs " + base + ")", nil
+	}
+	return stat + "\n\n" + full, nil
+}
+
+// DiffFile is one changed file in a diff, with its added/deleted line counts.
+// Binary files report Add == Del == -1.
+type DiffFile struct {
+	Path string
+	Add  int
+	Del  int
+}
+
+// DiffStat lists the files changed between base and HEAD (merge-base form) with
+// per-file line counts, parsed from `git diff --numstat`.
+func DiffStat(dir, base string) ([]DiffFile, error) {
+	out, err := run(dir, "diff", "--numstat", base+"...HEAD")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	var files []DiffFile
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		f := DiffFile{Path: fields[2]}
+		if fields[0] == "-" { // binary
+			f.Add, f.Del = -1, -1
+		} else {
+			f.Add, _ = strconv.Atoi(fields[0])
+			f.Del, _ = strconv.Atoi(fields[1])
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// FileDiff returns the colored diff of a single file between base and HEAD.
+func FileDiff(dir, base, file string) (string, error) {
+	out, err := run(dir, "-c", "color.ui=always", "diff", base+"...HEAD", "--", file)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// Fetch updates all remotes and prunes deleted remote branches.
+func Fetch(dir string) error {
+	_, err := run(dir, "fetch", "--all", "--prune")
+	return err
+}
+
+// PushSetUpstream pushes the current branch, setting the upstream on first push
+// (`git push -u origin HEAD`), so a freshly-created branch can open a PR.
+func PushSetUpstream(dir string) error {
+	_, err := run(dir, "push", "-u", "origin", "HEAD")
+	return err
+}
+
+// MergedBranches returns local branches already merged into base (excluding the
+// base branch itself and the current HEAD marker).
+func MergedBranches(dir, base string) ([]string, error) {
+	out, err := run(dir, "branch", "--merged", base, "--format=%(refname:short)")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	var branches []string
+	for _, b := range strings.Split(out, "\n") {
+		b = strings.TrimSpace(b)
+		if b == "" || b == base {
+			continue
+		}
+		branches = append(branches, b)
+	}
+	return branches, nil
+}

@@ -68,6 +68,55 @@ type prMapMsg struct {
 	err error
 }
 
+// prDetailMsg carries a fully-loaded PR for the PR detail tab.
+type prDetailMsg struct {
+	detail gh.PRDetail
+	err    error
+}
+
+// checksMsg carries a worktree's PR CI checks + rollup for the row badge and the
+// PR tab checks section.
+type checksMsg struct {
+	path   string
+	number int
+	checks []gh.Check
+	rollup string
+}
+
+// dirtyMsg reports whether a worktree has uncommitted changes.
+type dirtyMsg struct {
+	path  string
+	dirty bool
+}
+
+// activityMsg carries a worktree's HEAD commit time (for sort-by-activity).
+type activityMsg struct {
+	path string
+	unix int64
+}
+
+// diffMsg carries the changed-file list for the Diff tab.
+type diffMsg struct {
+	path  string
+	base  string
+	files []git.DiffFile
+	err   error
+}
+
+// fileDiffMsg carries the colored diff of one expanded file.
+type fileDiffMsg struct {
+	path    string // worktree path (to validate the diff still applies)
+	file    string
+	content string
+	err     error
+}
+
+// prCreatedMsg reports the outcome of creating a pull request.
+type prCreatedMsg struct {
+	number int
+	err    error
+}
+
 // --- Commands ---
 
 // loadWorktrees lists worktrees from the main repo.
@@ -190,6 +239,125 @@ func fetchPRs(repoDir string) tea.Cmd {
 		prs, err := gh.ListPRs(repoDir)
 		return prMapMsg{prs: prs, err: err}
 	}
+}
+
+// loadPRDetail fetches the full detail of a single PR for the PR tab.
+func loadPRDetail(repoDir string, number int) tea.Cmd {
+	return func() tea.Msg {
+		d, err := gh.ViewPR(repoDir, number)
+		return prDetailMsg{detail: d, err: err}
+	}
+}
+
+// loadChecks fetches a PR's CI checks + rollup. Runs quietly (errors → no badge).
+func loadChecks(repoDir, path string, number int) tea.Cmd {
+	return func() tea.Msg {
+		checks, err := gh.Checks(repoDir, number)
+		if err != nil {
+			return checksMsg{path: path, number: number}
+		}
+		return checksMsg{path: path, number: number, checks: checks, rollup: gh.Rollup(checks)}
+	}
+}
+
+// loadDirty reports whether a worktree has uncommitted changes.
+func loadDirty(path string) tea.Cmd {
+	return func() tea.Msg {
+		d, _ := git.Dirty(path)
+		return dirtyMsg{path: path, dirty: d}
+	}
+}
+
+// loadActivity fetches a worktree's HEAD commit time for sort-by-activity.
+func loadActivity(path string) tea.Cmd {
+	return func() tea.Msg {
+		u, _ := git.LastCommitUnix(path)
+		return activityMsg{path: path, unix: u}
+	}
+}
+
+// loadDiff fetches the changed-file list of a worktree branch against its base.
+func loadDiff(path, base string) tea.Cmd {
+	return func() tea.Msg {
+		files, err := git.DiffStat(path, base)
+		return diffMsg{path: path, base: base, files: files, err: err}
+	}
+}
+
+// loadFileDiff fetches the colored diff of a single file (on expand).
+func loadFileDiff(path, base, file string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := git.FileDiff(path, base, file)
+		return fileDiffMsg{path: path, file: file, content: out, err: err}
+	}
+}
+
+// gitFetch runs `git fetch --all --prune` for a worktree.
+func gitFetch(path string) tea.Cmd {
+	return func() tea.Msg { return opDoneMsg{label: "fetch", err: git.Fetch(path)} }
+}
+
+// prReview submits a PR review (approve / request-changes / comment).
+func prReview(repoDir string, number int, kind, body string) tea.Cmd {
+	return func() tea.Msg {
+		return opDoneMsg{label: "review", err: gh.ReviewPR(repoDir, number, kind, body)}
+	}
+}
+
+// prMerge merges a PR with a strategy (merge / squash / rebase).
+func prMerge(repoDir string, number int, strat string) tea.Cmd {
+	return func() tea.Msg {
+		return opDoneMsg{label: "merge PR", err: gh.MergePRStrategy(repoDir, number, strat)}
+	}
+}
+
+// prClose / prReopen / prReady wrap the corresponding gh state ops.
+func prClose(repoDir string, number int) tea.Cmd {
+	return func() tea.Msg { return opDoneMsg{label: "close PR", err: gh.ClosePR(repoDir, number)} }
+}
+
+func prReopen(repoDir string, number int) tea.Cmd {
+	return func() tea.Msg { return opDoneMsg{label: "reopen PR", err: gh.ReopenPR(repoDir, number)} }
+}
+
+func prReady(repoDir string, number int) tea.Cmd {
+	return func() tea.Msg { return opDoneMsg{label: "ready PR", err: gh.ReadyPR(repoDir, number)} }
+}
+
+// createPR pushes the branch (setting upstream if needed) then opens a PR.
+func createPR(repoDir, path, title, body, base string, draft bool) tea.Cmd {
+	return func() tea.Msg {
+		if err := git.PushSetUpstream(path); err != nil {
+			return prCreatedMsg{err: err}
+		}
+		n, err := gh.CreatePR(path, title, body, base, draft)
+		return prCreatedMsg{number: n, err: err}
+	}
+}
+
+// bulkPrune removes each merged worktree in sequence, aggregating the result.
+func bulkPrune(repoDir string, targets []pruneTarget, deleteHooks []string) tea.Cmd {
+	return func() tea.Msg {
+		n := 0
+		for _, t := range targets {
+			vars := config.HookVars(repoDir, t.path, t.branch, t.upstream, t.prNumber)
+			_ = coreexec.RunHooks(t.path, deleteHooks, vars)
+			if err := git.RemoveWorktree(repoDir, t.path); err != nil {
+				return opDoneMsg{label: "bulk prune", err: err}
+			}
+			if t.branch != "" {
+				_ = git.DeleteBranch(repoDir, t.branch)
+			}
+			n++
+		}
+		return opDoneMsg{label: fmt.Sprintf("bulk prune (%d)", n), err: nil}
+	}
+}
+
+// pruneTarget is one worktree scheduled for bulk pruning.
+type pruneTarget struct {
+	path, branch, upstream string
+	prNumber               int
 }
 
 // createWorktree builds a new worktree. mode selects the source:
