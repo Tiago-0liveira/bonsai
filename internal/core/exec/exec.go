@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // Process is a single running (or finished) subprocess with captured output.
@@ -74,11 +75,22 @@ func (p *Process) Status() string {
 	return "done"
 }
 
-// Kill terminates the process if still running.
+// Kill terminates the process if still running. The process runs in its own
+// group (see Spawn), so we signal the whole group: a shell like dash forks its
+// command instead of exec-replacing itself, and killing only the shell would
+// orphan that child. The orphan keeps the captured-output pipe open, which stalls
+// cmd.Wait until it too exits — so the group kill is what lets the process report
+// Done promptly.
 func (p *Process) Kill() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !p.done && p.cmd != nil && p.cmd.Process != nil {
+	if p.done || p.cmd == nil || p.cmd.Process == nil {
+		return
+	}
+	pid := p.cmd.Process.Pid
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		// Fall back to the single process if the group signal failed (e.g. the
+		// group was never established).
 		_ = p.cmd.Process.Kill()
 	}
 }
@@ -107,6 +119,8 @@ func (m *Manager) Spawn(path, label, command string) (*Process, error) {
 	// Coax color out of tools even though stdout is a pipe, not a TTY. Many CLIs
 	// honor these; the viewport renders the ANSI.
 	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
+	// Own process group so Kill can reap the shell and any child it forks.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	m.mu.Lock()
 	m.nextID++
