@@ -32,6 +32,21 @@ type Worktree struct {
 	PathTemplate string `mapstructure:"path_template"`
 }
 
+// Theme selects and customizes the UI color palette.
+type Theme struct {
+	// Preset names a built-in palette (bonsai / dracula / nord / mono). Empty
+	// defaults to bonsai.
+	Preset string `mapstructure:"preset"`
+	// Overrides maps a theme role (accent, danger, …) to a lipgloss color string.
+	Overrides map[string]string `mapstructure:"overrides"`
+}
+
+// Notifications toggles desktop notifications per event.
+type Notifications struct {
+	Process bool `mapstructure:"process"`
+	CI      bool `mapstructure:"ci"`
+}
+
 // Config is the parsed .bonsai.yaml.
 type Config struct {
 	// Upstream is the ref ahead/behind metrics compare against, e.g. origin/main.
@@ -39,6 +54,14 @@ type Config struct {
 	Hooks    Hooks    `mapstructure:"hooks"`
 	Aliases  []Alias  `mapstructure:"aliases"`
 	Worktree Worktree `mapstructure:"worktree"`
+	// ConfirmDestructive gates a yes/no prompt before merge/close/update/bulk-prune.
+	ConfirmDestructive bool `mapstructure:"confirm_destructive"`
+	// Keys maps an action name to an override key (see internal/ui keys.go).
+	Keys map[string]string `mapstructure:"keys"`
+	// Theme selects the color palette.
+	Theme Theme `mapstructure:"theme"`
+	// Notifications toggles desktop notifications.
+	Notifications Notifications `mapstructure:"notifications"`
 }
 
 // WorktreePath resolves the filesystem path for a branch's worktree from the
@@ -82,6 +105,9 @@ func Load(dir string) (*Config, error) {
 	v.SetConfigType("yaml")
 	v.AddConfigPath(dir)
 	v.SetDefault("upstream", "origin/main")
+	v.SetDefault("confirm_destructive", true)
+	v.SetDefault("notifications.process", true)
+	v.SetDefault("notifications.ci", false)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, notFound := err.(viper.ConfigFileNotFoundError); !notFound {

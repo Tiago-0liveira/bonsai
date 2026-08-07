@@ -13,6 +13,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
 // focusArea identifies which pane owns keyboard focus.
@@ -29,7 +30,41 @@ type rightTab int
 const (
 	tabLog rightTab = iota
 	tabProcs
+	tabDiff
+	tabPR
 )
+
+// sortMode orders the worktree list.
+type sortMode int
+
+const (
+	sortName sortMode = iota
+	sortAhead
+	sortBehind
+	sortPR
+	sortActivity
+)
+
+// label is the short suffix shown in the list title for a sort mode.
+func (s sortMode) label() string {
+	switch s {
+	case sortAhead:
+		return "↑ahead"
+	case sortBehind:
+		return "↓behind"
+	case sortPR:
+		return "PR"
+	case sortActivity:
+		return "activity"
+	default:
+		return "name"
+	}
+}
+
+// confirmState holds a deferred destructive action awaiting confirmation.
+type confirmState struct {
+	action tea.Cmd
+}
 
 // Model is the root Bubble Tea model.
 type Model struct {
@@ -55,9 +90,48 @@ type Model struct {
 	prs       []gh.PR
 	// prByBranch maps a branch (PR head ref) to its open PR, for row badges.
 	prByBranch map[string]gh.PR
+	// prDetail caches the full detail of PRs whose tab has been opened, keyed by
+	// PR number. prPaneErr holds the last PR-detail load error for display.
+	prDetail  map[int]gh.PRDetail
+	prPaneErr string
+	// prChecks caches CI checks per PR number (for the PR tab checks section).
+	prChecks map[int][]gh.Check
+	// checkRollup maps a worktree path to its PR's CI rollup ("pass"/"fail"/
+	// "pending"/""), for the row badge.
+	checkRollup map[string]string
+	// dirty maps a worktree path to whether it has uncommitted changes.
+	dirty map[string]bool
+	// lastCommit maps a worktree path to its HEAD commit unix time (sortActivity).
+	lastCommit map[string]int64
 
 	// activeProc maps a worktree path to the process ID shown in the terminal.
 	activeProc map[string]int
+	// seenProcStatus tracks the last observed status per process ("path#id") so a
+	// running→done/failed transition can fire a notification once.
+	seenProcStatus map[string]string
+
+	// sort is the current worktree ordering.
+	sort sortMode
+
+	// Diff tab (file list) state.
+	diffBase        string
+	diffPath        string // worktree path the diff belongs to
+	diffFiles       []git.DiffFile
+	diffCursor      int
+	diffFileContent map[string]string // file path -> colored diff (lazy)
+	diffModalFile   string            // file whose diff the scroll modal is showing
+
+	// runningSig is a signature of per-worktree running-process counts, used to
+	// skip list rebuilds on ticks where nothing changed.
+	runningSig string
+
+	// PR tab collapsible-section state.
+	prExpandDesc    bool
+	prExpandCommits bool
+	// pendingConfirm holds a destructive action awaiting a yes/no confirmation.
+	pendingConfirm *confirmState
+	// pendingPRTitle carries a new PR's title between the title and body prompts.
+	pendingPRTitle string
 
 	// pendingAlias holds a new alias name between the name and command prompts.
 	pendingAlias string
@@ -78,22 +152,38 @@ type Model struct {
 
 // New constructs the root model with its core-layer dependencies injected.
 func New(repoDir string, cfg *config.Config, state *config.State) Model {
+	// Resolve the color palette from config and push it to every styled component.
+	theme.Current = theme.Resolve(cfg.Theme.Preset, cfg.Theme.Overrides)
+	applyTheme()
+	worktreelist.SetTheme(theme.Current)
+	modals.SetTheme(theme.Current)
+
 	m := Model{
-		repoDir:    repoDir,
-		cfg:        cfg,
-		state:      state,
-		procs:      coreexec.NewManager(),
-		keys:       newKeyMap(),
-		help:       help.New(),
-		list:       worktreelist.New(),
-		term:       terminal.New(),
-		focus:      focusList,
-		metrics:    map[string]git.Metrics{},
-		activeProc: map[string]int{},
-		prByBranch: map[string]gh.PR{},
+		repoDir:         repoDir,
+		cfg:             cfg,
+		state:           state,
+		procs:           coreexec.NewManager(),
+		keys:            newKeyMap(cfg.Keys),
+		help:            help.New(),
+		list:            worktreelist.New(),
+		term:            terminal.New(),
+		focus:           focusList,
+		metrics:         map[string]git.Metrics{},
+		activeProc:      map[string]int{},
+		prByBranch:      map[string]gh.PR{},
+		prDetail:        map[int]gh.PRDetail{},
+		prChecks:        map[int][]gh.Check{},
+		checkRollup:     map[string]string{},
+		dirty:           map[string]bool{},
+		lastCommit:      map[string]int64{},
+		seenProcStatus:  map[string]string{},
+		diffFileContent: map[string]string{},
 	}
 	m.list.Focus()
 	m.term.SetTitle("Git Log")
+	if cols := keyCollisions(cfg.Keys); len(cols) > 0 {
+		m.status = "key conflicts ignored: " + cols[0]
+	}
 	return m
 }
 

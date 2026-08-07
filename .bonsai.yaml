@@ -22,6 +22,39 @@ worktree:
   root: ""
   path_template: "{repo}-{branch}"
 
+# ── Confirmations ────────────────────────────────────────────────────────────
+# When true (default), destructive actions (PR merge/close, update-from-base,
+# bulk prune) show a yes/no prompt first. Set false to run them immediately.
+confirm_destructive: true
+
+# ── Color theme ──────────────────────────────────────────────────────────────
+# preset: one of bonsai (default) / dracula / nord / mono.
+# overrides: per-role color (256-index like "212" or hex like "#ff5555").
+#   roles: accent, border, border_focus, dim, text, success, danger, warning, pr_badge
+theme:
+  preset: "bonsai"
+  overrides: {}
+    # accent: "212"
+    # danger: "#ff5555"
+
+# ── Desktop notifications ────────────────────────────────────────────────────
+# process → fire when a background process finishes/fails (default on).
+# ci      → fire when a connected PR's CI rollup changes (default off).
+notifications:
+  process: true
+  ci: false
+
+# ── Keybindings ──────────────────────────────────────────────────────────────
+# Override any action's key. Action names (defaults in parens):
+#   focus_next(tab) shell(enter) new_worktree(n) create_pr(ctrl+n) processes(v)
+#   pr_tab(P) diff_tab(d) filter(/) sort(o) copy_file(c) scripts(s) aliases(p)
+#   pull(ctrl+p) push(ctrl+u) fetch(f) commit(C) rebase(r) update_base(u)
+#   prune(x) bulk_prune(X) refresh(R) help(?) quit(q)
+# A key that collides with another action is ignored with a status-bar warning.
+keys: {}
+  # new_worktree: "N"
+  # prune: "D"
+
 # ── Lifecycle hooks ──────────────────────────────────────────────────────────
 # Shell commands run with `sh -c`, in the worktree's directory.
 #   on_worktree_create → after a worktree is created (new branch / existing / PR)

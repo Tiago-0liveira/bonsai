@@ -12,6 +12,10 @@ type Model struct {
 	vp      viewport.Model
 	title   string
 	focused bool
+	// follow keeps the view pinned to the bottom on new content (tail behavior).
+	// When false, the scroll offset is preserved across content updates so the
+	// view stays where the user left it (and starts at the top).
+	follow bool
 }
 
 // New builds an empty terminal pane.
@@ -26,16 +30,40 @@ func (m *Model) SetSize(w, h int) {
 }
 
 // SetContent replaces the displayed text, hard-wrapping to the viewport width so
-// long process/log lines cannot overflow into neighboring panes. Keeps the view
-// pinned to the bottom when already there (tail-follow behavior).
+// long process/log lines cannot overflow into neighboring panes. In follow mode
+// the view tail-follows the bottom; otherwise the scroll offset is preserved
+// (defaulting to the top for fresh content).
 func (m *Model) SetContent(s string) {
 	if m.vp.Width > 0 {
 		s = lipgloss.NewStyle().Width(m.vp.Width).Render(s)
 	}
-	atBottom := m.vp.AtBottom()
+	if m.follow {
+		atBottom := m.vp.AtBottom()
+		m.vp.SetContent(s)
+		if atBottom {
+			m.vp.GotoBottom()
+		}
+		return
+	}
+	off := m.vp.YOffset
 	m.vp.SetContent(s)
-	if atBottom {
-		m.vp.GotoBottom()
+	m.vp.SetYOffset(off)
+}
+
+// SetFollow toggles tail-follow: true pins new content to the bottom (process
+// output), false preserves the scroll position and starts at the top.
+func (m *Model) SetFollow(f bool) { m.follow = f }
+
+// EnsureVisible scrolls the viewport the minimum amount so that content line
+// (0-indexed) is within the visible window.
+func (m *Model) EnsureVisible(line int) {
+	top := m.vp.YOffset
+	bottom := top + m.vp.Height - 1
+	switch {
+	case line < top:
+		m.vp.SetYOffset(line)
+	case line > bottom:
+		m.vp.SetYOffset(line - m.vp.Height + 1)
 	}
 }
 
