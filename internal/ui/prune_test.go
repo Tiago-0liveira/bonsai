@@ -46,7 +46,7 @@ func TestOnBranchesError(t *testing.T) {
 func TestMergedTargetsFrom(t *testing.T) {
 	m := testModel()
 	m.cfg = &config.Config{Upstream: "origin/main"}
-	m.dirty = map[string]bool{"/wt/dirty": true}
+	m.statuses = map[string]git.StatusSummary{"/wt/dirty": {Modified: 1}}
 	m.prByBranch = map[string]gh.PR{"feat-a": {Number: 5}}
 	m.worktrees = []git.Worktree{
 		{Path: "/wt/main", Branch: "main", IsMain: true},
@@ -70,7 +70,6 @@ func TestOnPruneCandidates(t *testing.T) {
 	newModel := func(confirm bool) Model {
 		m := renderModel()
 		m.cfg = &config.Config{Upstream: "origin/main", ConfirmDestructive: confirm}
-		m.dirty = map[string]bool{}
 		m.worktrees = []git.Worktree{{Path: "/wt/a", Branch: "feat-a"}}
 		return m
 	}
@@ -142,7 +141,6 @@ func TestKindPruneForceThreadsThrough(t *testing.T) {
 	cfg := &config.Config{Upstream: "origin/main"}
 	m := New(main, cfg, &config.State{})
 	m.width, m.height = 100, 40
-	m.dirty = map[string]bool{}
 	m.worktrees = []git.Worktree{{Path: wtPath, Branch: "feat"}}
 	m.rebuildItems()
 

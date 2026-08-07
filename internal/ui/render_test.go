@@ -3,11 +3,13 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 )
 
 func renderModel() Model {
@@ -75,5 +77,73 @@ func TestRenderDiffEmpty(t *testing.T) {
 	out := m.renderDiff()
 	if !strings.Contains(out, "no changes") {
 		t.Errorf("empty diff should say no changes: %q", out)
+	}
+}
+
+func TestRenderInspect(t *testing.T) {
+	m := renderModel()
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}}})
+	m.inspectPath = "/w/feat"
+	m.inspect = inspectorData{
+		status:   git.StatusSummary{Modified: 2, Untracked: 1},
+		commit:   git.HeadCommit{Subject: "fix: thing", Author: "ana", When: time.Now().Add(-2 * time.Hour)},
+		commitOK: true,
+		diskKB:   42 * 1024,
+		diskOK:   true,
+		stashes:  2,
+		base:     "origin/main",
+		files:    []git.DiffFile{{Path: "a.go", Add: 3, Del: 1}},
+	}
+	out := m.renderInspect()
+	for _, want := range []string{"feat", "2 modified", "1 untracked", "fix: thing", "ana", "2h ago", "42.0 MB", "2 stash", "+3", "main"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("renderInspect missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderChecks(t *testing.T) {
+	m := renderModel()
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}}})
+	m.prByBranch = map[string]gh.PR{}
+	m.ciPath = "/w/feat"
+	m.ciRuns = []gh.Run{
+		{Name: "fix: thing", Workflow: "ci", Event: "push", Status: "completed", Conclusion: "success", CreatedAt: time.Now().Add(-time.Hour).Format(time.RFC3339)},
+		{Name: "wip", Workflow: "ci", Event: "pull_request", Status: "in_progress"},
+	}
+	out := m.renderChecks()
+	for _, want := range []string{"Runs · feat", "fix: thing", "wip", "1h ago"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("renderChecks missing %q\n%s", want, out)
+		}
+	}
+
+	m.ciRuns = nil
+	m.ciErr = "boom"
+	if out := m.renderChecks(); !strings.Contains(out, "gh unavailable") {
+		t.Errorf("error state missing:\n%s", out)
+	}
+	m.ciErr = ""
+	if out := m.renderChecks(); !strings.Contains(out, "no workflow runs") {
+		t.Errorf("empty state missing:\n%s", out)
+	}
+}
+
+func TestRenderInspectCleanNoCommit(t *testing.T) {
+	m := renderModel()
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{{WT: git.Worktree{Path: "/w/main", Branch: "main", IsMain: true}}})
+	m.inspectPath = "/w/main"
+	m.inspect = inspectorData{}
+	out := m.renderInspect()
+	for _, want := range []string{"clean", "no commits yet"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("renderInspect missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Diff vs") {
+		t.Errorf("main worktree should not show a diff section:\n%s", out)
 	}
 }

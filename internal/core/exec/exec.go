@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,6 +48,48 @@ func (s *syncBuffer) String() string {
 
 // Output returns the captured stdout+stderr so far.
 func (p *Process) Output() string { return p.buf.String() }
+
+// urlRE matches any http(s) URL up to whitespace or common delimiters.
+var urlRE = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// ansiRE strips SGR color sequences before scanning, since Spawn forces color
+// and a URL may be wrapped in escape codes.
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// isLoopbackURL reports whether u's host is a loopback/wildcard bind address.
+func isLoopbackURL(u string) bool {
+	host := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+	if strings.HasPrefix(host, "[") {
+		if i := strings.IndexByte(host, ']'); i >= 0 {
+			host = host[:i+1]
+		}
+	} else if i := strings.IndexAny(host, ":/"); i >= 0 {
+		host = host[:i]
+	}
+	switch host {
+	case "localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1":
+		return true
+	}
+	return false
+}
+
+// LastLocalURL returns the last local (loopback) URL found in s, or "".
+// Dev servers usually print their address once at startup; the last match wins
+// so a restarted server's fresh port is preferred. Trailing punctuation is
+// trimmed so prose like "…on http://localhost:3000." yields a clean URL.
+func LastLocalURL(s string) string {
+	matches := urlRE.FindAllString(ansiRE.ReplaceAllString(s, ""), -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		u := strings.TrimRight(matches[i], ".,;:")
+		if isLoopbackURL(u) {
+			return u
+		}
+	}
+	return ""
+}
+
+// LastURL returns the last local URL this process has printed, or "".
+func (p *Process) LastURL() string { return LastLocalURL(p.Output()) }
 
 // Done reports whether the process has exited.
 func (p *Process) Done() bool {

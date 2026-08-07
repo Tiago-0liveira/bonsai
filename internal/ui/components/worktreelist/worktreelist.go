@@ -28,8 +28,8 @@ type Item struct {
 	// PRState is the connected PR's state (gh.StateOpen / StateMerged /
 	// StateClosed). Empty when the PR number came from a "pr-N" branch name.
 	PRState string
-	// Dirty is true when the worktree has uncommitted changes.
-	Dirty bool
+	// Status holds the worktree's working-tree change counts for the badge.
+	Status git.StatusSummary
 	// Checks is the CI rollup for the connected PR: "pass"/"fail"/"pending"/"".
 	Checks string
 	// Running is the number of processes currently running in this worktree.
@@ -70,6 +70,20 @@ func checkDot(rollup string) string {
 		return checkPending.Render("◐")
 	}
 	return ""
+}
+
+// dirtyBadge renders working-tree change counts: a colored "●N" for tracked
+// changes (staged + modified) and a dim "?M" for untracked files. Clean
+// worktrees render "".
+func (i Item) dirtyBadge() string {
+	var parts []string
+	if n := i.Status.Staged + i.Status.Modified; n > 0 {
+		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("●%d", n)))
+	}
+	if i.Status.Untracked > 0 {
+		parts = append(parts, descStyle.Render(fmt.Sprintf("?%d", i.Status.Untracked)))
+	}
+	return strings.Join(parts, " ")
 }
 
 // prNumber returns the connected PR number: an explicitly-set PR (discovered via
@@ -171,8 +185,8 @@ func (itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.I
 	}
 	title += it.prBadge()
 	title += nameStyle.Render(it.Title())
-	if it.Dirty {
-		title += " " + dirtyStyle.Render("●")
+	if badge := it.dirtyBadge(); badge != "" {
+		title += " " + badge
 	}
 	if it.Running > 0 {
 		title += " " + runningStyle.Render(fmt.Sprintf("▶%d", it.Running))

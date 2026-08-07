@@ -32,6 +32,8 @@ const (
 	tabProcs
 	tabDiff
 	tabPR
+	tabInspect
+	tabChecks
 )
 
 // sortMode orders the worktree list.
@@ -43,6 +45,7 @@ const (
 	sortBehind
 	sortPR
 	sortActivity
+	sortDirty
 )
 
 // label is the short suffix shown in the list title for a sort mode.
@@ -56,6 +59,8 @@ func (s sortMode) label() string {
 		return "PR"
 	case sortActivity:
 		return "activity"
+	case sortDirty:
+		return "dirty"
 	default:
 		return "name"
 	}
@@ -99,8 +104,9 @@ type Model struct {
 	// checkRollup maps a worktree path to its PR's CI rollup ("pass"/"fail"/
 	// "pending"/""), for the row badge.
 	checkRollup map[string]string
-	// dirty maps a worktree path to whether it has uncommitted changes.
-	dirty map[string]bool
+	// statuses maps a worktree path to its working-tree change counts, for the
+	// row badge and dirty sorting.
+	statuses map[string]git.StatusSummary
 	// lastCommit maps a worktree path to its HEAD commit unix time (sortActivity).
 	lastCommit map[string]int64
 
@@ -121,6 +127,16 @@ type Model struct {
 	diffFileContent map[string]string // file path -> colored diff (lazy)
 	diffModalFile   string            // file whose diff the scroll modal is showing
 
+	// Inspector tab state: cached detail data and the worktree it belongs to.
+	inspectPath string
+	inspect     inspectorData
+
+	// Checks tab state: branch workflow runs, the last load error, and the
+	// worktree path they belong to (staleness guard).
+	ciPath string
+	ciRuns []gh.Run
+	ciErr  string
+
 	// runningSig is a signature of per-worktree running-process counts, used to
 	// skip list rebuilds on ticks where nothing changed.
 	runningSig string
@@ -139,6 +155,9 @@ type Model struct {
 	// scriptRun maps a script name to its full shell command for the last-opened
 	// scripts modal.
 	scriptRun map[string]string
+
+	// yankTargets maps a yank-menu label to the text it copies.
+	yankTargets map[string]string
 
 	// Layout / status.
 	width, height int
@@ -174,10 +193,11 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		prDetail:        map[int]gh.PRDetail{},
 		prChecks:        map[int][]gh.Check{},
 		checkRollup:     map[string]string{},
-		dirty:           map[string]bool{},
+		statuses:        map[string]git.StatusSummary{},
 		lastCommit:      map[string]int64{},
 		seenProcStatus:  map[string]string{},
 		diffFileContent: map[string]string{},
+		yankTargets:     map[string]string{},
 	}
 	m.list.Focus()
 	m.term.SetTitle("Git Log")

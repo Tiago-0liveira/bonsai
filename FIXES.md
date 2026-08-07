@@ -34,8 +34,8 @@ behavior) and four cheap correctness fixes.
 6. **Async UI** — branch lists (rebase + create-existing) load via `branchesMsg`; bulk-prune
    scan runs in a tea.Cmd and arrives as `pruneCandidatesMsg`; filtering happens in handlers
    against live model state.
-7. ~~**Parallelize `loadInspector`**~~ — N/A: no inspector feature in this
-   codebase version.
+7. **Parallelize `loadInspector`** — the 5 sections run as goroutines under a
+   `sync.WaitGroup`, one `inspectorMsg`, verified with `-race`.
 8. **Force toggle in prune modal** — `f` toggles `force (discard uncommitted changes)`;
    bulk prune gets no force path (dirty targets stay skipped).
 
@@ -44,6 +44,7 @@ Step 4 lands before 5 so the new removal code already runs under the timeout.
 ## Verification
 
 After each step: `go build ./... && go vet ./... && go test ./...`.
+After Step 7 additionally: `go test -race ./internal/ui`.
 
 End-to-end manual smoke (run `./bonsai` in a repo with worktrees):
 

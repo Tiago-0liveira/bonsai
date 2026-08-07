@@ -33,6 +33,26 @@ func TestSortedWorktreesMainFirst(t *testing.T) {
 	}
 }
 
+func TestSortedWorktreesByDirty(t *testing.T) {
+	m := testModel()
+	m.statuses = map[string]git.StatusSummary{}
+	m.worktrees = []git.Worktree{
+		{Path: "/main", Branch: "main", IsMain: true},
+		{Path: "/clean", Branch: "clean"},
+		{Path: "/messy", Branch: "messy"},
+	}
+	m.statuses["/messy"] = git.StatusSummary{Modified: 2, Untracked: 1}
+	m.statuses["/clean"] = git.StatusSummary{}
+	m.sort = sortDirty
+	got := m.sortedWorktrees()
+	if !got[0].IsMain {
+		t.Fatalf("main first, got %q", got[0].Branch)
+	}
+	if got[1].Branch != "messy" || got[2].Branch != "clean" {
+		t.Errorf("dirty sort wrong: %q %q", got[1].Branch, got[2].Branch)
+	}
+}
+
 func TestSortedWorktreesByAhead(t *testing.T) {
 	m := testModel()
 	m.worktrees = []git.Worktree{

@@ -30,7 +30,12 @@ Juggling git worktrees by hand is tedious: creating them, copying over untracked
 
 ## Features
 
-- 🌳 **Worktree list** with ahead/behind arrows (`↑N ↓M`) and `#PR` badges auto-detected via `gh`.
+- 🌳 **Worktree list** with ahead/behind arrows (`↑N ↓M`), `#PR` badges auto-detected via `gh`, dirty change counts (`●N ?M`), CI dots, and 6 sort modes.
+- 🔍 **Inspector tab** per worktree: working-tree status, last commit, diff-vs-base summary, disk usage, and stash count.
+- 🚦 **Checks tab** with the branch's GitHub Actions runs, and a full **PR tab** (detail, reviews, merge/approve/close).
+- 📄 **Diff tab**: files changed vs base with per-file diffs.
+- 🌐 **Live dev-server URLs** detected in process output (`http://localhost:…` shown next to each process).
+- 📋 **Yank menu** (`y`): copy the worktree path, branch name, or PR URL to your clipboard.
 - ✨ **Create worktrees** from a new branch, an existing branch, or a GitHub PR.
 - 📋 **Copy files** from main into a worktree via fuzzy finder — ranked by how often you copy them.
 - 🔧 **Run package scripts** and **custom aliases** as background processes — many per worktree, switchable.
@@ -84,18 +89,28 @@ Press `n` to create a worktree, `enter` to drop into a shell in the selected one
 
 | Key | Action |
 |-----|--------|
-| `tab` / `shift+tab` | Cycle focus between panes |
+| `tab` | Cycle focus between panes |
+| `shift+tab` | Cycle the right-pane tabs |
 | `enter` | Open a shell in the selected worktree |
 | `n` | New worktree (new branch / existing branch / PR) |
+| `ctrl+n` | Create a PR from the selected worktree |
+| `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
+| `i` | Inspector tab (status, last commit, diff, disk, stashes) |
+| `b` | Checks tab (GitHub Actions runs for the branch) |
+| `o` | Cycle list sort (name / ahead / behind / PR / activity / dirty) |
+| `/` | Filter the worktree list |
 | `c` | Copy a file from main into the worktree (fuzzy) |
+| `y` | Yank: copy path / branch / PR URL to the clipboard |
 | `s` | Run a `package.json` script |
 | `p` | Aliases menu (run one, or `＋ new alias`) |
-| `v` | Switch which process's output is shown |
 | `ctrl+p` | Git pull |
 | `ctrl+u` | Git push |
+| `f` | Git fetch (all remotes) |
 | `C` | Git commit (stages all) |
 | `r` | Git rebase onto a chosen branch |
+| `u` | Update branch from base (rebase or merge) |
 | `x` | Prune the worktree (with optional PR merge) |
+| `X` | Prune all merged worktrees |
 | `R` | Refresh worktrees, metrics, and PRs |
 | `?` | Toggle full help |
 | `q` / `ctrl+c` | Quit |
@@ -182,7 +197,7 @@ merge PR #20 to main → run on_worktree_delete → delete worktree → delete b
 Strict split between presentation and core:
 
 - **`internal/ui`** — all Bubble Tea (model / update / view / components). No `os/exec`, file I/O, or raw git.
-- **`internal/core`** — `git`, `gh`, `config`, `exec`, `fs`, `pkgmgr`. Plain Go types and errors, independently testable.
+- **`internal/core`** — `git`, `gh`, `config`, `exec`, `fs`, `pkgmgr`, `notify`, `clipboard`. Plain Go types and errors, independently testable.
 - **`internal/cli`** — the non-interactive subcommands, sharing the same core.
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Lip Gloss](https://github.com/charmbracelet/lipgloss), [Viper](https://github.com/spf13/viper), and [sahilm/fuzzy](https://github.com/sahilm/fuzzy).

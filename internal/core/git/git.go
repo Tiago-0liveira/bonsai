@@ -38,6 +38,14 @@ type Metrics struct {
 // gitTimeout. Interactive commands (RebaseCmd/MergeCmd) are built separately
 // and deliberately untimed.
 func run(dir string, args ...string) (string, error) {
+	out, err := runRaw(dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// runRaw executes a git command in dir and returns stdout without trimming.
+// Needed by parsers whose leading whitespace is significant (e.g. the status
+// columns of `git status --porcelain`). Bounded by gitTimeout.
+func runRaw(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -46,7 +54,7 @@ func run(dir string, args ...string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
-	return strings.TrimSpace(string(out)), nil
+	return string(out), nil
 }
 
 // RepoRoot returns the top-level directory of the git repo containing dir. Note
@@ -276,14 +284,88 @@ func MergeCmd(dir, target string) *exec.Cmd {
 	return cmd
 }
 
-// Dirty reports whether the worktree has uncommitted changes (staged, unstaged,
-// or untracked) via `git status --porcelain`.
-func Dirty(dir string) (bool, error) {
-	out, err := run(dir, "status", "--porcelain")
+// StatusSummary counts working-tree changes from a single `git status
+// --porcelain` call and keeps the raw lines for display.
+type StatusSummary struct {
+	Staged    int
+	Modified  int
+	Untracked int
+	Lines     []string
+}
+
+// Dirty reports whether any change (staged, unstaged, or untracked) exists.
+func (s StatusSummary) Dirty() bool {
+	return s.Staged+s.Modified+s.Untracked > 0
+}
+
+// Total returns the number of changed entries.
+func (s StatusSummary) Total() int { return s.Staged + s.Modified + s.Untracked }
+
+// StatusSummary parses `git status --porcelain`: the first column counts as
+// staged, the second as modified, and "??" entries as untracked.
+func StatusSummaryOf(dir string) (StatusSummary, error) {
+	out, err := runRaw(dir, "status", "--porcelain")
 	if err != nil {
-		return false, err
+		return StatusSummary{}, err
 	}
-	return strings.TrimSpace(out) != "", nil
+	var s StatusSummary
+	if strings.TrimSpace(out) == "" {
+		return s, nil
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 3 {
+			continue
+		}
+		s.Lines = append(s.Lines, line)
+		if line[0] == '?' && line[1] == '?' {
+			s.Untracked++
+			continue
+		}
+		if line[0] != ' ' {
+			s.Staged++
+		}
+		if line[1] != ' ' && line[1] != '?' {
+			s.Modified++
+		}
+	}
+	return s, nil
+}
+
+// HeadCommit describes a worktree's HEAD commit.
+type HeadCommit struct {
+	Subject string
+	Author  string
+	When    time.Time
+}
+
+// LastCommit returns the HEAD commit's subject, author and time. It errors on
+// repos without commits — callers must handle that case.
+func LastCommit(dir string) (HeadCommit, error) {
+	out, err := run(dir, "log", "-1", "--format=%s%x00%an%x00%ct")
+	if err != nil {
+		return HeadCommit{}, err
+	}
+	parts := strings.SplitN(out, "\x00", 3)
+	if len(parts) != 3 {
+		return HeadCommit{}, fmt.Errorf("unexpected log output: %q", out)
+	}
+	unix, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return HeadCommit{}, err
+	}
+	return HeadCommit{Subject: parts[0], Author: parts[1], When: time.Unix(unix, 0)}, nil
+}
+
+// StashCount returns the number of stash entries in the repo.
+func StashCount(dir string) (int, error) {
+	out, err := run(dir, "stash", "list", "--format=%gd")
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return 0, nil
+	}
+	return len(strings.Split(out, "\n")), nil
 }
 
 // LastCommitUnix returns the HEAD commit's author time as a unix timestamp.

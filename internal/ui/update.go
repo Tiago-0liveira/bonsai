@@ -77,8 +77,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case checksMsg:
 		return m.onChecks(msg)
 
-	case dirtyMsg:
-		m.dirty[msg.path] = msg.dirty
+	case statusMsg:
+		m.statuses[msg.path] = msg.summary
 		m.rebuildItems()
 		return m, nil
 
@@ -89,6 +89,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case diffMsg:
 		return m.onDiff(msg)
+
+	case inspectorMsg:
+		return m.onInspector(msg)
+
+	case runsMsg:
+		return m.onRuns(msg)
 
 	case fileDiffMsg:
 		if msg.path == m.diffPath {
@@ -160,13 +166,19 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 	// for the selection.
 	cmds := []tea.Cmd{fetchPRs(m.repoDir)}
 	for _, t := range msg.trees {
-		cmds = append(cmds, loadDirty(t.Path), loadActivity(t.Path))
+		cmds = append(cmds, loadStatus(t.Path), loadActivity(t.Path))
 		if t.Branch != "" && t.Branch != "(detached)" {
 			cmds = append(cmds, loadMetrics(t.Path, t.Branch, m.cfg.Upstream))
 		}
 	}
 	if wt, ok := m.selectedWorktree(); ok {
 		cmds = append(cmds, loadLog(wt.Path))
+		if m.rightTab == tabInspect {
+			cmds = append(cmds, m.enterInspect(wt))
+		}
+		if m.rightTab == tabChecks && wt.Branch != "" && wt.Branch != "(detached)" {
+			cmds = append(cmds, m.enterChecks(wt))
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -271,7 +283,7 @@ func (m *Model) rebuildItems() {
 			it.PR = pr.Number
 			it.PRState = pr.State
 		}
-		it.Dirty = m.dirty[t.Path]
+		it.Status = m.statuses[t.Path]
 		it.Checks = m.checkRollup[t.Path]
 		it.Running = m.countRunning(t.Path)
 		items[i] = it
@@ -299,6 +311,8 @@ func (m *Model) sortedWorktrees() []git.Worktree {
 			return m.prByBranch[ta.Branch].Number > m.prByBranch[tb.Branch].Number
 		case sortActivity:
 			return m.lastCommit[ta.Path] > m.lastCommit[tb.Path]
+		case sortDirty:
+			return m.statuses[ta.Path].Total() > m.statuses[tb.Path].Total()
 		default:
 			return ta.Branch < tb.Branch
 		}
@@ -543,8 +557,14 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.DiffTab):
 		return m.openDiffTab()
 
+	case key.Matches(msg, m.keys.InspectTab):
+		return m.openInspectTab()
+
+	case key.Matches(msg, m.keys.ChecksTab):
+		return m.openChecksTab()
+
 	case key.Matches(msg, m.keys.Sort):
-		m.sort = (m.sort + 1) % 5
+		m.sort = (m.sort + 1) % 6
 		m.rebuildItems()
 		return m, nil
 
@@ -566,6 +586,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.CopyFile):
 		return m.openCopyModal()
+
+	case key.Matches(msg, m.keys.Yank):
+		return m.openYankModal()
 
 	case key.Matches(msg, m.keys.Scripts):
 		if wt, ok := m.selectedWorktree(); ok {
@@ -664,6 +687,36 @@ func (m Model) openCopyModal() (tea.Model, tea.Cmd) {
 	rank := func(p string) int { return m.state.CopyRank(p) }
 	filter := func(q string) []string { return fs.Search(files, q, rank) }
 	modal := modals.NewFuzzy(modals.KindCopyFile, "Copy file to worktree", filter, fs.Search(files, "", rank))
+	modal.SetSize(m.width, m.height)
+	m.modal = &modal
+	return m, nil
+}
+
+// Yank-menu option labels.
+const (
+	yankPathLabel   = "copy worktree path"
+	yankBranchLabel = "copy branch name"
+)
+
+// openYankModal offers copying the selection's path, branch name, or connected
+// PR URL to the clipboard.
+func (m Model) openYankModal() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	m.yankTargets = map[string]string{yankPathLabel: wt.Path}
+	items := []string{yankPathLabel}
+	if wt.Branch != "" && wt.Branch != "(detached)" {
+		m.yankTargets[yankBranchLabel] = wt.Branch
+		items = append(items, yankBranchLabel)
+		if pr, ok := m.prByBranch[wt.Branch]; ok && pr.URL != "" {
+			label := fmt.Sprintf("copy PR URL (#%d)", pr.Number)
+			m.yankTargets[label] = pr.URL
+			items = append(items, label)
+		}
+	}
+	modal := modals.NewSelect(modals.KindYank, "Yank", items)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -811,7 +864,7 @@ func (m Model) cycleRightTab() (tea.Model, tea.Cmd) {
 
 // tabVisible reports whether tab t is currently available for the selection.
 func (m Model) tabVisible(t rightTab) bool {
-	
+
 	for _, v := range m.visibleTabs() {
 		if v == t {
 			return true
@@ -839,6 +892,10 @@ func (m *Model) reloadRightPane() tea.Cmd {
 		return nil
 	case tabDiff:
 		return m.enterDiff(wt)
+	case tabInspect:
+		return m.enterInspect(wt)
+	case tabChecks:
+		return m.enterChecks(wt)
 	case tabProcs:
 		m.refreshProcPane()
 		return nil
@@ -902,6 +959,115 @@ func (m *Model) enterDiff(wt git.Worktree) tea.Cmd {
 		m.refreshDiffPane()
 	}
 	return loadDiff(wt.Path, base)
+}
+
+// onInspector records loaded inspector data, discarding stale results that
+// belong to a worktree the cursor has since left.
+func (m Model) onInspector(msg inspectorMsg) (tea.Model, tea.Cmd) {
+	if msg.path != m.inspectPath {
+		return m, nil // stale (selection moved on)
+	}
+	m.inspect = msg.data
+	if m.rightTab == tabInspect {
+		m.refreshInspectPane()
+	}
+	return m, nil
+}
+
+// openInspectTab focuses the inspector tab for the selected worktree.
+func (m Model) openInspectTab() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	m.rightTab = tabInspect
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
+	return m, m.enterInspect(wt)
+}
+
+// enterInspect shows the inspector for wt, showing cached data instantly when it
+// belongs to the same worktree, and returns the load command.
+func (m *Model) enterInspect(wt git.Worktree) tea.Cmd {
+	m.term.SetTitle("Inspect · " + wt.Branch)
+	base := ""
+	if !wt.IsMain {
+		base = m.upstreamFor(wt.Branch)
+	}
+	if m.inspectPath != wt.Path {
+		m.inspectPath = wt.Path
+		m.inspect = inspectorData{}
+		m.term.SetFollow(false)
+		m.term.SetContent("(loading…)")
+	} else {
+		m.refreshInspectPane()
+	}
+	return loadInspector(wt.Path, base)
+}
+
+// refreshInspectPane renders the cached inspector data into the viewport.
+func (m *Model) refreshInspectPane() {
+	m.term.SetFollow(false)
+	m.term.SetContent(m.renderInspect())
+}
+
+// onRuns records branch workflow runs for the Checks tab, discarding stale
+// results for a worktree the cursor has since left.
+func (m Model) onRuns(msg runsMsg) (tea.Model, tea.Cmd) {
+	if msg.path != m.ciPath {
+		return m, nil // stale (selection moved on)
+	}
+	if msg.err != nil {
+		m.ciErr = msg.err.Error()
+		m.ciRuns = nil
+	} else {
+		m.ciErr = ""
+		m.ciRuns = msg.runs
+	}
+	if m.rightTab == tabChecks {
+		m.refreshChecksPane()
+	}
+	return m, nil
+}
+
+// openChecksTab focuses the CI Checks tab for the selected worktree's branch.
+func (m Model) openChecksTab() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	if wt.Branch == "" || wt.Branch == "(detached)" {
+		m.status = "checks need a branch — HEAD is detached"
+		return m, nil
+	}
+	m.rightTab = tabChecks
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
+	return m, m.enterChecks(wt)
+}
+
+// enterChecks shows the Checks tab for wt, keeping cached runs when they belong
+// to the same worktree, and returns the load command.
+func (m *Model) enterChecks(wt git.Worktree) tea.Cmd {
+	m.term.SetTitle("Checks · " + wt.Branch)
+	if m.ciPath != wt.Path {
+		m.ciPath = wt.Path
+		m.ciRuns = nil
+		m.ciErr = ""
+		m.term.SetFollow(false)
+		m.term.SetContent("(loading…)")
+	} else {
+		m.refreshChecksPane()
+	}
+	return loadRuns(m.repoDir, wt.Path, wt.Branch)
+}
+
+// refreshChecksPane renders the cached workflow runs into the viewport.
+func (m *Model) refreshChecksPane() {
+	m.term.SetFollow(false)
+	m.term.SetContent(m.renderChecks())
 }
 
 // onDiff records the changed-file list and renders the diff tab.
@@ -1125,7 +1291,7 @@ func (m Model) mergedTargetsFrom(merged map[string]bool) []pruneTarget {
 		if t.IsMain || t.Branch == "" || t.Branch == "(detached)" {
 			continue
 		}
-		if m.dirty[t.Path] {
+		if m.statuses[t.Path].Dirty() {
 			continue
 		}
 		if !merged[t.Branch] {
@@ -1326,6 +1492,12 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.Kind {
+	case modals.KindYank:
+		if text := m.yankTargets[msg.Value]; text != "" {
+			return m, copyToClipboard(text, "yank")
+		}
+		return m, nil
+
 	case modals.KindCopyFile:
 		m.status = "copying " + msg.Value
 		return m, copyFile(m.repoDir, wt.Path, msg.Value, m.state.RecordCopy)

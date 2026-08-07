@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/clipboard"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
@@ -88,10 +90,10 @@ type checksMsg struct {
 	rollup string
 }
 
-// dirtyMsg reports whether a worktree has uncommitted changes.
-type dirtyMsg struct {
-	path  string
-	dirty bool
+// statusMsg carries a worktree's working-tree change counts for row badges.
+type statusMsg struct {
+	path    string
+	summary git.StatusSummary
 }
 
 // activityMsg carries a worktree's HEAD commit time (for sort-by-activity).
@@ -178,6 +180,14 @@ func loadScripts(path string) tea.Cmd {
 // gitPull / gitPush / gitCommit wrap the corresponding core ops.
 func gitPull(path string) tea.Cmd {
 	return func() tea.Msg { return opDoneMsg{label: "pull", err: git.Pull(path)} }
+}
+
+// copyToClipboard copies text to the system clipboard and reports the outcome
+// through the standard opDoneMsg status path.
+func copyToClipboard(text, label string) tea.Cmd {
+	return func() tea.Msg {
+		return opDoneMsg{label: label, err: clipboard.Copy(text)}
+	}
 }
 
 func gitPush(path string) tea.Cmd {
@@ -329,11 +339,28 @@ func loadChecks(repoDir, path string, number int) tea.Cmd {
 	}
 }
 
-// loadDirty reports whether a worktree has uncommitted changes.
-func loadDirty(path string) tea.Cmd {
+// runsMsg carries branch workflow runs for the Checks tab. path guards against
+// stale results after the selection moves.
+type runsMsg struct {
+	path   string
+	branch string
+	runs   []gh.Run
+	err    error
+}
+
+// loadRuns fetches recent workflow runs for a branch, for the Checks tab.
+func loadRuns(repoDir, path, branch string) tea.Cmd {
 	return func() tea.Msg {
-		d, _ := git.Dirty(path)
-		return dirtyMsg{path: path, dirty: d}
+		runs, err := gh.ListRuns(repoDir, branch, 20)
+		return runsMsg{path: path, branch: branch, runs: runs, err: err}
+	}
+}
+
+// loadStatus reports a worktree's working-tree change counts.
+func loadStatus(path string) tea.Cmd {
+	return func() tea.Msg {
+		s, _ := git.StatusSummaryOf(path)
+		return statusMsg{path: path, summary: s}
 	}
 }
 
@@ -502,6 +529,75 @@ func loadCommitPreview(path string) tea.Cmd {
 	return func() tea.Msg {
 		s, err := git.Status(path)
 		return commitPreviewMsg{status: s, err: err}
+	}
+}
+
+// inspectorData aggregates everything the Inspector tab shows for one worktree.
+// Each section carries an OK flag so a single failure (e.g. no commits yet)
+// doesn't blank the rest.
+type inspectorData struct {
+	status   git.StatusSummary
+	commit   git.HeadCommit
+	commitOK bool
+	diskKB   int64
+	diskOK   bool
+	stashes  int
+	files    []git.DiffFile // diff vs base (empty for the main worktree)
+	base     string
+}
+
+// inspectorMsg carries the loaded inspector data for a worktree path, used to
+// discard stale results after fast selection changes.
+type inspectorMsg struct {
+	path string
+	data inspectorData
+}
+
+// loadInspector fetches the inspector pane's 5 sections in parallel. Each
+// goroutine writes a distinct inspectorData field, so the WaitGroup's
+// happens-before is all the synchronization needed.
+func loadInspector(path, base string) tea.Cmd {
+	return func() tea.Msg {
+		var d inspectorData
+		d.base = base
+		var wg sync.WaitGroup
+		wg.Add(5)
+		go func() {
+			defer wg.Done()
+			if s, err := git.StatusSummaryOf(path); err == nil {
+				d.status = s
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if c, err := git.LastCommit(path); err == nil {
+				d.commit = c
+				d.commitOK = true
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if kb, err := fs.DiskUsageKB(path); err == nil {
+				d.diskKB = kb
+				d.diskOK = true
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if n, err := git.StashCount(path); err == nil {
+				d.stashes = n
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if base != "" {
+				if files, err := git.DiffStat(path, base); err == nil {
+					d.files = files
+				}
+			}
+		}()
+		wg.Wait()
+		return inspectorMsg{path: path, data: d}
 	}
 }
 
