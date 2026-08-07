@@ -1,0 +1,23 @@
+# Compiled binary
+/bonsai
+bonsai
+
+# Go build/test artifacts
+*.exe
+*.test
+*.out
+/dist/
+/build/
+
+# Coverage
+coverage.txt
+*.cover
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local, non-shared config overrides (keep the committed .bonsai.yaml example)
+.bonsai.local.yaml

@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  .bonsai.yaml — project configuration for bonsai (https://github.com/Tiago-0liveira/bonsai)
+#  Lives in your repo root. All fields are optional; sensible defaults apply.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Base ref used for two things:
+#   1. the ↑ahead / ↓behind counts next to each worktree
+#   2. the branch shown as the merge target when pruning a PR worktree
+# Format: <remote>/<branch>. Default: origin/main
+upstream: origin/main
+
+# ── Lifecycle hooks ──────────────────────────────────────────────────────────
+# Shell commands run with `sh -c`, in the worktree's directory.
+#   on_worktree_create → after a worktree is created (new branch / existing / PR)
+#   on_worktree_delete → before a worktree is pruned
+# Commands run top-to-bottom and STOP at the first failure. Empty strings are skipped.
+#
+# Variables — usable as {name} in any command, and also exported as $BONSAI_<NAME>:
+#   {new_worktree} / {worktree}     absolute path of the worktree
+#   {worktree_name}                 worktree directory name (e.g. repo-feat-login)
+#   {main} / {main_branch_path}     absolute path of the main worktree
+#   {branch}                        branch name
+#   {base_branch}                   base branch from `upstream` (origin/main → main)
+#   {repo}                          repository directory name
+#   {pr_number}                     connected PR number, or empty
+#
+# Examples (uncomment and adapt):
+hooks:
+  on_worktree_create: []
+    # - "cp {main}/.env {new_worktree}/.env"     # carry over untracked secrets
+    # - "npm install"                            # install deps in the new tree
+    # - "echo 'created {branch} at {new_worktree}'"
+  on_worktree_delete:
+    - "echo 'removing worktree {worktree_name} ({branch})'"
+
+# ── Aliases ──────────────────────────────────────────────────────────────────
+# Named commands runnable against the selected worktree:
+#   • in the TUI: press `p`, pick one (or `＋ new alias`)
+#   • from the CLI: `bonsai x <name> [worktree]`
+# Alias commands support the same {variables} as hooks.
+# NOTE: aliases here are read-only project defaults. Aliases you add in-app or via
+# `bonsai alias add` are saved per-user to ~/.config/bonsai/state.json.
+aliases:
+  - name: build
+    command: "go build ."
+  - name: open
+    command: "zed {worktree}"                 # open this worktree in Zed
+  # - name: dev
+  #   command: "npm run dev"
