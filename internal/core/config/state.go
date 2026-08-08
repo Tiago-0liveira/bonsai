@@ -22,6 +22,9 @@ type Prefs struct {
 	Keys map[string]string `json:"keys,omitempty"`
 	// PruneMerge turns the prune modal's merge-PR step on by default.
 	PruneMerge bool `json:"prune_merge,omitempty"`
+	// PRStatus is the worktree-list PR status display mode: "full" (glyph
+	// plus label), "compact" (glyph only) or "off" ("" = full).
+	PRStatus string `json:"pr_status,omitempty"`
 }
 
 // State is persisted mutable data: how often each main-repo file has been copied

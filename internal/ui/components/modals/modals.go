@@ -60,6 +60,11 @@ const (
 	// Process viewer.
 	KindProcesses Kind = "processes"
 
+	// Config editors (.bonsai.yaml).
+	KindConfigChoice  Kind = "config_choice"  // sub-picker: map entry or list item
+	KindConfigValue   Kind = "config_value"   // final value for a config setting
+	KindConfigConfirm Kind = "config_confirm" // confirm removal of a config entry
+
 	// Scrollable read-only diff of a single file.
 	KindDiffFile Kind = "diff_file"
 )
@@ -214,6 +219,12 @@ func (m *Model) setScrollContent() {
 
 // SetBody sets read-only text rendered above the input field (input mode only).
 func (m *Model) SetBody(s string) { m.body = s }
+
+// SetInitial prefills the input field and moves the cursor to the end.
+func (m *Model) SetInitial(v string) {
+	m.input.SetValue(v)
+	m.input.CursorEnd()
+}
 
 func (m Model) submit(value string) tea.Cmd {
 	k := m.kind

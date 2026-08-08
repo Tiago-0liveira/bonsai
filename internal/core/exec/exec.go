@@ -26,6 +26,9 @@ type Process struct {
 	mu   sync.Mutex
 	done bool
 	err  error
+	// killed marks a user-initiated kill so the exit reads "stopped", not
+	// "failed" (a SIGKILL'd process exits non-zero).
+	killed bool
 }
 
 // syncBuffer is a goroutine-safe bytes.Buffer.
@@ -112,6 +115,9 @@ func (p *Process) Status() string {
 	if !p.done {
 		return "running"
 	}
+	if p.killed {
+		return "stopped"
+	}
 	if p.err != nil {
 		return "failed"
 	}
@@ -130,6 +136,7 @@ func (p *Process) Kill() {
 	if p.done || p.cmd == nil || p.cmd.Process == nil {
 		return
 	}
+	p.killed = true
 	pid := p.cmd.Process.Pid
 	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
 		// Fall back to the single process if the group signal failed (e.g. the
@@ -333,6 +340,25 @@ func ShellCmd(path string) *exec.Cmd {
 	cmd := exec.Command(shell())
 	cmd.Dir = path
 	return cmd
+}
+
+// EditorCmd builds an interactive editor *exec.Cmd rooted at path, suitable
+// for tea.ExecProcess. The editor comes from $VISUAL or $EDITOR (arguments in
+// the value are honored); vi is the fallback.
+func EditorCmd(path string) *exec.Cmd {
+	name, args := editor()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = path
+	return cmd
+}
+
+func editor() (string, []string) {
+	raw := envEditor()
+	if raw == "" {
+		return "vi", nil
+	}
+	fields := strings.Fields(raw)
+	return fields[0], fields[1:]
 }
 
 func shell() string {

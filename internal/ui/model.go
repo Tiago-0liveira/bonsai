@@ -78,6 +78,8 @@ type Model struct {
 	cfg     *config.Config
 	state   *config.State
 	procs   *coreexec.Manager
+	// ghCache memoizes gh PR/checks queries across refresh cycles.
+	ghCache *gh.Cache
 
 	// Components.
 	keys keyMap
@@ -96,6 +98,9 @@ type Model struct {
 	prs       []gh.PR
 	// prByBranch maps a branch (PR head ref) to its PR (any state), for row badges.
 	prByBranch map[string]gh.PR
+	// prByNumber maps a PR number to its PR, so "pr-N" worktree branches (whose
+	// name never equals the PR head ref) still get state-aware badges.
+	prByNumber map[int]gh.PR
 	// prDetail caches the full detail of PRs whose tab has been opened, keyed by
 	// PR number. prPaneErr holds the last PR-detail load error for display.
 	prDetail  map[int]gh.PRDetail
@@ -153,6 +158,13 @@ type Model struct {
 	// pendingAlias holds a new alias name between the name and command prompts.
 	pendingAlias string
 
+	// configFile is the .bonsai.yaml the config editors write to.
+	configFile string
+	// pendingCfg is the setting being edited; pendingCfgSub the selected
+	// sub-entry for map/list settings (or cfgAddSentinel mid-flow).
+	pendingCfg    *configSetting
+	pendingCfgSub string
+
 	// scriptRun maps a script name to its full shell command for the last-opened
 	// scripts modal.
 	scriptRun map[string]string
@@ -185,6 +197,7 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 	theme.Current = theme.Resolve(preset, cfg.Theme.Overrides)
 	applyTheme()
 	worktreelist.SetTheme(theme.Current)
+	worktreelist.SetPRStatusMode(state.Prefs.PRStatus)
 	modals.SetTheme(theme.Current)
 	prefs.SetTheme(theme.Current)
 
@@ -202,6 +215,8 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		cfg:             cfg,
 		state:           state,
 		procs:           coreexec.NewManager(),
+		ghCache:         gh.NewCache(gh.DefaultCacheTTL),
+		configFile:      config.FileFor(repoDir),
 		keys:            newKeyMap(keys),
 		list:            worktreelist.New(),
 		term:            terminal.New(),
@@ -266,7 +281,7 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadWorktrees(m.repoDir), indexFiles(m.repoDir), tickProc(), tickPRs())
+	return tea.Batch(loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs())
 }
 
 // selectedWorktree returns the highlighted worktree, if any.

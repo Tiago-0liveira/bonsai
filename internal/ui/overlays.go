@@ -65,6 +65,7 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 		m.currentThemePreset(),
 		m.sort.name(),
 		m.state.Prefs.PruneMerge,
+		m.state.Prefs.PRStatus,
 		theme.Presets(),
 		prefsActions(m.cfg.Keys),
 		startOnKeys,
@@ -83,6 +84,7 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		Theme:      p.Theme,
 		Sort:       p.Sort,
 		PruneMerge: p.PruneMerge,
+		PRStatus:   p.PRStatus,
 		Keys:       p.Keys,
 	}
 	if err := m.state.Save(); err != nil {
@@ -93,6 +95,7 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 	theme.Current = theme.Resolve(p.Theme, m.cfg.Theme.Overrides)
 	applyTheme()
 	worktreelist.SetTheme(theme.Current)
+	worktreelist.SetPRStatusMode(p.PRStatus)
 	modals.SetTheme(theme.Current)
 	prefs.SetTheme(theme.Current)
 

@@ -16,7 +16,7 @@ func testActions() []Action {
 }
 
 func testModel() Model {
-	return New("bonsai", "name", false, []string{"bonsai", "sakura"}, testActions(), false)
+	return New("bonsai", "name", false, "", []string{"bonsai", "sakura"}, testActions(), false)
 }
 
 // keyMsg simulates pressing a rune key.
@@ -154,5 +154,22 @@ func TestSortCycle(t *testing.T) {
 	snap := saveFrom(t, cmd)
 	if snap == nil || snap.Sort != "ahead" {
 		t.Errorf("right on sort should cycle name→ahead, got %+v", snap)
+	}
+}
+
+func TestPRStatusCycle(t *testing.T) {
+	m := testModel()
+	if m.prStatus != "full" {
+		t.Fatalf("default PR status = %q, want full", m.prStatus)
+	}
+	for i, r := range m.rows {
+		if r.kind == rowPRStatus {
+			m.cursor = i
+		}
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	snap := saveFrom(t, cmd)
+	if snap == nil || snap.PRStatus != "compact" {
+		t.Errorf("right on PR status should cycle full→compact, got %+v", snap)
 	}
 }
