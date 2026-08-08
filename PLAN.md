@@ -753,3 +753,125 @@ shell-out itself is manual QA / behind an interface for a fake in tests.
 
 Dependencies: 7→6 (tab section), 8→6+12, 11→9a+12, 15(ci)→7. Everything else is
 independent and individually shippable.
+
+---
+---
+
+# Round 3
+
+## Phase 16 — Command palette (ctrl+k)
+
+**Why:** bonsai now has ~25 global bindings, three tab-local key routers, and
+user aliases — and Phase 13 let users remap the globals, so help text alone no
+longer answers "how do I…?". One key opens a fuzzy list of **every** action;
+each row shows its current keybinding and — the key requirement — **exactly
+which worktree/PR it will act on** when it is selection-scoped.
+
+### Design
+
+New file `internal/ui/palette.go`:
+
+```go
+type paletteCmd struct {
+    id        string
+    label     string                          // "Commit changes"
+    scopeHint func(m Model) string            // "· feat/login" | "· PR #42" | ""
+    available func(m Model) (bool, string)    // ok + reason when unavailable
+    run       func(m Model) (tea.Model, tea.Cmd)
+}
+
+func (m Model) paletteCommands() []paletteCmd
+```
+
+Built at open-time (not cached) so bindings, scope hints, and availability
+reflect live state. Three sources:
+
+1. **Global actions** — one entry per case in `onKey` (`update.go:522`).
+   `run` calls the existing openers directly (`m.openCommitModal()`,
+   `m.openPruneModal()`, `m.openCreateSourceModal()`, …); inline cases
+   (pull/push/fetch/sort/refresh/quit) get tiny wrappers. No refactor of
+   `onKey` itself is required — the palette is a second caller of the same
+   openers.
+2. **Tab-local actions** — PR approve / request-changes / merge / close /
+   reopen / ready (from `prTabKey`, `update.go:1168`) and process
+   kill / restart / remove (from `procTabKey`, `update.go:1320`). These are
+   otherwise invisible unless the right tab is focused — the palette makes
+   them discoverable. PR actions switch to the PR tab first when needed.
+3. **Aliases** — one entry per alias (`m.cfg.Aliases` +
+   `m.state.SortedAliases()`), label `alias: <name>`; `run` mirrors the
+   `KindAliases` submit path (`update.go:1525`) including `HookVars`
+   expansion. State aliases shadow config aliases (same `ResolveAlias` rule).
+
+### Scope indication (the user-facing requirement)
+
+Each row renders as `label` + right-aligned dim keybinding + dim scope suffix:
+
+```
+Commands · feat/login
+› Commit changes                       C  · feat/login
+  Approve PR                              · PR #42
+  Prune merged (bulk)                    X
+  alias: dev                                · feat/login
+```
+
+- Worktree-scoped commands append `· <branch>` of the **currently selected**
+  worktree; the palette title carries the same context (`Commands · <branch>`)
+  so it is visible even before reading a row.
+- PR-scoped commands append `· PR #N`.
+- Global commands get no suffix.
+- **Unavailable** rows render dim with a reason instead of a scope
+  (`(no PR connected)`, `(main worktree)`, `(no worktree selected)`); pressing
+  enter on one sets `m.status` to the reason rather than running anything.
+  Availability reuses the guards already in the openers (e.g.
+  `openPruneModal`'s main check, `update.go:1399`).
+
+### Modal wiring
+
+- Reuse `modals.NewFuzzy` (`modals.go:126`) with a new `KindPalette`;
+  `m.paletteByLabel map[string]paletteCmd` maps the display label back to the
+  command — same pattern as `yankTargets` (`update.go:708`).
+- Filter: lowercase-contains over label + scope hint (same shape as the
+  scripts filter, `update.go:337`).
+- Submit: look up the label; unavailable → status reason; else `run`.
+  `m.modal = nil` already happens first in `onModalSubmit` (`update.go:1424`),
+  so commands that open their own modal chain cleanly.
+
+### Keys
+
+- New action `"palette"` in `defaultBindings` (`keys.go:53`), default
+  `ctrl+k` (currently free globally; the modal-local `ctrl+k` cursor-up is
+  unreachable while no modal is open, and inside any modal the modal owns all
+  keys, `update.go:137`).
+- Add `Palette key.Binding` to `keyMap` + `newKeyMap`; handle in `onKey` ahead
+  of the main switch; add to `FullHelp` (`keys.go:180`) — `ShortHelp` stays as
+  is (already 8 entries).
+
+### Edge cases
+
+- No worktrees / none selected → worktree-scoped rows show
+  `(no worktree selected)` and stay disabled.
+- The selection cannot change while the palette is open (modal owns input),
+  so scope hints can never go stale mid-session.
+- Label uniqueness: command labels are fixed and aliases are prefixed
+  `alias: `, so the label→command map cannot collide; duplicate alias names
+  dedupe keeping the state-first shadowing order.
+
+### Extension point: AI commands
+
+The `ai:` config integration (spawn claude/qodercli on one key) plugs in here
+as two more registry entries — `AI: commit via <tool> (interactive)` and
+`(headless)` — with `scopeHint` = selected worktree and `available` = binary
+found on PATH. The registry makes that a small follow-up rather than another
+keymap fight.
+
+### Tests
+
+- `palette_test.go`: table over model states (main selected / feature branch /
+  PR-backed branch / no selection) asserting labels, scope hints, and
+  availability reasons; assert display labels are unique.
+- `keys_test.go`: palette binding override via `keys: { palette: ":" }`.
+
+### Delivery
+
+Single self-contained phase; depends on nothing. Optional follow-up: rank
+frequently used commands first (reuse the `state.CopyRank` pattern).

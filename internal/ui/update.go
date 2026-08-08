@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
@@ -17,6 +18,7 @@ import (
 	corenotify "github.com/Tiago-0liveira/bonsai/internal/core/notify"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
 // Update routes messages: layout, data results, the process tick, an active
@@ -520,6 +522,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch {
+	case key.Matches(msg, m.keys.Palette):
+		return m.openPalette()
+
 	case key.Matches(msg, m.keys.Quit):
 		m.procs.KillAll()
 		return m, tea.Quit
@@ -717,6 +722,73 @@ func (m Model) openYankModal() (tea.Model, tea.Cmd) {
 		}
 	}
 	modal := modals.NewSelect(modals.KindYank, "Yank", items)
+	modal.SetSize(m.width, m.height)
+	m.modal = &modal
+	return m, nil
+}
+
+// paletteEntry is one rendered command-palette row: the styled display string
+// and the plain text used for filtering.
+type paletteEntry struct {
+	display string
+	plain   string
+}
+
+// openPalette builds the command palette from live state. Each row shows its
+// keybinding (if any) and the worktree/PR it would act on; rows that cannot run
+// right now show the reason instead and stay inert on enter.
+func (m Model) openPalette() (tea.Model, tea.Cmd) {
+	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	entries := make([]paletteEntry, 0, 64)
+	m.paletteByLabel = map[string]paletteCmd{}
+
+	add := func(c paletteCmd) {
+		plain, display := c.label, c.label
+		ok, reason := true, ""
+		if c.available != nil {
+			ok, reason = c.available(m)
+		}
+		if !ok {
+			plain += " (" + reason + ")"
+			display += dim.Render("  (" + reason + ")")
+		} else {
+			if hint := c.binding.Help().Key; hint != "" {
+				plain += " (" + hint + ")"
+				display += dim.Render("  (" + hint + ")")
+			}
+			if c.scopeHint != nil {
+				if scope := c.scopeHint(m); scope != "" {
+					plain += " · " + scope
+					display += dim.Render("  · " + scope)
+				}
+			}
+		}
+		if _, dup := m.paletteByLabel[display]; dup {
+			return
+		}
+		m.paletteByLabel[display] = c
+		entries = append(entries, paletteEntry{display: display, plain: plain})
+	}
+	for _, c := range m.paletteCommands() {
+		add(c)
+	}
+
+	filter := func(q string) []string {
+		q = strings.ToLower(strings.TrimSpace(q))
+		out := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if q == "" || strings.Contains(strings.ToLower(e.plain), q) {
+				out = append(out, e.display)
+			}
+		}
+		return out
+	}
+
+	title := "Commands"
+	if wt, ok := m.selectedWorktree(); ok && wt.Branch != "" {
+		title += " · " + wt.Branch
+	}
+	modal := modals.NewFuzzy(modals.KindPalette, title, filter, filter(""))
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -1425,6 +1497,22 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	// These kinds do not require an existing selection.
 	switch msg.Kind {
+	case modals.KindPalette:
+		c, found := m.paletteByLabel[msg.Value]
+		if !found {
+			return m, nil
+		}
+		if c.available != nil {
+			if ok, reason := c.available(m); !ok {
+				m.status = reason
+				return m, nil
+			}
+		}
+		if c.run == nil {
+			return m, nil
+		}
+		return c.run(m)
+
 	case modals.KindConfirm:
 		if m.pendingConfirm != nil {
 			action := m.pendingConfirm.action

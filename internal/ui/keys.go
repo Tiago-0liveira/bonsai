@@ -22,6 +22,7 @@ type keyMap struct {
 	ChecksTab  key.Binding
 	Filter     key.Binding
 	Sort       key.Binding
+	Palette    key.Binding
 	CopyFile   key.Binding
 	Yank       key.Binding
 	Scripts    key.Binding
@@ -64,6 +65,7 @@ var defaultBindings = map[string]bindingSpec{
 	"checks_tab":   {[]string{"b"}, "CI runs"},
 	"filter":       {[]string{"/"}, "filter"},
 	"sort":         {[]string{"o"}, "sort"},
+	"palette":      {[]string{"ctrl+k"}, "commands"},
 	"copy_file":    {[]string{"c"}, "copy file"},
 	"yank":         {[]string{"y"}, "yank/copy"},
 	"scripts":      {[]string{"s"}, "scripts"},
@@ -151,6 +153,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		ChecksTab:  b("checks_tab"),
 		Filter:     b("filter"),
 		Sort:       b("sort"),
+		Palette:    b("palette"),
 		CopyFile:   b("copy_file"),
 		Yank:       b("yank"),
 		Scripts:    b("scripts"),
@@ -179,7 +182,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 // FullHelp implements help.KeyMap.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab, k.ShiftTab, k.Enter, k.Create, k.CreatePR, k.Refresh},
+		{k.Tab, k.ShiftTab, k.Enter, k.Create, k.CreatePR, k.Refresh, k.Palette},
 		{k.ViewProcs, k.LogTab, k.PRTab, k.DiffTab, k.InspectTab, k.ChecksTab, k.Filter, k.Sort},
 		{k.CopyFile, k.Yank, k.Scripts, k.Aliases},
 		{k.Pull, k.Push, k.Fetch, k.Commit, k.Rebase, k.Update},

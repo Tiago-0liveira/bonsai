@@ -159,6 +159,10 @@ type Model struct {
 	// yankTargets maps a yank-menu label to the text it copies.
 	yankTargets map[string]string
 
+	// paletteByLabel maps a command-palette display label to its command for the
+	// currently open palette.
+	paletteByLabel map[string]paletteCmd
+
 	// Layout / status.
 	width, height int
 	focus         focusArea
