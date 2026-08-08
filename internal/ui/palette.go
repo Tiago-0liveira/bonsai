@@ -197,11 +197,11 @@ func (m Model) paletteCommands() []paletteCmd {
 			m.rebuildItems()
 			return m, nil
 		}),
-		global("Toggle full help", m.keys.Help, func(m Model) (tea.Model, tea.Cmd) {
-			m.help.ShowAll = !m.help.ShowAll
-			m.layout()
-			return m, nil
+		global("Preferences (theme, keys, defaults)", m.keys.Prefs, func(m Model) (tea.Model, tea.Cmd) {
+			return m.openPrefs(false)
 		}),
+		global("Keybindings reference", m.keys.Help, Model.openKeymap),
+		global("Status glyph legend", key.Binding{}, Model.openLegend),
 		global("Quit bonsai", m.keys.Quit, func(m Model) (tea.Model, tea.Cmd) {
 			m.procs.KillAll()
 			return m, tea.Quit

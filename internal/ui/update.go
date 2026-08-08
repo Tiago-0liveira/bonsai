@@ -17,6 +17,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	corenotify "github.com/Tiago-0liveira/bonsai/internal/core/notify"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
@@ -134,8 +135,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingConfirm = nil
 		return m, nil
 
+	case prefs.SaveMsg:
+		return m.applyPrefs(msg)
+
+	case prefs.CloseMsg:
+		m.prefs = nil
+		return m, nil
+
+	case prefs.JumpMsg:
+		m.prefs = nil
+		if msg.Target == "aliases" {
+			return m.openAliasModal()
+		}
+		return m, nil
+
 	case tea.KeyMsg:
-		// An open modal owns all key input.
+		// An open overlay owns all key input.
+		if m.prefs != nil {
+			pm, cmd := m.prefs.Update(msg)
+			m.prefs = &pm
+			return m, cmd
+		}
 		if m.modal != nil {
 			nm, cmd := m.modal.Update(msg)
 			m.modal = &nm
@@ -150,7 +170,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) onResize(msg tea.WindowSizeMsg) Model {
 	m.width, m.height = msg.Width, msg.Height
-	m.help.Width = msg.Width
+	if m.prefs != nil {
+		m.prefs.SetSize(msg.Width, msg.Height)
+	}
 	m.layout()
 	m.ready = true
 	return m
@@ -540,9 +562,10 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadWorktrees(m.repoDir)
 
 	case key.Matches(msg, m.keys.Help):
-		m.help.ShowAll = !m.help.ShowAll
-		m.layout()
-		return m, nil
+		return m.openKeymap()
+
+	case key.Matches(msg, m.keys.Prefs):
+		return m.openPrefs(false)
 
 	case key.Matches(msg, m.keys.Enter):
 		return m.openShell()
@@ -1486,6 +1509,7 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 	steps = append(steps, "delete worktree", "delete branch")
 
 	modal := modals.NewPrune(modals.KindPrune, "Prune worktree "+wt.Branch+"?", mergeLabel, steps, isPR)
+	modal.SetMergeDefault(m.state.Prefs.PruneMerge)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -1497,6 +1521,10 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	// These kinds do not require an existing selection.
 	switch msg.Kind {
+	case modals.KindKeymap:
+		// Any selection in the key reference jumps to the key editor.
+		return m.openPrefs(true)
+
 	case modals.KindPalette:
 		c, found := m.paletteByLabel[msg.Value]
 		if !found {

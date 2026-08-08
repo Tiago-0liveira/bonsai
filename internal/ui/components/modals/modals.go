@@ -47,6 +47,10 @@ const (
 	KindConfirm   Kind = "confirm"
 	KindBulkPrune Kind = "bulk_prune"
 
+	// Reference overlays.
+	KindKeymap Kind = "keymap" // searchable list of every keybinding
+	KindLegend Kind = "legend" // status-glyph legend
+
 	// Worktree creation flow.
 	KindCreateSource   Kind = "create_source"   // pick new/existing/PR
 	KindCreateNew      Kind = "create_new"      // enter new branch name
@@ -157,6 +161,10 @@ func NewPrune(kind Kind, title, mergeLabel string, tailSteps []string, canMerge 
 
 // MergeEnabled reports whether the merge step is toggled on.
 func (m Model) MergeEnabled() bool { return m.mergeOn }
+
+// SetMergeDefault sets the initial state of the merge toggle (the prune-merge
+// preference). It has no effect when the modal offers no merge step.
+func (m *Model) SetMergeDefault(on bool) { m.mergeOn = on && m.canMerge }
 
 // ForceEnabled reports whether the force (discard uncommitted changes) option
 // is toggled on.

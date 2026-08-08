@@ -38,6 +38,7 @@ type keyMap struct {
 	Refresh    key.Binding
 	Kill       key.Binding
 	Restart    key.Binding
+	Prefs      key.Binding
 	Help       key.Binding
 	Quit       key.Binding
 }
@@ -50,7 +51,7 @@ type bindingSpec struct {
 }
 
 // defaultBindings maps each action name to its default keys + help text. Order
-// here is not significant; help ordering is defined by ShortHelp/FullHelp.
+// here is not significant; display grouping is defined by keymapSections.
 var defaultBindings = map[string]bindingSpec{
 	"focus_next":   {[]string{"tab"}, "focus"},
 	"focus_prev":   {[]string{"shift+tab"}, "focus"},
@@ -81,7 +82,8 @@ var defaultBindings = map[string]bindingSpec{
 	"refresh":      {[]string{"R"}, "refresh"},
 	"kill_proc":    {[]string{"k"}, "kill proc"},
 	"restart_proc": {[]string{"r"}, "restart proc"},
-	"help":         {[]string{"?"}, "help"},
+	"prefs":        {[]string{","}, "preferences"},
+	"help":         {[]string{"?"}, "keys"},
 	"quit":         {[]string{"q", "ctrl+c"}, "quit"},
 }
 
@@ -169,24 +171,33 @@ func newKeyMap(overrides map[string]string) keyMap {
 		Refresh:    b("refresh"),
 		Kill:       b("kill_proc"),
 		Restart:    b("restart_proc"),
+		Prefs:      b("prefs"),
 		Help:       b("help"),
 		Quit:       b("quit"),
 	}
 }
 
-// ShortHelp implements help.KeyMap.
-func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab, k.Enter, k.Create, k.Filter, k.Commit, k.Prune, k.Help, k.Quit}
+// keymapSection groups actions for the keymap modal and the preferences key
+// editor. Every defaultBindings action should appear exactly once.
+type keymapSection struct {
+	name    string
+	actions []string
 }
 
-// FullHelp implements help.KeyMap.
-func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Tab, k.ShiftTab, k.Enter, k.Create, k.CreatePR, k.Refresh, k.Palette},
-		{k.ViewProcs, k.LogTab, k.PRTab, k.DiffTab, k.InspectTab, k.ChecksTab, k.Filter, k.Sort},
-		{k.CopyFile, k.Yank, k.Scripts, k.Aliases},
-		{k.Pull, k.Push, k.Fetch, k.Commit, k.Rebase, k.Update},
-		{k.Prune, k.BulkPrune},
-		{k.Kill, k.Restart, k.Help, k.Quit},
+var keymapSections = []keymapSection{
+	{"Navigation", []string{"focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
+	{"Worktree", []string{"shell", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
+	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab"}},
+	{"Files & clipboard", []string{"copy_file", "yank"}},
+	{"Run", []string{"scripts", "aliases"}},
+	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
+	{"Processes tab", []string{"kill_proc", "restart_proc"}},
+}
+
+// effectiveKey returns the key in effect for an action given user overrides.
+func effectiveKey(action string, overrides map[string]string) string {
+	if ov, ok := overrides[action]; ok && ov != "" {
+		return ov
 	}
+	return defaultBindings[action].keys[0]
 }

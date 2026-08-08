@@ -43,6 +43,18 @@ var presets = map[string]Palette{
 	},
 }
 
+// presetOrder is the display order for the preset list.
+var presetOrder = []string{"bonsai", "sakura", "dracula", "nord", "mono"}
+
+// Presets returns the built-in palette names in display order.
+func Presets() []string { return presetOrder }
+
+// Valid reports whether name is a built-in preset.
+func Valid(name string) bool {
+	_, ok := presets[name]
+	return ok
+}
+
 // Current is the palette in effect; components read it when (re)building styles.
 var Current = presets["bonsai"]
 
