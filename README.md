@@ -42,6 +42,7 @@ Juggling git worktrees by hand is tedious: creating them, copying over untracked
 - 🪝 **Lifecycle hooks** (`on_worktree_create` / `on_worktree_delete`) with `{variable}` and `$BONSAI_*` substitution.
 - 🔀 **Git ops** inline: pull, push, commit, rebase (drops to a real shell for conflict resolution).
 - 🗑️ **Prune** with an optional **merge-PR-first** step and a clear preview of exactly what will happen.
+- ⚙️ **Edit `.bonsai.yaml` from the command palette** — every setting, with descriptions and examples, applied live.
 - 🖥️ **Everything works from the CLI too** — `bonsai create`, `bonsai copy`, `bonsai x <alias>`, and more.
 
 ## Install
@@ -92,6 +93,7 @@ Press `n` to create a worktree, `enter` to drop into a shell in the selected one
 | `tab` | Cycle focus between panes |
 | `shift+tab` | Cycle the right-pane tabs |
 | `enter` | Open a shell in the selected worktree |
+| `e` | Open your editor ($VISUAL/$EDITOR) in the selected worktree |
 | `n` | New worktree (new branch / existing branch / PR) |
 | `ctrl+n` | Create a PR from the selected worktree |
 | `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
@@ -101,7 +103,7 @@ Press `n` to create a worktree, `enter` to drop into a shell in the selected one
 | `/` | Filter the worktree list |
 | `c` | Copy a file from main into the worktree (fuzzy) |
 | `y` | Yank: copy path / branch / PR URL to the clipboard |
-| `s` | Run a `package.json` script |
+| `s` | Run a package script (npm / pnpm / yarn / bun / cargo / make) |
 | `p` | Aliases menu (run one, or `＋ new alias`) |
 | `ctrl+p` | Git pull |
 | `ctrl+u` | Git push |

@@ -58,6 +58,16 @@ func TestPrefsBinding(t *testing.T) {
 	}
 }
 
+func TestEditorBinding(t *testing.T) {
+	k := newKeyMap(nil)
+	if got := k.Editor.Keys(); len(got) != 1 || got[0] != "e" {
+		t.Errorf("default editor keys = %v", got)
+	}
+	if k.Editor.Help().Desc != "editor" {
+		t.Errorf("editor help desc = %q", k.Editor.Help().Desc)
+	}
+}
+
 func TestKeymapSectionsCoverEveryAction(t *testing.T) {
 	seen := map[string]int{}
 	for _, sec := range keymapSections {

@@ -26,8 +26,13 @@ type Item struct {
 	// PR is the number of a PR whose head is this branch (0 = none).
 	PR int
 	// PRState is the connected PR's state (gh.StateOpen / StateMerged /
-	// StateClosed). Empty when the PR number came from a "pr-N" branch name.
+	// StateClosed). Empty only when the PR is not in the fetched window.
 	PRState string
+	// PRDraft marks the connected PR as a draft.
+	PRDraft bool
+	// PRReview is the connected PR's review decision (gh.ReviewApproved /
+	// ReviewChangesRequested, "" otherwise).
+	PRReview string
 	// Status holds the worktree's working-tree change counts for the badge.
 	Status git.StatusSummary
 	// Checks is the CI rollup for the connected PR: "pass"/"fail"/"pending"/"".
@@ -101,19 +106,22 @@ func (i Item) prNumber() (int, bool) {
 }
 
 var (
-	titleStyle       lipgloss.Style
-	prBadgeStyle     lipgloss.Style
-	mergedBadgeStyle lipgloss.Style
-	closedBadgeStyle lipgloss.Style
-	normalTitle      lipgloss.Style
-	selectedTitle    lipgloss.Style
-	descStyle        lipgloss.Style
-	accentStyle      lipgloss.Style
-	dirtyStyle       lipgloss.Style
-	runningStyle     lipgloss.Style
-	checkPass        lipgloss.Style
-	checkFail        lipgloss.Style
-	checkPending     lipgloss.Style
+	titleStyle         lipgloss.Style
+	prBadgeStyle       lipgloss.Style
+	draftBadgeStyle    lipgloss.Style
+	mergedBadgeStyle   lipgloss.Style
+	approvedBadgeStyle lipgloss.Style
+	closedBadgeStyle   lipgloss.Style
+	changesBadgeStyle  lipgloss.Style
+	normalTitle        lipgloss.Style
+	selectedTitle      lipgloss.Style
+	descStyle          lipgloss.Style
+	accentStyle        lipgloss.Style
+	dirtyStyle         lipgloss.Style
+	runningStyle       lipgloss.Style
+	checkPass          lipgloss.Style
+	checkFail          lipgloss.Style
+	checkPending       lipgloss.Style
 )
 
 // titleIcon decorates the pane header, sitting in the app's top-left corner.
@@ -125,8 +133,11 @@ func init() { SetTheme(theme.Current) }
 func SetTheme(p theme.Palette) {
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(p.Accent)
 	prBadgeStyle = lipgloss.NewStyle().Foreground(p.PRBadge).Bold(true)
+	draftBadgeStyle = lipgloss.NewStyle().Foreground(p.Dim)
 	mergedBadgeStyle = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
-	closedBadgeStyle = lipgloss.NewStyle().Foreground(p.Dim)
+	approvedBadgeStyle = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
+	closedBadgeStyle = lipgloss.NewStyle().Foreground(p.Danger)
+	changesBadgeStyle = lipgloss.NewStyle().Foreground(p.Danger)
 	normalTitle = lipgloss.NewStyle().Foreground(p.Text)
 	selectedTitle = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
 	descStyle = lipgloss.NewStyle().Foreground(p.Dim)
@@ -138,21 +149,65 @@ func SetTheme(p theme.Palette) {
 	checkPending = lipgloss.NewStyle().Foreground(p.Warning).Bold(true)
 }
 
-// prBadge renders the connected PR badge: colored "#N" while open,
-// "#N merged" once merged, dimmed "#N closed" when closed without merging.
-// Branches named "pr-N" without a known state render the plain badge.
+// PRStatusModes are the display modes for the row PR status indicator, in
+// cycle order.
+var PRStatusModes = []string{"full", "compact", "off"}
+
+// prStatusMode is the active display mode; "full" is the default.
+var prStatusMode = PRStatusModes[0]
+
+// SetPRStatusMode selects how row PR status is shown. Unknown modes fall
+// back to "full".
+func SetPRStatusMode(mode string) {
+	switch mode {
+	case "compact", "off":
+		prStatusMode = mode
+	default:
+		prStatusMode = "full"
+	}
+}
+
+// prStatus maps the connected PR's state, draft flag and review decision to
+// its indicator glyph, label and style. Half circles mark not-ready states
+// (draft, unapproved, changes requested); full circles mark settled ones
+// (approved, merged, closed).
+func (i Item) prStatus() (glyph, label string, st lipgloss.Style) {
+	switch i.PRState {
+	case gh.StateMerged:
+		return "●", "merged", mergedBadgeStyle
+	case gh.StateClosed:
+		return "●", "closed", closedBadgeStyle
+	}
+	if i.PRDraft {
+		return "◐", "draft", draftBadgeStyle
+	}
+	switch i.PRReview {
+	case gh.ReviewApproved:
+		return "●", "approved", approvedBadgeStyle
+	case gh.ReviewChangesRequested:
+		return "◐", "changes", changesBadgeStyle
+	}
+	return "◐", "open", prBadgeStyle
+}
+
+// prBadge renders the connected PR badge: a colored "#N" plus, depending on
+// the display mode, a state glyph ("compact") or glyph and label ("full").
+// With "off" only the number shows. Branches named "pr-N" without a known
+// state always render the plain badge.
 func (i Item) prBadge() string {
 	n, ok := i.prNumber()
 	if !ok {
 		return ""
 	}
-	switch i.PRState {
-	case gh.StateMerged:
-		return mergedBadgeStyle.Render(fmt.Sprintf("#%d merged ", n))
-	case gh.StateClosed:
-		return closedBadgeStyle.Render(fmt.Sprintf("#%d closed ", n))
-	default:
+	if i.PRState == "" || prStatusMode == "off" {
 		return prBadgeStyle.Render(fmt.Sprintf("#%d ", n))
+	}
+	glyph, label, st := i.prStatus()
+	switch prStatusMode {
+	case "compact":
+		return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(glyph) + " "
+	default: // full
+		return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(glyph+" "+label) + " "
 	}
 }
 

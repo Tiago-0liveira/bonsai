@@ -12,6 +12,7 @@ type keyMap struct {
 	Tab        key.Binding
 	ShiftTab   key.Binding
 	Enter      key.Binding
+	Editor     key.Binding
 	Create     key.Binding
 	CreatePR   key.Binding
 	ViewProcs  key.Binding
@@ -56,6 +57,7 @@ var defaultBindings = map[string]bindingSpec{
 	"focus_next":   {[]string{"tab"}, "focus"},
 	"focus_prev":   {[]string{"shift+tab"}, "focus"},
 	"shell":        {[]string{"enter"}, "shell"},
+	"editor":       {[]string{"e"}, "editor"},
 	"new_worktree": {[]string{"n"}, "new worktree"},
 	"create_pr":    {[]string{"ctrl+n"}, "create PR"},
 	"processes":    {[]string{"v"}, "processes"},
@@ -145,6 +147,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		Tab:        b("focus_next"),
 		ShiftTab:   b("focus_prev"),
 		Enter:      b("shell"),
+		Editor:     b("editor"),
 		Create:     b("new_worktree"),
 		CreatePR:   b("create_pr"),
 		ViewProcs:  b("processes"),
@@ -186,7 +189,7 @@ type keymapSection struct {
 
 var keymapSections = []keymapSection{
 	{"Navigation", []string{"focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
-	{"Worktree", []string{"shell", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
+	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
 	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab"}},
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},

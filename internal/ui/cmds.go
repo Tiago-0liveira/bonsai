@@ -23,6 +23,9 @@ import (
 type worktreesMsg struct {
 	trees []git.Worktree
 	err   error
+	// force reports whether gh-backed data (PR list, CI checks) must be
+	// refetched or may be served from the cache.
+	force bool
 }
 
 type metricsMsg struct {
@@ -73,6 +76,8 @@ type prsMsg struct {
 type prMapMsg struct {
 	prs []gh.PR
 	err error
+	// force propagates to the per-PR checks loads (see worktreesMsg.force).
+	force bool
 }
 
 // prDetailMsg carries a fully-loaded PR for the PR detail tab.
@@ -126,11 +131,12 @@ type prCreatedMsg struct {
 
 // --- Commands ---
 
-// loadWorktrees lists worktrees from the main repo.
-func loadWorktrees(repoDir string) tea.Cmd {
+// loadWorktrees lists worktrees from the main repo. force is propagated to the
+// gh-backed follow-up loads (PR list, CI checks).
+func loadWorktrees(repoDir string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		trees, err := git.ListWorktrees(repoDir)
-		return worktreesMsg{trees: trees, err: err}
+		return worktreesMsg{trees: trees, err: err, force: force}
 	}
 }
 
@@ -312,11 +318,12 @@ func loadPruneCandidates(repoDir, base string) tea.Cmd {
 }
 
 // fetchPRs fetches PRs in any state to decorate worktree rows (open, merged,
-// and closed all get a badge). Runs quietly.
-func fetchPRs(repoDir string) tea.Cmd {
+// and closed all get a badge). Results are served from cache when fresh unless
+// force is set. Runs quietly.
+func fetchPRs(repoDir string, cache *gh.Cache, force bool) tea.Cmd {
 	return func() tea.Msg {
-		prs, err := gh.ListPRs(repoDir, "all")
-		return prMapMsg{prs: prs, err: err}
+		prs, err := cache.PRs(repoDir, "all", force)
+		return prMapMsg{prs: prs, err: err, force: force}
 	}
 }
 
@@ -328,10 +335,11 @@ func loadPRDetail(repoDir string, number int) tea.Cmd {
 	}
 }
 
-// loadChecks fetches a PR's CI checks + rollup. Runs quietly (errors → no badge).
-func loadChecks(repoDir, path string, number int) tea.Cmd {
+// loadChecks fetches a PR's CI checks + rollup via the cache (fresh results
+// are reused unless force is set). Runs quietly (errors → no badge).
+func loadChecks(repoDir string, cache *gh.Cache, path string, number int, force bool) tea.Cmd {
 	return func() tea.Msg {
-		checks, err := gh.Checks(repoDir, number)
+		checks, err := cache.Checks(repoDir, number, force)
 		if err != nil {
 			return checksMsg{path: path, number: number}
 		}

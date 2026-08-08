@@ -19,6 +19,8 @@ type SaveMsg struct {
 	Theme      string
 	Sort       string
 	PruneMerge bool
+	// PRStatus is the worktree-list PR status display mode (full/compact/off).
+	PRStatus string
 	// Keys holds personal keybinding overrides (action -> key).
 	Keys map[string]string
 }
@@ -41,6 +43,9 @@ type Action struct {
 // SortModes are the worktree list orderings, in cycle order.
 var SortModes = []string{"name", "ahead", "behind", "pr", "activity", "dirty"}
 
+// PRStatusModes are the worktree-list PR status display modes, in cycle order.
+var PRStatusModes = []string{"full", "compact", "off"}
+
 // reservedKeys can never be bound: they drive navigation and quit semantics
 // inside bonsai (and its modals).
 var reservedKeys = map[string]bool{
@@ -56,6 +61,7 @@ const (
 	rowPreset
 	rowSort
 	rowPruneMerge
+	rowPRStatus
 	rowAliases
 	rowKey
 )
@@ -73,6 +79,7 @@ type Model struct {
 	theme      string
 	sort       string
 	pruneMerge bool
+	prStatus   string
 	actions    []Action
 	defaults   map[string]string // action -> default key
 	overrides  map[string]string // action -> personal key (working copy)
@@ -87,15 +94,19 @@ type Model struct {
 // New builds the overlay. actions must be ordered by section; a section header
 // is inserted wherever the section changes. startOnKeys places the cursor on
 // the first keybinding row (used when arriving from the keymap modal).
-func New(themePreset, sort string, pruneMerge bool, presets []string, actions []Action, startOnKeys bool) Model {
+func New(themePreset, sort string, pruneMerge bool, prStatus string, presets []string, actions []Action, startOnKeys bool) Model {
 	if sort == "" {
 		sort = SortModes[0]
+	}
+	if prStatus == "" {
+		prStatus = PRStatusModes[0]
 	}
 	m := Model{
 		presets:    presets,
 		theme:      themePreset,
 		sort:       sort,
 		pruneMerge: pruneMerge,
+		prStatus:   prStatus,
 		actions:    actions,
 		defaults:   map[string]string{},
 		overrides:  map[string]string{},
@@ -108,6 +119,7 @@ func New(themePreset, sort string, pruneMerge bool, presets []string, actions []
 		row{kind: rowHeader, header: "Defaults"},
 		row{kind: rowSort},
 		row{kind: rowPruneMerge},
+		row{kind: rowPRStatus},
 		row{kind: rowAliases},
 		row{kind: rowHeader, header: "Keybindings"},
 	)
@@ -179,7 +191,7 @@ func (m Model) save() tea.Cmd {
 	for k, v := range m.overrides {
 		keys[k] = v
 	}
-	snap := SaveMsg{Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, Keys: keys}
+	snap := SaveMsg{Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, PRStatus: m.prStatus, Keys: keys}
 	return func() tea.Msg { return snap }
 }
 
@@ -301,6 +313,17 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 	case rowPruneMerge:
 		m.pruneMerge = !m.pruneMerge
 		m.msg = ""
+		return m, m.save()
+
+	case rowPRStatus:
+		idx := 0
+		for i, s := range PRStatusModes {
+			if s == m.prStatus {
+				idx = i
+			}
+		}
+		m.prStatus = PRStatusModes[(idx+dir+len(PRStatusModes))%len(PRStatusModes)]
+		m.msg = "PR status: " + m.prStatus
 		return m, m.save()
 
 	case rowAliases:
@@ -440,6 +463,13 @@ func (m Model) renderRow(i int) string {
 			val = onStyle.Render("on")
 		}
 		return cursor + pad(label, labelCol) + val
+
+	case rowPRStatus:
+		label := "PR status in worktree list"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.prStatus+" ▸")
 
 	case rowAliases:
 		label := "manage aliases…"

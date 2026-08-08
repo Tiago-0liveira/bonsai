@@ -42,6 +42,12 @@ const (
 	StateClosed = "CLOSED"
 )
 
+// PR review decisions as reported by GitHub.
+const (
+	ReviewApproved         = "APPROVED"
+	ReviewChangesRequested = "CHANGES_REQUESTED"
+)
+
 // PR is a pull request with its current state.
 type PR struct {
 	Number int    `json:"number"`
@@ -50,6 +56,11 @@ type PR struct {
 	Head   string `json:"headRefName"`
 	Base   string `json:"baseRefName"`
 	URL    string `json:"url"`
+	// IsDraft marks a draft pull request.
+	IsDraft bool `json:"isDraft"`
+	// ReviewDecision is the overall review verdict: APPROVED,
+	// CHANGES_REQUESTED, REVIEW_REQUIRED, or "".
+	ReviewDecision string `json:"reviewDecision"`
 }
 
 // ListPRs returns pull requests for the repo containing dir via
@@ -58,7 +69,7 @@ type PR struct {
 // never pushed out of the window by older PRs. Requires the gh CLI to be
 // installed and authenticated.
 func ListPRs(dir, state string) ([]PR, error) {
-	args := []string{"pr", "list", "--state", state, "--json", "number,title,state,headRefName,baseRefName,url", "--limit", "50"}
+	args := []string{"pr", "list", "--state", state, "--json", "number,title,state,headRefName,baseRefName,url,isDraft,reviewDecision", "--limit", "50"}
 	if state == "all" {
 		args = append(args, "--search", "sort:updated-desc")
 	}

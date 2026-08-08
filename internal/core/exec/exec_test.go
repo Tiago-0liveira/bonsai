@@ -85,6 +85,70 @@ func TestRemoveDropsFromList(t *testing.T) {
 	}
 }
 
+func TestKilledProcessReportsStopped(t *testing.T) {
+	m := NewManager()
+	dir := t.TempDir()
+
+	p, err := m.Spawn(dir, "srv", "sleep 30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.KillByID(dir, p.ID)
+	if !waitDone(p, time.Second) {
+		t.Fatal("killed process still running")
+	}
+	if got := p.Status(); got != "stopped" {
+		t.Errorf("killed status = %q, want stopped", got)
+	}
+
+	// A natural non-zero exit still reads as failed.
+	bad, err := m.Spawn(dir, "bad", "false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDone(bad, time.Second)
+	if got := bad.Status(); got != "failed" {
+		t.Errorf("failed status = %q, want failed", got)
+	}
+}
+
+func TestEditorResolution(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+	if name, args := editor(); name != "vi" || args != nil {
+		t.Errorf("fallback = %q %v, want vi", name, args)
+	}
+
+	t.Setenv("EDITOR", "nano")
+	if name, args := editor(); name != "nano" || len(args) != 0 {
+		t.Errorf("$EDITOR only = %q %v, want nano", name, args)
+	}
+
+	t.Setenv("EDITOR", "vim -u NONE")
+	if name, args := editor(); name != "vim" || len(args) != 2 || args[0] != "-u" || args[1] != "NONE" {
+		t.Errorf("$EDITOR with args = %q %v", name, args)
+	}
+
+	// $VISUAL wins over $EDITOR.
+	t.Setenv("VISUAL", "code -w")
+	if name, args := editor(); name != "code" || len(args) != 1 || args[0] != "-w" {
+		t.Errorf("$VISUAL priority = %q %v, want code -w", name, args)
+	}
+}
+
+func TestEditorCmdRootedAtDir(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "nano")
+	dir := t.TempDir()
+	cmd := EditorCmd(dir)
+	if cmd.Dir != dir {
+		t.Errorf("EditorCmd dir = %q, want %q", cmd.Dir, dir)
+	}
+	if got := cmd.Args[0]; got != "nano" {
+		t.Errorf("EditorCmd argv0 = %q, want nano", got)
+	}
+}
+
 func TestLastLocalURL(t *testing.T) {
 	cases := []struct {
 		name string

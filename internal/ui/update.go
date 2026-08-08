@@ -127,12 +127,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prTickMsg:
 		return m.onPRTick()
 
+	case configSavedMsg:
+		return m.onConfigSaved(msg)
+
 	case modals.SubmitMsg:
 		return m.onModalSubmit(msg)
 
 	case modals.CancelMsg:
 		m.modal = nil
 		m.pendingConfirm = nil
+		m.pendingCfg = nil
+		m.pendingCfgSub = ""
 		return m, nil
 
 	case prefs.SaveMsg:
@@ -188,7 +193,7 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 
 	// Fetch metrics per branch, connected PRs, dirty state, activity, and the log
 	// for the selection.
-	cmds := []tea.Cmd{fetchPRs(m.repoDir)}
+	cmds := []tea.Cmd{fetchPRs(m.repoDir, m.ghCache, msg.force)}
 	for _, t := range msg.trees {
 		cmds = append(cmds, loadStatus(t.Path), loadActivity(t.Path))
 		if t.Branch != "" && t.Branch != "(detached)" {
@@ -226,7 +231,9 @@ func (m Model) onPRMap(msg prMapMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.prByBranch = make(map[string]gh.PR, len(msg.prs))
+	m.prByNumber = make(map[int]gh.PR, len(msg.prs))
 	for _, pr := range msg.prs {
+		m.prByNumber[pr.Number] = pr
 		if cur, ok := m.prByBranch[pr.Head]; ok && cur.State == gh.StateOpen && pr.State != gh.StateOpen {
 			continue
 		}
@@ -243,7 +250,7 @@ func (m Model) onPRMap(msg prMapMsg) (tea.Model, tea.Cmd) {
 			if pr.Base != "" {
 				cmds = append(cmds, loadMetrics(t.Path, t.Branch, m.upstreamFor(t.Branch)))
 			}
-			cmds = append(cmds, loadChecks(m.repoDir, t.Path, pr.Number))
+			cmds = append(cmds, loadChecks(m.repoDir, m.ghCache, t.Path, pr.Number, msg.force))
 		}
 	}
 	return m, tea.Batch(cmds...)
@@ -303,9 +310,20 @@ func (m *Model) rebuildItems() {
 			it.Metrics = mtr
 			it.HasMetrics = true
 		}
-		if pr, ok := m.prByBranch[t.Branch]; ok {
+		pr, ok := m.prByBranch[t.Branch]
+		if !ok {
+			// "pr-N" worktree branches match no head ref; resolve by number.
+			if strings.HasPrefix(t.Branch, "pr-") {
+				if n, err := strconv.Atoi(strings.TrimPrefix(t.Branch, "pr-")); err == nil {
+					pr, ok = m.prByNumber[n]
+				}
+			}
+		}
+		if ok {
 			it.PR = pr.Number
 			it.PRState = pr.State
+			it.PRDraft = pr.IsDraft
+			it.PRReview = pr.ReviewDecision
 		}
 		it.Status = m.statuses[t.Path]
 		it.Checks = m.checkRollup[t.Path]
@@ -385,8 +403,9 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.status = msg.label + ": ok"
 	}
-	// Refresh worktrees + log after any mutating op.
-	return m, loadWorktrees(m.repoDir)
+	// Refresh worktrees + log after any mutating op. Force a gh refetch so
+	// badges reflect the just-completed op instead of a cached state.
+	return m, loadWorktrees(m.repoDir, true)
 }
 
 func (m Model) onProcTick() (tea.Model, tea.Cmd) {
@@ -436,6 +455,7 @@ func (m *Model) checkProcTransitions() {
 		st := p.Status()
 		prev := m.seenProcStatus[key]
 		m.seenProcStatus[key] = st
+		// "stopped" (user kill) is intentionally silent.
 		if prev == "running" && (st == "done" || st == "failed") {
 			notify("bonsai: process "+st, fmt.Sprintf("#%d %s", p.ID, p.Label))
 		}
@@ -446,9 +466,11 @@ func (m *Model) checkProcTransitions() {
 func notify(title, body string) { corenotify.Send(title, body) }
 
 // onPRTick re-checks PR states periodically so a merge done outside bonsai
-// flips the row badge to MERGED without a restart or manual refresh.
+// flips the row badge to MERGED without a restart or manual refresh. Fresh
+// cached results are reused, so only every other tick (TTL > tick interval)
+// actually shells out to gh.
 func (m Model) onPRTick() (tea.Model, tea.Cmd) {
-	return m, tea.Batch(fetchPRs(m.repoDir), tickPRs())
+	return m, tea.Batch(fetchPRs(m.repoDir, m.ghCache, false), tickPRs())
 }
 
 // activeProcess returns the process currently selected for display under path,
@@ -559,7 +581,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.cycleRightTab()
 
 	case key.Matches(msg, m.keys.Refresh):
-		return m, loadWorktrees(m.repoDir)
+		return m, loadWorktrees(m.repoDir, true)
 
 	case key.Matches(msg, m.keys.Help):
 		return m.openKeymap()
@@ -569,6 +591,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Enter):
 		return m.openShell()
+
+	case key.Matches(msg, m.keys.Editor):
+		return m.openEditor()
 
 	case key.Matches(msg, m.keys.Create):
 		return m.openCreateSourceModal()
@@ -699,6 +724,19 @@ func (m Model) openShell() (tea.Model, tea.Cmd) {
 	c := coreexec.ShellCmd(wt.Path)
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
 		return opDoneMsg{label: "shell", err: err}
+	})
+}
+
+// openEditor suspends the TUI into the user's editor ($VISUAL/$EDITOR, vi
+// fallback) rooted at the selected worktree.
+func (m Model) openEditor() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	c := coreexec.EditorCmd(wt.Path)
+	return m, tea.ExecProcess(c, func(err error) tea.Msg {
+		return opDoneMsg{label: "editor", err: err}
 	})
 }
 
@@ -1407,7 +1445,7 @@ func (m Model) onPRCreated(msg prCreatedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.status = fmt.Sprintf("opened PR #%d", msg.number)
-	return m, fetchPRs(m.repoDir)
+	return m, fetchPRs(m.repoDir, m.ghCache, true)
 }
 
 // procTabKey handles process-control keys while the Processes tab is focused.
@@ -1548,6 +1586,15 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 			return m, action
 		}
 		return m, nil
+
+	case modals.KindConfigChoice:
+		return m.onConfigChoice(msg.Value)
+
+	case modals.KindConfigValue:
+		return m.onConfigValue(msg.Value)
+
+	case modals.KindConfigConfirm:
+		return m.onConfigConfirm()
 
 	case modals.KindPRTitle:
 		if msg.Value == "" {

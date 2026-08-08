@@ -150,9 +150,10 @@ func (m Model) paletteCommands() []paletteCmd {
 		global("New worktree", m.keys.Create, Model.openCreateSourceModal),
 		global("Prune merged worktrees", m.keys.BulkPrune, Model.openBulkPruneModal),
 		global("Refresh", m.keys.Refresh, func(m Model) (tea.Model, tea.Cmd) {
-			return m, loadWorktrees(m.repoDir)
+			return m, loadWorktrees(m.repoDir, true)
 		}),
 		wt("Open shell", m.keys.Enter, Model.openShell),
+		wt("Open editor", m.keys.Editor, Model.openEditor),
 		wt("Pull", m.keys.Pull, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
 			m.status = "pulling…"
 			return m, gitPull(path)
@@ -206,6 +207,18 @@ func (m Model) paletteCommands() []paletteCmd {
 			m.procs.KillAll()
 			return m, tea.Quit
 		}),
+	}
+
+	// Config editors (.bonsai.yaml): one entry per setting.
+	for _, s := range configSettings {
+		s := s
+		cmds = append(cmds, paletteCmd{
+			label: s.label,
+			run: func(m Model) (tea.Model, tea.Cmd) { return m.openConfigSetting(s) },
+		})
+	}
+
+	cmds = append(cmds,
 
 		// PR actions (normally tab-local).
 		pr("PR: approve", func(m Model) (tea.Model, tea.Cmd) {
@@ -258,7 +271,7 @@ func (m Model) paletteCommands() []paletteCmd {
 			}
 			return m, nil
 		}},
-	}
+	)
 
 	// Aliases: one entry each, run in the selected worktree with hook-variable
 	// expansion (state aliases shadow config aliases of the same name).
