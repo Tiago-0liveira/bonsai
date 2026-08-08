@@ -112,7 +112,8 @@ Press `n` to create a worktree, `enter` to drop into a shell in the selected one
 | `x` | Prune the worktree (with optional PR merge) |
 | `X` | Prune all merged worktrees |
 | `R` | Refresh worktrees, metrics, and PRs |
-| `?` | Toggle full help |
+| `,` | Preferences (theme, keybindings, defaults) |
+| `?` | Keybindings reference (searchable) |
 | `q` / `ctrl+c` | Quit |
 
 ## CLI

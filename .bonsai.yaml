@@ -46,10 +46,13 @@ notifications:
 
 # ── Keybindings ──────────────────────────────────────────────────────────────
 # Override any action's key. Action names (defaults in parens):
-#   focus_next(tab) shell(enter) new_worktree(n) create_pr(ctrl+n) processes(v)
-#   pr_tab(P) diff_tab(d) filter(/) sort(o) copy_file(c) scripts(s) aliases(p)
-#   pull(ctrl+p) push(ctrl+u) fetch(f) commit(C) rebase(r) update_base(u)
-#   prune(x) bulk_prune(X) refresh(R) help(?) quit(q)
+#   focus_next(tab) focus_prev(shift+tab) shell(enter) new_worktree(n)
+#   create_pr(ctrl+n) processes(v) log_tab(l) pr_tab(P) diff_tab(d)
+#   inspect_tab(i) checks_tab(b) filter(/) sort(o) palette(ctrl+k)
+#   copy_file(c) yank(y) scripts(s) aliases(p) pull(ctrl+p) push(ctrl+u)
+#   fetch(f) commit(C) rebase(r) update_base(u) prune(x) bulk_prune(X)
+#   refresh(R) kill_proc(k) restart_proc(r) prefs(,) help(?) quit(q)
+# Keys overridden in-app (preferences modal) take precedence over these.
 # A key that collides with another action is ignored with a status-bar warning.
 keys: {}
   # new_worktree: "N"

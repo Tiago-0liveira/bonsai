@@ -50,3 +50,36 @@ func TestKeyCollisionsDetected(t *testing.T) {
 		t.Fatalf("expected a collision for new_worktree=x")
 	}
 }
+
+func TestPrefsBinding(t *testing.T) {
+	k := newKeyMap(nil)
+	if got := k.Prefs.Keys(); len(got) != 1 || got[0] != "," {
+		t.Errorf("default prefs keys = %v", got)
+	}
+}
+
+func TestKeymapSectionsCoverEveryAction(t *testing.T) {
+	seen := map[string]int{}
+	for _, sec := range keymapSections {
+		for _, a := range sec.actions {
+			seen[a]++
+		}
+	}
+	for action := range defaultBindings {
+		if seen[action] != 1 {
+			t.Errorf("action %q appears %d times in keymapSections, want 1", action, seen[action])
+		}
+	}
+	if len(seen) != len(defaultBindings) {
+		t.Errorf("keymapSections covers %d actions, defaultBindings has %d", len(seen), len(defaultBindings))
+	}
+}
+
+func TestEffectiveKey(t *testing.T) {
+	if got := effectiveKey("prune", nil); got != "x" {
+		t.Errorf("effectiveKey default = %q", got)
+	}
+	if got := effectiveKey("prune", map[string]string{"prune": "z"}); got != "z" {
+		t.Errorf("effectiveKey override = %q", got)
+	}
+}

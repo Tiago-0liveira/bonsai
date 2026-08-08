@@ -3,7 +3,6 @@
 package ui
 
 import (
-	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -11,6 +10,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
@@ -81,12 +81,13 @@ type Model struct {
 
 	// Components.
 	keys keyMap
-	help help.Model
 	list worktreelist.Model
 	term terminal.Model
 
 	// modal is non-nil while an overlay is active.
 	modal *modals.Model
+	// prefs is non-nil while the preferences overlay is open.
+	prefs *prefs.Model
 
 	// Data.
 	worktrees []git.Worktree
@@ -175,22 +176,37 @@ type Model struct {
 
 // New constructs the root model with its core-layer dependencies injected.
 func New(repoDir string, cfg *config.Config, state *config.State) Model {
-	// Resolve the color palette from config and push it to every styled component.
-	theme.Current = theme.Resolve(cfg.Theme.Preset, cfg.Theme.Overrides)
+	// Resolve the color palette: a personal in-app pick (state.json) overrides
+	// the repo's .bonsai.yaml preset; per-role overrides stay repo-level.
+	preset := cfg.Theme.Preset
+	if state.Prefs.Theme != "" {
+		preset = state.Prefs.Theme
+	}
+	theme.Current = theme.Resolve(preset, cfg.Theme.Overrides)
 	applyTheme()
 	worktreelist.SetTheme(theme.Current)
 	modals.SetTheme(theme.Current)
+	prefs.SetTheme(theme.Current)
+
+	// Personal key overrides (state.json) override repo-level ones.
+	keys := make(map[string]string, len(cfg.Keys)+len(state.Prefs.Keys))
+	for k, v := range cfg.Keys {
+		keys[k] = v
+	}
+	for k, v := range state.Prefs.Keys {
+		keys[k] = v
+	}
 
 	m := Model{
 		repoDir:         repoDir,
 		cfg:             cfg,
 		state:           state,
 		procs:           coreexec.NewManager(),
-		keys:            newKeyMap(cfg.Keys),
-		help:            help.New(),
+		keys:            newKeyMap(keys),
 		list:            worktreelist.New(),
 		term:            terminal.New(),
 		focus:           focusList,
+		sort:            sortModeFromName(state.Prefs.Sort),
 		metrics:         map[string]git.Metrics{},
 		activeProc:      map[string]int{},
 		prByBranch:      map[string]gh.PR{},
@@ -205,10 +221,47 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 	}
 	m.list.Focus()
 	m.term.SetTitle("Git Log")
-	if cols := keyCollisions(cfg.Keys); len(cols) > 0 {
+	if cols := keyCollisions(keys); len(cols) > 0 {
 		m.status = "key conflicts ignored: " + cols[0]
 	}
 	return m
+}
+
+// name returns the persisted preference name for a sort mode.
+func (s sortMode) name() string {
+	switch s {
+	case sortAhead:
+		return "ahead"
+	case sortBehind:
+		return "behind"
+	case sortPR:
+		return "pr"
+	case sortActivity:
+		return "activity"
+	case sortDirty:
+		return "dirty"
+	default:
+		return "name"
+	}
+}
+
+// sortModeFromName parses a persisted sort preference; unknown names sort by
+// name.
+func sortModeFromName(name string) sortMode {
+	switch name {
+	case "ahead":
+		return sortAhead
+	case "behind":
+		return sortBehind
+	case "pr":
+		return sortPR
+	case "activity":
+		return sortActivity
+	case "dirty":
+		return sortDirty
+	default:
+		return sortName
+	}
 }
 
 // Init kicks off the first data load.

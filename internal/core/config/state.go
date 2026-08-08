@@ -8,12 +8,29 @@ import (
 	"sync"
 )
 
+// Prefs holds personal UI preferences that override the repo's .bonsai.yaml
+// for the local user: theme preset, keybinding overrides, default sort, and
+// the prune merge default. Project settings (hooks, aliases, upstream) stay
+// in .bonsai.yaml.
+type Prefs struct {
+	// Theme names a palette preset chosen in-app ("" = use .bonsai.yaml).
+	Theme string `json:"theme,omitempty"`
+	// Sort is the default worktree list ordering (name/ahead/behind/pr/
+	// activity/dirty; "" = name).
+	Sort string `json:"sort,omitempty"`
+	// Keys maps an action name to a personal key override.
+	Keys map[string]string `json:"keys,omitempty"`
+	// PruneMerge turns the prune modal's merge-PR step on by default.
+	PruneMerge bool `json:"prune_merge,omitempty"`
+}
+
 // State is persisted mutable data: how often each main-repo file has been copied
 // into a worktree, plus user-recorded aliases.
 type State struct {
 	// CopyCounts maps a main-repo relative file path to its copy frequency.
 	CopyCounts map[string]int `json:"copy_counts"`
 	Aliases    []Alias        `json:"aliases"`
+	Prefs      Prefs          `json:"prefs"`
 
 	mu   sync.Mutex `json:"-"`
 	path string     `json:"-"`
@@ -125,4 +142,12 @@ func (s *State) SortedAliases() []Alias {
 	copy(out, s.Aliases)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// SetPrefs replaces the stored UI preferences and persists them.
+func (s *State) SetPrefs(p Prefs) error {
+	s.mu.Lock()
+	s.Prefs = p
+	s.mu.Unlock()
+	return s.Save()
 }

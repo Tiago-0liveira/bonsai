@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
@@ -572,6 +573,9 @@ func (m Model) View() string {
 	if !m.ready {
 		return "Loading bonsai…"
 	}
+	if m.prefs != nil {
+		return m.prefs.View()
+	}
 	if m.modal != nil {
 		return m.modal.View()
 	}
@@ -661,28 +665,44 @@ func (m Model) borderFor(focused bool) lipgloss.Style {
 	return blurredBorder
 }
 
-// statusBar renders the keybinding help (compact, or full when toggled with ?).
-// In compact mode a status/error is appended, truncated to the leftover width so
-// the keymap stays visible. Every line is clamped to the terminal width so the
-// bar can never overflow and break the layout.
+// statusBar renders a context-aware key hint line plus any status/error
+// message, truncated to the terminal width so the bar never overflows.
 func (m Model) statusBar() string {
-	help := m.help.View(m.keys)
+	help := m.contextHelp()
 
-	if m.help.ShowAll {
-		return truncateToWidth(help, m.width)
-	}
-
-	line := help
 	msg := m.status
 	if m.err != nil {
 		msg = "error: " + m.err.Error()
 	}
+	line := help
 	if msg != "" {
 		if avail := m.width - lipgloss.Width(help) - 3; avail >= 8 {
 			line = help + "  " + statusStyle.Render(ansi.Truncate(msg, avail, "…"))
 		}
 	}
 	return truncateToWidth(line, m.width)
+}
+
+// contextHelp renders the keys that matter right now: worktree actions while
+// the list is focused, tab cycling while the right pane is, plus the always-on
+// palette/preferences/keys/quit.
+func (m Model) contextHelp() string {
+	bindings := []key.Binding{m.keys.Tab}
+	if m.focus == focusList {
+		bindings = append(bindings, m.keys.Enter, m.keys.Create, m.keys.Filter)
+	} else {
+		bindings = append(bindings, m.keys.ShiftTab)
+	}
+	bindings = append(bindings, m.keys.Palette, m.keys.Prefs, m.keys.Help, m.keys.Quit)
+
+	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
+	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	parts := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		h := b.Help()
+		parts = append(parts, keySt.Render(h.Key)+" "+descSt.Render(h.Desc))
+	}
+	return strings.Join(parts, descSt.Render(" · "))
 }
 
 // clampHeight drops any lines of s beyond the first h.

@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
@@ -15,7 +13,6 @@ import (
 func renderModel() Model {
 	m := testModel()
 	m.width, m.height = 100, 40
-	m.help = help.New()
 	m.keys = newKeyMap(nil)
 	m.diffFileContent = map[string]string{}
 	return m
