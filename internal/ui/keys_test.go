@@ -23,6 +23,20 @@ func TestNewKeyMapOverride(t *testing.T) {
 	}
 }
 
+func TestPaletteBinding(t *testing.T) {
+	k := newKeyMap(nil)
+	if got := k.Palette.Keys(); len(got) != 1 || got[0] != "ctrl+k" {
+		t.Errorf("default palette keys = %v", got)
+	}
+	k = newKeyMap(map[string]string{"palette": ":"})
+	if got := k.Palette.Keys(); len(got) != 1 || got[0] != ":" {
+		t.Errorf("overridden palette keys = %v", got)
+	}
+	if k.Palette.Help().Desc != "commands" {
+		t.Errorf("palette help desc = %q", k.Palette.Help().Desc)
+	}
+}
+
 func TestKeyCollisionsNoneByDefault(t *testing.T) {
 	if got := keyCollisions(nil); got != nil {
 		t.Errorf("expected no collisions for defaults, got %v", got)
