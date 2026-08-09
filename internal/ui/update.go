@@ -800,8 +800,11 @@ type paletteEntry struct {
 // right now show the reason instead and stay inert on enter.
 func (m Model) openPalette() (tea.Model, tea.Cmd) {
 	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
-	entries := make([]paletteEntry, 0, 64)
 	m.paletteByLabel = map[string]paletteCmd{}
+
+	// Entries grouped by section, preserving first-seen section order.
+	var order []string
+	bySection := map[string][]paletteEntry{}
 
 	add := func(c paletteCmd) {
 		plain, display := c.label, c.label
@@ -828,19 +831,30 @@ func (m Model) openPalette() (tea.Model, tea.Cmd) {
 			return
 		}
 		m.paletteByLabel[display] = c
-		entries = append(entries, paletteEntry{display: display, plain: plain})
+		sec := c.section
+		if sec == "" {
+			sec = "Other"
+		}
+		if _, seen := bySection[sec]; !seen {
+			order = append(order, sec)
+		}
+		bySection[sec] = append(bySection[sec], paletteEntry{display: display, plain: plain})
 	}
 	for _, c := range m.paletteCommands() {
 		add(c)
 	}
 
-	filter := func(q string) []string {
+	filter := func(q string) []modals.Section {
 		q = strings.ToLower(strings.TrimSpace(q))
-		out := make([]string, 0, len(entries))
-		for _, e := range entries {
-			if q == "" || strings.Contains(strings.ToLower(e.plain), q) {
-				out = append(out, e.display)
+		out := make([]modals.Section, 0, len(order))
+		for _, sec := range order {
+			items := make([]string, 0, len(bySection[sec]))
+			for _, e := range bySection[sec] {
+				if q == "" || strings.Contains(strings.ToLower(e.plain), q) {
+					items = append(items, e.display)
+				}
 			}
+			out = append(out, modals.Section{Name: sec, Items: items})
 		}
 		return out
 	}
@@ -849,7 +863,7 @@ func (m Model) openPalette() (tea.Model, tea.Cmd) {
 	if wt, ok := m.selectedWorktree(); ok && wt.Branch != "" {
 		title += " · " + wt.Branch
 	}
-	modal := modals.NewFuzzy(modals.KindPalette, title, filter, filter(""))
+	modal := modals.NewSectionedFuzzy(modals.KindPalette, title, filter, filter(""))
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil

@@ -117,8 +117,13 @@ func (m Model) openKeymap() (tea.Model, tea.Cmd) {
 	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
 
 	overrides := m.mergedKeyOverrides()
-	entries := make([]paletteEntry, 0, len(defaultBindings))
+	type kmSection struct {
+		name    string
+		entries []paletteEntry
+	}
+	sections := make([]kmSection, 0, len(keymapSections))
 	for _, sec := range keymapSections {
+		entries := make([]paletteEntry, 0, len(sec.actions))
 		for _, name := range sec.actions {
 			k := effectiveKey(name, overrides)
 			custom := ""
@@ -130,20 +135,25 @@ func (m Model) openKeymap() (tea.Model, tea.Cmd) {
 				dim.Render("· "+sec.name+custom)
 			entries = append(entries, paletteEntry{display: display, plain: plain})
 		}
+		sections = append(sections, kmSection{name: sec.name, entries: entries})
 	}
 
-	filter := func(q string) []string {
+	filter := func(q string) []modals.Section {
 		q = strings.ToLower(strings.TrimSpace(q))
-		out := make([]string, 0, len(entries))
-		for _, e := range entries {
-			if q == "" || strings.Contains(strings.ToLower(e.plain), q) {
-				out = append(out, e.display)
+		out := make([]modals.Section, 0, len(sections))
+		for _, s := range sections {
+			items := make([]string, 0, len(s.entries))
+			for _, e := range s.entries {
+				if q == "" || strings.Contains(strings.ToLower(e.plain), q) {
+					items = append(items, e.display)
+				}
 			}
+			out = append(out, modals.Section{Name: s.name, Items: items})
 		}
 		return out
 	}
 
-	modal := modals.NewFuzzy(modals.KindKeymap, "Keybindings · enter to edit in preferences", filter, filter(""))
+	modal := modals.NewSectionedFuzzy(modals.KindKeymap, "Keybindings · enter to edit in preferences", filter, filter(""))
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil

@@ -16,10 +16,19 @@ import (
 // reports whether it can run right now, with a reason when it cannot.
 type paletteCmd struct {
 	label     string
+	section   string // group name for the sectioned palette
 	binding   key.Binding // zero value when there is no direct keybinding
 	scopeHint func(m Model) string
 	available func(m Model) (bool, string)
 	run       func(m Model) (tea.Model, tea.Cmd)
+}
+
+// tag stamps a section name onto a group of commands.
+func tag(section string, cs []paletteCmd) []paletteCmd {
+	for i := range cs {
+		cs[i].section = section
+	}
+	return cs
 }
 
 // --- Scope hints ---
@@ -145,8 +154,7 @@ func (m Model) paletteCommands() []paletteCmd {
 		return paletteCmd{label: label, binding: b, run: run}
 	}
 
-	cmds := []paletteCmd{
-		// Worktree & git ops.
+	cmds := tag("Worktree & git", []paletteCmd{
 		global("New worktree", m.keys.Create, Model.openCreateSourceModal),
 		global("Prune merged worktrees", m.keys.BulkPrune, Model.openBulkPruneModal),
 		global("Refresh", m.keys.Refresh, func(m Model) (tea.Model, tea.Cmd) {
@@ -173,16 +181,18 @@ func (m Model) paletteCommands() []paletteCmd {
 		feature("Create pull request", m.keys.CreatePR, Model.openCreatePR),
 		feature("Copy file into worktree", m.keys.CopyFile, Model.openCopyModal),
 		wt("Yank path / branch / PR URL", m.keys.Yank, Model.openYankModal),
+	})
 
-		// Tabs.
+	cmds = append(cmds, tag("Tabs", []paletteCmd{
 		wt("Show git log", m.keys.LogTab, Model.openLogTab),
 		pr("Show PR detail", Model.openPRTab),
 		feature("Show diff vs base", m.keys.DiffTab, Model.openDiffTab),
 		wt("Show inspector", m.keys.InspectTab, Model.openInspectTab),
 		paletteCmd{label: "Show CI checks", binding: m.keys.ChecksTab, scopeHint: wtScope, available: needBranch, run: Model.openChecksTab},
 		wt("Show processes", m.keys.ViewProcs, Model.toggleProcsTab),
+	})...)
 
-		// Tools.
+	cmds = append(cmds, tag("Tools", []paletteCmd{
 		wt("Run package script", m.keys.Scripts, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
 			return m, loadScripts(path)
 		})),
@@ -207,18 +217,19 @@ func (m Model) paletteCommands() []paletteCmd {
 			m.procs.KillAll()
 			return m, tea.Quit
 		}),
-	}
+	})...)
 
 	// Config editors (.bonsai.yaml): one entry per setting.
 	for _, s := range configSettings {
 		s := s
 		cmds = append(cmds, paletteCmd{
-			label: s.label,
-			run: func(m Model) (tea.Model, tea.Cmd) { return m.openConfigSetting(s) },
+			label:   s.label,
+			section: "Config",
+			run:     func(m Model) (tea.Model, tea.Cmd) { return m.openConfigSetting(s) },
 		})
 	}
 
-	cmds = append(cmds,
+	cmds = append(cmds, tag("PR actions", []paletteCmd{
 
 		// PR actions (normally tab-local).
 		pr("PR: approve", func(m Model) (tea.Model, tea.Cmd) {
@@ -249,9 +260,11 @@ func (m Model) paletteCommands() []paletteCmd {
 		pr("PR: mark ready for review", func(m Model) (tea.Model, tea.Cmd) {
 			return m, prReady(m.repoDir, m.prNumber())
 		}),
+	})...)
 
-		// Process control (normally tab-local).
-		paletteCmd{label: "Process: kill selected", binding: m.keys.Kill, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
+	// Process control (normally tab-local).
+	cmds = append(cmds, tag("Processes", []paletteCmd{
+		{label: "Process: kill selected", binding: m.keys.Kill, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
 			wt, _ := m.selectedWorktree()
 			if id, ok := m.selectedProcID(wt.Path); ok {
 				m.procs.KillByID(wt.Path, id)
@@ -259,7 +272,7 @@ func (m Model) paletteCommands() []paletteCmd {
 			}
 			return m, nil
 		}},
-		paletteCmd{label: "Process: restart selected", binding: m.keys.Restart, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
+		{label: "Process: restart selected", binding: m.keys.Restart, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
 			wt, _ := m.selectedWorktree()
 			if id, ok := m.selectedProcID(wt.Path); ok {
 				if p, err := m.procs.Restart(wt.Path, id); err == nil {
@@ -271,7 +284,7 @@ func (m Model) paletteCommands() []paletteCmd {
 			}
 			return m, nil
 		}},
-	)
+	})...)
 
 	// Aliases: one entry each, run in the selected worktree with hook-variable
 	// expansion (state aliases shadow config aliases of the same name).
@@ -284,6 +297,7 @@ func (m Model) paletteCommands() []paletteCmd {
 		name := a.Name
 		cmds = append(cmds, paletteCmd{
 			label:     "alias: " + name,
+			section:   "Aliases",
 			scopeHint: wtScope,
 			available: needWorktree,
 			run: func(m Model) (tea.Model, tea.Cmd) {
