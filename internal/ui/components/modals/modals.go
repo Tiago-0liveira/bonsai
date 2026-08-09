@@ -93,6 +93,25 @@ type CancelMsg struct{ Kind Kind }
 // FilterFunc maps a query to an ordered candidate list.
 type FilterFunc func(query string) []string
 
+// Section is a named group of items in a sectioned fuzzy modal. Items are
+// already filtered to the current query by the parent-supplied SectionFilterFunc.
+type Section struct {
+	Name  string
+	Items []string
+}
+
+// SectionFilterFunc maps a query to an ordered list of sections, each holding
+// only the items that match the query.
+type SectionFilterFunc func(query string) []Section
+
+// visRow is one rendered line in a sectioned modal: either a section header or
+// an item within a section. It is recomputed from the sections + collapse state.
+type visRow struct {
+	header  bool
+	section int
+	item    int
+}
+
 // Model is the overlay state.
 type Model struct {
 	kind   Kind
@@ -105,6 +124,12 @@ type Model struct {
 	filter FilterFunc
 	width  int
 	height int
+
+	// Sectioned fuzzy fields.
+	sectioned     bool
+	sections      []Section
+	sectionFilter SectionFilterFunc
+	expanded      map[string]bool // section name -> manually expanded (default collapsed)
 
 	// Prune-mode fields.
 	canMerge   bool
@@ -138,6 +163,26 @@ func NewFuzzy(kind Kind, title string, filter FilterFunc, initial []string) Mode
 	ti.Placeholder = "type to filter…"
 	ti.Focus()
 	return Model{kind: kind, mode: modeFuzzy, title: title, input: ti, items: initial, filter: filter}
+}
+
+// NewSectionedFuzzy builds a live fuzzy-search modal whose results are grouped
+// into collapsible sections. It opens collapsed (headers only); typing a query
+// auto-expands every section with a match and hides the rest. filter is called on
+// every keystroke; initial seeds the first render.
+func NewSectionedFuzzy(kind Kind, title string, filter SectionFilterFunc, initial []Section) Model {
+	ti := textinput.New()
+	ti.Placeholder = "type to filter…"
+	ti.Focus()
+	return Model{
+		kind:          kind,
+		mode:          modeFuzzy,
+		title:         title,
+		input:         ti,
+		sectioned:     true,
+		sections:      initial,
+		sectionFilter: filter,
+		expanded:      map[string]bool{},
+	}
 }
 
 // NewScroll builds a read-only scrollable modal (e.g. a single file's diff).
@@ -270,6 +315,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "left", "right":
+		// In a sectioned modal, arrows collapse/expand the header under the
+		// cursor; on an item they fall through to the text field.
+		if m.sectioned {
+			rows := m.visibleRows()
+			if m.cursor >= 0 && m.cursor < len(rows) && rows[m.cursor].header {
+				m.expanded[m.sections[rows[m.cursor].section].Name] = key.String() == "right"
+				return m, nil
+			}
+		}
+
 	case " ", "m":
 		// Toggle merge only in prune mode; in text modes these are literal keys
 		// and must fall through to the input field.
@@ -288,6 +344,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case "enter":
+		if m.sectioned {
+			return m.onSectionedEnter()
+		}
 		return m, m.onEnter()
 	}
 
@@ -295,25 +354,80 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if m.mode == modeInput || m.mode == modeFuzzy {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		if m.mode == modeFuzzy && m.filter != nil {
-			m.items = m.filter(m.input.Value())
-			m.cursor = 0
+		if m.mode == modeFuzzy {
+			if m.sectioned && m.sectionFilter != nil {
+				m.sections = m.sectionFilter(m.input.Value())
+				m.cursor = m.firstItemRow()
+			} else if m.filter != nil {
+				m.items = m.filter(m.input.Value())
+				m.cursor = 0
+			}
 		}
 		return m, cmd
 	}
 	return m, nil
 }
 
+// visibleRows flattens the sections into the currently visible lines: every
+// section header, plus the items of expanded sections. A non-empty query
+// force-expands sections that have matches and hides sections that have none.
+func (m Model) visibleRows() []visRow {
+	hasQuery := strings.TrimSpace(m.input.Value()) != ""
+	var rows []visRow
+	for si, s := range m.sections {
+		if hasQuery && len(s.Items) == 0 {
+			continue
+		}
+		rows = append(rows, visRow{header: true, section: si})
+		if hasQuery || m.expanded[s.Name] {
+			for ii := range s.Items {
+				rows = append(rows, visRow{section: si, item: ii})
+			}
+		}
+	}
+	return rows
+}
+
+// firstItemRow returns the index of the first item row, or 0 (the first header)
+// when nothing is expanded.
+func (m Model) firstItemRow() int {
+	for i, r := range m.visibleRows() {
+		if !r.header {
+			return i
+		}
+	}
+	return 0
+}
+
+// onSectionedEnter toggles the header under the cursor or submits the item.
+func (m Model) onSectionedEnter() (Model, tea.Cmd) {
+	rows := m.visibleRows()
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return m, nil
+	}
+	r := rows[m.cursor]
+	if r.header {
+		name := m.sections[r.section].Name
+		m.expanded[name] = !m.expanded[name]
+		return m, nil
+	}
+	return m, m.submit(m.sections[r.section].Items[r.item])
+}
+
 func (m *Model) moveCursor(delta int) {
-	if len(m.items) == 0 {
+	n := len(m.items)
+	if m.sectioned {
+		n = len(m.visibleRows())
+	}
+	if n == 0 {
 		return
 	}
 	m.cursor += delta
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	if m.cursor >= len(m.items) {
-		m.cursor = len(m.items) - 1
+	if m.cursor >= n {
+		m.cursor = n - 1
 	}
 }
 
@@ -395,9 +509,15 @@ func (m Model) View() string {
 	case modeFuzzy:
 		b.WriteString(m.input.View())
 		b.WriteString("\n")
-		b.WriteString(m.renderList())
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("↑/↓ move · enter select · esc cancel"))
+		if m.sectioned {
+			b.WriteString(m.renderSections())
+			b.WriteString("\n")
+			b.WriteString(dimStyle.Render("↑/↓ move · →/← expand/collapse · enter select · esc cancel"))
+		} else {
+			b.WriteString(m.renderList())
+			b.WriteString("\n")
+			b.WriteString(dimStyle.Render("↑/↓ move · enter select · esc cancel"))
+		}
 	default:
 		if m.body != "" {
 			b.WriteString(m.body)
@@ -448,6 +568,55 @@ func (m Model) renderPrune() string {
 		hint = "space toggle merge · " + hint
 	}
 	b.WriteString(dangerStyle.Render("This is destructive.") + " " + dimStyle.Render(hint))
+	return b.String()
+}
+
+// renderSections draws the collapsible section list with a scroll window around
+// the cursor, mirroring renderList's windowing.
+func (m Model) renderSections() string {
+	rows := m.visibleRows()
+	if len(rows) == 0 {
+		return dimStyle.Render("(no matches)")
+	}
+	const maxRows = 14
+	start := 0
+	if m.cursor >= maxRows {
+		start = m.cursor - maxRows + 1
+	}
+	end := start + maxRows
+	if end > len(rows) {
+		end = len(rows)
+	}
+
+	var b strings.Builder
+	for i := start; i < end; i++ {
+		r := rows[i]
+		sel := i == m.cursor
+		if r.header {
+			s := m.sections[r.section]
+			arrow := "▸"
+			if strings.TrimSpace(m.input.Value()) != "" || m.expanded[s.Name] {
+				arrow = "▾"
+			}
+			line := fmt.Sprintf("%s %s (%d)", arrow, s.Name, len(s.Items))
+			if sel {
+				b.WriteString(cursorStyle.Render("› " + line))
+			} else {
+				b.WriteString("  " + titleStyle.Render(line))
+			}
+		} else {
+			item := m.sections[r.section].Items[r.item]
+			if sel {
+				b.WriteString(cursorStyle.Render("  › "))
+				b.WriteString(selectedStyle.Render(item))
+			} else {
+				b.WriteString("    " + item)
+			}
+		}
+		if i < end-1 {
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
 

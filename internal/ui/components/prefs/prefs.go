@@ -84,6 +84,7 @@ type Model struct {
 	defaults   map[string]string // action -> default key
 	overrides  map[string]string // action -> personal key (working copy)
 	rows       []row
+	collapsed  map[int]bool // header row index -> collapsed
 	cursor     int
 	capture    string // action awaiting a new key, "" when idle
 	msg        string // transient status line
@@ -110,6 +111,7 @@ func New(themePreset, sort string, pruneMerge bool, prStatus string, presets []s
 		actions:    actions,
 		defaults:   map[string]string{},
 		overrides:  map[string]string{},
+		collapsed:  map[int]bool{},
 	}
 	m.rows = append(m.rows, row{kind: rowHeader, header: "Appearance"})
 	for _, p := range presets {
@@ -140,9 +142,60 @@ func New(themePreset, sort string, pruneMerge bool, prStatus string, presets []s
 			}
 		}
 	} else {
+		// Fold the long Keybindings tree by default: collapse its top header and
+		// every per-section sub-header so the overlay opens compact.
+		for i, r := range m.rows {
+			if r.kind == rowHeader && (r.header == "Keybindings" || m.headerLevel(i) == 1) {
+				m.collapsed[i] = true
+			}
+		}
 		m.cursor = 1 // first preset
 	}
 	return m
+}
+
+// headerLevel is 0 for top-level headers and 1 for indented sub-headers
+// (the per-section keybinding groups, prefixed with "  ").
+func (m Model) headerLevel(i int) int {
+	if strings.HasPrefix(m.rows[i].header, "  ") {
+		return 1
+	}
+	return 0
+}
+
+// visibleRows returns the indices of rows currently shown, honoring collapsed
+// headers. A collapsed header hides every row (including sub-headers) until the
+// next header at its level or shallower.
+func (m Model) visibleRows() []int {
+	type hdr struct {
+		level     int
+		collapsed bool
+	}
+	var stack []hdr
+	hidden := func() bool {
+		for _, h := range stack {
+			if h.collapsed {
+				return true
+			}
+		}
+		return false
+	}
+	out := make([]int, 0, len(m.rows))
+	for i := range m.rows {
+		if m.rows[i].kind == rowHeader {
+			lvl := m.headerLevel(i)
+			for len(stack) > 0 && stack[len(stack)-1].level >= lvl {
+				stack = stack[:len(stack)-1]
+			}
+			if !hidden() {
+				out = append(out, i)
+			}
+			stack = append(stack, hdr{level: lvl, collapsed: m.collapsed[i]})
+		} else if !hidden() {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // SetOverrides loads the personal key overrides in effect.
@@ -216,7 +269,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case "right":
 		return m.activate(1)
 	case "enter", " ":
-		return m.activate(1)
+		return m.activate(0)
 	}
 	return m, nil
 }
@@ -265,24 +318,19 @@ func (m Model) captureKey(key tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m *Model) move(delta int) {
-	n := len(m.rows)
-	if n == 0 {
+	vis := m.visibleRows()
+	if len(vis) == 0 {
 		return
 	}
-	i := m.cursor
-	for step := 0; step < n; step++ {
-		i += delta
-		if i < 0 {
-			i = n - 1
-		}
-		if i >= n {
-			i = 0
-		}
-		if m.rows[i].kind != rowHeader {
+	pos := 0
+	for idx, i := range vis {
+		if i == m.cursor {
+			pos = idx
 			break
 		}
 	}
-	m.cursor = i
+	pos = (pos + delta + len(vis)) % len(vis)
+	m.cursor = vis[pos]
 	m.msg = ""
 }
 
@@ -294,19 +342,33 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 	}
 	r := m.rows[m.cursor]
 	switch r.kind {
+	case rowHeader:
+		// enter (dir 0) toggles; ← collapses, → expands.
+		if dir == 0 {
+			m.collapsed[m.cursor] = !m.collapsed[m.cursor]
+		} else {
+			m.collapsed[m.cursor] = dir < 0
+		}
+		m.msg = ""
+		return m, nil
+
 	case rowPreset:
 		m.theme = r.preset
 		m.msg = "theme: " + r.preset
 		return m, m.save()
 
 	case rowSort:
+		d := dir
+		if d == 0 {
+			d = 1
+		}
 		idx := 0
 		for i, s := range SortModes {
 			if s == m.sort {
 				idx = i
 			}
 		}
-		m.sort = SortModes[(idx+dir+len(SortModes))%len(SortModes)]
+		m.sort = SortModes[(idx+d+len(SortModes))%len(SortModes)]
 		m.msg = "default sort: " + m.sort
 		return m, m.save()
 
@@ -316,13 +378,17 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		return m, m.save()
 
 	case rowPRStatus:
+		d := dir
+		if d == 0 {
+			d = 1
+		}
 		idx := 0
 		for i, s := range PRStatusModes {
 			if s == m.prStatus {
 				idx = i
 			}
 		}
-		m.prStatus = PRStatusModes[(idx+dir+len(PRStatusModes))%len(PRStatusModes)]
+		m.prStatus = PRStatusModes[(idx+d+len(PRStatusModes))%len(PRStatusModes)]
 		m.msg = "PR status: " + m.prStatus
 		return m, m.save()
 
@@ -376,7 +442,7 @@ func (m Model) View() string {
 	} else if m.msg != "" {
 		b.WriteString(dimStyle.Render(m.msg))
 	}
-	b.WriteString("\n" + dimStyle.Render("↑/↓ move · ←/→ adjust · enter select · esc close"))
+	b.WriteString("\n" + dimStyle.Render("↑/↓ move · ←/→ adjust · enter select/fold · esc close"))
 
 	box := boxStyle.Render(b.String())
 	if m.width == 0 || m.height == 0 {
@@ -401,22 +467,33 @@ func (m Model) windowLines() int {
 }
 
 func (m Model) renderRows() string {
+	vis := m.visibleRows()
 	n := m.windowLines()
-	start := 0
-	if m.cursor >= n {
-		start = m.cursor - n + 1
+	if n > len(vis) {
+		n = len(vis)
 	}
-	if start+n > len(m.rows) {
-		start = len(m.rows) - n
+	cpos := 0
+	for idx, i := range vis {
+		if i == m.cursor {
+			cpos = idx
+			break
+		}
+	}
+	start := 0
+	if cpos >= n {
+		start = cpos - n + 1
+	}
+	if start+n > len(vis) {
+		start = len(vis) - n
 	}
 	if start < 0 {
 		start = 0
 	}
 
 	var b strings.Builder
-	for i := start; i < start+n && i < len(m.rows); i++ {
-		b.WriteString(m.renderRow(i))
-		if i < start+n-1 && i < len(m.rows)-1 {
+	for k := start; k < start+n && k < len(vis); k++ {
+		b.WriteString(m.renderRow(vis[k]))
+		if k < start+n-1 && k < len(vis)-1 {
 			b.WriteString("\n")
 		}
 	}
@@ -433,7 +510,19 @@ func (m Model) renderRow(i int) string {
 
 	switch r.kind {
 	case rowHeader:
-		return "  " + headerStyle.Render(r.header)
+		arrow := "▾ "
+		if m.collapsed[i] {
+			arrow = "▸ "
+		}
+		indent := ""
+		if m.headerLevel(i) == 1 {
+			indent = "  "
+		}
+		name := strings.TrimLeft(r.header, " ")
+		if sel {
+			return cursorStyle.Render("› ") + indent + cursorStyle.Render(arrow+name)
+		}
+		return "  " + indent + headerStyle.Render(arrow+name)
 
 	case rowPreset:
 		mark := dimStyle.Render("○")

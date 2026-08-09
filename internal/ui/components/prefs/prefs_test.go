@@ -45,6 +45,92 @@ func moveToAction(m *Model, action string) {
 	}
 }
 
+// headerIndex returns the row index of a header by its display name.
+func headerIndex(m Model, name string) int {
+	for i, r := range m.rows {
+		if r.kind == rowHeader && r.header == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func contains(vis []int, i int) bool {
+	for _, v := range vis {
+		if v == i {
+			return true
+		}
+	}
+	return false
+}
+
+func TestKeybindingsCollapsedByDefault(t *testing.T) {
+	m := testModel()
+	// Any key row lives under the (collapsed) Keybindings header, so it must
+	// not be in the visible set on open.
+	var keyRow int = -1
+	for i, r := range m.rows {
+		if r.kind == rowKey {
+			keyRow = i
+			break
+		}
+	}
+	if keyRow == -1 {
+		t.Fatal("expected a key row")
+	}
+	if contains(m.visibleRows(), keyRow) {
+		t.Error("key rows should be hidden while Keybindings is collapsed")
+	}
+	// The Keybindings header itself is visible.
+	if !contains(m.visibleRows(), headerIndex(m, "Keybindings")) {
+		t.Error("Keybindings header should be visible")
+	}
+}
+
+func TestStartOnKeysExpandsKeybindings(t *testing.T) {
+	m := New("bonsai", "name", false, "", []string{"bonsai"}, testActions(), true)
+	if m.rows[m.cursor].kind != rowKey {
+		t.Fatal("startOnKeys should land the cursor on a key row")
+	}
+	if !contains(m.visibleRows(), m.cursor) {
+		t.Error("the key row under the cursor should be visible when arriving via startOnKeys")
+	}
+}
+
+func TestHeaderEnterTogglesCollapse(t *testing.T) {
+	m := testModel()
+	kb := headerIndex(m, "Keybindings")
+	m.cursor = kb
+	if !m.collapsed[kb] {
+		t.Fatal("Keybindings should start collapsed")
+	}
+	// Enter expands it; its sub-headers become visible.
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if nm.collapsed[kb] {
+		t.Error("enter on a collapsed header should expand it")
+	}
+	sub := headerIndex(nm, "  Git")
+	if sub == -1 || !contains(nm.visibleRows(), sub) {
+		t.Error("sub-headers should be visible after expanding Keybindings")
+	}
+}
+
+func TestHeaderArrowsCollapseExpand(t *testing.T) {
+	m := testModel()
+	appr := headerIndex(m, "Appearance")
+	m.cursor = appr
+	// left collapses.
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if !nm.collapsed[appr] {
+		t.Error("left should collapse the header")
+	}
+	// right expands.
+	nm2, _ := nm.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if nm2.collapsed[appr] {
+		t.Error("right should expand the header")
+	}
+}
+
 func TestPresetChangeEmitsSave(t *testing.T) {
 	m := testModel()
 	m.cursor = 2 // sakura row
