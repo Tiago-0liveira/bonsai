@@ -57,13 +57,23 @@ func (m *Model) SetFollow(f bool) { m.follow = f }
 // EnsureVisible scrolls the viewport the minimum amount so that content line
 // (0-indexed) is within the visible window.
 func (m *Model) EnsureVisible(line int) {
+	if line < 0 {
+		line = 0
+	}
 	top := m.vp.YOffset
+	if top < 0 {
+		top = 0
+	}
 	bottom := top + m.vp.Height - 1
 	switch {
 	case line < top:
 		m.vp.SetYOffset(line)
 	case line > bottom:
-		m.vp.SetYOffset(line - m.vp.Height + 1)
+		newOffset := line - m.vp.Height + 1
+		if newOffset < 0 {
+			newOffset = 0
+		}
+		m.vp.SetYOffset(newOffset)
 	}
 }
 

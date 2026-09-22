@@ -8,6 +8,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func renderModel() Model {
@@ -144,3 +145,97 @@ func TestRenderInspectCleanNoCommit(t *testing.T) {
 		t.Errorf("main worktree should not show a diff section:\n%s", out)
 	}
 }
+
+func TestTabStripNeverWraps(t *testing.T) {
+	m := renderModel()
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{
+		{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
+	})
+	m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
+
+	testWidths := []int{10, 15, 20, 25, 30, 40, 50, 60, 75, 80, 100, 120}
+	testTabs := []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR}
+
+	for _, w := range testWidths {
+		for _, tab := range testTabs {
+			m.rightTab = tab
+			strip := m.tabStrip(w)
+
+			// Must never contain newlines (strictly single line)
+			if strings.Contains(strip, "\n") {
+				t.Fatalf("tabStrip(%d) with tab %v contains newlines:\n%q", w, tab, strip)
+			}
+
+			// Rendered visual width must never exceed available width
+			visualW := lipgloss.Width(strip)
+			if visualW > w {
+				t.Fatalf("tabStrip(%d) with tab %v visual width %d > %d:\n%q", w, tab, visualW, w, strip)
+			}
+
+			// Height must be at most 1
+			h := lipgloss.Height(strip)
+			if h > 1 {
+				t.Fatalf("tabStrip(%d) with tab %v height %d > 1", w, tab, h)
+			}
+		}
+	}
+}
+
+func TestActiveTabAlwaysVisibleInConstrainedTabStrip(t *testing.T) {
+	m := renderModel()
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{
+		{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
+	})
+	m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
+
+	// Even at constrained width of 35, the active tab label must be present in strip
+	for _, tab := range []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR} {
+		m.rightTab = tab
+		strip := m.tabStrip(35)
+		activeKey := tabLabel(tab, true) // compact label
+		trimmedKey := strings.TrimSpace(activeKey)
+		if !strings.Contains(strip, trimmedKey) {
+			t.Errorf("tabStrip(35) active tab %v (key %q) not found in strip:\n%q", tab, trimmedKey, strip)
+		}
+	}
+}
+
+func TestViewHeightNeverExceedsTerminalHeight(t *testing.T) {
+	termSizes := [][2]int{
+		{80, 24},  // standard CMD / terminal
+		{100, 40}, // standard wide
+		{60, 20},  // compact
+		{120, 30}, // wide
+		{40, 15},  // very small
+	}
+
+	for _, sz := range termSizes {
+		w, h := sz[0], sz[1]
+		m := renderModel()
+		m.width, m.height = w, h
+		m.list = worktreelist.New()
+		m.list.SetItems([]worktreelist.Item{
+			{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
+		})
+		m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
+		m.ready = true
+		m.layout()
+
+		for _, tab := range []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR} {
+			m.rightTab = tab
+			view := m.View()
+			actualH := lipgloss.Height(view)
+			if actualH > h {
+				t.Fatalf("View() at size %dx%d with tab %v produced height %d (exceeds %d):\n%s",
+					w, h, tab, actualH, h, view)
+			}
+			if actualH != h {
+				t.Fatalf("View() at size %dx%d with tab %v produced height %d (expected exactly %d)",
+					w, h, tab, actualH, h)
+			}
+		}
+	}
+}
+
