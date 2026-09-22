@@ -30,7 +30,12 @@ func initRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("SECRET"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	commit := exec.Command("sh", "-c", "git add -A && git commit -qm init")
+	add := exec.Command("git", "add", "-A")
+	add.Dir = repo
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	commit := exec.Command("git", "commit", "-qm", "init")
 	commit.Dir = repo
 	if out, err := commit.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v: %s", err, out)

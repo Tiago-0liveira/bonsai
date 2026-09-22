@@ -98,17 +98,30 @@ func (c *Config) WorktreePath(repoDir, branch string) string {
 	name := strings.ReplaceAll(tmpl, "{repo}", filepath.Base(repoDir))
 	name = strings.ReplaceAll(name, "{branch}", safe)
 
-	if filepath.IsAbs(name) {
+	if isAbsOrRooted(name) {
 		return filepath.Clean(name)
 	}
 
 	root := c.Worktree.Root
 	if root == "" {
 		root = filepath.Dir(repoDir)
-	} else if !filepath.IsAbs(root) {
+	} else if !isAbsOrRooted(root) {
 		root = filepath.Join(repoDir, root)
 	}
 	return filepath.Join(root, name)
+}
+
+func isAbsOrRooted(p string) bool {
+	if filepath.IsAbs(p) {
+		return true
+	}
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") {
+		return true
+	}
+	if len(p) >= 2 && p[1] == ':' {
+		return true
+	}
+	return false
 }
 
 // RemoteOf returns the remote portion of an upstream ref: "origin" for
