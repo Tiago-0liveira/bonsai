@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +27,22 @@ func main() {
 		cfgPath, args = args[1], args[2:]
 	case len(args) >= 1 && strings.HasPrefix(args[0], "--config="):
 		cfgPath, args = strings.TrimPrefix(args[0], "--config="), args[1:]
+	}
+	if cfgPath != "" {
+		if strings.HasPrefix(cfgPath, "~") {
+			if home, err := os.UserHomeDir(); err == nil {
+				if cfgPath == "~" {
+					cfgPath = home
+				} else if strings.HasPrefix(cfgPath, "~/") || strings.HasPrefix(cfgPath, "~\\") {
+					cfgPath = filepath.Join(home, cfgPath[2:])
+				}
+			}
+		}
+		if abs, err := filepath.Abs(cfgPath); err == nil {
+			cfgPath = filepath.Clean(abs)
+		} else {
+			cfgPath = filepath.Clean(cfgPath)
+		}
 	}
 
 	// Any remaining argument selects a non-interactive subcommand; bare

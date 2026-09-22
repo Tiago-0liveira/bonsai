@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 
@@ -220,15 +221,24 @@ func cmdX(repoDir string, args []string, out, errOut io.Writer) error {
 	return cmd.Run()
 }
 
+// pathEqual compares two filesystem paths, case-insensitively on Windows.
+func pathEqual(a, b string) bool {
+	ca := filepath.Clean(a)
+	cb := filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ca, cb)
+	}
+	return ca == cb
+}
+
 // branchForPath returns the branch checked out in the worktree at path, or "".
 func branchForPath(repoDir, path string) string {
 	trees, err := git.ListWorktrees(repoDir)
 	if err != nil {
 		return ""
 	}
-	clean := filepath.Clean(path)
 	for _, t := range trees {
-		if filepath.Clean(t.Path) == clean {
+		if pathEqual(t.Path, path) {
 			return t.Branch
 		}
 	}
@@ -327,11 +337,20 @@ func printAliases(repoDir string, out io.Writer) error {
 	return tw.Flush()
 }
 
-// cmdShellInit prints a shell function enabling `bcd <branch>` to change dirs.
+// cmdShellInit prints shell integration helpers enabling `bcd <branch>` to change dirs.
 func cmdShellInit(out io.Writer) error {
-	fmt.Fprint(out, `# bonsai shell integration — add to ~/.zshrc or ~/.bashrc:
+	fmt.Fprint(out, `# bonsai shell integration
+#
+# Bash / Zsh — add to ~/.zshrc or ~/.bashrc:
 #   eval "$(bonsai shell-init)"
 bcd() { cd "$(bonsai path "${1:-main}")" || return; }
+
+# PowerShell — add to $PROFILE:
+#   function bcd { param($target = "main") $p = (bonsai path $target); if ($LASTEXITCODE -eq 0 -and $p) { Set-Location $p } }
+
+# Windows CMD — create bcd.bat on your PATH:
+#   @echo off
+#   for /f "delims=" %%i in ('bonsai path %*') do cd /d "%%i"
 `)
 	return nil
 }
@@ -351,7 +370,7 @@ func resolveWorktree(repoDir, name string) (string, error) {
 		}
 	}
 	for _, t := range trees {
-		if t.Branch == name || t.Path == name || filepath.Base(t.Path) == name {
+		if t.Branch == name || pathEqual(t.Path, name) || (runtime.GOOS == "windows" && strings.EqualFold(filepath.Base(t.Path), name)) || filepath.Base(t.Path) == name {
 			return t.Path, nil
 		}
 	}

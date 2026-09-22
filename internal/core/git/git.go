@@ -61,7 +61,11 @@ func runRaw(dir string, args ...string) (string, error) {
 // that from inside a linked worktree this is that worktree, not the main repo —
 // use MainRoot when you need the primary worktree.
 func RepoRoot(dir string) (string, error) {
-	return run(dir, "rev-parse", "--show-toplevel")
+	out, err := run(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(out), nil
 }
 
 // MainRoot returns the main worktree's path regardless of which worktree dir is
@@ -74,7 +78,7 @@ func MainRoot(dir string) (string, error) {
 	if len(trees) == 0 {
 		return "", fmt.Errorf("no worktrees found for %s", dir)
 	}
-	return trees[0].Path, nil
+	return filepath.Clean(trees[0].Path), nil
 }
 
 // ListWorktrees parses `git worktree list --porcelain` into structured data.
@@ -104,7 +108,7 @@ func ListWorktrees(dir string) ([]Worktree, error) {
 		switch {
 		case strings.HasPrefix(line, "worktree "):
 			flush()
-			cur.Path = strings.TrimPrefix(line, "worktree ")
+			cur.Path = filepath.Clean(strings.TrimPrefix(line, "worktree "))
 			open = true
 		case strings.HasPrefix(line, "HEAD "):
 			cur.HEAD = strings.TrimPrefix(line, "HEAD ")
@@ -160,7 +164,15 @@ func ListBranches(dir string) ([]string, error) {
 	if out == "" {
 		return nil, nil
 	}
-	return strings.Split(out, "\n"), nil
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	var branches []string
+	for _, b := range lines {
+		b = strings.TrimSpace(b)
+		if b != "" {
+			branches = append(branches, b)
+		}
+	}
+	return branches, nil
 }
 
 // ErrWorktreeDirty is returned by RemoveWorktree when git refuses to remove a
@@ -312,7 +324,8 @@ func StatusSummaryOf(dir string) (StatusSummary, error) {
 	if strings.TrimSpace(out) == "" {
 		return s, nil
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		line = strings.TrimRight(line, "\r")
 		if len(line) < 3 {
 			continue
 		}
@@ -365,7 +378,14 @@ func StashCount(dir string) (int, error) {
 	if strings.TrimSpace(out) == "" {
 		return 0, nil
 	}
-	return len(strings.Split(out, "\n")), nil
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	count := 0
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // LastCommitUnix returns the HEAD commit's author time as a unix timestamp.

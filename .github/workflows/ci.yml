@@ -10,7 +10,19 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shell: bash
+            test_cmd: go test -race ./...
+          - os: windows-latest
+            shell: cmd
+            test_cmd: go test ./...
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +33,7 @@ jobs:
           cache: true
 
       - name: Verify go.mod is tidy
+        if: runner.os != 'Windows'
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
@@ -32,4 +45,4 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test -race ./...
+        run: ${{ matrix.test_cmd }}
