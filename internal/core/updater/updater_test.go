@@ -225,3 +225,161 @@ func TestInstallPipeline(t *testing.T) {
 		})
 	}
 }
+
+func TestSemVerComparison(t *testing.T) {
+	// Plan requirement: Test v1.2.0 < v1.2.1, v1.2.0 == 1.2.0, v2.0.0 > v1.9.9
+	cmp, err := Compare("v1.2.0", "v1.2.1")
+	if err != nil || cmp >= 0 {
+		t.Fatalf("expected v1.2.0 < v1.2.1, got cmp=%d err=%v", cmp, err)
+	}
+	if !IsNewerVersion("v1.2.0", "v1.2.1") {
+		t.Fatal("expected IsNewerVersion(v1.2.0, v1.2.1) to be true")
+	}
+
+	cmp, err = Compare("v1.2.0", "1.2.0")
+	if err != nil || cmp != 0 {
+		t.Fatalf("expected v1.2.0 == 1.2.0, got cmp=%d err=%v", cmp, err)
+	}
+	if IsNewerVersion("v1.2.0", "1.2.0") || IsNewerVersion("1.2.0", "v1.2.0") {
+		t.Fatal("expected IsNewerVersion to be false for identical versions")
+	}
+
+	cmp, err = Compare("v2.0.0", "v1.9.9")
+	if err != nil || cmp <= 0 {
+		t.Fatalf("expected v2.0.0 > v1.9.9, got cmp=%d err=%v", cmp, err)
+	}
+	if !IsNewerVersion("v1.9.9", "v2.0.0") {
+		t.Fatal("expected IsNewerVersion(v1.9.9, v2.0.0) to be true")
+	}
+	if IsNewerVersion("v2.0.0", "v1.9.9") {
+		t.Fatal("expected IsNewerVersion(v2.0.0, v1.9.9) to be false")
+	}
+}
+
+func TestCacheCooldown(t *testing.T) {
+	// Plan requirement: Verify ShouldCheckForUpdate() returns false when
+	// last_checked_at is recent, and true when older than 24 hours.
+	now := time.Now().Unix()
+
+	// Direct timestamp evaluation
+	if ShouldCheckForUpdateAt(now-600, now) {
+		t.Fatal("expected ShouldCheckForUpdateAt to return false for 10-minute-old check")
+	}
+	if !ShouldCheckForUpdateAt(now-86401, now) {
+		t.Fatal("expected ShouldCheckForUpdateAt to return true for >24-hour-old check")
+	}
+	if !ShouldCheckForUpdateAt(0, now) {
+		t.Fatal("expected ShouldCheckForUpdateAt to return true when never checked")
+	}
+
+	// State file cache integration
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("LOCALAPPDATA", dir)
+	t.Setenv("HOME", dir)
+
+	// No state file -> true
+	if !ShouldCheckForUpdate() {
+		t.Fatal("expected ShouldCheckForUpdate to be true when no state file exists")
+	}
+
+	// Recent check (1 hour ago) -> false
+	if err := SaveState(&State{LastCheckedAt: time.Now().Add(-1 * time.Hour).Unix(), LatestVersion: "v1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if ShouldCheckForUpdate() {
+		t.Fatal("expected ShouldCheckForUpdate to be false when checked 1 hour ago")
+	}
+
+	// Expired check (25 hours ago) -> true
+	if err := SaveState(&State{LastCheckedAt: time.Now().Add(-25 * time.Hour).Unix(), LatestVersion: "v1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if !ShouldCheckForUpdate() {
+		t.Fatal("expected ShouldCheckForUpdate to be true when checked 25 hours ago")
+	}
+}
+
+func TestPromptUserToUpdate(t *testing.T) {
+	// Interactive yes
+	for _, inStr := range []string{"y\n", "Y\n", "yes\n", "YES\n"} {
+		var out bytes.Buffer
+		accepted, err := PromptUserToUpdate(strings.NewReader(inStr), &out, "v1.2.0", "v1.3.0", "https://example.com")
+		if err != nil || !accepted {
+			t.Fatalf("expected accepted=true for %q, got %v, err=%v", inStr, accepted, err)
+		}
+		if !strings.Contains(out.String(), "Do you want to update now? [y/N]:") {
+			t.Fatalf("missing prompt in output: %s", out.String())
+		}
+	}
+
+	// Interactive no / empty
+	for _, inStr := range []string{"n\n", "N\n", "\n"} {
+		var out bytes.Buffer
+		accepted, err := PromptUserToUpdate(strings.NewReader(inStr), &out, "v1.2.0", "v1.3.0", "https://example.com")
+		if err != nil || accepted {
+			t.Fatalf("expected accepted=false for %q, got %v, err=%v", inStr, accepted, err)
+		}
+		if !strings.Contains(out.String(), "Update skipped.") {
+			t.Fatalf("expected 'Update skipped.' in output: %s", out.String())
+		}
+	}
+
+	// Explicit update decline message
+	{
+		var out bytes.Buffer
+		accepted, err := PromptUserToUpdateExplicit(strings.NewReader("n\n"), &out, "v1.2.0", "v1.3.0", "https://example.com")
+		if err != nil || accepted {
+			t.Fatalf("expected accepted=false for explicit decline")
+		}
+		if !strings.Contains(out.String(), "Update cancelled.") {
+			t.Fatalf("expected 'Update cancelled.' in output: %s", out.String())
+		}
+	}
+
+	// Non-interactive / CI notice
+	SetForceNonInteractiveForTesting(true)
+	defer SetForceNonInteractiveForTesting(false)
+	var out bytes.Buffer
+	accepted, err := PromptUserToUpdate(strings.NewReader("y\n"), &out, "v1.2.0", "v1.3.0", "https://example.com")
+	if err != nil || accepted {
+		t.Fatal("expected accepted=false in non-interactive mode")
+	}
+	expectedNotice := "Notice: A new version v1.3.0 is available. Run 'bonsai --update' to upgrade."
+	if !strings.Contains(out.String(), expectedNotice) {
+		t.Fatalf("expected non-interactive notice %q, got %q", expectedNotice, out.String())
+	}
+}
+
+func TestRateLimitCooldown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("LOCALAPPDATA", dir)
+	t.Setenv("HOME", dir)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	_, err := FetchLatestRelease(context.Background(), client, server.URL)
+	if err == nil {
+		t.Fatal("expected rate limit error, got nil")
+	}
+
+	st, err := LoadState()
+	if err != nil || st == nil {
+		t.Fatalf("expected state saved on rate limit: %v", err)
+	}
+	// Check that last_checked_at was advanced into the future (around 1 hour ahead)
+	if st.LastCheckedAt <= time.Now().Unix() {
+		t.Fatalf("expected last_checked_at in the future for rate limit, got %d vs now %d", st.LastCheckedAt, time.Now().Unix())
+	}
+	// Cooldown active -> should not check
+	if ShouldCheckForUpdate() {
+		t.Fatal("expected ShouldCheckForUpdate to be false during active rate limit cooldown")
+	}
+}

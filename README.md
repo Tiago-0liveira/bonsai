@@ -81,8 +81,9 @@ go build -o bonsai .
 
 ```sh
 bonsai -v                  # also --version or version
+bonsai -u                  # also --update or update
 bonsai update --check      # check the latest stable GitHub Release
-bonsai update              # verify and install it
+bonsai update              # prompt to verify and install it
 ```
 
 These commands work outside a Git repository. Updates support Linux, macOS,
@@ -94,10 +95,11 @@ remove it only after confirming no updater is running.
 
 Release builds include their version, commit, and build date. Source builds
 report `dev` and do not replace themselves or display automatic update prompts.
-The TUI checks in the background with a five-second timeout and caches the
-result (including failures) for 24 hours in the OS user cache under
-`bonsai/update.json`. Choose **u** to update or **l** to dismiss for the session.
-Network failures never prevent startup; explicit `update --check` bypasses the cache.
+Periodic update checks run in the background (once every 24 hours) with a short
+timeout and cache the result in the OS user cache under `bonsai/update_state.json`.
+Interactive sessions prompt before installing, while non-interactive environments
+(like CI or piped commands) log a single-line notice.
+Network failures never prevent startup; explicit `bonsai --update` bypasses the cache.
 
 ## CI and releases
 
@@ -182,6 +184,8 @@ bonsai alias add <name> <cmd…>  # add a user alias
 bonsai alias list               # list aliases
 bonsai alias rm <name>          # remove a user alias
 bonsai shell-init               # print a shell 'bcd' cd helper
+bonsai version (-v)             # print version and build info
+bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage
 ```
 

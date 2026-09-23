@@ -19,6 +19,18 @@ import (
 func main() {
 	args := os.Args[1:]
 
+	// Flags like --version / -v and --update / -u are checked early
+	if len(args) > 0 {
+		switch args[0] {
+		case "--version", "-v", "version", "--update", "-u", "update":
+			if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
+				fmt.Fprintln(os.Stderr, "bonsai:", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
 	// --config <file> (or --config=<file>) overrides config discovery for the
 	// TUI. It must come before any subcommand.
 	var cfgPath string
