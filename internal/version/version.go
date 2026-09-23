@@ -63,4 +63,3 @@ func Info() string {
 	}
 	return s
 }
-
