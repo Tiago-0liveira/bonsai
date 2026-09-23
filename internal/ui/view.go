@@ -598,6 +598,9 @@ func (m *Model) layout() {
 // View renders two bordered panes filling the screen above a status/help bar,
 // with any active modal drawn centered on top.
 func (m Model) View() string {
+	if m.updatePromptVisible() {
+		return clampHeight(m.updatePrompt(), m.height)
+	}
 	if !m.ready {
 		return "Loading bonsai…"
 	}

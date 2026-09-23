@@ -18,7 +18,7 @@ func stubGH(t *testing.T, prs func(dir, state string) ([]PR, error), checks func
 // fakeClock is a manually-advanced clock for TTL tests.
 type fakeClock struct{ t time.Time }
 
-func (f *fakeClock) now() time.Time { return f.t }
+func (f *fakeClock) now() time.Time          { return f.t }
 func (f *fakeClock) advance(d time.Duration) { f.t = f.t.Add(d) }
 
 func TestCachePRsTTL(t *testing.T) {

@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -11,11 +12,14 @@ import (
 	"runtime"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/core/updater"
+	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
 // Run dispatches a subcommand. args excludes the program name. out/errOut are the
@@ -25,8 +29,16 @@ func Run(args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("no subcommand")
 	}
 
-	// help and shell-init do not touch a repo, so they must work outside one.
+	// Global commands must work outside a Git repository.
 	switch args[0] {
+	case "version", "-v", "--version":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: bonsai version")
+		}
+		fmt.Fprintln(out, "bonsai", version.String())
+		return nil
+	case "update":
+		return cmdUpdate(args[1:], out, errOut)
 	case "help", "-h", "--help":
 		printUsage(out)
 		return nil
@@ -396,6 +408,44 @@ Usage:
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias
   bonsai shell-init               print a shell 'bcd' cd helper
+  bonsai version                  print the installed version
+  bonsai update [--check]          install or check the latest release
   bonsai help                     show this help
 `, "\n"))
+}
+
+func cmdUpdate(args []string, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	check := fs.Bool("check", false, "check without installing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: bonsai update [--check]")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	c := updater.New()
+	r, err := c.Latest(ctx)
+	if err != nil {
+		return err
+	}
+	if version.Version == "dev" || !updater.Newer(r.Tag, version.String()) {
+		if version.Version == "dev" {
+			fmt.Fprintf(out, "Current: dev; latest: %s. Install a release binary to enable updates.\n", r.Tag)
+		} else {
+			fmt.Fprintf(out, "bonsai %s is up to date.\n", version.String())
+		}
+		return nil
+	}
+	fmt.Fprintf(out, "Bonsai %s is available. Current: %s\n", r.Tag, version.String())
+	if *check {
+		return nil
+	}
+	if err = c.Install(ctx, r); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Updated to %s. Restart Bonsai to use it.\n", r.Tag)
+	return nil
 }

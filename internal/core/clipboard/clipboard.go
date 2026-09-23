@@ -22,7 +22,7 @@ var tools = []tool{
 	{"wl-copy", nil},                       // Wayland
 	{"xclip", []string{"-selection", "c"}}, // X11
 	{"xsel", []string{"--clipboard", "--input"}},
-	{"clip.exe", nil},                      // Windows
+	{"clip.exe", nil}, // Windows
 	{"clip", nil},
 }
 

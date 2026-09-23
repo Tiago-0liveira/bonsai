@@ -27,7 +27,7 @@ const (
 	KindRunCommand  Kind = "run_command" // free-text ad-hoc command from the scripts modal
 	KindAliases     Kind = "aliases"
 	KindPalette     Kind = "palette" // command palette (fuzzy over every action)
-	KindYank        Kind = "yank" // pick what to copy to the clipboard
+	KindYank        Kind = "yank"    // pick what to copy to the clipboard
 	KindBranches    Kind = "branches"
 	KindCommit      Kind = "commit"
 	KindPrune       Kind = "prune"
