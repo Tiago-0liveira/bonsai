@@ -16,7 +16,7 @@ import (
 // reports whether it can run right now, with a reason when it cannot.
 type paletteCmd struct {
 	label     string
-	section   string // group name for the sectioned palette
+	section   string      // group name for the sectioned palette
 	binding   key.Binding // zero value when there is no direct keybinding
 	scopeHint func(m Model) string
 	available func(m Model) (bool, string)
@@ -115,6 +115,27 @@ func needProcess(m Model) (bool, string) {
 	return true, ""
 }
 
+// mouseToggleLabel names what the mouse toggle would do next.
+func mouseToggleLabel(m Model) string {
+	if m.mouseOff {
+		return "Mouse: enable wheel scrolling"
+	}
+	return "Mouse: disable (drag-select text without shift)"
+}
+
+// toggleMouse turns wheel scrolling on or off for this session. With mouse
+// tracking on, most terminals need shift held to select text by dragging;
+// turning it off gives plain drag-select back at the cost of the wheel.
+func (m Model) toggleMouse() (tea.Model, tea.Cmd) {
+	m.mouseOff = !m.mouseOff
+	if m.mouseOff {
+		m.status = "mouse off — drag to select text; wheel no longer scrolls"
+		return m, tea.DisableMouse
+	}
+	m.status = "mouse on — wheel scrolls; hold shift to select text"
+	return m, tea.EnableMouseCellMotion
+}
+
 // --- Run helpers ---
 
 // runOnWorktree wraps an op that needs the selected worktree's path.
@@ -211,11 +232,11 @@ func (m Model) paletteCommands() []paletteCmd {
 		global("Preferences (theme, keys, defaults)", m.keys.Prefs, func(m Model) (tea.Model, tea.Cmd) {
 			return m.openPrefs(false)
 		}),
+		global(mouseToggleLabel(m), key.Binding{}, Model.toggleMouse),
 		global("Keybindings reference", m.keys.Help, Model.openKeymap),
 		global("Status glyph legend", key.Binding{}, Model.openLegend),
 		global("Quit bonsai", m.keys.Quit, func(m Model) (tea.Model, tea.Cmd) {
-			m.procs.KillAll()
-			return m, tea.Quit
+			return m.quit()
 		}),
 	})...)
 
@@ -267,7 +288,7 @@ func (m Model) paletteCommands() []paletteCmd {
 		{label: "Process: kill selected", binding: m.keys.Kill, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
 			wt, _ := m.selectedWorktree()
 			if id, ok := m.selectedProcID(wt.Path); ok {
-				m.procs.KillByID(wt.Path, id)
+				m.procs.Kill(id)
 				m.refreshProcPane()
 			}
 			return m, nil
@@ -275,7 +296,7 @@ func (m Model) paletteCommands() []paletteCmd {
 		{label: "Process: restart selected", binding: m.keys.Restart, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
 			wt, _ := m.selectedWorktree()
 			if id, ok := m.selectedProcID(wt.Path); ok {
-				if p, err := m.procs.Restart(wt.Path, id); err == nil {
+				if p, err := m.procs.Restart(id); err == nil {
 					m.activeProc[wt.Path] = p.ID
 				} else {
 					m.status = "restart: " + err.Error()
@@ -283,6 +304,26 @@ func (m Model) paletteCommands() []paletteCmd {
 				m.refreshProcPane()
 			}
 			return m, nil
+		}},
+		{label: "Process: restart policy", binding: m.keys.SetPolicy, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
+			wt, _ := m.selectedWorktree()
+			if id, ok := m.selectedProcID(wt.Path); ok {
+				return m.openPolicyModal(id)
+			}
+			return m, nil
+		}},
+		{label: "Process: view multiple together", binding: m.keys.MultiView, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
+			return m.openProcMultiViewModal()
+		}},
+		{label: "Process: tag selected", binding: m.keys.RenameProc, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {
+			wt, _ := m.selectedWorktree()
+			if id, ok := m.selectedProcID(wt.Path); ok {
+				return m.openRenameProcModal(id)
+			}
+			return m, nil
+		}},
+		{label: "Processes: view all running", binding: m.keys.ProcModal, run: func(m Model) (tea.Model, tea.Cmd) {
+			return m.openProcModal()
 		}},
 	})...)
 

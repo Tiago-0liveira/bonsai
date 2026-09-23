@@ -12,11 +12,32 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
 )
 
 func main() {
 	args := os.Args[1:]
+
+	// Hidden: `bonsai __daemon --repo <root>` runs the per-repo background daemon.
+	// Clients auto-start it detached; users never invoke it directly.
+	if len(args) >= 1 && args[0] == "__daemon" {
+		root := ""
+		for i := 1; i < len(args); i++ {
+			if args[i] == "--repo" && i+1 < len(args) {
+				root = args[i+1]
+			}
+		}
+		if root == "" {
+			fmt.Fprintln(os.Stderr, "bonsai: __daemon requires --repo <root>")
+			os.Exit(1)
+		}
+		if err := server.Serve(root); err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai daemon:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// --config <file> (or --config=<file>) overrides config discovery for the
 	// TUI. It must come before any subcommand.
@@ -77,7 +98,11 @@ func run(cfgPath string) error {
 	}
 
 	model := ui.New(repoDir, cfg, state)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// Mouse tracking is on so the wheel scrolls the pane under the pointer.
+	// Without it, terminals translate the wheel into arrow keys, which the panes
+	// read as "move the selection". The cost is that dragging to select text now
+	// needs shift held (or the mouse turned off from the command palette).
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	return err
 }

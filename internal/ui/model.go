@@ -3,12 +3,13 @@
 package ui
 
 import (
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
@@ -77,7 +78,7 @@ type Model struct {
 	repoDir string
 	cfg     *config.Config
 	state   *config.State
-	procs   *coreexec.Manager
+	procs   *procView
 	// ghCache memoizes gh PR/checks queries across refresh cycles.
 	ghCache *gh.Cache
 
@@ -116,8 +117,29 @@ type Model struct {
 	// lastCommit maps a worktree path to its HEAD commit unix time (sortActivity).
 	lastCommit map[string]int64
 
-	// activeProc maps a worktree path to the process ID shown in the terminal.
+	// activeProc maps a worktree path to the process ID shown in the terminal
+	// (the single-view selection; also the most-recently-touched id in multi-view).
 	activeProc map[string]int
+	// procMultiSel maps a worktree path to the ordered set of process IDs shown
+	// together in the merged multi-view. nil/len<=1 means single-process view via
+	// activeProc.
+	procMultiSel map[string][]int
+	// procMultiPickIDs is the ordered id list backing the currently open
+	// multi-view picker modal; its MultiSubmitMsg indices refer into it.
+	procMultiPickIDs []int
+	// procLabelOverride maps a process id to a user-chosen short tag, used to
+	// color-tag its lines in the merged multi-view log (see procTag).
+	procLabelOverride map[int]string
+	// policyModalID is the process id the open restart-policy picker applies to.
+	policyModalID int
+	// renameProcID is the process id the open tag/rename input applies to.
+	renameProcID int
+	// procSearch maps a worktree path to its active output search/filter query.
+	procSearch map[string]string
+	// procSearchActive is true while the inline process-output search box has
+	// keyboard focus (Processes tab, "/"); it swallows all keys until esc/enter.
+	procSearchActive bool
+	procSearchInput  textinput.Model
 	// seenProcStatus tracks the last observed status per process ("path#id") so a
 	// running→done/failed transition can fire a notification once.
 	seenProcStatus map[string]string
@@ -176,6 +198,17 @@ type Model struct {
 	// currently open palette.
 	paletteByLabel map[string]paletteCmd
 
+	// procModalRecs maps a process-modal row label to its record (for jump-to).
+	procModalRecs map[string]*procstore.Record
+	// quitRecs is the ordered list of running processes shown in the quit modal;
+	// MultiSubmitMsg indices refer into it.
+	quitRecs []*procstore.Record
+
+	// mouseOff disables wheel scrolling for this session, handing the mouse back
+	// to the terminal so text can be selected by dragging without holding shift
+	// (see the "Mouse" palette command).
+	mouseOff bool
+
 	// Layout / status.
 	width, height int
 	focus         focusArea
@@ -211,30 +244,35 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 	}
 
 	m := Model{
-		repoDir:         repoDir,
-		cfg:             cfg,
-		state:           state,
-		procs:           coreexec.NewManager(),
-		ghCache:         gh.NewCache(gh.DefaultCacheTTL),
-		configFile:      config.FileFor(repoDir),
-		keys:            newKeyMap(keys),
-		list:            worktreelist.New(),
-		term:            terminal.New(),
-		focus:           focusList,
-		sort:            sortModeFromName(state.Prefs.Sort),
-		metrics:         map[string]git.Metrics{},
-		activeProc:      map[string]int{},
-		prByBranch:      map[string]gh.PR{},
-		prDetail:        map[int]gh.PRDetail{},
-		prChecks:        map[int][]gh.Check{},
-		checkRollup:     map[string]string{},
-		statuses:        map[string]git.StatusSummary{},
-		lastCommit:      map[string]int64{},
-		seenProcStatus:  map[string]string{},
-		diffFileContent: map[string]string{},
-		yankTargets:     map[string]string{},
+		repoDir:           repoDir,
+		cfg:               cfg,
+		state:             state,
+		procs:             newProcView(repoDir),
+		ghCache:           gh.NewCache(gh.DefaultCacheTTL),
+		configFile:        config.FileFor(repoDir),
+		keys:              newKeyMap(keys),
+		list:              worktreelist.New(),
+		term:              terminal.New(),
+		focus:             focusList,
+		sort:              sortModeFromName(state.Prefs.Sort),
+		metrics:           map[string]git.Metrics{},
+		activeProc:        map[string]int{},
+		procMultiSel:      map[string][]int{},
+		procLabelOverride: map[int]string{},
+		procSearch:        map[string]string{},
+		procSearchInput:   textinput.New(),
+		prByBranch:        map[string]gh.PR{},
+		prDetail:          map[int]gh.PRDetail{},
+		prChecks:          map[int][]gh.Check{},
+		checkRollup:       map[string]string{},
+		statuses:          map[string]git.StatusSummary{},
+		lastCommit:        map[string]int64{},
+		seenProcStatus:    map[string]string{},
+		diffFileContent:   map[string]string{},
+		yankTargets:       map[string]string{},
 	}
 	m.list.Focus()
+	m.procSearchInput.Placeholder = "search output…"
 	m.term.SetTitle("Git Log")
 	if cols := keyCollisions(keys); len(cols) > 0 {
 		m.status = "key conflicts ignored: " + cols[0]

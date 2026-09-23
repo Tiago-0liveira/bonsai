@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
@@ -16,6 +17,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	corenotify "github.com/Tiago-0liveira/bonsai/internal/core/notify"
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
@@ -25,6 +27,13 @@ import (
 // Update routes messages: layout, data results, the process tick, an active
 // modal, or global keys.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// The right pane's viewport height depends on the active tab (the Processes
+	// footer eats into it), so re-derive it before any message — scroll keys in
+	// particular are computed against the viewport's own height and go nowhere
+	// when it disagrees with the area on screen.
+	if m.ready {
+		m.layout()
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.onResize(msg), nil
@@ -133,6 +142,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modals.SubmitMsg:
 		return m.onModalSubmit(msg)
 
+	case modals.MultiSubmitMsg:
+		switch msg.Kind {
+		case modals.KindQuit:
+			return m.onQuitSubmit(msg.Selected)
+		case modals.KindMultiView:
+			return m.onMultiViewSubmit(msg.Selected)
+		}
+		m.modal = nil
+		return m, nil
+
 	case modals.CancelMsg:
 		m.modal = nil
 		m.pendingConfirm = nil
@@ -152,7 +171,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Target == "aliases" {
 			return m.openAliasModal()
 		}
+		if msg.Target == "editor" {
+			return m.openPrefEditorModal()
+		}
 		return m, nil
+
+	case tea.MouseMsg:
+		return m.onMouse(msg)
 
 	case tea.KeyMsg:
 		// An open overlay owns all key input.
@@ -171,6 +196,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Forward remaining messages to the focused pane.
 	return m.forwardToPane(msg)
+}
+
+// onMouse scrolls the pane the pointer is over — the log on the right, the
+// worktree list on the left — regardless of which one has keyboard focus, since
+// aiming the wheel is how a mouse says "this one". Only wheel events are acted
+// on: clicks and drags belong to the terminal's own text selection.
+func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.mouseOff || m.prefs != nil || m.modal != nil {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+	default:
+		return m, nil
+	}
+	var cmd tea.Cmd
+	if leftW, _, _ := m.dims(); msg.X < leftW {
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+	m.term, cmd = m.term.Update(msg)
+	return m, cmd
 }
 
 func (m Model) onResize(msg tea.WindowSizeMsg) Model {
@@ -409,6 +456,7 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) onProcTick() (tea.Model, tea.Cmd) {
+	m.procs.refresh()
 	m.checkProcTransitions()
 	// Refresh the list badges only when the running-process counts changed.
 	if sig := m.runningCountSig(); sig != m.runningSig {
@@ -425,7 +473,7 @@ func (m Model) onProcTick() (tea.Model, tea.Cmd) {
 func (m Model) countRunning(path string) int {
 	n := 0
 	for _, p := range m.procs.List(path) {
-		if p.Status() == "running" {
+		if p.Status == procstore.StatusRunning {
 			n++
 		}
 	}
@@ -451,12 +499,12 @@ func (m *Model) checkProcTransitions() {
 		return
 	}
 	for _, p := range m.procs.All() {
-		key := p.Path + "#" + strconv.Itoa(p.ID)
-		st := p.Status()
+		key := p.Worktree + "#" + strconv.Itoa(p.ID)
+		st := p.Status
 		prev := m.seenProcStatus[key]
 		m.seenProcStatus[key] = st
 		// "stopped" (user kill) is intentionally silent.
-		if prev == "running" && (st == "done" || st == "failed") {
+		if prev == procstore.StatusRunning && (st == procstore.StatusDone || st == procstore.StatusFailed) {
 			notify("bonsai: process "+st, fmt.Sprintf("#%d %s", p.ID, p.Label))
 		}
 	}
@@ -475,7 +523,7 @@ func (m Model) onPRTick() (tea.Model, tea.Cmd) {
 
 // activeProcess returns the process currently selected for display under path,
 // falling back to the most recently spawned one.
-func (m Model) activeProcess(path string) (*coreexec.Process, bool) {
+func (m Model) activeProcess(path string) (*procstore.Record, bool) {
 	if id, ok := m.activeProc[path]; ok {
 		if p, found := m.procs.GetByID(path, id); found {
 			return p, true
@@ -487,10 +535,17 @@ func (m Model) activeProcess(path string) (*coreexec.Process, bool) {
 // refreshProcPane loads the selected process's output into the scrolling area of
 // the Processes tab. The process list + keybind hint are rendered separately as a
 // footer pinned to the bottom of the pane (see renderProcFooter / View). Output
-// tail-follows so new lines stay visible.
+// tail-follows so new lines stay visible. When two or more processes are picked
+// via the multi-view modal, their outputs are merged instead (see
+// mergedProcOutput). Either way, an active search/filter query (see
+// updateProcSearch) is applied before display.
 func (m *Model) refreshProcPane() {
 	m.term.SetTitle("Processes")
 	m.term.SetFollow(true)
+	// The footer's height depends on the process list, so re-size the viewport
+	// before loading content: a viewport taller than the area it is drawn into
+	// clamps its own scroll offset to 0 and nothing scrolls (see layout).
+	m.layout()
 	wt, ok := m.selectedWorktree()
 	if !ok {
 		m.term.SetContent("")
@@ -500,13 +555,123 @@ func (m *Model) refreshProcPane() {
 		m.term.SetContent("")
 		return
 	}
+	query := m.procSearch[wt.Path]
+	if ids := m.procMultiSel[wt.Path]; len(ids) > 1 {
+		m.term.SetContent(m.mergedProcOutput(ids, query))
+		return
+	}
 	sel, selOK := m.activeProcess(wt.Path)
 	if selOK {
 		m.activeProc[wt.Path] = sel.ID
-		m.term.SetContent(sel.Output())
+		out := applyProcSearch(m.procs.Output(sel.ID), query)
+		m.term.SetContent(renderProcLog(out, m.termInnerWidth()))
 		return
 	}
 	m.term.SetContent("")
+}
+
+// mergedProcOutput builds the multi-view merged log: each selected process's
+// output, in selection order, with every line prefixed by a color-tagged label
+// (docker-compose-style) so lines from different processes stay easy to tell
+// apart. Colors come from assignProcColor (deterministic, not re-rolled per
+// refresh); tags come from procTag (user override or truncated label).
+func (m Model) mergedProcOutput(ids []int, query string) string {
+	var b strings.Builder
+	for _, id := range ids {
+		out := applyProcSearch(m.procs.Output(id), query)
+		if out == "" {
+			continue
+		}
+		// Delimiter rules are narrowed by the tag column so they still end at the
+		// pane edge once prefixed.
+		out = renderProcLog(out, max(m.termInnerWidth()-procTagMaxLen-2, 8))
+		style := lipgloss.NewStyle().Foreground(assignProcColor(id)).Bold(true)
+		prefix := style.Render(fmt.Sprintf("%-*s│ ", procTagMaxLen, m.procTag(id)))
+		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			b.WriteString(prefix)
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+// applyProcSearch filters text down to the lines containing query
+// (case-insensitive) and highlights every match. It is plain substring
+// matching, not a regex engine, so it stays cheap enough to re-run on the full
+// log every tick while a process is still writing output. An empty query is a
+// no-op (returns text unchanged, unfiltered). Run delimiters survive the filter
+// unconditionally, so hits stay attributable to the run that produced them.
+func applyProcSearch(text, query string) string {
+	if query == "" {
+		return text
+	}
+	q := strings.ToLower(query)
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if isMarkerLine(line) {
+			out = append(out, line)
+			continue
+		}
+		low := strings.ToLower(line)
+		if !strings.Contains(low, q) {
+			continue
+		}
+		out = append(out, highlightMatches(line, low, q))
+	}
+	return strings.Join(out, "\n")
+}
+
+// highlightMatches wraps every case-insensitive occurrence of q in line (low
+// is line, already lower-cased by the caller) in the search-hit style.
+func highlightMatches(line, low, q string) string {
+	var b strings.Builder
+	i := 0
+	for {
+		idx := strings.Index(low[i:], q)
+		if idx < 0 {
+			b.WriteString(line[i:])
+			break
+		}
+		start, end := i+idx, i+idx+len(q)
+		b.WriteString(line[i:start])
+		b.WriteString(procSearchHit.Render(line[start:end]))
+		i = end
+	}
+	return b.String()
+}
+
+// updateProcSearch routes keys to the inline process-output search box while
+// it has focus (see keys.ProcSearch), swallowing everything except esc/enter,
+// which close the box (the query itself is kept either way — clear it by
+// deleting the text before closing).
+func (m Model) updateProcSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter":
+		m.procSearchActive = false
+		m.procSearchInput.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.procSearchInput, cmd = m.procSearchInput.Update(msg)
+	if wt, ok := m.selectedWorktree(); ok {
+		m.procSearch[wt.Path] = m.procSearchInput.Value()
+		m.refreshProcPane()
+	}
+	return m, cmd
+}
+
+// isProcScrollKey reports whether msg is one of the bubbles viewport's default
+// scroll bindings that would otherwise be swallowed by a global single-letter
+// action (fetch/diff-tab/checks-tab/update-base) before ever reaching the
+// terminal pane. See the Processes-tab gate in onKey.
+func isProcScrollKey(msg tea.KeyMsg) bool {
+	switch msg.String() {
+	case "j", "k", "u", "d", "b", "f", "ctrl+u", "ctrl+d", "ctrl+b", "ctrl+f", "pgup", "pgdown", " ", "home", "end":
+		return true
+	}
+	return false
 }
 
 // selectedProcID returns the selected process id for path.
@@ -546,10 +711,20 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.focus == focusList && m.list.SettingFilter() {
 		return m.forwardToPane(msg)
 	}
-	// On the Processes tab (focused), process-control keys win over the globals.
+	// On the Processes tab (focused), the inline search box (if active), then
+	// process-control keys, win over the globals. Remaining viewport-scroll keys
+	// (j/k/u/d/b/f/…) are forwarded to the log viewport explicitly, since several
+	// of them are also global single-letter actions (fetch/diff-tab/checks-tab/
+	// update-base) that would otherwise swallow them before they ever scroll.
 	if m.rightTab == tabProcs && m.focus == focusTerminal {
+		if m.procSearchActive {
+			return m.updateProcSearch(msg)
+		}
 		if handled, nm, cmd := m.procTabKey(msg); handled {
 			return nm, cmd
+		}
+		if isProcScrollKey(msg) {
+			return m.forwardToPane(msg)
 		}
 	}
 	// On the PR tab (focused), PR-action keys win over the globals.
@@ -569,9 +744,11 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Palette):
 		return m.openPalette()
 
+	case key.Matches(msg, m.keys.ProcModal):
+		return m.openProcModal()
+
 	case key.Matches(msg, m.keys.Quit):
-		m.procs.KillAll()
-		return m, tea.Quit
+		return m.quit()
 
 	case key.Matches(msg, m.keys.Tab):
 		m.toggleFocus()
@@ -727,14 +904,15 @@ func (m Model) openShell() (tea.Model, tea.Cmd) {
 	})
 }
 
-// openEditor suspends the TUI into the user's editor ($VISUAL/$EDITOR, vi
-// fallback) rooted at the selected worktree.
+// openEditor suspends the TUI into the configured editor (personal override,
+// then .bonsai.yaml's editor, then $VISUAL/$EDITOR, then vi) rooted at the
+// selected worktree.
 func (m Model) openEditor() (tea.Model, tea.Cmd) {
 	wt, ok := m.selectedWorktree()
 	if !ok {
 		return m, nil
 	}
-	c := coreexec.EditorCmd(wt.Path)
+	c := coreexec.EditorCmd(wt.Path, m.effectiveEditor())
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
 		return opDoneMsg{label: "editor", err: err}
 	})
@@ -773,6 +951,15 @@ func (m Model) openYankModal() (tea.Model, tea.Cmd) {
 	}
 	m.yankTargets = map[string]string{yankPathLabel: wt.Path}
 	items := []string{yankPathLabel}
+	// On the Processes tab the log is what the user is looking at, so offer it
+	// first — terminal text selection cannot reach the scrolled-off part.
+	if m.rightTab == tabProcs {
+		if id, ok := m.selectedProcID(wt.Path); ok {
+			label := fmt.Sprintf("copy process #%d output", id)
+			m.yankTargets[label] = m.plainProcOutput(id)
+			items = append([]string{label}, items...)
+		}
+	}
 	if wt.Branch != "" && wt.Branch != "(detached)" {
 		m.yankTargets[yankBranchLabel] = wt.Branch
 		items = append(items, yankBranchLabel)
@@ -786,6 +973,21 @@ func (m Model) openYankModal() (tea.Model, tea.Cmd) {
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
+}
+
+// plainProcOutput returns a process's full log as pasteable text: run delimiters
+// become plain rules and every ANSI sequence the process emitted is stripped, so
+// what lands on the clipboard is readable outside a terminal.
+func (m Model) plainProcOutput(id int) string {
+	lines := strings.Split(m.procs.Output(id), "\n")
+	for i, line := range lines {
+		if mk, ok := procstore.ParseMarker(line); ok {
+			lines[i] = mk.Line(60)
+			continue
+		}
+		lines[i] = ansi.Strip(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // paletteEntry is one rendered command-palette row: the styled display string
@@ -958,6 +1160,7 @@ func (m Model) openCreateSourceModal() (tea.Model, tea.Cmd) {
 func (m Model) toggleProcsTab() (tea.Model, tea.Cmd) {
 	if m.rightTab == tabProcs {
 		m.rightTab = tabLog
+		m.layout() // the Processes footer is gone: give its rows back to the viewport
 		m.term.SetTitle("Git Log")
 		m.term.SetFollow(false)
 		m.term.SetContent(m.logContent)
@@ -974,6 +1177,7 @@ func (m Model) toggleProcsTab() (tea.Model, tea.Cmd) {
 // openLogTab switches the right pane to the Git Log tab for the selection.
 func (m Model) openLogTab() (tea.Model, tea.Cmd) {
 	m.rightTab = tabLog
+	m.layout()
 	m.focus = focusTerminal
 	m.list.Blur()
 	m.term.Focus()
@@ -1026,6 +1230,7 @@ func (m *Model) reloadRightPane() tea.Cmd {
 	if !m.tabVisible(m.rightTab) {
 		m.rightTab = tabLog
 	}
+	m.layout() // the viewport's height is tab-dependent (Processes footer)
 	wt, ok := m.selectedWorktree()
 	if !ok {
 		return nil
@@ -1064,6 +1269,7 @@ func (m Model) openPRTab() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.rightTab = tabPR
+	m.layout()
 	m.focus = focusTerminal
 	m.list.Blur()
 	m.term.Focus()
@@ -1082,6 +1288,7 @@ func (m Model) openDiffTab() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.rightTab = tabDiff
+	m.layout()
 	m.focus = focusTerminal
 	m.list.Blur()
 	m.term.Focus()
@@ -1128,6 +1335,7 @@ func (m Model) openInspectTab() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.rightTab = tabInspect
+	m.layout()
 	m.focus = focusTerminal
 	m.list.Blur()
 	m.term.Focus()
@@ -1189,6 +1397,7 @@ func (m Model) openChecksTab() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.rightTab = tabChecks
+	m.layout()
 	m.focus = focusTerminal
 	m.list.Blur()
 	m.term.Focus()
@@ -1473,14 +1682,14 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Kill):
 		if id, ok := m.selectedProcID(wt.Path); ok {
-			m.procs.KillByID(wt.Path, id)
+			m.procs.Kill(id)
 			m.refreshProcPane()
 		}
 		return true, m, nil
 
 	case key.Matches(msg, m.keys.Restart):
 		if id, ok := m.selectedProcID(wt.Path); ok {
-			if p, err := m.procs.Restart(wt.Path, id); err == nil {
+			if p, err := m.procs.Restart(id); err == nil {
 				m.activeProc[wt.Path] = p.ID
 			} else {
 				m.status = "restart: " + err.Error()
@@ -1491,7 +1700,7 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Prune): // x removes a finished process
 		if id, ok := m.selectedProcID(wt.Path); ok {
-			m.procs.Remove(wt.Path, id)
+			m.procs.Remove(id)
 			if p, ok := m.procs.Latest(wt.Path); ok {
 				m.activeProc[wt.Path] = p.ID
 			} else {
@@ -1501,17 +1710,52 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		return true, m, nil
 
+	case key.Matches(msg, m.keys.SetPolicy): // p opens the restart-policy picker
+		if id, ok := m.selectedProcID(wt.Path); ok {
+			nm, cmd := m.openPolicyModal(id)
+			return true, nm, cmd
+		}
+		return true, m, nil
+
+	case key.Matches(msg, m.keys.MultiView): // m picks processes to view together
+		nm, cmd := m.openProcMultiViewModal()
+		return true, nm, cmd
+
+	case key.Matches(msg, m.keys.RenameProc): // L tags the selected process
+		if id, ok := m.selectedProcID(wt.Path); ok {
+			nm, cmd := m.openRenameProcModal(id)
+			return true, nm, cmd
+		}
+		return true, m, nil
+
+	case key.Matches(msg, m.keys.ProcSearch): // / opens the inline output search
+		m.procSearchActive = true
+		m.procSearchInput.SetValue(m.procSearch[wt.Path])
+		m.procSearchInput.CursorEnd()
+		m.procSearchInput.Focus()
+		return true, m, nil
+
 	case key.Matches(msg, m.keys.Create): // n starts a new command
 		return true, m, loadScripts(wt.Path)
+
+	case msg.String() == "g": // jump to the start of the log
+		m.term.GotoTop()
+		return true, m, nil
+
+	case msg.String() == "G": // jump back to the live end and resume tailing
+		m.term.GotoBottom()
+		return true, m, nil
 
 	case msg.String() == "up" || msg.String() == "ctrl+k":
 		m.moveProcSel(wt.Path, -1)
 		m.refreshProcPane()
+		m.term.GotoBottom() // a different process: show its live tail, not the old offset
 		return true, m, nil
 
 	case msg.String() == "down" || msg.String() == "ctrl+j":
 		m.moveProcSel(wt.Path, 1)
 		m.refreshProcPane()
+		m.term.GotoBottom() // a different process: show its live tail, not the old offset
 		return true, m, nil
 	}
 
@@ -1577,6 +1821,15 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		// Any selection in the key reference jumps to the key editor.
 		return m.openPrefs(true)
 
+	case modals.KindProcesses:
+		return m.onProcModalSubmit(msg.Value)
+
+	case modals.KindSetPolicy:
+		return m.onPolicyModalSubmit(msg.Value)
+
+	case modals.KindRenameProc:
+		return m.onRenameProcSubmit(msg.Value)
+
 	case modals.KindPalette:
 		c, found := m.paletteByLabel[msg.Value]
 		if !found {
@@ -1609,6 +1862,19 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	case modals.KindConfigConfirm:
 		return m.onConfigConfirm()
+
+	case modals.KindPrefEditor:
+		m.state.Prefs.Editor = msg.Value
+		if err := m.state.Save(); err != nil {
+			m.status = "editor: " + err.Error()
+			return m, nil
+		}
+		if msg.Value == "" {
+			m.status = "editor: cleared personal override"
+		} else {
+			m.status = "editor: " + msg.Value
+		}
+		return m, nil
 
 	case modals.KindPRTitle:
 		if msg.Value == "" {
@@ -1790,7 +2056,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 // spawn starts a background process, marks it active for its worktree, and sets
 // a status line.
 func (m Model) spawn(path, label, command string) Model {
-	p, err := m.procs.Spawn(path, label, command)
+	p, err := m.procs.Spawn(path, m.branchForPath(path), label, command)
 	if err != nil {
 		m.status = "spawn: " + err.Error()
 		return m
@@ -1798,6 +2064,16 @@ func (m Model) spawn(path, label, command string) Model {
 	m.activeProc[path] = p.ID
 	m.status = "running " + label
 	return m
+}
+
+// branchForPath returns the branch checked out in the worktree at path, or "".
+func (m Model) branchForPath(path string) string {
+	for _, t := range m.worktrees {
+		if t.Path == path {
+			return t.Branch
+		}
+	}
+	return ""
 }
 
 // onCreateSource advances the worktree-creation flow after the source type is

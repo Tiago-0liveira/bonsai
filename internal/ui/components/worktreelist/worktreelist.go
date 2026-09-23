@@ -297,6 +297,18 @@ func (m Model) Selected() (Item, bool) {
 	return it, ok
 }
 
+// SelectByPath moves the highlight to the worktree with the given path, if
+// present. Returns whether a match was found.
+func (m *Model) SelectByPath(path string) bool {
+	for i, li := range m.list.Items() {
+		if it, ok := li.(Item); ok && it.WT.Path == path {
+			m.list.Select(i)
+			return true
+		}
+	}
+	return false
+}
+
 // SettingFilter reports whether the filter text input is currently active, in
 // which case the list should own every keystroke.
 func (m Model) SettingFilter() bool { return m.list.SettingFilter() }

@@ -7,7 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
@@ -20,7 +19,7 @@ func paletteModel(branch string, isMain bool) Model {
 	m := renderModel()
 	m.cfg = &config.Config{Upstream: "origin/main"}
 	m.state = &config.State{}
-	m.procs = coreexec.NewManager()
+	m.procs = newProcView("/w/" + branch)
 	m.statuses = map[string]git.StatusSummary{}
 	m.worktrees = []git.Worktree{{Path: "/w/" + branch, Branch: branch, IsMain: isMain}}
 	m.list = worktreelist.New()

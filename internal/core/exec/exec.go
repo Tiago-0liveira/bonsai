@@ -343,17 +343,21 @@ func ShellCmd(path string) *exec.Cmd {
 }
 
 // EditorCmd builds an interactive editor *exec.Cmd rooted at path, suitable
-// for tea.ExecProcess. The editor comes from $VISUAL or $EDITOR (arguments in
-// the value are honored); vi is the fallback.
-func EditorCmd(path string) *exec.Cmd {
-	name, args := editor()
+// for tea.ExecProcess. override (a configured editor command, arguments
+// honored) takes priority; otherwise the editor comes from $VISUAL or
+// $EDITOR, with vi as the final fallback.
+func EditorCmd(path, override string) *exec.Cmd {
+	name, args := editor(override)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = path
 	return cmd
 }
 
-func editor() (string, []string) {
-	raw := envEditor()
+func editor(override string) (string, []string) {
+	raw := override
+	if raw == "" {
+		raw = envEditor()
+	}
 	if raw == "" {
 		return "vi", nil
 	}

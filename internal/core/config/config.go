@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 )
 
 // Alias is a user-defined command runnable against a worktree.
@@ -69,10 +70,23 @@ type Notifications struct {
 	CI      bool `mapstructure:"ci"`
 }
 
+// ProcessPolicy sets the daemon's restart behavior for background processes
+// whose label or command matches Match (exact or prefix). Restart is one of
+// "no", "on-failure", "always".
+type ProcessPolicy struct {
+	Match       string `mapstructure:"match"`
+	Restart     string `mapstructure:"restart"`
+	MaxRestarts int    `mapstructure:"max_restarts"`
+}
+
 // Config is the parsed .bonsai.yaml.
 type Config struct {
 	// Upstream is the ref ahead/behind metrics compare against, e.g. origin/main.
-	Upstream string   `mapstructure:"upstream"`
+	Upstream string `mapstructure:"upstream"`
+	// Editor is the command run for the "open editor" action ("e"), e.g.
+	// "code -w" or "nvim". Empty falls back to $VISUAL/$EDITOR, then vi. A
+	// personal override in preferences (state.json) wins over this.
+	Editor   string   `mapstructure:"editor"`
 	Hooks    Hooks    `mapstructure:"hooks"`
 	Aliases  []Alias  `mapstructure:"aliases"`
 	Worktree Worktree `mapstructure:"worktree"`
@@ -84,6 +98,34 @@ type Config struct {
 	Theme Theme `mapstructure:"theme"`
 	// Notifications toggles desktop notifications.
 	Notifications Notifications `mapstructure:"notifications"`
+	// Processes sets per-process restart policies for the background daemon.
+	Processes []ProcessPolicy `mapstructure:"processes"`
+}
+
+// PolicyFor resolves the restart policy for a process, matching label first then
+// command against each configured entry (exact match or prefix). It returns
+// procstore.DefaultPolicy when nothing matches.
+func (c *Config) PolicyFor(label, command string) procstore.Policy {
+	match := func(s, pat string) bool {
+		return pat != "" && (s == pat || strings.HasPrefix(s, pat))
+	}
+	for _, key := range []string{label, command} {
+		for _, p := range c.Processes {
+			if !match(key, p.Match) {
+				continue
+			}
+			mode := p.Restart
+			if !procstore.ValidMode(mode) {
+				mode = procstore.DefaultPolicy().Mode
+			}
+			max := p.MaxRestarts
+			if max <= 0 {
+				max = procstore.DefaultPolicy().MaxRestarts
+			}
+			return procstore.Policy{Mode: mode, MaxRestarts: max}
+		}
+	}
+	return procstore.DefaultPolicy()
 }
 
 // WorktreePath resolves the filesystem path for a branch's worktree from the
