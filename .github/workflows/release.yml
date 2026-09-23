@@ -28,6 +28,7 @@ jobs:
         with:
           script: |
             const {selectVersion} = require('./.github/scripts/release-version.cjs');
+            const {prepareRelease} = require('./.github/scripts/release-publish.cjs');
             const {owner, repo} = context.repo;
             const sha = context.payload.pull_request.merge_commit_sha;
             const labels = context.payload.pull_request.labels.map(x => x.name);
@@ -39,11 +40,7 @@ jobs:
             const tag = existing ? existing.name : next;
             if (!existing) await github.rest.git.createRef({owner, repo, ref: `refs/tags/${tag}`, sha});
             core.setOutput('tag', tag);
-            try {
-              const {data: release} = await github.rest.repos.getReleaseByTag({owner, repo, tag});
-              if (!release.draft) core.setOutput('skip', 'true');
-              else await github.rest.repos.deleteRelease({owner, repo, release_id: release.id});
-            } catch (error) { if (error.status !== 404) throw error; }
+            if (await prepareRelease(github, owner, repo, tag)) core.setOutput('skip', 'true');
       - name: Fetch release tag
         if: steps.version.outputs.skip != 'true'
         run: git fetch --tags --force
@@ -63,6 +60,5 @@ jobs:
         with:
           script: |
             const {owner, repo} = context.repo;
-            const {data: release} = await github.rest.repos.getReleaseByTag({owner, repo, tag: process.env.RELEASE_TAG});
-            // Semantic ordering keeps a retry of an older release from becoming latest.
-            await github.rest.repos.updateRelease({owner, repo, release_id: release.id, draft: false, make_latest: 'legacy'});
+            const {publishRelease} = require('./.github/scripts/release-publish.cjs');
+            await publishRelease(github, owner, repo, process.env.RELEASE_TAG);
