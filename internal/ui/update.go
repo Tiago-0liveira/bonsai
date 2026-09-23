@@ -26,6 +26,18 @@ import (
 // modal, or global keys.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case updateAvailableMsg:
+		m.availableUpdate = msg.release
+		return m, nil
+	case updateInstalledMsg:
+		m.updating = false
+		m.availableUpdate.Tag = ""
+		if msg.err != nil {
+			m.err = fmt.Errorf("update failed: %w", msg.err)
+		} else {
+			m.status = "Updated to " + msg.tag + ". Restart Bonsai to use it."
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		return m.onResize(msg), nil
 
@@ -155,6 +167,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.updatePromptVisible() && msg.String() != "ctrl+c" {
+			switch msg.String() {
+			case "u":
+				if !m.updating {
+					m.updating = true
+					return m, installUpdate(m.availableUpdate)
+				}
+			case "l", "esc":
+				m.availableUpdate.Tag = ""
+			}
+			return m, nil
+		}
 		// An open overlay owns all key input.
 		if m.prefs != nil {
 			pm, cmd := m.prefs.Update(msg)

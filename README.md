@@ -53,11 +53,17 @@ Juggling git worktrees by hand is tedious: creating them, copying over untracked
 ./install.sh
 ```
 
-Builds the binary and installs it to `/usr/local/bin` (or `~/.local/bin` if that isn't writable). Override the location with `PREFIX`:
+Downloads the latest GitHub Release, verifies its SHA256 checksum, and installs it to `/usr/local/bin` (or `~/.local/bin` if that isn't writable). Override the location with `PREFIX`:
 
 ```sh
 PREFIX="$HOME/.local" ./install.sh
 ```
+
+On Windows, run `install.bat` (which calls `install.ps1`), or run `./install.ps1`
+from PowerShell. It installs to `%USERPROFILE%\go\bin` by default, honoring
+`PREFIX`, `GOBIN`, or `GOPATH` when set, and installs the `bcd.bat` helper.
+Neither installer requires Go. Linux/macOS need `curl`, `tar`, and either
+`sha256sum` or `shasum`; Windows uses PowerShell 5.1 or later.
 
 ### With Go
 
@@ -69,6 +75,47 @@ go install github.com/Tiago-0liveira/bonsai@latest
 
 ```sh
 go build -o bonsai .
+```
+
+## Versions and updates
+
+```sh
+bonsai -v                  # also --version or version
+bonsai update --check      # check the latest stable GitHub Release
+bonsai update              # verify and install it
+```
+
+These commands work outside a Git repository. Updates support Linux, macOS,
+and Windows on amd64 and arm64. The executable's directory must be writable;
+symlinked installations update the resolved executable. Restart Bonsai after
+updating. On Windows the old executable remains as `bonsai.exe.old` until the
+next update. A crashed updater may leave a `.update-lock` beside the executable;
+remove it only after confirming no updater is running.
+
+Release builds include their version, commit, and build date. Source builds
+report `dev` and do not replace themselves or display automatic update prompts.
+The TUI checks in the background with a five-second timeout and caches the
+result (including failures) for 24 hours in the OS user cache under
+`bonsai/update.json`. Choose **u** to update or **l** to dismiss for the session.
+Network failures never prevent startup; explicit `update --check` bypasses the cache.
+
+## CI and releases
+
+Pull requests targeting `main` run formatting, module checks, vet, builds and
+tests on Linux/macOS/Windows, Linux race tests, and a GoReleaser snapshot build.
+The `CI passes` aggregate must pass before merging into protected `main`.
+
+A merged PR triggers a queued release, defaulting to the next patch version.
+Use at most one label: `release:patch`, `release:minor`, `release:major`, or
+`release:none`. With no existing stable tags, the first patch is `v0.0.1`.
+Release jobs check out the exact merge commit, create a tag, build all six
+platform archives and `checksums.txt`, then publish the completed draft.
+They run only for merged PRs, including fork PRs; direct pushes and manual tags
+do not trigger releases. A failed run can be rerun: it reuses that merge's tag
+and rebuilds an incomplete draft. Published releases are left intact.
+
+```sh
+goreleaser release --snapshot --clean  # local release dry-run
 ```
 
 ## Requirements

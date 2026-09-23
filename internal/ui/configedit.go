@@ -29,11 +29,11 @@ const (
 // configSetting describes one editable .bonsai.yaml setting: its YAML path,
 // how it reads in the palette, and what its editor modal explains.
 type configSetting struct {
-	key     string   // dotted YAML path, e.g. "notifications.ci"
-	label   string   // palette label
-	title   string   // modal title
-	desc    string   // what the setting does (modal body)
-	example string   // example value (modal body + input placeholder)
+	key     string // dotted YAML path, e.g. "notifications.ci"
+	label   string // palette label
+	title   string // modal title
+	desc    string // what the setting does (modal body)
+	example string // example value (modal body + input placeholder)
 	kind    cfgKind
 	options []string // for cfgSelect
 }

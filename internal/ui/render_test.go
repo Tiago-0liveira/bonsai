@@ -238,4 +238,3 @@ func TestViewHeightNeverExceedsTerminalHeight(t *testing.T) {
 		}
 	}
 }
-

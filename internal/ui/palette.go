@@ -16,7 +16,7 @@ import (
 // reports whether it can run right now, with a reason when it cannot.
 type paletteCmd struct {
 	label     string
-	section   string // group name for the sectioned palette
+	section   string      // group name for the sectioned palette
 	binding   key.Binding // zero value when there is no direct keybinding
 	scopeHint func(m Model) string
 	available func(m Model) (bool, string)
