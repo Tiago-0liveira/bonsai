@@ -22,13 +22,13 @@ func IsTerminal(in io.Reader) bool {
 	if forceNonInteractive {
 		return false
 	}
-	if os.Getenv("CI") != "" || os.Getenv("CONTINUOUS_INTEGRATION") != "" {
-		return false
-	}
 	f, ok := in.(*os.File)
 	if !ok {
 		// In tests, non-file readers default to interactive unless forced otherwise
 		return true
+	}
+	if os.Getenv("CI") != "" || os.Getenv("CONTINUOUS_INTEGRATION") != "" {
+		return false
 	}
 	return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 }
