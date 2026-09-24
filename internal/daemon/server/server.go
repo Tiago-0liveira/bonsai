@@ -223,7 +223,7 @@ func (s *Server) stopAllProcesses() {
 			mp.mu.Unlock()
 			continue
 		}
-		if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping {
+		if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping || status == procstore.StatusOrphan {
 			mp.rec.Status = procstore.StatusStopping
 			_ = s.store.WriteRecord(mp.rec)
 			cmd := mp.cmd

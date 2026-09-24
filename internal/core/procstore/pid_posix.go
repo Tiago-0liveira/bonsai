@@ -5,7 +5,6 @@ package procstore
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -19,9 +18,11 @@ func PidAlive(pid int) bool {
 	return err == nil
 }
 
-// ProcessMatches reports whether pid is alive and matches expected process metadata.
-// It guards against PID reuse by checking ownership, procfs cwd, and creation time if available.
-func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
+// ProcessMatches reports whether pid is alive and still plausibly refers to the
+// process bonsai started. On Linux, procfs metadata is used to guard against PID
+// reuse when available. The current working directory is deliberately not part
+// of identity: a perfectly valid managed command may chdir after launch.
+func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
 	if !PidAlive(pid) {
 		return false
 	}
@@ -32,13 +33,6 @@ func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
 			diff := mtime.Sub(startedAt)
 			if diff < -1*time.Minute || diff > 1*time.Minute {
 				return false
-			}
-		}
-		if worktree != "" {
-			if cwd, err := os.Readlink(procDir + "/cwd"); err == nil {
-				if filepath.Clean(cwd) != filepath.Clean(worktree) {
-					return false
-				}
 			}
 		}
 		return true

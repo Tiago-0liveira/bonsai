@@ -421,6 +421,32 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 	mp.mu.Unlock()
 
 	if err := s.start(mp, gen); err != nil {
+		if errors.Is(err, errGenerationMismatch) {
+			return nil, err
+		}
+
+		// start() already records failures from cmd.Start. Failures that happen
+		// earlier (for example opening the log file) still leave the record in
+		// StatusStarting, so make that transition terminal here as well.
+		mp.mu.Lock()
+		transitioned := mp.generation == gen && mp.rec.Status == procstore.StatusStarting
+		if transitioned {
+			mp.rec.Status = procstore.StatusFailed
+			mp.rec.ExitError = err.Error()
+			_ = s.store.WriteRecord(mp.rec)
+		}
+		mp.mu.Unlock()
+		if transitioned {
+			s.appendMarker(id, procstore.Marker{
+				Kind: procstore.MarkerExit,
+				Code: -1,
+				Text: "restart failed · " + err.Error(),
+			})
+		}
+
+		s.mu.Lock()
+		s.armIdleLocked()
+		s.mu.Unlock()
 		return nil, err
 	}
 	s.mu.Lock()

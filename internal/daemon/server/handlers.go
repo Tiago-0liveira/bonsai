@@ -160,9 +160,9 @@ func (s *Server) remove(id int) error {
 	}
 	mp.mu.Lock()
 	status := mp.rec.Status
-	if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping {
+	if status != procstore.StatusBackoff && !procstore.IsTerminal(status) {
 		mp.mu.Unlock()
-		return fmt.Errorf("process #%d is still running", id)
+		return fmt.Errorf("process #%d is still active", id)
 	}
 
 	if mp.restartTimer != nil {

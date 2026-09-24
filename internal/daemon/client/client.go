@@ -207,11 +207,51 @@ func (c *Client) List() ([]*procstore.Record, error) {
 	return recs, nil
 }
 
+// hasLivePersistedTarget reports whether a persisted active record matching the
+// requested target still names a live OS process. This is used after a daemon
+// crash so client operations can restart supervision instead of assuming that
+// "no daemon" means "no processes".
+func (c *Client) hasLivePersistedTarget(id int, all bool, worktree string) (bool, error) {
+	recs, err := c.store.ListRecords()
+	if err != nil {
+		return false, err
+	}
+	for _, r := range recs {
+		if !procstore.IsActive(r.Status) {
+			continue
+		}
+		match := false
+		switch {
+		case all:
+			match = true
+		case worktree != "":
+			match = r.Worktree == worktree
+		default:
+			match = r.ID == id
+		}
+		if match && procstore.ProcessMatches(r.PID, r.StartedAt, r.Worktree) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Kill stops a single process (id>0), or all when all=true, or a worktree's
 // processes when worktree!="".
 func (c *Client) Kill(id int, all bool, worktree string) ([]int, error) {
 	if !c.alive() {
-		return nil, nil // nothing running
+		live, err := c.hasLivePersistedTarget(id, all, worktree)
+		if err != nil {
+			return nil, err
+		}
+		if !live {
+			return nil, nil
+		}
+		// A child survived its daemon. Restart supervision so orphan
+		// reconciliation and process-tree termination stay server-owned.
+		if err := c.ensureDaemon(); err != nil {
+			return nil, err
+		}
 	}
 	if err := c.CheckCompatibility(); err != nil {
 		return nil, err
@@ -265,7 +305,18 @@ func (c *Client) SetPolicy(id int, policy procstore.Policy) (*procstore.Record, 
 // Remove drops a terminal process from the daemon (deleting its record and log).
 func (c *Client) Remove(id int) error {
 	if !c.alive() {
-		return c.store.RemoveRecord(id)
+		live, err := c.hasLivePersistedTarget(id, false, "")
+		if err != nil {
+			return err
+		}
+		if !live {
+			return c.store.RemoveRecord(id)
+		}
+		// Do not delete the only metadata for a live orphan. Re-establish the
+		// daemon and let the server reject removal until the process is stopped.
+		if err := c.ensureDaemon(); err != nil {
+			return err
+		}
 	}
 	if err := c.CheckCompatibility(); err != nil {
 		return err
@@ -282,7 +333,21 @@ func (c *Client) Ping() (*protocol.Response, error) {
 // Shutdown asks the daemon to exit (only succeeds with 0 running unless force).
 func (c *Client) Shutdown(force bool) error {
 	if !c.alive() {
-		return nil
+		if !force {
+			return nil
+		}
+		live, err := c.hasLivePersistedTarget(0, true, "")
+		if err != nil {
+			return err
+		}
+		if !live {
+			return nil
+		}
+		// Forced shutdown is also a cleanup operation: if the daemon crashed but
+		// children survived, revive supervision first so they are not left behind.
+		if err := c.ensureDaemon(); err != nil {
+			return err
+		}
 	}
 	_, err := c.roundtrip(&protocol.Request{Kind: protocol.KindShutdown, Force: force})
 	if err != nil {

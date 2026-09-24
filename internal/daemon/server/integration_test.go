@@ -133,6 +133,50 @@ func newDaemonWithServer(t *testing.T) (*client.Client, string, *server.Server) 
 	return c, root, srv
 }
 
+// newExternalDaemonClient returns an isolated client whose daemon, when needed,
+// is started as a real child process. Recovery tests use this instead of an
+// in-process Server so killing the daemon also removes its supervisor goroutines.
+func newExternalDaemonClient(t *testing.T) (*client.Client, string) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	t.Setenv("BONSAI_DAEMON_BIN", getTestBonsaiBin(t))
+	root := t.TempDir()
+	c := client.For(root)
+	t.Cleanup(func() { _ = c.Shutdown(true) })
+	return c, root
+}
+
+// crashExternalDaemon terminates the actual daemon process without asking it to
+// stop its children, then waits until both the PID and socket are unusable.
+func crashExternalDaemon(t *testing.T, c *client.Client) {
+	t.Helper()
+	ping, err := c.Ping()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := os.FindProcess(ping.PID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	// Reap when possible. Signal-0/PidAlive is not a useful crash boundary here:
+	// a killed detached child may remain as a zombie until somebody waits for it.
+	_, _ = p.Wait()
+	if !waitFor(t, 3*time.Second, func() bool {
+		_, err := c.Ping()
+		return err != nil
+	}) {
+		t.Fatal("daemon socket remained reachable after crash")
+	}
+}
+
 var (
 	testBonsaiBin     string
 	testBonsaiBinOnce sync.Once
@@ -1008,6 +1052,197 @@ func TestCrashRecovery_OrphanAliveAndCleanup(t *testing.T) {
 		return !procstore.PidAlive(pid)
 	}) {
 		t.Fatalf("expected child PID %d to be dead after kill", pid)
+	}
+}
+
+func TestKillRecoversAfterDaemonCrash(t *testing.T) {
+	c, root := newExternalDaemonClient(t)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 31 127.0.0.1 >nul"
+	}
+	rec, err := c.Spawn(root, "", "orphan-kill", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+
+	// Simulate a daemon crash while the child survives.
+	crashExternalDaemon(t, c)
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to survive daemon crash", pid)
+	}
+
+	// Kill must revive supervision, reconcile the orphan, then terminate it.
+	killed, err := c.Kill(rec.ID, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(killed) != 1 || killed[0] != rec.ID {
+		t.Fatalf("killed = %v, want [%d]", killed, rec.ID)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return !procstore.PidAlive(pid) }) {
+		t.Fatalf("orphan PID %d survived kill", pid)
+	}
+	r := recByID(t, c, rec.ID)
+	if r == nil || r.Status != procstore.StatusStopped {
+		t.Fatalf("record = %+v, want stopped", r)
+	}
+}
+
+func TestRemoveRefusesLiveOrphanAfterDaemonCrash(t *testing.T) {
+	c, root := newExternalDaemonClient(t)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 31 127.0.0.1 >nul"
+	}
+	rec, err := c.Spawn(root, "", "orphan-remove", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+
+	crashExternalDaemon(t, c)
+
+	if err := c.Remove(rec.ID); err == nil {
+		t.Fatal("expected remove to refuse a live orphan")
+	}
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("remove unexpectedly killed orphan PID %d", pid)
+	}
+	if _, err := os.Stat(procstore.New(root).RecordPath(rec.ID)); err != nil {
+		t.Fatalf("remove deleted orphan metadata: %v", err)
+	}
+
+	// Cleanup through the normal recovery-aware kill path.
+	if _, err := c.Kill(rec.ID, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return !procstore.PidAlive(pid) }) {
+		t.Fatalf("orphan PID %d survived cleanup", pid)
+	}
+}
+
+func TestForceShutdownRecoversAndKillsOrphan(t *testing.T) {
+	c, root := newExternalDaemonClient(t)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 31 127.0.0.1 >nul"
+	}
+	rec, err := c.Spawn(root, "", "orphan-shutdown", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+
+	crashExternalDaemon(t, c)
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to survive daemon crash", pid)
+	}
+
+	// --force is a cleanup operation even when the original daemon is gone.
+	if err := c.Shutdown(true); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return !procstore.PidAlive(pid) }) {
+		t.Fatalf("orphan PID %d survived forced shutdown", pid)
+	}
+
+	persisted, err := procstore.New(root).ReadRecord(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != procstore.StatusStopped {
+		t.Fatalf("persisted status = %q, want %q", persisted.Status, procstore.StatusStopped)
+	}
+}
+
+func TestManualRestartLogOpenFailureBecomesFailed(t *testing.T) {
+	c, root := newDaemon(t)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 31 127.0.0.1 >nul"
+	}
+	rec, err := c.Spawn(root, "", "restart-log-failure", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Kill(rec.ID, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusStopped
+	}) {
+		t.Fatalf("process did not stop: %+v", recByID(t, c, rec.ID))
+	}
+
+	// Make newLogWriter fail before cmd.Start. A directory at the log path is
+	// portable and does not depend on filesystem permission behavior.
+	store := procstore.New(root)
+	if err := os.Remove(store.LogPath(rec.ID)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(store.LogPath(rec.ID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.Restart(rec.ID); err == nil {
+		t.Fatal("expected restart to fail when log path is a directory")
+	}
+	r := recByID(t, c, rec.ID)
+	if r == nil || r.Status != procstore.StatusFailed || r.ExitError == "" {
+		t.Fatalf("record = %+v, want failed with exit error", r)
+	}
+	ping, err := c.Ping()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ping.ProcCount != 0 {
+		t.Fatalf("active process count = %d, want 0", ping.ProcCount)
+	}
+}
+
+func TestCrashRecoveryAllowsProcessChangedCWD(t *testing.T) {
+	c, root := newExternalDaemonClient(t)
+
+	sub := filepath.Join(root, "child")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := "cd child && sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "cd child && ping -n 31 127.0.0.1 >nul"
+	}
+	rec, err := c.Spawn(root, "", "changed-cwd", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	time.Sleep(100 * time.Millisecond)
+
+	crashExternalDaemon(t, c)
+
+	recs, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Status != procstore.StatusOrphan {
+		t.Fatalf("records = %+v, want one orphan after cwd change", recs)
+	}
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("PID %d unexpectedly exited", pid)
+	}
+
+	if _, err := c.Kill(rec.ID, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return !procstore.PidAlive(pid) }) {
+		t.Fatalf("PID %d survived cleanup", pid)
 	}
 }
 
