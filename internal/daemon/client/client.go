@@ -301,6 +301,15 @@ func (c *Client) SetPolicy(id int, policy procstore.Policy) (*procstore.Record, 
 // Remove drops a terminal process from the daemon (deleting its record and log).
 func (c *Client) Remove(id int) error {
 	if !c.alive() {
+		rec, err := c.store.ReadRecord(id)
+		if err != nil {
+			return c.store.RemoveRecord(id)
+		}
+		if !procstore.IsTerminal(rec.Status) {
+			if rec.PID > 0 && procstore.ProcessMatches(rec.PID, rec.StartedAt, rec.Worktree) {
+				return fmt.Errorf("process #%d is still running", id)
+			}
+		}
 		return c.store.RemoveRecord(id)
 	}
 	if err := c.CheckCompatibility(); err != nil {

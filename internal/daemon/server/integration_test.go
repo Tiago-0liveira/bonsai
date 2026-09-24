@@ -1111,6 +1111,181 @@ func TestKillRecoversDaemonAndKillsOrphan(t *testing.T) {
 	}
 }
 
+func TestRemoveRejectsLiveOrphan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	srv1, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv1Done := make(chan struct{})
+	go func() {
+		defer close(srv1Done)
+		_ = srv1.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 30 127.0.0.1 >nul"
+	}
+
+	rec, err := c.Spawn(root, "", "orphan-job", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("spawned process PID %d is not alive", pid)
+	}
+
+	// Stop daemon 1 without killing children
+	srv1.Stop(false)
+	<-srv1Done
+
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive after daemon stopped", pid)
+	}
+
+	// Start daemon 2 (adopts orphan)
+	srv2, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2Done := make(chan struct{})
+	go func() {
+		defer close(srv2Done)
+		_ = srv2.Run()
+	}()
+	waitAlive(t, c)
+
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		<-srv2Done
+	})
+
+	// Verify process is StatusOrphan
+	r := recByID(t, c, rec.ID)
+	if r == nil || r.Status != procstore.StatusOrphan {
+		t.Fatalf("expected process to be StatusOrphan, got %+v", r)
+	}
+
+	// Remove must fail for live orphan
+	if err := c.Remove(rec.ID); err == nil {
+		t.Fatal("expected Remove to fail for live orphan, but succeeded")
+	}
+
+	// Assert PID is still alive and record still exists
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive", pid)
+	}
+	if recByID(t, c, rec.ID) == nil {
+		t.Fatal("expected record to still exist after rejected Remove")
+	}
+
+	// Kill must succeed
+	if _, err := c.Kill(rec.ID, false, ""); err != nil {
+		t.Fatalf("Kill failed: %v", err)
+	}
+
+	// After kill, Remove must succeed
+	if err := c.Remove(rec.ID); err != nil {
+		t.Fatalf("Remove failed for stopped process: %v", err)
+	}
+	if recByID(t, c, rec.ID) != nil {
+		t.Fatal("expected removed record to be gone")
+	}
+}
+
+func TestOfflineRemoveDoesNotForgetLiveProcess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	binPath := getTestBonsaiBin(t)
+	t.Setenv("BONSAI_DAEMON_BIN", binPath)
+
+	srv1, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv1Done := make(chan struct{})
+	go func() {
+		defer close(srv1Done)
+		_ = srv1.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 30 127.0.0.1 >nul"
+	}
+
+	rec, err := c.Spawn(root, "", "orphan-job", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("spawned process PID %d is not alive", pid)
+	}
+
+	// Stop daemon without killing child
+	srv1.Stop(false)
+	<-srv1Done
+
+	// Confirm offline and child still alive
+	if _, err := c.Ping(); err == nil {
+		t.Fatal("expected daemon to be offline")
+	}
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive after daemon stopped", pid)
+	}
+
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+	})
+
+	// Offline Remove must reject deleting record of a live process
+	if err := c.Remove(rec.ID); err == nil {
+		t.Fatal("expected offline Remove to fail for live process, but succeeded")
+	}
+
+	// Assert PID is still alive and record still exists
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive after rejected offline Remove", pid)
+	}
+	store := procstore.New(root)
+	if _, err := store.ReadRecord(rec.ID); err != nil {
+		t.Fatalf("expected record to still exist in store, got %v", err)
+	}
+
+	// Kill recovers daemon and kills the process
+	if _, err := c.Kill(rec.ID, false, ""); err != nil {
+		t.Fatalf("Kill failed: %v", err)
+	}
+
+	// Now Remove should succeed
+	if err := c.Remove(rec.ID); err != nil {
+		t.Fatalf("Remove failed for stopped process: %v", err)
+	}
+	if _, err := store.ReadRecord(rec.ID); err == nil {
+		t.Fatal("expected record to be deleted after remove")
+	}
+}
+
 func TestStateInvariant_NoGhostRunning(t *testing.T) {
 	c, root := newDaemon(t)
 
