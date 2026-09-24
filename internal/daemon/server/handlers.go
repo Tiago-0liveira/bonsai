@@ -121,8 +121,9 @@ func (s *Server) kill(req *protocol.Request) []int {
 
 	var killed []int
 	for _, mp := range targets {
-		s.killManaged(mp)
-		killed = append(killed, mp.rec.ID)
+		if s.killManaged(mp) {
+			killed = append(killed, mp.rec.ID)
+		}
 	}
 	sort.Ints(killed)
 	return killed
