@@ -66,6 +66,51 @@ func TestListAndMaxID(t *testing.T) {
 	}
 }
 
+func TestReadCombinedLog(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+
+	path := s.LogPath(1)
+	if err := os.WriteFile(path+".1", []byte("old-1\nold-2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("new-1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ReadCombinedLog(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "old-1\nold-2\nnew-1\n"; string(got) != want {
+		t.Fatalf("combined log = %q, want %q", string(got), want)
+	}
+
+	onlyCurrent := s.LogPath(2)
+	if err := os.WriteFile(onlyCurrent, []byte("current\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadCombinedLog(2)
+	if err != nil || string(got) != "current\n" {
+		t.Fatalf("current-only log = %q, %v", string(got), err)
+	}
+
+	onlyRotated := s.LogPath(3)
+	if err := os.WriteFile(onlyRotated+".1", []byte("rotated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadCombinedLog(3)
+	if err != nil || string(got) != "rotated\n" {
+		t.Fatalf("rotated-only log = %q, %v", string(got), err)
+	}
+
+	if _, err := s.ReadCombinedLog(4); !os.IsNotExist(err) {
+		t.Fatalf("missing log error = %v, want os.IsNotExist", err)
+	}
+}
+
 func TestTryLock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "x.lock")
 	l1, err := TryLock(path)
