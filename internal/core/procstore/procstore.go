@@ -226,6 +226,28 @@ func (s *Store) RemoveRecord(id int) error {
 	return err
 }
 
+// ReadCombinedLog returns the concatenated contents of the rotated log (<id>.log.1)
+// and current log (<id>.log) in chronological order.
+func (s *Store) ReadCombinedLog(id int) ([]byte, error) {
+	path := s.LogPath(id)
+	var combined []byte
+	if oldData, err := os.ReadFile(path + ".1"); err == nil {
+		combined = append(combined, oldData...)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if len(combined) > 0 && os.IsNotExist(err) {
+			return combined, nil
+		}
+		if len(combined) == 0 {
+			return nil, err
+		}
+	} else {
+		combined = append(combined, data...)
+	}
+	return combined, nil
+}
+
 // MaxID returns the highest existing record id (0 if none), so a restarting
 // daemon can resume the id counter without reusing numbers.
 func (s *Store) MaxID() (int, error) {

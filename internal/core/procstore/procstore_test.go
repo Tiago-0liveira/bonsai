@@ -145,3 +145,38 @@ func TestProcessMatches(t *testing.T) {
 		t.Fatal("expected live PID with mismatched start time to return false")
 	}
 }
+
+func TestReadCombinedLog(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+	_ = s.EnsureDirs()
+
+	// Both .log.1 and .log exist
+	logPath := s.LogPath(1)
+	if err := os.WriteFile(logPath+".1", []byte("part 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("part 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	combined, err := s.ReadCombinedLog(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(combined) != "part 1\npart 2\n" {
+		t.Fatalf("expected 'part 1\\npart 2\\n', got %q", string(combined))
+	}
+
+	// Only .log exists
+	logPath2 := s.LogPath(2)
+	if err := os.WriteFile(logPath2, []byte("only live\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	combined2, err := s.ReadCombinedLog(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(combined2) != "only live\n" {
+		t.Fatalf("expected 'only live\\n', got %q", string(combined2))
+	}
+}

@@ -1665,6 +1665,80 @@ func TestLogRotationFollower(t *testing.T) {
 			t.Errorf("follower missing %q in output: %q", expected, out)
 		}
 	}
+
+	// 1. Full read (follow=false) includes .log.1 + .log
+	var fullOut string
+	if err := c.Logs(rec.ID, false, 0, "", false, func(chunk string) error {
+		fullOut += chunk
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"line 111111111111111111", "line 222222222222222222", "line 333333333333333333", "line 444444444444444444"} {
+		if !strings.Contains(fullOut, expected) {
+			t.Errorf("full read missing %q in output: %q", expected, fullOut)
+		}
+	}
+
+	// 2. Tail works across rotation boundary (4 lines across boundary, including exit marker)
+	var tailOut string
+	if err := c.Logs(rec.ID, false, 4, "", false, func(chunk string) error {
+		tailOut += chunk
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"line 222222222222222222", "line 333333333333333333", "line 444444444444444444"} {
+		if !strings.Contains(tailOut, expected) {
+			t.Errorf("tail across boundary missing %q in output: %q", expected, tailOut)
+		}
+	}
+	if strings.Contains(tailOut, "line 111111111111111111") {
+		t.Errorf("tail across boundary should not include line 1: %q", tailOut)
+	}
+
+	// 3. Grep can match content from .log.1
+	var grepOut string
+	if err := c.Logs(rec.ID, false, 0, "line 1111", false, func(chunk string) error {
+		grepOut += chunk
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(grepOut, "line 111111111111111111") {
+		t.Errorf("grep missing match from .log.1: %q", grepOut)
+	}
+	if strings.Contains(grepOut, "line 4444") {
+		t.Errorf("grep should only match line 1: %q", grepOut)
+	}
+
+	// 4. Offline reads include .log.1 + .log
+	if err := c.Shutdown(true); err != nil {
+		t.Fatal(err)
+	}
+	var offlineFull string
+	if err := c.Logs(rec.ID, false, 0, "", false, func(chunk string) error {
+		offlineFull += chunk
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"line 111111111111111111", "line 222222222222222222", "line 333333333333333333", "line 444444444444444444"} {
+		if !strings.Contains(offlineFull, expected) {
+			t.Errorf("offline full read missing %q: %q", expected, offlineFull)
+		}
+	}
+
+	var offlineGrep string
+	if err := c.Logs(rec.ID, false, 0, "line 1111", false, func(chunk string) error {
+		offlineGrep += chunk
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(offlineGrep, "line 111111111111111111") {
+		t.Errorf("offline grep missing match from .log.1: %q", offlineGrep)
+	}
 }
 
 func TestProtocolCompatibility(t *testing.T) {

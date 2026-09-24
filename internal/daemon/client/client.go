@@ -348,7 +348,7 @@ func (c *Client) Shutdown(force bool) error {
 // When no daemon is live it reads the log file once, respecting tailLines and grep options.
 func (c *Client) Logs(id int, follow bool, tailLines int, grep string, insensitive bool, onChunk func(string) error) error {
 	if !c.alive() {
-		data, err := os.ReadFile(c.store.LogPath(id))
+		data, err := c.store.ReadCombinedLog(id)
 		if err != nil {
 			return err
 		}
