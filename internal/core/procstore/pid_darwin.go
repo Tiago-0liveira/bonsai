@@ -8,6 +8,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const processStartTolerance = 5 * time.Second
+
 // PidAlive reports whether pid names a live process.
 func PidAlive(pid int) bool {
 	if pid <= 0 {
