@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -17,10 +18,14 @@ import (
 
 // shortRuntimeDir returns a short-pathed dir for the daemon socket. Unix socket
 // paths are capped (~104 bytes on macOS) and t.TempDir() is far too deep, so we
-// anchor under /tmp.
+// anchor under /tmp on Unix, or default temp dir on Windows.
 func shortRuntimeDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "bsrt")
+	base := ""
+	if runtime.GOOS != "windows" {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "bsrt")
 	if err != nil {
 		t.Fatal(err)
 	}

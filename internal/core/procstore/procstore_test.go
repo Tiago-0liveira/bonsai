@@ -101,7 +101,7 @@ func TestIndexRegisterDeregister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Root != "/repo/a" {
+	if len(list) != 1 || list[0].Root != filepath.Clean("/repo/a") {
 		t.Fatalf("unexpected list: %+v", list)
 	}
 
