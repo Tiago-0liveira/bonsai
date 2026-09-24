@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -1406,14 +1405,14 @@ func TestLogStreamingGrepAcrossChunkBoundary(t *testing.T) {
 	// 32765 'a's + "MATCH_TARGET" + " remainder\n"
 	pad := strings.Repeat("a", 32765)
 	payload := pad + "MATCH_TARGET remainder\n"
-	logPath := filepath.Join(t.TempDir(), "source.log")
+	logPath := filepath.Join(root, "source.log")
 	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	cmd := fmt.Sprintf("cat %q", logPath)
+	cmd := "cat source.log"
 	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
-		cmd = fmt.Sprintf("type %q", logPath)
+		cmd = "type source.log"
 	}
 
 	rec, err := c.Spawn(root, "", "grepper", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
@@ -1442,7 +1441,7 @@ func TestLogStreamingGrepAcrossChunkBoundary(t *testing.T) {
 	}
 
 	mu.Lock()
-	got := collected.String()
+	got := strings.ReplaceAll(collected.String(), "\r\n", "\n")
 	mu.Unlock()
 
 	if !strings.Contains(got, "MATCH_TARGET") {
