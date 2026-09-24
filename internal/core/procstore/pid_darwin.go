@@ -36,7 +36,7 @@ func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
 		int64(kproc.Proc.P_starttime.Usec)*int64(time.Microsecond),
 	)
 	diff := started.Sub(startedAt)
-	return diff >= -time.Minute && diff <= time.Minute
+	return diff >= -processStartTolerance && diff <= processStartTolerance
 }
 
 func pidAlive(pid int) bool {
