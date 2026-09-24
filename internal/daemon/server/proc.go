@@ -256,6 +256,17 @@ func (s *Server) executeScheduledRestart(id int, scheduledGen uint64) {
 		mp.mu.Unlock()
 		return
 	}
+	if mp.rec.Policy.Mode == procstore.PolicyNo ||
+		(mp.rec.Policy.MaxRestarts > 0 && mp.consecFails > mp.rec.Policy.MaxRestarts) {
+		mp.restartTimer = nil
+		mp.rec.Status = procstore.StatusFailed
+		_ = s.store.WriteRecord(mp.rec)
+		mp.mu.Unlock()
+		s.mu.Lock()
+		s.armIdleLocked()
+		s.mu.Unlock()
+		return
+	}
 	mp.restartTimer = nil
 	mp.rec.Status = procstore.StatusStarting
 	_ = s.store.WriteRecord(mp.rec)
