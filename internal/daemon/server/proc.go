@@ -83,6 +83,14 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 		mp.mu.Unlock()
 	})
 	if err != nil {
+		s.appendMarker(mp.rec.ID, procstore.Marker{
+			Kind: procstore.MarkerExit,
+			Code: -1,
+			Text: "failed to start · " + err.Error(),
+		})
+		mp.rec.Status = procstore.StatusFailed
+		mp.rec.ExitError = err.Error()
+		_ = s.store.WriteRecord(mp.rec)
 		return err
 	}
 
@@ -241,6 +249,15 @@ func (s *Server) executeScheduledRestart(id int, scheduledGen uint64) {
 	mp.mu.Lock()
 	if mp.generation != scheduledGen || mp.rec.Status != procstore.StatusBackoff {
 		mp.mu.Unlock()
+		return
+	}
+	if mp.rec.Policy.Mode == procstore.PolicyNo || (mp.rec.Policy.MaxRestarts > 0 && mp.consecFails > mp.rec.Policy.MaxRestarts) {
+		mp.rec.Status = procstore.StatusFailed
+		_ = s.store.WriteRecord(mp.rec)
+		mp.mu.Unlock()
+		s.mu.Lock()
+		s.armIdleLocked()
+		s.mu.Unlock()
 		return
 	}
 	mp.restartTimer = nil
@@ -421,6 +438,16 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 	mp.mu.Unlock()
 
 	if err := s.start(mp, gen); err != nil {
+		mp.mu.Lock()
+		if mp.rec.Status != procstore.StatusFailed {
+			mp.rec.Status = procstore.StatusFailed
+			mp.rec.ExitError = err.Error()
+			_ = s.store.WriteRecord(mp.rec)
+		}
+		mp.mu.Unlock()
+		s.mu.Lock()
+		s.armIdleLocked()
+		s.mu.Unlock()
 		return nil, err
 	}
 	s.mu.Lock()

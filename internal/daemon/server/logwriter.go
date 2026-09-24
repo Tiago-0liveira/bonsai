@@ -55,6 +55,7 @@ func (w *logWriter) Write(p []byte) (int, error) {
 // Caller holds w.mu.
 func (w *logWriter) rotate() {
 	_ = w.f.Close()
+	_ = os.Remove(w.path + ".1")
 	_ = os.Rename(w.path, w.path+".1")
 	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {

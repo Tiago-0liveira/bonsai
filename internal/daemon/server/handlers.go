@@ -46,7 +46,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		err := s.remove(req.ID)
 		writeResult(enc, &protocol.Response{}, err)
 
-	case protocol.KindLogs, "attach":
+	case protocol.KindLogs, protocol.KindAttach:
 		s.streamLogs(conn, enc, req)
 
 	case protocol.KindPing:

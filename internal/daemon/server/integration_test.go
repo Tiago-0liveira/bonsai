@@ -850,6 +850,193 @@ func TestControlledShutdown(t *testing.T) {
 	}
 }
 
+func TestControlledShutdown_Orphan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	srv1, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv1Done := make(chan struct{})
+	go func() {
+		defer close(srv1Done)
+		_ = srv1.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 30 127.0.0.1 >nul"
+	}
+
+	rec, err := c.Spawn(root, "", "orphan-job", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("spawned process PID %d is not alive", pid)
+	}
+
+	// Stop daemon 1 without killing children to leave orphan alive
+	srv1.Stop(false)
+	<-srv1Done
+
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive after ungraceful shutdown", pid)
+	}
+
+	// Start daemon 2 for the same root (adopts orphan)
+	srv2, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2Done := make(chan struct{})
+	go func() {
+		defer close(srv2Done)
+		_ = srv2.Run()
+	}()
+	waitAlive(t, c)
+
+	// Forced shutdown of daemon 2 must terminate orphan child process
+	if err := c.Shutdown(true); err != nil {
+		t.Fatalf("forced shutdown of daemon with orphan failed: %v", err)
+	}
+	<-srv2Done
+
+	// Child process must be gone
+	if procstore.PidAlive(pid) {
+		t.Fatalf("orphan child process %d still alive after forced daemon shutdown", pid)
+	}
+
+	// Final state must be persisted as stopped
+	store := procstore.New(root)
+	persisted, err := store.ReadRecord(rec.ID)
+	if err != nil {
+		t.Fatalf("reading persisted record: %v", err)
+	}
+	if persisted.Status != procstore.StatusStopped {
+		t.Fatalf("persisted status = %q, want %q", persisted.Status, procstore.StatusStopped)
+	}
+}
+
+func TestStateInvariant_NoGhostRunning(t *testing.T) {
+	c, root := newDaemon(t)
+
+	// Scenario 1: PolicyNo process exits
+	// Must transition to StatusFailed (terminal); must never remain StatusRunning without child
+	pNo, err := c.Spawn(root, "", "no-restart", "exit 1", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, pNo.ID)
+		return r != nil && r.Status == procstore.StatusFailed
+	}) {
+		t.Fatalf("expected StatusFailed for PolicyNo proc, got %+v", recByID(t, c, pNo.ID))
+	}
+	rNo := recByID(t, c, pNo.ID)
+	if rNo.Status == procstore.StatusRunning {
+		t.Fatalf("invariant violated: dead process with no restart marked running: %+v", rNo)
+	}
+
+	// Scenario 2: Automatic restart attempt fails (worktree missing)
+	sub := filepath.Join(root, "subworktree-invariant")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pFlap, err := c.Spawn(sub, "", "flap-fail", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Wait until it enters backoff
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, pFlap.ID)
+		return r != nil && r.Status == procstore.StatusBackoff
+	}) {
+		t.Fatalf("expected backoff, got %+v", recByID(t, c, pFlap.ID))
+	}
+	// Remove directory so next restart attempt fails to start
+	if err := os.RemoveAll(sub); err != nil {
+		t.Fatal(err)
+	}
+	// Invariant: when restart attempt fails, it transitions to StatusFailed, NOT StatusRunning
+	if !waitFor(t, 3*time.Second, func() bool {
+		r := recByID(t, c, pFlap.ID)
+		return r != nil && r.Status == procstore.StatusFailed && r.ExitError != ""
+	}) {
+		t.Fatalf("expected StatusFailed after restart failure, got %+v", recByID(t, c, pFlap.ID))
+	}
+	rFlap := recByID(t, c, pFlap.ID)
+	if rFlap.Status == procstore.StatusRunning {
+		t.Fatalf("invariant violated: process whose restart failed marked running: %+v", rFlap)
+	}
+
+	// Scenario 3: Manual restart attempt fails (worktree missing)
+	// Must transition to StatusFailed, not remain StatusStarting or StatusRunning
+	_, err = c.Restart(pFlap.ID)
+	if err == nil {
+		t.Fatal("expected error on manual restart with missing worktree, got nil")
+	}
+	rManual := recByID(t, c, pFlap.ID)
+	if rManual.Status == procstore.StatusRunning || rManual.Status == procstore.StatusStarting {
+		t.Fatalf("invariant violated: process whose manual restart failed marked %q", rManual.Status)
+	}
+	if rManual.Status != procstore.StatusFailed {
+		t.Fatalf("expected StatusFailed after manual restart failure, got %q", rManual.Status)
+	}
+
+	// Verify daemon active count is 0
+	ping, err := c.Ping()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ping.ProcCount != 0 {
+		t.Fatalf("expected 0 active processes in ping, got %d", ping.ProcCount)
+	}
+}
+
+func TestScheduledRestart_PolicyNoDuringBackoff(t *testing.T) {
+	c, root := newDaemon(t)
+
+	rec, err := c.Spawn(root, "", "policy-change", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait until it enters backoff
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusBackoff
+	}) {
+		t.Fatalf("expected backoff, got %+v", recByID(t, c, rec.ID))
+	}
+
+	// Change policy to "no" while in backoff
+	if _, err := c.SetPolicy(rec.ID, procstore.Policy{Mode: procstore.PolicyNo}); err != nil {
+		t.Fatalf("SetPolicy failed: %v", err)
+	}
+
+	// Wait long enough for scheduled timer to fire (base backoff is 1s)
+	time.Sleep(1500 * time.Millisecond)
+
+	// Invariant: should transition to StatusFailed, NOT StatusRunning or StatusStarting
+	r := recByID(t, c, rec.ID)
+	if r.Status != procstore.StatusFailed {
+		t.Fatalf("expected StatusFailed after cancelling restart via policy=no, got %q", r.Status)
+	}
+	if r.Restarts != 1 {
+		t.Fatalf("expected restarts count to remain 1, got %d", r.Restarts)
+	}
+}
+
 func TestCrashRecoveryMarksLost(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")

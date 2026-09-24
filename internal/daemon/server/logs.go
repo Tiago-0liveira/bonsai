@@ -48,11 +48,7 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 
 	data, _ := os.ReadFile(path)
 	if !req.Follow {
-		initial := string(data)
-		if req.TailLines > 0 {
-			initial = procstore.LastLines(initial, req.TailLines)
-		}
-		initial = procstore.FilterGrep(initial, req.Grep, req.GrepInsensitive)
+		initial := procstore.FilterLog(string(data), req.TailLines, req.Grep, req.GrepInsensitive)
 		if initial != "" {
 			_ = enc.WriteResponse(&protocol.Response{OK: true, LogChunk: initial})
 		}

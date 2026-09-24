@@ -223,16 +223,16 @@ func (s *Server) stopAllProcesses() {
 			mp.mu.Unlock()
 			continue
 		}
-		if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping {
+		if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping || status == procstore.StatusOrphan {
 			mp.rec.Status = procstore.StatusStopping
 			_ = s.store.WriteRecord(mp.rec)
 			cmd := mp.cmd
 			pid := mp.rec.PID
 			mp.mu.Unlock()
 			if cmd != nil {
-				coreexec.KillProcessTree(cmd)
+				coreexec.TerminateProcessTree(cmd)
 			} else if pid > 0 {
-				coreexec.KillPID(pid)
+				coreexec.TerminatePID(pid)
 			}
 			runningProcs = append(runningProcs, mp)
 			continue
@@ -241,30 +241,75 @@ func (s *Server) stopAllProcesses() {
 	}
 	s.mu.Unlock()
 
-	// Bounded wait for running processes to exit
+	// Wait up to 2.5s for graceful termination before escalating.
+	graceDeadline := time.Now().Add(2500 * time.Millisecond)
 	shutdownDeadline := time.Now().Add(5 * time.Second)
+
 	for _, mp := range runningProcs {
 		mp.mu.Lock()
 		done := mp.waitDone
+		pid := mp.rec.PID
+		cmd := mp.cmd
 		mp.mu.Unlock()
+
 		if done != nil {
-			remaining := time.Until(shutdownDeadline)
-			if remaining > 0 {
+			graceRem := time.Until(graceDeadline)
+			if graceRem > 0 {
 				select {
 				case <-done:
-				case <-time.After(remaining):
-					mp.mu.Lock()
-					pid := mp.rec.PID
-					mp.mu.Unlock()
-					if pid > 0 {
+				case <-time.After(graceRem):
+					// Grace period expired; escalate to SIGKILL / taskkill /F
+					if cmd != nil {
+						coreexec.KillProcessTree(cmd)
+					} else if pid > 0 {
 						coreexec.KillPID(pid)
+					}
+					// Wait for exit after escalation
+					rem := time.Until(shutdownDeadline)
+					if rem > 0 {
+						select {
+						case <-done:
+						case <-time.After(rem):
+						}
+					}
+				}
+			} else {
+				// Already past grace period, escalate immediately
+				if cmd != nil {
+					coreexec.KillProcessTree(cmd)
+				} else if pid > 0 {
+					coreexec.KillPID(pid)
+				}
+				rem := time.Until(shutdownDeadline)
+				if rem > 0 {
+					select {
+					case <-done:
+					case <-time.After(rem):
 					}
 				}
 			}
+		} else if pid > 0 {
+			// Orphan process without waitDone channel
+			pollDeadline := time.Now().Add(1500 * time.Millisecond)
+			for time.Now().Before(pollDeadline) && procstore.PidAlive(pid) {
+				time.Sleep(20 * time.Millisecond)
+			}
+			if procstore.PidAlive(pid) {
+				coreexec.KillPID(pid)
+				escalateDeadline := time.Now().Add(1500 * time.Millisecond)
+				for time.Now().Before(escalateDeadline) && procstore.PidAlive(pid) {
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
 		}
+
 		mp.mu.Lock()
 		if !procstore.IsTerminal(mp.rec.Status) {
 			mp.rec.Status = procstore.StatusStopped
+			s.appendMarker(mp.rec.ID, procstore.Marker{
+				Kind: procstore.MarkerStopped,
+				Text: "stopped by daemon shutdown",
+			})
 			_ = s.store.WriteRecord(mp.rec)
 		}
 		mp.mu.Unlock()
@@ -297,6 +342,10 @@ func (s *Server) activeCountLocked() int {
 	n := 0
 	for _, mp := range s.procs {
 		mp.mu.Lock()
+		if mp.rec.Status == procstore.StatusOrphan && !procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.Worktree) {
+			mp.rec.Status = procstore.StatusLost
+			_ = s.store.WriteRecord(mp.rec)
+		}
 		if procstore.IsActive(mp.rec.Status) {
 			n++
 		}
