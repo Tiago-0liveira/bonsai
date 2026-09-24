@@ -53,7 +53,8 @@ const (
 	StatusStopped  = "stopped" // user-killed
 	StatusDone     = "done"    // exited zero, not restarting
 	StatusFailed   = "failed"  // exited non-zero, not restarting
-	StatusLost     = "lost"    // daemon lost authoritative supervision
+	StatusLost     = "lost"    // daemon lost authoritative supervision and process exited
+	StatusOrphan   = "orphan"  // daemon restarted; process is still alive unmanaged
 )
 
 // IsTerminal reports whether status represents a terminal state.
@@ -68,7 +69,7 @@ func IsTerminal(status string) bool {
 // IsActive reports whether status represents an active (or recovering) state.
 func IsActive(status string) bool {
 	switch status {
-	case StatusStarting, StatusRunning, StatusBackoff, StatusStopping:
+	case StatusStarting, StatusRunning, StatusBackoff, StatusStopping, StatusOrphan:
 		return true
 	}
 	return false

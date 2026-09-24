@@ -85,6 +85,12 @@ func (s *Server) list() []*procstore.Record {
 
 	out := make([]*procstore.Record, 0, len(mps))
 	for _, mp := range mps {
+		mp.mu.Lock()
+		if mp.rec.Status == procstore.StatusOrphan && !procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.Worktree) {
+			mp.rec.Status = procstore.StatusLost
+			_ = s.store.WriteRecord(mp.rec)
+		}
+		mp.mu.Unlock()
 		out = append(out, s.snapshot(mp))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

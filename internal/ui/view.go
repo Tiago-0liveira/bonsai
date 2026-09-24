@@ -165,7 +165,7 @@ func procLine(p *procstore.Record, url string) string {
 	switch p.Status {
 	case procstore.StatusRunning:
 		st = procRunning.Render(p.Status)
-	case procstore.StatusStarting, procstore.StatusBackoff, procstore.StatusStopping:
+	case procstore.StatusStarting, procstore.StatusBackoff, procstore.StatusStopping, procstore.StatusOrphan:
 		st = procMarkerWarn.Render(p.Status)
 	case procstore.StatusFailed, procstore.StatusLost:
 		st = procFailed.Render(p.Status)

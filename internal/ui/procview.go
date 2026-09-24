@@ -1,7 +1,6 @@
 package ui
 
 import (
-	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 )
@@ -79,7 +78,12 @@ func (v *procView) Output(id int) string {
 
 // LastURL returns the last local URL printed by process id (dev-server address).
 func (v *procView) LastURL(id int) string {
-	return coreexec.LastLocalURL(v.Output(id))
+	for _, r := range v.recs {
+		if r.ID == id {
+			return r.LastURL
+		}
+	}
+	return ""
 }
 
 // Spawn starts a new background process and refreshes the cache.

@@ -64,15 +64,33 @@ func (c *Client) CheckCompatibility() error {
 			ErrIncompatibleDaemon, resp.Version, protocol.Version, resp.ProcCount)
 	}
 	// Incompatible but idle: shut it down and replace it.
-	_ = c.Shutdown(false)
+	if err := c.Shutdown(false); err != nil {
+		return fmt.Errorf("%w: failed to shutdown incompatible daemon: %v", ErrIncompatibleDaemon, err)
+	}
+	stopped := false
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if !c.alive() {
+			stopped = true
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return c.autostart()
+	if !stopped {
+		return fmt.Errorf("%w: incompatible daemon survived shutdown deadline", ErrIncompatibleDaemon)
+	}
+	if err := c.autostart(); err != nil {
+		return err
+	}
+	newResp, err := c.Ping()
+	if err != nil {
+		return fmt.Errorf("failed to ping replacement daemon: %w", err)
+	}
+	if newResp.Version != protocol.Version {
+		return fmt.Errorf("%w: replacement daemon version %d, expected %d",
+			ErrIncompatibleDaemon, newResp.Version, protocol.Version)
+	}
+	return nil
 }
 
 // ensureDaemon guarantees a reachable compatible daemon, auto-starting one if needed.
@@ -178,8 +196,12 @@ func (c *Client) List() ([]*procstore.Record, error) {
 		return nil, err
 	}
 	for _, r := range recs {
-		if procstore.IsActive(r.Status) {
-			r.Status = procstore.StatusLost
+		if procstore.IsActive(r.Status) || r.Status == procstore.StatusOrphan {
+			if procstore.ProcessMatches(r.PID, r.StartedAt, r.Worktree) {
+				r.Status = procstore.StatusOrphan
+			} else {
+				r.Status = procstore.StatusLost
+			}
 		}
 	}
 	return recs, nil

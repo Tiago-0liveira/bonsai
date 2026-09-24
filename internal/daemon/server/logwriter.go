@@ -15,9 +15,10 @@ type logWriter struct {
 	f          *os.File
 	size       int64
 	generation uint64
+	onWrite    func([]byte)
 }
 
-func newLogWriter(path string, cap int64) (*logWriter, error) {
+func newLogWriter(path string, cap int64, onWrite func([]byte)) (*logWriter, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
@@ -27,13 +28,13 @@ func newLogWriter(path string, cap int64) (*logWriter, error) {
 	if fi != nil {
 		size = fi.Size()
 	}
-	return &logWriter{path: path, cap: cap, f: f, size: size}, nil
+	return &logWriter{path: path, cap: cap, f: f, size: size, onWrite: onWrite}, nil
 }
 
 func (w *logWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.f == nil {
+		w.mu.Unlock()
 		return len(p), nil // closed; drop
 	}
 	if w.cap > 0 && w.size+int64(len(p)) > w.cap {
@@ -41,6 +42,12 @@ func (w *logWriter) Write(p []byte) (int, error) {
 	}
 	n, err := w.f.Write(p)
 	w.size += int64(n)
+	onWrite := w.onWrite
+	w.mu.Unlock()
+
+	if n > 0 && onWrite != nil {
+		onWrite(p[:n])
+	}
 	return n, err
 }
 

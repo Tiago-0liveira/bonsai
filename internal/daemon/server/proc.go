@@ -14,6 +14,8 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
 
+var errGenerationMismatch = errors.New("generation mismatch")
+
 // spawn creates a new managed process and starts it.
 func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	if req.Worktree == "" || req.Command == "" {
@@ -39,7 +41,7 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	s.procs[id] = mp
 	s.mu.Unlock()
 
-	if err := s.start(mp); err != nil {
+	if err := s.start(mp, 1); err != nil {
 		s.mu.Lock()
 		delete(s.procs, id)
 		s.mu.Unlock()
@@ -55,15 +57,31 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 
 // start launches mp's command as a fresh subprocess in its own process group,
 // routing output to its log file. Caller must not hold mp.mu.
-func (s *Server) start(mp *managedProc) error {
+func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	mp.mu.Lock()
 	defer mp.mu.Unlock()
+
+	if mp.generation != expectedGen || mp.rec.Status != procstore.StatusStarting {
+		return errGenerationMismatch
+	}
 
 	cap := s.logCap
 	if cap <= 0 {
 		cap = logCap
 	}
-	logw, err := newLogWriter(s.store.LogPath(mp.rec.ID), cap)
+	var urlBuf []byte
+	logw, err := newLogWriter(s.store.LogPath(mp.rec.ID), cap, func(chunk []byte) {
+		mp.mu.Lock()
+		urlBuf = append(urlBuf, chunk...)
+		if len(urlBuf) > 4096 {
+			urlBuf = urlBuf[len(urlBuf)-4096:]
+		}
+		if url := coreexec.LastLocalURL(string(urlBuf)); url != "" && mp.rec.LastURL != url {
+			mp.rec.LastURL = url
+			_ = s.store.WriteRecord(mp.rec)
+		}
+		mp.mu.Unlock()
+	})
 	if err != nil {
 		return err
 	}
@@ -73,6 +91,11 @@ func (s *Server) start(mp *managedProc) error {
 	cmd.Stderr = logw
 	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
 	coreexec.SetProcessGroup(cmd)
+
+	if mp.generation != expectedGen || mp.rec.Status != procstore.StatusStarting {
+		_ = logw.Close()
+		return errGenerationMismatch
+	}
 
 	s.appendMarker(mp.rec.ID, procstore.Marker{Kind: procstore.MarkerStart, Text: startText(mp.rec)})
 	if err := cmd.Start(); err != nil {
@@ -209,6 +232,7 @@ func (s *Server) onExit(mp *managedProc, werr error, started time.Time, done cha
 func (s *Server) executeScheduledRestart(id int, scheduledGen uint64) {
 	s.mu.Lock()
 	mp, ok := s.procs[id]
+	barrier := s.startBarrier
 	s.mu.Unlock()
 	if !ok {
 		return
@@ -228,7 +252,14 @@ func (s *Server) executeScheduledRestart(id int, scheduledGen uint64) {
 	}
 	mp.mu.Unlock()
 
-	if err := s.start(mp); err != nil {
+	if barrier != nil {
+		barrier(id)
+	}
+
+	if err := s.start(mp, scheduledGen); err != nil {
+		if errors.Is(err, errGenerationMismatch) {
+			return
+		}
 		mp.mu.Lock()
 		mp.rec.Status = procstore.StatusFailed
 		mp.rec.ExitError = err.Error()
@@ -281,6 +312,53 @@ func (s *Server) killManaged(mp *managedProc) {
 		return
 	}
 
+	if status == procstore.StatusStarting {
+		mp.generation++
+		mp.rec.Status = procstore.StatusStopped
+		s.appendMarker(mp.rec.ID, procstore.Marker{
+			Kind: procstore.MarkerStopped,
+			Text: "stopped by user",
+		})
+		_ = s.store.WriteRecord(mp.rec)
+		mp.mu.Unlock()
+
+		s.mu.Lock()
+		s.armIdleLocked()
+		s.mu.Unlock()
+		return
+	}
+
+	if status == procstore.StatusOrphan {
+		pid := mp.rec.PID
+		alive := procstore.ProcessMatches(pid, mp.rec.StartedAt, mp.rec.Worktree)
+		if !alive {
+			mp.rec.Status = procstore.StatusLost
+			s.appendMarker(mp.rec.ID, procstore.Marker{
+				Kind: procstore.MarkerExit,
+				Code: -1,
+				Text: "orphan process exited",
+			})
+			_ = s.store.WriteRecord(mp.rec)
+			mp.mu.Unlock()
+			return
+		}
+		mp.rec.Status = procstore.StatusStopped
+		s.appendMarker(mp.rec.ID, procstore.Marker{
+			Kind: procstore.MarkerStopped,
+			Text: "orphan stopped by user",
+		})
+		_ = s.store.WriteRecord(mp.rec)
+		mp.mu.Unlock()
+
+		if pid > 0 {
+			coreexec.KillPID(pid)
+		}
+		s.mu.Lock()
+		s.armIdleLocked()
+		s.mu.Unlock()
+		return
+	}
+
 	if status == procstore.StatusStopping {
 		cmd := mp.cmd
 		pid := mp.rec.PID
@@ -327,7 +405,7 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 	}
 	mp.mu.Unlock()
 
-	if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping {
+	if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping || status == procstore.StatusOrphan {
 		s.killManaged(mp)
 		if done != nil {
 			<-done
@@ -337,10 +415,12 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 	mp.mu.Lock()
 	mp.consecFails = 0
 	mp.generation++
+	gen := mp.generation
 	mp.rec.Status = procstore.StatusStarting
+	_ = s.store.WriteRecord(mp.rec)
 	mp.mu.Unlock()
 
-	if err := s.start(mp); err != nil {
+	if err := s.start(mp, gen); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()

@@ -61,13 +61,21 @@ type Server struct {
 	lock      *procstore.FileLock
 	idleTimer *time.Timer
 
-	done      chan struct{}
-	closeOnce sync.Once
+	done         chan struct{}
+	closeOnce    sync.Once
+	startBarrier func(id int)
 }
 
 // SetLogCap sets a custom log capacity before rotation (used by tests).
 func (s *Server) SetLogCap(cap int64) {
 	s.logCap = cap
+}
+
+// SetStartBarrier sets a deterministic test hook called between StatusStarting and start().
+func (s *Server) SetStartBarrier(fn func(id int)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startBarrier = fn
 }
 
 // Run runs the daemon serve loop until shut down.
@@ -150,7 +158,7 @@ func NewServer(root string) (*Server, error) {
 }
 
 // adoptExisting loads records left by a previous daemon. If active records exist,
-// they are explicitly reconciled as "lost" because this new daemon has lost authoritative supervision.
+// they are explicitly reconciled: if still alive, classified as "orphan"; if dead, classified as "lost".
 func (s *Server) adoptExisting() {
 	recs, _ := s.store.ListRecords()
 	max := 0
@@ -158,18 +166,24 @@ func (s *Server) adoptExisting() {
 		if r.ID > max {
 			max = r.ID
 		}
-		if procstore.IsActive(r.Status) {
-			alive := procstore.PidAlive(r.PID)
-			r.Status = procstore.StatusLost
-			text := "daemon exited · process lost"
+		if procstore.IsActive(r.Status) || r.Status == procstore.StatusOrphan {
+			alive := procstore.ProcessMatches(r.PID, r.StartedAt, r.Worktree)
 			if alive {
-				text = fmt.Sprintf("daemon exited · process lost (orphaned pid %d)", r.PID)
+				r.Status = procstore.StatusOrphan
+				text := fmt.Sprintf("daemon restarted · orphan process still alive (pid %d)", r.PID)
+				s.appendMarker(r.ID, procstore.Marker{
+					Kind: procstore.MarkerStart,
+					Text: text,
+				})
+			} else {
+				r.Status = procstore.StatusLost
+				text := "daemon exited · process lost"
+				s.appendMarker(r.ID, procstore.Marker{
+					Kind: procstore.MarkerExit,
+					Code: -1,
+					Text: text,
+				})
 			}
-			s.appendMarker(r.ID, procstore.Marker{
-				Kind: procstore.MarkerExit,
-				Code: -1,
-				Text: text,
-			})
 			_ = s.store.WriteRecord(r)
 		}
 		s.procs[r.ID] = &managedProc{rec: r}
@@ -255,6 +269,11 @@ func (s *Server) stopAllProcesses() {
 		}
 		mp.mu.Unlock()
 	}
+}
+
+// Stop terminates the server loop, optionally stopping managed processes.
+func (s *Server) Stop(killChildren bool) {
+	s.shutdown(killChildren)
 }
 
 // shutdown stops the server.

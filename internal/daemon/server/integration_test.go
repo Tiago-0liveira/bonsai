@@ -1,8 +1,11 @@
 package server_test
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -97,6 +100,77 @@ func newDaemonWithLogCap(t *testing.T, logLimit int64) (*client.Client, string) 
 		}
 	})
 	return c, root
+}
+
+func newDaemonWithServer(t *testing.T) (*client.Client, string, *server.Server) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	srv, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = srv.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	})
+	return c, root, srv
+}
+
+var (
+	testBonsaiBin     string
+	testBonsaiBinOnce sync.Once
+	realHome, _       = os.UserHomeDir()
+	realGOPATH        = os.Getenv("GOPATH")
+	realGOCACHE       = os.Getenv("GOCACHE")
+)
+
+func getTestBonsaiBin(t *testing.T) string {
+	t.Helper()
+	testBonsaiBinOnce.Do(func() {
+		binDir, err := os.MkdirTemp("", "bonsai-test-bin-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := "bonsai"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		testBonsaiBin = filepath.Join(binDir, name)
+		cmd := exec.Command("go", "build", "-o", testBonsaiBin, "github.com/Tiago-0liveira/bonsai")
+		env := os.Environ()
+		if realHome != "" {
+			env = append(env, "HOME="+realHome)
+		}
+		if realGOPATH != "" {
+			env = append(env, "GOPATH="+realGOPATH)
+		}
+		if realGOCACHE != "" {
+			env = append(env, "GOCACHE="+realGOCACHE)
+		}
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("building bonsai binary for tests: %v: %s", err, string(out))
+		}
+	})
+	return testBonsaiBin
 }
 
 func waitAlive(t *testing.T, c *client.Client) {
@@ -530,6 +604,92 @@ func TestRestartRace(t *testing.T) {
 	}
 }
 
+func TestRestartRace_KillDuringStartingBarrier(t *testing.T) {
+	c, root, srv := newDaemonWithServer(t)
+
+	barrierHit := make(chan struct{})
+	killDone := make(chan struct{})
+	srv.SetStartBarrier(func(id int) {
+		close(barrierHit)
+		// During the starting barrier, issue kill
+		_, err := c.Kill(id, false, "")
+		if err != nil {
+			t.Errorf("kill during barrier failed: %v", err)
+		}
+		close(killDone)
+	})
+
+	rec, err := c.Spawn(root, "", "flapper", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-barrierHit:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for start barrier")
+	}
+
+	<-killDone
+	time.Sleep(500 * time.Millisecond)
+
+	r := recByID(t, c, rec.ID)
+	if r.Status != procstore.StatusStopped {
+		t.Fatalf("expected status stopped, got %s", r.Status)
+	}
+
+	// Verify it does NOT restart later
+	time.Sleep(1500 * time.Millisecond)
+	r = recByID(t, c, rec.ID)
+	if r.Status != procstore.StatusStopped {
+		t.Fatalf("expected status to remain stopped, got %s", r.Status)
+	}
+}
+
+func TestRestartRace_RestartDuringStartingBarrier(t *testing.T) {
+	c, root, srv := newDaemonWithServer(t)
+
+	var once sync.Once
+	barrierHit := make(chan struct{})
+	restartDone := make(chan struct{})
+	srv.SetStartBarrier(func(id int) {
+		once.Do(func() {
+			close(barrierHit)
+			// During the starting barrier, issue manual restart
+			restarted, err := c.Restart(id)
+			if err != nil {
+				t.Errorf("restart during barrier failed: %v", err)
+			}
+			if restarted == nil {
+				t.Errorf("restart returned nil record")
+			}
+			close(restartDone)
+		})
+	})
+
+	_, err := c.Spawn(root, "", "flapper", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-barrierHit:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for start barrier")
+	}
+
+	<-restartDone
+	time.Sleep(1500 * time.Millisecond)
+
+	recs, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected exactly 1 process, got %d", len(recs))
+	}
+}
+
 func TestKillDuringBackoff(t *testing.T) {
 	c, root := newDaemon(t)
 
@@ -757,6 +917,101 @@ func TestCrashRecoveryMarksLost(t *testing.T) {
 	}
 }
 
+func TestCrashRecovery_OrphanAliveAndCleanup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	srv1, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv1Done := make(chan struct{})
+	go func() {
+		defer close(srv1Done)
+		_ = srv1.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 30 127.0.0.1 >nul"
+	}
+
+	rec, err := c.Spawn(root, "", "long-job", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("spawned process PID %d is not alive", pid)
+	}
+
+	// Stop daemon 1 WITHOUT killing children (simulating crash leaving orphan alive)
+	srv1.Stop(false)
+	<-srv1Done
+
+	// Child must still be alive
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive after ungraceful shutdown", pid)
+	}
+
+	// Start daemon 2 for the same root
+	srv2, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2Done := make(chan struct{})
+	go func() {
+		defer close(srv2Done)
+		_ = srv2.Run()
+	}()
+	waitAlive(t, c)
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		<-srv2Done
+	})
+
+	// Daemon 2 must reconcile live orphan as StatusOrphan
+	recs, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(recs))
+	}
+	if recs[0].Status != procstore.StatusOrphan {
+		t.Fatalf("expected status %q, got %q", procstore.StatusOrphan, recs[0].Status)
+	}
+
+	// Bonsai kill must succeed in killing the orphan
+	killed, err := c.Kill(recs[0].ID, false, "")
+	if err != nil {
+		t.Fatalf("c.Kill failed: %v", err)
+	}
+	if len(killed) != 1 || killed[0] != recs[0].ID {
+		t.Fatalf("expected killed IDs [%d], got %v", recs[0].ID, killed)
+	}
+
+	// Verify status is stopped
+	r := recByID(t, c, recs[0].ID)
+	if r.Status != procstore.StatusStopped {
+		t.Fatalf("expected status %q, got %q", procstore.StatusStopped, r.Status)
+	}
+
+	// Verify child process was actually terminated
+	if !waitFor(t, 2*time.Second, func() bool {
+		return !procstore.PidAlive(pid)
+	}) {
+		t.Fatalf("expected child PID %d to be dead after kill", pid)
+	}
+}
+
 func TestLogRotationFollower(t *testing.T) {
 	c, root := newDaemonWithLogCap(t, 80)
 
@@ -878,7 +1133,130 @@ func TestProtocolCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("incompatible idle daemon is safely replaced", func(t *testing.T) {
+	t.Run("incompatible daemon survives shutdown returns ErrIncompatibleDaemon", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		appData := t.TempDir()
+		t.Setenv("AppData", appData)
+		t.Setenv("APPDATA", appData)
+		t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+		root := t.TempDir()
+
+		store := procstore.New(root)
+		if err := store.EnsureDirs(); err != nil {
+			t.Fatal(err)
+		}
+
+		ln, err := net.Listen("unix", store.SockPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func(c net.Conn) {
+					defer c.Close()
+					dec := protocol.NewDecoder(c)
+					enc := protocol.NewEncoder(c)
+					req, err := dec.ReadRequest()
+					if err != nil {
+						return
+					}
+					switch req.Kind {
+					case protocol.KindPing:
+						_ = enc.WriteResponse(&protocol.Response{
+							OK:        true,
+							Version:   999, // incompatible
+							ProcCount: 0,
+							EOF:       true,
+						})
+					case protocol.KindShutdown:
+						// Acknowledge shutdown but keep listening to simulate daemon surviving deadline
+						_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
+					}
+				}(conn)
+			}
+		}()
+
+		c := client.For(root)
+		err = c.CheckCompatibility()
+		if err == nil {
+			t.Fatal("expected error when daemon survives shutdown deadline, got nil")
+		}
+		if !errors.Is(err, client.ErrIncompatibleDaemon) {
+			t.Fatalf("expected ErrIncompatibleDaemon, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "survived shutdown deadline") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("incompatible daemon shutdown error returns ErrIncompatibleDaemon", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		appData := t.TempDir()
+		t.Setenv("AppData", appData)
+		t.Setenv("APPDATA", appData)
+		t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+		root := t.TempDir()
+
+		store := procstore.New(root)
+		if err := store.EnsureDirs(); err != nil {
+			t.Fatal(err)
+		}
+
+		ln, err := net.Listen("unix", store.SockPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func(c net.Conn) {
+					defer c.Close()
+					dec := protocol.NewDecoder(c)
+					enc := protocol.NewEncoder(c)
+					req, err := dec.ReadRequest()
+					if err != nil {
+						return
+					}
+					switch req.Kind {
+					case protocol.KindPing:
+						_ = enc.WriteResponse(&protocol.Response{
+							OK:        true,
+							Version:   999,
+							ProcCount: 0,
+							EOF:       true,
+						})
+					case protocol.KindShutdown:
+						// Abruptly close to cause shutdown error
+						c.Close()
+					}
+				}(conn)
+			}
+		}()
+
+		c := client.For(root)
+		err = c.CheckCompatibility()
+		if err == nil {
+			t.Fatal("expected error on shutdown failure, got nil")
+		}
+		if !errors.Is(err, client.ErrIncompatibleDaemon) {
+			t.Fatalf("expected ErrIncompatibleDaemon, got: %v", err)
+		}
+	})
+
+	t.Run("incompatible idle daemon is safely replaced and verified", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("XDG_CONFIG_HOME", "")
 		appData := t.TempDir()
@@ -930,14 +1308,29 @@ func TestProtocolCompatibility(t *testing.T) {
 			}
 		}()
 
+		binPath := getTestBonsaiBin(t)
+		t.Setenv("BONSAI_DAEMON_BIN", binPath)
+
 		c := client.For(root)
-		_ = c.CheckCompatibility()
+		if err := c.CheckCompatibility(); err != nil {
+			t.Fatalf("CheckCompatibility failed: %v", err)
+		}
+
 		select {
 		case <-shutdownReceived:
-			// Success: shutdown was requested for the idle incompatible daemon
-		case <-time.After(2 * time.Second):
-			t.Fatal("expected shutdown to be sent to idle incompatible daemon")
+		default:
+			t.Fatal("expected shutdown to be received")
 		}
+
+		// Ping must confirm that the replacement daemon is running the current protocol version
+		ping, err := c.Ping()
+		if err != nil {
+			t.Fatalf("pinging replacement daemon: %v", err)
+		}
+		if ping.Version != protocol.Version {
+			t.Fatalf("replacement version = %d, want %d", ping.Version, protocol.Version)
+		}
+		_ = c.Shutdown(true)
 	})
 }
 
@@ -983,5 +1376,79 @@ func TestOfflineLogs(t *testing.T) {
 	wantGrepI := "line 3: ERROR disk full\nline 5: error timeout\n"
 	if grepIOut != wantGrepI {
 		t.Errorf("offline grep -i = %q, want %q", grepIOut, wantGrepI)
+	}
+}
+
+func TestLastURL_LiveCapture(t *testing.T) {
+	c, root := newDaemon(t)
+
+	cmd := "printf 'Starting dev server on http://localhost:4321\\n'; sleep 0.5"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "echo Starting dev server on http://localhost:4321 & ping -n 2 127.0.0.1 >nul"
+	}
+	rec, err := c.Spawn(root, "", "web", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !waitFor(t, 3*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.LastURL == "http://localhost:4321"
+	}) {
+		t.Fatalf("expected LastURL to be captured as http://localhost:4321, got %+v", recByID(t, c, rec.ID))
+	}
+}
+
+func TestLogStreamingGrepAcrossChunkBoundary(t *testing.T) {
+	c, root := newDaemon(t)
+
+	// Create a line where the match target straddles the 32 KiB chunk boundary (32768 bytes).
+	// 32765 'a's + "MATCH_TARGET" + " remainder\n"
+	pad := strings.Repeat("a", 32765)
+	payload := pad + "MATCH_TARGET remainder\n"
+	logPath := filepath.Join(t.TempDir(), "source.log")
+	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := fmt.Sprintf("cat %q", logPath)
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = fmt.Sprintf("type %q", logPath)
+	}
+
+	rec, err := c.Spawn(root, "", "grepper", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var collected strings.Builder
+	var mu sync.Mutex
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		_ = c.Logs(rec.ID, true, 0, "MATCH_TARGET", false, func(chunk string) error {
+			mu.Lock()
+			collected.WriteString(chunk)
+			mu.Unlock()
+			return nil
+		})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for log streaming")
+	}
+
+	mu.Lock()
+	got := collected.String()
+	mu.Unlock()
+
+	if !strings.Contains(got, "MATCH_TARGET") {
+		t.Fatalf("expected streamed grep to match string crossing 32 KiB boundary, got %d bytes: %q", len(got), got)
+	}
+	if got != payload {
+		t.Fatalf("expected complete intact line of length %d, got %d", len(payload), len(got))
 	}
 }

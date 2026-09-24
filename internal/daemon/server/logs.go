@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"net"
 	"os"
 	"time"
@@ -14,24 +15,74 @@ import (
 // streaming new output until the process is terminal and the log is drained.
 // It is rotation-aware: when a log rotates to .1 and a new file is started,
 // it drains the remainder of .1 and seamlessly resumes following the new file from offset 0.
+// Line safety: partial lines across read chunks or rotations are buffered in a carry
+// buffer so FilterGrep only ever inspects complete lines.
 func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.Request) {
 	path := s.store.LogPath(req.ID)
 
-	data, _ := os.ReadFile(path)
-	initial := string(data)
-	if req.TailLines > 0 {
-		initial = procstore.LastLines(initial, req.TailLines)
-	}
-	initial = procstore.FilterGrep(initial, req.Grep, req.GrepInsensitive)
-	if initial != "" {
-		if err := enc.WriteResponse(&protocol.Response{OK: true, LogChunk: initial}); err != nil {
-			return
+	var carry []byte
+
+	emitChunk := func(chunk []byte, isFinal bool) error {
+		carry = append(carry, chunk...)
+		if isFinal {
+			if len(carry) > 0 {
+				out := procstore.FilterGrep(string(carry), req.Grep, req.GrepInsensitive)
+				carry = nil
+				if out != "" {
+					return enc.WriteResponse(&protocol.Response{OK: true, LogChunk: out})
+				}
+			}
+			return nil
 		}
+		lastNL := bytes.LastIndexByte(carry, '\n')
+		if lastNL >= 0 {
+			complete := string(carry[:lastNL+1])
+			carry = append([]byte(nil), carry[lastNL+1:]...)
+			out := procstore.FilterGrep(complete, req.Grep, req.GrepInsensitive)
+			if out != "" {
+				return enc.WriteResponse(&protocol.Response{OK: true, LogChunk: out})
+			}
+		}
+		return nil
 	}
 
+	data, _ := os.ReadFile(path)
 	if !req.Follow {
+		initial := string(data)
+		if req.TailLines > 0 {
+			initial = procstore.LastLines(initial, req.TailLines)
+		}
+		initial = procstore.FilterGrep(initial, req.Grep, req.GrepInsensitive)
+		if initial != "" {
+			_ = enc.WriteResponse(&protocol.Response{OK: true, LogChunk: initial})
+		}
 		_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
 		return
+	}
+
+	offset := int64(len(data))
+	if req.TailLines > 0 {
+		initial := string(data)
+		lastNL := bytes.LastIndexByte(data, '\n')
+		if lastNL >= 0 {
+			initial = procstore.LastLines(string(data[:lastNL+1]), req.TailLines)
+			if lastNL+1 < len(data) {
+				carry = append([]byte(nil), data[lastNL+1:]...)
+			}
+		} else if len(data) > 0 {
+			carry = append([]byte(nil), data...)
+			initial = ""
+		}
+		initial = procstore.FilterGrep(initial, req.Grep, req.GrepInsensitive)
+		if initial != "" {
+			if err := enc.WriteResponse(&protocol.Response{OK: true, LogChunk: initial}); err != nil {
+				return
+			}
+		}
+	} else {
+		if err := emitChunk(data, false); err != nil {
+			return
+		}
 	}
 
 	// Detect client disconnection
@@ -46,7 +97,6 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 		}
 	}()
 
-	offset := int64(len(data))
 	lastGen := s.logWriterGen(req.ID)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -56,6 +106,7 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 		case <-gone:
 			return
 		case <-s.done:
+			_ = emitChunk(nil, true)
 			_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
 			return
 		case <-ticker.C:
@@ -75,12 +126,9 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 						if n <= 0 {
 							break
 						}
-						out := procstore.FilterGrep(string(buf[:n]), req.Grep, req.GrepInsensitive)
-						if out != "" {
-							if err := enc.WriteResponse(&protocol.Response{OK: true, LogChunk: out}); err != nil {
-								_ = oldF.Close()
-								return
-							}
+						if err := emitChunk(buf[:n], false); err != nil {
+							_ = oldF.Close()
+							return
 						}
 					}
 				}
@@ -100,12 +148,9 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 						break
 					}
 					offset += int64(n)
-					out := procstore.FilterGrep(string(buf[:n]), req.Grep, req.GrepInsensitive)
-					if out != "" {
-						if err := enc.WriteResponse(&protocol.Response{OK: true, LogChunk: out}); err != nil {
-							_ = f.Close()
-							return
-						}
+					if err := emitChunk(buf[:n], false); err != nil {
+						_ = f.Close()
+						return
 					}
 				}
 			}
@@ -123,14 +168,15 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 							break
 						}
 						offset += int64(n)
-						out := procstore.FilterGrep(string(buf[:n]), req.Grep, req.GrepInsensitive)
-						if out != "" {
-							_ = enc.WriteResponse(&protocol.Response{OK: true, LogChunk: out})
+						if err := emitChunk(buf[:n], false); err != nil {
+							_ = f.Close()
+							return
 						}
 					}
 				}
 				_ = f.Close()
 			}
+			_ = emitChunk(nil, true)
 			_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
 			return
 		}
