@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -83,11 +85,19 @@ func (c *Client) ensureDaemon() error {
 
 // autostart launches a detached daemon for this repo and waits for its socket.
 func (c *Client) autostart() error {
-	self, err := os.Executable()
-	if err != nil {
-		return err
+	bin := os.Getenv("BONSAI_DAEMON_BIN")
+	if bin == "" {
+		var err error
+		bin, err = os.Executable()
+		if err != nil {
+			return err
+		}
+		base := filepath.Base(bin)
+		if strings.HasSuffix(base, ".test") || strings.HasSuffix(base, ".test.exe") {
+			return errors.New("cannot autostart daemon from test binary")
+		}
 	}
-	cmd := exec.Command(self, "__daemon", "--repo", c.store.Root())
+	cmd := exec.Command(bin, "__daemon", "--repo", c.store.Root())
 	// Fully detach: new session, no controlling terminal, stdio to /dev/null.
 	devnull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if devnull != nil {
