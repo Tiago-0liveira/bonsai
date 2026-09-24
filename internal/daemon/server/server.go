@@ -202,7 +202,7 @@ func (s *Server) acceptLoop() {
 }
 
 // stopAllProcesses cleanly terminates all running processes and cancels scheduled restarts.
-func (s *Server) stopAllProcesses() {
+func (s *Server) stopAllProcesses() error {
 	s.mu.Lock()
 	var runningProcs []*managedProc
 	for _, mp := range s.procs {
@@ -245,6 +245,7 @@ func (s *Server) stopAllProcesses() {
 	// exec.Cmd/waitDone, so confirm their original process identity disappeared
 	// before persisting StatusStopped.
 	shutdownDeadline := time.Now().Add(5 * time.Second)
+	failedStops := 0
 	for _, mp := range runningProcs {
 		mp.mu.Lock()
 		done := mp.waitDone
@@ -273,6 +274,7 @@ func (s *Server) stopAllProcesses() {
 				} else {
 					mp.rec.Status = procstore.StatusOrphan
 					mp.rec.ExitError = "failed to confirm orphan process termination during daemon shutdown"
+					failedStops++
 				}
 				_ = s.store.WriteRecord(mp.rec)
 			}
@@ -300,6 +302,10 @@ func (s *Server) stopAllProcesses() {
 		}
 		mp.mu.Unlock()
 	}
+	if failedStops > 0 {
+		return fmt.Errorf("%d process(es) still alive after forced shutdown", failedStops)
+	}
+	return nil
 }
 
 // Stop terminates the server loop, optionally stopping managed processes.
@@ -310,7 +316,7 @@ func (s *Server) Stop(killChildren bool) {
 // shutdown stops the server.
 func (s *Server) shutdown(killChildren bool) {
 	if killChildren {
-		s.stopAllProcesses()
+		_ = s.stopAllProcesses()
 	}
 	s.closeOnce.Do(func() { close(s.done) })
 }
