@@ -226,6 +226,34 @@ func (s *Store) RemoveRecord(id int) error {
 	return err
 }
 
+// ReadCombinedLog returns the process log history in chronological order,
+// concatenating the rotated backup (<id>.log.1) before the current log.
+// Missing files are tolerated as long as at least one log generation exists.
+func (s *Store) ReadCombinedLog(id int) ([]byte, error) {
+	path := s.LogPath(id)
+	var combined []byte
+
+	oldData, oldErr := os.ReadFile(path + ".1")
+	if oldErr == nil {
+		combined = append(combined, oldData...)
+	} else if !os.IsNotExist(oldErr) {
+		return nil, oldErr
+	}
+
+	data, err := os.ReadFile(path)
+	if err == nil {
+		combined = append(combined, data...)
+		return combined, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if len(combined) > 0 {
+		return combined, nil
+	}
+	return nil, err
+}
+
 // MaxID returns the highest existing record id (0 if none), so a restarting
 // daemon can resume the id counter without reusing numbers.
 func (s *Store) MaxID() (int, error) {
