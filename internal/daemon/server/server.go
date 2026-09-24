@@ -223,7 +223,30 @@ func (s *Server) stopAllProcesses() {
 			mp.mu.Unlock()
 			continue
 		}
-		if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping || status == procstore.StatusOrphan {
+		if status == procstore.StatusOrphan {
+			alive := procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.Worktree)
+			if !alive {
+				mp.rec.Status = procstore.StatusLost
+				s.appendMarker(mp.rec.ID, procstore.Marker{
+					Kind: procstore.MarkerExit,
+					Code: -1,
+					Text: "orphan process exited",
+				})
+				_ = s.store.WriteRecord(mp.rec)
+				mp.mu.Unlock()
+				continue
+			}
+			mp.rec.Status = procstore.StatusStopping
+			_ = s.store.WriteRecord(mp.rec)
+			pid := mp.rec.PID
+			mp.mu.Unlock()
+			if pid > 0 {
+				coreexec.TerminatePID(pid)
+			}
+			runningProcs = append(runningProcs, mp)
+			continue
+		}
+		if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping {
 			mp.rec.Status = procstore.StatusStopping
 			_ = s.store.WriteRecord(mp.rec)
 			cmd := mp.cmd

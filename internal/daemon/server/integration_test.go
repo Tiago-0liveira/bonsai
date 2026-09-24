@@ -927,6 +927,92 @@ func TestControlledShutdown_Orphan(t *testing.T) {
 	}
 }
 
+func TestForcedShutdownKillsRecoveredOrphan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	srv1, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv1Done := make(chan struct{})
+	go func() {
+		defer close(srv1Done)
+		_ = srv1.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 30 127.0.0.1 >nul"
+	}
+
+	rec, err := c.Spawn(root, "", "orphan-job", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("spawned process PID %d is not alive", pid)
+	}
+
+	// Stop daemon 1 without killing children
+	srv1.Stop(false)
+	<-srv1Done
+
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive after Stop(false)", pid)
+	}
+
+	// Start a new daemon
+	srv2, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2Done := make(chan struct{})
+	go func() {
+		defer close(srv2Done)
+		_ = srv2.Run()
+	}()
+	waitAlive(t, c)
+
+	// Confirm process is StatusOrphan
+	recs, err := c.List()
+	if err != nil {
+		t.Fatalf("listing processes: %v", err)
+	}
+	if len(recs) != 1 || recs[0].Status != procstore.StatusOrphan {
+		t.Fatalf("expected 1 process in StatusOrphan, got %+v", recs)
+	}
+
+	// Call Shutdown(true)
+	if err := c.Shutdown(true); err != nil {
+		t.Fatalf("Shutdown(true) failed: %v", err)
+	}
+	<-srv2Done
+
+	// Assert PID is dead
+	if procstore.PidAlive(pid) {
+		t.Fatalf("orphan child process %d still alive after forced daemon shutdown", pid)
+	}
+
+	// Assert record is terminal
+	store := procstore.New(root)
+	persisted, err := store.ReadRecord(rec.ID)
+	if err != nil {
+		t.Fatalf("reading persisted record: %v", err)
+	}
+	if !procstore.IsTerminal(persisted.Status) {
+		t.Fatalf("persisted status = %q, want terminal", persisted.Status)
+	}
+}
+
 func TestStateInvariant_NoGhostRunning(t *testing.T) {
 	c, root := newDaemon(t)
 
