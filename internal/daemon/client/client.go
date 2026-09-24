@@ -10,12 +10,14 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"syscall"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
+
+// ErrIncompatibleDaemon is returned when the daemon's protocol version does not match.
+var ErrIncompatibleDaemon = errors.New("daemon protocol version mismatch")
 
 // Client is a connection factory for one repo's daemon.
 type Client struct {
@@ -43,10 +45,38 @@ func (c *Client) alive() bool {
 	return true
 }
 
-// ensureDaemon guarantees a reachable daemon, auto-starting one if needed.
+// CheckCompatibility checks if the running daemon matches the expected protocol version.
+// If incompatible:
+// - If the daemon owns running processes, returns an error refusing to disrupt them.
+// - If the daemon is idle, shuts it down and restarts a compatible one.
+func (c *Client) CheckCompatibility() error {
+	resp, err := c.Ping()
+	if err != nil {
+		return err
+	}
+	if resp.Version == protocol.Version {
+		return nil
+	}
+	if resp.ProcCount > 0 {
+		return fmt.Errorf("%w: daemon version %d, client version %d (%d processes running)",
+			ErrIncompatibleDaemon, resp.Version, protocol.Version, resp.ProcCount)
+	}
+	// Incompatible but idle: shut it down and replace it.
+	_ = c.Shutdown(false)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !c.alive() {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return c.autostart()
+}
+
+// ensureDaemon guarantees a reachable compatible daemon, auto-starting one if needed.
 func (c *Client) ensureDaemon() error {
 	if c.alive() {
-		return nil
+		return c.CheckCompatibility()
 	}
 	return c.autostart()
 }
@@ -64,7 +94,7 @@ func (c *Client) autostart() error {
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, devnull, devnull
 		defer devnull.Close()
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setDetach(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -121,9 +151,12 @@ func (c *Client) Spawn(worktree, branch, label, command string, policy *procstor
 }
 
 // List returns every process record for the repo. With no live daemon it reads
-// the registry directly, downgrading stale "running" records to "stopped".
+// the registry directly, marking stale active records as "lost".
 func (c *Client) List() ([]*procstore.Record, error) {
 	if c.alive() {
+		if err := c.CheckCompatibility(); err != nil {
+			return nil, err
+		}
 		resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindList})
 		if err != nil {
 			return nil, err
@@ -135,8 +168,8 @@ func (c *Client) List() ([]*procstore.Record, error) {
 		return nil, err
 	}
 	for _, r := range recs {
-		if r.Status == procstore.StatusRunning && !pidAlive(r.PID) {
-			r.Status = procstore.StatusStopped
+		if procstore.IsActive(r.Status) {
+			r.Status = procstore.StatusLost
 		}
 	}
 	return recs, nil
@@ -147,6 +180,9 @@ func (c *Client) List() ([]*procstore.Record, error) {
 func (c *Client) Kill(id int, all bool, worktree string) ([]int, error) {
 	if !c.alive() {
 		return nil, nil // nothing running
+	}
+	if err := c.CheckCompatibility(); err != nil {
+		return nil, err
 	}
 	resp, err := c.roundtrip(&protocol.Request{
 		Kind: protocol.KindKill, ID: id, All: all, Worktree2: worktree,
@@ -174,6 +210,9 @@ func (c *Client) Restart(id int) (*procstore.Record, error) {
 // immediate; otherwise it is written straight to the on-disk record.
 func (c *Client) SetPolicy(id int, policy procstore.Policy) (*procstore.Record, error) {
 	if c.alive() {
+		if err := c.CheckCompatibility(); err != nil {
+			return nil, err
+		}
 		resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindSetPolicy, ID: id, Policy: &policy})
 		if err != nil {
 			return nil, err
@@ -196,6 +235,9 @@ func (c *Client) Remove(id int) error {
 	if !c.alive() {
 		return c.store.RemoveRecord(id)
 	}
+	if err := c.CheckCompatibility(); err != nil {
+		return err
+	}
 	_, err := c.roundtrip(&protocol.Request{Kind: protocol.KindRemove, ID: id})
 	return err
 }
@@ -211,19 +253,36 @@ func (c *Client) Shutdown(force bool) error {
 		return nil
 	}
 	_, err := c.roundtrip(&protocol.Request{Kind: protocol.KindShutdown, Force: force})
-	return err
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !c.alive() {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return nil
 }
 
 // Logs streams a process's log, invoking onChunk for each chunk until the stream
 // ends (process terminal or, when follow, the caller returns an error/ctx ends).
-// When no daemon is live it reads the log file once (follow is ignored).
+// When no daemon is live it reads the log file once, respecting tailLines and grep options.
 func (c *Client) Logs(id int, follow bool, tailLines int, grep string, insensitive bool, onChunk func(string) error) error {
 	if !c.alive() {
 		data, err := os.ReadFile(c.store.LogPath(id))
 		if err != nil {
 			return err
 		}
-		return onChunk(string(data))
+		filtered := procstore.FilterLog(string(data), tailLines, grep, insensitive)
+		if filtered != "" {
+			return onChunk(filtered)
+		}
+		return nil
+	}
+	if err := c.CheckCompatibility(); err != nil {
+		return err
 	}
 	conn, err := c.dial()
 	if err != nil {
@@ -257,11 +316,9 @@ func (c *Client) Logs(id int, follow bool, tailLines int, grep string, insensiti
 	}
 }
 
-// pidAlive reports whether pid is a live process.
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+// Attach connects to a process's output stream. Currently backed by log streaming,
+// but separated from Logs so future interactive PTY sessions (stdin, resize, signals)
+// can be added without altering the Logs API.
+func (c *Client) Attach(id int, onChunk func(string) error) error {
+	return c.Logs(id, true, 0, "", false, onChunk)
 }

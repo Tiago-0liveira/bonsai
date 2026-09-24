@@ -24,6 +24,7 @@ const (
 	KindRestart   = "restart"
 	KindSetPolicy = "setPolicy"
 	KindLogs      = "logs"
+	KindAttach    = "attach"
 	KindRemove    = "remove"
 	KindPing      = "ping"
 	KindShutdown  = "shutdown"

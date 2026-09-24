@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,11 +46,33 @@ func ValidMode(mode string) bool {
 
 // Process status values.
 const (
-	StatusRunning = "running"
-	StatusStopped = "stopped" // user-killed
-	StatusFailed  = "failed"  // exited non-zero, not restarting
-	StatusDone    = "done"    // exited zero, not restarting
+	StatusStarting = "starting"
+	StatusRunning  = "running"
+	StatusBackoff  = "backoff"
+	StatusStopping = "stopping"
+	StatusStopped  = "stopped" // user-killed
+	StatusDone     = "done"    // exited zero, not restarting
+	StatusFailed   = "failed"  // exited non-zero, not restarting
+	StatusLost     = "lost"    // daemon lost authoritative supervision
 )
+
+// IsTerminal reports whether status represents a terminal state.
+func IsTerminal(status string) bool {
+	switch status {
+	case StatusStopped, StatusDone, StatusFailed, StatusLost:
+		return true
+	}
+	return false
+}
+
+// IsActive reports whether status represents an active (or recovering) state.
+func IsActive(status string) bool {
+	switch status {
+	case StatusStarting, StatusRunning, StatusBackoff, StatusStopping:
+		return true
+	}
+	return false
+}
 
 // Record is the persisted metadata for one managed process. It is the source of
 // truth for discovery: readable without touching the daemon socket.
@@ -92,7 +115,11 @@ func (s *Store) ProcsDir() string { return filepath.Join(s.Dir(), "procs") }
 func SockDir() string {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
-		base = "/tmp"
+		if runtime.GOOS == "windows" {
+			base = os.TempDir()
+		} else {
+			base = "/tmp"
+		}
 	}
 	return filepath.Join(base, "bonsai")
 }

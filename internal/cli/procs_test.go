@@ -309,3 +309,47 @@ func TestCLISpawnRestartPolicyValidation(t *testing.T) {
 		t.Fatalf("spawn with policy: %q", out)
 	}
 }
+
+func TestCLIOfflineLogs(t *testing.T) {
+	// Setup repo without starting any daemon
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	repo := t.TempDir()
+
+	ident := []string{"-c", "user.email=test@example.com", "-c", "user.name=test"}
+	cmd := exec.Command("git", append(ident, "init")...)
+	cmd.Dir = repo
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	store := procstore.New(repo)
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "line 1: INFO init\nline 2: WARNING alert\nline 3: ERROR critical failure\nline 4: info ping\nline 5: error timeout\n"
+	if err := os.WriteFile(store.LogPath(1), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tail
+	tailOut := runCLI(t, "logs", "1", "-n", "2")
+	if !strings.Contains(tailOut, "line 4: info ping") || !strings.Contains(tailOut, "line 5: error timeout") || strings.Contains(tailOut, "line 1") {
+		t.Fatalf("unexpected offline tail output: %q", tailOut)
+	}
+
+	// Grep case-sensitive
+	grepOut := runCLI(t, "logs", "1", "--grep", "ERROR")
+	if !strings.Contains(grepOut, "line 3: ERROR critical failure") || strings.Contains(grepOut, "line 5") {
+		t.Fatalf("unexpected offline grep output: %q", grepOut)
+	}
+
+	// Grep case-insensitive
+	grepIOut := runCLI(t, "logs", "1", "--grep", "error", "-i")
+	if !strings.Contains(grepIOut, "line 3: ERROR critical failure") || !strings.Contains(grepIOut, "line 5: error timeout") || strings.Contains(grepIOut, "line 1") {
+		t.Fatalf("unexpected offline grep -i output: %q", grepIOut)
+	}
+}

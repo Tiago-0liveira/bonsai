@@ -241,7 +241,7 @@ func (m Model) quit() (tea.Model, tea.Cmd) {
 	m.procs.refresh()
 	var running []*procstore.Record
 	for _, r := range m.procs.All() {
-		if r.Status == procstore.StatusRunning {
+		if procstore.IsActive(r.Status) {
 			running = append(running, r)
 		}
 	}

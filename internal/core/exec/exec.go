@@ -344,6 +344,16 @@ func Command(dir, command string) *exec.Cmd {
 	return cmd
 }
 
+// SetProcessGroup configures cmd to run in its own process group or job.
+func SetProcessGroup(cmd *exec.Cmd) {
+	setProcessGroup(cmd)
+}
+
+// KillProcessTree terminates cmd and all child processes it spawned.
+func KillProcessTree(cmd *exec.Cmd) {
+	killProcessTree(cmd)
+}
+
 // ShellCmd builds an interactive shell *exec.Cmd rooted at path, suitable for
 // tea.ExecProcess (the caller wires up stdio).
 func ShellCmd(path string) *exec.Cmd {

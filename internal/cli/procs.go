@@ -139,11 +139,34 @@ func cmdLogs(repoDir string, args []string, out io.Writer) error {
 	n := fs.Int("n", 0, "show only the last N lines")
 	grep := fs.String("grep", "", "show only lines matching PATTERN")
 	insensitive := fs.Bool("i", false, "case-insensitive grep")
-	if err := fs.Parse(args); err != nil {
+
+	// Separate flags from positional id argument so `bonsai logs <id> -n 100`
+	// and `bonsai logs -n 100 <id>` both parse correctly.
+	var flagArgs []string
+	var idStr string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flagArgs = append(flagArgs, arg)
+			if (arg == "-n" || arg == "--n" || arg == "-grep" || arg == "--grep") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				flagArgs = append(flagArgs, args[i])
+			}
+		} else if idStr == "" {
+			idStr = arg
+		} else {
+			flagArgs = append(flagArgs, arg)
+		}
+	}
+
+	if err := fs.Parse(flagArgs); err != nil {
 		return err
 	}
-	id, err := strconv.Atoi(fs.Arg(0))
-	if err != nil {
+	if idStr == "" && fs.NArg() > 0 {
+		idStr = fs.Arg(0)
+	}
+	id, err := strconv.Atoi(idStr)
+	if err != nil || idStr == "" {
 		return fmt.Errorf("usage: bonsai logs <id> [-f] [-n N] [--grep P] [-i]")
 	}
 	c := client.For(repoDir)

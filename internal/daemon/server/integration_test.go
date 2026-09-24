@@ -1,13 +1,17 @@
 package server_test
 
 import (
+	"net"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 )
 
@@ -37,10 +41,52 @@ func newDaemon(t *testing.T) (*client.Client, string) {
 	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 	root := t.TempDir()
 
-	go func() { _ = server.Serve(root) }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = server.Serve(root)
+	}()
 	c := client.For(root)
 	waitAlive(t, c)
-	t.Cleanup(func() { _ = c.Shutdown(true) })
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	})
+	return c, root
+}
+
+func newDaemonWithLogCap(t *testing.T, logLimit int64) (*client.Client, string) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	srv, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logLimit > 0 {
+		srv.SetLogCap(logLimit)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = srv.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	})
 	return c, root
 }
 
@@ -426,5 +472,488 @@ func TestLogMarkersRecordUserStopAndSuccess(t *testing.T) {
 		return false
 	}) {
 		t.Fatalf("no success marker: %+v", markersIn(t, c, done.ID))
+	}
+}
+
+func TestRestartRace(t *testing.T) {
+	c, root := newDaemon(t)
+
+	// Command fails immediately. Policy is on-failure.
+	rec, err := c.Spawn(root, "", "flapping", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait until it enters backoff
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusBackoff
+	}) {
+		t.Fatalf("expected backoff, got %+v", recByID(t, c, rec.ID))
+	}
+
+	// Manual restart occurs while in backoff (before timer fires).
+	restarted, err := c.Restart(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.ID != rec.ID {
+		t.Fatalf("expected ID %d, got %d", rec.ID, restarted.ID)
+	}
+
+	// Wait long enough for the old backoff timer (1s) to have fired.
+	time.Sleep(1500 * time.Millisecond)
+
+	// Verify exactly one process exists in the daemon listing
+	recs, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected exactly 1 process, got %d", len(recs))
+	}
+}
+
+func TestKillDuringBackoff(t *testing.T) {
+	c, root := newDaemon(t)
+
+	rec, err := c.Spawn(root, "", "flapping", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait until it enters backoff
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusBackoff
+	}) {
+		t.Fatalf("expected backoff, got %+v", recByID(t, c, rec.ID))
+	}
+
+	// Kill during backoff
+	if _, err := c.Kill(rec.ID, false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	r := recByID(t, c, rec.ID)
+	if r.Status != procstore.StatusStopped {
+		t.Fatalf("expected stopped immediately, got %s", r.Status)
+	}
+
+	// Wait past the restart delay (1s)
+	time.Sleep(1500 * time.Millisecond)
+
+	// Assert process did NOT restart
+	r = recByID(t, c, rec.ID)
+	if r.Status != procstore.StatusStopped {
+		t.Fatalf("expected stopped after delay, got %s", r.Status)
+	}
+}
+
+func TestRemoveDuringBackoff(t *testing.T) {
+	c, root := newDaemon(t)
+
+	rec, err := c.Spawn(root, "", "flapping", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusBackoff
+	}) {
+		t.Fatalf("expected backoff, got %+v", recByID(t, c, rec.ID))
+	}
+
+	// Remove during backoff
+	if err := c.Remove(rec.ID); err != nil {
+		t.Fatalf("remove during backoff failed: %v", err)
+	}
+
+	if recByID(t, c, rec.ID) != nil {
+		t.Fatal("expected removed record to be gone")
+	}
+
+	// Wait past timer
+	time.Sleep(1500 * time.Millisecond)
+
+	// Assert process never started / no new records created
+	recs, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("expected 0 processes, got %d", len(recs))
+	}
+}
+
+func TestAutomaticRestartFails(t *testing.T) {
+	c, root := newDaemon(t)
+
+	// Create a subdirectory as the worktree dir
+	sub := filepath.Join(root, "subworktree")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := c.Spawn(sub, "", "flapping", "exit 1", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait until it enters backoff
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusBackoff
+	}) {
+		t.Fatalf("expected backoff, got %+v", recByID(t, c, rec.ID))
+	}
+
+	// Delete the worktree directory so the next start attempt fails in chdir
+	if err := os.RemoveAll(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restart fires, fails to start, transitions to StatusFailed
+	if !waitFor(t, 3*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusFailed && r.ExitError != ""
+	}) {
+		t.Fatalf("expected status failed with exit error, got %+v", recByID(t, c, rec.ID))
+	}
+
+	// INVARIANT: daemon must treat process as terminal
+	ping, err := c.Ping()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ping.ProcCount != 0 {
+		t.Fatalf("expected 0 running processes in ping, got %d", ping.ProcCount)
+	}
+
+	r := recByID(t, c, rec.ID)
+	if r.Status == procstore.StatusRunning {
+		t.Fatalf("invariant violated: failed process still marked running: %+v", r)
+	}
+}
+
+func TestControlledShutdown(t *testing.T) {
+	c, root := newDaemon(t)
+
+	rec, err := c.Spawn(root, "", "sleeper", "sleep 30", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("process %d not alive after spawn", pid)
+	}
+
+	// Forced shutdown
+	if err := c.Shutdown(true); err != nil {
+		t.Fatalf("forced shutdown failed: %v", err)
+	}
+
+	// Child process must be gone
+	if procstore.PidAlive(pid) {
+		t.Fatalf("child process %d still alive after shutdown", pid)
+	}
+
+	// Final state must be persisted
+	store := procstore.New(root)
+	persisted, err := store.ReadRecord(rec.ID)
+	if err != nil {
+		t.Fatalf("reading persisted record: %v", err)
+	}
+	if persisted.Status != procstore.StatusStopped {
+		t.Fatalf("persisted status = %q, want %q", persisted.Status, procstore.StatusStopped)
+	}
+
+	// Socket must be cleaned up
+	if _, err := os.Stat(store.SockPath()); !os.IsNotExist(err) {
+		t.Fatalf("socket still exists after shutdown: %v", err)
+	}
+}
+
+func TestCrashRecoveryMarksLost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	store := procstore.New(root)
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate stale active records from a crashed daemon
+	r1 := &procstore.Record{
+		ID:        1,
+		Label:     "stale-running",
+		Command:   "some command 1",
+		Worktree:  root,
+		PID:       9999999, // Non-existent PID
+		Status:    procstore.StatusRunning,
+		StartedAt: time.Now().Add(-10 * time.Minute),
+	}
+	r2 := &procstore.Record{
+		ID:        2,
+		Label:     "stale-backoff",
+		Command:   "some command 2",
+		Worktree:  root,
+		PID:       0,
+		Status:    procstore.StatusBackoff,
+		StartedAt: time.Now().Add(-5 * time.Minute),
+	}
+	if err := store.WriteRecord(r1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteRecord(r2); err != nil {
+		t.Fatal(err)
+	}
+
+	srvDone := make(chan struct{})
+	go func() {
+		defer close(srvDone)
+		_ = server.Serve(root)
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		<-srvDone
+	})
+
+	recs, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(recs))
+	}
+	for _, r := range recs {
+		if r.Status != procstore.StatusLost {
+			t.Errorf("proc #%d status = %q, want %q", r.ID, r.Status, procstore.StatusLost)
+		}
+	}
+}
+
+func TestLogRotationFollower(t *testing.T) {
+	c, root := newDaemonWithLogCap(t, 80)
+
+	cmd := "printf 'line 111111111111111111\\n'; sleep 0.1; printf 'line 222222222222222222\\n'; sleep 0.1; printf 'line 333333333333333333\\n'; sleep 0.1; printf 'line 444444444444444444\\n'"
+	rec, err := c.Spawn(root, "", "rotator", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var collected strings.Builder
+	var mu sync.Mutex
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		_ = c.Logs(rec.ID, true, 0, "", false, func(chunk string) error {
+			mu.Lock()
+			collected.WriteString(chunk)
+			mu.Unlock()
+			return nil
+		})
+	}()
+
+	if !waitFor(t, 4*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusDone
+	}) {
+		t.Fatalf("expected done, got %+v", recByID(t, c, rec.ID))
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("follower did not complete after process exited")
+	}
+
+	mu.Lock()
+	out := collected.String()
+	mu.Unlock()
+
+	for _, expected := range []string{"line 111111111111111111", "line 222222222222222222", "line 333333333333333333", "line 444444444444444444"} {
+		if !strings.Contains(out, expected) {
+			t.Errorf("follower missing %q in output: %q", expected, out)
+		}
+	}
+}
+
+func TestProtocolCompatibility(t *testing.T) {
+	t.Run("matching version succeeds", func(t *testing.T) {
+		c, _ := newDaemon(t)
+		ping, err := c.Ping()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ping.Version != protocol.Version {
+			t.Fatalf("version = %d, want %d", ping.Version, protocol.Version)
+		}
+		if err := c.CheckCompatibility(); err != nil {
+			t.Fatalf("CheckCompatibility failed: %v", err)
+		}
+	})
+
+	t.Run("incompatible busy daemon refuses and preserves processes", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+		root := t.TempDir()
+
+		store := procstore.New(root)
+		if err := store.EnsureDirs(); err != nil {
+			t.Fatal(err)
+		}
+
+		ln, err := net.Listen("unix", store.SockPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func(c net.Conn) {
+					defer c.Close()
+					dec := protocol.NewDecoder(c)
+					enc := protocol.NewEncoder(c)
+					req, err := dec.ReadRequest()
+					if err != nil {
+						return
+					}
+					if req.Kind == protocol.KindPing {
+						_ = enc.WriteResponse(&protocol.Response{
+							OK:        true,
+							Version:   999, // incompatible!
+							ProcCount: 2,   // has 2 running processes!
+							EOF:       true,
+						})
+					}
+				}(conn)
+			}
+		}()
+
+		c := client.For(root)
+		err = c.CheckCompatibility()
+		if err == nil {
+			t.Fatal("expected error on incompatible busy daemon, got nil")
+		}
+		if !strings.Contains(err.Error(), "daemon protocol version mismatch") && !strings.Contains(err.Error(), "version 999") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("incompatible idle daemon is safely replaced", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+		root := t.TempDir()
+
+		store := procstore.New(root)
+		if err := store.EnsureDirs(); err != nil {
+			t.Fatal(err)
+		}
+
+		ln, err := net.Listen("unix", store.SockPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		shutdownReceived := make(chan struct{})
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func(c net.Conn) {
+					defer c.Close()
+					dec := protocol.NewDecoder(c)
+					enc := protocol.NewEncoder(c)
+					req, err := dec.ReadRequest()
+					if err != nil {
+						return
+					}
+					switch req.Kind {
+					case protocol.KindPing:
+						_ = enc.WriteResponse(&protocol.Response{
+							OK:        true,
+							Version:   999, // incompatible!
+							ProcCount: 0,   // idle!
+							EOF:       true,
+						})
+					case protocol.KindShutdown:
+						_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
+						_ = ln.Close()
+						_ = os.Remove(store.SockPath())
+						close(shutdownReceived)
+					}
+				}(conn)
+			}
+		}()
+
+		c := client.For(root)
+		_ = c.CheckCompatibility()
+		select {
+		case <-shutdownReceived:
+			// Success: shutdown was requested for the idle incompatible daemon
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected shutdown to be sent to idle incompatible daemon")
+		}
+	})
+}
+
+func TestOfflineLogs(t *testing.T) {
+	root := t.TempDir()
+	store := procstore.New(root)
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "line 1: INFO startup\nline 2: WARNING low memory\nline 3: ERROR disk full\nline 4: info heartbeat\nline 5: error timeout\n"
+	if err := os.WriteFile(store.LogPath(1), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := client.For(root)
+
+	// Tail
+	var tailOut string
+	if err := c.Logs(1, false, 2, "", false, func(s string) error { tailOut += s; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	wantTail := "line 4: info heartbeat\nline 5: error timeout\n"
+	if tailOut != wantTail {
+		t.Errorf("offline tail = %q, want %q", tailOut, wantTail)
+	}
+
+	// Grep case-sensitive
+	var grepOut string
+	if err := c.Logs(1, false, 0, "ERROR", false, func(s string) error { grepOut += s; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	wantGrep := "line 3: ERROR disk full\n"
+	if grepOut != wantGrep {
+		t.Errorf("offline grep = %q, want %q", grepOut, wantGrep)
+	}
+
+	// Grep case-insensitive
+	var grepIOut string
+	if err := c.Logs(1, false, 0, "error", true, func(s string) error { grepIOut += s; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	wantGrepI := "line 3: ERROR disk full\nline 5: error timeout\n"
+	if grepIOut != wantGrepI {
+		t.Errorf("offline grep -i = %q, want %q", grepIOut, wantGrepI)
 	}
 }

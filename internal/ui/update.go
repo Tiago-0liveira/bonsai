@@ -493,11 +493,11 @@ func (m Model) onProcTick() (tea.Model, tea.Cmd) {
 	return m, tickProc()
 }
 
-// countRunning returns the number of processes currently running in path.
+// countRunning returns the number of active processes currently running or recovering in path.
 func (m Model) countRunning(path string) int {
 	n := 0
 	for _, p := range m.procs.List(path) {
-		if p.Status == procstore.StatusRunning {
+		if procstore.IsActive(p.Status) {
 			n++
 		}
 	}
@@ -517,7 +517,7 @@ func (m Model) runningCountSig() string {
 }
 
 // checkProcTransitions fires a desktop notification when a process moves from
-// running to done/failed (once per process), if enabled in config.
+// active to done/failed/lost (once per process), if enabled in config.
 func (m *Model) checkProcTransitions() {
 	if !m.cfg.Notifications.Process {
 		return
@@ -528,7 +528,7 @@ func (m *Model) checkProcTransitions() {
 		prev := m.seenProcStatus[key]
 		m.seenProcStatus[key] = st
 		// "stopped" (user kill) is intentionally silent.
-		if prev == procstore.StatusRunning && (st == procstore.StatusDone || st == procstore.StatusFailed) {
+		if procstore.IsActive(prev) && (st == procstore.StatusDone || st == procstore.StatusFailed || st == procstore.StatusLost) {
 			notify("bonsai: process "+st, fmt.Sprintf("#%d %s", p.ID, p.Label))
 		}
 	}

@@ -46,25 +46,28 @@ func (s *Server) handleConn(conn net.Conn) {
 		err := s.remove(req.ID)
 		writeResult(enc, &protocol.Response{}, err)
 
-	case protocol.KindLogs:
+	case protocol.KindLogs, "attach":
 		s.streamLogs(conn, enc, req)
 
 	case protocol.KindPing:
 		s.mu.Lock()
-		n := s.runningCountLocked()
+		n := s.activeCountLocked()
 		s.mu.Unlock()
 		writeResult(enc, &protocol.Response{Version: protocol.Version, PID: os.Getpid(), ProcCount: n}, nil)
 
 	case protocol.KindShutdown:
 		s.mu.Lock()
-		running := s.runningCountLocked()
+		active := s.activeCountLocked()
 		s.mu.Unlock()
-		if running > 0 && !req.Force {
-			writeResult(enc, nil, fmt.Errorf("%d process(es) still running (use --force)", running))
+		if active > 0 && !req.Force {
+			writeResult(enc, nil, fmt.Errorf("%d process(es) still running (use --force)", active))
 			return
 		}
+		if req.Force {
+			s.stopAllProcesses()
+		}
 		writeResult(enc, &protocol.Response{}, nil)
-		s.shutdown(req.Force)
+		s.closeOnce.Do(func() { close(s.done) })
 
 	default:
 		writeResult(enc, nil, fmt.Errorf("unknown request %q", req.Kind))
@@ -97,11 +100,11 @@ func (s *Server) kill(req *protocol.Request) []int {
 		match := false
 		switch {
 		case req.All:
-			match = !mp.terminal
+			match = !procstore.IsTerminal(mp.rec.Status)
 		case req.Worktree2 != "":
-			match = !mp.terminal && mp.rec.Worktree == req.Worktree2
+			match = !procstore.IsTerminal(mp.rec.Status) && mp.rec.Worktree == req.Worktree2
 		default:
-			match = mp.rec.ID == req.ID && !mp.terminal
+			match = mp.rec.ID == req.ID && !procstore.IsTerminal(mp.rec.Status)
 		}
 		mp.mu.Unlock()
 		if match {
@@ -140,8 +143,8 @@ func (s *Server) setPolicy(req *protocol.Request) (*procstore.Record, error) {
 	return s.snapshot(mp), nil
 }
 
-// remove drops a terminal process from the daemon and deletes its record/log.
-// A running process must be killed first.
+// remove drops a process from the daemon and deletes its record/log.
+// Running processes must be killed first; processes waiting in backoff are cancelled and removed.
 func (s *Server) remove(id int) error {
 	s.mu.Lock()
 	mp, ok := s.procs[id]
@@ -150,11 +153,19 @@ func (s *Server) remove(id int) error {
 		return nil
 	}
 	mp.mu.Lock()
-	terminal := mp.terminal
-	mp.mu.Unlock()
-	if !terminal {
+	status := mp.rec.Status
+	if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping {
+		mp.mu.Unlock()
 		return fmt.Errorf("process #%d is still running", id)
 	}
+
+	if mp.restartTimer != nil {
+		mp.restartTimer.Stop()
+		mp.restartTimer = nil
+	}
+	mp.generation++
+	mp.mu.Unlock()
+
 	s.mu.Lock()
 	delete(s.procs, id)
 	s.mu.Unlock()
