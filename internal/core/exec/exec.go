@@ -349,6 +349,11 @@ func SetProcessGroup(cmd *exec.Cmd) {
 	setProcessGroup(cmd)
 }
 
+// TerminateProcessTree attempts graceful termination of cmd and all child processes it spawned.
+func TerminateProcessTree(cmd *exec.Cmd) {
+	terminateProcessTree(cmd)
+}
+
 // KillProcessTree terminates cmd and all child processes it spawned.
 func KillProcessTree(cmd *exec.Cmd) {
 	killProcessTree(cmd)

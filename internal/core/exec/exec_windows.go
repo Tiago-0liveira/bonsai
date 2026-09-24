@@ -14,6 +14,18 @@ func setProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
+func terminateProcessTree(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	TerminatePID(cmd.Process.Pid)
+}
+
+// TerminatePID terminates the process and all child processes it spawned.
+func TerminatePID(pid int) {
+	KillPID(pid)
+}
+
 func killProcessTree(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
