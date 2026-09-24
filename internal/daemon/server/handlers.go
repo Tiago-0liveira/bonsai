@@ -31,8 +31,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		writeResult(enc, &protocol.Response{Records: s.list()}, nil)
 
 	case protocol.KindKill:
-		killed := s.kill(req)
-		writeResult(enc, &protocol.Response{Killed: killed}, nil)
+		killed, err := s.kill(req)
+		writeResult(enc, &protocol.Response{Killed: killed}, err)
 
 	case protocol.KindRestart:
 		rec, err := s.restart(req.ID)
@@ -64,7 +64,10 @@ func (s *Server) handleConn(conn net.Conn) {
 			return
 		}
 		if req.Force {
-			s.stopAllProcesses()
+			if err := s.stopAllProcesses(); err != nil {
+				writeResult(enc, nil, err)
+				return
+			}
 		}
 		writeResult(enc, &protocol.Response{}, nil)
 		s.closeOnce.Do(func() { close(s.done) })
@@ -98,7 +101,7 @@ func (s *Server) list() []*procstore.Record {
 }
 
 // kill stops processes selected by the request (single id, all, or a worktree).
-func (s *Server) kill(req *protocol.Request) []int {
+func (s *Server) kill(req *protocol.Request) ([]int, error) {
 	s.mu.Lock()
 	var targets []*managedProc
 	for _, mp := range s.procs {
@@ -120,13 +123,20 @@ func (s *Server) kill(req *protocol.Request) []int {
 	s.mu.Unlock()
 
 	var killed []int
+	var failed []int
 	for _, mp := range targets {
 		if s.killManaged(mp) {
 			killed = append(killed, mp.rec.ID)
+		} else {
+			failed = append(failed, mp.rec.ID)
 		}
 	}
 	sort.Ints(killed)
-	return killed
+	sort.Ints(failed)
+	if len(failed) > 0 {
+		return killed, fmt.Errorf("failed to confirm process(es) stopped: %v", failed)
+	}
+	return killed, nil
 }
 
 // setPolicy updates a process's restart policy, effective on its next exit.
