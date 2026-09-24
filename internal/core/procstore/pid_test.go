@@ -22,3 +22,10 @@ func TestProcessMatchesCurrentProcess(t *testing.T) {
 		t.Fatalf("current process PID %d did not match recent start metadata", pid)
 	}
 }
+
+func TestProcessMatchesRejectsMissingStartMetadata(t *testing.T) {
+	pid := os.Getpid()
+	if ProcessMatches(pid, time.Time{}, "") {
+		t.Fatalf("PID %d matched without persisted start metadata", pid)
+	}
+}
