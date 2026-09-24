@@ -1013,6 +1013,104 @@ func TestForcedShutdownKillsRecoveredOrphan(t *testing.T) {
 	}
 }
 
+func TestKillRecoversDaemonAndKillsOrphan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	binPath := getTestBonsaiBin(t)
+	t.Setenv("BONSAI_DAEMON_BIN", binPath)
+
+	srv1, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv1Done := make(chan struct{})
+	go func() {
+		defer close(srv1Done)
+		_ = srv1.Run()
+	}()
+	c := client.For(root)
+	waitAlive(t, c)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 30 127.0.0.1 >nul"
+	}
+
+	rec, err := c.Spawn(root, "", "orphan-job", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := rec.PID
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("spawned process PID %d is not alive", pid)
+	}
+
+	// Stop daemon without killing child
+	srv1.Stop(false)
+	<-srv1Done
+
+	// Confirm PID is still alive
+	if !procstore.PidAlive(pid) {
+		t.Fatalf("expected child PID %d to still be alive after daemon stopped", pid)
+	}
+
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+	})
+
+	// Call Client.Kill(...)
+	killed, err := c.Kill(rec.ID, false, "")
+	if err != nil {
+		t.Fatalf("Client.Kill failed: %v", err)
+	}
+	if len(killed) == 0 {
+		t.Fatalf("expected killed list to be non-empty, got %v", killed)
+	}
+
+	// Assert Bonsai restores supervision
+	if _, err := c.Ping(); err != nil {
+		t.Fatalf("daemon supervision not restored: %v", err)
+	}
+
+	// Assert PID dies
+	if !waitFor(t, 3*time.Second, func() bool {
+		return !procstore.PidAlive(pid)
+	}) {
+		t.Fatalf("expected child PID %d to die, but still alive", pid)
+	}
+
+	// Assert record becomes StatusStopped
+	store := procstore.New(root)
+	persisted, err := store.ReadRecord(rec.ID)
+	if err != nil {
+		t.Fatalf("reading persisted record: %v", err)
+	}
+	if persisted.Status != procstore.StatusStopped {
+		t.Fatalf("persisted status = %q, want %q", persisted.Status, procstore.StatusStopped)
+	}
+
+	// Shut down daemon again and verify Kill on terminal record does not start daemon
+	if err := c.Shutdown(true); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
+	killed2, err := c.Kill(rec.ID, false, "")
+	if err != nil {
+		t.Fatalf("Kill on terminal record failed: %v", err)
+	}
+	if len(killed2) != 0 {
+		t.Fatalf("expected 0 killed on terminal record, got %v", killed2)
+	}
+	if _, err := c.Ping(); err == nil {
+		t.Fatal("expected daemon not to be running after kill on terminal record")
+	}
+}
+
 func TestStateInvariant_NoGhostRunning(t *testing.T) {
 	c, root := newDaemon(t)
 

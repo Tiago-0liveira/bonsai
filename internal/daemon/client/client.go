@@ -211,7 +211,12 @@ func (c *Client) List() ([]*procstore.Record, error) {
 // processes when worktree!="".
 func (c *Client) Kill(id int, all bool, worktree string) ([]int, error) {
 	if !c.alive() {
-		return nil, nil // nothing running
+		if !c.targetMayBeActive(id, all, worktree) {
+			return nil, nil // nothing running or terminal/nonexistent
+		}
+		if err := c.ensureDaemon(); err != nil {
+			return nil, err
+		}
 	}
 	if err := c.CheckCompatibility(); err != nil {
 		return nil, err
@@ -223,6 +228,37 @@ func (c *Client) Kill(id int, all bool, worktree string) ([]int, error) {
 		return nil, err
 	}
 	return resp.Killed, nil
+}
+
+func (c *Client) targetMayBeActive(id int, all bool, worktree string) bool {
+	if id > 0 {
+		rec, err := c.store.ReadRecord(id)
+		if err != nil || procstore.IsTerminal(rec.Status) {
+			return false
+		}
+		if rec.PID > 0 && !procstore.ProcessMatches(rec.PID, rec.StartedAt, rec.Worktree) {
+			return false
+		}
+		return true
+	}
+	if !all && worktree == "" {
+		return false
+	}
+	recs, err := c.store.ListRecords()
+	if err != nil {
+		return false
+	}
+	for _, r := range recs {
+		if worktree != "" && r.Worktree != worktree {
+			continue
+		}
+		if !procstore.IsTerminal(r.Status) {
+			if r.PID > 0 && procstore.ProcessMatches(r.PID, r.StartedAt, r.Worktree) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Restart restarts a process by id, auto-starting the daemon if needed (so an

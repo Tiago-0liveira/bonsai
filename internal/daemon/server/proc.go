@@ -148,6 +148,14 @@ func (s *Server) onExit(mp *managedProc, werr error, started time.Time, done cha
 		return // Stale notification from an earlier run
 	}
 
+	select {
+	case <-s.done:
+		mp.mu.Unlock()
+		close(done)
+		return // Daemon stopped; supervision relinquished
+	default:
+	}
+
 	failed := werr != nil
 	ran := time.Since(started).Round(time.Millisecond)
 
