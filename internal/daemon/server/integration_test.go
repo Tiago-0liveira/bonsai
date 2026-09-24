@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
@@ -1293,6 +1294,187 @@ func TestLogRotationFollower(t *testing.T) {
 		if !strings.Contains(out, expected) {
 			t.Errorf("follower missing %q in output: %q", expected, out)
 		}
+	}
+}
+
+func TestShutdownErrorsWhenDaemonSurvivesDeadline(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	store := procstore.New(root)
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", store.SockPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				dec := protocol.NewDecoder(c)
+				enc := protocol.NewEncoder(c)
+				req, err := dec.ReadRequest()
+				if err != nil {
+					return
+				}
+				if req.Kind == protocol.KindShutdown {
+					// Acknowledge the request but deliberately remain reachable.
+					_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
+				}
+			}(conn)
+		}
+	}()
+
+	err = client.For(root).Shutdown(true)
+	if err == nil {
+		t.Fatal("expected shutdown to fail when daemon survives the deadline")
+	}
+	if !strings.Contains(err.Error(), "survived shutdown deadline") {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+}
+
+func TestScheduledRestartHonorsPolicyChangeDuringBackoff(t *testing.T) {
+	c, root := newDaemon(t)
+
+	rec, err := c.Spawn(root, "", "policy-change", "exit 1",
+		&procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusBackoff
+	}) {
+		t.Fatalf("expected backoff, got %+v", recByID(t, c, rec.ID))
+	}
+	if _, err := c.SetPolicy(rec.ID, procstore.Policy{Mode: procstore.PolicyNo}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !waitFor(t, 2*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		return r != nil && r.Status == procstore.StatusFailed
+	}) {
+		t.Fatalf("scheduled restart ignored policy change: %+v", recByID(t, c, rec.ID))
+	}
+	r := recByID(t, c, rec.ID)
+	if r.Restarts != 1 {
+		t.Fatalf("restarts = %d, want 1", r.Restarts)
+	}
+}
+
+func TestActiveCountReconcilesExitedOrphan(t *testing.T) {
+	c, root := newExternalDaemonClient(t)
+
+	cmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "ping -n 31 127.0.0.1 >nul"
+	}
+	orphan, err := c.Spawn(root, "", "orphan-count", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	crashExternalDaemon(t, c)
+
+	// Starting another process revives the daemon, which adopts the survivor as
+	// an orphan without otherwise touching its status.
+	keeper, err := c.Spawn(root, "", "keeper", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ping, err := c.Ping()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ping.ProcCount != 2 {
+		t.Fatalf("active count before orphan exit = %d, want 2", ping.ProcCount)
+	}
+
+	coreexec.KillPID(orphan.PID)
+	if !waitFor(t, 3*time.Second, func() bool {
+		return !procstore.ProcessMatches(orphan.PID, orphan.StartedAt, orphan.Worktree)
+	}) {
+		t.Fatalf("orphan PID %d did not exit", orphan.PID)
+	}
+
+	// Do not call List here: Ping itself must reconcile the dead orphan while
+	// computing activeCountLocked.
+	ping, err = c.Ping()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ping.ProcCount != 1 {
+		t.Fatalf("active count after orphan exit = %d, want 1", ping.ProcCount)
+	}
+	persisted, err := procstore.New(root).ReadRecord(orphan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != procstore.StatusLost {
+		t.Fatalf("orphan status = %q, want %q", persisted.Status, procstore.StatusLost)
+	}
+
+	if _, err := c.Kill(keeper.ID, false, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNonFollowLogsIncludeRotatedHistory(t *testing.T) {
+	c, root := newDaemon(t)
+	store := procstore.New(root)
+	id := 4242
+	if err := os.WriteFile(store.LogPath(id)+".1", []byte("old-1\nold-target\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.LogPath(id), []byte("new-1\nnew-2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func(tail int, grep string) string {
+		t.Helper()
+		var out strings.Builder
+		if err := c.Logs(id, false, tail, grep, false, func(chunk string) error {
+			out.WriteString(chunk)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+
+	if got, want := read(0, ""), "old-1\nold-target\nnew-1\nnew-2\n"; got != want {
+		t.Fatalf("online full log = %q, want %q", got, want)
+	}
+	if got, want := read(3, ""), "old-target\nnew-1\nnew-2\n"; got != want {
+		t.Fatalf("online tail = %q, want %q", got, want)
+	}
+	if got, want := read(0, "old-target"), "old-target\n"; got != want {
+		t.Fatalf("online grep = %q, want %q", got, want)
+	}
+
+	if err := c.Shutdown(false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := read(0, ""), "old-1\nold-target\nnew-1\nnew-2\n"; got != want {
+		t.Fatalf("offline full log = %q, want %q", got, want)
+	}
+	if got, want := read(0, "old-target"), "old-target\n"; got != want {
+		t.Fatalf("offline grep = %q, want %q", got, want)
 	}
 }
 

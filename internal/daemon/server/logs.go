@@ -46,13 +46,9 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 		return nil
 	}
 
-	data, _ := os.ReadFile(path)
 	if !req.Follow {
-		initial := string(data)
-		if req.TailLines > 0 {
-			initial = procstore.LastLines(initial, req.TailLines)
-		}
-		initial = procstore.FilterGrep(initial, req.Grep, req.GrepInsensitive)
+		data, _ := s.store.ReadCombinedLog(req.ID)
+		initial := procstore.FilterLog(string(data), req.TailLines, req.Grep, req.GrepInsensitive)
 		if initial != "" {
 			_ = enc.WriteResponse(&protocol.Response{OK: true, LogChunk: initial})
 		}
@@ -60,6 +56,7 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 		return
 	}
 
+	data, _ := os.ReadFile(path)
 	offset := int64(len(data))
 	if req.TailLines > 0 {
 		initial := string(data)

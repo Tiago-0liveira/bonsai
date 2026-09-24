@@ -334,6 +334,11 @@ func (s *Server) activeCountLocked() int {
 	n := 0
 	for _, mp := range s.procs {
 		mp.mu.Lock()
+		if mp.rec.Status == procstore.StatusOrphan &&
+			!procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.Worktree) {
+			mp.rec.Status = procstore.StatusLost
+			_ = s.store.WriteRecord(mp.rec)
+		}
 		if procstore.IsActive(mp.rec.Status) {
 			n++
 		}

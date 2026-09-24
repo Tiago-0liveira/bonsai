@@ -59,6 +59,16 @@ func TestKillByIDLeavesSiblings(t *testing.T) {
 	if len(m.List(dir)) != 2 {
 		t.Fatalf("List len = %d, want 2", len(m.List(dir)))
 	}
+
+	// The sibling command is intentionally short-lived. Wait for cmd.Wait to
+	// finish before TempDir cleanup: on Windows a still-exiting cmd.exe can keep
+	// its working directory open long enough for RemoveAll to fail.
+	if !waitDone(short, time.Second) {
+		short.Kill()
+		if !waitDone(short, time.Second) {
+			t.Fatal("short sibling did not exit")
+		}
+	}
 }
 
 func TestRestartRespawns(t *testing.T) {
