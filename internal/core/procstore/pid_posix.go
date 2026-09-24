@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package procstore
 
@@ -23,21 +23,20 @@ func PidAlive(pid int) bool {
 // reuse when available. The current working directory is deliberately not part
 // of identity: a perfectly valid managed command may chdir after launch.
 func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
-	if !PidAlive(pid) {
+	if !PidAlive(pid) || startedAt.IsZero() {
 		return false
 	}
 	procDir := fmt.Sprintf("/proc/%d", pid)
-	if fi, err := os.Stat(procDir); err == nil {
-		if !startedAt.IsZero() {
-			mtime := fi.ModTime()
-			diff := mtime.Sub(startedAt)
-			if diff < -1*time.Minute || diff > 1*time.Minute {
-				return false
-			}
-		}
-		return true
+	fi, err := os.Stat(procDir)
+	if err != nil {
+		// Without trustworthy process metadata we cannot safely distinguish the
+		// original child from a reused PID. Fail closed rather than risk killing
+		// an unrelated process during orphan recovery.
+		return false
 	}
-	return true
+	mtime := fi.ModTime()
+	diff := mtime.Sub(startedAt)
+	return diff >= -1*time.Minute && diff <= time.Minute
 }
 
 func pidAlive(pid int) bool {
