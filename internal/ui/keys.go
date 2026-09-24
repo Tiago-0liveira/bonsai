@@ -39,6 +39,11 @@ type keyMap struct {
 	Refresh    key.Binding
 	Kill       key.Binding
 	Restart    key.Binding
+	SetPolicy  key.Binding
+	ProcModal  key.Binding
+	MultiView  key.Binding
+	RenameProc key.Binding
+	ProcSearch key.Binding
 	Prefs      key.Binding
 	Help       key.Binding
 	Quit       key.Binding
@@ -72,7 +77,7 @@ var defaultBindings = map[string]bindingSpec{
 	"copy_file":    {[]string{"c"}, "copy file"},
 	"yank":         {[]string{"y"}, "yank/copy"},
 	"scripts":      {[]string{"s"}, "scripts"},
-	"aliases":      {[]string{"p"}, "aliases"},
+	"aliases":      {[]string{"a"}, "aliases"},
 	"pull":         {[]string{"ctrl+p"}, "pull"},
 	"push":         {[]string{"ctrl+u"}, "push"},
 	"fetch":        {[]string{"f"}, "fetch"},
@@ -82,8 +87,13 @@ var defaultBindings = map[string]bindingSpec{
 	"prune":        {[]string{"x"}, "prune"},
 	"bulk_prune":   {[]string{"X"}, "prune merged"},
 	"refresh":      {[]string{"R"}, "refresh"},
-	"kill_proc":    {[]string{"k"}, "kill proc"},
+	"kill_proc":    {[]string{"K"}, "kill proc"},
 	"restart_proc": {[]string{"r"}, "restart proc"},
+	"set_policy":   {[]string{"p"}, "restart policy"},
+	"proc_modal":   {[]string{"V"}, "all processes"},
+	"multi_view":   {[]string{"m"}, "view multiple processes together"},
+	"rename_proc":  {[]string{"L"}, "tag process (multi-view label)"},
+	"proc_search":  {[]string{"/"}, "search process output"},
 	"prefs":        {[]string{","}, "preferences"},
 	"help":         {[]string{"?"}, "keys"},
 	"quit":         {[]string{"q", "ctrl+c"}, "quit"},
@@ -174,6 +184,11 @@ func newKeyMap(overrides map[string]string) keyMap {
 		Refresh:    b("refresh"),
 		Kill:       b("kill_proc"),
 		Restart:    b("restart_proc"),
+		SetPolicy:  b("set_policy"),
+		ProcModal:  b("proc_modal"),
+		MultiView:  b("multi_view"),
+		RenameProc: b("rename_proc"),
+		ProcSearch: b("proc_search"),
 		Prefs:      b("prefs"),
 		Help:       b("help"),
 		Quit:       b("quit"),
@@ -194,7 +209,7 @@ var keymapSections = []keymapSection{
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
-	{"Processes tab", []string{"kill_proc", "restart_proc"}},
+	{"Processes tab", []string{"kill_proc", "restart_proc", "set_policy", "proc_modal", "multi_view", "rename_proc", "proc_search"}},
 }
 
 // effectiveKey returns the key in effect for an action given user overrides.

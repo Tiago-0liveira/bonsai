@@ -25,6 +25,9 @@ type Prefs struct {
 	// PRStatus is the worktree-list PR status display mode: "full" (glyph
 	// plus label), "compact" (glyph only) or "off" ("" = full).
 	PRStatus string `json:"pr_status,omitempty"`
+	// Editor is a personal override for the "open editor" command, taking
+	// priority over .bonsai.yaml's editor setting ("" = defer to it).
+	Editor string `json:"editor,omitempty"`
 }
 
 // State is persisted mutable data: how often each main-repo file has been copied

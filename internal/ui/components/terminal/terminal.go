@@ -77,6 +77,21 @@ func (m *Model) EnsureVisible(line int) {
 	}
 }
 
+// Height returns the viewport's current height in rows.
+func (m Model) Height() int { return m.vp.Height }
+
+// GotoTop / GotoBottom jump the view to the start / end of the content.
+func (m *Model) GotoTop()    { m.vp.GotoTop() }
+func (m *Model) GotoBottom() { m.vp.GotoBottom() }
+
+// AtBottom reports whether the view is pinned to the end of the content. In
+// follow mode this is what decides between tailing and staying put, so callers
+// use it to show whether output is live or paused.
+func (m Model) AtBottom() bool { return m.vp.AtBottom() }
+
+// ScrollPercent is the current scroll position, 0..1.
+func (m Model) ScrollPercent() float64 { return m.vp.ScrollPercent() }
+
 // SetTitle sets the pane header.
 func (m *Model) SetTitle(t string) { m.title = t }
 

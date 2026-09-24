@@ -59,11 +59,21 @@ const (
 
 	// Process viewer.
 	KindProcesses Kind = "processes"
+	// Quit keep/kill multi-select.
+	KindQuit Kind = "quit"
+	// Restart-policy picker (no/on-failure/always).
+	KindSetPolicy Kind = "set_policy"
+	// Multi-select of processes to show together in the merged log.
+	KindMultiView Kind = "multi_view"
+	// Free-text tag for a process's multi-view label.
+	KindRenameProc Kind = "rename_proc"
 
 	// Config editors (.bonsai.yaml).
 	KindConfigChoice  Kind = "config_choice"  // sub-picker: map entry or list item
 	KindConfigValue   Kind = "config_value"   // final value for a config setting
 	KindConfigConfirm Kind = "config_confirm" // confirm removal of a config entry
+
+	KindPrefEditor Kind = "pref_editor" // personal "open editor" override (state.json)
 
 	// Scrollable read-only diff of a single file.
 	KindDiffFile Kind = "diff_file"
@@ -79,6 +89,7 @@ const (
 	modeConfirm
 	modePrune
 	modeScroll
+	modeMultiSelect
 )
 
 // SubmitMsg is emitted when the user confirms a choice.
@@ -89,6 +100,13 @@ type SubmitMsg struct {
 
 // CancelMsg is emitted when the user dismisses the modal.
 type CancelMsg struct{ Kind Kind }
+
+// MultiSubmitMsg is emitted when a multi-select modal is confirmed. Selected
+// holds the indices (into the items passed to NewMultiSelect) that are checked.
+type MultiSubmitMsg struct {
+	Kind     Kind
+	Selected []int
+}
 
 // FilterFunc maps a query to an ordered candidate list.
 type FilterFunc func(query string) []string
@@ -141,6 +159,9 @@ type Model struct {
 	// Scroll-mode fields.
 	vp      viewport.Model
 	content string
+
+	// Multi-select fields.
+	selected []bool
 }
 
 // NewInput builds a free-text modal (e.g. commit message).
@@ -183,6 +204,15 @@ func NewSectionedFuzzy(kind Kind, title string, filter SectionFilterFunc, initia
 		sectionFilter: filter,
 		expanded:      map[string]bool{},
 	}
+}
+
+// NewMultiSelect builds a checkbox list modal. preselected sets the initial
+// checked state per item (a shorter/nil slice defaults the rest to unchecked).
+// Space toggles the row under the cursor; enter emits MultiSubmitMsg.
+func NewMultiSelect(kind Kind, title string, items []string, preselected []bool) Model {
+	sel := make([]bool, len(items))
+	copy(sel, preselected)
+	return Model{kind: kind, mode: modeMultiSelect, title: title, items: items, selected: sel}
 }
 
 // NewScroll builds a read-only scrollable modal (e.g. a single file's diff).
@@ -327,11 +357,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case " ", "m":
-		// Toggle merge only in prune mode; in text modes these are literal keys
-		// and must fall through to the input field.
+		// Toggle merge only in prune mode; toggle the checkbox in multi-select
+		// mode; in text modes these are literal keys and fall through to the input.
 		if m.mode == modePrune {
 			if m.canMerge {
 				m.mergeOn = !m.mergeOn
+			}
+			return m, nil
+		}
+		if m.mode == modeMultiSelect {
+			if m.cursor >= 0 && m.cursor < len(m.selected) {
+				m.selected[m.cursor] = !m.selected[m.cursor]
 			}
 			return m, nil
 		}
@@ -346,6 +382,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case "enter":
 		if m.sectioned {
 			return m.onSectionedEnter()
+		}
+		if m.mode == modeMultiSelect {
+			return m, m.onMultiSubmit()
 		}
 		return m, m.onEnter()
 	}
@@ -412,6 +451,18 @@ func (m Model) onSectionedEnter() (Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, m.submit(m.sections[r.section].Items[r.item])
+}
+
+// onMultiSubmit emits the checked indices.
+func (m Model) onMultiSubmit() tea.Cmd {
+	var sel []int
+	for i, on := range m.selected {
+		if on {
+			sel = append(sel, i)
+		}
+	}
+	k := m.kind
+	return func() tea.Msg { return MultiSubmitMsg{Kind: k, Selected: sel} }
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -499,6 +550,10 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("↑/↓ scroll · esc close"))
 	case modePrune:
 		b.WriteString(m.renderPrune())
+	case modeMultiSelect:
+		b.WriteString(m.renderMultiSelect())
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("↑/↓ move · space toggle · enter confirm · esc cancel"))
 	case modeInput:
 		if m.body != "" {
 			b.WriteString(m.body) // may carry its own ANSI color (git status)
@@ -614,6 +669,29 @@ func (m Model) renderSections() string {
 			}
 		}
 		if i < end-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// renderMultiSelect draws the checkbox list with the cursor.
+func (m Model) renderMultiSelect() string {
+	if len(m.items) == 0 {
+		return dimStyle.Render("(none)")
+	}
+	var b strings.Builder
+	for i, item := range m.items {
+		box := "[ ]"
+		if i < len(m.selected) && m.selected[i] {
+			box = onStyle.Render("[x]")
+		}
+		if i == m.cursor {
+			b.WriteString(cursorStyle.Render("› ") + box + " " + selectedStyle.Render(item))
+		} else {
+			b.WriteString("  " + box + " " + item)
+		}
+		if i < len(m.items)-1 {
 			b.WriteString("\n")
 		}
 	}

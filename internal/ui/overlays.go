@@ -40,6 +40,16 @@ func (m Model) currentThemePreset() string {
 	return cur
 }
 
+// effectiveEditor is the "open editor" command in effect: a personal
+// override (state.json) wins over the repo's .bonsai.yaml editor setting;
+// "" defers to $VISUAL/$EDITOR/vi (see coreexec.EditorCmd).
+func (m Model) effectiveEditor() string {
+	if m.state.Prefs.Editor != "" {
+		return m.state.Prefs.Editor
+	}
+	return m.cfg.Editor
+}
+
 // prefsActions lists every bindable action grouped for display. Default is the
 // key the action reverts to when the personal override is cleared — i.e. the
 // repo-level override if one exists, else the built-in default.
@@ -66,6 +76,7 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 		m.sort.name(),
 		m.state.Prefs.PruneMerge,
 		m.state.Prefs.PRStatus,
+		m.state.Prefs.Editor,
 		theme.Presets(),
 		prefsActions(m.cfg.Keys),
 		startOnKeys,
@@ -85,6 +96,7 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		Sort:       p.Sort,
 		PruneMerge: p.PruneMerge,
 		PRStatus:   p.PRStatus,
+		Editor:     p.Editor,
 		Keys:       p.Keys,
 	}
 	if err := m.state.Save(); err != nil {
@@ -107,6 +119,23 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		m.sort = sortModeFromName(p.Sort)
 		m.rebuildItems()
 	}
+	return m, nil
+}
+
+// openPrefEditorModal opens the input for a personal "open editor" command
+// override (state.json). An empty submission clears it, deferring to
+// .bonsai.yaml's editor setting (and then $VISUAL/$EDITOR/vi).
+func (m Model) openPrefEditorModal() (tea.Model, tea.Cmd) {
+	modal := modals.NewInput(modals.KindPrefEditor, "Personal editor override", "code -w, nvim, hx …")
+	body := "current: " + m.state.Prefs.Editor
+	if m.state.Prefs.Editor == "" {
+		body = "current: (none — using .bonsai.yaml's editor, or $VISUAL/$EDITOR/vi)"
+	}
+	body += "\nEmpty clears the override. Takes priority over .bonsai.yaml's editor setting."
+	modal.SetBody(body)
+	modal.SetInitial(m.state.Prefs.Editor)
+	modal.SetSize(m.width, m.height)
+	m.modal = &modal
 	return m, nil
 }
 

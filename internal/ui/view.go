@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -30,6 +30,12 @@ var (
 	procRunning   lipgloss.Style
 	procFailed    lipgloss.Style
 	procDone      lipgloss.Style
+	procSearchHit lipgloss.Style
+	// Process-log delimiter styles, one per marker outcome (see renderProcLog).
+	procMarkerStart lipgloss.Style
+	procMarkerOK    lipgloss.Style
+	procMarkerFail  lipgloss.Style
+	procMarkerWarn  lipgloss.Style
 	// PR-pane role styles.
 	prStateOpen   lipgloss.Style
 	prStateClosed lipgloss.Style
@@ -61,6 +67,11 @@ func applyTheme() {
 	procRunning = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
 	procFailed = lipgloss.NewStyle().Foreground(p.Danger).Bold(true)
 	procDone = lipgloss.NewStyle().Foreground(p.Dim)
+	procSearchHit = lipgloss.NewStyle().Foreground(p.Text).Background(p.Accent).Bold(true)
+	procMarkerStart = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
+	procMarkerOK = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
+	procMarkerFail = lipgloss.NewStyle().Foreground(p.Danger).Bold(true)
+	procMarkerWarn = lipgloss.NewStyle().Foreground(p.Warning).Bold(true)
 	prStateOpen = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
 	prStateClosed = lipgloss.NewStyle().Foreground(p.Danger).Bold(true)
 	prStateMerged = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
@@ -75,59 +86,98 @@ func applyTheme() {
 }
 
 const (
-	procHint      = "↑/↓ select · k kill · r restart · n new · x remove · v log"
+	procHint      = "↑/↓ select · j/k scroll · g/G top/end · K kill · r restart · p policy · m multi · L tag · / search · y copy · n new · x remove"
 	procEmptyHint = "no processes yet — press n to run a script or command"
 )
 
+// procScrollState labels whether the output pane is tailing the live end of the
+// log or parked where the user scrolled to. Without it, a paused view looks
+// identical to a process that simply stopped printing.
+func (m Model) procScrollState() string {
+	if m.term.AtBottom() {
+		return procRunning.Render("● live")
+	}
+	return procMarkerWarn.Render(fmt.Sprintf("⏸ %.0f%% · G to follow", m.term.ScrollPercent()*100))
+}
+
 // renderProcFooter builds the Processes-tab footer pinned to the bottom of the
-// right pane: a divider, the colored process list with the selection cursor, and
-// the keybind hint. The selected process's output scrolls above it (see View).
-func (m Model) renderProcFooter(width int) string {
+// right pane: an optional search box, a divider, the colored process list with
+// the selection cursor (or a color-tagged bullet per row when multi-viewing),
+// and the keybind hint. The process output scrolls above it (see View).
+func (m Model) renderProcFooter() string {
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		return procDim.Render(ansi.Truncate("(no worktree selected)", width, "…"))
+		return procDim.Render(ansi.Truncate("(no worktree selected)", m.termInnerWidth(), "…"))
 	}
 	if m.procs == nil {
-		return procDim.Render(ansi.Truncate(procEmptyHint, width, "…"))
+		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
 	}
 	procs := m.procs.List(wt.Path)
 	if len(procs) == 0 {
-		return procDim.Render(ansi.Truncate(procEmptyHint, width, "…"))
+		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
 	}
 	sel, selOK := m.activeProcess(wt.Path)
-	var b strings.Builder
-	b.WriteString(rule(width) + "\n")
-	for _, p := range procs {
-		cursor := "  "
-		if selOK && p.ID == sel.ID {
-			cursor = procAccent.Render("› ")
-		}
-		avail := width - lipgloss.Width(cursor)
-		if avail < 1 {
-			avail = 1
-		}
-		b.WriteString(cursor + ansi.Truncate(procLine(p), avail, "…") + "\n")
+	multi := m.procMultiSel[wt.Path]
+	inMulti := make(map[int]bool, len(multi))
+	for _, id := range multi {
+		inMulti[id] = true
 	}
-	b.WriteString(procDim.Render(ansi.Truncate(procHint, width, "…")))
+
+	var b strings.Builder
+	switch {
+	case m.procSearchActive:
+		b.WriteString("/ " + m.procSearchInput.View() + "\n")
+	case m.procSearch[wt.Path] != "":
+		b.WriteString(procDim.Render("filter: "+m.procSearch[wt.Path]+" (/ to edit, clear text to reset)") + "\n")
+	}
+	// Divider doubles as the scroll indicator for the output above it.
+	state := m.procScrollState()
+	dashes := m.termInnerWidth() - lipgloss.Width(state) - 1
+	if dashes < 4 {
+		dashes = 4
+	}
+	b.WriteString(prMeta.Render(strings.Repeat("─", dashes)) + " " + state + "\n")
+	for _, p := range procs {
+		// Two independent marks: a color-tagged bullet for multi-view membership,
+		// and the accent cursor for the row that single-process keys (kill/
+		// restart/policy/tag) still target — a row can carry both at once.
+		bullet := " "
+		if len(multi) > 1 && inMulti[p.ID] {
+			bullet = lipgloss.NewStyle().Foreground(assignProcColor(p.ID)).Bold(true).Render("●")
+		}
+		cursor := " "
+		if selOK && p.ID == sel.ID {
+			cursor = procAccent.Render("›")
+		}
+		line := procLine(p, m.procs.LastURL(p.ID))
+		b.WriteString(bullet + cursor + " " + ansi.Truncate(line, m.termInnerWidth(), "…") + "\n")
+	}
+	// Truncated, not wrapped: the footer's height is derived, not measured (see
+	// procFooterHeight), so it has to stay exactly one row.
+	b.WriteString(procDim.Render(ansi.Truncate(procHint, m.termInnerWidth(), "…")))
 	return b.String()
 }
 
-// procLine renders one process row with a color-coded status, plus any local
-// URL the process has printed (e.g. a dev server's address).
-func procLine(p *coreexec.Process) string {
-	status := p.Status()
+// procLine renders one process row with a color-coded status and restart policy,
+// plus any local URL the process has printed (e.g. a dev server's address).
+func procLine(p *procstore.Record, url string) string {
 	var st string
-	switch status {
-	case "running":
-		st = procRunning.Render(status)
-	case "failed":
-		st = procFailed.Render(status)
+	switch p.Status {
+	case procstore.StatusRunning:
+		st = procRunning.Render(p.Status)
+	case procstore.StatusStarting, procstore.StatusBackoff, procstore.StatusStopping, procstore.StatusOrphan:
+		st = procMarkerWarn.Render(p.Status)
+	case procstore.StatusFailed, procstore.StatusLost:
+		st = procFailed.Render(p.Status)
 	default:
-		st = procDone.Render(status)
+		st = procDone.Render(p.Status)
 	}
 	line := fmt.Sprintf("#%d %s (%s)", p.ID, p.Label, st)
-	if u := p.LastURL(); u != "" {
-		line += "  " + procDim.Render(u)
+	if p.Policy.Mode != "" && p.Policy.Mode != procstore.PolicyNo {
+		line += " " + procDim.Render("["+p.Policy.Mode+"]")
+	}
+	if url != "" {
+		line += "  " + procDim.Render(url)
 	}
 	return line
 }
@@ -587,12 +637,41 @@ func (m *Model) layout() {
 	if rightInnerW < 1 {
 		rightInnerW = 1
 	}
-	termH := innerH - 1
-	if termH < 1 {
-		termH = 1
-	}
 	m.list.SetSize(leftInnerW, innerH)
-	m.term.SetSize(rightInnerW, termH) // -1 for the pane title line
+	m.term.SetSize(rightInnerW, m.termHeight(innerH))
+}
+
+// termHeight is the right pane's viewport height: the pane body minus the tab
+// strip, minus the Processes-tab footer when that tab is showing. The viewport
+// must be sized to the area it is actually drawn into — a viewport that thinks
+// it is taller clamps its own max scroll offset to zero, which silently
+// disables scrolling and pins the view to the top of the log.
+func (m Model) termHeight(innerH int) int {
+	h := innerH - 1 // -1 for the tab strip line
+	if m.rightTab == tabProcs {
+		h -= m.procFooterHeight()
+	}
+	return max(h, 1)
+}
+
+// procFooterHeight counts the rows renderProcFooter will occupy. It is derived
+// rather than measured because layout runs on every message, while rendering the
+// footer re-reads every process's log (for its URL); the two must stay in step
+// (TestTermHeightLeavesRoomForProcFooter checks that they do).
+func (m Model) procFooterHeight() int {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return 1 // "(no worktree selected)"
+	}
+	n := len(m.procs.List(wt.Path))
+	if n == 0 {
+		return 1 // the empty hint
+	}
+	h := 1 + n + 1 // divider + one row per process + the keybind hint
+	if m.procSearchActive || m.procSearch[wt.Path] != "" {
+		h++ // the search box / active-filter line
+	}
+	return h
 }
 
 // View renders two bordered panes filling the screen above a status/help bar,
@@ -629,15 +708,10 @@ func (m Model) View() string {
 
 	var rightBody string
 	if m.rightTab == tabProcs {
-		// Output scrolls in the term viewport; the process list + hint sit in a
-		// footer pinned to the bottom. Shrink a copy of the term to leave room.
-		footer := m.renderProcFooter(rightInnerW)
-		footerH := lipgloss.Height(footer)
-		term := m.term
-		outH := innerH - 1 - footerH // -1 for the tab strip line
-		outH = max(outH, 1)
-		term.SetSize(rightInnerW, outH)
-		rightBody = m.tabStrip(rightInnerW) + "\n" + term.View() + "\n" + footer
+		// Output scrolls in the term viewport (already sized to leave the footer
+		// room, see layout); the process list + hint sit in a footer pinned to
+		// the bottom.
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View() + "\n" + m.renderProcFooter()
 	} else {
 		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View()
 	}

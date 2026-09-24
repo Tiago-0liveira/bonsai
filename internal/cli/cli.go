@@ -77,6 +77,22 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdX(repoDir, args[1:], out, errOut)
 	case "alias", "aliases":
 		return cmdAlias(repoDir, args[1:], out, errOut)
+	case "spawn":
+		return cmdSpawn(repoDir, args[1:], out)
+	case "ps", "status":
+		return cmdPS(repoDir, args[1:], out)
+	case "logs":
+		return cmdLogs(repoDir, args[1:], out)
+	case "grep":
+		return cmdGrep(repoDir, args[1:], out)
+	case "kill":
+		return cmdKill(repoDir, args[1:], out)
+	case "restart":
+		return cmdRestart(repoDir, args[1:], out)
+	case "attach":
+		return cmdAttach(repoDir, args[1:], out)
+	case "daemon":
+		return cmdDaemon(repoDir, args[1:], out)
 	default:
 		printUsage(errOut)
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -415,6 +431,14 @@ Usage:
   bonsai path <branch|main>       print a worktree path (for cd)
   bonsai x <alias> [worktree]     run an alias (default: current dir)
   bonsai x --list                 list available aliases
+  bonsai spawn [--wt X] [--restart MODE] <cmd…>  run a background process
+  bonsai ps [--wt X] [--all]      list background processes
+  bonsai logs <id> [-f] [-n N] [--grep P] [-i]  view/follow a process log
+  bonsai grep [-i] [--all] <p> [id]  search process logs
+  bonsai kill [--repo R] <id | --all | --wt X>  stop process(es)
+  bonsai restart <id>             restart a process
+  bonsai attach <id>              stream a process log (Ctrl-C detaches)
+  bonsai daemon status|stop       control the background daemon
   bonsai alias list               list aliases
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias

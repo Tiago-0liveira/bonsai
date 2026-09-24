@@ -16,7 +16,7 @@ func testActions() []Action {
 }
 
 func testModel() Model {
-	return New("bonsai", "name", false, "", []string{"bonsai", "sakura"}, testActions(), false)
+	return New("bonsai", "name", false, "", "", []string{"bonsai", "sakura"}, testActions(), false)
 }
 
 // keyMsg simulates pressing a rune key.
@@ -88,7 +88,7 @@ func TestKeybindingsCollapsedByDefault(t *testing.T) {
 }
 
 func TestStartOnKeysExpandsKeybindings(t *testing.T) {
-	m := New("bonsai", "name", false, "", []string{"bonsai"}, testActions(), true)
+	m := New("bonsai", "name", false, "", "", []string{"bonsai"}, testActions(), true)
 	if m.rows[m.cursor].kind != rowKey {
 		t.Fatal("startOnKeys should land the cursor on a key row")
 	}

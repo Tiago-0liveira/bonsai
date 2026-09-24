@@ -137,24 +137,29 @@ func TestEditorResolution(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		want = "notepad"
 	}
-	if name, args := editor(); name != want || args != nil {
+	if name, args := editor(""); name != want || args != nil {
 		t.Errorf("fallback = %q %v, want %s", name, args, want)
 	}
 
 	t.Setenv("EDITOR", "nano")
-	if name, args := editor(); name != "nano" || len(args) != 0 {
+	if name, args := editor(""); name != "nano" || len(args) != 0 {
 		t.Errorf("$EDITOR only = %q %v, want nano", name, args)
 	}
 
 	t.Setenv("EDITOR", "vim -u NONE")
-	if name, args := editor(); name != "vim" || len(args) != 2 || args[0] != "-u" || args[1] != "NONE" {
+	if name, args := editor(""); name != "vim" || len(args) != 2 || args[0] != "-u" || args[1] != "NONE" {
 		t.Errorf("$EDITOR with args = %q %v", name, args)
 	}
 
 	// $VISUAL wins over $EDITOR.
 	t.Setenv("VISUAL", "code -w")
-	if name, args := editor(); name != "code" || len(args) != 1 || args[0] != "-w" {
+	if name, args := editor(""); name != "code" || len(args) != 1 || args[0] != "-w" {
 		t.Errorf("$VISUAL priority = %q %v, want code -w", name, args)
+	}
+
+	// An explicit override wins over $VISUAL/$EDITOR.
+	if name, args := editor("hx"); name != "hx" || len(args) != 0 {
+		t.Errorf("override = %q %v, want hx", name, args)
 	}
 }
 
@@ -162,12 +167,17 @@ func TestEditorCmdRootedAtDir(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "nano")
 	dir := t.TempDir()
-	cmd := EditorCmd(dir)
+	cmd := EditorCmd(dir, "")
 	if cmd.Dir != dir {
 		t.Errorf("EditorCmd dir = %q, want %q", cmd.Dir, dir)
 	}
 	if got := cmd.Args[0]; got != "nano" {
 		t.Errorf("EditorCmd argv0 = %q, want nano", got)
+	}
+
+	cmd = EditorCmd(dir, "hx")
+	if got := cmd.Args[0]; got != "hx" {
+		t.Errorf("EditorCmd override argv0 = %q, want hx", got)
 	}
 }
 

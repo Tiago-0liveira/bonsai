@@ -21,6 +21,9 @@ type SaveMsg struct {
 	PruneMerge bool
 	// PRStatus is the worktree-list PR status display mode (full/compact/off).
 	PRStatus string
+	// Editor is a personal override for the "open editor" command ("" = defer
+	// to .bonsai.yaml, then $VISUAL/$EDITOR/vi).
+	Editor string
 	// Keys holds personal keybinding overrides (action -> key).
 	Keys map[string]string
 }
@@ -62,6 +65,7 @@ const (
 	rowSort
 	rowPruneMerge
 	rowPRStatus
+	rowEditor
 	rowAliases
 	rowKey
 )
@@ -80,6 +84,7 @@ type Model struct {
 	sort       string
 	pruneMerge bool
 	prStatus   string
+	editor     string
 	actions    []Action
 	defaults   map[string]string // action -> default key
 	overrides  map[string]string // action -> personal key (working copy)
@@ -95,7 +100,7 @@ type Model struct {
 // New builds the overlay. actions must be ordered by section; a section header
 // is inserted wherever the section changes. startOnKeys places the cursor on
 // the first keybinding row (used when arriving from the keymap modal).
-func New(themePreset, sort string, pruneMerge bool, prStatus string, presets []string, actions []Action, startOnKeys bool) Model {
+func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, presets []string, actions []Action, startOnKeys bool) Model {
 	if sort == "" {
 		sort = SortModes[0]
 	}
@@ -108,6 +113,7 @@ func New(themePreset, sort string, pruneMerge bool, prStatus string, presets []s
 		sort:       sort,
 		pruneMerge: pruneMerge,
 		prStatus:   prStatus,
+		editor:     editor,
 		actions:    actions,
 		defaults:   map[string]string{},
 		overrides:  map[string]string{},
@@ -122,6 +128,7 @@ func New(themePreset, sort string, pruneMerge bool, prStatus string, presets []s
 		row{kind: rowSort},
 		row{kind: rowPruneMerge},
 		row{kind: rowPRStatus},
+		row{kind: rowEditor},
 		row{kind: rowAliases},
 		row{kind: rowHeader, header: "Keybindings"},
 	)
@@ -244,7 +251,7 @@ func (m Model) save() tea.Cmd {
 	for k, v := range m.overrides {
 		keys[k] = v
 	}
-	snap := SaveMsg{Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, PRStatus: m.prStatus, Keys: keys}
+	snap := SaveMsg{Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, PRStatus: m.prStatus, Editor: m.editor, Keys: keys}
 	return func() tea.Msg { return snap }
 }
 
@@ -391,6 +398,9 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		m.prStatus = PRStatusModes[(idx+d+len(PRStatusModes))%len(PRStatusModes)]
 		m.msg = "PR status: " + m.prStatus
 		return m, m.save()
+
+	case rowEditor:
+		return m, func() tea.Msg { return JumpMsg{Target: "editor"} }
 
 	case rowAliases:
 		return m, func() tea.Msg { return JumpMsg{Target: "aliases"} }
@@ -559,6 +569,17 @@ func (m Model) renderRow(i int) string {
 			label = cursorStyle.Render(label)
 		}
 		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.prStatus+" ▸")
+
+	case rowEditor:
+		label := "editor command"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		val := dimStyle.Render("(auto: $VISUAL/$EDITOR/vi)")
+		if m.editor != "" {
+			val = accentStyle.Render(m.editor)
+		}
+		return cursor + pad(label, labelCol) + val
 
 	case rowAliases:
 		label := "manage aliases…"

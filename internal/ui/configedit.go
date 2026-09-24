@@ -45,6 +45,9 @@ var configSettings = []configSetting{
 	{key: "upstream", label: "Config: upstream", title: "Set upstream",
 		desc:    "Base ref that ahead/behind metrics compare against.",
 		example: "origin/main", kind: cfgInput},
+	{key: "editor", label: "Config: editor", title: "Set editor",
+		desc:    "Command for the \"open editor\" action (\"e\"). Empty falls back to $VISUAL/$EDITOR, then vi. A personal override in preferences wins over this.",
+		example: "code -w", kind: cfgInput},
 	{key: "confirm_destructive", label: "Config: confirm_destructive", title: "confirm_destructive",
 		desc:    "Prompt for confirmation before destructive operations.",
 		example: "true / false", kind: cfgToggle},
@@ -108,6 +111,11 @@ func (m Model) configCurrentValue(s configSetting) string {
 	switch s.key {
 	case "upstream":
 		return m.cfg.Upstream
+	case "editor":
+		if m.cfg.Editor == "" {
+			return "(default: $VISUAL/$EDITOR or vi)"
+		}
+		return m.cfg.Editor
 	case "confirm_destructive":
 		return fmt.Sprintf("%v", m.cfg.ConfirmDestructive)
 	case "notifications.process":

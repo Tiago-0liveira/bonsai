@@ -344,6 +344,16 @@ func Command(dir, command string) *exec.Cmd {
 	return cmd
 }
 
+// SetProcessGroup configures cmd to run in its own process group or job.
+func SetProcessGroup(cmd *exec.Cmd) {
+	setProcessGroup(cmd)
+}
+
+// KillProcessTree terminates cmd and all child processes it spawned.
+func KillProcessTree(cmd *exec.Cmd) {
+	killProcessTree(cmd)
+}
+
 // ShellCmd builds an interactive shell *exec.Cmd rooted at path, suitable for
 // tea.ExecProcess (the caller wires up stdio).
 func ShellCmd(path string) *exec.Cmd {
@@ -353,17 +363,21 @@ func ShellCmd(path string) *exec.Cmd {
 }
 
 // EditorCmd builds an interactive editor *exec.Cmd rooted at path, suitable
-// for tea.ExecProcess. The editor comes from $VISUAL or $EDITOR (arguments in
-// the value are honored); vi or notepad is the fallback.
-func EditorCmd(path string) *exec.Cmd {
-	name, args := editor()
+// for tea.ExecProcess. override (a configured editor command, arguments
+// honored) takes priority; otherwise the editor comes from $VISUAL or
+// $EDITOR, with vi or notepad as the final fallback.
+func EditorCmd(path, override string) *exec.Cmd {
+	name, args := editor(override)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = path
 	return cmd
 }
 
-func editor() (string, []string) {
-	raw := envEditor()
+func editor(override string) (string, []string) {
+	raw := override
+	if raw == "" {
+		raw = envEditor()
+	}
 	if raw == "" {
 		if runtime.GOOS == "windows" {
 			return "notepad", nil

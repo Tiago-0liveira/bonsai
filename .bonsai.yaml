@@ -27,6 +27,12 @@ worktree:
 # bulk prune) show a yes/no prompt first. Set false to run them immediately.
 confirm_destructive: true
 
+# ── Editor ────────────────────────────────────────────────────────────────────
+# Command for the "open editor" action (e). Arguments are honored, e.g.
+# "code -w". Empty (default) falls back to $VISUAL, then $EDITOR, then vi.
+# A personal override set in preferences (state.json) wins over this.
+editor: ""
+
 # ── Color theme ──────────────────────────────────────────────────────────────
 # preset: one of bonsai (default) / sakura / dracula / nord / mono.
 # overrides: per-role color (256-index like "212" or hex like "#ff5555").
