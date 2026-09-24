@@ -130,3 +130,18 @@ func TestIndexPrunesStale(t *testing.T) {
 		t.Fatalf("stale entry not pruned: %+v", list)
 	}
 }
+
+func TestProcessMatches(t *testing.T) {
+	// dead PID -> false
+	deadPID := 0x7fffffff
+	if ProcessMatches(deadPID, time.Now(), "") {
+		t.Fatal("expected dead PID to return false")
+	}
+
+	// live PID + clearly mismatched start metadata -> false
+	livePID := os.Getpid()
+	mismatchedStart := time.Now().Add(-24 * time.Hour)
+	if ProcessMatches(livePID, mismatchedStart, "") {
+		t.Fatal("expected live PID with mismatched start time to return false")
+	}
+}

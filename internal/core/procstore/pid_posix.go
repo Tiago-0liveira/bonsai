@@ -46,22 +46,29 @@ func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
 		return true
 	}
 	// Fallback for systems without /proc (e.g. macOS / Darwin):
-	// Validate process start time using ps if startedAt is provided.
-	if !startedAt.IsZero() {
-		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "lstart=").Output()
-		if err != nil {
-			return false
-		}
-		raw := strings.TrimSpace(string(out))
-		if raw != "" {
-			// lstart format: "Mon Jan _2 15:04:05 2006"
-			if t, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", raw, time.Local); err == nil {
-				diff := t.Sub(startedAt)
-				if diff < -2*time.Minute || diff > 2*time.Minute {
-					return false
-				}
-			}
-		}
+	return processMatchesDarwin(pid, startedAt)
+}
+
+func processMatchesDarwin(pid int, startedAt time.Time) bool {
+	if !PidAlive(pid) || startedAt.IsZero() {
+		return false
+	}
+	out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "lstart=").Output()
+	if err != nil {
+		return false
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return false
+	}
+	// lstart format: "Mon Jan _2 15:04:05 2006"
+	t, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", raw, time.Local)
+	if err != nil {
+		return false
+	}
+	diff := t.Sub(startedAt)
+	if diff < -2*time.Minute || diff > 2*time.Minute {
+		return false
 	}
 	return true
 }
