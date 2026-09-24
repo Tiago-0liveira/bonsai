@@ -1082,8 +1082,8 @@ func TestKillRecoversAfterDaemonCrash(t *testing.T) {
 	if len(killed) != 1 || killed[0] != rec.ID {
 		t.Fatalf("killed = %v, want [%d]", killed, rec.ID)
 	}
-	if !waitFor(t, 2*time.Second, func() bool { return !procstore.PidAlive(pid) }) {
-		t.Fatalf("orphan PID %d survived kill", pid)
+	if procstore.PidAlive(pid) {
+		t.Fatalf("kill returned before orphan PID %d was confirmed dead", pid)
 	}
 	r := recByID(t, c, rec.ID)
 	if r == nil || r.Status != procstore.StatusStopped {
@@ -1147,8 +1147,8 @@ func TestForceShutdownRecoversAndKillsOrphan(t *testing.T) {
 	if err := c.Shutdown(true); err != nil {
 		t.Fatal(err)
 	}
-	if !waitFor(t, 2*time.Second, func() bool { return !procstore.PidAlive(pid) }) {
-		t.Fatalf("orphan PID %d survived forced shutdown", pid)
+	if procstore.PidAlive(pid) {
+		t.Fatalf("forced shutdown returned before orphan PID %d was confirmed dead", pid)
 	}
 
 	persisted, err := procstore.New(root).ReadRecord(rec.ID)
