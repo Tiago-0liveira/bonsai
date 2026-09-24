@@ -5,7 +5,9 @@ package procstore
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -30,7 +32,7 @@ func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
 		if !startedAt.IsZero() {
 			mtime := fi.ModTime()
 			diff := mtime.Sub(startedAt)
-			if diff < -1*time.Minute || diff > 1*time.Minute {
+			if diff < -2*time.Minute || diff > 2*time.Minute {
 				return false
 			}
 		}
@@ -42,6 +44,24 @@ func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
 			}
 		}
 		return true
+	}
+	// Fallback for systems without /proc (e.g. macOS / Darwin):
+	// Validate process start time using ps if startedAt is provided.
+	if !startedAt.IsZero() {
+		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "lstart=").Output()
+		if err != nil {
+			return false
+		}
+		raw := strings.TrimSpace(string(out))
+		if raw != "" {
+			// lstart format: "Mon Jan _2 15:04:05 2006"
+			if t, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", raw, time.Local); err == nil {
+				diff := t.Sub(startedAt)
+				if diff < -2*time.Minute || diff > 2*time.Minute {
+					return false
+				}
+			}
+		}
 	}
 	return true
 }
