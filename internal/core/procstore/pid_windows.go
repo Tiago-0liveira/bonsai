@@ -8,6 +8,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const processStartTolerance = 5 * time.Second
+
 // PidAlive reports whether pid names a live process on Windows.
 func PidAlive(pid int) bool {
 	if pid <= 0 {
@@ -47,7 +49,7 @@ func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
 		if err := windows.GetProcessTimes(h, &creationTime, &exitTime, &kernelTime, &userTime); err == nil {
 			t := time.Unix(0, creationTime.Nanoseconds())
 			diff := t.Sub(startedAt)
-			if diff < -1*time.Minute || diff > 1*time.Minute {
+			if diff < -processStartTolerance || diff > processStartTolerance {
 				return false
 			}
 		}
