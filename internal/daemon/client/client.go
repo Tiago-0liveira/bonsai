@@ -340,7 +340,7 @@ func (c *Client) Shutdown(force bool) error {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return nil
+	return errors.New("daemon survived shutdown deadline")
 }
 
 // Logs streams a process's log, invoking onChunk for each chunk until the stream

@@ -1286,6 +1286,66 @@ func TestOfflineRemoveDoesNotForgetLiveProcess(t *testing.T) {
 	}
 }
 
+func TestShutdownErrorsWhenDaemonSurvivesDeadline(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
+	root := t.TempDir()
+
+	store := procstore.New(root)
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+
+	ln, err := net.Listen("unix", store.SockPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	defer os.Remove(store.SockPath())
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				dec := protocol.NewDecoder(c)
+				enc := protocol.NewEncoder(c)
+				req, err := dec.ReadRequest()
+				if err != nil {
+					return
+				}
+				switch req.Kind {
+				case protocol.KindPing:
+					_ = enc.WriteResponse(&protocol.Response{
+						OK:        true,
+						Version:   protocol.Version,
+						ProcCount: 0,
+						EOF:       true,
+					})
+				case protocol.KindShutdown:
+					// Acknowledge shutdown but stay reachable
+					_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
+				}
+			}(conn)
+		}
+	}()
+
+	c := client.For(root)
+	waitAlive(t, c)
+
+	err = c.Shutdown(true)
+	if err == nil {
+		t.Fatal("expected Shutdown to return error when daemon survives deadline, but got nil")
+	}
+}
+
 func TestStateInvariant_NoGhostRunning(t *testing.T) {
 	c, root := newDaemon(t)
 
