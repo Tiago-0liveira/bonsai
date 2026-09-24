@@ -88,6 +88,9 @@ func TestTryLock(t *testing.T) {
 func TestIndexRegisterDeregister(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 
 	// A live daemon = this test process (its pid is alive) with an existing sock.
 	sock := filepath.Join(t.TempDir(), "daemon.sock")
@@ -116,6 +119,9 @@ func TestIndexRegisterDeregister(t *testing.T) {
 func TestIndexPrunesStale(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	// pid 0x7fffffff is (almost certainly) not alive -> entry pruned on read.
 	if err := Register("/repo/dead", "/nonexistent.sock", 0x7fffffff); err != nil {
 		t.Fatal(err)

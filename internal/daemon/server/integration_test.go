@@ -38,11 +38,12 @@ func shortRuntimeDir(t *testing.T) string {
 // socket and the global index never touch the developer's real config.
 func newDaemon(t *testing.T) (*client.Client, string) {
 	t.Helper()
-	// Isolate the global index. os.UserConfigDir honors XDG_CONFIG_HOME on Linux
-	// but $HOME/Library on macOS, so redirect HOME too (and clear XDG so Linux
-	// also falls back to the temp HOME).
+	// Isolate the global index across platforms (Linux, macOS, Windows).
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 	root := t.TempDir()
 
@@ -57,7 +58,7 @@ func newDaemon(t *testing.T) (*client.Client, string) {
 		_ = c.Shutdown(true)
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 		}
 	})
 	return c, root
@@ -67,6 +68,9 @@ func newDaemonWithLogCap(t *testing.T, logLimit int64) (*client.Client, string) 
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 	root := t.TempDir()
 
@@ -89,7 +93,7 @@ func newDaemonWithLogCap(t *testing.T, logLimit int64) (*client.Client, string) 
 		_ = c.Shutdown(true)
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 		}
 	})
 	return c, root
@@ -151,8 +155,11 @@ func recByID(t *testing.T, c *client.Client, id int) *procstore.Record {
 func TestSpawnListLogsKill(t *testing.T) {
 	c, root := newDaemon(t)
 
-	rec, err := c.Spawn(root, "", "greet",
-		"printf 'listening on http://localhost:3000\\n'; sleep 30", nil)
+	greetCmd := "printf 'listening on http://localhost:3000\\n'; sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		greetCmd = "echo listening on http://localhost:3000 & ping -n 31 127.0.0.1 >nul"
+	}
+	rec, err := c.Spawn(root, "", "greet", greetCmd, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +422,11 @@ func TestLogMarkersDelimitRuns(t *testing.T) {
 
 	// A failing command with restarts disabled: start marker, then exit marker
 	// carrying the process's own exit code.
-	rec, err := c.Spawn(root, "", "boom", "echo working; exit 3",
+	boomCmd := "echo working; exit 3"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		boomCmd = "echo working & exit /b 3"
+	}
+	rec, err := c.Spawn(root, "", "boom", boomCmd,
 		&procstore.Policy{Mode: procstore.PolicyNo})
 	if err != nil {
 		t.Fatal(err)
@@ -683,6 +694,9 @@ func TestControlledShutdown(t *testing.T) {
 func TestCrashRecoveryMarksLost(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 	root := t.TempDir()
 
@@ -747,6 +761,9 @@ func TestLogRotationFollower(t *testing.T) {
 	c, root := newDaemonWithLogCap(t, 80)
 
 	cmd := "printf 'line 111111111111111111\\n'; sleep 0.1; printf 'line 222222222222222222\\n'; sleep 0.1; printf 'line 333333333333333333\\n'; sleep 0.1; printf 'line 444444444444444444\\n'"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		cmd = "echo line 111111111111111111& ping -n 1 127.0.0.1 >nul& echo line 222222222222222222& ping -n 1 127.0.0.1 >nul& echo line 333333333333333333& ping -n 1 127.0.0.1 >nul& echo line 444444444444444444"
+	}
 	rec, err := c.Spawn(root, "", "rotator", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
 	if err != nil {
 		t.Fatal(err)
@@ -808,6 +825,9 @@ func TestProtocolCompatibility(t *testing.T) {
 	t.Run("incompatible busy daemon refuses and preserves processes", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("XDG_CONFIG_HOME", "")
+		appData := t.TempDir()
+		t.Setenv("AppData", appData)
+		t.Setenv("APPDATA", appData)
 		t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 		root := t.TempDir()
 
@@ -861,6 +881,9 @@ func TestProtocolCompatibility(t *testing.T) {
 	t.Run("incompatible idle daemon is safely replaced", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("XDG_CONFIG_HOME", "")
+		appData := t.TempDir()
+		t.Setenv("AppData", appData)
+		t.Setenv("APPDATA", appData)
 		t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 		root := t.TempDir()
 

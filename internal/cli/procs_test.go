@@ -37,10 +37,12 @@ func shortRuntimeDir(t *testing.T) string {
 // starts an in-process daemon so CLI commands connect without exec-autostarting.
 func setupCLIRepo(t *testing.T) string {
 	t.Helper()
-	// Isolate the global index across platforms (see server tests): macOS
-	// UserConfigDir uses $HOME, Linux uses XDG_CONFIG_HOME.
+	// Isolate the global index across platforms (Linux, macOS, Windows).
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 	repo := t.TempDir()
 	// HOME is redirected for index isolation, so git has no global identity;
@@ -95,8 +97,11 @@ func runCLIExpectErr(t *testing.T, args ...string) error {
 func TestCLISpawnPsLogsGrepKill(t *testing.T) {
 	setupCLIRepo(t)
 
-	out := runCLI(t, "spawn", "--label", "dev",
-		"printf 'listening on http://localhost:5173\\n'; sleep 30")
+	devCmd := "printf 'listening on http://localhost:5173\\n'; sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		devCmd = "echo listening on http://localhost:5173 & ping -n 31 127.0.0.1 >nul"
+	}
+	out := runCLI(t, "spawn", "--label", "dev", devCmd)
 	if !strings.Contains(out, "started #1") {
 		t.Fatalf("spawn output: %q", out)
 	}
@@ -217,13 +222,20 @@ func shutdownAndWait(t *testing.T, root string) {
 func TestCLIKillCrossRepo(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 
 	rootA := startRepo(t)
 	rootB := startRepo(t)
 
 	t.Chdir(rootA)
-	runCLI(t, "spawn", "--label", "in-a", "sleep 30")
+	sleepCmd := "sleep 30"
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		sleepCmd = "ping -n 31 127.0.0.1 >nul"
+	}
+	runCLI(t, "spawn", "--label", "in-a", sleepCmd)
 
 	// Repo B's daemon starts its own id counter at 1 too, but has spawned
 	// nothing: from there, id 1 only exists in repo A's daemon. A bare kill
@@ -320,6 +332,9 @@ func TestCLIOfflineLogs(t *testing.T) {
 	// Setup repo without starting any daemon
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	appData := t.TempDir()
+	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	t.Setenv("XDG_RUNTIME_DIR", shortRuntimeDir(t))
 	repo := t.TempDir()
 
