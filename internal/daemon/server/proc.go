@@ -304,7 +304,7 @@ func (s *Server) killManaged(mp *managedProc) bool {
 
 	if procstore.IsTerminal(status) {
 		mp.mu.Unlock()
-		return false
+		return true
 	}
 
 	if status == procstore.StatusBackoff {
