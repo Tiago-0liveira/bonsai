@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const processStartTolerance = 5 * time.Second
+
 // PidAlive reports whether pid names a live process owned by the current user (signal 0 probe).
 func PidAlive(pid int) bool {
 	if pid <= 0 {
@@ -36,7 +38,7 @@ func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
 	}
 	mtime := fi.ModTime()
 	diff := mtime.Sub(startedAt)
-	return diff >= -1*time.Minute && diff <= time.Minute
+	return diff >= -processStartTolerance && diff <= processStartTolerance
 }
 
 func pidAlive(pid int) bool {
