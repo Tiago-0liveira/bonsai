@@ -16,6 +16,19 @@ import (
 
 var errGenerationMismatch = errors.New("generation mismatch")
 
+const orphanStopTimeout = 2 * time.Second
+
+func waitForProcessExit(pid int, startedAt time.Time, worktree string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for procstore.ProcessMatches(pid, startedAt, worktree) {
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return true
+}
+
 // spawn creates a new managed process and starts it.
 func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	if req.Worktree == "" || req.Command == "" {
@@ -283,13 +296,15 @@ func (s *Server) executeScheduledRestart(id int, scheduledGen uint64) {
 }
 
 // killManaged terminates a process and invalidates any pending restart.
-func (s *Server) killManaged(mp *managedProc) {
+// It returns false only when an adopted orphan was still alive after the kill
+// attempt, so callers never report or restart an unconfirmed stop.
+func (s *Server) killManaged(mp *managedProc) bool {
 	mp.mu.Lock()
 	status := mp.rec.Status
 
 	if procstore.IsTerminal(status) {
 		mp.mu.Unlock()
-		return
+		return true
 	}
 
 	if status == procstore.StatusBackoff {
@@ -309,7 +324,7 @@ func (s *Server) killManaged(mp *managedProc) {
 		s.mu.Lock()
 		s.armIdleLocked()
 		s.mu.Unlock()
-		return
+		return true
 	}
 
 	if status == procstore.StatusStarting {
@@ -325,13 +340,14 @@ func (s *Server) killManaged(mp *managedProc) {
 		s.mu.Lock()
 		s.armIdleLocked()
 		s.mu.Unlock()
-		return
+		return true
 	}
 
 	if status == procstore.StatusOrphan {
 		pid := mp.rec.PID
-		alive := procstore.ProcessMatches(pid, mp.rec.StartedAt, mp.rec.Worktree)
-		if !alive {
+		startedAt := mp.rec.StartedAt
+		worktree := mp.rec.Worktree
+		if !procstore.ProcessMatches(pid, startedAt, worktree) {
 			mp.rec.Status = procstore.StatusLost
 			s.appendMarker(mp.rec.ID, procstore.Marker{
 				Kind: procstore.MarkerExit,
@@ -340,35 +356,74 @@ func (s *Server) killManaged(mp *managedProc) {
 			})
 			_ = s.store.WriteRecord(mp.rec)
 			mp.mu.Unlock()
-			return
+			return true
 		}
-		mp.rec.Status = procstore.StatusStopped
-		s.appendMarker(mp.rec.ID, procstore.Marker{
-			Kind: procstore.MarkerStopped,
-			Text: "orphan stopped by user",
-		})
+
+		// Persist an in-progress state first. StatusStopped is only written after
+		// the original process identity can no longer be observed.
+		mp.rec.Status = procstore.StatusStopping
 		_ = s.store.WriteRecord(mp.rec)
 		mp.mu.Unlock()
 
 		if pid > 0 {
 			coreexec.KillPID(pid)
 		}
+		stopped := waitForProcessExit(pid, startedAt, worktree, orphanStopTimeout)
+
+		mp.mu.Lock()
+		if mp.rec.Status == procstore.StatusStopping {
+			if stopped {
+				mp.rec.Status = procstore.StatusStopped
+				mp.rec.ExitError = ""
+				s.appendMarker(mp.rec.ID, procstore.Marker{
+					Kind: procstore.MarkerStopped,
+					Text: "orphan stopped by user",
+				})
+			} else {
+				mp.rec.Status = procstore.StatusOrphan
+				mp.rec.ExitError = "failed to confirm orphan process termination"
+			}
+			_ = s.store.WriteRecord(mp.rec)
+		}
+		mp.mu.Unlock()
+
 		s.mu.Lock()
 		s.armIdleLocked()
 		s.mu.Unlock()
-		return
+		return stopped
 	}
 
 	if status == procstore.StatusStopping {
 		cmd := mp.cmd
 		pid := mp.rec.PID
+		startedAt := mp.rec.StartedAt
+		worktree := mp.rec.Worktree
 		mp.mu.Unlock()
 		if cmd != nil {
 			coreexec.KillProcessTree(cmd)
-		} else if pid > 0 {
+			return true
+		}
+		if pid > 0 {
 			coreexec.KillPID(pid)
 		}
-		return
+		stopped := waitForProcessExit(pid, startedAt, worktree, orphanStopTimeout)
+		mp.mu.Lock()
+		if mp.rec.Status == procstore.StatusStopping {
+			if stopped {
+				mp.rec.Status = procstore.StatusStopped
+				mp.rec.ExitError = ""
+				s.appendMarker(mp.rec.ID, procstore.Marker{
+					Kind: procstore.MarkerStopped,
+					Text: "orphan stopped by user",
+				})
+			} else {
+				mp.rec.Status = procstore.StatusOrphan
+				mp.rec.ExitError = "failed to confirm orphan process termination"
+			}
+			_ = s.store.WriteRecord(mp.rec)
+		}
+		mp.mu.Unlock()
+		return stopped
 	}
 
 	mp.rec.Status = procstore.StatusStopping
@@ -382,6 +437,7 @@ func (s *Server) killManaged(mp *managedProc) {
 	} else if pid > 0 {
 		coreexec.KillPID(pid)
 	}
+	return true
 }
 
 // restart terminates mp (if running) and starts it fresh with a new generation.
@@ -406,7 +462,9 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 	mp.mu.Unlock()
 
 	if status == procstore.StatusRunning || status == procstore.StatusStarting || status == procstore.StatusStopping || status == procstore.StatusOrphan {
-		s.killManaged(mp)
+		if !s.killManaged(mp) {
+			return nil, fmt.Errorf("failed to confirm process #%d stopped before restart", id)
+		}
 		if done != nil {
 			<-done
 		}

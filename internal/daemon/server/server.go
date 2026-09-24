@@ -202,7 +202,7 @@ func (s *Server) acceptLoop() {
 }
 
 // stopAllProcesses cleanly terminates all running processes and cancels scheduled restarts.
-func (s *Server) stopAllProcesses() {
+func (s *Server) stopAllProcesses() error {
 	s.mu.Lock()
 	var runningProcs []*managedProc
 	for _, mp := range s.procs {
@@ -241,24 +241,57 @@ func (s *Server) stopAllProcesses() {
 	}
 	s.mu.Unlock()
 
-	// Bounded wait for running processes to exit
+	// Bounded wait for running processes to exit. Adopted orphans have no
+	// exec.Cmd/waitDone, so confirm their original process identity disappeared
+	// before persisting StatusStopped.
 	shutdownDeadline := time.Now().Add(5 * time.Second)
+	failedStops := 0
 	for _, mp := range runningProcs {
 		mp.mu.Lock()
 		done := mp.waitDone
+		pid := mp.rec.PID
+		startedAt := mp.rec.StartedAt
+		worktree := mp.rec.Worktree
 		mp.mu.Unlock()
-		if done != nil {
-			remaining := time.Until(shutdownDeadline)
-			if remaining > 0 {
-				select {
-				case <-done:
-				case <-time.After(remaining):
-					mp.mu.Lock()
-					pid := mp.rec.PID
-					mp.mu.Unlock()
-					if pid > 0 {
-						coreexec.KillPID(pid)
-					}
+
+		if done == nil {
+			stopped := !procstore.ProcessMatches(pid, startedAt, worktree)
+			if !stopped {
+				if remaining := time.Until(shutdownDeadline); remaining > 0 {
+					stopped = waitForProcessExit(pid, startedAt, worktree, remaining)
+				}
+			}
+
+			mp.mu.Lock()
+			if !procstore.IsTerminal(mp.rec.Status) {
+				if stopped {
+					mp.rec.Status = procstore.StatusStopped
+					mp.rec.ExitError = ""
+					s.appendMarker(mp.rec.ID, procstore.Marker{
+						Kind: procstore.MarkerStopped,
+						Text: "orphan stopped by daemon shutdown",
+					})
+				} else {
+					mp.rec.Status = procstore.StatusOrphan
+					mp.rec.ExitError = "failed to confirm orphan process termination during daemon shutdown"
+					failedStops++
+				}
+				_ = s.store.WriteRecord(mp.rec)
+			}
+			mp.mu.Unlock()
+			continue
+		}
+
+		remaining := time.Until(shutdownDeadline)
+		if remaining > 0 {
+			select {
+			case <-done:
+			case <-time.After(remaining):
+				mp.mu.Lock()
+				pid := mp.rec.PID
+				mp.mu.Unlock()
+				if pid > 0 {
+					coreexec.KillPID(pid)
 				}
 			}
 		}
@@ -269,6 +302,10 @@ func (s *Server) stopAllProcesses() {
 		}
 		mp.mu.Unlock()
 	}
+	if failedStops > 0 {
+		return fmt.Errorf("%d process(es) still alive after forced shutdown", failedStops)
+	}
+	return nil
 }
 
 // Stop terminates the server loop, optionally stopping managed processes.
@@ -279,7 +316,7 @@ func (s *Server) Stop(killChildren bool) {
 // shutdown stops the server.
 func (s *Server) shutdown(killChildren bool) {
 	if killChildren {
-		s.stopAllProcesses()
+		_ = s.stopAllProcesses()
 	}
 	s.closeOnce.Do(func() { close(s.done) })
 }
