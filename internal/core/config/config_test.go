@@ -140,11 +140,11 @@ func TestResolveAlias(t *testing.T) {
 		wantCmd   string
 		wantFound bool
 	}{
-		{"build", "user-build", true},       // user shadows config
-		{"only-config", "cfg-only", true},   // config-only
-		{"only-user", "user-only", true},    // state-only
-		{"missing", "", false},              // not found
-		{"dup", "cfg-second", true},         // same list: last wins
+		{"build", "user-build", true},     // user shadows config
+		{"only-config", "cfg-only", true}, // config-only
+		{"only-user", "user-only", true},  // state-only
+		{"missing", "", false},            // not found
+		{"dup", "cfg-second", true},       // same list: last wins
 	}
 	for _, c := range cases {
 		cmd, found := ResolveAlias(c.name, configAliases, stateAliases)

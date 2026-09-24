@@ -1,9 +1,27 @@
 package exec
 
 import (
+	"os"
+	"runtime"
 	"testing"
 	"time"
 )
+
+var (
+	testSleepCmd = "sleep 30"
+	testTrueCmd  = "true"
+	testFalseCmd = "false"
+	testURLCmd   = "printf 'ready at http://localhost:4321\\n'"
+)
+
+func init() {
+	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
+		testSleepCmd = "ping -n 31 127.0.0.1 >nul"
+		testTrueCmd = "exit /b 0"
+		testFalseCmd = "exit /b 1"
+		testURLCmd = "echo ready at http://localhost:4321"
+	}
+}
 
 // waitDone polls until p reports Done or the deadline passes.
 func waitDone(p *Process, d time.Duration) bool {
@@ -21,11 +39,11 @@ func TestKillByIDLeavesSiblings(t *testing.T) {
 	m := NewManager()
 	dir := t.TempDir()
 
-	long, err := m.Spawn(dir, "long", "sleep 30")
+	long, err := m.Spawn(dir, "long", testSleepCmd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	short, err := m.Spawn(dir, "short", "true")
+	short, err := m.Spawn(dir, "short", testTrueCmd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +65,7 @@ func TestRestartRespawns(t *testing.T) {
 	m := NewManager()
 	dir := t.TempDir()
 
-	p, err := m.Spawn(dir, "job", "sleep 30")
+	p, err := m.Spawn(dir, "job", testSleepCmd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +76,7 @@ func TestRestartRespawns(t *testing.T) {
 	if np.ID == p.ID {
 		t.Fatal("restart reused the old ID")
 	}
-	if np.Label != "job" || np.Command != "sleep 30" {
+	if np.Label != "job" || np.Command != testSleepCmd {
 		t.Fatalf("restart lost label/command: %q %q", np.Label, np.Command)
 	}
 	if !waitDone(p, time.Second) {
@@ -71,7 +89,7 @@ func TestRemoveDropsFromList(t *testing.T) {
 	m := NewManager()
 	dir := t.TempDir()
 
-	p, err := m.Spawn(dir, "job", "true")
+	p, err := m.Spawn(dir, "job", testTrueCmd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +107,7 @@ func TestKilledProcessReportsStopped(t *testing.T) {
 	m := NewManager()
 	dir := t.TempDir()
 
-	p, err := m.Spawn(dir, "srv", "sleep 30")
+	p, err := m.Spawn(dir, "srv", testSleepCmd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +120,7 @@ func TestKilledProcessReportsStopped(t *testing.T) {
 	}
 
 	// A natural non-zero exit still reads as failed.
-	bad, err := m.Spawn(dir, "bad", "false")
+	bad, err := m.Spawn(dir, "bad", testFalseCmd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +133,12 @@ func TestKilledProcessReportsStopped(t *testing.T) {
 func TestEditorResolution(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "")
-	if name, args := editor(""); name != "vi" || args != nil {
-		t.Errorf("fallback = %q %v, want vi", name, args)
+	want := "vi"
+	if runtime.GOOS == "windows" {
+		want = "notepad"
+	}
+	if name, args := editor(""); name != want || args != nil {
+		t.Errorf("fallback = %q %v, want %s", name, args, want)
 	}
 
 	t.Setenv("EDITOR", "nano")
@@ -187,7 +209,7 @@ func TestLastLocalURL(t *testing.T) {
 func TestProcessLastURL(t *testing.T) {
 	m := NewManager()
 	dir := t.TempDir()
-	p, err := m.Spawn(dir, "srv", "printf 'ready at http://localhost:4321\\n'")
+	p, err := m.Spawn(dir, "srv", testURLCmd)
 	if err != nil {
 		t.Fatal(err)
 	}

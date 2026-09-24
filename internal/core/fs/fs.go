@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,19 +85,42 @@ func Search(files []string, query string, rank Ranker) []string {
 	return out
 }
 
-// DiskUsageKB returns the on-disk size of dir in KiB via `du -sk` (a single
-// fast process, unlike walking possibly millions of files from Go).
+// DiskUsageKB returns the on-disk size of dir in KiB.
+// On POSIX systems with du available, it uses du -sk for speed;
+// on Windows or when du is unavailable, it walks the directory.
 func DiskUsageKB(dir string) (int64, error) {
-	cmd := exec.Command("du", "-sk", dir)
-	out, err := cmd.Output()
+	if _, err := os.Stat(dir); err != nil {
+		return 0, err
+	}
+	if _, err := exec.LookPath("du"); err == nil {
+		cmd := exec.Command("du", "-sk", dir)
+		out, err := cmd.Output()
+		if err == nil {
+			fields := strings.Fields(string(out))
+			if len(fields) > 0 {
+				if kb, parseErr := strconv.ParseInt(fields[0], 10, 64); parseErr == nil {
+					return kb, nil
+				}
+			}
+		}
+	}
+	var totalBytes int64
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			info, err := d.Info()
+			if err == nil {
+				totalBytes += info.Size()
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("du -sk: %w", err)
+		return 0, fmt.Errorf("walk dir: %w", err)
 	}
-	fields := strings.Fields(string(out))
-	if len(fields) == 0 {
-		return 0, fmt.Errorf("du -sk: empty output")
-	}
-	return strconv.ParseInt(fields[0], 10, 64)
+	return (totalBytes + 1023) / 1024, nil
 }
 
 // HumanSize renders a KiB count in human-readable form (1024-based, one decimal
@@ -149,7 +173,7 @@ func Copy(src, dst string) error {
 
 // sameFile reports whether src and dst resolve to the same location. It first
 // tries os.SameFile (handles symlinks/hardlinks when dst exists) then falls back
-// to a cleaned absolute-path comparison.
+// to a cleaned absolute-path comparison (case-insensitive on Windows).
 func sameFile(src, dst string) bool {
 	if si, err := os.Stat(src); err == nil {
 		if di, err := os.Stat(dst); err == nil {
@@ -158,5 +182,13 @@ func sameFile(src, dst string) bool {
 	}
 	a, err1 := filepath.Abs(src)
 	b, err2 := filepath.Abs(dst)
-	return err1 == nil && err2 == nil && filepath.Clean(a) == filepath.Clean(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	ca := filepath.Clean(a)
+	cb := filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ca, cb)
+	}
+	return ca == cb
 }

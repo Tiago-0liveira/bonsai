@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,6 +40,18 @@ func main() {
 		return
 	}
 
+	// Flags like --version / -v and --update / -u are checked early
+	if len(args) > 0 {
+		switch args[0] {
+		case "--version", "-v", "version", "--update", "-u", "update":
+			if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
+				fmt.Fprintln(os.Stderr, "bonsai:", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
 	// --config <file> (or --config=<file>) overrides config discovery for the
 	// TUI. It must come before any subcommand.
 	var cfgPath string
@@ -47,6 +60,22 @@ func main() {
 		cfgPath, args = args[1], args[2:]
 	case len(args) >= 1 && strings.HasPrefix(args[0], "--config="):
 		cfgPath, args = strings.TrimPrefix(args[0], "--config="), args[1:]
+	}
+	if cfgPath != "" {
+		if strings.HasPrefix(cfgPath, "~") {
+			if home, err := os.UserHomeDir(); err == nil {
+				if cfgPath == "~" {
+					cfgPath = home
+				} else if strings.HasPrefix(cfgPath, "~/") || strings.HasPrefix(cfgPath, "~\\") {
+					cfgPath = filepath.Join(home, cfgPath[2:])
+				}
+			}
+		}
+		if abs, err := filepath.Abs(cfgPath); err == nil {
+			cfgPath = filepath.Clean(abs)
+		} else {
+			cfgPath = filepath.Clean(cfgPath)
+		}
 	}
 
 	// Any remaining argument selects a non-interactive subcommand; bare

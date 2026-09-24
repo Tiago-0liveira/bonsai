@@ -1,67 +1,44 @@
 #!/usr/bin/env bash
-#
-# bonsai installer — builds the binary and installs it onto your PATH.
-#
-# Usage:
-#   ./install.sh                     # install to /usr/local/bin (fallback ~/.local/bin)
-#   PREFIX="$HOME/.local" ./install.sh   # install to $PREFIX/bin
-#
+# Install an official, checksum-verified release. Go is not required.
 set -euo pipefail
-
-BINARY="bonsai"
-SRC="."
-
-# Resolve the repo root (directory of this script) so it works from anywhere.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-info()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
-warn()  { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
-die()   { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-
-command -v go >/dev/null 2>&1 || die "Go is required but not found on your PATH. See https://go.dev/dl/"
-
-# Pick an install directory: explicit PREFIX, then /usr/local/bin, then ~/.local/bin.
+repo=Tiago-0liveira/bonsai
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+for tool in curl tar; do command -v "$tool" >/dev/null || die "$tool is required"; done
+case "$(uname -s)" in Linux) os=linux ;; Darwin) os=darwin ;; *) die 'Unsupported OS' ;; esac
+case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) die 'Unsupported architecture' ;; esac
 if [ -n "${PREFIX:-}" ]; then
-  BINDIR="$PREFIX/bin"
-elif [ -w /usr/local/bin ] || { [ ! -e /usr/local/bin ] && [ -w /usr/local ]; }; then
-  BINDIR="/usr/local/bin"
+  bindir="$PREFIX/bin"
+elif [ -w /usr/local/bin ]; then
+  bindir=/usr/local/bin
 else
-  BINDIR="$HOME/.local/bin"
+  bindir="$HOME/.local/bin"
 fi
-
-mkdir -p "$BINDIR"
-
-info "Building ${BINARY}..."
-TMP="$(mktemp -d)"
-trap 'rm -rf "${TMP}"' EXIT
-go build -o "${TMP}/${BINARY}" "${SRC}"
-
-info "Installing to ${BINDIR}/${BINARY}"
-if [ -w "${BINDIR}" ]; then
-  install -m 0755 "${TMP}/${BINARY}" "${BINDIR}/${BINARY}"
+tmp="$(mktemp -d)"
+staged=''
+trap 'rm -rf "$tmp"; if [ -n "$staged" ]; then rm -f "$staged"; fi' EXIT
+# Resolve the tag once so a concurrent release cannot mix archive and checksum versions.
+release="$(curl --proto '=https' --tlsv1.2 -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest")"
+tag="${release##*/}"
+[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'No stable release found'
+asset="bonsai_${os}_${arch}.tar.gz"
+base="https://github.com/$repo/releases/download/$tag"
+curl --proto '=https' --tlsv1.2 -fsSL "$base/$asset" -o "$tmp/$asset"
+curl --proto '=https' --tlsv1.2 -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
+expected="$(awk -v name="$asset" '$2 == name {print $1}' "$tmp/checksums.txt")"
+[[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || die 'Missing or invalid SHA256 checksum'
+if command -v sha256sum >/dev/null; then
+  actual="$(sha256sum "$tmp/$asset")"
 else
-  warn "${BINDIR} is not writable; retrying with sudo"
-  sudo install -m 0755 "${TMP}/${BINARY}" "${BINDIR}/${BINARY}"
+  command -v shasum >/dev/null || die 'sha256sum or shasum is required'
+  actual="$(shasum -a 256 "$tmp/$asset")"
 fi
-
-info "Installed ${BINARY} to ${BINDIR}"
-
-case ":$PATH:" in
-  *":$BINDIR:"*) : ;;
-  *) warn "$BINDIR is not on your PATH. Add this to your shell profile:"
-     printf '    export PATH="%s:$PATH"\n' "$BINDIR" >&2 ;;
-esac
-
-cat <<EOF
-
-Done. Try it:
-
-  cd your-repo
-  bonsai
-
-Optional — enable 'bcd' to cd into worktrees from your shell:
-
-  eval "\$(bonsai shell-init)"   # add to ~/.zshrc or ~/.bashrc
-
-EOF
+[ "${actual%% *}" = "$expected" ] || die 'SHA256 checksum mismatch'
+tar -xzf "$tmp/$asset" -C "$tmp" bonsai
+[ -f "$tmp/bonsai" ] && [ ! -L "$tmp/bonsai" ] || die 'Archive has no regular bonsai binary'
+mkdir -p "$bindir"
+staged="$(mktemp "$bindir/.bonsai-install.XXXXXX")"
+install -m 0755 "$tmp/bonsai" "$staged"
+mv -f "$staged" "$bindir/bonsai"
+printf 'Installed Bonsai %s to %s/bonsai\n' "$tag" "$bindir"
+case ":$PATH:" in *":$bindir:"*) ;; *) printf 'Add %s to your PATH.\n' "$bindir" ;; esac
+printf 'Optional shell helper: eval "$(bonsai shell-init)"\n'

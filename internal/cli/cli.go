@@ -3,29 +3,47 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/core/updater"
+	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
 // Run dispatches a subcommand. args excludes the program name. out/errOut are the
 // destination streams (stdout/stderr in production).
 func Run(args []string, out, errOut io.Writer) error {
+	return RunWithIO(args, os.Stdin, out, errOut)
+}
+
+// RunWithIO dispatches a subcommand using the specified standard input.
+func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("no subcommand")
 	}
 
-	// help and shell-init do not touch a repo, so they must work outside one.
+	// Global commands must work outside a Git repository.
 	switch args[0] {
+	case "version", "-v", "--version":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: bonsai version")
+		}
+		fmt.Fprintln(out, "bonsai", version.String())
+		return nil
+	case "update", "--update", "-u":
+		return cmdUpdate(args[1:], in, out, errOut)
 	case "help", "-h", "--help":
 		printUsage(out)
 		return nil
@@ -40,6 +58,14 @@ func Run(args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("not inside a git repository: %w", err)
 	}
 
+	// cmdPath is used by machine-readable scripts (e.g. bcd) and must not be interrupted.
+	if args[0] == "path" || args[0] == "cd" {
+		return cmdPath(repoDir, args[1:], out)
+	}
+
+	// Periodic update check for standard CLI commands
+	_ = updater.PeriodicCheckHook(context.Background(), version.String(), in, out, errOut)
+
 	switch args[0] {
 	case "list", "ls":
 		return cmdList(repoDir, out)
@@ -47,8 +73,6 @@ func Run(args []string, out, errOut io.Writer) error {
 		return cmdCreate(repoDir, args[1:], out, errOut)
 	case "copy", "cp":
 		return cmdCopy(repoDir, args[1:], out)
-	case "path", "cd":
-		return cmdPath(repoDir, args[1:], out)
 	case "x", "run":
 		return cmdX(repoDir, args[1:], out, errOut)
 	case "alias", "aliases":
@@ -236,15 +260,24 @@ func cmdX(repoDir string, args []string, out, errOut io.Writer) error {
 	return cmd.Run()
 }
 
+// pathEqual compares two filesystem paths, case-insensitively on Windows.
+func pathEqual(a, b string) bool {
+	ca := filepath.Clean(a)
+	cb := filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ca, cb)
+	}
+	return ca == cb
+}
+
 // branchForPath returns the branch checked out in the worktree at path, or "".
 func branchForPath(repoDir, path string) string {
 	trees, err := git.ListWorktrees(repoDir)
 	if err != nil {
 		return ""
 	}
-	clean := filepath.Clean(path)
 	for _, t := range trees {
-		if filepath.Clean(t.Path) == clean {
+		if pathEqual(t.Path, path) {
 			return t.Branch
 		}
 	}
@@ -343,11 +376,20 @@ func printAliases(repoDir string, out io.Writer) error {
 	return tw.Flush()
 }
 
-// cmdShellInit prints a shell function enabling `bcd <branch>` to change dirs.
+// cmdShellInit prints shell integration helpers enabling `bcd <branch>` to change dirs.
 func cmdShellInit(out io.Writer) error {
-	fmt.Fprint(out, `# bonsai shell integration — add to ~/.zshrc or ~/.bashrc:
+	fmt.Fprint(out, `# bonsai shell integration
+#
+# Bash / Zsh — add to ~/.zshrc or ~/.bashrc:
 #   eval "$(bonsai shell-init)"
 bcd() { cd "$(bonsai path "${1:-main}")" || return; }
+
+# PowerShell — add to $PROFILE:
+#   function bcd { param($target = "main") $p = (bonsai path $target); if ($LASTEXITCODE -eq 0 -and $p) { Set-Location $p } }
+
+# Windows CMD — create bcd.bat on your PATH:
+#   @echo off
+#   for /f "delims=" %%i in ('bonsai path %*') do cd /d "%%i"
 `)
 	return nil
 }
@@ -367,7 +409,7 @@ func resolveWorktree(repoDir, name string) (string, error) {
 		}
 	}
 	for _, t := range trees {
-		if t.Branch == name || t.Path == name || filepath.Base(t.Path) == name {
+		if t.Branch == name || pathEqual(t.Path, name) || (runtime.GOOS == "windows" && strings.EqualFold(filepath.Base(t.Path), name)) || filepath.Base(t.Path) == name {
 			return t.Path, nil
 		}
 	}
@@ -401,6 +443,81 @@ Usage:
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias
   bonsai shell-init               print a shell 'bcd' cd helper
+  bonsai version (-v, --version)  print the installed version
+  bonsai update (-u, --update)    check or install updates
   bonsai help                     show this help
 `, "\n"))
+}
+
+func cmdUpdate(args []string, in io.Reader, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	check := fs.Bool("check", false, "check without installing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: bonsai update [--check]")
+	}
+
+	fmt.Fprintln(out, "Checking for updates...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), updater.ExplicitTimeout)
+	defer cancel()
+
+	c := updater.New()
+	r, err := c.Latest(ctx)
+	if err != nil {
+		return fmt.Errorf("unable to check for updates (network unreachable): %w", err)
+	}
+
+	curVer := version.String()
+	if version.Version == "dev" {
+		fmt.Fprintf(out, "Current: dev; latest: %s. Install a release binary to enable updates.\n", r.Tag)
+		return nil
+	}
+
+	if !updater.IsNewerVersion(curVer, r.Tag) {
+		fmt.Fprintf(out, "You are already using the latest version (%s).\n", curVer)
+		return nil
+	}
+
+	if *check {
+		fmt.Fprintf(out, "Bonsai %s is available. Current: %s\n", r.Tag, curVer)
+		return nil
+	}
+
+	releaseURL := r.HTMLURL
+	if releaseURL == "" {
+		releaseURL = "https://github.com/" + updater.Repository + "/releases/tag/" + r.Tag
+	}
+
+	accepted, pErr := updater.PromptUserToUpdateExplicit(in, out, curVer, r.Tag, releaseURL)
+	if pErr != nil {
+		return pErr
+	}
+	if !accepted {
+		return nil
+	}
+
+	if err := c.Install(ctx, r); err != nil {
+		if updater.IsPermissionError(err) {
+			fmt.Fprintln(errOut, "Permission denied. Please run 'sudo bonsai --update' or update via your package manager.")
+			return err
+		}
+		return err
+	}
+
+	fmt.Fprintf(out, "Successfully updated bonsai to version %s!\n", r.Tag)
+
+	assetName, _ := updater.AssetName(runtime.GOOS, runtime.GOARCH)
+	downloadURL, _ := r.AssetURL(assetName)
+	_ = updater.SaveState(&updater.State{
+		LastCheckedAt: time.Now().Unix(),
+		LatestVersion: r.Tag,
+		ReleaseURL:    releaseURL,
+		DownloadURL:   downloadURL,
+	})
+
+	return nil
 }

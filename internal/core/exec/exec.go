@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 )
 
 // Process is a single running (or finished) subprocess with captured output.
@@ -137,12 +137,7 @@ func (p *Process) Kill() {
 		return
 	}
 	p.killed = true
-	pid := p.cmd.Process.Pid
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-		// Fall back to the single process if the group signal failed (e.g. the
-		// group was never established).
-		_ = p.cmd.Process.Kill()
-	}
+	killProcessTree(p.cmd)
 }
 
 // Manager owns every Process, grouped by worktree path.
@@ -162,7 +157,7 @@ func NewManager() *Manager {
 // into the returned Process buffer.
 func (m *Manager) Spawn(path, label, command string) (*Process, error) {
 	buf := &syncBuffer{}
-	cmd := exec.Command("sh", "-c", command)
+	cmd := shellCommand(command)
 	cmd.Dir = path
 	cmd.Stdout = buf
 	cmd.Stderr = buf
@@ -170,7 +165,7 @@ func (m *Manager) Spawn(path, label, command string) (*Process, error) {
 	// honor these; the viewport renders the ANSI.
 	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
 	// Own process group so Kill can reap the shell and any child it forks.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(cmd)
 
 	m.mu.Lock()
 	m.nextID++
@@ -288,7 +283,7 @@ func (m *Manager) KillAll() {
 	}
 }
 
-// RunHooks executes each command with `sh -c` in dir sequentially, stopping at
+// RunHooks executes each command with the platform shell in dir sequentially, stopping at
 // the first failure. Before running, "{name}" placeholders are replaced using
 // vars (see config.HookVars) and each var is also exported as $BONSAI_<NAME>.
 // Empty command strings are skipped.
@@ -299,7 +294,7 @@ func RunHooks(dir string, commands []string, vars map[string]string) error {
 		if strings.TrimSpace(c) == "" {
 			continue
 		}
-		cmd := exec.Command("sh", "-c", c)
+		cmd := shellCommand(c)
 		cmd.Dir = dir
 		cmd.Env = env
 		if err := cmd.Run(); err != nil {
@@ -326,10 +321,25 @@ func hookEnv(vars map[string]string) []string {
 	return env
 }
 
-// Command builds a `sh -c command` *exec.Cmd rooted at dir. The caller wires up
+// shellCommand builds an *exec.Cmd using the appropriate shell for the platform.
+func shellCommand(command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		if s := envShell(); s != "" {
+			return exec.Command(s, "-c", command)
+		}
+		comspec := os.Getenv("COMSPEC")
+		if comspec == "" {
+			comspec = "cmd.exe"
+		}
+		return exec.Command(comspec, "/c", command)
+	}
+	return exec.Command("sh", "-c", command)
+}
+
+// Command builds a shell *exec.Cmd rooted at dir. The caller wires up
 // stdio (used by the CLI to run an alias in the foreground).
 func Command(dir, command string) *exec.Cmd {
-	cmd := exec.Command("sh", "-c", command)
+	cmd := shellCommand(command)
 	cmd.Dir = dir
 	return cmd
 }
@@ -345,7 +355,7 @@ func ShellCmd(path string) *exec.Cmd {
 // EditorCmd builds an interactive editor *exec.Cmd rooted at path, suitable
 // for tea.ExecProcess. override (a configured editor command, arguments
 // honored) takes priority; otherwise the editor comes from $VISUAL or
-// $EDITOR, with vi as the final fallback.
+// $EDITOR, with vi or notepad as the final fallback.
 func EditorCmd(path, override string) *exec.Cmd {
 	name, args := editor(override)
 	cmd := exec.Command(name, args...)
@@ -359,6 +369,9 @@ func editor(override string) (string, []string) {
 		raw = envEditor()
 	}
 	if raw == "" {
+		if runtime.GOOS == "windows" {
+			return "notepad", nil
+		}
 		return "vi", nil
 	}
 	fields := strings.Fields(raw)
@@ -368,6 +381,12 @@ func editor(override string) (string, []string) {
 func shell() string {
 	if s := envShell(); s != "" {
 		return s
+	}
+	if runtime.GOOS == "windows" {
+		if c := os.Getenv("COMSPEC"); c != "" {
+			return c
+		}
+		return "cmd.exe"
 	}
 	return "/bin/sh"
 }

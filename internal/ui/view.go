@@ -107,11 +107,14 @@ func (m Model) procScrollState() string {
 func (m Model) renderProcFooter() string {
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		return procDim.Render("(no worktree selected)")
+		return procDim.Render(ansi.Truncate("(no worktree selected)", m.termInnerWidth(), "…"))
+	}
+	if m.procs == nil {
+		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
 	}
 	procs := m.procs.List(wt.Path)
 	if len(procs) == 0 {
-		return procDim.Render(procEmptyHint)
+		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
 	}
 	sel, selOK := m.activeProcess(wt.Path)
 	multi := m.procMultiSel[wt.Path]
@@ -597,10 +600,19 @@ func itoa(n int) string { return fmt.Sprintf("%d", n) }
 // left/right outer widths and the shared inner (inside-border) height.
 func (m Model) dims() (leftW, rightW, innerH int) {
 	leftW = m.width * leftPaneRatio / 100
-	if leftW < 12 {
-		leftW = 12
+	if leftW < 16 {
+		leftW = 16
+	}
+	if m.width > 28 && leftW > m.width-12 {
+		leftW = m.width - 12
+	}
+	if leftW < 1 {
+		leftW = 1
 	}
 	rightW = m.width - leftW
+	if rightW < 1 {
+		rightW = 1
+	}
 	barH := lipgloss.Height(m.statusBar())
 	innerH = m.height - barH - 2 // 2 = top+bottom border rows
 	if innerH < 1 {
@@ -615,8 +627,16 @@ func (m *Model) layout() {
 		return
 	}
 	leftW, rightW, innerH := m.dims()
-	m.list.SetSize(leftW-2, innerH)
-	m.term.SetSize(rightW-2, m.termHeight(innerH))
+	leftInnerW := leftW - 2
+	rightInnerW := rightW - 2
+	if leftInnerW < 1 {
+		leftInnerW = 1
+	}
+	if rightInnerW < 1 {
+		rightInnerW = 1
+	}
+	m.list.SetSize(leftInnerW, innerH)
+	m.term.SetSize(rightInnerW, m.termHeight(innerH))
 }
 
 // termHeight is the right pane's viewport height: the pane body minus the tab
@@ -655,41 +675,74 @@ func (m Model) procFooterHeight() int {
 // View renders two bordered panes filling the screen above a status/help bar,
 // with any active modal drawn centered on top.
 func (m Model) View() string {
+	if m.updatePromptVisible() {
+		return clampHeight(m.updatePrompt(), m.height)
+	}
 	if !m.ready {
 		return "Loading bonsai…"
 	}
 	if m.prefs != nil {
-		return m.prefs.View()
+		return clampHeight(m.prefs.View(), m.height)
 	}
 	if m.modal != nil {
-		return m.modal.View()
+		return clampHeight(m.modal.View(), m.height)
 	}
 
 	leftW, rightW, innerH := m.dims()
+	leftInnerW := leftW - 2
+	rightInnerW := rightW - 2
+	if leftInnerW < 1 {
+		leftInnerW = 1
+	}
+	if rightInnerW < 1 {
+		rightInnerW = 1
+	}
+	targetPaneH := innerH + 2
 
 	left := m.borderFor(m.focus == focusList).
-		Width(leftW - 2).Height(innerH).
+		Width(leftInnerW).Height(innerH).
 		Render(clampHeight(m.list.View(), innerH))
+	left = clampHeight(left, targetPaneH)
 
 	var rightBody string
 	if m.rightTab == tabProcs {
 		// Output scrolls in the term viewport (already sized to leave the footer
 		// room, see layout); the process list + hint sit in a footer pinned to
 		// the bottom.
-		rightBody = m.tabStrip() + "\n" + m.term.View() + "\n" + m.renderProcFooter()
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View() + "\n" + m.renderProcFooter()
 	} else {
-		rightBody = m.tabStrip() + "\n" + m.term.View()
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View()
 	}
 	right := m.borderFor(m.focus == focusTerminal).
-		Width(rightW - 2).Height(innerH).
+		Width(rightInnerW).Height(innerH).
 		Render(clampHeight(rightBody, innerH))
+	right = clampHeight(right, targetPaneH)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	return lipgloss.JoinVertical(lipgloss.Left, body, m.statusBar())
+	body = clampHeight(body, targetPaneH)
+
+	out := lipgloss.JoinVertical(lipgloss.Left, body, m.statusBar())
+	return clampHeight(out, m.height)
 }
 
 // tabLabel is the header text for a tab, including its jump key hint.
-func tabLabel(t rightTab) string {
+func tabLabel(t rightTab, compact bool) string {
+	if compact {
+		switch t {
+		case tabProcs:
+			return " Procs (v) "
+		case tabDiff:
+			return " Diff (d) "
+		case tabPR:
+			return " PR (P) "
+		case tabInspect:
+			return " Insp (i) "
+		case tabChecks:
+			return " Checks (b) "
+		default:
+			return " Log (l) "
+		}
+	}
 	switch t {
 	case tabProcs:
 		return " Processes (v) "
@@ -725,17 +778,112 @@ func (m Model) visibleTabs() []rightTab {
 	return tabs
 }
 
-// tabStrip renders the right-pane tab headers with the active tab highlighted.
-func (m Model) tabStrip() string {
-	var parts []string
-	for _, t := range m.visibleTabs() {
+// tabStrip renders the right-pane tab headers with the active tab highlighted,
+// safely clamped to the available width so it never wraps to multiple rows.
+func (m Model) tabStrip(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	tabs := m.visibleTabs()
+	if len(tabs) == 0 {
+		return ""
+	}
+
+	hint := inactiveTab.Render("  shift+tab ⇄")
+	sep := inactiveTab.Render("│")
+
+	buildParts := func(compact bool, tabList []rightTab) []string {
+		parts := make([]string, 0, len(tabList))
+		for _, t := range tabList {
+			label := tabLabel(t, compact)
+			if t == m.rightTab {
+				parts = append(parts, activeTab.Render(label))
+			} else {
+				parts = append(parts, inactiveTab.Render(label))
+			}
+		}
+		return parts
+	}
+
+	// 1. Full labels + hint
+	fullParts := buildParts(false, tabs)
+	fullStrip := strings.Join(fullParts, sep)
+	if lipgloss.Width(fullStrip)+lipgloss.Width(hint) <= width {
+		return ansi.Truncate(fullStrip+hint, width, "")
+	}
+
+	// 2. Full labels without hint
+	if lipgloss.Width(fullStrip) <= width {
+		return ansi.Truncate(fullStrip, width, "")
+	}
+
+	// 3. Compact labels + hint
+	compactParts := buildParts(true, tabs)
+	compactStrip := strings.Join(compactParts, sep)
+	if lipgloss.Width(compactStrip)+lipgloss.Width(hint) <= width {
+		return ansi.Truncate(compactStrip+hint, width, "")
+	}
+
+	// 4. Compact labels without hint
+	if lipgloss.Width(compactStrip) <= width {
+		return ansi.Truncate(compactStrip, width, "")
+	}
+
+	// 5. Window tabs around active tab if space is very constrained
+	activeIdx := 0
+	for i, t := range tabs {
 		if t == m.rightTab {
-			parts = append(parts, activeTab.Render(tabLabel(t)))
-		} else {
-			parts = append(parts, inactiveTab.Render(tabLabel(t)))
+			activeIdx = i
+			break
 		}
 	}
-	return strings.Join(parts, inactiveTab.Render("│")) + inactiveTab.Render("  shift+tab ⇄")
+
+	start, end := activeIdx, activeIdx+1
+	for {
+		expanded := false
+		if end < len(tabs) {
+			testParts := buildParts(true, tabs[start:end+1])
+			testStrip := strings.Join(testParts, sep)
+			if start > 0 {
+				testStrip = inactiveTab.Render("…") + testStrip
+			}
+			if end+1 < len(tabs) {
+				testStrip = testStrip + inactiveTab.Render("…")
+			}
+			if lipgloss.Width(testStrip) <= width {
+				end++
+				expanded = true
+			}
+		}
+		if start > 0 {
+			testParts := buildParts(true, tabs[start-1:end])
+			testStrip := strings.Join(testParts, sep)
+			if start-1 > 0 {
+				testStrip = inactiveTab.Render("…") + testStrip
+			}
+			if end < len(tabs) {
+				testStrip = testStrip + inactiveTab.Render("…")
+			}
+			if lipgloss.Width(testStrip) <= width {
+				start--
+				expanded = true
+			}
+		}
+		if !expanded {
+			break
+		}
+	}
+
+	windowParts := buildParts(true, tabs[start:end])
+	windowStrip := strings.Join(windowParts, sep)
+	if start > 0 {
+		windowStrip = inactiveTab.Render("…") + windowStrip
+	}
+	if end < len(tabs) {
+		windowStrip = windowStrip + inactiveTab.Render("…")
+	}
+
+	return ansi.Truncate(windowStrip, width, "")
 }
 
 func (m Model) borderFor(focused bool) lipgloss.Style {

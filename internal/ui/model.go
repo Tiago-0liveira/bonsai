@@ -10,6 +10,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	"github.com/Tiago-0liveira/bonsai/internal/core/updater"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
@@ -74,6 +75,8 @@ type confirmState struct {
 
 // Model is the root Bubble Tea model.
 type Model struct {
+	availableUpdate updater.Release
+	updating        bool
 	// Dependencies (core layer handles).
 	repoDir string
 	cfg     *config.Config
@@ -319,7 +322,7 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs())
+	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs())
 }
 
 // selectedWorktree returns the highlighted worktree, if any.

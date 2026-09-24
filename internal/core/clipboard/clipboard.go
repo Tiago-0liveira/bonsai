@@ -22,6 +22,8 @@ var tools = []tool{
 	{"wl-copy", nil},                       // Wayland
 	{"xclip", []string{"-selection", "c"}}, // X11
 	{"xsel", []string{"--clipboard", "--input"}},
+	{"clip.exe", nil}, // Windows
+	{"clip", nil},
 }
 
 // lookPath is the probing function, swappable in tests.
@@ -42,7 +44,7 @@ func pick(lookup lookPath) (tool, bool) {
 func Copy(text string) error {
 	t, ok := pick(exec.LookPath)
 	if !ok {
-		return fmt.Errorf("no clipboard tool found (pbcopy/wl-copy/xclip/xsel)")
+		return fmt.Errorf("no clipboard tool found (pbcopy/wl-copy/xclip/xsel/clip)")
 	}
 	cmd := exec.Command(t.bin, t.args...)
 	cmd.Stdin = strings.NewReader(text)
