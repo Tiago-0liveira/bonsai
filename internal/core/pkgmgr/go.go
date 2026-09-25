@@ -59,7 +59,7 @@ var goBuiltins = []struct {
 }
 
 func (goProvider) Commands(_ Context, detection Detection) ([]Command, error) {
-	d, ok := detection.Data.(goDetection)
+	_, ok := detection.Data.(goDetection)
 	if !ok {
 		return nil, fmt.Errorf("pkgmgr: invalid go detection data")
 	}
