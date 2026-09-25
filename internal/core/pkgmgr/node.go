@@ -36,7 +36,7 @@ func (nodeProvider) Detect(ctx Context) (Detection, error) {
 	if err != nil {
 		return Detection{}, fmt.Errorf("read %s: %w", manifestPath, err)
 	}
-	workspaceRoot := findNodeWorkspaceRoot(root)
+	workspaceRoot := findNodeWorkspaceRoot(root, ctx.Location.RepositoryRoot)
 	manager, lock := detectNodeManager(root, workspaceRoot, manifest)
 	return Detection{
 		Applicable:    true,
@@ -222,7 +222,8 @@ func uniqueDirs(dirs ...string) []string {
 	return out
 }
 
-func findNodeWorkspaceRoot(projectRoot string) string {
+func findNodeWorkspaceRoot(projectRoot, boundary string) string {
+	boundary = filepath.Clean(boundary)
 	for cur := projectRoot; ; cur = filepath.Dir(cur) {
 		if _, err := os.Stat(filepath.Join(cur, "pnpm-workspace.yaml")); err == nil {
 			return cur
@@ -230,6 +231,9 @@ func findNodeWorkspaceRoot(projectRoot string) string {
 		manifestPath := filepath.Join(cur, "package.json")
 		if manifest, err := readNodeManifest(manifestPath); err == nil && hasWorkspaces(manifest.Workspaces) {
 			return cur
+		}
+		if boundary != "" && filepath.Clean(cur) == boundary {
+			break
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
