@@ -139,7 +139,6 @@ func cargoArgs(command, manifest string, meta cargoMetadataInfo) []Argument {
 	case "build", "check":
 		args = append(args, shared...)
 	case "run":
-		args = append(args, shared...)
 		bin := flag("bin", ValueString, "--bin")
 		if len(meta.Bins) > 0 {
 			bin.Type = ValueEnum
@@ -147,16 +146,19 @@ func cargoArgs(command, manifest string, meta cargoMetadataInfo) []Argument {
 			bin.Source = Source{Kind: "cargo metadata", File: manifest, Pointer: "targets.bin"}
 			bin.Confidence = ConfidenceExact
 		}
-		args = append(args, bin, Argument{ID: "args", Name: "arguments", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true, Source: src, Confidence: ConfidenceExact})
+		args = append(args, shared[0], bin)
+		args = append(args, shared[1:]...)
+		args = append(args, Argument{ID: "args", Name: "arguments", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true, Source: src, Confidence: ConfidenceExact})
 	case "test":
-		args = append(args, shared...)
 		test := flag("test", ValueString, "--test")
 		if len(meta.Tests) > 0 {
 			test.Type = ValueEnum
 			test.Choices = append([]string(nil), meta.Tests...)
 			test.Source = Source{Kind: "cargo metadata", File: manifest, Pointer: "targets.test"}
 		}
-		args = append(args, test, Argument{ID: "args", Name: "arguments", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true, Source: src, Confidence: ConfidenceExact})
+		args = append(args, shared[0], test)
+		args = append(args, shared[1:]...)
+		args = append(args, Argument{ID: "args", Name: "arguments", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true, Source: src, Confidence: ConfidenceExact})
 	case "clean":
 		args = append(args,
 			flag("package", ValueString, "-p", "--package"),
