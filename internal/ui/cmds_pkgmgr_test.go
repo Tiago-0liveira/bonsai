@@ -183,3 +183,59 @@ func TestLoadScriptsGoRootWithNestedWeb(t *testing.T) {
 		t.Fatalf("npm dir = %q, want %q", msg.runDir["[npm] dev"], web)
 	}
 }
+
+
+func TestLoadScriptsDisambiguatesMultipleNodeProjects(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"vite --mode root"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	web := filepath.Join(root, "apps", "web")
+	if err := os.MkdirAll(web, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(web, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := loadScripts(root, 2)().(scriptsMsg)
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	for label, dir := range map[string]string{
+		"[npm root] dev":     root,
+		"[npm apps/web] dev": web,
+	} {
+		if msg.runDir[label] != dir {
+			t.Fatalf("%s dir = %q, want %q; scripts=%v", label, msg.runDir[label], dir, msg.scripts)
+		}
+		inv, ok := msg.runExec[label]
+		if !ok {
+			t.Fatalf("%s missing structured invocation", label)
+		}
+		if inv.Program != "npm" || !reflect.DeepEqual(inv.Args, []string{"run", "dev"}) || inv.Dir != dir {
+			t.Fatalf("%s invocation = %+v", label, inv)
+		}
+	}
+}
+
+func TestLoadScriptsKeepsMetacharacterScriptNameAsArgv(t *testing.T) {
+	dir := t.TempDir()
+	name := "dev; touch MUST_NOT_EXIST"
+	data := []byte(`{"scripts":{"dev; touch MUST_NOT_EXIST":"echo safe"}}`)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := loadScripts(dir)().(scriptsMsg)
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	inv, ok := msg.runExec[name]
+	if !ok {
+		t.Fatalf("missing structured invocation for %q: %+v", name, msg.runExec)
+	}
+	if inv.Program != "npm" || !reflect.DeepEqual(inv.Args, []string{"run", name}) {
+		t.Fatalf("structured invocation = %+v, want npm argv preserving script name", inv)
+	}
+}
