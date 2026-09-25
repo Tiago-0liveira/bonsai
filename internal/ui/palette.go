@@ -214,8 +214,8 @@ func (m Model) paletteCommands() []paletteCmd {
 	})...)
 
 	cmds = append(cmds, tag("Tools", []paletteCmd{
-		wt("Run package script", m.keys.Scripts, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
-			return m, loadScripts(path)
+		wt("Run project command", m.keys.Scripts, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
+			return m, loadScripts(path, m.cfg.PkgMgr.SearchDepth)
 		})),
 		wt("Run alias", m.keys.Aliases, Model.openAliasModal),
 		global("Filter worktree list", m.keys.Filter, func(m Model) (tea.Model, tea.Cmd) {
