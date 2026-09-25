@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --bg: 8 9 11;
+  --panel: 12 14 17;
+  --panel-2: 17 19 23;
+  --panel-3: 22 24 29;
+  --border: 43 46 54;
+  --border-strong: 65 68 78;
+  --text: 232 233 236;
+  --muted: 139 143 154;
+  --muted-2: 94 99 112;
+  --purple: 151 109 255;
+  --purple-soft: 151 109 255 / .12;
+  --green: 75 214 140;
+  --blue: 92 157 255;
+  --orange: 245 166 75;
+  --red: 243 103 114;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body {
+  overflow: hidden;
+  background: rgb(var(--bg));
+  color: rgb(var(--text));
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  text-rendering: optimizeLegibility;
+}
+button, input { font: inherit; }
+button { color: inherit; }
+::selection { background: rgb(var(--purple) / .28); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--border-strong)); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.bonsai-panel { background: rgb(var(--panel)); border-color: rgb(var(--border)); }
+.bonsai-card { background: rgb(var(--panel-2)); border: 1px solid rgb(var(--border)); border-radius: 8px; }
+.bonsai-muted { color: rgb(var(--muted)); }
+.bonsai-kbd { border: 1px solid rgb(var(--border)); background: rgb(var(--panel-2)); border-radius: 5px; padding: 1px 6px; color: rgb(var(--muted)); font-size: 11px; }
+.bonsai-focus:focus-visible { outline: 1px solid rgb(var(--purple)); outline-offset: 2px; }
+
+.react-flow__node { font-family: inherit; }
+.react-flow__controls { box-shadow: none !important; border: 1px solid rgb(var(--border)) !important; border-radius: 7px !important; overflow: hidden; }
+.react-flow__controls-button { background: rgb(var(--panel-2)) !important; border-bottom-color: rgb(var(--border)) !important; fill: rgb(var(--muted)) !important; }
+.react-flow__controls-button:hover { background: rgb(var(--panel-3)) !important; }
+.react-flow__minimap { background: rgb(var(--panel)) !important; border: 1px solid rgb(var(--border)); border-radius: 8px; }
+
+.xterm { height: 100%; padding: 10px 12px; }
+.xterm-viewport { scrollbar-color: rgb(var(--border-strong)) transparent; }
+
+@media (max-width: 1100px) {
+  .desktop-inspector { display: none; }
+}
+@media (max-width: 800px) {
+  .desktop-sidebar { display: none; }
+  .top-nav-secondary { display: none; }
+}
