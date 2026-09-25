@@ -50,20 +50,47 @@ func resolveLocation(dir string) (Location, error) {
 }
 
 func nearestRoot(input string, roots ...string) string {
+	input = filepath.Clean(input)
 	best := ""
+	bestDistance := int(^uint(0) >> 1)
 	for _, root := range roots {
 		if root == "" {
 			continue
 		}
-		rel, err := filepath.Rel(root, input)
-		if err != nil || rel == ".." || len(rel) >= 3 && rel[:3] == ".."+string(filepath.Separator) {
+		root = filepath.Clean(root)
+
+		distance, ok := pathDistance(input, root)
+		if !ok {
 			continue
 		}
-		if best == "" || len(filepath.Clean(root)) > len(filepath.Clean(best)) {
+		if distance < bestDistance || (distance == bestDistance && (best == "" || root < best)) {
 			best = root
+			bestDistance = distance
 		}
 	}
 	return best
+}
+
+func pathDistance(a, b string) (int, bool) {
+	if rel, err := filepath.Rel(a, b); err == nil && pathIsWithin(rel) {
+		return pathDepth(rel), true
+	}
+	if rel, err := filepath.Rel(b, a); err == nil && pathIsWithin(rel) {
+		return pathDepth(rel), true
+	}
+	return 0, false
+}
+
+func pathIsWithin(rel string) bool {
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func pathDepth(rel string) int {
+	rel = filepath.Clean(rel)
+	if rel == "." {
+		return 0
+	}
+	return len(strings.Split(rel, string(filepath.Separator)))
 }
 
 func findUp(start string, names ...string) (string, string) {
