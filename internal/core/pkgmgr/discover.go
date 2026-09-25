@@ -138,7 +138,11 @@ func Discover(dir string, opts Options) (*Project, error) {
 		groups = append(groups, commands)
 	}
 	commands := mergeCommands(groups...)
-	commands, err = applyOverrides(commands, overrides, overridePath, loc.ProjectRoot)
+	overrideRoot := loc.ProjectRoot
+	if overridePath != "" {
+		overrideRoot = filepath.Dir(overridePath)
+	}
+	commands, err = applyOverrides(commands, overrides, overridePath, overrideRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +178,14 @@ func rebaseCachedProject(project Project, loc Location, detected []detectedProvi
 		cmd := &project.Commands[i]
 		oldRoot, newRoot := oldRoots[cmd.Provider], newRoots[cmd.Provider]
 		if cmd.Provider == "override" {
-			oldRoot, newRoot = oldLocation.ProjectRoot, loc.ProjectRoot
+			oldRoot = oldLocation.ProjectRoot
+			if cmd.Source.File != "" {
+				oldRoot = filepath.Dir(cmd.Source.File)
+			}
+			newRoot = loc.ProjectRoot
+			if path := findOverridePath(loc); path != "" {
+				newRoot = filepath.Dir(path)
+			}
 		}
 		if newRoot == "" {
 			continue
