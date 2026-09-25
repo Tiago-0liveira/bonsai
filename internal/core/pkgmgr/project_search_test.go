@@ -82,3 +82,54 @@ func TestBoundedSearchPreservesUpwardPreference(t *testing.T) {
 		}
 	}
 }
+
+
+func TestDiscoverRootAndNestedNodeProjects(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "package.json", `{"scripts":{"root":"echo root"}}`)
+	web := filepath.Join(root, "apps", "web")
+	write(t, web, "package.json", `{"scripts":{"dev":"vite"}}`)
+	depth2 := 2
+
+	project, err := Discover(root, Options{SearchDepth: &depth2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nodeProviders int
+	for _, provider := range project.Providers {
+		if provider.ID == "node:npm" {
+			nodeProviders++
+		}
+	}
+	if nodeProviders != 2 {
+		t.Fatalf("node providers = %d, want 2: %+v", nodeProviders, project.Providers)
+	}
+
+	rootCmd := commandByID(t, project, "node:script:root@.")
+	if rootCmd.Invocation.WorkingDir != root {
+		t.Fatalf("root command dir = %q, want %q", rootCmd.Invocation.WorkingDir, root)
+	}
+	webCmd := commandByID(t, project, "node:script:dev@apps/web")
+	if webCmd.Invocation.WorkingDir != web {
+		t.Fatalf("web command dir = %q, want %q", webCmd.Invocation.WorkingDir, web)
+	}
+}
+
+func TestDiscoverSiblingNodeProjects(t *testing.T) {
+	root := t.TempDir()
+	admin := filepath.Join(root, "apps", "admin")
+	web := filepath.Join(root, "apps", "web")
+	write(t, admin, "package.json", `{"scripts":{"dev":"vite --mode admin"}}`)
+	write(t, web, "package.json", `{"scripts":{"dev":"vite"}}`)
+	depth2 := 2
+
+	project, err := Discover(root, Options{SearchDepth: &depth2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminCmd := commandByID(t, project, "node:script:dev@apps/admin")
+	webCmd := commandByID(t, project, "node:script:dev@apps/web")
+	if adminCmd.Invocation.WorkingDir != admin || webCmd.Invocation.WorkingDir != web {
+		t.Fatalf("sibling dirs = admin %q web %q", adminCmd.Invocation.WorkingDir, webCmd.Invocation.WorkingDir)
+	}
+}
