@@ -47,7 +47,6 @@ func TestParseUsageModernShape(t *testing.T) {
 	}
 }
 
-
 func TestParseUsageAntigravityCLIShape(t *testing.T) {
 	data := []byte(`{
 		"response": {
