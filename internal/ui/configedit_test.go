@@ -213,3 +213,33 @@ func TestConfigEmptyValueRejected(t *testing.T) {
 		t.Errorf("status should explain the refusal: %q", model.status)
 	}
 }
+
+
+func TestConfigPkgMgrSearchDepthFlow(t *testing.T) {
+	m := configModel(t)
+	s, ok := settingByKey("pkgmgr.search_depth")
+	if !ok {
+		t.Fatal("pkgmgr.search_depth missing from config registry")
+	}
+	nm, _ := m.openConfigSetting(s)
+	model := submitConfig(t, nm.(Model), "3")
+	if model.cfg.PkgMgr.SearchDepth != 3 {
+		t.Fatalf("search depth after save = %d, want 3", model.cfg.PkgMgr.SearchDepth)
+	}
+}
+
+func TestConfigPkgMgrSearchDepthRejectsInvalid(t *testing.T) {
+	m := configModel(t)
+	s, _ := settingByKey("pkgmgr.search_depth")
+	nm, _ := m.openConfigSetting(s)
+	model := nm.(Model)
+
+	nm, cmd := model.Update(modals.SubmitMsg{Kind: modals.KindConfigValue, Value: "-1"})
+	model = nm.(Model)
+	if cmd != nil {
+		t.Fatal("negative search depth should not save")
+	}
+	if !strings.Contains(model.status, "non-negative integer") {
+		t.Fatalf("status = %q, want validation message", model.status)
+	}
+}
