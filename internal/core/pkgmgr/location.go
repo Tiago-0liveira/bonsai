@@ -120,11 +120,30 @@ var skippedProjectDirs = map[string]bool{
 	"__pycache__": true,
 }
 
-// findProjectFile first preserves the historical upward lookup. If nothing is
-// found, it performs a deterministic breadth-first scan below start, bounded by
-// maxDepth. Symlinked directories are not followed.
-func findProjectFile(start string, maxDepth int, names ...string) (string, string) {
-	if root, path := findUp(start, names...); root != "" {
+func findUpTo(start, boundary string, names ...string) (string, string) {
+	boundary = filepath.Clean(boundary)
+	for cur := filepath.Clean(start); ; cur = filepath.Dir(cur) {
+		for _, name := range names {
+			path := filepath.Join(cur, name)
+			if st, err := os.Stat(path); err == nil && !st.IsDir() {
+				return cur, path
+			}
+		}
+		if boundary != "" && cur == boundary {
+			return "", ""
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", ""
+		}
+	}
+}
+
+// findProjectFileWithin searches upward first, stopping at boundary when one is
+// known, then performs a deterministic breadth-first scan below start bounded
+// by maxDepth. Symlinked directories are not followed.
+func findProjectFileWithin(start, boundary string, maxDepth int, names ...string) (string, string) {
+	if root, path := findUpTo(start, boundary, names...); root != "" {
 		return root, path
 	}
 	if maxDepth <= 0 {
@@ -161,4 +180,11 @@ func findProjectFile(start string, maxDepth int, names ...string) (string, strin
 		}
 	}
 	return "", ""
+}
+
+
+// findProjectFile is retained for focused tests/helpers outside a resolved Git
+// repository; provider detection should use findProjectFileWithin.
+func findProjectFile(start string, maxDepth int, names ...string) (string, string) {
+	return findProjectFileWithin(start, "", maxDepth, names...)
 }
