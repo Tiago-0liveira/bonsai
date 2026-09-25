@@ -491,4 +491,3 @@ export function AgentNode(props: NodeProps) { return <NodeShell data={props.data
 export function StackNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
 export function DefaultBranchNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
 export function EnvNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
-export function AgentHistoryNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
