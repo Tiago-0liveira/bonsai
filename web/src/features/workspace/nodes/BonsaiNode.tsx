@@ -2,7 +2,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
   Bot,
-  Branch,
+  GitBranch,
   CircleDot,
   ExternalLink,
   FolderGit2,
@@ -64,7 +64,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
     data.kind === 'project' ? (
       <FolderGit2 size={14} />
     ) : data.kind === 'worktree' ? (
-      <Branch size={14} />
+      <GitBranch size={14} />
     ) : (
       <Bot size={14} />
     )
