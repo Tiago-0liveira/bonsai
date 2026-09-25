@@ -33,7 +33,6 @@ type credentialVault struct {
 
 type generationMarker struct {
 	Generation uint64 `json:"generation"`
-	Identity   string `json:"identity"`
 }
 
 type fileCredentialManager struct {
@@ -71,10 +70,7 @@ func (m *fileCredentialManager) Materialize(_ context.Context, account agents.Ac
 			return err
 		}
 	}
-	return writePrivateJSON(generationPath(session), generationMarker{
-		Generation: vault.Generation,
-		Identity: vault.Identity,
-	})
+	return writePrivateJSON(generationPath(session), generationMarker{Generation: vault.Generation})
 }
 
 func (m *fileCredentialManager) CaptureSetup(_ context.Context, account agents.Account, session agents.Session) error {
@@ -122,9 +118,6 @@ func (m *fileCredentialManager) Reconcile(_ context.Context, account agents.Acco
 	var marker generationMarker
 	if data, err := os.ReadFile(generationPath(session)); err == nil {
 		_ = json.Unmarshal(data, &marker)
-	}
-	if marker.Identity != "" && marker.Identity != current.Identity {
-		return fmt.Errorf("antigravity credential generation identity mismatch")
 	}
 
 	candidate.OAuth = mergeOAuth(current.OAuth, candidate.OAuth)
