@@ -54,3 +54,38 @@ func TestLoadScriptsDiscoveryError(t *testing.T) {
 		t.Fatal("expected discovery error")
 	}
 }
+
+func TestLoadScriptsMixedProvidersKeepsLegacyPriority(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"packageManager":"pnpm@10.17.0","scripts":{"test":"vitest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname=\"x\"\nversion=\"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("test:\n\t@echo test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := loadScripts(dir)().(scriptsMsg)
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	if msg.manager != "pnpm" || !reflect.DeepEqual(msg.scripts, []string{"test"}) || msg.runCmd["test"] != "pnpm run test" {
+		t.Fatalf("legacy mixed-provider scripts message = %+v", msg)
+	}
+}
+
+func TestLoadScriptsEmptyCommandList(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"empty"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg := loadScripts(dir)().(scriptsMsg)
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	if msg.manager != "npm" || len(msg.scripts) != 0 || len(msg.runCmd) != 0 {
+		t.Fatalf("empty scripts message = %+v", msg)
+	}
+}
