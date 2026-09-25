@@ -99,10 +99,8 @@ func Discover(dir string, opts Options) (*Project, error) {
 	}
 	fingerprint := computeFingerprint(providerIDs, fingerprintInputs)
 
-	providerCounts := map[string]int{}
 	providerFamilyCounts := map[string]int{}
 	for _, item := range detected {
-		providerCounts[item.detection.ID]++
 		providerFamilyCounts[item.provider.ID()]++
 	}
 	cacheSafe := true
