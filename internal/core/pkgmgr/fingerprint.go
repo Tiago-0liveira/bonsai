@@ -1,6 +1,7 @@
 package pkgmgr
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -57,7 +58,12 @@ func computeFingerprint(providerIDs []string, inputs []FingerprintInput) string 
 		fmt.Fprintf(h, "provider=%s@%s\n", id, providerVersions[family])
 	}
 	sorted := append([]FingerprintInput(nil), inputs...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Name != sorted[j].Name {
+			return sorted[i].Name < sorted[j].Name
+		}
+		return bytes.Compare(sorted[i].Content, sorted[j].Content) < 0
+	})
 	for _, input := range sorted {
 		sum := sha256.Sum256(input.Content)
 		fmt.Fprintf(h, "input=%s:%s\n", input.Name, hex.EncodeToString(sum[:]))
