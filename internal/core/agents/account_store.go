@@ -396,6 +396,9 @@ func ResolveAccount(store AccountStore, selector string) (Account, error) {
 	if a, err := store.Get(AccountID(selector)); err == nil {
 		return a, nil
 	}
+	if provider, name, ok := strings.Cut(selector, "/"); ok && provider != "" && name != "" {
+		return store.GetByName(ProviderID(provider), name)
+	}
 	all, err := store.List()
 	if err != nil {
 		return Account{}, err
@@ -412,6 +415,6 @@ func ResolveAccount(store AccountStore, selector string) (Account, error) {
 	case 1:
 		return matches[0], nil
 	default:
-		return Account{}, fmt.Errorf("%w: %q matches multiple providers; use account id", ErrAccountAmbiguous, selector)
+		return Account{}, fmt.Errorf("%w: %q matches multiple providers; use provider/name or account id", ErrAccountAmbiguous, selector)
 	}
 }
