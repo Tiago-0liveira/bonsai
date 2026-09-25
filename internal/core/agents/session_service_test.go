@@ -8,8 +8,8 @@ import (
 )
 
 type lifecycleSessionStore struct {
-	events *[]string
-	session Session
+	events     *[]string
+	session    Session
 	cleanupErr error
 }
 
@@ -28,12 +28,12 @@ func (s *lifecycleSessionStore) Cleanup(Session) error {
 }
 
 type lifecycleProvider struct {
-	events *[]string
-	prepareErr error
+	events      *[]string
+	prepareErr  error
 	finalizeErr error
 }
 
-func (p *lifecycleProvider) ID() ProviderID { return "fake" }
+func (p *lifecycleProvider) ID() ProviderID             { return "fake" }
 func (p *lifecycleProvider) Capabilities() Capabilities { return Capabilities{Interactive: true} }
 func (p *lifecycleProvider) SetupAccount(context.Context, SetupRequest) (SetupResult, error) {
 	return SetupResult{}, nil
@@ -55,7 +55,7 @@ func (p *lifecycleProvider) Usage(context.Context, Account, UsageOptions) (Usage
 
 type lifecycleLauncher struct {
 	events *[]string
-	err error
+	err    error
 }
 
 func (l *lifecycleLauncher) RunForeground(context.Context, PreparedSession) error {
@@ -74,7 +74,7 @@ func TestSessionServiceLifecycleOrdering(t *testing.T) {
 	}
 	events := []string{}
 	sessions := &lifecycleSessionStore{
-		events: &events,
+		events:  &events,
 		session: Session{ID: "sess_run", RuntimeDir: t.TempDir(), HomeDir: t.TempDir(), CreatedAt: time.Now()},
 	}
 	provider := &lifecycleProvider{events: &events}
