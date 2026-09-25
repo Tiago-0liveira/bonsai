@@ -2106,14 +2106,16 @@ func (m Model) branchForPath(path string) string {
 
 func (m Model) worktreeOwner(path string) (string, string) {
 	path = filepath.Clean(path)
+	bestPath, bestBranch := path, ""
+	bestLen := -1
 	for _, t := range m.worktrees {
 		root := filepath.Clean(t.Path)
 		rel, err := filepath.Rel(root, path)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return t.Path, t.Branch
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && len(root) > bestLen {
+			bestPath, bestBranch, bestLen = t.Path, t.Branch, len(root)
 		}
 	}
-	return path, ""
+	return bestPath, bestBranch
 }
 
 // onCreateSource advances the worktree-creation flow after the source type is
