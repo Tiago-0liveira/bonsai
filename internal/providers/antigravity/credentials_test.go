@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,18 +12,26 @@ import (
 
 func writeSessionAuth(t *testing.T, home, access, refresh, email string, expiry time.Time) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
+	if err := os.MkdirAll(antigravityDir(home), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	oauth, _ := json.Marshal(map[string]any{
-		"email": email, "access_token": access, "refresh_token": refresh,
-		"expiry_date": expiry.UnixMilli(),
+		"auth_method": "consumer",
+		"token": map[string]any{
+			"email":         email,
+			"access_token":  access,
+			"refresh_token": refresh,
+			"token_type":    "Bearer",
+			"expiry":        expiry.UTC().Format(time.RFC3339),
+		},
 	})
 	if err := os.WriteFile(oauthPath(home), oauth, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	accounts, _ := json.Marshal(map[string]any{"active": email})
-	if err := os.WriteFile(accountsPath(home), accounts, 0o600); err != nil {
+	settings, _ := json.Marshal(map[string]any{
+		"gcp": map[string]any{"project": "test-project", "location": "global"},
+	})
+	if err := os.WriteFile(providerSettingsPath(home), settings, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -75,6 +82,9 @@ func TestCredentialMaterializationAndStaleReconciliation(t *testing.T) {
 	if a.HomeDir == b.HomeDir {
 		t.Fatal("same-account sessions share HOME")
 	}
+	if _, err := os.Stat(providerSettingsPath(a.HomeDir)); err != nil {
+		t.Fatalf("provider settings were not materialized: %v", err)
+	}
 
 	writeSessionAuth(t, b.HomeDir, "new-access", "new-refresh", "user@example.com", baseExpiry.Add(time.Hour))
 	if err := manager.Reconcile(ctx, account, b); err != nil {
@@ -100,8 +110,12 @@ func TestCredentialMaterializationAndStaleReconciliation(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
-	if state["access_token"] != "new-access" || state["refresh_token"] != "new-refresh" {
-		t.Fatalf("stale session overwrote newer vault: %#v", state)
+	token, ok := state["token"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing nested token state: %#v", state)
+	}
+	if token["access_token"] != "new-access" || token["refresh_token"] != "new-refresh" {
+		t.Fatalf("stale session overwrote newer vault: %#v", token)
 	}
 }
 
@@ -132,5 +146,34 @@ func TestCredentialIdentityMismatchDoesNotReplaceVault(t *testing.T) {
 	writeSessionAuth(t, session.HomeDir, "b", "r2", "user-b@example.com", time.Now().Add(2*time.Hour))
 	if err := manager.Reconcile(ctx, account, session); err == nil {
 		t.Fatal("expected identity mismatch")
+	}
+}
+
+func TestCaptureSetupAcceptsTokenWithoutIdentityClaims(t *testing.T) {
+	accountStore, err := agents.NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionStore, err := agents.NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := agents.Account{ID: "acct_opaque", Provider: ProviderID, Name: "opaque", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := accountStore.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	session, err := sessionStore.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(antigravityDir(session.HomeDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	token := []byte(`{"auth_method":"consumer","token":{"access_token":"a","refresh_token":"r","expiry":"2030-01-01T00:00:00Z"}}`)
+	if err := os.WriteFile(oauthPath(session.HomeDir), token, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewCredentialManager(accountStore).CaptureSetup(context.Background(), account, session); err != nil {
+		t.Fatalf("capture rejected a valid Antigravity token without identity claims: %v", err)
 	}
 }
