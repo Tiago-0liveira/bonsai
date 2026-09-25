@@ -27,7 +27,7 @@ func (cargoProvider) Detect(ctx Context) (Detection, error) {
 	if root == "" {
 		return Detection{}, nil
 	}
-	workspace := findCargoWorkspaceRoot(root)
+	workspace := findCargoWorkspaceRoot(root, ctx.Location.RepositoryRoot)
 	return Detection{
 		Applicable:    true,
 		ID:            "cargo",
@@ -192,11 +192,15 @@ func cargoArgs(command, manifest string, meta cargoMetadataInfo) []Argument {
 	return args
 }
 
-func findCargoWorkspaceRoot(projectRoot string) string {
+func findCargoWorkspaceRoot(projectRoot, boundary string) string {
+	boundary = filepath.Clean(boundary)
 	for cur := projectRoot; ; cur = filepath.Dir(cur) {
 		data, err := os.ReadFile(filepath.Join(cur, "Cargo.toml"))
 		if err == nil && hasTOMLSection(data, "workspace") {
 			return cur
+		}
+		if boundary != "" && filepath.Clean(cur) == boundary {
+			break
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
