@@ -8,7 +8,7 @@ import (
 
 type registryFakeProvider struct{ id ProviderID }
 
-func (p registryFakeProvider) ID() ProviderID { return p.id }
+func (p registryFakeProvider) ID() ProviderID           { return p.id }
 func (registryFakeProvider) Capabilities() Capabilities { return Capabilities{} }
 func (registryFakeProvider) SetupAccount(context.Context, SetupRequest) (SetupResult, error) {
 	return SetupResult{}, nil
@@ -16,7 +16,9 @@ func (registryFakeProvider) SetupAccount(context.Context, SetupRequest) (SetupRe
 func (registryFakeProvider) PrepareSession(context.Context, PrepareSessionRequest) (PreparedSession, error) {
 	return PreparedSession{}, nil
 }
-func (registryFakeProvider) FinalizeSession(context.Context, FinalizeSessionRequest) error { return nil }
+func (registryFakeProvider) FinalizeSession(context.Context, FinalizeSessionRequest) error {
+	return nil
+}
 func (registryFakeProvider) Usage(context.Context, Account, UsageOptions) (UsageSnapshot, error) {
 	return UsageSnapshot{}, nil
 }
