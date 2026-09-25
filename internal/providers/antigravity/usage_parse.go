@@ -29,16 +29,24 @@ func ParseUsage(data []byte) ([]agents.UsageLimit, error) {
 		if !ok {
 			continue
 		}
-		groupName := firstString(group, "label", "name", "group", "title")
+		groupName := firstString(group, "displayName", "display_name", "label", "name", "group", "title")
 		buckets, _ := firstSlice(group, "buckets", "limits", "quotas")
 		for _, rawBucket := range buckets {
 			bucket, ok := rawBucket.(map[string]any)
 			if !ok {
 				continue
 			}
-			id := firstString(bucket, "id", "quota_id", "quotaId", "name")
+			id := firstString(bucket, "bucketId", "bucket_id", "id", "quota_id", "quotaId", "name")
 			window := firstString(bucket, "window", "period")
-			label := firstString(bucket, "label", "name", "title")
+			if window == "" {
+				switch {
+				case strings.HasSuffix(strings.ToLower(id), "weekly"):
+					window = "weekly"
+				case strings.HasSuffix(strings.ToLower(id), "5h"):
+					window = "5h"
+				}
+			}
+			label := firstString(bucket, "displayName", "display_name", "label", "name", "title")
 			if label == "" {
 				label = id
 			}
