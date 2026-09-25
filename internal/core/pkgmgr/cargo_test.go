@@ -261,3 +261,29 @@ func TestRustCargoProviderFoundAtDepthTwo(t *testing.T) {
 		t.Fatalf("cargo command dir = %q, want %q", cmd.Invocation.WorkingDir, app)
 	}
 }
+
+
+func TestCargoWorkspaceRootDoesNotDuplicateMemberCatalog(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "Cargo.toml", "[workspace]\nmembers = [\"crates/app\"]\n")
+	app := filepath.Join(root, "crates", "app")
+	write(t, app, "Cargo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+	depth2 := 2
+
+	project, err := Discover(root, Options{SearchDepth: &depth2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cargoProviders int
+	for _, provider := range project.Providers {
+		if provider.ID == "cargo" {
+			cargoProviders++
+		}
+	}
+	if cargoProviders != 1 {
+		t.Fatalf("cargo providers = %d, want 1: %+v", cargoProviders, project.Providers)
+	}
+	if got := commandByID(t, project, "cargo:builtin:test").Invocation.WorkingDir; got != root {
+		t.Fatalf("cargo workspace command dir = %q, want %q", got, root)
+	}
+}
