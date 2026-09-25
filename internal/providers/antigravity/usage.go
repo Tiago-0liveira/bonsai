@@ -35,9 +35,9 @@ func (p *Provider) Usage(ctx context.Context, account agents.Account, _ agents.U
 		return agents.UsageSnapshot{}, err
 	}
 	return agents.UsageSnapshot{
-		Provider: ProviderID,
+		Provider:  ProviderID,
 		AccountID: account.ID,
 		FetchedAt: time.Now().UTC(),
-		Limits: limits,
+		Limits:    limits,
 	}, nil
 }
