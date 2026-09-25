@@ -190,9 +190,10 @@ type Model struct {
 	pendingCfg    *configSetting
 	pendingCfgSub string
 
-	// scriptRun maps a script name to its full shell command for the last-opened
-	// scripts modal.
+	// scriptRun and scriptDir map a scripts-modal label to its command and
+	// provider-selected working directory.
 	scriptRun map[string]string
+	scriptDir map[string]string
 
 	// yankTargets maps a yank-menu label to the text it copies.
 	yankTargets map[string]string
