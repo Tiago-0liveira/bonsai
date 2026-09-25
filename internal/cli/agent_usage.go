@@ -23,6 +23,7 @@ const (
 
 type usageDashboardRow struct {
 	account    agents.Account
+	usage      *agents.UsageSnapshot
 	gemini5h   *agents.UsageLimit
 	geminiWeek *agents.UsageLimit
 	third5h    *agents.UsageLimit
@@ -37,7 +38,7 @@ func printUsageDashboard(out io.Writer, results []agents.AccountUsageResult) {
 func renderUsageDashboard(out io.Writer, results []agents.AccountUsageResult, now time.Time, color bool) {
 	rows := make([]usageDashboardRow, 0, len(results))
 	for _, result := range results {
-		row := usageDashboardRow{account: result.Account, err: result.Error}
+		row := usageDashboardRow{account: result.Account, usage: result.Usage, err: result.Error}
 		if result.Usage != nil {
 			for i := range result.Usage.Limits {
 				limit := &result.Usage.Limits[i]
@@ -71,86 +72,54 @@ func renderUsageDashboard(out io.Writer, results []agents.AccountUsageResult, no
 		if rows[i].err == nil && rows[j].err != nil {
 			return true
 		}
-		iw, iok := usageFraction(rows[i].geminiWeek)
-		jw, jok := usageFraction(rows[j].geminiWeek)
+		is, iok := usageRowScore(rows[i])
+		js, jok := usageRowScore(rows[j])
 		if iok != jok {
 			return iok
 		}
-		if iw != jw {
-			return iw > jw
-		}
-		i5, _ := usageFraction(rows[i].gemini5h)
-		j5, _ := usageFraction(rows[j].gemini5h)
-		if i5 != j5 {
-			return i5 > j5
+		if is != js {
+			return is > js
 		}
 		return strings.ToLower(rows[i].account.Name) < strings.ToLower(rows[j].account.Name)
 	})
 
-	title := "Agent Usage"
-	if len(rows) > 0 {
-		allAntigravity := true
-		for _, row := range rows {
-			if row.account.Provider != "antigravity" {
-				allAntigravity = false
-				break
-			}
-		}
-		if allAntigravity {
-			title = "Antigravity Usage"
-		}
-	}
-	fmt.Fprintln(out, usageStyle(title, "\x1b[1m", color))
+	fmt.Fprintln(out, usageStyle("Agent Fleet Usage", "\x1b[1m", color))
 	fmt.Fprintln(out)
 
 	renderFleetSummary(out, rows, now, color)
-	fmt.Fprintln(out)
-	renderUsageTable(out, rows, now, color, false)
-
-	hasThirdParty := false
-	for _, row := range rows {
-		if row.third5h != nil || row.thirdWeek != nil {
-			hasThirdParty = true
-			break
-		}
-	}
-	if hasThirdParty {
+	for _, provider := range usageProviders(rows) {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, usageStyle("Claude/GPT Capacity", "\x1b[1m", color))
-		renderUsageTable(out, rows, now, color, true)
+		renderUsageProvider(out, provider, usageRowsForProvider(rows, provider), now, color)
 	}
 }
 
 func renderFleetSummary(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
-	geminiAvg, geminiOK := usageAverage(rows, func(row usageDashboardRow) *agents.UsageLimit {
-		return row.gemini5h
-	})
-	weeklyAvg, weeklyOK := usageAverage(rows, func(row usageDashboardRow) *agents.UsageLimit {
-		return row.geminiWeek
-	})
-
+	avg, avgOK := usageFleetAverage(rows)
 	ready, active, low := usageFleetStatuses(rows)
-	title := fmt.Sprintf("Fleet Capacity (%d %s)", len(rows), plural(len(rows), "Account", "Accounts"))
+	providerCount := len(usageProviders(rows))
+	title := fmt.Sprintf(
+		"Fleet Capacity (%d %s · %d %s)",
+		len(rows), plural(len(rows), "Account", "Accounts"),
+		providerCount, plural(providerCount, "Provider", "Providers"),
+	)
 	fmt.Fprintln(out, usageFleetTop(title))
 
-	geminiText := "Gemini Pool: " + usageSummaryValue(geminiAvg, geminiOK, color)
+	poolText := "Usage Pool: " + usageSummaryValue(avg, avgOK, color)
 	statusPlain := fmt.Sprintf("   ● %d Ready  ▲ %d Active  ✖ %d Low", ready, active, low)
 	statusRendered := "   " +
 		usageStyle(fmt.Sprintf("● %d Ready", ready), "\x1b[92m", color) + "  " +
 		usageStyle(fmt.Sprintf("▲ %d Active", active), "\x1b[93m", color) + "  " +
 		usageStyle(fmt.Sprintf("✖ %d Low", low), "\x1b[91m", color)
-	usageFleetLine(out, geminiText+statusRendered, stripUsageANSI(geminiText)+statusPlain)
+	usageFleetLine(out, poolText+statusRendered, stripUsageANSI(poolText)+statusPlain)
 
-	weeklyText := "Weekly Pool: " + usageSummaryValue(weeklyAvg, weeklyOK, color)
 	nextPlain, nextRendered := usageNextReset(rows, now, color)
-	if nextPlain != "" {
-		usageFleetLine(out, weeklyText+"   "+nextRendered, stripUsageANSI(weeklyText)+"   "+nextPlain)
+	if nextPlain == "" {
+		usageFleetLine(out, "Next Reset: -", "Next Reset: -")
 	} else {
-		usageFleetLine(out, weeklyText, stripUsageANSI(weeklyText))
+		usageFleetLine(out, nextRendered, nextPlain)
 	}
 	fmt.Fprintln(out, "╰"+strings.Repeat("─", usageFleetInnerSize+2)+"╯")
 }
-
 func usageFleetTop(title string) string {
 	maxTitle := usageFleetInnerSize - 2
 	if utf8.RuneCountInString(title) > maxTitle {
@@ -218,48 +187,137 @@ func usageRowLow(row usageDashboardRow) bool {
 }
 
 func usageRowScore(row usageDashboardRow) (float64, bool) {
-	weekly, weeklyOK := usageFraction(row.geminiWeek)
-	five, fiveOK := usageFraction(row.gemini5h)
-	switch {
-	case weeklyOK && fiveOK:
-		if weekly < five {
-			return weekly, true
-		}
-		return five, true
-	case weeklyOK:
-		return weekly, true
-	case fiveOK:
-		return five, true
+	switch row.account.Provider {
+	case "antigravity":
+		return usageMinRemaining(row.gemini5h, row.geminiWeek)
 	default:
 		return 0, false
 	}
 }
 
-func usageNextReset(rows []usageDashboardRow, now time.Time, color bool) (string, string) {
-	var account string
-	var reset time.Time
-	for _, row := range rows {
-		if row.geminiWeek == nil || row.geminiWeek.ResetsAt == nil {
+func usageMinRemaining(limits ...*agents.UsageLimit) (float64, bool) {
+	var value float64
+	found := false
+	for _, limit := range limits {
+		remaining, ok := usageFraction(limit)
+		if !ok {
 			continue
 		}
-		candidate := *row.geminiWeek.ResetsAt
-		if !candidate.After(now) {
+		if !found || remaining < value {
+			value = remaining
+			found = true
+		}
+	}
+	return value, found
+}
+
+func usagePrimaryReset(row usageDashboardRow) *time.Time {
+	switch row.account.Provider {
+	case "antigravity":
+		if row.geminiWeek != nil && row.geminiWeek.ResetsAt != nil {
+			return row.geminiWeek.ResetsAt
+		}
+		if row.gemini5h != nil {
+			return row.gemini5h.ResetsAt
+		}
+	}
+	return nil
+}
+func usageNextReset(rows []usageDashboardRow, now time.Time, color bool) (string, string) {
+	var account string
+	var provider agents.ProviderID
+	var reset time.Time
+	for _, row := range rows {
+		candidate := usagePrimaryReset(row)
+		if candidate == nil || !candidate.After(now) {
 			continue
 		}
 		if reset.IsZero() || candidate.Before(reset) {
-			reset = candidate
+			reset = *candidate
 			account = row.account.Name
+			provider = row.account.Provider
 		}
 	}
 	if reset.IsZero() {
 		return "", ""
 	}
 	account = truncateRunes(account, 16)
-	plain := fmt.Sprintf("Next Reset: %s in %s", account, usageDuration(reset.Sub(now), true))
+	owner := account
+	if len(usageProviders(rows)) > 1 {
+		owner = usageProviderTitle(provider) + "/" + account
+	}
+	plain := fmt.Sprintf("Next Reset: %s in %s", owner, usageDuration(reset.Sub(now), true))
 	return plain, usageStyle(plain, "\x1b[36m", color)
 }
 
-func renderUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, color, thirdParty bool) {
+func renderUsageProvider(out io.Writer, provider agents.ProviderID, rows []usageDashboardRow, now time.Time, color bool) {
+	title := fmt.Sprintf("◆ %s · %d %s", usageProviderTitle(provider), len(rows), plural(len(rows), "account", "accounts"))
+	fmt.Fprintln(out, usageStyle(title, "\x1b[1;36m", color))
+
+	switch provider {
+	case "antigravity":
+		fmt.Fprintln(out, "  "+usageStyle("Gemini Models", "\x1b[1m", color))
+		renderAntigravityUsageTable(out, rows, now, color, false)
+
+		hasThirdParty := false
+		for _, row := range rows {
+			if row.third5h != nil || row.thirdWeek != nil {
+				hasThirdParty = true
+				break
+			}
+		}
+		if hasThirdParty {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  "+usageStyle("Claude & GPT Models", "\x1b[1m", color))
+			renderAntigravityUsageTable(out, rows, now, color, true)
+		}
+	default:
+		fmt.Fprintln(out, "  Usage dashboard adapter not implemented yet.")
+	}
+}
+
+func usageProviders(rows []usageDashboardRow) []agents.ProviderID {
+	seen := make(map[agents.ProviderID]struct{})
+	providers := make([]agents.ProviderID, 0)
+	for _, row := range rows {
+		if _, ok := seen[row.account.Provider]; ok {
+			continue
+		}
+		seen[row.account.Provider] = struct{}{}
+		providers = append(providers, row.account.Provider)
+	}
+	sort.Slice(providers, func(i, j int) bool {
+		return strings.ToLower(usageProviderTitle(providers[i])) < strings.ToLower(usageProviderTitle(providers[j]))
+	})
+	return providers
+}
+
+func usageRowsForProvider(rows []usageDashboardRow, provider agents.ProviderID) []usageDashboardRow {
+	filtered := make([]usageDashboardRow, 0)
+	for _, row := range rows {
+		if row.account.Provider == provider {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func usageProviderTitle(provider agents.ProviderID) string {
+	switch provider {
+	case "antigravity":
+		return "Antigravity"
+	case "codex":
+		return "Codex"
+	case "claude-code":
+		return "Claude Code"
+	default:
+		if provider == "" {
+			return "Unknown Provider"
+		}
+		return string(provider)
+	}
+}
+func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, color, thirdParty bool) {
 	nameWidth := len("Account")
 	for _, row := range rows {
 		if n := utf8.RuneCountInString(row.account.Name); n > nameWidth {
@@ -270,12 +328,8 @@ func renderUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, co
 		nameWidth = 18
 	}
 
-	leftHeader := "Gemini 5h"
-	rightHeader := "Gemini Wk"
-	if thirdParty {
-		leftHeader = "Claude/GPT 5h"
-		rightHeader = "Claude/GPT Wk"
-	}
+	leftHeader := "5h"
+	rightHeader := "Weekly"
 	fmt.Fprintf(out, "%s  %s  %s\n",
 		padUsage("Account", nameWidth),
 		padUsage(leftHeader, usageCellWidth),
@@ -370,14 +424,14 @@ func usageDuration(d time.Duration, precise bool) string {
 	return fmt.Sprintf("%dd", days)
 }
 
-func usageAverage(rows []usageDashboardRow, pick func(usageDashboardRow) *agents.UsageLimit) (float64, bool) {
+func usageFleetAverage(rows []usageDashboardRow) (float64, bool) {
 	var total float64
 	count := 0
 	for _, row := range rows {
 		if row.err != nil {
 			continue
 		}
-		if value, ok := usageFraction(pick(row)); ok {
+		if value, ok := usageRowScore(row); ok {
 			total += value
 			count++
 		}
@@ -387,7 +441,6 @@ func usageAverage(rows []usageDashboardRow, pick func(usageDashboardRow) *agents
 	}
 	return total / float64(count), true
 }
-
 func usageFraction(limit *agents.UsageLimit) (float64, bool) {
 	if limit == nil || limit.RemainingFraction == nil {
 		return 0, false
