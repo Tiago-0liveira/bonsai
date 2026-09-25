@@ -223,21 +223,20 @@ func uniqueDirs(dirs ...string) []string {
 }
 
 func findNodeWorkspaceRoot(projectRoot string) string {
-	workspace := ""
 	for cur := projectRoot; ; cur = filepath.Dir(cur) {
 		if _, err := os.Stat(filepath.Join(cur, "pnpm-workspace.yaml")); err == nil {
-			workspace = cur
+			return cur
 		}
 		manifestPath := filepath.Join(cur, "package.json")
 		if manifest, err := readNodeManifest(manifestPath); err == nil && hasWorkspaces(manifest.Workspaces) {
-			workspace = cur
+			return cur
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
 			break
 		}
 	}
-	return workspace
+	return ""
 }
 
 func hasWorkspaces(raw json.RawMessage) bool {
