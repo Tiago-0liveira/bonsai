@@ -44,4 +44,17 @@ type Options struct {
 	Refresh          bool
 	AllowProviderCLI bool
 	Runner           Runner
+	// SearchDepth limits downward manifest discovery. Nil defaults to 2;
+	// zero disables downward searching.
+	SearchDepth *int
+}
+
+func (o Options) searchDepth() int {
+	if o.SearchDepth == nil {
+		return 2
+	}
+	if *o.SearchDepth < 0 {
+		return 0
+	}
+	return *o.SearchDepth
 }
