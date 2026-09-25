@@ -133,3 +133,22 @@ func TestDiscoverSiblingNodeProjects(t *testing.T) {
 		t.Fatalf("sibling dirs = admin %q web %q", adminCmd.Invocation.WorkingDir, webCmd.Invocation.WorkingDir)
 	}
 }
+
+
+func TestDiscoverDifferentNodeManagersDoNotCollide(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "package.json", `{"packageManager":"npm@11.0.0","scripts":{"dev":"echo root"}}`)
+	web := filepath.Join(root, "apps", "web")
+	write(t, web, "package.json", `{"packageManager":"pnpm@10.17.0","scripts":{"dev":"vite"}}`)
+	depth2 := 2
+
+	project, err := Discover(root, Options{SearchDepth: &depth2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootCmd := commandByID(t, project, "node:script:dev@.")
+	webCmd := commandByID(t, project, "node:script:dev@apps/web")
+	if rootCmd.Provider != "node:npm" || webCmd.Provider != "node:pnpm" {
+		t.Fatalf("manager-scoped commands = root %+v web %+v", rootCmd, webCmd)
+	}
+}
