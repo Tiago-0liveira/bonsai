@@ -330,7 +330,7 @@ func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now ti
 
 	leftHeader := "5h"
 	rightHeader := "Weekly"
-	fmt.Fprintf(out, "%s  %s  %s\n",
+	fmt.Fprintf(out, "  %s  %s  %s\n",
 		padUsage("Account", nameWidth),
 		padUsage(leftHeader, usageCellWidth),
 		rightHeader,
@@ -355,21 +355,19 @@ func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now ti
 
 		left := row.gemini5h
 		right := row.geminiWeek
-		leftLabel := "5h"
-		rightLabel := "Wk"
 		if thirdParty {
 			left = row.third5h
 			right = row.thirdWeek
 		}
-		fmt.Fprintf(out, "%s  %s  %s\n",
+		fmt.Fprintf(out, "  %s  %s  %s\n",
 			renderedName,
-			renderUsageLimitCell(leftLabel, left, now, color, usageCellWidth),
-			renderUsageLimitCell(rightLabel, right, now, color, 0),
+			renderUsageLimitCell(left, now, color, usageCellWidth),
+			renderUsageLimitCell(right, now, color, 0),
 		)
 	}
 }
 
-func renderUsageLimitCell(label string, limit *agents.UsageLimit, now time.Time, color bool, width int) string {
+func renderUsageLimitCell(limit *agents.UsageLimit, now time.Time, color bool, width int) string {
 	fraction, ok := usageFraction(limit)
 	if !ok {
 		plain := "-"
@@ -388,7 +386,7 @@ func renderUsageLimitCell(label string, limit *agents.UsageLimit, now time.Time,
 			reset = "now"
 		}
 	}
-	plain := fmt.Sprintf("%s: [%s] %3d%%  %s", label, usageBar(fraction, usageBarWidth), pct, reset)
+	plain := fmt.Sprintf("[%s] %3d%%  %s", usageBar(fraction, usageBarWidth), pct, reset)
 	if width > 0 {
 		plain = padUsage(plain, width)
 	}
