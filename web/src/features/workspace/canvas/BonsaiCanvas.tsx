@@ -6,6 +6,7 @@ import {
   ReactFlow,
   useEdgesState,
   useNodesState,
+  useNodesInitialized,
   useReactFlow,
   type Edge,
   type Node,
@@ -76,6 +77,12 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const lastCommand = useRef(0)
   const dragSnapshot = useRef<DragSnapshot | null>(null)
   const { fitView } = useReactFlow()
+  const nodesInitialized = useNodesInitialized()
+  const fitViewRef = useRef(fitView)
+
+  useEffect(() => {
+    fitViewRef.current = fitView
+  }, [fitView])
 
   const graph = useMemo(() => {
     const project = projects.find((item) => item.id === activeProjectId) ?? projects[0]
@@ -374,28 +381,39 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         positions[node.id] = node.position
       })
       setNodePositionsBatch(positions)
-      requestAnimationFrame(() => void fitView({ padding: 0.14, duration: 280 }))
     })
     return () => {
       cancelled = true
     }
-  }, [graph.shapeKey, fitView, setNodePositionsBatch, setNodes])
+  }, [graph.shapeKey, setNodePositionsBatch, setNodes])
 
   useEffect(() => {
-    if (!focus) return
+    if (!nodesInitialized) return
+    const frame = requestAnimationFrame(() => {
+      void fitViewRef.current({ padding: 0.14, duration: 280 })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [graph.shapeKey, nodesInitialized])
+
+  useEffect(() => {
+    if (!focus || !nodesInitialized) return
     const ids =
       focus === 'agents'
         ? nodes.filter((node) => node.type === 'agent').map((node) => node.id)
         : nodes.filter((node) => node.type === 'worktree' || node.type === 'stack').map((node) => node.id)
     const visible = nodes.filter((node) => ids.includes(node.id))
-    if (visible.length) void fitView({ nodes: visible, padding: 0.2, duration: 300 })
-  }, [focus, fitView])
+    if (!visible.length) return
+    const frame = requestAnimationFrame(() => {
+      void fitViewRef.current({ nodes: visible, padding: 0.2, duration: 300 })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focus, graph.shapeKey, nodesInitialized])
 
   useEffect(() => {
     if (!canvasCommand.nonce || lastCommand.current === canvasCommand.nonce) return
     lastCommand.current = canvasCommand.nonce
     if (canvasCommand.type === 'fit') {
-      void fitView({ padding: 0.14, duration: 300 })
+      void fitViewRef.current({ padding: 0.14, duration: 300 })
       return
     }
 
@@ -407,9 +425,9 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         positions[node.id] = node.position
       })
       setNodePositionsBatch(positions)
-      requestAnimationFrame(() => void fitView({ padding: 0.14, duration: 300 }))
+      requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
     })
-  }, [canvasCommand, edges, fitView, nodes, setNodePositionsBatch, setNodes])
+  }, [canvasCommand, edges, nodes, setNodePositionsBatch, setNodes])
 
   const onNodeClick: NodeMouseHandler = (_, node) => {
     const data = node.data as BonsaiGraphData

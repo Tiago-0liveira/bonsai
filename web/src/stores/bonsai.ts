@@ -438,9 +438,21 @@ export const useBonsaiStore = create<BonsaiState>()(
 
       nodePositions: {},
       setNodePosition: (id, position) =>
-        set((state) => ({ nodePositions: { ...state.nodePositions, [id]: position } })),
+        set((state) => {
+          const current = state.nodePositions[id]
+          if (current?.x === position.x && current?.y === position.y) return state
+          return { nodePositions: { ...state.nodePositions, [id]: position } }
+        }),
       setNodePositionsBatch: (positions) =>
-        set((state) => ({ nodePositions: { ...state.nodePositions, ...positions } })),
+        set((state) => {
+          const entries = Object.entries(positions)
+          const unchanged = entries.every(([id, position]) => {
+            const current = state.nodePositions[id]
+            return current?.x === position.x && current?.y === position.y
+          })
+          if (unchanged) return state
+          return { nodePositions: { ...state.nodePositions, ...positions } }
+        }),
       subtreeMoveRootId: null,
       setSubtreeMoveRoot: (subtreeMoveRootId) => set({ subtreeMoveRootId }),
       viewport: { x: 0, y: 0, zoom: 0.82 },
