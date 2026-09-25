@@ -20,9 +20,12 @@ func TestRecordRoundTrip(t *testing.T) {
 	r := &Record{
 		ID:        3,
 		Label:     "dev",
-		Command:   "npm run dev",
-		Worktree:  "/wt/feat-x",
-		PID:       4242,
+		Command:    "npm run dev",
+		Program:    "npm",
+		Args:       []string{"run", "dev;literal"},
+		Worktree:   "/wt/feat-x",
+		WorkingDir: "/wt/feat-x/apps/web",
+		PID:        4242,
 		Status:    StatusRunning,
 		Policy:    Policy{Mode: PolicyAlways, MaxRestarts: 5},
 		StartedAt: time.Now().Truncate(time.Second),
@@ -36,6 +39,9 @@ func TestRecordRoundTrip(t *testing.T) {
 	}
 	if got.Label != "dev" || got.PID != 4242 || got.Policy.Mode != PolicyAlways {
 		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+	if got.Program != "npm" || got.WorkingDir != "/wt/feat-x/apps/web" || len(got.Args) != 2 || got.Args[1] != "dev;literal" {
+		t.Fatalf("structured command round-trip mismatch: %+v", got)
 	}
 }
 
