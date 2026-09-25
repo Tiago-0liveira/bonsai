@@ -38,7 +38,7 @@ Juggling git worktrees by hand is tedious: creating them, copying over untracked
 - 📋 **Yank menu** (`y`): copy the worktree path, branch name, or PR URL to your clipboard.
 - ✨ **Create worktrees** from a new branch, an existing branch, or a GitHub PR.
 - 📋 **Copy files** from main into a worktree via fuzzy finder — ranked by how often you copy them.
-- 🔧 **Run package scripts** and **custom aliases** as background processes — many per worktree, switchable.
+- 🔧 **Run project commands** from Node, Python, Go, Rust/Cargo, and Make plus **custom aliases** as background processes — many per worktree, switchable.
 - 🪝 **Lifecycle hooks** (`on_worktree_create` / `on_worktree_delete`) with `{variable}` and `$BONSAI_*` substitution.
 - 🔀 **Git ops** inline: pull, push, commit, rebase (drops to a real shell for conflict resolution).
 - 🗑️ **Prune** with an optional **merge-PR-first** step and a clear preview of exactly what will happen.
@@ -152,7 +152,7 @@ Press `n` to create a worktree, `enter` to drop into a shell in the selected one
 | `/` | Filter the worktree list |
 | `c` | Copy a file from main into the worktree (fuzzy) |
 | `y` | Yank: copy path / branch / PR URL to the clipboard |
-| `s` | Run a package script (npm / pnpm / yarn / bun / cargo / make) |
+| `s` | Run discovered project commands (Node / Python / Go / Rust-Cargo / Make) |
 | `p` | Aliases menu (run one, or `＋ new alias`) |
 | `ctrl+p` | Git pull |
 | `ctrl+u` | Git push |
