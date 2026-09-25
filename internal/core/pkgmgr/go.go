@@ -87,7 +87,7 @@ func (goProvider) Commands(_ Context, detection Detection) ([]Command, error) {
 				WorkingDir:  detection.Root,
 				PassThrough: PassThroughAppend,
 			},
-			Source:     Source{Kind: "go manifest", File: d.ManifestPath, Pointer: builtin.name},
+			Source:     src,
 			Confidence: ConfidenceExact,
 		})
 	}
