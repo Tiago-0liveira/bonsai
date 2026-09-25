@@ -3,13 +3,23 @@ export type WorktreeKind = 'Production' | 'Feature' | 'Bug' | 'Refactor' | 'Chor
 export type AgentState = 'running' | 'idle' | 'finished'
 export type BoardStatus = 'todo' | 'progress' | 'done'
 export type BoardKind = 'Idea' | 'Feature' | 'Bug' | 'Problem' | 'Task'
+export type PrStatus = 'Draft' | 'Open' | 'Closed' | 'Merged'
+export type CiStatus = 'running' | 'passed' | 'failed' | 'waiting'
+
+export interface Workspace {
+  id: string
+  name: string
+  projectIds: string[]
+}
 
 export interface Project {
   id: string
+  workspaceId: string
   name: string
   repository: string
   description: string
   health: Health
+  defaultBranch: string
   worktreeIds: string[]
   openPrCount: number
 }
@@ -19,11 +29,17 @@ export interface Worktree {
   projectId: string
   branch: string
   kind: WorktreeKind
+  tag: string
   status: Health
   agentIds: string[]
   prNumber?: number
+  prStatus?: PrStatus
+  ciStatus: CiStatus
+  ciFailed: number
   ahead: number
   behind: number
+  dirtyFiles: number
+  lastActivity: string
   gitState?: string
 }
 
@@ -53,7 +69,7 @@ export interface PullRequest {
   title: string
   branch: string
   base: string
-  status: 'Open' | 'Draft' | 'Merged'
+  status: 'Open' | 'Draft' | 'Merged' | 'Closed'
   checks: { name: string; status: 'success' | 'running' | 'failed' }[]
   commits: { sha: string; message: string; author: string }[]
   conversation: { author: string; body: string; time: string }[]

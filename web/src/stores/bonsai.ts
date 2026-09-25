@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { agents as initialAgents } from '../mock/agents'
 import { boardItems as initialBoardItems } from '../mock/board'
+import { projects as initialProjects, workspaces } from '../mock/projects'
 import { worktrees as initialWorktrees } from '../mock/worktrees'
 import type {
   Agent,
@@ -10,6 +11,7 @@ import type {
   BoardStatus,
   DockState,
   DockTab,
+  Project,
   Selection,
   ViewportState,
   Worktree,
@@ -27,9 +29,22 @@ interface BonsaiState {
   projectQuery: string
   setProjectQuery: (query: string) => void
 
+  projects: Project[]
+  activeWorkspaceId: string
+  activeProjectId: string
+  setActiveWorkspace: (id: string) => void
+  setActiveProject: (id: string) => void
+  createMockProject: (name?: string) => void
+
+  sidebarCollapsed: boolean
+  toggleSidebar: () => void
+
   worktrees: Worktree[]
   agents: Agent[]
   boardItems: BoardItem[]
+  collapsedTagGroups: string[]
+  toggleTagGroup: (projectId: string, tag: string) => void
+  setWorktreeTag: (id: string, tag: string) => void
 
   dockState: DockState
   setDockState: (state: DockState) => void
@@ -60,7 +75,7 @@ interface BonsaiState {
 
   moveBoardItem: (id: string, status: BoardStatus) => void
   setAgentState: (id: string, state: AgentState) => void
-  createMockWorktree: () => void
+  createMockWorktree: (tag?: string) => void
   startMockAgent: () => void
 }
 
@@ -80,6 +95,14 @@ const initialTerminalOutput: Record<string, string[]> = {
   ],
 }
 
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+}
+
 export const useBonsaiStore = create<BonsaiState>()(
   persist(
     (set, get) => ({
@@ -88,9 +111,93 @@ export const useBonsaiStore = create<BonsaiState>()(
       projectQuery: '',
       setProjectQuery: (projectQuery) => set({ projectQuery }),
 
+      projects: initialProjects,
+      activeWorkspaceId: 'personal',
+      activeProjectId: 'bonsai',
+      setActiveWorkspace: (activeWorkspaceId) => {
+        const state = get()
+        const workspace = workspaces.find((item) => item.id === activeWorkspaceId)
+        const nextProject =
+          state.projects.find((project) => workspace?.projectIds.includes(project.id)) ??
+          state.projects.find((project) => project.workspaceId === activeWorkspaceId)
+        set({
+          activeWorkspaceId,
+          activeProjectId: nextProject?.id ?? state.activeProjectId,
+          selection: nextProject ? { type: 'project', id: nextProject.id } : state.selection,
+          nodePositions: {},
+          notice: nextProject ? 'Switched workspace to ' + workspace?.name : 'Workspace selected',
+        })
+      },
+      setActiveProject: (activeProjectId) => {
+        const project = get().projects.find((item) => item.id === activeProjectId)
+        if (!project) return
+        set({
+          activeProjectId,
+          activeWorkspaceId: project.workspaceId,
+          selection: { type: 'project', id: project.id },
+          nodePositions: {},
+          notice: 'Opened project ' + project.name,
+        })
+      },
+      createMockProject: (name) =>
+        set((state) => {
+          const fallback = 'new-project-' + (state.projects.length + 1)
+          const displayName = (name?.trim() || fallback).slice(0, 42)
+          const baseId = slugify(displayName) || fallback
+          let id = baseId
+          let suffix = 2
+          while (state.projects.some((project) => project.id === id)) {
+            id = baseId + '-' + suffix
+            suffix += 1
+          }
+          const project: Project = {
+            id,
+            workspaceId: state.activeWorkspaceId,
+            name: displayName,
+            repository: 'local/' + id,
+            description: 'Frontend-only mock project. Connect repository details later.',
+            health: 'idle',
+            defaultBranch: 'main',
+            worktreeIds: [],
+            openPrCount: 0,
+          }
+          return {
+            projects: [...state.projects, project],
+            activeProjectId: id,
+            selection: { type: 'project', id },
+            nodePositions: {},
+            notice: 'Added project ' + displayName,
+          }
+        }),
+
+      sidebarCollapsed: false,
+      toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+
       worktrees: initialWorktrees,
       agents: initialAgents,
       boardItems: initialBoardItems,
+      collapsedTagGroups: ['bonsai:feat'],
+      toggleTagGroup: (projectId, tag) =>
+        set((state) => {
+          const key = projectId + ':' + tag
+          return {
+            collapsedTagGroups: state.collapsedTagGroups.includes(key)
+              ? state.collapsedTagGroups.filter((item) => item !== key)
+              : [...state.collapsedTagGroups, key],
+            nodePositions: {},
+          }
+        }),
+      setWorktreeTag: (id, tag) =>
+        set((state) => {
+          const nextTag = tag.trim() || 'untagged'
+          return {
+            worktrees: state.worktrees.map((worktree) =>
+              worktree.id === id ? { ...worktree, tag: nextTag } : worktree,
+            ),
+            nodePositions: {},
+            notice: 'Worktree tag updated to ' + nextTag,
+          }
+        }),
 
       dockState: 'normal',
       setDockState: (dockState) => set({ dockState }),
@@ -123,7 +230,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       openTerminal: (agentId) => {
         const state = get()
         const agent = agentId ? state.agents.find((item) => item.id === agentId) : undefined
-        const id = agent?.terminalId ?? `term-${Date.now()}`
+        const id = agent?.terminalId ?? 'term-' + Date.now()
         const exists = state.terminalSessions.some((session) => session.id === id)
         set({
           activeDockTab: 'terminal',
@@ -137,8 +244,8 @@ export const useBonsaiStore = create<BonsaiState>()(
             : {
                 ...state.terminalOutput,
                 [id]: [
-                  `# ${agent?.name ?? 'Bonsai shell'}`,
-                  agent ? `# ${agent.task}` : '# Frontend-only mock terminal',
+                  '# ' + (agent?.name ?? 'Bonsai shell'),
+                  agent ? '# ' + agent.task : '# Frontend-only mock terminal',
                   '$ ',
                 ],
               },
@@ -161,9 +268,9 @@ export const useBonsaiStore = create<BonsaiState>()(
           dockState: 'normal',
           terminalOutput: {
             ...terminalOutput,
-            [activeTerminalId]: [...lines, `$ ${command}`, ...result],
+            [activeTerminalId]: [...lines, '$ ' + command, ...result],
           },
-          notice: `Ran “${command}” in the mock terminal`,
+          notice: 'Ran “' + command + '” in the mock terminal',
         })
       },
 
@@ -174,78 +281,100 @@ export const useBonsaiStore = create<BonsaiState>()(
       setAgentState: (id, agentState) =>
         set((state) => ({
           agents: state.agents.map((agent) => (agent.id === id ? { ...agent, state: agentState } : agent)),
-          notice: `Agent moved to ${agentState}`,
+          notice: 'Agent moved to ' + agentState,
         })),
-      createMockWorktree: () =>
+      createMockWorktree: (tag = 'feat') =>
         set((state) => {
-          const id = `wt-prototype-${state.worktrees.length + 1}`
-          return {
-            worktrees: [
-              ...state.worktrees,
-              {
-                id,
-                projectId: 'bonsai',
-                branch: `feat/prototype-${state.worktrees.length + 1}`,
-                kind: 'Feature',
-                status: 'idle',
-                agentIds: [],
-                ahead: 0,
-                behind: 0,
-                gitState: 'clean',
-              },
-            ],
-            selection: { type: 'worktree', id },
-            notice: 'Created a mock worktree',
-          }
-        }),
-      startMockAgent: () =>
-        set((state) => {
-          const selectedWorktree =
-            state.selection.type === 'worktree'
-              ? state.selection.id
-              : state.selection.type === 'agent'
-                ? state.agents.find((agent) => agent.id === state.selection.id)?.worktreeId
-                : 'wt-web'
-          const worktreeId = selectedWorktree ?? 'wt-web'
-          const id = `agent-prototype-${state.agents.length + 1}`
-          const terminalId = `term-prototype-${state.agents.length + 1}`
-          const agent: Agent = {
+          const projectId = state.activeProjectId
+          const project = state.projects.find((item) => item.id === projectId)
+          const projectWorktrees = state.worktrees.filter((item) => item.projectId === projectId)
+          const id = 'wt-' + projectId + '-' + (projectWorktrees.length + 1)
+          const branch = tag + '/prototype-' + (projectWorktrees.length + 1)
+          const worktree: Worktree = {
             id,
-            worktreeId,
-            name: `Prototype agent ${state.agents.length + 1}`,
-            provider: 'Codex',
-            state: 'running',
-            task: 'Exploring the next frontend interaction',
-            runtime: 'just now',
-            terminalId,
+            projectId,
+            branch,
+            kind: 'Feature',
+            tag,
+            status: 'idle',
+            agentIds: [],
+            ciStatus: 'waiting',
+            ciFailed: 0,
+            ahead: 0,
+            behind: 0,
+            dirtyFiles: 0,
+            lastActivity: 'just now',
+            gitState: 'clean',
           }
           return {
-            agents: [...state.agents, agent],
-            worktrees: state.worktrees.map((worktree) =>
-              worktree.id === worktreeId
-                ? { ...worktree, agentIds: [...worktree.agentIds, id] }
-                : worktree,
+            worktrees: [...state.worktrees, worktree],
+            projects: state.projects.map((item) =>
+              item.id === project?.id ? { ...item, worktreeIds: [...item.worktreeIds, id] } : item,
             ),
-            selection: { type: 'agent', id },
-            terminalSessions: [...state.terminalSessions, { id: terminalId, label: agent.name, agentId: id }],
-            terminalOutput: {
-              ...state.terminalOutput,
-              [terminalId]: ['# Prototype agent session', '# No backend process is running.', '$ '],
-            },
-            notice: 'Started a mock agent',
+            selection: { type: 'worktree', id },
+            nodePositions: {},
+            notice: 'Created a mock ' + tag + ' worktree',
           }
         }),
+      startMockAgent: () => {
+        const state = get()
+        const selectedWorktree =
+          state.selection.type === 'worktree'
+            ? state.selection.id
+            : state.selection.type === 'agent'
+              ? state.agents.find((agent) => agent.id === state.selection.id)?.worktreeId
+              : state.worktrees.find((worktree) => worktree.projectId === state.activeProjectId)?.id
+        if (!selectedWorktree) {
+          set({ notice: 'Create a worktree before starting an agent' })
+          return
+        }
+        const worktreeId = selectedWorktree
+        const id = 'agent-prototype-' + (state.agents.length + 1)
+        const terminalId = 'term-prototype-' + (state.agents.length + 1)
+        const agent: Agent = {
+          id,
+          worktreeId,
+          name: 'Prototype agent ' + (state.agents.length + 1),
+          provider: 'Codex',
+          state: 'running',
+          task: 'Exploring the next frontend interaction',
+          runtime: 'just now',
+          terminalId,
+        }
+        set({
+          agents: [...state.agents, agent],
+          worktrees: state.worktrees.map((worktree) =>
+            worktree.id === worktreeId
+              ? { ...worktree, agentIds: [...worktree.agentIds, id] }
+              : worktree,
+          ),
+          selection: { type: 'agent', id },
+          terminalSessions: [...state.terminalSessions, { id: terminalId, label: agent.name, agentId: id }],
+          terminalOutput: {
+            ...state.terminalOutput,
+            [terminalId]: ['# Prototype agent session', '# No backend process is running.', '$ '],
+          },
+          notice: 'Started a mock agent',
+        })
+      },
     }),
     {
-      name: 'bonsai-web-workspace',
+      name: 'bonsai-web-workspace-v2',
       partialize: (state) => ({
         selection: state.selection,
+        projects: state.projects,
+        activeWorkspaceId: state.activeWorkspaceId,
+        activeProjectId: state.activeProjectId,
+        sidebarCollapsed: state.sidebarCollapsed,
         dockState: state.dockState,
         activeDockTab: state.activeDockTab,
         selectedFilePath: state.selectedFilePath,
         nodePositions: state.nodePositions,
         viewport: state.viewport,
         boardItems: state.boardItems,
+        worktrees: state.worktrees,
+        agents: state.agents,
+        collapsedTagGroups: state.collapsedTagGroups,
       }),
     },
   ),
