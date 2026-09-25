@@ -3,10 +3,15 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { useBonsaiStore } from '../../stores/bonsai'
 
+const EMPTY_LINES: string[] = []
+
 export function FakeTerminal() {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const terminalRef = useRef<Terminal | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
   const activeTerminalId = useBonsaiStore((state) => state.activeTerminalId)
-  const lines = useBonsaiStore((state) => state.terminalOutput[activeTerminalId] ?? [])
+  const terminalLines = useBonsaiStore((state) => state.terminalOutput[activeTerminalId])
+  const lines = terminalLines ?? EMPTY_LINES
 
   useEffect(() => {
     const host = hostRef.current
@@ -33,24 +38,55 @@ export function FakeTerminal() {
       scrollback: 2000,
     })
     const fit = new FitAddon()
+    let disposed = false
+
     terminal.loadAddon(fit)
     terminal.open(host)
+    terminalRef.current = terminal
+    fitRef.current = fit
 
-    const render = () => {
-      terminal.reset()
-      lines.forEach((line) => terminal.writeln(line))
-      fit.fit()
-      terminal.scrollToBottom()
+    const fitSafely = () => {
+      if (disposed || !host.isConnected || terminalRef.current !== terminal) return
+      try {
+        fit.fit()
+      } catch {
+        // The viewport may be between mount/unmount phases while the dock resizes.
+      }
     }
 
-    render()
-    const observer = new ResizeObserver(() => fit.fit())
+    const observer = new ResizeObserver(() => fitSafely())
     observer.observe(host)
+    const frame = requestAnimationFrame(fitSafely)
 
     return () => {
+      disposed = true
+      cancelAnimationFrame(frame)
       observer.disconnect()
+      terminalRef.current = null
+      fitRef.current = null
       terminal.dispose()
     }
+  }, [])
+
+  useEffect(() => {
+    const terminal = terminalRef.current
+    const fit = fitRef.current
+    if (!terminal || !fit) return
+
+    terminal.reset()
+    lines.forEach((line) => terminal.writeln(line))
+
+    const frame = requestAnimationFrame(() => {
+      if (terminalRef.current !== terminal || fitRef.current !== fit) return
+      try {
+        fit.fit()
+        terminal.scrollToBottom()
+      } catch {
+        // Ignore transient xterm resize races while switching worktrees.
+      }
+    })
+
+    return () => cancelAnimationFrame(frame)
   }, [activeTerminalId, lines])
 
   return <div ref={hostRef} className="h-full min-h-[120px] w-full bg-[#0c0e11]" />

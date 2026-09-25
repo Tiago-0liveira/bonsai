@@ -426,7 +426,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       activeDockTab: 'terminal',
       setActiveDockTab: (activeDockTab) => set({ activeDockTab }),
       dockWorktreeId: 'wt-web',
-      setDockWorktreeId: (dockWorktreeId) => set({ dockWorktreeId }),
+      setDockWorktreeId: (dockWorktreeId) =>
+        set((state) => state.dockWorktreeId === dockWorktreeId ? state : { dockWorktreeId }),
       rightPanels: { files: true, prs: true },
       toggleRightPanel: (panel) =>
         set((state) => ({ rightPanels: { ...state.rightPanels, [panel]: !state.rightPanels[panel] } })),
@@ -497,7 +498,8 @@ export const useBonsaiStore = create<BonsaiState>()(
               },
         })
       },
-      setActiveTerminalId: (activeTerminalId) => set({ activeTerminalId }),
+      setActiveTerminalId: (activeTerminalId) =>
+        set((state) => state.activeTerminalId === activeTerminalId ? state : { activeTerminalId }),
       appendTerminalCommand: (command) => {
         const { activeTerminalId, terminalOutput } = get()
         const lines = terminalOutput[activeTerminalId] ?? []

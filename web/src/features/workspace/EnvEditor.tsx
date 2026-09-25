@@ -2,12 +2,15 @@ import { useState } from 'react'
 import { Eye, EyeOff, KeyRound, Lock, LockOpen, Plus, Trash2, X } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
 
+const EMPTY_ENV_VARIABLES: never[] = []
+
 export function EnvEditor() {
   const open = useBonsaiStore((state) => state.envEditorOpen)
   const setOpen = useBonsaiStore((state) => state.setEnvEditorOpen)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const projects = useBonsaiStore((state) => state.projects)
-  const variables = useBonsaiStore((state) => state.envVariables[activeProjectId] ?? [])
+  const storedVariables = useBonsaiStore((state) => state.envVariables[activeProjectId])
+  const variables = storedVariables ?? EMPTY_ENV_VARIABLES
   const addVariable = useBonsaiStore((state) => state.addEnvVariable)
   const updateVariable = useBonsaiStore((state) => state.updateEnvVariable)
   const removeVariable = useBonsaiStore((state) => state.removeEnvVariable)
