@@ -43,18 +43,19 @@ func (goProvider) Detect(ctx Context) (Detection, error) {
 }
 
 var goBuiltins = []struct {
+	id     string
 	name   string
 	prefix []string
 }{
-	{"build", []string{"build", "./..."}},
-	{"clean", []string{"clean"}},
-	{"fmt", []string{"fmt", "./..."}},
-	{"generate", []string{"generate", "./..."}},
-	{"mod download", []string{"mod", "download"}},
-	{"mod tidy", []string{"mod", "tidy"}},
-	{"run", []string{"run", "."}},
-	{"test", []string{"test", "./..."}},
-	{"vet", []string{"vet", "./..."}},
+	{"build", "build", []string{"build", "./..."}},
+	{"clean", "clean", []string{"clean"}},
+	{"fmt", "fmt", []string{"fmt", "./..."}},
+	{"generate", "generate", []string{"generate", "./..."}},
+	{"mod-download", "mod download", []string{"mod", "download"}},
+	{"mod-tidy", "mod tidy", []string{"mod", "tidy"}},
+	{"run", "run", []string{"run", "."}},
+	{"test", "test", []string{"test", "./..."}},
+	{"vet", "vet", []string{"vet", "./..."}},
 }
 
 func (goProvider) Commands(_ Context, detection Detection) ([]Command, error) {
@@ -66,7 +67,7 @@ func (goProvider) Commands(_ Context, detection Detection) ([]Command, error) {
 	for _, builtin := range goBuiltins {
 		src := Source{Kind: "catalog", File: "Go builtin catalog", Pointer: builtin.name}
 		commands = append(commands, Command{
-			ID:          "go:builtin:" + builtin.name,
+			ID:          "go:builtin:" + builtin.id,
 			Name:        builtin.name,
 			Description: "go " + builtin.name,
 			Provider:    detection.ID,
