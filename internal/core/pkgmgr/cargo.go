@@ -1,12 +1,10 @@
 package pkgmgr
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -52,7 +50,7 @@ func (cargoProvider) Commands(ctx Context, detection Detection) ([]Command, erro
 	}
 	if ctx.Options.AllowProviderCLI && !d.MetadataAttempted {
 		d.MetadataAttempted = true
-		if got, err := readCargoMetadata(detection.Root); err == nil {
+		if got, err := readCargoMetadata(ctx.Options.Runner, detection.Root); err == nil {
 			d.Metadata = got
 		}
 	}
@@ -104,7 +102,7 @@ func (cargoProvider) FingerprintInputs(ctx Context, detection Detection) ([]Fing
 	}
 	if ctx.Options.AllowProviderCLI {
 		d.MetadataAttempted = true
-		if meta, err := readCargoMetadata(detection.Root); err == nil {
+		if meta, err := readCargoMetadata(ctx.Options.Runner, detection.Root); err == nil {
 			d.Metadata = meta
 			if canonical, err := json.Marshal(meta); err == nil {
 				inputs = append(inputs, FingerprintInput{Name: "cargo/metadata.json", Content: canonical})
@@ -193,18 +191,17 @@ func cargoArgs(command, manifest string, meta cargoMetadataInfo) []Argument {
 }
 
 func findCargoWorkspaceRoot(projectRoot string) string {
-	workspace := ""
 	for cur := projectRoot; ; cur = filepath.Dir(cur) {
 		data, err := os.ReadFile(filepath.Join(cur, "Cargo.toml"))
 		if err == nil && hasTOMLSection(data, "workspace") {
-			workspace = cur
+			return cur
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
 			break
 		}
 	}
-	return workspace
+	return ""
 }
 
 func hasTOMLSection(data []byte, section string) bool {
@@ -239,24 +236,23 @@ type cargoMetadataJSON struct {
 	WorkspaceMembers []string `json:"workspace_members"`
 }
 
-func readCargoMetadata(dir string) (cargoMetadataInfo, error) {
+func readCargoMetadata(runner Runner, dir string) (cargoMetadataInfo, error) {
+	if runner == nil {
+		runner = execRunner{}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "cargo", "metadata", "--format-version", "1", "--no-deps")
-	cmd.Dir = dir
-	var stdout, stderr limitedBuffer
-	stdout.max = 1 << 20
-	stderr.max = 64 << 10
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return cargoMetadataInfo{}, ctx.Err()
-		}
-		return cargoMetadataInfo{}, fmt.Errorf("cargo metadata: %w: %s", err, strings.TrimSpace(stderr.String()))
+
+	out, err := runner.Run(ctx, dir, "cargo", "metadata", "--format-version", "1", "--no-deps")
+	if err != nil {
+		return cargoMetadataInfo{}, fmt.Errorf("cargo metadata: %w", err)
 	}
+	if len(out) > providerStdoutLimit {
+		return cargoMetadataInfo{}, fmt.Errorf("cargo metadata output exceeded %d bytes", providerStdoutLimit)
+	}
+
 	var raw cargoMetadataJSON
-	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+	if err := json.Unmarshal(out, &raw); err != nil {
 		return cargoMetadataInfo{}, err
 	}
 	members := map[string]bool{}
@@ -297,22 +293,6 @@ func readCargoMetadata(dir string) (cargoMetadataInfo, error) {
 		Benches:  sortedSet(sets["benches"]),
 		Features: sortedSet(sets["features"]),
 	}, nil
-}
-
-type limitedBuffer struct {
-	bytes.Buffer
-	max int
-}
-
-func (b *limitedBuffer) Write(p []byte) (int, error) {
-	if b.Buffer.Len()+len(p) > b.max {
-		remaining := b.max - b.Buffer.Len()
-		if remaining > 0 {
-			_, _ = b.Buffer.Write(p[:remaining])
-		}
-		return len(p), fmt.Errorf("provider output exceeded %d bytes", b.max)
-	}
-	return b.Buffer.Write(p)
 }
 
 func sortedSet(set map[string]bool) []string {
