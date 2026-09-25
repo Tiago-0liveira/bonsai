@@ -14,13 +14,13 @@ func (p *Provider) SetupAccount(ctx context.Context, req agents.SetupRequest) (a
 		return agents.SetupResult{}, err
 	}
 	session := agents.Session{
-		ID: filepathBaseSessionID(req.RuntimeDir),
-		Provider: ProviderID,
-		AccountID: req.Account.ID,
+		ID:         filepathBaseSessionID(req.RuntimeDir),
+		Provider:   ProviderID,
+		AccountID:  req.Account.ID,
 		RuntimeDir: req.RuntimeDir,
-		HomeDir: req.HomeDir,
+		HomeDir:    req.HomeDir,
 	}
-	if err := os.MkdirAll(filepath.Join(req.HomeDir, ".gemini"), 0o700); err != nil {
+	if err := os.MkdirAll(antigravityDir(req.HomeDir), 0o700); err != nil {
 		return agents.SetupResult{}, err
 	}
 	dir, err := os.Getwd()
@@ -29,8 +29,8 @@ func (p *Provider) SetupAccount(ctx context.Context, req agents.SetupRequest) (a
 	}
 	prepared := agents.PreparedSession{
 		Executable: executable,
-		Dir: dir,
-		EnvSet: buildEnvironment(req.Account, session),
+		Dir:        dir,
+		EnvSet:     buildEnvironment(req.Account, session),
 	}
 	if err := p.launcher.RunForeground(ctx, prepared); err != nil {
 		return agents.SetupResult{}, err
