@@ -11,7 +11,7 @@ type detectedProvider struct {
 	detection Detection
 }
 
-var defaultProviders = []Provider{nodeProvider{}, cargoProvider{}, makeProvider{}}
+var defaultProviders = []Provider{nodeProvider{}, pythonProvider{}, goProvider{}, cargoProvider{}, makeProvider{}}
 
 // Discover finds every applicable provider and returns a normalized command catalog.
 func Discover(dir string, opts Options) (*Project, error) {
