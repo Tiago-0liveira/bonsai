@@ -17,8 +17,8 @@ func TestGoProviderCatalog(t *testing.T) {
 	if len(project.Providers) != 1 || project.Providers[0].ID != "go" {
 		t.Fatalf("providers = %+v, want go", project.Providers)
 	}
-	for _, name := range []string{"build", "clean", "fmt", "generate", "mod download", "mod tidy", "run", "test", "vet"} {
-		commandByID(t, project, "go:builtin:"+name)
+	for _, id := range []string{"build", "clean", "fmt", "generate", "mod-download", "mod-tidy", "run", "test", "vet"} {
+		commandByID(t, project, "go:builtin:"+id)
 	}
 
 	testCmd := commandByID(t, project, "go:builtin:test")
