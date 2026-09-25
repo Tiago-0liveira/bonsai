@@ -14,16 +14,16 @@ func vaultPath(accounts agents.AccountStore, account agents.Account) string {
 	return filepath.Join(accounts.CredentialDir(account.ID), "antigravity.json")
 }
 
+func antigravityDir(home string) string {
+	return filepath.Join(home, ".gemini", "antigravity-cli")
+}
+
 func oauthPath(home string) string {
-	return filepath.Join(home, ".gemini", "oauth_creds.json")
+	return filepath.Join(antigravityDir(home), "antigravity-oauth-token")
 }
 
-func accountsPath(home string) string {
-	return filepath.Join(home, ".gemini", "google_accounts.json")
-}
-
-func userIDPath(home string) string {
-	return filepath.Join(home, ".gemini", "user_id")
+func providerSettingsPath(home string) string {
+	return filepath.Join(antigravityDir(home), "settings.json")
 }
 
 func generationPath(session agents.Session) string {
