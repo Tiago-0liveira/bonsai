@@ -14,7 +14,7 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 1
+const Version = 2
 
 // Request kinds.
 const (
@@ -38,8 +38,11 @@ type Request struct {
 	Worktree string            `json:"worktree,omitempty"`
 	Branch   string            `json:"branch,omitempty"`
 	Label    string            `json:"label,omitempty"`
-	Command  string            `json:"command,omitempty"`
-	Policy   *procstore.Policy `json:"policy,omitempty"`
+	Command    string            `json:"command,omitempty"`
+	Program    string            `json:"program,omitempty"`
+	Args       []string          `json:"args,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Policy     *procstore.Policy `json:"policy,omitempty"`
 
 	// Target for kill/restart/setPolicy/logs.
 	ID        int    `json:"id,omitempty"`
