@@ -677,11 +677,11 @@ func tickPRs() tea.Cmd {
 
 
 func commandScopeLabel(root, dir string) string {
-	if rel, err := filepath.Rel(root, dir); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel, err := filepath.Rel(root, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rel == "." {
+			return "root"
+		}
 		return filepath.ToSlash(rel)
-	}
-	if base := filepath.Base(dir); base != "" && base != "." {
-		return base
 	}
 	return "project"
 }
