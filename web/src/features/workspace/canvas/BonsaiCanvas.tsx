@@ -5,8 +5,8 @@ import {
   Controls,
   ReactFlow,
   useEdgesState,
-  useNodesState,
   useNodesInitialized,
+  useNodesState,
   useReactFlow,
   type Edge,
   type Node,
@@ -16,11 +16,11 @@ import {
 import { LocateFixed, Network, Plus } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
 import type { Health, Worktree } from '../../../types'
-import { CreateWorktreeDialog } from '../CreateWorktreeDialog'
-import { EnvEditor } from '../EnvEditor'
 import { getTagPresentation } from '../tagStyles'
 import { getDescendantIds, layoutGraph } from './layout'
+import { PullRequestMergeEdge } from './PullRequestMergeEdge'
 import {
+  AgentHistoryNode,
   AgentNode,
   DefaultBranchNode,
   EnvNode,
@@ -35,8 +35,13 @@ const nodeTypes = {
   worktree: WorktreeNode,
   stack: StackNode,
   agent: AgentNode,
+  agentHistory: AgentHistoryNode,
   defaultBranch: DefaultBranchNode,
   env: EnvNode,
+}
+
+const edgeTypes = {
+  prMerge: PullRequestMergeEdge,
 }
 
 function groupHealth(items: Worktree[]): Health {
@@ -60,7 +65,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const tags = useBonsaiStore((state) => state.worktreeTags)
   const agents = useBonsaiStore((state) => state.agents)
   const collapsedTagGroups = useBonsaiStore((state) => state.collapsedTagGroups)
-  const stackExcludedWorktreeIds = useBonsaiStore((state) => state.stackExcludedWorktreeIds)
+  const detachedStackWorktreeIds = useBonsaiStore((state) => state.detachedStackWorktreeIds)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const selection = useBonsaiStore((state) => state.selection)
   const setSelection = useBonsaiStore((state) => state.setSelection)
@@ -91,7 +96,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const allProjectWorktrees = worktrees.filter((worktree) => worktree.projectId === project.id)
     const projectWorktrees = allProjectWorktrees.filter((worktree) => worktree.branch !== project.defaultBranch)
     const projectWorktreeIds = new Set(projectWorktrees.map((worktree) => worktree.id))
-    const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId))
+    const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && !agent.archived)
     const runningAgents = projectAgents.filter((agent) => agent.state === 'running').length
     const activePrs = projectWorktrees.filter((worktree) => worktree.prStatus === 'Open' || worktree.prStatus === 'Draft').length
     const failedChecks = projectWorktrees.reduce((total, worktree) => total + worktree.ciFailed, 0)
@@ -111,11 +116,13 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const visibleNodeForWorktree = new Map<string, string>()
 
     groups.forEach((items, tag) => {
-      const excluded = items.filter((item) => stackExcludedWorktreeIds.includes(item.id))
-      const stackable = items.filter((item) => !stackExcludedWorktreeIds.includes(item.id))
-      const collapsed =
-        stackable.length > 1 &&
-        collapsedTagGroups.includes(project.id + ':' + tag)
+      const stackable = items.filter(
+        (item) => item.stackPreference !== 'never' && !detachedStackWorktreeIds.includes(item.id),
+      )
+      const separate = items.filter(
+        (item) => item.stackPreference === 'never' || detachedStackWorktreeIds.includes(item.id),
+      )
+      const collapsed = stackable.length > 1 && collapsedTagGroups.includes(project.id + ':' + tag)
 
       if (collapsed) {
         const stackId = 'stack:' + project.id + ':' + tag
@@ -128,7 +135,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         })
       }
 
-      excluded.forEach((worktree) => {
+      separate.forEach((worktree) => {
         visibleEntries.push({ type: 'worktree', id: worktree.id, worktree, items })
         visibleNodeForWorktree.set(worktree.id, worktree.id)
       })
@@ -137,7 +144,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const rootDefault = nodePositions[project.id] ?? { x: 420, y: 34 }
     const defaultBranchId = 'default:' + project.id
     const envId = 'env:' + project.id
-
     const nodes: Node[] = [
       {
         id: project.id,
@@ -164,7 +170,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         type: 'defaultBranch',
         draggable: false,
         selectable: false,
-        position: { x: rootDefault.x - 278, y: rootDefault.y },
+        position: { x: rootDefault.x - 266, y: rootDefault.y },
         data: {
           entityId: defaultBranchId,
           kind: 'default-branch',
@@ -177,7 +183,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         type: 'env',
         draggable: false,
         selectable: false,
-        position: { x: rootDefault.x + 334, y: rootDefault.y + 48 },
+        position: { x: rootDefault.x + 334, y: rootDefault.y + 42 },
         data: {
           entityId: envId,
           kind: 'env',
@@ -201,9 +207,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     visibleEntries.forEach((entry, index) => {
       const fallbackPosition = { x: 40 + index * 250, y: 220 }
       if (entry.type === 'stack') {
-        const stackAgents = projectAgents.filter((agent) =>
-          entry.items.some((worktree) => worktree.id === agent.worktreeId),
-        )
+        const stackAgents = projectAgents.filter((agent) => entry.items.some((worktree) => worktree.id === agent.worktreeId))
         const stackPrs = entry.items.filter((worktree) => worktree.prStatus && worktree.prStatus !== 'Closed').length
         const tagDefinition = tags.find((tag) => tag.id === entry.items[0]?.tagId || tag.name === entry.tag)
         const presentation = getTagPresentation(tagDefinition)
@@ -225,8 +229,10 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
             stackItems: entry.items.map((worktree) => ({
               id: worktree.id,
               branch: worktree.branch,
+              prNumber: worktree.prNumber,
               prStatus: worktree.prStatus,
               ciStatus: worktree.ciStatus,
+              hasRunningAgent: projectAgents.some((agent) => agent.worktreeId === worktree.id && agent.state === 'running'),
             })),
           } satisfies BonsaiGraphData,
         })
@@ -235,6 +241,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
       const worktree = entry.worktree
       const worktreeAgents = projectAgents.filter((agent) => agent.worktreeId === worktree.id)
+      const activeWorktreeAgents = worktreeAgents.filter((agent) => agent.state !== 'finished')
+      const finishedAgents = worktreeAgents.filter((agent) => agent.state === 'finished')
       const tagDefinition = tags.find((tag) => tag.id === worktree.tagId || tag.name === worktree.tag)
       const presentation = getTagPresentation(tagDefinition)
       nodes.push({
@@ -258,71 +266,141 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           ciStatus: worktree.ciStatus,
           ciFailed: worktree.ciFailed,
           gitState: worktree.gitState,
-          stats: [{ label: 'agents', value: worktreeAgents.length }],
+          stats: [{ label: 'agents', value: activeWorktreeAgents.length }],
         } satisfies BonsaiGraphData,
       })
-    })
 
-    const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
-    const edgeKeys = new Set<string>()
-
-    projectWorktrees.forEach((worktree) => {
-      const target = visibleNodeForWorktree.get(worktree.id)
-      if (!target) return
-      const parentWorktree = branchToWorktree.get(worktree.mergeTargetBranch)
-      const source = parentWorktree
-        ? visibleNodeForWorktree.get(parentWorktree.id) ?? project.id
-        : project.id
-      if (source === target) return
-      const edgeKey = source + '>' + target
-      if (edgeKeys.has(edgeKey)) return
-      edgeKeys.add(edgeKey)
-      const nested = worktree.mergeTargetBranch !== project.defaultBranch && Boolean(parentWorktree)
-      edges.push({
-        id: 'merge:' + edgeKey,
-        source,
-        target,
-        type: 'smoothstep',
-        data: { relationship: 'hierarchy', mergeTargetBranch: worktree.mergeTargetBranch },
-        label: nested ? 'merge → ' + worktree.mergeTargetBranch : undefined,
-        labelStyle: nested ? { fill: 'rgb(151 109 255)', fontSize: 8 } : undefined,
-        labelBgStyle: nested ? { fill: 'rgb(12 14 17)', fillOpacity: 0.94 } : undefined,
-        labelBgPadding: nested ? [4, 2] : undefined,
-        style: nested
-          ? { stroke: 'rgb(151 109 255 / .62)', strokeWidth: 1.25, strokeDasharray: '5 4' }
-          : { stroke: 'rgb(62 65 75)', strokeWidth: 1 },
-      })
-    })
-
-    projectWorktrees.forEach((worktree) => {
-      const visibleParent = visibleNodeForWorktree.get(worktree.id)
-      if (!visibleParent || visibleParent !== worktree.id) return
-      const worktreeAgents = projectAgents.filter((agent) => agent.worktreeId === worktree.id)
-      worktreeAgents.forEach((agent, agentIndex) => {
-        const id = agent.id
+      activeWorktreeAgents.forEach((agent, agentIndex) => {
         nodes.push({
-          id,
+          id: agent.id,
           type: 'agent',
-          position: nodePositions[id] ?? { x: 58, y: 420 + agentIndex * 110 },
+          position: nodePositions[agent.id] ?? { x: 58 + agentIndex * 192, y: 420 },
           data: {
-            entityId: id,
+            entityId: agent.id,
             kind: 'agent',
             title: agent.name,
             agentState: agent.state,
             provider: agent.provider,
+            model: agent.model,
+            reasoningEffort: agent.reasoningEffort + (agent.fastMode ? ' · Fast' : ''),
             task: agent.task,
             runtime: agent.runtime,
+            worktreeId: worktree.id,
           } satisfies BonsaiGraphData,
         })
         edges.push({
-          id: worktree.id + '-' + id,
+          id: worktree.id + '-' + agent.id,
           source: worktree.id,
-          target: id,
+          target: agent.id,
           type: 'smoothstep',
           data: { relationship: 'agent' },
           style: { stroke: 'rgb(50 53 62)', strokeWidth: 1 },
         })
       })
+
+      if (finishedAgents.length >= 2) {
+        const historyId = 'history:' + worktree.id
+        nodes.push({
+          id: historyId,
+          type: 'agentHistory',
+          position: nodePositions[historyId] ?? { x: 58, y: 520 },
+          data: {
+            entityId: historyId,
+            kind: 'agent-history',
+            title: 'History',
+            worktreeId: worktree.id,
+            historyItems: finishedAgents.map((agent) => ({
+              id: agent.id,
+              name: agent.name,
+              provider: agent.provider,
+              finishedAt: agent.finishedAt,
+            })),
+          } satisfies BonsaiGraphData,
+        })
+        edges.push({
+          id: worktree.id + '-' + historyId,
+          source: worktree.id,
+          target: historyId,
+          type: 'smoothstep',
+          data: { relationship: 'agent' },
+          style: { stroke: 'rgb(50 53 62)', strokeWidth: 1, strokeDasharray: '3 4' },
+        })
+      } else {
+        finishedAgents.forEach((agent) => {
+          nodes.push({
+            id: agent.id,
+            type: 'agent',
+            position: nodePositions[agent.id] ?? { x: 58, y: 520 },
+            data: {
+              entityId: agent.id,
+              kind: 'agent',
+              title: agent.name,
+              agentState: agent.state,
+              provider: agent.provider,
+              model: agent.model,
+              reasoningEffort: agent.reasoningEffort,
+              task: agent.task,
+              runtime: agent.runtime,
+              worktreeId: worktree.id,
+            } satisfies BonsaiGraphData,
+          })
+          edges.push({
+            id: worktree.id + '-' + agent.id,
+            source: worktree.id,
+            target: agent.id,
+            type: 'smoothstep',
+            data: { relationship: 'agent' },
+            style: { stroke: 'rgb(50 53 62)', strokeWidth: 1, strokeDasharray: '3 4' },
+          })
+        })
+      }
+    })
+
+    const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
+    const structuralKeys = new Set<string>()
+
+    projectWorktrees.forEach((worktree) => {
+      const target = visibleNodeForWorktree.get(worktree.id)
+      if (!target) return
+      const parentWorktree = branchToWorktree.get(worktree.mergeTargetBranch)
+      const source = parentWorktree ? visibleNodeForWorktree.get(parentWorktree.id) ?? project.id : project.id
+      if (source === target) return
+      const edgeKey = source + '>' + target
+      if (!structuralKeys.has(edgeKey)) {
+        structuralKeys.add(edgeKey)
+        const nested = worktree.mergeTargetBranch !== project.defaultBranch && Boolean(parentWorktree)
+        edges.push({
+          id: 'structure:' + edgeKey,
+          source,
+          target,
+          type: 'smoothstep',
+          data: { relationship: 'hierarchy' },
+          style: nested
+            ? { stroke: 'transparent', strokeWidth: 0.1 }
+            : { stroke: 'rgb(62 65 75)', strokeWidth: 1 },
+        })
+      }
+
+      if (
+        parentWorktree &&
+        worktree.mergeTargetBranch !== project.defaultBranch &&
+        visibleNodeForWorktree.get(parentWorktree.id) === parentWorktree.id &&
+        target === worktree.id
+      ) {
+        edges.push({
+          id: 'pr:' + worktree.id + '>' + parentWorktree.id,
+          source: worktree.id,
+          target: parentWorktree.id,
+          sourceHandle: 'pr-source',
+          targetHandle: 'pr-target',
+          type: 'prMerge',
+          data: {
+            relationship: 'merge-pr',
+            prNumber: worktree.prNumber,
+            targetBranch: parentWorktree.branch,
+          },
+        })
+      }
     })
 
     return {
@@ -333,16 +411,18 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         '|' +
         visibleEntries.map((entry) => entry.id).join('|') +
         '|' +
-        projectWorktrees.map((worktree) => worktree.id + '>' + worktree.mergeTargetBranch).join('|'),
+        projectWorktrees.map((worktree) => worktree.id + '>' + worktree.mergeTargetBranch + ':' + worktree.stackPreference).join('|') +
+        '|' +
+        projectAgents.map((agent) => agent.id + ':' + agent.state).join('|'),
     }
   }, [
     activeProjectId,
     agents,
     collapsedTagGroups,
+    detachedStackWorktreeIds,
     envVariables,
     nodePositions,
     projects,
-    stackExcludedWorktreeIds,
     tags,
     worktrees,
   ])
@@ -389,9 +469,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
   useEffect(() => {
     if (!nodesInitialized) return
-    const frame = requestAnimationFrame(() => {
-      void fitViewRef.current({ padding: 0.14, duration: 280 })
-    })
+    const frame = requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 280 }))
     return () => cancelAnimationFrame(frame)
   }, [graph.shapeKey, nodesInitialized])
 
@@ -399,13 +477,11 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     if (!focus || !nodesInitialized) return
     const ids =
       focus === 'agents'
-        ? nodes.filter((node) => node.type === 'agent').map((node) => node.id)
+        ? nodes.filter((node) => node.type === 'agent' || node.type === 'agentHistory').map((node) => node.id)
         : nodes.filter((node) => node.type === 'worktree' || node.type === 'stack').map((node) => node.id)
     const visible = nodes.filter((node) => ids.includes(node.id))
     if (!visible.length) return
-    const frame = requestAnimationFrame(() => {
-      void fitViewRef.current({ nodes: visible, padding: 0.2, duration: 300 })
-    })
+    const frame = requestAnimationFrame(() => void fitViewRef.current({ nodes: visible, padding: 0.2, duration: 300 }))
     return () => cancelAnimationFrame(frame)
   }, [focus, graph.shapeKey, nodesInitialized])
 
@@ -416,7 +492,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       void fitViewRef.current({ padding: 0.14, duration: 300 })
       return
     }
-
     void layoutGraph(nodes, edges).then((laidOut) => {
       setNodes(laidOut)
       const positions: Record<string, { x: number; y: number }> = {}
@@ -449,7 +524,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         positions[node.id] = node.position
       })
       setNodePositionsBatch(positions)
-      requestAnimationFrame(() => void fitView({ padding: 0.14, duration: 300 }))
+      requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
     })
   }
 
@@ -459,19 +534,12 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       companionIds.add('default:' + activeProjectId)
       companionIds.add('env:' + activeProjectId)
     }
-    if (subtreeMoveRootId === node.id) {
-      getDescendantIds(node.id, edges).forEach((id) => companionIds.add(id))
-    }
+    if (subtreeMoveRootId === node.id) getDescendantIds(node.id, edges).forEach((id) => companionIds.add(id))
     const positions: Record<string, { x: number; y: number }> = {}
     nodes.forEach((candidate) => {
       if (companionIds.has(candidate.id)) positions[candidate.id] = { ...candidate.position }
     })
-    dragSnapshot.current = {
-      rootId: node.id,
-      rootStart: { ...node.position },
-      companionIds: [...companionIds],
-      positions,
-    }
+    dragSnapshot.current = { rootId: node.id, rootStart: { ...node.position }, companionIds: [...companionIds], positions }
   }
 
   const dragNode: OnNodeDrag<Node> = (_, node) => {
@@ -482,9 +550,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     setNodes((current) =>
       current.map((candidate) => {
         const initial = snapshot.positions[candidate.id]
-        return initial
-          ? { ...candidate, position: { x: initial.x + dx, y: initial.y + dy } }
-          : candidate
+        return initial ? { ...candidate, position: { x: initial.x + dx, y: initial.y + dy } } : candidate
       }),
     )
   }
@@ -498,9 +564,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     }
     const dx = node.position.x - snapshot.rootStart.x
     const dy = node.position.y - snapshot.rootStart.y
-    const positions: Record<string, { x: number; y: number }> = {
-      [node.id]: node.position,
-    }
+    const positions: Record<string, { x: number; y: number }> = { [node.id]: node.position }
     snapshot.companionIds.forEach((id) => {
       const initial = snapshot.positions[id]
       if (initial) positions[id] = { x: initial.x + dx, y: initial.y + dy }
@@ -516,6 +580,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
@@ -527,7 +592,10 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         minZoom={0.28}
         maxZoom={1.8}
         selectionOnDrag
-        panOnScroll
+        panOnScroll={false}
+        zoomOnScroll
+        zoomOnPinch
+        panOnDrag
         zoomOnDoubleClick={false}
         proOptions={{ hideAttribution: true }}
       >
@@ -537,22 +605,14 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
       <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2">
         <div className="pointer-events-auto flex items-center rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel)/.94)] p-0.5 shadow-lg backdrop-blur">
-          <button
-            onClick={() => void fitView({ padding: 0.14, duration: 300 })}
-            className="bonsai-focus flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
-          >
+          <button onClick={() => void fitViewRef.current({ padding: 0.14, duration: 300 })} className="bonsai-focus flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">
             <LocateFixed size={12} /> Fit
           </button>
-          <button
-            onClick={autoLayout}
-            className="bonsai-focus flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
-          >
+          <button onClick={autoLayout} className="bonsai-focus flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">
             <Network size={12} /> Auto-layout
           </button>
         </div>
-        <span className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel)/.88)] px-2 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">
-          {nodes.length} visible nodes
-        </span>
+        <span className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel)/.88)] px-2 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">{nodes.length} visible nodes</span>
       </div>
 
       <button
@@ -561,9 +621,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       >
         <Plus size={12} /> New worktree
       </button>
-
-      <CreateWorktreeDialog />
-      <EnvEditor />
     </div>
   )
 }

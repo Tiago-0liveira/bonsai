@@ -3,11 +3,14 @@ export type WorktreeKind = 'Production' | 'Feature' | 'Bug' | 'Refactor' | 'Chor
 export type WorktreeSourceType = 'existing' | 'origin' | 'new'
 export type TagColor = 'purple' | 'blue' | 'green' | 'orange' | 'red' | 'cyan' | 'pink'
 export type AgentState = 'running' | 'idle' | 'finished'
-export type BoardStatus = 'todo' | 'progress' | 'done'
-export type BoardKind = 'Idea' | 'Feature' | 'Bug' | 'Problem' | 'Task'
+export type BoardStatus = string
+export type BoardKind = string
 export type PrStatus = 'Draft' | 'Open' | 'Closed' | 'Merged'
 export type CiStatus = 'running' | 'passed' | 'failed' | 'waiting'
 export type DockPanelKey = 'files' | 'prs'
+export type StackPreference = 'auto' | 'never'
+export type FileGitStatus = 'modified' | 'untracked' | 'added' | 'deleted' | 'committed'
+export type EditorPreference = 'vscode' | 'cursor' | 'zed' | 'system'
 
 export interface Workspace {
   id: string
@@ -23,6 +26,9 @@ export interface DefaultBranchInfo {
   prNumber?: number
   prTitle?: string
   ciStatus: CiStatus
+  cdStatus?: CiStatus
+  deploymentTarget?: string
+  deployedAt?: string
 }
 
 export interface Project {
@@ -54,6 +60,7 @@ export interface Worktree {
   sourceType: WorktreeSourceType
   remoteBranch?: string
   mergeTargetBranch: string
+  stackPreference?: StackPreference
   status: Health
   agentIds: string[]
   prNumber?: number
@@ -82,15 +89,36 @@ export interface EnvVariable {
   secret: boolean
 }
 
+export type AgentProvider = 'Claude' | 'Codex' | 'Gemini'
+
 export interface Agent {
   id: string
   worktreeId: string
   name: string
-  provider: 'Claude' | 'Codex' | 'Gemini'
+  provider: AgentProvider
+  model: string
+  reasoningEffort: string
+  fastMode?: boolean
+  workType: string
+  prompt: string
+  archived: boolean
   state: AgentState
   task: string
   runtime: string
   terminalId: string
+  createdAt: string
+  finishedAt?: string
+}
+
+export interface StartAgentInput {
+  worktreeId: string
+  name: string
+  provider: AgentProvider
+  model: string
+  reasoningEffort: string
+  fastMode: boolean
+  workType: string
+  prompt: string
 }
 
 export interface Process {
@@ -106,13 +134,39 @@ export interface PullRequest {
   id: string
   number: number
   title: string
+  description: string
   branch: string
   base: string
-  status: 'Open' | 'Draft' | 'Merged' | 'Closed'
+  status: PrStatus
+  author?: string
+  createdAt: string
+  updatedAt: string
+  mergeable?: boolean
   checks: { name: string; status: 'success' | 'running' | 'failed' }[]
-  commits: { sha: string; message: string; author: string }[]
-  conversation: { author: string; body: string; time: string }[]
+  commits: { sha: string; message: string; author: string; time?: string }[]
+  conversation: { author: string; body: string; time: string; kind?: 'comment' | 'review' | 'system' | 'checks' }[]
   files: { path: string; additions: number; deletions: number; diff: string[] }[]
+}
+
+export interface BoardList {
+  id: string
+  name: string
+  color: TagColor
+  priority: string
+  itemType: string
+  order: number
+  archived?: boolean
+}
+
+export interface BoardPriority {
+  id: string
+  name: string
+  rank: number
+}
+
+export interface BoardType {
+  id: string
+  name: string
 }
 
 export interface BoardItem {
@@ -121,7 +175,7 @@ export interface BoardItem {
   kind: BoardKind
   status: BoardStatus
   assignee: string
-  priority: 'Low' | 'Medium' | 'High'
+  priority: string
 }
 
 export interface RepoFile {
@@ -131,6 +185,7 @@ export interface RepoFile {
   type: 'file' | 'folder'
   language?: string
   content?: string
+  gitStatus?: FileGitStatus
   children?: RepoFile[]
 }
 

@@ -10,6 +10,9 @@ import { CheckCircle2 } from 'lucide-react'
 import { CommandPalette } from '../../features/command-palette/CommandPalette'
 import { Inspector } from '../../features/inspector/Inspector'
 import { BottomWorkspace } from '../../features/terminal/BottomWorkspace'
+import { CreateWorktreeDialog } from '../../features/workspace/CreateWorktreeDialog'
+import { EnvEditor } from '../../features/workspace/EnvEditor'
+import { StartAgentDialog } from '../../features/workspace/StartAgentDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { ProjectSidebar } from './ProjectSidebar'
 import { TopBar } from './TopBar'
@@ -74,6 +77,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
+        <CreateWorktreeDialog />
+        <StartAgentDialog />
+        <EnvEditor />
         <CommandPalette />
       </div>
     </Tooltip.Provider>

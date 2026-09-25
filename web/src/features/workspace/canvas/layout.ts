@@ -3,14 +3,18 @@ import type { Edge, Node } from '@xyflow/react'
 function sizeOf(node: Node) {
   const type = node.type ?? 'agent'
   if (type === 'project') return { width: 300, height: 154 }
-  if (type === 'defaultBranch') return { width: 244, height: 156 }
+  if (type === 'defaultBranch') return { width: 232, height: 132 }
   if (type === 'env') return { width: 150, height: 56 }
   if (type === 'worktree') return { width: 230, height: 154 }
   if (type === 'stack') {
     const count = Number(node.data?.stackCount ?? 1)
-    return { width: 272, height: 58 + Math.min(6, count) * 31 }
+    return { width: 286, height: 50 + Math.min(7, count) * 34 }
   }
-  return { width: 172, height: 92 }
+  if (type === 'agentHistory') {
+    const count = Number((node.data?.historyItems as unknown[] | undefined)?.length ?? 1)
+    return { width: 190, height: 44 + Math.min(5, count) * 26 }
+  }
+  return { width: 188, height: 98 }
 }
 
 function isHierarchyEdge(edge: Edge) {
@@ -43,7 +47,7 @@ export async function layoutGraph(nodes: Node[], edges: Edge[]) {
   const childMap = new Map<string, string[]>()
   edges.filter(isHierarchyEdge).forEach((edge) => {
     const items = childMap.get(edge.source) ?? []
-    items.push(edge.target)
+    if (!items.includes(edge.target)) items.push(edge.target)
     childMap.set(edge.source, items)
   })
 
@@ -89,10 +93,7 @@ export async function layoutGraph(nodes: Node[], edges: Edge[]) {
 
   const envNode = nodes.find((node) => node.type === 'env')
   if (envNode) {
-    positions.set(envNode.id, {
-      x: rootX + sizeOf(project).width + 34,
-      y: rootY + 48,
-    })
+    positions.set(envNode.id, { x: rootX + sizeOf(project).width + 34, y: rootY + 48 })
   }
 
   const placeChildren = (sourceId: string, centerX: number, depth: number, visiting = new Set<string>()) => {
@@ -127,8 +128,5 @@ export async function layoutGraph(nodes: Node[], edges: Edge[]) {
     overflow += 1
   })
 
-  return nodes.map((node) => ({
-    ...node,
-    position: positions.get(node.id) ?? node.position,
-  }))
+  return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }))
 }

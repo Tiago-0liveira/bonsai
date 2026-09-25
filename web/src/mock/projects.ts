@@ -1,16 +1,8 @@
 import type { Project, Workspace } from '../types'
 
 export const workspaces: Workspace[] = [
-  {
-    id: 'personal',
-    name: 'personal',
-    projectIds: ['bonsai', 'sprout-lab'],
-  },
-  {
-    id: 'client',
-    name: 'client-work',
-    projectIds: ['storefront', 'mobile-backend'],
-  },
+  { id: 'personal', name: 'personal', projectIds: ['bonsai', 'sprout-lab'] },
+  { id: 'client', name: 'client-work', projectIds: ['storefront', 'mobile-backend'] },
 ]
 
 export const projects: Project[] = [
@@ -23,13 +15,16 @@ export const projects: Project[] = [
     health: 'healthy',
     defaultBranch: 'main',
     defaultBranchInfo: {
-      commitSha: 'f0f0578',
-      commitMessage: 'fix(web): keep one source handle per hierarchy node',
+      commitSha: '8170933',
+      commitMessage: 'fix(web): stabilize terminal selectors and lifecycle',
       lastActivity: '8m ago',
       releaseTag: 'v0.8.2',
       prNumber: 26,
       prTitle: 'web workspace prototype',
       ciStatus: 'passed',
+      cdStatus: 'passed',
+      deploymentTarget: 'preview',
+      deployedAt: '6m ago',
     },
     worktreeIds: ['wt-main', 'wt-web', 'wt-docs', 'wt-daemon', 'wt-release', 'wt-review'],
     openPrCount: 4,
@@ -65,6 +60,8 @@ export const projects: Project[] = [
       commitMessage: 'fix: checkout recovery',
       lastActivity: '24m ago',
       ciStatus: 'running',
+      cdStatus: 'waiting',
+      deploymentTarget: 'production',
     },
     worktreeIds: [],
     openPrCount: 1,
@@ -83,6 +80,9 @@ export const projects: Project[] = [
       lastActivity: '1h ago',
       releaseTag: 'v1.4.1',
       ciStatus: 'passed',
+      cdStatus: 'passed',
+      deploymentTarget: 'production',
+      deployedAt: '58m ago',
     },
     worktreeIds: [],
     openPrCount: 0,

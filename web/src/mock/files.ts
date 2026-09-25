@@ -8,25 +8,20 @@ export const repoFiles: RepoFile[] = [
           {
             id: 'workspace', name: 'workspace', path: 'src/features/workspace', type: 'folder', children: [
               {
-                id: 'canvas', name: 'BonsaiCanvas.tsx', path: 'src/features/workspace/canvas/BonsaiCanvas.tsx', type: 'file', language: 'tsx',
-                content: `export function BonsaiCanvas() {
-  return <ReactFlow nodes={nodes} edges={edges} fitView />
-}`,
+                id: 'canvas', name: 'BonsaiCanvas.tsx', path: 'src/features/workspace/canvas/BonsaiCanvas.tsx', type: 'file', language: 'tsx', gitStatus: 'modified',
+                content: 'export function BonsaiCanvas() {\n  return <ReactFlow nodes={nodes} edges={edges} />\n}',
               },
               {
-                id: 'nodes', name: 'BonsaiNode.tsx', path: 'src/features/workspace/nodes/BonsaiNode.tsx', type: 'file', language: 'tsx',
-                content: `export function BonsaiNode({ data }: NodeProps) {
-  return <NodeCard data={data} />
-}`,
+                id: 'nodes', name: 'BonsaiNode.tsx', path: 'src/features/workspace/nodes/BonsaiNode.tsx', type: 'file', language: 'tsx', gitStatus: 'modified',
+                content: 'export function BonsaiNode({ data }: NodeProps) {\n  return <NodeCard data={data} />\n}',
               },
             ],
           },
           {
             id: 'terminal', name: 'terminal', path: 'src/features/terminal', type: 'folder', children: [
               {
-                id: 'fake-terminal', name: 'FakeTerminal.tsx', path: 'src/features/terminal/FakeTerminal.tsx', type: 'file', language: 'tsx',
-                content: `const terminal = new Terminal({ cursorBlink: true })
-// Prototype only: output is simulated in the browser.`,
+                id: 'fake-terminal', name: 'FakeTerminal.tsx', path: 'src/features/terminal/FakeTerminal.tsx', type: 'file', language: 'tsx', gitStatus: 'untracked',
+                content: 'const terminal = new Terminal({ cursorBlink: true })',
               },
             ],
           },
@@ -35,28 +30,20 @@ export const repoFiles: RepoFile[] = [
       {
         id: 'mock', name: 'mock', path: 'src/mock', type: 'folder', children: [
           {
-            id: 'mock-agents', name: 'agents.ts', path: 'src/mock/agents.ts', type: 'file', language: 'ts',
-            content: `export const agents = [
-  { name: 'UI builder', state: 'running' },
-  { name: 'Test runner', state: 'running' },
-]`,
+            id: 'mock-agents', name: 'agents.ts', path: 'src/mock/agents.ts', type: 'file', language: 'ts', gitStatus: 'committed',
+            content: 'export const agents = []',
           },
         ],
       },
     ],
   },
   {
-    id: 'pkg', name: 'package.json', path: 'package.json', type: 'file', language: 'json',
-    content: `{
-  "name": "bonsai-web",
-  "scripts": { "dev": "vite", "test": "vitest run" }
-}`,
+    id: 'pkg', name: 'package.json', path: 'package.json', type: 'file', language: 'json', gitStatus: 'committed',
+    content: '{\n  "name": "bonsai-web"\n}',
   },
   {
-    id: 'readme', name: 'README.md', path: 'README.md', type: 'file', language: 'markdown',
-    content: `# Bonsai web prototype
-
-Frontend-only workspace for validating Bonsai's interaction model.`,
+    id: 'readme', name: 'README.md', path: 'README.md', type: 'file', language: 'markdown', gitStatus: 'committed',
+    content: '# Bonsai web prototype',
   },
 ]
 

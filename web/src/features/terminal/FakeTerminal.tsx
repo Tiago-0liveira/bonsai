@@ -5,12 +5,13 @@ import { useBonsaiStore } from '../../stores/bonsai'
 
 const EMPTY_LINES: string[] = []
 
-export function FakeTerminal() {
+export function FakeTerminal({ terminalId }: { terminalId?: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const activeTerminalId = useBonsaiStore((state) => state.activeTerminalId)
-  const terminalLines = useBonsaiStore((state) => state.terminalOutput[activeTerminalId])
+  const resolvedTerminalId = terminalId ?? activeTerminalId
+  const terminalLines = useBonsaiStore((state) => state.terminalOutput[resolvedTerminalId])
   const lines = terminalLines ?? EMPTY_LINES
 
   useEffect(() => {
@@ -20,8 +21,8 @@ export function FakeTerminal() {
     const terminal = new Terminal({
       cursorBlink: true,
       fontFamily: 'JetBrains Mono, SFMono-Regular, Consolas, monospace',
-      fontSize: 12,
-      lineHeight: 1.35,
+      fontSize: 11,
+      lineHeight: 1.3,
       theme: {
         background: '#0c0e11',
         foreground: '#d7d9df',
@@ -50,7 +51,7 @@ export function FakeTerminal() {
       try {
         fit.fit()
       } catch {
-        // The viewport may be between mount/unmount phases while the dock resizes.
+        // Ignore transient xterm layout races while panels are resizing.
       }
     }
 
@@ -82,12 +83,12 @@ export function FakeTerminal() {
         fit.fit()
         terminal.scrollToBottom()
       } catch {
-        // Ignore transient xterm resize races while switching worktrees.
+        // Ignore transient xterm resize races.
       }
     })
 
     return () => cancelAnimationFrame(frame)
-  }, [activeTerminalId, lines])
+  }, [resolvedTerminalId, lines])
 
   return <div ref={hostRef} className="h-full min-h-[120px] w-full bg-[#0c0e11]" />
 }
