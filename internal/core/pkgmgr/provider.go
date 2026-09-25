@@ -43,4 +43,5 @@ type Options struct {
 	UseCache         bool
 	Refresh          bool
 	AllowProviderCLI bool
+	Runner           Runner
 }
