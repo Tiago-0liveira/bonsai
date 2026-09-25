@@ -38,9 +38,9 @@ func (m *compatibilityManager) RunCommand(name string) string {
 	return strings.Join(parts, " ")
 }
 
-// Detect adapts the new discovery engine to the legacy single-provider API.
-// It intentionally keeps the previous Node -> Cargo -> Make priority so the
-// existing scripts modal remains unchanged during migration.
+// Detect adapts the discovery engine to the legacy single-provider API.
+// The TUI now consumes Discover directly, but this adapter remains for callers
+// that still expect one package/build manager.
 func Detect(dir string) (PackageManager, error) {
 	return DetectWithOptions(dir, Options{UseCache: true})
 }
