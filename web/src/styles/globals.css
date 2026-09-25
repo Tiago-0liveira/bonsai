@@ -31,8 +31,9 @@ body {
   font-size: 13px;
   text-rendering: optimizeLegibility;
 }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; }
+select { color-scheme: dark; }
 ::selection { background: rgb(var(--purple) / .28); }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: rgb(var(--border-strong)); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
@@ -45,10 +46,10 @@ button { color: inherit; }
 .bonsai-focus:focus-visible { outline: 1px solid rgb(var(--purple)); outline-offset: 2px; }
 
 .react-flow__node { font-family: inherit; }
+.react-flow__edge-path { transition: stroke 120ms ease; }
 .react-flow__controls { box-shadow: none !important; border: 1px solid rgb(var(--border)) !important; border-radius: 7px !important; overflow: hidden; }
 .react-flow__controls-button { background: rgb(var(--panel-2)) !important; border-bottom-color: rgb(var(--border)) !important; fill: rgb(var(--muted)) !important; }
 .react-flow__controls-button:hover { background: rgb(var(--panel-3)) !important; }
-.react-flow__minimap { background: rgb(var(--panel)) !important; border: 1px solid rgb(var(--border)); border-radius: 8px; }
 
 .xterm { height: 100%; padding: 10px 12px; }
 .xterm-viewport { scrollbar-color: rgb(var(--border-strong)) transparent; }
