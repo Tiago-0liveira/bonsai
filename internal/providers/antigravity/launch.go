@@ -20,9 +20,9 @@ func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSession
 	}
 	return agents.PreparedSession{
 		Executable: executable,
-		Args: invocationArgs(settings, req.Args),
-		Dir: req.Session.WorkDir,
-		EnvSet: buildEnvironment(req.Account, req.Session),
+		Args:       invocationArgs(settings, req.Args),
+		Dir:        req.Session.WorkDir,
+		EnvSet:     buildEnvironment(req.Account, req.Session),
 	}, nil
 }
 
