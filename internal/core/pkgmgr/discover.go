@@ -117,7 +117,12 @@ func Discover(dir string, opts Options) (*Project, error) {
 		}
 	}
 
-	var groups [][]Command
+	type discoveredCommandGroup struct {
+		commands []Command
+		root     string
+	}
+	var discoveredGroups []discoveredCommandGroup
+	commandIDCounts := map[string]int{}
 	for _, item := range detected {
 		providerCtx := item.ctx
 		providerCtx.Location.ProjectRoot = item.detection.Root
@@ -134,12 +139,19 @@ func Discover(dir string, opts Options) (*Project, error) {
 			if commands[i].Invocation.WorkingDir == "" {
 				commands[i].Invocation.WorkingDir = item.detection.Root
 			}
-			if providerFamilyCounts[item.provider.ID()] > 1 {
-				scope := projectScope(loc, item.detection.Root)
-				commands[i].ID = commands[i].ID + "@" + scope
+			commandIDCounts[commands[i].ID]++
+		}
+		discoveredGroups = append(discoveredGroups, discoveredCommandGroup{commands: commands, root: item.detection.Root})
+	}
+
+	groups := make([][]Command, 0, len(discoveredGroups))
+	for _, group := range discoveredGroups {
+		for i := range group.commands {
+			if commandIDCounts[group.commands[i].ID] > 1 {
+				group.commands[i].ID += "@" + projectScope(loc, group.root)
 			}
 		}
-		groups = append(groups, commands)
+		groups = append(groups, group.commands)
 	}
 	commands := mergeCommands(groups...)
 	overrideRoot := loc.ProjectRoot
