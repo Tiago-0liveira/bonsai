@@ -22,12 +22,12 @@ const (
 )
 
 type usageDashboardRow struct {
-	account     agents.Account
-	gemini5h    *agents.UsageLimit
-	geminiWeek  *agents.UsageLimit
-	third5h     *agents.UsageLimit
-	thirdWeek   *agents.UsageLimit
-	err         error
+	account    agents.Account
+	gemini5h   *agents.UsageLimit
+	geminiWeek *agents.UsageLimit
+	third5h    *agents.UsageLimit
+	thirdWeek  *agents.UsageLimit
+	err        error
 }
 
 func printUsageDashboard(out io.Writer, results []agents.AccountUsageResult) {
@@ -315,7 +315,7 @@ func renderUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, co
 	}
 }
 
-func renderUsageLimitCell(label string, limit *agents.UsageLimit, now time.Time, color, width int) string {
+func renderUsageLimitCell(label string, limit *agents.UsageLimit, now time.Time, color bool, width int) string {
 	fraction, ok := usageFraction(limit)
 	if !ok {
 		plain := "-"
@@ -470,7 +470,7 @@ func usageColorEnabled(out io.Writer) bool {
 		return false
 	}
 	fd := f.Fd()
-	return isatty.IsTerminal(fd) || isatty.IsCygwin(fd)
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 
 func stripUsageANSI(s string) string {
