@@ -58,7 +58,7 @@ func TestRenderUsageDashboardFleetRanking(t *testing.T) {
 		"Agent Fleet Usage",
 		"Fleet Capacity (3 Accounts · 1 Provider)",
 		"Usage Pool:",
-		"Weekly Pool:",
+		"◆ Antigravity · 3 accounts",
 		"● 1 Ready",
 		"▲ 1 Active",
 		"✖ 1 Low",
