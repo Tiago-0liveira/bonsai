@@ -16,7 +16,7 @@ type goDetection struct {
 }
 
 func (goProvider) Detect(ctx Context) (Detection, error) {
-	root, manifest := findProjectFile(ctx.Location.InputDir, ctx.Options.searchDepth(), "go.mod", "go.work")
+	root, manifest := findProjectFileWithin(ctx.Location.InputDir, ctx.Location.RepositoryRoot, ctx.Options.searchDepth(), "go.mod", "go.work")
 	if root == "" {
 		return Detection{}, nil
 	}
