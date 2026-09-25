@@ -205,8 +205,11 @@ func projectScope(loc Location, root string) string {
 	if base == "" {
 		base = loc.InputDir
 	}
-	if rel, err := filepath.Rel(base, root); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel, err := filepath.Rel(base, root); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rel == "." {
+			return "."
+		}
 		return filepath.ToSlash(rel)
 	}
-	return filepath.ToSlash(filepath.Base(root))
+	return "project"
 }
