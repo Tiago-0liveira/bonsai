@@ -156,6 +156,13 @@ export const useBonsaiStore = create<BonsaiState>()(
         if (selection.type === 'agent') {
           dockWorktreeId = state.agents.find((agent) => agent.id === selection.id)?.worktreeId ?? dockWorktreeId
         }
+        if (
+          state.selection.type === selection.type &&
+          state.selection.id === selection.id &&
+          state.dockWorktreeId === dockWorktreeId
+        ) {
+          return
+        }
         set({ selection, dockWorktreeId })
       },
       projectQuery: '',

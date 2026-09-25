@@ -136,7 +136,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         id: project.id,
         type: 'project',
         position: rootDefault,
-        selected: selection.type === 'project' && selection.id === project.id,
         data: {
           entityId: project.id,
           kind: 'project',
@@ -235,7 +234,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         id: worktree.id,
         type: 'worktree',
         position: nodePositions[worktree.id] ?? fallbackPosition,
-        selected: selection.type === 'worktree' && selection.id === worktree.id,
         data: {
           entityId: worktree.id,
           kind: 'worktree',
@@ -299,7 +297,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           id,
           type: 'agent',
           position: nodePositions[id] ?? { x: 58, y: 420 + agentIndex * 110 },
-          selected: selection.type === 'agent' && selection.id === id,
           data: {
             entityId: id,
             kind: 'agent',
@@ -338,7 +335,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     envVariables,
     nodePositions,
     projects,
-    selection,
     stackExcludedWorktreeIds,
     tags,
     worktrees,
@@ -349,6 +345,23 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
   useEffect(() => setNodes(graph.nodes), [graph.nodes, setNodes])
   useEffect(() => setEdges(graph.edges), [graph.edges, setEdges])
+
+  useEffect(() => {
+    setNodes((current) => {
+      let changed = false
+      const next = current.map((node) => {
+        const data = node.data as BonsaiGraphData
+        const selected =
+          (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent') &&
+          selection.type === data.kind &&
+          selection.id === data.entityId
+        if (node.selected === selected) return node
+        changed = true
+        return { ...node, selected }
+      })
+      return changed ? next : current
+    })
+  }, [selection, setNodes])
 
   useEffect(() => {
     let cancelled = false
