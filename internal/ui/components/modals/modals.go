@@ -21,18 +21,18 @@ import (
 type Kind string
 
 const (
-	KindNone        Kind = ""
-	KindCopyFile    Kind = "copy_file"
-	KindScripts     Kind = "scripts"
-	KindRunCommand  Kind = "run_command" // free-text ad-hoc command from the scripts modal
-	KindAliases     Kind = "aliases"
-	KindPalette     Kind = "palette" // command palette (fuzzy over every action)
-	KindYank        Kind = "yank"    // pick what to copy to the clipboard
-	KindBranches    Kind = "branches"
-	KindCommit      Kind = "commit"
-	KindPrune       Kind = "prune"
-	KindNewAlias    Kind = "new_alias"     // enter new alias name
-	KindNewAliasCmd Kind = "new_alias_cmd" // enter new alias command
+	KindNone          Kind = ""
+	KindCopyFile      Kind = "copy_file"
+	KindScripts       Kind = "scripts"
+	KindRunCommand    Kind = "run_command" // free-text ad-hoc command from the scripts modal
+	KindAliases       Kind = "aliases"
+	KindPalette       Kind = "palette" // command palette (fuzzy over every action)
+	KindYank          Kind = "yank"    // pick what to copy to the clipboard
+	KindBranches      Kind = "branches"
+	KindCommit        Kind = "commit"
+	KindPrune         Kind = "prune"
+	KindNewAlias      Kind = "new_alias"       // enter new alias name
+	KindNewAliasCmd   Kind = "new_alias_cmd"   // enter new alias command
 	KindAgentTask     Kind = "agent_task"      // enter AI agent task prompt
 	KindAgentAutoTask Kind = "agent_auto_task" // enter AI agent task prompt with auto branch & worktree
 

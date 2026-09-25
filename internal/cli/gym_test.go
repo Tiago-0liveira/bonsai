@@ -194,4 +194,3 @@ func TestGymRunAutoWorktree(t *testing.T) {
 		t.Errorf("Run = %+v, want run-cli-auto", res.Run)
 	}
 }
-

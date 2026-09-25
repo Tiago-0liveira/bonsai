@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -62,7 +64,13 @@ func TestParseNDJSONEvent(t *testing.T) {
 
 func TestStreamEventsRejectsSequenceGap(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "agym")
-	script := "#!/bin/sh\nprintf '%s\\n' '{\"run_id\":\"run-1\",\"seq\":2,\"timestamp\":\"2026-09-23T12:00:00Z\",\"type\":\"output\",\"payload\":{}}'\n"
+	var script string
+	if runtime.GOOS == "windows" {
+		bin += ".bat"
+		script = "@echo {\"run_id\":\"run-1\",\"seq\":2,\"timestamp\":\"2026-09-23T12:00:00Z\",\"type\":\"output\",\"payload\":{}}\r\n"
+	} else {
+		script = "#!/bin/sh\nprintf '%s\\n' '{\"run_id\":\"run-1\",\"seq\":2,\"timestamp\":\"2026-09-23T12:00:00Z\",\"type\":\"output\",\"payload\":{}}'\n"
+	}
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +79,11 @@ func TestStreamEventsRejectsSequenceGap(t *testing.T) {
 	for range events {
 		t.Fatal("gap event should not be published")
 	}
-	if err := <-errors; err == nil {
+	err := <-errors
+	if err == nil {
 		t.Fatal("expected sequence gap error")
+	}
+	if !strings.Contains(err.Error(), "event sequence gap") {
+		t.Fatalf("unexpected error: %v, want event sequence gap", err)
 	}
 }

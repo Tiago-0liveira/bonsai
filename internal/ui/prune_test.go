@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -145,8 +146,15 @@ func TestKindPruneForceThreadsThrough(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "agym"), []byte("#!/bin/sh\necho '{\"protocol\":{\"major\":1,\"minor\":0},\"ok\":true,\"data\":[]}'\n"), 0o755); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		bat := "@echo {\"protocol\":{\"major\":1,\"minor\":0},\"ok\":true,\"data\":[]}\r\n"
+		if err := os.WriteFile(filepath.Join(binDir, "agym.bat"), []byte(bat), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.WriteFile(filepath.Join(binDir, "agym"), []byte("#!/bin/sh\necho '{\"protocol\":{\"major\":1,\"minor\":0},\"ok\":true,\"data\":[]}'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	m := New(main, cfg, &config.State{})

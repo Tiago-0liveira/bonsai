@@ -99,4 +99,3 @@ func TestAgentAutoStartModalAndMessage(t *testing.T) {
 		t.Errorf("status = %q, want fix/memory-leak", mod.status)
 	}
 }
-

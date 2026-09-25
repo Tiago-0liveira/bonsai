@@ -143,3 +143,15 @@ func TestPruneFailsClosedWithoutLocalBinding(t *testing.T) {
 		t.Fatalf("prune with failed remote lookup = %v, want uncertainty", err)
 	}
 }
+
+func TestPruneAllowedWhenAgymNotInstalledWithoutBinding(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	store, err := NewStore(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &mockClient{runsErr: agym.ErrNotInstalled}
+	if err := CheckPruneAllowed(context.Background(), store, client, repoDir); err != nil {
+		t.Fatalf("prune should be allowed when agym is not installed and no local binding exists: %v", err)
+	}
+}

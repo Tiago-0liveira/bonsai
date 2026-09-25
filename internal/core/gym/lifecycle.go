@@ -37,6 +37,9 @@ func CheckPruneAllowed(ctx context.Context, store *Store, client agym.Client, wo
 		defer cancel()
 		runs, err := client.ListRunsByWorkspace(probeCtx, ws.WorktreeID)
 		if err != nil {
+			if errors.Is(err, agym.ErrNotInstalled) {
+				return nil
+			}
 			return fmt.Errorf("%w: failed to check remote workspace runs: %v", ErrAgentUncertain, err)
 		}
 		for _, r := range runs {
