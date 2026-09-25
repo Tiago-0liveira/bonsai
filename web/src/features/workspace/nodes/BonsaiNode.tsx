@@ -272,10 +272,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
             </div>
           )}
 
-          {data.kind !== 'agent' && data.kind !== 'stack' && (
-            <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
-          )}
-          {data.kind === 'worktree' && (
+          {(data.kind === 'project' || data.kind === 'worktree') && (
             <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
           )}
         </div>
