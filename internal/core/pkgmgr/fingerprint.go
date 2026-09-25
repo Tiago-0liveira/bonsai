@@ -8,14 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 const discoverySchemaVersion = 1
 
 var providerVersions = map[string]string{
-	"node":  "1",
-	"cargo": "1",
-	"make":  "1",
+	"node":   "1",
+	"python": "1",
+	"go":     "1",
+	"cargo":  "1",
+	"make":   "1",
 }
 
 func fileInputs(prefix, workspaceRoot, projectRoot string, paths []string) ([]FingerprintInput, error) {
@@ -52,8 +55,10 @@ func computeFingerprint(providerIDs []string, inputs []FingerprintInput) string 
 	sort.Strings(ids)
 	for _, id := range ids {
 		family := id
-		if len(id) >= 5 && id[:5] == "node:" {
+		if strings.HasPrefix(id, "node:") {
 			family = "node"
+		} else if strings.HasPrefix(id, "python:") {
+			family = "python"
 		}
 		fmt.Fprintf(h, "provider=%s@%s\n", id, providerVersions[family])
 	}
