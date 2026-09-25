@@ -23,7 +23,7 @@ type cargoDetection struct {
 }
 
 func (cargoProvider) Detect(ctx Context) (Detection, error) {
-	root, manifest := findProjectFile(ctx.Location.InputDir, ctx.Options.searchDepth(), "Cargo.toml")
+	root, manifest := findProjectFileWithin(ctx.Location.InputDir, ctx.Location.RepositoryRoot, ctx.Options.searchDepth(), "Cargo.toml")
 	if root == "" {
 		return Detection{}, nil
 	}
