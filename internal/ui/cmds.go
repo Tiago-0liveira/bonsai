@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,9 +46,10 @@ type fileIndexMsg struct {
 }
 
 type scriptsMsg struct {
-	manager string            // detected package manager name, "" if none
-	scripts []string          // selectable script/target names
-	runCmd  map[string]string // script name -> full shell command
+	manager string            // provider name, "project" for mixed providers
+	scripts []string          // selectable command labels
+	runCmd  map[string]string // label -> full shell command
+	runDir  map[string]string // label -> command working directory
 	err     error
 }
 
@@ -171,19 +173,51 @@ func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 		if len(configuredDepth) > 0 {
 			depth = configuredDepth[0]
 		}
-		pm, err := pkgmgr.DetectWithOptions(path, pkgmgr.Options{UseCache: true, SearchDepth: &depth})
+		project, err := pkgmgr.Discover(path, pkgmgr.Options{UseCache: true, SearchDepth: &depth})
 		if err != nil {
 			return scriptsMsg{err: err}
 		}
-		if pm == nil {
-			return scriptsMsg{} // no manager: modal still offers the ad-hoc entry
+		if len(project.Commands) == 0 {
+			return scriptsMsg{} // modal still offers the ad-hoc entry
 		}
-		names := pm.GetScripts()
-		runCmd := make(map[string]string, len(names))
-		for _, n := range names {
-			runCmd[n] = pm.RunCommand(n)
+
+		providerNames := map[string]string{}
+		for _, provider := range project.Providers {
+			providerNames[provider.ID] = provider.Name
 		}
-		return scriptsMsg{manager: pm.Name(), scripts: names, runCmd: runCmd}
+		distinct := map[string]bool{}
+		for _, cmd := range project.Commands {
+			distinct[cmd.Provider] = true
+		}
+		mixed := len(distinct) > 1
+
+		names := make([]string, 0, len(project.Commands))
+		runCmd := make(map[string]string, len(project.Commands))
+		runDir := make(map[string]string, len(project.Commands))
+		for _, cmd := range project.Commands {
+			label := cmd.Name
+			if mixed {
+				provider := providerNames[cmd.Provider]
+				if provider == "" {
+					provider = cmd.Provider
+				}
+				label = "[" + provider + "] " + cmd.Name
+			}
+			parts := append([]string{cmd.Invocation.Program}, cmd.Invocation.Prefix...)
+			names = append(names, label)
+			runCmd[label] = strings.Join(parts, " ")
+			runDir[label] = cmd.Invocation.WorkingDir
+		}
+
+		manager := ""
+		if mixed {
+			manager = "project"
+		} else if len(project.Providers) == 1 {
+			manager = project.Providers[0].Name
+		} else if len(project.Commands) > 0 {
+			manager = "project"
+		}
+		return scriptsMsg{manager: manager, scripts: names, runCmd: runCmd, runDir: runDir}
 	}
 }
 
