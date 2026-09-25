@@ -42,13 +42,19 @@ func (m *compatibilityManager) RunCommand(name string) string {
 // It intentionally keeps the previous Node -> Cargo -> Make priority so the
 // existing scripts modal remains unchanged during migration.
 func Detect(dir string) (PackageManager, error) {
-	project, err := Discover(dir, Options{UseCache: true})
+	return DetectWithOptions(dir, Options{UseCache: true})
+}
+
+// DetectWithOptions adapts discovery to the legacy scripts modal while allowing
+// callers to configure bounded manifest search.
+func DetectWithOptions(dir string, opts Options) (PackageManager, error) {
+	project, err := Discover(dir, opts)
 	if err != nil {
 		return nil, err
 	}
-	for _, wanted := range []string{"node:", "cargo", "make"} {
+	for _, wanted := range []string{"node:", "python:", "go", "cargo", "make"} {
 		for _, provider := range project.Providers {
-			match := provider.ID == wanted || wanted == "node:" && strings.HasPrefix(provider.ID, wanted)
+			match := provider.ID == wanted || (strings.HasSuffix(wanted, ":") && strings.HasPrefix(provider.ID, wanted))
 			if !match {
 				continue
 			}
