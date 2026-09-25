@@ -37,6 +37,16 @@ func Resolve(cmd Command, values ArgumentValues) (Invocation, error) {
 	}
 	args := append([]string(nil), cmd.Invocation.Prefix...)
 
+	known := make(map[string]struct{}, len(cmd.Args))
+	for _, arg := range cmd.Args {
+		known[arg.ID] = struct{}{}
+	}
+	for id := range values {
+		if _, ok := known[id]; !ok {
+			return Invocation{}, fmt.Errorf("pkgmgr: unknown argument %q", id)
+		}
+	}
+
 	positionals := append([]Argument(nil), cmd.Args...)
 	sort.SliceStable(positionals, func(i, j int) bool { return positionals[i].Position < positionals[j].Position })
 
