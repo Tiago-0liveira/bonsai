@@ -445,6 +445,7 @@ func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 	}
 	m.scriptRun = msg.runCmd
 	m.scriptDir = msg.runDir
+	m.scriptExec = msg.runExec
 
 	names := msg.scripts
 	// The sentinel entry is always present (even with no manager) so any command
@@ -1978,15 +1979,14 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 			m.modal = &modal
 			return m, nil
 		}
+		if inv, ok := m.scriptExec[msg.Value]; ok {
+			return m.spawnExec(wt.Path, msg.Value, inv), nil
+		}
 		cmd := m.scriptRun[msg.Value]
 		if cmd == "" {
 			cmd = msg.Value // fallback: run the entry literally
 		}
-		dir := m.scriptDir[msg.Value]
-		if dir == "" {
-			dir = wt.Path
-		}
-		return m.spawn(dir, msg.Value, cmd), nil
+		return m.spawn(wt.Path, msg.Value, cmd), nil
 
 	case modals.KindRunCommand:
 		if msg.Value == "" {
@@ -2088,6 +2088,22 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 func (m Model) spawn(path, label, command string) Model {
 	ownerPath, branch := m.worktreeOwner(path)
 	p, err := m.procs.Spawn(path, branch, label, command)
+	if err != nil {
+		m.status = "spawn: " + err.Error()
+		return m
+	}
+	m.activeProc[ownerPath] = p.ID
+	m.status = "running " + label
+	return m
+}
+
+func (m Model) spawnExec(ownerPath, label string, inv scriptInvocation) Model {
+	_, branch := m.worktreeOwner(ownerPath)
+	dir := inv.Dir
+	if dir == "" {
+		dir = ownerPath
+	}
+	p, err := m.procs.SpawnExec(ownerPath, branch, dir, label, inv.Program, inv.Args)
 	if err != nil {
 		m.status = "spawn: " + err.Error()
 		return m
