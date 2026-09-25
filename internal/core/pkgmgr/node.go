@@ -28,7 +28,7 @@ type nodeDetection struct {
 }
 
 func (nodeProvider) Detect(ctx Context) (Detection, error) {
-	root, manifestPath := findUp(ctx.Location.InputDir, "package.json")
+	root, manifestPath := findProjectFile(ctx.Location.InputDir, ctx.Options.searchDepth(), "package.json")
 	if root == "" {
 		return Detection{}, nil
 	}
