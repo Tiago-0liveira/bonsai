@@ -241,3 +241,23 @@ func TestCargoProviderCLIDisabledDoesNotCallRunner(t *testing.T) {
 		t.Fatalf("runner was called during passive discovery: %+v", runner.calls)
 	}
 }
+
+
+func TestRustCargoProviderFoundAtDepthTwo(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "crates", "api")
+	write(t, app, "Cargo.toml", "[package]\nname = \"api\"\nversion = \"0.1.0\"\n")
+	depth2 := 2
+
+	project, err := Discover(root, Options{SearchDepth: &depth2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(project.Providers) != 1 || project.Providers[0].ID != "cargo" {
+		t.Fatalf("providers = %+v, want cargo/Rust provider", project.Providers)
+	}
+	cmd := commandByID(t, project, "cargo:builtin:test")
+	if cmd.Invocation.WorkingDir != app {
+		t.Fatalf("cargo command dir = %q, want %q", cmd.Invocation.WorkingDir, app)
+	}
+}
