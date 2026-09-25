@@ -68,8 +68,6 @@ func Discover(dir string, opts Options) (*Project, error) {
 	if workspace := nearestRoot(loc.InputDir, workspaces...); workspace != "" {
 		loc.WorkspaceRoot = workspace
 	}
-	ctx := Context{Location: loc, Options: opts}
-
 	providerInfos := make([]ProviderInfo, 0, len(detected))
 	providerIDs := make([]string, 0, len(detected))
 	var fingerprintInputs []FingerprintInput
