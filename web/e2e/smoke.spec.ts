@@ -12,5 +12,5 @@ test('renders the Bonsai workspace shell and worktree flow', async ({ page }) =>
   await expect(page.getByText('Origin branch', { exact: true })).toBeVisible()
   await expect(page.getByText('New branch', { exact: true })).toBeVisible()
   await expect(page.getByText('Worktree tag', { exact: true })).toBeVisible()
-  await page.getByTitle('Close').click()
+  await page.getByRole('button', { name: 'Close', exact: true }).click()
 })
