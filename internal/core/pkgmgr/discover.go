@@ -9,6 +9,7 @@ import (
 type detectedProvider struct {
 	provider  Provider
 	detection Detection
+	ctx       Context
 }
 
 var defaultProviders = []Provider{nodeProvider{}, pythonProvider{}, goProvider{}, cargoProvider{}, makeProvider{}}
@@ -19,21 +20,37 @@ func Discover(dir string, opts Options) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx := Context{Location: loc, Options: opts}
 	var detected []detectedProvider
 	var warnings []Warning
 	var firstErr error
-	for _, provider := range defaultProviders {
-		detection, detectErr := provider.Detect(ctx)
-		if detectErr != nil {
-			if firstErr == nil {
-				firstErr = detectErr
+	seenDetection := map[string]bool{}
+	zeroDepth := 0
+	for _, candidate := range projectSearchDirs(loc.InputDir, opts.searchDepth()) {
+		candidateLoc := loc
+		candidateLoc.InputDir = candidate
+		candidateLoc.ProjectRoot = candidate
+		detectOpts := opts
+		detectOpts.SearchDepth = &zeroDepth
+		detectCtx := Context{Location: candidateLoc, Options: detectOpts}
+		commandCtx := Context{Location: candidateLoc, Options: opts}
+		for _, provider := range defaultProviders {
+			detection, detectErr := provider.Detect(detectCtx)
+			if detectErr != nil {
+				if firstErr == nil {
+					firstErr = detectErr
+				}
+				warnings = append(warnings, Warning{Provider: provider.ID(), Message: detectErr.Error()})
+				continue
 			}
-			warnings = append(warnings, Warning{Provider: provider.ID(), Message: detectErr.Error()})
-			continue
-		}
-		if detection.Applicable {
-			detected = append(detected, detectedProvider{provider: provider, detection: detection})
+			if !detection.Applicable {
+				continue
+			}
+			key := detection.ID + "\x00" + filepath.Clean(detection.Root)
+			if seenDetection[key] {
+				continue
+			}
+			seenDetection[key] = true
+			detected = append(detected, detectedProvider{provider: provider, detection: detection, ctx: commandCtx})
 		}
 	}
 	if len(detected) == 0 && firstErr != nil {
@@ -51,7 +68,7 @@ func Discover(dir string, opts Options) (*Project, error) {
 	if workspace := nearestRoot(loc.InputDir, workspaces...); workspace != "" {
 		loc.WorkspaceRoot = workspace
 	}
-	ctx.Location = loc
+	ctx := Context{Location: loc, Options: opts}
 
 	providerInfos := make([]ProviderInfo, 0, len(detected))
 	providerIDs := make([]string, 0, len(detected))
@@ -60,7 +77,10 @@ func Discover(dir string, opts Options) (*Project, error) {
 		d := item.detection
 		providerInfos = append(providerInfos, ProviderInfo{ID: d.ID, Name: d.Name, Root: d.Root, WorkspaceRoot: d.WorkspaceRoot})
 		providerIDs = append(providerIDs, d.ID)
-		inputs, fpErr := item.provider.FingerprintInputs(ctx, d)
+		providerCtx := item.ctx
+		providerCtx.Location.ProjectRoot = d.Root
+		providerCtx.Location.WorkspaceRoot = d.WorkspaceRoot
+		inputs, fpErr := item.provider.FingerprintInputs(providerCtx, d)
 		if fpErr != nil {
 			warnings = append(warnings, Warning{Provider: d.ID, Message: fpErr.Error()})
 			continue
@@ -77,7 +97,19 @@ func Discover(dir string, opts Options) (*Project, error) {
 	}
 	fingerprint := computeFingerprint(providerIDs, fingerprintInputs)
 
-	if opts.UseCache && !opts.Refresh {
+	providerCounts := map[string]int{}
+	for _, item := range detected {
+		providerCounts[item.detection.ID]++
+	}
+	cacheSafe := true
+	for _, count := range providerCounts {
+		if count > 1 {
+			cacheSafe = false
+			break
+		}
+	}
+
+	if opts.UseCache && cacheSafe && !opts.Refresh {
 		if cached, ok := loadCache(fingerprint); ok {
 			return rebaseCachedProject(*cached, loc, detected), nil
 		}
@@ -85,7 +117,10 @@ func Discover(dir string, opts Options) (*Project, error) {
 
 	var groups [][]Command
 	for _, item := range detected {
-		commands, commandErr := item.provider.Commands(ctx, item.detection)
+		providerCtx := item.ctx
+		providerCtx.Location.ProjectRoot = item.detection.Root
+		providerCtx.Location.WorkspaceRoot = item.detection.WorkspaceRoot
+		commands, commandErr := item.provider.Commands(providerCtx, item.detection)
 		if commandErr != nil {
 			warnings = append(warnings, Warning{Provider: item.detection.ID, Message: commandErr.Error()})
 			continue
@@ -96,6 +131,10 @@ func Discover(dir string, opts Options) (*Project, error) {
 			}
 			if commands[i].Invocation.WorkingDir == "" {
 				commands[i].Invocation.WorkingDir = item.detection.Root
+			}
+			if providerCounts[item.detection.ID] > 1 {
+				scope := projectScope(loc, item.detection.Root)
+				commands[i].ID = commands[i].ID + "@" + scope
 			}
 		}
 		groups = append(groups, commands)
@@ -108,7 +147,7 @@ func Discover(dir string, opts Options) (*Project, error) {
 	commands = mergeCommands(commands)
 
 	project := &Project{Location: loc, Providers: providerInfos, Commands: commands, Fingerprint: fingerprint, Warnings: warnings}
-	if opts.UseCache {
+	if opts.UseCache && cacheSafe {
 		_ = storeCache(*project)
 	}
 	return project, nil
@@ -160,4 +199,16 @@ func rebasePath(path, oldRoot, newRoot string) string {
 		return path
 	}
 	return filepath.Join(newRoot, rel)
+}
+
+
+func projectScope(loc Location, root string) string {
+	base := loc.RepositoryRoot
+	if base == "" {
+		base = loc.InputDir
+	}
+	if rel, err := filepath.Rel(base, root); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(filepath.Base(root))
 }
