@@ -45,7 +45,11 @@ func Discover(dir string, opts Options) (*Project, error) {
 			if !detection.Applicable {
 				continue
 			}
-			key := detection.ID + "\x00" + filepath.Clean(detection.Root)
+			identityRoot := detection.Root
+			if detection.ID == "cargo" && detection.WorkspaceRoot != "" {
+				identityRoot = detection.WorkspaceRoot
+			}
+			key := detection.ID + "\x00" + filepath.Clean(identityRoot)
 			if seenDetection[key] {
 				continue
 			}
