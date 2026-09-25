@@ -45,11 +45,18 @@ type fileIndexMsg struct {
 	err   error
 }
 
+type scriptInvocation struct {
+	Program string
+	Args    []string
+	Dir     string
+}
+
 type scriptsMsg struct {
-	manager string            // provider name, "project" for mixed providers
-	scripts []string          // selectable command labels
-	runCmd  map[string]string // label -> full shell command
-	runDir  map[string]string // label -> command working directory
+	manager string                      // provider name, "project" for mixed providers
+	scripts []string                    // selectable command labels
+	runCmd  map[string]string           // label -> display command
+	runDir  map[string]string           // label -> command working directory
+	runExec map[string]scriptInvocation // label -> shell-free invocation
 	err     error
 }
 
@@ -194,6 +201,7 @@ func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 		names := make([]string, 0, len(project.Commands))
 		runCmd := make(map[string]string, len(project.Commands))
 		runDir := make(map[string]string, len(project.Commands))
+		runExec := make(map[string]scriptInvocation, len(project.Commands))
 		for _, cmd := range project.Commands {
 			label := cmd.Name
 			if mixed {
@@ -203,10 +211,15 @@ func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 				}
 				label = "[" + provider + "] " + cmd.Name
 			}
-			parts := append([]string{cmd.Invocation.Program}, cmd.Invocation.Prefix...)
+			inv, err := pkgmgr.Resolve(cmd, nil)
+			if err != nil {
+				return scriptsMsg{err: err}
+			}
+			parts := append([]string{inv.Program}, inv.Args...)
 			names = append(names, label)
 			runCmd[label] = strings.Join(parts, " ")
-			runDir[label] = cmd.Invocation.WorkingDir
+			runDir[label] = inv.Dir
+			runExec[label] = scriptInvocation{Program: inv.Program, Args: append([]string(nil), inv.Args...), Dir: inv.Dir}
 		}
 
 		manager := ""
@@ -217,7 +230,7 @@ func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 		} else if len(project.Commands) > 0 {
 			manager = "project"
 		}
-		return scriptsMsg{manager: manager, scripts: names, runCmd: runCmd, runDir: runDir}
+		return scriptsMsg{manager: manager, scripts: names, runCmd: runCmd, runDir: runDir, runExec: runExec}
 	}
 }
 
