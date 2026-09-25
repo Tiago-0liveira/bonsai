@@ -11,6 +11,7 @@ import {
   ScrollText,
   TestTube2,
   TerminalSquare,
+  type LucideIcon,
 } from 'lucide-react'
 import { activity } from '../../mock/activity'
 import { flattenFiles, repoFiles } from '../../mock/files'
@@ -19,7 +20,7 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import type { DockTab } from '../../types'
 import { FakeTerminal } from './FakeTerminal'
 
-const tabs: { id: DockTab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+const tabs: { id: DockTab; label: string; icon: LucideIcon }[] = [
   { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare },
   { id: 'tests', label: 'Tests', icon: TestTube2 },
