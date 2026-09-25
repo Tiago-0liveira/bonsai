@@ -139,6 +139,16 @@ func TestKindPruneForceThreadsThrough(t *testing.T) {
 	}
 
 	cfg := &config.Config{Upstream: "origin/main"}
+	// The prune safety probe needs a healthy AGYM response before Git removes a
+	// worktree. Serve an empty run list so this test reaches the Git force path.
+	binDir := filepath.Join(base, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "agym"), []byte("#!/bin/sh\necho '{\"protocol\":{\"major\":1,\"minor\":0},\"ok\":true,\"data\":[]}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	m := New(main, cfg, &config.State{})
 	m.width, m.height = 100, 40
 	m.worktrees = []git.Worktree{{Path: wtPath, Branch: "feat"}}

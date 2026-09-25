@@ -37,8 +37,7 @@ func CheckPruneAllowed(ctx context.Context, store *Store, client agym.Client, wo
 		defer cancel()
 		runs, err := client.ListRunsByWorkspace(probeCtx, ws.WorktreeID)
 		if err != nil {
-			// Remote check failed, but no local binding exists; allow prune
-			return nil
+			return fmt.Errorf("%w: failed to check remote workspace runs: %v", ErrAgentUncertain, err)
 		}
 		for _, r := range runs {
 			if !agym.IsTerminal(r.Status) {
@@ -49,7 +48,7 @@ func CheckPruneAllowed(ctx context.Context, store *Store, client agym.Client, wo
 	}
 
 	// Pending submission must block prune
-	if binding.Submission == SubmissionPending {
+	if binding.Submission == SubmissionPending || (binding.RunID == "" && binding.RequestID != "") {
 		return fmt.Errorf("%w: run submission is pending (request %s)", ErrWorktreeHasActiveAgent, binding.RequestID)
 	}
 
@@ -61,10 +60,19 @@ func CheckPruneAllowed(ctx context.Context, store *Store, client agym.Client, wo
 
 		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
+		if binding.AGYMInstanceID != "" {
+			info, err := client.Info(probeCtx)
+			if err != nil || info == nil || info.InstanceID != binding.AGYMInstanceID {
+				return fmt.Errorf("%w: AGYM installation identity changed", ErrAgentUncertain)
+			}
+		}
 
 		run, err := client.GetRun(probeCtx, binding.RunID)
 		if err != nil {
 			return fmt.Errorf("%w: failed to query run %s: %v", ErrAgentUncertain, binding.RunID, err)
+		}
+		if run == nil || run.RunID != binding.RunID || (run.RequestID != "" && run.RequestID != binding.RequestID) {
+			return fmt.Errorf("%w: run identity mismatch for %s", ErrAgentUncertain, binding.RunID)
 		}
 
 		if !agym.IsTerminal(run.Status) {
@@ -72,7 +80,9 @@ func CheckPruneAllowed(ctx context.Context, store *Store, client agym.Client, wo
 		}
 
 		// Terminal run: archive binding
-		_ = store.ArchiveBinding(binding)
+		if err := store.ArchiveBinding(binding); err != nil {
+			return fmt.Errorf("%w: failed to archive terminal run: %v", ErrAgentUncertain, err)
+		}
 	}
 
 	return nil

@@ -117,7 +117,62 @@ func (s *Service) GetAgentView(ctx context.Context, worktreePath string) (*Agent
 		return nil, err
 	}
 	if binding == nil {
-		return nil, nil
+		history, historyErr := s.store.LatestHistory(ws.WorktreeID)
+		if historyErr != nil {
+			return nil, historyErr
+		}
+		// Recover a run after local binding loss only when every public identity
+		// agrees. A branch name or reused path is insufficient.
+		if s.client != nil {
+			runs, lookupErr := s.client.ListRunsByWorkspace(ctx, ws.WorktreeID)
+			if lookupErr == nil {
+				for _, candidate := range runs {
+					if agym.IsTerminal(candidate.Status) && history != nil &&
+						!candidate.CreatedAt.After(history.CreatedAt) {
+						continue
+					}
+					if candidate.Client != "bonsai" || candidate.ClientID != s.clientID ||
+						candidate.Workspace.Key != ws.WorktreeID ||
+						candidate.Workspace.Cwd != ws.Path ||
+						candidate.Workspace.RepositoryKey != ws.RepositoryID {
+						continue
+					}
+					binding = &RunBinding{SchemaVersion: CurrentSchemaVersion, Workspace: *ws,
+						RequestID: candidate.RequestID, RunID: candidate.RunID, LeaseID: candidate.LeaseID,
+						CreatedAt: candidate.CreatedAt, Submission: SubmissionAcknowledged}
+					if info, err := s.client.Info(ctx); err == nil && info != nil {
+						binding.AGYMInstanceID = info.InstanceID
+					}
+					if err := s.store.SaveBinding(binding); err != nil {
+						return nil, err
+					}
+					break
+				}
+			}
+		}
+		if binding == nil {
+			binding = history
+			if binding == nil {
+				return nil, nil
+			}
+		}
+	}
+	if binding.AGYMInstanceID != "" && s.client != nil {
+		info, err := s.client.Info(ctx)
+		if err != nil || info == nil || info.InstanceID != binding.AGYMInstanceID {
+			return &AgentView{Binding: *binding, ObservedAt: time.Now(), Stale: true,
+				Error: "AGYM installation identity could not be verified"}, nil
+		}
+	}
+	if s.client != nil && binding.RunID != "" && binding.Submission == SubmissionAcknowledged {
+		run, err := s.client.GetRun(ctx, binding.RunID)
+		if err == nil && run != nil && run.RunID == binding.RunID && run.RequestID == binding.RequestID &&
+			agym.IsTerminal(run.Status) {
+			if archiveErr := s.store.ArchiveBinding(binding); archiveErr != nil {
+				return nil, archiveErr
+			}
+			return &AgentView{Binding: *binding, Run: run, ObservedAt: time.Now()}, nil
+		}
 	}
 
 	reconciledBinding, run, err := ReconcileBinding(ctx, s.store, s.client, s.clientID, binding)
@@ -140,6 +195,17 @@ func (s *Service) Start(ctx context.Context, worktreePath, profile, task string)
 	}
 	if s.store == nil {
 		return nil, errors.New("no gym store available")
+	}
+	info, err := s.client.Info(ctx)
+	if err != nil {
+		return nil, err
+	}
+	instanceID := ""
+	if info != nil {
+		if !info.SupportsMajor(agym.SupportedProtocolMajor) {
+			return nil, agym.ErrProtocolIncompatible
+		}
+		instanceID = info.InstanceID
 	}
 
 	// Canonicalize and validate path
@@ -175,6 +241,9 @@ func (s *Service) Start(ctx context.Context, worktreePath, profile, task string)
 				if probeErr == nil && r != nil && !agym.IsTerminal(r.Status) {
 					return agym.ErrWorkspaceBusy
 				}
+				if probeErr != nil || r == nil || r.RunID != existing.RunID {
+					return fmt.Errorf("cannot verify previous agent run: %w", agym.ErrWorkspaceBusy)
+				}
 			}
 		}
 
@@ -184,11 +253,12 @@ func (s *Service) Start(ctx context.Context, worktreePath, profile, task string)
 
 		requestID := NewUUID()
 		binding := &RunBinding{
-			SchemaVersion: CurrentSchemaVersion,
-			Workspace:     *ws,
-			RequestID:     requestID,
-			CreatedAt:     time.Now(),
-			Submission:    SubmissionPending,
+			SchemaVersion:  CurrentSchemaVersion,
+			Workspace:      *ws,
+			AGYMInstanceID: instanceID,
+			RequestID:      requestID,
+			CreatedAt:      time.Now(),
+			Submission:     SubmissionPending,
 		}
 
 		if err := s.store.SaveBindingLocked(binding); err != nil {
@@ -212,8 +282,14 @@ func (s *Service) Start(ctx context.Context, worktreePath, profile, task string)
 
 		run, err := s.client.StartRun(ctx, startReq)
 		if err != nil {
-			binding.Submission = SubmissionRejected
-			_ = s.store.SaveBindingLocked(binding)
+			// A transport failure leaves the submission outcome unknown. Keep the
+			// durable request ID for reconciliation and an explicit same-ID retry.
+			if _, known := agym.AsProtocolError(err); known {
+				binding.Submission = SubmissionRejected
+				if saveErr := s.store.SaveBindingLocked(binding); saveErr != nil {
+					return fmt.Errorf("saving rejected binding: %w", saveErr)
+				}
+			}
 			return err
 		}
 
@@ -279,10 +355,22 @@ func (s *Service) Attach(ctx context.Context, worktreePath, runID string, after 
 		return ErrNoActiveRun
 	}
 
-	// First, fetch any historical events if after was specified or from beginning
-	page, err := s.client.GetEvents(ctx, targetRunID, after, 200)
-	if err == nil && page != nil {
+	// Drain every historical page before opening the live stream.
+	for {
+		page, err := s.client.GetEvents(ctx, targetRunID, after, 200)
+		if err != nil {
+			return err
+		}
+		if page == nil {
+			return agym.ErrInvalidResponse
+		}
 		for _, ev := range page.Events {
+			if ev.Seq <= after {
+				continue
+			}
+			if ev.Seq != after+1 || ev.RunID != targetRunID {
+				return fmt.Errorf("%w: event sequence gap", agym.ErrInvalidResponse)
+			}
 			if ev.Type == "output" {
 				payload, err := agym.ParseOutputPayload(ev)
 				if err == nil {
@@ -291,8 +379,14 @@ func (s *Service) Attach(ctx context.Context, worktreePath, runID string, after 
 			}
 			after = ev.Seq
 		}
-		if page.Snapshot != nil && agym.IsTerminal(page.Snapshot.Status) {
+		if !page.HasMore && page.Snapshot != nil && agym.IsTerminal(page.Snapshot.Status) {
 			return nil
+		}
+		if !page.HasMore {
+			break
+		}
+		if len(page.Events) == 0 {
+			return fmt.Errorf("%w: event page made no progress", agym.ErrInvalidResponse)
 		}
 	}
 
@@ -303,13 +397,29 @@ func (s *Service) Attach(ctx context.Context, worktreePath, runID string, after 
 		case <-ctx.Done():
 			return ctx.Err()
 		case err, ok := <-errCh:
-			if ok && err != nil {
+			if !ok {
+				errCh = nil
+			} else if err != nil {
 				return err
 			}
 		case ev, ok := <-eventsCh:
 			if !ok {
+				run, err := s.client.GetRun(ctx, targetRunID)
+				if err != nil {
+					return err
+				}
+				if run == nil || !agym.IsTerminal(run.Status) {
+					return fmt.Errorf("%w: event stream ended before terminal status", agym.ErrTransport)
+				}
 				return nil
 			}
+			if ev.Seq <= after {
+				continue
+			}
+			if ev.Seq != after+1 || ev.RunID != targetRunID {
+				return fmt.Errorf("%w: event sequence gap", agym.ErrInvalidResponse)
+			}
+			after = ev.Seq
 			if ev.Type == "output" {
 				payload, err := agym.ParseOutputPayload(ev)
 				if err == nil {

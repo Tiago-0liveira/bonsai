@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -56,5 +57,21 @@ func TestParseNDJSONEvent(t *testing.T) {
 	}
 	if payload.Text != "hello world\n" {
 		t.Errorf("payload text = %q, want hello world\n", payload.Text)
+	}
+}
+
+func TestStreamEventsRejectsSequenceGap(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "agym")
+	script := "#!/bin/sh\nprintf '%s\\n' '{\"run_id\":\"run-1\",\"seq\":2,\"timestamp\":\"2026-09-23T12:00:00Z\",\"type\":\"output\",\"payload\":{}}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(bin)
+	events, errors := client.StreamEvents(context.Background(), "run-1", 0)
+	for range events {
+		t.Fatal("gap event should not be published")
+	}
+	if err := <-errors; err == nil {
+		t.Fatal("expected sequence gap error")
 	}
 }

@@ -261,7 +261,15 @@ func (s *Store) ArchiveBinding(b *RunBinding) error {
 		if err := atomicWriteJSON(histPath, b); err != nil {
 			return err
 		}
-		_ = os.Remove(activePath)
+		current, err := s.GetBindingLocked(b.Workspace.WorktreeID)
+		if err != nil {
+			return err
+		}
+		if current != nil && current.RunID == b.RunID && current.RequestID == b.RequestID {
+			if err := os.Remove(activePath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
 		return nil
 	})
 }
@@ -291,6 +299,37 @@ func (s *Store) ListBindings() ([]RunBinding, error) {
 		return nil
 	})
 	return list, err
+}
+
+// LatestHistory returns the newest archived run for a worktree, if any.
+func (s *Store) LatestHistory(worktreeID string) (*RunBinding, error) {
+	var latest *RunBinding
+	err := s.WithLock(func() error {
+		entries, err := os.ReadDir(filepath.Join(s.baseDir, "history"))
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(s.baseDir, "history", entry.Name()))
+			if err != nil {
+				return err
+			}
+			var candidate RunBinding
+			if err := json.Unmarshal(data, &candidate); err != nil {
+				return err
+			}
+			if candidate.Workspace.WorktreeID == worktreeID && candidate.RunID != "" &&
+				(latest == nil || candidate.CreatedAt.After(latest.CreatedAt)) {
+				copy := candidate
+				latest = &copy
+			}
+		}
+		return nil
+	})
+	return latest, err
 }
 
 func atomicWriteJSON(target string, v any) error {

@@ -2,7 +2,7 @@ package gym
 
 import (
 	"context"
-	"time"
+	"fmt"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agym"
 )
@@ -16,18 +16,21 @@ func ReconcileBinding(ctx context.Context, store *Store, client agym.Client, cli
 	// Case 1: Pending submission
 	if binding.Submission == SubmissionPending && binding.RunID == "" {
 		runs, err := client.ListRunsByRequest(ctx, clientID, binding.RequestID)
-		if err == nil && len(runs) > 0 {
-			matching := runs[0]
+		if err != nil {
+			return binding, nil, err
+		}
+		for _, matching := range runs {
+			if matching.RequestID != binding.RequestID || matching.ClientID != clientID ||
+				matching.Workspace.Key != binding.Workspace.WorktreeID {
+				continue
+			}
 			binding.RunID = matching.RunID
 			binding.LeaseID = matching.LeaseID
 			binding.Submission = SubmissionAcknowledged
-			_ = store.SaveBinding(binding)
+			if err := store.SaveBinding(binding); err != nil {
+				return binding, nil, fmt.Errorf("saving recovered binding: %w", err)
+			}
 			return binding, &matching, nil
-		}
-		// If older than 30s and still not found, leave as pending or mark rejected
-		if time.Since(binding.CreatedAt) > 30*time.Second {
-			// Leave as pending so user can retry or cancel
-			return binding, nil, nil
 		}
 		return binding, nil, nil
 	}
@@ -38,8 +41,13 @@ func ReconcileBinding(ctx context.Context, store *Store, client agym.Client, cli
 		if err != nil {
 			return binding, nil, err
 		}
+		if run == nil || run.RunID != binding.RunID || run.RequestID != binding.RequestID {
+			return binding, nil, fmt.Errorf("run identity mismatch for %s", binding.RunID)
+		}
 		if agym.IsTerminal(run.Status) {
-			_ = store.ArchiveBinding(binding)
+			if err := store.ArchiveBinding(binding); err != nil {
+				return binding, run, fmt.Errorf("archiving completed binding: %w", err)
+			}
 		}
 		return binding, run, nil
 	}

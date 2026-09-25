@@ -101,6 +101,32 @@ func TestStoreBindingLifecycle(t *testing.T) {
 	}
 }
 
+func TestArchivingOldRunPreservesNewBinding(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	store, err := NewStore(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.ResolveWorkspaceIdentity(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := &RunBinding{SchemaVersion: CurrentSchemaVersion, Workspace: *ws,
+		RunID: "run-old", RequestID: "req-old", Submission: SubmissionAcknowledged}
+	newBinding := &RunBinding{SchemaVersion: CurrentSchemaVersion, Workspace: *ws,
+		RunID: "run-new", RequestID: "req-new", Submission: SubmissionAcknowledged}
+	if err := store.SaveBinding(newBinding); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ArchiveBinding(old); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetBinding(ws.WorktreeID)
+	if err != nil || got == nil || got.RunID != "run-new" {
+		t.Fatalf("new binding overwritten: %+v, %v", got, err)
+	}
+}
+
 func TestStoreAdvisoryLock(t *testing.T) {
 	repoDir := initTestGitRepo(t)
 	store, err := NewStore(repoDir)

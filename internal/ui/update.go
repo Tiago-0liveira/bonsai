@@ -158,7 +158,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wt, ok := m.selectedWorktree(); ok && wt.Path == msg.worktreePath {
 			if m.rightTab == tabAgent {
 				m.refreshAgentPane(wt.Path)
-				if msg.view != nil && msg.view.Run != nil && !agym.IsTerminal(msg.view.Run.Status) {
+				if msg.view != nil && msg.view.Run != nil &&
+					(!agym.IsTerminal(msg.view.Run.Status) || m.agentCursor[msg.view.Run.RunID] < msg.view.Run.LastSeq) {
 					return m, pollGymEvents(m.gymSvc, msg.view.Run.RunID, m.agentCursor[msg.view.Run.RunID])
 				}
 			}
@@ -167,18 +168,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case gymEventsMsg:
+		if msg.err != nil {
+			m.status = "agent events: " + msg.err.Error()
+			return m, nil
+		}
 		if len(msg.events) > 0 {
 			for _, ev := range msg.events {
+				if ev.RunID != msg.runID || ev.Seq <= m.agentCursor[msg.runID] {
+					continue
+				}
+				if ev.Seq != m.agentCursor[msg.runID]+1 {
+					m.status = "agent event sequence gap; refresh to retry"
+					return m, nil
+				}
 				if ev.Type == "output" {
 					if p, err := agym.ParseOutputPayload(ev); err == nil {
 						m.agentOutput[msg.runID] = append(m.agentOutput[msg.runID], p.Text)
+						if len(m.agentOutput[msg.runID]) > 500 {
+							m.agentOutput[msg.runID] = m.agentOutput[msg.runID][len(m.agentOutput[msg.runID])-500:]
+						}
 					}
 				}
+				m.agentCursor[msg.runID] = ev.Seq
 			}
-			m.agentCursor[msg.runID] = msg.nextCursor
 			if wt, ok := m.selectedWorktree(); ok && m.rightTab == tabAgent {
 				m.refreshAgentPane(wt.Path)
 			}
+		}
+		if msg.hasMore {
+			return m, pollGymEvents(m.gymSvc, msg.runID, m.agentCursor[msg.runID])
 		}
 		return m, nil
 

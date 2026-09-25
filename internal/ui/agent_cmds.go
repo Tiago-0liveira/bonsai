@@ -26,6 +26,7 @@ type gymEventsMsg struct {
 	runID      string
 	events     []agym.Event
 	nextCursor uint64
+	hasMore    bool
 	err        error
 }
 
@@ -66,10 +67,14 @@ func pollGymEvents(svc *gym.Service, runID string, after uint64) tea.Cmd {
 		if err != nil {
 			return gymEventsMsg{runID: runID, err: err}
 		}
+		if page == nil || (page.HasMore && len(page.Events) == 0) {
+			return gymEventsMsg{runID: runID, err: agym.ErrInvalidResponse}
+		}
 		return gymEventsMsg{
 			runID:      runID,
 			events:     page.Events,
 			nextCursor: page.NextCursor,
+			hasMore:    page.HasMore,
 		}
 	}
 }
@@ -117,4 +122,3 @@ func startAgentAutoWorktree(svc *gym.Service, profile, task string, cfg *config.
 		return gymAutoRunMsg{result: res, err: err}
 	}
 }
-

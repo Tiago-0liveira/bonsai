@@ -27,6 +27,9 @@ func (m *mockClient) Info(ctx context.Context) (*agym.InfoData, error) {
 }
 
 func (m *mockClient) GetRun(ctx context.Context, runID string) (*agym.Run, error) {
+	if m.runResp != nil && m.runResp.RequestID == "" && m.startResp != nil {
+		m.runResp.RequestID = m.startResp.RequestID
+	}
 	return m.runResp, m.runErr
 }
 
@@ -39,6 +42,11 @@ func (m *mockClient) ListRunsByRequest(ctx context.Context, clientID, requestID 
 }
 
 func (m *mockClient) StartRun(ctx context.Context, req *agym.StartRequest) (*agym.Run, error) {
+	if m.startResp != nil {
+		m.startResp.RequestID = req.RequestID
+		m.startResp.ClientID = req.ClientID
+		m.startResp.Workspace = req.Workspace
+	}
 	return m.startResp, m.startErr
 }
 
@@ -121,5 +129,17 @@ func TestCheckPruneAllowed(t *testing.T) {
 	err = CheckPruneAllowed(context.Background(), store, mockTerminal, repoDir)
 	if err != nil {
 		t.Errorf("expected nil for terminal run, got %v", err)
+	}
+}
+
+func TestPruneFailsClosedWithoutLocalBinding(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	store, err := NewStore(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &mockClient{runsErr: errors.New("agym unavailable")}
+	if err := CheckPruneAllowed(context.Background(), store, client, repoDir); !errors.Is(err, ErrAgentUncertain) {
+		t.Fatalf("prune with failed remote lookup = %v, want uncertainty", err)
 	}
 }

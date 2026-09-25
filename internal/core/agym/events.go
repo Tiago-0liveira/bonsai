@@ -23,6 +23,8 @@ func (c *ExecClient) StreamEvents(ctx context.Context, runID string, after uint6
 	go func() {
 		defer close(eventsCh)
 		defer close(errCh)
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 
 		bin := c.binaryPath
 		if bin == "" {
@@ -43,7 +45,7 @@ func (c *ExecClient) StreamEvents(ctx context.Context, runID string, after uint6
 			"--ndjson",
 		}
 
-		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd := exec.CommandContext(streamCtx, bin, args...)
 		cmd.Env = append(os.Environ(), "NO_COLOR=1")
 
 		stdout, err := cmd.StdoutPipe()
@@ -58,17 +60,10 @@ func (c *ExecClient) StreamEvents(ctx context.Context, runID string, after uint6
 			return
 		}
 
-		// Ensure process is cleaned up when context completes
-		go func() {
-			<-ctx.Done()
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-		}()
-
 		sc := bufio.NewScanner(stdout)
 		buf := make([]byte, MaxEventBytes)
 		sc.Buffer(buf, MaxEventBytes)
+		cursor := after
 
 		for sc.Scan() {
 			line := sc.Bytes()
@@ -76,10 +71,9 @@ func (c *ExecClient) StreamEvents(ctx context.Context, runID string, after uint6
 				continue
 			}
 
-			// Each NDJSON frame can be an Event directly or wrapped
+			// Each NDJSON frame can be an Event directly or wrapped.
 			var ev Event
-			if err := json.Unmarshal(line, &ev); err != nil {
-				// Try unwrapping envelope if present
+			if err := json.Unmarshal(line, &ev); err != nil || ev.RunID == "" {
 				var wrapped struct {
 					Event *Event `json:"event"`
 					Data  *Event `json:"data"`
@@ -91,9 +85,28 @@ func (c *ExecClient) StreamEvents(ctx context.Context, runID string, after uint6
 						ev = *wrapped.Data
 					}
 				} else {
-					continue // Ignore unparseable or unknown frames
+					errCh <- fmt.Errorf("%w: malformed event frame", ErrInvalidResponse)
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+					return
 				}
 			}
+			if ev.RunID != runID || ev.Seq == 0 || ev.Type == "" {
+				errCh <- fmt.Errorf("%w: invalid event identity", ErrInvalidResponse)
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return
+			}
+			if ev.Seq <= cursor {
+				continue
+			}
+			if ev.Seq != cursor+1 {
+				errCh <- fmt.Errorf("%w: event sequence gap after %d", ErrInvalidResponse, cursor)
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return
+			}
+			cursor = ev.Seq
 
 			select {
 			case <-ctx.Done():
@@ -106,7 +119,9 @@ func (c *ExecClient) StreamEvents(ctx context.Context, runID string, after uint6
 			errCh <- fmt.Errorf("%w: reading ndjson stream: %v", ErrTransport, err)
 		}
 
-		_ = cmd.Wait()
+		if err := cmd.Wait(); err != nil && ctx.Err() == nil && sc.Err() == nil {
+			errCh <- fmt.Errorf("%w: agym events stream exited: %v", ErrTransport, err)
+		}
 	}()
 
 	return eventsCh, errCh

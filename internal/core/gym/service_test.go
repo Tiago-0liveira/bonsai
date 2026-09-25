@@ -2,6 +2,7 @@ package gym
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -44,6 +45,77 @@ func TestServiceStartAndGetAgentView(t *testing.T) {
 	}
 	if view == nil || view.Run == nil || view.Run.RunID != "run-new" {
 		t.Fatalf("unexpected view: %+v", view)
+	}
+}
+
+func TestStartTransportFailureKeepsPendingRequest(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	svc, err := NewService(repoDir, &mockClient{startErr: errors.New("lost acknowledgement")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Start(context.Background(), repoDir, "personal", "task"); err == nil {
+		t.Fatal("expected transport failure")
+	}
+	ws, err := svc.store.ResolveWorkspaceIdentity(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := svc.store.GetBinding(ws.WorktreeID)
+	if err != nil || binding == nil || binding.Submission != SubmissionPending || binding.RequestID == "" {
+		t.Fatalf("pending request not retained: %+v, %v", binding, err)
+	}
+}
+
+func TestGetAgentViewRecoversMatchingRemoteRun(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	client := &mockClient{}
+	svc, err := NewService(repoDir, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := svc.store.ResolveWorkspaceIdentity(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := agym.Run{RunID: "remote-1", RequestID: "req-1", Client: "bonsai",
+		ClientID: svc.clientID, Workspace: agym.WorkspaceIdentityPayload{
+			Key: ws.WorktreeID, Cwd: ws.Path, RepositoryKey: ws.RepositoryID},
+		Status: agym.RunStateRunning, CreatedAt: time.Now()}
+	client.runsResp = []agym.Run{candidate}
+	client.runResp = &candidate
+	view, err := svc.GetAgentView(context.Background(), repoDir)
+	if err != nil || view == nil || view.Run == nil || view.Run.RunID != candidate.RunID {
+		t.Fatalf("remote run not recovered: view=%+v err=%v", view, err)
+	}
+	binding, err := svc.store.GetBinding(ws.WorktreeID)
+	if err != nil || binding == nil || binding.RunID != candidate.RunID {
+		t.Fatalf("remote binding not saved: binding=%+v err=%v", binding, err)
+	}
+}
+
+func TestGetAgentViewKeepsArchivedRunVisible(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	client := &mockClient{}
+	svc, err := NewService(repoDir, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := svc.store.ResolveWorkspaceIdentity(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := &RunBinding{SchemaVersion: CurrentSchemaVersion, Workspace: *ws,
+		RequestID: "req-1", RunID: "run-1", CreatedAt: time.Now(), Submission: SubmissionAcknowledged}
+	if err := svc.store.SaveBinding(binding); err != nil {
+		t.Fatal(err)
+	}
+	client.runResp = &agym.Run{RunID: "run-1", RequestID: "req-1", Status: agym.RunStateSucceeded}
+	for i := 0; i < 2; i++ {
+		view, err := svc.GetAgentView(context.Background(), repoDir)
+		if err != nil || view == nil || view.Run == nil || view.Run.Status != agym.RunStateSucceeded {
+			t.Fatalf("archived run disappeared on view %d: view=%+v err=%v", i, view, err)
+		}
 	}
 }
 
