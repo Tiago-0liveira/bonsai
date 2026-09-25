@@ -165,9 +165,13 @@ func indexFiles(repoDir string) tea.Cmd {
 }
 
 // loadScripts detects a package manager and lists its scripts.
-func loadScripts(path string) tea.Cmd {
+func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 	return func() tea.Msg {
-		pm, err := pkgmgr.Detect(path)
+		depth := 2
+		if len(configuredDepth) > 0 {
+			depth = configuredDepth[0]
+		}
+		pm, err := pkgmgr.DetectWithOptions(path, pkgmgr.Options{UseCache: true, SearchDepth: &depth})
 		if err != nil {
 			return scriptsMsg{err: err}
 		}
