@@ -188,3 +188,40 @@ func findProjectFileWithin(start, boundary string, maxDepth int, names ...string
 func findProjectFile(start string, maxDepth int, names ...string) (string, string) {
 	return findProjectFileWithin(start, "", maxDepth, names...)
 }
+
+
+// projectSearchDirs returns start plus descendant directories up to maxDepth in
+// deterministic breadth-first order. Dependency/build directories and symlinked
+// directories are skipped.
+func projectSearchDirs(start string, maxDepth int) []string {
+	start = filepath.Clean(start)
+	out := []string{start}
+	if maxDepth <= 0 {
+		return out
+	}
+	type queuedDir struct {
+		path  string
+		depth int
+	}
+	queue := []queuedDir{{path: start, depth: 0}}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current.depth >= maxDepth {
+			continue
+		}
+		entries, err := os.ReadDir(current.path)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() || skippedProjectDirs[entry.Name()] {
+				continue
+			}
+			child := filepath.Join(current.path, entry.Name())
+			out = append(out, child)
+			queue = append(queue, queuedDir{path: child, depth: current.depth + 1})
+		}
+	}
+	return out
+}
