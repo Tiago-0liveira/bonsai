@@ -220,7 +220,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
       <MoveSubtreeGrip id={data.entityId} />
       <button
         type="button"
-        onClick={() => data.tag && toggleTagGroup(activeProjectId, data.tag)}
+        onClick={(event) => { event.stopPropagation(); if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
         className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5 text-left"
         style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--purple))'}` }}
       >
@@ -235,7 +235,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (item.hasRunningAgent ? 'bg-[rgb(var(--green))] shadow-[0_0_7px_rgb(var(--green)/.8)]' : 'bg-[rgb(var(--muted-2))]')} title={item.hasRunningAgent ? 'Agent running' : 'No agent running'} />
             <button
               type="button"
-              onClick={() => setSelection({ type: 'worktree', id: item.id })}
+              onClick={(event) => { event.stopPropagation(); setSelection({ type: 'worktree', id: item.id }) }}
               className="min-w-0 flex-1 truncate text-left font-mono text-[9px] hover:text-[rgb(var(--text))]"
             >
               {item.branch}
@@ -244,7 +244,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             <CiBadge status={item.ciStatus} compact />
             <button
               type="button"
-              onClick={() => ejectWorktreeFromStack(item.id)}
+              onClick={(event) => { event.stopPropagation(); ejectWorktreeFromStack(item.id) }}
               title="Detach this worktree from the stack until the group is toggled"
               className="nodrag grid h-5 w-5 shrink-0 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--bg))] hover:text-[rgb(var(--text))]"
             >
