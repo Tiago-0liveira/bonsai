@@ -10,6 +10,7 @@ import {
   type Edge,
   type Node,
   type NodeMouseHandler,
+  type OnNodeDrag,
 } from '@xyflow/react'
 import { LocateFixed, Network, Plus } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
@@ -421,7 +422,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     })
   }
 
-  const beginDrag = (_: React.MouseEvent, node: Node) => {
+  const beginDrag: OnNodeDrag<Node> = (_, node) => {
     const companionIds = new Set<string>()
     if (node.type === 'project') {
       companionIds.add('default:' + activeProjectId)
@@ -442,7 +443,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     }
   }
 
-  const dragNode = (_: React.MouseEvent, node: Node) => {
+  const dragNode: OnNodeDrag<Node> = (_, node) => {
     const snapshot = dragSnapshot.current
     if (!snapshot || snapshot.rootId !== node.id || !snapshot.companionIds.length) return
     const dx = node.position.x - snapshot.rootStart.x
@@ -457,7 +458,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     )
   }
 
-  const finishDrag = (_: React.MouseEvent, node: Node) => {
+  const finishDrag: OnNodeDrag<Node> = (_, node) => {
     const snapshot = dragSnapshot.current
     if (!snapshot || snapshot.rootId !== node.id) {
       setNodePosition(node.id, node.position)
