@@ -163,7 +163,7 @@ func (c *Client) roundtrip(req *protocol.Request) (*protocol.Response, error) {
 	}
 }
 
-// Spawn starts a background process, auto-starting the daemon if needed.
+// Spawn starts a shell command in a background process, auto-starting the daemon if needed.
 func (c *Client) Spawn(worktree, branch, label, command string, policy *procstore.Policy) (*procstore.Record, error) {
 	if err := c.ensureDaemon(); err != nil {
 		return nil, err
@@ -171,6 +171,24 @@ func (c *Client) Spawn(worktree, branch, label, command string, policy *procstor
 	resp, err := c.roundtrip(&protocol.Request{
 		Kind: protocol.KindSpawn, Worktree: worktree, Branch: branch,
 		Label: label, Command: command, Policy: policy,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Record, nil
+}
+
+// SpawnExec starts a shell-free program+argv command. worktree remains the
+// owning Git worktree while workingDir may point at a nested project.
+func (c *Client) SpawnExec(worktree, branch, workingDir, label, program string, args []string, policy *procstore.Policy) (*procstore.Record, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	display := strings.Join(append([]string{program}, args...), " ")
+	resp, err := c.roundtrip(&protocol.Request{
+		Kind: protocol.KindSpawn, Worktree: worktree, Branch: branch,
+		Label: label, Command: display, Program: program,
+		Args: append([]string(nil), args...), WorkingDir: workingDir, Policy: policy,
 	})
 	if err != nil {
 		return nil, err
