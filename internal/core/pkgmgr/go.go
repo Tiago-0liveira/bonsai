@@ -25,7 +25,7 @@ func (goProvider) Detect(ctx Context) (Detection, error) {
 	workspacePath := ""
 	if filepath.Base(manifest) == "go.work" {
 		workspaceRoot, workspacePath = root, manifest
-	} else if wr, wp := findUp(root, "go.work"); wr != "" {
+	} else if wr, wp := findUpTo(root, ctx.Location.RepositoryRoot, "go.work"); wr != "" {
 		workspaceRoot, workspacePath = wr, wp
 	}
 
