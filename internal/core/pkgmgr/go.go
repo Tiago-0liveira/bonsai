@@ -16,16 +16,14 @@ type goDetection struct {
 }
 
 func (goProvider) Detect(ctx Context) (Detection, error) {
-	root, manifest := findProjectFileWithin(ctx.Location.InputDir, ctx.Location.RepositoryRoot, ctx.Options.searchDepth(), "go.mod", "go.work")
+	root, manifest := findProjectFileWithin(ctx.Location.InputDir, ctx.Location.RepositoryRoot, ctx.Options.searchDepth(), "go.mod")
 	if root == "" {
 		return Detection{}, nil
 	}
 
 	workspaceRoot := ""
 	workspacePath := ""
-	if filepath.Base(manifest) == "go.work" {
-		workspaceRoot, workspacePath = root, manifest
-	} else if wr, wp := findUpTo(root, ctx.Location.RepositoryRoot, "go.work"); wr != "" {
+	if wr, wp := findUpTo(root, ctx.Location.RepositoryRoot, "go.work"); wr != "" {
 		workspaceRoot, workspacePath = wr, wp
 	}
 
