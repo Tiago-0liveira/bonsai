@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -443,6 +444,7 @@ func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.scriptRun = msg.runCmd
+	m.scriptDir = msg.runDir
 
 	names := msg.scripts
 	// The sentinel entry is always present (even with no manager) so any command
@@ -1980,7 +1982,11 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		if cmd == "" {
 			cmd = msg.Value // fallback: run the entry literally
 		}
-		return m.spawn(wt.Path, msg.Value, cmd), nil
+		dir := m.scriptDir[msg.Value]
+		if dir == "" {
+			dir = wt.Path
+		}
+		return m.spawn(dir, msg.Value, cmd), nil
 
 	case modals.KindRunCommand:
 		if msg.Value == "" {
@@ -2080,24 +2086,34 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 // spawn starts a background process, marks it active for its worktree, and sets
 // a status line.
 func (m Model) spawn(path, label, command string) Model {
-	p, err := m.procs.Spawn(path, m.branchForPath(path), label, command)
+	ownerPath, branch := m.worktreeOwner(path)
+	p, err := m.procs.Spawn(path, branch, label, command)
 	if err != nil {
 		m.status = "spawn: " + err.Error()
 		return m
 	}
-	m.activeProc[path] = p.ID
+	m.activeProc[ownerPath] = p.ID
 	m.status = "running " + label
 	return m
 }
 
-// branchForPath returns the branch checked out in the worktree at path, or "".
+// branchForPath returns the branch containing path, including nested project
+// directories inside a worktree.
 func (m Model) branchForPath(path string) string {
+	_, branch := m.worktreeOwner(path)
+	return branch
+}
+
+func (m Model) worktreeOwner(path string) (string, string) {
+	path = filepath.Clean(path)
 	for _, t := range m.worktrees {
-		if t.Path == path {
-			return t.Branch
+		root := filepath.Clean(t.Path)
+		rel, err := filepath.Rel(root, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return t.Path, t.Branch
 		}
 	}
-	return ""
+	return path, ""
 }
 
 // onCreateSource advances the worktree-creation flow after the source type is
