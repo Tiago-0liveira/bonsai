@@ -48,7 +48,7 @@ export interface HistoryItemData {
 
 export interface BonsaiGraphData extends Record<string, unknown> {
   entityId: string
-  kind: 'project' | 'worktree' | 'agent' | 'stack' | 'default-branch' | 'env' | 'agent-history'
+  kind: 'project' | 'worktree' | 'agent' | 'stack' | 'default-branch' | 'env'
   title: string
   subtitle?: string
   health?: Health
@@ -258,42 +258,13 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
   )
 }
 
-function HistoryCard({ data }: { data: BonsaiGraphData }) {
-  const [expanded, setExpanded] = useState(false)
-  const setSelection = useBonsaiStore((state) => state.setSelection)
-  return (
-    <div className="w-[190px] overflow-hidden rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)]">
-      <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
-      <button type="button" onClick={() => setExpanded((value) => !value)} className="flex w-full items-center gap-2 px-2.5 py-2 text-left">
-        <History size={11} className="text-[rgb(var(--muted))]" />
-        <span className="text-[9px] font-medium">History</span>
-        <span className="rounded bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted-2))]">{data.historyItems?.length ?? 0}</span>
-        <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">{expanded ? 'Hide' : 'Show'}</span>
-      </button>
-      {expanded && (
-        <div className="border-t border-[rgb(var(--border))]">
-          {(data.historyItems ?? []).map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              onClick={() => setSelection({ type: 'agent', id: item.id })}
-              className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-2.5 py-1.5 text-left last:border-0 hover:bg-[rgb(var(--bg)/.5)]"
-            >
-              <Bot size={9} className="text-[rgb(var(--muted-2))]" />
-              <span className="min-w-0 flex-1 truncate text-[8px]">{item.name}</span>
-              <span className="text-[7px] text-[rgb(var(--muted-2))]">{item.finishedAt}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolean }) {
+  const [historyOpen, setHistoryOpen] = useState(false)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
+  const moveAgentToHistory = useBonsaiStore((state) => state.moveAgentToHistory)
+  const restoreAgentFromHistory = useBonsaiStore((state) => state.restoreAgentFromHistory)
   const archiveAgent = useBonsaiStore((state) => state.archiveAgent)
   const restoreAgent = useBonsaiStore((state) => state.restoreAgent)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
@@ -307,7 +278,6 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
   if (data.kind === 'default-branch') return <DefaultBranchCard data={data} />
   if (data.kind === 'env') return <EnvCard data={data} />
   if (data.kind === 'stack') return <StackCard data={data} />
-  if (data.kind === 'agent-history') return <HistoryCard data={data} />
 
   const status: Health =
     data.kind === 'agent'
@@ -393,8 +363,56 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
               </div>
               <div className="flex items-center justify-between border-t border-[rgb(var(--border))] px-2.5 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">
                 <span>{data.subtitle}</span>
-                <span>{data.stats?.[0]?.value ?? 0} active agents</span>
+                <span>{data.stats?.[0]?.value ?? 0} canvas agents</span>
               </div>
+              {(data.historyItems?.length ?? 0) > 0 && (
+                <div className="border-t border-[rgb(var(--border))]">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setHistoryOpen((value) => !value)
+                    }}
+                    className="nodrag flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[8px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--bg)/.45)] hover:text-[rgb(var(--text))]"
+                  >
+                    <History size={9} />
+                    <span>History</span>
+                    <span className="rounded bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[7px] text-[rgb(var(--muted-2))]">{data.historyItems?.length}</span>
+                    <span className="ml-auto text-[7px] text-[rgb(var(--muted-2))]">{historyOpen ? 'Hide' : 'Show'}</span>
+                  </button>
+                  {historyOpen && (
+                    <div className="bg-[rgb(var(--bg)/.28)] px-1.5 pb-1.5">
+                      {(data.historyItems ?? []).map((item) => (
+                        <div key={item.id} className="flex items-center gap-1.5 rounded px-1.5 py-1.5 text-[8px] hover:bg-[rgb(var(--panel-3))]">
+                          <Bot size={8} className="shrink-0 text-[rgb(var(--muted-2))]" />
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setSelection({ type: 'agent', id: item.id })
+                            }}
+                            className="nodrag min-w-0 flex-1 truncate text-left"
+                          >
+                            {item.name}
+                          </button>
+                          <span className="shrink-0 text-[7px] text-[rgb(var(--muted-2))]">{item.finishedAt}</span>
+                          <button
+                            type="button"
+                            title="Restore agent to canvas"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              restoreAgentFromHistory(item.id)
+                            }}
+                            className="nodrag grid h-5 w-5 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--bg))] hover:text-[rgb(var(--text))]"
+                          >
+                            <Undo2 size={8} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
 
@@ -450,8 +468,11 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
               <MenuItem onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
               <MenuItem onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart mock</MenuItem>
               <MenuItem onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
+              {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
+                <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
+              )}
               <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
-              {agent?.archived ? (
+              {(agent?.presentation ?? (agent?.archived ? 'archived' : 'canvas')) === 'archived' ? (
                 <MenuItem onSelect={() => restoreAgent(data.entityId)}><Undo2 size={13} /> Restore agent</MenuItem>
               ) : (
                 <MenuItem onSelect={() => archiveAgent(data.entityId)}><Archive size={13} /> Archive agent</MenuItem>

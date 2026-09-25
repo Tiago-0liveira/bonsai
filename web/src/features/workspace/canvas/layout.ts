@@ -10,10 +10,6 @@ function sizeOf(node: Node) {
     const count = Number(node.data?.stackCount ?? 1)
     return { width: 286, height: 50 + Math.min(7, count) * 34 }
   }
-  if (type === 'agentHistory') {
-    const count = Number((node.data?.historyItems as unknown[] | undefined)?.length ?? 1)
-    return { width: 190, height: 44 + Math.min(5, count) * 26 }
-  }
   return { width: 188, height: 98 }
 }
 

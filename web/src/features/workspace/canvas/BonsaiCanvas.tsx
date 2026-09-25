@@ -20,7 +20,6 @@ import { getTagPresentation } from '../tagStyles'
 import { getDescendantIds, layoutGraph } from './layout'
 import { PullRequestMergeEdge } from './PullRequestMergeEdge'
 import {
-  AgentHistoryNode,
   AgentNode,
   DefaultBranchNode,
   EnvNode,
@@ -35,7 +34,6 @@ const nodeTypes = {
   worktree: WorktreeNode,
   stack: StackNode,
   agent: AgentNode,
-  agentHistory: AgentHistoryNode,
   defaultBranch: DefaultBranchNode,
   env: EnvNode,
 }
@@ -96,7 +94,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const allProjectWorktrees = worktrees.filter((worktree) => worktree.projectId === project.id)
     const projectWorktrees = allProjectWorktrees.filter((worktree) => worktree.branch !== project.defaultBranch)
     const projectWorktreeIds = new Set(projectWorktrees.map((worktree) => worktree.id))
-    const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && !agent.archived)
+    const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) !== 'archived')
     const runningAgents = projectAgents.filter((agent) => agent.state === 'running').length
     const activePrs = projectWorktrees.filter((worktree) => worktree.prStatus === 'Open' || worktree.prStatus === 'Draft').length
     const failedChecks = projectWorktrees.reduce((total, worktree) => total + worktree.ciFailed, 0)
@@ -241,8 +239,12 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
       const worktree = entry.worktree
       const worktreeAgents = projectAgents.filter((agent) => agent.worktreeId === worktree.id)
-      const activeWorktreeAgents = worktreeAgents.filter((agent) => agent.state !== 'finished')
-      const finishedAgents = worktreeAgents.filter((agent) => agent.state === 'finished')
+      const canvasAgents = worktreeAgents.filter(
+        (agent) => (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) === 'canvas',
+      )
+      const historyAgents = worktreeAgents.filter(
+        (agent) => (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) === 'history',
+      )
       const tagDefinition = tags.find((tag) => tag.id === worktree.tagId || tag.name === worktree.tag)
       const presentation = getTagPresentation(tagDefinition)
       nodes.push({
@@ -266,11 +268,17 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           ciStatus: worktree.ciStatus,
           ciFailed: worktree.ciFailed,
           gitState: worktree.gitState,
-          stats: [{ label: 'agents', value: activeWorktreeAgents.length }],
+          stats: [{ label: 'agents', value: canvasAgents.length }],
+          historyItems: historyAgents.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            provider: agent.provider,
+            finishedAt: agent.finishedAt,
+          })),
         } satisfies BonsaiGraphData,
       })
 
-      activeWorktreeAgents.forEach((agent, agentIndex) => {
+      canvasAgents.forEach((agent, agentIndex) => {
         nodes.push({
           id: agent.id,
           type: 'agent',
@@ -294,66 +302,13 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           target: agent.id,
           type: 'smoothstep',
           data: { relationship: 'agent' },
-          style: { stroke: 'rgb(50 53 62)', strokeWidth: 1 },
+          style: {
+            stroke: 'rgb(50 53 62)',
+            strokeWidth: 1,
+            strokeDasharray: agent.state === 'finished' ? '3 4' : undefined,
+          },
         })
       })
-
-      if (finishedAgents.length >= 2) {
-        const historyId = 'history:' + worktree.id
-        nodes.push({
-          id: historyId,
-          type: 'agentHistory',
-          position: nodePositions[historyId] ?? { x: 58, y: 520 },
-          data: {
-            entityId: historyId,
-            kind: 'agent-history',
-            title: 'History',
-            worktreeId: worktree.id,
-            historyItems: finishedAgents.map((agent) => ({
-              id: agent.id,
-              name: agent.name,
-              provider: agent.provider,
-              finishedAt: agent.finishedAt,
-            })),
-          } satisfies BonsaiGraphData,
-        })
-        edges.push({
-          id: worktree.id + '-' + historyId,
-          source: worktree.id,
-          target: historyId,
-          type: 'smoothstep',
-          data: { relationship: 'agent' },
-          style: { stroke: 'rgb(50 53 62)', strokeWidth: 1, strokeDasharray: '3 4' },
-        })
-      } else {
-        finishedAgents.forEach((agent) => {
-          nodes.push({
-            id: agent.id,
-            type: 'agent',
-            position: nodePositions[agent.id] ?? { x: 58, y: 520 },
-            data: {
-              entityId: agent.id,
-              kind: 'agent',
-              title: agent.name,
-              agentState: agent.state,
-              provider: agent.provider,
-              model: agent.model,
-              reasoningEffort: agent.reasoningEffort,
-              task: agent.task,
-              runtime: agent.runtime,
-              worktreeId: worktree.id,
-            } satisfies BonsaiGraphData,
-          })
-          edges.push({
-            id: worktree.id + '-' + agent.id,
-            source: worktree.id,
-            target: agent.id,
-            type: 'smoothstep',
-            data: { relationship: 'agent' },
-            style: { stroke: 'rgb(50 53 62)', strokeWidth: 1, strokeDasharray: '3 4' },
-          })
-        })
-      }
     })
 
     const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
@@ -413,7 +368,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         '|' +
         projectWorktrees.map((worktree) => worktree.id + '>' + worktree.mergeTargetBranch + ':' + worktree.stackPreference).join('|') +
         '|' +
-        projectAgents.map((agent) => agent.id + ':' + agent.state).join('|'),
+        projectAgents.map((agent) => agent.id + ':' + agent.state + ':' + (agent.presentation ?? 'canvas')).join('|'),
     }
   }, [
     activeProjectId,
@@ -477,7 +432,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     if (!focus || !nodesInitialized) return
     const ids =
       focus === 'agents'
-        ? nodes.filter((node) => node.type === 'agent' || node.type === 'agentHistory').map((node) => node.id)
+        ? nodes.filter((node) => node.type === 'agent').map((node) => node.id)
         : nodes.filter((node) => node.type === 'worktree' || node.type === 'stack').map((node) => node.id)
     const visible = nodes.filter((node) => ids.includes(node.id))
     if (!visible.length) return
@@ -612,7 +567,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
             <Network size={12} /> Auto-layout
           </button>
         </div>
-        <span className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel)/.88)] px-2 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">{nodes.length} visible nodes</span>
       </div>
 
       <button

@@ -30,6 +30,7 @@ describe('bonsai mock store', () => {
       dockRuntimeId: 'agent-ui',
       openRuntimeIds: ['agent-ui'],
       rightPanels: { files: true, prs: true },
+      dockHeight: 30,
       envVariables: {
         bonsai: [{ id: 'env-test', key: 'NODE_ENV', value: 'test', secret: false }],
       },
@@ -52,9 +53,17 @@ describe('bonsai mock store', () => {
     expect(useBonsaiStore.getState().boardItems.find((item) => item.id === 'b1')?.status).toBe('feat')
   })
 
-  it('updates an agent state without a backend', () => {
+  it('stopping an agent keeps it on the canvas until history is explicitly requested', () => {
     useBonsaiStore.getState().setAgentState('agent-ui', 'finished')
-    expect(useBonsaiStore.getState().agents.find((agent) => agent.id === 'agent-ui')?.state).toBe('finished')
+    const stopped = useBonsaiStore.getState().agents.find((agent) => agent.id === 'agent-ui')
+    expect(stopped?.state).toBe('finished')
+    expect(stopped?.presentation).toBe('canvas')
+
+    useBonsaiStore.getState().moveAgentToHistory('agent-ui')
+    expect(useBonsaiStore.getState().agents.find((agent) => agent.id === 'agent-ui')?.presentation).toBe('history')
+
+    useBonsaiStore.getState().restoreAgentFromHistory('agent-ui')
+    expect(useBonsaiStore.getState().agents.find((agent) => agent.id === 'agent-ui')?.presentation).toBe('canvas')
   })
 
   it('selects the exact child agent runtime', () => {
@@ -89,6 +98,7 @@ describe('bonsai mock store', () => {
     useBonsaiStore.getState().archiveAgent('agent-ui')
     const state = useBonsaiStore.getState()
     expect(state.agents.find((agent) => agent.id === 'agent-ui')?.archived).toBe(true)
+    expect(state.agents.find((agent) => agent.id === 'agent-ui')?.presentation).toBe('archived')
     expect(state.agents.find((agent) => agent.id === 'agent-ui')?.state).toBe('finished')
     expect(state.openRuntimeIds).not.toContain('agent-ui')
   })
@@ -152,5 +162,15 @@ describe('bonsai mock store', () => {
     expect(useBonsaiStore.getState().envVariables.bonsai.find((item) => item.id === added.id)?.key).toBe('API_KEY')
     useBonsaiStore.getState().removeEnvVariable('bonsai', added.id)
     expect(useBonsaiStore.getState().envVariables.bonsai.some((item) => item.id === added.id)).toBe(false)
+  })
+})
+
+
+describe('dock sizing', () => {
+  it('clamps the remembered open dock height', () => {
+    useBonsaiStore.getState().setDockHeight(4)
+    expect(useBonsaiStore.getState().dockHeight).toBe(14)
+    useBonsaiStore.getState().setDockHeight(90)
+    expect(useBonsaiStore.getState().dockHeight).toBe(72)
   })
 })

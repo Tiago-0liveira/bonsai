@@ -21,8 +21,8 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     const terminal = new Terminal({
       cursorBlink: true,
       fontFamily: 'JetBrains Mono, SFMono-Regular, Consolas, monospace',
-      fontSize: 11,
-      lineHeight: 1.3,
+      fontSize: 10,
+      lineHeight: 1.25,
       theme: {
         background: '#0c0e11',
         foreground: '#d7d9df',
@@ -73,10 +73,8 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     const terminal = terminalRef.current
     const fit = fitRef.current
     if (!terminal || !fit) return
-
     terminal.reset()
     lines.forEach((line) => terminal.writeln(line))
-
     const frame = requestAnimationFrame(() => {
       if (terminalRef.current !== terminal || fitRef.current !== fit) return
       try {
@@ -86,9 +84,8 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
         // Ignore transient xterm resize races.
       }
     })
-
     return () => cancelAnimationFrame(frame)
   }, [resolvedTerminalId, lines])
 
-  return <div ref={hostRef} className="h-full min-h-[120px] w-full bg-[#0c0e11]" />
+  return <div ref={hostRef} className="h-full min-h-0 w-full overflow-hidden bg-[#0c0e11]" />
 }

@@ -3,6 +3,7 @@ export type WorktreeKind = 'Production' | 'Feature' | 'Bug' | 'Refactor' | 'Chor
 export type WorktreeSourceType = 'existing' | 'origin' | 'new'
 export type TagColor = 'purple' | 'blue' | 'green' | 'orange' | 'red' | 'cyan' | 'pink'
 export type AgentState = 'running' | 'idle' | 'finished'
+export type AgentPresentation = 'canvas' | 'history' | 'archived'
 export type BoardStatus = string
 export type BoardKind = string
 export type PrStatus = 'Draft' | 'Open' | 'Closed' | 'Merged'
@@ -102,6 +103,7 @@ export interface Agent {
   workType: string
   prompt: string
   archived: boolean
+  presentation: AgentPresentation
   state: AgentState
   task: string
   runtime: string

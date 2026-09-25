@@ -8,6 +8,7 @@ import {
   ExternalLink,
   GitBranch,
   GitPullRequest,
+  History,
   Layers3,
   LoaderCircle,
   Play,
@@ -87,6 +88,8 @@ export function Inspector() {
   const agents = useBonsaiStore((state) => state.agents)
   const collapsedTagGroups = useBonsaiStore((state) => state.collapsedTagGroups)
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
+  const moveAgentToHistory = useBonsaiStore((state) => state.moveAgentToHistory)
+  const restoreAgentFromHistory = useBonsaiStore((state) => state.restoreAgentFromHistory)
   const archiveAgent = useBonsaiStore((state) => state.archiveAgent)
   const restoreAgent = useBonsaiStore((state) => state.restoreAgent)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
@@ -102,7 +105,7 @@ export function Inspector() {
   const project = projects.find((item) => item.id === activeProjectId) ?? projects[0]
   const projectWorktrees = worktrees.filter((item) => item.projectId === project?.id)
   const projectWorktreeIds = new Set(projectWorktrees.map((item) => item.id))
-  const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && !agent.archived)
+  const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) !== 'archived')
   const worktree = selection.type === 'worktree' ? worktrees.find((item) => item.id === selection.id) : undefined
   const agent = selection.type === 'agent' ? agents.find((item) => item.id === selection.id) : undefined
 
@@ -206,7 +209,7 @@ export function Inspector() {
 
                 <div className="rounded-md border border-[rgb(var(--border))] px-3">
                   <Row label="Tag" value={worktree.tag} />
-                  <Row label="Agents" value={agents.filter((item) => item.worktreeId === worktree.id && !item.archived).length} />
+                  <Row label="Agents" value={agents.filter((item) => item.worktreeId === worktree.id && (item.presentation ?? (item.archived ? 'archived' : 'canvas')) !== 'archived').length} />
                   <Row label="Git state" value={worktree.gitState ?? 'clean'} />
                   <Row label="Last activity" value={worktree.lastActivity} />
                   <Row label="Pull request" value={worktree.prNumber ? '#' + worktree.prNumber : 'none'} />
@@ -270,7 +273,7 @@ export function Inspector() {
                   <div className="flex items-center gap-2">
                     <span className={'h-2 w-2 rounded-full ' + statusClass[agent.state === 'running' ? 'healthy' : agent.state === 'finished' ? 'idle' : 'warning']} />
                     <h2 className="truncate font-medium">{agent.name}</h2>
-                    {agent.archived && <span className="ml-auto rounded bg-[rgb(var(--panel-3))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted-2))]">archived</span>}
+                    {(agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) !== 'canvas' && <span className="ml-auto rounded bg-[rgb(var(--panel-3))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted-2))]">{agent.presentation ?? 'archived'}</span>}
                   </div>
                   <p className="mt-2 text-[10px] leading-5 text-[rgb(var(--muted))]">{agent.task}</p>
                 </div>
@@ -290,7 +293,13 @@ export function Inspector() {
                   <QuickButton icon={TerminalSquare} label="Terminal" onClick={() => openTerminal(agent.id)} />
                   <QuickButton icon={RotateCcw} label="Restart" onClick={() => setAgentState(agent.id, 'running')} />
                   <QuickButton icon={Square} label="Stop" onClick={() => setAgentState(agent.id, 'finished')} />
-                  {agent.archived ? (
+                  {(agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) === 'canvas' && agent.state === 'finished' && (
+                    <QuickButton icon={History} label="Move to history" onClick={() => moveAgentToHistory(agent.id)} />
+                  )}
+                  {(agent.presentation ?? 'canvas') === 'history' && (
+                    <QuickButton icon={Undo2} label="Restore to canvas" onClick={() => restoreAgentFromHistory(agent.id)} />
+                  )}
+                  {(agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) === 'archived' ? (
                     <QuickButton icon={Undo2} label="Restore" onClick={() => restoreAgent(agent.id)} />
                   ) : (
                     <QuickButton icon={Archive} label={agent.state === 'running' ? 'Stop + archive' : 'Archive'} danger onClick={() => archiveAgent(agent.id)} />

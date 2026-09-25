@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   PointerSensor,
@@ -14,13 +14,13 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import * as Tabs from '@radix-ui/react-tabs'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import {
   Archive,
   Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   CircleDot,
   ExternalLink,
   FileCode2,
@@ -34,7 +34,6 @@ import {
   ListTree,
   Maximize2,
   Minus,
-  PanelRight,
   Search,
   TerminalSquare,
   X,
@@ -68,6 +67,10 @@ function ProviderMark({ provider }: { provider: Agent['provider'] }) {
   )
 }
 
+function agentPresentation(agent: Agent) {
+  return agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
+}
+
 function BranchTreeItem({
   worktree,
   allWorktrees,
@@ -93,60 +96,62 @@ function BranchTreeItem({
   const nextVisited = new Set(visited)
   nextVisited.add(worktree.id)
   const children = allWorktrees.filter((item) => item.id !== worktree.id && item.mergeTargetBranch === worktree.branch)
-  const branchAgents = agents.filter((agent) => agent.worktreeId === worktree.id && !agent.archived)
-  const currentAgents = branchAgents.filter((agent) => agent.state !== 'finished')
-  const finishedAgents = branchAgents.filter((agent) => agent.state === 'finished')
+  const branchAgents = agents.filter((agent) => agent.worktreeId === worktree.id && agentPresentation(agent) !== 'archived')
+  const canvasAgents = branchAgents.filter((agent) => agentPresentation(agent) === 'canvas')
+  const historyAgents = branchAgents.filter((agent) => agentPresentation(agent) === 'history')
   const collapsed = collapsedBranchIds.includes(worktree.id)
-  const expandable = currentAgents.length > 0 || finishedAgents.length > 0 || children.length > 0
+  const expandable = canvasAgents.length > 0 || historyAgents.length > 0 || children.length > 0
+  const indent = depth * 10
 
   return (
     <div>
-      <div className="flex items-center">
+      <div className="grid h-7 grid-cols-[18px_minmax(0,1fr)_28px] items-center" style={{ paddingLeft: indent }}>
         <button
           type="button"
           onClick={() => expandable && toggleBranchCollapsed(worktree.id)}
-          style={{ marginLeft: 3 + depth * 13 }}
-          className="grid h-6 w-5 shrink-0 place-items-center rounded text-[rgb(var(--muted-2))] hover:text-[rgb(var(--text))]"
+          className="grid h-6 w-[18px] place-items-center rounded text-[rgb(var(--muted-2))] hover:text-[rgb(var(--text))]"
           title={collapsed ? 'Expand branch' : 'Collapse branch'}
         >
-          {expandable ? (collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />) : <span className="h-1 w-1 rounded-full bg-[rgb(var(--muted-2))]" />}
+          {expandable ? (collapsed ? <ChevronRight size={9} /> : <ChevronDown size={9} />) : <span className="h-1 w-1 rounded-full bg-[rgb(var(--muted-2))]" />}
         </button>
         <button
           type="button"
           onClick={() => onWorktree(worktree)}
           className={
-            'bonsai-focus flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md pr-2 text-left text-[10px] ' +
+            'bonsai-focus flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-[9px] ' +
             (selectedId === worktree.id ? 'bg-[rgb(var(--purple)/.11)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
           }
         >
-          <GitBranch size={11} className="shrink-0" />
+          <GitBranch size={10} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate font-mono">{worktree.branch}</span>
-          {currentAgents.length > 0 && <span className="text-[8px] text-[rgb(var(--muted-2))]">{currentAgents.length}</span>}
-          <StatusDot status={worktree.status} />
+          {canvasAgents.length > 0 && <span className="text-[7px] text-[rgb(var(--muted-2))]">{canvasAgents.length}</span>}
         </button>
+        <span className="grid place-items-center"><StatusDot status={worktree.status} /></span>
       </div>
 
       {!collapsed && (
         <>
-          {currentAgents.map((agent) => (
+          {canvasAgents.map((agent) => (
             <button
               type="button"
               key={agent.id}
               onClick={() => onAgent(agent)}
-              style={{ paddingLeft: 28 + depth * 13 }}
-              className="bonsai-focus flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-[9px] text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
+              style={{ paddingLeft: 24 + indent }}
+              className="bonsai-focus flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-[8px] text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
             >
-              <ProviderMark provider={agent.provider} />
+              <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[7px] font-semibold">
+                {agent.provider === 'Codex' ? 'O' : agent.provider === 'Claude' ? 'A' : 'G'}
+              </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{agent.name}</span>
-                <span className="block truncate text-[7px] text-[rgb(var(--muted-2))]">{agent.model} · {agent.reasoningEffort}</span>
+                <span className="block truncate text-[6.5px] text-[rgb(var(--muted-2))]">{agent.model} · {agent.reasoningEffort}</span>
               </span>
               <StatusDot status={agent.state} />
             </button>
           ))}
-          {finishedAgents.length > 0 && (
-            <div style={{ paddingLeft: 28 + depth * 13 }} className="flex h-6 items-center gap-1.5 pr-2 text-[8px] text-[rgb(var(--muted-2))]">
-              <Archive size={9} /> History · {finishedAgents.length}
+          {historyAgents.length > 0 && (
+            <div style={{ paddingLeft: 28 + indent }} className="flex h-6 items-center gap-1.5 pr-2 text-[7.5px] text-[rgb(var(--muted-2))]">
+              <Archive size={8} /> <span>History</span><span>· {historyAgents.length}</span>
             </div>
           )}
           {children.map((child) => (
@@ -180,30 +185,30 @@ function BranchSidebar() {
   const defaultWorktree = projectWorktrees.find((item) => item.branch === project?.defaultBranch)
   const roots = projectWorktrees.filter((item) => item.branch !== project?.defaultBranch && item.mergeTargetBranch === project?.defaultBranch)
 
-  const selectWorktree = (worktree: Worktree) => setSelection({ type: 'worktree', id: worktree.id })
-  const selectAgent = (agent: Agent) => setSelection({ type: 'agent', id: agent.id })
-
   return (
-    <aside className="flex w-[220px] shrink-0 flex-col border-r border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
+    <aside className="flex h-full min-w-0 flex-col bg-[rgb(var(--panel))]">
       <div className="flex h-9 shrink-0 items-center border-b border-[rgb(var(--border))] px-2.5">
-        <GitBranch size={12} className="mr-1.5 text-[rgb(var(--muted))]" />
-        <span className="text-[10px] font-semibold">Branches</span>
-        <span className="ml-auto text-[9px] text-[rgb(var(--muted-2))]">{projectWorktrees.length}</span>
+        <GitBranch size={11} className="mr-1.5 text-[rgb(var(--muted))]" />
+        <span className="text-[9px] font-semibold">Branches</span>
+        <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">{projectWorktrees.length}</span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-1.5">
+      <div className="min-h-0 flex-1 overflow-auto p-1">
         {defaultWorktree && (
-          <button
-            type="button"
-            onClick={() => selectWorktree(defaultWorktree)}
-            className={
-              'bonsai-focus mb-1 flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[10px] ' +
-              (dockWorktreeId === defaultWorktree.id ? 'bg-[rgb(var(--green)/.08)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
-            }
-          >
-            <GitBranch size={11} className="text-[rgb(var(--green))]" />
-            <span className="min-w-0 flex-1 truncate font-mono">{defaultWorktree.branch}</span>
-            <span className="rounded bg-[rgb(var(--green)/.10)] px-1 py-0.5 text-[7px] text-[rgb(var(--green))]">default</span>
-          </button>
+          <div className="grid h-7 grid-cols-[18px_minmax(0,1fr)_auto] items-center">
+            <span />
+            <button
+              type="button"
+              onClick={() => setSelection({ type: 'worktree', id: defaultWorktree.id })}
+              className={
+                'bonsai-focus flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-[9px] ' +
+                (dockWorktreeId === defaultWorktree.id ? 'bg-[rgb(var(--green)/.08)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
+              }
+            >
+              <GitBranch size={10} className="shrink-0 text-[rgb(var(--green))]" />
+              <span className="min-w-0 flex-1 truncate font-mono">{defaultWorktree.branch}</span>
+            </button>
+            <span className="ml-1 rounded bg-[rgb(var(--green)/.10)] px-1 py-0.5 text-[6.5px] text-[rgb(var(--green))]">default</span>
+          </div>
         )}
         {roots.map((worktree) => (
           <BranchTreeItem
@@ -214,8 +219,8 @@ function BranchSidebar() {
             depth={0}
             selectedId={dockWorktreeId}
             visited={new Set()}
-            onWorktree={selectWorktree}
-            onAgent={selectAgent}
+            onWorktree={(item) => setSelection({ type: 'worktree', id: item.id })}
+            onAgent={(agent) => setSelection({ type: 'agent', id: agent.id })}
           />
         ))}
       </div>
@@ -231,7 +236,6 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
   const closeRuntime = useBonsaiStore((state) => state.closeRuntime)
   const setDockRuntimeId = useBonsaiStore((state) => state.setDockRuntimeId)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: runtime.id })
-
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.55 : 1 }
 
   return (
@@ -239,19 +243,25 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
       ref={setNodeRef}
       style={style}
       onClick={() => setDockRuntimeId(runtime.id)}
-      className="flex min-h-[170px] min-w-0 flex-col overflow-hidden rounded-md border border-[rgb(var(--border))] bg-[#0c0e11]"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-[rgb(var(--border))] bg-[#0c0e11]"
     >
       <div
         {...attributes}
         {...listeners}
-        className="flex h-10 shrink-0 cursor-grab items-center gap-2 border-b border-[rgb(var(--border))] bg-[rgb(var(--panel))] px-2 active:cursor-grabbing"
+        className="flex h-8 shrink-0 cursor-grab items-center gap-1.5 border-b border-[rgb(var(--border))] bg-[rgb(var(--panel))] px-1.5 active:cursor-grabbing"
         title="Drag terminal"
       >
-        <GripVertical size={11} className="shrink-0 text-[rgb(var(--muted-2))]" />
-        {runtime.type === 'agent' ? <ProviderMark provider={runtime.agent.provider} /> : <span className="grid h-6 w-6 place-items-center rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))]"><TerminalSquare size={11} /></span>}
+        <GripVertical size={9} className="shrink-0 text-[rgb(var(--muted-2))]" />
+        {runtime.type === 'agent' ? (
+          <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[7px] font-semibold">
+            {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'G'}
+          </span>
+        ) : (
+          <span className="grid h-5 w-5 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))]"><TerminalSquare size={9} /></span>
+        )}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[9px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</div>
-          <div className="truncate text-[7px] text-[rgb(var(--muted-2))]">
+          <div className="truncate text-[8px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</div>
+          <div className="truncate text-[6.5px] text-[rgb(var(--muted-2))]">
             {runtime.type === 'agent'
               ? runtime.agent.model + ' · ' + runtime.agent.reasoningEffort + (runtime.agent.fastMode ? ' · Fast' : '')
               : runtime.process.command}
@@ -265,21 +275,20 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
             event.stopPropagation()
             closeRuntime(runtime.id)
           }}
-          className="grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
+          className="grid h-5 w-5 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
           title="Close terminal"
         >
-          <X size={10} />
+          <X size={9} />
         </button>
       </div>
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-hidden">
         {runtime.type === 'agent' ? (
           <FakeTerminal terminalId={runtime.agent.terminalId} />
         ) : (
-          <div className="h-full overflow-auto p-3 font-mono text-[9px] leading-5 text-[rgb(var(--muted))]">
+          <div className="h-full min-h-0 overflow-auto p-2.5 font-mono text-[8px] leading-4 text-[rgb(var(--muted))]">
             <div className="text-[rgb(var(--green))]">$ {runtime.process.command}</div>
             <div>[bonsai] status: {runtime.process.status}</div>
             {runtime.process.port && <div>[bonsai] listening on http://localhost:{runtime.process.port}</div>}
-            <div className="mt-2 text-[rgb(var(--muted-2))]">Process output is simulated in this frontend prototype.</div>
           </div>
         )}
       </div>
@@ -288,6 +297,8 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
 }
 
 function RuntimeWorkspace() {
+  const hostRef = useRef<HTMLElement | null>(null)
+  const [wideHeader, setWideHeader] = useState(false)
   const projects = useBonsaiStore((state) => state.projects)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const worktrees = useBonsaiStore((state) => state.worktrees)
@@ -307,19 +318,27 @@ function RuntimeWorkspace() {
   const projectWorktrees = worktrees.filter((item) => item.projectId === activeProjectId)
   const fallbackWorktree = projectWorktrees.find((item) => item.branch !== project?.defaultBranch) ?? projectWorktrees[0]
   const worktree = projectWorktrees.find((item) => item.id === dockWorktreeId) ?? fallbackWorktree
-  const worktreeAgents = agents.filter((item) => item.worktreeId === worktree?.id && !item.archived)
+  const worktreeAgents = agents.filter((item) => item.worktreeId === worktree?.id && agentPresentation(item) === 'canvas')
   const worktreeProcesses = processes.filter((item) => item.worktreeId === worktree?.id)
   const available: RuntimeEntry[] = [
-    ...worktreeAgents.filter((agent) => agent.state !== 'finished').map((agent) => ({ id: agent.id, type: 'agent' as const, agent })),
+    ...worktreeAgents.map((agent) => ({ id: agent.id, type: 'agent' as const, agent })),
     ...worktreeProcesses.map((process) => ({ id: process.id, type: 'process' as const, process })),
   ]
   const availableMap = new Map(available.map((runtime) => [runtime.id, runtime]))
   const openEntries = openRuntimeIds.map((id) => availableMap.get(id)).filter((item): item is RuntimeEntry => Boolean(item))
 
   useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const observer = new ResizeObserver(([entry]) => setWideHeader(entry.contentRect.width >= 690))
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
     if (!worktree || !available.length) return
     if (dockRuntimeId && availableMap.has(dockRuntimeId)) {
-      openRuntime(dockRuntimeId)
+      if (!openRuntimeIds.includes(dockRuntimeId)) openRuntime(dockRuntimeId)
       return
     }
     if (!openEntries.length) {
@@ -328,7 +347,7 @@ function RuntimeWorkspace() {
       ) ?? available[0]
       openRuntime(preferred.id)
     }
-  }, [worktree?.id])
+  }, [worktree?.id, dockRuntimeId, openRuntimeIds.join('|')])
 
   const onDragEnd = (event: DragEndEvent) => {
     const active = String(event.active.id)
@@ -336,53 +355,76 @@ function RuntimeWorkspace() {
     if (over) reorderOpenRuntime(active, over)
   }
 
+  const runtimeOptions = available.map((runtime) => ({
+    value: runtime.id,
+    label: runtime.type === 'agent' ? runtime.agent.name : runtime.process.name,
+    description: runtime.type === 'agent' ? runtime.agent.provider + ' · ' + runtime.agent.model : runtime.process.command,
+    meta: openRuntimeIds.includes(runtime.id) ? 'open' : undefined,
+  }))
+
   return (
-    <section className="flex min-w-[320px] flex-1 flex-col bg-[rgb(var(--bg))]">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[rgb(var(--border))] px-2">
-        <div className="w-[190px] shrink-0">
-          <BonsaiSelect
-            ariaLabel="Open runtime"
-            compact
-            searchable
-            value=""
-            onChange={openRuntime}
-            placeholder="Open agent / process…"
-            options={available.map((runtime) => ({
-              value: runtime.id,
-              label: runtime.type === 'agent' ? runtime.agent.name : runtime.process.name,
-              description: runtime.type === 'agent' ? runtime.agent.provider + ' · ' + runtime.agent.model : runtime.process.command,
-              meta: openRuntimeIds.includes(runtime.id) ? 'open' : undefined,
-            }))}
-          />
-        </div>
-        <div className="min-w-0 flex-1 truncate text-[8px] text-[rgb(var(--muted-2))]">
-          {openEntries.length ? openEntries.length + ' terminal' + (openEntries.length === 1 ? '' : 's') + ' open' : 'Choose a runtime'}
-        </div>
+    <section ref={hostRef} className="flex h-full min-h-0 min-w-0 flex-col bg-[rgb(var(--bg))]">
+      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[rgb(var(--border))] px-1.5">
+        {wideHeader ? (
+          <>
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+              {openEntries.map((runtime) => (
+                <button
+                  key={runtime.id}
+                  type="button"
+                  onClick={() => openRuntime(runtime.id)}
+                  className={
+                    'flex h-7 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-2 text-left ' +
+                    (dockRuntimeId === runtime.id ? 'bg-[rgb(var(--panel-2))] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
+                  }
+                >
+                  {runtime.type === 'agent' ? (
+                    <span className="grid h-4 w-4 shrink-0 place-items-center rounded border border-[rgb(var(--border))] text-[6px] font-semibold">
+                      {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'G'}
+                    </span>
+                  ) : <TerminalSquare size={9} />}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[7.5px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</span>
+                    {runtime.type === 'agent' && <span className="block truncate text-[6px] text-[rgb(var(--muted-2))]">{runtime.agent.provider} · {runtime.agent.model}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="w-[142px] shrink-0">
+              <BonsaiSelect ariaLabel="Open runtime" compact searchable value="" onChange={openRuntime} placeholder="+ Open" options={runtimeOptions} />
+            </div>
+          </>
+        ) : (
+          <div className="min-w-0 flex-1">
+            <BonsaiSelect ariaLabel="Open runtime" compact searchable value={dockRuntimeId} onChange={openRuntime} placeholder="Open agent / process…" options={runtimeOptions} />
+          </div>
+        )}
+
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <button type="button" onClick={() => toggleRightPanel('files')} title="Toggle Files / Git Diff" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[9px] ' + (rightPanels.files ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
-            <Files size={11} /> Files
+          <button type="button" onClick={() => toggleRightPanel('files')} title="Toggle Files / Git Diff" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[8px] ' + (rightPanels.files ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
+            <Files size={10} /> Files
           </button>
-          <button type="button" onClick={() => toggleRightPanel('prs')} title="Toggle pull requests" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[9px] ' + (rightPanels.prs ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
-            <GitPullRequest size={11} /> PRs
+          <button type="button" onClick={() => toggleRightPanel('prs')} title="Toggle pull requests" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[8px] ' + (rightPanels.prs ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
+            <GitPullRequest size={10} /> PRs
           </button>
           <span className="mx-0.5 h-4 w-px bg-[rgb(var(--border))]" />
-          <button onClick={() => setDockState('collapsed')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Close bottom workspace"><Minus size={12} /></button>
-          <button onClick={() => setDockState(dockState === 'maximized' ? 'normal' : 'maximized')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Maximize bottom workspace"><Maximize2 size={12} /></button>
+          <button onClick={() => setDockState('collapsed')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Minimize workspace"><Minus size={11} /></button>
+          <button onClick={() => setDockState(dockState === 'maximized' ? 'normal' : 'maximized')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Maximize workspace"><Maximize2 size={11} /></button>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-1.5">
+      <div className="min-h-0 flex-1 overflow-hidden p-1">
         {openEntries.length ? (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={openEntries.map((item) => item.id)} strategy={rectSortingStrategy}>
-              <div className="grid min-h-full auto-rows-fr grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-1.5">
+              <div className="grid h-full min-h-0 auto-rows-fr grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-1">
                 {openEntries.map((runtime) => <SortableRuntimeTile key={runtime.id} runtime={runtime} />)}
               </div>
             </SortableContext>
           </DndContext>
         ) : (
-          <div className="grid h-full place-items-center rounded-md border border-dashed border-[rgb(var(--border))] text-[10px] text-[rgb(var(--muted-2))]">
-            Open an agent or process terminal from the dropdown.
+          <div className="grid h-full place-items-center rounded-md border border-dashed border-[rgb(var(--border))] text-[9px] text-[rgb(var(--muted-2))]">
+            Open an agent or process terminal.
           </div>
         )}
       </div>
@@ -395,6 +437,24 @@ function GitStatus({ status }: { status?: RepoFile['gitStatus'] }) {
   const label = status === 'modified' ? 'M' : status === 'untracked' ? 'U' : status === 'added' ? 'A' : 'D'
   const tone = status === 'deleted' ? 'text-[rgb(var(--red))]' : status === 'untracked' ? 'text-[rgb(var(--green))]' : 'text-[rgb(var(--orange))]'
   return <span className={'ml-auto shrink-0 font-mono text-[8px] ' + tone}>{label}</span>
+}
+
+function countChanged(nodes: RepoFile[]): number {
+  return nodes.reduce((total, node) => {
+    if (node.type === 'file') return total + (node.gitStatus && node.gitStatus !== 'committed' ? 1 : 0)
+    return total + countChanged(node.children ?? [])
+  }, 0)
+}
+
+function filterTree(nodes: RepoFile[], mode: 'changed' | 'committed'): RepoFile[] {
+  return nodes.flatMap((node) => {
+    if (node.type === 'file') {
+      const changed = Boolean(node.gitStatus && node.gitStatus !== 'committed')
+      return (mode === 'changed' ? changed : !changed) ? [node] : []
+    }
+    const children = filterTree(node.children ?? [], mode)
+    return children.length ? [{ ...node, children }] : []
+  })
 }
 
 function FileTreeRows({ nodes, depth = 0 }: { nodes: RepoFile[]; depth?: number }) {
@@ -415,7 +475,8 @@ function FileTreeRows({ nodes, depth = 0 }: { nodes: RepoFile[]; depth?: number 
               >
                 {open ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
                 <Folder size={10} />
-                <span className="truncate">{node.name}</span>
+                <span className="min-w-0 flex-1 truncate">{node.name}</span>
+                {countChanged(node.children ?? []) > 0 && <span className="text-[7px] text-[rgb(var(--orange))]">{countChanged(node.children ?? [])}</span>}
               </button>
               {open && node.children && <FileTreeRows nodes={node.children} depth={depth + 1} />}
             </div>
@@ -451,9 +512,11 @@ function FilesDiffPanel() {
   const files = flattenFiles(repoFiles).filter((item) => item.type === 'file')
   const changed = files.filter((item) => item.gitStatus && item.gitStatus !== 'committed')
   const committed = files.filter((item) => !item.gitStatus || item.gitStatus === 'committed')
+  const changedTree = filterTree(repoFiles, 'changed')
+  const committedTree = filterTree(repoFiles, 'committed')
 
   return (
-    <aside className="flex w-[330px] min-w-[270px] max-w-[36vw] shrink-0 flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
+    <aside className="flex h-full min-w-0 flex-col bg-[rgb(var(--panel))]">
       <Tabs.Root defaultValue="files" className="flex min-h-0 flex-1 flex-col">
         <div className="flex h-9 shrink-0 items-center border-b border-[rgb(var(--border))] px-2">
           <Tabs.List className="flex h-full items-center">
@@ -470,7 +533,12 @@ function FilesDiffPanel() {
 
         <Tabs.Content value="files" className="min-h-0 flex-1 overflow-auto p-1.5 outline-none">
           {view === 'tree' ? (
-            <FileTreeRows nodes={repoFiles} />
+            <>
+              <div className="px-2 pb-1 pt-1 text-[7px] font-semibold uppercase tracking-[.12em] text-[rgb(var(--muted-2))]">Changed</div>
+              {changedTree.length ? <FileTreeRows nodes={changedTree} /> : <div className="px-2 py-2 text-[8px] text-[rgb(var(--muted-2))]">No changed files</div>}
+              <div className="mt-2 border-t border-[rgb(var(--border))] px-2 pb-1 pt-2 text-[7px] font-semibold uppercase tracking-[.12em] text-[rgb(var(--muted-2))]">Repository</div>
+              <FileTreeRows nodes={committedTree} />
+            </>
           ) : (
             <>
               <div className="px-2 pb-1 pt-1 text-[7px] font-semibold uppercase tracking-[.12em] text-[rgb(var(--muted-2))]">Changed</div>
@@ -599,7 +667,7 @@ function PullRequestsPanel() {
   }, [pullRequests, query, sort])
 
   return (
-    <aside className="flex w-[350px] min-w-[285px] max-w-[38vw] shrink-0 flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
+    <aside className="flex h-full min-w-0 flex-col bg-[rgb(var(--panel))]">
       <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[rgb(var(--border))] px-2">
         <GitPullRequest size={11} className="shrink-0 text-[rgb(var(--muted))]" />
         <label className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
@@ -681,40 +749,44 @@ function EditorPreferenceDialog() {
   )
 }
 
-export function BottomWorkspace() {
-  const dockState = useBonsaiStore((state) => state.dockState)
-  const setDockState = useBonsaiStore((state) => state.setDockState)
-  const rightPanels = useBonsaiStore((state) => state.rightPanels)
-  const toggleRightPanel = useBonsaiStore((state) => state.toggleRightPanel)
-  const dockWorktreeId = useBonsaiStore((state) => state.dockWorktreeId)
-  const worktrees = useBonsaiStore((state) => state.worktrees)
-  const selectedWorktree = worktrees.find((item) => item.id === dockWorktreeId)
+function HorizontalResizeHandle() {
+  return (
+    <PanelResizeHandle className="group relative w-1.5 shrink-0 cursor-col-resize border-x border-[rgb(var(--border))] bg-[rgb(var(--bg))]">
+      <div className="absolute left-1/2 top-1/2 h-9 w-px -translate-x-1/2 -translate-y-1/2 bg-[rgb(var(--border-strong))] opacity-0 transition-opacity group-hover:opacity-100" />
+    </PanelResizeHandle>
+  )
+}
 
-  if (dockState === 'collapsed') {
-    return (
-      <>
-        <div className="flex h-full items-center border-t border-[rgb(var(--border))] bg-[rgb(var(--panel))] px-2">
-          <GitBranch size={11} className="mr-1.5 text-[rgb(var(--muted))]" />
-          <span className="max-w-48 truncate font-mono text-[9px] text-[rgb(var(--muted))]">{selectedWorktree?.branch ?? 'Workspace'}</span>
-          <div className="ml-auto flex items-center gap-1">
-            <button onClick={() => toggleRightPanel('files')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Toggle Files / Git Diff"><Files size={11} /></button>
-            <button onClick={() => toggleRightPanel('prs')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Toggle pull requests"><PanelRight size={11} /></button>
-            <button onClick={() => setDockState('normal')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Open bottom workspace"><ChevronUp size={12} /></button>
-          </div>
-        </div>
-        <EditorPreferenceDialog />
-      </>
-    )
-  }
+export function BottomWorkspace() {
+  const rightPanels = useBonsaiStore((state) => state.rightPanels)
 
   return (
     <>
-      <div className="flex h-full min-h-0 bg-[rgb(var(--panel))]">
-        <BranchSidebar />
-        <RuntimeWorkspace />
-        {rightPanels.files && <FilesDiffPanel />}
-        {rightPanels.prs && <PullRequestsPanel />}
-      </div>
+      <PanelGroup autoSaveId="bonsai-bottom-panels-v1" direction="horizontal" className="h-full min-h-0 bg-[rgb(var(--panel))]">
+        <Panel id="branches" order={1} defaultSize={14} minSize={9} maxSize={26}>
+          <BranchSidebar />
+        </Panel>
+        <HorizontalResizeHandle />
+        <Panel id="runtime" order={2} defaultSize={50} minSize={26}>
+          <RuntimeWorkspace />
+        </Panel>
+        {rightPanels.files && (
+          <>
+            <HorizontalResizeHandle />
+            <Panel id="files" order={3} defaultSize={18} minSize={13} maxSize={36}>
+              <FilesDiffPanel />
+            </Panel>
+          </>
+        )}
+        {rightPanels.prs && (
+          <>
+            <HorizontalResizeHandle />
+            <Panel id="prs" order={4} defaultSize={18} minSize={14} maxSize={40}>
+              <PullRequestsPanel />
+            </Panel>
+          </>
+        )}
+      </PanelGroup>
       <EditorPreferenceDialog />
     </>
   )

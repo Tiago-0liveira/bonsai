@@ -78,6 +78,8 @@ interface BonsaiState {
   setStartAgentDialogOpen: (open: boolean) => void
   createAgent: (input: StartAgentInput) => void
   startMockAgent: () => void
+  moveAgentToHistory: (id: string) => void
+  restoreAgentFromHistory: (id: string) => void
   archiveAgent: (id: string) => void
   restoreAgent: (id: string) => void
   setAgentState: (id: string, state: AgentState) => void
@@ -91,6 +93,8 @@ interface BonsaiState {
 
   dockState: DockState
   setDockState: (state: DockState) => void
+  dockHeight: number
+  setDockHeight: (height: number) => void
   activeDockTab: DockTab
   setActiveDockTab: (tab: DockTab) => void
   dockWorktreeId: string
@@ -454,6 +458,7 @@ export const useBonsaiStore = create<BonsaiState>()(
             workType: input.workType,
             prompt: input.prompt,
             archived: false,
+            presentation: 'canvas',
             state: 'running',
             task: input.prompt.slice(0, 90) || input.workType,
             runtime: 'just now',
@@ -494,11 +499,27 @@ export const useBonsaiStore = create<BonsaiState>()(
               : ''
         set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target })
       },
+      moveAgentToHistory: (id) =>
+        set((state) => ({
+          agents: state.agents.map((agent) =>
+            agent.id === id
+              ? { ...agent, presentation: 'history', archived: false, state: agent.state === 'running' ? 'finished' : agent.state, finishedAt: agent.finishedAt ?? 'just now' }
+              : agent,
+          ),
+          openRuntimeIds: state.openRuntimeIds.filter((runtimeId) => runtimeId !== id),
+          dockRuntimeId: state.dockRuntimeId === id ? '' : state.dockRuntimeId,
+          notice: 'Agent moved to history',
+        })),
+      restoreAgentFromHistory: (id) =>
+        set((state) => ({
+          agents: state.agents.map((agent) => agent.id === id ? { ...agent, presentation: 'canvas', archived: false } : agent),
+          notice: 'Agent restored to canvas',
+        })),
       archiveAgent: (id) =>
         set((state) => ({
           agents: state.agents.map((agent) =>
             agent.id === id
-              ? { ...agent, archived: true, state: agent.state === 'running' ? 'finished' : agent.state, finishedAt: agent.finishedAt ?? 'just now' }
+              ? { ...agent, presentation: 'archived', archived: true, state: agent.state === 'running' ? 'finished' : agent.state, finishedAt: agent.finishedAt ?? 'just now' }
               : agent,
           ),
           openRuntimeIds: state.openRuntimeIds.filter((runtimeId) => runtimeId !== id),
@@ -507,7 +528,7 @@ export const useBonsaiStore = create<BonsaiState>()(
         })),
       restoreAgent: (id) =>
         set((state) => ({
-          agents: state.agents.map((agent) => agent.id === id ? { ...agent, archived: false } : agent),
+          agents: state.agents.map((agent) => agent.id === id ? { ...agent, presentation: 'canvas', archived: false } : agent),
           notice: 'Agent restored',
         })),
       setAgentState: (id, agentState) =>
@@ -549,6 +570,8 @@ export const useBonsaiStore = create<BonsaiState>()(
 
       dockState: 'normal',
       setDockState: (dockState) => set({ dockState }),
+      dockHeight: 30,
+      setDockHeight: (dockHeight) => set({ dockHeight: Math.min(72, Math.max(14, dockHeight)) }),
       activeDockTab: 'terminal',
       setActiveDockTab: (activeDockTab) => set({ activeDockTab }),
       dockWorktreeId: 'wt-web',
@@ -780,7 +803,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       },
     }),
     {
-      name: 'bonsai-web-workspace-v4',
+      name: 'bonsai-web-workspace-v5',
       partialize: (state) => ({
         selection: state.selection,
         projects: state.projects,
@@ -788,6 +811,7 @@ export const useBonsaiStore = create<BonsaiState>()(
         activeProjectId: state.activeProjectId,
         sidebarCollapsed: state.sidebarCollapsed,
         dockState: state.dockState,
+        dockHeight: state.dockHeight,
         activeDockTab: state.activeDockTab,
         dockWorktreeId: state.dockWorktreeId,
         dockRuntimeId: state.dockRuntimeId,
