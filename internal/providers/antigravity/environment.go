@@ -26,9 +26,16 @@ func buildEnvironment(account agents.Account, session agents.Session) map[string
 			}
 		}
 		if _, ok := os.LookupEnv("GH_CONFIG_DIR"); !ok {
-			ghConfig := filepath.Join(hostHome, ".config", "gh")
-			if _, err := os.Stat(ghConfig); err == nil {
-				env["GH_CONFIG_DIR"] = ghConfig
+			var candidates []string
+			if configRoot, err := os.UserConfigDir(); err == nil && configRoot != "" {
+				candidates = append(candidates, filepath.Join(configRoot, "gh"), filepath.Join(configRoot, "GitHub CLI"))
+			}
+			candidates = append(candidates, filepath.Join(hostHome, ".config", "gh"))
+			for _, ghConfig := range candidates {
+				if _, err := os.Stat(ghConfig); err == nil {
+					env["GH_CONFIG_DIR"] = ghConfig
+					break
+				}
 			}
 		}
 	}
