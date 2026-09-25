@@ -194,7 +194,7 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 		if err != nil {
 			return err
 		}
-		printUsageSnapshot(out, account, snapshot)
+		printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Usage: &snapshot}})
 		return nil
 	}
 
@@ -204,39 +204,10 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 		if result.Error != nil {
 			fmt.Fprintf(errOut, "%s/%s: %v\n", result.Account.Provider, result.Account.Name, result.Error)
 			errs = append(errs, result.Error)
-			continue
-		}
-		if result.Usage != nil {
-			printUsageSnapshot(out, result.Account, *result.Usage)
 		}
 	}
+	printUsageDashboard(out, results)
 	return errors.Join(errs...)
-}
-
-func printUsageSnapshot(out io.Writer, account agents.Account, snapshot agents.UsageSnapshot) {
-	fmt.Fprintf(out, "%s (%s)\n", account.Name, account.Provider)
-	if len(snapshot.Limits) == 0 {
-		fmt.Fprintln(out, "  no usage limits reported")
-		return
-	}
-	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "  GROUP\tWINDOW\tREMAINING\tRESET")
-	for _, limit := range snapshot.Limits {
-		remaining := "-"
-		if limit.RemainingFraction != nil {
-			remaining = fmt.Sprintf("%.0f%%", *limit.RemainingFraction*100)
-		}
-		reset := "-"
-		if limit.ResetsAt != nil {
-			reset = limit.ResetsAt.Local().Format(time.RFC3339)
-		}
-		group := limit.Group
-		if group == "" {
-			group = limit.Label
-		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", group, limit.Window, remaining, reset)
-	}
-	_ = tw.Flush()
 }
 
 func printAgentUsage(w io.Writer) {
