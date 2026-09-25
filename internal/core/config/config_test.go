@@ -154,3 +154,44 @@ func TestResolveAlias(t *testing.T) {
 		}
 	}
 }
+
+
+func TestPkgMgrSearchDepthConfig(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		cfg, err := Load(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.PkgMgr.SearchDepth != 2 {
+			t.Fatalf("search depth = %d, want 2", cfg.PkgMgr.SearchDepth)
+		}
+	})
+
+	t.Run("custom", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".bonsai.yaml"), []byte("pkgmgr:\n  search_depth: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.PkgMgr.SearchDepth != 1 {
+			t.Fatalf("search depth = %d, want 1", cfg.PkgMgr.SearchDepth)
+		}
+	})
+
+	t.Run("zero disables downward scan", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".bonsai.yaml"), []byte("pkgmgr:\n  search_depth: 0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.PkgMgr.SearchDepth != 0 {
+			t.Fatalf("search depth = %d, want 0", cfg.PkgMgr.SearchDepth)
+		}
+	})
+}
