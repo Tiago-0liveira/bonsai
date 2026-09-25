@@ -3,18 +3,24 @@ import { persist } from 'zustand/middleware'
 import { agents as initialAgents } from '../mock/agents'
 import { boardItems as initialBoardItems } from '../mock/board'
 import { projects as initialProjects, workspaces } from '../mock/projects'
+import { worktreeTags as initialWorktreeTags } from '../mock/tags'
 import { worktrees as initialWorktrees } from '../mock/worktrees'
 import type {
   Agent,
   AgentState,
   BoardItem,
   BoardStatus,
+  CreateWorktreeInput,
+  DockPanelKey,
   DockState,
   DockTab,
+  EnvVariable,
   Project,
   Selection,
   ViewportState,
   Worktree,
+  WorktreeKind,
+  WorktreeTag,
 } from '../types'
 
 interface TerminalSession {
@@ -40,22 +46,45 @@ interface BonsaiState {
   toggleSidebar: () => void
 
   worktrees: Worktree[]
+  worktreeTags: WorktreeTag[]
   agents: Agent[]
   boardItems: BoardItem[]
   collapsedTagGroups: string[]
+  stackExcludedWorktreeIds: string[]
   toggleTagGroup: (projectId: string, tag: string) => void
+  ejectWorktreeFromStack: (id: string) => void
   setWorktreeTag: (id: string, tag: string) => void
+  setWorktreeMergeTarget: (id: string, branch: string) => void
+
+  worktreeDialogOpen: boolean
+  setWorktreeDialogOpen: (open: boolean) => void
+  createMockWorktree: (input?: CreateWorktreeInput | string) => void
+
+  envEditorOpen: boolean
+  setEnvEditorOpen: (open: boolean) => void
+  envVariables: Record<string, EnvVariable[]>
+  addEnvVariable: (projectId: string) => void
+  updateEnvVariable: (projectId: string, id: string, patch: Partial<Pick<EnvVariable, 'key' | 'value' | 'secret'>>) => void
+  removeEnvVariable: (projectId: string, id: string) => void
 
   dockState: DockState
   setDockState: (state: DockState) => void
   activeDockTab: DockTab
   setActiveDockTab: (tab: DockTab) => void
+  dockWorktreeId: string
+  setDockWorktreeId: (id: string) => void
+  rightPanels: Record<DockPanelKey, boolean>
+  toggleRightPanel: (panel: DockPanelKey) => void
+  setRightPanel: (panel: DockPanelKey, open: boolean) => void
 
   selectedFilePath: string
   setSelectedFilePath: (path: string) => void
 
   nodePositions: Record<string, { x: number; y: number }>
   setNodePosition: (id: string, position: { x: number; y: number }) => void
+  setNodePositionsBatch: (positions: Record<string, { x: number; y: number }>) => void
+  subtreeMoveRootId: string | null
+  setSubtreeMoveRoot: (id: string | null) => void
   viewport: ViewportState
   setViewport: (viewport: ViewportState) => void
   canvasCommand: { type: 'fit' | 'layout'; nonce: number }
@@ -75,7 +104,6 @@ interface BonsaiState {
 
   moveBoardItem: (id: string, status: BoardStatus) => void
   setAgentState: (id: string, state: AgentState) => void
-  createMockWorktree: (tag?: string) => void
   startMockAgent: () => void
 }
 
@@ -103,11 +131,33 @@ function slugify(value: string) {
     .replace(/(^-|-$)/g, '')
 }
 
+function kindForTag(tag: string): WorktreeKind {
+  if (tag === 'bug') return 'Bug'
+  if (tag === 'chore') return 'Chore'
+  if (tag === 'review-code') return 'Refactor'
+  if (tag === 'production') return 'Production'
+  return 'Feature'
+}
+
+function branchForInput(input: CreateWorktreeInput, fallback: string) {
+  if (input.sourceType === 'new') return input.branchName?.trim() || fallback
+  if (input.sourceType === 'origin') return input.sourceRef.replace(/^origin\//, '')
+  return input.sourceRef
+}
+
 export const useBonsaiStore = create<BonsaiState>()(
   persist(
     (set, get) => ({
       selection: { type: 'project', id: 'bonsai' },
-      setSelection: (selection) => set({ selection }),
+      setSelection: (selection) => {
+        const state = get()
+        let dockWorktreeId = state.dockWorktreeId
+        if (selection.type === 'worktree') dockWorktreeId = selection.id
+        if (selection.type === 'agent') {
+          dockWorktreeId = state.agents.find((agent) => agent.id === selection.id)?.worktreeId ?? dockWorktreeId
+        }
+        set({ selection, dockWorktreeId })
+      },
       projectQuery: '',
       setProjectQuery: (projectQuery) => set({ projectQuery }),
 
@@ -120,21 +170,30 @@ export const useBonsaiStore = create<BonsaiState>()(
         const nextProject =
           state.projects.find((project) => workspace?.projectIds.includes(project.id)) ??
           state.projects.find((project) => project.workspaceId === activeWorkspaceId)
+        const nextWorktree = state.worktrees.find(
+          (worktree) => worktree.projectId === nextProject?.id && worktree.branch !== nextProject?.defaultBranch,
+        )
         set({
           activeWorkspaceId,
           activeProjectId: nextProject?.id ?? state.activeProjectId,
           selection: nextProject ? { type: 'project', id: nextProject.id } : state.selection,
+          dockWorktreeId: nextWorktree?.id ?? '',
           nodePositions: {},
           notice: nextProject ? 'Switched workspace to ' + workspace?.name : 'Workspace selected',
         })
       },
       setActiveProject: (activeProjectId) => {
-        const project = get().projects.find((item) => item.id === activeProjectId)
+        const state = get()
+        const project = state.projects.find((item) => item.id === activeProjectId)
         if (!project) return
+        const nextWorktree = state.worktrees.find(
+          (worktree) => worktree.projectId === project.id && worktree.branch !== project.defaultBranch,
+        )
         set({
           activeProjectId,
           activeWorkspaceId: project.workspaceId,
           selection: { type: 'project', id: project.id },
+          dockWorktreeId: nextWorktree?.id ?? '',
           nodePositions: {},
           notice: 'Opened project ' + project.name,
         })
@@ -158,6 +217,12 @@ export const useBonsaiStore = create<BonsaiState>()(
             description: 'Frontend-only mock project. Connect repository details later.',
             health: 'idle',
             defaultBranch: 'main',
+            defaultBranchInfo: {
+              commitSha: 'local',
+              commitMessage: 'No commits loaded yet',
+              lastActivity: 'just now',
+              ciStatus: 'waiting',
+            },
             worktreeIds: [],
             openPrCount: 0,
           }
@@ -165,6 +230,7 @@ export const useBonsaiStore = create<BonsaiState>()(
             projects: [...state.projects, project],
             activeProjectId: id,
             selection: { type: 'project', id },
+            dockWorktreeId: '',
             nodePositions: {},
             notice: 'Added project ' + displayName,
           }
@@ -174,9 +240,11 @@ export const useBonsaiStore = create<BonsaiState>()(
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 
       worktrees: initialWorktrees,
+      worktreeTags: initialWorktreeTags,
       agents: initialAgents,
       boardItems: initialBoardItems,
       collapsedTagGroups: ['bonsai:feat'],
+      stackExcludedWorktreeIds: [],
       toggleTagGroup: (projectId, tag) =>
         set((state) => {
           const key = projectId + ':' + tag
@@ -187,22 +255,176 @@ export const useBonsaiStore = create<BonsaiState>()(
             nodePositions: {},
           }
         }),
+      ejectWorktreeFromStack: (id) =>
+        set((state) => ({
+          stackExcludedWorktreeIds: state.stackExcludedWorktreeIds.includes(id)
+            ? state.stackExcludedWorktreeIds
+            : [...state.stackExcludedWorktreeIds, id],
+          nodePositions: {},
+          notice: 'Removed worktree from the collapsed stack',
+        })),
       setWorktreeTag: (id, tag) =>
         set((state) => {
           const nextTag = tag.trim() || 'untagged'
+          const tagDefinition = state.worktreeTags.find((item) => item.name === nextTag)
           return {
             worktrees: state.worktrees.map((worktree) =>
-              worktree.id === id ? { ...worktree, tag: nextTag } : worktree,
+              worktree.id === id ? { ...worktree, tag: nextTag, tagId: tagDefinition?.id } : worktree,
             ),
+            stackExcludedWorktreeIds: state.stackExcludedWorktreeIds.filter((item) => item !== id),
             nodePositions: {},
             notice: 'Worktree tag updated to ' + nextTag,
           }
         }),
+      setWorktreeMergeTarget: (id, branch) => {
+        const state = get()
+        const worktree = state.worktrees.find((item) => item.id === id)
+        const project = state.projects.find((item) => item.id === worktree?.projectId)
+        if (!worktree || !project) return
+        if (branch === worktree.branch) {
+          set({ notice: 'A worktree cannot merge into itself' })
+          return
+        }
+        let cursor = branch
+        const visited = new Set<string>()
+        while (cursor !== project.defaultBranch && !visited.has(cursor)) {
+          visited.add(cursor)
+          if (cursor === worktree.branch) {
+            set({ notice: 'That merge target would create a branch cycle' })
+            return
+          }
+          const parent = state.worktrees.find(
+            (item) => item.projectId === project.id && item.branch === cursor,
+          )
+          if (!parent) break
+          cursor = parent.mergeTargetBranch
+        }
+        set({
+          worktrees: state.worktrees.map((item) =>
+            item.id === id ? { ...item, mergeTargetBranch: branch } : item,
+          ),
+          nodePositions: {},
+          notice: worktree.branch + ' now merges into ' + branch,
+        })
+      },
+
+      worktreeDialogOpen: false,
+      setWorktreeDialogOpen: (worktreeDialogOpen) => set({ worktreeDialogOpen }),
+      createMockWorktree: (input) =>
+        set((state) => {
+          const projectId = state.activeProjectId
+          const project = state.projects.find((item) => item.id === projectId)
+          if (!project) return {}
+          const projectWorktrees = state.worktrees.filter((item) => item.projectId === projectId)
+          const fallbackTag = typeof input === 'string' ? input : 'feat'
+          const fallbackTagDef =
+            state.worktreeTags.find((item) => item.name === fallbackTag) ?? state.worktreeTags[0]
+          const normalized: CreateWorktreeInput =
+            typeof input === 'object'
+              ? input
+              : {
+                  sourceType: 'new',
+                  sourceRef: project.defaultBranch,
+                  branchName: fallbackTag + '/prototype-' + (projectWorktrees.length + 1),
+                  tagId: fallbackTagDef?.id ?? 'feat',
+                  mergeTargetBranch: project.defaultBranch,
+                }
+          const tagDefinition =
+            state.worktreeTags.find((item) => item.id === normalized.tagId) ?? fallbackTagDef
+          const fallbackBranch = (tagDefinition?.name ?? 'feat') + '/prototype-' + (projectWorktrees.length + 1)
+          const branch = branchForInput(normalized, fallbackBranch)
+          if (!branch.trim()) {
+            return { notice: 'Choose or enter a branch before creating the worktree' }
+          }
+          if (projectWorktrees.some((item) => item.branch === branch)) {
+            return { notice: branch + ' already has a worktree' }
+          }
+          const id = 'wt-' + projectId + '-' + (projectWorktrees.length + 1) + '-' + Date.now().toString(36)
+          const tag = tagDefinition?.name ?? 'feat'
+          const mergeTargetExists =
+            normalized.mergeTargetBranch === project.defaultBranch ||
+            projectWorktrees.some((item) => item.branch === normalized.mergeTargetBranch)
+          const mergeTargetBranch = mergeTargetExists ? normalized.mergeTargetBranch : project.defaultBranch
+          const worktree: Worktree = {
+            id,
+            projectId,
+            branch,
+            kind: kindForTag(tag),
+            tag,
+            tagId: tagDefinition?.id,
+            sourceType: normalized.sourceType,
+            remoteBranch: normalized.sourceType === 'origin' ? normalized.sourceRef : undefined,
+            mergeTargetBranch,
+            status: 'idle',
+            agentIds: [],
+            ciStatus: 'waiting',
+            ciFailed: 0,
+            ahead: 0,
+            behind: 0,
+            dirtyFiles: 0,
+            lastActivity: 'just now',
+            gitState: 'clean',
+          }
+          return {
+            worktrees: [...state.worktrees, worktree],
+            projects: state.projects.map((item) =>
+              item.id === project.id ? { ...item, worktreeIds: [...item.worktreeIds, id] } : item,
+            ),
+            selection: { type: 'worktree', id },
+            dockWorktreeId: id,
+            worktreeDialogOpen: false,
+            nodePositions: {},
+            notice: 'Created worktree ' + branch,
+          }
+        }),
+
+      envEditorOpen: false,
+      setEnvEditorOpen: (envEditorOpen) => set({ envEditorOpen }),
+      envVariables: {
+        bonsai: [
+          { id: 'env-1', key: 'BONSAI_API_URL', value: 'http://localhost:8080', secret: false },
+          { id: 'env-2', key: 'GITHUB_TOKEN', value: 'ghp_example_token', secret: true },
+          { id: 'env-3', key: 'NODE_ENV', value: 'development', secret: false },
+        ],
+      },
+      addEnvVariable: (projectId) =>
+        set((state) => ({
+          envVariables: {
+            ...state.envVariables,
+            [projectId]: [
+              ...(state.envVariables[projectId] ?? []),
+              { id: 'env-' + Date.now().toString(36), key: '', value: '', secret: true },
+            ],
+          },
+        })),
+      updateEnvVariable: (projectId, id, patch) =>
+        set((state) => ({
+          envVariables: {
+            ...state.envVariables,
+            [projectId]: (state.envVariables[projectId] ?? []).map((item) =>
+              item.id === id ? { ...item, ...patch } : item,
+            ),
+          },
+        })),
+      removeEnvVariable: (projectId, id) =>
+        set((state) => ({
+          envVariables: {
+            ...state.envVariables,
+            [projectId]: (state.envVariables[projectId] ?? []).filter((item) => item.id !== id),
+          },
+        })),
 
       dockState: 'normal',
       setDockState: (dockState) => set({ dockState }),
       activeDockTab: 'terminal',
       setActiveDockTab: (activeDockTab) => set({ activeDockTab }),
+      dockWorktreeId: 'wt-web',
+      setDockWorktreeId: (dockWorktreeId) => set({ dockWorktreeId }),
+      rightPanels: { files: true, prs: true },
+      toggleRightPanel: (panel) =>
+        set((state) => ({ rightPanels: { ...state.rightPanels, [panel]: !state.rightPanels[panel] } })),
+      setRightPanel: (panel, open) =>
+        set((state) => ({ rightPanels: { ...state.rightPanels, [panel]: open } })),
 
       selectedFilePath: 'package.json',
       setSelectedFilePath: (selectedFilePath) => set({ selectedFilePath }),
@@ -210,6 +432,10 @@ export const useBonsaiStore = create<BonsaiState>()(
       nodePositions: {},
       setNodePosition: (id, position) =>
         set((state) => ({ nodePositions: { ...state.nodePositions, [id]: position } })),
+      setNodePositionsBatch: (positions) =>
+        set((state) => ({ nodePositions: { ...state.nodePositions, ...positions } })),
+      subtreeMoveRootId: null,
+      setSubtreeMoveRoot: (subtreeMoveRootId) => set({ subtreeMoveRootId }),
       viewport: { x: 0, y: 0, zoom: 0.82 },
       setViewport: (viewport) => set({ viewport }),
       canvasCommand: { type: 'fit', nonce: 0 },
@@ -235,6 +461,7 @@ export const useBonsaiStore = create<BonsaiState>()(
         set({
           activeDockTab: 'terminal',
           dockState: 'normal',
+          dockWorktreeId: agent?.worktreeId ?? state.dockWorktreeId,
           activeTerminalId: id,
           terminalSessions: exists
             ? state.terminalSessions
@@ -283,39 +510,6 @@ export const useBonsaiStore = create<BonsaiState>()(
           agents: state.agents.map((agent) => (agent.id === id ? { ...agent, state: agentState } : agent)),
           notice: 'Agent moved to ' + agentState,
         })),
-      createMockWorktree: (tag = 'feat') =>
-        set((state) => {
-          const projectId = state.activeProjectId
-          const project = state.projects.find((item) => item.id === projectId)
-          const projectWorktrees = state.worktrees.filter((item) => item.projectId === projectId)
-          const id = 'wt-' + projectId + '-' + (projectWorktrees.length + 1)
-          const branch = tag + '/prototype-' + (projectWorktrees.length + 1)
-          const worktree: Worktree = {
-            id,
-            projectId,
-            branch,
-            kind: 'Feature',
-            tag,
-            status: 'idle',
-            agentIds: [],
-            ciStatus: 'waiting',
-            ciFailed: 0,
-            ahead: 0,
-            behind: 0,
-            dirtyFiles: 0,
-            lastActivity: 'just now',
-            gitState: 'clean',
-          }
-          return {
-            worktrees: [...state.worktrees, worktree],
-            projects: state.projects.map((item) =>
-              item.id === project?.id ? { ...item, worktreeIds: [...item.worktreeIds, id] } : item,
-            ),
-            selection: { type: 'worktree', id },
-            nodePositions: {},
-            notice: 'Created a mock ' + tag + ' worktree',
-          }
-        }),
       startMockAgent: () => {
         const state = get()
         const selectedWorktree =
@@ -323,7 +517,11 @@ export const useBonsaiStore = create<BonsaiState>()(
             ? state.selection.id
             : state.selection.type === 'agent'
               ? state.agents.find((agent) => agent.id === state.selection.id)?.worktreeId
-              : state.worktrees.find((worktree) => worktree.projectId === state.activeProjectId)?.id
+              : state.dockWorktreeId || state.worktrees.find(
+                  (worktree) =>
+                    worktree.projectId === state.activeProjectId &&
+                    worktree.branch !== state.projects.find((project) => project.id === state.activeProjectId)?.defaultBranch,
+                )?.id
         if (!selectedWorktree) {
           set({ notice: 'Create a worktree before starting an agent' })
           return
@@ -349,6 +547,7 @@ export const useBonsaiStore = create<BonsaiState>()(
               : worktree,
           ),
           selection: { type: 'agent', id },
+          dockWorktreeId: worktreeId,
           terminalSessions: [...state.terminalSessions, { id: terminalId, label: agent.name, agentId: id }],
           terminalOutput: {
             ...state.terminalOutput,
@@ -359,7 +558,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       },
     }),
     {
-      name: 'bonsai-web-workspace-v2',
+      name: 'bonsai-web-workspace-v3',
       partialize: (state) => ({
         selection: state.selection,
         projects: state.projects,
@@ -368,6 +567,8 @@ export const useBonsaiStore = create<BonsaiState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         dockState: state.dockState,
         activeDockTab: state.activeDockTab,
+        dockWorktreeId: state.dockWorktreeId,
+        rightPanels: state.rightPanels,
         selectedFilePath: state.selectedFilePath,
         nodePositions: state.nodePositions,
         viewport: state.viewport,
@@ -375,6 +576,8 @@ export const useBonsaiStore = create<BonsaiState>()(
         worktrees: state.worktrees,
         agents: state.agents,
         collapsedTagGroups: state.collapsedTagGroups,
+        stackExcludedWorktreeIds: state.stackExcludedWorktreeIds,
+        envVariables: state.envVariables,
       }),
     },
   ),

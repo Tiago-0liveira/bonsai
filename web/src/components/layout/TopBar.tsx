@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Bell, ChevronDown, Command, Search, Sprout } from 'lucide-react'
+import { Bell, Check, ChevronDown, Command, Search, Sprout } from 'lucide-react'
 import { workspaces } from '../../mock/projects'
 import { useBonsaiStore } from '../../stores/bonsai'
 
@@ -21,23 +22,77 @@ function HeaderSelect({
   options: { value: string; label: string }[]
   onChange: (value: string) => void
 }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const selected = options.find((option) => option.value === value) ?? options[0]
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [open])
+
   return (
-    <label className="relative flex max-w-40 items-center">
-      <span className="sr-only">{label}</span>
-      <select
+    <div ref={rootRef} className="relative max-w-44">
+      <button
+        type="button"
         aria-label={label}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="bonsai-focus h-7 max-w-40 appearance-none truncate rounded-md border border-transparent bg-transparent py-0 pl-2 pr-7 text-[12px] font-medium text-[rgb(var(--muted))] outline-none transition-colors hover:border-[rgb(var(--border))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={
+          'bonsai-focus flex h-8 max-w-44 items-center gap-2 rounded-md border px-2.5 text-[12px] font-medium transition-colors ' +
+          (open
+            ? 'border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))] text-[rgb(var(--text))]'
+            : 'border-transparent text-[rgb(var(--muted))] hover:border-[rgb(var(--border))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]')
+        }
       >
-        {options.map((option) => (
-          <option key={option.value} value={option.value} className="bg-[rgb(var(--panel-2))] text-[rgb(var(--text))]">
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={11} className="pointer-events-none absolute right-2 text-[rgb(var(--muted-2))]" />
-    </label>
+        <span className="truncate">{selected?.label ?? label}</span>
+        <ChevronDown
+          size={12}
+          className={'shrink-0 text-[rgb(var(--muted-2))] transition-transform ' + (open ? 'rotate-180' : '')}
+        />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label={label}
+          className="absolute left-0 top-[calc(100%+6px)] z-[80] min-w-[190px] overflow-hidden rounded-lg border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))] p-1 shadow-[0_18px_55px_rgb(0_0_0/.46)]"
+        >
+          <div className="px-2 py-1.5 text-[9px] font-semibold uppercase tracking-[.12em] text-[rgb(var(--muted-2))]">
+            {label}
+          </div>
+          {options.map((option) => {
+            const active = option.value === value
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={active}
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value)
+                  setOpen(false)
+                }}
+                className={
+                  'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[11px] transition-colors ' +
+                  (active
+                    ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]'
+                    : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))] hover:text-[rgb(var(--text))]')
+                }
+              >
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {active && <Check size={12} className="text-[rgb(var(--purple))]" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -53,9 +108,9 @@ export function TopBar() {
   const workspaceProjects = projects.filter((project) => project.workspaceId === activeWorkspaceId)
 
   return (
-    <header className="flex h-12 shrink-0 items-center border-b border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3">
-      <div className="flex min-w-0 items-center">
-        <Link to="/" className="flex items-center gap-2 pr-2 font-semibold tracking-tight">
+    <header className="grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3">
+      <div className="flex min-w-0 items-center justify-self-start">
+        <Link to="/" className="flex shrink-0 items-center gap-2 pr-2 font-semibold tracking-tight">
           <span className="grid h-7 w-7 place-items-center text-[rgb(var(--green))]">
             <Sprout size={19} />
           </span>
@@ -77,7 +132,7 @@ export function TopBar() {
         />
       </div>
 
-      <nav className="top-nav-secondary ml-8 flex h-full items-center gap-2">
+      <nav className="top-nav-secondary flex h-full items-center justify-self-center gap-2">
         {nav.map((item) => (
           <Link
             key={item.label}
@@ -99,7 +154,7 @@ export function TopBar() {
         </button>
       </nav>
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 justify-self-end">
         <button
           className="bonsai-focus flex h-7 items-center gap-2 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel))] px-2.5 text-[12px] text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--panel-2))]"
           onClick={() => setPaletteOpen(true)}

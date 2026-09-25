@@ -95,7 +95,7 @@ export function Inspector() {
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const startMockAgent = useBonsaiStore((state) => state.startMockAgent)
-  const createMockWorktree = useBonsaiStore((state) => state.createMockWorktree)
+  const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const setWorktreeTag = useBonsaiStore((state) => state.setWorktreeTag)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const setNotice = useBonsaiStore((state) => state.setNotice)
@@ -178,7 +178,7 @@ export function Inspector() {
                   <Row label="CI queue" value={runningChecks + ' running · ' + waitingChecks + ' waiting'} />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <QuickButton icon={GitBranch} label="Worktree" onClick={() => createMockWorktree('feat')} />
+                  <QuickButton icon={GitBranch} label="Worktree" onClick={() => setWorktreeDialogOpen(true)} />
                   <QuickButton icon={Bot} label="Agent" onClick={startMockAgent} />
                 </div>
 
