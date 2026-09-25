@@ -100,8 +100,10 @@ func Discover(dir string, opts Options) (*Project, error) {
 	fingerprint := computeFingerprint(providerIDs, fingerprintInputs)
 
 	providerCounts := map[string]int{}
+	providerFamilyCounts := map[string]int{}
 	for _, item := range detected {
 		providerCounts[item.detection.ID]++
+		providerFamilyCounts[item.provider.ID()]++
 	}
 	cacheSafe := true
 	for _, count := range providerCounts {
@@ -134,7 +136,7 @@ func Discover(dir string, opts Options) (*Project, error) {
 			if commands[i].Invocation.WorkingDir == "" {
 				commands[i].Invocation.WorkingDir = item.detection.Root
 			}
-			if providerCounts[item.detection.ID] > 1 {
+			if providerFamilyCounts[item.provider.ID()] > 1 {
 				scope := projectScope(loc, item.detection.Root)
 				commands[i].ID = commands[i].ID + "@" + scope
 			}
