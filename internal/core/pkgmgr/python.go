@@ -32,8 +32,9 @@ type pythonPyProject struct {
 }
 
 func (pythonProvider) Detect(ctx Context) (Detection, error) {
-	root, manifest := findProjectFile(
+	root, manifest := findProjectFileWithin(
 		ctx.Location.InputDir,
+		ctx.Location.RepositoryRoot,
 		ctx.Options.searchDepth(),
 		"pyproject.toml", "Pipfile", "requirements.txt", "setup.py", "uv.lock", "poetry.lock",
 	)
