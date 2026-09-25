@@ -21,6 +21,7 @@ type keyMap struct {
 	DiffTab    key.Binding
 	InspectTab key.Binding
 	ChecksTab  key.Binding
+	AgentTab   key.Binding
 	Filter     key.Binding
 	Sort       key.Binding
 	Palette    key.Binding
@@ -71,6 +72,7 @@ var defaultBindings = map[string]bindingSpec{
 	"diff_tab":     {[]string{"d"}, "diff vs base"},
 	"inspect_tab":  {[]string{"i"}, "inspect"},
 	"checks_tab":   {[]string{"b"}, "CI runs"},
+	"agent_tab":    {[]string{"a"}, "agent"},
 	"filter":       {[]string{"/"}, "filter"},
 	"sort":         {[]string{"o"}, "sort"},
 	"palette":      {[]string{"ctrl+k"}, "commands"},
@@ -166,6 +168,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		DiffTab:    b("diff_tab"),
 		InspectTab: b("inspect_tab"),
 		ChecksTab:  b("checks_tab"),
+		AgentTab:   b("agent_tab"),
 		Filter:     b("filter"),
 		Sort:       b("sort"),
 		Palette:    b("palette"),
@@ -205,7 +208,7 @@ type keymapSection struct {
 var keymapSections = []keymapSection{
 	{"Navigation", []string{"focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
 	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
-	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab"}},
+	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab", "agent_tab"}},
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},

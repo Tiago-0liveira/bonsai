@@ -5,12 +5,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agym"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
@@ -151,6 +153,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case configSavedMsg:
 		return m.onConfigSaved(msg)
 
+	case gymAgentViewMsg:
+		m.agentViews[msg.worktreePath] = msg.view
+		if wt, ok := m.selectedWorktree(); ok && wt.Path == msg.worktreePath {
+			if m.rightTab == tabAgent {
+				m.refreshAgentPane(wt.Path)
+				if msg.view != nil && msg.view.Run != nil && !agym.IsTerminal(msg.view.Run.Status) {
+					return m, pollGymEvents(m.gymSvc, msg.view.Run.RunID, m.agentCursor[msg.view.Run.RunID])
+				}
+			}
+		}
+		m.rebuildItems()
+		return m, nil
+
+	case gymEventsMsg:
+		if len(msg.events) > 0 {
+			for _, ev := range msg.events {
+				if ev.Type == "output" {
+					if p, err := agym.ParseOutputPayload(ev); err == nil {
+						m.agentOutput[msg.runID] = append(m.agentOutput[msg.runID], p.Text)
+					}
+				}
+			}
+			m.agentCursor[msg.runID] = msg.nextCursor
+			if wt, ok := m.selectedWorktree(); ok && m.rightTab == tabAgent {
+				m.refreshAgentPane(wt.Path)
+			}
+		}
+		return m, nil
+
+	case gymAutoRunMsg:
+		if msg.err != nil {
+			if msg.result != nil && msg.result.Branch != "" {
+				m.status = fmt.Sprintf("created %s, but agent start failed: %v", msg.result.Branch, msg.err)
+			} else {
+				m.status = "start agent: " + msg.err.Error()
+			}
+			return m, loadWorktrees(m.repoDir, true)
+		}
+		m.status = fmt.Sprintf("created %s · agent running", msg.result.Branch)
+		m.rightTab = tabAgent
+		m.term.SetTitle("AI Agent")
+		m.term.SetFollow(true)
+		return m, tea.Batch(
+			loadWorktrees(m.repoDir, true),
+			loadGymView(m.gymSvc, msg.result.WorktreePath),
+		)
+
+	case gymTickMsg:
+		var cmds []tea.Cmd
+		if wt, ok := m.selectedWorktree(); ok {
+			cmds = append(cmds, loadGymView(m.gymSvc, wt.Path))
+		}
+		cmds = append(cmds, tickGym(2*time.Second))
+		return m, tea.Batch(cmds...)
+
 	case modals.SubmitMsg:
 		return m.onModalSubmit(msg)
 
@@ -279,6 +336,9 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 		if m.rightTab == tabChecks && wt.Branch != "" && wt.Branch != "(detached)" {
 			cmds = append(cmds, m.enterChecks(wt))
 		}
+		if m.rightTab == tabAgent {
+			cmds = append(cmds, m.enterAgent(wt))
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -399,6 +459,10 @@ func (m *Model) rebuildItems() {
 		it.Status = m.statuses[t.Path]
 		it.Checks = m.checkRollup[t.Path]
 		it.Running = m.countRunning(t.Path)
+		if v, ok := m.agentViews[t.Path]; ok && v != nil && v.Run != nil {
+			it.AgentProfile = v.Run.SelectedProfile
+			it.AgentStatus = v.Run.Status
+		}
 		items[i] = it
 	}
 	m.list.SetItems(items)
@@ -817,6 +881,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ChecksTab):
 		return m.openChecksTab()
 
+	case key.Matches(msg, m.keys.AgentTab):
+		return m.openAgentTab()
+
 	case key.Matches(msg, m.keys.Sort):
 		m.sort = (m.sort + 1) % 6
 		m.rebuildItems()
@@ -1169,11 +1236,15 @@ const (
 	createSourceNew      = "New branch"
 	createSourceExisting = "Existing branch"
 	createSourcePR       = "Pull request"
+	createSourceAgent    = "AI agent task (auto branch)"
 )
 
 func (m Model) openCreateSourceModal() (tea.Model, tea.Cmd) {
-	modal := modals.NewSelect(modals.KindCreateSource, "Create worktree from",
-		[]string{createSourceNew, createSourceExisting, createSourcePR})
+	sources := []string{createSourceNew, createSourceExisting, createSourcePR}
+	if m.cfg.Gym.Enabled {
+		sources = append(sources, createSourceAgent)
+	}
+	modal := modals.NewSelect(modals.KindCreateSource, "Create worktree from", sources)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -1272,6 +1343,8 @@ func (m *Model) reloadRightPane() tea.Cmd {
 		return m.enterInspect(wt)
 	case tabChecks:
 		return m.enterChecks(wt)
+	case tabAgent:
+		return m.enterAgent(wt)
 	case tabProcs:
 		m.refreshProcPane()
 		return nil
@@ -1442,6 +1515,78 @@ func (m *Model) enterChecks(wt git.Worktree) tea.Cmd {
 		m.refreshChecksPane()
 	}
 	return loadRuns(m.repoDir, wt.Path, wt.Branch)
+}
+
+// openAgentTab focuses the AI Agent tab for the selected worktree.
+func (m Model) openAgentTab() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	m.rightTab = tabAgent
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
+	return m, m.enterAgent(wt)
+}
+
+// enterAgent sets up the Agent tab for wt and loads the gym view.
+func (m *Model) enterAgent(wt git.Worktree) tea.Cmd {
+	m.term.SetTitle("Agent · " + wt.Branch)
+	m.refreshAgentPane(wt.Path)
+	return loadGymView(m.gymSvc, wt.Path)
+}
+
+// refreshAgentPane formats the header and captured output for the Agent viewport.
+func (m *Model) refreshAgentPane(worktreePath string) {
+	view := m.agentViews[worktreePath]
+	header := renderAgentHeader(view, 80)
+	var output string
+	if view != nil && view.Run != nil && len(m.agentOutput[view.Run.RunID]) > 0 {
+		output = strings.Join(m.agentOutput[view.Run.RunID], "")
+	}
+	m.term.SetFollow(true)
+	m.term.SetContent(header + "\n" + output)
+}
+
+// openAgentStartModal opens an input modal to prompt for an agent task.
+func (m Model) openAgentStartModal() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	modal := modals.NewInput(modals.KindAgentTask, "Start AI Agent · "+wt.Branch, "describe task for agent (e.g. fix tests, implement feature)")
+	modal.SetSize(m.width, m.height)
+	m.modal = &modal
+	return m, nil
+}
+
+// openAgentAutoStartModal opens an input modal to prompt for an agent task with auto branch & worktree creation.
+func (m Model) openAgentAutoStartModal() (tea.Model, tea.Cmd) {
+	modal := modals.NewInput(modals.KindAgentAutoTask, "Start AI Agent · auto branch & worktree", "describe task (branch and worktree will be generated)")
+	modal.SetSize(m.width, m.height)
+	m.modal = &modal
+	return m, nil
+}
+
+// agentStop terminates the active agent run on the current worktree.
+func (m Model) agentStop() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	m.status = "stopping agent…"
+	return m, stopAgent(m.gymSvc, wt.Path, "")
+}
+
+// refreshAgentView reloads the agent view for the current worktree.
+func (m Model) refreshAgentView() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	m.status = "refreshing agent…"
+	return m, loadGymView(m.gymSvc, wt.Path)
 }
 
 // refreshChecksPane renders the cached workflow runs into the viewport.
@@ -1878,6 +2023,34 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case modals.KindAgentTask:
+		task := strings.TrimSpace(msg.Value)
+		if task == "" {
+			return m, nil
+		}
+		wt, ok := m.selectedWorktree()
+		if !ok {
+			return m, nil
+		}
+		m.status = "starting agent…"
+		profile := m.cfg.Gym.DefaultProfile
+		if profile == "" {
+			profile = "auto"
+		}
+		return m, startAgent(m.gymSvc, wt.Path, profile, task)
+
+	case modals.KindAgentAutoTask:
+		task := strings.TrimSpace(msg.Value)
+		if task == "" {
+			return m, nil
+		}
+		m.status = "generating branch & starting agent…"
+		profile := m.cfg.Gym.DefaultProfile
+		if profile == "" {
+			profile = "auto"
+		}
+		return m, startAgentAutoWorktree(m.gymSvc, profile, task, m.cfg)
+
 	case modals.KindConfigChoice:
 		return m.onConfigChoice(msg.Value)
 
@@ -2115,6 +2288,8 @@ func (m Model) onCreateSource(choice string) (tea.Model, tea.Cmd) {
 	case createSourcePR:
 		m.status = "loading pull requests…"
 		return m, loadPRs(m.repoDir)
+	case createSourceAgent:
+		return m.openAgentAutoStartModal()
 	}
 	return m, nil
 }

@@ -33,6 +33,8 @@ const (
 	KindPrune       Kind = "prune"
 	KindNewAlias    Kind = "new_alias"     // enter new alias name
 	KindNewAliasCmd Kind = "new_alias_cmd" // enter new alias command
+	KindAgentTask     Kind = "agent_task"      // enter AI agent task prompt
+	KindAgentAutoTask Kind = "agent_auto_task" // enter AI agent task prompt with auto branch & worktree
 
 	// PR actions.
 	KindMergeStrategy Kind = "merge_strategy" // pick merge/squash/rebase

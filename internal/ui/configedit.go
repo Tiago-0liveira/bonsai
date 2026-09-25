@@ -78,6 +78,12 @@ var configSettings = []configSetting{
 	{key: "hooks.on_worktree_delete", label: "Config: hooks.on_worktree_delete", title: "hooks.on_worktree_delete",
 		desc:    "Commands run in a worktree before it is pruned.",
 		example: "docker compose down", kind: cfgList},
+	{key: "gym.enabled", label: "Config: gym.enabled", title: "gym.enabled",
+		desc:    "Enable background AI agent discovery and status updates.",
+		example: "true / false", kind: cfgToggle},
+	{key: "gym.default_profile", label: "Config: gym.default_profile", title: "Set gym.default_profile",
+		desc:    "Default AGYM profile used for new AI agent tasks.",
+		example: "auto", kind: cfgInput},
 }
 
 // themeRoles lists the color roles theme.overrides accepts, matching the

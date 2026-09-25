@@ -154,3 +154,32 @@ func TestResolveAlias(t *testing.T) {
 		}
 	}
 }
+
+func TestGymConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Gym.Enabled {
+		t.Errorf("expected gym.enabled to default to false, got true")
+	}
+	if cfg.Gym.DefaultProfile != "auto" {
+		t.Errorf("expected gym.default_profile to default to auto, got %q", cfg.Gym.DefaultProfile)
+	}
+
+	customPath := filepath.Join(dir, ".bonsai.yaml")
+	if err := os.WriteFile(customPath, []byte("gym:\n  enabled: true\n  default_profile: personal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Gym.Enabled {
+		t.Errorf("expected gym.enabled to be true")
+	}
+	if cfg.Gym.DefaultProfile != "personal" {
+		t.Errorf("expected gym.default_profile to be personal, got %q", cfg.Gym.DefaultProfile)
+	}
+}

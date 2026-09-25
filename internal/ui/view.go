@@ -741,6 +741,8 @@ func tabLabel(t rightTab, compact bool) string {
 			return " Insp (i) "
 		case tabChecks:
 			return " Checks (b) "
+		case tabAgent:
+			return " Agent (a) "
 		default:
 			return " Log (l) "
 		}
@@ -756,6 +758,8 @@ func tabLabel(t rightTab, compact bool) string {
 		return " Inspect (i) "
 	case tabChecks:
 		return " Checks (b) "
+	case tabAgent:
+		return " Agent (a) "
 	default:
 		return " Git Log "
 	}
@@ -765,7 +769,7 @@ func tabLabel(t rightTab, compact bool) string {
 // Log, Processes and Inspect always; Diff for non-main worktrees; Checks when
 // the selection is on a branch; PR when the selection has a connected PR.
 func (m Model) visibleTabs() []rightTab {
-	tabs := []rightTab{tabLog, tabProcs, tabInspect}
+	tabs := []rightTab{tabLog, tabProcs}
 	if wt, ok := m.selectedWorktree(); ok {
 		if !wt.IsMain {
 			tabs = append(tabs, tabDiff)
@@ -776,7 +780,9 @@ func (m Model) visibleTabs() []rightTab {
 		if _, isPR := m.prForBranch(wt.Branch); isPR {
 			tabs = append(tabs, tabPR)
 		}
+		tabs = append(tabs, tabAgent)
 	}
+	tabs = append(tabs, tabInspect)
 	return tabs
 }
 

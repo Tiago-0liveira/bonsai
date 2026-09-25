@@ -118,3 +118,44 @@ func TestRemoveWorktreeDirty(t *testing.T) {
 		t.Errorf("worktree still listed after force removal: %+v", trees)
 	}
 }
+
+func TestCommonDirAndGitDir(t *testing.T) {
+	main := gitInit(t)
+	wtPath := filepath.Join(t.TempDir(), "feature")
+	runGit(t, main, "worktree", "add", "-b", "feature", wtPath)
+
+	mainCommon, err := CommonDir(main)
+	if err != nil {
+		t.Fatalf("CommonDir(main): %v", err)
+	}
+	wtCommon, err := CommonDir(wtPath)
+	if err != nil {
+		t.Fatalf("CommonDir(wtPath): %v", err)
+	}
+	if mainCommon != wtCommon {
+		t.Errorf("expected common dir to match: main=%s wt=%s", mainCommon, wtCommon)
+	}
+
+	mainGitDir, err := GitDir(main)
+	if err != nil {
+		t.Fatalf("GitDir(main): %v", err)
+	}
+	wtGitDir, err := GitDir(wtPath)
+	if err != nil {
+		t.Fatalf("GitDir(wtPath): %v", err)
+	}
+	if mainGitDir == wtGitDir {
+		t.Errorf("expected distinct git dirs for main and worktree: %s", mainGitDir)
+	}
+	if !filepath.IsAbs(mainCommon) || !filepath.IsAbs(wtGitDir) {
+		t.Errorf("expected absolute paths: common=%s gitDir=%s", mainCommon, wtGitDir)
+	}
+}
+
+func TestCanonicalPath(t *testing.T) {
+	dir := t.TempDir()
+	can := CanonicalPath(dir)
+	if !filepath.IsAbs(can) {
+		t.Errorf("expected absolute canonical path: %s", can)
+	}
+}

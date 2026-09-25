@@ -49,6 +49,8 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return nil
 	case "shell-init":
 		return cmdShellInit(out)
+	case "gym":
+		return cmdGym(args[1:], out, errOut)
 	}
 
 	// Anchor to the main worktree regardless of the current directory, so copy
@@ -443,6 +445,7 @@ Usage:
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias
   bonsai shell-init               print a shell 'bcd' cd helper
+  bonsai gym [cmd]                manage AI agent integration
   bonsai version (-v, --version)  print the installed version
   bonsai update (-u, --update)    check or install updates
   bonsai help                     show this help

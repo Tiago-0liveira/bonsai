@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,12 +10,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agym"
 	"github.com/Tiago-0liveira/bonsai/internal/core/clipboard"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/core/gym"
 	"github.com/Tiago-0liveira/bonsai/internal/core/pkgmgr"
 )
 
@@ -204,6 +207,16 @@ func gitCommit(path, msg string) tea.Cmd {
 	return func() tea.Msg { return opDoneMsg{label: "commit", err: git.Commit(path, msg)} }
 }
 
+func checkPruneAllowed(repoDir, worktreePath string) error {
+	svc, err := gym.NewService(repoDir, agym.NewClient(""))
+	if err != nil || svc == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return svc.CheckPruneAllowed(ctx, worktreePath)
+}
+
 // pruneWorktree optionally merges a PR, runs delete hooks in the worktree,
 // removes it, then deletes its branch. When merge is true and prNumber > 0 the
 // merge happens first and aborts the prune on failure. When force is true the
@@ -211,6 +224,9 @@ func gitCommit(path, msg string) tea.Cmd {
 // prune with git.ErrWorktreeDirty.
 func pruneWorktree(repoDir, path, branch, upstream string, deleteHooks []string, merge, force bool, prNumber int) tea.Cmd {
 	return func() tea.Msg {
+		if err := checkPruneAllowed(repoDir, path); err != nil {
+			return opDoneMsg{label: "prune", err: err}
+		}
 		if merge && prNumber > 0 {
 			if err := gh.MergePR(repoDir, prNumber); err != nil {
 				return opDoneMsg{label: "merge PR", err: err}
@@ -447,6 +463,12 @@ func bulkPrune(repoDir string, targets []pruneTarget, deleteHooks []string) tea.
 		var firstErr error
 		n := 0
 		for _, t := range targets {
+			if err := checkPruneAllowed(repoDir, t.path); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
 			vars := config.HookVars(repoDir, t.path, t.branch, t.upstream, t.prNumber)
 			if err := coreexec.RunHooks(t.path, deleteHooks, vars); err != nil {
 				if firstErr == nil {

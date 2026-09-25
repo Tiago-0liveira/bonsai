@@ -81,6 +81,45 @@ func MainRoot(dir string) (string, error) {
 	return filepath.Clean(trees[0].Path), nil
 }
 
+// CommonDir returns the canonical common git directory for the repo containing dir.
+// In linked worktrees, this points to the main repository's .git directory.
+// Symlinks are evaluated to ensure canonical identity.
+func CommonDir(dir string) (string, error) {
+	out, err := run(dir, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	p := out
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	return CanonicalPath(p), nil
+}
+
+// GitDir returns the canonical per-worktree git directory for the worktree containing dir.
+// For the main worktree, this is the repository's .git directory. For linked worktrees,
+// this is .git/worktrees/<name>. Symlinks are evaluated to ensure canonical identity.
+func GitDir(dir string) (string, error) {
+	out, err := run(dir, "rev-parse", "--git-dir")
+	if err != nil {
+		return "", err
+	}
+	p := out
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	return CanonicalPath(p), nil
+}
+
+// CanonicalPath cleans path and resolves any symlinks if possible.
+func CanonicalPath(path string) string {
+	cleaned := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return resolved
+	}
+	return cleaned
+}
+
 // ListWorktrees parses `git worktree list --porcelain` into structured data.
 // The first entry is the main worktree.
 func ListWorktrees(dir string) ([]Worktree, error) {

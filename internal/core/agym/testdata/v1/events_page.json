@@ -1,0 +1,35 @@
+{
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "ok": true,
+  "data": {
+    "run_id": "run-xyz-789",
+    "events": [
+      {
+        "run_id": "run-xyz-789",
+        "seq": 1,
+        "timestamp": "2026-09-23T12:00:01Z",
+        "type": "output",
+        "payload": {
+          "stream": "stdout",
+          "text": "Initializing Antigravity workspace...\n"
+        }
+      },
+      {
+        "run_id": "run-xyz-789",
+        "seq": 2,
+        "timestamp": "2026-09-23T12:00:02Z",
+        "type": "output",
+        "payload": {
+          "stream": "stdout",
+          "text": "Running tests...\n"
+        }
+      }
+    ],
+    "next_cursor": 2,
+    "has_more": false,
+    "oldest_retained_seq": 1
+  }
+}

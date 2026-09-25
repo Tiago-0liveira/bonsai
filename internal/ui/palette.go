@@ -211,6 +211,15 @@ func (m Model) paletteCommands() []paletteCmd {
 		wt("Show inspector", m.keys.InspectTab, Model.openInspectTab),
 		paletteCmd{label: "Show CI checks", binding: m.keys.ChecksTab, scopeHint: wtScope, available: needBranch, run: Model.openChecksTab},
 		wt("Show processes", m.keys.ViewProcs, Model.toggleProcsTab),
+		wt("Show agent", m.keys.AgentTab, Model.openAgentTab),
+	})...)
+
+	cmds = append(cmds, tag("AI Agent", []paletteCmd{
+		global("Agent: Start new task (auto worktree)", key.Binding{}, Model.openAgentAutoStartModal),
+		wt("Agent: Start new task in selected worktree", key.Binding{}, Model.openAgentStartModal),
+		wt("Agent: Stop active run", key.Binding{}, Model.agentStop),
+		wt("Agent: Show status", m.keys.AgentTab, Model.openAgentTab),
+		wt("Agent: Refresh view", key.Binding{}, Model.refreshAgentView),
 	})...)
 
 	cmds = append(cmds, tag("Tools", []paletteCmd{

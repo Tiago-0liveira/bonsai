@@ -1,0 +1,20 @@
+{
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "ok": true,
+  "data": [
+    {
+      "profile_id": "prof-personal-123",
+      "name": "personal",
+      "readiness": "ready"
+    },
+    {
+      "profile_id": "prof-work-456",
+      "name": "work",
+      "readiness": "busy",
+      "reason": "leased by run_abc"
+    }
+  ]
+}

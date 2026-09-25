@@ -3,12 +3,16 @@
 package ui
 
 import (
+	"time"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agym"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/core/gym"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/core/updater"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
@@ -36,6 +40,7 @@ const (
 	tabPR
 	tabInspect
 	tabChecks
+	tabAgent
 )
 
 // sortMode orders the worktree list.
@@ -147,6 +152,12 @@ type Model struct {
 	// running→done/failed transition can fire a notification once.
 	seenProcStatus map[string]string
 
+	// AGYM AI Agent integration state.
+	gymSvc      *gym.Service
+	agentViews  map[string]*gym.AgentView
+	agentOutput map[string][]string
+	agentCursor map[string]uint64
+
 	// sort is the current worktree ordering.
 	sort sortMode
 
@@ -246,6 +257,9 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		keys[k] = v
 	}
 
+	gymClient := agym.NewClient("")
+	gymSvc, _ := gym.NewService(repoDir, gymClient)
+
 	m := Model{
 		repoDir:           repoDir,
 		cfg:               cfg,
@@ -273,6 +287,10 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		seenProcStatus:    map[string]string{},
 		diffFileContent:   map[string]string{},
 		yankTargets:       map[string]string{},
+		gymSvc:          gymSvc,
+		agentViews:      map[string]*gym.AgentView{},
+		agentOutput:     map[string][]string{},
+		agentCursor:     map[string]uint64{},
 	}
 	m.list.Focus()
 	m.procSearchInput.Placeholder = "search output…"
@@ -322,7 +340,11 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs())
+	cmds := []tea.Cmd{checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs()}
+	if m.cfg.Gym.Enabled {
+		cmds = append(cmds, tickGym(2*time.Second))
+	}
+	return tea.Batch(cmds...)
 }
 
 // selectedWorktree returns the highlighted worktree, if any.

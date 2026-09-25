@@ -1,0 +1,25 @@
+{
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "ok": true,
+  "data": {
+    "run_id": "run-xyz-789",
+    "request_id": "req-001",
+    "client": "bonsai",
+    "client_id": "client-uuid",
+    "workspace": {
+      "key": "ws-key-1",
+      "cwd": "/path/to/worktree"
+    },
+    "selected_profile": "personal",
+    "lease_id": "lease-abc",
+    "task": "Fix the parser bug",
+    "status": "running",
+    "last_seq": 4,
+    "created_at": "2026-09-23T12:00:00Z",
+    "started_at": "2026-09-23T12:00:01Z",
+    "elapsed_seconds": 24.5
+  }
+}

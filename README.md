@@ -43,7 +43,8 @@ Juggling git worktrees by hand is tedious: creating them, copying over untracked
 - 🔀 **Git ops** inline: pull, push, commit, rebase (drops to a real shell for conflict resolution).
 - 🗑️ **Prune** with an optional **merge-PR-first** step and a clear preview of exactly what will happen.
 - ⚙️ **Edit `.bonsai.yaml` from the command palette** — every setting, with descriptions and examples, applied live.
-- 🖥️ **Everything works from the CLI too** — `bonsai create`, `bonsai copy`, `bonsai x <alias>`, and more.
+- 🤖 **AI Agent integration** with [AGYM](docs/agym.md): run durable headless agents in worktrees with live output and prune guards.
+- 🖥️ **Everything works from the CLI too** — `bonsai create`, `bonsai copy`, `bonsai gym`, `bonsai x <alias>`, and more.
 
 ## Install
 

@@ -79,6 +79,12 @@ type ProcessPolicy struct {
 	MaxRestarts int    `mapstructure:"max_restarts"`
 }
 
+// Gym configures the AGYM AI integration.
+type Gym struct {
+	Enabled        bool   `mapstructure:"enabled"`
+	DefaultProfile string `mapstructure:"default_profile"`
+}
+
 // Config is the parsed .bonsai.yaml.
 type Config struct {
 	// Upstream is the ref ahead/behind metrics compare against, e.g. origin/main.
@@ -100,6 +106,8 @@ type Config struct {
 	Notifications Notifications `mapstructure:"notifications"`
 	// Processes sets per-process restart policies for the background daemon.
 	Processes []ProcessPolicy `mapstructure:"processes"`
+	// Gym configures AGYM AI agent integration.
+	Gym Gym `mapstructure:"gym"`
 }
 
 // PolicyFor resolves the restart policy for a process, matching label first then
@@ -185,6 +193,8 @@ func Load(dir string) (*Config, error) {
 	v.SetDefault("confirm_destructive", true)
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
+	v.SetDefault("gym.enabled", false)
+	v.SetDefault("gym.default_profile", "auto")
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, notFound := err.(viper.ConfigFileNotFoundError); !notFound {
@@ -199,6 +209,9 @@ func Load(dir string) (*Config, error) {
 
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
+	}
+	if cfg.Gym.DefaultProfile == "" {
+		cfg.Gym.DefaultProfile = "auto"
 	}
 	return cfg, nil
 }
@@ -227,6 +240,8 @@ func LoadFile(path string) (*Config, error) {
 	v.SetDefault("confirm_destructive", true)
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
+	v.SetDefault("gym.enabled", false)
+	v.SetDefault("gym.default_profile", "auto")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
@@ -238,6 +253,9 @@ func LoadFile(path string) (*Config, error) {
 	}
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
+	}
+	if cfg.Gym.DefaultProfile == "" {
+		cfg.Gym.DefaultProfile = "auto"
 	}
 	return cfg, nil
 }

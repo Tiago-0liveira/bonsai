@@ -39,6 +39,10 @@ type Item struct {
 	Checks string
 	// Running is the number of processes currently running in this worktree.
 	Running int
+	// AgentProfile is the selected AGYM profile for an active agent run.
+	AgentProfile string
+	// AgentStatus is the current status of the active agent run.
+	AgentStatus string
 }
 
 // Title is the branch name (or "(main)").
@@ -245,6 +249,14 @@ func (itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.I
 	}
 	if it.Running > 0 {
 		title += " " + runningStyle.Render(fmt.Sprintf("▶%d", it.Running))
+	}
+	if it.AgentStatus != "" {
+		agentLabel := "agent: "
+		if it.AgentProfile != "" && it.AgentProfile != "auto" {
+			agentLabel += it.AgentProfile + " · "
+		}
+		agentLabel += it.AgentStatus
+		title += " " + accentStyle.Render(agentLabel)
 	}
 
 	desc := "  " + descStyle.Render(it.Description())
