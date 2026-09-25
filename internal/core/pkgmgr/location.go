@@ -80,3 +80,57 @@ func findUp(start string, names ...string) (string, string) {
 		}
 	}
 }
+
+
+var skippedProjectDirs = map[string]bool{
+	".git":        true,
+	"node_modules": true,
+	"target":      true,
+	"vendor":      true,
+	".venv":       true,
+	"venv":        true,
+	"__pycache__": true,
+}
+
+// findProjectFile first preserves the historical upward lookup. If nothing is
+// found, it performs a deterministic breadth-first scan below start, bounded by
+// maxDepth. Symlinked directories are not followed.
+func findProjectFile(start string, maxDepth int, names ...string) (string, string) {
+	if root, path := findUp(start, names...); root != "" {
+		return root, path
+	}
+	if maxDepth <= 0 {
+		return "", ""
+	}
+
+	type queuedDir struct {
+		path  string
+		depth int
+	}
+	queue := []queuedDir{{path: start, depth: 0}}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current.depth >= maxDepth {
+			continue
+		}
+		entries, err := os.ReadDir(current.path)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() || skippedProjectDirs[entry.Name()] {
+				continue
+			}
+			child := filepath.Join(current.path, entry.Name())
+			for _, name := range names {
+				path := filepath.Join(child, name)
+				if st, err := os.Stat(path); err == nil && !st.IsDir() {
+					return child, path
+				}
+			}
+			queue = append(queue, queuedDir{path: child, depth: current.depth + 1})
+		}
+	}
+	return "", ""
+}
