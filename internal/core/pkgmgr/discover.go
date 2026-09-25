@@ -106,7 +106,7 @@ func Discover(dir string, opts Options) (*Project, error) {
 		providerFamilyCounts[item.provider.ID()]++
 	}
 	cacheSafe := true
-	for _, count := range providerCounts {
+	for _, count := range providerFamilyCounts {
 		if count > 1 {
 			cacheSafe = false
 			break
