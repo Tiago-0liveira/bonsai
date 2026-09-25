@@ -55,27 +55,32 @@ func TestRenderUsageDashboardFleetRanking(t *testing.T) {
 	got := out.String()
 
 	for _, want := range []string{
-		"Antigravity Usage",
-		"Fleet Capacity (3 Accounts)",
-		"Gemini Pool:",
+		"Agent Fleet Usage",
+		"Fleet Capacity (3 Accounts · 1 Provider)",
+		"Usage Pool:",
 		"Weekly Pool:",
 		"● 1 Ready",
 		"▲ 1 Active",
 		"✖ 1 Low",
 		"Next Reset: best in 55h00m",
-		"Gemini 5h",
-		"Gemini Wk",
+		"Gemini Models",
+		"Weekly",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, got)
 		}
 	}
 
-	best := strings.Index(got, "best")
-	middle := strings.Index(got, "middle")
-	low := strings.Index(got, "low")
+	sectionStart := strings.Index(got, "Gemini Models")
+	if sectionStart < 0 {
+		t.Fatalf("Gemini section missing:\n%s", got)
+	}
+	section := got[sectionStart:]
+	best := strings.Index(section, "best")
+	middle := strings.Index(section, "middle")
+	low := strings.Index(section, "low")
 	if best < 0 || middle < 0 || low < 0 || !(best < middle && middle < low) {
-		t.Fatalf("rows not ranked by remaining weekly capacity:\n%s", got)
+		t.Fatalf("rows not ranked by provider score:\n%s", got)
 	}
 	if strings.Contains(got, "\x1b[") {
 		t.Fatalf("non-color render contains ANSI escapes: %q", got)
@@ -93,10 +98,69 @@ func TestRenderUsageDashboardIncludesThirdPartyPool(t *testing.T) {
 	var out bytes.Buffer
 	renderUsageDashboard(&out, []agents.AccountUsageResult{result}, now, false)
 	got := out.String()
-	if !strings.Contains(got, "Claude/GPT Capacity") ||
-		!strings.Contains(got, "Claude/GPT 5h") ||
-		!strings.Contains(got, "Claude/GPT Wk") {
+	if !strings.Contains(got, "Claude & GPT Models") ||
+		!strings.Contains(got, "5h") ||
+		!strings.Contains(got, "Weekly") {
 		t.Fatalf("third-party pool missing:\n%s", got)
+	}
+}
+
+func TestAntigravityFleetScoreUsesGeminiPrimaryPool(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	result := usageTestResult("work", 0.80, 0.90, now.Add(48*time.Hour), now.Add(3*time.Hour))
+	result.Usage.Limits = append(result.Usage.Limits,
+		usageTestLimit("3p-5h", "Claude and GPT models", "5h", 0.05, now.Add(2*time.Hour)),
+		usageTestLimit("3p-weekly", "Claude and GPT models", "weekly", 0.05, now.Add(24*time.Hour)),
+	)
+
+	row := usageDashboardRow{account: result.Account, usage: result.Usage}
+	for i := range result.Usage.Limits {
+		limit := &result.Usage.Limits[i]
+		switch classifyUsageLimit(*limit) {
+		case "gemini-5h":
+			row.gemini5h = limit
+		case "gemini-weekly":
+			row.geminiWeek = limit
+		case "third-5h":
+			row.third5h = limit
+		case "third-weekly":
+			row.thirdWeek = limit
+		}
+	}
+
+	score, ok := usageRowScore(row)
+	if !ok || score != 0.80 {
+		t.Fatalf("Antigravity fleet score = %v, %v; want 0.80 from Gemini primary pool", score, ok)
+	}
+}
+
+func TestRenderUsageDashboardSeparatesProviders(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	antigravity := usageTestResult("google", 0.70, 0.90, now.Add(48*time.Hour), now.Add(3*time.Hour))
+	codexRemaining := 0.60
+	codex := agents.AccountUsageResult{
+		Account: agents.Account{ID: "acct_codex", Provider: "codex", Name: "openai"},
+		Usage: &agents.UsageSnapshot{
+			Provider:  "codex",
+			AccountID: "acct_codex",
+			Limits: []agents.UsageLimit{
+				{ID: "session", Window: "5h", RemainingFraction: &codexRemaining},
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	renderUsageDashboard(&out, []agents.AccountUsageResult{codex, antigravity}, now, false)
+	got := out.String()
+	for _, want := range []string{
+		"Fleet Capacity (2 Accounts · 2 Providers)",
+		"◆ Antigravity · 1 account",
+		"◆ Codex · 1 account",
+		"Usage dashboard adapter not implemented yet.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("multi-provider dashboard missing %q:\n%s", want, got)
+		}
 	}
 }
 
