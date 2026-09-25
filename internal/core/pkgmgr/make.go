@@ -18,7 +18,7 @@ type makeDetection struct {
 }
 
 func (makeProvider) Detect(ctx Context) (Detection, error) {
-	root, path := findUp(ctx.Location.InputDir, "Makefile", "makefile", "GNUmakefile")
+	root, path := findProjectFile(ctx.Location.InputDir, ctx.Options.searchDepth(), "Makefile", "makefile", "GNUmakefile")
 	if root == "" {
 		return Detection{}, nil
 	}
