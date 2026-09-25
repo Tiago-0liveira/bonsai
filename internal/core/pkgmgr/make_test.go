@@ -37,7 +37,7 @@ func TestMakeParsing(t *testing.T) {
 			got = append(got, cmd.Name)
 		}
 	}
-	want := []string{"build", "test", "deploy-prod", "foo.bar", "foo_bar"}
+	want := []string{"build", "deploy-prod", "foo.bar", "foo_bar", "test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("make targets = %v, want %v", got, want)
 	}
