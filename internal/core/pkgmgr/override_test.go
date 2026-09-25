@@ -213,3 +213,29 @@ func TestOverridePrecedenceOverDiscoveredMetadata(t *testing.T) {
 		t.Fatalf("argument override did not win: %+v", args)
 	}
 }
+
+
+func TestOverrideWorkingDirUsesConfigDirectoryInMultiProjectRepo(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "apps", "admin"), "package.json", `{"scripts":{"dev":"vite"}}`)
+	write(t, filepath.Join(root, "apps", "web"), "package.json", `{"scripts":{"test":"vitest"}}`)
+	write(t, root, ".bonsai.yaml", `pkgmgr:
+  search_depth: 2
+  commands:
+    - id: project:seed
+      command:
+        program: pnpm
+        args: ["db:seed"]
+        working_dir: tools
+`)
+	depth2 := 2
+	project, err := Discover(root, Options{SearchDepth: &depth2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := commandByID(t, project, "project:seed")
+	want := filepath.Join(root, "tools")
+	if seed.Invocation.WorkingDir != want {
+		t.Fatalf("override working dir = %q, want config-rooted %q", seed.Invocation.WorkingDir, want)
+	}
+}
