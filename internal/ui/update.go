@@ -846,7 +846,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Scripts):
 		if wt, ok := m.selectedWorktree(); ok {
-			return m, loadScripts(wt.Path)
+			return m, loadScripts(wt.Path, m.cfg.PkgMgr.SearchDepth)
 		}
 		return m, nil
 
@@ -1760,7 +1760,7 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		return true, m, nil
 
 	case key.Matches(msg, m.keys.Create): // n starts a new command
-		return true, m, loadScripts(wt.Path)
+		return true, m, loadScripts(wt.Path, m.cfg.PkgMgr.SearchDepth)
 
 	case msg.String() == "g": // jump to the start of the log
 		m.term.GotoTop()
