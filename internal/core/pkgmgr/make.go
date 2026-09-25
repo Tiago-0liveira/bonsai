@@ -79,6 +79,7 @@ func parseMakefile(path string) ([]makeTarget, error) {
 	phony := map[string]bool{}
 	seen := map[string]bool{}
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
@@ -99,6 +100,10 @@ func parseMakefile(path string) ([]makeTarget, error) {
 		colon := strings.IndexByte(line, ':')
 		if colon <= 0 {
 			continue
+		}
+		afterColon := strings.TrimSpace(line[colon+1:])
+		if strings.HasPrefix(afterColon, "=") || strings.HasPrefix(afterColon, ":=") {
+			continue // variable assignment such as VAR := value / VAR ::= value
 		}
 		left := strings.TrimSpace(line[:colon])
 		if left == "" || strings.Contains(left, "=") {
