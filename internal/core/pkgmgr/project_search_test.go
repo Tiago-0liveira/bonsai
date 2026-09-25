@@ -105,11 +105,11 @@ func TestDiscoverRootAndNestedNodeProjects(t *testing.T) {
 		t.Fatalf("node providers = %d, want 2: %+v", nodeProviders, project.Providers)
 	}
 
-	rootCmd := commandByID(t, project, "node:script:root@.")
+	rootCmd := commandByID(t, project, "node:script:root")
 	if rootCmd.Invocation.WorkingDir != root {
 		t.Fatalf("root command dir = %q, want %q", rootCmd.Invocation.WorkingDir, root)
 	}
-	webCmd := commandByID(t, project, "node:script:dev@apps/web")
+	webCmd := commandByID(t, project, "node:script:dev")
 	if webCmd.Invocation.WorkingDir != web {
 		t.Fatalf("web command dir = %q, want %q", webCmd.Invocation.WorkingDir, web)
 	}
