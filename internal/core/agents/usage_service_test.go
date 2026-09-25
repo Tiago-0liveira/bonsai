@@ -10,14 +10,14 @@ import (
 )
 
 type usageTestProvider struct {
-	mu sync.Mutex
-	inFlight int
+	mu          sync.Mutex
+	inFlight    int
 	maxInFlight int
-	calls int
-	fail map[AccountID]error
+	calls       int
+	fail        map[AccountID]error
 }
 
-func (p *usageTestProvider) ID() ProviderID { return "usage-fake" }
+func (p *usageTestProvider) ID() ProviderID             { return "usage-fake" }
 func (p *usageTestProvider) Capabilities() Capabilities { return Capabilities{Usage: true} }
 func (p *usageTestProvider) SetupAccount(context.Context, SetupRequest) (SetupResult, error) {
 	return SetupResult{}, nil
@@ -25,7 +25,9 @@ func (p *usageTestProvider) SetupAccount(context.Context, SetupRequest) (SetupRe
 func (p *usageTestProvider) PrepareSession(context.Context, PrepareSessionRequest) (PreparedSession, error) {
 	return PreparedSession{}, nil
 }
-func (p *usageTestProvider) FinalizeSession(context.Context, FinalizeSessionRequest) error { return nil }
+func (p *usageTestProvider) FinalizeSession(context.Context, FinalizeSessionRequest) error {
+	return nil
+}
 func (p *usageTestProvider) Usage(_ context.Context, account Account, _ UsageOptions) (UsageSnapshot, error) {
 	p.mu.Lock()
 	p.inFlight++
@@ -45,7 +47,7 @@ func (p *usageTestProvider) Usage(_ context.Context, account Account, _ UsageOpt
 	f := 0.5
 	return UsageSnapshot{
 		AccountID: account.ID,
-		Limits: []UsageLimit{{ID: "window", Window: "5h", RemainingFraction: &f}},
+		Limits:    []UsageLimit{{ID: "window", Window: "5h", RemainingFraction: &f}},
 	}, nil
 }
 
