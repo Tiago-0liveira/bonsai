@@ -118,4 +118,16 @@ func TestStructuredSpawnKeepsWorktreeOwnerAndNestedWorkingDir(t *testing.T) {
 	if len(list) != 1 || list[0].Worktree != root || list[0].WorkingDir != working {
 		t.Fatalf("listed record lost owner/cwd: %+v", list)
 	}
+
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		list = s.list()
+		if len(list) == 1 && procstore.IsTerminal(list[0].Status) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("structured child did not reach a terminal state: %+v", list)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
