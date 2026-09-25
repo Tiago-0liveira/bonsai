@@ -12,7 +12,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { Bug, CircleDot, GripVertical, Lightbulb, ListTodo, Sparkles, TriangleAlert } from 'lucide-react'
+import { Bug, CircleDot, GripVertical, Lightbulb, ListTodo, Sparkles, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { BoardItem, BoardKind, BoardStatus } from '../../types'
 
@@ -22,7 +22,7 @@ const columns: { id: BoardStatus; label: string }[] = [
   { id: 'done', label: 'Done' },
 ]
 
-const kindIcon: Record<BoardKind, React.ComponentType<{ size?: number }>> = {
+const kindIcon: Record<BoardKind, LucideIcon> = {
   Idea: Lightbulb,
   Feature: Sparkles,
   Bug,
