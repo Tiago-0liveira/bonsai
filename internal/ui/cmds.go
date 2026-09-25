@@ -189,8 +189,10 @@ func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 		}
 
 		providerNames := map[string]string{}
+		providerRootCounts := map[string]int{}
 		for _, provider := range project.Providers {
 			providerNames[provider.ID] = provider.Name
+			providerRootCounts[provider.ID]++
 		}
 		distinct := map[string]bool{}
 		for _, cmd := range project.Commands {
@@ -204,11 +206,14 @@ func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 		runExec := make(map[string]scriptInvocation, len(project.Commands))
 		for _, cmd := range project.Commands {
 			label := cmd.Name
-			if mixed {
-				provider := providerNames[cmd.Provider]
-				if provider == "" {
-					provider = cmd.Provider
-				}
+			provider := providerNames[cmd.Provider]
+			if provider == "" {
+				provider = cmd.Provider
+			}
+			if providerRootCounts[cmd.Provider] > 1 {
+				scope := commandScopeLabel(path, cmd.Invocation.WorkingDir)
+				label = "[" + provider + " " + scope + "] " + cmd.Name
+			} else if mixed {
 				label = "[" + provider + "] " + cmd.Name
 			}
 			inv, err := pkgmgr.Resolve(cmd, nil)
@@ -668,4 +673,15 @@ func tickProc() tea.Cmd {
 // tickPRs schedules the next pull-request state re-check.
 func tickPRs() tea.Cmd {
 	return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })
+}
+
+
+func commandScopeLabel(root, dir string) string {
+	if rel, err := filepath.Rel(root, dir); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(rel)
+	}
+	if base := filepath.Base(dir); base != "" && base != "." {
+		return base
+	}
+	return "project"
 }
