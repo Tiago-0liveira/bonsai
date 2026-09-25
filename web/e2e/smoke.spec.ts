@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('renders the Bonsai workspace shell and worktree flow', async ({ page }) => {
   const pageErrors: string[] = []
-  page.on('pageerror', (error) => pageErrors.push(error.message))
+  page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message))
 
   await page.goto('/')
   await expect(page.getByText('bonsai', { exact: true }).first()).toBeVisible()
