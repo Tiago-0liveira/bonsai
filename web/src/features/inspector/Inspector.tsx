@@ -1,13 +1,14 @@
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import {
   Bot,
-  Branch,
+  GitBranch,
   ExternalLink,
   GitPullRequest,
   Play,
   RotateCcw,
   Square,
   TerminalSquare,
+  type LucideIcon,
 } from 'lucide-react'
 import { activity } from '../../mock/activity'
 import { projects } from '../../mock/projects'
@@ -35,7 +36,7 @@ function QuickButton({
   label,
   onClick,
 }: {
-  icon: React.ComponentType<{ size?: number }>
+  icon: LucideIcon
   label: string
   onClick?: () => void
 }) {
@@ -90,7 +91,7 @@ export function Inspector() {
                   <Row label="Open PRs" value={project.openPrCount} />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <QuickButton icon={Branch} label="Worktree" onClick={createMockWorktree} />
+                  <QuickButton icon={GitBranch} label="Worktree" onClick={createMockWorktree} />
                   <QuickButton icon={Bot} label="Agent" onClick={startMockAgent} />
                 </div>
                 <section className="mt-5">
