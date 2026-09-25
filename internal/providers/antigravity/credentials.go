@@ -22,13 +22,12 @@ type CredentialManager interface {
 }
 
 type credentialVault struct {
-	Version    int             `json:"version"`
-	Identity   string          `json:"identity"`
-	Generation uint64          `json:"generation"`
-	UpdatedAt  time.Time       `json:"updated_at"`
-	OAuth      json.RawMessage `json:"oauth"`
-	Accounts   json.RawMessage `json:"accounts,omitempty"`
-	UserID     string          `json:"user_id,omitempty"`
+	Version          int             `json:"version"`
+	Identity         string          `json:"identity"`
+	Generation       uint64          `json:"generation"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	OAuth            json.RawMessage `json:"oauth"`
+	ProviderSettings json.RawMessage `json:"provider_settings,omitempty"`
 }
 
 type generationMarker struct {
@@ -54,19 +53,14 @@ func (m *fileCredentialManager) Materialize(_ context.Context, account agents.Ac
 	if err != nil {
 		return err
 	}
-	if vault.Identity == "" || len(vault.OAuth) == 0 {
+	if len(vault.OAuth) == 0 {
 		return fmt.Errorf("%w: antigravity credentials are incomplete", agents.ErrNotAuthenticated)
 	}
 	if err := writePrivateFile(oauthPath(session.HomeDir), vault.OAuth); err != nil {
 		return err
 	}
-	if len(vault.Accounts) > 0 {
-		if err := writePrivateFile(accountsPath(session.HomeDir), vault.Accounts); err != nil {
-			return err
-		}
-	}
-	if vault.UserID != "" {
-		if err := writePrivateFile(userIDPath(session.HomeDir), []byte(vault.UserID)); err != nil {
+	if len(vault.ProviderSettings) > 0 {
+		if err := writePrivateFile(providerSettingsPath(session.HomeDir), vault.ProviderSettings); err != nil {
 			return err
 		}
 	}
@@ -85,7 +79,7 @@ func (m *fileCredentialManager) CaptureSetup(_ context.Context, account agents.A
 		return err
 	}
 	if candidate.Identity == "" {
-		return fmt.Errorf("%w: unable to identify authenticated antigravity account", agents.ErrNotAuthenticated)
+		candidate.Identity = fallbackIdentity(account)
 	}
 	candidate.Version = 1
 	candidate.Generation = 1
@@ -111,7 +105,9 @@ func (m *fileCredentialManager) Reconcile(_ context.Context, account agents.Acco
 		}
 		return err
 	}
-	if candidate.Identity == "" || current.Identity == "" || candidate.Identity != current.Identity {
+	if candidate.Identity == "" {
+		candidate.Identity = current.Identity
+	} else if !isFallbackIdentity(current.Identity, account) && candidate.Identity != current.Identity {
 		return fmt.Errorf("antigravity credential identity mismatch")
 	}
 
@@ -121,6 +117,9 @@ func (m *fileCredentialManager) Reconcile(_ context.Context, account agents.Acco
 	}
 
 	candidate.OAuth = mergeOAuth(current.OAuth, candidate.OAuth)
+	if len(candidate.ProviderSettings) == 0 {
+		candidate.ProviderSettings = append(json.RawMessage(nil), current.ProviderSettings...)
+	}
 	if credentialsEquivalent(current, candidate) {
 		return nil
 	}
@@ -130,10 +129,20 @@ func (m *fileCredentialManager) Reconcile(_ context.Context, account agents.Acco
 		}
 	}
 	candidate.Version = 1
-	candidate.Identity = current.Identity
+	if candidate.Identity == "" {
+		candidate.Identity = fallbackIdentity(account)
+	}
 	candidate.Generation = current.Generation + 1
 	candidate.UpdatedAt = time.Now().UTC()
 	return m.writeVault(account, candidate)
+}
+
+func fallbackIdentity(account agents.Account) string {
+	return "account:" + string(account.ID)
+}
+
+func isFallbackIdentity(identity string, account agents.Account) bool {
+	return identity == "" || identity == fallbackIdentity(account)
 }
 
 func (m *fileCredentialManager) readVault(account agents.Account) (credentialVault, error) {
@@ -164,7 +173,7 @@ func (m *fileCredentialManager) writeVault(account agents.Account, vault credent
 func readSessionCredentialState(home string) (credentialVault, error) {
 	oauth, err := os.ReadFile(oauthPath(home))
 	if errors.Is(err, os.ErrNotExist) {
-		return credentialVault{}, fmt.Errorf("%w: antigravity credential file missing", agents.ErrNotAuthenticated)
+		return credentialVault{}, fmt.Errorf("%w: antigravity credential file missing at %s", agents.ErrNotAuthenticated, oauthPath(home))
 	}
 	if err != nil {
 		return credentialVault{}, err
@@ -172,30 +181,18 @@ func readSessionCredentialState(home string) (credentialVault, error) {
 	if !json.Valid(oauth) {
 		return credentialVault{}, fmt.Errorf("malformed antigravity oauth state")
 	}
-	accounts, err := readOptional(accountsPath(home))
+	settings, err := readOptional(providerSettingsPath(home))
 	if err != nil {
 		return credentialVault{}, err
 	}
-	if len(accounts) > 0 && !json.Valid(accounts) {
-		return credentialVault{}, fmt.Errorf("malformed antigravity account state")
-	}
-	userIDBytes, err := readOptional(userIDPath(home))
-	if err != nil {
-		return credentialVault{}, err
-	}
-	userID := strings.TrimSpace(string(userIDBytes))
-	identity := identityFromAccounts(accounts)
-	if identity == "" {
-		identity = identityFromOAuth(oauth)
-	}
-	if identity == "" && userID != "" {
-		identity = "user_id:" + userID
+	if len(settings) > 0 && !json.Valid(settings) {
+		return credentialVault{}, fmt.Errorf("malformed antigravity provider settings")
 	}
 	return credentialVault{
-		Version: 1, Identity: identity,
-		OAuth: append(json.RawMessage(nil), oauth...),
-		Accounts: append(json.RawMessage(nil), accounts...),
-		UserID: userID,
+		Version:          1,
+		Identity:         identityFromOAuth(oauth),
+		OAuth:            append(json.RawMessage(nil), oauth...),
+		ProviderSettings: append(json.RawMessage(nil), settings...),
 	}, nil
 }
 
@@ -207,39 +204,41 @@ func readOptional(path string) ([]byte, error) {
 	return data, err
 }
 
-func identityFromAccounts(data []byte) string {
-	if len(data) == 0 {
+func identityFromOAuth(data []byte) string {
+	var root any
+	if json.Unmarshal(data, &root) != nil {
 		return ""
 	}
-	var v map[string]any
-	if json.Unmarshal(data, &v) != nil {
-		return ""
-	}
-	for _, key := range []string{"active", "active_account", "activeAccount", "email"} {
-		if s, ok := v[key].(string); ok && strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
+	return identityFromJSON(root)
 }
 
-func identityFromOAuth(data []byte) string {
-	var v map[string]any
-	if json.Unmarshal(data, &v) != nil {
-		return ""
-	}
-	for _, key := range []string{"email", "account", "user"} {
-		if s, ok := v[key].(string); ok && strings.Contains(s, "@") {
-			return strings.TrimSpace(s)
-		}
-	}
-	for _, key := range []string{"id_token", "idToken"} {
-		if token, ok := v[key].(string); ok {
-			if email := jwtStringClaim(token, "email"); email != "" {
-				return email
+func identityFromJSON(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, key := range []string{"email", "account", "user"} {
+			if s, ok := x[key].(string); ok && strings.Contains(s, "@") {
+				return strings.TrimSpace(s)
 			}
-			if sub := jwtStringClaim(token, "sub"); sub != "" {
-				return "sub:" + sub
+		}
+		for _, key := range []string{"id_token", "idToken"} {
+			if token, ok := x[key].(string); ok {
+				if email := jwtStringClaim(token, "email"); email != "" {
+					return email
+				}
+				if sub := jwtStringClaim(token, "sub"); sub != "" {
+					return "sub:" + sub
+				}
+			}
+		}
+		for _, child := range x {
+			if identity := identityFromJSON(child); identity != "" {
+				return identity
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if identity := identityFromJSON(child); identity != "" {
+				return identity
 			}
 		}
 	}
@@ -264,19 +263,37 @@ func jwtStringClaim(token, claim string) string {
 }
 
 func tokenFreshness(data []byte) time.Time {
-	var v map[string]any
-	if json.Unmarshal(data, &v) != nil {
+	var root any
+	if json.Unmarshal(data, &root) != nil {
 		return time.Time{}
 	}
-	for _, key := range []string{"expiry_date", "expiryDate", "expires_at", "expiresAt", "expiry"} {
-		if t := parseTimeValue(v[key]); !t.IsZero() {
-			return t
+	return freshnessFromJSON(root)
+}
+
+func freshnessFromJSON(v any) time.Time {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, key := range []string{"expiry_date", "expiryDate", "expires_at", "expiresAt", "expiry"} {
+			if t := parseTimeValue(x[key]); !t.IsZero() {
+				return t
+			}
 		}
-	}
-	for _, key := range []string{"id_token", "idToken", "access_token", "accessToken"} {
-		if token, ok := v[key].(string); ok {
-			if exp := jwtNumberClaim(token, "exp"); exp > 0 {
-				return time.Unix(exp, 0).UTC()
+		for _, key := range []string{"id_token", "idToken", "access_token", "accessToken"} {
+			if token, ok := x[key].(string); ok {
+				if exp := jwtNumberClaim(token, "exp"); exp > 0 {
+					return time.Unix(exp, 0).UTC()
+				}
+			}
+		}
+		for _, child := range x {
+			if t := freshnessFromJSON(child); !t.IsZero() {
+				return t
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if t := freshnessFromJSON(child); !t.IsZero() {
+				return t
 			}
 		}
 	}
@@ -343,13 +360,7 @@ func mergeOAuth(current, candidate []byte) json.RawMessage {
 	if json.Unmarshal(current, &cur) != nil || json.Unmarshal(candidate, &next) != nil {
 		return append(json.RawMessage(nil), candidate...)
 	}
-	for _, key := range []string{"refresh_token", "refreshToken"} {
-		if _, ok := next[key]; !ok {
-			if v, ok := cur[key]; ok {
-				next[key] = v
-			}
-		}
-	}
+	mergeRefreshTokens(cur, next)
 	out, err := json.Marshal(next)
 	if err != nil {
 		return append(json.RawMessage(nil), candidate...)
@@ -357,10 +368,24 @@ func mergeOAuth(current, candidate []byte) json.RawMessage {
 	return out
 }
 
+func mergeRefreshTokens(current, candidate map[string]any) {
+	for _, key := range []string{"refresh_token", "refreshToken"} {
+		if _, ok := candidate[key]; !ok {
+			if v, ok := current[key]; ok {
+				candidate[key] = v
+			}
+		}
+	}
+	curToken, curOK := current["token"].(map[string]any)
+	nextToken, nextOK := candidate["token"].(map[string]any)
+	if curOK && nextOK {
+		mergeRefreshTokens(curToken, nextToken)
+	}
+}
+
 func credentialsEquivalent(a, b credentialVault) bool {
 	return string(a.OAuth) == string(b.OAuth) &&
-		string(a.Accounts) == string(b.Accounts) &&
-		a.UserID == b.UserID
+		string(a.ProviderSettings) == string(b.ProviderSettings)
 }
 
 func writePrivateFile(path string, data []byte) error {
