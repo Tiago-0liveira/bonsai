@@ -3,7 +3,7 @@ import { Command } from 'cmdk'
 import { useNavigate } from '@tanstack/react-router'
 import {
   Bot,
-  Branch,
+  GitBranch,
   FileCode2,
   GitCommitHorizontal,
   GitPullRequest,
@@ -17,6 +17,7 @@ import {
   UploadCloud,
   DownloadCloud,
   LocateFixed,
+  type LucideIcon,
 } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
 
@@ -85,7 +86,7 @@ export function CommandPalette() {
           <Command.Group heading="Workspace" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">
             <CommandItem icon={LocateFixed} label="Fit canvas" onSelect={() => run(() => requestCanvasAction('fit'))} />
             <CommandItem icon={Network} label="Auto-layout canvas" onSelect={() => run(() => requestCanvasAction('layout'))} />
-            <CommandItem icon={Branch} label="Create worktree" onSelect={() => run(createMockWorktree)} />
+            <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(createMockWorktree)} />
             <CommandItem icon={Bot} label="Start agent" onSelect={() => run(startMockAgent)} />
             <CommandItem icon={Square} label="Stop agent" onSelect={() => run(stopAgent)} />
             <CommandItem icon={TerminalSquare} label="Open terminal" onSelect={() => run(() => openTerminal(selection.type === 'agent' ? selection.id : undefined))} />
@@ -119,7 +120,7 @@ function CommandItem({
   hint,
   onSelect,
 }: {
-  icon: React.ComponentType<{ size?: number }>
+  icon: LucideIcon
   label: string
   hint?: string
   onSelect: () => void
