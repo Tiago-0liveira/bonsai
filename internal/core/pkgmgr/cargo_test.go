@@ -242,7 +242,6 @@ func TestCargoProviderCLIDisabledDoesNotCallRunner(t *testing.T) {
 	}
 }
 
-
 func TestRustCargoProviderFoundAtDepthTwo(t *testing.T) {
 	root := t.TempDir()
 	app := filepath.Join(root, "crates", "api")
@@ -261,7 +260,6 @@ func TestRustCargoProviderFoundAtDepthTwo(t *testing.T) {
 		t.Fatalf("cargo command dir = %q, want %q", cmd.Invocation.WorkingDir, app)
 	}
 }
-
 
 func TestCargoWorkspaceRootDoesNotDuplicateMemberCatalog(t *testing.T) {
 	root := t.TempDir()
