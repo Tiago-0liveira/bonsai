@@ -60,6 +60,34 @@ func TestUnixPTYIsTTYAndResizes(t *testing.T) {
 	}
 }
 
+func TestUnixPTYControlCharacterDeliversSIGINT(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "trap 'printf __INTERRUPTED__; exit 0' INT; printf __READY__; read _")
+	p, err := Start(cmd, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf := make([]byte, 256)
+	n, err := p.Session().Read(buf)
+	if err != nil && n == 0 {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(buf[:n]), "__READY__") {
+		t.Fatalf("initial PTY output = %q", buf[:n])
+	}
+	if _, err := p.Session().Write([]byte{0x03}); err != nil {
+		t.Fatal(err)
+	}
+	out, waitErr := collectProcess(t, p)
+	_ = p.Session().Close()
+	if waitErr != nil {
+		t.Fatalf("wait: %v; output=%q", waitErr, out)
+	}
+	if !strings.Contains(string(out), "__INTERRUPTED__") {
+		t.Fatalf("Ctrl-C was not delivered through the controlling terminal: %q", out)
+	}
+}
+
 func TestUnixPTYReportsNonZeroExit(t *testing.T) {
 	p, err := Start(exec.Command("sh", "-c", "exit 7"), 80, 24)
 	if err != nil {
