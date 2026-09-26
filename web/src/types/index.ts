@@ -213,3 +213,11 @@ export interface ViewportState {
   y: number
   zoom: number
 }
+
+export type NodePlacementMode = 'manual' | 'generated'
+
+export interface NodePlacement {
+  x: number
+  y: number
+  mode: NodePlacementMode
+}
