@@ -183,7 +183,7 @@ export function placeAddedNodesLocally(nodes: Node[], placements: NodePlacements
   })
 
   restoredByStack.forEach((members) => {
-    if (members.length < 2) return
+    if (!members.length) return
     const memberIds = new Set(members.map((member) => member.id))
     const movingRects = members.map((member) => getNodeRect(member, placements[member.id]))
     const delta = resolveLocalCollisions({
