@@ -21,6 +21,7 @@ import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
 import { computeGlobalPlacements } from './layout/globalLayout'
 import {
   placeAddedNodesLocally,
+  placeExpandedStackLocally,
   placeMissingNodes,
   refreshGeneratedAgentShelves,
   relocateGeneratedBranches,
@@ -93,6 +94,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     projectId: string
     ids: Set<string>
     parents: Map<string, string>
+    stacks: Map<string, string[]>
   } | null>(null)
   const { fitView } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
@@ -429,6 +431,14 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     )
     const currentIds = new Set(placeableNodes.map((node) => node.id))
     const currentParents = getStructuralParentMap(graph.edges)
+    const currentStacks = new Map(
+      graph.nodes
+        .filter((node) => node.type === 'stack')
+        .map((node) => [
+          node.id,
+          ((node.data?.stackItems ?? []) as Array<{ id: string }>).map((item) => item.id),
+        ] as const),
+    )
     const previous =
       previousTopology.current?.projectId === graph.projectId
         ? previousTopology.current
@@ -450,6 +460,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           projectId: graph.projectId,
           ids: currentIds,
           parents: currentParents,
+          stacks: currentStacks,
         }
         requestAnimationFrame(() => {
           requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
@@ -470,6 +481,28 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     if (previous) {
       const addedIds = [...currentIds].filter((id) => !previous.ids.has(id))
       Object.assign(generated, placeAddedNodesLocally(graph.nodes, nodePlacements, addedIds))
+
+      const addedSet = new Set(addedIds)
+      previous.stacks.forEach((memberIds, stackId) => {
+        if (currentStacks.has(stackId)) return
+        const anchor = nodePlacements[stackId]
+        if (!anchor) return
+        const missingMembers = memberIds.filter((id) => addedSet.has(id) && !nodePlacements[id])
+        if (!missingMembers.length) return
+        const workingPlacements = {
+          ...nodePlacements,
+          ...Object.fromEntries(
+            Object.entries(generated).map(([id, position]) => [
+              id,
+              { ...position, mode: 'generated' as const },
+            ]),
+          ),
+        }
+        Object.assign(
+          generated,
+          placeExpandedStackLocally(graph.nodes, workingPlacements, missingMembers, anchor),
+        )
+      })
 
       const changedParents = [...currentParents.entries()]
         .filter(([id, parent]) => previous.parents.has(id) && previous.parents.get(id) !== parent)
@@ -496,6 +529,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       projectId: graph.projectId,
       ids: currentIds,
       parents: currentParents,
+      stacks: currentStacks,
     }
   }, [
     graph.projectId,
