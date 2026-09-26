@@ -99,6 +99,31 @@ export function placeMissingNodes(nodes: Node[], edges: Edge[], placements: Node
   return pending
 }
 
+export function placeCollapsedStacksLocally(
+  nodes: Node[],
+  placements: NodePlacements,
+  addedIds: string[],
+) {
+  const pending: Record<string, CanvasPosition> = {}
+  const added = new Set(addedIds)
+  nodes
+    .filter(
+      (node) =>
+        added.has(node.id) &&
+        node.type === 'stack' &&
+        placements[node.id]?.mode !== 'manual',
+    )
+    .forEach((node) => {
+      const preferred = stackCollapsePosition(node, placements) ?? placements[node.id] ?? node.position
+      pending[node.id] = nearestFreePosition(
+        preferred,
+        getNodeSize(node),
+        fixedRects(nodes, placements, pending, new Set([node.id])),
+      )
+    })
+  return pending
+}
+
 export function placeExpandedStackLocally(
   nodes: Node[],
   placements: NodePlacements,
