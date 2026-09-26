@@ -163,9 +163,9 @@ func TestResolvePreservesValuesAsArgvEntries(t *testing.T) {
 
 func TestResolveEmptyPassThroughDoesNotAddSeparator(t *testing.T) {
 	cmd := Command{
-		ID: "safe",
+		ID:         "safe",
 		Invocation: InvocationSpec{Program: "tool", Prefix: []string{"run"}, PassThrough: PassThroughDoubleDash},
-		Args: []Argument{{ID: "args", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true}},
+		Args:       []Argument{{ID: "args", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true}},
 	}
 	got, err := Resolve(cmd, ArgumentValues{"args": {}})
 	if err != nil {
