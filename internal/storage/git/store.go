@@ -74,13 +74,7 @@ func (s *Store) Update(fn func(Data) error) error {
 		return e
 	}
 	s.data = next
-	// Directory sync makes the rename durable across an OS crash.
-	dir, e := os.Open(filepath.Dir(s.path))
-	if e != nil {
-		return e
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return syncDir(filepath.Dir(s.path))
 }
 func Put(d Data, table, key string, value any) error {
 	b, e := json.Marshal(value)
