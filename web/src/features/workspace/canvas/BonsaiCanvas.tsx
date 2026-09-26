@@ -64,6 +64,19 @@ interface DragSnapshot {
   positions: Record<string, { x: number; y: number }>
 }
 
+function storablePositions(
+  nodes: Node[],
+  positions: Record<string, { x: number; y: number }>,
+) {
+  const result: Record<string, { x: number; y: number }> = {}
+  nodes.forEach((node) => {
+    if (node.type === 'defaultBranch' || node.type === 'env') return
+    const position = positions[node.id]
+    if (position) result[node.id] = position
+  })
+  return result
+}
+
 export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const projects = useBonsaiStore((state) => state.projects)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
@@ -450,11 +463,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       initializedProjects.current.add(graph.projectId)
       if (!hasUsablePlacements) {
         const allPositions = computeGlobalPlacements(graph.nodes, graph.edges, nodePlacements)
-        const generated = Object.fromEntries(
-          placeableNodes
-            .map((node) => [node.id, allPositions[node.id]] as const)
-            .filter((entry): entry is [string, { x: number; y: number }] => Boolean(entry[1])),
-        )
+        const generated = storablePositions(placeableNodes, allPositions)
         setGeneratedNodePlacements(generated)
         previousTopology.current = {
           projectId: graph.projectId,
@@ -566,12 +575,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     setNodes((current) =>
       current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
     )
-    const generated = Object.fromEntries(
-      nodes
-        .filter((node) => node.type !== 'defaultBranch' && node.type !== 'env')
-        .map((node) => [node.id, positions[node.id]] as const)
-        .filter((entry): entry is [string, { x: number; y: number }] => Boolean(entry[1])),
-    )
+    const generated = storablePositions(nodes, positions)
     setGeneratedNodePlacements(generated)
     requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
   }, [
@@ -599,12 +603,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     setNodes((current) =>
       current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
     )
-    const generated = Object.fromEntries(
-      nodes
-        .filter((node) => node.type !== 'defaultBranch' && node.type !== 'env')
-        .map((node) => [node.id, positions[node.id]] as const)
-        .filter((entry): entry is [string, { x: number; y: number }] => Boolean(entry[1])),
-    )
+    const generated = storablePositions(nodes, positions)
     setGeneratedNodePlacements(generated)
     requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
   }
