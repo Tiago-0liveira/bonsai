@@ -105,12 +105,12 @@ func TestDiscoverRootAndNestedNodeProjects(t *testing.T) {
 	}
 
 	rootCmd := commandByID(t, project, "node:script:root")
-	if rootCmd.Invocation.WorkingDir != root {
-		t.Fatalf("root command dir = %q, want %q", rootCmd.Invocation.WorkingDir, root)
+	if rootCmd.Invocation.WorkingDir != root || !samePath(rootCmd.ProjectRoot, root) {
+		t.Fatalf("root command = dir %q project %q, want root %q", rootCmd.Invocation.WorkingDir, rootCmd.ProjectRoot, root)
 	}
 	webCmd := commandByID(t, project, "node:script:dev")
-	if webCmd.Invocation.WorkingDir != web {
-		t.Fatalf("web command dir = %q, want %q", webCmd.Invocation.WorkingDir, web)
+	if webCmd.Invocation.WorkingDir != web || !samePath(webCmd.ProjectRoot, web) {
+		t.Fatalf("web command = dir %q project %q, want web %q", webCmd.Invocation.WorkingDir, webCmd.ProjectRoot, web)
 	}
 }
 
@@ -130,6 +130,9 @@ func TestDiscoverSiblingNodeProjects(t *testing.T) {
 	webCmd := commandByID(t, project, "node:script:dev@apps/web")
 	if adminCmd.Invocation.WorkingDir != admin || webCmd.Invocation.WorkingDir != web {
 		t.Fatalf("sibling dirs = admin %q web %q", adminCmd.Invocation.WorkingDir, webCmd.Invocation.WorkingDir)
+	}
+	if !samePath(adminCmd.ProjectRoot, admin) || !samePath(webCmd.ProjectRoot, web) {
+		t.Fatalf("sibling projects = admin %q web %q", adminCmd.ProjectRoot, webCmd.ProjectRoot)
 	}
 }
 
