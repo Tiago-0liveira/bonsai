@@ -53,8 +53,18 @@ func TestSignatureDedupeAndRestart(t *testing.T) {
 	}
 	h = New(secret, reopened, process)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go h.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	})
 	select {
 	case <-processed:
 	case <-time.After(time.Second):
@@ -62,5 +72,11 @@ func TestSignatureDedupeAndRestart(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatal(calls.Load())
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("webhook worker did not stop")
 	}
 }
