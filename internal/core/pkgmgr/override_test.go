@@ -214,7 +214,6 @@ func TestOverridePrecedenceOverDiscoveredMetadata(t *testing.T) {
 	}
 }
 
-
 func TestOverrideWorkingDirUsesConfigDirectoryInMultiProjectRepo(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "apps", "admin"), "package.json", `{"scripts":{"dev":"vite"}}`)
@@ -233,7 +232,13 @@ func TestOverrideWorkingDirUsesConfigDirectoryInMultiProjectRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !samePath(project.Location.ProjectRoot, root) {
+		t.Fatalf("ProjectRoot = %q, want equivalent to %q", project.Location.ProjectRoot, root)
+	}
 	seed := commandByID(t, project, "project:seed")
+	if !samePath(seed.ProjectRoot, root) {
+		t.Fatalf("override ProjectRoot = %q, want equivalent to %q", seed.ProjectRoot, root)
+	}
 	want := filepath.Join(root, "tools")
 	if seed.Invocation.WorkingDir != want {
 		t.Fatalf("override working dir = %q, want config-rooted %q", seed.Invocation.WorkingDir, want)
