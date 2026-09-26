@@ -19,7 +19,7 @@ func TestResolveLocationInputs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if loc.InputDir != nested || loc.ProjectRoot != nested {
+		if !samePath(loc.InputDir, nested) || !samePath(loc.ProjectRoot, nested) {
 			t.Fatalf("location = %+v", loc)
 		}
 	})
@@ -37,8 +37,8 @@ func TestResolveLocationInputs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if loc.InputDir != nested {
-			t.Fatalf("InputDir = %q, want %q", loc.InputDir, nested)
+		if !samePath(loc.InputDir, nested) {
+			t.Fatalf("InputDir = %q, want equivalent to %q", loc.InputDir, nested)
 		}
 	})
 
@@ -55,8 +55,8 @@ func TestResolveLocationInputs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if loc.InputDir != nested {
-			t.Fatalf("InputDir = %q, want %q", loc.InputDir, nested)
+		if !samePath(loc.InputDir, nested) {
+			t.Fatalf("InputDir = %q, want equivalent to %q", loc.InputDir, nested)
 		}
 	})
 }
@@ -89,8 +89,8 @@ func TestResolveLocationGitRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loc.RepositoryRoot != repo {
-		t.Fatalf("RepositoryRoot = %q, want %q", loc.RepositoryRoot, repo)
+	if !samePath(loc.RepositoryRoot, repo) {
+		t.Fatalf("RepositoryRoot = %q, want equivalent to %q", loc.RepositoryRoot, repo)
 	}
 
 	outside := t.TempDir()
@@ -114,7 +114,18 @@ func TestDiscoverNestedProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Location.ProjectRoot != root {
-		t.Fatalf("ProjectRoot = %q, want %q", project.Location.ProjectRoot, root)
+	if !samePath(project.Location.ProjectRoot, root) {
+		t.Fatalf("ProjectRoot = %q, want equivalent to %q", project.Location.ProjectRoot, root)
 	}
+}
+
+func samePath(a, b string) bool {
+	canonical := func(path string) string {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			path = resolved
+		}
+		return filepath.Clean(path)
+	}
+	return canonical(a) == canonical(b)
 }
