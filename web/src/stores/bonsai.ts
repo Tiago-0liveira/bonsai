@@ -705,11 +705,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       name: 'bonsai-web-workspace-v5',
       version: 6,
       migrate: (persisted) => {
-        const state = persisted as BonsaiState & {
+        const state = persisted as Partial<BonsaiState> & {
           nodePositions?: Record<string, { x: number; y: number }>
-          projects?: Project[]
-          worktrees?: Worktree[]
-          pullRequests?: PullRequest[]
         }
         if (!state.nodePlacements && state.nodePositions) {
           state.nodePlacements = Object.fromEntries(
