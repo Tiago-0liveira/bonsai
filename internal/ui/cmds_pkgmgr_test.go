@@ -149,7 +149,6 @@ func TestLoadScriptsEmptyCommandList(t *testing.T) {
 	}
 }
 
-
 func TestLoadScriptsGoRootWithNestedWeb(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
@@ -183,7 +182,6 @@ func TestLoadScriptsGoRootWithNestedWeb(t *testing.T) {
 		t.Fatalf("npm dir = %q, want %q", msg.runDir["[npm] dev"], web)
 	}
 }
-
 
 func TestLoadScriptsDisambiguatesMultipleNodeProjects(t *testing.T) {
 	root := t.TempDir()
