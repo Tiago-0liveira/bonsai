@@ -184,7 +184,6 @@ func TestPaletteOpensViaKeybinding(t *testing.T) {
 	}
 }
 
-
 func TestPaletteRunProjectCommandHonorsConfiguredDepth(t *testing.T) {
 	root := t.TempDir()
 	web := filepath.Join(root, "apps", "web")
