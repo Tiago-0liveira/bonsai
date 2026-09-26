@@ -26,6 +26,7 @@ describe('bonsai mock store', () => {
       worktreeTags,
       collapsedTagGroups: ['bonsai:feat'],
       detachedStackWorktreeIds: [],
+      nodePlacements: {},
       dockWorktreeId: 'wt-web',
       dockRuntimeId: 'agent-ui',
       openRuntimeIds: ['agent-ui'],
@@ -163,6 +164,58 @@ describe('bonsai mock store', () => {
     useBonsaiStore.getState().removeEnvVariable('bonsai', added.id)
     expect(useBonsaiStore.getState().envVariables.bonsai.some((item) => item.id === added.id)).toBe(false)
   })
+
+  it('preserves placements when stacks are toggled or detached', () => {
+    useBonsaiStore.getState().setManualNodePlacement('wt-web', { x: 120, y: 240 })
+    useBonsaiStore.getState().setGeneratedNodePlacements({
+      'stack:bonsai:feat': { x: 400, y: 260 },
+    })
+
+    useBonsaiStore.getState().toggleTagGroup('bonsai', 'feat')
+    useBonsaiStore.getState().ejectWorktreeFromStack('wt-web')
+
+    const placements = useBonsaiStore.getState().nodePlacements
+    expect(placements['wt-web']).toEqual({ x: 120, y: 240, mode: 'manual' })
+    expect(placements['stack:bonsai:feat']).toEqual({ x: 400, y: 260, mode: 'generated' })
+  })
+
+  it('preserves manual placement across merge-target and metadata changes', () => {
+    useBonsaiStore.getState().setManualNodePlacement('wt-daemon', { x: 620, y: 310 })
+    const before = useBonsaiStore.getState().nodePlacements['wt-daemon']
+
+    useBonsaiStore.getState().setWorktreeMergeTarget('wt-daemon', 'feat/web-workspace')
+    useBonsaiStore.getState().setAgentState('agent-ui', 'finished')
+    useBonsaiStore.getState().setWorktreeStackPreference('wt-web', 'never')
+
+    expect(useBonsaiStore.getState().nodePlacements['wt-daemon']).toEqual(before)
+  })
+
+  it('removes only an agent placement when moving it to history', () => {
+    useBonsaiStore.getState().setGeneratedNodePlacements({
+      'agent-ui': { x: 300, y: 500 },
+      'wt-web': { x: 260, y: 240 },
+    })
+
+    useBonsaiStore.getState().moveAgentToHistory('agent-ui')
+
+    const placements = useBonsaiStore.getState().nodePlacements
+    expect(placements['agent-ui']).toBeUndefined()
+    expect(placements['wt-web']).toEqual({ x: 260, y: 240, mode: 'generated' })
+  })
+
+  it('marks drag-style placement updates as manual', () => {
+    useBonsaiStore.getState().setGeneratedNodePlacements({
+      'wt-web': { x: 10, y: 20 },
+    })
+    useBonsaiStore.getState().setManualNodePlacement('wt-web', { x: 44, y: 88 })
+
+    expect(useBonsaiStore.getState().nodePlacements['wt-web']).toEqual({
+      x: 44,
+      y: 88,
+      mode: 'manual',
+    })
+  })
+
 })
 
 

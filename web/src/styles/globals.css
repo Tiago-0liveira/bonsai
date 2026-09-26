@@ -61,3 +61,65 @@ select { color-scheme: dark; }
   .desktop-sidebar { display: none; }
   .top-nav-secondary { display: none; }
 }
+
+/* Dock surfaces share one quiet frame, with color reserved for focus and status. */
+.bottom-workspace { background: rgb(var(--bg)); }
+.dock-pane {
+  overflow: hidden;
+  border: 1px solid rgb(var(--border) / .8);
+  border-radius: 10px;
+  background: rgb(var(--panel));
+}
+.dock-heading {
+  height: 42px;
+  background: linear-gradient(180deg, rgb(var(--panel-3) / .7), rgb(var(--panel-2) / .45));
+  border-bottom: 1px solid rgb(var(--border) / .7);
+}
+.dock-title { font-size: 11px; font-weight: 600; letter-spacing: .01em; }
+.dock-count, .inspector-count {
+  border: 1px solid rgb(var(--border) / .65);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 9px;
+  color: rgb(var(--muted));
+  font-variant-numeric: tabular-nums;
+}
+.dock-tab {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgb(var(--muted));
+}
+.dock-tab[data-state=active] { background: rgb(var(--purple) / .12); color: rgb(var(--text)); box-shadow: inset 0 0 0 1px rgb(var(--purple) / .2); }
+.dock-tab:hover { color: rgb(var(--text)); }
+.runtime-tile { border: 1px solid rgb(var(--border) / .8); border-radius: 8px; background: #0c0e11; }
+.runtime-tile-active { border-color: rgb(var(--purple) / .4); box-shadow: 0 0 0 1px rgb(var(--purple) / .05); }
+.runtime-heading { border-bottom: 1px solid rgb(var(--border) / .65); background: rgb(var(--panel-2)); }
+.runtime-tile-active .runtime-heading { background: linear-gradient(100deg, rgb(var(--purple) / .09), rgb(var(--panel-2)) 75%); }
+.dock-resize { border-radius: 8px; transition: background 150ms; }
+.dock-resize:hover, .dock-resize[data-resize-handle-active] { background: rgb(var(--purple) / .13); }
+
+.inspector-shell { background: linear-gradient(160deg, rgb(var(--panel-2) / .8), rgb(var(--panel)) 35%); }
+.inspector-hero { padding: 14px; border: 1px solid rgb(var(--border)); border-radius: 12px; background: radial-gradient(ellipse at top left, rgb(var(--purple) / .10), transparent 85%), rgb(var(--panel-2) / .4); }
+.inspector-section { padding-top: 2px; }
+.inspector-section + .inspector-section { border-top: 1px solid rgb(var(--border) / .6); padding-top: 16px; }
+.inspector-action { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 32px; padding: 6px 8px; border: 1px solid rgb(var(--border)); border-radius: 7px; background: rgb(var(--panel-2)); font-size: 10px; font-weight: 500; color: rgb(var(--muted)); transition: background 120ms, border-color 120ms; }
+.inspector-action:hover { background: rgb(var(--panel-3)); border-color: rgb(var(--border-strong)); color: rgb(var(--text)); }
+.inspector-action-primary { background: rgb(var(--purple) / .14); border-color: rgb(var(--purple) / .3); color: rgb(var(--text)); }
+.inspector-action-primary:hover { background: rgb(var(--purple) / .22); border-color: rgb(var(--purple) / .5); }
+.inspector-action-danger { color: rgb(var(--red)); }
+.inspector-action-danger:hover { color: rgb(var(--red)); border-color: rgb(var(--red) / .4); background: rgb(var(--red) / .07); }
+.inspector-link { display: flex; width: 100%; align-items: center; gap: 9px; padding: 9px 6px; border-radius: 7px; text-align: left; }
+.inspector-link:hover { background: rgb(var(--panel-3) / .7); }
+.inspector-avatar { display: grid; width: 30px; height: 30px; flex-shrink: 0; place-items: center; border: 1px solid rgb(var(--border)); border-radius: 8px; background: rgb(var(--bg) / .5); }
+.inspector-attention { display: flex; width: 100%; gap: 8px; padding: 10px; text-align: left; border: 1px solid rgb(var(--orange) / .15); border-radius: 8px; background: rgb(var(--orange) / .035); }
+.inspector-attention:hover { background: rgb(var(--orange) / .075); border-color: rgb(var(--orange) / .3); }
+.inspector-alert { padding: 12px; border: 1px solid rgb(var(--orange) / .2); border-radius: 9px; background: rgb(var(--orange) / .04); }
+.inspector-empty { font-size: 11px; line-height: 1.7; color: rgb(var(--muted)); }
+.inspector-output { margin: 0; padding: 11px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; line-height: 1.8; color: rgb(var(--muted)); background: rgb(var(--bg)); border: 1px solid rgb(var(--border) / .65); border-radius: 8px; }
+.inspector-settings { border-top: 1px solid rgb(var(--border) / .7); padding-top: 14px; }
+.inspector-settings summary { list-style: none; }
+.inspector-settings summary::-webkit-details-marker { display: none; }
+.inspector-settings[open] .inspector-disclosure { transform: rotate(90deg); }

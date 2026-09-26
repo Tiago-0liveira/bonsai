@@ -17,7 +17,16 @@ import { LocateFixed, Network, Plus } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
 import type { Health, Worktree } from '../../../types'
 import { getTagPresentation } from '../tagStyles'
-import { getDescendantIds, layoutGraph } from './layout'
+import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
+import { computeGlobalPlacements } from './layout/globalLayout'
+import { placePrLabels } from './layout/prLabels'
+import {
+  placeAddedNodesLocally,
+  placeExpandedStackLocally,
+  placeMissingNodes,
+  refreshGeneratedAgentShelves,
+  relocateGeneratedBranches,
+} from './layout/localPlacement'
 import { PullRequestMergeEdge } from './PullRequestMergeEdge'
 import {
   AgentNode,
@@ -56,6 +65,19 @@ interface DragSnapshot {
   positions: Record<string, { x: number; y: number }>
 }
 
+function storablePositions(
+  nodes: Node[],
+  positions: Record<string, { x: number; y: number }>,
+) {
+  const result: Record<string, { x: number; y: number }> = {}
+  nodes.forEach((node) => {
+    if (node.type === 'defaultBranch' || node.type === 'env') return
+    const position = positions[node.id]
+    if (position) result[node.id] = position
+  })
+  return result
+}
+
 export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const projects = useBonsaiStore((state) => state.projects)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
@@ -67,9 +89,10 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const selection = useBonsaiStore((state) => state.selection)
   const setSelection = useBonsaiStore((state) => state.setSelection)
-  const nodePositions = useBonsaiStore((state) => state.nodePositions)
-  const setNodePosition = useBonsaiStore((state) => state.setNodePosition)
-  const setNodePositionsBatch = useBonsaiStore((state) => state.setNodePositionsBatch)
+  const nodePlacements = useBonsaiStore((state) => state.nodePlacements)
+  const setManualNodePlacement = useBonsaiStore((state) => state.setManualNodePlacement)
+  const setManualNodePlacements = useBonsaiStore((state) => state.setManualNodePlacements)
+  const setGeneratedNodePlacements = useBonsaiStore((state) => state.setGeneratedNodePlacements)
   const subtreeMoveRootId = useBonsaiStore((state) => state.subtreeMoveRootId)
   const setSubtreeMoveRoot = useBonsaiStore((state) => state.setSubtreeMoveRoot)
   const viewport = useBonsaiStore((state) => state.viewport)
@@ -80,7 +103,15 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const lastCommand = useRef(0)
   const lastFocusFit = useRef<string | undefined>(undefined)
   const dragSnapshot = useRef<DragSnapshot | null>(null)
-  const { fitView } = useReactFlow()
+  const initializedProjects = useRef<Set<string>>(new Set())
+  const previousTopology = useRef<{
+    projectId: string
+    ids: Set<string>
+    parents: Map<string, string>
+    agentOwners: Map<string, string>
+    stacks: Map<string, string[]>
+  } | null>(null)
+  const { fitView, getNodes } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const fitViewRef = useRef(fitView)
 
@@ -90,7 +121,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
   const graph = useMemo(() => {
     const project = projects.find((item) => item.id === activeProjectId) ?? projects[0]
-    if (!project) return { nodes: [] as Node[], edges: [] as Edge[], shapeKey: 'empty' }
+    if (!project) return { nodes: [] as Node[], edges: [] as Edge[], projectId: '', topologyKey: 'empty' }
 
     const allProjectWorktrees = worktrees.filter((worktree) => worktree.projectId === project.id)
     const projectWorktrees = allProjectWorktrees.filter((worktree) => worktree.branch !== project.defaultBranch)
@@ -140,7 +171,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       })
     })
 
-    const rootDefault = nodePositions[project.id] ?? { x: 420, y: 34 }
+    const rootDefault = nodePlacements[project.id] ?? { x: 420, y: 34 }
     const defaultBranchId = 'default:' + project.id
     const envId = 'env:' + project.id
     const nodes: Node[] = [
@@ -213,7 +244,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         nodes.push({
           id: entry.id,
           type: 'stack',
-          position: nodePositions[entry.id] ?? fallbackPosition,
+          position: nodePlacements[entry.id] ?? fallbackPosition,
           data: {
             entityId: entry.id,
             kind: 'stack',
@@ -251,7 +282,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       nodes.push({
         id: worktree.id,
         type: 'worktree',
-        position: nodePositions[worktree.id] ?? fallbackPosition,
+        position: nodePlacements[worktree.id] ?? fallbackPosition,
         data: {
           entityId: worktree.id,
           kind: 'worktree',
@@ -283,7 +314,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         nodes.push({
           id: agent.id,
           type: 'agent',
-          position: nodePositions[agent.id] ?? { x: 58 + agentIndex * 192, y: 420 },
+          position: nodePlacements[agent.id] ?? { x: 58 + agentIndex * 192, y: 420 },
           data: {
             entityId: agent.id,
             kind: 'agent',
@@ -362,14 +393,15 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     return {
       nodes,
       edges,
-      shapeKey:
+      projectId: project.id,
+      topologyKey:
         project.id +
         '|' +
         visibleEntries.map((entry) => entry.id).join('|') +
         '|' +
-        projectWorktrees.map((worktree) => worktree.id + '>' + worktree.mergeTargetBranch + ':' + worktree.stackPreference).join('|') +
+        projectWorktrees.map((worktree) => worktree.id + '>' + worktree.mergeTargetBranch).join('|') +
         '|' +
-        projectAgents.map((agent) => agent.id + ':' + agent.state + ':' + (agent.presentation ?? 'canvas')).join('|'),
+        nodes.filter((node) => node.type === 'agent').map((node) => node.id).join('|'),
     }
   }, [
     activeProjectId,
@@ -377,7 +409,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     collapsedTagGroups,
     detachedStackWorktreeIds,
     envVariables,
-    nodePositions,
+    nodePlacements,
     projects,
     tags,
     worktrees,
@@ -385,8 +417,19 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges)
+  const displayEdges = useMemo(() => {
+    const labels = placePrLabels(nodes, edges)
+    return edges.map((edge) => labels[edge.id]
+      ? { ...edge, data: { ...edge.data, labelPlacement: labels[edge.id] } }
+      : edge)
+  }, [nodes, edges])
 
-  useEffect(() => setNodes(graph.nodes), [graph.nodes, setNodes])
+  useEffect(() => {
+    setNodes((current) => {
+      const measured = new Map(current.map((node) => [node.id, node.measured]))
+      return graph.nodes.map((node) => ({ ...node, measured: measured.get(node.id) }))
+    })
+  }, [graph.nodes, setNodes])
   useEffect(() => setEdges(graph.edges), [graph.edges, setEdges])
 
   useEffect(() => {
@@ -407,21 +450,135 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   }, [selection, setNodes])
 
   useEffect(() => {
-    let cancelled = false
-    void layoutGraph(graph.nodes, graph.edges).then((laidOut) => {
-      if (cancelled) return
-      setNodes(laidOut)
-      const positions: Record<string, { x: number; y: number }> = {}
-      laidOut.forEach((node) => {
-        if (node.type === 'defaultBranch' || node.type === 'env') return
-        positions[node.id] = node.position
-      })
-      setNodePositionsBatch(positions)
-    })
-    return () => {
-      cancelled = true
+    if (!graph.projectId) return
+
+    const rendered = new Map(getNodes().map((node) => [node.id, node]))
+    const layoutNodes = graph.nodes.map((node) => ({ ...node, measured: rendered.get(node.id)?.measured }))
+    const currentAgentOwners = new Map(graph.edges
+      .filter((edge) => edge.data?.relationship === 'agent')
+      .map((edge) => [edge.target, edge.source]))
+    const placeableNodes = layoutNodes.filter(
+      (node) => node.type !== 'defaultBranch' && node.type !== 'env',
+    )
+    const currentIds = new Set(placeableNodes.map((node) => node.id))
+    const currentParents = getStructuralParentMap(graph.edges)
+    const currentStacks = new Map(
+      graph.nodes
+        .filter((node) => node.type === 'stack')
+        .map((node) => [
+          node.id,
+          ((node.data?.stackItems ?? []) as Array<{ id: string }>).map((item) => item.id),
+        ] as const),
+    )
+    const previous =
+      previousTopology.current?.projectId === graph.projectId
+        ? previousTopology.current
+        : null
+    const firstForProject = !initializedProjects.current.has(graph.projectId)
+    const hasUsablePlacements = placeableNodes.some((node) => Boolean(nodePlacements[node.id]))
+
+    if (firstForProject) {
+      initializedProjects.current.add(graph.projectId)
+      if (!hasUsablePlacements) {
+        const allPositions = computeGlobalPlacements(layoutNodes, graph.edges, nodePlacements)
+        const generated = storablePositions(placeableNodes, allPositions)
+        setGeneratedNodePlacements(generated)
+        previousTopology.current = {
+          projectId: graph.projectId,
+          ids: currentIds,
+          parents: currentParents,
+          agentOwners: currentAgentOwners,
+          stacks: currentStacks,
+        }
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
+        })
+        return
+      }
     }
-  }, [graph.shapeKey, setNodePositionsBatch, setNodes])
+
+    const generated: Record<string, { x: number; y: number }> = {}
+    const missingIds = placeableNodes
+      .filter((node) => !nodePlacements[node.id])
+      .map((node) => node.id)
+    Object.assign(
+      generated,
+      placeMissingNodes(layoutNodes, graph.edges, nodePlacements, missingIds),
+    )
+
+    if (previous) {
+      const addedIds = [...currentIds].filter((id) => !previous.ids.has(id))
+      Object.assign(generated, placeAddedNodesLocally(layoutNodes, nodePlacements, addedIds))
+
+      const addedSet = new Set(addedIds)
+      previous.stacks.forEach((memberIds, stackId) => {
+        if (currentStacks.has(stackId)) return
+        const anchor = nodePlacements[stackId]
+        if (!anchor) return
+        const missingMembers = memberIds.filter((id) => addedSet.has(id) && !nodePlacements[id])
+        if (!missingMembers.length) return
+        const workingPlacements = {
+          ...nodePlacements,
+          ...Object.fromEntries(
+            Object.entries(generated).map(([id, position]) => [
+              id,
+              { ...position, mode: 'generated' as const },
+            ]),
+          ),
+        }
+        Object.assign(
+          generated,
+          placeExpandedStackLocally(layoutNodes, workingPlacements, missingMembers, anchor),
+        )
+      })
+
+      const changedParents = [...currentParents.entries()]
+        .filter(([id, parent]) => previous.parents.has(id) && previous.parents.get(id) !== parent)
+        .map(([id]) => id)
+      Object.assign(
+        generated,
+        relocateGeneratedBranches(layoutNodes, graph.edges, nodePlacements, changedParents),
+      )
+    }
+
+    const workingPlacements = {
+      ...nodePlacements,
+      ...Object.fromEntries(
+        Object.entries(generated).map(([id, position]) => [id, { ...position, mode: 'generated' as const }]),
+      ),
+    }
+    // Refresh only shelves whose membership or owner placement changed. A
+    // sibling's add/remove operation must not undo existing Auto-layout results.
+    const affectedOwners = new Set<string>()
+    currentAgentOwners.forEach((ownerId, agentId) => {
+      if (!nodePlacements[agentId] || generated[ownerId] ||
+          (previous && previous.agentOwners.get(agentId) !== ownerId)) {
+        affectedOwners.add(ownerId)
+      }
+    })
+    previous?.agentOwners.forEach((ownerId, agentId) => {
+      if (currentAgentOwners.get(agentId) !== ownerId) affectedOwners.add(ownerId)
+    })
+    if (affectedOwners.size) {
+      Object.assign(generated,
+        refreshGeneratedAgentShelves(layoutNodes, graph.edges, workingPlacements, affectedOwners))
+    }
+
+    if (Object.keys(generated).length) setGeneratedNodePlacements(generated)
+    previousTopology.current = {
+      projectId: graph.projectId,
+      ids: currentIds,
+      parents: currentParents,
+      agentOwners: currentAgentOwners,
+      stacks: currentStacks,
+    }
+  }, [
+    getNodes,
+    graph.projectId,
+    graph.topologyKey,
+    nodePlacements,
+    setGeneratedNodePlacements,
+  ])
 
   useEffect(() => {
     if (!focus) {
@@ -447,17 +604,21 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       void fitViewRef.current({ padding: 0.14, duration: 300 })
       return
     }
-    void layoutGraph(nodes, edges).then((laidOut) => {
-      setNodes(laidOut)
-      const positions: Record<string, { x: number; y: number }> = {}
-      laidOut.forEach((node) => {
-        if (node.type === 'defaultBranch' || node.type === 'env') return
-        positions[node.id] = node.position
-      })
-      setNodePositionsBatch(positions)
-      requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
-    })
-  }, [canvasCommand, edges, nodes, setNodePositionsBatch, setNodes])
+    const positions = computeGlobalPlacements(nodes, edges, nodePlacements)
+    setNodes((current) =>
+      current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
+    )
+    const generated = storablePositions(nodes, positions)
+    setGeneratedNodePlacements(generated)
+    requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
+  }, [
+    canvasCommand,
+    edges,
+    nodePlacements,
+    nodes,
+    setGeneratedNodePlacements,
+    setNodes,
+  ])
 
   const onNodeClick: NodeMouseHandler = (_, node) => {
     const data = node.data as BonsaiGraphData
@@ -471,16 +632,13 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   }
 
   const autoLayout = () => {
-    void layoutGraph(nodes, edges).then((laidOut) => {
-      setNodes(laidOut)
-      const positions: Record<string, { x: number; y: number }> = {}
-      laidOut.forEach((node) => {
-        if (node.type === 'defaultBranch' || node.type === 'env') return
-        positions[node.id] = node.position
-      })
-      setNodePositionsBatch(positions)
-      requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
-    })
+    const positions = computeGlobalPlacements(nodes, edges, nodePlacements)
+    setNodes((current) =>
+      current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
+    )
+    const generated = storablePositions(nodes, positions)
+    setGeneratedNodePlacements(generated)
+    requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
   }
 
   const beginDrag: OnNodeDrag<Node> = (_, node) => {
@@ -513,7 +671,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const finishDrag: OnNodeDrag<Node> = (_, node) => {
     const snapshot = dragSnapshot.current
     if (!snapshot || snapshot.rootId !== node.id) {
-      setNodePosition(node.id, node.position)
+      setManualNodePlacement(node.id, node.position)
       setSubtreeMoveRoot(null)
       return
     }
@@ -524,7 +682,13 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       const initial = snapshot.positions[id]
       if (initial) positions[id] = { x: initial.x + dx, y: initial.y + dy }
     })
-    setNodePositionsBatch(positions)
+    const persisted = Object.fromEntries(
+      Object.entries(positions).filter(([id]) => {
+        const moved = nodes.find((candidate) => candidate.id === id)
+        return moved?.type !== 'defaultBranch' && moved?.type !== 'env'
+      }),
+    )
+    setManualNodePlacements(persisted)
     dragSnapshot.current = null
     setSubtreeMoveRoot(null)
   }
@@ -533,7 +697,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     <div className="relative h-full min-h-0 w-full bg-[rgb(var(--bg))]">
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={displayEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}

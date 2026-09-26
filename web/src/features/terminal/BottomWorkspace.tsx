@@ -186,11 +186,11 @@ function BranchSidebar() {
   const roots = projectWorktrees.filter((item) => item.branch !== project?.defaultBranch && item.mergeTargetBranch === project?.defaultBranch)
 
   return (
-    <aside className="flex h-full min-w-0 flex-col bg-[rgb(var(--panel))]">
-      <div className="flex h-9 shrink-0 items-center border-b border-[rgb(var(--border))] px-2.5">
-        <GitBranch size={11} className="mr-1.5 text-[rgb(var(--muted))]" />
-        <span className="text-[9px] font-semibold">Branches</span>
-        <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">{projectWorktrees.length}</span>
+    <aside className="dock-pane flex h-full min-w-0 flex-col">
+      <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
+        <GitBranch size={13} className="text-[rgb(var(--purple))]" />
+        <span className="dock-title">Branches</span>
+        <span className="dock-count ml-auto">{projectWorktrees.length}</span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-1">
         {defaultWorktree && (
@@ -233,6 +233,7 @@ type RuntimeEntry =
   | { id: string; type: 'process'; process: Process }
 
 function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
+  const active = useBonsaiStore((state) => state.dockRuntimeId === runtime.id)
   const closeRuntime = useBonsaiStore((state) => state.closeRuntime)
   const setDockRuntimeId = useBonsaiStore((state) => state.setDockRuntimeId)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: runtime.id })
@@ -243,12 +244,12 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
       ref={setNodeRef}
       style={style}
       onClick={() => setDockRuntimeId(runtime.id)}
-      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-[rgb(var(--border))] bg-[#0c0e11]"
+      className={"runtime-tile flex h-full min-h-0 min-w-0 flex-col overflow-hidden " + (active ? "runtime-tile-active" : "")}
     >
       <div
         {...attributes}
         {...listeners}
-        className="flex h-8 shrink-0 cursor-grab items-center gap-1.5 border-b border-[rgb(var(--border))] bg-[rgb(var(--panel))] px-1.5 active:cursor-grabbing"
+        className="runtime-heading flex h-10 shrink-0 cursor-grab items-center gap-2 px-2.5 active:cursor-grabbing"
         title="Drag terminal"
       >
         <GripVertical size={9} className="shrink-0 text-[rgb(var(--muted-2))]" />
@@ -260,8 +261,8 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
           <span className="grid h-5 w-5 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))]"><TerminalSquare size={9} /></span>
         )}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[8px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</div>
-          <div className="truncate text-[6.5px] text-[rgb(var(--muted-2))]">
+          <div className="truncate text-[11px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</div>
+          <div className="truncate text-[9px] text-[rgb(var(--muted))]">
             {runtime.type === 'agent'
               ? runtime.agent.model + ' · ' + runtime.agent.reasoningEffort + (runtime.agent.fastMode ? ' · Fast' : '')
               : runtime.process.command}
@@ -363,8 +364,8 @@ function RuntimeWorkspace() {
   }))
 
   return (
-    <section ref={hostRef} className="flex h-full min-h-0 min-w-0 flex-col bg-[rgb(var(--bg))]">
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[rgb(var(--border))] px-1.5">
+    <section ref={hostRef} className="dock-pane flex h-full min-h-0 min-w-0 flex-col">
+      <div className="dock-heading flex shrink-0 items-center gap-2 px-2.5">
         {wideHeader ? (
           <>
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
@@ -384,8 +385,8 @@ function RuntimeWorkspace() {
                     </span>
                   ) : <TerminalSquare size={9} />}
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[7.5px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</span>
-                    {runtime.type === 'agent' && <span className="block truncate text-[6px] text-[rgb(var(--muted-2))]">{runtime.agent.provider} · {runtime.agent.model}</span>}
+                    <span className="block truncate text-[10px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</span>
+                    {runtime.type === 'agent' && <span className="block truncate text-[8px] text-[rgb(var(--muted))]">{runtime.agent.provider} · {runtime.agent.model}</span>}
                   </span>
                 </button>
               ))}
@@ -413,11 +414,11 @@ function RuntimeWorkspace() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden p-1">
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
         {openEntries.length ? (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={openEntries.map((item) => item.id)} strategy={rectSortingStrategy}>
-              <div className="grid h-full min-h-0 auto-rows-fr grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-1">
+              <div className="grid h-full min-h-0 auto-rows-fr grid-cols-[repeat(auto-fit,minmax(min(210px,100%),1fr))] gap-2">
                 {openEntries.map((runtime) => <SortableRuntimeTile key={runtime.id} runtime={runtime} />)}
               </div>
             </SortableContext>
@@ -516,12 +517,12 @@ function FilesDiffPanel() {
   const committedTree = filterTree(repoFiles, 'committed')
 
   return (
-    <aside className="flex h-full min-w-0 flex-col bg-[rgb(var(--panel))]">
+    <aside className="dock-pane flex h-full min-w-0 flex-col">
       <Tabs.Root defaultValue="files" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex h-9 shrink-0 items-center border-b border-[rgb(var(--border))] px-2">
-          <Tabs.List className="flex h-full items-center">
-            <Tabs.Trigger value="files" className="relative h-full px-2 text-[9px] font-medium text-[rgb(var(--muted))] data-[state=active]:text-[rgb(var(--text))] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-2 data-[state=active]:after:right-2 data-[state=active]:after:h-px data-[state=active]:after:bg-[rgb(var(--purple))]">Files</Tabs.Trigger>
-            <Tabs.Trigger value="diff" className="relative h-full px-2 text-[9px] font-medium text-[rgb(var(--muted))] data-[state=active]:text-[rgb(var(--text))] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-2 data-[state=active]:after:right-2 data-[state=active]:after:h-px data-[state=active]:after:bg-[rgb(var(--purple))]">Git Diff</Tabs.Trigger>
+        <div className="dock-heading flex shrink-0 items-center px-2">
+          <Tabs.List className="dock-tabs flex h-full items-center gap-1">
+            <Tabs.Trigger value="files" className="bonsai-focus dock-tab">Files</Tabs.Trigger>
+            <Tabs.Trigger value="diff" className="bonsai-focus dock-tab">Git Diff</Tabs.Trigger>
           </Tabs.List>
           <div className="ml-auto flex items-center gap-1">
             <button onClick={() => setView(view === 'tree' ? 'flat' : 'tree')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title={view === 'tree' ? 'Flat file list' : 'File tree'}>
@@ -654,7 +655,18 @@ function PullRequestsPanel() {
   const setRightPanel = useBonsaiStore((state) => state.setRightPanel)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selectedId = useBonsaiStore((state) => state.inspectedPullRequestId)
+  const focusNonce = useBonsaiStore((state) => state.pullRequestFocusNonce)
+  const setSelectedId = useBonsaiStore((state) => state.setInspectedPullRequestId)
+  const selectedRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setQuery('')
+  }, [focusNonce])
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [selectedId, query, focusNonce])
 
   const filtered = useMemo(() => {
     const items = pullRequests.filter((pr) => {
@@ -667,12 +679,17 @@ function PullRequestsPanel() {
   }, [pullRequests, query, sort])
 
   return (
-    <aside className="flex h-full min-w-0 flex-col bg-[rgb(var(--panel))]">
-      <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[rgb(var(--border))] px-2">
-        <GitPullRequest size={11} className="shrink-0 text-[rgb(var(--muted))]" />
+    <aside className="dock-pane flex h-full min-w-0 flex-col">
+      <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
+        <GitPullRequest size={13} className="shrink-0 text-[rgb(var(--green))]" />
+        <span className="dock-title min-w-0 truncate">Pull requests</span>
+        <span className="dock-count">{pullRequests.length}</span>
+        <button onClick={() => setRightPanel('prs', false)} className="bonsai-focus ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))]" title="Close pull requests"><X size={12} /></button>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-[rgb(var(--border)/.5)] p-2">
         <label className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
           <Search size={9} className="text-[rgb(var(--muted-2))]" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search PRs" className="min-w-0 flex-1 bg-transparent text-[8px] outline-none placeholder:text-[rgb(var(--muted-2))]" />
+          <input aria-label="Search pull requests" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search PRs" className="min-w-0 flex-1 bg-transparent text-[8px] outline-none placeholder:text-[rgb(var(--muted-2))]" />
         </label>
         <div className="w-[92px] shrink-0">
           <BonsaiSelect ariaLabel="Sort pull requests" compact value={sort} onChange={setSort} options={[
@@ -681,14 +698,14 @@ function PullRequestsPanel() {
             { value: 'checks', label: 'Checks' },
           ]} />
         </div>
-        <button onClick={() => setRightPanel('prs', false)} className="bonsai-focus grid h-6 w-6 shrink-0 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Close pull requests"><X size={11} /></button>
+
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {filtered.map((pr) => {
           const expanded = selectedId === pr.id
           const success = pr.checks.filter((check) => check.status === 'success').length
           return (
-            <div key={pr.id} className="border-b border-[rgb(var(--border))]">
+            <div key={pr.id} ref={expanded ? selectedRef : undefined} className="border-b border-[rgb(var(--border)/.55)]">
               <button type="button" onClick={() => setSelectedId(expanded ? null : pr.id)} className="flex w-full items-start gap-2 px-2.5 py-2.5 text-left hover:bg-[rgb(var(--panel-2))]">
                 <GitPullRequest size={11} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--green))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--purple))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
                 <span className="min-w-0 flex-1">
@@ -751,7 +768,7 @@ function EditorPreferenceDialog() {
 
 function HorizontalResizeHandle() {
   return (
-    <PanelResizeHandle className="group relative w-1.5 shrink-0 cursor-col-resize border-x border-[rgb(var(--border))] bg-[rgb(var(--bg))]">
+    <PanelResizeHandle className="dock-resize group relative w-2 shrink-0 cursor-col-resize">
       <div className="absolute left-1/2 top-1/2 h-9 w-px -translate-x-1/2 -translate-y-1/2 bg-[rgb(var(--border-strong))] opacity-0 transition-opacity group-hover:opacity-100" />
     </PanelResizeHandle>
   )
@@ -762,7 +779,7 @@ export function BottomWorkspace() {
 
   return (
     <>
-      <PanelGroup autoSaveId="bonsai-bottom-panels-v1" direction="horizontal" className="h-full min-h-0 bg-[rgb(var(--panel))]">
+      <PanelGroup autoSaveId="bonsai-bottom-panels-v1" direction="horizontal" className="bottom-workspace h-full min-h-0 p-2 pt-1">
         <Panel id="branches" order={1} defaultSize={14} minSize={9} maxSize={26}>
           <BranchSidebar />
         </Panel>

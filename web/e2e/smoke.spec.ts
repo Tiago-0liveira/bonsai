@@ -48,3 +48,28 @@ test('renders the Bonsai workspace and core dialogs without page errors', async 
 
   expect(pageErrors).toEqual([])
 })
+
+
+test('expanding a stack keeps unrelated branches fixed', async ({ page }) => {
+  await page.goto('/')
+
+  const unrelated = page.locator('.react-flow__node-worktree').filter({ hasText: 'fix/daemon-lifecycle' })
+  const stack = page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })
+  await expect(unrelated).toBeVisible()
+  await expect(stack).toBeVisible()
+  await page.waitForTimeout(450)
+
+  const before = await unrelated.boundingBox()
+  expect(before).not.toBeNull()
+
+  await stack.locator('button').filter({ hasText: 'Expand' }).click()
+  await expect(page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })).toHaveCount(0)
+  await expect(page.getByTestId('rf__node-wt-web')).toBeVisible()
+
+  const after = await unrelated.boundingBox()
+  expect(after).not.toBeNull()
+  if (before && after) {
+    expect(Math.abs(after.x - before.x)).toBeLessThan(1)
+    expect(Math.abs(after.y - before.y)).toBeLessThan(1)
+  }
+})
