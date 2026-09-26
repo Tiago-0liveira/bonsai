@@ -137,3 +137,48 @@ func TestSessionServiceFailurePathsStillCleanup(t *testing.T) {
 		}
 	}
 }
+
+
+func TestSessionServiceRunFinalizeAndCleanupErrorsAreJoined(t *testing.T) {
+	store, err := NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount("acct_joined", "fake", "personal")
+	if err := store.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	runSentinel := errors.New("run failed")
+	finalizeSentinel := errors.New("finalize failed")
+	cleanupSentinel := errors.New("cleanup failed")
+	events := []string{}
+	sessions := &lifecycleSessionStore{
+		events: &events, cleanupErr: cleanupSentinel,
+		session: Session{ID: "sess_joined", RuntimeDir: t.TempDir(), HomeDir: t.TempDir()},
+	}
+	provider := &lifecycleProvider{events: &events, finalizeErr: finalizeSentinel}
+	registry := NewRegistry()
+	if err := registry.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	service := &SessionService{
+		Accounts: store, Sessions: sessions, Registry: registry,
+		Launcher: &lifecycleLauncher{events: &events, err: runSentinel},
+	}
+
+	err = service.RunForeground(context.Background(), account.ID, t.TempDir(), nil)
+	for _, sentinel := range []error{runSentinel, finalizeSentinel, cleanupSentinel} {
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("joined error %v does not contain %v", err, sentinel)
+		}
+	}
+	want := []string{"create", "prepare", "run", "finalize", "cleanup"}
+	if len(events) != len(want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("events = %v, want %v", events, want)
+		}
+	}
+}
