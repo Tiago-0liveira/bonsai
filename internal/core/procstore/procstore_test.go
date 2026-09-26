@@ -18,17 +18,17 @@ func TestRecordRoundTrip(t *testing.T) {
 	}
 
 	r := &Record{
-		ID:        3,
-		Label:     "dev",
+		ID:         3,
+		Label:      "dev",
 		Command:    "npm run dev",
 		Program:    "npm",
 		Args:       []string{"run", "dev;literal"},
 		Worktree:   "/wt/feat-x",
 		WorkingDir: "/wt/feat-x/apps/web",
 		PID:        4242,
-		Status:    StatusRunning,
-		Policy:    Policy{Mode: PolicyAlways, MaxRestarts: 5},
-		StartedAt: time.Now().Truncate(time.Second),
+		Status:     StatusRunning,
+		Policy:     Policy{Mode: PolicyAlways, MaxRestarts: 5},
+		StartedAt:  time.Now().Truncate(time.Second),
 	}
 	if err := s.WriteRecord(r); err != nil {
 		t.Fatal(err)
