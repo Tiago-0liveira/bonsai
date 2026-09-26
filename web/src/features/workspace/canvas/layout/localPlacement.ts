@@ -52,7 +52,29 @@ export function placeMissingNodes(nodes: Node[], edges: Edge[], placements: Node
     pending[node.id] = nearestFreePosition(preferred, getNodeSize(node), fixedRects(nodes, placements, pending, new Set([node.id])))
   })
 
-  nodes.filter((node) => missing.has(node.id) && node.type === 'worktree').forEach((node) => {
+  const missingWorktrees = nodes.filter((node) => missing.has(node.id) && node.type === 'worktree')
+  const expansionHandled = new Set<string>()
+  const expansionGroups = new Map<string, Node[]>()
+
+  missingWorktrees.forEach((node) => {
+    const id = stackId(nodes, node)
+    const visibleStack = nodes.some((candidate) => candidate.id === id && candidate.type === 'stack')
+    if (!id || visibleStack || !placements[id]) return
+    expansionGroups.set(id, [...(expansionGroups.get(id) ?? []), node])
+  })
+
+  expansionGroups.forEach((members, id) => {
+    if (members.length < 2) return
+    const anchor = placements[id]
+    const excluded = new Set(members.map((member) => member.id))
+    Object.assign(
+      pending,
+      compactStackExpansion(members, { x: anchor.x, y: anchor.y }, fixedRects(nodes, placements, pending, excluded)),
+    )
+    members.forEach((member) => expansionHandled.add(member.id))
+  })
+
+  missingWorktrees.filter((node) => !expansionHandled.has(node.id)).forEach((node) => {
     const id = stackId(nodes, node)
     const stack = nodes.find((candidate) => candidate.id === id && candidate.type === 'stack')
     const stackPlacement = placements[id]
