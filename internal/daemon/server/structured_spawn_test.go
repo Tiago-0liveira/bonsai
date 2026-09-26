@@ -142,3 +142,14 @@ func equivalentPath(a, b string) bool {
 	}
 	return canonical(a) == canonical(b)
 }
+
+
+func sameResolvedTestPath(a, b string) bool {
+	resolve := func(path string) string {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return filepath.Clean(resolved)
+		}
+		return filepath.Clean(path)
+	}
+	return resolve(a) == resolve(b)
+}
