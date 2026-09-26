@@ -108,13 +108,13 @@ func findUp(start string, names ...string) (string, string) {
 }
 
 var skippedProjectDirs = map[string]bool{
-	".git":        true,
+	".git":         true,
 	"node_modules": true,
-	"target":      true,
-	"vendor":      true,
-	".venv":       true,
-	"venv":        true,
-	"__pycache__": true,
+	"target":       true,
+	"vendor":       true,
+	".venv":        true,
+	"venv":         true,
+	"__pycache__":  true,
 }
 
 func findUpTo(start, boundary string, names ...string) (string, string) {
