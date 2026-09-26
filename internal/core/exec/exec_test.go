@@ -229,7 +229,6 @@ func TestProcessLastURL(t *testing.T) {
 	}
 }
 
-
 func TestExecCommandPreservesArgvAndDir(t *testing.T) {
 	dir := t.TempDir()
 	args := []string{"value with spaces", "semi;colon", "quote\"value", "$HOME", "&&"}
