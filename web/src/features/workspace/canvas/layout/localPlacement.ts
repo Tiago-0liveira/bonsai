@@ -102,7 +102,23 @@ export function placeMissingNodes(nodes: Node[], edges: Edge[], placements: Node
 export function placeAddedNodesLocally(nodes: Node[], placements: NodePlacements, addedIds: string[]) {
   const pending: Record<string, CanvasPosition> = {}
   const added = new Set(addedIds)
-  nodes.filter((node) => added.has(node.id) && node.type === 'worktree' && placements[node.id]?.mode !== 'manual').forEach((node) => {
+
+  nodes.filter((node) => added.has(node.id) && node.type === 'stack').forEach((node) => {
+    if (placements[node.id]?.mode === 'manual') return
+    const preferred = stackCollapsePosition(node, placements)
+    if (!preferred) return
+    pending[node.id] = nearestFreePosition(
+      preferred,
+      getNodeSize(node),
+      fixedRects(nodes, placements, pending, new Set([node.id])),
+    )
+  })
+
+  const addedWorktrees = nodes.filter(
+    (node) => added.has(node.id) && node.type === 'worktree' && placements[node.id]?.mode !== 'manual',
+  )
+
+  addedWorktrees.forEach((node) => {
     const id = stackId(nodes, node)
     const stack = nodes.find((candidate) => candidate.id === id && candidate.type === 'stack')
     const stackPlacement = placements[id]
@@ -114,6 +130,30 @@ export function placeAddedNodesLocally(nodes: Node[], placements: NodePlacements
       fixedRects(nodes, placements, pending, new Set([node.id])),
     )
   })
+
+  const restoredByStack = new Map<string, Node[]>()
+  addedWorktrees.forEach((node) => {
+    const id = stackId(nodes, node)
+    const visibleStack = nodes.some((candidate) => candidate.id === id && candidate.type === 'stack')
+    if (!id || visibleStack || !placements[id] || !placements[node.id]) return
+    restoredByStack.set(id, [...(restoredByStack.get(id) ?? []), node])
+  })
+
+  restoredByStack.forEach((members) => {
+    if (members.length < 2) return
+    const memberIds = new Set(members.map((member) => member.id))
+    const movingRects = members.map((member) => getNodeRect(member, placements[member.id]))
+    const delta = resolveLocalCollisions({
+      movingRects,
+      fixedRects: fixedRects(nodes, placements, pending, memberIds),
+    })
+    if (!delta.x && !delta.y) return
+    members.forEach((member) => {
+      const placement = placements[member.id]
+      pending[member.id] = { x: placement.x + delta.x, y: placement.y + delta.y }
+    })
+  })
+
   return pending
 }
 
