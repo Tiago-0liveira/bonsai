@@ -8,7 +8,7 @@ import (
 
 func TestResolveArgumentValidation(t *testing.T) {
 	base := Command{
-		ID: "test",
+		ID:         "test",
 		Invocation: InvocationSpec{Program: "tool", Prefix: []string{"run"}},
 		Args: []Argument{
 			{ID: "required", Kind: ArgumentPositional, Type: ValueString, Required: true, Position: 0},
@@ -141,14 +141,14 @@ func TestResolveExactMakeInvocation(t *testing.T) {
 
 func TestResolvePreservesValuesAsArgvEntries(t *testing.T) {
 	cmd := Command{
-		ID: "safe",
+		ID:         "safe",
 		Invocation: InvocationSpec{
 			Program:     "tool",
 			Prefix:      []string{"run"},
 			WorkingDir:  "C:\\repo",
 			PassThrough: PassThroughDoubleDash,
 		},
-		Args: []Argument{{ID: "args", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true}},
+		Args:       []Argument{{ID: "args", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true}},
 	}
 	values := []string{"hello world", "日本語", `"quoted value"`, `C:\repo\a b\file.txt`, "; touch nope"}
 	got, err := Resolve(cmd, ArgumentValues{"args": values})
