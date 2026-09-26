@@ -61,9 +61,10 @@ type ptyHub struct {
 	replayCap   int
 	subQueue    int
 
-	closed   bool
-	exitCode int
-	exitErr  string
+	closed        bool
+	sessionClosed bool
+	exitCode      int
+	exitErr       string
 }
 
 func newPTYHub(session corepty.Session, cols, rows int, startSeq uint64) *ptyHub {
@@ -171,7 +172,7 @@ func (h *ptyHub) WriteInput(data []byte) error {
 	defer h.writeMu.Unlock()
 
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || h.sessionClosed {
 		h.mu.Unlock()
 		return net.ErrClosed
 	}
@@ -201,7 +202,7 @@ func (h *ptyHub) Resize(cols, rows int) error {
 	defer h.writeMu.Unlock()
 
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || h.sessionClosed {
 		h.mu.Unlock()
 		return net.ErrClosed
 	}
@@ -215,6 +216,25 @@ func (h *ptyHub) Resize(cols, rows int) error {
 	h.cols, h.rows = cols, rows
 	h.mu.Unlock()
 	return nil
+}
+
+func (h *ptyHub) CloseSession() error {
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
+
+	h.mu.Lock()
+	if h.sessionClosed {
+		h.mu.Unlock()
+		return nil
+	}
+	h.sessionClosed = true
+	session := h.session
+	h.mu.Unlock()
+
+	if session == nil {
+		return nil
+	}
+	return session.Close()
 }
 
 func (h *ptyHub) Close(exitCode int, exitErr string) {
@@ -290,10 +310,10 @@ func (s *Server) startPTYLocked(mp *managedProc, cmd *exec.Cmd, logw *logWriter,
 		select {
 		case <-pumpDone:
 		case <-time.After(ptyDrainGrace):
-			_ = session.Close()
+			_ = hub.CloseSession()
 			<-pumpDone
 		}
-		_ = session.Close()
+		_ = hub.CloseSession()
 		_ = logw.Close()
 
 		exitErr := ""
@@ -458,13 +478,13 @@ func (s *Server) closePTYResources() {
 	s.mu.Unlock()
 	for _, mp := range mps {
 		mp.mu.Lock()
-		if mp.ptySession != nil {
-			_ = mp.ptySession.Close()
-			mp.ptySession = nil
-		}
 		if mp.ptyHub != nil {
+			_ = mp.ptyHub.CloseSession()
 			mp.ptyHub.Close(-1, "daemon stopped")
+		} else if mp.ptySession != nil {
+			_ = mp.ptySession.Close()
 		}
+		mp.ptySession = nil
 		mp.mu.Unlock()
 	}
 }

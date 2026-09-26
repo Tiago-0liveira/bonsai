@@ -184,14 +184,14 @@ func (s *Server) remove(id int) error {
 		mp.restartTimer = nil
 	}
 	mp.generation++
-	if mp.ptySession != nil {
-		_ = mp.ptySession.Close()
-		mp.ptySession = nil
-	}
 	if mp.ptyHub != nil {
+		_ = mp.ptyHub.CloseSession()
 		mp.ptyHub.Close(-1, "process removed")
 		mp.ptyHub = nil
+	} else if mp.ptySession != nil {
+		_ = mp.ptySession.Close()
 	}
+	mp.ptySession = nil
 	mp.mu.Unlock()
 
 	s.mu.Lock()
