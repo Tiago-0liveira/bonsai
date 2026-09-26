@@ -1,7 +1,14 @@
 import type { Edge, Node } from '@xyflow/react'
 import { buildBranchForest } from './graphModel'
-import { getAgentShelfSize, getNodeSize, LAYOUT } from './geometry'
+import { getNodeSize as layoutSize, LAYOUT } from './geometry'
 import type { BranchBlock, CanvasPosition, NodePlacements, Size } from './types'
+
+interface ShelfRow {
+  nodes: Node[]
+  sizes: Size[]
+  width: number
+  height: number
+}
 
 interface MeasuredBlock {
   block: BranchBlock
@@ -10,12 +17,27 @@ interface MeasuredBlock {
   shelfSize: Size
   children: MeasuredBlock[]
   childrenWidth: number
-  childrenHeight: number
+  shelfRows: ShelfRow[]
 }
 
 function measure(block: BranchBlock): MeasuredBlock {
-  const nodeSize = getNodeSize(block.node)
-  const shelfSize = getAgentShelfSize(block.agentNodes.length)
+  const nodeSize = layoutSize(block.node)
+  const shelfRows: ShelfRow[] = []
+  for (let index = 0; index < block.agentNodes.length; index += 3) {
+    const nodes = block.agentNodes.slice(index, index + 3)
+    const sizes = nodes.map(layoutSize)
+    shelfRows.push({
+      nodes,
+      sizes,
+      width: sizes.reduce((sum, size) => sum + size.width, 0) + (nodes.length - 1) * LAYOUT.agentGapX,
+      height: Math.max(...sizes.map((size) => size.height)),
+    })
+  }
+  const shelfSize = {
+    width: Math.max(0, ...shelfRows.map((row) => row.width)),
+    height: shelfRows.reduce((sum, row) => sum + row.height, 0) +
+      Math.max(0, shelfRows.length - 1) * LAYOUT.agentGapY,
+  }
   const children = block.childBlocks.map(measure)
   const childrenWidth =
     children.reduce((sum, child) => sum + child.size.width, 0) +
@@ -26,7 +48,7 @@ function measure(block: BranchBlock): MeasuredBlock {
     width: Math.max(nodeSize.width, shelfSize.width, childrenWidth),
     height: localHeight + (children.length ? LAYOUT.childTopGap + childrenHeight : 0),
   }
-  return { block, size, nodeSize, shelfSize, children, childrenWidth, childrenHeight }
+  return { block, size, nodeSize, shelfSize, children, childrenWidth, shelfRows }
 }
 
 function placeBlock(
@@ -44,20 +66,14 @@ function placeBlock(
   let cursorY = y + nodeSize.height
   if (block.agentNodes.length) {
     cursorY += LAYOUT.agentTopGap
-    const columns = Math.min(3, block.agentNodes.length)
-    const agentSize = getNodeSize({ type: 'agent', data: {} })
-    const shelfX = x + (size.width - shelfSize.width) / 2
-
-    block.agentNodes.forEach((agent, index) => {
-      const row = Math.floor(index / columns)
-      const col = index % columns
-      const rowCount = Math.min(columns, block.agentNodes.length - row * columns)
-      const rowWidth = rowCount * agentSize.width + Math.max(0, rowCount - 1) * LAYOUT.agentGapX
-      const rowX = x + (size.width - rowWidth) / 2
-      positions[agent.id] = {
-        x: rowX + col * (agentSize.width + LAYOUT.agentGapX),
-        y: cursorY + row * (agentSize.height + LAYOUT.agentGapY),
-      }
+    let rowY = cursorY
+    measured.shelfRows.forEach((row) => {
+      let rowX = x + (size.width - row.width) / 2
+      row.nodes.forEach((agent, index) => {
+        positions[agent.id] = { x: rowX, y: rowY }
+        rowX += row.sizes[index].width + LAYOUT.agentGapX
+      })
+      rowY += row.height + LAYOUT.agentGapY
     })
     cursorY += shelfSize.height
   }
@@ -80,7 +96,7 @@ export function computeGlobalPlacements(
   if (!project) return {}
 
   const forest = buildBranchForest(nodes, edges, previousPlacements).map(measure)
-  const projectSize = getNodeSize(project)
+  const projectSize = layoutSize(project)
   const totalForestWidth =
     forest.reduce((sum, block) => sum + block.size.width, 0) +
     Math.max(0, forest.length - 1) * LAYOUT.branchGapX
@@ -92,7 +108,7 @@ export function computeGlobalPlacements(
 
   const defaultNode = nodes.find((node) => node.type === 'defaultBranch')
   if (defaultNode) {
-    const size = getNodeSize(defaultNode)
+    const size = layoutSize(defaultNode)
     positions[defaultNode.id] = {
       x: rootX - size.width - 34,
       y: rootY + Math.max(0, (projectSize.height - size.height) / 2),
@@ -107,9 +123,13 @@ export function computeGlobalPlacements(
     }
   }
 
+  const headerBottom = Math.max(...nodes
+    .filter((node) => positions[node.id])
+    .map((node) => positions[node.id].y + layoutSize(node).height))
+
   if (forest.length) {
     let forestX = rootX + projectSize.width / 2 - totalForestWidth / 2
-    const forestY = rootY + projectSize.height + LAYOUT.projectTopGap
+    const forestY = headerBottom + LAYOUT.projectTopGap
     forest.forEach((block) => {
       placeBlock(block, forestX, forestY, positions)
       forestX += block.size.width + LAYOUT.branchGapX
@@ -117,13 +137,16 @@ export function computeGlobalPlacements(
   }
 
   const positioned = new Set(Object.keys(positions))
-  let overflow = 0
+  const overflowY = Math.max(...nodes
+    .filter((node) => positioned.has(node.id))
+    .map((node) => positions[node.id].y + layoutSize(node).height)) + LAYOUT.childTopGap
+  let overflowX = 80
   nodes
     .filter((node) => !positioned.has(node.id))
     .sort((a, b) => a.id.localeCompare(b.id))
     .forEach((node) => {
-      positions[node.id] = { x: 24 + overflow * 210, y: rootY + 620 }
-      overflow += 1
+      positions[node.id] = { x: overflowX, y: overflowY }
+      overflowX += layoutSize(node).width + LAYOUT.branchGapX
     })
 
   return positions

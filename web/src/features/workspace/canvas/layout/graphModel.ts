@@ -59,40 +59,62 @@ export function buildBranchForest(nodes: Node[], edges: Edge[], placements: Node
 
   const branchNodes = nodes.filter((node) => node.type === 'worktree' || node.type === 'stack')
   const branchMap = new Map(branchNodes.map((node) => [node.id, node]))
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]))
   const agents = new Map<string, Node[]>()
-  edges.filter(isAgentEdge).forEach((edge) => {
-    const agent = nodes.find((node) => node.id === edge.target && node.type === 'agent')
-    if (!agent) return
+  const assignedAgents = new Set<string>()
+  const sortedEdges = [...edges].sort((a, b) =>
+    a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
+  sortedEdges.filter(isAgentEdge).forEach((edge) => {
+    const agent = nodeMap.get(edge.target)
+    if (agent?.type !== 'agent' || !branchMap.has(edge.source) || assignedAgents.has(agent.id)) return
+    assignedAgents.add(agent.id)
     agents.set(edge.source, [...(agents.get(edge.source) ?? []), agent])
   })
 
-  const children = new Map<string, Node[]>()
-  edges.filter(isStructuralEdge).forEach((edge) => {
-    const target = branchMap.get(edge.target)
-    if (!target) return
-    children.set(edge.source, [...(children.get(edge.source) ?? []), target])
+  // A visible stack can have multiple incoming relationships. Give each block
+  // one deterministic owner, preferring a branch parent over the project.
+  const parents = new Map<string, string>()
+  sortedEdges.filter(isStructuralEdge).forEach((edge) => {
+    if (!branchMap.has(edge.target) || edge.source === edge.target) return
+    if (edge.source !== project.id && !branchMap.has(edge.source)) return
+    if (!parents.has(edge.target) || parents.get(edge.target) === project.id) {
+      parents.set(edge.target, edge.source)
+    }
   })
 
-  const visiting = new Set<string>()
-  const build = (node: Node): BranchBlock => {
-    if (visiting.has(node.id)) return { id: node.id, node, agentNodes: [], childBlocks: [] }
-    visiting.add(node.id)
-    const block: BranchBlock = {
-      id: node.id,
-      node,
-      agentNodes: [...(agents.get(node.id) ?? [])].sort((a, b) => a.id.localeCompare(b.id)),
-      childBlocks: sortBranches(children.get(node.id) ?? [], placements).map(build),
+  // Break each cycle at its smallest ID, independently of prior coordinates.
+  const checked = new Set<string>()
+  for (const node of branchNodes) {
+    const path = new Set<string>()
+    let id: string | undefined = node.id
+    while (id && branchMap.has(id) && !checked.has(id)) {
+      if (path.has(id)) {
+        const cycle = [id]
+        let next = parents.get(id)
+        while (next && next !== id) {
+          cycle.push(next)
+          next = parents.get(next)
+        }
+        parents.delete(cycle.sort((a, b) => a.localeCompare(b))[0])
+        break
+      }
+      path.add(id)
+      id = parents.get(id)
     }
-    visiting.delete(node.id)
-    return block
+    path.forEach((item) => checked.add(item))
   }
 
-  const explicitRoots = sortBranches(children.get(project.id) ?? [], placements)
-  const parented = new Set(edges.filter(isStructuralEdge).map((edge) => edge.target))
-  const orphans = sortBranches(
-    branchNodes.filter((node) => !parented.has(node.id) && !explicitRoots.some((root) => root.id === node.id)),
-    placements,
-  )
+  const children = new Map<string, Node[]>()
+  branchNodes.forEach((node) => {
+    const parent = parents.get(node.id) ?? project.id
+    children.set(parent, [...(children.get(parent) ?? []), node])
+  })
+  const build = (node: Node): BranchBlock => ({
+    id: node.id,
+    node,
+    agentNodes: [...(agents.get(node.id) ?? [])].sort((a, b) => a.id.localeCompare(b.id)),
+    childBlocks: sortBranches(children.get(node.id) ?? [], placements).map(build),
+  })
 
-  return [...explicitRoots, ...orphans].map(build)
+  return sortBranches(children.get(project.id) ?? [], placements).map(build)
 }

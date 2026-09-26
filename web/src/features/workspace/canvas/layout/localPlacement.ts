@@ -11,7 +11,8 @@ function pos(node: Node, placements: NodePlacements, pending: Record<string, Can
 
 function fixedRects(nodes: Node[], placements: NodePlacements, pending: Record<string, CanvasPosition>, excluded: Set<string>): Rect[] {
   return nodes
-    .filter((node) => !excluded.has(node.id))
+    .filter((node) => !excluded.has(node.id) &&
+      (placements[node.id] || pending[node.id] || node.type === 'defaultBranch' || node.type === 'env'))
     .map((node) => getNodeRect(node, pos(node, placements, pending)))
 }
 
@@ -30,7 +31,12 @@ function childAnchor(node: Node, parent: Node | undefined, nodes: Node[], edges:
   if (parent.type === 'worktree') {
     const agents = agentsFor(parent.id, nodes, edges)
     const shelf = getAgentShelfSize(agents.length)
-    y = parentPos.y + parentSize.height + (agents.length ? LAYOUT.agentTopGap + shelf.height : 0) + LAYOUT.childTopGap
+    const placedAgents = agents.filter((agent) => placements[agent.id] || pending[agent.id])
+    const shelfBottom = placedAgents.length
+      ? Math.max(parentPos.y + parentSize.height, ...placedAgents.map((agent) =>
+        pos(agent, placements, pending).y + getNodeSize(agent).height))
+      : parentPos.y + parentSize.height + (agents.length ? LAYOUT.agentTopGap + shelf.height : 0)
+    y = shelfBottom + LAYOUT.childTopGap
   }
   return { x: parentPos.x + parentSize.width / 2 - nodeSize.width / 2, y }
 }
@@ -200,35 +206,45 @@ export function placeAddedNodesLocally(nodes: Node[], placements: NodePlacements
   return pending
 }
 
-export function refreshGeneratedAgentShelves(nodes: Node[], edges: Edge[], placements: NodePlacements) {
+export function refreshGeneratedAgentShelves(
+  nodes: Node[],
+  edges: Edge[],
+  placements: NodePlacements,
+  ownerIds?: Set<string>,
+) {
   const pending: Record<string, CanvasPosition> = {}
-  nodes.filter((node) => node.type === 'worktree').forEach((owner) => {
+  nodes.filter((node) => node.type === 'worktree' && (!ownerIds || ownerIds.has(node.id))).forEach((owner) => {
     const ownerPos = pos(owner, placements, pending)
     const ownerSize = getNodeSize(owner)
     const agents = agentsFor(owner.id, nodes, edges)
+      .filter((agent) => placements[agent.id]?.mode !== 'manual')
     if (!agents.length) return
-    const columns = Math.min(3, agents.length)
-    const agentSize = getNodeSize({ type: 'agent', data: {} })
-    const shelfY = ownerPos.y + ownerSize.height + LAYOUT.agentTopGap
 
-    agents.forEach((agent, index) => {
-      if (placements[agent.id]?.mode === 'manual') return
-      const row = Math.floor(index / columns)
-      const col = index % columns
-      const rowCount = Math.min(columns, agents.length - row * columns)
-      const rowWidth = rowCount * agentSize.width + Math.max(0, rowCount - 1) * LAYOUT.agentGapX
-      const preferred = {
-        x: ownerPos.x + ownerSize.width / 2 - rowWidth / 2 + col * (agentSize.width + LAYOUT.agentGapX),
-        y: shelfY + row * (agentSize.height + LAYOUT.agentGapY),
-      }
-      const generatedSiblingIds = agents
-        .filter((candidate) => candidate.id !== agent.id && placements[candidate.id]?.mode !== 'manual')
-        .map((candidate) => candidate.id)
-      pending[agent.id] = nearestFreePosition(
-        preferred,
-        agentSize,
-        fixedRects(nodes, placements, pending, new Set([agent.id, ...generatedSiblingIds])),
-      )
+    // Resolve the complete shelf together, so collision adjustments preserve
+    // rows and spacing instead of sending each agent to an unrelated position.
+    const preferred: Record<string, CanvasPosition> = {}
+    let rowY = ownerPos.y + ownerSize.height + LAYOUT.agentTopGap
+    for (let index = 0; index < agents.length; index += 3) {
+      const row = agents.slice(index, index + 3)
+      const sizes = row.map(getNodeSize)
+      const width = sizes.reduce((sum, size) => sum + size.width, 0) + (row.length - 1) * LAYOUT.agentGapX
+      let rowX = ownerPos.x + (ownerSize.width - width) / 2
+      row.forEach((agent, column) => {
+        preferred[agent.id] = { x: rowX, y: rowY }
+        rowX += sizes[column].width + LAYOUT.agentGapX
+      })
+      rowY += Math.max(...sizes.map((size) => size.height)) + LAYOUT.agentGapY
+    }
+    const excluded = new Set(agents.map((agent) => agent.id))
+    const delta = resolveLocalCollisions({
+      movingRects: agents.map((agent) => getNodeRect(agent, preferred[agent.id])),
+      fixedRects: fixedRects(nodes, placements, pending, excluded),
+      // Match the shelf's own spacing; branch padding exceeds the top gap.
+      padding: LAYOUT.agentGapY,
+    })
+    agents.forEach((agent) => {
+      const preferredPos = preferred[agent.id]
+      pending[agent.id] = { x: preferredPos.x + delta.x, y: preferredPos.y + delta.y }
     })
   })
   return pending

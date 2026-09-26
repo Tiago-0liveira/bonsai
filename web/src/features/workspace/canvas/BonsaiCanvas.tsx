@@ -19,6 +19,7 @@ import type { Health, Worktree } from '../../../types'
 import { getTagPresentation } from '../tagStyles'
 import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
 import { computeGlobalPlacements } from './layout/globalLayout'
+import { placePrLabels } from './layout/prLabels'
 import {
   placeAddedNodesLocally,
   placeExpandedStackLocally,
@@ -107,9 +108,10 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     projectId: string
     ids: Set<string>
     parents: Map<string, string>
+    agentOwners: Map<string, string>
     stacks: Map<string, string[]>
   } | null>(null)
-  const { fitView } = useReactFlow()
+  const { fitView, getNodes } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const fitViewRef = useRef(fitView)
 
@@ -415,8 +417,19 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges)
+  const displayEdges = useMemo(() => {
+    const labels = placePrLabels(nodes, edges)
+    return edges.map((edge) => labels[edge.id]
+      ? { ...edge, data: { ...edge.data, labelPlacement: labels[edge.id] } }
+      : edge)
+  }, [nodes, edges])
 
-  useEffect(() => setNodes(graph.nodes), [graph.nodes, setNodes])
+  useEffect(() => {
+    setNodes((current) => {
+      const measured = new Map(current.map((node) => [node.id, node.measured]))
+      return graph.nodes.map((node) => ({ ...node, measured: measured.get(node.id) }))
+    })
+  }, [graph.nodes, setNodes])
   useEffect(() => setEdges(graph.edges), [graph.edges, setEdges])
 
   useEffect(() => {
@@ -439,7 +452,12 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   useEffect(() => {
     if (!graph.projectId) return
 
-    const placeableNodes = graph.nodes.filter(
+    const rendered = new Map(getNodes().map((node) => [node.id, node]))
+    const layoutNodes = graph.nodes.map((node) => ({ ...node, measured: rendered.get(node.id)?.measured }))
+    const currentAgentOwners = new Map(graph.edges
+      .filter((edge) => edge.data?.relationship === 'agent')
+      .map((edge) => [edge.target, edge.source]))
+    const placeableNodes = layoutNodes.filter(
       (node) => node.type !== 'defaultBranch' && node.type !== 'env',
     )
     const currentIds = new Set(placeableNodes.map((node) => node.id))
@@ -462,13 +480,14 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     if (firstForProject) {
       initializedProjects.current.add(graph.projectId)
       if (!hasUsablePlacements) {
-        const allPositions = computeGlobalPlacements(graph.nodes, graph.edges, nodePlacements)
+        const allPositions = computeGlobalPlacements(layoutNodes, graph.edges, nodePlacements)
         const generated = storablePositions(placeableNodes, allPositions)
         setGeneratedNodePlacements(generated)
         previousTopology.current = {
           projectId: graph.projectId,
           ids: currentIds,
           parents: currentParents,
+          agentOwners: currentAgentOwners,
           stacks: currentStacks,
         }
         requestAnimationFrame(() => {
@@ -484,12 +503,12 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       .map((node) => node.id)
     Object.assign(
       generated,
-      placeMissingNodes(graph.nodes, graph.edges, nodePlacements, missingIds),
+      placeMissingNodes(layoutNodes, graph.edges, nodePlacements, missingIds),
     )
 
     if (previous) {
       const addedIds = [...currentIds].filter((id) => !previous.ids.has(id))
-      Object.assign(generated, placeAddedNodesLocally(graph.nodes, nodePlacements, addedIds))
+      Object.assign(generated, placeAddedNodesLocally(layoutNodes, nodePlacements, addedIds))
 
       const addedSet = new Set(addedIds)
       previous.stacks.forEach((memberIds, stackId) => {
@@ -509,7 +528,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         }
         Object.assign(
           generated,
-          placeExpandedStackLocally(graph.nodes, workingPlacements, missingMembers, anchor),
+          placeExpandedStackLocally(layoutNodes, workingPlacements, missingMembers, anchor),
         )
       })
 
@@ -518,7 +537,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         .map(([id]) => id)
       Object.assign(
         generated,
-        relocateGeneratedBranches(graph.nodes, graph.edges, nodePlacements, changedParents),
+        relocateGeneratedBranches(layoutNodes, graph.edges, nodePlacements, changedParents),
       )
     }
 
@@ -528,19 +547,33 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         Object.entries(generated).map(([id, position]) => [id, { ...position, mode: 'generated' as const }]),
       ),
     }
-    Object.assign(
-      generated,
-      refreshGeneratedAgentShelves(graph.nodes, graph.edges, workingPlacements),
-    )
+    // Refresh only shelves whose membership or owner placement changed. A
+    // sibling's add/remove operation must not undo existing Auto-layout results.
+    const affectedOwners = new Set<string>()
+    currentAgentOwners.forEach((ownerId, agentId) => {
+      if (!nodePlacements[agentId] || generated[ownerId] ||
+          (previous && previous.agentOwners.get(agentId) !== ownerId)) {
+        affectedOwners.add(ownerId)
+      }
+    })
+    previous?.agentOwners.forEach((ownerId, agentId) => {
+      if (currentAgentOwners.get(agentId) !== ownerId) affectedOwners.add(ownerId)
+    })
+    if (affectedOwners.size) {
+      Object.assign(generated,
+        refreshGeneratedAgentShelves(layoutNodes, graph.edges, workingPlacements, affectedOwners))
+    }
 
     if (Object.keys(generated).length) setGeneratedNodePlacements(generated)
     previousTopology.current = {
       projectId: graph.projectId,
       ids: currentIds,
       parents: currentParents,
+      agentOwners: currentAgentOwners,
       stacks: currentStacks,
     }
   }, [
+    getNodes,
     graph.projectId,
     graph.topologyKey,
     nodePlacements,
@@ -664,7 +697,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     <div className="relative h-full min-h-0 w-full bg-[rgb(var(--bg))]">
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={displayEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}

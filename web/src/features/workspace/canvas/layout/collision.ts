@@ -22,19 +22,22 @@ export function resolveLocalCollisions({
 }: ResolveLocalCollisionsInput): CanvasPosition {
   if (!movingRects.length || clearAt(movingRects, fixedRects, 0, 0, padding)) return { x: 0, y: 0 }
 
-  const minX = Math.min(...movingRects.map((rect) => rect.x))
-  const maxX = Math.max(...movingRects.map((rect) => rect.x + rect.width))
-  const step = Math.max(64, maxX - minX + padding)
-  const signs =
-    preferredDirection === 'left' ? [-1, 1] :
-      preferredDirection === 'right' ? [1, -1] :
-        [1, -1]
-
-  for (let distance = 1; distance <= 24; distance += 1) {
-    for (const sign of signs) {
-      const dx = sign * distance * step
-      if (clearAt(movingRects, fixedRects, dx, 0, padding)) return { x: dx, y: 0 }
+  // Collision interval boundaries are the nearest useful translations. Large
+  // fixed steps can jump over usable gaps and scatter otherwise compact shelves.
+  const candidates = new Set<number>()
+  for (const moving of movingRects) {
+    for (const fixed of fixedRects) {
+      if (moving.y + moving.height + padding <= fixed.y ||
+          fixed.y + fixed.height + padding <= moving.y) continue
+      candidates.add(fixed.x - moving.x - moving.width - padding)
+      candidates.add(fixed.x + fixed.width + padding - moving.x)
     }
+  }
+  const preferredSign = preferredDirection === 'left' ? -1 : 1
+  const ordered = [...candidates].sort((a, b) =>
+    Math.abs(a) - Math.abs(b) || preferredSign * (b - a))
+  for (const dx of ordered) {
+    if (clearAt(movingRects, fixedRects, dx, 0, padding)) return { x: dx, y: 0 }
   }
 
   const maxY = Math.max(...fixedRects.map((rect) => rect.y + rect.height), 0)

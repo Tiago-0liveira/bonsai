@@ -12,7 +12,7 @@ export const LAYOUT = {
   collisionPadding: 28,
 } as const
 
-export function getNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
+function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   const type = node.type ?? 'agent'
   if (type === 'project') return { width: 300, height: 154 }
   if (type === 'defaultBranch') return { width: 232, height: 132 }
@@ -23,13 +23,26 @@ export function getNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
     return { width: 230, height: 154 + historyAllowance }
   }
   if (type === 'stack') {
-    const count = Number(node.data?.stackCount ?? 1)
-    return { width: 286, height: 50 + Math.min(7, count) * 34 }
+    const count = Math.max(Number(node.data?.stackCount) || 1,
+      Array.isArray(node.data?.stackItems) ? node.data.stackItems.length : 0)
+    return { width: 286, height: 50 + count * 37 }
   }
   return { width: 188, height: 98 }
 }
 
-export function getNodeRect(node: Pick<Node, 'type' | 'data'>, position: CanvasPosition): Rect {
+type SizedNode = Pick<Node, 'type' | 'data'> & Partial<Pick<Node, 'measured'>>
+
+export function getNodeSize(node: SizedNode): Size {
+  const estimate = estimateNodeSize(node)
+  const valid = (value: number | undefined, fallback: number) =>
+    value !== undefined && Number.isFinite(value) && value > 0 ? value : fallback
+  return {
+    width: valid(node.measured?.width, estimate.width),
+    height: valid(node.measured?.height, estimate.height),
+  }
+}
+
+export function getNodeRect(node: SizedNode, position: CanvasPosition): Rect {
   return { ...position, ...getNodeSize(node) }
 }
 

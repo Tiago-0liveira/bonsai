@@ -1,6 +1,8 @@
 import type { Edge, Node } from '@xyflow/react'
 import { describe, expect, it } from 'vitest'
-import { getNodeRect } from './geometry'
+import { getNodeRect, getNodeSize, LAYOUT, rectsOverlap } from './geometry'
+import { buildBranchForest } from './graphModel'
+import type { CanvasPosition, NodePlacements } from './types'
 import { computeGlobalPlacements } from './globalLayout'
 
 function node(id: string, type: string, data: Record<string, unknown> = {}): Node {
@@ -89,5 +91,118 @@ describe('branch-block global layout', () => {
     })
     expect(new Set(agents.map((agentNode) => positions[agentNode.id].x)).size).toBe(3)
     expect(new Set(agents.map((agentNode) => positions[agentNode.id].y)).size).toBe(2)
+  })
+})
+
+function expectNoOverlaps(nodes: Node[], positions: Record<string, CanvasPosition>) {
+  for (let i = 0; i < nodes.length; i += 1) {
+    const a = nodes[i]
+    expect(positions[a.id], a.id).toBeDefined()
+    for (const b of nodes.slice(i + 1)) {
+      const aRect = { ...getNodeSize(a), ...a.measured, ...positions[a.id] }
+      const bRect = { ...getNodeSize(b), ...b.measured, ...positions[b.id] }
+      expect(rectsOverlap(aRect, bRect), a.id + ' overlaps ' + b.id).toBe(false)
+    }
+  }
+}
+
+function generated(positions: Record<string, CanvasPosition>): NodePlacements {
+  return Object.fromEntries(Object.entries(positions).map(([id, position]) =>
+    [id, { ...position, mode: 'generated' }]))
+}
+
+describe('Auto-layout spacing regressions', () => {
+  it('reserves measured History height and wraps variable-size agents above child branches', () => {
+    const { nodes, edges } = baseGraph()
+    nodes.find((item) => item.id === 'a')!.measured = { width: 230, height: 440 }
+    const agents = Array.from({ length: 7 }, (_, index) => ({
+      ...node('agent-' + index, 'agent'),
+      measured: { width: 188 + index * 20, height: index === 1 ? 240 : 98 },
+    }))
+    nodes.push(...agents)
+    edges.push(...agents.map((agent) => edge('a', agent.id, 'agent')))
+    const positions = computeGlobalPlacements(nodes, edges)
+    expectNoOverlaps(nodes, positions)
+    expect(positions['agent-0'].y - positions.a.y).toBe(440 + LAYOUT.agentTopGap)
+    expect(positions['agent-3'].y - positions['agent-0'].y).toBe(240 + LAYOUT.agentGapY)
+    expect(positions.nested.y - positions['agent-6'].y).toBe(98 + LAYOUT.childTopGap)
+    expect(computeGlobalPlacements(nodes, edges, generated(positions))).toEqual(positions)
+  })
+
+  it('leaves space below every header companion', () => {
+    const { nodes, edges } = baseGraph()
+    nodes.find((item) => item.type === 'defaultBranch')!.measured = { width: 232, height: 430 }
+    nodes.find((item) => item.type === 'env')!.measured = { width: 150, height: 500 }
+    const positions = computeGlobalPlacements(nodes, edges)
+    expectNoOverlaps(nodes, positions)
+    expect(positions.a.y).toBe(positions['env:project'].y + 500 + LAYOUT.projectTopGap)
+  })
+
+  it('reserves all stack rows before measurements exist', () => {
+    const nodes = [node('project', 'project'), node('stack', 'stack', { stackCount: 12 }), node('child', 'worktree')]
+    const edges = [edge('project', 'stack', 'hierarchy'), edge('stack', 'child', 'hierarchy')]
+    const positions = computeGlobalPlacements(nodes, edges)
+    expect(positions.child.y - positions.stack.y).toBeGreaterThanOrEqual(50 + 12 * 34 + LAYOUT.childTopGap)
+  })
+
+  it('places disconnected cards below a deep tree with room for their actual widths', () => {
+    const { nodes, edges } = baseGraph()
+    nodes.find((item) => item.id === 'nested')!.measured = { width: 230, height: 600 }
+    nodes.push(
+      { ...node('loose-a', 'agent'), measured: { width: 350, height: 120 } },
+      { ...node('loose-b', 'agent'), measured: { width: 420, height: 150 } },
+    )
+    const positions = computeGlobalPlacements(nodes, edges)
+    expectNoOverlaps(nodes, positions)
+    expect(positions['loose-a'].y).toBe(positions.nested.y + 600 + LAYOUT.childTopGap)
+    expect(positions['loose-b'].x - positions['loose-a'].x).toBe(350 + LAYOUT.branchGapX)
+  })
+
+  it('orders disconnected branches together with connected roots on consecutive runs', () => {
+    const { nodes, edges } = baseGraph()
+    nodes.push(node('orphan', 'worktree', { tag: 'aaa' }))
+    const previous: NodePlacements = {
+      orphan: { x: -500, y: 300, mode: 'manual' },
+      a: { x: 0, y: 300, mode: 'manual' },
+      b: { x: 500, y: 300, mode: 'manual' },
+    }
+    const positions = computeGlobalPlacements(nodes, edges, previous)
+    expect(positions.orphan.x).toBeLessThan(positions.a.x)
+    expect(positions.a.x).toBeLessThan(positions.b.x)
+    expect(computeGlobalPlacements([...nodes].reverse(), [...edges].reverse(), generated(positions))).toEqual(positions)
+  })
+
+  it('builds each branch and agent once despite duplicate edges and cycles', () => {
+    const nodes = [node('project', 'project'), ...['a', 'b', 'c', 'orphan'].map((id) => node(id, 'worktree')), node('agent', 'agent')]
+    const edges = [
+      edge('a', 'b', 'hierarchy'), edge('b', 'a', 'hierarchy'),
+      edge('b', 'c', 'hierarchy'), edge('b', 'c', 'hierarchy'),
+      edge('project', 'c', 'hierarchy'), edge('missing', 'orphan', 'hierarchy'),
+      edge('a', 'agent', 'agent'), edge('a', 'agent', 'agent'), edge('b', 'agent', 'agent'),
+    ]
+    const forest = buildBranchForest(nodes, edges, {})
+    const ids: string[] = []
+    const visit = (blocks: typeof forest) => blocks.forEach((block) => {
+      ids.push(block.id, ...block.agentNodes.map((agent) => agent.id))
+      visit(block.childBlocks)
+    })
+    visit(forest)
+    expect(ids.sort()).toEqual(['a', 'agent', 'b', 'c', 'orphan'])
+    const positions = computeGlobalPlacements(nodes, edges)
+    expectNoOverlaps(nodes, positions)
+    expect(positions.b.y).toBeGreaterThan(positions.a.y)
+    expect(positions.c.y).toBeGreaterThan(positions.b.y)
+    expect(computeGlobalPlacements([...nodes].reverse(), [...edges].reverse())).toEqual(positions)
+    expect(computeGlobalPlacements(nodes, edges, generated(positions))).toEqual(positions)
+  })
+
+  it('falls back to estimates for invalid or partial measurements', () => {
+    const { nodes, edges } = baseGraph()
+    const baseline = computeGlobalPlacements(nodes, edges)
+    nodes.forEach((item) => { item.measured = { width: 0, height: Number.NaN } })
+    expect(computeGlobalPlacements(nodes, edges)).toEqual(baseline)
+    nodes.find((item) => item.id === 'a')!.measured = { height: 450 }
+    const positions = computeGlobalPlacements(nodes, edges)
+    expect(positions.nested.y - positions.a.y).toBe(450 + LAYOUT.childTopGap)
   })
 })
