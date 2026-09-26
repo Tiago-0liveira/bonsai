@@ -240,6 +240,7 @@ func TestCacheSerializationRoundTrip(t *testing.T) {
 			Name:        "test",
 			Description: "test",
 			Provider:    "node:pnpm",
+			ProjectRoot: "/project",
 			Kind:        CommandProject,
 			Args: []Argument{{
 				ID: "mode", Kind: ArgumentFlag, Type: ValueEnum, Flags: []string{"--mode"},
