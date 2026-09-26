@@ -65,9 +65,9 @@ func FuzzResolveInvocation(f *testing.F) {
 	f.Add("hello world", "--flag", "日本語")
 	f.Fuzz(func(t *testing.T, a, b, c string) {
 		cmd := Command{
-			ID: "fuzz",
+			ID:         "fuzz",
 			Invocation: InvocationSpec{Program: "tool", Prefix: []string{"run"}, PassThrough: PassThroughDoubleDash},
-			Args: []Argument{{ID: "args", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true}},
+			Args:       []Argument{{ID: "args", Kind: ArgumentPassThrough, Type: ValueUnknown, Variadic: true}},
 		}
 		first, err := Resolve(cmd, ArgumentValues{"args": {a, b, c}})
 		if err != nil {
