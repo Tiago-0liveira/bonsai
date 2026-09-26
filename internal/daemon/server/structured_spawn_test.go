@@ -97,8 +97,8 @@ func TestStructuredSpawnKeepsWorktreeOwnerAndNestedWorkingDir(t *testing.T) {
 			if len(parts) != 2 {
 				t.Fatalf("helper output = %q", string(data))
 			}
-			if filepath.Clean(parts[0]) != filepath.Clean(working) {
-				t.Fatalf("helper cwd = %q, want %q", parts[0], working)
+			if !equivalentPath(parts[0], working) {
+				t.Fatalf("helper cwd = %q, want equivalent to %q", parts[0], working)
 			}
 			if parts[1] != literal {
 				t.Fatalf("helper arg = %q, want %q", parts[1], literal)
@@ -130,4 +130,15 @@ func TestStructuredSpawnKeepsWorktreeOwnerAndNestedWorkingDir(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func equivalentPath(a, b string) bool {
+	canonical := func(path string) string {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			path = resolved
+		}
+		return filepath.Clean(path)
+	}
+	return canonical(a) == canonical(b)
 }
