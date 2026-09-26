@@ -114,7 +114,7 @@ interface BonsaiState {
 
   selectedFilePath: string
   setSelectedFilePath: (path: string) => void
-  editorPreference?: EditorPreference
+  editorPreference: EditorPreference | undefined
   editorPromptOpen: boolean
   pendingOpenFile: string
   requestOpenFile: (path: string) => void
