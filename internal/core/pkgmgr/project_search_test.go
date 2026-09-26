@@ -83,7 +83,6 @@ func TestBoundedSearchPreservesUpwardPreference(t *testing.T) {
 	}
 }
 
-
 func TestDiscoverRootAndNestedNodeProjects(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "package.json", `{"scripts":{"root":"echo root"}}`)
@@ -133,7 +132,6 @@ func TestDiscoverSiblingNodeProjects(t *testing.T) {
 		t.Fatalf("sibling dirs = admin %q web %q", adminCmd.Invocation.WorkingDir, webCmd.Invocation.WorkingDir)
 	}
 }
-
 
 func TestDiscoverDifferentNodeManagersDoNotCollide(t *testing.T) {
 	root := t.TempDir()
