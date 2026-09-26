@@ -130,6 +130,32 @@ func TestStructuredSpawnKeepsWorktreeOwnerAndNestedWorkingDir(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
+	if err := os.Remove(out); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := s.restart(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.Program != req.Program || restarted.WorkingDir != working || len(restarted.Args) != len(req.Args) {
+		t.Fatalf("structured restart lost invocation: %+v", restarted)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		data, readErr := os.ReadFile(out)
+		if readErr == nil {
+			parts := strings.SplitN(string(data), "\n", 2)
+			if len(parts) != 2 || !equivalentPath(parts[0], working) || parts[1] != literal {
+				t.Fatalf("restarted helper output = %q", string(data))
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("restarted structured helper did not produce output")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func equivalentPath(a, b string) bool {
