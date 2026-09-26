@@ -675,7 +675,6 @@ func tickPRs() tea.Cmd {
 	return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })
 }
 
-
 func commandScopeLabel(root, dir string) string {
 	if rel, err := filepath.Rel(root, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		if rel == "." {
