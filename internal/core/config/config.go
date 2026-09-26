@@ -70,6 +70,14 @@ type Notifications struct {
 	CI      bool `mapstructure:"ci"`
 }
 
+// PackageManager controls bounded project command discovery.
+type PackageManager struct {
+	// SearchDepth is the maximum number of child-directory levels pkgmgr may
+	// inspect when no provider manifest is found at or above the worktree root.
+	// Zero disables downward searching.
+	SearchDepth int `mapstructure:"search_depth"`
+}
+
 // ProcessPolicy sets the daemon's restart behavior for background processes
 // whose label or command matches Match (exact or prefix). Restart is one of
 // "no", "on-failure", "always".
@@ -98,6 +106,8 @@ type Config struct {
 	Theme Theme `mapstructure:"theme"`
 	// Notifications toggles desktop notifications.
 	Notifications Notifications `mapstructure:"notifications"`
+	// PkgMgr controls project command discovery.
+	PkgMgr PackageManager `mapstructure:"pkgmgr"`
 	// Processes sets per-process restart policies for the background daemon.
 	Processes []ProcessPolicy `mapstructure:"processes"`
 }
@@ -185,6 +195,7 @@ func Load(dir string) (*Config, error) {
 	v.SetDefault("confirm_destructive", true)
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
+	v.SetDefault("pkgmgr.search_depth", 2)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, notFound := err.(viper.ConfigFileNotFoundError); !notFound {
@@ -227,6 +238,7 @@ func LoadFile(path string) (*Config, error) {
 	v.SetDefault("confirm_destructive", true)
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
+	v.SetDefault("pkgmgr.search_depth", 2)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)

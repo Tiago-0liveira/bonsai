@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -179,5 +181,54 @@ func TestPaletteOpensViaKeybinding(t *testing.T) {
 	model := nm.(Model)
 	if model.modal == nil || model.modal.Kind() != modals.KindPalette {
 		t.Error("ctrl+k should open the command palette")
+	}
+}
+
+func TestPaletteRunProjectCommandHonorsConfiguredDepth(t *testing.T) {
+	root := t.TempDir()
+	web := filepath.Join(root, "apps", "web")
+	if err := os.MkdirAll(web, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(web, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := paletteModel("feat", false)
+	m.repoDir = root
+	m.procs = newProcView(root)
+	m.worktrees = []git.Worktree{{Path: root, Branch: "feat"}}
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{{WT: m.worktrees[0]}})
+
+	m.cfg.PkgMgr.SearchDepth = 1
+	run := paletteByLabel(m.paletteCommands())["Run project command"]
+	if run.run == nil {
+		t.Fatal("Run project command missing from palette")
+	}
+	_, cmd := run.run(m)
+	if cmd == nil {
+		t.Fatal("palette project command returned no load command")
+	}
+	shallow, ok := cmd().(scriptsMsg)
+	if !ok {
+		t.Fatalf("palette load returned unexpected message type")
+	}
+	if shallow.err != nil {
+		t.Fatal(shallow.err)
+	}
+	if len(shallow.scripts) != 0 {
+		t.Fatalf("depth=1 palette scripts = %v, want none", shallow.scripts)
+	}
+
+	m.cfg.PkgMgr.SearchDepth = 2
+	run = paletteByLabel(m.paletteCommands())["Run project command"]
+	_, cmd = run.run(m)
+	deep := cmd().(scriptsMsg)
+	if deep.err != nil {
+		t.Fatal(deep.err)
+	}
+	if len(deep.scripts) != 1 || deep.scripts[0] != "dev" {
+		t.Fatalf("depth=2 palette scripts = %v, want [dev]", deep.scripts)
 	}
 }

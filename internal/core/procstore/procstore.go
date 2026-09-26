@@ -78,18 +78,21 @@ func IsActive(status string) bool {
 // Record is the persisted metadata for one managed process. It is the source of
 // truth for discovery: readable without touching the daemon socket.
 type Record struct {
-	ID        int       `json:"id"`
-	Label     string    `json:"label"`
-	Command   string    `json:"command"`
-	Worktree  string    `json:"worktree"`
-	Branch    string    `json:"branch,omitempty"`
-	PID       int       `json:"pid"`
-	Status    string    `json:"status"`
-	Policy    Policy    `json:"policy"`
-	Restarts  int       `json:"restarts"`
-	StartedAt time.Time `json:"started_at"`
-	ExitError string    `json:"exit_error,omitempty"`
-	LastURL   string    `json:"last_url,omitempty"`
+	ID         int       `json:"id"`
+	Label      string    `json:"label"`
+	Command    string    `json:"command"` // display/shell command; structured commands also set Program/Args
+	Program    string    `json:"program,omitempty"`
+	Args       []string  `json:"args,omitempty"`
+	Worktree   string    `json:"worktree"` // owning Git worktree root
+	WorkingDir string    `json:"working_dir,omitempty"`
+	Branch     string    `json:"branch,omitempty"`
+	PID        int       `json:"pid"`
+	Status     string    `json:"status"`
+	Policy     Policy    `json:"policy"`
+	Restarts   int       `json:"restarts"`
+	StartedAt  time.Time `json:"started_at"`
+	ExitError  string    `json:"exit_error,omitempty"`
+	LastURL    string    `json:"last_url,omitempty"`
 }
 
 // Store is the on-disk state for a single repo, rooted at its main worktree.

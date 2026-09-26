@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -443,6 +444,8 @@ func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.scriptRun = msg.runCmd
+	m.scriptDir = msg.runDir
+	m.scriptExec = msg.runExec
 
 	names := msg.scripts
 	// The sentinel entry is always present (even with no manager) so any command
@@ -846,7 +849,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Scripts):
 		if wt, ok := m.selectedWorktree(); ok {
-			return m, loadScripts(wt.Path)
+			return m, loadScripts(wt.Path, m.cfg.PkgMgr.SearchDepth)
 		}
 		return m, nil
 
@@ -1760,7 +1763,7 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		return true, m, nil
 
 	case key.Matches(msg, m.keys.Create): // n starts a new command
-		return true, m, loadScripts(wt.Path)
+		return true, m, loadScripts(wt.Path, m.cfg.PkgMgr.SearchDepth)
 
 	case msg.String() == "g": // jump to the start of the log
 		m.term.GotoTop()
@@ -1976,6 +1979,9 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 			m.modal = &modal
 			return m, nil
 		}
+		if inv, ok := m.scriptExec[msg.Value]; ok {
+			return m.spawnExec(wt.Path, msg.Value, inv), nil
+		}
 		cmd := m.scriptRun[msg.Value]
 		if cmd == "" {
 			cmd = msg.Value // fallback: run the entry literally
@@ -2080,24 +2086,52 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 // spawn starts a background process, marks it active for its worktree, and sets
 // a status line.
 func (m Model) spawn(path, label, command string) Model {
-	p, err := m.procs.Spawn(path, m.branchForPath(path), label, command)
+	ownerPath, branch := m.worktreeOwner(path)
+	p, err := m.procs.Spawn(path, branch, label, command)
 	if err != nil {
 		m.status = "spawn: " + err.Error()
 		return m
 	}
-	m.activeProc[path] = p.ID
+	m.activeProc[ownerPath] = p.ID
 	m.status = "running " + label
 	return m
 }
 
-// branchForPath returns the branch checked out in the worktree at path, or "".
+func (m Model) spawnExec(ownerPath, label string, inv scriptInvocation) Model {
+	_, branch := m.worktreeOwner(ownerPath)
+	dir := inv.Dir
+	if dir == "" {
+		dir = ownerPath
+	}
+	p, err := m.procs.SpawnExec(ownerPath, branch, dir, label, inv.Program, inv.Args)
+	if err != nil {
+		m.status = "spawn: " + err.Error()
+		return m
+	}
+	m.activeProc[ownerPath] = p.ID
+	m.status = "running " + label
+	return m
+}
+
+// branchForPath returns the branch containing path, including nested project
+// directories inside a worktree.
 func (m Model) branchForPath(path string) string {
+	_, branch := m.worktreeOwner(path)
+	return branch
+}
+
+func (m Model) worktreeOwner(path string) (string, string) {
+	path = filepath.Clean(path)
+	bestPath, bestBranch := path, ""
+	bestLen := -1
 	for _, t := range m.worktrees {
-		if t.Path == path {
-			return t.Branch
+		root := filepath.Clean(t.Path)
+		rel, err := filepath.Rel(root, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && len(root) > bestLen {
+			bestPath, bestBranch, bestLen = t.Path, t.Branch, len(root)
 		}
 	}
-	return ""
+	return bestPath, bestBranch
 }
 
 // onCreateSource advances the worktree-creation flow after the source type is
