@@ -35,9 +35,9 @@ type Request struct {
 	Kind string `json:"kind"`
 
 	// Spawn.
-	Worktree string            `json:"worktree,omitempty"`
-	Branch   string            `json:"branch,omitempty"`
-	Label    string            `json:"label,omitempty"`
+	Worktree   string            `json:"worktree,omitempty"`
+	Branch     string            `json:"branch,omitempty"`
+	Label      string            `json:"label,omitempty"`
 	Command    string            `json:"command,omitempty"`
 	Program    string            `json:"program,omitempty"`
 	Args       []string          `json:"args,omitempty"`
