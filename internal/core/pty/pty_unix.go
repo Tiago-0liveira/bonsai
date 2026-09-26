@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 
 	creackpty "github.com/creack/pty"
 )
@@ -17,6 +18,9 @@ type unixBackend struct {
 	cols   int
 	rows   int
 	master *os.File
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func newBackend(cols, rows int) (backend, error) {
@@ -78,12 +82,12 @@ func (p *unixBackend) Size() (int, int, error) {
 }
 
 func (p *unixBackend) Close() error {
-	if p.master == nil {
-		return nil
-	}
-	err := p.master.Close()
-	p.master = nil
-	return err
+	p.closeOnce.Do(func() {
+		if p.master != nil {
+			p.closeErr = p.master.Close()
+		}
+	})
+	return p.closeErr
 }
 
 func waitProcess(ctx context.Context, cmd *exec.Cmd) error {
