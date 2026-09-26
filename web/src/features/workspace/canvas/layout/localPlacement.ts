@@ -119,6 +119,24 @@ export function placeCollapsedStacksLocally(
   return pending
 }
 
+export function placeExpandedStackLocally(
+  nodes: Node[],
+  placements: NodePlacements,
+  memberIds: string[],
+  anchor: CanvasPosition,
+) {
+  const members = memberIds
+    .map((id) => nodes.find((node) => node.id === id && node.type === 'worktree'))
+    .filter((node): node is Node => Boolean(node))
+  if (!members.length) return {}
+  const excluded = new Set(members.map((member) => member.id))
+  return compactStackExpansion(
+    members,
+    anchor,
+    fixedRects(nodes, placements, {}, excluded),
+  )
+}
+
 export function placeAddedNodesLocally(nodes: Node[], placements: NodePlacements, addedIds: string[]) {
   const pending: Record<string, CanvasPosition> = {}
   const added = new Set(addedIds)
