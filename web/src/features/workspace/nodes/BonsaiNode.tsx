@@ -1,3 +1,4 @@
+import { openGitHub } from '../../../api/git'
 import { useState } from 'react'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
@@ -170,7 +171,7 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
       </div>
       <button
         type="button"
-        onClick={() => setNotice('Opened commit ' + (info?.commitSha ?? 'unknown') + ' (mock)')}
+        onClick={() => info?.commitSha ? openGitHub('commit/' + info.commitSha) : setNotice('No commit loaded')}
         className="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-[rgb(var(--bg)/.45)]"
       >
         <GitCommitHorizontal size={11} className="mt-0.5 shrink-0 text-[rgb(var(--muted-2))]" />
@@ -456,7 +457,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
           {data.kind === 'worktree' && (
             <>
               <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
-              <MenuItem onSelect={() => setNotice(data.prNumber ? 'Opened PR #' + data.prNumber + ' (mock)' : 'No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
+              <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
               {data.tag && (data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.tag} stack</MenuItem>}
             </>
           )}

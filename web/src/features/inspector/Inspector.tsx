@@ -1,3 +1,4 @@
+import { openGitHub } from '../../api/git'
 import { useEffect, useState, type FormEvent } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import {
@@ -262,7 +263,7 @@ export function Inspector() {
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <QuickButton icon={Bot} label="Start agent" onClick={() => openStartAgentDialog(worktree.id)} />
-                  <QuickButton icon={GitPullRequest} label="Open PR" onClick={() => setNotice(worktree.prNumber ? 'Opened PR #' + worktree.prNumber + ' (mock)' : 'No pull request linked')} />
+                  <QuickButton icon={GitPullRequest} label="Open PR" onClick={() => worktree.prNumber ? openGitHub('pull/' + worktree.prNumber, worktree.projectId) : setNotice('No pull request linked')} />
                 </div>
               </>
             )}

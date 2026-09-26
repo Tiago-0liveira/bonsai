@@ -46,12 +46,22 @@ func run(dir string, args ...string) (string, error) {
 // Needed by parsers whose leading whitespace is significant (e.g. the status
 // columns of `git status --porcelain`). Bounded by gitTimeout.
 func runRaw(dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	return RunContext(context.Background(), dir, args...)
+}
+
+// RunContext is the shared, bounded Git runner used by both local adapters.
+// Arguments are passed directly to Git, never interpreted by a shell.
+func RunContext(parent context.Context, dir string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
@@ -84,7 +94,12 @@ func MainRoot(dir string) (string, error) {
 // ListWorktrees parses `git worktree list --porcelain` into structured data.
 // The first entry is the main worktree.
 func ListWorktrees(dir string) ([]Worktree, error) {
-	out, err := run(dir, "worktree", "list", "--porcelain")
+	return ListWorktreesContext(context.Background(), dir)
+}
+
+// ListWorktreesContext preserves the CLI parser while propagating cancellation.
+func ListWorktreesContext(ctx context.Context, dir string) ([]Worktree, error) {
+	out, err := RunContext(ctx, dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}

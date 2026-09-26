@@ -4,6 +4,15 @@ test('renders the Bonsai workspace and core dialogs without page errors', async 
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message))
 
+
+  const repository = { id: 'bonsai', workspace_id: 'personal', full_name: 'owner/bonsai', default_branch: 'main' }
+  const snapshot = { repository, online: true, sequence: 0, metadata: {}, local: { branches: [{ name: 'main', remote: false }, { name: 'feature', remote: false }], worktrees: [{ id: 'main', repository_id: 'bonsai', branch: 'main', main: true, local_head_sha: 'abc' }, { id: 'feature', repository_id: 'bonsai', branch: 'feature', main: false, local_head_sha: 'def' }] }, remote: { repository, branches: [], pull_requests: [] } }
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/events') { await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': ready\n\n' }); return }
+    const data = url.pathname === '/api/projects' ? [repository] : url.pathname.endsWith('/git') ? snapshot : url.pathname.endsWith('/diff') ? { patch: '', files: [] } : []
+    await route.fulfill({ json: data })
+  })
   await page.goto('/')
   await expect(page.getByText('bonsai', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Canvas', { exact: true }).first()).toBeVisible()

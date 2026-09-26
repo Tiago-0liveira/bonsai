@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Bell, Check, ChevronDown, Command, Search, Sprout } from 'lucide-react'
-import { workspaces } from '../../mock/projects'
 import { useBonsaiStore } from '../../stores/bonsai'
 
 const nav = [
@@ -97,6 +96,9 @@ function HeaderSelect({
 }
 
 export function TopBar() {
+  const allWorkspaceProjects = useBonsaiStore(state => state.projects)
+  const workspaces = [...new Set(allWorkspaceProjects.map(p => p.workspaceId))].map(id => ({ id, name: id }))
+
   const projects = useBonsaiStore((state) => state.projects)
   const activeWorkspaceId = useBonsaiStore((state) => state.activeWorkspaceId)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)

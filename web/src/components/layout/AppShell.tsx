@@ -26,6 +26,7 @@ function MainWorkspace({ children }: { children: React.ReactNode }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const gitError = useBonsaiStore(state => state.gitError)
   const dockRef = useRef<ImperativePanelHandle>(null)
   const dockState = useBonsaiStore((state) => state.dockState)
   const setDockState = useBonsaiStore((state) => state.setDockState)
@@ -51,6 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <Tooltip.Provider delayDuration={250}>
       <div className="relative flex h-full w-full flex-col overflow-hidden bg-[rgb(var(--bg))]">
         <TopBar />
+        {gitError && <div role="status" className="p-3 text-sm">{gitError} <a href="/auth/github" className="underline">Sign in with GitHub</a></div>}
         <div className="min-h-0 flex-1">
           {dockState === 'collapsed' ? (
             <MainWorkspace>{children}</MainWorkspace>
