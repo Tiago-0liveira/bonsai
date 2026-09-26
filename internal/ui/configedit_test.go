@@ -214,7 +214,6 @@ func TestConfigEmptyValueRejected(t *testing.T) {
 	}
 }
 
-
 func TestConfigPkgMgrSearchDepthFlow(t *testing.T) {
 	m := configModel(t)
 	s, ok := settingByKey("pkgmgr.search_depth")
