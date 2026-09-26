@@ -67,7 +67,6 @@ func TestGoProviderFoundBelowWorktreeRoot(t *testing.T) {
 	}
 }
 
-
 func TestGoWorkspaceRootDiscoversModuleNotVirtualRoot(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "go.work", "go 1.26\nuse ./services/api\n")
