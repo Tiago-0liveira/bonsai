@@ -80,7 +80,7 @@ export function placeMissingNodes(nodes: Node[], edges: Edge[], placements: Node
 export function placeAddedNodesLocally(nodes: Node[], placements: NodePlacements, addedIds: string[]) {
   const pending: Record<string, CanvasPosition> = {}
   const added = new Set(addedIds)
-  nodes.filter((node) => added.has(node.id) && node.type === 'worktree' && placements[node.id]?.mode === 'generated').forEach((node) => {
+  nodes.filter((node) => added.has(node.id) && node.type === 'worktree' && placements[node.id]?.mode !== 'manual').forEach((node) => {
     const id = stackId(nodes, node)
     const stack = nodes.find((candidate) => candidate.id === id && candidate.type === 'stack')
     const stackPlacement = placements[id]
