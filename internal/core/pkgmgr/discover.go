@@ -136,6 +136,9 @@ func Discover(dir string, opts Options) (*Project, error) {
 			if commands[i].Provider == "" {
 				commands[i].Provider = item.detection.ID
 			}
+			if commands[i].ProjectRoot == "" {
+				commands[i].ProjectRoot = item.detection.Root
+			}
 			if commands[i].Invocation.WorkingDir == "" {
 				commands[i].Invocation.WorkingDir = item.detection.Root
 			}
@@ -206,6 +209,7 @@ func rebaseCachedProject(project Project, loc Location, detected []detectedProvi
 		if newRoot == "" {
 			continue
 		}
+		cmd.ProjectRoot = rebasePath(cmd.ProjectRoot, oldRoot, newRoot)
 		cmd.Invocation.WorkingDir = rebasePath(cmd.Invocation.WorkingDir, oldRoot, newRoot)
 		cmd.Source.File = rebasePath(cmd.Source.File, oldRoot, newRoot)
 		for j := range cmd.Args {
@@ -225,7 +229,6 @@ func rebasePath(path, oldRoot, newRoot string) string {
 	}
 	return filepath.Join(newRoot, rel)
 }
-
 
 func projectScope(loc Location, root string) string {
 	base := loc.RepositoryRoot
