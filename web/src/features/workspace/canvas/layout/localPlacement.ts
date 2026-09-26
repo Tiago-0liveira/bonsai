@@ -99,26 +99,6 @@ export function placeMissingNodes(nodes: Node[], edges: Edge[], placements: Node
   return pending
 }
 
-export function placeCollapsedStacksLocally(
-  nodes: Node[],
-  placements: NodePlacements,
-  addedIds: string[],
-) {
-  const pending: Record<string, CanvasPosition> = {}
-  const added = new Set(addedIds)
-  nodes
-    .filter((node) => added.has(node.id) && node.type === 'stack')
-    .forEach((node) => {
-      const preferred = stackCollapsePosition(node, placements) ?? placements[node.id] ?? node.position
-      pending[node.id] = nearestFreePosition(
-        preferred,
-        getNodeSize(node),
-        fixedRects(nodes, placements, pending, new Set([node.id])),
-      )
-    })
-  return pending
-}
-
 export function placeExpandedStackLocally(
   nodes: Node[],
   placements: NodePlacements,
@@ -263,23 +243,4 @@ export function relocateGeneratedBranches(nodes: Node[], edges: Edge[], placemen
     })
   })
   return pending
-}
-
-
-export function placeExpandedStackLocally(
-  nodes: Node[],
-  placements: NodePlacements,
-  memberIds: string[],
-  anchor: CanvasPosition,
-) {
-  const memberSet = new Set(memberIds)
-  const members = nodes
-    .filter((node) => node.type === 'worktree' && memberSet.has(node.id))
-    .sort((a, b) => a.id.localeCompare(b.id))
-  if (!members.length) return {}
-  return compactStackExpansion(
-    members,
-    anchor,
-    fixedRects(nodes, placements, {}, memberSet),
-  )
 }
