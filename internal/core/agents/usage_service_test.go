@@ -126,3 +126,65 @@ func TestUsageServiceCacheSurvivesRename(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 1 cached call after rename", calls)
 	}
 }
+
+
+func TestUsageServiceRefreshAndExpiredCacheBypass(t *testing.T) {
+	store, err := NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := NewFileUsageCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount("acct_ttl", "usage-fake", "personal")
+	if err := store.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	provider := &usageTestProvider{fail: map[AccountID]error{}}
+	registry := NewRegistry()
+	if err := registry.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	service := &UsageService{Accounts: store, Registry: registry, Cache: cache, TTL: time.Minute}
+
+	if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	calls := provider.calls
+	provider.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("provider calls after cache hit = %d, want 1", calls)
+	}
+
+	if _, err := service.Account(context.Background(), account.ID, UsageOptions{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	calls = provider.calls
+	provider.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("provider calls after refresh = %d, want 2", calls)
+	}
+
+	stale := UsageSnapshot{
+		Provider: account.Provider, AccountID: account.ID,
+		FetchedAt: time.Now().Add(-2 * time.Minute),
+	}
+	if err := cache.Put(stale); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	calls = provider.calls
+	provider.mu.Unlock()
+	if calls != 3 {
+		t.Fatalf("provider calls after expired cache = %d, want 3", calls)
+	}
+}
