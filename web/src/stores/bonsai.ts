@@ -122,6 +122,10 @@ interface BonsaiState {
   closeEditorPrompt: () => void
 
   pullRequests: PullRequest[]
+  inspectedPullRequestId: string | null
+  pullRequestFocusNonce: number
+  setInspectedPullRequestId: (id: string | null) => void
+  inspectPullRequest: (id: string) => void
   setPullRequestStatus: (id: string, status: PullRequest['status']) => void
   addPullRequestReview: (id: string, body: string, kind: 'comment' | 'approve' | 'request-changes') => void
 
@@ -657,6 +661,22 @@ export const useBonsaiStore = create<BonsaiState>()(
       closeEditorPrompt: () => set({ editorPromptOpen: false, pendingOpenFile: '' }),
 
       pullRequests: initialPullRequests,
+      inspectedPullRequestId: null,
+      pullRequestFocusNonce: 0,
+      setInspectedPullRequestId: (inspectedPullRequestId) => set({ inspectedPullRequestId }),
+      inspectPullRequest: (id) => {
+        const state = get()
+        const pr = state.pullRequests.find((item) => item.id === id)
+        if (!pr) return
+        const worktree = state.worktrees.find((item) => item.projectId === state.activeProjectId && item.prNumber === pr.number && item.branch === pr.branch)
+        set({
+          inspectedPullRequestId: id,
+          pullRequestFocusNonce: state.pullRequestFocusNonce + 1,
+          dockState: state.dockState === 'collapsed' ? 'normal' : state.dockState,
+          dockWorktreeId: worktree?.id ?? state.dockWorktreeId,
+          rightPanels: { ...state.rightPanels, prs: true },
+        })
+      },
       setPullRequestStatus: (id, status) =>
         set((state) => ({
           pullRequests: state.pullRequests.map((pr) => pr.id === id ? { ...pr, status, updatedAt: 'just now' } : pr),
