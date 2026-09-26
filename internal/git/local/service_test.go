@@ -33,7 +33,14 @@ func setup(t *testing.T) (*Service, string, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	return s, dir, ID("repo", dir)
+	trees, e := s.ListWorktrees(context.Background(), "repo")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(trees) != 1 {
+		t.Fatalf("expected one main worktree, got %d", len(trees))
+	}
+	return s, dir, trees[0].ID
 }
 func TestStatusFilesBoundaries(t *testing.T) {
 	s, dir, id := setup(t)
