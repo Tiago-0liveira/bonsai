@@ -155,7 +155,6 @@ func TestResolveAlias(t *testing.T) {
 	}
 }
 
-
 func TestPkgMgrSearchDepthConfig(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		cfg, err := Load(t.TempDir())
