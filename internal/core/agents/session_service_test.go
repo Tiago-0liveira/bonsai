@@ -138,7 +138,6 @@ func TestSessionServiceFailurePathsStillCleanup(t *testing.T) {
 	}
 }
 
-
 func TestSessionServiceRunFinalizeAndCleanupErrorsAreJoined(t *testing.T) {
 	store, err := NewFileAccountStore(t.TempDir())
 	if err != nil {
