@@ -11,7 +11,6 @@ import { projects as initialProjects, workspaces } from '../mock/projects'
 import { pullRequests as initialPullRequests } from '../mock/pullRequests'
 import { worktreeTags as initialWorktreeTags } from '../mock/tags'
 import { worktrees as initialWorktrees } from '../mock/worktrees'
-import type { NodePlacement } from '../features/workspace/canvas/layout/types'
 import type {
   Agent,
   AgentState,
@@ -26,6 +25,7 @@ import type {
   DockTab,
   EditorPreference,
   EnvVariable,
+  NodePlacement,
   Project,
   PullRequest,
   Selection,
@@ -833,7 +833,7 @@ export const useBonsaiStore = create<BonsaiState>()(
         const state = persisted as { nodePlacements?: Record<string, NodePlacement>; nodePositions?: Record<string, { x: number; y: number }> }
         if (!state.nodePlacements && state.nodePositions) {
           state.nodePlacements = Object.fromEntries(
-            Object.entries(state.nodePositions).map(([id, position]) => [id, { ...position, mode: 'generated' as const }]),
+            Object.entries(state.nodePositions).map(([id, position]) => [id, { ...position, mode: 'manual' as const }]),
           )
         }
         delete state.nodePositions
