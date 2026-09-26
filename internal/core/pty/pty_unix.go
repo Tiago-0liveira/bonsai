@@ -39,8 +39,9 @@ func newBackend(cols, rows int) (backend, error) {
 		return nil, err
 	}
 	p := &unixBackend{
-		cols: cols, rows: rows,
-		fd: -1,
+		cols:  cols,
+		rows:  rows,
+		fd:    -1,
 		wakeR: wakeR,
 		wakeW: wakeW,
 	}
