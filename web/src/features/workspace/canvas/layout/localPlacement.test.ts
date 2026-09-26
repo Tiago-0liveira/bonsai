@@ -4,6 +4,7 @@ import { getNodeRect, rectsOverlap } from './geometry'
 import {
   placeAddedNodesLocally,
   placeExpandedStackLocally,
+  placeMissingNodes,
   refreshGeneratedAgentShelves,
   relocateGeneratedBranches,
 } from './localPlacement'
@@ -95,6 +96,69 @@ describe('local canvas placement', () => {
     const result = refreshGeneratedAgentShelves(nodes, edges, placements)
     expect(result['manual-agent']).toBeUndefined()
     expect(result['generated-agent']).toBeDefined()
+  })
+
+  it('places a new main-target worktree below the project without moving the project', () => {
+    const nodes = [
+      node('project', 'project'),
+      node('created', 'worktree', { tag: 'feat' }),
+    ]
+    const edges = [edge('project', 'created', 'hierarchy')]
+    const placements: NodePlacements = {
+      project: { x: 420, y: 34, mode: 'manual' },
+    }
+
+    const result = placeMissingNodes(nodes, edges, placements, ['created'])
+
+    expect(result.created).toBeDefined()
+    expect(result.created.y).toBeGreaterThan(placements.project.y)
+    expect(result.project).toBeUndefined()
+  })
+
+  it('places a new nested worktree below its merge parent', () => {
+    const nodes = [
+      node('project', 'project'),
+      node('parent', 'worktree'),
+      node('child', 'worktree'),
+    ]
+    const edges = [
+      edge('project', 'parent', 'hierarchy'),
+      edge('parent', 'child', 'hierarchy'),
+    ]
+    const placements: NodePlacements = {
+      project: { x: 420, y: 34, mode: 'generated' },
+      parent: { x: 360, y: 300, mode: 'manual' },
+    }
+
+    const result = placeMissingNodes(nodes, edges, placements, ['child'])
+
+    expect(result.child).toBeDefined()
+    expect(result.child.y).toBeGreaterThan(placements.parent.y)
+    expect(result.parent).toBeUndefined()
+  })
+
+  it('routes a new worktree around a manually placed collision obstacle', () => {
+    const nodes = [
+      node('project', 'project'),
+      node('obstacle', 'worktree'),
+      node('created', 'worktree'),
+    ]
+    const edges = [
+      edge('project', 'obstacle', 'hierarchy'),
+      edge('project', 'created', 'hierarchy'),
+    ]
+    const placements: NodePlacements = {
+      project: { x: 420, y: 34, mode: 'generated' },
+      obstacle: { x: 455, y: 278, mode: 'manual' },
+    }
+
+    const result = placeMissingNodes(nodes, edges, placements, ['created'])
+
+    expect(result.created).toBeDefined()
+    const obstacleRect = getNodeRect(nodes[1], placements.obstacle)
+    const createdRect = getNodeRect(nodes[2], result.created)
+    expect(rectsOverlap(createdRect, obstacleRect, 28)).toBe(false)
+    expect(placements.obstacle).toEqual({ x: 455, y: 278, mode: 'manual' })
   })
 
   it('does not relocate a manually placed branch when its merge parent changes', () => {
