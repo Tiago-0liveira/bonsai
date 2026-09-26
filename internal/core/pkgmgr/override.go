@@ -79,6 +79,10 @@ func findOverridePath(loc Location) string {
 	}
 	if loc.RepositoryRoot != "" {
 		boundary = loc.RepositoryRoot
+	} else if loc.InputDir != "" {
+		if rel, err := filepath.Rel(loc.InputDir, loc.ProjectRoot); err == nil && pathIsWithin(rel) {
+			boundary = loc.InputDir
+		}
 	}
 	for cur := start; ; cur = filepath.Dir(cur) {
 		path := filepath.Join(cur, ".bonsai.yaml")
