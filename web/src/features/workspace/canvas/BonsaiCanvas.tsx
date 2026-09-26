@@ -21,7 +21,6 @@ import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
 import { computeGlobalPlacements } from './layout/globalLayout'
 import {
   placeAddedNodesLocally,
-  placeCollapsedStacksLocally,
   placeExpandedStackLocally,
   placeMissingNodes,
   refreshGeneratedAgentShelves,
@@ -490,10 +489,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
     if (previous) {
       const addedIds = [...currentIds].filter((id) => !previous.ids.has(id))
-      Object.assign(
-        generated,
-        placeCollapsedStacksLocally(graph.nodes, nodePlacements, addedIds),
-      )
       Object.assign(generated, placeAddedNodesLocally(graph.nodes, nodePlacements, addedIds))
 
       const addedSet = new Set(addedIds)
