@@ -104,7 +104,22 @@ func TestAccountServiceSetupPersistsProviderStateAndCleansSession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(stored.Settings) != string(provider.settings) {
+	var storedSettings, wantSettings any
+	if err := json.Unmarshal(stored.Settings, &storedSettings); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(provider.settings, &wantSettings); err != nil {
+		t.Fatal(err)
+	}
+	storedCanonical, err := json.Marshal(storedSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCanonical, err := json.Marshal(wantSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(storedCanonical) != string(wantCanonical) {
 		t.Fatalf("stored settings = %s, want %s", stored.Settings, provider.settings)
 	}
 	entries, err := os.ReadDir(sessionRoot)
