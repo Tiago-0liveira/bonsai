@@ -78,7 +78,7 @@ func TestLoadScriptsMixedProvidersShowsAllProviders(t *testing.T) {
 		t.Fatalf("manager = %q, want project", msg.manager)
 	}
 	for label, want := range map[string]string{
-		"[pnpm] test": "pnpm run test",
+		"[pnpm] test":  "pnpm run test",
 		"[cargo] test": "cargo test",
 		"[make] test":  "make test",
 	} {
