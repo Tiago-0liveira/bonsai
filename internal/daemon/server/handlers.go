@@ -46,8 +46,11 @@ func (s *Server) handleConn(conn net.Conn) {
 		err := s.remove(req.ID)
 		writeResult(enc, &protocol.Response{}, err)
 
-	case protocol.KindLogs, "attach":
+	case protocol.KindLogs, protocol.KindAttach:
 		s.streamLogs(conn, enc, req)
+
+	case protocol.KindPTYAttach:
+		s.streamPTY(conn, dec, enc, req)
 
 	case protocol.KindPing:
 		s.mu.Lock()
@@ -181,6 +184,14 @@ func (s *Server) remove(id int) error {
 		mp.restartTimer = nil
 	}
 	mp.generation++
+	if mp.ptySession != nil {
+		_ = mp.ptySession.Close()
+		mp.ptySession = nil
+	}
+	if mp.ptyHub != nil {
+		mp.ptyHub.Close(-1, "process removed")
+		mp.ptyHub = nil
+	}
 	mp.mu.Unlock()
 
 	s.mu.Lock()

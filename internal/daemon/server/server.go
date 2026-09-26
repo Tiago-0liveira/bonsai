@@ -19,6 +19,7 @@ import (
 
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	corepty "github.com/Tiago-0liveira/bonsai/internal/core/pty"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
@@ -39,6 +40,10 @@ type managedProc struct {
 
 	cmd  *exec.Cmd
 	logw *logWriter
+
+	ptySession  corepty.Session
+	ptyHub      *ptyHub
+	ptyPumpDone chan struct{}
 
 	generation   uint64
 	restartTimer *time.Timer
@@ -322,6 +327,7 @@ func (s *Server) shutdown(killChildren bool) {
 }
 
 func (s *Server) cleanup() {
+	s.closePTYResources()
 	_ = s.ln.Close()
 	_ = os.Remove(s.store.SockPath())
 	_ = os.Remove(s.store.PidPath())
