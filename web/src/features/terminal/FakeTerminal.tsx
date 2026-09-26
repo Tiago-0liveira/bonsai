@@ -13,6 +13,7 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
   const resolvedTerminalId = terminalId ?? activeTerminalId
   const terminalLines = useBonsaiStore((state) => state.terminalOutput[resolvedTerminalId])
   const lines = terminalLines ?? EMPTY_LINES
+  const linesRef = useRef(lines)
 
   useEffect(() => {
     const host = hostRef.current
@@ -41,11 +42,6 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     const fit = new FitAddon()
     let disposed = false
 
-    terminal.loadAddon(fit)
-    terminal.open(host)
-    terminalRef.current = terminal
-    fitRef.current = fit
-
     const fitSafely = () => {
       if (disposed || !host.isConnected || terminalRef.current !== terminal) return
       try {
@@ -56,8 +52,18 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     }
 
     const observer = new ResizeObserver(() => fitSafely())
-    observer.observe(host)
-    const frame = requestAnimationFrame(fitSafely)
+    // StrictMode can dispose an effect before xterm's deferred viewport setup runs.
+    // Open only once the host survives to a frame, so that setup has a live renderer.
+    const frame = requestAnimationFrame(() => {
+      if (disposed || !host.isConnected) return
+      terminal.loadAddon(fit)
+      terminal.open(host)
+      terminalRef.current = terminal
+      fitRef.current = fit
+      linesRef.current.forEach((line) => terminal.writeln(line))
+      observer.observe(host)
+      fitSafely()
+    })
 
     return () => {
       disposed = true
@@ -70,10 +76,11 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
   }, [])
 
   useEffect(() => {
+    linesRef.current = lines
     const terminal = terminalRef.current
     const fit = fitRef.current
     if (!terminal || !fit) return
-    terminal.reset()
+    terminal.write('\x1b[2J\x1b[3J\x1b[H')
     lines.forEach((line) => terminal.writeln(line))
     const frame = requestAnimationFrame(() => {
       if (terminalRef.current !== terminal || fitRef.current !== fit) return
