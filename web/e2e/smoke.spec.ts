@@ -62,7 +62,7 @@ test('expanding a stack keeps unrelated branches fixed', async ({ page }) => {
   const before = await unrelated.boundingBox()
   expect(before).not.toBeNull()
 
-  await stack.getByText('Expand', { exact: true }).click()
+  await stack.locator('button').filter({ hasText: 'Expand' }).click()
   await expect(page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })).toHaveCount(0)
   await expect(page.locator('.react-flow__node-worktree').filter({ hasText: 'feat/web-workspace' })).toBeVisible()
 
