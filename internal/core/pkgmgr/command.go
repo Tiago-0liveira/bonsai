@@ -16,6 +16,7 @@ type Command struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Provider    string         `json:"provider"`
+	ProjectRoot string         `json:"project_root,omitempty"`
 	Kind        CommandKind    `json:"kind"`
 	Args        []Argument     `json:"args,omitempty"`
 	Invocation  InvocationSpec `json:"invocation"`
