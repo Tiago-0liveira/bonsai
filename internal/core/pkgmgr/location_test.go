@@ -130,7 +130,6 @@ func samePath(a, b string) bool {
 	return canonical(a) == canonical(b)
 }
 
-
 func sameResolvedPath(a, b string) bool {
 	resolve := func(path string) string {
 		if resolved, err := filepath.EvalSymlinks(path); err == nil {
