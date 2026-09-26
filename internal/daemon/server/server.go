@@ -19,8 +19,8 @@ import (
 
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
-	corepty "github.com/Tiago-0liveira/bonsai/internal/core/pty"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	corepty "github.com/Tiago-0liveira/bonsai/internal/core/pty"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
 

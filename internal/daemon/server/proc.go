@@ -10,8 +10,8 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/notify"
-	corepty "github.com/Tiago-0liveira/bonsai/internal/core/pty"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	corepty "github.com/Tiago-0liveira/bonsai/internal/core/pty"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
 

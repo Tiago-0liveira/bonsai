@@ -35,10 +35,10 @@ type ptyAttachment struct {
 	dec    *protocol.Decoder
 	events chan PTYEvent
 
-	writeMu sync.Mutex
-	closed  bool
-	stop    chan struct{}
-	done    chan struct{}
+	writeMu  sync.Mutex
+	closed   bool
+	stop     chan struct{}
+	done     chan struct{}
 	stopOnce sync.Once
 }
 
