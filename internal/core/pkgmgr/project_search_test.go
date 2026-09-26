@@ -30,8 +30,11 @@ func TestBoundedManifestSearchDepth(t *testing.T) {
 	if cmd.Invocation.WorkingDir != wantRoot {
 		t.Fatalf("WorkingDir = %q, want %q", cmd.Invocation.WorkingDir, wantRoot)
 	}
-	if project.Location.ProjectRoot != wantRoot {
-		t.Fatalf("ProjectRoot = %q, want %q", project.Location.ProjectRoot, wantRoot)
+	if !samePath(cmd.ProjectRoot, wantRoot) {
+		t.Fatalf("command ProjectRoot = %q, want %q", cmd.ProjectRoot, wantRoot)
+	}
+	if !samePath(project.Location.ProjectRoot, root) {
+		t.Fatalf("discovery ProjectRoot = %q, want root %q", project.Location.ProjectRoot, root)
 	}
 }
 
