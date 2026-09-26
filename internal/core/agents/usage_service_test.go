@@ -127,7 +127,6 @@ func TestUsageServiceCacheSurvivesRename(t *testing.T) {
 	}
 }
 
-
 func TestUsageServiceRefreshAndExpiredCacheBypass(t *testing.T) {
 	store, err := NewFileAccountStore(t.TempDir())
 	if err != nil {
