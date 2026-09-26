@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { getNodeRect, rectsOverlap } from './geometry'
 import {
   placeAddedNodesLocally,
+  placeCollapsedStacksLocally,
   placeExpandedStackLocally,
   refreshGeneratedAgentShelves,
   relocateGeneratedBranches,
@@ -37,6 +38,22 @@ describe('local canvas placement', () => {
     const result = placeAddedNodesLocally(nodes, placements, ['a'])
     expect(result.a).toBeDefined()
     expect(result.a.x).toBeGreaterThan(placements['stack:project:feat'].x)
+  })
+
+  it('recenters a newly collapsed stack on its member positions', () => {
+    const nodes = [
+      node('stack:project:feat', 'stack', { stackItems: [{ id: 'a' }, { id: 'b' }], stackCount: 2 }),
+    ]
+    const placements: NodePlacements = {
+      a: { x: 100, y: 200, mode: 'manual' },
+      b: { x: 500, y: 400, mode: 'generated' },
+      'stack:project:feat': { x: 20, y: 20, mode: 'generated' },
+    }
+
+    const result = placeCollapsedStacksLocally(nodes, placements, ['stack:project:feat'])
+    expect(result['stack:project:feat']).toBeDefined()
+    expect(result['stack:project:feat'].x).toBeGreaterThan(100)
+    expect(result['stack:project:feat'].y).toBeGreaterThan(100)
   })
 
   it('expands missing stack members around the disappearing stack anchor without moving unrelated nodes', () => {
