@@ -72,14 +72,12 @@ func nearestRoot(input string, roots ...string) string {
 	return best
 }
 
-func pathDistance(a, b string) (int, bool) {
-	if rel, err := filepath.Rel(a, b); err == nil && pathIsWithin(rel) {
-		return pathDepth(rel), true
+func pathDistance(input, root string) (int, bool) {
+	rel, err := filepath.Rel(root, input)
+	if err != nil || !pathIsWithin(rel) {
+		return 0, false
 	}
-	if rel, err := filepath.Rel(b, a); err == nil && pathIsWithin(rel) {
-		return pathDepth(rel), true
-	}
-	return 0, false
+	return pathDepth(rel), true
 }
 
 func pathIsWithin(rel string) bool {
@@ -108,7 +106,6 @@ func findUp(start string, names ...string) (string, string) {
 		}
 	}
 }
-
 
 var skippedProjectDirs = map[string]bool{
 	".git":        true,
@@ -182,13 +179,11 @@ func findProjectFileWithin(start, boundary string, maxDepth int, names ...string
 	return "", ""
 }
 
-
 // findProjectFile is retained for focused tests/helpers outside a resolved Git
 // repository; provider detection should use findProjectFileWithin.
 func findProjectFile(start string, maxDepth int, names ...string) (string, string) {
 	return findProjectFileWithin(start, "", maxDepth, names...)
 }
-
 
 // projectSearchDirs returns start plus descendant directories up to maxDepth in
 // deterministic breadth-first order. Dependency/build directories and symlinked
