@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { getNodeRect, rectsOverlap } from './geometry'
 import {
   placeAddedNodesLocally,
-  placeCollapsedStacksLocally,
   placeExpandedStackLocally,
   refreshGeneratedAgentShelves,
   relocateGeneratedBranches,
@@ -50,7 +49,7 @@ describe('local canvas placement', () => {
       'stack:project:feat': { x: 20, y: 20, mode: 'generated' },
     }
 
-    const result = placeCollapsedStacksLocally(nodes, placements, ['stack:project:feat'])
+    const result = placeAddedNodesLocally(nodes, placements, ['stack:project:feat'])
     expect(result['stack:project:feat']).toBeDefined()
     expect(result['stack:project:feat'].x).toBeGreaterThan(100)
     expect(result['stack:project:feat'].y).toBeGreaterThan(100)
