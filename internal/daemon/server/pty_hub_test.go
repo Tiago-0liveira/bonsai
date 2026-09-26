@@ -97,6 +97,18 @@ func TestPTYHubReplayBroadcastBackpressureAndControl(t *testing.T) {
 	}
 }
 
+func TestPTYHubPreservesRawBytes(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	raw := []byte{0x00, 0xff, 0x1b, '[', '3', '1', 'm', '\r', '\n'}
+	h.Publish(raw)
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+	ev := <-sub.C
+	if !bytes.Equal(ev.data, raw) {
+		t.Fatalf("raw PTY bytes changed: got %v want %v", ev.data, raw)
+	}
+}
+
 func TestPTYHubCloseReplaysExit(t *testing.T) {
 	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
 	h.Publish([]byte("final"))

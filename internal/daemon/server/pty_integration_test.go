@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -140,7 +141,11 @@ func TestPTYStructuredSpawnInputAndKill(t *testing.T) {
 	}
 	defer att.Close()
 	readPTYUntil(t, att, 3*time.Second, "PTY-READY")
-	if err := att.Write([]byte("hello\n")); err != nil {
+	enter := "\n"
+	if runtime.GOOS == "windows" {
+		enter = "\r"
+	}
+	if err := att.Write([]byte("hello" + enter)); err != nil {
 		t.Fatal(err)
 	}
 	readPTYUntil(t, att, 3*time.Second, "reply:hello")
@@ -169,9 +174,19 @@ func TestPTYANSIReplayAndReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, seq := readPTYUntil(t, att, 3*time.Second, "\x1b[31mRED\x1b[0m")
-	if !strings.Contains(out, "\x1b[31mRED\x1b[0m") {
+	want := "\x1b[31mRED\x1b[0m"
+	if runtime.GOOS == "windows" {
+		// ConPTY may normalize/inject VT sequences around application output.
+		// The daemon must preserve the bytes it receives from ConPTY, but the
+		// console host itself is allowed to transform the child's VT stream.
+		want = "RED"
+	}
+	out, seq := readPTYUntil(t, att, 3*time.Second, want)
+	if runtime.GOOS != "windows" && !strings.Contains(out, "\x1b[31mRED\x1b[0m") {
 		t.Fatalf("ANSI bytes changed: %q", out)
+	}
+	if runtime.GOOS == "windows" && (!strings.Contains(out, "RED") || !strings.Contains(out, "\x1b[")) {
+		t.Fatalf("ConPTY output missing VT/color data: %q", out)
 	}
 	_ = att.Close()
 
@@ -180,9 +195,12 @@ func TestPTYANSIReplayAndReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer replay.Close()
-	out, _ = readPTYUntil(t, replay, 3*time.Second, "\x1b[31mRED\x1b[0m")
-	if !strings.Contains(out, "\x1b[31mRED\x1b[0m") {
+	out, _ = readPTYUntil(t, replay, 3*time.Second, want)
+	if runtime.GOOS != "windows" && !strings.Contains(out, "\x1b[31mRED\x1b[0m") {
 		t.Fatalf("replayed ANSI bytes changed: %q", out)
+	}
+	if runtime.GOOS == "windows" && (!strings.Contains(out, "RED") || !strings.Contains(out, "\x1b[")) {
+		t.Fatalf("replayed ConPTY output missing VT/color data: %q", out)
 	}
 }
 
@@ -228,7 +246,11 @@ func TestPTYMultipleObserversAndResizeRestart(t *testing.T) {
 	defer b.Close()
 	readPTYUntil(t, a, 3*time.Second, "PTY-READY")
 	readPTYUntil(t, b, 3*time.Second, "PTY-READY")
-	if err := a.Write([]byte("shared\n")); err != nil {
+	enter := "\n"
+	if runtime.GOOS == "windows" {
+		enter = "\r"
+	}
+	if err := a.Write([]byte("shared" + enter)); err != nil {
 		t.Fatal(err)
 	}
 	readPTYUntil(t, a, 3*time.Second, "reply:shared")

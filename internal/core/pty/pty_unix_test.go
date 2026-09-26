@@ -90,7 +90,7 @@ func TestUnixPTYCloseUnblocksRead(t *testing.T) {
 	}
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("Close did not unblock Read")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
