@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	corepty "github.com/Tiago-0liveira/bonsai/internal/core/pty"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
@@ -236,7 +237,7 @@ func (h *ptyHub) Close(exitCode int, exitErr string) {
 }
 
 func (s *Server) startPTYLocked(mp *managedProc, cmd *exec.Cmd, logw *logWriter, expectedGen uint64) error {
-	if mp.generation != expectedGen || mp.rec.Status != "starting" {
+	if mp.generation != expectedGen || mp.rec.Status != procstore.StatusStarting {
 		_ = logw.Close()
 		return errGenerationMismatch
 	}
@@ -257,7 +258,7 @@ func (s *Server) startPTYLocked(mp *managedProc, cmd *exec.Cmd, logw *logWriter,
 	if err != nil {
 		s.appendMarker(mp.rec.ID, failedStartMarker(err))
 		_ = logw.Close()
-		mp.rec.Status = "failed"
+		mp.rec.Status = procstore.StatusFailed
 		mp.rec.ExitError = err.Error()
 		_ = s.store.WriteRecord(mp.rec)
 		return err
@@ -275,7 +276,7 @@ func (s *Server) startPTYLocked(mp *managedProc, cmd *exec.Cmd, logw *logWriter,
 	mp.ptyPumpDone = pumpDone
 	mp.waitDone = done
 	mp.rec.PID = cmd.Process.Pid
-	mp.rec.Status = "running"
+	mp.rec.Status = procstore.StatusRunning
 	mp.rec.StartedAt = time.Now()
 	mp.rec.ExitError = ""
 	_ = s.store.WriteRecord(mp.rec)

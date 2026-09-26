@@ -73,9 +73,9 @@ func TestPTYHubReplayBroadcastBackpressureAndControl(t *testing.T) {
 		t.Fatal("healthy subscriber should remain attached")
 	}
 
-	for i := 0; i < 4; i++ {
-		if got := <-fast.C; string(got.data) != string('1'+rune(i)) {
-			t.Fatalf("fast event %d = %q", i, got.data)
+	for i, want := range []string{"1", "2", "3", "4"} {
+		if got := <-fast.C; string(got.data) != want {
+			t.Fatalf("fast event %d = %q, want %q", i, got.data, want)
 		}
 	}
 

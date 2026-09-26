@@ -37,6 +37,9 @@ type ptyAttachment struct {
 
 	writeMu sync.Mutex
 	closed  bool
+	stop    chan struct{}
+	done    chan struct{}
+	stopOnce sync.Once
 }
 
 // SpawnPTY starts a shell command under a daemon-owned PTY.
@@ -109,23 +112,16 @@ func (c *Client) AttachPTY(ctx context.Context, id int, afterSeq uint64) (PTYAtt
 	a := &ptyAttachment{
 		conn: conn, enc: enc, dec: dec,
 		events: make(chan PTYEvent, 64),
+		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
 	}
 	go a.readLoop()
 	go func() {
 		select {
 		case <-ctx.Done():
 			_ = a.Close()
-		case <-a.events:
-			// The read loop owns channel closure. If it ends first this goroutine
-			// may consume one event, so do not use this branch.
+		case <-a.done:
 		}
-	}()
-	// Replace the watcher above with a non-consuming closure signal.
-	// A tiny forwarding goroutine is avoided by watching the socket lifetime in
-	// readLoop; context cancellation still needs to close the transport.
-	go func() {
-		<-ctx.Done()
-		_ = a.Close()
 	}()
 	return a, nil
 }
@@ -163,6 +159,7 @@ func (a *ptyAttachment) Close() error {
 	}
 	_ = a.enc.WriteRequest(&protocol.Request{Kind: protocol.KindPTYDetach})
 	a.closed = true
+	a.stopOnce.Do(func() { close(a.stop) })
 	err := a.conn.Close()
 	a.writeMu.Unlock()
 	return err
@@ -172,14 +169,25 @@ func (a *ptyAttachment) closeFromReader() {
 	a.writeMu.Lock()
 	if !a.closed {
 		a.closed = true
+		a.stopOnce.Do(func() { close(a.stop) })
 		_ = a.conn.Close()
 	}
 	a.writeMu.Unlock()
 }
 
 func (a *ptyAttachment) readLoop() {
+	defer close(a.done)
 	defer close(a.events)
 	defer a.closeFromReader()
+
+	emit := func(ev PTYEvent) bool {
+		select {
+		case a.events <- ev:
+			return true
+		case <-a.stop:
+			return false
+		}
+	}
 
 	for {
 		resp, err := a.dec.ReadResponse()
@@ -188,24 +196,30 @@ func (a *ptyAttachment) readLoop() {
 		}
 		switch resp.Kind {
 		case protocol.KindPTYOutput:
-			a.events <- PTYEvent{
+			if !emit(PTYEvent{
 				Kind: protocol.KindPTYOutput,
 				Seq:  resp.Seq,
 				Data: append([]byte(nil), resp.Data...),
+			}) {
+				return
 			}
 		case protocol.KindPTYExit:
-			a.events <- PTYEvent{
+			_ = emit(PTYEvent{
 				Kind: protocol.KindPTYExit, ExitCode: resp.ExitCode, Error: resp.ExitError,
-			}
+			})
 			return
 		case protocol.KindPTYError:
-			a.events <- PTYEvent{Kind: protocol.KindPTYError, Error: resp.Error}
+			if !emit(PTYEvent{Kind: protocol.KindPTYError, Error: resp.Error}) {
+				return
+			}
 			if resp.EOF {
 				return
 			}
 		default:
 			if resp.Error != "" {
-				a.events <- PTYEvent{Kind: protocol.KindPTYError, Error: resp.Error}
+				if !emit(PTYEvent{Kind: protocol.KindPTYError, Error: resp.Error}) {
+					return
+				}
 			}
 			if resp.EOF {
 				return
