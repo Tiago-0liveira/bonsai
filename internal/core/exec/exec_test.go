@@ -228,3 +228,21 @@ func TestProcessLastURL(t *testing.T) {
 		t.Errorf("LastURL = %q", got)
 	}
 }
+
+func TestExecCommandPreservesArgvAndDir(t *testing.T) {
+	dir := t.TempDir()
+	args := []string{"value with spaces", "semi;colon", "quote\"value", "$HOME", "&&"}
+	cmd := ExecCommand(dir, "tool", args...)
+	if cmd.Dir != dir {
+		t.Fatalf("ExecCommand dir = %q, want %q", cmd.Dir, dir)
+	}
+	want := append([]string{"tool"}, args...)
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("ExecCommand argv = %v, want %v", cmd.Args, want)
+	}
+	for i := range want {
+		if cmd.Args[i] != want[i] {
+			t.Fatalf("ExecCommand argv[%d] = %q, want %q", i, cmd.Args[i], want[i])
+		}
+	}
+}

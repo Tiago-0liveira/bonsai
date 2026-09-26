@@ -96,6 +96,17 @@ func (v *procView) Spawn(path, branch, label, command string) (*procstore.Record
 	return rec, nil
 }
 
+// SpawnExec starts a discovered command without a shell. ownerPath is the Git
+// worktree shown by the UI; workingDir may be a nested project directory.
+func (v *procView) SpawnExec(ownerPath, branch, workingDir, label, program string, args []string) (*procstore.Record, error) {
+	rec, err := v.client.SpawnExec(ownerPath, branch, workingDir, label, program, args, nil)
+	if err != nil {
+		return nil, err
+	}
+	v.refresh()
+	return rec, nil
+}
+
 // Kill stops a process and refreshes the cache.
 func (v *procView) Kill(id int) {
 	_, _ = v.client.Kill(id, false, "")

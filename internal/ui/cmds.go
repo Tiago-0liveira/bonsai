@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,10 +45,18 @@ type fileIndexMsg struct {
 	err   error
 }
 
+type scriptInvocation struct {
+	Program string
+	Args    []string
+	Dir     string
+}
+
 type scriptsMsg struct {
-	manager string            // detected package manager name, "" if none
-	scripts []string          // selectable script/target names
-	runCmd  map[string]string // script name -> full shell command
+	manager string                      // provider name, "project" for mixed providers
+	scripts []string                    // selectable command labels
+	runCmd  map[string]string           // label -> display command
+	runDir  map[string]string           // label -> command working directory
+	runExec map[string]scriptInvocation // label -> shell-free invocation
 	err     error
 }
 
@@ -165,21 +174,68 @@ func indexFiles(repoDir string) tea.Cmd {
 }
 
 // loadScripts detects a package manager and lists its scripts.
-func loadScripts(path string) tea.Cmd {
+func loadScripts(path string, configuredDepth ...int) tea.Cmd {
 	return func() tea.Msg {
-		pm, err := pkgmgr.Detect(path)
+		depth := 2
+		if len(configuredDepth) > 0 {
+			depth = configuredDepth[0]
+		}
+		project, err := pkgmgr.Discover(path, pkgmgr.Options{UseCache: true, SearchDepth: &depth})
 		if err != nil {
 			return scriptsMsg{err: err}
 		}
-		if pm == nil {
-			return scriptsMsg{} // no manager: modal still offers the ad-hoc entry
+		if len(project.Commands) == 0 {
+			return scriptsMsg{} // modal still offers the ad-hoc entry
 		}
-		names := pm.GetScripts()
-		runCmd := make(map[string]string, len(names))
-		for _, n := range names {
-			runCmd[n] = pm.RunCommand(n)
+
+		providerNames := map[string]string{}
+		providerRootCounts := map[string]int{}
+		for _, provider := range project.Providers {
+			providerNames[provider.ID] = provider.Name
+			providerRootCounts[provider.ID]++
 		}
-		return scriptsMsg{manager: pm.Name(), scripts: names, runCmd: runCmd}
+		distinct := map[string]bool{}
+		for _, cmd := range project.Commands {
+			distinct[cmd.Provider] = true
+		}
+		mixed := len(distinct) > 1
+
+		names := make([]string, 0, len(project.Commands))
+		runCmd := make(map[string]string, len(project.Commands))
+		runDir := make(map[string]string, len(project.Commands))
+		runExec := make(map[string]scriptInvocation, len(project.Commands))
+		for _, cmd := range project.Commands {
+			label := cmd.Name
+			provider := providerNames[cmd.Provider]
+			if provider == "" {
+				provider = cmd.Provider
+			}
+			if providerRootCounts[cmd.Provider] > 1 {
+				scope := commandScopeLabel(path, cmd.Invocation.WorkingDir)
+				label = "[" + provider + " " + scope + "] " + cmd.Name
+			} else if mixed {
+				label = "[" + provider + "] " + cmd.Name
+			}
+			inv, err := pkgmgr.Resolve(cmd, nil)
+			if err != nil {
+				return scriptsMsg{err: err}
+			}
+			parts := append([]string{inv.Program}, inv.Args...)
+			names = append(names, label)
+			runCmd[label] = strings.Join(parts, " ")
+			runDir[label] = inv.Dir
+			runExec[label] = scriptInvocation{Program: inv.Program, Args: append([]string(nil), inv.Args...), Dir: inv.Dir}
+		}
+
+		manager := ""
+		if mixed {
+			manager = "project"
+		} else if len(project.Providers) == 1 {
+			manager = project.Providers[0].Name
+		} else if len(project.Commands) > 0 {
+			manager = "project"
+		}
+		return scriptsMsg{manager: manager, scripts: names, runCmd: runCmd, runDir: runDir, runExec: runExec}
 	}
 }
 
@@ -617,4 +673,14 @@ func tickProc() tea.Cmd {
 // tickPRs schedules the next pull-request state re-check.
 func tickPRs() tea.Cmd {
 	return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })
+}
+
+func commandScopeLabel(root, dir string) string {
+	if rel, err := filepath.Rel(root, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rel == "." {
+			return "root"
+		}
+		return filepath.ToSlash(rel)
+	}
+	return "project"
 }

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -63,6 +64,9 @@ var configSettings = []configSetting{
 	{key: "worktree.path_template", label: "Config: worktree.path_template", title: "Set worktree.path_template",
 		desc:    "Worktree directory name; {repo} and {branch} are replaced.",
 		example: "{repo}-{branch}", kind: cfgInput},
+	{key: "pkgmgr.search_depth", label: "Config: pkgmgr.search_depth", title: "Set pkgmgr.search_depth",
+		desc:    "Maximum child-directory depth searched for project manifests. 0 disables downward discovery.",
+		example: "2", kind: cfgInput},
 	{key: "theme.preset", label: "Config: theme.preset", title: "theme.preset",
 		desc:    "Built-in color palette for the whole UI.",
 		example: "sakura", kind: cfgSelect, options: theme.Presets()},
@@ -132,6 +136,8 @@ func (m Model) configCurrentValue(s configSetting) string {
 			return "(default: {repo}-{branch})"
 		}
 		return m.cfg.Worktree.PathTemplate
+	case "pkgmgr.search_depth":
+		return strconv.Itoa(m.cfg.PkgMgr.SearchDepth)
 	case "theme.preset":
 		if m.cfg.Theme.Preset == "" {
 			return "(default: bonsai)"
@@ -357,6 +363,14 @@ func (m Model) onConfigValue(value string) (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(value) == "" {
 		m.status = "config: empty value for " + s.key
 		return m, nil
+	}
+	if s.key == "pkgmgr.search_depth" {
+		depth, err := strconv.Atoi(value)
+		if err != nil || depth < 0 {
+			m.status = "config: pkgmgr.search_depth must be a non-negative integer"
+			return m, nil
+		}
+		value = strconv.Itoa(depth)
 	}
 
 	if s.kind == cfgMap {

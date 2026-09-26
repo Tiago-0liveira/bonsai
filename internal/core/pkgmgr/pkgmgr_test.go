@@ -7,12 +7,9 @@ import (
 	"testing"
 )
 
-func TestDetectAndGetScripts(t *testing.T) {
+func TestDetectCompatibilityAdapter(t *testing.T) {
 	dir := t.TempDir()
-	manifest := `{"scripts":{"dev":"vite","build":"vite build","test":"vitest"}}`
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(manifest), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	write(t, dir, "package.json", `{"scripts":{"dev":"vite","build":"vite build","test":"vitest"}}`)
 
 	pm, err := Detect(dir)
 	if err != nil {
@@ -21,11 +18,32 @@ func TestDetectAndGetScripts(t *testing.T) {
 	if pm == nil {
 		t.Fatal("expected a PackageManager")
 	}
-
-	got := pm.GetScripts()
-	want := []string{"build", "dev", "test"} // sorted
-	if !reflect.DeepEqual(got, want) {
+	if pm.Name() != "npm" {
+		t.Fatalf("Name = %q, want npm", pm.Name())
+	}
+	if got, want := pm.GetScripts(), []string{"build", "dev", "test"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("GetScripts = %v, want %v", got, want)
+	}
+	if got := pm.RunCommand("dev"); got != "npm run dev" {
+		t.Fatalf("RunCommand(dev) = %q", got)
+	}
+}
+
+func TestDetectCompatibilityPriority(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "package.json", `{"packageManager":"pnpm@10.17.0","scripts":{"test":"vitest"}}`)
+	write(t, dir, "Cargo.toml", "[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
+	write(t, dir, "Makefile", "test:\n\t@echo make\n")
+
+	pm, err := Detect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pm == nil || pm.Name() != "pnpm" {
+		t.Fatalf("compatibility manager = %#v, want pnpm", pm)
+	}
+	if got := pm.RunCommand("test"); got != "pnpm run test" {
+		t.Fatalf("RunCommand(test) = %q", got)
 	}
 }
 
@@ -39,82 +57,35 @@ func TestDetectMissing(t *testing.T) {
 	}
 }
 
-func TestDetectNodeManagers(t *testing.T) {
-	cases := []struct {
-		lockfile string
-		name     string
-		runDev   string
-	}{
-		{"package-lock.json", "npm", "npm run dev"},
-		{"pnpm-lock.yaml", "pnpm", "pnpm run dev"},
-		{"yarn.lock", "yarn", "yarn dev"},
-		{"bun.lockb", "bun", "bun run dev"},
+func commandByID(t *testing.T, project *Project, id string) Command {
+	t.Helper()
+	for _, cmd := range project.Commands {
+		if cmd.ID == id {
+			return cmd
+		}
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			write(t, dir, "package.json", `{"scripts":{"dev":"vite"}}`)
-			if c.lockfile != "" {
-				write(t, dir, c.lockfile, "")
-			}
-			pm, err := Detect(dir)
-			if err != nil {
-				t.Fatalf("Detect: %v", err)
-			}
-			if pm.Name() != c.name {
-				t.Fatalf("Name = %q, want %q", pm.Name(), c.name)
-			}
-			if got := pm.RunCommand("dev"); got != c.runDev {
-				t.Fatalf("RunCommand = %q, want %q", got, c.runDev)
-			}
-		})
-	}
+	t.Fatalf("command %q not found; commands=%+v", id, project.Commands)
+	return Command{}
 }
 
-func TestDetectCargo(t *testing.T) {
-	dir := t.TempDir()
-	write(t, dir, "Cargo.toml", "[package]\nname = \"x\"\n")
-	pm, err := Detect(dir)
-	if err != nil {
-		t.Fatalf("Detect: %v", err)
+func argByID(t *testing.T, cmd Command, id string) Argument {
+	t.Helper()
+	for _, arg := range cmd.Args {
+		if arg.ID == id {
+			return arg
+		}
 	}
-	if pm.Name() != "cargo" {
-		t.Fatalf("Name = %q, want cargo", pm.Name())
-	}
-	if got := pm.RunCommand("build"); got != "cargo build" {
-		t.Fatalf("RunCommand = %q, want cargo build", got)
-	}
-}
-
-func TestDetectMakeTargets(t *testing.T) {
-	dir := t.TempDir()
-	mk := "" +
-		".PHONY: build test\n" +
-		"build:\n\tgo build .\n" +
-		"test: build\n\tgo test ./...\n" +
-		"%.o: %.c\n\tcc -c $<\n" +
-		"VAR := x\n"
-	write(t, dir, "Makefile", mk)
-	pm, err := Detect(dir)
-	if err != nil {
-		t.Fatalf("Detect: %v", err)
-	}
-	if pm.Name() != "make" {
-		t.Fatalf("Name = %q, want make", pm.Name())
-	}
-	got := pm.GetScripts()
-	want := []string{"build", "test"} // .PHONY, pattern rule, and VAR assignment excluded
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("GetScripts = %v, want %v", got, want)
-	}
-	if cmd := pm.RunCommand("test"); cmd != "make test" {
-		t.Fatalf("RunCommand = %q, want make test", cmd)
-	}
+	t.Fatalf("argument %q not found in command %q: %+v", id, cmd.ID, cmd.Args)
+	return Argument{}
 }
 
 func write(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

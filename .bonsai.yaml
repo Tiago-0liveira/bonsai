@@ -64,6 +64,19 @@ keys: {}
   # new_worktree: "N"
   # prune: "D"
 
+# ── Project command discovery ────────────────────────────────────────────────
+# search_depth: when a provider manifest is not found at/above the selected
+# worktree root, inspect child directories this many levels deep.
+#   0 = worktree root/upward only
+#   1 = also root/<dir>/
+#   2 = also root/<dir>/<dir>/ (default)
+# The scan is bounded and skips dependency/build directories such as .git,
+# node_modules, target, vendor, .venv, venv, and __pycache__.
+#
+# commands: optional pkgmgr command overrides/enrichment (see pkgmgr docs/tests).
+pkgmgr:
+  search_depth: 2
+
 # ── Lifecycle hooks ──────────────────────────────────────────────────────────
 # Shell commands run with `sh -c`, in the worktree's directory.
 #   on_worktree_create → after a worktree is created (new branch / existing / PR)
