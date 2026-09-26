@@ -2,7 +2,7 @@ import type { Edge, Node } from '@xyflow/react'
 import { nearestFreePosition, resolveLocalCollisions } from './collision'
 import { getAgentShelfSize, getNodeRect, getNodeSize, LAYOUT } from './geometry'
 import { getDescendantIds, getStructuralParentMap, isAgentEdge } from './graphModel'
-import { detachedWorktreePosition, stackCollapsePosition } from './stackPlacement'
+import { compactStackExpansion, detachedWorktreePosition, stackCollapsePosition } from './stackPlacement'
 import type { CanvasPosition, NodePlacements, Rect } from './types'
 
 function pos(node: Node, placements: NodePlacements, pending: Record<string, CanvasPosition>) {
@@ -163,4 +163,23 @@ export function relocateGeneratedBranches(nodes: Node[], edges: Edge[], placemen
     })
   })
   return pending
+}
+
+
+export function placeExpandedStackLocally(
+  nodes: Node[],
+  placements: NodePlacements,
+  memberIds: string[],
+  anchor: CanvasPosition,
+) {
+  const memberSet = new Set(memberIds)
+  const members = nodes
+    .filter((node) => node.type === 'worktree' && memberSet.has(node.id))
+    .sort((a, b) => a.id.localeCompare(b.id))
+  if (!members.length) return {}
+  return compactStackExpansion(
+    members,
+    anchor,
+    fixedRects(nodes, placements, {}, memberSet),
+  )
 }
