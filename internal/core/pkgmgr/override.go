@@ -161,6 +161,7 @@ func applyOverrides(commands []Command, cfg pkgmgrOverrides, path, projectRoot s
 			Name:        name,
 			Description: override.Description,
 			Provider:    "override",
+			ProjectRoot: projectRoot,
 			Kind:        CommandOverride,
 			Args:        args,
 			Invocation:  overrideInvocation(*override.Command, projectRoot),
