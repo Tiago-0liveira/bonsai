@@ -1,16 +1,14 @@
 import type { Node } from '@xyflow/react'
+import type { NodePlacement, NodePlacementMode } from '../../../../types'
+
+export type { NodePlacement, NodePlacementMode } from '../../../../types'
 
 export interface CanvasPosition {
   x: number
   y: number
 }
 
-export type PlacementMode = 'manual' | 'generated'
-
-export interface NodePlacement extends CanvasPosition {
-  mode: PlacementMode
-}
-
+export type PlacementMode = NodePlacementMode
 export type NodePlacements = Record<string, NodePlacement>
 
 export interface Size {
