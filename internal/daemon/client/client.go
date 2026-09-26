@@ -98,7 +98,19 @@ func (c *Client) ensureDaemon() error {
 	if c.alive() {
 		return c.CheckCompatibility()
 	}
-	return c.autostart()
+	if err := c.autostart(); err != nil {
+		return err
+	}
+	resp, err := c.Ping()
+	if err != nil {
+		return fmt.Errorf("ping autostarted daemon: %w", err)
+	}
+	if resp.Version != protocol.Version {
+		_ = c.Shutdown(false)
+		return fmt.Errorf("%w: daemon version %d, client version %d",
+			ErrIncompatibleDaemon, resp.Version, protocol.Version)
+	}
+	return nil
 }
 
 // autostart launches a detached daemon for this repo and waits for its socket.
