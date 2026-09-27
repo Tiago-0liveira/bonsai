@@ -275,62 +275,127 @@ func moveToKind(m *Model, kind rowKind) {
 	}
 }
 
-func TestLayoutOrientationCycleEmitsSave(t *testing.T) {
-	m := testModel()
-	moveToKind(&m, rowLayoutOrientation)
+func enterLayoutEditor(t *testing.T, m Model) Model {
+	t.Helper()
+	moveToKind(&m, rowLayoutEdit)
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("opening layout editor should not save")
+	}
+	if !nm.layoutEditing {
+		t.Fatal("layout editor did not open")
+	}
+	return nm
+}
+
+func findLayoutItem(t *testing.T, m Model, kind layoutEditKind, view string) int {
+	t.Helper()
+	items := layoutEditorItems(m.layout.Root)
+	for i, item := range items {
+		if item.kind != kind {
+			continue
+		}
+		if kind != layoutEditView {
+			return i
+		}
+		node := nodeAtPath(m.layout.Root, item.path)
+		if node != nil && node.Pane != nil && node.Pane.Views[item.viewIndex] == view {
+			return i
+		}
+	}
+	t.Fatalf("layout item kind=%v view=%q not found", kind, view)
+	return -1
+}
+
+func TestLayoutEditorRatioAndOrientationEmitSave(t *testing.T) {
+	m := enterLayoutEditor(t, testModel())
+	m.layoutCursor = 0 // root split
+
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	snap := saveFrom(t, cmd)
 	if snap == nil {
-		t.Fatal("orientation change should emit SaveMsg")
+		t.Fatal("ratio change should emit SaveMsg")
 	}
-	if snap.Layout.Axis != "vertical" || nm.layout.Axis != "vertical" {
-		t.Fatalf("orientation = snapshot %q model %q, want vertical", snap.Layout.Axis, nm.layout.Axis)
+	if snap.Layout.Root.Ratio != 40 || nm.layout.Root.Ratio != 40 {
+		t.Fatalf("ratio = snapshot %d model %d, want 40", snap.Layout.Root.Ratio, nm.layout.Root.Ratio)
+	}
+
+	nm, cmd = nm.Update(keyMsg("o"))
+	snap = saveFrom(t, cmd)
+	if snap == nil || snap.Layout.Root.Axis != "vertical" {
+		t.Fatalf("orientation snapshot = %+v", snap)
 	}
 	if snap.Theme != "bonsai" || snap.Sort != "name" {
-		t.Fatalf("layout save must preserve unrelated prefs: %+v", snap)
+		t.Fatalf("layout save changed unrelated prefs: %+v", snap)
 	}
 }
 
-func TestLayoutOrderUsesOrientationDirection(t *testing.T) {
-	m := testModel()
-	moveToKind(&m, rowLayoutOrientation)
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	moveToKind(&m, rowLayoutOrder)
-	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+func TestLayoutEditorSplitViewCreatesPane(t *testing.T) {
+	m := enterLayoutEditor(t, testModel())
+	m.layoutCursor = findLayoutItem(t, m, layoutEditView, "processes")
+
+	nm, cmd := m.Update(keyMsg("s"))
 	snap := saveFrom(t, cmd)
 	if snap == nil {
-		t.Fatal("order change should emit SaveMsg")
+		t.Fatal("split should emit SaveMsg")
 	}
-	if snap.Layout.Order[0] != "workspace" || snap.Layout.Order[1] != "worktrees" {
-		t.Fatalf("order = %v, want workspace/worktrees", snap.Layout.Order)
+	if !validLayoutPrefs(snap.Layout) {
+		t.Fatalf("split produced invalid layout: %+v", snap.Layout)
 	}
-	if got := layoutOrderLabel(nm.layout); got != "workspace ↓ worktrees" {
-		t.Fatalf("vertical order label = %q", got)
+	if got := layoutSummary(nm.layout); got != "3 panes · 7 views" {
+		t.Fatalf("summary after split = %q", got)
+	}
+	processPaneFound := false
+	for _, path := range panePaths(nm.layout.Root) {
+		node := nodeAtPath(nm.layout.Root, path)
+		if node != nil && node.Pane != nil && len(node.Pane.Views) == 1 && node.Pane.Views[0] == "processes" {
+			processPaneFound = true
+		}
+	}
+	if !processPaneFound {
+		t.Fatal("Processes was not split into its own pane")
 	}
 }
 
-func TestLayoutSizesAdjustByFiveAndClamp(t *testing.T) {
-	m := testModel()
-	moveToKind(&m, rowLayoutSizes)
+func TestLayoutEditorMoveLastViewCollapsesEmptyPane(t *testing.T) {
+	m := enterLayoutEditor(t, testModel())
+	m.layoutCursor = findLayoutItem(t, m, layoutEditView, "processes")
+	m, _ = m.Update(keyMsg("s"))
+	m.layoutCursor = findLayoutItem(t, m, layoutEditView, "processes")
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	nm, cmd := m.Update(keyMsg("m"))
 	snap := saveFrom(t, cmd)
-	if snap == nil || snap.Layout.Worktrees != 40 {
-		t.Fatalf("35 + 5 snapshot = %+v", snap)
+	if snap == nil || !validLayoutPrefs(snap.Layout) {
+		t.Fatalf("move produced invalid snapshot: %+v", snap)
 	}
-
-	m.layout.Worktrees = 80
-	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	snap = saveFrom(t, cmd)
-	if snap == nil || snap.Layout.Worktrees != 80 || nm.layout.Worktrees != 80 {
-		t.Fatalf("upper clamp snapshot=%+v model=%+v", snap, nm.layout)
+	if got := layoutSummary(nm.layout); got != "2 panes · 7 views" {
+		t.Fatalf("empty source pane was not collapsed: %q", got)
 	}
+}
 
-	m.layout.Worktrees = 20
-	nm, cmd = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	snap = saveFrom(t, cmd)
-	if snap == nil || snap.Layout.Worktrees != 20 || nm.layout.Worktrees != 20 {
-		t.Fatalf("lower clamp snapshot=%+v model=%+v", snap, nm.layout)
+func TestLayoutEditorMergeSiblingPanes(t *testing.T) {
+	m := enterLayoutEditor(t, testModel())
+	m.layoutCursor = findLayoutItem(t, m, layoutEditView, "processes")
+	m, _ = m.Update(keyMsg("v"))
+
+	items := layoutEditorItems(m.layout.Root)
+	for i, item := range items {
+		if item.kind != layoutEditPane {
+			continue
+		}
+		node := nodeAtPath(m.layout.Root, item.path)
+		if node != nil && node.Pane != nil && len(node.Pane.Views) == 1 && node.Pane.Views[0] == "processes" {
+			m.layoutCursor = i
+			break
+		}
+	}
+	nm, cmd := m.Update(keyMsg("g"))
+	snap := saveFrom(t, cmd)
+	if snap == nil || !validLayoutPrefs(snap.Layout) {
+		t.Fatalf("merge produced invalid snapshot: %+v", snap)
+	}
+	if got := layoutSummary(nm.layout); got != "2 panes · 7 views" {
+		t.Fatalf("merge summary = %q", got)
 	}
 }
 
@@ -342,11 +407,10 @@ func TestResetLayoutOnlyResetsLayout(t *testing.T) {
 	m.prStatus = "compact"
 	m.editor = "hx"
 	m.overrides["prune"] = "z"
-	m.layout = LayoutPrefs{
-		Axis:      "vertical",
-		Order:     []string{"workspace", "worktrees"},
-		Worktrees: 65,
-	}
+	m = enterLayoutEditor(t, m)
+	m.layoutCursor = findLayoutItem(t, m, layoutEditView, "processes")
+	m, _ = m.Update(keyMsg("s"))
+	m.layoutEditing = false
 	moveToKind(&m, rowLayoutReset)
 
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -354,18 +418,15 @@ func TestResetLayoutOnlyResetsLayout(t *testing.T) {
 	if snap == nil {
 		t.Fatal("reset layout should emit SaveMsg")
 	}
-	if snap.Layout.Axis != "horizontal" ||
-		snap.Layout.Worktrees != 35 ||
-		len(snap.Layout.Order) != 2 ||
-		snap.Layout.Order[0] != "worktrees" ||
-		snap.Layout.Order[1] != "workspace" {
+	if snap.Layout.Version != layoutPrefsVersion || !validLayoutPrefs(snap.Layout) ||
+		layoutSummary(snap.Layout) != "2 panes · 7 views" {
 		t.Fatalf("reset layout snapshot = %+v", snap.Layout)
 	}
 	if snap.Theme != "sakura" || snap.Sort != "dirty" || !snap.PruneMerge ||
 		snap.PRStatus != "compact" || snap.Editor != "hx" || snap.Keys["prune"] != "z" {
 		t.Fatalf("reset layout changed non-layout prefs: %+v", snap)
 	}
-	if nm.layout.Worktrees != 35 {
+	if layoutSummary(nm.layout) != "2 panes · 7 views" {
 		t.Fatalf("working layout was not reset: %+v", nm.layout)
 	}
 }
