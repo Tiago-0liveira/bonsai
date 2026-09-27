@@ -565,9 +565,7 @@ func (m Model) layoutEditorView() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Layout editor") + "
-
-")
+	b.WriteString(titleStyle.Render("Layout editor") + "\n\n")
 	for i, item := range items {
 		node := nodeAtPath(m.layout.Root, item.path)
 		if node == nil {
@@ -599,17 +597,13 @@ func (m Model) layoutEditorView() string {
 		}
 		b.WriteString(prefix + indent + line)
 		if i < len(items)-1 {
-			b.WriteByte('
-')
+			b.WriteByte('\n')
 		}
 	}
 
-	b.WriteString("
-
-")
+	b.WriteString("\n\n")
 	if m.msg != "" {
-		b.WriteString(dimStyle.Render(m.msg) + "
-")
+		b.WriteString(dimStyle.Render(m.msg) + "\n")
 	}
 	b.WriteString(dimStyle.Render(
 		"↑/↓ select · ←/→ ratio · o orientation · s split ↔ · v split ↕ · m move view · [/] reorder · g merge · r reset · esc back",
