@@ -254,7 +254,6 @@ func TestPTYHubExitMetadataDeliveredAtCapacity(t *testing.T) {
 	}
 }
 
-
 func newPTYSizePersistenceFixture(t *testing.T) (*Server, *managedProc, *ptyHub) {
 	t.Helper()
 	store := procstore.New(t.TempDir())
