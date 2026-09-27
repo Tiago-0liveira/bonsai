@@ -3,7 +3,6 @@ package relay
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,12 +28,12 @@ const testSessionSecret = "test-relay-session-secret"
 func newTestServer(t *testing.T) (*Server, Config) {
 	t.Helper()
 	cfg := Config{
-		Database: filepath.Join(t.TempDir(), "relay.json"),
-		ExternalURL: ProductionExternalURL,
-		FrontendOrigin: ProductionFrontendOrigin,
-		GitHubClientID: "client",
+		Database:           filepath.Join(t.TempDir(), "relay.json"),
+		ExternalURL:        ProductionExternalURL,
+		FrontendOrigin:     ProductionFrontendOrigin,
+		GitHubClientID:     "client",
 		GitHubClientSecret: "secret",
-		WebhookSecret: "webhook-secret",
+		WebhookSecret:      "webhook-secret",
 	}
 	s, err := NewServer(cfg)
 	if err != nil {
@@ -46,7 +45,7 @@ func newTestServer(t *testing.T) (*Server, Config) {
 func putTestSession(t *testing.T, s *Server, secret string, user int64, grants ...RepositoryGrant) RelaySession {
 	t.Helper()
 	now := time.Now().UTC()
-	session := RelaySession{GitHubUserID:user, Repositories:grants, CreatedAt:now, ExpiresAt:now.Add(time.Hour)}
+	session := RelaySession{GitHubUserID: user, Repositories: grants, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 	if err := s.store.PutSession(SecretHash(secret), session); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +77,7 @@ func webhookRequest(t *testing.T, h http.Handler, method, delivery, eventName st
 
 func TestWebhookVerificationDedupeAndRestart(t *testing.T) {
 	s, cfg := newTestServer(t)
-	putTestSession(t, s, testSessionSecret, 1, RepositoryGrant{RepositoryID:123, InstallationID:456})
+	putTestSession(t, s, testSessionSecret, 1, RepositoryGrant{RepositoryID: 123, InstallationID: 456})
 	h := s.Handler()
 	body := []byte(`{"action":"synchronize","repository":{"id":123},"installation":{"id":456},"number":42,"pull_request":{"number":42}}`)
 
@@ -144,9 +143,9 @@ func TestWebhookVerificationDedupeAndRestart(t *testing.T) {
 
 func TestAuthorizationIsolationAndLogout(t *testing.T) {
 	s, _ := newTestServer(t)
-	sessionA := putTestSession(t, s, "session-a", 1, RepositoryGrant{RepositoryID:123, InstallationID:456})
-	putTestSession(t, s, "session-b", 2, RepositoryGrant{RepositoryID:999, InstallationID:777})
-	eventB := webhooks.Event{DeliveryID:"b", Event:"pull_request", Action:"opened", RepositoryID:999, InstallationID:777}
+	sessionA := putTestSession(t, s, "session-a", 1, RepositoryGrant{RepositoryID: 123, InstallationID: 456})
+	putTestSession(t, s, "session-b", 2, RepositoryGrant{RepositoryID: 999, InstallationID: 777})
+	eventB := webhooks.Event{DeliveryID: "b", Event: "pull_request", Action: "opened", RepositoryID: 999, InstallationID: 777}
 	if _, _, err := s.store.RecordWebhook("b", "digest-b", eventB, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +163,7 @@ func TestAuthorizationIsolationAndLogout(t *testing.T) {
 
 	logout := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	logout.Header.Set("Origin", ProductionFrontendOrigin)
-	logout.AddCookie(&http.Cookie{Name:relayCookieName, Value:"session-a"})
+	logout.AddCookie(&http.Cookie{Name: relayCookieName, Value: "session-a"})
 	logoutW := httptest.NewRecorder()
 	s.Handler().ServeHTTP(logoutW, logout)
 	if logoutW.Code != http.StatusNoContent {
@@ -172,7 +171,7 @@ func TestAuthorizationIsolationAndLogout(t *testing.T) {
 	}
 	status := httptest.NewRequest(http.MethodGet, "/auth/session", nil)
 	status.Header.Set("Origin", ProductionFrontendOrigin)
-	status.AddCookie(&http.Cookie{Name:relayCookieName, Value:"session-a"})
+	status.AddCookie(&http.Cookie{Name: relayCookieName, Value: "session-a"})
 	statusW := httptest.NewRecorder()
 	s.Handler().ServeHTTP(statusW, status)
 	if statusW.Code != http.StatusUnauthorized {
@@ -217,15 +216,15 @@ func streamRequest(t *testing.T, base, secret string, last uint64, query string)
 func TestSSEReplayResetHeartbeatAndQuerySpoofing(t *testing.T) {
 	s, _ := newTestServer(t)
 	s.heartbeat = 15 * time.Millisecond
-	putTestSession(t, s, "session-a", 1, RepositoryGrant{RepositoryID:123, InstallationID:456})
-	putTestSession(t, s, "session-b", 2, RepositoryGrant{RepositoryID:999, InstallationID:777})
+	putTestSession(t, s, "session-a", 1, RepositoryGrant{RepositoryID: 123, InstallationID: 456})
+	putTestSession(t, s, "session-b", 2, RepositoryGrant{RepositoryID: 999, InstallationID: 777})
 	for i := 1; i <= 2; i++ {
-		event := webhooks.Event{DeliveryID:fmtDelivery(i), Event:"pull_request", Action:"synchronize", RepositoryID:123, InstallationID:456, PullRequestNumber:i}
+		event := webhooks.Event{DeliveryID: fmtDelivery(i), Event: "pull_request", Action: "synchronize", RepositoryID: 123, InstallationID: 456, PullRequestNumber: i}
 		if _, _, err := s.store.RecordWebhook(event.DeliveryID, "digest-"+strconv.Itoa(i), event, time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	eventB := webhooks.Event{DeliveryID:"repo-b", Event:"push", RepositoryID:999, InstallationID:777, Ref:"refs/heads/main"}
+	eventB := webhooks.Event{DeliveryID: "repo-b", Event: "push", RepositoryID: 999, InstallationID: 777, Ref: "refs/heads/main"}
 	if _, _, err := s.store.RecordWebhook(eventB.DeliveryID, "digest-b", eventB, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +246,7 @@ func TestSSEReplayResetHeartbeatAndQuerySpoofing(t *testing.T) {
 	}
 
 	s.store.maxEvents = 1
-	event3 := webhooks.Event{DeliveryID:"d3", Event:"push", RepositoryID:123, InstallationID:456, Ref:"refs/heads/main"}
+	event3 := webhooks.Event{DeliveryID: "d3", Event: "push", RepositoryID: 123, InstallationID: 456, Ref: "refs/heads/main"}
 	if _, _, err := s.store.RecordWebhook("d3", "digest-3", event3, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +257,7 @@ func TestSSEReplayResetHeartbeatAndQuerySpoofing(t *testing.T) {
 		t.Fatalf("old cursor did not reset: %q", reset)
 	}
 
-	freshRes, freshReader := streamRequest(t, ts.URL, "session-a", 3, "")
+	freshRes, freshReader := streamRequest(t, ts.URL, "session-a", s.store.Cursor(), "")
 	defer freshRes.Body.Close()
 	connected := readFrame(t, freshReader)
 	if connected != ": connected" {
@@ -285,7 +284,7 @@ func TestHubMultipleSubscribersAndSlowConsumerBound(t *testing.T) {
 	}
 	defer hub.unsubscribe(a)
 	defer hub.unsubscribe(b)
-	event := RelayEvent{Sequence:1, RepositoryID:123, InstallationID:456}
+	event := RelayEvent{Sequence: 1, RepositoryID: 123, InstallationID: 456}
 	hub.publish(event)
 	if got := <-a.ch; got.Sequence != 1 {
 		t.Fatalf("tab A = %+v", got)
@@ -299,7 +298,7 @@ func TestHubMultipleSubscribersAndSlowConsumerBound(t *testing.T) {
 		t.Fatal("slow subscriber rejected")
 	}
 	for i := 0; i <= subscriberQueueSize; i++ {
-		hub.publish(RelayEvent{Sequence:uint64(i + 2), RepositoryID:123, InstallationID:456})
+		hub.publish(RelayEvent{Sequence: uint64(i + 2), RepositoryID: 123, InstallationID: 456})
 	}
 	for range slow.ch {
 	}
@@ -317,23 +316,23 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func jsonResponse(status int, value any) *http.Response {
 	body, _ := json.Marshal(value)
-	return &http.Response{StatusCode:status, Status:http.StatusText(status), Header:make(http.Header), Body:io.NopCloser(bytes.NewReader(body))}
+	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(body))}
 }
 
 func TestGitHubOAuthCreatesAuthorizedSecureSession(t *testing.T) {
 	s, _ := newTestServer(t)
-	s.httpClient = &http.Client{Transport:roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	s.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
 		case r.URL.Host == "github.com" && r.URL.Path == "/login/oauth/access_token":
-			return jsonResponse(200, map[string]any{"access_token":"token"}), nil
+			return jsonResponse(200, map[string]any{"access_token": "token"}), nil
 		case r.URL.Host == "api.github.com" && r.URL.Path == "/user":
-			return jsonResponse(200, map[string]any{"id":42}), nil
+			return jsonResponse(200, map[string]any{"id": 42}), nil
 		case r.URL.Host == "api.github.com" && r.URL.Path == "/user/installations":
-			return jsonResponse(200, map[string]any{"installations":[]map[string]any{{"id":456}}}), nil
+			return jsonResponse(200, map[string]any{"installations": []map[string]any{{"id": 456}}}), nil
 		case r.URL.Host == "api.github.com" && r.URL.Path == "/user/installations/456/repositories":
-			return jsonResponse(200, map[string]any{"repositories":[]map[string]any{{"id":123,"full_name":"acme/repo"}}}), nil
+			return jsonResponse(200, map[string]any{"repositories": []map[string]any{{"id": 123, "full_name": "acme/repo"}}}), nil
 		default:
-			return jsonResponse(404, map[string]any{"message":"not found"}), nil
+			return jsonResponse(404, map[string]any{"message": "not found"}), nil
 		}
 	})}
 
@@ -416,6 +415,3 @@ func TestRelayArchitectureDoesNotImportLocalExecution(t *testing.T) {
 	}
 }
 
-func TestRunStopsWithContext(t *testing.T) {
-	_ = context.Canceled
-}
