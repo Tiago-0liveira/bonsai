@@ -270,7 +270,7 @@ func TestWebSocketAuthentication(t *testing.T) {
 	if err := conn.WriteJSON(websocketAuth{Type: "authenticate", Token: session.Token}); err != nil {
 		t.Fatal(err)
 	}
-	var ready map[string]string
+	var ready map[string]any
 	if err := conn.ReadJSON(&ready); err != nil {
 		t.Fatal(err)
 	}
