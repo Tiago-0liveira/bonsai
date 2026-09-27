@@ -702,23 +702,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       },
     }),
     {
-      name: 'bonsai-web-workspace-v5',
-      version: 6,
-      migrate: (persisted) => {
-        const state = persisted as Partial<BonsaiState> & {
-          nodePositions?: Record<string, { x: number; y: number }>
-        }
-        if (!state.nodePlacements && state.nodePositions) {
-          state.nodePlacements = Object.fromEntries(
-            Object.entries(state.nodePositions).map(([id, position]) => [id, { ...position, mode: 'manual' as const }]),
-          )
-        }
-        delete state.nodePositions
-        delete state.projects
-        delete state.worktrees
-        delete state.pullRequests
-        return state
-      },
+      name: 'bonsai-web-workspace-v6',
       partialize: (state) => ({
         selection: state.selection,
         activeWorkspaceId: state.activeWorkspaceId,
