@@ -6,8 +6,10 @@ import '@xterm/xterm/css/xterm.css'
 import './styles/globals.css'
 import { router } from './app/router'
 import { startGitBackend } from './api/git'
+import { startRelayInvalidation } from './api/relay'
 
 startGitBackend()
+startRelayInvalidation()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
