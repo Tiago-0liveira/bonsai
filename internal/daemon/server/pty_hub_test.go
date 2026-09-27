@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -690,5 +693,181 @@ func TestPTYHubReplayByteAndEventCapsPreserveAfterSeq(t *testing.T) {
 	}
 	if got, want := cap(sub.C), 2+h.subQueue+1; got != want {
 		t.Fatalf("after-seq subscriber capacity = %d, want %d", got, want)
+	}
+}
+
+func TestRetirePTYHubClearsCurrentGenerationAndCapturesNextSeq(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.Publish([]byte("one"))
+	h.Publish([]byte("two"))
+	mp := &managedProc{ptyHub: h}
+
+	next := retirePTYHubLocked(mp)
+
+	if next != 3 || mp.ptyNextSeq != 3 {
+		t.Fatalf("retired next seq = %d stored=%d, want 3", next, mp.ptyNextSeq)
+	}
+	if mp.ptyHub != nil {
+		t.Fatal("retired hub is still exposed as the current generation")
+	}
+}
+
+func TestRetirePTYHubPreservesSequenceAcrossRepeatedFailures(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 20)
+	h.Publish([]byte("one"))
+	mp := &managedProc{ptyHub: h}
+
+	first := retirePTYHubLocked(mp)
+	second := retirePTYHubLocked(mp)
+	third := retirePTYHubLocked(mp)
+
+	if first != 21 || second != 21 || third != 21 || mp.ptyNextSeq != 21 {
+		t.Fatalf("retired sequence values = %d, %d, %d stored=%d; want 21", first, second, third, mp.ptyNextSeq)
+	}
+}
+
+func TestStartPTYLockedInvalidSizeRetiresOldHubBeforeFailure(t *testing.T) {
+	store := procstore.New(t.TempDir())
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	oldHub := newPTYHub(&fakePTYSession{}, 80, 24, 7)
+	oldHub.Publish([]byte("old"))
+	oldHub.Close(0, "")
+	mp := &managedProc{
+		rec: &procstore.Record{
+			ID:      1,
+			IOMode:  procstore.IOModePTY,
+			PTYCols: -1,
+			PTYRows: 24,
+			Status:  procstore.StatusStarting,
+		},
+		generation: 2,
+		ptyHub:     oldHub,
+	}
+	s := &Server{store: store}
+	logw, err := newLogWriter(store.LogPath(1), 1024, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mp.mu.Lock()
+	err = s.startPTYLocked(mp, exec.Command("unused"), logw, 2)
+	mp.mu.Unlock()
+	if err == nil {
+		t.Fatal("invalid PTY dimensions should fail")
+	}
+	if mp.ptyHub != nil {
+		t.Fatal("failed restart left the old hub exposed")
+	}
+	if mp.ptyNextSeq != 8 {
+		t.Fatalf("preserved next seq = %d, want 8", mp.ptyNextSeq)
+	}
+}
+
+func TestStartPTYLockedCommandFailureDoesNotRestoreOldHub(t *testing.T) {
+	store := procstore.New(t.TempDir())
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	oldHub := newPTYHub(&fakePTYSession{}, 80, 24, 30)
+	oldHub.Publish([]byte("old"))
+	oldHub.Close(0, "")
+	mp := &managedProc{
+		rec: &procstore.Record{
+			ID:      1,
+			IOMode:  procstore.IOModePTY,
+			PTYCols: 80,
+			PTYRows: 24,
+			Status:  procstore.StatusStarting,
+		},
+		generation: 3,
+		ptyHub:     oldHub,
+	}
+	s := &Server{store: store}
+	logw, err := newLogWriter(store.LogPath(1), 1024, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "definitely-not-a-bonsai-test-binary")
+
+	mp.mu.Lock()
+	err = s.startPTYLocked(mp, exec.Command(missing), logw, 3)
+	mp.mu.Unlock()
+	if err == nil {
+		t.Fatal("missing command should fail to start")
+	}
+	if mp.ptyHub != nil {
+		t.Fatal("command-start failure restored or retained the old hub")
+	}
+	if mp.ptyNextSeq != 31 {
+		t.Fatalf("preserved next seq = %d, want 31", mp.ptyNextSeq)
+	}
+}
+
+func TestStreamPTYCannotAttachToRetiredGeneration(t *testing.T) {
+	oldHub := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	oldHub.Publish([]byte("secret-old-generation-output"))
+	oldHub.Close(0, "")
+	mp := &managedProc{
+		rec: &procstore.Record{
+			ID:     1,
+			IOMode: procstore.IOModePTY,
+			Status: procstore.StatusFailed,
+		},
+		ptyHub: oldHub,
+	}
+	retirePTYHubLocked(mp)
+	s := &Server{procs: map[int]*managedProc{1: mp}, done: make(chan struct{})}
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.streamPTY(
+			serverConn,
+			protocol.NewDecoder(serverConn),
+			protocol.NewEncoder(serverConn),
+			&protocol.Request{Kind: protocol.KindPTYAttach, ID: 1},
+		)
+		serverConn.Close()
+	}()
+
+	resp, err := protocol.NewDecoder(clientConn).ReadResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Error == "" || !strings.Contains(resp.Error, "no live terminal") {
+		t.Fatalf("attach error = %q, want no live terminal", resp.Error)
+	}
+	if len(resp.Data) != 0 {
+		t.Fatalf("retired generation leaked replay data: %q", resp.Data)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("retired-generation attach handler did not finish")
+	}
+}
+
+func TestFreshPTYHubAfterFailedReplacementContinuesSequence(t *testing.T) {
+	oldHub := newPTYHub(&fakePTYSession{}, 80, 24, 50)
+	oldHub.Publish([]byte("old-1"))
+	oldHub.Publish([]byte("old-2"))
+	mp := &managedProc{ptyHub: oldHub}
+
+	next := retirePTYHubLocked(mp)
+	// Simulate one or more failed replacement attempts with no current hub.
+	if retryNext := retirePTYHubLocked(mp); retryNext != next {
+		t.Fatalf("retry next seq = %d, want %d", retryNext, next)
+	}
+
+	fresh := newPTYHub(&fakePTYSession{}, 80, 24, next)
+	fresh.Publish([]byte("fresh"))
+	sub, _, _, _ := fresh.Subscribe(next - 1)
+	defer sub.Close()
+	ev := <-sub.C
+	if ev.seq != next || string(ev.data) != "fresh" {
+		t.Fatalf("fresh event = seq %d data %q, want seq %d data fresh", ev.seq, ev.data, next)
 	}
 }
