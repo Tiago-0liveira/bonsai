@@ -16,6 +16,7 @@ import (
 
 func renderModel() Model {
 	m := testModel()
+	m.list = worktreelist.New()
 	m.width, m.height = 100, 40
 	m.keys = newKeyMap(nil)
 	m.diffFileContent = map[string]string{}
