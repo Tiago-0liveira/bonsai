@@ -44,6 +44,7 @@ type managedProc struct {
 	ptySession  corepty.Session
 	ptyHub      *ptyHub
 	ptyPumpDone chan struct{}
+	ptyNextSeq  uint64
 
 	generation   uint64
 	restartTimer *time.Timer
