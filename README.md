@@ -184,12 +184,12 @@ bonsai alias add <name> <cmd…>  # add a user alias
 bonsai alias list               # list aliases
 bonsai alias rm <name>          # remove a user alias
 bonsai shell-init               # print a shell 'bcd' cd helper
-bonsai serve                    # start/reuse API + webhook + web and attach
+bonsai serve                    # start/reuse the secured loopback API and attach
 bonsai serve -d                 # start/reuse, verify readiness, then detach
-bonsai serve --sidecar-script ./tunnel.sh
-bonsai serve status             # inspect the current worktree's serve group
-bonsai serve logs --process webhook
-bonsai serve restart [process]
+bonsai serve --dev-origin http://localhost:5173  # explicit frontend development only
+bonsai serve status             # inspect the current worktree's API process
+bonsai serve logs --process api
+bonsai serve restart [api]
 bonsai serve stop
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
@@ -272,25 +272,21 @@ MIT
 The GitHub App server, daemon bridge, API, and deployment setup are documented in [docs/git-backend.md](docs/git-backend.md).
 
 
-### Local serve stack
+### Local serve API
 
-`bonsai serve` is a thin client for a daemon-owned workspace stack. The daemon
-supervises the local API, the isolated GitHub webhook listener, the frontend
-(`npm run start` from `web/`), and configured sidecars. Detaching with `q`
-or Ctrl+C leaves the stack running; `X` in the serve view or
-`bonsai serve stop` explicitly stops it.
+`bonsai serve` is a thin client for one daemon-supervised browser API bound to
+`127.0.0.1:7001` by default. It does not start a webhook listener, Vite server,
+public tunnel, or cloud daemon bridge. Detaching with `q` or Ctrl+C leaves the
+API running; `X` in the serve view or `bonsai serve stop` explicitly stops it.
 
-The default local ports are API 7001, webhook 7002, and web 7003. Only the
-webhook port is intended for a public tunnel. Generic sidecars can be configured
-under `serve.sidecars` in `.bonsai.yaml`, or executable scripts can be added
-with repeatable `--sidecar-script` flags. Sidecars receive the
-`BONSAI_API_*`, `BONSAI_WEBHOOK_*`, `BONSAI_WEB_*`, `BONSAI_WORKSPACE`,
-and `BONSAI_SERVE_GROUP` environment variables.
+Production browser access is restricted to the exact origin
+`https://app.bonsai.dev` and exact Host `127.0.0.1:7001`. Frontend development
+origins are disabled unless `--dev-origin` explicitly selects
+`http://localhost:5173` or `http://127.0.0.1:5173`. The API never uses browser
+cookies for local authorization.
 
-
-For the local serve path, the web process proxies `/api` and `/auth` to the
-daemon-owned API port. The API still enforces browser Origin checks, but uses the
-loopback web origin for the local session/OAuth flow; production server behavior
-continues to use HTTPS-only secure cookies. Configure the GitHub App with the
-loopback callback URL used for development (default:
-`http://127.0.0.1:7003/auth/github/callback`).
+The browser creates a short-lived local capability with `POST /api/session` and
+sends it in `X-Bonsai-Session` for privileged requests. The token is held only
+in server/browser memory and is invalidated when the local API restarts. Git
+mutations continue through the daemon's structured Git bridge, while local
+GitHub operations use the installed `gh` CLI.
