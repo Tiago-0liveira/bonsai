@@ -180,7 +180,7 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	if err := start(
 		"api",
 		spec.Executable,
-		serveAPIArgs(*spec),
+		serveAPIArgs(s.root, *spec, "production"),
 		spec.WorkspacePath,
 		spec.APIPort,
 	); err != nil {
@@ -233,13 +233,13 @@ func checkServePorts(ports ...int) error {
 	return nil
 }
 
-func serveAPIArgs(spec procstore.ServeSpec) []string {
+func serveAPIArgs(repoRoot string, spec procstore.ServeSpec, securityMode string) []string {
 	return []string{
 		"__serve-api",
-		"--repo", spec.WorkspacePath,
+		"--repo", repoRoot,
 		"--port", strconv.Itoa(spec.APIPort),
 		"--browser-origin", spec.BrowserOrigin,
-		"--security-mode", "production",
+		"--security-mode", securityMode,
 	}
 }
 
