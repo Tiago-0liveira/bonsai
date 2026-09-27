@@ -16,7 +16,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
-
 var (
 	focusedBorder lipgloss.Style
 	blurredBorder lipgloss.Style
