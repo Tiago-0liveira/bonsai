@@ -393,3 +393,38 @@ func TestMouseWheelSuppressionAcrossLayouts(t *testing.T) {
 		}
 	}
 }
+
+
+func TestLayoutRecomputePreservesUIState(t *testing.T) {
+	m := renderModel()
+	m.width, m.height = 100, 40
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{
+		{WT: git.Worktree{Path: "/w/first", Branch: "first"}},
+		{WT: git.Worktree{Path: "/w/second", Branch: "second"}},
+	})
+	m.focus = focusTerminal
+	m.rightTab = tabInspect
+	before, ok := m.selectedWorktree()
+	if !ok {
+		t.Fatal("expected selected worktree")
+	}
+
+	m.paneLayout = layoutSpec{
+		Axis:             axisVertical,
+		Order:            [2]paneID{paneWorkspace, paneWorktrees},
+		WorktreesPercent: 65,
+	}
+	m.layout()
+
+	after, ok := m.selectedWorktree()
+	if !ok || after.Path != before.Path {
+		t.Fatalf("layout recompute changed worktree selection: before=%+v after=%+v ok=%v", before, after, ok)
+	}
+	if m.focus != focusTerminal {
+		t.Fatalf("layout recompute changed focus: %v", m.focus)
+	}
+	if m.rightTab != tabInspect {
+		t.Fatalf("layout recompute changed workspace tab: %v", m.rightTab)
+	}
+}
