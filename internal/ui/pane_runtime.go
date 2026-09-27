@@ -242,7 +242,6 @@ func (m Model) viewVisible(id viewID) bool {
 	return false
 }
 
-
 func (m *Model) focusedTerm() *terminal.Model {
 	id := m.focusedView()
 	if !terminalBackedView(id) {
