@@ -61,9 +61,10 @@ type Server struct {
 	store         *procstore.Store
 	logCap        int64
 
-	mu     sync.Mutex
-	procs  map[int]*managedProc
-	nextID int
+	mu          sync.Mutex
+	procs       map[int]*managedProc
+	nextID      int
+	serveGroups map[string]*serveRuntime
 
 	ln        net.Listener
 	lock      *procstore.FileLock
@@ -165,8 +166,9 @@ func NewServer(root string) (*Server, error) {
 		root:   store.Root(),
 		store:  store,
 		logCap: logCap,
-		procs:  map[int]*managedProc{},
-		ln:     ln,
+		procs:       map[int]*managedProc{},
+		serveGroups: map[string]*serveRuntime{},
+		ln:          ln,
 		lock:   lock,
 		done:   make(chan struct{}),
 	}
@@ -175,6 +177,7 @@ func NewServer(root string) (*Server, error) {
 	_ = procstore.Register(s.root, store.SockPath(), os.Getpid())
 
 	s.adoptExisting()
+	s.loadServeGroups()
 	return s, nil
 }
 

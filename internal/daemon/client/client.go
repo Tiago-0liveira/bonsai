@@ -449,3 +449,51 @@ func (c *Client) Logs(id int, follow bool, tailLines int, grep string, insensiti
 func (c *Client) Attach(id int, onChunk func(string) error) error {
 	return c.Logs(id, true, 0, "", false, onChunk)
 }
+
+
+// ServeStart starts or reuses the daemon-owned development stack for a workspace.
+func (c *Client) ServeStart(spec procstore.ServeSpec) (*procstore.ServeGroup, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindServeStart, ServeSpec: &spec})
+	if err != nil {
+		return nil, err
+	}
+	return resp.ServeGroup, nil
+}
+
+// ServeStatus returns the current serve group for workspaceID, if one exists.
+func (c *Client) ServeStatus(workspaceID string) (*procstore.ServeGroup, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindServeStatus, ServeGroup: workspaceID})
+	if err != nil {
+		return nil, err
+	}
+	return resp.ServeGroup, nil
+}
+
+// ServeStop gracefully stops every process in a serve group.
+func (c *Client) ServeStop(workspaceID string) error {
+	if err := c.ensureDaemon(); err != nil {
+		return err
+	}
+	_, err := c.roundtrip(&protocol.Request{Kind: protocol.KindServeStop, ServeGroup: workspaceID})
+	return err
+}
+
+// ServeRestart restarts one named process, or the entire group when processName is empty.
+func (c *Client) ServeRestart(workspaceID, processName string) (*procstore.ServeGroup, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{
+		Kind: protocol.KindServeRestart, ServeGroup: workspaceID, ProcessName: processName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.ServeGroup, nil
+}

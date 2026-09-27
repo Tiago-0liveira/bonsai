@@ -53,6 +53,22 @@ func (s *Server) handleConn(conn net.Conn) {
 		err := s.remove(req.ID)
 		writeResult(enc, &protocol.Response{}, err)
 
+	case protocol.KindServeStart:
+		group, err := s.serveStart(req.ServeSpec)
+		writeResult(enc, &protocol.Response{ServeGroup: group}, err)
+
+	case protocol.KindServeStatus:
+		group, err := s.serveStatus(req.ServeGroup)
+		writeResult(enc, &protocol.Response{ServeGroup: group}, err)
+
+	case protocol.KindServeStop:
+		err := s.serveStop(req.ServeGroup)
+		writeResult(enc, &protocol.Response{}, err)
+
+	case protocol.KindServeRestart:
+		group, err := s.serveRestart(req.ServeGroup, req.ProcessName)
+		writeResult(enc, &protocol.Response{ServeGroup: group}, err)
+
 	case protocol.KindLogs, "attach":
 		s.streamLogs(conn, enc, req)
 

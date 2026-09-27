@@ -15,7 +15,7 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 2
+const Version = 3
 
 // Request kinds.
 const (
@@ -27,9 +27,13 @@ const (
 	KindSetPolicy = "setPolicy"
 	KindLogs      = "logs"
 	KindAttach    = "attach"
-	KindRemove    = "remove"
-	KindPing      = "ping"
-	KindShutdown  = "shutdown"
+	KindRemove       = "remove"
+	KindServeStart   = "serveStart"
+	KindServeStatus  = "serveStatus"
+	KindServeStop    = "serveStop"
+	KindServeRestart = "serveRestart"
+	KindPing         = "ping"
+	KindShutdown     = "shutdown"
 )
 
 // Request is a single client command.
@@ -44,8 +48,17 @@ type Request struct {
 	Command    string            `json:"command,omitempty"`
 	Program    string            `json:"program,omitempty"`
 	Args       []string          `json:"args,omitempty"`
-	WorkingDir string            `json:"working_dir,omitempty"`
-	Policy     *procstore.Policy `json:"policy,omitempty"`
+	WorkingDir   string            `json:"working_dir,omitempty"`
+	Environment  map[string]string `json:"environment,omitempty"`
+	ExpectedPort int               `json:"expected_port,omitempty"`
+	ServeGroup   string            `json:"serve_group,omitempty"`
+	ServeName    string            `json:"serve_name,omitempty"`
+	ServeRequired bool             `json:"serve_required,omitempty"`
+	Policy       *procstore.Policy `json:"policy,omitempty"`
+
+	// Serve-group lifecycle.
+	ServeSpec   *procstore.ServeSpec `json:"serve,omitempty"`
+	ProcessName string               `json:"process_name,omitempty"`
 
 	// Target for kill/restart/setPolicy/logs.
 	ID        int    `json:"id,omitempty"`
@@ -70,7 +83,8 @@ type Response struct {
 
 	Record  *procstore.Record   `json:"record,omitempty"`  // spawn/restart
 	Records []*procstore.Record `json:"records,omitempty"` // list
-	Killed  []int               `json:"killed,omitempty"`  // kill
+	Killed     []int                 `json:"killed,omitempty"` // kill
+	ServeGroup *procstore.ServeGroup `json:"serve_group,omitempty"`
 
 	// Ping.
 	Version   int `json:"version,omitempty"`
