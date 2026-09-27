@@ -124,3 +124,131 @@ func TestPTYHubCloseReplaysExit(t *testing.T) {
 		t.Fatal("closed hub subscription should close")
 	}
 }
+
+
+func TestPTYHubExitDeliveredWithFullOutputBacklog(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.subQueue = 2
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+
+	h.Publish([]byte("one"))
+	h.Publish([]byte("two"))
+	h.Close(0, "")
+
+	for _, want := range []string{"one", "two"} {
+		ev, ok := <-sub.C
+		if !ok || ev.kind != "ptyOutput" || string(ev.data) != want {
+			t.Fatalf("output = %#v, %v; want %q", ev, ok, want)
+		}
+	}
+	exit, ok := <-sub.C
+	if !ok || exit.kind != "ptyExit" {
+		t.Fatalf("exit = %#v, %v; want ptyExit", exit, ok)
+	}
+	if _, ok := <-sub.C; ok {
+		t.Fatal("subscription should close after exit")
+	}
+}
+
+func TestPTYHubExitDeliveredAfterReplayAndFullLiveBacklog(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.subQueue = 2
+	h.Publish([]byte("replay"))
+
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+	h.Publish([]byte("live-one"))
+	h.Publish([]byte("live-two"))
+	h.Close(0, "")
+
+	for _, want := range []string{"replay", "live-one", "live-two"} {
+		ev, ok := <-sub.C
+		if !ok || ev.kind != "ptyOutput" || string(ev.data) != want {
+			t.Fatalf("event = %#v, %v; want output %q", ev, ok, want)
+		}
+	}
+	exit, ok := <-sub.C
+	if !ok || exit.kind != "ptyExit" {
+		t.Fatalf("exit = %#v, %v; want ptyExit", exit, ok)
+	}
+}
+
+func TestPTYHubExitFollowsQueuedOutputAtCapacity(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 10)
+	h.subQueue = 3
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+
+	h.Publish([]byte("a"))
+	h.Publish([]byte("b"))
+	h.Publish([]byte("c"))
+	h.Close(0, "")
+
+	var got []string
+	for ev := range sub.C {
+		if ev.kind == "ptyOutput" {
+			got = append(got, string(ev.data))
+			continue
+		}
+		if ev.kind != "ptyExit" {
+			t.Fatalf("unexpected terminal event: %#v", ev)
+		}
+		got = append(got, "exit")
+	}
+	want := []string{"a", "b", "c", "exit"}
+	if len(got) != len(want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("events = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestPTYHubExitDeliveredExactlyOnceAtCapacity(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.subQueue = 1
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+
+	h.Publish([]byte("queued"))
+	h.Close(0, "")
+	h.Close(99, "second close must be ignored")
+
+	exitCount := 0
+	outputCount := 0
+	for ev := range sub.C {
+		switch ev.kind {
+		case "ptyOutput":
+			outputCount++
+		case "ptyExit":
+			exitCount++
+		}
+	}
+	if outputCount != 1 || exitCount != 1 {
+		t.Fatalf("output=%d exit=%d, want output=1 exit=1", outputCount, exitCount)
+	}
+}
+
+func TestPTYHubExitMetadataDeliveredAtCapacity(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.subQueue = 2
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+
+	h.Publish([]byte("one"))
+	h.Publish([]byte("two"))
+	h.Close(23, "boom")
+
+	<-sub.C
+	<-sub.C
+	exit, ok := <-sub.C
+	if !ok {
+		t.Fatal("subscription closed before exit")
+	}
+	if exit.kind != "ptyExit" || exit.exitCode != 23 || exit.err != "boom" {
+		t.Fatalf("exit = %#v, want code 23 and error boom", exit)
+	}
+}
