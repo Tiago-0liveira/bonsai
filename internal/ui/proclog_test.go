@@ -148,8 +148,8 @@ func TestMouseWheelOverListLeavesLogAlone(t *testing.T) {
 
 	wheel := tea.MouseMsg{X: 1, Y: 3, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
 	nm, _ := m.onMouse(wheel)
-	if got := nm.(Model); got.term.ScrollPercent() > 0 {
-		t.Errorf("wheel over the worktree list scrolled the log (%.2f)", got.term.ScrollPercent())
+	if got := nm.(Model); got.viewTerm(viewProcesses).ScrollPercent() > 0 {
+		t.Errorf("wheel over the worktree list scrolled the log (%.2f)", got.viewTerm(viewProcesses).ScrollPercent())
 	}
 }
 
@@ -163,8 +163,8 @@ func TestMouseOffIgnoresWheel(t *testing.T) {
 	leftW, _, _ := m.dims()
 	wheel := tea.MouseMsg{X: leftW + 5, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
 	nm, _ := m.onMouse(wheel)
-	if got := nm.(Model); got.term.ScrollPercent() > 0 {
-		t.Errorf("wheel scrolled with the mouse turned off (%.2f)", got.term.ScrollPercent())
+	if got := nm.(Model); got.viewTerm(viewProcesses).ScrollPercent() > 0 {
+		t.Errorf("wheel scrolled with the mouse turned off (%.2f)", got.viewTerm(viewProcesses).ScrollPercent())
 	}
 }
 
