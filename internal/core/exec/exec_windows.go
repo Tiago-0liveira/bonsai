@@ -26,7 +26,10 @@ func terminateProcessTree(cmd *exec.Cmd, grace time.Duration) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	pid := cmd.Process.Pid
+	terminatePIDTree(cmd.Process.Pid, grace)
+}
+
+func terminatePIDTree(pid int, grace time.Duration) {
 	if pid <= 0 {
 		return
 	}

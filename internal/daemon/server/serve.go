@@ -563,7 +563,7 @@ func (s *Server) stopServeProcess(mp *managedProc, grace time.Duration) error {
 	if cmd != nil {
 		coreexec.TerminateProcessTree(cmd, grace)
 	} else if pid > 0 {
-		coreexec.KillPID(pid)
+		coreexec.TerminatePIDTree(pid, grace)
 	}
 	if done != nil {
 		select {

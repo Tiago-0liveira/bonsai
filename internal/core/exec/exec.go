@@ -369,6 +369,12 @@ func TerminateProcessTree(cmd *exec.Cmd, grace time.Duration) {
 	terminateProcessTree(cmd, grace)
 }
 
+// TerminatePIDTree requests graceful process-tree termination for an adopted
+// process where no *exec.Cmd remains, then force-kills descendants after grace.
+func TerminatePIDTree(pid int, grace time.Duration) {
+	terminatePIDTree(pid, grace)
+}
+
 // ShellCmd builds an interactive shell *exec.Cmd rooted at path, suitable for
 // tea.ExecProcess (the caller wires up stdio).
 func ShellCmd(path string) *exec.Cmd {
