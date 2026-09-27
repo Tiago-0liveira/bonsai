@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	relayCookieName = "bonsai_relay_session"
+	relayCookieName       = "bonsai_relay_session"
 	maxSessionSubscribers = 8
-	subscriberQueueSize = 16
+	subscriberQueueSize   = 16
 )
 
 type subscriber struct {
@@ -41,7 +41,7 @@ func (h *eventHub) subscribe(sessionKey string, allows func(RelayEvent) bool) (*
 		return nil, false
 	}
 	h.nextID++
-	sub := &subscriber{id:h.nextID, session:sessionKey, allows:allows, ch:make(chan RelayEvent, subscriberQueueSize)}
+	sub := &subscriber{id: h.nextID, session: sessionKey, allows: allows, ch: make(chan RelayEvent, subscriberQueueSize)}
 	h.subs[sub.id] = sub
 	h.perSession[sessionKey]++
 	return sub, true
