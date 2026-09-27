@@ -22,6 +22,7 @@ import (
 const (
 	localRepositoryID  = "local"
 	localBrowserUserID = "local-browser"
+	localAPIVersion    = 1
 )
 
 type daemonClient interface {
@@ -95,7 +96,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": version.String()})
+	writeJSON(w, http.StatusOK, map[string]any{"version": version.String(), "api_version": localAPIVersion})
 }
 
 func (s *Server) createSession(w http.ResponseWriter, _ *http.Request) {
