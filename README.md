@@ -286,3 +286,11 @@ under `serve.sidecars` in `.bonsai.yaml`, or executable scripts can be added
 with repeatable `--sidecar-script` flags. Sidecars receive the
 `BONSAI_API_*`, `BONSAI_WEBHOOK_*`, `BONSAI_WEB_*`, `BONSAI_WORKSPACE`,
 and `BONSAI_SERVE_GROUP` environment variables.
+
+
+For the local serve path, the web process proxies `/api` and `/auth` to the
+daemon-owned API port. The API still enforces browser Origin checks, but uses the
+loopback web origin for the local session/OAuth flow; production server behavior
+continues to use HTTPS-only secure cookies. Configure the GitHub App with the
+loopback callback URL used for development (default:
+`http://127.0.0.1:7003/auth/github/callback`).
