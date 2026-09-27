@@ -155,12 +155,15 @@ func (h *ptyHub) Publish(data []byte) {
 	}
 
 	for id, ch := range h.subs {
-		select {
-		case ch <- ev:
-		default:
+		// Keep one queue slot reserved for the terminal lifecycle event. Without
+		// this reservation a subscriber whose output queue is exactly full when
+		// the process exits can observe EOF without ever receiving ptyExit.
+		if len(ch) >= cap(ch)-1 {
 			delete(h.subs, id)
 			close(ch)
+			continue
 		}
+		ch <- ev
 	}
 }
 
@@ -248,10 +251,9 @@ func (h *ptyHub) Close(exitCode int, exitErr string) {
 	h.exitErr = exitErr
 	ev := ptyEvent{kind: protocol.KindPTYExit, exitCode: exitCode, err: exitErr}
 	for id, ch := range h.subs {
-		select {
-		case ch <- ev:
-		default:
-		}
+		// Publish always preserves one slot for terminal completion, so this send
+		// is guaranteed not to block while h.mu is held.
+		ch <- ev
 		delete(h.subs, id)
 		close(ch)
 	}
