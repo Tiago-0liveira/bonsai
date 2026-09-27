@@ -1029,6 +1029,7 @@ internal/ui/layout_test.go
 internal/ui/model.go
 internal/ui/view.go
 internal/ui/update.go
+internal/ui/overlays.go
 internal/ui/render_test.go
 
 internal/ui/components/prefs/prefs.go
@@ -1044,6 +1045,8 @@ internal/core/config/state_test.go
 ~~~
 
 No other file is pre-approved.
+
+internal/ui/overlays.go was added to this whitelist with explicit approval because the existing Preferences construction and SaveMsg persistence seam lives in that file. Changes there remain limited to passing, applying, and persisting layout preference state.
 
 If another file appears necessary, stop before editing it and verify whether that means scope has expanded.
 
