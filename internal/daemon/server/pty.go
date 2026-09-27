@@ -30,10 +30,16 @@ type ptyEvent struct {
 }
 
 type ptySubscription struct {
-	hub  *ptyHub
-	id   uint64
-	once sync.Once
-	C    <-chan ptyEvent
+	hub     *ptyHub
+	id      uint64
+	once    sync.Once
+	C       <-chan ptyEvent
+	evicted <-chan struct{}
+}
+
+type ptySubscriber struct {
+	events  chan ptyEvent
+	evicted chan struct{}
 }
 
 func (s *ptySubscription) Close() {
@@ -54,7 +60,7 @@ type ptyHub struct {
 
 	nextSeq uint64
 	nextSub uint64
-	subs    map[uint64]chan ptyEvent
+	subs    map[uint64]*ptySubscriber
 
 	replay      []ptyEvent
 	replayBytes int
@@ -76,7 +82,7 @@ func newPTYHub(session corepty.Session, cols, rows int, startSeq uint64) *ptyHub
 		cols:      cols,
 		rows:      rows,
 		nextSeq:   startSeq,
-		subs:      make(map[uint64]chan ptyEvent),
+		subs:      make(map[uint64]*ptySubscriber),
 		replayCap: ptyReplayBytes,
 		subQueue:  ptySubscriberQueue,
 	}
@@ -111,6 +117,7 @@ func (h *ptyHub) Subscribe(afterSeq uint64) (*ptySubscription, int, int, uint64)
 		capacity = 1
 	}
 	ch := make(chan ptyEvent, capacity)
+	evicted := make(chan struct{})
 	for _, ev := range h.replay {
 		if ev.seq > afterSeq {
 			ch <- ev
@@ -120,21 +127,21 @@ func (h *ptyHub) Subscribe(afterSeq uint64) (*ptySubscription, int, int, uint64)
 	if h.closed {
 		ch <- ptyEvent{kind: protocol.KindPTYExit, exitCode: h.exitCode, err: h.exitErr}
 		close(ch)
-		return &ptySubscription{hub: h, id: id, C: ch}, h.cols, h.rows, h.nextSeq
+		return &ptySubscription{hub: h, id: id, C: ch, evicted: evicted}, h.cols, h.rows, h.nextSeq
 	}
-	h.subs[id] = ch
-	return &ptySubscription{hub: h, id: id, C: ch}, h.cols, h.rows, h.nextSeq
+	h.subs[id] = &ptySubscriber{events: ch, evicted: evicted}
+	return &ptySubscription{hub: h, id: id, C: ch, evicted: evicted}, h.cols, h.rows, h.nextSeq
 }
 
 func (h *ptyHub) unsubscribe(id uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ch, ok := h.subs[id]
+	sub, ok := h.subs[id]
 	if !ok {
 		return
 	}
 	delete(h.subs, id)
-	close(ch)
+	close(sub.events)
 }
 
 func (h *ptyHub) Publish(data []byte) {
@@ -160,16 +167,17 @@ func (h *ptyHub) Publish(data []byte) {
 		}
 	}
 
-	for id, ch := range h.subs {
+	for id, sub := range h.subs {
 		// Keep one queue slot reserved for the terminal lifecycle event. Without
 		// this reservation a subscriber whose output queue is exactly full when
 		// the process exits can observe EOF without ever receiving ptyExit.
-		if len(ch) >= cap(ch)-1 {
+		if len(sub.events) >= cap(sub.events)-1 {
 			delete(h.subs, id)
-			close(ch)
+			close(sub.evicted)
+			close(sub.events)
 			continue
 		}
-		ch <- ev
+		sub.events <- ev
 	}
 }
 
@@ -256,12 +264,12 @@ func (h *ptyHub) Close(exitCode int, exitErr string) {
 	h.exitCode = exitCode
 	h.exitErr = exitErr
 	ev := ptyEvent{kind: protocol.KindPTYExit, exitCode: exitCode, err: exitErr}
-	for id, ch := range h.subs {
+	for id, sub := range h.subs {
 		// Publish always preserves one slot for terminal completion, so this send
 		// is guaranteed not to block while h.mu is held.
-		ch <- ev
+		sub.events <- ev
 		delete(h.subs, id)
-		close(ch)
+		close(sub.events)
 	}
 }
 
@@ -395,6 +403,9 @@ func (s *Server) streamPTY(conn net.Conn, dec *protocol.Decoder, enc *protocol.E
 
 	sub, cols, rows, nextSeq := hub.Subscribe(req.AfterSeq)
 	defer sub.Close()
+	streamDone := make(chan struct{})
+	defer close(streamDone)
+	go watchPTYStream(conn, sub, streamDone, s.done)
 	if err := enc.WriteResponse(&protocol.Response{
 		OK: true, Kind: protocol.KindPTYAttached, ID: req.ID,
 		PTYCols: cols, PTYRows: rows, NextSeq: nextSeq,
@@ -469,6 +480,16 @@ func (s *Server) streamPTY(conn net.Conn, dec *protocol.Decoder, enc *protocol.E
 				return
 			}
 		}
+	}
+}
+
+func watchPTYStream(conn net.Conn, sub *ptySubscription, streamDone, serverDone <-chan struct{}) {
+	select {
+	case <-sub.evicted:
+		_ = conn.Close()
+	case <-serverDone:
+		_ = conn.Close()
+	case <-streamDone:
 	}
 }
 
