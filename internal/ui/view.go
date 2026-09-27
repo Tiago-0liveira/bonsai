@@ -604,6 +604,14 @@ func (m Model) resolvedPaneLayout() resolvedLayout {
 	return resolvePaneLayout(m.width, m.height, barH, m.paneLayout)
 }
 
+// dims is retained for existing layout-sensitive tests and helpers. It reports
+// the worktrees outer width, workspace outer width, and workspace inner height,
+// all derived from the same resolved rectangles used by runtime rendering.
+func (m Model) dims() (worktreesW, workspaceW, workspaceInnerH int) {
+	resolved := m.resolvedPaneLayout()
+	return resolved.Worktrees.W, resolved.Workspace.W, max(resolved.Workspace.H-2, 1)
+}
+
 // layout recomputes child component sizes from their own resolved pane
 // rectangles. Persisted percentages are never changed by runtime clamps.
 func (m *Model) layout() {
