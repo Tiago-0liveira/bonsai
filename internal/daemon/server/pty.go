@@ -286,17 +286,13 @@ func (s *Server) startPTYLocked(mp *managedProc, cmd *exec.Cmd, logw *logWriter,
 		_ = logw.Close()
 		return errGenerationMismatch
 	}
+	nextSeq := retirePTYHubLocked(mp)
 	cols, rows, err := corepty.NormalizeSize(mp.rec.PTYCols, mp.rec.PTYRows)
 	if err != nil {
 		_ = logw.Close()
 		return err
 	}
 	mp.rec.PTYCols, mp.rec.PTYRows = cols, rows
-
-	nextSeq := uint64(1)
-	if mp.ptyHub != nil {
-		nextSeq = mp.ptyHub.NextSeq()
-	}
 
 	s.appendMarker(mp.rec.ID, procstoreMarkerStart(mp.rec))
 	proc, err := corepty.Start(cmd, cols, rows)
@@ -311,6 +307,7 @@ func (s *Server) startPTYLocked(mp *managedProc, cmd *exec.Cmd, logw *logWriter,
 
 	session := proc.Session()
 	hub := newPTYHub(session, cols, rows, nextSeq)
+	mp.ptyNextSeq = nextSeq
 	pumpDone := make(chan struct{})
 	done := make(chan struct{})
 
@@ -403,9 +400,10 @@ func (s *Server) streamPTY(conn net.Conn, dec *protocol.Decoder, enc *protocol.E
 		return
 	}
 	hub := mp.ptyHub
+	status := mp.rec.Status
 	mp.mu.Unlock()
 	if hub == nil {
-		writeResult(enc, nil, fmt.Errorf("PTY for process #%d is unavailable after daemon restart", req.ID))
+		writeResult(enc, nil, fmt.Errorf("PTY for process #%d has no live terminal (status %s)", req.ID, status))
 		return
 	}
 
@@ -489,6 +487,19 @@ func (s *Server) streamPTY(conn net.Conn, dec *protocol.Decoder, enc *protocol.E
 			}
 		}
 	}
+}
+
+func retirePTYHubLocked(mp *managedProc) uint64 {
+	nextSeq := mp.ptyNextSeq
+	if nextSeq == 0 {
+		nextSeq = 1
+	}
+	if mp.ptyHub != nil {
+		nextSeq = mp.ptyHub.NextSeq()
+	}
+	mp.ptyNextSeq = nextSeq
+	mp.ptyHub = nil
+	return nextSeq
 }
 
 func watchPTYStream(conn net.Conn, sub *ptySubscription, streamDone, serverDone <-chan struct{}) {
