@@ -103,7 +103,6 @@ func (m *Manager) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-
 func (m *Manager) secureCookies() bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(m.Origin)), "https://")
 }
