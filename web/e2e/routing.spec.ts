@@ -38,6 +38,7 @@ test('application waits for an explicit local connection and remains usable with
   await expect.poll(() => healthCalls).toBe(1)
   await expect.poll(() => sessionCalls).toBe(1)
   await expect(page.getByText('bonsai', { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: /Connect GitHub/i })).toBeVisible()
 })
 
 test('reload requires a fresh local capability', async ({ page }) => {
@@ -60,8 +61,11 @@ test('reload requires a fresh local capability', async ({ page }) => {
   await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
   await expect.poll(() => sessions).toBe(1)
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Connect to local Bonsai' })).toBeVisible()
+  const reconnect = page.getByRole('button', { name: 'Connect to local Bonsai' })
+  await expect(reconnect).toBeVisible()
   expect(sessions).toBe(1)
+  await reconnect.click()
+  await expect.poll(() => sessions).toBe(2)
 })
 
 test('production preview sends restrictive security headers', async ({ page }) => {
@@ -72,5 +76,6 @@ test('production preview sends restrictive security headers', async ({ page }) =
   expect(headers['content-security-policy']).toContain("connect-src 'self' https://api.bonsai.dev http://127.0.0.1:7001 ws://127.0.0.1:7001")
   expect(headers['referrer-policy']).toBe('no-referrer')
   expect(headers['x-content-type-options']).toBe('nosniff')
+  expect(headers['permissions-policy']).toContain('loopback-network=(self)')
   expect(await page.locator('script[src^="http"]').count()).toBe(0)
 })
