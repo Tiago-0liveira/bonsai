@@ -19,66 +19,20 @@ const rootRoute = createRootRoute({
   ),
 })
 
-const workspaceRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/',
-  component: () => <WorkspacePage />,
-})
-
-const worktreesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/worktrees',
-  component: () => <WorkspacePage focus="worktrees" />,
-})
-
-const agentsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/agents',
-  component: () => <WorkspacePage focus="agents" />,
-})
-
-const githubRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/github',
-  component: PullRequestsPage,
-})
-
-const prsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/pull-requests',
-  component: PullRequestsPage,
-})
-
-const tablesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/tables',
-  component: BoardPage,
-})
-
-const filesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/files',
-  component: FilesPage,
-})
-
-const logsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/logs',
-  component: LogsPage,
-})
+const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <WorkspacePage /> })
+const worktreesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/worktrees', component: () => <WorkspacePage focus="worktrees" /> })
+const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/agents', component: () => <WorkspacePage focus="agents" /> })
+const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: '/github', component: PullRequestsPage })
+const prsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pull-requests', component: PullRequestsPage })
+const tablesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/tables', component: BoardPage })
+const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/files', component: FilesPage })
+const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsPage })
 
 const routeTree = rootRoute.addChildren([
-  workspaceRoute,
-  worktreesRoute,
-  agentsRoute,
-  githubRoute,
-  prsRoute,
-  tablesRoute,
-  filesRoute,
-  logsRoute,
+  workspaceRoute, worktreesRoute, agentsRoute, githubRoute, prsRoute, tablesRoute, filesRoute, logsRoute,
 ])
 
-export const router = createRouter({ routeTree })
+export const router = createRouter({ routeTree, basepath: '/app' })
 
 declare module '@tanstack/react-router' {
   interface Register {
