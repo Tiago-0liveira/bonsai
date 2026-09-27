@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test'
-import { mockGitBackend } from './mockGit'
+import { mockGitBackend, openConnectedApp } from './mockGit'
 
 test.beforeEach(async ({ page }) => {
   await mockGitBackend(page)
 })
 
 test('Auto-layout clears expanded History and keeps repeated layouts stable', async ({ page }) => {
-  await page.goto('/')
+  await openConnectedApp(page)
   await page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })
     .getByRole('button', { name: /Expand/ }).click()
   const worktree = page.getByTestId('rf__node-wt-web')
@@ -37,7 +37,7 @@ test('Auto-layout clears expanded History and keeps repeated layouts stable', as
 })
 
 test('adding and removing a shelf agent preserves other branches and readable PR labels', async ({ page }) => {
-  await page.goto('/')
+  await openConnectedApp(page)
   await page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })
     .getByRole('button', { name: /Expand/ }).click()
   const owner = page.getByTestId('rf__node-wt-web')
