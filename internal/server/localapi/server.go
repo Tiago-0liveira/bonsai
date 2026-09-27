@@ -47,7 +47,7 @@ type Server struct {
 	registry      projectRegistry
 	sessions      *sessionStore
 	state         *gitstore.Store
-	events        *eventHub
+	eventHub      *eventHub
 	sequence      atomic.Uint64
 }
 
@@ -73,7 +73,7 @@ func New(cfg Config) (*Server, error) {
 		registry:      newStaticProjectRegistry(cfg.RepoDir),
 		sessions:      newSessionStore(),
 		state:         state,
-		events:        newEventHub(),
+		eventHub:      newEventHub(),
 	}, nil
 }
 
