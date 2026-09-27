@@ -337,7 +337,7 @@ func (m Model) onPRDetail(msg prDetailMsg) (tea.Model, tea.Cmd) {
 		m.prPaneErr = ""
 		m.prDetail[msg.detail.Number] = msg.detail
 	}
-	if m.rightTab == tabPR {
+	if m.viewVisible(viewPR) {
 		m.refreshPRPane()
 	}
 	return m, nil
@@ -355,7 +355,7 @@ func (m Model) onChecks(msg checksMsg) (tea.Model, tea.Cmd) {
 		notify("bonsai: CI "+msg.rollup, fmt.Sprintf("PR #%d checks: %s", msg.number, msg.rollup))
 	}
 	m.rebuildItems()
-	if m.rightTab == tabPR {
+	if m.viewVisible(viewPR) {
 		m.refreshPRPane()
 	}
 	return m, nil
@@ -1179,67 +1179,57 @@ func (m Model) openCreateSourceModal() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// toggleProcsTab switches the right pane between the Git Log and Processes tabs.
-// Selecting Processes moves focus to the right pane.
+// toggleProcsTab activates Processes, or returns to Log when Processes is the
+// currently focused view. The target view may live in any pane.
 func (m Model) toggleProcsTab() (tea.Model, tea.Cmd) {
-	if m.rightTab == tabProcs {
-		m.rightTab = tabLog
-		m.layout() // the Processes footer is gone: give its rows back to the viewport
-		m.term.SetTitle("Git Log")
-		m.term.SetFollow(false)
-		m.viewTerm(viewProcesses).SetContent(m.logContent)
+	if m.focusedView() == viewProcesses {
+		if m.activateView(viewLog) {
+			m.layout()
+			if wt, ok := m.selectedWorktree(); ok {
+				return m, m.refreshView(viewLog, wt)
+			}
+		}
 		return m, nil
 	}
-	m.rightTab = tabProcs
-	m.focus = focusTerminal
-	m.list.Blur()
-	m.term.Focus()
-	m.refreshProcPane()
+	if m.activateView(viewProcesses) {
+		m.layout()
+		m.refreshProcPane()
+	}
 	return m, nil
 }
 
-// openLogTab switches the right pane to the Git Log tab for the selection.
+// openLogTab activates Git Log wherever the configured layout placed it.
 func (m Model) openLogTab() (tea.Model, tea.Cmd) {
-	m.rightTab = tabLog
+	if !m.activateView(viewLog) {
+		return m, nil
+	}
 	m.layout()
-	m.focus = focusTerminal
-	m.list.Blur()
-	m.term.Focus()
-	m.term.SetTitle("Git Log")
+	if wt, ok := m.selectedWorktree(); ok {
+		return m, m.refreshView(viewLog, wt)
+	}
+	term := m.viewTerm(viewLog)
+	term.SetTitle("Git Log")
+	term.SetFollow(false)
+	term.SetContent(m.logContent)
+	return m, nil
+}
+
+// cycleRightTab is retained as the Shift+Tab command, but now cycles only the
+// available views assigned to the focused pane.
+func (m Model) cycleRightTab() (tea.Model, tea.Cmd) {
+	if !m.cycleFocusedPaneView() {
+		return m, nil
+	}
+	m.layout()
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		m.term.SetFollow(false)
-		m.viewTerm(viewProcesses).SetContent(m.logContent)
 		return m, nil
 	}
-	return m, loadLog(wt.Path)
+	return m, m.reloadRightPane()
 }
 
-// cycleRightTab advances to the next visible right-pane tab, focusing the right
-// pane and loading the tab's content.
-func (m Model) cycleRightTab() (tea.Model, tea.Cmd) {
-	tabs := m.visibleTabs()
-	if len(tabs) == 0 {
-		return m, nil
-	}
-	idx := 0
-	for i, t := range tabs {
-		if t == m.rightTab {
-			idx = i
-			break
-		}
-	}
-	m.rightTab = tabs[(idx+1)%len(tabs)]
-	m.focus = focusTerminal
-	m.list.Blur()
-	m.term.Focus()
-	cmd := m.reloadRightPane()
-	return m, cmd
-}
-
-// tabVisible reports whether tab t is currently available for the selection.
+// tabVisible reports whether the legacy tab's view is currently available.
 func (m Model) tabVisible(t rightTab) bool {
-
 	for _, v := range m.visibleTabs() {
 		if v == t {
 			return true
@@ -1248,40 +1238,70 @@ func (m Model) tabVisible(t rightTab) bool {
 	return false
 }
 
-// reloadRightPane refreshes the active tab's content for the current selection,
-// falling back to the Git Log tab if the active tab is no longer visible.
+// reloadRightPane refreshes the currently focused view. The name is retained
+// while legacy callsites are migrated to the pane/view model.
 func (m *Model) reloadRightPane() tea.Cmd {
-	if !m.tabVisible(m.rightTab) {
-		m.rightTab = tabLog
-	}
-	m.layout() // the viewport's height is tab-dependent (Processes footer)
+	m.normalizePaneActives()
+	m.layout()
 	wt, ok := m.selectedWorktree()
 	if !ok {
 		return nil
 	}
-	switch m.rightTab {
-	case tabPR:
-		m.refreshPRPane()
-		if n, isPR := m.prForBranch(wt.Branch); isPR {
-			return loadPRDetail(m.repoDir, n)
-		}
-		return nil
-	case tabDiff:
-		return m.enterDiff(wt)
-	case tabInspect:
-		return m.enterInspect(wt)
-	case tabChecks:
-		return m.enterChecks(wt)
-	case tabProcs:
-		m.refreshProcPane()
-		return nil
-	default:
-		m.term.SetTitle("Git Log")
-		return loadLog(wt.Path)
-	}
+	return m.refreshView(m.focusedView(), wt)
 }
 
-// openPRTab focuses the PR detail tab for the selected worktree's PR.
+// refreshVisibleViews updates every currently visible contextual view exactly
+// once after a worktree selection/data-context change.
+func (m *Model) refreshVisibleViews(wt git.Worktree) []tea.Cmd {
+	m.normalizePaneActives()
+	seen := map[viewID]bool{}
+	var cmds []tea.Cmd
+	for _, id := range m.visibleViews() {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if cmd := m.refreshView(id, wt); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return cmds
+}
+
+func (m *Model) refreshView(id viewID, wt git.Worktree) tea.Cmd {
+	switch id {
+	case viewWorktrees:
+		return nil
+	case viewLog:
+		term := m.viewTerm(viewLog)
+		term.SetTitle("Git Log")
+		term.SetFollow(false)
+		return loadLog(wt.Path)
+	case viewProcesses:
+		m.refreshProcPane()
+		return nil
+	case viewInspect:
+		return m.enterInspect(wt)
+	case viewDiff:
+		if wt.IsMain {
+			return nil
+		}
+		return m.enterDiff(wt)
+	case viewChecks:
+		if wt.Branch == "" || wt.Branch == "(detached)" {
+			return nil
+		}
+		return m.enterChecks(wt)
+	case viewPR:
+		m.refreshPRPane()
+		if n, ok := m.prForBranch(wt.Branch); ok {
+			return loadPRDetail(m.repoDir, n)
+		}
+	}
+	return nil
+}
+
+// openPRTab focuses the pane containing the PR view.
 func (m Model) openPRTab() (tea.Model, tea.Cmd) {
 	wt, ok := m.selectedWorktree()
 	if !ok {
@@ -1292,16 +1312,15 @@ func (m Model) openPRTab() (tea.Model, tea.Cmd) {
 		m.status = "no PR connected to this worktree"
 		return m, nil
 	}
-	m.rightTab = tabPR
+	if !m.activateView(viewPR) {
+		return m, nil
+	}
 	m.layout()
-	m.focus = focusTerminal
-	m.list.Blur()
-	m.term.Focus()
 	m.refreshPRPane()
 	return m, loadPRDetail(m.repoDir, n)
 }
 
-// openDiffTab focuses the diff-vs-base tab for the selected worktree.
+// openDiffTab focuses the pane containing Diff.
 func (m Model) openDiffTab() (tea.Model, tea.Cmd) {
 	wt, ok := m.selectedWorktree()
 	if !ok {
@@ -1311,19 +1330,18 @@ func (m Model) openDiffTab() (tea.Model, tea.Cmd) {
 		m.status = "diff vs base is unavailable on the main worktree"
 		return m, nil
 	}
-	m.rightTab = tabDiff
+	if !m.activateView(viewDiff) {
+		return m, nil
+	}
 	m.layout()
-	m.focus = focusTerminal
-	m.list.Blur()
-	m.term.Focus()
-	cmd := m.enterDiff(wt)
-	return m, cmd
+	return m, m.enterDiff(wt)
 }
 
 // enterDiff shows the diff tab for wt, resetting per-file state when the diff
 // belongs to a different worktree than the one currently cached.
 func (m *Model) enterDiff(wt git.Worktree) tea.Cmd {
-	m.term.SetTitle("Diff · " + wt.Branch)
+	term := m.viewTerm(viewDiff)
+	term.SetTitle("Diff · " + wt.Branch)
 	base := m.upstreamFor(wt.Branch)
 	if m.diffPath != wt.Path {
 		m.diffPath = wt.Path
@@ -1331,8 +1349,8 @@ func (m *Model) enterDiff(wt git.Worktree) tea.Cmd {
 		m.diffFiles = nil
 		m.diffCursor = 0
 		m.diffFileContent = map[string]string{}
-		m.term.SetFollow(false)
-		m.viewTerm(viewProcesses).SetContent("(loading diff…)")
+		term.SetFollow(false)
+		term.SetContent("(loading diff…)")
 	} else {
 		m.refreshDiffPane()
 	}
@@ -1346,7 +1364,7 @@ func (m Model) onInspector(msg inspectorMsg) (tea.Model, tea.Cmd) {
 		return m, nil // stale (selection moved on)
 	}
 	m.inspect = msg.data
-	if m.rightTab == tabInspect {
+	if m.viewVisible(viewInspect) {
 		m.refreshInspectPane()
 	}
 	return m, nil
@@ -1358,18 +1376,18 @@ func (m Model) openInspectTab() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m.rightTab = tabInspect
+	if !m.activateView(viewInspect) {
+		return m, nil
+	}
 	m.layout()
-	m.focus = focusTerminal
-	m.list.Blur()
-	m.term.Focus()
 	return m, m.enterInspect(wt)
 }
 
 // enterInspect shows the inspector for wt, showing cached data instantly when it
 // belongs to the same worktree, and returns the load command.
 func (m *Model) enterInspect(wt git.Worktree) tea.Cmd {
-	m.term.SetTitle("Inspect · " + wt.Branch)
+	term := m.viewTerm(viewInspect)
+	term.SetTitle("Inspect · " + wt.Branch)
 	base := ""
 	if !wt.IsMain {
 		base = m.upstreamFor(wt.Branch)
@@ -1377,8 +1395,8 @@ func (m *Model) enterInspect(wt git.Worktree) tea.Cmd {
 	if m.inspectPath != wt.Path {
 		m.inspectPath = wt.Path
 		m.inspect = inspectorData{}
-		m.term.SetFollow(false)
-		m.viewTerm(viewProcesses).SetContent("(loading…)")
+		term.SetFollow(false)
+		term.SetContent("(loading…)")
 	} else {
 		m.refreshInspectPane()
 	}
@@ -1387,8 +1405,9 @@ func (m *Model) enterInspect(wt git.Worktree) tea.Cmd {
 
 // refreshInspectPane renders the cached inspector data into the viewport.
 func (m *Model) refreshInspectPane() {
-	m.term.SetFollow(false)
-	m.viewTerm(viewProcesses).SetContent(m.renderInspect())
+	term := m.viewTerm(viewInspect)
+	term.SetFollow(false)
+	term.SetContent(m.renderInspect())
 }
 
 // onRuns records branch workflow runs for the Checks tab, discarding stale
@@ -1404,7 +1423,7 @@ func (m Model) onRuns(msg runsMsg) (tea.Model, tea.Cmd) {
 		m.ciErr = ""
 		m.ciRuns = msg.runs
 	}
-	if m.rightTab == tabChecks {
+	if m.viewVisible(viewChecks) {
 		m.refreshChecksPane()
 	}
 	return m, nil
@@ -1420,24 +1439,24 @@ func (m Model) openChecksTab() (tea.Model, tea.Cmd) {
 		m.status = "checks need a branch — HEAD is detached"
 		return m, nil
 	}
-	m.rightTab = tabChecks
+	if !m.activateView(viewChecks) {
+		return m, nil
+	}
 	m.layout()
-	m.focus = focusTerminal
-	m.list.Blur()
-	m.term.Focus()
 	return m, m.enterChecks(wt)
 }
 
 // enterChecks shows the Checks tab for wt, keeping cached runs when they belong
 // to the same worktree, and returns the load command.
 func (m *Model) enterChecks(wt git.Worktree) tea.Cmd {
-	m.term.SetTitle("Checks · " + wt.Branch)
+	term := m.viewTerm(viewChecks)
+	term.SetTitle("Checks · " + wt.Branch)
 	if m.ciPath != wt.Path {
 		m.ciPath = wt.Path
 		m.ciRuns = nil
 		m.ciErr = ""
-		m.term.SetFollow(false)
-		m.viewTerm(viewProcesses).SetContent("(loading…)")
+		term.SetFollow(false)
+		term.SetContent("(loading…)")
 	} else {
 		m.refreshChecksPane()
 	}
@@ -1446,8 +1465,9 @@ func (m *Model) enterChecks(wt git.Worktree) tea.Cmd {
 
 // refreshChecksPane renders the cached workflow runs into the viewport.
 func (m *Model) refreshChecksPane() {
-	m.term.SetFollow(false)
-	m.viewTerm(viewProcesses).SetContent(m.renderChecks())
+	term := m.viewTerm(viewChecks)
+	term.SetFollow(false)
+	term.SetContent(m.renderChecks())
 }
 
 // onDiff records the changed-file list and renders the diff tab.
@@ -1457,9 +1477,9 @@ func (m Model) onDiff(msg diffMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.err != nil {
 		m.diffFiles = nil
-		if m.rightTab == tabDiff {
-			m.term.SetTitle("Diff")
-			m.viewTerm(viewProcesses).SetContent("(diff unavailable: " + msg.err.Error() + ")")
+		if m.viewVisible(viewDiff) {
+			m.viewTerm(viewDiff).SetTitle("Diff")
+			m.viewTerm(viewDiff).SetContent("(diff unavailable: " + msg.err.Error() + ")")
 		}
 		return m, nil
 	}
@@ -1467,7 +1487,7 @@ func (m Model) onDiff(msg diffMsg) (tea.Model, tea.Cmd) {
 	if m.diffCursor >= len(m.diffFiles) {
 		m.diffCursor = 0
 	}
-	if m.rightTab == tabDiff {
+	if m.viewVisible(viewDiff) {
 		m.refreshDiffPane()
 	}
 	return m, nil
@@ -1475,8 +1495,9 @@ func (m Model) onDiff(msg diffMsg) (tea.Model, tea.Cmd) {
 
 // refreshDiffPane renders the changed-file list into the viewport.
 func (m *Model) refreshDiffPane() {
-	m.term.SetFollow(false)
-	m.viewTerm(viewProcesses).SetContent(m.renderDiff())
+	term := m.viewTerm(viewDiff)
+	term.SetFollow(false)
+	term.SetContent(m.renderDiff())
 }
 
 // diffTabKey handles navigation/expand keys while the Diff tab is focused.
@@ -1490,14 +1511,14 @@ func (m Model) diffTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			m.diffCursor--
 		}
 		m.refreshDiffPane()
-		m.term.EnsureVisible(diffHeaderLines + m.diffCursor)
+		m.viewTerm(viewDiff).EnsureVisible(diffHeaderLines + m.diffCursor)
 		return true, m, nil
 	case "down", "ctrl+j", "j":
 		if m.diffCursor < len(m.diffFiles)-1 {
 			m.diffCursor++
 		}
 		m.refreshDiffPane()
-		m.term.EnsureVisible(diffHeaderLines + m.diffCursor)
+		m.viewTerm(viewDiff).EnsureVisible(diffHeaderLines + m.diffCursor)
 		return true, m, nil
 	case "enter", " ":
 		f := m.diffFiles[m.diffCursor].Path
@@ -1519,28 +1540,29 @@ func (m Model) diffTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 
 // refreshPRPane renders the PR detail tab from the cached PRDetail + checks.
 func (m *Model) refreshPRPane() {
-	m.term.SetTitle("PR")
-	m.term.SetFollow(false)
+	term := m.viewTerm(viewPR)
+	term.SetTitle("PR")
+	term.SetFollow(false)
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		m.viewTerm(viewProcesses).SetContent("(no worktree selected)")
+		term.SetContent("(no worktree selected)")
 		return
 	}
 	n, isPR := m.prForBranch(wt.Branch)
 	if !isPR {
-		m.viewTerm(viewProcesses).SetContent("(no PR connected)")
+		term.SetContent("(no PR connected)")
 		return
 	}
 	d, ok := m.prDetail[n]
 	if !ok {
 		if m.prPaneErr != "" {
-			m.viewTerm(viewProcesses).SetContent("PR #" + strconv.Itoa(n) + ": " + m.prPaneErr)
+			term.SetContent("PR #" + strconv.Itoa(n) + ": " + m.prPaneErr)
 		} else {
-			m.viewTerm(viewProcesses).SetContent("(loading PR #" + strconv.Itoa(n) + "…)")
+			term.SetContent("(loading PR #" + strconv.Itoa(n) + "…)")
 		}
 		return
 	}
-	m.viewTerm(viewProcesses).SetContent(m.renderPRDetail(d, m.prChecks[n]))
+	term.SetContent(m.renderPRDetail(d, m.prChecks[n]))
 }
 
 // prTabKey handles PR-action keys while the PR tab is focused. The bool reports
@@ -1763,23 +1785,23 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		return true, m, loadScripts(wt.Path, m.cfg.PkgMgr.SearchDepth)
 
 	case msg.String() == "g": // jump to the start of the log
-		m.term.GotoTop()
+		m.viewTerm(viewProcesses).GotoTop()
 		return true, m, nil
 
 	case msg.String() == "G": // jump back to the live end and resume tailing
-		m.term.GotoBottom()
+		m.viewTerm(viewProcesses).GotoBottom()
 		return true, m, nil
 
 	case msg.String() == "up" || msg.String() == "ctrl+k":
 		m.moveProcSel(wt.Path, -1)
 		m.refreshProcPane()
-		m.term.GotoBottom() // a different process: show its live tail, not the old offset
+		m.viewTerm(viewProcesses).GotoBottom() // a different process: show its live tail, not the old offset
 		return true, m, nil
 
 	case msg.String() == "down" || msg.String() == "ctrl+j":
 		m.moveProcSel(wt.Path, 1)
 		m.refreshProcPane()
-		m.term.GotoBottom() // a different process: show its live tail, not the old offset
+		m.viewTerm(viewProcesses).GotoBottom() // a different process: show its live tail, not the old offset
 		return true, m, nil
 	}
 
