@@ -391,7 +391,6 @@ func TestPersistPTYSizeConcurrentStaleCallerCannotRegressRecord(t *testing.T) {
 	}
 }
 
-
 type signalingWriteConn struct {
 	net.Conn
 	mu                 sync.Mutex
