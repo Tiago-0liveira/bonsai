@@ -124,8 +124,9 @@ aliases:
 #
 # The API defaults to port 7001, accepts the production browser origin
 # https://app.bonsai.dev (or an explicit loopback development origin), validates
-# the exact Host and Origin, and requires a short-lived capability printed by
-# `bonsai serve`.
+# the exact Host and Origin, and issues short-lived capability sessions through
+# `POST /api/session`. Session tokens live only in browser memory and are never
+# persisted or printed by `bonsai serve`.
 serve:
   api_port: 7001
   startup_timeout_seconds: 30
