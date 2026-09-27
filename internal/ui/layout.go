@@ -23,7 +23,7 @@ const (
 	minWorktreesOuterWidth = 16
 	minWorkspaceOuterWidth = 12
 	minWorktreesOuterHeight = 3
-	minWorkspaceOuterHeight = 4
+	minWorkspaceOuterHeight = 5
 )
 
 type layoutSpec struct {
@@ -123,7 +123,7 @@ func normalizeLayoutPrefs(p config.TUILayoutPrefs) layoutSpec {
 		return def
 	}
 
-	if p.Sizes == nil {
+	if p.Sizes == nil || len(p.Sizes) != 2 {
 		return def
 	}
 	worktrees, okWorktrees := p.Sizes[string(paneWorktrees)]
