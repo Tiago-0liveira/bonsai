@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,11 +29,11 @@ func (v *stringListFlag) Set(value string) error {
 	return nil
 }
 
-func cmdServe(repoDir string, args []string, out, errOut io.Writer) error {
+func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer) error {
 	action := "start"
 	if len(args) > 0 {
 		switch args[0] {
-		case "status", "attach", "restart", "stop":
+		case "status", "attach", "logs", "restart", "stop":
 			action, args = args[0], args[1:]
 		}
 	}
@@ -69,7 +71,10 @@ func cmdServe(repoDir string, args []string, out, errOut io.Writer) error {
 		if group == nil {
 			return fmt.Errorf("no serve group for this workspace")
 		}
-		return printServeStatus(out, group)
+		return runServeTUI(in, out, c, group)
+
+	case "logs":
+		return cmdServeLogs(c, workspaceID, args, out, errOut)
 
 	case "stop":
 		if len(args) != 0 {
@@ -204,8 +209,42 @@ func cmdServe(repoDir string, args []string, out, errOut io.Writer) error {
 		} else {
 			fmt.Fprintln(out, "serve group ready; detached")
 		}
+		return printServeStatus(out, group)
 	}
-	return printServeStatus(out, group)
+	return runServeTUI(in, out, c, group)
+}
+
+func cmdServeLogs(c *client.Client, workspaceID string, args []string, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet("serve logs", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	follow := fs.Bool("f", false, "follow combined logs")
+	n := fs.Int("n", 200, "number of recent lines")
+	process := fs.String("process", "", "restrict to a process name")
+	grep := fs.String("grep", "", "show lines containing text")
+	insensitive := fs.Bool("i", false, "case-insensitive search")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: bonsai serve logs [-f] [-n N] [--process NAME] [--grep TEXT] [-i]")
+	}
+	group, err := c.ServeStatus(workspaceID)
+	if err != nil {
+		return err
+	}
+	if group == nil {
+		return fmt.Errorf("no serve group for this workspace")
+	}
+	ctx := context.Background()
+	stop := func() {}
+	if *follow {
+		ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt)
+	}
+	defer stop()
+	return c.ServeLogs(ctx, workspaceID, *process, *follow, *n, *grep, *insensitive, func(chunk string) error {
+		_, err := io.WriteString(out, chunk)
+		return err
+	})
 }
 
 func cloneServeEnv(in map[string]string) map[string]string {

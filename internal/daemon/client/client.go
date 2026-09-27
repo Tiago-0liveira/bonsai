@@ -517,7 +517,7 @@ func (c *Client) ServeLogs(ctx context.Context, workspaceID, processName string,
 	if err := protocol.NewEncoder(conn).WriteRequest(req); err != nil {
 		return err
 	}
-	if ctx != nil {
+	if ctx != nil && ctx.Done() != nil {
 		go func() {
 			<-ctx.Done()
 			_ = conn.Close()

@@ -184,6 +184,13 @@ bonsai alias add <name> <cmd…>  # add a user alias
 bonsai alias list               # list aliases
 bonsai alias rm <name>          # remove a user alias
 bonsai shell-init               # print a shell 'bcd' cd helper
+bonsai serve                    # start/reuse API + webhook + web and attach
+bonsai serve -d                 # start/reuse, verify readiness, then detach
+bonsai serve --sidecar-script ./tunnel.sh
+bonsai serve status             # inspect the current worktree's serve group
+bonsai serve logs --process webhook
+bonsai serve restart [process]
+bonsai serve stop
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage
@@ -263,3 +270,19 @@ MIT
 ## Web Git backend
 
 The GitHub App server, daemon bridge, API, and deployment setup are documented in [docs/git-backend.md](docs/git-backend.md).
+
+
+### Local serve stack
+
+`bonsai serve` is a thin client for a daemon-owned workspace stack. The daemon
+supervises the local API, the isolated GitHub webhook listener, the frontend
+(`npm run start` from `web/`), and configured sidecars. Detaching with `q`
+or Ctrl+C leaves the stack running; `X` in the serve view or
+`bonsai serve stop` explicitly stops it.
+
+The default local ports are API 7001, webhook 7002, and web 7003. Only the
+webhook port is intended for a public tunnel. Generic sidecars can be configured
+under `serve.sidecars` in `.bonsai.yaml`, or executable scripts can be added
+with repeatable `--sidecar-script` flags. Sidecars receive the
+`BONSAI_API_*`, `BONSAI_WEBHOOK_*`, `BONSAI_WEB_*`, `BONSAI_WORKSPACE`,
+and `BONSAI_SERVE_GROUP` environment variables.

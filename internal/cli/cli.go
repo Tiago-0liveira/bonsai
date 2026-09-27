@@ -96,7 +96,7 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "daemon":
 		return cmdDaemon(repoDir, args[1:], out)
 	case "serve":
-		return cmdServe(repoDir, args[1:], out, errOut)
+		return cmdServe(repoDir, args[1:], in, out, errOut)
 	default:
 		printUsage(errOut)
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -445,6 +445,8 @@ Usage:
   bonsai daemon status|stop       control the background daemon
   bonsai serve [-d]               run API + webhook + web via the daemon
   bonsai serve status|attach      inspect/attach the workspace serve group
+  bonsai serve logs [-f]           combined daemon-owned serve logs
+  bonsai serve logs --process X   logs for one serve process
   bonsai serve restart [process]  restart one/all serve processes
   bonsai serve stop               stop the workspace serve group
   bonsai alias list               list aliases
