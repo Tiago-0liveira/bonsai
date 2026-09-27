@@ -162,9 +162,9 @@ func runServeInternal(args []string) error {
 	}
 	address := fmt.Sprintf("127.0.0.1:%d", *port)
 	return localapi.Run(localapi.Config{
-		RepoDir: *repoDir,
-		Address: address,
+		RepoDir:       *repoDir,
+		Address:       address,
 		BrowserOrigin: *browserOrigin,
-		Development: *development,
+		Development:   *development,
 	})
 }
