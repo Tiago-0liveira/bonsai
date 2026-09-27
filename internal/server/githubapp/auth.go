@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -37,7 +38,7 @@ func (m *Manager) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication unavailable", 503)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "bonsai_oauth_state", Value: state, Path: "/auth/github/callback", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	http.SetCookie(w, &http.Cookie{Name: "bonsai_oauth_state", Value: state, Path: "/auth/github/callback", Secure: m.secureCookies(), HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	q := url.Values{"client_id": {m.ClientID}, "redirect_uri": {m.Origin + "/auth/github/callback"}, "state": {state}}
 	http.Redirect(w, r, "https://github.com/login/oauth/authorize?"+q.Encode(), http.StatusFound)
 }
@@ -83,8 +84,8 @@ func (m *Manager) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session unavailable", 503)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "bonsai_session", Value: secret, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: expiry})
-	http.SetCookie(w, &http.Cookie{Name: "bonsai_oauth_state", Path: "/auth/github/callback", Secure: true, HttpOnly: true, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "bonsai_session", Value: secret, Path: "/", Secure: m.secureCookies(), HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: expiry})
+	http.SetCookie(w, &http.Cookie{Name: "bonsai_oauth_state", Path: "/auth/github/callback", Secure: m.secureCookies(), HttpOnly: true, MaxAge: -1})
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 func (m *Manager) Logout(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +99,11 @@ func (m *Manager) Logout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: "bonsai_session", Path: "/", Secure: true, HttpOnly: true, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "bonsai_session", Path: "/", Secure: m.secureCookies(), HttpOnly: true, MaxAge: -1})
 	w.WriteHeader(204)
+}
+
+
+func (m *Manager) secureCookies() bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(m.Origin)), "https://")
 }
