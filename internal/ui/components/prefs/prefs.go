@@ -214,7 +214,7 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, lay
 				m.collapsed[i] = true
 			}
 		}
-		m.cursor = 1 // first preset
+		m.cursor = 1 // first layout control
 	}
 	return m
 }
@@ -426,10 +426,6 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		return m, nil
 
 	case rowLayoutOrientation:
-		d := dir
-		if d == 0 {
-			d = 1
-		}
 		if m.layout.Axis == "horizontal" {
 			m.layout.Axis = "vertical"
 		} else {
