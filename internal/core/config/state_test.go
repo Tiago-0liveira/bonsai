@@ -23,8 +23,9 @@ func TestStateWithoutLayoutStillDecodes(t *testing.T) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if st.Prefs.Layout.Version != 0 || st.Prefs.Layout.Axis != "" ||
-		len(st.Prefs.Layout.Order) != 0 || len(st.Prefs.Layout.Sizes) != 0 {
+	if st.Prefs.Layout.Version != 0 || st.Prefs.Layout.Root != nil ||
+		st.Prefs.Layout.Axis != "" || len(st.Prefs.Layout.Order) != 0 ||
+		len(st.Prefs.Layout.Sizes) != 0 {
 		t.Fatalf("old state should leave layout empty, got %+v", st.Prefs.Layout)
 	}
 	if st.Prefs.Theme != "bonsai" || st.Prefs.Sort != "activity" ||
@@ -34,7 +35,31 @@ func TestStateWithoutLayoutStillDecodes(t *testing.T) {
 	}
 }
 
-func TestStateLayoutRoundTripPreservesOtherPrefs(t *testing.T) {
+func TestVersion1LayoutStillDecodes(t *testing.T) {
+	data := []byte(`{
+	  "prefs": {
+	    "layout": {
+	      "version": 1,
+	      "axis": "vertical",
+	      "order": ["workspace", "worktrees"],
+	      "sizes": {"worktrees": 65, "workspace": 35}
+	    }
+	  }
+	}`)
+	var st State
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if st.Prefs.Layout.Version != 1 ||
+		st.Prefs.Layout.Axis != "vertical" ||
+		len(st.Prefs.Layout.Order) != 2 ||
+		st.Prefs.Layout.Order[0] != "workspace" ||
+		st.Prefs.Layout.Sizes["worktrees"] != 65 {
+		t.Fatalf("v1 layout decode mismatch: %+v", st.Prefs.Layout)
+	}
+}
+
+func TestStateVersion2LayoutRoundTripPreservesOtherPrefs(t *testing.T) {
 	want := Prefs{
 		Theme:      "sakura",
 		Sort:       "dirty",
@@ -43,12 +68,25 @@ func TestStateLayoutRoundTripPreservesOtherPrefs(t *testing.T) {
 		PRStatus:   "off",
 		Editor:     "hx",
 		Layout: TUILayoutPrefs{
-			Version: 1,
-			Axis:    "vertical",
-			Order:   []string{"workspace", "worktrees"},
-			Sizes: map[string]int{
-				"worktrees": 65,
-				"workspace": 35,
+			Version: 2,
+			Root: &TUILayoutNodePrefs{
+				Type:  "split",
+				Axis:  "horizontal",
+				Ratio: 40,
+				First: &TUILayoutNodePrefs{
+					Type: "pane",
+					Pane: &TUILayoutPanePrefs{
+						ID:    "left",
+						Views: []string{"worktrees", "inspect"},
+					},
+				},
+				Second: &TUILayoutNodePrefs{
+					Type: "pane",
+					Pane: &TUILayoutPanePrefs{
+						ID:    "right",
+						Views: []string{"log", "processes", "diff", "checks", "pr"},
+					},
+				},
 			},
 		},
 	}
@@ -70,13 +108,16 @@ func TestStateLayoutRoundTripPreservesOtherPrefs(t *testing.T) {
 		got.Prefs.Keys["prune"] != want.Keys["prune"] {
 		t.Fatalf("non-layout prefs were not preserved: got %+v want %+v", got.Prefs, want)
 	}
-	if got.Prefs.Layout.Version != want.Layout.Version ||
-		got.Prefs.Layout.Axis != want.Layout.Axis ||
-		len(got.Prefs.Layout.Order) != 2 ||
-		got.Prefs.Layout.Order[0] != "workspace" ||
-		got.Prefs.Layout.Order[1] != "worktrees" ||
-		got.Prefs.Layout.Sizes["worktrees"] != 65 ||
-		got.Prefs.Layout.Sizes["workspace"] != 35 {
-		t.Fatalf("layout round trip mismatch: got %+v want %+v", got.Prefs.Layout, want.Layout)
+	root := got.Prefs.Layout.Root
+	if got.Prefs.Layout.Version != 2 || root == nil ||
+		root.Type != "split" || root.Axis != "horizontal" || root.Ratio != 40 ||
+		root.First == nil || root.First.Pane == nil ||
+		root.First.Pane.ID != "left" ||
+		len(root.First.Pane.Views) != 2 ||
+		root.First.Pane.Views[1] != "inspect" ||
+		root.Second == nil || root.Second.Pane == nil ||
+		root.Second.Pane.ID != "right" ||
+		len(root.Second.Pane.Views) != 5 {
+		t.Fatalf("v2 layout round trip mismatch: got %+v", got.Prefs.Layout)
 	}
 }
