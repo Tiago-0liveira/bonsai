@@ -269,7 +269,7 @@ MIT
 
 ## Web Git backend
 
-The GitHub App server, daemon bridge, API, and deployment setup are documented in [docs/git-backend.md](docs/git-backend.md).
+The hardened loopback API and the separate GitHub webhook relay are documented in [docs/git-backend.md](docs/git-backend.md). The internet relay has no route to the local daemon or repositories.
 
 
 ### Local serve API
@@ -290,3 +290,17 @@ sends it in `X-Bonsai-Session` for privileged requests. The token is held only
 in server/browser memory and is invalidated when the local API restarts. Git
 mutations continue through the daemon's structured Git bridge, while local
 GitHub operations use the installed `gh` CLI.
+
+
+### Internet GitHub relay
+
+`cmd/bonsai-relay` serves the small cloud-only surface at `api.bonsai.dev`:
+GitHub OAuth/session routes, `POST /webhooks/github`, `GET /events`, and
+`GET /healthz`. Webhook signatures are verified before JSON normalization,
+delivery IDs are durably deduplicated, and SSE is scoped to repositories the
+GitHub-authenticated relay session may access.
+
+The relay sends normalized notification metadata only. It cannot access local
+files, worktrees, processes, the daemon, or local Bonsai session capabilities.
+Browser relay events invalidate local state; the browser then refreshes canonical
+state from the loopback API.
