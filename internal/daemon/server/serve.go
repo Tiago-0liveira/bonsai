@@ -525,6 +525,7 @@ func (s *Server) stopServeRuntime(rt *serveRuntime) error {
 	}
 	s.mu.Unlock()
 	s.removeServeArtifacts(rt.Spec.WorkspaceID)
+	s.closeServeLogSubscribers(rt.Spec.WorkspaceID)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}

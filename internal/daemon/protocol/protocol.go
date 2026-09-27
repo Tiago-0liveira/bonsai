@@ -15,7 +15,7 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 3
+const Version = 4
 
 // Request kinds.
 const (
@@ -32,6 +32,7 @@ const (
 	KindServeStatus  = "serveStatus"
 	KindServeStop    = "serveStop"
 	KindServeRestart = "serveRestart"
+	KindServeLogs    = "serveLogs"
 	KindPing         = "ping"
 	KindShutdown     = "shutdown"
 )

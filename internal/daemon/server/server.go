@@ -66,6 +66,12 @@ type Server struct {
 	nextID      int
 	serveGroups map[string]*serveRuntime
 
+	serveLogMu       sync.Mutex
+	serveLogRings    map[string]*serveLogRing
+	serveLogPartials map[string]string
+	serveLogSubs     map[string]map[int]chan string
+	serveLogNextSub  int
+
 	ln        net.Listener
 	lock      *procstore.FileLock
 	idleTimer *time.Timer
@@ -167,8 +173,11 @@ func NewServer(root string) (*Server, error) {
 		store:  store,
 		logCap: logCap,
 		procs:       map[int]*managedProc{},
-		serveGroups: map[string]*serveRuntime{},
-		ln:          ln,
+		serveGroups:     map[string]*serveRuntime{},
+		serveLogRings:    map[string]*serveLogRing{},
+		serveLogPartials: map[string]string{},
+		serveLogSubs:     map[string]map[int]chan string{},
+		ln:               ln,
 		lock:   lock,
 		done:   make(chan struct{}),
 	}
@@ -346,6 +355,7 @@ func (s *Server) shutdown(killChildren bool) {
 }
 
 func (s *Server) cleanup() {
+	s.closeAllServeLogSubscribers()
 	_ = s.ln.Close()
 	_ = os.Remove(s.store.SockPath())
 	_ = os.Remove(s.store.PidPath())

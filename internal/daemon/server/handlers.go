@@ -69,6 +69,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		group, err := s.serveRestart(req.ServeGroup, req.ProcessName)
 		writeResult(enc, &protocol.Response{ServeGroup: group}, err)
 
+	case protocol.KindServeLogs:
+		s.streamServeLogs(conn, enc, req)
+
 	case protocol.KindLogs, "attach":
 		s.streamLogs(conn, enc, req)
 

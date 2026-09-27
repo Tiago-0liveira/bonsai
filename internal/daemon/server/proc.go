@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -125,8 +126,14 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	} else {
 		cmd = coreexec.Command(workingDir, mp.rec.Command)
 	}
-	cmd.Stdout = logw
-	cmd.Stderr = logw
+	var stdout io.Writer = logw
+	var stderr io.Writer = logw
+	if mp.rec.ServeGroup != "" {
+		stdout = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "OUT", next: logw}
+		stderr = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "ERR", next: logw}
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
 	keys := make([]string, 0, len(mp.rec.Environment))
 	for key := range mp.rec.Environment {
@@ -167,6 +174,9 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	mp.rec.ExitCode = nil
 	mp.rec.ExitError = ""
 	_ = s.store.WriteRecord(mp.rec)
+	if mp.rec.ServeGroup != "" {
+		s.appendServeLog(mp.rec.ServeGroup, mp.rec.ServeName, "SYS", []byte("started\n"))
+	}
 
 	started := mp.rec.StartedAt
 	done := mp.waitDone

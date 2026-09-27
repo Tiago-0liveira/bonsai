@@ -5,6 +5,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -496,4 +497,51 @@ func (c *Client) ServeRestart(workspaceID, processName string) (*procstore.Serve
 		return nil, err
 	}
 	return resp.ServeGroup, nil
+}
+
+
+// ServeLogs reads or follows the daemon-owned combined serve-group log.
+func (c *Client) ServeLogs(ctx context.Context, workspaceID, processName string, follow bool, tailLines int, grep string, insensitive bool, onChunk func(string) error) error {
+	if err := c.ensureDaemon(); err != nil {
+		return err
+	}
+	conn, err := c.dial()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	req := &protocol.Request{
+		Kind: protocol.KindServeLogs, ServeGroup: workspaceID, ProcessName: processName,
+		Follow: follow, TailLines: tailLines, Grep: grep, GrepInsensitive: insensitive,
+	}
+	if err := protocol.NewEncoder(conn).WriteRequest(req); err != nil {
+		return err
+	}
+	if ctx != nil {
+		go func() {
+			<-ctx.Done()
+			_ = conn.Close()
+		}()
+	}
+	dec := protocol.NewDecoder(conn)
+	for {
+		resp, err := dec.ReadResponse()
+		if err != nil {
+			if ctx != nil && ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		if resp.Error != "" {
+			return errors.New(resp.Error)
+		}
+		if resp.LogChunk != "" {
+			if err := onChunk(resp.LogChunk); err != nil {
+				return err
+			}
+		}
+		if resp.EOF {
+			return nil
+		}
+	}
 }
