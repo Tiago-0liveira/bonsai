@@ -23,9 +23,12 @@ func (s *Server) newServeDevSecret(id string) (string, error) {
 	if err := os.MkdirAll(s.serveDir(), 0o700); err != nil {
 		return "", err
 	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
+	raw := []byte(os.Getenv("BONSAI_DEV_WEBHOOK_SECRET"))
+	if len(raw) == 0 {
+		raw = make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return "", err
+		}
 	}
 	path := s.serveDevSecretPath(id)
 	if err := os.WriteFile(path, []byte(hex.EncodeToString(raw)), 0o600); err != nil {

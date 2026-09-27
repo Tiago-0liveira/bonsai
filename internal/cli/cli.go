@@ -65,6 +65,15 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdPath(repoDir, args[1:], out)
 	}
 
+	// Internal contributor/testing commands intentionally stay out of public help
+	// and skip the normal update-check path.
+	switch args[0] {
+	case "__serve-dev-stack":
+		return cmdServeDevStack(repoDir, args[1:], in, out, errOut)
+	case "__dev-webhook":
+		return cmdDevWebhook(repoDir, args[1:], out, errOut)
+	}
+
 	// Periodic update check for standard CLI commands
 	_ = updater.PeriodicCheckHook(context.Background(), version.String(), in, out, errOut)
 
