@@ -47,8 +47,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 
-	subscriptionID, events := s.events.subscribe()
-	defer s.events.unsubscribe(subscriptionID)
+	subscriptionID, events := s.eventHub.subscribe()
+	defer s.eventHub.unsubscribe(subscriptionID)
 	if err := conn.WriteJSON(map[string]any{"type": "ready", "sequence": s.sequence.Load()}); err != nil {
 		return
 	}
