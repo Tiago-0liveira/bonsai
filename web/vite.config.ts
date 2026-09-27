@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
@@ -9,10 +10,16 @@ const securityHeaders = {
   'Permissions-Policy': 'local-network-access=(self)',
 }
 
+const httpsKey = process.env.BONSAI_E2E_HTTPS_KEY
+const httpsCert = process.env.BONSAI_E2E_HTTPS_CERT
+const previewHttps = httpsKey && httpsCert
+  ? { key: readFileSync(httpsKey), cert: readFileSync(httpsCert) }
+  : undefined
+
 export default defineConfig({
   plugins: [react()],
   server: { host: '127.0.0.1' },
-  preview: { headers: securityHeaders },
+  preview: { headers: securityHeaders, https: previewHttps },
   test: {
     environment: 'jsdom',
     globals: true,
