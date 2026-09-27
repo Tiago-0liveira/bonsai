@@ -31,6 +31,8 @@ describe('local Bonsai client', () => {
     await localFetch('/api/projects')
     const privileged = fetchMock.mock.calls.at(-1)
     expect(new Headers(privileged?.[1]?.headers).get('X-Bonsai-Session')).toBe('secret-session')
+    expect((privileged?.[1] as RequestInit & { targetAddressSpace?: string })?.targetAddressSpace).toBe('loopback')
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes('secret-session'))).toBe(true)
     expect(setItem.mock.calls.some(([, value]) => String(value).includes('secret-session'))).toBe(false)
   })
 
@@ -42,6 +44,7 @@ describe('local Bonsai client', () => {
     try {
       await connectLocalBonsai()
       expect(getLocalConnectionSnapshot().status).toBe('permission-denied')
+      expect(query).toHaveBeenCalledWith({ name: 'loopback-network' })
       expect(fetchMock).not.toHaveBeenCalled()
     } finally {
       Object.defineProperty(navigator, 'permissions', { configurable: true, value: originalPermissions })
