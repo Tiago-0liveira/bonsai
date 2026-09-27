@@ -52,7 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <Tooltip.Provider delayDuration={250}>
       <div className="relative flex h-full w-full flex-col overflow-hidden bg-[rgb(var(--bg))]">
         <TopBar />
-        {gitError && <div role="status" className="p-3 text-sm">{gitError} <a href="/auth/github" className="underline">Sign in with GitHub</a></div>}
+        {gitError && <div role="status" className="p-3 text-sm">{gitError}{gitError.includes('Sign in with GitHub') && <> <a href="/auth/github" className="underline">Sign in with GitHub</a></>}</div>}
         <div className="min-h-0 flex-1">
           {dockState === 'collapsed' ? (
             <MainWorkspace>{children}</MainWorkspace>
