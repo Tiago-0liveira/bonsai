@@ -34,6 +34,20 @@ describe('local Bonsai client', () => {
     expect(setItem.mock.calls.some(([, value]) => String(value).includes('secret-session'))).toBe(false)
   })
 
+  it('surfaces local network permission denial without probing loopback', async () => {
+    const originalPermissions = navigator.permissions
+    const query = vi.fn().mockResolvedValue({ state: 'denied' })
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query } })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    try {
+      await connectLocalBonsai()
+      expect(getLocalConnectionSnapshot().status).toBe('permission-denied')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(navigator, 'permissions', { configurable: true, value: originalPermissions })
+    }
+  })
+
   it('surfaces an incompatible local API protocol explicitly', async () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
