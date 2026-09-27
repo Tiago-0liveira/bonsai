@@ -670,6 +670,10 @@ function PullRequestsPanel() {
   }, [focusNonce])
 
   useEffect(() => {
+    if (selectedId) void loadPullRequest(selectedId)
+  }, [selectedId])
+
+  useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: 'nearest' })
   }, [selectedId, query, focusNonce])
 
