@@ -1221,8 +1221,7 @@ func (m Model) cycleRightTab() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.layout()
-	wt, ok := m.selectedWorktree()
-	if !ok {
+	if _, ok := m.selectedWorktree(); !ok {
 		return m, nil
 	}
 	return m, m.reloadRightPane()
