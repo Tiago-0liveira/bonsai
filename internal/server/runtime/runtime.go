@@ -5,10 +5,10 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -66,7 +66,7 @@ func LoadConfig(path string) (Config, error) {
 }
 
 // RunAPI starts only the Bonsai API. The serve path always binds it to loopback.
-func RunAPI(configPath, address string) error {
+func RunAPI(configPath, address, sessionSecretFile string) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
@@ -92,11 +92,18 @@ func RunAPI(configPath, address string) error {
 	}
 	defer svc.Close()
 
+	sessionSecret, err := readSessionSecret(sessionSecretFile)
+	if err != nil {
+		return err
+	}
+	internal := webhooks.NewInternalQueue(sessionSecret, st, svc.WebhookEvent)
 	mux := http.NewServeMux()
 	svc.Register(mux)
+	mux.Handle("POST /internal/github-events", internal)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.Run(ctx)
+	go internal.Run(ctx)
 
 	server := &http.Server{
 		Addr:              address,
@@ -114,54 +121,67 @@ func RunAPI(configPath, address string) error {
 	return err
 }
 
-// RunWebhookShell starts the isolated webhook-only HTTP boundary. It verifies
-// GitHub signatures before parsing and intentionally exposes no other route.
-func RunWebhookShell(configPath, address string) error {
-	if _, err := LoadConfig(configPath); err != nil {
+// RunWebhook starts the isolated verify+normalize-only webhook boundary.
+func RunWebhook(configPath, address, apiAddress, sessionSecretFile string) error {
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
 		return err
 	}
 	if err := requireLoopback(address); err != nil {
 		return err
 	}
-	secret := os.Getenv("GITHUB_WEBHOOK_SECRET")
-	if secret == "" {
+	if err := requireLoopback(apiAddress); err != nil {
+		return err
+	}
+	githubSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+	if githubSecret == "" {
 		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is required")
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /github/webhook", func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		if !webhooks.Verify([]byte(secret), body, r.Header.Get("X-Hub-Signature-256")) {
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
-			return
-		}
-		if r.Header.Get("X-GitHub-Delivery") == "" || r.Header.Get("X-GitHub-Event") == "" || !json.Valid(body) {
-			http.Error(w, "invalid delivery", http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusAccepted)
+	sessionSecret, err := readSessionSecret(sessionSecretFile)
+	if err != nil {
+		return err
+	}
+	repositories := make([]webhooks.RepositoryIdentity, 0, len(cfg.Repositories))
+	for _, r := range cfg.Repositories {
+		repositories = append(repositories, webhooks.RepositoryIdentity{
+			RepositoryID: r.GitHubRepositoryID, InstallationID: r.InstallationID,
+		})
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	ingress := webhooks.NewIngress([]byte(githubSecret), repositories, func(ctx context.Context, event webhooks.Event) error {
+		return webhooks.ForwardEvent(ctx, client, "http://"+apiAddress+"/internal/github-events", sessionSecret, event)
 	})
+	mux := http.NewServeMux()
+	mux.Handle("POST /github/webhook", ingress)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server := &http.Server{
-		Addr:              address,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       90 * time.Second,
-		MaxHeaderBytes:    32 << 10,
+		Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10,
 	}
 	go shutdownWithContext(ctx, server)
 	log.Printf("Bonsai webhook listener at %s", address)
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 	if err == http.ErrServerClosed {
 		return nil
 	}
 	return err
+}
+
+func readSessionSecret(path string) ([]byte, error) {
+	if path == "" {
+		return nil, fmt.Errorf("serve session secret file required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil || len(secret) != 32 {
+		return nil, fmt.Errorf("invalid serve session secret")
+	}
+	return secret, nil
 }
 
 func buildService(cfg Config, st *store.Store) (*api.Service, error) {

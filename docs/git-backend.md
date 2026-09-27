@@ -209,3 +209,26 @@ the running web app obtains Git state from this API.
 GitHub references: [installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation),
 [user access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app),
 and [webhook verification](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries).
+
+
+## Local `bonsai serve` webhook boundary
+
+`bonsai serve` uses a stricter local runtime split than the legacy combined
+deployment entrypoint. The daemon owns three core process groups: the API on
+`127.0.0.1:$BONSAI_API_PORT`, the frontend on
+`127.0.0.1:$BONSAI_WEB_PORT`, and a dedicated webhook listener on
+`127.0.0.1:$BONSAI_WEBHOOK_PORT`. Only the webhook port is intended to be a
+tunnel target.
+
+The webhook listener accepts only `POST /github/webhook`. It bounds the raw
+body, validates `X-Hub-Signature-256` before JSON parsing, allowlists GitHub
+event/action pairs, validates the configured repository/installation, and
+normalizes the payload to non-executable event fields. It cannot invoke git,
+shell commands, worktree operations, or general API handlers.
+
+For every serve group the daemon writes a random 256-bit session secret with
+user-only permissions. Only the API and webhook process receive the secret-file
+path. The webhook listener signs each normalized event with the timestamp,
+GitHub delivery ID, and exact normalized body. The API rejects stale or invalid
+signatures and durably deduplicates delivery IDs before processing. A tunnel
+must never target the API, frontend, or daemon socket.

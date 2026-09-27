@@ -153,8 +153,8 @@ func runServeInternal(kind string, args []string) error {
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", "", "server config path")
 	port := fs.Int("port", 0, "loopback listen port")
-	_ = fs.Int("api-port", 0, "main API port")
-	_ = fs.String("session-secret-file", "", "serve session secret file")
+	apiPort := fs.Int("api-port", 0, "main API port")
+	sessionSecretFile := fs.String("session-secret-file", "", "serve session secret file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -164,9 +164,12 @@ func runServeInternal(kind string, args []string) error {
 	address := fmt.Sprintf("127.0.0.1:%d", *port)
 	switch kind {
 	case "__serve-api":
-		return serverruntime.RunAPI(*configPath, address)
+		return serverruntime.RunAPI(*configPath, address, *sessionSecretFile)
 	case "__serve-webhook":
-		return serverruntime.RunWebhookShell(*configPath, address)
+		if *apiPort <= 0 {
+			return fmt.Errorf("__serve-webhook requires --api-port")
+		}
+		return serverruntime.RunWebhook(*configPath, address, fmt.Sprintf("127.0.0.1:%d", *apiPort), *sessionSecretFile)
 	default:
 		return fmt.Errorf("unknown internal serve command %q", kind)
 	}
