@@ -14,6 +14,48 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
+// LayoutPrefs is the Preferences overlay's UI-facing snapshot of the
+// normalized top-level TUI layout. Persistence remains owned by the parent.
+type LayoutPrefs struct {
+	Axis      string
+	Order     []string
+	Worktrees int
+}
+
+func defaultLayoutPrefs() LayoutPrefs {
+	return LayoutPrefs{
+		Axis:      "horizontal",
+		Order:     []string{"worktrees", "workspace"},
+		Worktrees: 35,
+	}
+}
+
+func normalizeLayoutPrefs(p LayoutPrefs) LayoutPrefs {
+	def := defaultLayoutPrefs()
+	if p.Axis != "horizontal" && p.Axis != "vertical" {
+		return def
+	}
+	if len(p.Order) != 2 ||
+		(p.Order[0] != "worktrees" && p.Order[0] != "workspace") ||
+		(p.Order[1] != "worktrees" && p.Order[1] != "workspace") ||
+		p.Order[0] == p.Order[1] {
+		return def
+	}
+	if p.Worktrees < 20 || p.Worktrees > 80 {
+		return def
+	}
+	return LayoutPrefs{
+		Axis:      p.Axis,
+		Order:     append([]string(nil), p.Order...),
+		Worktrees: p.Worktrees,
+	}
+}
+
+func cloneLayoutPrefs(p LayoutPrefs) LayoutPrefs {
+	p.Order = append([]string(nil), p.Order...)
+	return p
+}
+
 // SaveMsg carries the full preferences snapshot after any change.
 type SaveMsg struct {
 	Theme      string
@@ -26,6 +68,8 @@ type SaveMsg struct {
 	Editor string
 	// Keys holds personal keybinding overrides (action -> key).
 	Keys map[string]string
+	// Layout is the current top-level pane arrangement.
+	Layout LayoutPrefs
 }
 
 // CloseMsg is emitted when the user dismisses the preferences.
@@ -61,6 +105,10 @@ type rowKind int
 
 const (
 	rowHeader rowKind = iota
+	rowLayoutOrientation
+	rowLayoutOrder
+	rowLayoutSizes
+	rowLayoutReset
 	rowPreset
 	rowSort
 	rowPruneMerge
@@ -85,6 +133,7 @@ type Model struct {
 	pruneMerge bool
 	prStatus   string
 	editor     string
+	layout     LayoutPrefs
 	actions    []Action
 	defaults   map[string]string // action -> default key
 	overrides  map[string]string // action -> personal key (working copy)
@@ -100,13 +149,14 @@ type Model struct {
 // New builds the overlay. actions must be ordered by section; a section header
 // is inserted wherever the section changes. startOnKeys places the cursor on
 // the first keybinding row (used when arriving from the keymap modal).
-func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, presets []string, actions []Action, startOnKeys bool) Model {
+func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, layout LayoutPrefs, presets []string, actions []Action, startOnKeys bool) Model {
 	if sort == "" {
 		sort = SortModes[0]
 	}
 	if prStatus == "" {
 		prStatus = PRStatusModes[0]
 	}
+	layout = normalizeLayoutPrefs(layout)
 	m := Model{
 		presets:    presets,
 		theme:      themePreset,
@@ -114,12 +164,20 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, pre
 		pruneMerge: pruneMerge,
 		prStatus:   prStatus,
 		editor:     editor,
+		layout:     layout,
 		actions:    actions,
 		defaults:   map[string]string{},
 		overrides:  map[string]string{},
 		collapsed:  map[int]bool{},
 	}
-	m.rows = append(m.rows, row{kind: rowHeader, header: "Appearance"})
+	m.rows = append(m.rows,
+		row{kind: rowHeader, header: "Layout"},
+		row{kind: rowLayoutOrientation},
+		row{kind: rowLayoutOrder},
+		row{kind: rowLayoutSizes},
+		row{kind: rowLayoutReset},
+		row{kind: rowHeader, header: "Appearance"},
+	)
 	for _, p := range presets {
 		m.rows = append(m.rows, row{kind: rowPreset, preset: p})
 	}
@@ -251,7 +309,15 @@ func (m Model) save() tea.Cmd {
 	for k, v := range m.overrides {
 		keys[k] = v
 	}
-	snap := SaveMsg{Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, PRStatus: m.prStatus, Editor: m.editor, Keys: keys}
+	snap := SaveMsg{
+		Theme:      m.theme,
+		Sort:       m.sort,
+		PruneMerge: m.pruneMerge,
+		PRStatus:   m.prStatus,
+		Editor:     m.editor,
+		Keys:       keys,
+		Layout:     cloneLayoutPrefs(m.layout),
+	}
 	return func() tea.Msg { return snap }
 }
 
@@ -358,6 +424,47 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		}
 		m.msg = ""
 		return m, nil
+
+	case rowLayoutOrientation:
+		d := dir
+		if d == 0 {
+			d = 1
+		}
+		if m.layout.Axis == "horizontal" {
+			m.layout.Axis = "vertical"
+		} else {
+			m.layout.Axis = "horizontal"
+		}
+		m.msg = "layout orientation: " + m.layout.Axis
+		return m, m.save()
+
+	case rowLayoutOrder:
+		m.layout.Order[0], m.layout.Order[1] = m.layout.Order[1], m.layout.Order[0]
+		m.msg = "pane order: " + layoutOrderLabel(m.layout)
+		return m, m.save()
+
+	case rowLayoutSizes:
+		d := dir
+		if d == 0 {
+			d = 1
+		}
+		m.layout.Worktrees += d * 5
+		if m.layout.Worktrees < 20 {
+			m.layout.Worktrees = 20
+		}
+		if m.layout.Worktrees > 80 {
+			m.layout.Worktrees = 80
+		}
+		m.msg = fmt.Sprintf("pane sizes: worktrees %d%% / workspace %d%%", m.layout.Worktrees, 100-m.layout.Worktrees)
+		return m, m.save()
+
+	case rowLayoutReset:
+		if dir != 0 {
+			return m, nil
+		}
+		m.layout = defaultLayoutPrefs()
+		m.msg = "layout reset to default"
+		return m, m.save()
 
 	case rowPreset:
 		m.theme = r.preset
@@ -510,6 +617,14 @@ func (m Model) renderRows() string {
 	return b.String()
 }
 
+func layoutOrderLabel(p LayoutPrefs) string {
+	sep := " → "
+	if p.Axis == "vertical" {
+		sep = " ↓ "
+	}
+	return p.Order[0] + sep + p.Order[1]
+}
+
 func (m Model) renderRow(i int) string {
 	r := m.rows[i]
 	sel := i == m.cursor
@@ -533,6 +648,35 @@ func (m Model) renderRow(i int) string {
 			return cursorStyle.Render("› ") + indent + cursorStyle.Render(arrow+name)
 		}
 		return "  " + indent + headerStyle.Render(arrow+name)
+
+	case rowLayoutOrientation:
+		label := "orientation"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.layout.Axis+" ▸")
+
+	case rowLayoutOrder:
+		label := "pane order"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+layoutOrderLabel(m.layout)+" ▸")
+
+	case rowLayoutSizes:
+		label := "pane sizes"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		value := fmt.Sprintf("◂ worktrees %d%% / workspace %d%% ▸", m.layout.Worktrees, 100-m.layout.Worktrees)
+		return cursor + pad(label, labelCol) + accentStyle.Render(value)
+
+	case rowLayoutReset:
+		label := "reset layout"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + label + dimStyle.Render("  (horizontal · worktrees first · 35/65)")
 
 	case rowPreset:
 		mark := dimStyle.Render("○")
