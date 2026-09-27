@@ -88,6 +88,12 @@ func (h *ptyHub) NextSeq() uint64 {
 	return h.nextSeq
 }
 
+func (h *ptyHub) Size() (int, int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cols, h.rows
+}
+
 func (h *ptyHub) Subscribe(afterSeq uint64) (*ptySubscription, int, int, uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -418,12 +424,7 @@ func (s *Server) streamPTY(conn net.Conn, dec *protocol.Decoder, enc *protocol.E
 					control <- ptyControlResult{err: err}
 					continue
 				}
-				mp.mu.Lock()
-				if mp.ptyHub == hub {
-					mp.rec.PTYCols, mp.rec.PTYRows = frame.PTYCols, frame.PTYRows
-					_ = s.store.WriteRecord(mp.rec)
-				}
-				mp.mu.Unlock()
+				s.persistPTYSize(mp, hub)
 			case protocol.KindPTYDetach:
 				control <- ptyControlResult{detach: true}
 				return
@@ -469,6 +470,17 @@ func (s *Server) streamPTY(conn net.Conn, dec *protocol.Decoder, enc *protocol.E
 			}
 		}
 	}
+}
+
+func (s *Server) persistPTYSize(mp *managedProc, hub *ptyHub) {
+	mp.mu.Lock()
+	defer mp.mu.Unlock()
+	if mp.ptyHub != hub {
+		return
+	}
+	cols, rows := hub.Size()
+	mp.rec.PTYCols, mp.rec.PTYRows = cols, rows
+	_ = s.store.WriteRecord(mp.rec)
 }
 
 func (s *Server) closePTYResources() {
