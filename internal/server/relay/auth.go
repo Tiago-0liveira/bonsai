@@ -120,7 +120,7 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 		Name: oauthStateCookieName, Path: "/auth/github/callback",
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
-	http.Redirect(w, r, s.frontendOrigin+"/", http.StatusFound)
+	http.Redirect(w, r, s.frontendOrigin+"/app", http.StatusFound)
 }
 
 func (s *Server) authLogout(w http.ResponseWriter, r *http.Request) {
