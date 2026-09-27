@@ -79,27 +79,32 @@ function browserCanAttemptLoopback() {
 
 async function localNetworkPermission(): Promise<PermissionState | 'unknown'> {
   if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown'
-  try {
-    const query = navigator.permissions.query.bind(navigator.permissions) as unknown as (
-      descriptor: { name: string },
-    ) => Promise<PermissionStatus>
-    return (await query({ name: 'local-network-access' })).state
-  } catch {
-    return 'unknown'
+  const query = navigator.permissions.query.bind(navigator.permissions) as unknown as (
+    descriptor: { name: string },
+  ) => Promise<PermissionStatus>
+  for (const name of ['loopback-network', 'local-network-access']) {
+    try {
+      return (await query({ name })).state
+    } catch {
+      // Newer browsers use loopback-network; older implementations expose the alias.
+    }
   }
+  return 'unknown'
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}, timeout = 3_500) {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeout)
   try {
-    return await fetch(url, {
+    const request: RequestInit & { targetAddressSpace: 'loopback' } = {
       ...init,
       signal: controller.signal,
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
-    })
+      targetAddressSpace: 'loopback',
+    }
+    return await fetch(url, request)
   } finally {
     window.clearTimeout(timer)
   }
@@ -222,13 +227,15 @@ export async function localFetch(path: string, init: RequestInit = {}, retry = t
 
   let response: Response
   try {
-    response = await fetch(`${LOCAL_API_HTTP}${path}`, {
+    const request: RequestInit & { targetAddressSpace: 'loopback' } = {
       ...init,
       headers,
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
-    })
+      targetAddressSpace: 'loopback',
+    }
+    response = await fetch(`${LOCAL_API_HTTP}${path}`, request)
   } catch (error) {
     markLocalConnectionLost(error instanceof Error ? error.message : undefined)
     throw error
