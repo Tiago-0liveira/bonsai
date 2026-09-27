@@ -1,7 +1,7 @@
 import { useBonsaiStore } from '../stores/bonsai'
 import { projectForGitHubRepository, refreshProject, report } from './git'
 
-const configuredRelayOrigin = (import.meta.env.VITE_BONSAI_RELAY_ORIGIN as string | undefined)?.replace(/\/$/, '')
+const configuredRelayOrigin = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_RELAY_ORIGIN)?.replace(/\/$/, '')
 export const RELAY_HTTP_ORIGIN = configuredRelayOrigin || 'https://api.bonsai.dev'
 const relayUsesCloudSession = RELAY_HTTP_ORIGIN === 'https://api.bonsai.dev'
 
