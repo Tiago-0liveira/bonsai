@@ -3,6 +3,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	serverruntime "github.com/Tiago-0liveira/bonsai/internal/server/runtime"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
 )
 
@@ -35,6 +37,15 @@ func main() {
 		}
 		if err := server.Serve(root); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai daemon:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Hidden: the daemon supervises these split local HTTP services.
+	if len(args) >= 1 && (args[0] == "__serve-api" || args[0] == "__serve-webhook") {
+		if err := runServeInternal(args[0], args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai:", err)
 			os.Exit(1)
 		}
 		return
@@ -134,4 +145,29 @@ func run(cfgPath string) error {
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	return err
+}
+
+
+func runServeInternal(kind string, args []string) error {
+	fs := flag.NewFlagSet(kind, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", "", "server config path")
+	port := fs.Int("port", 0, "loopback listen port")
+	_ = fs.Int("api-port", 0, "main API port")
+	_ = fs.String("session-secret-file", "", "serve session secret file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *configPath == "" || *port <= 0 {
+		return fmt.Errorf("%s requires --config and --port", kind)
+	}
+	address := fmt.Sprintf("127.0.0.1:%d", *port)
+	switch kind {
+	case "__serve-api":
+		return serverruntime.RunAPI(*configPath, address)
+	case "__serve-webhook":
+		return serverruntime.RunWebhookShell(*configPath, address)
+	default:
+		return fmt.Errorf("unknown internal serve command %q", kind)
+	}
 }
