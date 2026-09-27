@@ -133,7 +133,12 @@ func TestHeaderArrowsCollapseExpand(t *testing.T) {
 
 func TestPresetChangeEmitsSave(t *testing.T) {
 	m := testModel()
-	m.cursor = 2 // sakura row
+	for i, row := range m.rows {
+		if row.kind == rowPreset && row.preset == "sakura" {
+			m.cursor = i
+			break
+		}
+	}
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	snap := saveFrom(t, cmd)
 	if snap == nil {
