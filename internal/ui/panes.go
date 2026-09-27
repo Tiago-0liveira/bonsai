@@ -1,6 +1,10 @@
 package ui
 
-import "github.com/Tiago-0liveira/bonsai/internal/core/config"
+import (
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+)
 
 const dynamicLayoutVersion = 2
 const maxLayoutDepth = 12
@@ -442,7 +446,7 @@ func renderDynamicNode(n *layoutTreeNode, rendered map[paneID]string) string {
 		return rendered[n.Pane.ID]
 	}
 	if n.Axis == axisVertical {
-		return joinVertical(renderDynamicNode(n.First, rendered), renderDynamicNode(n.Second, rendered))
+		return lipgloss.JoinVertical(lipgloss.Left, renderDynamicNode(n.First, rendered), renderDynamicNode(n.Second, rendered))
 	}
-	return joinHorizontal(renderDynamicNode(n.First, rendered), renderDynamicNode(n.Second, rendered))
+	return lipgloss.JoinHorizontal(lipgloss.Top, renderDynamicNode(n.First, rendered), renderDynamicNode(n.Second, rendered))
 }
