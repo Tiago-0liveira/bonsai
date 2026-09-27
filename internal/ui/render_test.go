@@ -19,6 +19,12 @@ func renderModel() Model {
 	m.width, m.height = 100, 40
 	m.keys = newKeyMap(nil)
 	m.diffFileContent = map[string]string{}
+	m.dynamicLayout = defaultDynamicLayout()
+	m.paneLayout = defaultLayoutSpec()
+	m.paneActive = map[paneID]viewID{}
+	m.viewTerms = newViewTerminals()
+	m.procs = &procView{}
+	m.initPaneRuntime()
 	return m
 }
 
@@ -149,7 +155,7 @@ func TestRenderInspectCleanNoCommit(t *testing.T) {
 	}
 }
 
-func TestTabStripNeverWraps(t *testing.T) {
+func TestPaneTabStripNeverWraps(t *testing.T) {
 	m := renderModel()
 	m.list = worktreelist.New()
 	m.list.SetItems([]worktreelist.Item{
@@ -158,34 +164,27 @@ func TestTabStripNeverWraps(t *testing.T) {
 	m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
 
 	testWidths := []int{10, 15, 20, 25, 30, 40, 50, 60, 75, 80, 100, 120}
-	testTabs := []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR}
+	views := []viewID{viewLog, viewProcesses, viewInspect, viewDiff, viewChecks, viewPR}
 
 	for _, w := range testWidths {
-		for _, tab := range testTabs {
-			m.rightTab = tab
-			strip := m.tabStrip(w)
-
-			// Must never contain newlines (strictly single line)
+		for _, id := range views {
+			m.activateView(id)
+			pane, _ := m.dynamicLayout.paneContaining(id)
+			strip := m.paneTabStrip(pane, w)
 			if strings.Contains(strip, "\n") {
-				t.Fatalf("tabStrip(%d) with tab %v contains newlines:\n%q", w, tab, strip)
+				t.Fatalf("paneTabStrip(%d) view %v contains newline: %q", w, id, strip)
 			}
-
-			// Rendered visual width must never exceed available width
-			visualW := lipgloss.Width(strip)
-			if visualW > w {
-				t.Fatalf("tabStrip(%d) with tab %v visual width %d > %d:\n%q", w, tab, visualW, w, strip)
+			if visualW := lipgloss.Width(strip); visualW > w {
+				t.Fatalf("paneTabStrip(%d) view %v width %d > %d: %q", w, id, visualW, w, strip)
 			}
-
-			// Height must be at most 1
-			h := lipgloss.Height(strip)
-			if h > 1 {
-				t.Fatalf("tabStrip(%d) with tab %v height %d > 1", w, tab, h)
+			if h := lipgloss.Height(strip); h > 1 {
+				t.Fatalf("paneTabStrip(%d) view %v height %d > 1", w, id, h)
 			}
 		}
 	}
 }
 
-func TestActiveTabAlwaysVisibleInConstrainedTabStrip(t *testing.T) {
+func TestActiveViewVisibleInConstrainedPaneStrip(t *testing.T) {
 	m := renderModel()
 	m.list = worktreelist.New()
 	m.list.SetItems([]worktreelist.Item{
@@ -193,209 +192,248 @@ func TestActiveTabAlwaysVisibleInConstrainedTabStrip(t *testing.T) {
 	})
 	m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
 
-	// Even at constrained width of 35, the active tab label must be present in strip
-	for _, tab := range []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR} {
-		m.rightTab = tab
-		strip := m.tabStrip(35)
-		activeKey := tabLabel(tab, true) // compact label
-		trimmedKey := strings.TrimSpace(activeKey)
-		if !strings.Contains(strip, trimmedKey) {
-			t.Errorf("tabStrip(35) active tab %v (key %q) not found in strip:\n%q", tab, trimmedKey, strip)
+	for _, id := range []viewID{viewLog, viewProcesses, viewInspect, viewDiff, viewChecks, viewPR} {
+		if !m.activateView(id) {
+			t.Fatalf("could not activate %s", id)
+		}
+		pane, _ := m.dynamicLayout.paneContaining(id)
+		strip := m.paneTabStrip(pane, 35)
+		label := strings.TrimSpace(paneViewLabel(id, true))
+		if !strings.Contains(strip, label) {
+			t.Errorf("active view %s not visible in strip: %q", id, strip)
 		}
 	}
 }
 
-func TestDefaultLayoutGeometryMatchesLegacy(t *testing.T) {
+func TestDefaultDynamicGeometryMatchesLegacy(t *testing.T) {
 	m := renderModel()
 	m.width, m.height = 100, 40
-	m.paneLayout = defaultLayoutSpec()
-	got := m.resolvedPaneLayout()
+	got := m.resolvedDynamicPaneLayout()
 
-	if got.Axis != axisHorizontal {
-		t.Fatalf("default axis = %v, want horizontal", got.Axis)
+	work, ok := got.pane("pane-worktrees")
+	if !ok {
+		t.Fatal("missing worktrees pane")
 	}
-	if got.Order != [2]paneID{paneWorktrees, paneWorkspace} {
-		t.Fatalf("default order = %v", got.Order)
+	workspace, ok := got.pane("pane-workspace")
+	if !ok {
+		t.Fatal("missing workspace pane")
 	}
-	if got.Worktrees.W != 35 || got.Workspace.W != 65 {
-		t.Fatalf("default widths = %d/%d, want 35/65", got.Worktrees.W, got.Workspace.W)
+	if work.Rect.W != 35 || workspace.Rect.W != 65 {
+		t.Fatalf("default widths = %d/%d, want 35/65", work.Rect.W, workspace.Rect.W)
 	}
-	if got.Worktrees.X != 0 || got.Workspace.X != 35 {
-		t.Fatalf("default positions = worktrees x=%d workspace x=%d", got.Worktrees.X, got.Workspace.X)
+	if work.Rect.X != 0 || workspace.Rect.X != 35 {
+		t.Fatalf("default positions = worktrees x=%d workspace x=%d", work.Rect.X, workspace.Rect.X)
 	}
 }
 
-func TestViewNeverExceedsTerminalAcrossLayouts(t *testing.T) {
-	termSizes := [][2]int{
-		{80, 24},
-		{100, 40},
-		{60, 20},
-		{120, 30},
-		{40, 15},
+func dynamicLayoutVariants() []dynamicLayout {
+	return []dynamicLayout{
+		migrateLegacyLayout(layoutSpec{
+			Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35,
+		}),
+		migrateLegacyLayout(layoutSpec{
+			Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35,
+		}),
+		migrateLegacyLayout(layoutSpec{
+			Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35,
+		}),
+		migrateLegacyLayout(layoutSpec{
+			Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35,
+		}),
+		threePaneTestLayout(),
 	}
-	layouts := []layoutSpec{
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
-		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
-	}
-	tabs := []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR}
+}
+
+func threePaneTestLayout() dynamicLayout {
+	return dynamicLayout{Root: &layoutTreeNode{
+		Axis:  axisHorizontal,
+		Ratio: 35,
+		First: &layoutTreeNode{Pane: &paneSpec{
+			ID: "pane-worktrees", Views: []viewID{viewWorktrees},
+		}},
+		Second: &layoutTreeNode{
+			Axis:  axisVertical,
+			Ratio: 50,
+			First: &layoutTreeNode{Pane: &paneSpec{
+				ID: "pane-log", Views: []viewID{viewLog, viewInspect, viewDiff},
+			}},
+			Second: &layoutTreeNode{Pane: &paneSpec{
+				ID: "pane-processes", Views: []viewID{viewProcesses, viewChecks, viewPR},
+			}},
+		},
+	}}
+}
+
+func TestViewNeverExceedsTerminalAcrossDynamicLayouts(t *testing.T) {
+	termSizes := [][2]int{{80, 24}, {100, 40}, {60, 20}, {120, 30}, {40, 15}}
 
 	for _, sz := range termSizes {
 		w, h := sz[0], sz[1]
-		for _, layout := range layouts {
-			for _, tab := range tabs {
-				m := renderModel()
-				m.width, m.height = w, h
-				m.paneLayout = layout
-				m.procs = &procView{}
-				m.list = worktreelist.New()
-				m.list.SetItems([]worktreelist.Item{
-					{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
-				})
-				m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
-				m.rightTab = tab
-				m.ready = true
-				m.layout()
+		for _, layout := range dynamicLayoutVariants() {
+			m := renderModel()
+			m.width, m.height = w, h
+			m.dynamicLayout = layout
+			m.paneActive = map[paneID]viewID{}
+			m.initPaneRuntime()
+			m.list = worktreelist.New()
+			m.list.SetItems([]worktreelist.Item{
+				{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
+			})
+			m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
+			m.ready = true
+			m.layout()
 
-				view := m.View()
-				actualH := lipgloss.Height(view)
-				actualW := lipgloss.Width(view)
-				if actualH > h {
-					t.Fatalf("View() size %dx%d layout=%+v tab=%v height=%d exceeds %d:\n%s",
-						w, h, layout, tab, actualH, h, view)
-				}
-				if actualH != h {
-					t.Fatalf("View() size %dx%d layout=%+v tab=%v height=%d, want exactly %d",
-						w, h, layout, tab, actualH, h)
-				}
-				if actualW > w {
-					t.Fatalf("View() size %dx%d layout=%+v tab=%v width=%d exceeds %d:\n%s",
-						w, h, layout, tab, actualW, w, view)
-				}
+			view := m.View()
+			if actualH := lipgloss.Height(view); actualH > h {
+				t.Fatalf("View() size %dx%d height=%d exceeds %d:\n%s", w, h, actualH, h, view)
+			} else if actualH != h {
+				t.Fatalf("View() size %dx%d height=%d, want %d", w, h, actualH, h)
+			}
+			if actualW := lipgloss.Width(view); actualW > w {
+				t.Fatalf("View() size %dx%d width=%d exceeds %d:\n%s", w, h, actualW, w, view)
 			}
 		}
 	}
 }
 
-func TestWorkspaceViewportUsesResolvedPaneHeight(t *testing.T) {
-	for _, layout := range []layoutSpec{
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 65},
-		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 65},
-	} {
-		m := renderModel()
-		m.width, m.height = 100, 40
-		m.paneLayout = layout
-		m.rightTab = tabLog
-		m.layout()
+func TestMultipleViewsRenderSimultaneously(t *testing.T) {
+	m := renderModel()
+	m.dynamicLayout = threePaneTestLayout()
+	m.paneActive = map[paneID]viewID{
+		"pane-worktrees": viewWorktrees,
+		"pane-log":       viewLog,
+		"pane-processes": viewProcesses,
+	}
+	m.initPaneRuntime()
+	m.ready = true
+	m.layout()
+	m.viewTerm(viewLog).SetContent("LOG-SENTINEL")
+	m.viewTerm(viewProcesses).SetContent("PROC-SENTINEL")
 
-		resolved := m.resolvedPaneLayout()
-		workspaceInnerH := max(resolved.Workspace.H-2, 1)
-		if got, want := m.termHeight(workspaceInnerH), max(workspaceInnerH-1, 1); got != want {
-			t.Fatalf("layout=%+v termHeight=%d want %d", layout, got, want)
+	out := m.View()
+	for _, want := range []string{"LOG-SENTINEL", "PROC-SENTINEL"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("simultaneous view missing %q:\n%s", want, out)
 		}
 	}
 }
 
-
-func TestMouseWheelRoutesByResolvedPaneAcrossLayouts(t *testing.T) {
-	layouts := []layoutSpec{
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
-		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+func TestPerViewScrollStateIsIndependent(t *testing.T) {
+	m := renderModel()
+	m.dynamicLayout = threePaneTestLayout()
+	m.paneActive = map[paneID]viewID{
+		"pane-worktrees": viewWorktrees,
+		"pane-log":       viewLog,
+		"pane-processes": viewProcesses,
 	}
+	m.initPaneRuntime()
+	m.layout()
 
-	for _, layout := range layouts {
+	logTerm := m.viewTerm(viewLog)
+	procTerm := m.viewTerm(viewProcesses)
+	logTerm.SetContent(strings.Repeat("log line\n", 200))
+	procTerm.SetContent(strings.Repeat("proc line\n", 200))
+	logTerm.GotoTop()
+	procTerm.GotoTop()
+
+	next, _ := logTerm.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	*logTerm = next
+	if logTerm.ScrollPercent() <= 0 {
+		t.Fatal("log viewport did not scroll")
+	}
+	if procTerm.ScrollPercent() > 0 {
+		t.Fatalf("process viewport moved with log: %.2f", procTerm.ScrollPercent())
+	}
+}
+
+func TestMouseWheelRoutesByDynamicPane(t *testing.T) {
+	for _, layout := range dynamicLayoutVariants() {
 		m := procModel()
 		m.width, m.height = 100, 40
-		m.paneLayout = layout
+		m.dynamicLayout = layout
+		m.paneActive = map[paneID]viewID{}
+		m.initPaneRuntime()
+		if !m.activateView(viewProcesses) {
+			t.Fatal("processes unavailable")
+		}
 		m.layout()
-		m.term.SetContent(strings.Repeat("a line of output\n", 200))
-		m.term.GotoTop()
+		term := m.viewTerm(viewProcesses)
+		term.SetContent(strings.Repeat("a line of output\n", 200))
+		term.GotoTop()
 
-		resolved := m.resolvedPaneLayout()
-		workspaceWheel := tea.MouseMsg{
-			X:      resolved.Workspace.X + resolved.Workspace.W/2,
-			Y:      resolved.Workspace.Y + resolved.Workspace.H/2,
-			Button: tea.MouseButtonWheelDown,
-			Action: tea.MouseActionPress,
+		resolved := m.resolvedDynamicPaneLayout()
+		procPane, _ := m.dynamicLayout.paneContaining(viewProcesses)
+		rp, _ := resolved.pane(procPane.ID)
+		wheel := tea.MouseMsg{
+			X: rp.Rect.X + rp.Rect.W/2, Y: rp.Rect.Y + rp.Rect.H/2,
+			Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress,
 		}
-		nm, _ := m.onMouse(workspaceWheel)
+		nm, _ := m.onMouse(wheel)
 		got := nm.(Model)
-		if got.term.ScrollPercent() <= 0 {
-			t.Fatalf("layout=%+v: wheel over workspace did not scroll terminal", layout)
+		if got.viewTerm(viewProcesses).ScrollPercent() <= 0 {
+			t.Fatalf("layout=%+v: wheel over Processes did not scroll", layout.Root)
 		}
 
-		m.term.GotoTop()
-		worktreesWheel := tea.MouseMsg{
-			X:      resolved.Worktrees.X + resolved.Worktrees.W/2,
-			Y:      resolved.Worktrees.Y + resolved.Worktrees.H/2,
-			Button: tea.MouseButtonWheelDown,
-			Action: tea.MouseActionPress,
+		got.viewTerm(viewProcesses).GotoTop()
+		workPane, _ := got.dynamicLayout.paneContaining(viewWorktrees)
+		workRect, _ := got.resolvedDynamicPaneLayout().pane(workPane.ID)
+		wheel = tea.MouseMsg{
+			X: workRect.Rect.X + workRect.Rect.W/2, Y: workRect.Rect.Y + workRect.Rect.H/2,
+			Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress,
 		}
-		nm, _ = m.onMouse(worktreesWheel)
-		got = nm.(Model)
-		if got.term.ScrollPercent() > 0 {
-			t.Fatalf("layout=%+v: wheel over worktrees scrolled terminal", layout)
+		nm, _ = got.onMouse(wheel)
+		if after := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); after > 0 {
+			t.Fatalf("layout=%+v: wheel over Worktrees scrolled Processes %.2f", layout.Root, after)
 		}
 	}
 }
 
-func TestMouseWheelSuppressionAcrossLayouts(t *testing.T) {
-	layouts := []layoutSpec{
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
-		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
-		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
-	}
-
-	for _, layout := range layouts {
+func TestMouseWheelSuppressionAcrossDynamicLayouts(t *testing.T) {
+	for _, layout := range dynamicLayoutVariants() {
 		base := procModel()
 		base.width, base.height = 100, 40
-		base.paneLayout = layout
+		base.dynamicLayout = layout
+		base.paneActive = map[paneID]viewID{}
+		base.initPaneRuntime()
+		base.activateView(viewProcesses)
 		base.layout()
-		base.term.SetContent(strings.Repeat("a line of output\n", 200))
-		resolved := base.resolvedPaneLayout()
+		base.viewTerm(viewProcesses).SetContent(strings.Repeat("a line of output\n", 200))
+		procPane, _ := base.dynamicLayout.paneContaining(viewProcesses)
+		rp, _ := base.resolvedDynamicPaneLayout().pane(procPane.ID)
 		wheel := tea.MouseMsg{
-			X:      resolved.Workspace.X + resolved.Workspace.W/2,
-			Y:      resolved.Workspace.Y + resolved.Workspace.H/2,
-			Button: tea.MouseButtonWheelDown,
-			Action: tea.MouseActionPress,
+			X: rp.Rect.X + rp.Rect.W/2, Y: rp.Rect.Y + rp.Rect.H/2,
+			Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress,
 		}
 
 		mouseOff := base
 		mouseOff.mouseOff = true
-		mouseOff.term.GotoTop()
+		mouseOff.viewTerm(viewProcesses).GotoTop()
 		nm, _ := mouseOff.onMouse(wheel)
-		if got := nm.(Model); got.term.ScrollPercent() > 0 {
-			t.Fatalf("layout=%+v: mouseOff allowed terminal scroll", layout)
+		if got := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); got > 0 {
+			t.Fatalf("mouseOff allowed process scroll: %.2f", got)
 		}
 
 		withPrefs := base
 		pm := prefs.Model{}
 		withPrefs.prefs = &pm
-		withPrefs.term.GotoTop()
+		withPrefs.viewTerm(viewProcesses).GotoTop()
 		nm, _ = withPrefs.onMouse(wheel)
-		if got := nm.(Model); got.term.ScrollPercent() > 0 {
-			t.Fatalf("layout=%+v: preferences overlay allowed background scroll", layout)
+		if got := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); got > 0 {
+			t.Fatalf("preferences overlay allowed process scroll: %.2f", got)
 		}
 
 		withModal := base
 		modal := modals.Model{}
 		withModal.modal = &modal
-		withModal.term.GotoTop()
+		withModal.viewTerm(viewProcesses).GotoTop()
 		nm, _ = withModal.onMouse(wheel)
-		if got := nm.(Model); got.term.ScrollPercent() > 0 {
-			t.Fatalf("layout=%+v: modal allowed background scroll", layout)
+		if got := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); got > 0 {
+			t.Fatalf("modal allowed process scroll: %.2f", got)
 		}
 	}
 }
 
-
-func TestLayoutRecomputePreservesUIState(t *testing.T) {
+func TestLayoutRecomputePreservesPaneFocusActiveViewAndSelection(t *testing.T) {
 	m := renderModel()
 	m.width, m.height = 100, 40
 	m.list = worktreelist.New()
@@ -403,28 +441,27 @@ func TestLayoutRecomputePreservesUIState(t *testing.T) {
 		{WT: git.Worktree{Path: "/w/first", Branch: "first"}},
 		{WT: git.Worktree{Path: "/w/second", Branch: "second"}},
 	})
-	m.focus = focusTerminal
-	m.rightTab = tabInspect
+	m.activateView(viewInspect)
 	before, ok := m.selectedWorktree()
 	if !ok {
 		t.Fatal("expected selected worktree")
 	}
+	focused := m.focusedPane
 
-	m.paneLayout = layoutSpec{
-		Axis:             axisVertical,
-		Order:            [2]paneID{paneWorkspace, paneWorktrees},
-		WorktreesPercent: 65,
-	}
+	m.dynamicLayout = migrateLegacyLayout(layoutSpec{
+		Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 65,
+	})
+	m.initPaneRuntime()
 	m.layout()
 
 	after, ok := m.selectedWorktree()
 	if !ok || after.Path != before.Path {
-		t.Fatalf("layout recompute changed worktree selection: before=%+v after=%+v ok=%v", before, after, ok)
+		t.Fatalf("layout recompute changed selection: before=%+v after=%+v ok=%v", before, after, ok)
 	}
-	if m.focus != focusTerminal {
-		t.Fatalf("layout recompute changed focus: %v", m.focus)
+	if m.focusedPane != focused {
+		t.Fatalf("layout recompute changed surviving focused pane: %q -> %q", focused, m.focusedPane)
 	}
-	if m.rightTab != tabInspect {
-		t.Fatalf("layout recompute changed workspace tab: %v", m.rightTab)
+	if got := m.activeView(focused); got != viewInspect {
+		t.Fatalf("layout recompute changed active view: %q", got)
 	}
 }
