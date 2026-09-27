@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	devRelayMaxBody      = 2 << 20
-	devRelayMaxReplay    = 1024
-	devRelaySubscriberQ  = 32
-	devRelayHeartbeat    = 20 * time.Second
+	devRelayMaxBody     = 2 << 20
+	devRelayMaxReplay   = 1024
+	devRelaySubscriberQ = 32
+	devRelayHeartbeat   = 20 * time.Second
 )
 
 type DevRelayConfig struct {
@@ -72,11 +72,11 @@ func NewDevRelay(cfg DevRelayConfig) (*DevRelay, error) {
 		return nil, fmt.Errorf("invalid development webhook secret file")
 	}
 	return &DevRelay{
-		expectedHost: cfg.Address,
+		expectedHost:  cfg.Address,
 		browserOrigin: cfg.BrowserOrigin,
-		secret: append([]byte(nil), secret...),
-		seen: map[string]string{},
-		subs: map[uint64]*devSubscriber{},
+		secret:        append([]byte(nil), secret...),
+		seen:          map[string]string{},
+		subs:          map[uint64]*devSubscriber{},
 	}, nil
 }
 
@@ -308,8 +308,8 @@ func RunDevRelay(cfg DevRelayConfig) error {
 	server := &http.Server{
 		Addr: cfg.Address, Handler: relay.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout: 90 * time.Second,
-		MaxHeaderBytes: 32 << 10,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    32 << 10,
 	}
 	done := make(chan struct{})
 	go func() {

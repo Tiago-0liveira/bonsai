@@ -19,10 +19,10 @@ import (
 )
 
 var devWebhookFixtures = map[string]string{
-	"push":                         "push",
-	"pull_request_opened":          "pull_request",
-	"pull_request_synchronize":     "pull_request",
-	"check_run_completed":          "check_run",
+	"push":                     "push",
+	"pull_request_opened":      "pull_request",
+	"pull_request_synchronize": "pull_request",
+	"check_run_completed":      "check_run",
 }
 
 func cmdDevWebhook(repoDir string, args []string, out, errOut io.Writer) error {
