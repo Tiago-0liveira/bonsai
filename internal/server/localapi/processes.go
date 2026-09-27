@@ -14,7 +14,7 @@ func (s *Server) registerProcessRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) processes(w http.ResponseWriter, _ *http.Request) {
-	records, err := s.daemon.List()
+	records, err := s.registry.Default().daemon.List()
 	if err != nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "daemon_unavailable", err.Error())
 		return
@@ -27,7 +27,7 @@ func (s *Server) processRestart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	record, err := s.daemon.Restart(id)
+	record, err := s.registry.Default().daemon.Restart(id)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "process_restart_failed", err.Error())
 		return
@@ -40,7 +40,7 @@ func (s *Server) processStop(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	killed, err := s.daemon.Kill(id, false, "")
+	killed, err := s.registry.Default().daemon.Kill(id, false, "")
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "process_stop_failed", err.Error())
 		return
@@ -63,7 +63,7 @@ func (s *Server) processLogs(w http.ResponseWriter, r *http.Request) {
 		lines = parsed
 	}
 	var out strings.Builder
-	if err := s.daemon.Logs(id, false, lines, "", false, func(chunk string) error {
+	if err := s.registry.Default().daemon.Logs(id, false, lines, "", false, func(chunk string) error {
 		_, err := out.WriteString(chunk)
 		return err
 	}); err != nil {
