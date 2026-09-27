@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -66,12 +67,15 @@ func LoadConfig(path string) (Config, error) {
 }
 
 // RunAPI starts only the Bonsai API. The serve path always binds it to loopback.
-func RunAPI(configPath, address, sessionSecretFile string) error {
+func RunAPI(configPath, address, browserOrigin, sessionSecretFile string) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
 	}
 	if err := requireLoopback(address); err != nil {
+		return err
+	}
+	if err := requireBrowserOrigin(browserOrigin); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Database), 0o700); err != nil {
@@ -86,7 +90,7 @@ func RunAPI(configPath, address, sessionSecretFile string) error {
 	if err != nil {
 		return err
 	}
-	svc, err := buildService(cfg, st)
+	svc, err := buildService(cfg, st, browserOrigin)
 	if err != nil {
 		return err
 	}
@@ -184,7 +188,7 @@ func readSessionSecret(path string) ([]byte, error) {
 	return secret, nil
 }
 
-func buildService(cfg Config, st *store.Store) (*api.Service, error) {
+func buildService(cfg Config, st *store.Store, browserOrigin string) (*api.Service, error) {
 	key, err := base64.StdEncoding.DecodeString(os.Getenv("BONSAI_TOKEN_KEY"))
 	if err != nil || len(key) != 32 {
 		return nil, fmt.Errorf("BONSAI_TOKEN_KEY must be a base64 encoded 32-byte key")
@@ -231,7 +235,7 @@ func buildService(cfg Config, st *store.Store) (*api.Service, error) {
 		PrivateKey:    private,
 		EncryptionKey: key,
 		Store:         st,
-		Origin:        cfg.Origin,
+		Origin:        browserOrigin,
 	}
 	if auth.AppID == "" || auth.ClientID == "" || auth.ClientSecret == "" {
 		return nil, fmt.Errorf("GitHub App credentials are required")
@@ -255,7 +259,29 @@ func buildService(cfg Config, st *store.Store) (*api.Service, error) {
 		}
 		return githubapp.RepositoryAccess{}, domain.ErrForbidden
 	}
-	return api.New(st, auth, app.New(auth), repos, cfg.Origin)
+	return api.New(st, auth, app.New(auth), repos, browserOrigin)
+}
+
+func requireBrowserOrigin(origin string) error {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("invalid browser origin %q", origin)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme != "http" {
+		return fmt.Errorf("browser origin must use HTTPS or loopback HTTP")
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("insecure browser origin must be loopback, got %q", host)
+	}
+	return nil
 }
 
 func requireLoopback(address string) error {
