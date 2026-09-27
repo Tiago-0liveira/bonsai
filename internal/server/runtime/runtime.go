@@ -9,19 +9,19 @@ const ProductionBrowserOrigin = localapi.ProductionBrowserOrigin
 
 // RunAPI starts the local API. The optional value is accepted only for source
 // compatibility with the pre-refactor capability-file argument; string values
-// are intentionally ignored. A bool enables the explicit development-origin
-// mode used by local frontend development.
+// are intentionally ignored. A bool selects the explicit development browser
+// security mode used only by the hidden local integration stack.
 func RunAPI(repoDir, address, browserOrigin string, option ...any) error {
-	development := false
+	mode := localapi.BrowserSecurityProduction
 	for _, value := range option {
-		if enabled, ok := value.(bool); ok {
-			development = enabled
+		if enabled, ok := value.(bool); ok && enabled {
+			mode = localapi.BrowserSecurityDevelopment
 		}
 	}
 	return localapi.Run(localapi.Config{
 		RepoDir:       repoDir,
 		Address:       address,
 		BrowserOrigin: browserOrigin,
-		Development:   development,
+		SecurityMode:  mode,
 	})
 }
