@@ -11,7 +11,7 @@ type resizeProbeSession struct {
 	rows  int
 }
 
-func (s *resizeProbeSession) Read([]byte) (int, error) { return 0, io.EOF }
+func (s *resizeProbeSession) Read([]byte) (int, error)    { return 0, io.EOF }
 func (s *resizeProbeSession) Write(p []byte) (int, error) { return len(p), nil }
 func (s *resizeProbeSession) Resize(cols, rows int) error {
 	s.calls++
@@ -19,7 +19,7 @@ func (s *resizeProbeSession) Resize(cols, rows int) error {
 	return nil
 }
 func (s *resizeProbeSession) Size() (int, int, error) { return s.cols, s.rows, nil }
-func (s *resizeProbeSession) Close() error { return nil }
+func (s *resizeProbeSession) Close() error            { return nil }
 
 func TestNormalizeSize(t *testing.T) {
 	cols, rows, err := NormalizeSize(0, 0)
