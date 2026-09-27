@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -138,9 +139,5 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = jsonEncoder(w, value)
-}
-
-func jsonEncoder(w http.ResponseWriter, value any) error {
-	return newJSONEncoder(w).Encode(value)
+	_ = json.NewEncoder(w).Encode(value)
 }
