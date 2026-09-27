@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockGitBackend } from './mockGit'
+import { mockGitBackend, openConnectedApp } from './mockGit'
 
 test.beforeEach(async ({ page }) => {
   await mockGitBackend(page)
@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
 test('inspector leads from branch blockers to the matching review and agent session', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
-  await page.goto('/')
+  await openConnectedApp(page)
   const inspector = page.getByRole('complementary', { name: 'Inspector' })
   await inspector.getByRole('button', { name: /fix\/daemon-lifecycle/ }).click()
   await expect(inspector.getByText('Resolve merge conflicts', { exact: true })).toBeVisible()
@@ -39,13 +39,14 @@ test('inspector leads from branch blockers to the matching review and agent sess
 })
 
 test('branch settings remain editable and project overview stays scoped', async ({ page }) => {
-  await page.goto('/')
+  await openConnectedApp(page)
   const inspector = page.getByRole('complementary', { name: 'Inspector' })
   await inspector.getByRole('button', { name: /fix\/daemon-lifecycle/ }).click()
   await inspector.getByText('Branch settings', { exact: true }).click()
   await inspector.getByRole('textbox', { name: 'Tag name' }).fill('needs-review')
   await inspector.getByRole('button', { name: 'Save tag' }).click()
   await page.reload()
+  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
   await inspector.getByText('Branch settings', { exact: true }).click()
   await expect(inspector.getByRole('textbox', { name: 'Tag name' })).toHaveValue('needs-review')
   await expect(inspector.getByRole('button', { name: 'Merge target', exact: true })).toBeVisible()
