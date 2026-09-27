@@ -142,7 +142,7 @@ func (c *Client) AttachPTY(ctx context.Context, id int, afterSeq uint64) (PTYAtt
 	return a, nil
 }
 
-func (a *ptyAttachment) Info() PTYInfo            { return a.info }
+func (a *ptyAttachment) Info() PTYInfo { return a.info }
 func (a *ptyAttachment) Events() <-chan PTYEvent { return a.events }
 
 func (a *ptyAttachment) Write(data []byte) error {
