@@ -12,10 +12,7 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
-	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
-	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
-	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
@@ -44,8 +41,7 @@ type Server struct {
 	expectedHost  string
 	browserOrigin string
 	development   bool
-	daemon        daemonClient
-	github        githubdomain.GitHubService
+	registry      projectRegistry
 	sessions      *sessionStore
 }
 
@@ -64,8 +60,7 @@ func New(cfg Config) (*Server, error) {
 		expectedHost:  cfg.Address,
 		browserOrigin: cfg.BrowserOrigin,
 		development:   cfg.Development,
-		daemon:        client.For(cfg.RepoDir),
-		github:        ghcli.New(cfg.RepoDir),
+		registry:      newStaticProjectRegistry(cfg.RepoDir),
 		sessions:      newSessionStore(),
 	}, nil
 }
@@ -75,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /version", s.version)
 	mux.HandleFunc("POST /api/session", s.createSession)
+	s.registerProjectRoutes(mux)
 	s.registerGitRoutes(mux)
 	s.registerProcessRoutes(mux)
 	s.registerGitHubRoutes(mux)
