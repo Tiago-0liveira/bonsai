@@ -69,6 +69,11 @@ func TestNormalizeLayoutPrefs(t *testing.T) {
 			p.Sizes = map[string]int{"worktrees": 40}
 			return p
 		}(), want: def},
+		{name: "unknown size key", pref: func() config.TUILayoutPrefs {
+			p := valid
+			p.Sizes = map[string]int{"worktrees": 40, "workspace": 60, "other": 1}
+			return p
+		}(), want: def},
 		{name: "negative size", pref: func() config.TUILayoutPrefs {
 			p := valid
 			p.Sizes = map[string]int{"worktrees": -5, "workspace": 105}
