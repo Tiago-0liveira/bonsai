@@ -1,4 +1,4 @@
-import type { Worktree } from '../types'
+import type { Worktree } from '../../types'
 
 export const worktrees: Worktree[] = [
   {

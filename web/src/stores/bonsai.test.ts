@@ -1,14 +1,15 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { agents } from '../mock/agents'
 import { boardItems, boardLists, boardPriorities, boardTypes } from '../mock/board'
-import { projects } from '../mock/projects'
-import { pullRequests } from '../mock/pullRequests'
+import { projects } from '../test/fixtures/projects'
+import { pullRequests } from '../test/fixtures/pullRequests'
 import { worktreeTags } from '../mock/tags'
-import { worktrees } from '../mock/worktrees'
+import { worktrees } from '../test/fixtures/worktrees'
 import { useBonsaiStore } from './bonsai'
 
-describe('bonsai mock store', () => {
+describe('bonsai store', () => {
   beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('daemon offline')))
     localStorage.clear()
     useBonsaiStore.setState({
       selection: { type: 'project', id: 'bonsai' },
@@ -26,6 +27,7 @@ describe('bonsai mock store', () => {
       worktreeTags,
       collapsedTagGroups: ['bonsai:feat'],
       detachedStackWorktreeIds: [],
+      nodePlacements: {},
       dockWorktreeId: 'wt-web',
       dockRuntimeId: 'agent-ui',
       openRuntimeIds: ['agent-ui'],
@@ -37,6 +39,8 @@ describe('bonsai mock store', () => {
       notice: '',
     })
   })
+
+  afterEach(() => vi.unstubAllGlobals())
 
   it('moves board items between user-defined lists', () => {
     useBonsaiStore.getState().moveBoardItem('b1', 'bug')
@@ -103,23 +107,12 @@ describe('bonsai mock store', () => {
     expect(state.openRuntimeIds).not.toContain('agent-ui')
   })
 
-  it('creates a worktree from a selected source, tag, and merge target', () => {
-    const previousCount = useBonsaiStore.getState().worktrees.length
-    useBonsaiStore.getState().createMockWorktree({
-      sourceType: 'existing',
-      sourceRef: 'feat/local-experiment',
-      tagId: 'review-code',
-      mergeTargetBranch: 'feat/web-workspace',
-    })
-    expect(useBonsaiStore.getState().worktrees).toHaveLength(previousCount + 1)
-    const selection = useBonsaiStore.getState().selection
-    expect(selection.type).toBe('worktree')
-    if (selection.type !== 'worktree') return
-    const created = useBonsaiStore.getState().worktrees.find((item) => item.id === selection.id)
-    expect(created?.tag).toBe('review-code')
-    expect(created?.branch).toBe('feat/local-experiment')
-    expect(created?.mergeTargetBranch).toBe('feat/web-workspace')
-    expect(created?.sourceType).toBe('existing')
+  it('sends worktree creation to the daemon API and preserves state on failure', async () => {
+    const previous = useBonsaiStore.getState().worktrees
+    useBonsaiStore.getState().createMockWorktree({ sourceType: 'existing', sourceRef: 'feat/local-experiment', tagId: 'review-code', mergeTargetBranch: 'main' })
+    await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
+    expect(useBonsaiStore.getState().worktrees).toBe(previous)
+    expect(fetch).toHaveBeenCalledWith('/api/projects/bonsai/worktrees', expect.objectContaining({ method: 'POST', body: JSON.stringify({ mode: 'existing', branch: 'feat/local-experiment', base: 'feat/local-experiment' }) }))
   })
 
   it('prevents merge-target cycles', () => {
@@ -135,16 +128,20 @@ describe('bonsai mock store', () => {
     expect(useBonsaiStore.getState().detachedStackWorktreeIds).not.toContain('wt-web')
   })
 
-  it('supports a persistent never-stack preference', () => {
+  it('persists stack preference through the metadata API before changing state', async () => {
     useBonsaiStore.getState().setWorktreeStackPreference('wt-web', 'never')
-    expect(useBonsaiStore.getState().worktrees.find((item) => item.id === 'wt-web')?.stackPreference).toBe('never')
+    await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
+    expect(useBonsaiStore.getState().worktrees.find(item => item.id === 'wt-web')?.stackPreference).not.toBe('never')
+    expect(fetch).toHaveBeenCalledWith('/api/worktrees/wt-web/metadata', expect.objectContaining({ method: 'PATCH' }))
   })
 
-  it('changes PR state and adds reviews', () => {
-    useBonsaiStore.getState().setPullRequestStatus('pr-24', 'Merged')
-    expect(useBonsaiStore.getState().pullRequests.find((pr) => pr.id === 'pr-24')?.status).toBe('Merged')
-    useBonsaiStore.getState().addPullRequestReview('pr-23', 'Looks good after the fix.', 'approve')
-    expect(useBonsaiStore.getState().pullRequests.find((pr) => pr.id === 'pr-23')?.conversation.at(-1)?.author).toBe('You')
+  it('does not claim a PR merged when GitHub fails', async () => {
+    const pr = { ...pullRequests[0], id: 'bonsai:24' }
+    useBonsaiStore.setState({ pullRequests: [pr] })
+    useBonsaiStore.getState().setPullRequestStatus(pr.id, 'Merged')
+    await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
+    expect(useBonsaiStore.getState().pullRequests[0].status).toBe(pr.status)
+    expect(fetch).toHaveBeenCalledWith('/api/projects/bonsai/pull-requests/' + pr.number + '/merge', expect.objectContaining({ method: 'POST' }))
   })
 
   it('toggles independent right-side dock panels', () => {
@@ -163,6 +160,58 @@ describe('bonsai mock store', () => {
     useBonsaiStore.getState().removeEnvVariable('bonsai', added.id)
     expect(useBonsaiStore.getState().envVariables.bonsai.some((item) => item.id === added.id)).toBe(false)
   })
+
+  it('preserves placements when stacks are toggled or detached', () => {
+    useBonsaiStore.getState().setManualNodePlacement('wt-web', { x: 120, y: 240 })
+    useBonsaiStore.getState().setGeneratedNodePlacements({
+      'stack:bonsai:feat': { x: 400, y: 260 },
+    })
+
+    useBonsaiStore.getState().toggleTagGroup('bonsai', 'feat')
+    useBonsaiStore.getState().ejectWorktreeFromStack('wt-web')
+
+    const placements = useBonsaiStore.getState().nodePlacements
+    expect(placements['wt-web']).toEqual({ x: 120, y: 240, mode: 'manual' })
+    expect(placements['stack:bonsai:feat']).toEqual({ x: 400, y: 260, mode: 'generated' })
+  })
+
+  it('preserves manual placement across merge-target and metadata changes', () => {
+    useBonsaiStore.getState().setManualNodePlacement('wt-daemon', { x: 620, y: 310 })
+    const before = useBonsaiStore.getState().nodePlacements['wt-daemon']
+
+    useBonsaiStore.getState().setWorktreeMergeTarget('wt-daemon', 'feat/web-workspace')
+    useBonsaiStore.getState().setAgentState('agent-ui', 'finished')
+    useBonsaiStore.getState().setWorktreeStackPreference('wt-web', 'never')
+
+    expect(useBonsaiStore.getState().nodePlacements['wt-daemon']).toEqual(before)
+  })
+
+  it('removes only an agent placement when moving it to history', () => {
+    useBonsaiStore.getState().setGeneratedNodePlacements({
+      'agent-ui': { x: 300, y: 500 },
+      'wt-web': { x: 260, y: 240 },
+    })
+
+    useBonsaiStore.getState().moveAgentToHistory('agent-ui')
+
+    const placements = useBonsaiStore.getState().nodePlacements
+    expect(placements['agent-ui']).toBeUndefined()
+    expect(placements['wt-web']).toEqual({ x: 260, y: 240, mode: 'generated' })
+  })
+
+  it('marks drag-style placement updates as manual', () => {
+    useBonsaiStore.getState().setGeneratedNodePlacements({
+      'wt-web': { x: 10, y: 20 },
+    })
+    useBonsaiStore.getState().setManualNodePlacement('wt-web', { x: 44, y: 88 })
+
+    expect(useBonsaiStore.getState().nodePlacements['wt-web']).toEqual({
+      x: 44,
+      y: 88,
+      mode: 'manual',
+    })
+  })
+
 })
 
 

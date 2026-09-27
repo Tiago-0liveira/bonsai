@@ -6,12 +6,15 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -49,9 +52,14 @@ type managedProc struct {
 
 // Server is a running daemon for one repo.
 type Server struct {
-	root   string
-	store  *procstore.Store
-	logCap int64
+	gitOnce       sync.Once
+	gitExecutor   *gitbridge.Executor
+	gitConfig     GitBridgeConfig
+	gitErr        error
+	bridgeEnabled bool
+	root          string
+	store         *procstore.Store
+	logCap        int64
 
 	mu     sync.Mutex
 	procs  map[int]*managedProc
@@ -80,6 +88,19 @@ func (s *Server) SetStartBarrier(fn func(id int)) {
 
 // Run runs the daemon serve loop until shut down.
 func (s *Server) Run() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := os.Stat(filepath.Join(s.store.Dir(), "git-bridge.json")); err == nil {
+		if err := s.initGit(); err != nil {
+			return err
+		}
+		s.bridgeEnabled = s.gitConfig.URL != ""
+		go func() {
+			if err := s.runGitBridge(ctx); err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "Git bridge:", err)
+			}
+		}()
+	}
 	defer s.lock.Unlock()
 
 	sig := make(chan os.Signal, 1)
@@ -363,7 +384,7 @@ func (s *Server) runningCountLocked() int {
 
 // armIdleLocked manages the idle exit timer. Caller holds s.mu.
 func (s *Server) armIdleLocked() {
-	if s.activeCountLocked() > 0 {
+	if s.bridgeEnabled || s.activeCountLocked() > 0 {
 		if s.idleTimer != nil {
 			s.idleTimer.Stop()
 			s.idleTimer = nil

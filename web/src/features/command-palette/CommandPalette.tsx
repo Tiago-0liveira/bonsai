@@ -1,3 +1,4 @@
+import { localCommand } from '../../api/git'
 import { useEffect } from 'react'
 import { Command } from 'cmdk'
 import { useNavigate } from '@tanstack/react-router'
@@ -97,9 +98,9 @@ export function CommandPalette() {
             <CommandItem icon={Play} label="Run pnpm test" hint="mock" onSelect={() => run(() => appendTerminalCommand('pnpm test'))} />
             <CommandItem icon={Play} label="Run cargo test" hint="mock" onSelect={() => run(() => appendTerminalCommand('cargo test'))} />
             <CommandItem icon={Play} label="Run make test" hint="mock" onSelect={() => run(() => appendTerminalCommand('make test'))} />
-            <CommandItem icon={DownloadCloud} label="Pull" hint="mock" onSelect={() => run(() => appendTerminalCommand('git pull'))} />
-            <CommandItem icon={UploadCloud} label="Push" hint="mock" onSelect={() => run(() => appendTerminalCommand('git push'))} />
-            <CommandItem icon={GitCommitHorizontal} label="Commit" hint="mock" onSelect={() => run(() => appendTerminalCommand('git commit -m "prototype update"'))} />
+            <CommandItem icon={DownloadCloud} label="Pull" onSelect={() => run(() => appendTerminalCommand('git pull'))} />
+            <CommandItem icon={UploadCloud} label="Push" onSelect={() => run(() => appendTerminalCommand('git push'))} />
+            <CommandItem icon={GitCommitHorizontal} label="Commit staged changes" onSelect={() => run(() => { const message = window.prompt('Commit message'); if (message?.trim()) void localCommand('commit', { message }) })} />
           </Command.Group>
 
           <Command.Group heading="Navigate" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">

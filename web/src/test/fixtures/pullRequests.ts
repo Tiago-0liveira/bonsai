@@ -1,4 +1,4 @@
-import type { PullRequest } from '../types'
+import type { PullRequest } from '../../types'
 
 export const pullRequests: PullRequest[] = [
   {

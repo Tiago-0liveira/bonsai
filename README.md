@@ -259,3 +259,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Lip Gloss]
 ## License
 
 MIT
+
+## Web Git backend
+
+The GitHub App server, daemon bridge, API, and deployment setup are documented in [docs/git-backend.md](docs/git-backend.md).

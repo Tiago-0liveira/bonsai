@@ -12,8 +12,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
-	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
+	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
