@@ -3,10 +3,13 @@ package server
 import (
 	"bytes"
 	"io"
+	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
 
 type fakePTYSession struct {
@@ -385,5 +388,201 @@ func TestPersistPTYSizeConcurrentStaleCallerCannotRegressRecord(t *testing.T) {
 	}
 	if rec.PTYCols != 160 || rec.PTYRows != 70 {
 		t.Fatalf("stale caller regressed stored size to %dx%d, want 160x70", rec.PTYCols, rec.PTYRows)
+	}
+}
+
+
+type signalingWriteConn struct {
+	net.Conn
+	mu                 sync.Mutex
+	writes             int
+	secondWriteStarted chan struct{}
+	secondOnce         sync.Once
+}
+
+func (c *signalingWriteConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	c.writes++
+	writeNo := c.writes
+	c.mu.Unlock()
+	if writeNo == 2 {
+		c.secondOnce.Do(func() { close(c.secondWriteStarted) })
+	}
+	return c.Conn.Write(p)
+}
+
+func startBlockedPTYStream(t *testing.T, s *Server, id int) (*signalingWriteConn, net.Conn, <-chan struct{}) {
+	t.Helper()
+	serverConn, clientConn := net.Pipe()
+	conn := &signalingWriteConn{
+		Conn:               serverConn,
+		secondWriteStarted: make(chan struct{}),
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.streamPTY(
+			conn,
+			protocol.NewDecoder(conn),
+			protocol.NewEncoder(conn),
+			&protocol.Request{Kind: protocol.KindPTYAttach, ID: id},
+		)
+	}()
+
+	resp, err := protocol.NewDecoder(clientConn).ReadResponse()
+	if err != nil {
+		clientConn.Close()
+		t.Fatalf("read attach handshake: %v", err)
+	}
+	if resp.Kind != protocol.KindPTYAttached {
+		clientConn.Close()
+		t.Fatalf("attach response kind = %q, want %q", resp.Kind, protocol.KindPTYAttached)
+	}
+	return conn, clientConn, done
+}
+
+func TestPTYHubSlowSubscriberSignalsEviction(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.subQueue = 1
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+
+	h.Publish([]byte("queued"))
+	h.Publish([]byte("overflow"))
+
+	select {
+	case <-sub.evicted:
+	case <-time.After(time.Second):
+		t.Fatal("slow subscriber eviction was not signaled")
+	}
+	if _, ok := <-sub.C; !ok {
+		t.Fatal("queued output should remain readable before channel closure is observed")
+	}
+	if _, ok := <-sub.C; ok {
+		t.Fatal("evicted subscriber channel should close after queued output")
+	}
+}
+
+func TestPTYHubManualUnsubscribeDoesNotSignalEviction(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	sub, _, _, _ := h.Subscribe(0)
+	sub.Close()
+
+	select {
+	case <-sub.evicted:
+		t.Fatal("manual unsubscribe must not be reported as slow-subscriber eviction")
+	default:
+	}
+	if _, ok := <-sub.C; ok {
+		t.Fatal("manual unsubscribe should close the event channel")
+	}
+}
+
+func TestPTYHubNormalCloseDoesNotSignalEviction(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+	h.Close(0, "")
+
+	select {
+	case <-sub.evicted:
+		t.Fatal("normal PTY exit must not be reported as slow-subscriber eviction")
+	default:
+	}
+	ev, ok := <-sub.C
+	if !ok || ev.kind != protocol.KindPTYExit {
+		t.Fatalf("normal close event = %#v, %v; want ptyExit", ev, ok)
+	}
+}
+
+func TestPTYStreamEvictionUnblocksBlockedSocketWrite(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.subQueue = 2
+	mp := &managedProc{
+		rec:    &procstore.Record{ID: 1, IOMode: procstore.IOModePTY, Status: procstore.StatusRunning},
+		ptyHub: h,
+	}
+	s := &Server{procs: map[int]*managedProc{1: mp}, done: make(chan struct{})}
+	conn, peer, handlerDone := startBlockedPTYStream(t, s, 1)
+	defer peer.Close()
+
+	h.Publish([]byte("blocks-on-peer"))
+	select {
+	case <-conn.secondWriteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("PTY output write did not block on non-reading peer")
+	}
+
+	// The blocked stream has consumed the first event. Fill its bounded queue,
+	// then publish one more event to evict it.
+	h.Publish([]byte("queued-1"))
+	h.Publish([]byte("queued-2"))
+	h.Publish([]byte("evict"))
+
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("evicted PTY stream did not exit after its blocked socket was closed")
+	}
+}
+
+func TestPTYStreamEvictionUnblocksAllBlockedSlowSockets(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.subQueue = 2
+	mp := &managedProc{
+		rec:    &procstore.Record{ID: 1, IOMode: procstore.IOModePTY, Status: procstore.StatusRunning},
+		ptyHub: h,
+	}
+	s := &Server{procs: map[int]*managedProc{1: mp}, done: make(chan struct{})}
+
+	connA, peerA, doneA := startBlockedPTYStream(t, s, 1)
+	defer peerA.Close()
+	connB, peerB, doneB := startBlockedPTYStream(t, s, 1)
+	defer peerB.Close()
+
+	h.subQueue = 16
+	healthy, _, _, _ := h.Subscribe(0)
+	defer healthy.Close()
+	healthyDone := make(chan struct{})
+	go func() {
+		defer close(healthyDone)
+		for range healthy.C {
+		}
+	}()
+
+	h.Publish([]byte("blocks-both"))
+	for name, blocked := range map[string]<-chan struct{}{
+		"A": connA.secondWriteStarted,
+		"B": connB.secondWriteStarted,
+	} {
+		select {
+		case <-blocked:
+		case <-time.After(time.Second):
+			t.Fatalf("PTY output write %s did not block", name)
+		}
+	}
+
+	h.Publish([]byte("queued-1"))
+	h.Publish([]byte("queued-2"))
+	h.Publish([]byte("evict"))
+
+	for name, done := range map[string]<-chan struct{}{"A": doneA, "B": doneB} {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("evicted PTY stream %s did not exit", name)
+		}
+	}
+	h.mu.Lock()
+	_, healthyStillAttached := h.subs[healthy.id]
+	h.mu.Unlock()
+	if !healthyStillAttached {
+		t.Fatal("healthy subscriber was dropped while slow socket streams were evicted")
+	}
+	h.Close(0, "")
+	select {
+	case <-healthyDone:
+	case <-time.After(time.Second):
+		t.Fatal("healthy subscriber did not finish on normal PTY close")
 	}
 }
