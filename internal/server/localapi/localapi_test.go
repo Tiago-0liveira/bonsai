@@ -284,3 +284,44 @@ func TestWebSocketAuthentication(t *testing.T) {
 		t.Fatalf("first event = %#v", ready)
 	}
 }
+
+func TestDevelopmentModeStillRequiresCapabilityAndExactOrigin(t *testing.T) {
+	const devOrigin = "http://127.0.0.1:7003"
+	s, err := New(Config{
+		RepoDir:       t.TempDir(),
+		Address:       "127.0.0.1:7001",
+		BrowserOrigin: devOrigin,
+		SecurityMode:  BrowserSecurityDevelopment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(origin, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7001/api/protected-missing", nil)
+		r.Host = "127.0.0.1:7001"
+		r.Header.Set("Origin", origin)
+		if token != "" {
+			r.Header.Set("X-Bonsai-Session", token)
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	if got := request(ProductionBrowserOrigin, "").Code; got != http.StatusForbidden {
+		t.Fatalf("production origin in development mode status = %d", got)
+	}
+	if got := request(devOrigin, "").Code; got != http.StatusUnauthorized {
+		t.Fatalf("missing development capability status = %d", got)
+	}
+	session, err := s.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorized := request(devOrigin, session.Token)
+	if authorized.Code != http.StatusNotFound {
+		t.Fatalf("valid development capability status = %d", authorized.Code)
+	}
+	if got := authorized.Header().Get("Access-Control-Allow-Origin"); got != devOrigin {
+		t.Fatalf("development allow origin = %q", got)
+	}
+}

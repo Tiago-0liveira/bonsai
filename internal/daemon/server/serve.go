@@ -365,7 +365,7 @@ func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 		names = append(names, name)
 	}
 	sort.Slice(names, func(i, j int) bool {
-		order := map[string]int{"api": 0}
+		order := map[string]int{"api": 0, "webhook": 1, "web": 2}
 		ai, aok := order[names[i]]
 		aj, bok := order[names[j]]
 		if aok != bok {

@@ -23,14 +23,21 @@ func (s *Server) newServeDevSecret(id string) (string, error) {
 	if err := os.MkdirAll(s.serveDir(), 0o700); err != nil {
 		return "", err
 	}
-	raw := []byte(os.Getenv("BONSAI_DEV_WEBHOOK_SECRET"))
-	if len(raw) == 0 {
-		raw = make([]byte, 32)
-		if _, err := rand.Read(raw); err != nil {
-			return "", err
-		}
-	}
 	path := s.serveDevSecretPath(id)
+	if data, err := os.ReadFile(path); err == nil {
+		raw, decodeErr := hex.DecodeString(strings.TrimSpace(string(data)))
+		if decodeErr != nil || len(raw) == 0 {
+			return "", fmt.Errorf("invalid existing development webhook secret file")
+		}
+		return path, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(path, []byte(hex.EncodeToString(raw)), 0o600); err != nil {
 		return "", err
 	}
@@ -159,7 +166,7 @@ func (s *Server) serveStartDevStack(spec *procstore.ServeSpec) (*procstore.Serve
 		"--port", strconv.Itoa(spec.WebhookPort),
 		"--browser-origin", spec.BrowserOrigin,
 		"--secret-file", secretFile,
-	}, spec.WorkspacePath, nil, spec.WebhookPort, true, corePolicy); err != nil {
+	}, spec.WorkspacePath, nil, spec.WebhookPort, false, corePolicy); err != nil {
 		s.cleanupFailedServe(rt)
 		return nil, err
 	}
@@ -169,7 +176,7 @@ func (s *Server) serveStartDevStack(spec *procstore.ServeSpec) (*procstore.Serve
 	}
 	if err := start("web", "pnpm", []string{
 		"dev", "--", "--host", "127.0.0.1", "--port", strconv.Itoa(spec.WebPort), "--strictPort",
-	}, webDir, webEnv, spec.WebPort, true, corePolicy); err != nil {
+	}, webDir, webEnv, spec.WebPort, false, corePolicy); err != nil {
 		s.cleanupFailedServe(rt)
 		return nil, err
 	}

@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,5 +43,29 @@ func TestDevTunnelExposesOnlyWebhookTarget(t *testing.T) {
 	}
 	if _, err := devTunnelSidecar("other", 7002); err == nil {
 		t.Fatal("unsupported tunnel accepted")
+	}
+}
+
+func TestPrepareDevWebhookSecretUsesPrivateFile(t *testing.T) {
+	repoDir := t.TempDir()
+	const workspaceID = "workspace"
+	const secret = "configured-development-secret"
+	if err := prepareDevWebhookSecret(repoDir, workspaceID, secret); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(procstore.New(repoDir).Dir(), "serve", workspaceID+".dev-webhook-secret")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != secret {
+		t.Fatalf("secret file did not preserve configured secret")
+	}
+	if err := prepareDevWebhookSecret(repoDir, workspaceID, ""); err == nil {
+		t.Fatal("empty configured secret accepted")
 	}
 }

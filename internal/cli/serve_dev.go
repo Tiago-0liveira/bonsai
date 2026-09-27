@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -38,6 +39,13 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 		return err
 	}
 	workspaceID := serveWorkspaceID(workspace)
+	configuredSecret, secretConfigured := os.LookupEnv("BONSAI_DEV_WEBHOOK_SECRET")
+	if secretConfigured {
+		if err := os.Unsetenv("BONSAI_DEV_WEBHOOK_SECRET"); err != nil {
+			return err
+		}
+		defer func() { _ = os.Setenv("BONSAI_DEV_WEBHOOK_SECRET", configuredSecret) }()
+	}
 	c := client.For(repoDir)
 
 	switch action {
@@ -123,8 +131,26 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 	if err != nil {
 		return err
 	}
-	if group, err := c.ServeStatus(workspaceID); err == nil && group != nil && normalizedGroupMode(group) == procstore.ServeModeProduction {
+	active, err := c.ServeStatus(workspaceID)
+	if err != nil {
+		return err
+	}
+	if active != nil && normalizedGroupMode(active) == procstore.ServeModeProduction {
 		return fmt.Errorf("production local API is active for this workspace; stop it with bonsai serve stop")
+	}
+	if active != nil && normalizedGroupMode(active) == procstore.ServeModeDevelopment &&
+		active.State != "ready" && active.State != "degraded" {
+		if err := c.ServeStop(workspaceID); err != nil {
+			return err
+		}
+		active = nil
+	}
+	if active == nil && secretConfigured {
+		if err := prepareDevWebhookSecret(repoDir, workspaceID, configuredSecret); err != nil {
+			return err
+		}
+	} else if active != nil && secretConfigured {
+		fmt.Fprintln(errOut, "warning: BONSAI_DEV_WEBHOOK_SECRET ignored because the development stack is already running")
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -168,6 +194,17 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 		return err
 	}
 	return runServeTUI(in, out, c, group)
+}
+
+func prepareDevWebhookSecret(repoDir, workspaceID, secret string) error {
+	if secret == "" {
+		return fmt.Errorf("BONSAI_DEV_WEBHOOK_SECRET must not be empty")
+	}
+	path := filepath.Join(procstore.New(repoDir).Dir(), "serve", workspaceID+".dev-webhook-secret")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(hex.EncodeToString([]byte(secret))), 0o600)
 }
 
 func resolveDevPort(flagValue int, envName string, fallback int) (int, error) {
