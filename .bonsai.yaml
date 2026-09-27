@@ -122,9 +122,9 @@ aliases:
 # Bonsai HTTP API on 127.0.0.1. It does not start the web app, a webhook listener,
 # a tunnel, or any cloud-control bridge.
 #
-# The API defaults to port 7001, accepts the production browser origin
-# https://app.bonsai.dev (or an explicit loopback development origin), validates
-# the exact Host and Origin, and issues short-lived capability sessions through
+# The API defaults to port 7001, accepts only the production browser origin
+# https://app.bonsai.dev, validates the exact Host and Origin, and issues
+# short-lived capability sessions through
 # `POST /api/session`. Session tokens live only in browser memory and are never
 # persisted or printed by `bonsai serve`.
 serve:

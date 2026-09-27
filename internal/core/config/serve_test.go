@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +37,25 @@ func TestServeDefaultsAndConfig(t *testing.T) {
 	}
 	if cfg.Serve.APIPort != 7101 || cfg.Serve.StartupTimeout != 12 || cfg.Serve.ShutdownTimeout != 3 {
 		t.Fatalf("serve config = %+v", cfg.Serve)
+	}
+
+	data = []byte(`serve:
+  api_port: 7101
+  webhook_port: 7102
+  web_port: 7103
+  server_config: old-dev.json
+`)
+	if err := os.WriteFile(filepath.Join(dir, ".bonsai.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cfg.DeprecatedServeKeys, ","); got != "serve.webhook_port,serve.web_port,serve.server_config" {
+		t.Fatalf("deprecated serve keys = %q", got)
+	}
+	if cfg.Serve.APIPort != 7101 {
+		t.Fatalf("legacy development keys changed production API config: %+v", cfg.Serve)
 	}
 }

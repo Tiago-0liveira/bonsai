@@ -1,10 +1,24 @@
-# Bonsai Web Prototype
+# Bonsai Web
 
-Frontend-only Bonsai workspace prototype for validating the Railway-inspired visual direction and interaction model before backend integration.
+The hosted frontend is a static Vite + React application. The public landing
+route does not contact localhost; the privileged `/app` surface connects
+explicitly to the loopback Bonsai API and separately consumes GitHub
+invalidation events from the relay.
 
-## Run
+## Integrated development
 
-```bash
+From the repository root, prefer the hidden contributor harness:
+
+```sh
+bonsai __serve-dev-stack
+```
+
+It supervises the local API, development webhook relay, and this Vite app on
+loopback. See [../docs/development.md](../docs/development.md).
+
+For visual-only iteration:
+
+```sh
 cd web
 pnpm install
 pnpm dev
@@ -12,23 +26,31 @@ pnpm dev
 
 ## Checks
 
-```bash
+```sh
 pnpm typecheck
 pnpm test
 pnpm test:e2e
 pnpm build
 ```
 
-All data and actions in this directory are mocked in the browser. There is no API, Go bridge, WebSocket connection, database, GitHub authentication, real repository access, or real command execution.
+## Networking
+
+Production defaults:
+
+- local API: `http://127.0.0.1:7001`
+- GitHub relay: `https://api.bonsai.dev`
+
+The development supervisor overrides the relay to
+`http://127.0.0.1:7002` and runs Vite at `http://127.0.0.1:7003`. Relay
+events are invalidation signals only; canonical project state is refreshed from
+the local API.
 
 ## Structure
 
-- `src/features/workspace` — React Flow canvas, Bonsai nodes, ELK layout
+- `src/api/localClient.ts` — loopback capability/session and WebSocket client
+- `src/api/relayClient.ts` — hosted or development SSE invalidation client
+- `src/features/workspace` — React Flow workspace surface
 - `src/features/inspector` — selection-aware inspector
-- `src/features/terminal` — resizable bottom dock and fake xterm sessions
-- `src/features/command-palette` — Cmd/Ctrl+K actions
-- `src/features/github` — mock pull requests
-- `src/features/board` — dnd-kit project board
-- `src/features/files` — mock file tree/viewer
-- `src/mock` — centralized prototype data
-- `src/stores` — Zustand workspace state and persistence
+- `src/features/terminal` — terminal dock
+- `src/features/github` — GitHub-facing UI
+- `src/stores` — Zustand application state

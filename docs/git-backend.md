@@ -22,7 +22,15 @@ Bonsai API.
 
 `bonsai serve` supervises one browser API on `127.0.0.1:7001`. Production
 browser requests must use the exact `https://app.bonsai.dev` Origin and exact
-loopback Host. Local development origins are enabled only explicitly.
+loopback Host. This production path cannot start a webhook listener, Vite,
+tunnel, sidecar, or development browser origin.
+
+Contributor integration testing uses the separate hidden
+`bonsai __serve-dev-stack` entrypoint. That mode keeps the same loopback,
+Host/Origin, capability, strict-request, idempotency, and WebSocket trust
+boundaries while explicitly authorizing its local Vite origin. The development
+webhook relay only emits normalized event metadata; the browser then refreshes
+canonical state from the local API. See [development.md](development.md).
 
 The browser creates a short-lived in-memory capability with
 `POST /api/session` and sends it in `X-Bonsai-Session`. Local capabilities

@@ -186,7 +186,6 @@ bonsai alias rm <name>          # remove a user alias
 bonsai shell-init               # print a shell 'bcd' cd helper
 bonsai serve                    # start/reuse the secured loopback API and attach
 bonsai serve -d                 # start/reuse, verify readiness, then detach
-bonsai serve --dev-origin http://localhost:5173  # explicit frontend development only
 bonsai serve status             # inspect the current worktree's API process
 bonsai serve logs --process api
 bonsai serve restart [api]
@@ -280,10 +279,15 @@ public tunnel, or cloud daemon bridge. Detaching with `q` or Ctrl+C leaves the
 API running; `X` in the serve view or `bonsai serve stop` explicitly stops it.
 
 Production browser access is restricted to the exact origin
-`https://app.bonsai.dev` and exact Host `127.0.0.1:7001`. Frontend development
-origins are disabled unless `--dev-origin` explicitly selects
-`http://localhost:5173` or `http://127.0.0.1:5173`. The API never uses browser
-cookies for local authorization.
+`https://app.bonsai.dev` and exact Host `127.0.0.1:7001`. Normal
+`bonsai serve` never enables development origins and never supervises a local
+webhook relay, Vite server, or tunnel. Start it, then open
+`https://app.bonsai.dev/app`. The API never uses browser cookies for local
+authorization.
+
+Contributors can reproduce the production topology entirely on loopback with
+the hidden `bonsai __serve-dev-stack` harness. It is intentionally absent from
+normal help and quick-start documentation; see [docs/development.md](docs/development.md).
 
 The browser creates a short-lived local capability with `POST /api/session` and
 sends it in `X-Bonsai-Session` for privileged requests. The token is held only
