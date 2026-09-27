@@ -124,7 +124,7 @@ function classifyProbeFailure(permission: PermissionState | 'unknown', error?: u
     status: 'bonsai-not-running',
     message: error instanceof DOMException && error.name === 'AbortError'
       ? 'Bonsai did not respond on 127.0.0.1:7001.'
-      : 'Bonsai is not reachable on this computer. Start it with `bonsai serve`, then try again.',
+      : 'Bonsai is not reachable on this computer. Start it with `bonsai serve`, then try again. If Bonsai is already running, check whether this browser has restricted Local Network Access for app.bonsai.dev.',
   })
 }
 
