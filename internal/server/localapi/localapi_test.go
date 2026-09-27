@@ -81,10 +81,10 @@ func TestSecurityHostOriginCORSAndSession(t *testing.T) {
 			t.Fatalf("origin %q status = %d", origin, got)
 		}
 	}
-	if got := request(http.MethodGet, "/api/projects", "127.0.0.1:7001", ProductionBrowserOrigin, "").Code; got != http.StatusUnauthorized {
+	if got := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", ProductionBrowserOrigin, "").Code; got != http.StatusUnauthorized {
 		t.Fatalf("missing session status = %d", got)
 	}
-	if got := request(http.MethodGet, "/api/projects", "127.0.0.1:7001", ProductionBrowserOrigin, "invalid").Code; got != http.StatusUnauthorized {
+	if got := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", ProductionBrowserOrigin, "invalid").Code; got != http.StatusUnauthorized {
 		t.Fatalf("invalid session status = %d", got)
 	}
 
@@ -92,8 +92,8 @@ func TestSecurityHostOriginCORSAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorized := request(http.MethodGet, "/api/projects", "127.0.0.1:7001", ProductionBrowserOrigin, session.Token)
-	if authorized.Code != http.StatusOK {
+	authorized := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", ProductionBrowserOrigin, session.Token)
+	if authorized.Code != http.StatusNotFound {
 		t.Fatalf("valid session status = %d", authorized.Code)
 	}
 	if got := authorized.Header().Get("Access-Control-Allow-Origin"); got != ProductionBrowserOrigin {
