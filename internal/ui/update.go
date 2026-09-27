@@ -71,11 +71,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil || msg.content == "" {
 			m.logContent = "(no commits yet)"
 		}
-		if m.rightTab == tabLog {
-			m.term.SetTitle("Git Log")
-			m.term.SetFollow(false)
-			m.term.SetContent(m.logContent)
-		}
+		term := m.viewTerm(viewLog)
+		term.SetTitle("Git Log")
+		term.SetFollow(false)
+		term.SetContent(m.logContent)
 		return m, nil
 
 	case scriptsMsg:
@@ -236,19 +235,21 @@ func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	pane, ok := m.resolvedPaneLayout().paneAt(msg.X, msg.Y)
+	rp, ok := m.resolvedDynamicPaneLayout().paneAt(msg.X, msg.Y)
 	if !ok {
 		return m, nil
 	}
-
-	var cmd tea.Cmd
-	switch pane {
-	case paneWorktrees:
+	active := m.activeView(rp.ID)
+	if active == viewWorktrees {
+		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
-	case paneWorkspace:
-		m.term, cmd = m.term.Update(msg)
+		return m, cmd
 	}
-	return m, cmd
+	if terminalBackedView(active) {
+		cmd := m.updateViewTerm(active, msg)
+		return m, cmd
+	}
+	return m, nil
 }
 
 func (m Model) onResize(msg tea.WindowSizeMsg) Model {
@@ -279,13 +280,7 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if wt, ok := m.selectedWorktree(); ok {
-		cmds = append(cmds, loadLog(wt.Path))
-		if m.rightTab == tabInspect {
-			cmds = append(cmds, m.enterInspect(wt))
-		}
-		if m.rightTab == tabChecks && wt.Branch != "" && wt.Branch != "(detached)" {
-			cmds = append(cmds, m.enterChecks(wt))
-		}
+		cmds = append(cmds, m.refreshVisibleViews(wt)...)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -573,34 +568,34 @@ func (m Model) activeProcess(path string) (*procstore.Record, bool) {
 // mergedProcOutput). Either way, an active search/filter query (see
 // updateProcSearch) is applied before display.
 func (m *Model) refreshProcPane() {
-	m.term.SetTitle("Processes")
-	m.term.SetFollow(true)
+	m.viewTerm(viewProcesses).SetTitle("Processes")
+	m.viewTerm(viewProcesses).SetFollow(true)
 	// The footer's height depends on the process list, so re-size the viewport
 	// before loading content: a viewport taller than the area it is drawn into
 	// clamps its own scroll offset to 0 and nothing scrolls (see layout).
 	m.layout()
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		m.term.SetContent("")
+		m.viewTerm(viewProcesses).SetContent("")
 		return
 	}
 	if len(m.procs.List(wt.Path)) == 0 {
-		m.term.SetContent("")
+		m.viewTerm(viewProcesses).SetContent("")
 		return
 	}
 	query := m.procSearch[wt.Path]
 	if ids := m.procMultiSel[wt.Path]; len(ids) > 1 {
-		m.term.SetContent(m.mergedProcOutput(ids, query))
+		m.viewTerm(viewProcesses).SetContent(m.mergedProcOutput(ids, query))
 		return
 	}
 	sel, selOK := m.activeProcess(wt.Path)
 	if selOK {
 		m.activeProc[wt.Path] = sel.ID
 		out := applyProcSearch(m.procs.Output(sel.ID), query)
-		m.term.SetContent(renderProcLog(out, m.termInnerWidth()))
+		m.viewTerm(viewProcesses).SetContent(renderProcLog(out, m.termInnerWidth()))
 		return
 	}
-	m.term.SetContent("")
+	m.viewTerm(viewProcesses).SetContent("")
 }
 
 // mergedProcOutput builds the multi-view merged log: each selected process's
@@ -741,7 +736,7 @@ func (m *Model) moveProcSel(path string, delta int) {
 // onKey handles global keybindings when no modal is open.
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// While the worktree filter input is active, the list owns every key.
-	if m.focus == focusList && m.list.SettingFilter() {
+	if m.focusedView() == viewWorktrees && m.list.SettingFilter() {
 		return m.forwardToPane(msg)
 	}
 	// On the Processes tab (focused), the inline search box (if active), then
@@ -749,7 +744,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// (j/k/u/d/b/f/…) are forwarded to the log viewport explicitly, since several
 	// of them are also global single-letter actions (fetch/diff-tab/checks-tab/
 	// update-base) that would otherwise swallow them before they ever scroll.
-	if m.rightTab == tabProcs && m.focus == focusTerminal {
+	if m.focusedView() == viewProcesses {
 		if m.procSearchActive {
 			return m.updateProcSearch(msg)
 		}
@@ -761,13 +756,13 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	// On the PR tab (focused), PR-action keys win over the globals.
-	if m.rightTab == tabPR && m.focus == focusTerminal {
+	if m.focusedView() == viewPR {
 		if handled, nm, cmd := m.prTabKey(msg); handled {
 			return nm, cmd
 		}
 	}
 	// On the Diff tab (focused), file navigation/expand keys win over the globals.
-	if m.rightTab == tabDiff && m.focus == focusTerminal {
+	if m.focusedView() == viewDiff {
 		if handled, nm, cmd := m.diffTabKey(msg); handled {
 			return nm, cmd
 		}
@@ -891,18 +886,22 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // forwardToPane sends a message to whichever pane is focused.
 func (m Model) forwardToPane(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	if m.focus == focusList {
+	active := m.focusedView()
+	if active == viewWorktrees {
 		prevPath := selectedPath(m.list)
+		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
-		// Reload the active tab's content when the highlighted worktree changes.
 		if newPath := selectedPath(m.list); newPath != "" && newPath != prevPath {
-			return m, tea.Batch(cmd, m.reloadRightPane())
+			if wt, ok := m.selectedWorktree(); ok {
+				return m, tea.Batch(append([]tea.Cmd{cmd}, m.refreshVisibleViews(wt)...)...)
+			}
 		}
 		return m, cmd
 	}
-	m.term, cmd = m.term.Update(msg)
-	return m, cmd
+	if terminalBackedView(active) {
+		return m, m.updateViewTerm(active, msg)
+	}
+	return m, nil
 }
 
 func selectedPath(l worktreelist.Model) string {
@@ -913,15 +912,7 @@ func selectedPath(l worktreelist.Model) string {
 }
 
 func (m *Model) toggleFocus() {
-	if m.focus == focusList {
-		m.focus = focusTerminal
-		m.list.Blur()
-		m.term.Focus()
-	} else {
-		m.focus = focusList
-		m.term.Blur()
-		m.list.Focus()
-	}
+	m.cyclePaneFocus()
 }
 
 // --- Modal openers ---
@@ -1196,7 +1187,7 @@ func (m Model) toggleProcsTab() (tea.Model, tea.Cmd) {
 		m.layout() // the Processes footer is gone: give its rows back to the viewport
 		m.term.SetTitle("Git Log")
 		m.term.SetFollow(false)
-		m.term.SetContent(m.logContent)
+		m.viewTerm(viewProcesses).SetContent(m.logContent)
 		return m, nil
 	}
 	m.rightTab = tabProcs
@@ -1218,7 +1209,7 @@ func (m Model) openLogTab() (tea.Model, tea.Cmd) {
 	wt, ok := m.selectedWorktree()
 	if !ok {
 		m.term.SetFollow(false)
-		m.term.SetContent(m.logContent)
+		m.viewTerm(viewProcesses).SetContent(m.logContent)
 		return m, nil
 	}
 	return m, loadLog(wt.Path)
@@ -1341,7 +1332,7 @@ func (m *Model) enterDiff(wt git.Worktree) tea.Cmd {
 		m.diffCursor = 0
 		m.diffFileContent = map[string]string{}
 		m.term.SetFollow(false)
-		m.term.SetContent("(loading diff…)")
+		m.viewTerm(viewProcesses).SetContent("(loading diff…)")
 	} else {
 		m.refreshDiffPane()
 	}
@@ -1387,7 +1378,7 @@ func (m *Model) enterInspect(wt git.Worktree) tea.Cmd {
 		m.inspectPath = wt.Path
 		m.inspect = inspectorData{}
 		m.term.SetFollow(false)
-		m.term.SetContent("(loading…)")
+		m.viewTerm(viewProcesses).SetContent("(loading…)")
 	} else {
 		m.refreshInspectPane()
 	}
@@ -1397,7 +1388,7 @@ func (m *Model) enterInspect(wt git.Worktree) tea.Cmd {
 // refreshInspectPane renders the cached inspector data into the viewport.
 func (m *Model) refreshInspectPane() {
 	m.term.SetFollow(false)
-	m.term.SetContent(m.renderInspect())
+	m.viewTerm(viewProcesses).SetContent(m.renderInspect())
 }
 
 // onRuns records branch workflow runs for the Checks tab, discarding stale
@@ -1446,7 +1437,7 @@ func (m *Model) enterChecks(wt git.Worktree) tea.Cmd {
 		m.ciRuns = nil
 		m.ciErr = ""
 		m.term.SetFollow(false)
-		m.term.SetContent("(loading…)")
+		m.viewTerm(viewProcesses).SetContent("(loading…)")
 	} else {
 		m.refreshChecksPane()
 	}
@@ -1456,7 +1447,7 @@ func (m *Model) enterChecks(wt git.Worktree) tea.Cmd {
 // refreshChecksPane renders the cached workflow runs into the viewport.
 func (m *Model) refreshChecksPane() {
 	m.term.SetFollow(false)
-	m.term.SetContent(m.renderChecks())
+	m.viewTerm(viewProcesses).SetContent(m.renderChecks())
 }
 
 // onDiff records the changed-file list and renders the diff tab.
@@ -1468,7 +1459,7 @@ func (m Model) onDiff(msg diffMsg) (tea.Model, tea.Cmd) {
 		m.diffFiles = nil
 		if m.rightTab == tabDiff {
 			m.term.SetTitle("Diff")
-			m.term.SetContent("(diff unavailable: " + msg.err.Error() + ")")
+			m.viewTerm(viewProcesses).SetContent("(diff unavailable: " + msg.err.Error() + ")")
 		}
 		return m, nil
 	}
@@ -1485,7 +1476,7 @@ func (m Model) onDiff(msg diffMsg) (tea.Model, tea.Cmd) {
 // refreshDiffPane renders the changed-file list into the viewport.
 func (m *Model) refreshDiffPane() {
 	m.term.SetFollow(false)
-	m.term.SetContent(m.renderDiff())
+	m.viewTerm(viewProcesses).SetContent(m.renderDiff())
 }
 
 // diffTabKey handles navigation/expand keys while the Diff tab is focused.
@@ -1532,24 +1523,24 @@ func (m *Model) refreshPRPane() {
 	m.term.SetFollow(false)
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		m.term.SetContent("(no worktree selected)")
+		m.viewTerm(viewProcesses).SetContent("(no worktree selected)")
 		return
 	}
 	n, isPR := m.prForBranch(wt.Branch)
 	if !isPR {
-		m.term.SetContent("(no PR connected)")
+		m.viewTerm(viewProcesses).SetContent("(no PR connected)")
 		return
 	}
 	d, ok := m.prDetail[n]
 	if !ok {
 		if m.prPaneErr != "" {
-			m.term.SetContent("PR #" + strconv.Itoa(n) + ": " + m.prPaneErr)
+			m.viewTerm(viewProcesses).SetContent("PR #" + strconv.Itoa(n) + ": " + m.prPaneErr)
 		} else {
-			m.term.SetContent("(loading PR #" + strconv.Itoa(n) + "…)")
+			m.viewTerm(viewProcesses).SetContent("(loading PR #" + strconv.Itoa(n) + "…)")
 		}
 		return
 	}
-	m.term.SetContent(m.renderPRDetail(d, m.prChecks[n]))
+	m.viewTerm(viewProcesses).SetContent(m.renderPRDetail(d, m.prChecks[n]))
 }
 
 // prTabKey handles PR-action keys while the PR tab is focused. The bool reports
