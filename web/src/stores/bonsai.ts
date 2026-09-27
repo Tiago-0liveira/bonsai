@@ -459,10 +459,10 @@ export const useBonsaiStore = create<BonsaiState>()(
       setDockHeight: (dockHeight) => set({ dockHeight: Math.min(72, Math.max(14, dockHeight)) }),
       activeDockTab: 'terminal',
       setActiveDockTab: (activeDockTab) => set({ activeDockTab }),
-      dockWorktreeId: 'wt-web',
+      dockWorktreeId: '',
       setDockWorktreeId: (dockWorktreeId) =>
         set((state) => state.dockWorktreeId === dockWorktreeId ? state : { dockWorktreeId, dockRuntimeId: '' }),
-      dockRuntimeId: 'agent-ui',
+      dockRuntimeId: '',
       setDockRuntimeId: (dockRuntimeId) =>
         set((state) => {
           if (state.dockRuntimeId === dockRuntimeId) return state
@@ -474,7 +474,7 @@ export const useBonsaiStore = create<BonsaiState>()(
             openRuntimeIds: dockRuntimeId ? uniqueAdd(state.openRuntimeIds, dockRuntimeId) : state.openRuntimeIds,
           }
         }),
-      openRuntimeIds: ['agent-ui', 'agent-tests'],
+      openRuntimeIds: [],
       openRuntime: (id) =>
         set((state) => {
           const agent = state.agents.find((item) => item.id === id)
