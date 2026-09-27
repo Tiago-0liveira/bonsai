@@ -125,7 +125,6 @@ func TestPTYHubCloseReplaysExit(t *testing.T) {
 	}
 }
 
-
 func TestPTYHubExitDeliveredWithFullOutputBacklog(t *testing.T) {
 	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
 	h.subQueue = 2
