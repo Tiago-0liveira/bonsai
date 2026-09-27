@@ -37,14 +37,14 @@ type Config struct {
 	RepoDir       string
 	Address       string
 	BrowserOrigin string
-	Development   bool
+	SecurityMode  BrowserSecurityMode
 }
 
 type Server struct {
 	repoDir       string
 	expectedHost  string
 	browserOrigin string
-	development   bool
+	securityMode  BrowserSecurityMode
 	registry      projectRegistry
 	sessions      *sessionStore
 	state         *gitstore.Store
@@ -59,7 +59,10 @@ func New(cfg Config) (*Server, error) {
 	if err := requireLoopback(cfg.Address); err != nil {
 		return nil, err
 	}
-	if err := validateBrowserOrigin(cfg.BrowserOrigin, cfg.Development); err != nil {
+	if cfg.SecurityMode == "" {
+		cfg.SecurityMode = BrowserSecurityProduction
+	}
+	if err := validateBrowserOrigin(cfg.BrowserOrigin, cfg.SecurityMode); err != nil {
 		return nil, err
 	}
 	state, err := gitstore.Open(filepath.Join(procstore.New(cfg.RepoDir).Dir(), "local-api-state.json"))
@@ -70,7 +73,7 @@ func New(cfg Config) (*Server, error) {
 		repoDir:       cfg.RepoDir,
 		expectedHost:  cfg.Address,
 		browserOrigin: cfg.BrowserOrigin,
-		development:   cfg.Development,
+		securityMode:  cfg.SecurityMode,
 		registry:      newStaticProjectRegistry(cfg.RepoDir),
 		sessions:      newSessionStore(),
 		state:         state,

@@ -119,6 +119,11 @@ type Config struct {
 	Processes []ProcessPolicy `mapstructure:"processes"`
 	// Serve configures the daemon-owned loopback browser API.
 	Serve ServeConfig `mapstructure:"serve"`
+
+	// DeprecatedServeKeys records legacy Plan-26 serve keys that were present in
+	// the loaded file. Callers may warn, but these keys never affect production
+	// local-API binding or browser security.
+	DeprecatedServeKeys []string `mapstructure:"-"`
 }
 
 // PolicyFor resolves the restart policy for a process, matching label first then
@@ -222,6 +227,7 @@ func Load(dir string) (*Config, error) {
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
 	}
+	cfg.DeprecatedServeKeys = deprecatedServeKeys(v)
 	return cfg, nil
 }
 
@@ -265,7 +271,18 @@ func LoadFile(path string) (*Config, error) {
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
 	}
+	cfg.DeprecatedServeKeys = deprecatedServeKeys(v)
 	return cfg, nil
+}
+
+func deprecatedServeKeys(v *viper.Viper) []string {
+	var out []string
+	for _, key := range []string{"serve.webhook_port", "serve.web_port", "serve.server_config"} {
+		if v.IsSet(key) {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 // CreateHooks returns the commands to run after a worktree is created.

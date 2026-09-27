@@ -16,6 +16,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
+	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
 )
 
@@ -45,6 +46,15 @@ func main() {
 	// Hidden: the daemon supervises the loopback-only local HTTP API.
 	if len(args) >= 1 && args[0] == "__serve-api" {
 		if err := runServeInternal(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Hidden: development-only verify/normalize/SSE webhook relay.
+	if len(args) >= 1 && args[0] == "__serve-webhook" {
+		if err := runDevWebhookInternal(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)
 			os.Exit(1)
 		}
@@ -153,7 +163,7 @@ func runServeInternal(args []string) error {
 	repoDir := fs.String("repo", "", "repository root")
 	port := fs.Int("port", 0, "loopback listen port")
 	browserOrigin := fs.String("browser-origin", localapi.ProductionBrowserOrigin, "authorized browser origin")
-	development := fs.Bool("development", false, "allow the explicit loopback development origin")
+	securityMode := fs.String("security-mode", string(localapi.BrowserSecurityProduction), "browser security mode")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -165,6 +175,25 @@ func runServeInternal(args []string) error {
 		RepoDir:       *repoDir,
 		Address:       address,
 		BrowserOrigin: *browserOrigin,
-		Development:   *development,
+		SecurityMode:  localapi.BrowserSecurityMode(*securityMode),
+	})
+}
+
+func runDevWebhookInternal(args []string) error {
+	fs := flag.NewFlagSet("__serve-webhook", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	port := fs.Int("port", 0, "loopback listen port")
+	browserOrigin := fs.String("browser-origin", "", "authorized development browser origin")
+	secretFile := fs.String("secret-file", "", "development webhook HMAC secret file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *port <= 0 || *browserOrigin == "" || *secretFile == "" {
+		return fmt.Errorf("__serve-webhook requires --port, --browser-origin, and --secret-file")
+	}
+	return webhooks.RunDevRelay(webhooks.DevRelayConfig{
+		Address:       fmt.Sprintf("127.0.0.1:%d", *port),
+		BrowserOrigin: *browserOrigin,
+		SecretFile:    *secretFile,
 	})
 }

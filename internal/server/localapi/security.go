@@ -4,15 +4,19 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
 const ProductionBrowserOrigin = "https://app.bonsai.dev"
 
-var developmentOrigins = map[string]struct{}{
-	"http://localhost:5173": {},
-	"http://127.0.0.1:5173": {},
-}
+type BrowserSecurityMode string
+
+const (
+	BrowserSecurityProduction  BrowserSecurityMode = "production"
+	BrowserSecurityDevelopment BrowserSecurityMode = "development"
+)
 
 func requireLoopback(address string) error {
 	host, _, err := net.SplitHostPort(address)
@@ -26,15 +30,39 @@ func requireLoopback(address string) error {
 	return nil
 }
 
-func validateBrowserOrigin(origin string, development bool) error {
-	if origin == ProductionBrowserOrigin {
+func validateBrowserOrigin(origin string, mode BrowserSecurityMode) error {
+	if mode == "" {
+		mode = BrowserSecurityProduction
+	}
+	switch mode {
+	case BrowserSecurityProduction:
+		if origin != ProductionBrowserOrigin {
+			return fmt.Errorf("production browser origin must be exactly %s", ProductionBrowserOrigin)
+		}
 		return nil
+	case BrowserSecurityDevelopment:
+		return validateDevelopmentOrigin(origin)
+	default:
+		return fmt.Errorf("unknown browser security mode %q", mode)
 	}
-	if !development {
-		return fmt.Errorf("browser origin must be exactly %s", ProductionBrowserOrigin)
+}
+
+func validateDevelopmentOrigin(origin string) error {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil ||
+		u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("development browser origin must be an explicit loopback HTTP origin")
 	}
-	if _, ok := developmentOrigins[origin]; !ok {
-		return fmt.Errorf("development origin must be http://localhost:5173 or http://127.0.0.1:5173")
+	host := u.Hostname()
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("development browser origin must be loopback, got %q", host)
+		}
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("development browser origin requires an explicit valid port")
 	}
 	return nil
 }

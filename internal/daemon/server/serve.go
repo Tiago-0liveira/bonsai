@@ -94,11 +94,18 @@ func (s *Server) loadServeGroups() {
 
 func (s *Server) removeServeArtifacts(id string) {
 	_ = os.Remove(s.serveStatePath(id))
+	_ = os.Remove(s.serveDevSecretPath(id))
 }
 
 func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("missing serve specification")
+	}
+	if spec.Mode == "" {
+		spec.Mode = procstore.ServeModeProduction
+	}
+	if spec.Mode == procstore.ServeModeDevelopment {
+		return s.serveStartDevStack(spec)
 	}
 	if err := validateServeSpec(*spec); err != nil {
 		return nil, err
@@ -109,7 +116,8 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	s.mu.Unlock()
 	if existing != nil {
 		group := s.serveSnapshot(existing)
-		modern := existing.Spec.BrowserOrigin != "" &&
+		modern := normalizedServeMode(existing.Spec) == procstore.ServeModeProduction &&
+			existing.Spec.BrowserOrigin != "" &&
 			len(existing.ProcessIDs) == 1 &&
 			existing.ProcessIDs["api"] != 0
 		if modern && group.State == "ready" {
@@ -188,21 +196,28 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	return group, nil
 }
 
+func normalizedServeMode(spec procstore.ServeSpec) procstore.ServeMode {
+	if spec.Mode == "" {
+		return procstore.ServeModeProduction
+	}
+	return spec.Mode
+}
+
 func validateServeSpec(spec procstore.ServeSpec) error {
+	if normalizedServeMode(spec) != procstore.ServeModeProduction {
+		return fmt.Errorf("production serve requires production mode")
+	}
 	if spec.WorkspaceID == "" || spec.WorkspacePath == "" || spec.Executable == "" {
 		return fmt.Errorf("serve requires workspace id/path and executable")
 	}
 	if spec.APIPort < 1 || spec.APIPort > 65535 {
 		return fmt.Errorf("api port %d is invalid", spec.APIPort)
 	}
-	if spec.BrowserOrigin == "" {
-		return fmt.Errorf("browser origin is required")
-	}
-	if !spec.Development && spec.BrowserOrigin != "https://app.bonsai.dev" {
+	if spec.BrowserOrigin != "https://app.bonsai.dev" {
 		return fmt.Errorf("production browser origin must be exactly https://app.bonsai.dev")
 	}
-	if spec.Development && spec.BrowserOrigin != "http://localhost:5173" && spec.BrowserOrigin != "http://127.0.0.1:5173" {
-		return fmt.Errorf("development browser origin must be an explicit loopback frontend origin")
+	if spec.WebhookPort != 0 || spec.WebPort != 0 || len(spec.Sidecars) != 0 {
+		return fmt.Errorf("production serve cannot supervise development services")
 	}
 	return nil
 }
@@ -219,16 +234,13 @@ func checkServePorts(ports ...int) error {
 }
 
 func serveAPIArgs(spec procstore.ServeSpec) []string {
-	args := []string{
+	return []string{
 		"__serve-api",
 		"--repo", spec.WorkspacePath,
 		"--port", strconv.Itoa(spec.APIPort),
 		"--browser-origin", spec.BrowserOrigin,
+		"--security-mode", "production",
 	}
-	if spec.Development {
-		args = append(args, "--development")
-	}
-	return args
 }
 
 func serveEnvironment(spec procstore.ServeSpec) map[string]string {
@@ -343,8 +355,10 @@ func (s *Server) serveStatus(id string) (*procstore.ServeGroup, error) {
 
 func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 	group := &procstore.ServeGroup{
-		ID: rt.Spec.WorkspaceID, WorkspaceID: rt.Spec.WorkspaceID, WorkspacePath: rt.Spec.WorkspacePath,
-		State: "ready", StartedAt: rt.StartedAt, APIPort: rt.Spec.APIPort, BrowserOrigin: rt.Spec.BrowserOrigin,
+		ID: rt.Spec.WorkspaceID, Mode: normalizedServeMode(rt.Spec),
+		WorkspaceID: rt.Spec.WorkspaceID, WorkspacePath: rt.Spec.WorkspacePath,
+		State: "ready", StartedAt: rt.StartedAt, APIPort: rt.Spec.APIPort,
+		WebhookPort: rt.Spec.WebhookPort, WebPort: rt.Spec.WebPort, BrowserOrigin: rt.Spec.BrowserOrigin,
 	}
 	names := make([]string, 0, len(rt.ProcessIDs))
 	for name := range rt.ProcessIDs {
@@ -518,6 +532,9 @@ func (s *Server) serveRestart(id, processName string) (*procstore.ServeGroup, er
 	s.mu.Unlock()
 	if rt == nil {
 		return nil, fmt.Errorf("no serve group for workspace")
+	}
+	if normalizedServeMode(rt.Spec) == procstore.ServeModeDevelopment {
+		return s.serveRestartDevStack(rt, processName)
 	}
 	var names []string
 	if processName != "" {
