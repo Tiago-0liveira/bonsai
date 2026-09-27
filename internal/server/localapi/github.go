@@ -107,10 +107,10 @@ func (s *Server) githubReviewPullRequest(w http.ResponseWriter, r *http.Request)
 	}
 	err := s.registry.Default().github.ReviewPullRequest(r.Context(), githubdomain.ReviewRequest{
 		Repository: repository,
-		Number: number,
-		Event: body.Event,
-		Body: body.Body,
-		CommitID: body.CommitID,
+		Number:     number,
+		Event:      body.Event,
+		Body:       body.Body,
+		CommitID:   body.CommitID,
 	})
 	writeGitHubResult(w, map[string]bool{"ok": err == nil}, err)
 }
@@ -167,9 +167,9 @@ func (s *Server) githubPullRequestAction(w http.ResponseWriter, r *http.Request)
 		}
 		err = s.registry.Default().github.MergePullRequest(r.Context(), githubdomain.MergePullRequestRequest{
 			Repository: repository,
-			Number: number,
-			Method: body.Method,
-			HeadSHA: body.HeadSHA,
+			Number:     number,
+			Method:     body.Method,
+			HeadSHA:    body.HeadSHA,
 		})
 	default:
 		http.NotFound(w, r)
