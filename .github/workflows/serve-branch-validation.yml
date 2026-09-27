@@ -1,0 +1,77 @@
+name: Serve branch validation
+
+on:
+  push:
+    branches:
+      - feat/serve-subcommand
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Format changed Go files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff --name-only 4831fdfe9c968d7ada97275447196a9bf986ed70...HEAD -- '*.go')
+          if (("${#files[@]}" > 0)); then
+            gofmt -w "${files[@]}"
+          fi
+          if ! git diff --quiet; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add -- "${files[@]}"
+            git commit -m "style(serve): gofmt implementation"
+            git push origin HEAD:feat/serve-subcommand
+          fi
+
+      - name: Module consistency
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit and integration tests
+        run: go test ./...
+
+      - name: Race tests
+        run: go test -race ./internal/daemon/... ./internal/server/...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Windows cross-build
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go build ./...
+
+      - name: Frontend install
+        run: npm --prefix web ci
+
+      - name: Frontend tests
+        run: npm --prefix web test
+
+      - name: Frontend build
+        run: npm --prefix web run build
