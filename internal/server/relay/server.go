@@ -11,7 +11,7 @@ import (
 
 const (
 	ProductionFrontendOrigin = "https://app.bonsai.dev"
-	ProductionExternalURL = "https://api.bonsai.dev"
+	ProductionExternalURL    = "https://api.bonsai.dev"
 )
 
 type Config struct {
@@ -132,8 +132,8 @@ func Run(ctx context.Context, cfg Config) error {
 	httpServer := &http.Server{
 		Addr: cfg.Address, Handler: s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout: 90 * time.Second,
-		MaxHeaderBytes: 32 << 10,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    32 << 10,
 	}
 	done := make(chan struct{})
 	go func() {
