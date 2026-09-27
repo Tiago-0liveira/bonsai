@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { mockGitBackend } from './mockGit'
 
 test('renders the Bonsai workspace and core dialogs without page errors', async ({ page }) => {
   const pageErrors: string[] = []
@@ -60,6 +61,7 @@ test('renders the Bonsai workspace and core dialogs without page errors', async 
 
 
 test('expanding a stack keeps unrelated branches fixed', async ({ page }) => {
+  await mockGitBackend(page)
   await page.goto('/')
 
   const unrelated = page.locator('.react-flow__node-worktree').filter({ hasText: 'fix/daemon-lifecycle' })
