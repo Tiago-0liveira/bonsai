@@ -30,6 +30,12 @@ func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/worktrees/{id}/diff", s.diffRead)
 	mux.HandleFunc("POST /api/worktrees/{id}/{action}", s.worktreeMutation)
 	mux.HandleFunc("POST /api/worktrees/{id}/operations/{action}", s.operationMutation)
+
+	// Compatibility with the current Bonsai Web route shape while requests now
+	// terminate directly at the loopback API instead of a cloud daemon bridge.
+	mux.HandleFunc("GET /api/projects/{projectId}/branches", s.projectGitRead("git.branches"))
+	mux.HandleFunc("GET /api/projects/{projectId}/worktrees", s.projectGitRead("git.worktrees"))
+	mux.HandleFunc("POST /api/projects/{projectId}/worktrees", s.compatCreateWorktree)
 }
 
 func (s *Server) gitRead(kind string, worktree bool) http.HandlerFunc {
@@ -40,7 +46,16 @@ func (s *Server) gitRead(kind string, worktree bool) http.HandlerFunc {
 				args[key] = value
 			}
 		}
-		s.executeGit(w, r, kind, worktreeID(r, worktree), mustJSON(args), false)
+		s.executeGitRead(w, r, kind, worktreeID(r, worktree), mustJSON(args))
+	}
+}
+
+func (s *Server) projectGitRead(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireLocalProject(w, r) {
+			return
+		}
+		s.executeGitRead(w, r, kind, "", json.RawMessage(`{}`))
 	}
 }
 
@@ -50,8 +65,19 @@ func (s *Server) gitMutation(kind string, worktree bool) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		s.executeGit(w, r, kind, worktreeID(r, worktree), args, true)
+		s.executeGitMutation(w, r, kind, worktreeID(r, worktree), args)
 	}
+}
+
+func (s *Server) compatCreateWorktree(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLocalProject(w, r) {
+		return
+	}
+	args, ok := requestArguments(w, r, allowedArguments("git.worktree.create")...)
+	if !ok {
+		return
+	}
+	s.executeGitMutation(w, r, "git.worktree.create", "", args)
 }
 
 func (s *Server) fileRead(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +86,7 @@ func (s *Server) fileRead(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid", "file path is required")
 		return
 	}
-	s.executeGit(w, r, "git.file.read", r.PathValue("id"), mustJSON(map[string]string{"path": path}), false)
+	s.executeGitRead(w, r, "git.file.read", r.PathValue("id"), mustJSON(map[string]string{"path": path}))
 }
 
 func (s *Server) diffRead(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +96,7 @@ func (s *Server) diffRead(w http.ResponseWriter, r *http.Request) {
 			args[key] = value
 		}
 	}
-	s.executeGit(w, r, "git.diff.read", r.PathValue("id"), mustJSON(args), false)
+	s.executeGitRead(w, r, "git.diff.read", r.PathValue("id"), mustJSON(args))
 }
 
 func (s *Server) worktreeMutation(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +118,7 @@ func (s *Server) worktreeMutation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.executeGit(w, r, kind, r.PathValue("id"), args, true)
+	s.executeGitMutation(w, r, kind, r.PathValue("id"), args)
 }
 
 func (s *Server) operationMutation(w http.ResponseWriter, r *http.Request) {
@@ -106,16 +132,52 @@ func (s *Server) operationMutation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.executeGit(w, r, kind, r.PathValue("id"), args, true)
+	s.executeGitMutation(w, r, kind, r.PathValue("id"), args)
 }
 
-func (s *Server) executeGit(w http.ResponseWriter, r *http.Request, kind, worktree string, args json.RawMessage, mutation bool) {
+func (s *Server) executeGitRead(w http.ResponseWriter, r *http.Request, kind, worktree string, args json.RawMessage) {
+	result, ok := s.runGit(w, r, kind, worktree, args, false)
+	if !ok {
+		return
+	}
+	if len(result.Payload) == 0 {
+		writeJSON(w, http.StatusOK, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(result.Payload)
+}
+
+func (s *Server) executeGitMutation(w http.ResponseWriter, r *http.Request, kind, worktree string, args json.RawMessage) {
+	result, ok := s.runGit(w, r, kind, worktree, args, true)
+	if !ok {
+		return
+	}
+	s.publishProjectEvent(worktree)
+	snapshot, err := s.browserSnapshot(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	var value any
+	if len(result.Payload) > 0 {
+		value = json.RawMessage(result.Payload)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"command_id": result.ID,
+		"result":     value,
+		"snapshot":   snapshot,
+	})
+}
+
+func (s *Server) runGit(w http.ResponseWriter, r *http.Request, kind, worktree string, args json.RawMessage, mutation bool) (*gitbridge.Result, bool) {
 	id := randomID()
 	if mutation {
 		id = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 		if id == "" || len(id) > 128 {
 			writeAPIError(w, http.StatusBadRequest, "invalid", "Idempotency-Key is required for mutations")
-			return
+			return nil, false
 		}
 	}
 	result, err := s.registry.Default().daemon.Git(gitbridge.Command{
@@ -129,19 +191,13 @@ func (s *Server) executeGit(w http.ResponseWriter, r *http.Request, kind, worktr
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "daemon_unavailable", err.Error())
-		return
+		return nil, false
 	}
 	if result.Error != nil {
 		writeDomainError(w, result.Error)
-		return
+		return nil, false
 	}
-	if len(result.Payload) == 0 {
-		writeJSON(w, http.StatusOK, nil)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(result.Payload)
+	return result, true
 }
 
 func allowedArguments(kind string) []string {
@@ -251,6 +307,8 @@ func writeDomainError(w http.ResponseWriter, e *domain.Error) {
 		status = http.StatusConflict
 	case "daemon_offline":
 		status = http.StatusServiceUnavailable
+	case "too_large":
+		status = http.StatusRequestEntityTooLarge
 	case "internal":
 		status = http.StatusInternalServerError
 	}
