@@ -192,8 +192,8 @@ export async function mockGitBackend(page: Page) {
     const url = new URL(request.url())
     const path = url.pathname
 
-    if (path === '/api/events') {
-      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': ready\n\n' })
+    if (path === '/api/session') {
+      await route.fulfill({ status: 201, json: { token: 'e2e-session', expires_at: new Date(Date.now() + 60_000).toISOString() } })
       return
     }
 
