@@ -177,7 +177,23 @@ function emptySnapshot(projectId: string) {
   }
 }
 
+export async function mockLocalEventSocket(page: Page) {
+  await page.routeWebSocket('ws://127.0.0.1:7001/events', socket => {
+    socket.onMessage(message => {
+      try {
+        const payload = JSON.parse(String(message)) as { type?: string }
+        if (payload.type === 'authenticate') {
+          socket.send(JSON.stringify({ type: 'ready', sequence: 0 }))
+        }
+      } catch {
+        // Invalid fixture messages are ignored just like production events.
+      }
+    })
+  })
+}
+
 export async function mockGitBackend(page: Page) {
+  await mockLocalEventSocket(page)
   const metadata: Record<string, Metadata> = {
     'wt-main': { tag: 'production', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-web': { tag: 'feat', merge_target_branch: 'main', stack_preference: 'auto' },
