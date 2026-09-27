@@ -21,7 +21,7 @@ const (
 )
 
 var (
-	ErrDeliveryConflict = errors.New("delivery id reused with different payload")
+	ErrDeliveryConflict  = errors.New("delivery id reused with different payload")
 	ErrUnauthorizedScope = errors.New("repository or installation is not authorized")
 )
 
@@ -66,11 +66,11 @@ type RelayEvent struct {
 }
 
 type diskState struct {
-	OAuthStates map[string]time.Time    `json:"oauth_states"`
-	Sessions    map[string]RelaySession `json:"relay_sessions"`
+	OAuthStates map[string]time.Time      `json:"oauth_states"`
+	Sessions    map[string]RelaySession   `json:"relay_sessions"`
 	Deliveries  map[string]DeliveryRecord `json:"webhook_deliveries"`
-	Events      []RelayEvent            `json:"relay_events"`
-	Sequence    uint64                  `json:"sequence"`
+	Events      []RelayEvent              `json:"relay_events"`
+	Sequence    uint64                    `json:"sequence"`
 }
 
 type Store struct {
@@ -86,11 +86,11 @@ func OpenStore(path string) (*Store, error) {
 		path: path,
 		state: diskState{
 			OAuthStates: map[string]time.Time{},
-			Sessions: map[string]RelaySession{},
-			Deliveries: map[string]DeliveryRecord{},
-			Events: []RelayEvent{},
+			Sessions:    map[string]RelaySession{},
+			Deliveries:  map[string]DeliveryRecord{},
+			Events:      []RelayEvent{},
 		},
-		maxEvents: defaultMaxEvents,
+		maxEvents:     defaultMaxEvents,
 		maxDeliveries: defaultMaxDeliveries,
 	}
 	b, err := os.ReadFile(path)
@@ -198,11 +198,11 @@ func (s *Store) purgeLocked(now time.Time) {
 	if len(s.state.Deliveries) > s.maxDeliveries {
 		type item struct {
 			key string
-			at time.Time
+			at  time.Time
 		}
 		items := make([]item, 0, len(s.state.Deliveries))
 		for key, d := range s.state.Deliveries {
-			items = append(items, item{key:key, at:d.ReceivedAt})
+			items = append(items, item{key: key, at: d.ReceivedAt})
 		}
 		for len(items) > s.maxDeliveries {
 			oldest := 0
@@ -289,10 +289,10 @@ func eventFromWebhook(event webhooks.Event, sequence uint64, receivedAt time.Tim
 		Number: event.Number, PullRequestNumber: event.PullRequestNumber,
 		PullRequestMerged: event.PullRequestMerged, IssueNumber: event.IssueNumber,
 		Ref: event.Ref, CheckHeadSHA: event.CheckHeadSHA,
-		WorkflowHeadBranch: event.WorkflowHeadBranch,
-		RepositoriesAdded: append([]int64(nil), event.RepositoriesAdded...),
+		WorkflowHeadBranch:  event.WorkflowHeadBranch,
+		RepositoriesAdded:   append([]int64(nil), event.RepositoriesAdded...),
 		RepositoriesRemoved: append([]int64(nil), event.RepositoriesRemoved...),
-		ReceivedAt: receivedAt.UTC(),
+		ReceivedAt:          receivedAt.UTC(),
 	}
 }
 
@@ -352,6 +352,12 @@ func (s *Store) Replay(after uint64, session RelaySession) ([]RelayEvent, bool) 
 		}
 	}
 	return out, false
+}
+
+func (s *Store) Cursor() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.Sequence
 }
 
 func (s *Store) EventCount() int {
