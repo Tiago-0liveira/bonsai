@@ -248,6 +248,7 @@ func TestViewNeverExceedsTerminalAcrossLayouts(t *testing.T) {
 				m := renderModel()
 				m.width, m.height = w, h
 				m.paneLayout = layout
+				m.procs = &procView{}
 				m.list = worktreelist.New()
 				m.list.SetItems([]worktreelist.Item{
 					{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
