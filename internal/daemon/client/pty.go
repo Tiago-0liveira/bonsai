@@ -21,8 +21,17 @@ type PTYEvent struct {
 	Error    string
 }
 
+// PTYInfo is immutable metadata returned by the PTY attach handshake.
+type PTYInfo struct {
+	ID      int
+	Cols    int
+	Rows    int
+	NextSeq uint64
+}
+
 // PTYAttachment is a transport-neutral full-duplex terminal attachment.
 type PTYAttachment interface {
+	Info() PTYInfo
 	Events() <-chan PTYEvent
 	Write([]byte) error
 	Resize(cols, rows int) error
@@ -34,6 +43,7 @@ type ptyAttachment struct {
 	enc    *protocol.Encoder
 	dec    *protocol.Decoder
 	events chan PTYEvent
+	info   PTYInfo
 
 	writeMu  sync.Mutex
 	closed   bool
@@ -112,8 +122,14 @@ func (c *Client) AttachPTY(ctx context.Context, id int, afterSeq uint64) (PTYAtt
 	a := &ptyAttachment{
 		conn: conn, enc: enc, dec: dec,
 		events: make(chan PTYEvent, 64),
-		stop:   make(chan struct{}),
-		done:   make(chan struct{}),
+		info: PTYInfo{
+			ID:      resp.ID,
+			Cols:    resp.PTYCols,
+			Rows:    resp.PTYRows,
+			NextSeq: resp.NextSeq,
+		},
+		stop: make(chan struct{}),
+		done: make(chan struct{}),
 	}
 	go a.readLoop()
 	go func() {
@@ -126,6 +142,7 @@ func (c *Client) AttachPTY(ctx context.Context, id int, afterSeq uint64) (PTYAtt
 	return a, nil
 }
 
+func (a *ptyAttachment) Info() PTYInfo             { return a.info }
 func (a *ptyAttachment) Events() <-chan PTYEvent { return a.events }
 
 func (a *ptyAttachment) Write(data []byte) error {
@@ -157,9 +174,11 @@ func (a *ptyAttachment) Close() error {
 		a.writeMu.Unlock()
 		return nil
 	}
-	_ = a.enc.WriteRequest(&protocol.Request{Kind: protocol.KindPTYDetach})
+	// Mark the close as intentional before touching the socket. This prevents
+	// the read loop from reporting the resulting EOF as a transport failure.
 	a.closed = true
 	a.stopOnce.Do(func() { close(a.stop) })
+	_ = a.enc.WriteRequest(&protocol.Request{Kind: protocol.KindPTYDetach})
 	err := a.conn.Close()
 	a.writeMu.Unlock()
 	return err
@@ -192,7 +211,16 @@ func (a *ptyAttachment) readLoop() {
 	for {
 		resp, err := a.dec.ReadResponse()
 		if err != nil {
-			return
+			select {
+			case <-a.stop:
+				return
+			default:
+				_ = emit(PTYEvent{
+					Kind:  protocol.KindPTYError,
+					Error: fmt.Sprintf("PTY transport: %v", err),
+				})
+				return
+			}
 		}
 		switch resp.Kind {
 		case protocol.KindPTYOutput:
