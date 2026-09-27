@@ -76,10 +76,10 @@ func cloneLayoutNode(n *config.TUILayoutNodePrefs) *config.TUILayoutNodePrefs {
 		return nil
 	}
 	out := &config.TUILayoutNodePrefs{
-		Type:  n.Type,
-		Axis:  n.Axis,
-		Ratio: n.Ratio,
-		First: cloneLayoutNode(n.First),
+		Type:   n.Type,
+		Axis:   n.Axis,
+		Ratio:  n.Ratio,
+		First:  cloneLayoutNode(n.First),
 		Second: cloneLayoutNode(n.Second),
 	}
 	if n.Pane != nil {
