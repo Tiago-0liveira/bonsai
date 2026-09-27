@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { mockGitBackend } from './mockGit'
+
+test.beforeEach(async ({ page }) => {
+  await mockGitBackend(page)
+})
 
 test('Auto-layout clears expanded History and keeps repeated layouts stable', async ({ page }) => {
   await page.goto('/')
@@ -24,7 +29,7 @@ test('Auto-layout clears expanded History and keeps repeated layouts stable', as
   await expect.poll(overlaps).toEqual([])
 
   const placements = () => page.evaluate(() =>
-    JSON.parse(localStorage.getItem('bonsai-web-workspace-v5')!).state.nodePlacements)
+    JSON.parse(localStorage.getItem('bonsai-web-workspace-v6')!).state.nodePlacements)
   const first = await placements()
   await layout.click()
   await expect.poll(placements).toEqual(first)
@@ -41,7 +46,7 @@ test('adding and removing a shelf agent preserves other branches and readable PR
   // Let the explicit Fit animation finish before checking viewport stability.
   await page.waitForTimeout(400)
   const snapshot = () => page.evaluate(() => {
-    const state = JSON.parse(localStorage.getItem('bonsai-web-workspace-v5')!).state
+    const state = JSON.parse(localStorage.getItem('bonsai-web-workspace-v6')!).state
     const ids = ['bonsai', 'wt-web', 'wt-docs', 'wt-daemon', 'wt-release', 'wt-review',
       'agent-daemon', 'agent-debug', 'agent-release']
     return {
