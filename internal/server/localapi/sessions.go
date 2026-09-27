@@ -2,8 +2,8 @@ package localapi
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"sync"
@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	sessionTTL = 15 * time.Minute
+	sessionTTL  = 15 * time.Minute
 	maxSessions = 32
 )
 
@@ -44,7 +44,7 @@ func (s *sessionStore) create() (session, error) {
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	now := s.now().UTC()
 	entry := sessionEntry{
-		digest: sha256.Sum256([]byte(token)),
+		digest:    sha256.Sum256([]byte(token)),
 		expiresAt: now.Add(sessionTTL),
 		createdAt: now,
 	}
