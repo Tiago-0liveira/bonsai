@@ -4,8 +4,10 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
+RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
+
+COPY package.json ./
+RUN pnpm install --no-frozen-lockfile
 
 COPY . .
 
@@ -15,7 +17,7 @@ ARG VITE_BONSAI_LOCAL_API_ORIGIN=http://127.0.0.1:7001
 ENV VITE_BONSAI_RELAY_ORIGIN=${VITE_BONSAI_RELAY_ORIGIN} \
     VITE_BONSAI_LOCAL_API_ORIGIN=${VITE_BONSAI_LOCAL_API_ORIGIN}
 
-RUN npm run build
+RUN pnpm build
 
 FROM caddy:2-alpine
 
