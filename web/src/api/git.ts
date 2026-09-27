@@ -9,6 +9,8 @@ export interface Snapshot { repository: Repository; online: boolean; sequence: n
 export class APIError extends Error { constructor(public code: string, message: string) { super(message) } }
 export async function request<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(method !== 'GET' ? { 'Idempotency-Key': crypto.randomUUID() } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) })
+  const contentType = response.headers.get('content-type') ?? ''
+  if (response.status !== 204 && !contentType.includes('application/json')) throw new APIError('backend_unavailable', 'Bonsai API is unavailable.')
   if (!response.ok) { const data = await response.json().catch(() => ({})); throw new APIError(data.error?.code ?? 'request_failed', data.error?.message ?? `Request failed (${response.status})`) }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -89,7 +91,7 @@ export function startGitBackend() {
       events.addEventListener('git', event => { const data = JSON.parse((event as MessageEvent).data) as { project_id: string }; void refreshProject(data.project_id).catch(report) })
       events.addEventListener('reset', () => { events?.close(); void connect() })
       events.onopen = () => { for (const r of repos) void refreshProject(r.id, useBonsaiStore.getState().gitOnline[r.id]).catch(report) }
-    } catch (error) { if (!closed) useBonsaiStore.setState({ gitError: error instanceof APIError && error.code === 'unauthorized' ? 'Sign in with GitHub to connect your repositories.' : String(error) }) }
+    } catch (error) { if (!closed) useBonsaiStore.setState({ gitError: error instanceof APIError ? (error.code === 'unauthorized' ? 'Sign in with GitHub to connect your repositories.' : error.message) : String(error) }) }
   }
   void connect()
   return () => { closed = true; events?.close() }
