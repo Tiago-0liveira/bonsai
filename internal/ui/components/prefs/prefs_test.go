@@ -265,7 +265,6 @@ func TestPRStatusCycle(t *testing.T) {
 	}
 }
 
-
 func moveToKind(m *Model, kind rowKind) {
 	for i, r := range m.rows {
 		if r.kind == kind {
