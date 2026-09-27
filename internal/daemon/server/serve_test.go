@@ -25,7 +25,12 @@ func TestValidateServeSpecAndPortCollision(t *testing.T) {
 		func() procstore.ServeSpec { v := spec; v.BrowserOrigin = ""; return v }(),
 		func() procstore.ServeSpec { v := spec; v.BrowserOrigin = "https://evil.example"; return v }(),
 		func() procstore.ServeSpec { v := spec; v.Development = true; return v }(),
-		func() procstore.ServeSpec {\n\t\t\tv := spec\n\t\t\tv.Development = true\n\t\t\tv.BrowserOrigin = "http://localhost:5174"\n\t\t\treturn v\n\t\t}(),
+		func() procstore.ServeSpec {
+			v := spec
+			v.Development = true
+			v.BrowserOrigin = "http://localhost:5174"
+			return v
+		}(),
 	}
 	for i, candidate := range invalid {
 		if err := validateServeSpec(candidate); err == nil {
