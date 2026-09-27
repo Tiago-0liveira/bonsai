@@ -33,7 +33,7 @@ type Config struct {
 	RepoDir       string
 	Address       string
 	BrowserOrigin string
-	Development  bool
+	Development   bool
 }
 
 type Server struct {
