@@ -1,6 +1,8 @@
 package ui
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
 )
 
@@ -238,4 +240,20 @@ func (m Model) viewVisible(id viewID) bool {
 		}
 	}
 	return false
+}
+
+
+func (m *Model) focusedTerm() *terminal.Model {
+	id := m.focusedView()
+	if !terminalBackedView(id) {
+		id = viewLog
+	}
+	return m.viewTerm(id)
+}
+
+func (m *Model) updateViewTerm(id viewID, msg tea.Msg) tea.Cmd {
+	term := m.viewTerm(id)
+	next, cmd := term.Update(msg)
+	*term = next
+	return cmd
 }
