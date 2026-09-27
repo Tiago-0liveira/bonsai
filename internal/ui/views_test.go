@@ -112,4 +112,3 @@ func TestUnavailableActiveViewFallsForwardWithoutChangingLayout(t *testing.T) {
 		t.Fatal("runtime availability fallback mutated persisted layout membership")
 	}
 }
-
