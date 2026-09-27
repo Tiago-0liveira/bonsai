@@ -7,7 +7,10 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -202,39 +205,226 @@ func TestActiveTabAlwaysVisibleInConstrainedTabStrip(t *testing.T) {
 	}
 }
 
-func TestViewHeightNeverExceedsTerminalHeight(t *testing.T) {
-	termSizes := [][2]int{
-		{80, 24},  // standard CMD / terminal
-		{100, 40}, // standard wide
-		{60, 20},  // compact
-		{120, 30}, // wide
-		{40, 15},  // very small
+func TestDefaultLayoutGeometryMatchesLegacy(t *testing.T) {
+	m := renderModel()
+	m.width, m.height = 100, 40
+	m.paneLayout = defaultLayoutSpec()
+	got := m.resolvedPaneLayout()
+
+	if got.Axis != axisHorizontal {
+		t.Fatalf("default axis = %v, want horizontal", got.Axis)
 	}
+	if got.Order != [2]paneID{paneWorktrees, paneWorkspace} {
+		t.Fatalf("default order = %v", got.Order)
+	}
+	if got.Worktrees.W != 35 || got.Workspace.W != 65 {
+		t.Fatalf("default widths = %d/%d, want 35/65", got.Worktrees.W, got.Workspace.W)
+	}
+	if got.Worktrees.X != 0 || got.Workspace.X != 35 {
+		t.Fatalf("default positions = worktrees x=%d workspace x=%d", got.Worktrees.X, got.Workspace.X)
+	}
+}
+
+func TestViewNeverExceedsTerminalAcrossLayouts(t *testing.T) {
+	termSizes := [][2]int{
+		{80, 24},
+		{100, 40},
+		{60, 20},
+		{120, 30},
+		{40, 15},
+	}
+	layouts := []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+	}
+	tabs := []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR}
 
 	for _, sz := range termSizes {
 		w, h := sz[0], sz[1]
-		m := renderModel()
-		m.width, m.height = w, h
-		m.list = worktreelist.New()
-		m.list.SetItems([]worktreelist.Item{
-			{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
-		})
-		m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
-		m.ready = true
-		m.layout()
+		for _, layout := range layouts {
+			for _, tab := range tabs {
+				m := renderModel()
+				m.width, m.height = w, h
+				m.paneLayout = layout
+				m.procs = &procView{}
+				m.list = worktreelist.New()
+				m.list.SetItems([]worktreelist.Item{
+					{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
+				})
+				m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
+				m.rightTab = tab
+				m.ready = true
+				m.layout()
 
-		for _, tab := range []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR} {
-			m.rightTab = tab
-			view := m.View()
-			actualH := lipgloss.Height(view)
-			if actualH > h {
-				t.Fatalf("View() at size %dx%d with tab %v produced height %d (exceeds %d):\n%s",
-					w, h, tab, actualH, h, view)
-			}
-			if actualH != h {
-				t.Fatalf("View() at size %dx%d with tab %v produced height %d (expected exactly %d)",
-					w, h, tab, actualH, h)
+				view := m.View()
+				actualH := lipgloss.Height(view)
+				actualW := lipgloss.Width(view)
+				if actualH > h {
+					t.Fatalf("View() size %dx%d layout=%+v tab=%v height=%d exceeds %d:\n%s",
+						w, h, layout, tab, actualH, h, view)
+				}
+				if actualH != h {
+					t.Fatalf("View() size %dx%d layout=%+v tab=%v height=%d, want exactly %d",
+						w, h, layout, tab, actualH, h)
+				}
+				if actualW > w {
+					t.Fatalf("View() size %dx%d layout=%+v tab=%v width=%d exceeds %d:\n%s",
+						w, h, layout, tab, actualW, w, view)
+				}
 			}
 		}
+	}
+}
+
+func TestWorkspaceViewportUsesResolvedPaneHeight(t *testing.T) {
+	for _, layout := range []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 65},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 65},
+	} {
+		m := renderModel()
+		m.width, m.height = 100, 40
+		m.paneLayout = layout
+		m.rightTab = tabLog
+		m.layout()
+
+		resolved := m.resolvedPaneLayout()
+		workspaceInnerH := max(resolved.Workspace.H-2, 1)
+		if got, want := m.termHeight(workspaceInnerH), max(workspaceInnerH-1, 1); got != want {
+			t.Fatalf("layout=%+v termHeight=%d want %d", layout, got, want)
+		}
+	}
+}
+
+
+func TestMouseWheelRoutesByResolvedPaneAcrossLayouts(t *testing.T) {
+	layouts := []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+	}
+
+	for _, layout := range layouts {
+		m := procModel()
+		m.width, m.height = 100, 40
+		m.paneLayout = layout
+		m.layout()
+		m.term.SetContent(strings.Repeat("a line of output\n", 200))
+		m.term.GotoTop()
+
+		resolved := m.resolvedPaneLayout()
+		workspaceWheel := tea.MouseMsg{
+			X:      resolved.Workspace.X + resolved.Workspace.W/2,
+			Y:      resolved.Workspace.Y + resolved.Workspace.H/2,
+			Button: tea.MouseButtonWheelDown,
+			Action: tea.MouseActionPress,
+		}
+		nm, _ := m.onMouse(workspaceWheel)
+		got := nm.(Model)
+		if got.term.ScrollPercent() <= 0 {
+			t.Fatalf("layout=%+v: wheel over workspace did not scroll terminal", layout)
+		}
+
+		m.term.GotoTop()
+		worktreesWheel := tea.MouseMsg{
+			X:      resolved.Worktrees.X + resolved.Worktrees.W/2,
+			Y:      resolved.Worktrees.Y + resolved.Worktrees.H/2,
+			Button: tea.MouseButtonWheelDown,
+			Action: tea.MouseActionPress,
+		}
+		nm, _ = m.onMouse(worktreesWheel)
+		got = nm.(Model)
+		if got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: wheel over worktrees scrolled terminal", layout)
+		}
+	}
+}
+
+func TestMouseWheelSuppressionAcrossLayouts(t *testing.T) {
+	layouts := []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+	}
+
+	for _, layout := range layouts {
+		base := procModel()
+		base.width, base.height = 100, 40
+		base.paneLayout = layout
+		base.layout()
+		base.term.SetContent(strings.Repeat("a line of output\n", 200))
+		resolved := base.resolvedPaneLayout()
+		wheel := tea.MouseMsg{
+			X:      resolved.Workspace.X + resolved.Workspace.W/2,
+			Y:      resolved.Workspace.Y + resolved.Workspace.H/2,
+			Button: tea.MouseButtonWheelDown,
+			Action: tea.MouseActionPress,
+		}
+
+		mouseOff := base
+		mouseOff.mouseOff = true
+		mouseOff.term.GotoTop()
+		nm, _ := mouseOff.onMouse(wheel)
+		if got := nm.(Model); got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: mouseOff allowed terminal scroll", layout)
+		}
+
+		withPrefs := base
+		pm := prefs.Model{}
+		withPrefs.prefs = &pm
+		withPrefs.term.GotoTop()
+		nm, _ = withPrefs.onMouse(wheel)
+		if got := nm.(Model); got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: preferences overlay allowed background scroll", layout)
+		}
+
+		withModal := base
+		modal := modals.Model{}
+		withModal.modal = &modal
+		withModal.term.GotoTop()
+		nm, _ = withModal.onMouse(wheel)
+		if got := nm.(Model); got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: modal allowed background scroll", layout)
+		}
+	}
+}
+
+
+func TestLayoutRecomputePreservesUIState(t *testing.T) {
+	m := renderModel()
+	m.width, m.height = 100, 40
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{
+		{WT: git.Worktree{Path: "/w/first", Branch: "first"}},
+		{WT: git.Worktree{Path: "/w/second", Branch: "second"}},
+	})
+	m.focus = focusTerminal
+	m.rightTab = tabInspect
+	before, ok := m.selectedWorktree()
+	if !ok {
+		t.Fatal("expected selected worktree")
+	}
+
+	m.paneLayout = layoutSpec{
+		Axis:             axisVertical,
+		Order:            [2]paneID{paneWorkspace, paneWorktrees},
+		WorktreesPercent: 65,
+	}
+	m.layout()
+
+	after, ok := m.selectedWorktree()
+	if !ok || after.Path != before.Path {
+		t.Fatalf("layout recompute changed worktree selection: before=%+v after=%+v ok=%v", before, after, ok)
+	}
+	if m.focus != focusTerminal {
+		t.Fatalf("layout recompute changed focus: %v", m.focus)
+	}
+	if m.rightTab != tabInspect {
+		t.Fatalf("layout recompute changed workspace tab: %v", m.rightTab)
 	}
 }

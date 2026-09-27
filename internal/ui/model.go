@@ -7,10 +7,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
-	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/core/updater"
+	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
+	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
@@ -216,6 +216,7 @@ type Model struct {
 
 	// Layout / status.
 	width, height int
+	paneLayout    layoutSpec
 	focus         focusArea
 	rightTab      rightTab
 	logContent    string // last-loaded git log, shown on the Git Log tab
@@ -239,6 +240,11 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 	modals.SetTheme(theme.Current)
 	prefs.SetTheme(theme.Current)
 
+	paneLayout := normalizeLayoutPrefs(state.Prefs.Layout)
+	// Keep the in-memory preference normalized without writing state.json merely
+	// because an old or malformed value was encountered at startup.
+	state.Prefs.Layout = paneLayout.persisted()
+
 	// Personal key overrides (state.json) override repo-level ones.
 	keys := make(map[string]string, len(cfg.Keys)+len(state.Prefs.Keys))
 	for k, v := range cfg.Keys {
@@ -258,6 +264,7 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		keys:              newKeyMap(keys),
 		list:              worktreelist.New(),
 		term:              terminal.New(),
+		paneLayout:        paneLayout,
 		focus:             focusList,
 		sort:              sortModeFromName(state.Prefs.Sort),
 		metrics:           map[string]git.Metrics{},

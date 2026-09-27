@@ -8,6 +8,16 @@ import (
 	"sync"
 )
 
+// TUILayoutPrefs is the persisted per-user top-level TUI pane arrangement.
+// Validation and normalization live in internal/ui; config only owns the
+// serializable preference shape.
+type TUILayoutPrefs struct {
+	Version int            `json:"version,omitempty"`
+	Axis    string         `json:"axis,omitempty"`
+	Order   []string       `json:"order,omitempty"`
+	Sizes   map[string]int `json:"sizes,omitempty"`
+}
+
 // Prefs holds personal UI preferences that override the repo's .bonsai.yaml
 // for the local user: theme preset, keybinding overrides, default sort, and
 // the prune merge default. Project settings (hooks, aliases, upstream) stay
@@ -28,6 +38,9 @@ type Prefs struct {
 	// Editor is a personal override for the "open editor" command, taking
 	// priority over .bonsai.yaml's editor setting ("" = defer to it).
 	Editor string `json:"editor,omitempty"`
+	// Layout is the personal TUI pane arrangement. Missing or invalid values are
+	// normalized by the TUI to the legacy 35/65 horizontal default.
+	Layout TUILayoutPrefs `json:"layout,omitempty"`
 }
 
 // State is persisted mutable data: how often each main-repo file has been copied

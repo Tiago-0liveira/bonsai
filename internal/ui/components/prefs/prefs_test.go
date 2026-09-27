@@ -16,7 +16,7 @@ func testActions() []Action {
 }
 
 func testModel() Model {
-	return New("bonsai", "name", false, "", "", []string{"bonsai", "sakura"}, testActions(), false)
+	return New("bonsai", "name", false, "", "", defaultLayoutPrefs(), []string{"bonsai", "sakura"}, testActions(), false)
 }
 
 // keyMsg simulates pressing a rune key.
@@ -88,7 +88,7 @@ func TestKeybindingsCollapsedByDefault(t *testing.T) {
 }
 
 func TestStartOnKeysExpandsKeybindings(t *testing.T) {
-	m := New("bonsai", "name", false, "", "", []string{"bonsai"}, testActions(), true)
+	m := New("bonsai", "name", false, "", "", defaultLayoutPrefs(), []string{"bonsai"}, testActions(), true)
 	if m.rows[m.cursor].kind != rowKey {
 		t.Fatal("startOnKeys should land the cursor on a key row")
 	}
@@ -133,7 +133,12 @@ func TestHeaderArrowsCollapseExpand(t *testing.T) {
 
 func TestPresetChangeEmitsSave(t *testing.T) {
 	m := testModel()
-	m.cursor = 2 // sakura row
+	for i, row := range m.rows {
+		if row.kind == rowPreset && row.preset == "sakura" {
+			m.cursor = i
+			break
+		}
+	}
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	snap := saveFrom(t, cmd)
 	if snap == nil {
@@ -257,5 +262,110 @@ func TestPRStatusCycle(t *testing.T) {
 	snap := saveFrom(t, cmd)
 	if snap == nil || snap.PRStatus != "compact" {
 		t.Errorf("right on PR status should cycle full→compact, got %+v", snap)
+	}
+}
+
+
+func moveToKind(m *Model, kind rowKind) {
+	for i, r := range m.rows {
+		if r.kind == kind {
+			m.cursor = i
+			return
+		}
+	}
+}
+
+func TestLayoutOrientationCycleEmitsSave(t *testing.T) {
+	m := testModel()
+	moveToKind(&m, rowLayoutOrientation)
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	snap := saveFrom(t, cmd)
+	if snap == nil {
+		t.Fatal("orientation change should emit SaveMsg")
+	}
+	if snap.Layout.Axis != "vertical" || nm.layout.Axis != "vertical" {
+		t.Fatalf("orientation = snapshot %q model %q, want vertical", snap.Layout.Axis, nm.layout.Axis)
+	}
+	if snap.Theme != "bonsai" || snap.Sort != "name" {
+		t.Fatalf("layout save must preserve unrelated prefs: %+v", snap)
+	}
+}
+
+func TestLayoutOrderUsesOrientationDirection(t *testing.T) {
+	m := testModel()
+	moveToKind(&m, rowLayoutOrientation)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	moveToKind(&m, rowLayoutOrder)
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	snap := saveFrom(t, cmd)
+	if snap == nil {
+		t.Fatal("order change should emit SaveMsg")
+	}
+	if snap.Layout.Order[0] != "workspace" || snap.Layout.Order[1] != "worktrees" {
+		t.Fatalf("order = %v, want workspace/worktrees", snap.Layout.Order)
+	}
+	if got := layoutOrderLabel(nm.layout); got != "workspace ↓ worktrees" {
+		t.Fatalf("vertical order label = %q", got)
+	}
+}
+
+func TestLayoutSizesAdjustByFiveAndClamp(t *testing.T) {
+	m := testModel()
+	moveToKind(&m, rowLayoutSizes)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	snap := saveFrom(t, cmd)
+	if snap == nil || snap.Layout.Worktrees != 40 {
+		t.Fatalf("35 + 5 snapshot = %+v", snap)
+	}
+
+	m.layout.Worktrees = 80
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	snap = saveFrom(t, cmd)
+	if snap == nil || snap.Layout.Worktrees != 80 || nm.layout.Worktrees != 80 {
+		t.Fatalf("upper clamp snapshot=%+v model=%+v", snap, nm.layout)
+	}
+
+	m.layout.Worktrees = 20
+	nm, cmd = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	snap = saveFrom(t, cmd)
+	if snap == nil || snap.Layout.Worktrees != 20 || nm.layout.Worktrees != 20 {
+		t.Fatalf("lower clamp snapshot=%+v model=%+v", snap, nm.layout)
+	}
+}
+
+func TestResetLayoutOnlyResetsLayout(t *testing.T) {
+	m := testModel()
+	m.theme = "sakura"
+	m.sort = "dirty"
+	m.pruneMerge = true
+	m.prStatus = "compact"
+	m.editor = "hx"
+	m.overrides["prune"] = "z"
+	m.layout = LayoutPrefs{
+		Axis:      "vertical",
+		Order:     []string{"workspace", "worktrees"},
+		Worktrees: 65,
+	}
+	moveToKind(&m, rowLayoutReset)
+
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	snap := saveFrom(t, cmd)
+	if snap == nil {
+		t.Fatal("reset layout should emit SaveMsg")
+	}
+	if snap.Layout.Axis != "horizontal" ||
+		snap.Layout.Worktrees != 35 ||
+		len(snap.Layout.Order) != 2 ||
+		snap.Layout.Order[0] != "worktrees" ||
+		snap.Layout.Order[1] != "workspace" {
+		t.Fatalf("reset layout snapshot = %+v", snap.Layout)
+	}
+	if snap.Theme != "sakura" || snap.Sort != "dirty" || !snap.PruneMerge ||
+		snap.PRStatus != "compact" || snap.Editor != "hx" || snap.Keys["prune"] != "z" {
+		t.Fatalf("reset layout changed non-layout prefs: %+v", snap)
+	}
+	if nm.layout.Worktrees != 35 {
+		t.Fatalf("working layout was not reset: %+v", nm.layout)
 	}
 }

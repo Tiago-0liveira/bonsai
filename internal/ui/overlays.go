@@ -77,6 +77,11 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 		m.state.Prefs.PruneMerge,
 		m.state.Prefs.PRStatus,
 		m.state.Prefs.Editor,
+		prefs.LayoutPrefs{
+			Axis:      m.paneLayout.axisName(),
+			Order:     m.paneLayout.orderNames(),
+			Worktrees: m.paneLayout.WorktreesPercent,
+		},
 		theme.Presets(),
 		prefsActions(m.cfg.Keys),
 		startOnKeys,
@@ -91,6 +96,16 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 // persists it, and restyles every component — this is what makes theme picks
 // preview live while the overlay is open.
 func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
+	nextLayout := normalizeLayoutPrefs(config.TUILayoutPrefs{
+		Version: layoutVersion,
+		Axis:    p.Layout.Axis,
+		Order:   append([]string(nil), p.Layout.Order...),
+		Sizes: map[string]int{
+			string(paneWorktrees): p.Layout.Worktrees,
+			string(paneWorkspace): 100 - p.Layout.Worktrees,
+		},
+	})
+	m.paneLayout = nextLayout
 	m.state.Prefs = config.Prefs{
 		Theme:      p.Theme,
 		Sort:       p.Sort,
@@ -98,7 +113,11 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		PRStatus:   p.PRStatus,
 		Editor:     p.Editor,
 		Keys:       p.Keys,
+		Layout:     nextLayout.persisted(),
 	}
+	// Layout is a presentation-only preference. Apply the normalized geometry
+	// immediately and keep it for this session even if persistence fails.
+	m.layout()
 	if err := m.state.Save(); err != nil {
 		m.err = err
 		return m, nil
@@ -116,8 +135,11 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		m.status = "key conflicts ignored: " + cols[0]
 	}
 	if p.Sort != "" {
-		m.sort = sortModeFromName(p.Sort)
-		m.rebuildItems()
+		nextSort := sortModeFromName(p.Sort)
+		if nextSort != m.sort {
+			m.sort = nextSort
+			m.rebuildItems()
+		}
 	}
 	return m, nil
 }

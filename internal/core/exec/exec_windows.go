@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 func setProcessGroup(cmd *exec.Cmd) {
@@ -19,6 +20,24 @@ func killProcessTree(cmd *exec.Cmd) {
 		return
 	}
 	KillPID(cmd.Process.Pid)
+}
+
+func terminateProcessTree(cmd *exec.Cmd, grace time.Duration) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	terminatePIDTree(cmd.Process.Pid, grace)
+}
+
+func terminatePIDTree(pid int, grace time.Duration) {
+	if pid <= 0 {
+		return
+	}
+	_ = exec.Command("taskkill", "/T", "/PID", strconv.Itoa(pid)).Run()
+	if grace > 0 {
+		time.Sleep(grace)
+	}
+	_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(pid)).Run()
 }
 
 // KillPID terminates the process and all child processes it spawned.

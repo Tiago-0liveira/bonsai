@@ -11,12 +11,11 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
-	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
-const leftPaneRatio = 35 // percent of width for the worktree list
 
 var (
 	focusedBorder lipgloss.Style
@@ -538,12 +537,11 @@ func mergeableBadge(m string) string {
 	}
 }
 
-// termInnerWidth returns a safe render width for the right pane body.
+// termInnerWidth returns a safe render width for the workspace pane body.
 func (m Model) termInnerWidth() int {
-	_, rightW, _ := m.dims()
-	w := rightW - 4
-	if w < 10 {
-		w = 10
+	w := m.resolvedPaneLayout().Workspace.W - 4
+	if w < 4 {
+		w = 4
 	}
 	if w > 100 {
 		w = 100
@@ -598,54 +596,44 @@ func shortTime(ts string) string {
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
-// dims returns the pane geometry for the current terminal size:
-// left/right outer widths and the shared inner (inside-border) height.
-func (m Model) dims() (leftW, rightW, innerH int) {
-	leftW = m.width * leftPaneRatio / 100
-	if leftW < 16 {
-		leftW = 16
-	}
-	if m.width > 28 && leftW > m.width-12 {
-		leftW = m.width - 12
-	}
-	if leftW < 1 {
-		leftW = 1
-	}
-	rightW = m.width - leftW
-	if rightW < 1 {
-		rightW = 1
-	}
+// resolvedPaneLayout derives the current pane rectangles from the normalized
+// personal preference and current terminal dimensions. Rendering, child sizing,
+// and mouse routing all consume this same geometry.
+func (m Model) resolvedPaneLayout() resolvedLayout {
 	barH := lipgloss.Height(m.statusBar())
-	innerH = m.height - barH - 2 // 2 = top+bottom border rows
-	if innerH < 1 {
-		innerH = 1
-	}
-	return leftW, rightW, innerH
+	return resolvePaneLayout(m.width, m.height, barH, m.paneLayout)
 }
 
-// layout recomputes child component sizes from the current terminal size.
+// dims is retained for existing layout-sensitive tests and helpers. It reports
+// the worktrees outer width, workspace outer width, and workspace inner height,
+// all derived from the same resolved rectangles used by runtime rendering.
+func (m Model) dims() (worktreesW, workspaceW, workspaceInnerH int) {
+	resolved := m.resolvedPaneLayout()
+	return resolved.Worktrees.W, resolved.Workspace.W, max(resolved.Workspace.H-2, 1)
+}
+
+// layout recomputes child component sizes from their own resolved pane
+// rectangles. Persisted percentages are never changed by runtime clamps.
 func (m *Model) layout() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	leftW, rightW, innerH := m.dims()
-	leftInnerW := leftW - 2
-	rightInnerW := rightW - 2
-	if leftInnerW < 1 {
-		leftInnerW = 1
-	}
-	if rightInnerW < 1 {
-		rightInnerW = 1
-	}
-	m.list.SetSize(leftInnerW, innerH)
-	m.term.SetSize(rightInnerW, m.termHeight(innerH))
+	resolved := m.resolvedPaneLayout()
+
+	worktreesInnerW := max(resolved.Worktrees.W-2, 1)
+	worktreesInnerH := max(resolved.Worktrees.H-2, 1)
+	workspaceInnerW := max(resolved.Workspace.W-2, 1)
+	workspaceInnerH := max(resolved.Workspace.H-2, 1)
+
+	m.list.SetSize(worktreesInnerW, worktreesInnerH)
+	m.term.SetSize(workspaceInnerW, m.termHeight(workspaceInnerH))
 }
 
-// termHeight is the right pane's viewport height: the pane body minus the tab
-// strip, minus the Processes-tab footer when that tab is showing. The viewport
-// must be sized to the area it is actually drawn into — a viewport that thinks
-// it is taller clamps its own max scroll offset to zero, which silently
-// disables scrolling and pins the view to the top of the log.
+// termHeight is the workspace pane's viewport height: the pane body minus the
+// tab strip, minus the Processes-tab footer when that tab is showing. The
+// viewport must be sized to the area it is actually drawn into — a viewport
+// that thinks it is taller clamps its own max scroll offset to zero, which
+// silently disables scrolling and pins the view to the top of the log.
 func (m Model) termHeight(innerH int) int {
 	h := innerH - 1 // -1 for the tab strip line
 	if m.rightTab == tabProcs {
@@ -674,8 +662,39 @@ func (m Model) procFooterHeight() int {
 	return h
 }
 
-// View renders two bordered panes filling the screen above a status/help bar,
-// with any active modal drawn centered on top.
+func (m Model) renderWorktreesPane(rect paneRect) string {
+	innerW := max(rect.W-2, 1)
+	innerH := max(rect.H-2, 1)
+	pane := m.borderFor(m.focus == focusList).
+		Width(innerW).Height(innerH).
+		Render(clampHeight(m.list.View(), innerH))
+	pane = truncateToWidth(pane, max(rect.W, 1))
+	return clampHeight(pane, max(rect.H, 1))
+}
+
+func (m Model) renderWorkspacePane(rect paneRect) string {
+	innerW := max(rect.W-2, 1)
+	innerH := max(rect.H-2, 1)
+
+	var body string
+	if m.rightTab == tabProcs {
+		// Output scrolls in the term viewport (already sized to leave the footer
+		// room, see layout); the process list + hint sit in a footer pinned to
+		// the bottom.
+		body = m.tabStrip(innerW) + "\n" + m.term.View() + "\n" + m.renderProcFooter()
+	} else {
+		body = m.tabStrip(innerW) + "\n" + m.term.View()
+	}
+	pane := m.borderFor(m.focus == focusTerminal).
+		Width(innerW).Height(innerH).
+		Render(clampHeight(body, innerH))
+	pane = truncateToWidth(pane, max(rect.W, 1))
+	return clampHeight(pane, max(rect.H, 1))
+}
+
+// View renders the two existing bordered panes in the configured order and
+// orientation above the full-width status/help bar, with active overlays still
+// owning the complete terminal surface.
 func (m Model) View() string {
 	if m.updatePromptVisible() {
 		return clampHeight(m.updatePrompt(), m.height)
@@ -690,40 +709,30 @@ func (m Model) View() string {
 		return clampHeight(m.modal.View(), m.height)
 	}
 
-	leftW, rightW, innerH := m.dims()
-	leftInnerW := leftW - 2
-	rightInnerW := rightW - 2
-	if leftInnerW < 1 {
-		leftInnerW = 1
-	}
-	if rightInnerW < 1 {
-		rightInnerW = 1
-	}
-	targetPaneH := innerH + 2
+	resolved := m.resolvedPaneLayout()
+	worktrees := m.renderWorktreesPane(resolved.Worktrees)
+	workspace := m.renderWorkspacePane(resolved.Workspace)
 
-	left := m.borderFor(m.focus == focusList).
-		Width(leftInnerW).Height(innerH).
-		Render(clampHeight(m.list.View(), innerH))
-	left = clampHeight(left, targetPaneH)
+	pane := func(id paneID) string {
+		if id == paneWorktrees {
+			return worktrees
+		}
+		return workspace
+	}
+	first := pane(resolved.Order[0])
+	second := pane(resolved.Order[1])
 
-	var rightBody string
-	if m.rightTab == tabProcs {
-		// Output scrolls in the term viewport (already sized to leave the footer
-		// room, see layout); the process list + hint sit in a footer pinned to
-		// the bottom.
-		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View() + "\n" + m.renderProcFooter()
+	var body string
+	if resolved.Axis == axisVertical {
+		body = lipgloss.JoinVertical(lipgloss.Left, first, second)
 	} else {
-		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View()
+		body = lipgloss.JoinHorizontal(lipgloss.Top, first, second)
 	}
-	right := m.borderFor(m.focus == focusTerminal).
-		Width(rightInnerW).Height(innerH).
-		Render(clampHeight(rightBody, innerH))
-	right = clampHeight(right, targetPaneH)
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	body = clampHeight(body, targetPaneH)
+	body = truncateToWidth(body, resolved.Body.W)
+	body = clampHeight(body, resolved.Body.H)
 
 	out := lipgloss.JoinVertical(lipgloss.Left, body, m.statusBar())
+	out = truncateToWidth(out, m.width)
 	return clampHeight(out, m.height)
 }
 
