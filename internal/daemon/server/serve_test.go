@@ -40,11 +40,19 @@ func TestValidateProductionServeSpecAndPortCollision(t *testing.T) {
 		}
 	}
 
-	args := serveAPIArgs(spec)
+	const daemonRoot = "/canonical/main-root"
+	args := serveAPIArgs(daemonRoot, spec, "production")
 	for _, forbidden := range []string{"__serve-webhook", "--capability-file", "--web-port", "--webhook-port", "--development"} {
 		if slices.Contains(args, forbidden) {
 			t.Fatalf("production serve API args contain development value %q: %v", forbidden, args)
 		}
+	}
+	repoIndex := slices.Index(args, "--repo")
+	if repoIndex < 0 || repoIndex+1 >= len(args) || args[repoIndex+1] != daemonRoot {
+		t.Fatalf("production serve API args do not use daemon root: %v", args)
+	}
+	if args[repoIndex+1] == spec.WorkspacePath {
+		t.Fatalf("production serve API args used workspace path as daemon root: %v", args)
 	}
 	modeIndex := slices.Index(args, "--security-mode")
 	if modeIndex < 0 || modeIndex+1 >= len(args) || args[modeIndex+1] != "production" {
@@ -95,6 +103,16 @@ func TestValidateDevelopmentServeSpec(t *testing.T) {
 			t.Fatalf("invalid development spec %d unexpectedly accepted: %+v", i, candidate)
 		}
 	}
+	devArgs := serveAPIArgs("/canonical/main-root", spec, "development")
+	repoIndex := slices.Index(devArgs, "--repo")
+	if repoIndex < 0 || repoIndex+1 >= len(devArgs) || devArgs[repoIndex+1] != "/canonical/main-root" {
+		t.Fatalf("development serve API args do not use daemon root: %v", devArgs)
+	}
+	modeIndex := slices.Index(devArgs, "--security-mode")
+	if modeIndex < 0 || modeIndex+1 >= len(devArgs) || devArgs[modeIndex+1] != "development" {
+		t.Fatalf("development serve API args do not force development security: %v", devArgs)
+	}
+
 	env := serveDevEnvironment(spec)
 	if env["BONSAI_API_PORT"] != "7001" || env["BONSAI_WEBHOOK_PORT"] != "7002" || env["BONSAI_WEB_PORT"] != "7003" {
 		t.Fatalf("development environment = %#v", env)
