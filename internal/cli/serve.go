@@ -12,12 +12,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"text/tabwriter"
-	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 )
 
 func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer) error {
@@ -98,12 +98,12 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	fs.BoolVar(&detached, "d", false, "wait for readiness, then detach")
 	fs.BoolVar(&detached, "auto-detach", false, "wait for readiness, then detach")
 	apiPort := fs.Int("api-port", 0, "override local API port")
-	browserOrigin := fs.String("browser-origin", "https://app.bonsai.dev", "authorized browser origin (production or loopback development)")
+	devOrigin := fs.String("dev-origin", "", "explicit development origin (http://localhost:5173 or http://127.0.0.1:5173)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--api-port PORT] [--browser-origin ORIGIN]")
+		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--api-port PORT] [--dev-origin ORIGIN]")
 	}
 
 	cfg, err := config.LoadFor(repoDir)
@@ -118,12 +118,19 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	if err != nil {
 		return err
 	}
+	browserOrigin := localapi.ProductionBrowserOrigin
+	development := false
+	if *devOrigin != "" {
+		browserOrigin = *devOrigin
+		development = true
+	}
 	spec := procstore.ServeSpec{
 		WorkspaceID:            workspaceID,
 		WorkspacePath:          workspace,
 		Executable:             executable,
 		APIPort:                *apiPort,
-		BrowserOrigin:          *browserOrigin,
+		BrowserOrigin:          browserOrigin,
+		Development:            development,
 		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
 		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
 	}
@@ -189,12 +196,6 @@ func printServeAccess(out io.Writer, group *procstore.ServeGroup) error {
 	}
 	fmt.Fprintf(out, "Local API: http://127.0.0.1:%d\n", group.APIPort)
 	fmt.Fprintf(out, "Browser origin: %s\n", group.BrowserOrigin)
-	if group.CapabilityToken != "" {
-		fmt.Fprintf(out, "Capability token: %s\n", group.CapabilityToken)
-	}
-	if !group.CapabilityExpiresAt.IsZero() {
-		fmt.Fprintf(out, "Capability expires: %s\n", group.CapabilityExpiresAt.Format(time.RFC3339))
-	}
 	return nil
 }
 
