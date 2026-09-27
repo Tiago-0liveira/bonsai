@@ -11,23 +11,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 )
-
-type stringListFlag []string
-
-func (v *stringListFlag) String() string { return strings.Join(*v, ",") }
-
-func (v *stringListFlag) Set(value string) error {
-	*v = append(*v, value)
-	return nil
-}
 
 func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer) error {
 	action := "start"
@@ -106,17 +97,13 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	var detached bool
 	fs.BoolVar(&detached, "d", false, "wait for readiness, then detach")
 	fs.BoolVar(&detached, "auto-detach", false, "wait for readiness, then detach")
-	apiPort := fs.Int("api-port", 0, "override API port")
-	webhookPort := fs.Int("webhook-port", 0, "override webhook port")
-	webPort := fs.Int("web-port", 0, "override web port")
-	serverConfig := fs.String("server-config", "", "Git API server config JSON")
-	var scripts stringListFlag
-	fs.Var(&scripts, "sidecar-script", "sidecar script (repeatable)")
+	apiPort := fs.Int("api-port", 0, "override local API port")
+	browserOrigin := fs.String("browser-origin", "https://app.bonsai.dev", "authorized browser origin (production or loopback development)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--sidecar-script PATH]")
+		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--api-port PORT] [--browser-origin ORIGIN]")
 	}
 
 	cfg, err := config.LoadFor(repoDir)
@@ -126,79 +113,19 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	if *apiPort == 0 {
 		*apiPort = cfg.Serve.APIPort
 	}
-	if *webhookPort == 0 {
-		*webhookPort = cfg.Serve.WebhookPort
-	}
-	if *webPort == 0 {
-		*webPort = cfg.Serve.WebPort
-	}
-	if *serverConfig == "" {
-		*serverConfig = cfg.Serve.ServerConfig
-	}
-	if *serverConfig == "" {
-		*serverConfig = os.Getenv("BONSAI_SERVER_CONFIG")
-	}
-	if *serverConfig == "" {
-		candidate := filepath.Join(workspace, "server.json")
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			*serverConfig = candidate
-		}
-	}
-	if *serverConfig == "" {
-		return fmt.Errorf("serve requires serve.server_config, --server-config, BONSAI_SERVER_CONFIG, or %s", filepath.Join(workspace, "server.json"))
-	}
-	if !filepath.IsAbs(*serverConfig) {
-		*serverConfig = filepath.Join(workspace, *serverConfig)
-	}
-	*serverConfig, err = filepath.Abs(*serverConfig)
-	if err != nil {
-		return err
-	}
 
 	executable, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	sidecars := make([]procstore.ServeSidecar, 0, len(cfg.Serve.Sidecars)+len(scripts))
-	for _, sc := range cfg.Serve.Sidecars {
-		sidecars = append(sidecars, procstore.ServeSidecar{
-			Name:        sc.Name,
-			Command:     append([]string(nil), sc.Command...),
-			Cwd:         sc.Cwd,
-			Environment: cloneServeEnv(sc.Environment),
-			Restart:     sc.Restart,
-			MaxRestarts: sc.MaxRestarts,
-			Required:    sc.Required,
-		})
-	}
-	for i, script := range scripts {
-		if !filepath.IsAbs(script) {
-			script = filepath.Join(workspace, script)
-		}
-		script, err = filepath.Abs(script)
-		if err != nil {
-			return err
-		}
-		sidecars = append(sidecars, procstore.ServeSidecar{
-			Name:     "script-" + strconv.Itoa(i+1),
-			Command:  []string{script},
-			Cwd:      workspace,
-			Restart:  procstore.PolicyOnFailure,
-			Required: true,
-		})
-	}
-
 	spec := procstore.ServeSpec{
 		WorkspaceID:            workspaceID,
 		WorkspacePath:          workspace,
 		Executable:             executable,
-		ServerConfig:           *serverConfig,
 		APIPort:                *apiPort,
-		WebhookPort:            *webhookPort,
-		WebPort:                *webPort,
+		BrowserOrigin:          *browserOrigin,
 		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
 		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
-		Sidecars:               sidecars,
 	}
 	group, err := c.ServeStart(spec)
 	if err != nil {
@@ -206,11 +133,14 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	}
 	if detached {
 		if group.Reused {
-			fmt.Fprintln(out, "serve group already healthy")
+			fmt.Fprintln(out, "local API already healthy")
 		} else {
-			fmt.Fprintln(out, "serve group ready; detached")
+			fmt.Fprintln(out, "local API ready; detached")
 		}
 		return printServeStatus(out, group)
+	}
+	if err := printServeAccess(out, group); err != nil {
+		return err
 	}
 	return runServeTUI(in, out, c, group)
 }
@@ -248,20 +178,24 @@ func cmdServeLogs(c *client.Client, workspaceID string, args []string, out, errO
 	})
 }
 
-func cloneServeEnv(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
 func serveWorkspaceID(path string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(path)))
 	return hex.EncodeToString(sum[:8])
+}
+
+func printServeAccess(out io.Writer, group *procstore.ServeGroup) error {
+	if group == nil {
+		return nil
+	}
+	fmt.Fprintf(out, "Local API: http://127.0.0.1:%d\n", group.APIPort)
+	fmt.Fprintf(out, "Browser origin: %s\n", group.BrowserOrigin)
+	if group.CapabilityToken != "" {
+		fmt.Fprintf(out, "Capability token: %s\n", group.CapabilityToken)
+	}
+	if !group.CapabilityExpiresAt.IsZero() {
+		fmt.Fprintf(out, "Capability expires: %s\n", group.CapabilityExpiresAt.Format(time.RFC3339))
+	}
+	return nil
 }
 
 func printServeStatus(out io.Writer, group *procstore.ServeGroup) error {
@@ -270,6 +204,9 @@ func printServeStatus(out io.Writer, group *procstore.ServeGroup) error {
 		return nil
 	}
 	fmt.Fprintf(out, "Bonsai Serve — %s — %s\n", group.WorkspacePath, group.State)
+	if err := printServeAccess(out, group); err != nil {
+		return err
+	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "PROCESS\tSTATUS\tPID\tADDRESS")
 	for _, process := range group.Processes {

@@ -117,25 +117,16 @@ aliases:
   #   command: "npm run dev"
 
 
-# ── Local serve stack ────────────────────────────────────────────────────────
-# `bonsai serve` asks the per-repository daemon to own the API, isolated
-# GitHub webhook listener, web frontend, and any generic sidecars. Core services
-# bind only to 127.0.0.1. A tunnel should target webhook_port only.
+# ── Local browser API ────────────────────────────────────────────────────────
+# `bonsai serve` asks the per-repository daemon to supervise one privileged
+# Bonsai HTTP API on 127.0.0.1. It does not start the web app, a webhook listener,
+# a tunnel, or any cloud-control bridge.
 #
-# server_config points at the Git API JSON config documented in
-# docs/git-backend.md. Relative paths resolve from the current worktree.
+# The API defaults to port 7001, accepts the production browser origin
+# https://app.bonsai.dev (or an explicit loopback development origin), validates
+# the exact Host and Origin, and requires a short-lived capability printed by
+# `bonsai serve`.
 serve:
   api_port: 7001
-  webhook_port: 7002
-  web_port: 7003
-  server_config: ""
   startup_timeout_seconds: 30
   shutdown_timeout_seconds: 5
-  sidecars: []
-    # - name: tunnel
-    #   command: ["cloudflared", "tunnel", "--url", "http://127.0.0.1:7002"]
-    #   required: true
-    #   restart: on-failure
-    #   max_restarts: 3
-    #   cwd: "."
-    #   environment: {}

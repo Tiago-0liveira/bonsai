@@ -42,9 +42,9 @@ func main() {
 		return
 	}
 
-	// Hidden: the daemon supervises these split local HTTP services.
-	if len(args) >= 1 && (args[0] == "__serve-api" || args[0] == "__serve-webhook") {
-		if err := runServeInternal(args[0], args[1:]); err != nil {
+	// Hidden: the daemon supervises the loopback-only local HTTP API.
+	if len(args) >= 1 && args[0] == "__serve-api" {
+		if err := runServeInternal(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)
 			os.Exit(1)
 		}
@@ -147,33 +147,19 @@ func run(cfgPath string) error {
 	return err
 }
 
-func runServeInternal(kind string, args []string) error {
-	fs := flag.NewFlagSet(kind, flag.ContinueOnError)
+func runServeInternal(args []string) error {
+	fs := flag.NewFlagSet("__serve-api", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	configPath := fs.String("config", "", "server config path")
+	repoDir := fs.String("repo", "", "repository root")
 	port := fs.Int("port", 0, "loopback listen port")
-	apiPort := fs.Int("api-port", 0, "main API port")
-	browserOrigin := fs.String("browser-origin", "", "local browser origin")
-	sessionSecretFile := fs.String("session-secret-file", "", "serve session secret file")
+	browserOrigin := fs.String("browser-origin", "", "authorized browser origin")
+	capabilityFile := fs.String("capability-file", "", "short-lived local capability file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *configPath == "" || *port <= 0 {
-		return fmt.Errorf("%s requires --config and --port", kind)
+	if *repoDir == "" || *port <= 0 || *browserOrigin == "" || *capabilityFile == "" {
+		return fmt.Errorf("__serve-api requires --repo, --port, --browser-origin, and --capability-file")
 	}
 	address := fmt.Sprintf("127.0.0.1:%d", *port)
-	switch kind {
-	case "__serve-api":
-		if *browserOrigin == "" {
-			return fmt.Errorf("__serve-api requires --browser-origin")
-		}
-		return serverruntime.RunAPI(*configPath, address, *browserOrigin, *sessionSecretFile)
-	case "__serve-webhook":
-		if *apiPort <= 0 {
-			return fmt.Errorf("__serve-webhook requires --api-port")
-		}
-		return serverruntime.RunWebhook(*configPath, address, fmt.Sprintf("127.0.0.1:%d", *apiPort), *sessionSecretFile)
-	default:
-		return fmt.Errorf("unknown internal serve command %q", kind)
-	}
+	return serverruntime.RunAPI(*repoDir, address, *browserOrigin, *capabilityFile)
 }

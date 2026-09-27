@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
 
@@ -449,6 +450,23 @@ func (c *Client) Logs(id int, follow bool, tailLines int, grep string, insensiti
 // can be added without altering the Logs API.
 func (c *Client) Attach(id int, onChunk func(string) error) error {
 	return c.Logs(id, true, 0, "", false, onChunk)
+}
+
+// Git executes one structured, allowlisted Git command through the daemon.
+// The HTTP API uses this boundary instead of opening repositories or invoking
+// git/gh itself.
+func (c *Client) Git(command gitbridge.Command) (*gitbridge.Result, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindGit, Git: &command})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Git == nil {
+		return nil, errors.New("daemon returned no Git result")
+	}
+	return resp.Git, nil
 }
 
 // ServeStart starts or reuses the daemon-owned development stack for a workspace.

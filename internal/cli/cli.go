@@ -443,7 +443,7 @@ Usage:
   bonsai restart <id>             restart a process
   bonsai attach <id>              stream a process log (Ctrl-C detaches)
   bonsai daemon status|stop       control the background daemon
-  bonsai serve [-d]               run API + webhook + web via the daemon
+  bonsai serve [-d]               run the secured loopback API via the daemon
   bonsai serve status|attach      inspect/attach the workspace serve group
   bonsai serve logs [-f]           combined daemon-owned serve logs
   bonsai serve logs --process X   logs for one serve process

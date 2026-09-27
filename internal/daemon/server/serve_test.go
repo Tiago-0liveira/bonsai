@@ -12,17 +12,20 @@ func TestValidateServeSpecAndPortCollision(t *testing.T) {
 		WorkspaceID:   "workspace",
 		WorkspacePath: t.TempDir(),
 		Executable:    "/tmp/bonsai",
-		ServerConfig:  "/tmp/server.json",
 		APIPort:       7001,
-		WebhookPort:   7002,
-		WebPort:       7003,
+		BrowserOrigin: "https://app.bonsai.dev",
 	}
 	if err := validateServeSpec(spec); err != nil {
 		t.Fatal(err)
 	}
-	spec.WebPort = spec.APIPort
+	spec.APIPort = 0
 	if err := validateServeSpec(spec); err == nil {
-		t.Fatal("expected duplicate-port validation error")
+		t.Fatal("expected invalid API port")
+	}
+	spec.APIPort = 7001
+	spec.BrowserOrigin = ""
+	if err := validateServeSpec(spec); err == nil {
+		t.Fatal("expected missing browser origin")
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
