@@ -382,7 +382,8 @@ func TestMouseWheelRoutesByDynamicPane(t *testing.T) {
 			Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress,
 		}
 		nm, _ = got.onMouse(wheel)
-		if after := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); after > 0 {
+		afterModel := nm.(Model)
+		if after := afterModel.viewTerm(viewProcesses).ScrollPercent(); after > 0 {
 			t.Fatalf("layout=%+v: wheel over Worktrees scrolled Processes %.2f", layout.Root, after)
 		}
 	}
@@ -409,7 +410,8 @@ func TestMouseWheelSuppressionAcrossDynamicLayouts(t *testing.T) {
 		mouseOff.mouseOff = true
 		mouseOff.viewTerm(viewProcesses).GotoTop()
 		nm, _ := mouseOff.onMouse(wheel)
-		if got := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); got > 0 {
+		mouseOffModel := nm.(Model)
+		if got := mouseOffModel.viewTerm(viewProcesses).ScrollPercent(); got > 0 {
 			t.Fatalf("mouseOff allowed process scroll: %.2f", got)
 		}
 
@@ -418,7 +420,8 @@ func TestMouseWheelSuppressionAcrossDynamicLayouts(t *testing.T) {
 		withPrefs.prefs = &pm
 		withPrefs.viewTerm(viewProcesses).GotoTop()
 		nm, _ = withPrefs.onMouse(wheel)
-		if got := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); got > 0 {
+		prefsModel := nm.(Model)
+		if got := prefsModel.viewTerm(viewProcesses).ScrollPercent(); got > 0 {
 			t.Fatalf("preferences overlay allowed process scroll: %.2f", got)
 		}
 
@@ -427,7 +430,8 @@ func TestMouseWheelSuppressionAcrossDynamicLayouts(t *testing.T) {
 		withModal.modal = &modal
 		withModal.viewTerm(viewProcesses).GotoTop()
 		nm, _ = withModal.onMouse(wheel)
-		if got := nm.(Model).viewTerm(viewProcesses).ScrollPercent(); got > 0 {
+		modalModel := nm.(Model)
+		if got := modalModel.viewTerm(viewProcesses).ScrollPercent(); got > 0 {
 			t.Fatalf("modal allowed process scroll: %.2f", got)
 		}
 	}
