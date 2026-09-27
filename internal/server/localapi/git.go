@@ -118,7 +118,7 @@ func (s *Server) executeGit(w http.ResponseWriter, r *http.Request, kind, worktr
 			return
 		}
 	}
-	result, err := s.daemon.Git(gitbridge.Command{
+	result, err := s.registry.Default().daemon.Git(gitbridge.Command{
 		ID:           id,
 		UserID:       localBrowserUserID,
 		RepositoryID: localRepositoryID,
