@@ -49,6 +49,7 @@ export function startRelayInvalidation() {
   let closed = false
   let source: EventSource | undefined
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let authCheckTimer: ReturnType<typeof setTimeout> | undefined
   const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   const debounceRefresh = (projectId: string) => {
@@ -101,12 +102,31 @@ export function startRelayInvalidation() {
         for (const project of useBonsaiStore.getState().projects) debounceRefresh(project.id)
       })
       source.onerror = () => {
-        source?.close()
-        source = undefined
-        if (!closed) {
-          publish({ status: 'offline', message: 'GitHub realtime is temporarily unavailable. Local Bonsai remains usable.' })
-          scheduleReconnect(connect)
-        }
+        if (closed) return
+        // Keep the EventSource open so the browser reconnects with its
+        // Last-Event-ID cursor and the relay can replay missed events.
+        publish({ status: 'offline', message: 'GitHub realtime is temporarily unavailable. Local Bonsai remains usable.' })
+        if (authCheckTimer) return
+        authCheckTimer = setTimeout(async () => {
+          authCheckTimer = undefined
+          if (closed) return
+          try {
+            const auth = await fetch(`${RELAY_HTTP_ORIGIN}/auth/session`, {
+              method: 'GET',
+              mode: 'cors',
+              credentials: 'include',
+              cache: 'no-store',
+            })
+            if (auth.status === 401) {
+              source?.close()
+              source = undefined
+              publish({ status: 'authorization-expired', message: 'Connect GitHub to restore realtime pull request updates.' })
+              scheduleReconnect(connect, 60_000)
+            }
+          } catch {
+            // Native EventSource reconnection continues while the relay is offline.
+          }
+        }, 1_500)
       }
     } catch {
       if (!closed) {
@@ -120,6 +140,7 @@ export function startRelayInvalidation() {
   return () => {
     closed = true
     if (reconnectTimer) clearTimeout(reconnectTimer)
+    if (authCheckTimer) clearTimeout(authCheckTimer)
     for (const timer of refreshTimers.values()) clearTimeout(timer)
     refreshTimers.clear()
     source?.close()
