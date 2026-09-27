@@ -1,8 +1,6 @@
 package server
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -25,15 +23,9 @@ const (
 )
 
 type serveRuntime struct {
-	Spec           procstore.ServeSpec `json:"spec"`
-	StartedAt      time.Time           `json:"started_at"`
-	ProcessIDs     map[string]int      `json:"process_ids"`
-	CapabilityFile string              `json:"capability_file"`
-}
-
-type serveCapability struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Spec       procstore.ServeSpec `json:"spec"`
+	StartedAt  time.Time           `json:"started_at"`
+	ProcessIDs map[string]int      `json:"process_ids"`
 }
 
 func (s *Server) serveDir() string {
@@ -60,91 +52,8 @@ func (s *Server) serveStatePath(id string) string {
 	return filepath.Join(s.serveDir(), safeServeID(id)+".json")
 }
 
-func (s *Server) serveCapabilityPath(id string) string {
-	return filepath.Join(s.serveDir(), safeServeID(id)+".capability")
-}
-
-func (s *Server) writeServeRuntime(rt *serveRuntime) error {
-	if err := os.MkdirAll(s.serveDir(), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(rt, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := s.serveStatePath(rt.Spec.WorkspaceID)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func (s *Server) loadServeGroups() {
-	entries, err := os.ReadDir(s.serveDir())
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(s.serveDir(), entry.Name()))
-		if err != nil {
-			continue
-		}
-		var rt serveRuntime
-		if json.Unmarshal(data, &rt) != nil || rt.Spec.WorkspaceID == "" {
-			continue
-		}
-		if rt.ProcessIDs == nil {
-			rt.ProcessIDs = map[string]int{}
-		}
-		s.serveGroups[rt.Spec.WorkspaceID] = &rt
-	}
-}
-
-func (s *Server) newServeCapability(id string) (string, serveCapability, error) {
-	if err := os.MkdirAll(s.serveDir(), 0o700); err != nil {
-		return "", serveCapability{}, err
-	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", serveCapability{}, err
-	}
-	cap := serveCapability{
-		Token:     hex.EncodeToString(raw),
-		ExpiresAt: time.Now().Add(15 * time.Minute).UTC(),
-	}
-	data, err := json.Marshal(cap)
-	if err != nil {
-		return "", serveCapability{}, err
-	}
-	path := s.serveCapabilityPath(id)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", serveCapability{}, err
-	}
-	return path, cap, nil
-}
-
-func readServeCapability(path string) (serveCapability, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return serveCapability{}, err
-	}
-	var cap serveCapability
-	if err := json.Unmarshal(data, &cap); err != nil {
-		return serveCapability{}, err
-	}
-	if cap.Token == "" || cap.ExpiresAt.IsZero() {
-		return serveCapability{}, fmt.Errorf("invalid serve capability")
-	}
-	return cap, nil
-}
-
 func (s *Server) removeServeArtifacts(id string) {
 	_ = os.Remove(s.serveStatePath(id))
-	_ = os.Remove(s.serveCapabilityPath(id))
 }
 
 func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, error) {
@@ -160,8 +69,7 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	s.mu.Unlock()
 	if existing != nil {
 		group := s.serveSnapshot(existing)
-		modern := existing.CapabilityFile != "" &&
-			existing.Spec.BrowserOrigin != "" &&
+		modern := existing.Spec.BrowserOrigin != "" &&
 			len(existing.ProcessIDs) == 1 &&
 			existing.ProcessIDs["api"] != 0
 		if modern && group.State == "ready" {
@@ -180,15 +88,10 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 		return nil, fmt.Errorf("bonsai executable: %w", err)
 	}
 
-	capabilityFile, _, err := s.newServeCapability(spec.WorkspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("create local API capability: %w", err)
-	}
 	rt := &serveRuntime{
-		Spec:           *spec,
-		StartedAt:      time.Now().UTC(),
-		ProcessIDs:     map[string]int{},
-		CapabilityFile: capabilityFile,
+		Spec:       *spec,
+		StartedAt:  time.Now().UTC(),
+		ProcessIDs: map[string]int{},
 	}
 	s.mu.Lock()
 	s.serveGroups[spec.WorkspaceID] = rt
@@ -229,13 +132,7 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	if err := start(
 		"api",
 		spec.Executable,
-		[]string{
-			"__serve-api",
-			"--repo", spec.WorkspacePath,
-			"--port", strconv.Itoa(spec.APIPort),
-			"--browser-origin", spec.BrowserOrigin,
-			"--capability-file", capabilityFile,
-		},
+		serveAPIArgs(*spec),
 		spec.WorkspacePath,
 		spec.APIPort,
 	); err != nil {
@@ -261,6 +158,12 @@ func validateServeSpec(spec procstore.ServeSpec) error {
 	if spec.BrowserOrigin == "" {
 		return fmt.Errorf("browser origin is required")
 	}
+	if !spec.Development && spec.BrowserOrigin != "https://app.bonsai.dev" {
+		return fmt.Errorf("production browser origin must be exactly https://app.bonsai.dev")
+	}
+	if spec.Development && spec.BrowserOrigin != "http://localhost:5173" && spec.BrowserOrigin != "http://127.0.0.1:5173" {
+		return fmt.Errorf("development browser origin must be an explicit loopback frontend origin")
+	}
 	return nil
 }
 
@@ -273,6 +176,19 @@ func checkServePorts(ports ...int) error {
 		_ = ln.Close()
 	}
 	return nil
+}
+
+func serveAPIArgs(spec procstore.ServeSpec) []string {
+	args := []string{
+		"__serve-api",
+		"--repo", spec.WorkspacePath,
+		"--port", strconv.Itoa(spec.APIPort),
+		"--browser-origin", spec.BrowserOrigin,
+	}
+	if spec.Development {
+		args = append(args, "--development")
+	}
+	return args
 }
 
 func serveEnvironment(spec procstore.ServeSpec) map[string]string {
@@ -389,10 +305,6 @@ func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 	group := &procstore.ServeGroup{
 		ID: rt.Spec.WorkspaceID, WorkspaceID: rt.Spec.WorkspaceID, WorkspacePath: rt.Spec.WorkspacePath,
 		State: "ready", StartedAt: rt.StartedAt, APIPort: rt.Spec.APIPort, BrowserOrigin: rt.Spec.BrowserOrigin,
-	}
-	if cap, err := readServeCapability(rt.CapabilityFile); err == nil {
-		group.CapabilityToken = cap.Token
-		group.CapabilityExpiresAt = cap.ExpiresAt
 	}
 	names := make([]string, 0, len(rt.ProcessIDs))
 	for name := range rt.ProcessIDs {
@@ -574,17 +486,10 @@ func (s *Server) serveRestart(id, processName string) (*procstore.ServeGroup, er
 		}
 		names = append(names, processName)
 	} else {
-		if _, ok := rt.ProcessIDs["api"]; ok {
-			names = append(names, "api")
+		if _, ok := rt.ProcessIDs["api"]; !ok {
+			return nil, fmt.Errorf("serve group has no api process")
 		}
-		var legacy []string
-		for name := range rt.ProcessIDs {
-			if name != "api" {
-				legacy = append(legacy, name)
-			}
-		}
-		sort.Strings(legacy)
-		names = append(names, legacy...)
+		names = append(names, "api")
 	}
 	timeout := serveDefaultStartupTimeout
 	if rt.Spec.StartupTimeoutSeconds > 0 {
