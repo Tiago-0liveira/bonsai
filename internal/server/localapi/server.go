@@ -15,6 +15,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
+	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
@@ -55,6 +56,13 @@ type Server struct {
 func New(cfg Config) (*Server, error) {
 	if cfg.RepoDir == "" {
 		return nil, fmt.Errorf("repository root required")
+	}
+	// Daemon runtime paths are keyed by the main worktree root. A local API may
+	// be launched from a linked worktree, so canonicalize before constructing
+	// procstore/client state; otherwise it waits on a socket the real daemon
+	// never owns.
+	if root, err := git.MainRoot(cfg.RepoDir); err == nil {
+		cfg.RepoDir = root
 	}
 	if err := requireLoopback(cfg.Address); err != nil {
 		return nil, err
