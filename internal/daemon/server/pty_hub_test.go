@@ -585,3 +585,110 @@ func TestPTYStreamEvictionUnblocksAllBlockedSlowSockets(t *testing.T) {
 		t.Fatal("healthy subscriber did not finish on normal PTY close")
 	}
 }
+
+func TestPTYHubReplayEventCapBoundsFragmentedOutput(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.replayCap = 1024
+	h.replayEventCap = 4
+
+	for i := 0; i < 10; i++ {
+		h.Publish([]byte{byte('a' + i)})
+	}
+
+	if len(h.replay) != 4 {
+		t.Fatalf("replay events = %d, want 4", len(h.replay))
+	}
+	if h.replayBytes != 4 {
+		t.Fatalf("replay bytes = %d, want 4", h.replayBytes)
+	}
+	if h.replay[0].seq != 7 || h.replay[3].seq != 10 {
+		t.Fatalf("retained seq range = %d..%d, want 7..10", h.replay[0].seq, h.replay[3].seq)
+	}
+}
+
+func TestPTYHubReplayEventCapRetainsNewestSequences(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.replayCap = 1024
+	h.replayEventCap = 3
+	for _, value := range []string{"one", "two", "three", "four", "five"} {
+		h.Publish([]byte(value))
+	}
+
+	sub, _, _, next := h.Subscribe(0)
+	defer sub.Close()
+	if next != 6 {
+		t.Fatalf("next seq = %d, want 6", next)
+	}
+	for i, wantSeq := range []uint64{3, 4, 5} {
+		ev := <-sub.C
+		if ev.seq != wantSeq {
+			t.Fatalf("replay event %d seq = %d, want %d", i, ev.seq, wantSeq)
+		}
+	}
+}
+
+func TestPTYHubReplaySubscriberCapacityBoundedByEventCap(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.replayCap = 1 << 20
+	h.replayEventCap = 5
+	h.subQueue = 2
+
+	for i := 0; i < 100; i++ {
+		h.Publish([]byte{byte(i)})
+	}
+
+	sub, _, _, _ := h.Subscribe(0)
+	defer sub.Close()
+	wantCap := h.replayEventCap + h.subQueue + 1
+	if got := cap(sub.C); got != wantCap {
+		t.Fatalf("subscriber channel capacity = %d, want bounded capacity %d", got, wantCap)
+	}
+}
+
+func TestPTYHubReplayByteCapStillBoundsLargePayloads(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.replayCap = 5
+	h.replayEventCap = 100
+
+	h.Publish([]byte("abcd"))
+	h.Publish([]byte("efgh"))
+
+	if len(h.replay) != 1 {
+		t.Fatalf("replay events = %d, want 1", len(h.replay))
+	}
+	if h.replayBytes != 4 {
+		t.Fatalf("replay bytes = %d, want 4", h.replayBytes)
+	}
+	if got := string(h.replay[0].data); got != "efgh" {
+		t.Fatalf("retained replay = %q, want efgh", got)
+	}
+}
+
+func TestPTYHubReplayByteAndEventCapsPreserveAfterSeq(t *testing.T) {
+	h := newPTYHub(&fakePTYSession{}, 80, 24, 1)
+	h.replayCap = 6
+	h.replayEventCap = 3
+	h.subQueue = 2
+
+	for _, value := range []string{"aa", "bb", "cc", "dd", "ee"} {
+		h.Publish([]byte(value))
+	}
+
+	if len(h.replay) != 3 || h.replayBytes != 6 {
+		t.Fatalf("replay state = %d events/%d bytes, want 3 events/6 bytes", len(h.replay), h.replayBytes)
+	}
+	sub, _, _, next := h.Subscribe(3)
+	defer sub.Close()
+	if next != 6 {
+		t.Fatalf("next seq = %d, want 6", next)
+	}
+	for _, wantSeq := range []uint64{4, 5} {
+		ev := <-sub.C
+		if ev.seq != wantSeq {
+			t.Fatalf("replayed seq = %d, want %d", ev.seq, wantSeq)
+		}
+	}
+	if got, want := cap(sub.C), 2+h.subQueue+1; got != want {
+		t.Fatalf("after-seq subscriber capacity = %d, want %d", got, want)
+	}
+}
