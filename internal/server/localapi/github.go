@@ -29,7 +29,7 @@ func (s *Server) githubRepository(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	value, err := s.github.Repository(r.Context(), repository)
+	value, err := s.registry.Default().github.Repository(r.Context(), repository)
 	writeGitHubResult(w, value, err)
 }
 
@@ -38,7 +38,7 @@ func (s *Server) githubBranches(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	value, err := s.github.Branches(r.Context(), repository)
+	value, err := s.registry.Default().github.Branches(r.Context(), repository)
 	writeGitHubResult(w, value, err)
 }
 
@@ -52,7 +52,7 @@ func (s *Server) githubPullRequests(w http.ResponseWriter, r *http.Request) {
 		Head:  r.URL.Query().Get("head"),
 		Base:  r.URL.Query().Get("base"),
 	}
-	value, err := s.github.PullRequests(r.Context(), repository, filter)
+	value, err := s.registry.Default().github.PullRequests(r.Context(), repository, filter)
 	writeGitHubResult(w, value, err)
 }
 
@@ -65,7 +65,7 @@ func (s *Server) githubPullRequest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	value, err := s.github.PullRequest(r.Context(), repository, number)
+	value, err := s.registry.Default().github.PullRequest(r.Context(), repository, number)
 	writeGitHubResult(w, value, err)
 }
 
@@ -81,7 +81,7 @@ func (s *Server) githubCreatePullRequest(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, "invalid", "repository must be owner/name")
 		return
 	}
-	value, err := s.github.CreatePullRequest(r.Context(), input)
+	value, err := s.registry.Default().github.CreatePullRequest(r.Context(), input)
 	writeGitHubResult(w, value, err)
 }
 
@@ -105,7 +105,7 @@ func (s *Server) githubReviewPullRequest(w http.ResponseWriter, r *http.Request)
 	if !decodeStrictJSON(w, r, &body) {
 		return
 	}
-	err := s.github.ReviewPullRequest(r.Context(), githubdomain.ReviewRequest{
+	err := s.registry.Default().github.ReviewPullRequest(r.Context(), githubdomain.ReviewRequest{
 		Repository: repository,
 		Number: number,
 		Event: body.Event,
@@ -133,7 +133,7 @@ func (s *Server) githubComment(w http.ResponseWriter, r *http.Request) {
 	if !decodeStrictJSON(w, r, &body) {
 		return
 	}
-	err := s.github.Comment(r.Context(), repository, number, body.Body)
+	err := s.registry.Default().github.Comment(r.Context(), repository, number, body.Body)
 	writeGitHubResult(w, map[string]bool{"ok": err == nil}, err)
 }
 
@@ -152,11 +152,11 @@ func (s *Server) githubPullRequestAction(w http.ResponseWriter, r *http.Request)
 	var err error
 	switch r.PathValue("action") {
 	case "ready":
-		err = s.github.ReadyPullRequest(r.Context(), repository, number)
+		err = s.registry.Default().github.ReadyPullRequest(r.Context(), repository, number)
 	case "close":
-		err = s.github.ClosePullRequest(r.Context(), repository, number)
+		err = s.registry.Default().github.ClosePullRequest(r.Context(), repository, number)
 	case "reopen":
-		err = s.github.ReopenPullRequest(r.Context(), repository, number)
+		err = s.registry.Default().github.ReopenPullRequest(r.Context(), repository, number)
 	case "merge":
 		var body struct {
 			Method  string `json:"method"`
@@ -165,7 +165,7 @@ func (s *Server) githubPullRequestAction(w http.ResponseWriter, r *http.Request)
 		if !decodeStrictJSON(w, r, &body) {
 			return
 		}
-		err = s.github.MergePullRequest(r.Context(), githubdomain.MergePullRequestRequest{
+		err = s.registry.Default().github.MergePullRequest(r.Context(), githubdomain.MergePullRequestRequest{
 			Repository: repository,
 			Number: number,
 			Method: body.Method,
@@ -188,7 +188,7 @@ func (s *Server) githubChecks(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid", "sha is required")
 		return
 	}
-	value, err := s.github.Checks(r.Context(), repository, sha)
+	value, err := s.registry.Default().github.Checks(r.Context(), repository, sha)
 	writeGitHubResult(w, value, err)
 }
 
@@ -197,7 +197,7 @@ func (s *Server) githubWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	value, err := s.github.WorkflowRuns(r.Context(), repository, r.URL.Query().Get("branch"))
+	value, err := s.registry.Default().github.WorkflowRuns(r.Context(), repository, r.URL.Query().Get("branch"))
 	writeGitHubResult(w, value, err)
 }
 
