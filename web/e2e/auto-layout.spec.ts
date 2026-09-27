@@ -16,6 +16,7 @@ test('Auto-layout clears expanded History and keeps repeated layouts stable', as
 
   const layout = page.getByRole('button', { name: 'Auto-layout', exact: true })
   await layout.click()
+  await expect(worktree.getByText('Old spacing pass', { exact: true })).toHaveCount(0)
   const overlaps = () => page.locator('.react-flow__node').evaluateAll((elements) => {
     const rects = elements.map((element) => ({
       id: element.getAttribute('data-id'),
@@ -67,6 +68,9 @@ test('adding and removing a shelf agent preserves other branches and readable PR
   })
   await expect.poll(overlaps).toEqual([])
 
+  // Auto-layout intentionally collapses branch-local History. Reopen it before
+  // exercising the restore action that this test is about.
+  await owner.getByRole('button', { name: /History.*Show/ }).click()
   await owner.getByTitle('Restore agent to canvas').first().click()
   const restored = page.getByTestId('rf__node-agent-history-a')
   await expect(restored).toBeVisible()
