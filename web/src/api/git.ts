@@ -102,11 +102,13 @@ export function startGitBackend() {
       events.onmessage = event => {
         let data: { type?: string; project_id?: string }
         try { data = JSON.parse(String(event.data)) as { type?: string; project_id?: string } } catch { return }
-        if (data.type === 'git') {
+        if (data.type === 'ready') {
+          for (const repo of repos) void refreshProject(repo.id, true).catch(report)
+        } else if (data.type && data.type !== 'heartbeat') {
+          // Local events invalidate local canonical state. Raw WebSocket payloads
+          // never become Zustand state directly.
           const id = data.project_id || useBonsaiStore.getState().activeProjectId
           if (id) void refreshProject(id, true).catch(report)
-        } else if (data.type === 'ready') {
-          for (const repo of repos) void refreshProject(repo.id, true).catch(report)
         }
       }
       events.onclose = event => {
