@@ -1,6 +1,6 @@
 import { useBonsaiStore } from '../stores/bonsai'
 import type { CreateWorktreeInput, Project, PullRequest, Worktree } from '../types'
-import { invalidateLocalSession, localFetch, openLocalEvents } from './local'
+import { invalidateLocalSession, localFetch, markLocalConnectionLost, openLocalEvents } from './local'
 
 export interface Branch { name: string; remote: boolean; local_head_sha?: string; local_remote_ref_sha?: string; remote_head_sha?: string }
 interface Repository { id: string; workspace_id: string; full_name: string; default_branch: string }
@@ -83,11 +83,7 @@ export async function reviewPullRequest(id: string, body: string, kind: 'comment
   try { await request(`/api/projects/${encodeURIComponent(repo)}/pull-requests/${p.number}/reviews`, { body, event: kind === 'approve' ? 'APPROVE' : kind === 'request-changes' ? 'REQUEST_CHANGES' : 'COMMENT', commit_id: heads.get(id) }); await loadPullRequest(id) } catch (error) { report(error) }
 }
 export function startGitBackend() {
-  let closed = false, events: WebSocket | undefined, reconnectTimer: ReturnType<typeof setTimeout> | undefined
-  const reconnect = () => {
-    if (closed || reconnectTimer) return
-    reconnectTimer = setTimeout(() => { reconnectTimer = undefined; void connect() }, 1_000)
-  }
+  let closed = false, events: WebSocket | undefined
   const connect = async () => {
     try {
       const repos = await request<Repository[]>('/api/projects'); if (closed) return
@@ -112,21 +108,23 @@ export function startGitBackend() {
         }
       }
       events.onclose = event => {
+        if (closed) return
         if (event.code === 1008) invalidateLocalSession()
-        if (!closed) reconnect()
+        markLocalConnectionLost(event.code === 1008
+          ? 'The local event session expired. Reconnect to create a fresh capability.'
+          : 'The local Bonsai event connection closed. Reconnect when Bonsai is available.')
       }
       events.onerror = () => { if (!closed) events?.close() }
     } catch (error) {
       if (!closed) {
         useBonsaiStore.setState({ gitError: error instanceof APIError ? error.message : String(error) })
-        reconnect()
+        markLocalConnectionLost(error instanceof Error ? error.message : String(error))
       }
     }
   }
   void connect()
   return () => {
     closed = true
-    if (reconnectTimer) clearTimeout(reconnectTimer)
     if (events) { events.onclose = null; events.close() }
   }
 }
