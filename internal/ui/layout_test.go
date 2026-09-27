@@ -246,7 +246,6 @@ func rectsOverlap(a, b paneRect) bool {
 		a.Y < b.Y+b.H && a.Y+a.H > b.Y
 }
 
-
 func TestRuntimeClampDoesNotMutateStoredIntent(t *testing.T) {
 	spec := layoutSpec{
 		Axis:             axisHorizontal,
