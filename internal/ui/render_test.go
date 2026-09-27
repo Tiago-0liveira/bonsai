@@ -7,7 +7,10 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -291,6 +294,101 @@ func TestWorkspaceViewportUsesResolvedPaneHeight(t *testing.T) {
 		workspaceInnerH := max(resolved.Workspace.H-2, 1)
 		if got, want := m.termHeight(workspaceInnerH), max(workspaceInnerH-1, 1); got != want {
 			t.Fatalf("layout=%+v termHeight=%d want %d", layout, got, want)
+		}
+	}
+}
+
+
+func TestMouseWheelRoutesByResolvedPaneAcrossLayouts(t *testing.T) {
+	layouts := []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+	}
+
+	for _, layout := range layouts {
+		m := procModel()
+		m.width, m.height = 100, 40
+		m.paneLayout = layout
+		m.layout()
+		m.term.SetContent(strings.Repeat("a line of output\n", 200))
+		m.term.GotoTop()
+
+		resolved := m.resolvedPaneLayout()
+		workspaceWheel := tea.MouseMsg{
+			X:      resolved.Workspace.X + resolved.Workspace.W/2,
+			Y:      resolved.Workspace.Y + resolved.Workspace.H/2,
+			Button: tea.MouseButtonWheelDown,
+			Action: tea.MouseActionPress,
+		}
+		nm, _ := m.onMouse(workspaceWheel)
+		got := nm.(Model)
+		if got.term.ScrollPercent() <= 0 {
+			t.Fatalf("layout=%+v: wheel over workspace did not scroll terminal", layout)
+		}
+
+		m.term.GotoTop()
+		worktreesWheel := tea.MouseMsg{
+			X:      resolved.Worktrees.X + resolved.Worktrees.W/2,
+			Y:      resolved.Worktrees.Y + resolved.Worktrees.H/2,
+			Button: tea.MouseButtonWheelDown,
+			Action: tea.MouseActionPress,
+		}
+		nm, _ = m.onMouse(worktreesWheel)
+		got = nm.(Model)
+		if got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: wheel over worktrees scrolled terminal", layout)
+		}
+	}
+}
+
+func TestMouseWheelSuppressionAcrossLayouts(t *testing.T) {
+	layouts := []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+	}
+
+	for _, layout := range layouts {
+		base := procModel()
+		base.width, base.height = 100, 40
+		base.paneLayout = layout
+		base.layout()
+		base.term.SetContent(strings.Repeat("a line of output\n", 200))
+		resolved := base.resolvedPaneLayout()
+		wheel := tea.MouseMsg{
+			X:      resolved.Workspace.X + resolved.Workspace.W/2,
+			Y:      resolved.Workspace.Y + resolved.Workspace.H/2,
+			Button: tea.MouseButtonWheelDown,
+			Action: tea.MouseActionPress,
+		}
+
+		mouseOff := base
+		mouseOff.mouseOff = true
+		mouseOff.term.GotoTop()
+		nm, _ := mouseOff.onMouse(wheel)
+		if got := nm.(Model); got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: mouseOff allowed terminal scroll", layout)
+		}
+
+		withPrefs := base
+		pm := prefs.Model{}
+		withPrefs.prefs = &pm
+		withPrefs.term.GotoTop()
+		nm, _ = withPrefs.onMouse(wheel)
+		if got := nm.(Model); got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: preferences overlay allowed background scroll", layout)
+		}
+
+		withModal := base
+		modal := modals.Model{}
+		withModal.modal = &modal
+		withModal.term.GotoTop()
+		nm, _ = withModal.onMouse(wheel)
+		if got := nm.(Model); got.term.ScrollPercent() > 0 {
+			t.Fatalf("layout=%+v: modal allowed background scroll", layout)
 		}
 	}
 }
