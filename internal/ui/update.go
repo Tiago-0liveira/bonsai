@@ -491,7 +491,7 @@ func (m Model) onProcTick() (tea.Model, tea.Cmd) {
 		m.runningSig = sig
 		m.rebuildItems()
 	}
-	if m.rightTab == tabProcs {
+	if m.viewVisible(viewProcesses) {
 		m.refreshProcPane()
 	}
 	return m, tickProc()
@@ -977,7 +977,7 @@ func (m Model) openYankModal() (tea.Model, tea.Cmd) {
 	items := []string{yankPathLabel}
 	// On the Processes tab the log is what the user is looking at, so offer it
 	// first — terminal text selection cannot reach the scrolled-off part.
-	if m.rightTab == tabProcs {
+	if m.focusedView() == viewProcesses {
 		if id, ok := m.selectedProcID(wt.Path); ok {
 			label := fmt.Sprintf("copy process #%d output", id)
 			m.yankTargets[label] = m.plainProcOutput(id)
