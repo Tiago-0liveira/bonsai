@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -234,6 +235,11 @@ func Load(dir string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	if path := v.ConfigFileUsed(); path != "" {
+		if err := restoreServeEnvironmentCase(path, cfg); err != nil {
+			return nil, fmt.Errorf("read serve environment: %w", err)
+		}
+	}
 
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
@@ -279,6 +285,9 @@ func LoadFile(path string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	if err := restoreServeEnvironmentCase(path, cfg); err != nil {
+		return nil, fmt.Errorf("read serve environment: %w", err)
+	}
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
 	}
@@ -290,3 +299,39 @@ func (c *Config) CreateHooks() []string { return c.Hooks.OnWorktreeCreate }
 
 // DeleteHooks returns the commands to run before a worktree is deleted.
 func (c *Config) DeleteHooks() []string { return c.Hooks.OnWorktreeDelete }
+
+
+// restoreServeEnvironmentCase reparses only sidecar environment maps from YAML.
+// Viper intentionally normalizes configuration keys to lowercase, which is
+// correct for Bonsai config keys but would silently change case-sensitive
+// environment variable names such as API_TOKEN or NODE_OPTIONS.
+func restoreServeEnvironmentCase(path string, cfg *Config) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var raw struct {
+		Serve struct {
+			Sidecars []struct {
+				Name        string            `yaml:"name"`
+				Environment map[string]string `yaml:"environment"`
+			} `yaml:"sidecars"`
+		} `yaml:"serve"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for i := range cfg.Serve.Sidecars {
+		if i < len(raw.Serve.Sidecars) && raw.Serve.Sidecars[i].Name == cfg.Serve.Sidecars[i].Name {
+			cfg.Serve.Sidecars[i].Environment = raw.Serve.Sidecars[i].Environment
+			continue
+		}
+		for _, sidecar := range raw.Serve.Sidecars {
+			if sidecar.Name == cfg.Serve.Sidecars[i].Name {
+				cfg.Serve.Sidecars[i].Environment = sidecar.Environment
+				break
+			}
+		}
+	}
+	return nil
+}
