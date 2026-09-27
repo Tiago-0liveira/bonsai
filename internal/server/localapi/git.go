@@ -76,12 +76,12 @@ func (s *Server) diffRead(w http.ResponseWriter, r *http.Request) {
 func (s *Server) worktreeMutation(w http.ResponseWriter, r *http.Request) {
 	action := r.PathValue("action")
 	kind := map[string]string{
-		"pull": "git.pull",
-		"push": "git.push",
-		"commit": "git.commit",
-		"rebase": "git.rebase",
-		"merge": "git.merge",
-		"stage": "git.stage",
+		"pull":    "git.pull",
+		"push":    "git.push",
+		"commit":  "git.commit",
+		"rebase":  "git.rebase",
+		"merge":   "git.merge",
+		"stage":   "git.stage",
 		"unstage": "git.unstage",
 	}[action]
 	if kind == "" {
