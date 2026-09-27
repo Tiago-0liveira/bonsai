@@ -42,12 +42,12 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return relay.Run(ctx, relay.Config{
-		Address: file.Address,
-		Database: file.Database,
-		ExternalURL: file.ExternalURL,
-		FrontendOrigin: file.FrontendOrigin,
-		GitHubClientID: os.Getenv("GITHUB_APP_CLIENT_ID"),
+		Address:            file.Address,
+		Database:           file.Database,
+		ExternalURL:        file.ExternalURL,
+		FrontendOrigin:     file.FrontendOrigin,
+		GitHubClientID:     os.Getenv("GITHUB_APP_CLIENT_ID"),
 		GitHubClientSecret: os.Getenv("GITHUB_APP_CLIENT_SECRET"),
-		WebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		WebhookSecret:      os.Getenv("GITHUB_WEBHOOK_SECRET"),
 	})
 }
