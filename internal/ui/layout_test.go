@@ -245,3 +245,29 @@ func rectsOverlap(a, b paneRect) bool {
 	return a.X < b.X+b.W && a.X+a.W > b.X &&
 		a.Y < b.Y+b.H && a.Y+a.H > b.Y
 }
+
+
+func TestRuntimeClampDoesNotMutateStoredIntent(t *testing.T) {
+	spec := layoutSpec{
+		Axis:             axisHorizontal,
+		Order:            [2]paneID{paneWorktrees, paneWorkspace},
+		WorktreesPercent: 20,
+	}
+
+	narrow := resolvePaneLayout(40, 20, 1, spec)
+	if narrow.Worktrees.W != minWorktreesOuterWidth {
+		t.Fatalf("narrow worktrees width = %d, want clamped minimum %d", narrow.Worktrees.W, minWorktreesOuterWidth)
+	}
+	if spec.WorktreesPercent != 20 {
+		t.Fatalf("runtime clamp mutated layout spec to %d%%", spec.WorktreesPercent)
+	}
+	persisted := spec.persisted()
+	if persisted.Sizes["worktrees"] != 20 || persisted.Sizes["workspace"] != 80 {
+		t.Fatalf("runtime clamp changed persisted intent: %+v", persisted.Sizes)
+	}
+
+	wide := resolvePaneLayout(100, 20, 1, spec)
+	if wide.Worktrees.W != 20 || wide.Workspace.W != 80 {
+		t.Fatalf("wide layout did not restore 20/80 intent: %d/%d", wide.Worktrees.W, wide.Workspace.W)
+	}
+}
