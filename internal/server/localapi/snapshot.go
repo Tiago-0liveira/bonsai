@@ -37,12 +37,12 @@ type worktreeMetadata struct {
 }
 
 type browserSnapshot struct {
-	Repository browserRepository             `json:"repository"`
-	Local      *domain.RepositoryState       `json:"local,omitempty"`
-	Remote     *browserRemoteSnapshot        `json:"remote,omitempty"`
-	Online     bool                          `json:"online"`
-	Sequence   uint64                        `json:"sequence"`
-	Metadata   map[string]worktreeMetadata   `json:"metadata"`
+	Repository browserRepository           `json:"repository"`
+	Local      *domain.RepositoryState     `json:"local,omitempty"`
+	Remote     *browserRemoteSnapshot      `json:"remote,omitempty"`
+	Online     bool                        `json:"online"`
+	Sequence   uint64                      `json:"sequence"`
+	Metadata   map[string]worktreeMetadata `json:"metadata"`
 }
 
 func (s *Server) readLocalRepository() (domain.RepositoryState, error) {
@@ -132,5 +132,5 @@ func (s *Server) putMetadata(value worktreeMetadata) error {
 
 func (s *Server) publishProjectEvent(entity string) {
 	s.sequence.Add(1)
-	s.events.publish(localEvent{Type: "git", ProjectID: localRepositoryID, EntityID: entity})
+	s.eventHub.publish(localEvent{Type: "git", ProjectID: localRepositoryID, EntityID: entity})
 }
