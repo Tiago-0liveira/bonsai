@@ -19,9 +19,9 @@ func RunAPI(repoDir, address, browserOrigin string, option ...any) error {
 		}
 	}
 	return localapi.Run(localapi.Config{
-		RepoDir: repoDir,
-		Address: address,
+		RepoDir:       repoDir,
+		Address:       address,
 		BrowserOrigin: browserOrigin,
-		Development: development,
+		Development:   development,
 	})
 }
