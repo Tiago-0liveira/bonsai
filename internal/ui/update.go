@@ -223,10 +223,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.forwardToPane(msg)
 }
 
-// onMouse scrolls the pane the pointer is over — the log on the right, the
-// worktree list on the left — regardless of which one has keyboard focus, since
-// aiming the wheel is how a mouse says "this one". Only wheel events are acted
-// on: clicks and drags belong to the terminal's own text selection.
+// onMouse scrolls the pane the pointer is over regardless of visual order or
+// orientation. Only wheel events are acted on: clicks and drags belong to the
+// terminal's own text selection.
 func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.mouseOff || m.prefs != nil || m.modal != nil {
 		return m, nil
@@ -236,12 +235,19 @@ func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
-	var cmd tea.Cmd
-	if leftW, _, _ := m.dims(); msg.X < leftW {
-		m.list, cmd = m.list.Update(msg)
-		return m, cmd
+
+	pane, ok := m.resolvedPaneLayout().paneAt(msg.X, msg.Y)
+	if !ok {
+		return m, nil
 	}
-	m.term, cmd = m.term.Update(msg)
+
+	var cmd tea.Cmd
+	switch pane {
+	case paneWorktrees:
+		m.list, cmd = m.list.Update(msg)
+	case paneWorkspace:
+		m.term, cmd = m.term.Update(msg)
+	}
 	return m, cmd
 }
 
