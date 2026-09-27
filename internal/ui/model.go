@@ -226,12 +226,12 @@ type Model struct {
 
 	// Legacy aliases kept synchronized while old tab-specific handlers are
 	// migrated. focus/rightTab describe the currently focused pane/view.
-	focus    focusArea
-	rightTab rightTab
-	logContent    string // last-loaded git log, shown on the Git Log tab
-	status        string
-	err           error
-	ready         bool
+	focus      focusArea
+	rightTab   rightTab
+	logContent string // last-loaded git log, shown on the Git Log tab
+	status     string
+	err        error
+	ready      bool
 }
 
 // New constructs the root model with its core-layer dependencies injected.
