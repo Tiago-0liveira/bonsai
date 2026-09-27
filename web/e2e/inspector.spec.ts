@@ -19,7 +19,7 @@ test('inspector leads from branch blockers to the matching review and agent sess
   await inspector.getByRole('button', { name: /#23 fix\(daemon\)/ }).click()
   await expect(page.getByTitle('Minimize workspace')).toBeVisible()
   await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toBeVisible()
-  await expect(page.getByText('go test ./...', { exact: true })).toBeVisible()
+  await expect(page.locator('#prs').getByText('go test ./...', { exact: true })).toBeVisible()
   await page.getByRole('textbox', { name: 'Search pull requests' }).fill('no matching review')
   await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toHaveCount(0)
   await inspector.getByRole('button', { name: /#23 fix\(daemon\)/ }).click()
