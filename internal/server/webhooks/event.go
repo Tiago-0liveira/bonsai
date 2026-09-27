@@ -13,19 +13,19 @@ var ErrUnsupported = errors.New("unsupported GitHub webhook event or action")
 // Event is the normalized, non-executable message that crosses from the
 // internet-facing webhook listener to the local Bonsai API.
 type Event struct {
-	DeliveryID         string  `json:"delivery_id"`
-	Event              string  `json:"event"`
-	Action             string  `json:"action,omitempty"`
-	RepositoryID       int64   `json:"repository_id,omitempty"`
-	InstallationID     int64   `json:"installation_id,omitempty"`
-	Number             int     `json:"number,omitempty"`
-	PullRequestNumber  int     `json:"pull_request,omitempty"`
-	PullRequestMerged  bool    `json:"pull_request_merged,omitempty"`
-	IssueNumber        int     `json:"issue,omitempty"`
-	Ref                string  `json:"ref,omitempty"`
-	CheckHeadSHA       string  `json:"check_head_sha,omitempty"`
-	WorkflowHeadBranch string  `json:"workflow_head_branch,omitempty"`
-	RepositoriesAdded  []int64 `json:"repositories_added,omitempty"`
+	DeliveryID          string  `json:"delivery_id"`
+	Event               string  `json:"event"`
+	Action              string  `json:"action,omitempty"`
+	RepositoryID        int64   `json:"repository_id,omitempty"`
+	InstallationID      int64   `json:"installation_id,omitempty"`
+	Number              int     `json:"number,omitempty"`
+	PullRequestNumber   int     `json:"pull_request,omitempty"`
+	PullRequestMerged   bool    `json:"pull_request_merged,omitempty"`
+	IssueNumber         int     `json:"issue,omitempty"`
+	Ref                 string  `json:"ref,omitempty"`
+	CheckHeadSHA        string  `json:"check_head_sha,omitempty"`
+	WorkflowHeadBranch  string  `json:"workflow_head_branch,omitempty"`
+	RepositoriesAdded   []int64 `json:"repositories_added,omitempty"`
 	RepositoriesRemoved []int64 `json:"repositories_removed,omitempty"`
 }
 
@@ -126,9 +126,9 @@ func AllowedEventAction(eventName, action string) bool {
 			"published": true, "unpublished": true, "created": true, "edited": true,
 			"deleted": true, "prereleased": true, "released": true,
 		},
-		"deployment":              {"created": true},
-		"deployment_status":       {"created": true},
-		"installation":            {"created": true, "deleted": true, "suspend": true, "unsuspend": true, "new_permissions_accepted": true},
+		"deployment":                {"created": true},
+		"deployment_status":         {"created": true},
+		"installation":              {"created": true, "deleted": true, "suspend": true, "unsuspend": true, "new_permissions_accepted": true},
 		"installation_repositories": {"added": true, "removed": true},
 	}
 	actions := allowed[eventName]

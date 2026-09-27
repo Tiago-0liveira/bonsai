@@ -8,7 +8,7 @@ import (
 
 func TestServeTUIFiltersLogs(t *testing.T) {
 	m := serveTUIModel{
-		group: &procstore.ServeGroup{Processes: []procstore.ServeProcess{{Name: "api"}, {Name: "webhook"}}},
+		group:    &procstore.ServeGroup{Processes: []procstore.ServeProcess{{Name: "api"}, {Name: "webhook"}}},
 		selected: 1,
 		search:   "denied",
 		height:   40,

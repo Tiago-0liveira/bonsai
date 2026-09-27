@@ -169,17 +169,17 @@ func NewServer(root string) (*Server, error) {
 	}
 
 	s := &Server{
-		root:   store.Root(),
-		store:  store,
-		logCap: logCap,
-		procs:       map[int]*managedProc{},
-		serveGroups:     map[string]*serveRuntime{},
+		root:             store.Root(),
+		store:            store,
+		logCap:           logCap,
+		procs:            map[int]*managedProc{},
+		serveGroups:      map[string]*serveRuntime{},
 		serveLogRings:    map[string]*serveLogRing{},
 		serveLogPartials: map[string]string{},
 		serveLogSubs:     map[string]map[int]chan string{},
 		ln:               ln,
-		lock:   lock,
-		done:   make(chan struct{}),
+		lock:             lock,
+		done:             make(chan struct{}),
 	}
 
 	_ = os.WriteFile(store.PidPath(), []byte(strconv.Itoa(os.Getpid())+"\n"+strconv.Itoa(protocol.Version)+"\n"), 0o644)

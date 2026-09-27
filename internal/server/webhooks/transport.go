@@ -152,10 +152,10 @@ type InternalQueue struct {
 
 func NewInternalQueue(secret []byte, st *store.Store, process func(context.Context, Event) error) *InternalQueue {
 	return &InternalQueue{
-		Secret: append([]byte(nil), secret...),
-		Store:  st,
+		Secret:  append([]byte(nil), secret...),
+		Store:   st,
 		Process: process,
-		wake:   make(chan struct{}, 1),
+		wake:    make(chan struct{}, 1),
 	}
 }
 

@@ -19,14 +19,14 @@ const Version = 4
 
 // Request kinds.
 const (
-	KindGit       = "git"
-	KindSpawn     = "spawn"
-	KindList      = "list"
-	KindKill      = "kill"
-	KindRestart   = "restart"
-	KindSetPolicy = "setPolicy"
-	KindLogs      = "logs"
-	KindAttach    = "attach"
+	KindGit          = "git"
+	KindSpawn        = "spawn"
+	KindList         = "list"
+	KindKill         = "kill"
+	KindRestart      = "restart"
+	KindSetPolicy    = "setPolicy"
+	KindLogs         = "logs"
+	KindAttach       = "attach"
 	KindRemove       = "remove"
 	KindServeStart   = "serveStart"
 	KindServeStatus  = "serveStatus"
@@ -43,19 +43,19 @@ type Request struct {
 	Kind string             `json:"kind"`
 
 	// Spawn.
-	Worktree   string            `json:"worktree,omitempty"`
-	Branch     string            `json:"branch,omitempty"`
-	Label      string            `json:"label,omitempty"`
-	Command    string            `json:"command,omitempty"`
-	Program    string            `json:"program,omitempty"`
-	Args       []string          `json:"args,omitempty"`
-	WorkingDir   string            `json:"working_dir,omitempty"`
-	Environment  map[string]string `json:"environment,omitempty"`
-	ExpectedPort int               `json:"expected_port,omitempty"`
-	ServeGroup   string            `json:"serve_group,omitempty"`
-	ServeName    string            `json:"serve_name,omitempty"`
-	ServeRequired bool             `json:"serve_required,omitempty"`
-	Policy       *procstore.Policy `json:"policy,omitempty"`
+	Worktree      string            `json:"worktree,omitempty"`
+	Branch        string            `json:"branch,omitempty"`
+	Label         string            `json:"label,omitempty"`
+	Command       string            `json:"command,omitempty"`
+	Program       string            `json:"program,omitempty"`
+	Args          []string          `json:"args,omitempty"`
+	WorkingDir    string            `json:"working_dir,omitempty"`
+	Environment   map[string]string `json:"environment,omitempty"`
+	ExpectedPort  int               `json:"expected_port,omitempty"`
+	ServeGroup    string            `json:"serve_group,omitempty"`
+	ServeName     string            `json:"serve_name,omitempty"`
+	ServeRequired bool              `json:"serve_required,omitempty"`
+	Policy        *procstore.Policy `json:"policy,omitempty"`
 
 	// Serve-group lifecycle.
 	ServeSpec   *procstore.ServeSpec `json:"serve,omitempty"`
@@ -82,9 +82,9 @@ type Response struct {
 	OK    bool              `json:"ok"`
 	Error string            `json:"error,omitempty"`
 
-	Record  *procstore.Record   `json:"record,omitempty"`  // spawn/restart
-	Records []*procstore.Record `json:"records,omitempty"` // list
-	Killed     []int                 `json:"killed,omitempty"` // kill
+	Record     *procstore.Record     `json:"record,omitempty"`  // spawn/restart
+	Records    []*procstore.Record   `json:"records,omitempty"` // list
+	Killed     []int                 `json:"killed,omitempty"`  // kill
 	ServeGroup *procstore.ServeGroup `json:"serve_group,omitempty"`
 
 	// Ping.

@@ -147,7 +147,6 @@ func run(cfgPath string) error {
 	return err
 }
 
-
 func runServeInternal(kind string, args []string) error {
 	fs := flag.NewFlagSet(kind, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

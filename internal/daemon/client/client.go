@@ -451,7 +451,6 @@ func (c *Client) Attach(id int, onChunk func(string) error) error {
 	return c.Logs(id, true, 0, "", false, onChunk)
 }
 
-
 // ServeStart starts or reuses the daemon-owned development stack for a workspace.
 func (c *Client) ServeStart(spec procstore.ServeSpec) (*procstore.ServeGroup, error) {
 	if err := c.ensureDaemon(); err != nil {
@@ -498,7 +497,6 @@ func (c *Client) ServeRestart(workspaceID, processName string) (*procstore.Serve
 	}
 	return resp.ServeGroup, nil
 }
-
 
 // ServeLogs reads or follows the daemon-owned combined serve-group log.
 func (c *Client) ServeLogs(ctx context.Context, workspaceID, processName string, follow bool, tailLines int, grep string, insensitive bool, onChunk func(string) error) error {

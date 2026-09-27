@@ -50,10 +50,10 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	s.nextID++
 	mp := &managedProc{
 		rec: &procstore.Record{
-			ID:         id,
-			Label:      req.Label,
-			Command:    req.Command,
-			Program:    req.Program,
+			ID:            id,
+			Label:         req.Label,
+			Command:       req.Command,
+			Program:       req.Program,
 			Args:          append([]string(nil), req.Args...),
 			Environment:   cloneEnvironment(req.Environment),
 			Worktree:      req.Worktree,
@@ -646,7 +646,6 @@ func (s *Server) resolvePolicy(req *protocol.Request) procstore.Policy {
 	}
 	return procstore.DefaultPolicy()
 }
-
 
 func cloneEnvironment(in map[string]string) map[string]string {
 	if len(in) == 0 {
