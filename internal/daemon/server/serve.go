@@ -202,7 +202,8 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	corePolicy := procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 3}
 	secretEnv := map[string]string{"BONSAI_SERVE_SECRET_FILE": secretFile}
 	if err := start("api", spec.Executable,
-		[]string{"__serve-api", "--config", spec.ServerConfig, "--port", strconv.Itoa(spec.APIPort), "--session-secret-file", secretFile},
+		[]string{"__serve-api", "--config", spec.ServerConfig, "--port", strconv.Itoa(spec.APIPort),
+			"--browser-origin", fmt.Sprintf("http://127.0.0.1:%d", spec.WebPort), "--session-secret-file", secretFile},
 		spec.WorkspacePath, secretEnv, spec.APIPort, true, corePolicy); err != nil {
 		s.cleanupFailedServe(rt)
 		return nil, err
