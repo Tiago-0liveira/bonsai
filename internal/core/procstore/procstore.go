@@ -115,13 +115,13 @@ type ServeSidecar struct {
 
 // ServeSpec is the daemon request for one workspace development stack.
 type ServeSpec struct {
-	WorkspaceID           string         `json:"workspace_id"`
-	WorkspacePath         string         `json:"workspace_path"`
-	Executable            string         `json:"executable"`
-	ServerConfig          string         `json:"server_config"`
-	APIPort               int            `json:"api_port"`
-	WebhookPort           int            `json:"webhook_port"`
-	WebPort               int            `json:"web_port"`
+	WorkspaceID            string         `json:"workspace_id"`
+	WorkspacePath          string         `json:"workspace_path"`
+	Executable             string         `json:"executable"`
+	ServerConfig           string         `json:"server_config"`
+	APIPort                int            `json:"api_port"`
+	WebhookPort            int            `json:"webhook_port"`
+	WebPort                int            `json:"web_port"`
 	StartupTimeoutSeconds  int            `json:"startup_timeout_seconds,omitempty"`
 	ShutdownTimeoutSeconds int            `json:"shutdown_timeout_seconds,omitempty"`
 	Sidecars               []ServeSidecar `json:"sidecars,omitempty"`

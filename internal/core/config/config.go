@@ -101,10 +101,10 @@ type ServeSidecar struct {
 
 // ServeConfig configures the daemon-owned local API, webhook, web, and sidecars.
 type ServeConfig struct {
-	APIPort        int            `mapstructure:"api_port"`
-	WebhookPort    int            `mapstructure:"webhook_port"`
-	WebPort        int            `mapstructure:"web_port"`
-	ServerConfig   string         `mapstructure:"server_config"`
+	APIPort         int            `mapstructure:"api_port"`
+	WebhookPort     int            `mapstructure:"webhook_port"`
+	WebPort         int            `mapstructure:"web_port"`
+	ServerConfig    string         `mapstructure:"server_config"`
 	StartupTimeout  int            `mapstructure:"startup_timeout_seconds"`
 	ShutdownTimeout int            `mapstructure:"shutdown_timeout_seconds"`
 	Sidecars        []ServeSidecar `mapstructure:"sidecars"`

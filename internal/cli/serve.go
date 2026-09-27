@@ -189,13 +189,13 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	}
 
 	spec := procstore.ServeSpec{
-		WorkspaceID:           workspaceID,
-		WorkspacePath:         workspace,
-		Executable:            executable,
-		ServerConfig:          *serverConfig,
-		APIPort:               *apiPort,
-		WebhookPort:           *webhookPort,
-		WebPort:               *webPort,
+		WorkspaceID:            workspaceID,
+		WorkspacePath:          workspace,
+		Executable:             executable,
+		ServerConfig:           *serverConfig,
+		APIPort:                *apiPort,
+		WebhookPort:            *webhookPort,
+		WebPort:                *webPort,
 		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
 		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
 		Sidecars:               sidecars,
