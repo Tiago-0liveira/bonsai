@@ -40,18 +40,24 @@ func TestRequireLoopback(t *testing.T) {
 }
 
 func TestValidateBrowserOrigin(t *testing.T) {
-	if err := validateBrowserOrigin(ProductionBrowserOrigin, false); err != nil {
+	if err := validateBrowserOrigin(ProductionBrowserOrigin, BrowserSecurityProduction); err != nil {
 		t.Fatal(err)
 	}
-	for _, origin := range []string{"http://localhost:5173", "http://127.0.0.1:5173"} {
-		if err := validateBrowserOrigin(origin, true); err != nil {
+	for _, origin := range []string{"http://localhost:7003", "http://127.0.0.1:7003"} {
+		if err := validateBrowserOrigin(origin, BrowserSecurityDevelopment); err != nil {
 			t.Fatalf("development origin %q rejected: %v", origin, err)
 		}
-	}
-	for _, origin := range []string{"https://evil.example", "https://fake.app.bonsai.dev", "null", "http://localhost:5174"} {
-		if err := validateBrowserOrigin(origin, false); err == nil {
-			t.Fatalf("production accepted %q", origin)
+		if err := validateBrowserOrigin(origin, BrowserSecurityProduction); err == nil {
+			t.Fatalf("production accepted development origin %q", origin)
 		}
+	}
+	for _, origin := range []string{"https://evil.example", "https://fake.app.bonsai.dev", "null", "http://0.0.0.0:7003", "http://localhost"} {
+		if err := validateBrowserOrigin(origin, BrowserSecurityDevelopment); err == nil {
+			t.Fatalf("development accepted %q", origin)
+		}
+	}
+	if err := validateBrowserOrigin(ProductionBrowserOrigin, BrowserSecurityDevelopment); err == nil {
+		t.Fatal("development mode accepted hosted production origin")
 	}
 }
 

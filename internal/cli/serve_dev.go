@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"text/tabwriter"
-	"path/filepath"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -33,7 +33,7 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 	if err != nil {
 		return err
 	}
-	workspace, err = filepathAbs(workspace)
+	workspace, err = filepath.Abs(workspace)
 	if err != nil {
 		return err
 	}
@@ -168,10 +168,6 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 		return err
 	}
 	return runServeTUI(in, out, c, group)
-}
-
-func filepathAbs(path string) (string, error) {
-	return filepath.Abs(path)
 }
 
 func resolveDevPort(flagValue int, envName string, fallback int) (int, error) {

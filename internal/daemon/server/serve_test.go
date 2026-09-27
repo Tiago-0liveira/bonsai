@@ -8,8 +8,9 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 )
 
-func TestValidateServeSpecAndPortCollision(t *testing.T) {
+func TestValidateProductionServeSpecAndPortCollision(t *testing.T) {
 	spec := procstore.ServeSpec{
+		Mode:          procstore.ServeModeProduction,
 		WorkspaceID:   "workspace",
 		WorkspacePath: t.TempDir(),
 		Executable:    "/tmp/bonsai",
@@ -24,44 +25,36 @@ func TestValidateServeSpecAndPortCollision(t *testing.T) {
 		func() procstore.ServeSpec { v := spec; v.APIPort = 0; return v }(),
 		func() procstore.ServeSpec { v := spec; v.BrowserOrigin = ""; return v }(),
 		func() procstore.ServeSpec { v := spec; v.BrowserOrigin = "https://evil.example"; return v }(),
-		func() procstore.ServeSpec { v := spec; v.Development = true; return v }(),
+		func() procstore.ServeSpec { v := spec; v.Mode = procstore.ServeModeDevelopment; return v }(),
+		func() procstore.ServeSpec { v := spec; v.WebhookPort = 7002; return v }(),
+		func() procstore.ServeSpec { v := spec; v.WebPort = 7003; return v }(),
 		func() procstore.ServeSpec {
 			v := spec
-			v.Development = true
-			v.BrowserOrigin = "http://localhost:5174"
+			v.Sidecars = []procstore.ServeSidecar{{Name: "tunnel", Command: []string{"cloudflared"}}}
 			return v
 		}(),
 	}
 	for i, candidate := range invalid {
 		if err := validateServeSpec(candidate); err == nil {
-			t.Fatalf("invalid serve spec %d unexpectedly accepted: %+v", i, candidate)
+			t.Fatalf("invalid production serve spec %d unexpectedly accepted: %+v", i, candidate)
 		}
-	}
-
-	dev := spec
-	dev.Development = true
-	dev.BrowserOrigin = "http://localhost:5173"
-	if err := validateServeSpec(dev); err != nil {
-		t.Fatalf("explicit development origin rejected: %v", err)
 	}
 
 	args := serveAPIArgs(spec)
-	for _, forbidden := range []string{"__serve-webhook", "--capability-file", "--web-port", "--webhook-port"} {
+	for _, forbidden := range []string{"__serve-webhook", "--capability-file", "--web-port", "--webhook-port", "--development"} {
 		if slices.Contains(args, forbidden) {
-			t.Fatalf("serve API args contain legacy value %q: %v", forbidden, args)
+			t.Fatalf("production serve API args contain development value %q: %v", forbidden, args)
 		}
 	}
-	if slices.Contains(args, "--development") {
-		t.Fatalf("production serve API args unexpectedly enable development: %v", args)
-	}
-	if devArgs := serveAPIArgs(dev); !slices.Contains(devArgs, "--development") {
-		t.Fatalf("development serve API args = %v", devArgs)
+	modeIndex := slices.Index(args, "--security-mode")
+	if modeIndex < 0 || modeIndex+1 >= len(args) || args[modeIndex+1] != "production" {
+		t.Fatalf("production serve API args do not force production security: %v", args)
 	}
 
 	env := serveEnvironment(spec)
-	for _, forbidden := range []string{"BONSAI_WEBHOOK_PORT", "BONSAI_WEB_PORT", "BONSAI_SERVE_SECRET_FILE"} {
+	for _, forbidden := range []string{"BONSAI_WEBHOOK_PORT", "BONSAI_WEB_PORT", "BONSAI_SERVE_SECRET_FILE", "BONSAI_DEV_WEBHOOK_SECRET"} {
 		if _, ok := env[forbidden]; ok {
-			t.Fatalf("serve environment exports legacy %s", forbidden)
+			t.Fatalf("production serve environment exports development value %s", forbidden)
 		}
 	}
 
@@ -73,5 +66,40 @@ func TestValidateServeSpecAndPortCollision(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	if err := checkServePorts(port); err == nil {
 		t.Fatal("expected occupied-port error")
+	}
+}
+
+func TestValidateDevelopmentServeSpec(t *testing.T) {
+	spec := procstore.ServeSpec{
+		Mode:          procstore.ServeModeDevelopment,
+		WorkspaceID:   "workspace",
+		WorkspacePath: t.TempDir(),
+		Executable:    "/tmp/bonsai",
+		APIPort:       7001,
+		WebhookPort:   7002,
+		WebPort:       7003,
+		BrowserOrigin: "http://127.0.0.1:7003",
+	}
+	if err := validateDevServeSpec(spec); err != nil {
+		t.Fatal(err)
+	}
+	for i, mutate := range []func(*procstore.ServeSpec){
+		func(v *procstore.ServeSpec) { v.Mode = procstore.ServeModeProduction },
+		func(v *procstore.ServeSpec) { v.WebhookPort = v.APIPort },
+		func(v *procstore.ServeSpec) { v.BrowserOrigin = "http://0.0.0.0:7003" },
+		func(v *procstore.ServeSpec) { v.BrowserOrigin = "http://127.0.0.1:7999" },
+	} {
+		candidate := spec
+		mutate(&candidate)
+		if err := validateDevServeSpec(candidate); err == nil {
+			t.Fatalf("invalid development spec %d unexpectedly accepted: %+v", i, candidate)
+		}
+	}
+	env := serveDevEnvironment(spec)
+	if env["BONSAI_API_PORT"] != "7001" || env["BONSAI_WEBHOOK_PORT"] != "7002" || env["BONSAI_WEB_PORT"] != "7003" {
+		t.Fatalf("development environment = %#v", env)
+	}
+	if _, ok := env["BONSAI_DEV_WEBHOOK_SECRET"]; ok {
+		t.Fatal("development webhook secret leaked into child environment")
 	}
 }
