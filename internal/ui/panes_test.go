@@ -152,10 +152,10 @@ func clonePersistedNode(n *config.TUILayoutNodePrefs) *config.TUILayoutNodePrefs
 		return nil
 	}
 	out := &config.TUILayoutNodePrefs{
-		Type:  n.Type,
-		Axis:  n.Axis,
-		Ratio: n.Ratio,
-		First: clonePersistedNode(n.First),
+		Type:   n.Type,
+		Axis:   n.Axis,
+		Ratio:  n.Ratio,
+		First:  clonePersistedNode(n.First),
 		Second: clonePersistedNode(n.Second),
 	}
 	if n.Pane != nil {
