@@ -45,15 +45,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-
 	_ = conn.SetReadDeadline(time.Time{})
-	if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
+
+	subscriptionID, events := s.events.subscribe()
+	defer s.events.unsubscribe(subscriptionID)
+	if err := conn.WriteJSON(map[string]any{"type": "ready", "sequence": s.sequence.Load()}); err != nil {
 		return
 	}
 
-	// The local event fan-out will plug into this bounded channel. Until then,
-	// heartbeats exercise the same slow-client behavior without leaking state.
-	outbound := make(chan map[string]string, 8)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -70,10 +69,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-done:
 			return
-		case <-ticker.C:
-			select {
-			case outbound <- map[string]string{"type": "heartbeat"}:
-			default:
+		case event, ok := <-events:
+			if !ok {
 				_ = conn.WriteControl(
 					websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "client is too slow"),
@@ -81,9 +78,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				)
 				return
 			}
-		case event := <-outbound:
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if err := conn.WriteJSON(event); err != nil {
+				return
+			}
+		case <-ticker.C:
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "sequence": s.sequence.Load()}); err != nil {
 				return
 			}
 		}
