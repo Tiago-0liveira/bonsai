@@ -5,15 +5,18 @@ import { projects } from '../test/fixtures/projects'
 import { pullRequests } from '../test/fixtures/pullRequests'
 import { worktreeTags } from '../mock/tags'
 import { worktrees } from '../test/fixtures/worktrees'
-import { invalidateLocalSession } from '../api/local'
+import { __resetLocalClientForTests, connectLocalBonsai } from '../api/localClient'
 import { useBonsaiStore } from './bonsai'
 
 describe('bonsai store', () => {
-  beforeEach(() => {
-    invalidateLocalSession()
+  beforeEach(async () => {
+    __resetLocalClientForTests()
     vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 'test', api_version: 1 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'test-session', expires_at: new Date(Date.now() + 60_000).toISOString() }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
       .mockRejectedValue(new Error('daemon offline')))
+    await connectLocalBonsai()
     localStorage.clear()
     useBonsaiStore.setState({
       selection: { type: 'project', id: 'bonsai' },
