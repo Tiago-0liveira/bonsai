@@ -174,9 +174,7 @@ func (s *Server) serveStartDevStack(spec *procstore.ServeSpec) (*procstore.Serve
 		"VITE_BONSAI_LOCAL_API_ORIGIN": fmt.Sprintf("http://127.0.0.1:%d", spec.APIPort),
 		"VITE_BONSAI_RELAY_ORIGIN":     fmt.Sprintf("http://127.0.0.1:%d", spec.WebhookPort),
 	}
-	if err := start("web", "pnpm", []string{
-		"dev", "--", "--host", "127.0.0.1", "--port", strconv.Itoa(spec.WebPort), "--strictPort",
-	}, webDir, webEnv, spec.WebPort, false, corePolicy); err != nil {
+	if err := start("web", "pnpm", []string{"exec", "vite"}, webDir, webEnv, spec.WebPort, false, corePolicy); err != nil {
 		s.cleanupFailedServe(rt)
 		return nil, err
 	}
