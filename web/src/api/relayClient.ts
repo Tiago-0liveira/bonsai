@@ -1,7 +1,9 @@
 import { useBonsaiStore } from '../stores/bonsai'
 import { projectForGitHubRepository, refreshProject, report } from './git'
 
-export const RELAY_HTTP_ORIGIN = 'https://api.bonsai.dev'
+const configuredRelayOrigin = (import.meta.env.VITE_BONSAI_RELAY_ORIGIN as string | undefined)?.replace(/\/$/, '')
+export const RELAY_HTTP_ORIGIN = configuredRelayOrigin || 'https://api.bonsai.dev'
+const relayUsesCloudSession = RELAY_HTTP_ORIGIN === 'https://api.bonsai.dev'
 
 export type RelayConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'authorization-expired' | 'offline'
 
@@ -72,21 +74,23 @@ export function startRelayInvalidation() {
     if (closed) return
     publish({ status: 'connecting' })
     try {
-      const status = await fetch(`${RELAY_HTTP_ORIGIN}/auth/session`, {
-        method: 'GET',
-        mode: 'cors',
-        credentials: 'include',
-        cache: 'no-store',
-      })
-      if (status.status === 401) {
-        publish({ status: 'authorization-expired', message: 'Connect GitHub to restore realtime pull request updates.' })
-        scheduleReconnect(connect, 60_000)
-        return
+      if (relayUsesCloudSession) {
+        const status = await fetch(`${RELAY_HTTP_ORIGIN}/auth/session`, {
+          method: 'GET',
+          mode: 'cors',
+          credentials: 'include',
+          cache: 'no-store',
+        })
+        if (status.status === 401) {
+          publish({ status: 'authorization-expired', message: 'Connect GitHub to restore realtime pull request updates.' })
+          scheduleReconnect(connect, 60_000)
+          return
+        }
+        if (!status.ok) throw new Error(`Relay session check failed (${status.status})`)
       }
-      if (!status.ok) throw new Error(`Relay session check failed (${status.status})`)
 
       source?.close()
-      source = new EventSource(`${RELAY_HTTP_ORIGIN}/events`, { withCredentials: true })
+      source = new EventSource(`${RELAY_HTTP_ORIGIN}/events`, { withCredentials: relayUsesCloudSession })
       source.onopen = () => publish({ status: 'connected' })
       source.onmessage = event => {
         try {
@@ -106,7 +110,7 @@ export function startRelayInvalidation() {
         // Keep the EventSource open so the browser reconnects with its
         // Last-Event-ID cursor and the relay can replay missed events.
         publish({ status: 'offline', message: 'GitHub realtime is temporarily unavailable. Local Bonsai remains usable.' })
-        if (authCheckTimer) return
+        if (!relayUsesCloudSession || authCheckTimer) return
         authCheckTimer = setTimeout(async () => {
           authCheckTimer = undefined
           if (closed) return

@@ -1,5 +1,6 @@
-export const LOCAL_API_HTTP = 'http://127.0.0.1:7001'
-export const LOCAL_API_WS = 'ws://127.0.0.1:7001/events'
+const configuredLocalOrigin = (import.meta.env.VITE_BONSAI_LOCAL_API_ORIGIN as string | undefined)?.replace(/\/$/, '')
+export const LOCAL_API_HTTP = configuredLocalOrigin || 'http://127.0.0.1:7001'
+export const LOCAL_API_WS = LOCAL_API_HTTP.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/events'
 export const LOCAL_API_PROTOCOL_VERSION = 1
 
 export type LocalConnectionStatus =
@@ -128,8 +129,8 @@ function classifyProbeFailure(permission: PermissionState | 'unknown', error?: u
   publish({
     status: 'bonsai-not-running',
     message: error instanceof DOMException && error.name === 'AbortError'
-      ? 'Bonsai did not respond on 127.0.0.1:7001.'
-      : 'Bonsai is not reachable on this computer. Start it with `bonsai serve`, then try again. If Bonsai is already running, check whether this browser has restricted Local Network Access for app.bonsai.dev.',
+      ? `Bonsai did not respond at ${LOCAL_API_HTTP}.`
+      : 'Bonsai is not reachable on this computer. Start it with `bonsai serve`, then try again. If Bonsai is already running, check whether this browser has restricted Local Network Access for this frontend origin.',
   })
 }
 
