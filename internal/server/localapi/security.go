@@ -120,9 +120,9 @@ func validPreflightHeaders(value string) bool {
 		return true
 	}
 	allowed := map[string]struct{}{
-		"content-type": {},
+		"content-type":     {},
 		"x-bonsai-session": {},
-		"idempotency-key": {},
+		"idempotency-key":  {},
 	}
 	for _, header := range strings.Split(value, ",") {
 		if _, ok := allowed[strings.ToLower(strings.TrimSpace(header))]; !ok {
