@@ -66,9 +66,9 @@ func cloneLayoutNode(n *layoutTreeNode) *layoutTreeNode {
 		return nil
 	}
 	out := &layoutTreeNode{
-		Axis:  n.Axis,
-		Ratio: n.Ratio,
-		First: cloneLayoutNode(n.First),
+		Axis:   n.Axis,
+		Ratio:  n.Ratio,
+		First:  cloneLayoutNode(n.First),
 		Second: cloneLayoutNode(n.Second),
 	}
 	if n.Pane != nil {
@@ -117,9 +117,9 @@ func migrateLegacyLayout(old layoutSpec) dynamicLayout {
 	}
 	return dynamicLayout{
 		Root: &layoutTreeNode{
-			Axis:  old.Axis,
-			Ratio: ratio,
-			First: &layoutTreeNode{Pane: &paneSpec{ID: first, Views: firstViews}},
+			Axis:   old.Axis,
+			Ratio:  ratio,
+			First:  &layoutTreeNode{Pane: &paneSpec{ID: first, Views: firstViews}},
 			Second: &layoutTreeNode{Pane: &paneSpec{ID: second, Views: secondViews}},
 		},
 	}
