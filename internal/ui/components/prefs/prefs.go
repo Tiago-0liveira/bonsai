@@ -11,8 +11,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
+
+// LayoutPrefs mirrors the serializable v2 layout tree. The Preferences
+// component edits this value but still owns no persistence side effects.
+type LayoutPrefs = config.TUILayoutPrefs
 
 // SaveMsg carries the full preferences snapshot after any change.
 type SaveMsg struct {
@@ -26,6 +31,8 @@ type SaveMsg struct {
 	Editor string
 	// Keys holds personal keybinding overrides (action -> key).
 	Keys map[string]string
+	// Layout is the current top-level pane arrangement.
+	Layout LayoutPrefs
 }
 
 // CloseMsg is emitted when the user dismisses the preferences.
@@ -61,6 +68,8 @@ type rowKind int
 
 const (
 	rowHeader rowKind = iota
+	rowLayoutEdit
+	rowLayoutReset
 	rowPreset
 	rowSort
 	rowPruneMerge
@@ -79,34 +88,38 @@ type row struct {
 
 // Model is the preferences overlay state.
 type Model struct {
-	presets    []string
-	theme      string
-	sort       string
-	pruneMerge bool
-	prStatus   string
-	editor     string
-	actions    []Action
-	defaults   map[string]string // action -> default key
-	overrides  map[string]string // action -> personal key (working copy)
-	rows       []row
-	collapsed  map[int]bool // header row index -> collapsed
-	cursor     int
-	capture    string // action awaiting a new key, "" when idle
-	msg        string // transient status line
-	width      int
-	height     int
+	presets       []string
+	theme         string
+	sort          string
+	pruneMerge    bool
+	prStatus      string
+	editor        string
+	layout        LayoutPrefs
+	layoutEditing bool
+	layoutCursor  int
+	actions       []Action
+	defaults      map[string]string // action -> default key
+	overrides     map[string]string // action -> personal key (working copy)
+	rows          []row
+	collapsed     map[int]bool // header row index -> collapsed
+	cursor        int
+	capture       string // action awaiting a new key, "" when idle
+	msg           string // transient status line
+	width         int
+	height        int
 }
 
 // New builds the overlay. actions must be ordered by section; a section header
 // is inserted wherever the section changes. startOnKeys places the cursor on
 // the first keybinding row (used when arriving from the keymap modal).
-func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, presets []string, actions []Action, startOnKeys bool) Model {
+func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, layout LayoutPrefs, presets []string, actions []Action, startOnKeys bool) Model {
 	if sort == "" {
 		sort = SortModes[0]
 	}
 	if prStatus == "" {
 		prStatus = PRStatusModes[0]
 	}
+	layout = normalizeLayoutPrefs(layout)
 	m := Model{
 		presets:    presets,
 		theme:      themePreset,
@@ -114,12 +127,18 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, pre
 		pruneMerge: pruneMerge,
 		prStatus:   prStatus,
 		editor:     editor,
+		layout:     layout,
 		actions:    actions,
 		defaults:   map[string]string{},
 		overrides:  map[string]string{},
 		collapsed:  map[int]bool{},
 	}
-	m.rows = append(m.rows, row{kind: rowHeader, header: "Appearance"})
+	m.rows = append(m.rows,
+		row{kind: rowHeader, header: "Layout"},
+		row{kind: rowLayoutEdit},
+		row{kind: rowLayoutReset},
+		row{kind: rowHeader, header: "Appearance"},
+	)
 	for _, p := range presets {
 		m.rows = append(m.rows, row{kind: rowPreset, preset: p})
 	}
@@ -156,7 +175,7 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, pre
 				m.collapsed[i] = true
 			}
 		}
-		m.cursor = 1 // first preset
+		m.cursor = 1 // first layout control
 	}
 	return m
 }
@@ -251,7 +270,15 @@ func (m Model) save() tea.Cmd {
 	for k, v := range m.overrides {
 		keys[k] = v
 	}
-	snap := SaveMsg{Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, PRStatus: m.prStatus, Editor: m.editor, Keys: keys}
+	snap := SaveMsg{
+		Theme:      m.theme,
+		Sort:       m.sort,
+		PruneMerge: m.pruneMerge,
+		PRStatus:   m.prStatus,
+		Editor:     m.editor,
+		Keys:       keys,
+		Layout:     cloneLayoutPrefs(m.layout),
+	}
 	return func() tea.Msg { return snap }
 }
 
@@ -260,6 +287,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
+	}
+	if m.layoutEditing {
+		return m.updateLayoutEditor(key)
 	}
 	if m.capture != "" {
 		return m.captureKey(key)
@@ -359,6 +389,23 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		m.msg = ""
 		return m, nil
 
+	case rowLayoutEdit:
+		if dir != 0 {
+			return m, nil
+		}
+		m.layoutEditing = true
+		m.layoutCursor = 0
+		m.msg = ""
+		return m, nil
+
+	case rowLayoutReset:
+		if dir != 0 {
+			return m, nil
+		}
+		m.layout = defaultLayoutPrefs()
+		m.msg = "layout reset to default"
+		return m, m.save()
+
 	case rowPreset:
 		m.theme = r.preset
 		m.msg = "theme: " + r.preset
@@ -442,6 +489,9 @@ const labelCol = 34 // left column width for key rows
 
 // View renders the centered overlay.
 func (m Model) View() string {
+	if m.layoutEditing {
+		return m.layoutEditorView()
+	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Preferences") + "\n\n")
 	b.WriteString(m.renderRows())
@@ -533,6 +583,20 @@ func (m Model) renderRow(i int) string {
 			return cursorStyle.Render("› ") + indent + cursorStyle.Render(arrow+name)
 		}
 		return "  " + indent + headerStyle.Render(arrow+name)
+
+	case rowLayoutEdit:
+		label := "edit layout…"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + pad(label, labelCol) + dimStyle.Render(layoutSummary(m.layout))
+
+	case rowLayoutReset:
+		label := "reset layout"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + label + dimStyle.Render("  (legacy two-pane grouping)")
 
 	case rowPreset:
 		mark := dimStyle.Render("○")

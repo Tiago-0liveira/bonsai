@@ -219,9 +219,7 @@ func (m Model) paletteCommands() []paletteCmd {
 		})),
 		wt("Run alias", m.keys.Aliases, Model.openAliasModal),
 		global("Filter worktree list", m.keys.Filter, func(m Model) (tea.Model, tea.Cmd) {
-			m.focus = focusList
-			m.term.Blur()
-			m.list.Focus()
+			m.activateView(viewWorktrees)
 			return m, func() tea.Msg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}} }
 		}),
 		global("Cycle sort order", m.keys.Sort, func(m Model) (tea.Model, tea.Cmd) {

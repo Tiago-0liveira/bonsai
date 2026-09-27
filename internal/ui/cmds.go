@@ -14,9 +14,9 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
-	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
-	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/pkgmgr"
+	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
+	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 )
 
 // --- Messages ---

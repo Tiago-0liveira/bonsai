@@ -1,0 +1,47 @@
+package server
+
+import (
+	"context"
+	"path/filepath"
+	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
+	domain "github.com/Tiago-0liveira/bonsai/internal/git"
+	"github.com/Tiago-0liveira/bonsai/internal/git/local"
+	store "github.com/Tiago-0liveira/bonsai/internal/storage/git"
+)
+
+const localRepositoryID = "local"
+
+// initGit owns the single local Git service used by TUI, CLI, and the browser
+// API. Plan 1 deliberately does not read git-bridge.json: cloud configuration
+// must never enable a command channel into this daemon.
+func (s *Server) initGit() error {
+	s.gitOnce.Do(func() {
+		svc, err := local.New([]local.Config{{
+			ID:           localRepositoryID,
+			Root:         s.root,
+			WorktreeRoot: filepath.Join(s.store.Dir(), "worktrees"),
+		}})
+		if err != nil {
+			s.gitErr = err
+			return
+		}
+		journal, err := store.Open(filepath.Join(s.store.Dir(), "git-commands.json"))
+		if err != nil {
+			s.gitErr = err
+			return
+		}
+		s.gitExecutor = &gitbridge.Executor{Local: svc, Journal: journal}
+	})
+	return s.gitErr
+}
+
+func (s *Server) gitCommand(c gitbridge.Command) gitbridge.Result {
+	if err := s.initGit(); err != nil {
+		return gitbridge.Result{ID: c.ID, Error: &domain.Error{Code: "internal", Message: err.Error()}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return s.gitExecutor.Execute(ctx, c)
+}

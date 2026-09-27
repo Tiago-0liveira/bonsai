@@ -77,6 +77,7 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 		m.state.Prefs.PruneMerge,
 		m.state.Prefs.PRStatus,
 		m.state.Prefs.Editor,
+		m.dynamicLayout.persisted(),
 		theme.Presets(),
 		prefsActions(m.cfg.Keys),
 		startOnKeys,
@@ -91,6 +92,13 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 // persists it, and restyles every component — this is what makes theme picks
 // preview live while the overlay is open.
 func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
+	nextLayout := normalizeDynamicLayout(p.Layout)
+	m.dynamicLayout = nextLayout
+	// Preserve pane-local active views/focus where the pane IDs survive; the
+	// runtime normalizer deterministically repairs anything removed by edits.
+	m.initPaneRuntime()
+	m.normalizePaneActives()
+
 	m.state.Prefs = config.Prefs{
 		Theme:      p.Theme,
 		Sort:       p.Sort,
@@ -98,7 +106,9 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		PRStatus:   p.PRStatus,
 		Editor:     p.Editor,
 		Keys:       p.Keys,
+		Layout:     nextLayout.persisted(),
 	}
+	m.layout()
 	if err := m.state.Save(); err != nil {
 		m.err = err
 		return m, nil
@@ -116,8 +126,14 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		m.status = "key conflicts ignored: " + cols[0]
 	}
 	if p.Sort != "" {
-		m.sort = sortModeFromName(p.Sort)
-		m.rebuildItems()
+		nextSort := sortModeFromName(p.Sort)
+		if nextSort != m.sort {
+			m.sort = nextSort
+			m.rebuildItems()
+		}
+	}
+	if wt, ok := m.selectedWorktree(); ok {
+		return m, tea.Batch(m.refreshVisibleViews(wt)...)
 	}
 	return m, nil
 }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,8 +13,9 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
+	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
 )
 
@@ -35,6 +37,15 @@ func main() {
 		}
 		if err := server.Serve(root); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai daemon:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Hidden: the daemon supervises the loopback-only local HTTP API.
+	if len(args) >= 1 && args[0] == "__serve-api" {
+		if err := runServeInternal(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai:", err)
 			os.Exit(1)
 		}
 		return
@@ -134,4 +145,26 @@ func run(cfgPath string) error {
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	return err
+}
+
+func runServeInternal(args []string) error {
+	fs := flag.NewFlagSet("__serve-api", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	repoDir := fs.String("repo", "", "repository root")
+	port := fs.Int("port", 0, "loopback listen port")
+	browserOrigin := fs.String("browser-origin", localapi.ProductionBrowserOrigin, "authorized browser origin")
+	development := fs.Bool("development", false, "allow the explicit loopback development origin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *repoDir == "" || *port <= 0 {
+		return fmt.Errorf("__serve-api requires --repo and --port")
+	}
+	address := fmt.Sprintf("127.0.0.1:%d", *port)
+	return localapi.Run(localapi.Config{
+		RepoDir:       *repoDir,
+		Address:       address,
+		BrowserOrigin: *browserOrigin,
+		Development:   *development,
+	})
 }

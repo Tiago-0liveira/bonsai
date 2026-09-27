@@ -83,11 +83,12 @@ func (m Model) onProcModalSubmit(label string) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	// Select the owning worktree, switch to the Processes tab, focus the process.
+	// Select the owning worktree, activate the configured Processes view, and
+	// focus the chosen process.
 	m.list.SelectByPath(rec.Worktree)
-	m.rightTab = tabProcs
-	m.focus = focusTerminal
+	m.activateView(viewProcesses)
 	m.activeProc[rec.Worktree] = rec.ID
+	m.layout()
 	m.refreshProcPane()
 	return m, nil
 }

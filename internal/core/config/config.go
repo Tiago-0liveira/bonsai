@@ -87,6 +87,13 @@ type ProcessPolicy struct {
 	MaxRestarts int    `mapstructure:"max_restarts"`
 }
 
+// ServeConfig configures the daemon-owned loopback Bonsai API.
+type ServeConfig struct {
+	APIPort         int `mapstructure:"api_port"`
+	StartupTimeout  int `mapstructure:"startup_timeout_seconds"`
+	ShutdownTimeout int `mapstructure:"shutdown_timeout_seconds"`
+}
+
 // Config is the parsed .bonsai.yaml.
 type Config struct {
 	// Upstream is the ref ahead/behind metrics compare against, e.g. origin/main.
@@ -110,6 +117,8 @@ type Config struct {
 	PkgMgr PackageManager `mapstructure:"pkgmgr"`
 	// Processes sets per-process restart policies for the background daemon.
 	Processes []ProcessPolicy `mapstructure:"processes"`
+	// Serve configures the daemon-owned loopback browser API.
+	Serve ServeConfig `mapstructure:"serve"`
 }
 
 // PolicyFor resolves the restart policy for a process, matching label first then
@@ -196,6 +205,9 @@ func Load(dir string) (*Config, error) {
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
 	v.SetDefault("pkgmgr.search_depth", 2)
+	v.SetDefault("serve.api_port", 7001)
+	v.SetDefault("serve.startup_timeout_seconds", 30)
+	v.SetDefault("serve.shutdown_timeout_seconds", 5)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, notFound := err.(viper.ConfigFileNotFoundError); !notFound {
@@ -207,7 +219,6 @@ func Load(dir string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
-
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
 	}
@@ -239,6 +250,9 @@ func LoadFile(path string) (*Config, error) {
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
 	v.SetDefault("pkgmgr.search_depth", 2)
+	v.SetDefault("serve.api_port", 7001)
+	v.SetDefault("serve.startup_timeout_seconds", 30)
+	v.SetDefault("serve.shutdown_timeout_seconds", 5)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)

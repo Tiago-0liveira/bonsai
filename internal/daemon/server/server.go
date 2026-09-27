@@ -20,6 +20,7 @@ import (
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
 
@@ -49,13 +50,23 @@ type managedProc struct {
 
 // Server is a running daemon for one repo.
 type Server struct {
-	root   string
-	store  *procstore.Store
-	logCap int64
+	gitOnce     sync.Once
+	gitExecutor *gitbridge.Executor
+	gitErr      error
+	root        string
+	store       *procstore.Store
+	logCap      int64
 
-	mu     sync.Mutex
-	procs  map[int]*managedProc
-	nextID int
+	mu          sync.Mutex
+	procs       map[int]*managedProc
+	nextID      int
+	serveGroups map[string]*serveRuntime
+
+	serveLogMu       sync.Mutex
+	serveLogRings    map[string]*serveLogRing
+	serveLogPartials map[string]string
+	serveLogSubs     map[string]map[int]chan string
+	serveLogNextSub  int
 
 	ln        net.Listener
 	lock      *procstore.FileLock
@@ -141,19 +152,24 @@ func NewServer(root string) (*Server, error) {
 	}
 
 	s := &Server{
-		root:   store.Root(),
-		store:  store,
-		logCap: logCap,
-		procs:  map[int]*managedProc{},
-		ln:     ln,
-		lock:   lock,
-		done:   make(chan struct{}),
+		root:             store.Root(),
+		store:            store,
+		logCap:           logCap,
+		procs:            map[int]*managedProc{},
+		serveGroups:      map[string]*serveRuntime{},
+		serveLogRings:    map[string]*serveLogRing{},
+		serveLogPartials: map[string]string{},
+		serveLogSubs:     map[string]map[int]chan string{},
+		ln:               ln,
+		lock:             lock,
+		done:             make(chan struct{}),
 	}
 
 	_ = os.WriteFile(store.PidPath(), []byte(strconv.Itoa(os.Getpid())+"\n"+strconv.Itoa(protocol.Version)+"\n"), 0o644)
 	_ = procstore.Register(s.root, store.SockPath(), os.Getpid())
 
 	s.adoptExisting()
+	s.loadServeGroups()
 	return s, nil
 }
 
@@ -322,6 +338,7 @@ func (s *Server) shutdown(killChildren bool) {
 }
 
 func (s *Server) cleanup() {
+	s.closeAllServeLogSubscribers()
 	_ = s.ln.Close()
 	_ = os.Remove(s.store.SockPath())
 	_ = os.Remove(s.store.PidPath())

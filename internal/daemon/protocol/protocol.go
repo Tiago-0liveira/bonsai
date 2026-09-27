@@ -7,6 +7,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	"io"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -14,35 +15,51 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 2
+const Version = 6
 
 // Request kinds.
 const (
-	KindSpawn     = "spawn"
-	KindList      = "list"
-	KindKill      = "kill"
-	KindRestart   = "restart"
-	KindSetPolicy = "setPolicy"
-	KindLogs      = "logs"
-	KindAttach    = "attach"
-	KindRemove    = "remove"
-	KindPing      = "ping"
-	KindShutdown  = "shutdown"
+	KindGit          = "git"
+	KindSpawn        = "spawn"
+	KindList         = "list"
+	KindKill         = "kill"
+	KindRestart      = "restart"
+	KindSetPolicy    = "setPolicy"
+	KindLogs         = "logs"
+	KindAttach       = "attach"
+	KindRemove       = "remove"
+	KindServeStart   = "serveStart"
+	KindServeStatus  = "serveStatus"
+	KindServeStop    = "serveStop"
+	KindServeRestart = "serveRestart"
+	KindServeLogs    = "serveLogs"
+	KindPing         = "ping"
+	KindShutdown     = "shutdown"
 )
 
 // Request is a single client command.
 type Request struct {
-	Kind string `json:"kind"`
+	Git  *gitbridge.Command `json:"git,omitempty"`
+	Kind string             `json:"kind"`
 
 	// Spawn.
-	Worktree   string            `json:"worktree,omitempty"`
-	Branch     string            `json:"branch,omitempty"`
-	Label      string            `json:"label,omitempty"`
-	Command    string            `json:"command,omitempty"`
-	Program    string            `json:"program,omitempty"`
-	Args       []string          `json:"args,omitempty"`
-	WorkingDir string            `json:"working_dir,omitempty"`
-	Policy     *procstore.Policy `json:"policy,omitempty"`
+	Worktree      string            `json:"worktree,omitempty"`
+	Branch        string            `json:"branch,omitempty"`
+	Label         string            `json:"label,omitempty"`
+	Command       string            `json:"command,omitempty"`
+	Program       string            `json:"program,omitempty"`
+	Args          []string          `json:"args,omitempty"`
+	WorkingDir    string            `json:"working_dir,omitempty"`
+	Environment   map[string]string `json:"environment,omitempty"`
+	ExpectedPort  int               `json:"expected_port,omitempty"`
+	ServeGroup    string            `json:"serve_group,omitempty"`
+	ServeName     string            `json:"serve_name,omitempty"`
+	ServeRequired bool              `json:"serve_required,omitempty"`
+	Policy        *procstore.Policy `json:"policy,omitempty"`
+
+	// Serve-group lifecycle.
+	ServeSpec   *procstore.ServeSpec `json:"serve,omitempty"`
+	ProcessName string               `json:"process_name,omitempty"`
 
 	// Target for kill/restart/setPolicy/logs.
 	ID        int    `json:"id,omitempty"`
@@ -61,12 +78,14 @@ type Request struct {
 
 // Response is a single daemon reply frame.
 type Response struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	Git   *gitbridge.Result `json:"git,omitempty"`
+	OK    bool              `json:"ok"`
+	Error string            `json:"error,omitempty"`
 
-	Record  *procstore.Record   `json:"record,omitempty"`  // spawn/restart
-	Records []*procstore.Record `json:"records,omitempty"` // list
-	Killed  []int               `json:"killed,omitempty"`  // kill
+	Record     *procstore.Record     `json:"record,omitempty"`  // spawn/restart
+	Records    []*procstore.Record   `json:"records,omitempty"` // list
+	Killed     []int                 `json:"killed,omitempty"`  // kill
+	ServeGroup *procstore.ServeGroup `json:"serve_group,omitempty"`
 
 	// Ping.
 	Version   int `json:"version,omitempty"`
