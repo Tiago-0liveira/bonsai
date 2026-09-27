@@ -20,7 +20,7 @@ const securityHeaders = {
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
-  'Permissions-Policy': 'local-network-access=(self)',
+  'Permissions-Policy': 'loopback-network=(self), local-network=(self), local-network-access=(self)',
 }
 const types = {
   '.html': 'text/html; charset=utf-8',
