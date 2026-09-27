@@ -88,7 +88,10 @@ type Model struct {
 	// Components.
 	keys keyMap
 	list worktreelist.Model
-	term terminal.Model
+
+	// Each terminal-backed view owns an independent viewport so multiple views
+	// can be visible at once without sharing scroll position.
+	viewTerms map[viewID]*terminal.Model
 
 	// modal is non-nil while an overlay is active.
 	modal *modals.Model
@@ -216,9 +219,15 @@ type Model struct {
 
 	// Layout / status.
 	width, height int
-	paneLayout    layoutSpec
-	focus         focusArea
-	rightTab      rightTab
+	paneLayout    layoutSpec // v1 compatibility mirror; dynamicLayout is authoritative
+	dynamicLayout dynamicLayout
+	focusedPane   paneID
+	paneActive    map[paneID]viewID
+
+	// Legacy aliases kept synchronized while old tab-specific handlers are
+	// migrated. focus/rightTab describe the currently focused pane/view.
+	focus    focusArea
+	rightTab rightTab
 	logContent    string // last-loaded git log, shown on the Git Log tab
 	status        string
 	err           error
@@ -241,9 +250,10 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 	prefs.SetTheme(theme.Current)
 
 	paneLayout := normalizeLayoutPrefs(state.Prefs.Layout)
+	dynamicLayout := normalizeDynamicLayout(state.Prefs.Layout)
 	// Keep the in-memory preference normalized without writing state.json merely
 	// because an old or malformed value was encountered at startup.
-	state.Prefs.Layout = paneLayout.persisted()
+	state.Prefs.Layout = dynamicLayout.persisted()
 
 	// Personal key overrides (state.json) override repo-level ones.
 	keys := make(map[string]string, len(cfg.Keys)+len(state.Prefs.Keys))
@@ -263,8 +273,10 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		configFile:        config.FileFor(repoDir),
 		keys:              newKeyMap(keys),
 		list:              worktreelist.New(),
-		term:              terminal.New(),
+		viewTerms:         newViewTerminals(),
 		paneLayout:        paneLayout,
+		dynamicLayout:     dynamicLayout,
+		paneActive:        map[paneID]viewID{},
 		focus:             focusList,
 		sort:              sortModeFromName(state.Prefs.Sort),
 		metrics:           map[string]git.Metrics{},
@@ -283,9 +295,9 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		diffFileContent:   map[string]string{},
 		yankTargets:       map[string]string{},
 	}
-	m.list.Focus()
+	m.initPaneRuntime()
 	m.procSearchInput.Placeholder = "search output…"
-	m.term.SetTitle("Git Log")
+	m.viewTerm(viewLog).SetTitle("Git Log")
 	if cols := keyCollisions(keys); len(cols) > 0 {
 		m.status = "key conflicts ignored: " + cols[0]
 	}
