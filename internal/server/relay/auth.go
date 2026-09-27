@@ -57,9 +57,9 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge: int(oauthStateTTL.Seconds()),
 	})
 	query := url.Values{
-		"client_id": {s.githubClientID},
+		"client_id":    {s.githubClientID},
 		"redirect_uri": {s.externalURL + "/auth/github/callback"},
-		"state": {state},
+		"state":        {state},
 	}
 	http.Redirect(w, r, "https://github.com/login/oauth/authorize?"+query.Encode(), http.StatusFound)
 }
@@ -173,17 +173,17 @@ func (s *Server) authSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Vary", "Origin")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"github_user_id": session.GitHubUserID,
-		"repositories": session.Repositories,
-		"expires_at": session.ExpiresAt,
+		"repositories":   session.Repositories,
+		"expires_at":     session.ExpiresAt,
 	})
 }
 
 func (s *Server) exchangeGitHubCode(ctx context.Context, code string) (string, error) {
 	values := url.Values{
-		"client_id": {s.githubClientID},
+		"client_id":     {s.githubClientID},
 		"client_secret": {s.githubClientSecret},
-		"code": {code},
-		"redirect_uri": {s.externalURL + "/auth/github/callback"},
+		"code":          {code},
+		"redirect_uri":  {s.externalURL + "/auth/github/callback"},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", bytes.NewBufferString(values.Encode()))
 	if err != nil {
