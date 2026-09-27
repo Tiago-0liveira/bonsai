@@ -9,6 +9,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 )
 
