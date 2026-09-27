@@ -11,50 +11,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
-// LayoutPrefs is the Preferences overlay's UI-facing snapshot of the
-// normalized top-level TUI layout. Persistence remains owned by the parent.
-type LayoutPrefs struct {
-	Axis      string
-	Order     []string
-	Worktrees int
-}
-
-func defaultLayoutPrefs() LayoutPrefs {
-	return LayoutPrefs{
-		Axis:      "horizontal",
-		Order:     []string{"worktrees", "workspace"},
-		Worktrees: 35,
-	}
-}
-
-func normalizeLayoutPrefs(p LayoutPrefs) LayoutPrefs {
-	def := defaultLayoutPrefs()
-	if p.Axis != "horizontal" && p.Axis != "vertical" {
-		return def
-	}
-	if len(p.Order) != 2 ||
-		(p.Order[0] != "worktrees" && p.Order[0] != "workspace") ||
-		(p.Order[1] != "worktrees" && p.Order[1] != "workspace") ||
-		p.Order[0] == p.Order[1] {
-		return def
-	}
-	if p.Worktrees < 20 || p.Worktrees > 80 {
-		return def
-	}
-	return LayoutPrefs{
-		Axis:      p.Axis,
-		Order:     append([]string(nil), p.Order...),
-		Worktrees: p.Worktrees,
-	}
-}
-
-func cloneLayoutPrefs(p LayoutPrefs) LayoutPrefs {
-	p.Order = append([]string(nil), p.Order...)
-	return p
-}
+// LayoutPrefs mirrors the serializable v2 layout tree. The Preferences
+// component edits this value but still owns no persistence side effects.
+type LayoutPrefs = config.TUILayoutPrefs
 
 // SaveMsg carries the full preferences snapshot after any change.
 type SaveMsg struct {
@@ -105,9 +68,7 @@ type rowKind int
 
 const (
 	rowHeader rowKind = iota
-	rowLayoutOrientation
-	rowLayoutOrder
-	rowLayoutSizes
+	rowLayoutEdit
 	rowLayoutReset
 	rowPreset
 	rowSort
@@ -133,8 +94,10 @@ type Model struct {
 	pruneMerge bool
 	prStatus   string
 	editor     string
-	layout     LayoutPrefs
-	actions    []Action
+	layout        LayoutPrefs
+	layoutEditing bool
+	layoutCursor  int
+	actions       []Action
 	defaults   map[string]string // action -> default key
 	overrides  map[string]string // action -> personal key (working copy)
 	rows       []row
@@ -172,9 +135,7 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, editor string, lay
 	}
 	m.rows = append(m.rows,
 		row{kind: rowHeader, header: "Layout"},
-		row{kind: rowLayoutOrientation},
-		row{kind: rowLayoutOrder},
-		row{kind: rowLayoutSizes},
+		row{kind: rowLayoutEdit},
 		row{kind: rowLayoutReset},
 		row{kind: rowHeader, header: "Appearance"},
 	)
@@ -327,6 +288,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	if m.layoutEditing {
+		return m.updateLayoutEditor(key)
+	}
 	if m.capture != "" {
 		return m.captureKey(key)
 	}
@@ -425,34 +389,14 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		m.msg = ""
 		return m, nil
 
-	case rowLayoutOrientation:
-		if m.layout.Axis == "horizontal" {
-			m.layout.Axis = "vertical"
-		} else {
-			m.layout.Axis = "horizontal"
+	case rowLayoutEdit:
+		if dir != 0 {
+			return m, nil
 		}
-		m.msg = "layout orientation: " + m.layout.Axis
-		return m, m.save()
-
-	case rowLayoutOrder:
-		m.layout.Order[0], m.layout.Order[1] = m.layout.Order[1], m.layout.Order[0]
-		m.msg = "pane order: " + layoutOrderLabel(m.layout)
-		return m, m.save()
-
-	case rowLayoutSizes:
-		d := dir
-		if d == 0 {
-			d = 1
-		}
-		m.layout.Worktrees += d * 5
-		if m.layout.Worktrees < 20 {
-			m.layout.Worktrees = 20
-		}
-		if m.layout.Worktrees > 80 {
-			m.layout.Worktrees = 80
-		}
-		m.msg = fmt.Sprintf("pane sizes: worktrees %d%% / workspace %d%%", m.layout.Worktrees, 100-m.layout.Worktrees)
-		return m, m.save()
+		m.layoutEditing = true
+		m.layoutCursor = 0
+		m.msg = ""
+		return m, nil
 
 	case rowLayoutReset:
 		if dir != 0 {
@@ -545,6 +489,9 @@ const labelCol = 34 // left column width for key rows
 
 // View renders the centered overlay.
 func (m Model) View() string {
+	if m.layoutEditing {
+		return m.layoutEditorView()
+	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Preferences") + "\n\n")
 	b.WriteString(m.renderRows())
@@ -613,14 +560,6 @@ func (m Model) renderRows() string {
 	return b.String()
 }
 
-func layoutOrderLabel(p LayoutPrefs) string {
-	sep := " → "
-	if p.Axis == "vertical" {
-		sep = " ↓ "
-	}
-	return p.Order[0] + sep + p.Order[1]
-}
-
 func (m Model) renderRow(i int) string {
 	r := m.rows[i]
 	sel := i == m.cursor
@@ -645,34 +584,19 @@ func (m Model) renderRow(i int) string {
 		}
 		return "  " + indent + headerStyle.Render(arrow+name)
 
-	case rowLayoutOrientation:
-		label := "orientation"
+	case rowLayoutEdit:
+		label := "edit layout…"
 		if sel {
 			label = cursorStyle.Render(label)
 		}
-		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.layout.Axis+" ▸")
-
-	case rowLayoutOrder:
-		label := "pane order"
-		if sel {
-			label = cursorStyle.Render(label)
-		}
-		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+layoutOrderLabel(m.layout)+" ▸")
-
-	case rowLayoutSizes:
-		label := "pane sizes"
-		if sel {
-			label = cursorStyle.Render(label)
-		}
-		value := fmt.Sprintf("◂ worktrees %d%% / workspace %d%% ▸", m.layout.Worktrees, 100-m.layout.Worktrees)
-		return cursor + pad(label, labelCol) + accentStyle.Render(value)
+		return cursor + pad(label, labelCol) + dimStyle.Render(layoutSummary(m.layout))
 
 	case rowLayoutReset:
 		label := "reset layout"
 		if sel {
 			label = cursorStyle.Render(label)
 		}
-		return cursor + label + dimStyle.Render("  (horizontal · worktrees first · 35/65)")
+		return cursor + label + dimStyle.Render("  (legacy two-pane grouping)")
 
 	case rowPreset:
 		mark := dimStyle.Render("○")
