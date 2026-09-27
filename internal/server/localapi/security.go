@@ -71,7 +71,7 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 				writeAPIError(w, http.StatusForbidden, "invalid_preflight", "requested headers are not allowed")
 				return
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Bonsai-Session, Idempotency-Key")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			if strings.EqualFold(r.Header.Get("Access-Control-Request-Private-Network"), "true") {
@@ -108,7 +108,7 @@ func setCORS(w http.ResponseWriter, origin string) {
 
 func validPreflightMethod(method string) bool {
 	switch method {
-	case "", http.MethodGet, http.MethodPost, http.MethodDelete:
+	case "", http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete:
 		return true
 	default:
 		return false
