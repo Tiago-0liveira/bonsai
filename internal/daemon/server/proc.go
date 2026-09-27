@@ -31,8 +31,15 @@ func waitForProcessExit(pid int, startedAt time.Time, worktree string, timeout t
 
 // spawn creates a new managed process and starts it.
 func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
-	if req.Worktree == "" || req.Command == "" {
-		return nil, fmt.Errorf("spawn requires worktree and command")
+	if req.Worktree == "" || (req.Command == "" && req.Program == "") {
+		return nil, fmt.Errorf("spawn requires worktree and command or program")
+	}
+	if req.Program == "" && len(req.Args) > 0 {
+		return nil, fmt.Errorf("spawn args require program")
+	}
+	workingDir := req.WorkingDir
+	if workingDir == "" {
+		workingDir = req.Worktree
 	}
 	policy := s.resolvePolicy(req)
 
@@ -41,13 +48,16 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	s.nextID++
 	mp := &managedProc{
 		rec: &procstore.Record{
-			ID:       id,
-			Label:    req.Label,
-			Command:  req.Command,
-			Worktree: req.Worktree,
-			Branch:   req.Branch,
-			Policy:   policy,
-			Status:   procstore.StatusStarting,
+			ID:         id,
+			Label:      req.Label,
+			Command:    req.Command,
+			Program:    req.Program,
+			Args:       append([]string(nil), req.Args...),
+			Worktree:   req.Worktree,
+			WorkingDir: workingDir,
+			Branch:     req.Branch,
+			Policy:     policy,
+			Status:     procstore.StatusStarting,
 		},
 		generation: 1,
 	}
@@ -99,7 +109,16 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 		return err
 	}
 
-	cmd := coreexec.Command(mp.rec.Worktree, mp.rec.Command)
+	workingDir := mp.rec.WorkingDir
+	if workingDir == "" {
+		workingDir = mp.rec.Worktree
+	}
+	var cmd *exec.Cmd
+	if mp.rec.Program != "" {
+		cmd = coreexec.ExecCommand(workingDir, mp.rec.Program, mp.rec.Args...)
+	} else {
+		cmd = coreexec.Command(workingDir, mp.rec.Command)
+	}
 	cmd.Stdout = logw
 	cmd.Stderr = logw
 	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")

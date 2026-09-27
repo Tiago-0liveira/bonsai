@@ -40,7 +40,8 @@ import {
   XCircle,
 } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { flattenFiles, repoFiles } from '../../mock/files'
+import { flattenFiles, useFiles, useLocalDiff } from '../../api/files'
+import { loadPullRequest } from '../../api/git'
 import { processes } from '../../mock/processes'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { Agent, EditorPreference, Process, PullRequest, RepoFile, Worktree } from '../../types'
@@ -502,6 +503,7 @@ function FileTreeRows({ nodes, depth = 0 }: { nodes: RepoFile[]; depth?: number 
 }
 
 function FilesDiffPanel() {
+  const repoFiles = useFiles()
   const setRightPanel = useBonsaiStore((state) => state.setRightPanel)
   const dockWorktreeId = useBonsaiStore((state) => state.dockWorktreeId)
   const worktrees = useBonsaiStore((state) => state.worktrees)
@@ -510,6 +512,8 @@ function FilesDiffPanel() {
   const [view, setView] = useState<'flat' | 'tree'>('tree')
   const worktree = worktrees.find((item) => item.id === dockWorktreeId)
   const pr = pullRequests.find((item) => item.number === worktree?.prNumber)
+  const patch = useLocalDiff(dockWorktreeId)
+  useEffect(() => { if (pr?.id) void loadPullRequest(pr.id) }, [pr?.id])
   const files = flattenFiles(repoFiles).filter((item) => item.type === 'file')
   const changed = files.filter((item) => item.gitStatus && item.gitStatus !== 'committed')
   const committed = files.filter((item) => !item.gitStatus || item.gitStatus === 'committed')
@@ -559,6 +563,7 @@ function FilesDiffPanel() {
         </Tabs.Content>
 
         <Tabs.Content value="diff" className="min-h-0 flex-1 overflow-auto p-2.5 outline-none">
+          {patch && <pre className="overflow-auto whitespace-pre font-mono text-[9px]">{patch}</pre>}
           {pr?.files.length ? pr.files.map((file) => (
             <div key={file.path} className="mb-2 overflow-hidden rounded-md border border-[rgb(var(--border))]">
               <div className="flex items-center border-b border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 py-1.5 font-mono text-[8px]">
@@ -663,6 +668,10 @@ function PullRequestsPanel() {
   useEffect(() => {
     setQuery('')
   }, [focusNonce])
+
+  useEffect(() => {
+    if (selectedId) void loadPullRequest(selectedId)
+  }, [selectedId])
 
   useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: 'nearest' })

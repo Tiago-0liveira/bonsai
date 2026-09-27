@@ -344,6 +344,14 @@ func Command(dir, command string) *exec.Cmd {
 	return cmd
 }
 
+// ExecCommand builds a shell-free command rooted at dir. Use it for discovered
+// project commands whose program and argv are already modeled structurally.
+func ExecCommand(dir, program string, args ...string) *exec.Cmd {
+	cmd := exec.Command(program, args...)
+	cmd.Dir = dir
+	return cmd
+}
+
 // SetProcessGroup configures cmd to run in its own process group or job.
 func SetProcessGroup(cmd *exec.Cmd) {
 	setProcessGroup(cmd)

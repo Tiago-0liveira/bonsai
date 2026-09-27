@@ -7,10 +7,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
-	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/core/updater"
+	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
+	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
@@ -190,9 +190,11 @@ type Model struct {
 	pendingCfg    *configSetting
 	pendingCfgSub string
 
-	// scriptRun maps a script name to its full shell command for the last-opened
-	// scripts modal.
-	scriptRun map[string]string
+	// scriptRun is display/fallback text; scriptExec is the exact shell-free
+	// invocation for discovered commands.
+	scriptRun  map[string]string
+	scriptDir  map[string]string
+	scriptExec map[string]scriptInvocation
 
 	// yankTargets maps a yank-menu label to the text it copies.
 	yankTargets map[string]string

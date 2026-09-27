@@ -24,23 +24,9 @@ export function CreateWorktreeDialog() {
   const projectWorktrees = worktrees.filter((item) => item.projectId === activeProjectId)
   const checkedOutBranches = useMemo(() => new Set(projectWorktrees.map((item) => item.branch)), [projectWorktrees])
 
-  const localBranches = useMemo(
-    () =>
-      [project?.defaultBranch ?? 'main', 'feat/local-experiment', 'chore/docs-refresh', 'fix/cache-key']
-        .filter((branch, index, list) => list.indexOf(branch) === index)
-        .filter((branch) => !checkedOutBranches.has(branch)),
-    [checkedOutBranches, project?.defaultBranch],
-  )
-  const originBranches = useMemo(
-    () =>
-      [
-        'origin/' + (project?.defaultBranch ?? 'main'),
-        ...projectWorktrees.map((item) => 'origin/' + item.branch),
-        'origin/feat/new-dashboard',
-        'origin/fix/login-error',
-      ].filter((branch, index, list) => list.indexOf(branch) === index && !checkedOutBranches.has(branch.replace(/^origin\//, ''))),
-    [checkedOutBranches, project?.defaultBranch, projectWorktrees],
-  )
+  const allBranches = useBonsaiStore(state => state.gitBranches[activeProjectId])
+  const localBranches = useMemo(() => (allBranches ?? []).filter(b => !b.remote && !checkedOutBranches.has(b.name)).map(b => b.name), [allBranches, checkedOutBranches])
+  const originBranches = useMemo(() => (allBranches ?? []).filter(b => b.remote && !checkedOutBranches.has(b.name.replace(/^origin\//, ''))).map(b => b.name), [allBranches, checkedOutBranches])
   const mergeTargets = [project?.defaultBranch ?? 'main', ...projectWorktrees.filter((item) => item.branch !== project?.defaultBranch).map((item) => item.branch)]
 
   const [sourceType, setSourceType] = useState<WorktreeSourceType>('new')

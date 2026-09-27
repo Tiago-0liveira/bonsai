@@ -270,6 +270,83 @@ func recByID(t *testing.T, c *client.Client, id int) *procstore.Record {
 	return nil
 }
 
+func TestClientStructuredExecHelper(t *testing.T) {
+	sep := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 || sep+2 >= len(os.Args) {
+		return
+	}
+	out := os.Args[sep+1]
+	payload := os.Args[sep+2]
+	cwd, err := os.Getwd()
+	if err != nil {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(out, []byte(cwd+"\n"+payload), 0o644); err != nil {
+		os.Exit(3)
+	}
+}
+
+func TestClientSpawnExecPreservesStructuredInvocation(t *testing.T) {
+	c, root := newDaemon(t)
+	working := filepath.Join(root, "apps", "web")
+	if err := os.MkdirAll(working, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(root, "spawn-exec-result.txt")
+	marker := filepath.Join(root, "MUST_NOT_EXIST")
+	literal := "arg with spaces; touch " + marker
+	args := []string{"-test.run=^TestClientStructuredExecHelper$", "--", out, literal}
+
+	rec, err := c.SpawnExec(root, "feat/structured", working, "structured", exe, args, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Worktree != root || rec.WorkingDir != working || rec.Program != exe || len(rec.Args) != len(args) {
+		t.Fatalf("structured spawn record = %+v", rec)
+	}
+
+	if !waitFor(t, 3*time.Second, func() bool {
+		data, readErr := os.ReadFile(out)
+		if readErr != nil {
+			return false
+		}
+		parts := strings.SplitN(string(data), "\n", 2)
+		return len(parts) == 2 && pathsEquivalent(parts[0], working) && parts[1] == literal
+	}) {
+		data, _ := os.ReadFile(out)
+		t.Fatalf("structured helper output = %q", string(data))
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("structured argv was interpreted by a shell: %v", err)
+	}
+
+	listed := recByID(t, c, rec.ID)
+	if listed == nil || listed.Program != exe || listed.WorkingDir != working || len(listed.Args) != len(args) {
+		t.Fatalf("listed structured record = %+v", listed)
+	}
+}
+
+func pathsEquivalent(a, b string) bool {
+	canonical := func(path string) string {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			path = resolved
+		}
+		return filepath.Clean(path)
+	}
+	return canonical(a) == canonical(b)
+}
+
 func TestSpawnListLogsKill(t *testing.T) {
 	c, root := newDaemon(t)
 

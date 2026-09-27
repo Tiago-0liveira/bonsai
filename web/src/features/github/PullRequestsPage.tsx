@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { loadPullRequest } from '../../api/git'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
   CheckCircle2,
@@ -67,10 +68,11 @@ function PrOperations({ pr }: { pr: PullRequest }) {
 }
 
 export function PullRequestsPage() {
-  const pullRequests = useBonsaiStore((state) => state.pullRequests)
+  const allPullRequests = useBonsaiStore((state) => state.pullRequests)
   const projects = useBonsaiStore((state) => state.projects)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const addReview = useBonsaiStore((state) => state.addPullRequestReview)
+  const pullRequests = useMemo(() => allPullRequests.filter(p => p.id.startsWith(activeProjectId + ':')), [allPullRequests, activeProjectId])
   const project = projects.find((item) => item.id === activeProjectId)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState(pullRequests[0]?.id ?? '')
@@ -78,6 +80,9 @@ export function PullRequestsPage() {
   const [commitsOpen, setCommitsOpen] = useState(false)
   const [review, setReview] = useState('')
   const selected = pullRequests.find((pr) => pr.id === selectedId) ?? pullRequests[0]
+
+  const revision = useBonsaiStore(s => s.gitRevision)
+  useEffect(() => { if (selected?.id) void loadPullRequest(selected.id) }, [selected?.id, revision])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()

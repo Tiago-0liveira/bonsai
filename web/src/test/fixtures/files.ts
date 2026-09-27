@@ -1,4 +1,4 @@
-import type { RepoFile } from '../types'
+import type { RepoFile } from '../../types'
 
 export const repoFiles: RepoFile[] = [
   {

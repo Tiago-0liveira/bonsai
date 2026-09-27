@@ -7,6 +7,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	"io"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -14,10 +15,11 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 1
+const Version = 2
 
 // Request kinds.
 const (
+	KindGit       = "git"
 	KindSpawn     = "spawn"
 	KindList      = "list"
 	KindKill      = "kill"
@@ -32,14 +34,18 @@ const (
 
 // Request is a single client command.
 type Request struct {
-	Kind string `json:"kind"`
+	Git  *gitbridge.Command `json:"git,omitempty"`
+	Kind string             `json:"kind"`
 
 	// Spawn.
-	Worktree string            `json:"worktree,omitempty"`
-	Branch   string            `json:"branch,omitempty"`
-	Label    string            `json:"label,omitempty"`
-	Command  string            `json:"command,omitempty"`
-	Policy   *procstore.Policy `json:"policy,omitempty"`
+	Worktree   string            `json:"worktree,omitempty"`
+	Branch     string            `json:"branch,omitempty"`
+	Label      string            `json:"label,omitempty"`
+	Command    string            `json:"command,omitempty"`
+	Program    string            `json:"program,omitempty"`
+	Args       []string          `json:"args,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Policy     *procstore.Policy `json:"policy,omitempty"`
 
 	// Target for kill/restart/setPolicy/logs.
 	ID        int    `json:"id,omitempty"`
@@ -58,8 +64,9 @@ type Request struct {
 
 // Response is a single daemon reply frame.
 type Response struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	Git   *gitbridge.Result `json:"git,omitempty"`
+	OK    bool              `json:"ok"`
+	Error string            `json:"error,omitempty"`
 
 	Record  *procstore.Record   `json:"record,omitempty"`  // spawn/restart
 	Records []*procstore.Record `json:"records,omitempty"` // list

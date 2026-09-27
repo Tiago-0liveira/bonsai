@@ -7,14 +7,17 @@ import {
   Folder,
   FolderOpen,
 } from 'lucide-react'
-import { flattenFiles, repoFiles } from '../../mock/files'
+import { flattenFiles, useFiles, useFileContent } from '../../api/files'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { RepoFile } from '../../types'
 
 export function FilesPage() {
+  const repoFiles = useFiles()
   const selectedPath = useBonsaiStore((state) => state.selectedFilePath)
   const setSelectedPath = useBonsaiStore((state) => state.setSelectedFilePath)
   const file = flattenFiles(repoFiles).find((item) => item.path === selectedPath) ?? flattenFiles(repoFiles).find((item) => item.type === 'file')
+
+  const content = useFileContent(file?.path ?? '')
 
   return (
     <div className="flex h-full min-h-0 bg-[rgb(var(--bg))]">
@@ -35,7 +38,7 @@ export function FilesPage() {
           {file?.language && <span className="ml-auto uppercase text-[rgb(var(--muted-2))]">{file.language}</span>}
         </div>
         <pre className="min-h-full p-5 font-mono text-[11px] leading-5 text-[rgb(var(--muted))]">
-          {file?.content ?? 'Select a file from the repository tree.'}
+          {content || 'Select a file from the repository tree.'}
         </pre>
       </section>
     </div>

@@ -1,3 +1,4 @@
+import { openGitHub } from '../../api/git'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import {
@@ -142,6 +143,7 @@ export function Inspector() {
               <Section title="Pull request" meta={pr && <span className="inspector-count">{pr.status}</span>}>
                 {pr ? <>
                   <button onClick={() => inspectPullRequest(pr.id)} className="bonsai-focus inspector-link !items-start !px-0"><GitPullRequest size={15} className="mt-0.5 shrink-0 text-[rgb(var(--purple))]" /><span className="min-w-0 flex-1"><span className="block text-[11px] font-medium leading-5">#{pr.number} {pr.title}</span><span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">{pr.files.length} files · {pr.commits.length} commits · View review</span></span><ChevronRight size={13} className="mt-1 shrink-0" /></button>
+                  <div className="mt-2"><QuickButton icon={GitPullRequest} label="Open on GitHub" onClick={() => openGitHub('pull/' + pr.number, worktree.projectId)} /></div>
                   <div className="mt-2 space-y-2 rounded-lg bg-[rgb(var(--bg)/.6)] p-2.5">{pr.checks.length ? pr.checks.map((check) => <div key={check.name} className="flex items-center gap-2 text-[10px]">
                     {check.status === 'failed' ? <XCircle size={12} className="shrink-0 text-[rgb(var(--red))]" /> : check.status === 'success' ? <CheckCircle2 size={12} className="shrink-0 text-[rgb(var(--green))]" /> : <CircleDot size={12} className="shrink-0 text-[rgb(var(--orange))]" />}
                     <span className="min-w-0 flex-1 break-words text-[rgb(var(--muted))]">{check.name}</span><span className="text-[9px] text-[rgb(var(--muted))]">{check.status === 'success' ? 'Passed' : check.status === 'failed' ? 'Failed' : 'Running'}</span>

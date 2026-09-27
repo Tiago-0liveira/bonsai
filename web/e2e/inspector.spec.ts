@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { mockGitBackend } from './mockGit'
+
+test.beforeEach(async ({ page }) => {
+  await mockGitBackend(page)
+})
 
 test('inspector leads from branch blockers to the matching review and agent session', async ({ page }) => {
   const errors: string[] = []
@@ -7,7 +12,6 @@ test('inspector leads from branch blockers to the matching review and agent sess
   const inspector = page.getByRole('complementary', { name: 'Inspector' })
   await inspector.getByRole('button', { name: /fix\/daemon-lifecycle/ }).click()
   await expect(inspector.getByText('Resolve merge conflicts', { exact: true })).toBeVisible()
-  await expect(inspector.getByText('go test ./...', { exact: true })).toBeVisible()
   await expect(inspector.getByText('1 commit behind main', { exact: true })).toBeVisible()
 
   // A review link must reveal the selected PR even after closing the entire dock.
@@ -15,6 +19,7 @@ test('inspector leads from branch blockers to the matching review and agent sess
   await inspector.getByRole('button', { name: /#23 fix\(daemon\)/ }).click()
   await expect(page.getByTitle('Minimize workspace')).toBeVisible()
   await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toBeVisible()
+  await expect(page.locator('#prs').getByText('go test ./...', { exact: true })).toBeVisible()
   await page.getByRole('textbox', { name: 'Search pull requests' }).fill('no matching review')
   await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toHaveCount(0)
   await inspector.getByRole('button', { name: /#23 fix\(daemon\)/ }).click()

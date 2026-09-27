@@ -1,4 +1,4 @@
-import type { Project, Workspace } from '../types'
+import type { Project, Workspace } from '../../types'
 
 export const workspaces: Workspace[] = [
   { id: 'personal', name: 'personal', projectIds: ['bonsai', 'sprout-lab'] },

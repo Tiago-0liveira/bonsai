@@ -17,8 +17,8 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
-	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/updater"
+	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
@@ -49,6 +49,8 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return nil
 	case "shell-init":
 		return cmdShellInit(out)
+	case "agent":
+		return cmdAgent(args[1:], in, out, errOut)
 	}
 
 	// Anchor to the main worktree regardless of the current directory, so copy
@@ -443,6 +445,7 @@ Usage:
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias
   bonsai shell-init               print a shell 'bcd' cd helper
+  bonsai agent ...                manage provider accounts and sessions
   bonsai version (-v, --version)  print the installed version
   bonsai update (-u, --update)    check or install updates
   bonsai help                     show this help
