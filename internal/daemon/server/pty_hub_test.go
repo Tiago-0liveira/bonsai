@@ -5,6 +5,8 @@ import (
 	"io"
 	"sync"
 	"testing"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 )
 
 type fakePTYSession struct {
@@ -249,5 +251,140 @@ func TestPTYHubExitMetadataDeliveredAtCapacity(t *testing.T) {
 	}
 	if exit.kind != "ptyExit" || exit.exitCode != 23 || exit.err != "boom" {
 		t.Fatalf("exit = %#v, want code 23 and error boom", exit)
+	}
+}
+
+
+func newPTYSizePersistenceFixture(t *testing.T) (*Server, *managedProc, *ptyHub) {
+	t.Helper()
+	store := procstore.New(t.TempDir())
+	if err := store.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	hub := newPTYHub(&fakePTYSession{cols: 80, rows: 24}, 80, 24, 1)
+	rec := &procstore.Record{
+		ID:      1,
+		IOMode:  procstore.IOModePTY,
+		PTYCols: 80,
+		PTYRows: 24,
+	}
+	if err := store.WriteRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	mp := &managedProc{rec: rec, ptyHub: hub}
+	return &Server{store: store}, mp, hub
+}
+
+func TestPTYHubSizeTracksLatestResize(t *testing.T) {
+	_, _, hub := newPTYSizePersistenceFixture(t)
+	if err := hub.Resize(101, 41); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.Resize(132, 52); err != nil {
+		t.Fatal(err)
+	}
+	cols, rows := hub.Size()
+	if cols != 132 || rows != 52 {
+		t.Fatalf("hub size = %dx%d, want 132x52", cols, rows)
+	}
+}
+
+func TestPersistPTYSizeUsesLatestHubSizeAfterStaleCaller(t *testing.T) {
+	s, mp, hub := newPTYSizePersistenceFixture(t)
+	if err := hub.Resize(100, 40); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.Resize(120, 50); err != nil {
+		t.Fatal(err)
+	}
+
+	// This persistence call represents the older 100x40 request resuming only
+	// after the newer 120x50 resize has already completed.
+	s.persistPTYSize(mp, hub)
+
+	mp.mu.Lock()
+	cols, rows := mp.rec.PTYCols, mp.rec.PTYRows
+	mp.mu.Unlock()
+	if cols != 120 || rows != 50 {
+		t.Fatalf("persisted size = %dx%d, want latest 120x50", cols, rows)
+	}
+}
+
+func TestPersistPTYSizeSkipsReplacedHub(t *testing.T) {
+	s, mp, oldHub := newPTYSizePersistenceFixture(t)
+	if err := oldHub.Resize(100, 40); err != nil {
+		t.Fatal(err)
+	}
+	newHub := newPTYHub(&fakePTYSession{cols: 140, rows: 60}, 140, 60, oldHub.NextSeq())
+	mp.mu.Lock()
+	mp.ptyHub = newHub
+	mp.rec.PTYCols, mp.rec.PTYRows = 140, 60
+	mp.mu.Unlock()
+
+	s.persistPTYSize(mp, oldHub)
+
+	mp.mu.Lock()
+	cols, rows := mp.rec.PTYCols, mp.rec.PTYRows
+	mp.mu.Unlock()
+	if cols != 140 || rows != 60 {
+		t.Fatalf("replaced hub regressed record to %dx%d", cols, rows)
+	}
+}
+
+func TestPersistPTYSizeWritesLatestHubSizeToStore(t *testing.T) {
+	s, mp, hub := newPTYSizePersistenceFixture(t)
+	if err := hub.Resize(150, 55); err != nil {
+		t.Fatal(err)
+	}
+	s.persistPTYSize(mp, hub)
+
+	rec, err := s.store.ReadRecord(mp.rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.PTYCols != 150 || rec.PTYRows != 55 {
+		t.Fatalf("stored size = %dx%d, want 150x55", rec.PTYCols, rec.PTYRows)
+	}
+}
+
+func TestPersistPTYSizeConcurrentStaleCallerCannotRegressRecord(t *testing.T) {
+	s, mp, hub := newPTYSizePersistenceFixture(t)
+	firstResized := make(chan struct{})
+	newerPersisted := make(chan struct{})
+	firstDone := make(chan struct{})
+
+	go func() {
+		defer close(firstDone)
+		if err := hub.Resize(90, 30); err != nil {
+			t.Errorf("first resize: %v", err)
+			return
+		}
+		close(firstResized)
+		<-newerPersisted
+		// Persist after the newer request to reproduce the original stale-write
+		// ordering deterministically.
+		s.persistPTYSize(mp, hub)
+	}()
+
+	<-firstResized
+	if err := hub.Resize(160, 70); err != nil {
+		t.Fatal(err)
+	}
+	s.persistPTYSize(mp, hub)
+	close(newerPersisted)
+	<-firstDone
+
+	mp.mu.Lock()
+	cols, rows := mp.rec.PTYCols, mp.rec.PTYRows
+	mp.mu.Unlock()
+	if cols != 160 || rows != 70 {
+		t.Fatalf("stale caller regressed record to %dx%d, want 160x70", cols, rows)
+	}
+	rec, err := s.store.ReadRecord(mp.rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.PTYCols != 160 || rec.PTYRows != 70 {
+		t.Fatalf("stale caller regressed stored size to %dx%d, want 160x70", rec.PTYCols, rec.PTYRows)
 	}
 }
