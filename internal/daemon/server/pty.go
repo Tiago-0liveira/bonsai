@@ -16,6 +16,7 @@ import (
 
 const (
 	ptyReplayBytes     = 256 << 10
+	ptyReplayEvents    = 1024
 	ptySubscriberQueue = 32
 	ptyReadBuffer      = 32 << 10
 	ptyDrainGrace      = 500 * time.Millisecond
@@ -62,10 +63,11 @@ type ptyHub struct {
 	nextSub uint64
 	subs    map[uint64]*ptySubscriber
 
-	replay      []ptyEvent
-	replayBytes int
-	replayCap   int
-	subQueue    int
+	replay         []ptyEvent
+	replayBytes    int
+	replayCap      int
+	replayEventCap int
+	subQueue       int
 
 	closed        bool
 	sessionClosed bool
@@ -83,8 +85,9 @@ func newPTYHub(session corepty.Session, cols, rows int, startSeq uint64) *ptyHub
 		rows:      rows,
 		nextSeq:   startSeq,
 		subs:      make(map[uint64]*ptySubscriber),
-		replayCap: ptyReplayBytes,
-		subQueue:  ptySubscriberQueue,
+		replayCap:      ptyReplayBytes,
+		replayEventCap: ptyReplayEvents,
+		subQueue:       ptySubscriberQueue,
 	}
 }
 
@@ -161,7 +164,12 @@ func (h *ptyHub) Publish(data []byte) {
 	if h.replayCap > 0 {
 		h.replay = append(h.replay, ev)
 		h.replayBytes += len(chunk)
-		for h.replayBytes > h.replayCap && len(h.replay) > 0 {
+		for len(h.replay) > 0 {
+			overBytes := h.replayBytes > h.replayCap
+			overEvents := h.replayEventCap > 0 && len(h.replay) > h.replayEventCap
+			if !overBytes && !overEvents {
+				break
+			}
 			h.replayBytes -= len(h.replay[0].data)
 			h.replay = h.replay[1:]
 		}
