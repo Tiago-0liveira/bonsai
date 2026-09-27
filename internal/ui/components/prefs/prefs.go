@@ -88,25 +88,25 @@ type row struct {
 
 // Model is the preferences overlay state.
 type Model struct {
-	presets    []string
-	theme      string
-	sort       string
-	pruneMerge bool
-	prStatus   string
-	editor     string
+	presets       []string
+	theme         string
+	sort          string
+	pruneMerge    bool
+	prStatus      string
+	editor        string
 	layout        LayoutPrefs
 	layoutEditing bool
 	layoutCursor  int
 	actions       []Action
-	defaults   map[string]string // action -> default key
-	overrides  map[string]string // action -> personal key (working copy)
-	rows       []row
-	collapsed  map[int]bool // header row index -> collapsed
-	cursor     int
-	capture    string // action awaiting a new key, "" when idle
-	msg        string // transient status line
-	width      int
-	height     int
+	defaults      map[string]string // action -> default key
+	overrides     map[string]string // action -> personal key (working copy)
+	rows          []row
+	collapsed     map[int]bool // header row index -> collapsed
+	cursor        int
+	capture       string // action awaiting a new key, "" when idle
+	msg           string // transient status line
+	width         int
+	height        int
 }
 
 // New builds the overlay. actions must be ordered by section; a section header
