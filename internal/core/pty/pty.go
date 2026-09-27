@@ -39,6 +39,18 @@ type backend interface {
 type process struct {
 	cmd     *exec.Cmd
 	session backend
+	exposed Session
+}
+
+type validatingSession struct {
+	Session
+}
+
+func (s *validatingSession) Resize(cols, rows int) error {
+	if err := ValidateSize(cols, rows); err != nil {
+		return err
+	}
+	return s.Session.Resize(cols, rows)
 }
 
 // ValidateSize rejects nonsensical or platform-hostile terminal dimensions.
@@ -85,10 +97,11 @@ func Start(cmd *exec.Cmd, cols, rows int) (Process, error) {
 		_ = session.Close()
 		return nil, err
 	}
-	return &process{cmd: cmd, session: session}, nil
+	exposed := &validatingSession{Session: session}
+	return &process{cmd: cmd, session: session, exposed: exposed}, nil
 }
 
-func (p *process) Session() Session { return p.session }
+func (p *process) Session() Session { return p.exposed }
 
 func (p *process) Wait(ctx context.Context) error {
 	if ctx == nil {
