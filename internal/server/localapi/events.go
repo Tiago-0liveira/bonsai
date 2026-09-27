@@ -7,7 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const websocketAuthTimeout = 3 * time.Second
+var websocketAuthTimeout = 3 * time.Second
 
 type websocketAuth struct {
 	Type  string `json:"type"`
