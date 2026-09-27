@@ -46,7 +46,10 @@ func TestStatusFilesBoundaries(t *testing.T) {
 	s, dir, id := setup(t)
 	ctx := context.Background()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("edit\n"), 0600)
-	os.WriteFile(filepath.Join(dir, "a\n b.txt"), []byte("new\n"), 0600)
+	const stagedPath = "a b.txt"
+	if e := os.WriteFile(filepath.Join(dir, stagedPath), []byte("new\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
 	st, e := s.Status(ctx, id)
 	if e != nil || !st.Dirty || st.Modified != 1 || st.Untracked != 1 {
 		t.Fatalf("%+v %v", st, e)
@@ -63,7 +66,7 @@ func TestStatusFilesBoundaries(t *testing.T) {
 	if _, e = s.Status(ctx, "other"); !errors.Is(e, domain.ErrNotFound) {
 		t.Fatal(e)
 	}
-	if e = s.Stage(ctx, id, []string{"a\n b.txt"}, false); e != nil {
+	if e = s.Stage(ctx, id, []string{stagedPath}, false); e != nil {
 		t.Fatal(e)
 	}
 	c, e := s.Commit(ctx, id, "added file")
@@ -75,6 +78,16 @@ func TestStatusFilesBoundaries(t *testing.T) {
 		t.Fatal("commit staged unrelated working changes")
 	}
 }
+func TestParseStatusPreservesNewlinePath(t *testing.T) {
+	st, e := parseStatus("? a\n b.txt\x00")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if st.Untracked != 1 || len(st.Files) != 1 || st.Files[0].Path != "a\n b.txt" {
+		t.Fatalf("%+v", st)
+	}
+}
+
 func TestWorktreesAndConflictRecovery(t *testing.T) {
 	s, dir, id := setup(t)
 	ctx := context.Background()
