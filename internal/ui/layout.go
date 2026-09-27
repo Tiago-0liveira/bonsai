@@ -17,13 +17,13 @@ const (
 )
 
 const (
-	layoutVersion             = 1
-	minPanePercent            = 20
-	maxPanePercent            = 80
-	minWorktreesOuterWidth    = 16
-	minWorkspaceOuterWidth    = 12
-	minWorktreesOuterHeight   = 3
-	minWorkspaceOuterHeight   = 5
+	layoutVersion           = 1
+	minPanePercent          = 20
+	maxPanePercent          = 80
+	minWorktreesOuterWidth  = 16
+	minWorkspaceOuterWidth  = 12
+	minWorktreesOuterHeight = 3
+	minWorkspaceOuterHeight = 5
 )
 
 type layoutSpec struct {
