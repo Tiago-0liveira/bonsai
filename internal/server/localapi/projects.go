@@ -29,7 +29,7 @@ type staticProjectRegistry struct {
 
 func newStaticProjectRegistry(repoDir string) projectRegistry {
 	return &staticProjectRegistry{project: projectServices{
-		info: ProjectInfo{ID: localRepositoryID},
+		info:   ProjectInfo{ID: localRepositoryID},
 		daemon: client.For(repoDir),
 		github: ghcli.New(repoDir),
 	}}
