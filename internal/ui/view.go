@@ -93,10 +93,11 @@ const (
 // log or parked where the user scrolled to. Without it, a paused view looks
 // identical to a process that simply stopped printing.
 func (m Model) procScrollState() string {
-	if m.term.AtBottom() {
+	term := m.viewTerm(viewProcesses)
+	if term.AtBottom() {
 		return procRunning.Render("● live")
 	}
-	return procMarkerWarn.Render(fmt.Sprintf("⏸ %.0f%% · G to follow", m.term.ScrollPercent()*100))
+	return procMarkerWarn.Render(fmt.Sprintf("⏸ %.0f%% · G to follow", term.ScrollPercent()*100))
 }
 
 // renderProcFooter builds the Processes-tab footer pinned to the bottom of the
@@ -537,9 +538,9 @@ func mergeableBadge(m string) string {
 	}
 }
 
-// termInnerWidth returns a safe render width for the workspace pane body.
+// termInnerWidth returns a safe render width for the Processes view's pane.
 func (m Model) termInnerWidth() int {
-	w := m.resolvedPaneLayout().Workspace.W - 4
+	w := m.viewPaneRect(viewProcesses).W - 4
 	if w < 4 {
 		w = 4
 	}
@@ -596,105 +597,173 @@ func shortTime(ts string) string {
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
-// resolvedPaneLayout derives the current pane rectangles from the normalized
-// personal preference and current terminal dimensions. Rendering, child sizing,
-// and mouse routing all consume this same geometry.
+// resolvedPaneLayout is the v1 compatibility projection used by a few existing
+// tests/helpers. Runtime rendering uses resolvedDynamicPaneLayout.
 func (m Model) resolvedPaneLayout() resolvedLayout {
 	barH := lipgloss.Height(m.statusBar())
-	return resolvePaneLayout(m.width, m.height, barH, m.paneLayout)
+	legacy := m.paneLayout
+	if !legacy.valid() {
+		legacy = defaultLayoutSpec()
+	}
+	return resolvePaneLayout(m.width, m.height, barH, legacy)
 }
 
-// dims is retained for existing layout-sensitive tests and helpers. It reports
-// the worktrees outer width, workspace outer width, and workspace inner height,
-// all derived from the same resolved rectangles used by runtime rendering.
+func (m Model) resolvedDynamicPaneLayout() resolvedDynamicLayout {
+	barH := lipgloss.Height(m.statusBar())
+	layout := m.dynamicLayout
+	if !layout.valid() {
+		layout = defaultDynamicLayout()
+	}
+	return resolveDynamicLayout(m.width, m.height, barH, layout)
+}
+
+func (m Model) viewPaneRect(id viewID) paneRect {
+	pane, ok := m.dynamicLayout.paneContaining(id)
+	if !ok {
+		pane, _ = defaultDynamicLayout().paneContaining(id)
+	}
+	resolved := m.resolvedDynamicPaneLayout()
+	if rp, ok := resolved.pane(pane.ID); ok {
+		return rp.Rect
+	}
+	return paneRect{}
+}
+
+// dims remains for old process-layout tests. It projects the worktrees pane and
+// the pane containing Git Log from the dynamic tree.
 func (m Model) dims() (worktreesW, workspaceW, workspaceInnerH int) {
-	resolved := m.resolvedPaneLayout()
-	return resolved.Worktrees.W, resolved.Workspace.W, max(resolved.Workspace.H-2, 1)
+	work := m.viewPaneRect(viewWorktrees)
+	workspace := m.viewPaneRect(viewLog)
+	return work.W, workspace.W, max(workspace.H-2, 1)
 }
 
-// layout recomputes child component sizes from their own resolved pane
-// rectangles. Persisted percentages are never changed by runtime clamps.
+func (m Model) paneHeaderHeight(pane paneSpec) int {
+	if len(m.availableViews(pane)) > 1 {
+		return 1
+	}
+	return 0
+}
+
+// layout recomputes each leaf pane's active child size from the same recursive
+// geometry used by rendering and mouse routing.
 func (m *Model) layout() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	resolved := m.resolvedPaneLayout()
+	m.initPaneRuntime()
+	m.normalizePaneActives()
+	resolved := m.resolvedDynamicPaneLayout()
 
-	worktreesInnerW := max(resolved.Worktrees.W-2, 1)
-	worktreesInnerH := max(resolved.Worktrees.H-2, 1)
-	workspaceInnerW := max(resolved.Workspace.W-2, 1)
-	workspaceInnerH := max(resolved.Workspace.H-2, 1)
+	for _, rp := range resolved.Panes {
+		pane, ok := m.paneByID(rp.ID)
+		if !ok {
+			continue
+		}
+		innerW := max(rp.Rect.W-2, 1)
+		innerH := max(rp.Rect.H-2, 1)
+		headerH := m.paneHeaderHeight(pane)
+		active := m.activeView(pane.ID)
 
-	m.list.SetSize(worktreesInnerW, worktreesInnerH)
-	m.term.SetSize(workspaceInnerW, m.termHeight(workspaceInnerH))
+		if active == viewWorktrees {
+			m.list.SetSize(innerW, max(innerH-headerH, 1))
+			continue
+		}
+		for _, id := range pane.Views {
+			if !terminalBackedView(id) {
+				continue
+			}
+			h := max(innerH-headerH, 1)
+			if id == viewProcesses {
+				h = max(h-m.procFooterHeight(), 1)
+			}
+			m.viewTerm(id).SetSize(innerW, h)
+		}
+	}
 }
 
-// termHeight is the workspace pane's viewport height: the pane body minus the
-// tab strip, minus the Processes-tab footer when that tab is showing. The
-// viewport must be sized to the area it is actually drawn into — a viewport
-// that thinks it is taller clamps its own max scroll offset to zero, which
-// silently disables scrolling and pins the view to the top of the log.
+// termHeight is retained for process-log tests and means the focused
+// terminal-backed view's viewport height inside its pane.
 func (m Model) termHeight(innerH int) int {
-	h := innerH - 1 // -1 for the tab strip line
-	if m.rightTab == tabProcs {
+	headerH := 1
+	if pane, ok := m.paneByID(m.focusedPane); ok {
+		headerH = m.paneHeaderHeight(pane)
+	}
+	h := innerH - headerH
+	if m.focusedView() == viewProcesses || m.rightTab == tabProcs {
 		h -= m.procFooterHeight()
 	}
 	return max(h, 1)
 }
 
-// procFooterHeight counts the rows renderProcFooter will occupy. It is derived
-// rather than measured because layout runs on every message, while rendering the
-// footer re-reads every process's log (for its URL); the two must stay in step
-// (TestTermHeightLeavesRoomForProcFooter checks that they do).
+// procFooterHeight counts the rows renderProcFooter will occupy.
 func (m Model) procFooterHeight() int {
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		return 1 // "(no worktree selected)"
+		return 1
+	}
+	if m.procs == nil {
+		return 1
 	}
 	n := len(m.procs.List(wt.Path))
 	if n == 0 {
-		return 1 // the empty hint
+		return 1
 	}
-	h := 1 + n + 1 // divider + one row per process + the keybind hint
+	h := 1 + n + 1
 	if m.procSearchActive || m.procSearch[wt.Path] != "" {
-		h++ // the search box / active-filter line
+		h++
 	}
 	return h
 }
 
-func (m Model) renderWorktreesPane(rect paneRect) string {
-	innerW := max(rect.W-2, 1)
-	innerH := max(rect.H-2, 1)
-	pane := m.borderFor(m.focus == focusList).
-		Width(innerW).Height(innerH).
-		Render(clampHeight(m.list.View(), innerH))
-	pane = truncateToWidth(pane, max(rect.W, 1))
-	return clampHeight(pane, max(rect.H, 1))
-}
-
-func (m Model) renderWorkspacePane(rect paneRect) string {
-	innerW := max(rect.W-2, 1)
-	innerH := max(rect.H-2, 1)
-
-	var body string
-	if m.rightTab == tabProcs {
-		// Output scrolls in the term viewport (already sized to leave the footer
-		// room, see layout); the process list + hint sit in a footer pinned to
-		// the bottom.
-		body = m.tabStrip(innerW) + "\n" + m.term.View() + "\n" + m.renderProcFooter()
-	} else {
-		body = m.tabStrip(innerW) + "\n" + m.term.View()
+func (m Model) renderPane(rp resolvedPane) string {
+	pane, ok := m.paneByID(rp.ID)
+	if !ok {
+		return ""
 	}
-	pane := m.borderFor(m.focus == focusTerminal).
+	innerW := max(rp.Rect.W-2, 1)
+	innerH := max(rp.Rect.H-2, 1)
+	available := m.availableViews(pane)
+	active := m.activeView(pane.ID)
+	if len(available) > 0 && !containsView(available, active) {
+		active = available[0]
+	}
+
+	header := ""
+	contentH := innerH
+	if len(available) > 1 {
+		header = m.paneTabStrip(pane, innerW)
+		contentH = max(contentH-1, 1)
+	}
+
+	body := ""
+	if len(available) == 0 {
+		body = procDim.Render("No views available for the current worktree")
+	} else if active == viewWorktrees {
+		body = clampHeight(m.list.View(), contentH)
+	} else {
+		term := m.viewTerm(active)
+		body = term.View()
+		if active == viewProcesses {
+			body += "\n" + m.renderProcFooter()
+		}
+	}
+	if header != "" {
+		body = header + "\n" + body
+	}
+
+	focused := rp.ID == m.focusedPane
+	if m.focusedPane == "" {
+		panes := m.dynamicLayout.panes()
+		focused = len(panes) > 0 && panes[0].ID == rp.ID
+	}
+	out := m.borderFor(focused).
 		Width(innerW).Height(innerH).
 		Render(clampHeight(body, innerH))
-	pane = truncateToWidth(pane, max(rect.W, 1))
-	return clampHeight(pane, max(rect.H, 1))
+	out = truncateToWidth(out, max(rp.Rect.W, 1))
+	return clampHeight(out, max(rp.Rect.H, 1))
 }
 
-// View renders the two existing bordered panes in the configured order and
-// orientation above the full-width status/help bar, with active overlays still
-// owning the complete terminal surface.
+// View renders the recursive split tree above the full-width status bar.
 func (m Model) View() string {
 	if m.updatePromptVisible() {
 		return clampHeight(m.updatePrompt(), m.height)
@@ -709,25 +778,16 @@ func (m Model) View() string {
 		return clampHeight(m.modal.View(), m.height)
 	}
 
-	resolved := m.resolvedPaneLayout()
-	worktrees := m.renderWorktreesPane(resolved.Worktrees)
-	workspace := m.renderWorkspacePane(resolved.Workspace)
-
-	pane := func(id paneID) string {
-		if id == paneWorktrees {
-			return worktrees
-		}
-		return workspace
+	layout := m.dynamicLayout
+	if !layout.valid() {
+		layout = defaultDynamicLayout()
 	}
-	first := pane(resolved.Order[0])
-	second := pane(resolved.Order[1])
-
-	var body string
-	if resolved.Axis == axisVertical {
-		body = lipgloss.JoinVertical(lipgloss.Left, first, second)
-	} else {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, first, second)
+	resolved := m.resolvedDynamicPaneLayout()
+	rendered := make(map[paneID]string, len(resolved.Panes))
+	for _, pane := range resolved.Panes {
+		rendered[pane.ID] = m.renderPane(pane)
 	}
+	body := renderDynamicNode(layout.Root, rendered)
 	body = truncateToWidth(body, resolved.Body.W)
 	body = clampHeight(body, resolved.Body.H)
 
@@ -789,25 +849,51 @@ func (m Model) visibleTabs() []rightTab {
 	return tabs
 }
 
-// tabStrip renders the right-pane tab headers with the active tab highlighted,
-// safely clamped to the available width so it never wraps to multiple rows.
+// tabStrip is the compatibility wrapper for the pane containing the focused
+// terminal view.
 func (m Model) tabStrip(width int) string {
+	pane, ok := m.dynamicLayout.paneContaining(viewForTab(m.rightTab))
+	if !ok {
+		pane, _ = defaultDynamicLayout().paneContaining(viewLog)
+	}
+	return m.paneTabStrip(pane, width)
+}
+
+func paneViewLabel(id viewID, compact bool) string {
+	if id == viewWorktrees {
+		if compact {
+			return " Trees "
+		}
+		return " Worktrees "
+	}
+	if tab, ok := tabForView(id); ok {
+		return tabLabel(tab, compact)
+	}
+	return " " + viewTitle(id) + " "
+}
+
+// paneTabStrip renders only the views assigned to one pane. It is omitted
+// entirely for single-view panes.
+func (m Model) paneTabStrip(pane paneSpec, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	tabs := m.visibleTabs()
-	if len(tabs) == 0 {
+	views := m.availableViews(pane)
+	if len(views) <= 1 {
 		return ""
+	}
+	active := m.activeView(pane.ID)
+	if !containsView(views, active) {
+		active = views[0]
 	}
 
 	hint := inactiveTab.Render("  shift+tab ⇄")
 	sep := inactiveTab.Render("│")
-
-	buildParts := func(compact bool, tabList []rightTab) []string {
-		parts := make([]string, 0, len(tabList))
-		for _, t := range tabList {
-			label := tabLabel(t, compact)
-			if t == m.rightTab {
+	build := func(compact bool, list []viewID) []string {
+		parts := make([]string, 0, len(list))
+		for _, id := range list {
+			label := paneViewLabel(id, compact)
+			if id == active {
 				parts = append(parts, activeTab.Render(label))
 			} else {
 				parts = append(parts, inactiveTab.Render(label))
@@ -816,66 +902,53 @@ func (m Model) tabStrip(width int) string {
 		return parts
 	}
 
-	// 1. Full labels + hint
-	fullParts := buildParts(false, tabs)
-	fullStrip := strings.Join(fullParts, sep)
-	if lipgloss.Width(fullStrip)+lipgloss.Width(hint) <= width {
-		return ansi.Truncate(fullStrip+hint, width, "")
+	full := strings.Join(build(false, views), sep)
+	if lipgloss.Width(full)+lipgloss.Width(hint) <= width {
+		return ansi.Truncate(full+hint, width, "")
+	}
+	if lipgloss.Width(full) <= width {
+		return ansi.Truncate(full, width, "")
+	}
+	compact := strings.Join(build(true, views), sep)
+	if lipgloss.Width(compact)+lipgloss.Width(hint) <= width {
+		return ansi.Truncate(compact+hint, width, "")
+	}
+	if lipgloss.Width(compact) <= width {
+		return ansi.Truncate(compact, width, "")
 	}
 
-	// 2. Full labels without hint
-	if lipgloss.Width(fullStrip) <= width {
-		return ansi.Truncate(fullStrip, width, "")
-	}
-
-	// 3. Compact labels + hint
-	compactParts := buildParts(true, tabs)
-	compactStrip := strings.Join(compactParts, sep)
-	if lipgloss.Width(compactStrip)+lipgloss.Width(hint) <= width {
-		return ansi.Truncate(compactStrip+hint, width, "")
-	}
-
-	// 4. Compact labels without hint
-	if lipgloss.Width(compactStrip) <= width {
-		return ansi.Truncate(compactStrip, width, "")
-	}
-
-	// 5. Window tabs around active tab if space is very constrained
 	activeIdx := 0
-	for i, t := range tabs {
-		if t == m.rightTab {
+	for i, id := range views {
+		if id == active {
 			activeIdx = i
 			break
 		}
 	}
-
 	start, end := activeIdx, activeIdx+1
 	for {
 		expanded := false
-		if end < len(tabs) {
-			testParts := buildParts(true, tabs[start:end+1])
-			testStrip := strings.Join(testParts, sep)
+		if end < len(views) {
+			test := strings.Join(build(true, views[start:end+1]), sep)
 			if start > 0 {
-				testStrip = inactiveTab.Render("…") + testStrip
+				test = inactiveTab.Render("…") + test
 			}
-			if end+1 < len(tabs) {
-				testStrip = testStrip + inactiveTab.Render("…")
+			if end+1 < len(views) {
+				test += inactiveTab.Render("…")
 			}
-			if lipgloss.Width(testStrip) <= width {
+			if lipgloss.Width(test) <= width {
 				end++
 				expanded = true
 			}
 		}
 		if start > 0 {
-			testParts := buildParts(true, tabs[start-1:end])
-			testStrip := strings.Join(testParts, sep)
+			test := strings.Join(build(true, views[start-1:end]), sep)
 			if start-1 > 0 {
-				testStrip = inactiveTab.Render("…") + testStrip
+				test = inactiveTab.Render("…") + test
 			}
-			if end < len(tabs) {
-				testStrip = testStrip + inactiveTab.Render("…")
+			if end < len(views) {
+				test += inactiveTab.Render("…")
 			}
-			if lipgloss.Width(testStrip) <= width {
+			if lipgloss.Width(test) <= width {
 				start--
 				expanded = true
 			}
@@ -884,17 +957,14 @@ func (m Model) tabStrip(width int) string {
 			break
 		}
 	}
-
-	windowParts := buildParts(true, tabs[start:end])
-	windowStrip := strings.Join(windowParts, sep)
+	window := strings.Join(build(true, views[start:end]), sep)
 	if start > 0 {
-		windowStrip = inactiveTab.Render("…") + windowStrip
+		window = inactiveTab.Render("…") + window
 	}
-	if end < len(tabs) {
-		windowStrip = windowStrip + inactiveTab.Render("…")
+	if end < len(views) {
+		window += inactiveTab.Render("…")
 	}
-
-	return ansi.Truncate(windowStrip, width, "")
+	return ansi.Truncate(window, width, "")
 }
 
 func (m Model) borderFor(focused bool) lipgloss.Style {
