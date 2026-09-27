@@ -132,8 +132,8 @@ func TestMouseWheelScrollsLogNotSelection(t *testing.T) {
 	nm, _ := m.onMouse(wheel)
 	got := nm.(Model)
 
-	if got.term.ScrollPercent() <= 0 {
-		t.Errorf("wheel over the log did not scroll it (%.2f)", got.term.ScrollPercent())
+	if got.viewTerm(viewProcesses).ScrollPercent() <= 0 {
+		t.Errorf("wheel over the log did not scroll it (%.2f)", got.viewTerm(viewProcesses).ScrollPercent())
 	}
 	if got.activeProc["/w/feat"] != 2 {
 		t.Errorf("wheel changed the selected process: %d", got.activeProc["/w/feat"])
