@@ -153,6 +153,7 @@ func runServeInternal(kind string, args []string) error {
 	configPath := fs.String("config", "", "server config path")
 	port := fs.Int("port", 0, "loopback listen port")
 	apiPort := fs.Int("api-port", 0, "main API port")
+	browserOrigin := fs.String("browser-origin", "", "local browser origin")
 	sessionSecretFile := fs.String("session-secret-file", "", "serve session secret file")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -163,7 +164,10 @@ func runServeInternal(kind string, args []string) error {
 	address := fmt.Sprintf("127.0.0.1:%d", *port)
 	switch kind {
 	case "__serve-api":
-		return serverruntime.RunAPI(*configPath, address, *sessionSecretFile)
+		if *browserOrigin == "" {
+			return fmt.Errorf("__serve-api requires --browser-origin")
+		}
+		return serverruntime.RunAPI(*configPath, address, *browserOrigin, *sessionSecretFile)
 	case "__serve-webhook":
 		if *apiPort <= 0 {
 			return fmt.Errorf("__serve-webhook requires --api-port")
