@@ -8,14 +8,34 @@ import (
 	"sync"
 )
 
-// TUILayoutPrefs is the persisted per-user top-level TUI pane arrangement.
-// Validation and normalization live in internal/ui; config only owns the
-// serializable preference shape.
+// TUILayoutPanePrefs is one persisted pane and the ordered views assigned to it.
+type TUILayoutPanePrefs struct {
+	ID    string   `json:"id,omitempty"`
+	Views []string `json:"views,omitempty"`
+}
+
+// TUILayoutNodePrefs is one persisted layout-tree node. Split nodes use Axis,
+// Ratio, First and Second; pane nodes use Pane.
+type TUILayoutNodePrefs struct {
+	Type   string             `json:"type,omitempty"`
+	Axis   string             `json:"axis,omitempty"`
+	Ratio  int                `json:"ratio,omitempty"`
+	First  *TUILayoutNodePrefs `json:"first,omitempty"`
+	Second *TUILayoutNodePrefs `json:"second,omitempty"`
+	Pane   *TUILayoutPanePrefs `json:"pane,omitempty"`
+}
+
+// TUILayoutPrefs is the persisted per-user TUI pane arrangement. Version 2
+// stores a split/pane tree. Axis/Order/Sizes are retained solely so version-1
+// state files continue to decode and can be migrated by internal/ui.
 type TUILayoutPrefs struct {
-	Version int            `json:"version,omitempty"`
-	Axis    string         `json:"axis,omitempty"`
-	Order   []string       `json:"order,omitempty"`
-	Sizes   map[string]int `json:"sizes,omitempty"`
+	Version int                `json:"version,omitempty"`
+	Root    *TUILayoutNodePrefs `json:"root,omitempty"`
+
+	// Version-1 compatibility fields.
+	Axis  string         `json:"axis,omitempty"`
+	Order []string       `json:"order,omitempty"`
+	Sizes map[string]int `json:"sizes,omitempty"`
 }
 
 // Prefs holds personal UI preferences that override the repo's .bonsai.yaml
