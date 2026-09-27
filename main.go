@@ -15,7 +15,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
-	serverruntime "github.com/Tiago-0liveira/bonsai/internal/server/runtime"
+	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
 )
 
@@ -152,14 +152,19 @@ func runServeInternal(args []string) error {
 	fs.SetOutput(os.Stderr)
 	repoDir := fs.String("repo", "", "repository root")
 	port := fs.Int("port", 0, "loopback listen port")
-	browserOrigin := fs.String("browser-origin", "", "authorized browser origin")
-	capabilityFile := fs.String("capability-file", "", "short-lived local capability file")
+	browserOrigin := fs.String("browser-origin", localapi.ProductionBrowserOrigin, "authorized browser origin")
+	development := fs.Bool("development", false, "allow the explicit loopback development origin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *repoDir == "" || *port <= 0 || *browserOrigin == "" || *capabilityFile == "" {
-		return fmt.Errorf("__serve-api requires --repo, --port, --browser-origin, and --capability-file")
+	if *repoDir == "" || *port <= 0 {
+		return fmt.Errorf("__serve-api requires --repo and --port")
 	}
 	address := fmt.Sprintf("127.0.0.1:%d", *port)
-	return serverruntime.RunAPI(*repoDir, address, *browserOrigin, *capabilityFile)
+	return localapi.Run(localapi.Config{
+		RepoDir: *repoDir,
+		Address: address,
+		BrowserOrigin: *browserOrigin,
+		Development: *development,
+	})
 }
