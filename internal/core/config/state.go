@@ -17,9 +17,9 @@ type TUILayoutPanePrefs struct {
 // TUILayoutNodePrefs is one persisted layout-tree node. Split nodes use Axis,
 // Ratio, First and Second; pane nodes use Pane.
 type TUILayoutNodePrefs struct {
-	Type   string             `json:"type,omitempty"`
-	Axis   string             `json:"axis,omitempty"`
-	Ratio  int                `json:"ratio,omitempty"`
+	Type   string              `json:"type,omitempty"`
+	Axis   string              `json:"axis,omitempty"`
+	Ratio  int                 `json:"ratio,omitempty"`
 	First  *TUILayoutNodePrefs `json:"first,omitempty"`
 	Second *TUILayoutNodePrefs `json:"second,omitempty"`
 	Pane   *TUILayoutPanePrefs `json:"pane,omitempty"`
@@ -29,7 +29,7 @@ type TUILayoutNodePrefs struct {
 // stores a split/pane tree. Axis/Order/Sizes are retained solely so version-1
 // state files continue to decode and can be migrated by internal/ui.
 type TUILayoutPrefs struct {
-	Version int                `json:"version,omitempty"`
+	Version int                 `json:"version,omitempty"`
 	Root    *TUILayoutNodePrefs `json:"root,omitempty"`
 
 	// Version-1 compatibility fields.
