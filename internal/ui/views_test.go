@@ -65,6 +65,10 @@ func TestShiftTabCyclesViewsOnlyInsideFocusedPane(t *testing.T) {
 
 func TestActivateViewFocusesOwningPane(t *testing.T) {
 	m := renderModel()
+	m.list = worktreelist.New()
+	m.list.SetItems([]worktreelist.Item{{
+		WT: git.Worktree{Path: "/w/feat", Branch: "feat"},
+	}})
 	m.dynamicLayout = threePaneTestLayout()
 	m.paneActive = map[paneID]viewID{}
 	m.initPaneRuntime()
@@ -104,11 +108,8 @@ func TestUnavailableActiveViewFallsForwardWithoutChangingLayout(t *testing.T) {
 		t.Fatalf("unavailable PR fell to %q, want processes", got)
 	}
 	after := m.dynamicLayout.persisted()
-	if !persistedTreeEqual(before.Root, after.Root) {
+	if !persistedLayoutEqual(before.Root, after.Root) {
 		t.Fatal("runtime availability fallback mutated persisted layout membership")
 	}
 }
 
-func persistedTreeEqual(a, b interface{ GetType() string }) bool {
-	return false
-}
