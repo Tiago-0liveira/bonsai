@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { mockLocalEventSocket } from './mockGit'
 
 test('landing page is public and never probes localhost or relay realtime', async ({ page }) => {
   const privilegedRequests: string[] = []
@@ -15,6 +16,7 @@ test('landing page is public and never probes localhost or relay realtime', asyn
 })
 
 test('application waits for an explicit local connection and remains usable without relay auth', async ({ page }) => {
+  await mockLocalEventSocket(page)
   let healthCalls = 0
   let sessionCalls = 0
   await page.route('http://127.0.0.1:7001/**', async route => {
@@ -39,6 +41,7 @@ test('application waits for an explicit local connection and remains usable with
 })
 
 test('reload requires a fresh local capability', async ({ page }) => {
+  await mockLocalEventSocket(page)
   let sessions = 0
   await page.route('http://127.0.0.1:7001/**', async route => {
     const path = new URL(route.request().url()).pathname
