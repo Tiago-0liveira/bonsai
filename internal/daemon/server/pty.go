@@ -80,11 +80,11 @@ func newPTYHub(session corepty.Session, cols, rows int, startSeq uint64) *ptyHub
 		startSeq = 1
 	}
 	return &ptyHub{
-		session:   session,
-		cols:      cols,
-		rows:      rows,
-		nextSeq:   startSeq,
-		subs:      make(map[uint64]*ptySubscriber),
+		session:        session,
+		cols:           cols,
+		rows:           rows,
+		nextSeq:        startSeq,
+		subs:           make(map[uint64]*ptySubscriber),
 		replayCap:      ptyReplayBytes,
 		replayEventCap: ptyReplayEvents,
 		subQueue:       ptySubscriberQueue,
