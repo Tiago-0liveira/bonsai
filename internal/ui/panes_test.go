@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -109,6 +110,28 @@ func TestDynamicLayoutRejectsMalformedTrees(t *testing.T) {
 			p.Root.Second.Pane.Views[0] = "unknown"
 		}},
 		{"future version", func(p *config.TUILayoutPrefs) { p.Version = 99 }},
+		{"excessive depth", func(p *config.TUILayoutPrefs) {
+			leaf := &config.TUILayoutNodePrefs{
+				Type: "pane",
+				Pane: &config.TUILayoutPanePrefs{ID: "deep-worktrees", Views: []string{"worktrees"}},
+			}
+			for i := 0; i < maxLayoutDepth+2; i++ {
+				leaf = &config.TUILayoutNodePrefs{
+					Type:  "split",
+					Axis:  "horizontal",
+					Ratio: 50,
+					First: leaf,
+					Second: &config.TUILayoutNodePrefs{
+						Type: "pane",
+						Pane: &config.TUILayoutPanePrefs{
+							ID:    fmt.Sprintf("extra-%d", i),
+							Views: []string{"log"},
+						},
+					},
+				}
+			}
+			p.Root = leaf
+		}},
 	}
 
 	for _, tt := range tests {
