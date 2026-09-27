@@ -9,7 +9,6 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 )
 
@@ -17,8 +16,7 @@ import (
 // selected worktree, enough for the footer to take several rows.
 func procModel() Model {
 	m := renderModel()
-	m.rightTab = tabProcs
-	m.term = terminal.New()
+	m.activateView(viewProcesses)
 	m.list = worktreelist.New()
 	m.list.SetItems([]worktreelist.Item{{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}}})
 	m.activeProc = map[string]int{}
@@ -38,6 +36,7 @@ func procModel() Model {
 func TestTermHeightLeavesRoomForProcFooter(t *testing.T) {
 	m := procModel()
 	_, _, innerH := m.dims()
+	m.activateView(viewProcesses)
 
 	footerH := len(strings.Split(m.renderProcFooter(), "\n"))
 	if footerH < 3 {
@@ -48,7 +47,7 @@ func TestTermHeightLeavesRoomForProcFooter(t *testing.T) {
 			got, want, innerH, footerH)
 	}
 
-	m.rightTab = tabLog
+	m.activateView(viewLog)
 	if got, want := m.termHeight(innerH), innerH-1; got != want {
 		t.Fatalf("termHeight on Git Log tab = %d, want %d", got, want)
 	}
@@ -57,17 +56,18 @@ func TestTermHeightLeavesRoomForProcFooter(t *testing.T) {
 func TestLayoutSizesTermForActiveTab(t *testing.T) {
 	m := procModel()
 	_, _, innerH := m.dims()
+	m.activateView(viewProcesses)
 	m.layout()
-	procH := m.term.Height()
+	procH := m.viewTerm(viewProcesses).Height()
 
-	m.rightTab = tabLog
+	m.activateView(viewLog)
 	m.layout()
-	if m.term.Height() <= procH {
-		t.Fatalf("leaving the Processes tab should give the footer's rows back: %d -> %d",
-			procH, m.term.Height())
+	logH := m.viewTerm(viewLog).Height()
+	if logH <= procH {
+		t.Fatalf("leaving the Processes view should give the footer's rows back: %d -> %d", procH, logH)
 	}
-	if m.term.Height() != innerH-1 {
-		t.Fatalf("Git Log viewport height = %d, want %d", m.term.Height(), innerH-1)
+	if logH != innerH-1 {
+		t.Fatalf("Git Log viewport height = %d, want %d", logH, innerH-1)
 	}
 }
 
@@ -120,8 +120,8 @@ func TestMouseWheelScrollsLogNotSelection(t *testing.T) {
 	m := procModel()
 	m.activeProc["/w/feat"] = 2
 	m.layout()
-	m.term.SetContent(strings.Repeat("a line of output\n", 200))
-	m.term.GotoTop()
+	m.viewTerm(viewProcesses).SetContent(strings.Repeat("a line of output\n", 200))
+	m.viewTerm(viewProcesses).GotoTop()
 
 	leftW, _, _ := m.dims()
 	wheel := tea.MouseMsg{
@@ -143,8 +143,8 @@ func TestMouseWheelScrollsLogNotSelection(t *testing.T) {
 func TestMouseWheelOverListLeavesLogAlone(t *testing.T) {
 	m := procModel()
 	m.layout()
-	m.term.SetContent(strings.Repeat("a line of output\n", 200))
-	m.term.GotoTop()
+	m.viewTerm(viewProcesses).SetContent(strings.Repeat("a line of output\n", 200))
+	m.viewTerm(viewProcesses).GotoTop()
 
 	wheel := tea.MouseMsg{X: 1, Y: 3, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
 	nm, _ := m.onMouse(wheel)
@@ -157,8 +157,8 @@ func TestMouseOffIgnoresWheel(t *testing.T) {
 	m := procModel()
 	m.mouseOff = true
 	m.layout()
-	m.term.SetContent(strings.Repeat("a line of output\n", 200))
-	m.term.GotoTop()
+	m.viewTerm(viewProcesses).SetContent(strings.Repeat("a line of output\n", 200))
+	m.viewTerm(viewProcesses).GotoTop()
 
 	leftW, _, _ := m.dims()
 	wheel := tea.MouseMsg{X: leftW + 5, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
