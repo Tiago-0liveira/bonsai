@@ -202,39 +202,95 @@ func TestActiveTabAlwaysVisibleInConstrainedTabStrip(t *testing.T) {
 	}
 }
 
-func TestViewHeightNeverExceedsTerminalHeight(t *testing.T) {
-	termSizes := [][2]int{
-		{80, 24},  // standard CMD / terminal
-		{100, 40}, // standard wide
-		{60, 20},  // compact
-		{120, 30}, // wide
-		{40, 15},  // very small
+func TestDefaultLayoutGeometryMatchesLegacy(t *testing.T) {
+	m := renderModel()
+	m.width, m.height = 100, 40
+	m.paneLayout = defaultLayoutSpec()
+	got := m.resolvedPaneLayout()
+
+	if got.Axis != axisHorizontal {
+		t.Fatalf("default axis = %v, want horizontal", got.Axis)
 	}
+	if got.Order != [2]paneID{paneWorktrees, paneWorkspace} {
+		t.Fatalf("default order = %v", got.Order)
+	}
+	if got.Worktrees.W != 35 || got.Workspace.W != 65 {
+		t.Fatalf("default widths = %d/%d, want 35/65", got.Worktrees.W, got.Workspace.W)
+	}
+	if got.Worktrees.X != 0 || got.Workspace.X != 35 {
+		t.Fatalf("default positions = worktrees x=%d workspace x=%d", got.Worktrees.X, got.Workspace.X)
+	}
+}
+
+func TestViewNeverExceedsTerminalAcrossLayouts(t *testing.T) {
+	termSizes := [][2]int{
+		{80, 24},
+		{100, 40},
+		{60, 20},
+		{120, 30},
+		{40, 15},
+	}
+	layouts := []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 35},
+	}
+	tabs := []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR}
 
 	for _, sz := range termSizes {
 		w, h := sz[0], sz[1]
+		for _, layout := range layouts {
+			for _, tab := range tabs {
+				m := renderModel()
+				m.width, m.height = w, h
+				m.paneLayout = layout
+				m.list = worktreelist.New()
+				m.list.SetItems([]worktreelist.Item{
+					{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
+				})
+				m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
+				m.rightTab = tab
+				m.ready = true
+				m.layout()
+
+				view := m.View()
+				actualH := lipgloss.Height(view)
+				actualW := lipgloss.Width(view)
+				if actualH > h {
+					t.Fatalf("View() size %dx%d layout=%+v tab=%v height=%d exceeds %d:\n%s",
+						w, h, layout, tab, actualH, h, view)
+				}
+				if actualH != h {
+					t.Fatalf("View() size %dx%d layout=%+v tab=%v height=%d, want exactly %d",
+						w, h, layout, tab, actualH, h)
+				}
+				if actualW > w {
+					t.Fatalf("View() size %dx%d layout=%+v tab=%v width=%d exceeds %d:\n%s",
+						w, h, layout, tab, actualW, w, view)
+				}
+			}
+		}
+	}
+}
+
+func TestWorkspaceViewportUsesResolvedPaneHeight(t *testing.T) {
+	for _, layout := range []layoutSpec{
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisHorizontal, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 65},
+		{Axis: axisVertical, Order: [2]paneID{paneWorktrees, paneWorkspace}, WorktreesPercent: 35},
+		{Axis: axisVertical, Order: [2]paneID{paneWorkspace, paneWorktrees}, WorktreesPercent: 65},
+	} {
 		m := renderModel()
-		m.width, m.height = w, h
-		m.list = worktreelist.New()
-		m.list.SetItems([]worktreelist.Item{
-			{WT: git.Worktree{Path: "/w/feat", Branch: "feat"}, PR: 12},
-		})
-		m.prByBranch = map[string]gh.PR{"feat": {Number: 12}}
-		m.ready = true
+		m.width, m.height = 100, 40
+		m.paneLayout = layout
+		m.rightTab = tabLog
 		m.layout()
 
-		for _, tab := range []rightTab{tabLog, tabProcs, tabInspect, tabDiff, tabChecks, tabPR} {
-			m.rightTab = tab
-			view := m.View()
-			actualH := lipgloss.Height(view)
-			if actualH > h {
-				t.Fatalf("View() at size %dx%d with tab %v produced height %d (exceeds %d):\n%s",
-					w, h, tab, actualH, h, view)
-			}
-			if actualH != h {
-				t.Fatalf("View() at size %dx%d with tab %v produced height %d (expected exactly %d)",
-					w, h, tab, actualH, h)
-			}
+		resolved := m.resolvedPaneLayout()
+		workspaceInnerH := max(resolved.Workspace.H-2, 1)
+		if got, want := m.termHeight(workspaceInnerH), max(workspaceInnerH-1, 1); got != want {
+			t.Fatalf("layout=%+v termHeight=%d want %d", layout, got, want)
 		}
 	}
 }
