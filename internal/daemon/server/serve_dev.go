@@ -151,13 +151,8 @@ func (s *Server) serveStartDevStack(spec *procstore.ServeSpec) (*procstore.Serve
 	}
 
 	corePolicy := procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 3}
-	if err := start("api", spec.Executable, []string{
-		"__serve-api",
-		"--repo", spec.WorkspacePath,
-		"--port", strconv.Itoa(spec.APIPort),
-		"--browser-origin", spec.BrowserOrigin,
-		"--security-mode", "development",
-	}, spec.WorkspacePath, nil, spec.APIPort, true, corePolicy); err != nil {
+	if err := start("api", spec.Executable, serveAPIArgs(s.root, *spec, "development"),
+		spec.WorkspacePath, nil, spec.APIPort, true, corePolicy); err != nil {
 		s.cleanupFailedServe(rt)
 		return nil, err
 	}
