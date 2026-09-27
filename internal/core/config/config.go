@@ -300,7 +300,6 @@ func (c *Config) CreateHooks() []string { return c.Hooks.OnWorktreeCreate }
 // DeleteHooks returns the commands to run before a worktree is deleted.
 func (c *Config) DeleteHooks() []string { return c.Hooks.OnWorktreeDelete }
 
-
 // restoreServeEnvironmentCase reparses only sidecar environment maps from YAML.
 // Viper intentionally normalizes configuration keys to lowercase, which is
 // correct for Bonsai config keys but would silently change case-sensitive
