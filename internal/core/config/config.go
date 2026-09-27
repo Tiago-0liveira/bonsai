@@ -105,8 +105,9 @@ type ServeConfig struct {
 	WebhookPort    int            `mapstructure:"webhook_port"`
 	WebPort        int            `mapstructure:"web_port"`
 	ServerConfig   string         `mapstructure:"server_config"`
-	StartupTimeout int            `mapstructure:"startup_timeout_seconds"`
-	Sidecars       []ServeSidecar `mapstructure:"sidecars"`
+	StartupTimeout  int            `mapstructure:"startup_timeout_seconds"`
+	ShutdownTimeout int            `mapstructure:"shutdown_timeout_seconds"`
+	Sidecars        []ServeSidecar `mapstructure:"sidecars"`
 }
 
 // Config is the parsed .bonsai.yaml.
@@ -224,6 +225,7 @@ func Load(dir string) (*Config, error) {
 	v.SetDefault("serve.webhook_port", 7002)
 	v.SetDefault("serve.web_port", 7003)
 	v.SetDefault("serve.startup_timeout_seconds", 30)
+	v.SetDefault("serve.shutdown_timeout_seconds", 5)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, notFound := err.(viper.ConfigFileNotFoundError); !notFound {
@@ -276,6 +278,7 @@ func LoadFile(path string) (*Config, error) {
 	v.SetDefault("serve.webhook_port", 7002)
 	v.SetDefault("serve.web_port", 7003)
 	v.SetDefault("serve.startup_timeout_seconds", 30)
+	v.SetDefault("serve.shutdown_timeout_seconds", 5)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)

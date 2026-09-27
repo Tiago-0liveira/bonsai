@@ -130,6 +130,7 @@ serve:
   web_port: 7003
   server_config: ""
   startup_timeout_seconds: 30
+  shutdown_timeout_seconds: 5
   sidecars: []
     # - name: tunnel
     #   command: ["cloudflared", "tunnel", "--url", "http://127.0.0.1:7002"]

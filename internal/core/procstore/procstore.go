@@ -122,8 +122,9 @@ type ServeSpec struct {
 	APIPort               int            `json:"api_port"`
 	WebhookPort           int            `json:"webhook_port"`
 	WebPort               int            `json:"web_port"`
-	StartupTimeoutSeconds int            `json:"startup_timeout_seconds,omitempty"`
-	Sidecars              []ServeSidecar `json:"sidecars,omitempty"`
+	StartupTimeoutSeconds  int            `json:"startup_timeout_seconds,omitempty"`
+	ShutdownTimeoutSeconds int            `json:"shutdown_timeout_seconds,omitempty"`
+	Sidecars               []ServeSidecar `json:"sidecars,omitempty"`
 }
 
 // ServeProcess is the public status view for one process in a ServeGroup.

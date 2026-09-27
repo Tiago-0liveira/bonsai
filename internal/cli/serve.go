@@ -196,8 +196,9 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 		APIPort:               *apiPort,
 		WebhookPort:           *webhookPort,
 		WebPort:               *webPort,
-		StartupTimeoutSeconds: cfg.Serve.StartupTimeout,
-		Sidecars:              sidecars,
+		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
+		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
+		Sidecars:               sidecars,
 	}
 	group, err := c.ServeStart(spec)
 	if err != nil {

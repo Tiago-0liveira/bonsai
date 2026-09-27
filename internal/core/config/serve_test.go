@@ -18,6 +18,9 @@ func TestServeDefaultsAndSidecarConfig(t *testing.T) {
 	if cfg.Serve.StartupTimeout != 30 {
 		t.Fatalf("serve startup timeout = %d, want 30", cfg.Serve.StartupTimeout)
 	}
+	if cfg.Serve.ShutdownTimeout != 5 {
+		t.Fatalf("serve shutdown timeout = %d, want 5", cfg.Serve.ShutdownTimeout)
+	}
 
 	data := []byte(`serve:
   api_port: 7101

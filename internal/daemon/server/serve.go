@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	serveDefaultStartupTimeout = 30 * time.Second
-	serveSidecarGrace          = 600 * time.Millisecond
-	serveStopGrace             = 2 * time.Second
+	serveDefaultStartupTimeout  = 30 * time.Second
+	serveDefaultShutdownTimeout = 5 * time.Second
+	serveSidecarGrace           = 600 * time.Millisecond
 )
 
 type serveRuntime struct {
@@ -478,6 +478,13 @@ func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 	return group
 }
 
+func serveShutdownGrace(spec procstore.ServeSpec) time.Duration {
+	if spec.ShutdownTimeoutSeconds > 0 {
+		return time.Duration(spec.ShutdownTimeoutSeconds) * time.Second
+	}
+	return serveDefaultShutdownTimeout
+}
+
 func (s *Server) cleanupFailedServe(rt *serveRuntime) { _ = s.stopServeRuntime(rt) }
 
 func (s *Server) serveStop(id string) error {
@@ -507,6 +514,7 @@ func (s *Server) stopServeRuntime(rt *serveRuntime) error {
 		}
 		return names[i] < names[j]
 	})
+	grace := serveShutdownGrace(rt.Spec)
 	var errs []string
 	for _, name := range names {
 		id := rt.ProcessIDs[name]
@@ -516,7 +524,7 @@ func (s *Server) stopServeRuntime(rt *serveRuntime) error {
 		if mp == nil {
 			continue
 		}
-		if err := s.stopServeProcess(mp); err != nil {
+		if err := s.stopServeProcess(mp, grace); err != nil {
 			errs = append(errs, name+": "+err.Error())
 		}
 	}
@@ -533,7 +541,7 @@ func (s *Server) stopServeRuntime(rt *serveRuntime) error {
 	return nil
 }
 
-func (s *Server) stopServeProcess(mp *managedProc) error {
+func (s *Server) stopServeProcess(mp *managedProc, grace time.Duration) error {
 	mp.mu.Lock()
 	status := mp.rec.Status
 	if procstore.IsTerminal(status) {
@@ -553,7 +561,7 @@ func (s *Server) stopServeProcess(mp *managedProc) error {
 	mp.mu.Unlock()
 
 	if cmd != nil {
-		coreexec.TerminateProcessTree(cmd, serveStopGrace)
+		coreexec.TerminateProcessTree(cmd, grace)
 	} else if pid > 0 {
 		coreexec.KillPID(pid)
 	}
@@ -561,7 +569,7 @@ func (s *Server) stopServeProcess(mp *managedProc) error {
 		select {
 		case <-done:
 			return nil
-		case <-time.After(serveStopGrace + time.Second):
+		case <-time.After(grace + time.Second):
 			if pid > 0 {
 				coreexec.KillPID(pid)
 			}
