@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
+	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
@@ -43,6 +46,9 @@ type Server struct {
 	development   bool
 	registry      projectRegistry
 	sessions      *sessionStore
+	state         *gitstore.Store
+	events        *eventHub
+	sequence      atomic.Uint64
 }
 
 func New(cfg Config) (*Server, error) {
@@ -55,6 +61,10 @@ func New(cfg Config) (*Server, error) {
 	if err := validateBrowserOrigin(cfg.BrowserOrigin, cfg.Development); err != nil {
 		return nil, err
 	}
+	state, err := gitstore.Open(filepath.Join(procstore.New(cfg.RepoDir).Dir(), "local-api-state.json"))
+	if err != nil {
+		return nil, fmt.Errorf("open local API state: %w", err)
+	}
 	return &Server{
 		repoDir:       cfg.RepoDir,
 		expectedHost:  cfg.Address,
@@ -62,6 +72,8 @@ func New(cfg Config) (*Server, error) {
 		development:   cfg.Development,
 		registry:      newStaticProjectRegistry(cfg.RepoDir),
 		sessions:      newSessionStore(),
+		state:         state,
+		events:        newEventHub(),
 	}, nil
 }
 
