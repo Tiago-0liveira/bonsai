@@ -120,15 +120,9 @@ type ServeSpec struct {
 	Executable             string `json:"executable"`
 	APIPort                int    `json:"api_port"`
 	BrowserOrigin          string `json:"browser_origin"`
+	Development            bool   `json:"development,omitempty"`
 	StartupTimeoutSeconds  int    `json:"startup_timeout_seconds,omitempty"`
 	ShutdownTimeoutSeconds int    `json:"shutdown_timeout_seconds,omitempty"`
-
-	// Deprecated Plan 1 compatibility fields. The daemon no longer starts the
-	// webhook listener, Vite server, server-config stack, or serve sidecars.
-	ServerConfig string         `json:"server_config,omitempty"`
-	WebhookPort  int            `json:"webhook_port,omitempty"`
-	WebPort      int            `json:"web_port,omitempty"`
-	Sidecars     []ServeSidecar `json:"sidecars,omitempty"`
 }
 
 // ServeProcess is the public status view for one process in a ServeGroup.
@@ -147,21 +141,15 @@ type ServeProcess struct {
 
 // ServeGroup is the daemon-owned status snapshot for one workspace stack.
 type ServeGroup struct {
-	ID                  string         `json:"id"`
-	WorkspaceID         string         `json:"workspace_id"`
-	WorkspacePath       string         `json:"workspace_path"`
-	State               string         `json:"state"`
-	StartedAt           time.Time      `json:"started_at"`
-	APIPort             int            `json:"api_port"`
-	BrowserOrigin       string         `json:"browser_origin,omitempty"`
-	CapabilityToken     string         `json:"capability_token,omitempty"`
-	CapabilityExpiresAt time.Time      `json:"capability_expires_at,omitempty"`
-	Reused              bool           `json:"reused,omitempty"`
-	Processes           []ServeProcess `json:"processes"`
-
-	// Deprecated compatibility fields. They remain zero after Plan 1.
-	WebhookPort int `json:"webhook_port,omitempty"`
-	WebPort     int `json:"web_port,omitempty"`
+	ID            string         `json:"id"`
+	WorkspaceID   string         `json:"workspace_id"`
+	WorkspacePath string         `json:"workspace_path"`
+	State         string         `json:"state"`
+	StartedAt     time.Time      `json:"started_at"`
+	APIPort       int            `json:"api_port"`
+	BrowserOrigin string         `json:"browser_origin,omitempty"`
+	Reused        bool           `json:"reused,omitempty"`
+	Processes     []ServeProcess `json:"processes"`
 }
 
 // Store is the on-disk state for a single repo, rooted at its main worktree.
