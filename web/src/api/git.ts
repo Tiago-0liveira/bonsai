@@ -4,9 +4,10 @@ import { invalidateLocalSession, localFetch, openLocalEvents } from './local'
 
 export interface Branch { name: string; remote: boolean; local_head_sha?: string; local_remote_ref_sha?: string; remote_head_sha?: string }
 interface Repository { id: string; workspace_id: string; full_name: string; default_branch: string }
+interface GitHubRepository { id: number; full_name: string; default_branch: string; private?: boolean }
 interface RemotePR { number: number; title: string; body: string; state: string; draft: boolean; head: string; base: string; head_sha: string; author: string; created_at: string; updated_at: string; mergeable?: string; comments?: { author: string; body: string; created_at: string }[]; reviews?: { author: string; body: string; submitted_at: string }[]; commits?: { sha: string; message: string; author: string; created_at: string }[]; files?: { path: string; additions: number; deletions: number; patch: string }[] }
 interface LocalWorktree { id: string; repository_id: string; branch: string; main: boolean; local_head_sha: string; status?: { ahead: number; behind: number; staged: number; modified: number; untracked: number; files: unknown[]; git_state: string; dirty: boolean; last_commit?: { when: string; subject: string; sha: string } } }
-export interface Snapshot { repository: Repository; online: boolean; sequence: number; local?: { branches: Branch[]; worktrees: LocalWorktree[] }; remote?: { repository: Repository; branches: { name: string; remote_head_sha: string }[]; pull_requests: RemotePR[] }; metadata: Record<string, { tag: string; merge_target_branch: string; stack_preference: 'auto' | 'never' }> }
+export interface Snapshot { repository: Repository; online: boolean; sequence: number; local?: { branches: Branch[]; worktrees: LocalWorktree[] }; remote?: { repository: GitHubRepository; branches: { name: string; remote_head_sha: string }[]; pull_requests: RemotePR[] }; metadata: Record<string, { tag: string; merge_target_branch: string; stack_preference: 'auto' | 'never' }> }
 export class APIError extends Error { constructor(public code: string, message: string) { super(message) } }
 export async function request<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await localFetch(path, { method, headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method !== 'GET' ? { 'Idempotency-Key': crypto.randomUUID() } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -22,8 +23,11 @@ function pullRequest(repo: string, p: RemotePR): PullRequest {
   return { id: `${repo}:${p.number}`, number: p.number, title: p.title, description: p.body ?? '', branch: p.head, base: p.base, status: p.state === 'merged' ? 'Merged' : p.state === 'closed' ? 'Closed' : p.draft ? 'Draft' : 'Open', author: p.author, createdAt: p.created_at, updatedAt: p.updated_at, mergeable: p.mergeable === 'mergeable', checks: [], commits: (p.commits ?? []).map(c => ({ sha: c.sha, message: c.message, author: c.author, time: c.created_at })), conversation: [...(p.comments ?? []).map(c => ({ author: c.author, body: c.body, time: c.created_at, kind: 'comment' as const })), ...(p.reviews ?? []).map(c => ({ author: c.author, body: c.body, time: c.submitted_at, kind: 'review' as const }))], files: (p.files ?? []).map(f => ({ path: f.path, additions: f.additions, deletions: f.deletions, diff: (f.patch ?? '').split('\n') })) }
 }
 const heads = new Map<string, string>()
+const githubRepositoryProjects = new Map<number, string>()
+export function projectForGitHubRepository(repositoryId: number) { return githubRepositoryProjects.get(repositoryId) }
 export function applySnapshot(snapshot: Snapshot) {
   const state = useBonsaiStore.getState(), id = snapshot.repository.id
+  if (snapshot.remote?.repository.id) githubRepositoryProjects.set(snapshot.remote.repository.id, id)
   const remote = snapshot.remote?.pull_requests ?? []
   const prs = remote.map(p => { const mapped = pullRequest(id, p); heads.set(mapped.id, p.head_sha); const previous = state.pullRequests.find(v => v.id === mapped.id); return previous?.updatedAt === mapped.updatedAt ? { ...previous, status: mapped.status } : mapped })
   const trees: Worktree[] = (snapshot.local?.worktrees ?? []).map(w => {
