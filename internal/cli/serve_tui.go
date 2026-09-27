@@ -347,7 +347,7 @@ func serveStateLabel(state string) string {
 	switch state {
 	case "ready", "running":
 		return "● " + state
-	case "starting", procstore.StatusStarting, procstore.StatusBackoff:
+	case procstore.StatusStarting, procstore.StatusBackoff:
 		return "◐ " + state
 	default:
 		return "○ " + state
