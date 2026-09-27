@@ -52,6 +52,46 @@ func (s *Server) serveStatePath(id string) string {
 	return filepath.Join(s.serveDir(), safeServeID(id)+".json")
 }
 
+func (s *Server) writeServeRuntime(rt *serveRuntime) error {
+	if err := os.MkdirAll(s.serveDir(), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(rt, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := s.serveStatePath(rt.Spec.WorkspaceID)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func (s *Server) loadServeGroups() {
+	entries, err := os.ReadDir(s.serveDir())
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.serveDir(), entry.Name()))
+		if err != nil {
+			continue
+		}
+		var rt serveRuntime
+		if json.Unmarshal(data, &rt) != nil || rt.Spec.WorkspaceID == "" {
+			continue
+		}
+		if rt.ProcessIDs == nil {
+			rt.ProcessIDs = map[string]int{}
+		}
+		s.serveGroups[rt.Spec.WorkspaceID] = &rt
+	}
+}
+
 func (s *Server) removeServeArtifacts(id string) {
 	_ = os.Remove(s.serveStatePath(id))
 }
