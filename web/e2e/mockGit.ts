@@ -187,10 +187,20 @@ export async function mockGitBackend(page: Page) {
     'wt-review': { tag: 'review-code', merge_target_branch: 'chore/release-automation', stack_preference: 'auto' },
   }
 
-  await page.route('**/api/**', async (route) => {
+  await page.route('http://127.0.0.1:7001/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname
+
+    if (path === '/health') {
+      await route.fulfill({ json: { ok: true } })
+      return
+    }
+
+    if (path === '/version') {
+      await route.fulfill({ json: { version: 'e2e', api_version: 1 } })
+      return
+    }
 
     if (path === '/api/session') {
       await route.fulfill({ status: 201, json: { token: 'e2e-session', expires_at: new Date(Date.now() + 60_000).toISOString() } })
@@ -244,4 +254,14 @@ export async function mockGitBackend(page: Page) {
 
     await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Not Found' } } })
   })
+
+  await page.route('https://api.bonsai.dev/**', async (route) => {
+    await route.fulfill({ status: 401, body: 'authentication required' })
+  })
+}
+
+export async function openConnectedApp(page: Page) {
+  await page.goto('/app')
+  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+  await page.locator('.react-flow').waitFor({ state: 'visible' })
 }
