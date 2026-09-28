@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -23,6 +24,16 @@ type Config struct {
 	GitHubClientSecret string
 	WebhookSecret      string
 	HTTPClient         *http.Client
+}
+
+func normalizeHTTPSOrigin(name, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("%s must be an explicit HTTPS origin", name)
+	}
+	return "https://" + u.Host, nil
 }
 
 type Server struct {
@@ -44,15 +55,17 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.ExternalURL == "" {
 		cfg.ExternalURL = ProductionExternalURL
 	}
-	cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
-	if !strings.HasPrefix(cfg.ExternalURL, "https://") {
-		return nil, errors.New("relay external URL must use HTTPS")
+	var err error
+	cfg.ExternalURL, err = normalizeHTTPSOrigin("relay external URL", cfg.ExternalURL)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.FrontendOrigin == "" {
 		cfg.FrontendOrigin = ProductionFrontendOrigin
 	}
-	if cfg.FrontendOrigin != ProductionFrontendOrigin {
-		return nil, fmt.Errorf("relay frontend origin must be exactly %s", ProductionFrontendOrigin)
+	cfg.FrontendOrigin, err = normalizeHTTPSOrigin("relay frontend origin", cfg.FrontendOrigin)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" || cfg.WebhookSecret == "" {
 		return nil, errors.New("GitHub OAuth credentials and webhook secret are required")
