@@ -16,9 +16,10 @@ import (
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	s, err := New(Config{
-		RepoDir:       t.TempDir(),
-		Address:       "127.0.0.1:7001",
-		BrowserOrigin: ProductionBrowserOrigin,
+		RepoDir:          t.TempDir(),
+		ProjectRootsPath: t.TempDir() + "/project-roots.json",
+		Address:          "127.0.0.1:7001",
+		BrowserOrigin:    ProductionBrowserOrigin,
 	})
 	if err != nil {
 		t.Fatal(err)

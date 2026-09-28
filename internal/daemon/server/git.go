@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"path/filepath"
 	"time"
 
@@ -19,9 +20,15 @@ const localRepositoryID = "local"
 func (s *Server) initGit() error {
 	s.gitOnce.Do(func() {
 		svc, err := local.New([]local.Config{{
-			ID:           localRepositoryID,
-			Root:         s.root,
-			WorktreeRoot: filepath.Join(s.store.Dir(), "worktrees"),
+			ID:   localRepositoryID,
+			Root: s.root,
+			WithWorktreeRoot: func(ctx context.Context, create func(string) error) error {
+				path, err := config.ProjectRootsPath()
+				if err != nil {
+					return err
+				}
+				return config.WithBrowserWorktreeRoot(ctx, path, s.root, create)
+			},
 		}})
 		if err != nil {
 			s.gitErr = err

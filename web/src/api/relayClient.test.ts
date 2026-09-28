@@ -5,7 +5,7 @@ vi.mock('../stores/bonsai', () => ({
 }))
 
 vi.mock('./git', () => ({
-  projectForGitHubRepository: vi.fn((id: number) => id === 123 ? 'bonsai' : undefined),
+  projectForGitHubRepository: vi.fn((id: number) => id === 123 ? ['bonsai'] : []),
   refreshProject: vi.fn().mockResolvedValue(undefined),
   report: vi.fn(),
 }))

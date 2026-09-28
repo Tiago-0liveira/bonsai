@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
@@ -14,12 +13,7 @@ import (
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
-type browserRepository struct {
-	ID            string `json:"id"`
-	WorkspaceID   string `json:"workspace_id"`
-	FullName      string `json:"full_name"`
-	DefaultBranch string `json:"default_branch"`
-}
+type browserRepository = ProjectInfo
 
 type browserRemoteSnapshot struct {
 	Repository   githubdomain.RemoteRepository `json:"repository"`
@@ -63,16 +57,16 @@ func (s *Server) readLocalRepository() (domain.RepositoryState, error) {
 	if err := json.Unmarshal(result.Payload, &state); err != nil {
 		return domain.RepositoryState{}, fmt.Errorf("decode local repository state: %w", err)
 	}
+	state.ID = s.registry.Default().info.ID
+	for i := range state.Worktrees {
+		state.Worktrees[i].RepositoryID = state.ID
+	}
 	return state, nil
 }
 
 func (s *Server) projectDescriptor(ctx context.Context, local domain.RepositoryState) browserRepository {
-	out := browserRepository{
-		ID:            localRepositoryID,
-		WorkspaceID:   localRepositoryID,
-		FullName:      filepath.Base(s.repoDir),
-		DefaultBranch: local.DefaultBranch,
-	}
+	out := s.registry.Default().info
+	out.DefaultBranch = local.DefaultBranch
 	if discovered, err := ghcli.Discover(ctx, s.repoDir); err == nil {
 		out.FullName = discovered.FullName
 		if out.DefaultBranch == "" {
@@ -87,13 +81,17 @@ func (s *Server) browserSnapshot(ctx context.Context) (browserSnapshot, error) {
 	if err != nil {
 		return browserSnapshot{}, err
 	}
+	metadata, err := s.metadataSnapshot()
+	if err != nil {
+		return browserSnapshot{}, fmt.Errorf("read project metadata: %w", err)
+	}
 	repository := s.projectDescriptor(ctx, local)
 	snapshot := browserSnapshot{
 		Repository: repository,
 		Local:      &local,
 		Online:     true,
 		Sequence:   s.sequence.Load(),
-		Metadata:   s.metadataSnapshot(),
+		Metadata:   metadata,
 	}
 	if validRepository(repository.FullName) {
 		remoteRepository, repoErr := s.registry.Default().github.Repository(ctx, repository.FullName)
@@ -111,26 +109,21 @@ func (s *Server) browserSnapshot(ctx context.Context) (browserSnapshot, error) {
 	return snapshot, nil
 }
 
-func (s *Server) metadataSnapshot() map[string]worktreeMetadata {
+func (s *Server) metadataSnapshot() (map[string]worktreeMetadata, error) {
 	out := map[string]worktreeMetadata{}
-	_ = s.state.View(func(data gitstore.Data) error {
+	err := s.state.View(func(data gitstore.Data) error {
 		for id := range data["worktree_metadata"] {
 			if value, ok := gitstore.Get[worktreeMetadata](data, "worktree_metadata", id); ok && value.RepositoryID == localRepositoryID {
+				value.RepositoryID = s.registry.Default().info.ID
 				out[id] = value
 			}
 		}
 		return nil
 	})
-	return out
-}
-
-func (s *Server) putMetadata(value worktreeMetadata) error {
-	return s.state.Update(func(data gitstore.Data) error {
-		return gitstore.Put(data, "worktree_metadata", value.WorktreeID, value)
-	})
+	return out, err
 }
 
 func (s *Server) publishProjectEvent(entity string) {
 	s.sequence.Add(1)
-	s.eventHub.publish(localEvent{Type: "git", ProjectID: localRepositoryID, EntityID: entity})
+	s.eventHub.publish(localEvent{Type: "git", ProjectID: s.registry.Default().info.ID, EntityID: entity})
 }

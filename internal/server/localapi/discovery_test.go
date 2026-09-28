@@ -1,0 +1,182 @@
+package localapi
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/git/local"
+)
+
+func gitFixture(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
+	}
+}
+func repoFixture(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	gitFixture(t, path, "init", "-b", "main")
+	gitFixture(t, path, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial")
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
+	root := t.TempDir()
+	a := repoFixture(t, filepath.Join(root, "team", "one"))
+	b := repoFixture(t, filepath.Join(root, "two"))
+	for _, repo := range []string{a, b} {
+		gitFixture(t, repo, "remote", "add", "origin", "https://github.com/example/same.git")
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	gitFixture(t, a, "worktree", "add", "-b", "linked", linked)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cfg, err := config.UpdateProjectRoots(path, "one", 0, root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = config.UpdateProjectRoots(path, "two", cfg.Revision, filepath.Join(root, "team"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newProjectRegistry(path, a)
+	if _, err = r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.List()) != 2 {
+		t.Fatal(r.List())
+	}
+	p, ok := r.Lookup(config.PathID("project", a))
+	if !ok || p.info.RootID != config.PathID("root", filepath.Dir(a)) {
+		t.Fatal(p.info)
+	}
+	if owner, ok := r.Worktree(context.Background(), local.ID("local", linked)); !ok || owner.info.ID != p.info.ID {
+		t.Fatal(owner.info, ok)
+	}
+	before := r.List()
+	if changed, err := r.Refresh(context.Background()); changed || err != nil {
+		t.Fatal(changed, err)
+	}
+	if r.List()[0].ID != before[0].ID {
+		t.Fatal("unstable IDs")
+	}
+	// A selected linked worktree can discover a main repository outside all roots.
+	linkedSettings := filepath.Join(t.TempDir(), "settings.json")
+	if _, err = config.UpdateProjectRoots(linkedSettings, "linked", 0, linked, ""); err != nil {
+		t.Fatal(err)
+	}
+	only := newProjectRegistry(linkedSettings, b)
+	if _, err = only.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(only.List()) != 1 || only.List()[0].Path != a {
+		t.Fatal(only.List())
+	}
+	if only.Default().daemon != nil {
+		t.Fatal("picked arbitrary default")
+	}
+}
+func TestDiscoveryLimitsMissingAndCancellation(t *testing.T) {
+	root := t.TempDir()
+	repoFixture(t, filepath.Join(root, "a", "b", "c", "d", "included"))
+	repoFixture(t, filepath.Join(root, "node_modules", "hidden"))
+	repoFixture(t, filepath.Join(root, "visible"))
+	gitFixture(t, root, "init", "--bare", "bare.git")
+	canonical, _ := config.CanonicalDirectory(root)
+	scan := scanRoot(context.Background(), config.ProjectRoot{ID: "root", Path: canonical})
+	if len(scan.repos) != 1 || !scan.diagnostic.Truncated || len(scan.diagnostic.Messages) < 2 {
+		t.Fatal(scan)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if out := scanRoot(ctx, config.ProjectRoot{Path: root}); out.complete {
+		t.Fatal("cancelled scan marked complete")
+	}
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cfg, err := config.UpdateProjectRoots(path, "add", 0, filepath.Join(root, "visible"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newProjectRegistry(path, filepath.Join(root, "visible"))
+	if _, err = r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(filepath.Join(root, "visible"), filepath.Join(root, "offline")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.List()) != 1 || r.List()[0].Available {
+		t.Fatal(r.List())
+	}
+	if _, err = config.UpdateProjectRoots(path, "remove", cfg.Revision, "", cfg.Roots[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.List()) != 0 {
+		t.Fatal(r.List())
+	}
+	if _, err = os.Stat(filepath.Join(root, "offline", ".git")); err != nil {
+		t.Fatal("root removal changed files", err)
+	}
+}
+func TestDiscoveryRootItselfAndNoSymlinkTraversal(t *testing.T) {
+	root := t.TempDir()
+	repo := repoFixture(t, filepath.Join(root, "repo"))
+	scan := scanRoot(context.Background(), config.ProjectRoot{Path: repo})
+	if len(scan.repos) != 1 {
+		t.Fatal(scan)
+	}
+	alias := filepath.Join(root, "cycle")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skip(err)
+	}
+	root, _ = config.CanonicalDirectory(root)
+	scan = scanRoot(context.Background(), config.ProjectRoot{Path: root})
+	if len(scan.repos) != 1 || scan.diagnostic.Truncated {
+		t.Fatal(scan)
+	}
+}
+
+func TestDiscoveryDiscardsChangedGeneration(t *testing.T) {
+	root := repoFixture(t, filepath.Join(t.TempDir(), "repo"))
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cfg, err := config.UpdateProjectRoots(path, "add", 0, root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newProjectRegistry(path, root)
+	started, release := make(chan struct{}), make(chan struct{})
+	r.scan = func(ctx context.Context, root config.ProjectRoot) rootScan {
+		close(started)
+		<-release
+		return scanRoot(ctx, root)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := r.Refresh(context.Background()); done <- err }()
+	<-started
+	if _, err = config.UpdateProjectRoots(path, "remove", cfg.Revision, "", cfg.Roots[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err = <-done; err == nil {
+		t.Fatal("published obsolete scan")
+	}
+	if len(r.List()) != 0 {
+		t.Fatal(r.List())
+	}
+}

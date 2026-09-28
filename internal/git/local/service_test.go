@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"errors"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	"os"
 	"os/exec"
@@ -144,5 +145,55 @@ func TestRemoteRefsStayLocal(t *testing.T) {
 		if b.RemoteHeadSHA != "" {
 			t.Fatal("invented GitHub state")
 		}
+	}
+}
+
+func TestDynamicWorktreePlacementAndSymlinkContainment(t *testing.T) {
+	_, repo, _ := setup(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cfg, err := config.UpdateProjectRoots(path, "add", 0, repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New([]Config{{ID: "local", Root: repo, WithWorktreeRoot: func(ctx context.Context, create func(string) error) error {
+		return config.WithBrowserWorktreeRoot(ctx, path, repo, create)
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(branch string) error {
+		_, err := svc.CreateWorktree(context.Background(), domain.CreateWorktreeRequest{RepositoryID: "local", Mode: "new", Branch: branch, Base: "main"})
+		return err
+	}
+	if err := create("one"); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".bonsai.yaml"), []byte("worktree:\n  root: "+filepath.ToSlash(outside)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := create("outside"); err == nil {
+		t.Fatal("allowed unconfigured destination")
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "escape")); err == nil {
+		if err := os.WriteFile(filepath.Join(repo, ".bonsai.yaml"), []byte("worktree:\n  root: escape/new-child\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := create("symlink"); err == nil {
+			t.Fatal("allowed symlink escape")
+		}
+		if _, err := os.Stat(filepath.Join(outside, "new-child")); !os.IsNotExist(err) {
+			t.Fatal("created escaped directory", err)
+		}
+	}
+	if _, err := config.UpdateProjectRoots(path, "remove", cfg.Revision, "", cfg.Roots[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := create("removed"); err == nil {
+		t.Fatal("used stale settings")
+	}
+	trees, err := svc.ListWorktrees(context.Background(), "local")
+	if err != nil || len(trees) != 2 {
+		t.Fatal(trees, err)
 	}
 }

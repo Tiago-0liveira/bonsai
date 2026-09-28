@@ -192,8 +192,9 @@ export async function mockLocalEventSocket(page: Page) {
   })
 }
 
-export async function mockGitBackend(page: Page) {
+export async function mockGitBackend(page: Page, emptyRoots = false) {
   await mockLocalEventSocket(page)
+  const rootSettings = { version: 1, revision: 0, roots: emptyRoots ? [] as { id: string; path: string }[] : [{ id: 'root-fixture', path: '/projects' }], diagnostics: [], suggestions: ['/projects'] }
   const metadata: Record<string, Metadata> = {
     'wt-main': { tag: 'production', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-web': { tag: 'feat', merge_target_branch: 'main', stack_preference: 'auto' },
@@ -214,7 +215,7 @@ export async function mockGitBackend(page: Page) {
     }
 
     if (path === '/version') {
-      await route.fulfill({ json: { version: 'e2e', api_version: 1 } })
+      await route.fulfill({ json: { version: 'e2e', api_version: 2 } })
       return
     }
 
@@ -223,8 +224,17 @@ export async function mockGitBackend(page: Page) {
       return
     }
 
+    if (path.startsWith('/api/settings/project-roots')) {
+      if (request.method() === 'POST') {
+        const body = request.postDataJSON() as { path: string; revision: number }
+        rootSettings.roots.push({ id: `root-${rootSettings.revision}`, path: body.path }); rootSettings.revision++
+      } else if (request.method() === 'DELETE') {
+        rootSettings.roots = rootSettings.roots.filter(root => root.id !== path.split('/').at(-1)); rootSettings.revision++
+      }
+      await route.fulfill({ json: rootSettings }); return
+    }
     if (path === '/api/projects') {
-      await route.fulfill({ json: repositories })
+      await route.fulfill({ json: rootSettings.roots.length ? repositories : [] })
       return
     }
 

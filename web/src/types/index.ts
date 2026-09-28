@@ -33,6 +33,9 @@ export interface DefaultBranchInfo {
 }
 
 export interface Project {
+  path?: string
+  rootId?: string
+  available?: boolean
   id: string
   workspaceId: string
   name: string

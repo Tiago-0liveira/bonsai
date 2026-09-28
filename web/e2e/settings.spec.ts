@@ -1,0 +1,28 @@
+import { expect, test } from '@playwright/test'
+import { mockGitBackend } from './mockGit'
+
+test('empty onboarding, multiple folders, Settings and last-root removal', async ({ page }) => {
+  await mockGitBackend(page, true)
+  await page.route('https://api.bonsai.dev/**', route => route.fulfill({ status: 401, body: '' }))
+  await page.goto('/app')
+  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+  const onboarding = page.getByRole('dialog', { name: 'Choose project folders' })
+  await expect(onboarding).toBeVisible()
+  await onboarding.getByRole('button', { name: '/projects', exact: true }).click()
+  await onboarding.getByRole('button', { name: 'Add folder' }).click()
+  await expect(onboarding).toBeHidden()
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await expect(page).toHaveURL(/\/app\/settings$/)
+  await expect(page.getByText('/projects', { exact: true })).toBeVisible()
+  await page.getByLabel('Folder path').fill('/another')
+  await page.getByRole('button', { name: 'Add folder' }).click()
+  await expect(page.getByRole('button', { name: 'Remove /another' })).toBeVisible()
+  await page.getByRole('button', { name: 'Remove /projects' }).click()
+  await page.getByRole('button', { name: 'Remove /another' }).click()
+  await expect(onboarding).toBeVisible()
+  await onboarding.getByRole('button', { name: 'Later' }).click()
+  await expect(onboarding).toBeHidden()
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Project folders' })).toBeVisible()
+  await expect(page.getByText('No project folders configured yet.')).toBeVisible()
+})

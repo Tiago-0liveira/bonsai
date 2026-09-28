@@ -1,3 +1,4 @@
+import { SettingsPage } from '../features/settings/SettingsPage'
 import {
   Outlet,
   createRootRoute,
@@ -28,8 +29,10 @@ const tablesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/table
 const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/files', component: FilesPage })
 const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsPage })
 
+const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage })
+
 const routeTree = rootRoute.addChildren([
-  workspaceRoute, worktreesRoute, agentsRoute, githubRoute, prsRoute, tablesRoute, filesRoute, logsRoute,
+  settingsRoute, workspaceRoute, worktreesRoute, agentsRoute, githubRoute, prsRoute, tablesRoute, filesRoute, logsRoute,
 ])
 
 export const router = createRouter({ routeTree, basepath: '/app' })

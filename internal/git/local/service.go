@@ -16,7 +16,10 @@ import (
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 )
 
-type Config struct{ ID, Root, WorktreeRoot string }
+type Config struct {
+	ID, Root, WorktreeRoot string
+	WithWorktreeRoot       func(context.Context, func(string) error) error
+}
 type repository struct {
 	Config
 	gate chan struct{}
@@ -43,19 +46,21 @@ func New(configs []Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		if c.WorktreeRoot == "" {
-			return nil, fmt.Errorf("worktree root must be configured")
-		}
-		c.WorktreeRoot, err = filepath.Abs(c.WorktreeRoot)
-		if err != nil {
-			return nil, err
-		}
-		if err = os.MkdirAll(c.WorktreeRoot, 0700); err != nil {
-			return nil, err
-		}
-		c.WorktreeRoot, err = filepath.EvalSymlinks(c.WorktreeRoot)
-		if err != nil {
-			return nil, err
+		if c.WithWorktreeRoot == nil {
+			if c.WorktreeRoot == "" {
+				return nil, fmt.Errorf("worktree root must be configured")
+			}
+			c.WorktreeRoot, err = filepath.Abs(c.WorktreeRoot)
+			if err != nil {
+				return nil, err
+			}
+			if err = os.MkdirAll(c.WorktreeRoot, 0700); err != nil {
+				return nil, err
+			}
+			c.WorktreeRoot, err = filepath.EvalSymlinks(c.WorktreeRoot)
+			if err != nil {
+				return nil, err
+			}
 		}
 		s.repos[c.ID] = &repository{Config: c, gate: make(chan struct{}, 1)}
 	}
