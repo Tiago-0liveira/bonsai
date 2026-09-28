@@ -54,7 +54,7 @@ func TestBrowserCreationReadsCurrentRootsThroughDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := filepath.Join(canonical, ".bonsai", "worktrees", config.PathID("project", canonical))
+	expected := filepath.Join(canonical, ".bonsai", "worktrees", config.ProjectID(canonical))
 	if !config.ContainsPath(expected, trees[1].Path) {
 		t.Fatal(trees[1].Path, expected)
 	}
