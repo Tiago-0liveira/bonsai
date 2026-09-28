@@ -1,475 +1,582 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import './parallax.css'
 
-type Camera = { x: number; y: number; s: number; r: number }
 type InstallPlatform = 'unix' | 'windows'
-
-const CAMERA: Camera[] = [
-  // Start with the whole bonsai parked safely to the right of the hero copy.
-  { x: 34, y: 1, s: 0.72, r: 0 },
-  // Ease into the whole workspace before visiting individual branches.
-  { x: 4, y: 1, s: 0.96, r: 0 },
-  // The branch tour mostly travels vertically through the tree. Horizontal
-  // movement stays within a few viewport units so the tree never pendulums.
-  { x: -3, y: 10, s: 1.52, r: 0 },
-  { x: -4, y: 2, s: 1.50, r: 0 },
-  { x: -3, y: -7, s: 1.46, r: 0 },
-  { x: 3, y: -11, s: 1.42, r: 0 },
-  { x: 0, y: -6, s: 1.04, r: 0 },
-]
 
 const INSTALL_COMMANDS: Record<InstallPlatform, string> = {
   unix: 'curl -fsSL https://raw.githubusercontent.com/Tiago-0liveira/bonsai/main/install.sh | bash',
   windows: 'irm https://raw.githubusercontent.com/Tiago-0liveira/bonsai/main/install.ps1 | iex',
 }
 
-const clamp = (v: number) => Math.max(0, Math.min(1, v))
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t
-const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10)
+const clamp = (value: number) => Math.max(0, Math.min(1, value))
+const lerp = (from: number, to: number, t: number) => from + (to - from) * t
+const smootherstep = (value: number) => {
+  const t = clamp(value)
+  return t * t * t * (t * (t * 6 - 15) + 10)
+}
+const range = (progress: number, start: number, end: number) =>
+  smootherstep((progress - start) / Math.max(0.0001, end - start))
+const band = (progress: number, inStart: number, inEnd: number, outStart: number, outEnd: number) =>
+  range(progress, inStart, inEnd) * (1 - range(progress, outStart, outEnd))
 
-const chapters = [
-  {
-    eyebrow: 'WEB CLIENT / PROJECT CANVAS',
-    title: <>Your local workspace.<br/><em>Visible in one browser.</em></>,
-    body: <>Open <strong>/app</strong> and connect it to the Bonsai server on your machine. The canvas keeps projects, branches, agents, changed files, processes, logs, PRs and checks reachable while work continues in parallel.</>,
-    telemetry: (
-      <div className="canvas-readout">
-        <div className="canvas-tabs"><b>Canvas</b><span>Table</span><span>GitHub</span><span>Logs</span></div>
-        <div className="canvas-body">
-          <div className="canvas-project">
-            <div className="canvas-project-head"><i/><strong>bonsai</strong><span>CI healthy</span></div>
-            <div className="canvas-stats"><span><b>10</b> worktrees</span><span><b>2</b> agents</span><span><b>1</b> open PR</span></div>
-            <div className="canvas-branches"><span>feat/auth-passkeys</span><span>pr/128-review</span><span>feat/live-preview</span></div>
-          </div>
-          <div className="canvas-inspector"><small>INSPECTOR</small><b>workspace overview</b><span>branches 11</span><span>changed files 36</span><em>GitHub realtime connected</em></div>
-        </div>
-      </div>
-    ),
-  },
-  {
-    eyebrow: 'WORKTREE / AGENT',
-    title: <>Claude keeps coding.<br/><em>You keep moving.</em></>,
-    body: <>Give an isolated branch its own agent and leave it running. The branch keeps its filesystem, process and Git state while you jump to another project or inspect a different worktree from <strong>/app</strong>.</>,
-    telemetry: (
-      <div className="agent-readout">
-        <div className="agent-head"><i/><b>feat/auth-passkeys</b><span>RUNNING</span></div>
-        <strong>Claude · Sonnet 4.5</strong>
-        <small>Implement WebAuthn registration + recovery flow</small>
-        <div className="agent-progress"><i/><span>tests 28 / 32</span></div>
-      </div>
-    ),
-  },
-  {
-    eyebrow: 'PARALLEL REVIEW / PR',
-    title: <>Astra reviews the PR.<br/><em>Another branch still builds.</em></>,
-    body: <>Keep review work separate from implementation. Diff, checks, comments and PR context stay attached to the review worktree while the feature branch continues running its own agent and processes.</>,
-    telemetry: (
-      <div className="review-readout">
-        <div><b>pr/128-review</b><span>#128</span></div>
-        <strong>ChatGPT Astra · PR review</strong>
-        <small>Security + regression pass on the auth changes</small>
-        <div className="review-checks"><span>CI ✓</span><span>diff +214 −39</span><span>4 comments</span><span>reviewing</span></div>
-      </div>
-    ),
-  },
-  {
-    eyebrow: 'WORKTREE / LIVE RUNTIME',
-    title: <>Every branch can run<br/><em>its own stack.</em></>,
-    body: <>Start discovered commands or aliases as background processes per worktree. Bonsai keeps each runtime attached to its branch and exposes detected localhost URLs directly in the web client.</>,
-    telemetry: (
-      <div className="runtime-readout">
-        <div><i/><b>web</b><code>http://localhost:5173</code><em>LIVE</em></div>
-        <div><i/><b>api</b><code>http://localhost:7001</code><em>RUN</em></div>
-        <div><i className="warm"/><b>tests</b><code>watch · 42 / 42</code><em>PASS</em></div>
-      </div>
-    ),
-  },
-  {
-    eyebrow: 'GITHUB / REALTIME EVENTS',
-    title: <>GitHub changes.<br/><em>The canvas catches up.</em></>,
-    body: <>The hosted relay streams normalized GitHub events to the browser. <strong>/app</strong> uses them to invalidate stale views, then refreshes canonical branch, check and PR state from your local Bonsai server.</>,
-    telemetry: (
-      <div className="event-stream">
-        <div><time>18:42:07</time><b>check_run</b><span className="ok">success</span></div>
-        <div><time>18:42:11</time><b>pull_request</b><span>#128 synchronize</span></div>
-        <div><time>18:42:12</time><b>local refresh</b><span className="ok">canonical ✓</span></div>
-      </div>
-    ),
-  },
-  {
-    eyebrow: 'ONE LOCAL CORE / MULTIPLE SURFACES',
-    title: <>Overview in the web.<br/><em>Focus in the TUI.</em></>,
-    body: <>The website, TUI and CLI share the same worktree model. Use the browser to supervise many branches and projects at once, drop into the TUI for keyboard-first depth, or automate the same primitives from the CLI.</>,
-    telemetry: (
-      <div className="surface-readout">
-        <div><small>WEB</small><b>/app</b><span>canvas · agents · files · PRs · logs</span></div>
-        <div><small>TUI</small><b>bonsai</b><span>fast keyboard-first branch control</span></div>
-        <div><small>CLI</small><b>bonsai create</b><span>scriptable worktree primitives</span></div>
-      </div>
-    ),
-  },
-]
-
-function Brand() {
+function BrandMark() {
   return (
     <svg viewBox="0 0 28 28" aria-hidden="true">
-      <path d="M14 23V10M14 14l-5-4M14 17l6-5M14 10l3-4M9 10H5M20 12h4"/>
-      <path d="M6 7h6v5H6zM16 4h5v5h-5zM19 10h6v5h-6zM3 9h5v5H3z"/>
+      <path d="M14 23V10M14 15l-5-4M14 18l6-5M14 10l3-4" />
+      <circle cx="9" cy="10.5" r="2.4" />
+      <circle cx="20" cy="12.5" r="2.4" />
+      <circle cx="17.5" cy="6" r="2.2" />
     </svg>
   )
 }
 
-function BranchTask({
-  n,
-  x,
-  y,
-  title,
-  detail,
-  state,
-  warm = false,
-}: {
-  n: number
-  x: number
-  y: number
-  title: string
-  detail: string
-  state: string
-  warm?: boolean
-}) {
-  return (
-    <g className={'branch-task bt' + n + (warm ? ' warm' : '')} transform={'translate(' + x + ' ' + y + ')'}>
-      <rect className="branch-task-shell" width="194" height="60" rx="7"/>
-      <path className="branch-task-stem" d="M8 30H-22"/>
-      <circle className="branch-task-dot" cx="15" cy="16" r="4"/>
-      <text className="branch-task-title" x="27" y="20">{title}</text>
-      <text className="branch-task-detail" x="14" y="38">{detail}</text>
-      <rect className="branch-task-track" x="14" y="49" width="106" height="2" rx="1"/>
-      <rect className="branch-task-progress" x="14" y="49" width="68" height="2" rx="1"/>
-      <text className="branch-task-state" x="179" y="52" textAnchor="end">{state}</text>
-    </g>
-  )
+function LiveDot() {
+  return <span className="live-dot" aria-hidden="true" />
 }
 
-function FoliagePad({
-  className,
-  cx,
-  cy,
-  sx = 1,
-  sy = 1,
-}: {
-  className: string
-  cx: number
-  cy: number
-  sx?: number
-  sy?: number
-}) {
+function AppPreview() {
   return (
-    <g className={'pad ' + className} transform={'translate(' + cx + ' ' + cy + ') scale(' + sx + ' ' + sy + ')'}>
-      <ellipse cx="-82" cy="8" rx="54" ry="22"/>
-      <ellipse cx="-38" cy="-8" rx="67" ry="28"/>
-      <ellipse cx="18" cy="-3" rx="73" ry="30"/>
-      <ellipse cx="72" cy="8" rx="59" ry="25"/>
-      <ellipse cx="108" cy="18" rx="34" ry="18"/>
-      <path className="leaf-lines" d="M-119 7h73M-74-11h94M-26 11h112M31-8h96M50 23h83"/>
-    </g>
-  )
-}
-
-function Tree() {
-  return (
-    <div className="world" aria-hidden="true">
-      <div className="grid-bg"/>
-      <div className="haze haze-a"/>
-      <div className="haze haze-b"/>
-      <div className="reticle"><span/><span/></div>
-
-      <div className="camera" data-camera>
-        <svg className="tree" viewBox="0 0 1200 820">
-          <defs>
-            <filter id="glow" x="-70%" y="-70%" width="240%" height="240%">
-              <feGaussianBlur stdDeviation="6" result="b"/>
-              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-            <linearGradient id="trunkFill" x1=".1" y1=".05" x2=".9" y2=".95">
-              <stop offset="0" stopColor="#936b4d"/>
-              <stop offset=".3" stopColor="#72503b"/>
-              <stop offset=".63" stopColor="#503528"/>
-              <stop offset="1" stopColor="#25160f"/>
-            </linearGradient>
-            <linearGradient id="branchStroke" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#825f48"/>
-              <stop offset=".52" stopColor="#5f4232"/>
-              <stop offset="1" stopColor="#38261d"/>
-            </linearGradient>
-          </defs>
-
-          <g className="rings">
-            <circle cx="602" cy="406" r="326"/>
-            <circle cx="602" cy="406" r="250"/>
-            <circle cx="602" cy="406" r="176"/>
-            <path d="M602 42V775M235 406H971"/>
-          </g>
-
-          <path className="bonsai-shadow" d="M526 742C544 704 538 669 516 629C493 586 499 544 532 505C569 461 577 428 557 390C536 349 543 311 577 277C607 247 620 219 608 188C597 160 600 136 619 115C632 100 650 98 662 109C675 120 671 140 657 157C644 173 646 191 655 210C673 247 662 286 627 322C598 352 595 379 612 412C634 454 623 498 587 541C557 576 554 607 570 643C590 687 582 718 566 746Z"/>
-          <path className="trunk-silhouette" d="M538 738C555 701 550 668 529 628C508 588 512 550 543 513C578 471 588 433 569 395C549 355 555 319 588 287C618 258 630 226 618 194C607 166 611 142 628 123C639 110 652 107 661 115C670 123 667 139 654 154C641 170 642 190 651 209C668 245 658 281 624 316C592 349 589 379 607 414C628 456 617 495 582 537C551 574 549 607 565 642C584 684 577 714 562 741Z"/>
-
-          <path className="deadwood" d="M555 697C567 663 565 633 551 603C539 578 542 552 557 530M577 501C594 476 600 451 593 426M586 388C577 359 581 335 599 312M614 276C626 253 632 227 626 204"/>
-          <g className="bark-lines">
-            <path d="M546 710C559 677 558 650 546 620M540 583C536 554 544 527 559 505M576 474C588 448 590 425 584 401M582 363C584 339 595 319 608 301M622 264C631 239 631 217 624 195"/>
-            <path d="M566 715C579 684 578 658 568 631M563 594C561 565 569 542 582 520M594 489C604 465 607 441 601 419M600 381C603 354 614 335 625 317"/>
-          </g>
-
-          <g className="primary-branches">
-            <path className="branch-stroke b1" d="M554 614C497 600 451 573 404 552C359 532 314 537 268 565"/>
-            <path className="twig b1" d="M420 558C382 573 350 594 321 621"/>
-            <path className="branch-stroke b2" d="M557 515C504 505 462 478 421 441C381 405 331 400 279 416"/>
-            <path className="twig b2" d="M424 442C389 433 355 439 322 459"/>
-            <path className="branch-stroke b3" d="M573 395C522 384 481 354 440 322C400 291 354 290 307 306"/>
-            <path className="twig b3" d="M441 322C406 309 375 312 342 330"/>
-
-            <path className="branch-stroke b4" d="M568 565C637 555 694 532 751 495C803 461 858 459 919 477"/>
-            <path className="twig b4" d="M749 496C795 502 833 519 870 546"/>
-            <path className="branch-stroke b5" d="M594 460C660 445 715 413 763 376C812 338 865 333 927 346"/>
-            <path className="twig b5" d="M763 376C810 382 850 399 888 424"/>
-            <path className="branch-stroke b6" d="M608 337C667 318 716 283 756 247C800 209 850 200 908 211"/>
-            <path className="twig b6" d="M757 247C801 251 839 266 876 290"/>
-            <path className="branch-stroke apex" d="M606 292C619 261 622 231 614 203C607 178 611 153 627 132"/>
-          </g>
-
-          <g className="fine-twigs">
-            <path d="M347 541C324 526 300 520 271 523M365 558C337 569 316 585 298 605M388 542C365 521 340 510 311 508"/>
-            <path d="M354 405C330 390 307 385 277 388M378 425C349 435 325 451 305 474M402 420C385 395 366 378 340 366"/>
-            <path d="M381 292C359 278 336 273 307 278M403 311C376 322 354 337 334 358M426 304C410 281 389 264 366 253"/>
-            <path d="M812 465C840 455 866 454 897 460M821 501C850 511 875 526 898 548M858 452C879 438 903 432 932 434"/>
-            <path d="M823 344C851 335 877 334 907 340M832 381C863 391 887 405 910 427M870 330C892 316 916 311 943 314"/>
-            <path d="M818 218C843 207 867 203 896 207M829 254C858 259 883 270 907 290M862 205C882 189 904 182 932 183"/>
-            <path d="M616 215C634 197 648 188 669 181M613 179C603 160 600 143 604 127"/>
-          </g>
-
-          <g className="foliage">
-            <FoliagePad className="p1" cx={302} cy={548} sx={1.03} sy={0.9}/>
-            <FoliagePad className="p2" cx={296} cy={405} sx={0.98} sy={0.86}/>
-            <FoliagePad className="p3" cx={322} cy={292} sx={0.88} sy={0.8}/>
-            <FoliagePad className="p4" cx={896} cy={468} sx={1.05} sy={0.9}/>
-            <FoliagePad className="p5" cx={906} cy={337} sx={1.02} sy={0.88}/>
-            <FoliagePad className="p6" cx={884} cy={208} sx={0.95} sy={0.82}/>
-            <FoliagePad className="p7" cx={627} cy={126} sx={0.72} sy={0.72}/>
-          </g>
-
-          <g className="roots">
-            <path d="M548 716C505 720 461 738 421 768M559 717C616 719 673 739 726 771M545 722C520 741 502 764 490 790M570 722C595 742 615 766 629 793"/>
-          </g>
-          <g className="pot">
-            <path className="pot-rim" d="M420 724H770L752 753H440Z"/>
-            <path className="pot-body" d="M446 752H746L719 806H480Z"/>
-            <path className="pot-line" d="M477 772H716M496 790H699"/>
-          </g>
-          <g className="root-chip" transform="translate(511 744)">
-            <rect width="174" height="47" rx="5"/>
-            <text x="13" y="20">LOCAL CORE</text>
-            <text className="sub" x="13" y="37">WEB · TUI · CLI</text>
-          </g>
-
-          <g className="branch-jobs">
-            <BranchTask n={1} x={235} y={250} title="feat/auth-passkeys" detail="Claude · Sonnet 4.5" state="CODING"/>
-            <BranchTask n={2} x={780} y={176} title="pr/128-review" detail="ChatGPT Astra · security" state="REVIEW" warm/>
-            <BranchTask n={3} x={795} y={327} title="feat/live-preview" detail="web :5173 · api :7001" state="3 PROC"/>
-            <BranchTask n={4} x={798} y={492} title="feat/payments" detail="tests · watch · 42/42" state="PASS"/>
-            <BranchTask n={5} x={225} y={500} title="orchard-api/cache" detail="Claude · Haiku · project 02" state="RUN"/>
-            <BranchTask n={6} x={470} y={594} title="github/events" detail="PR · checks · relay" state="LIVE"/>
-          </g>
-        </svg>
-
-        <div className="depth d1">local://worktree-graph</div>
-        <div className="depth d2">branch isolation / realtime state</div>
+    <div className="app-preview">
+      <div className="app-topbar">
+        <div className="app-brand">
+          <BrandMark />
+          <strong>Bonsai</strong>
+        </div>
+        <div className="app-project-switcher">
+          <span>bonsai</span>
+          <small>/ main</small>
+        </div>
+        <nav className="app-tabs" aria-label="Preview navigation">
+          <b>Canvas</b>
+          <span>Table</span>
+          <span>GitHub</span>
+          <span>Logs</span>
+        </nav>
+        <div className="app-local-status"><LiveDot /> local</div>
       </div>
 
-      <div className="scan"/>
+      <div className="app-main">
+        <aside className="app-sidebar">
+          <small>Projects</small>
+          <div className="project-row selected"><span className="project-glyph">B</span><b>bonsai</b><em>6</em></div>
+          <div className="project-row"><span className="project-glyph">O</span><b>orchard-api</b><em>2</em></div>
+          <div className="project-row"><span className="project-glyph">D</span><b>docs-site</b><em>1</em></div>
+          <small className="sidebar-label">Views</small>
+          <div className="sidebar-link active">Workspace</div>
+          <div className="sidebar-link">Worktrees</div>
+          <div className="sidebar-link">Agents</div>
+          <div className="sidebar-link">Pull requests</div>
+        </aside>
+
+        <div className="app-canvas">
+          <div className="canvas-heading">
+            <div><strong>Workspace</strong><span>6 active worktrees</span></div>
+            <button type="button" tabIndex={-1}>+ Worktree</button>
+          </div>
+
+          <div className="canvas-map">
+            <svg viewBox="0 0 560 270" className="canvas-lines" aria-hidden="true">
+              <path d="M278 143C231 133 205 101 166 82" />
+              <path d="M283 137C329 117 357 92 404 74" />
+              <path d="M288 148C339 156 371 178 420 194" />
+              <path d="M273 151C235 174 208 194 169 211" />
+            </svg>
+            <div className="canvas-root">
+              <BrandMark />
+              <div><b>bonsai</b><span>main</span></div>
+            </div>
+            <div className="canvas-chip chip-auth"><LiveDot /><b>feat/auth-passkeys</b><span>Claude</span></div>
+            <div className="canvas-chip chip-pr"><LiveDot /><b>pr/128-review</b><span>Astra</span></div>
+            <div className="canvas-chip chip-runtime"><LiveDot /><b>feat/live-preview</b><span>3 processes</span></div>
+            <div className="canvas-chip chip-tests"><LiveDot /><b>tests/refactor</b><span>42 / 42</span></div>
+          </div>
+        </div>
+
+        <aside className="app-inspector">
+          <small>Inspector</small>
+          <div className="inspector-branch"><LiveDot /><div><b>feat/auth-passkeys</b><span>running</span></div></div>
+          <dl>
+            <div><dt>Agent</dt><dd>Claude</dd></div>
+            <div><dt>Files</dt><dd>12 changed</dd></div>
+            <div><dt>PR</dt><dd>#128</dd></div>
+            <div><dt>CI</dt><dd className="good">passing</dd></div>
+          </dl>
+          <div className="inspector-action">Open worktree</div>
+        </aside>
+      </div>
+
+      <div className="app-dock">
+        <div className="dock-tab"><LiveDot /><b>web</b><code>:5173</code></div>
+        <div className="dock-tab"><LiveDot /><b>api</b><code>:7001</code></div>
+        <div className="dock-tab"><span className="check-dot">✓</span><b>tests</b><code>42 / 42</code></div>
+        <span className="dock-spacer" />
+        <span className="dock-log">18:42:12 &nbsp; GitHub state refreshed</span>
+      </div>
     </div>
   )
 }
 
-function Scene({ i, children }: { i: number; children: ReactNode }) {
-  const id = i === 1 ? 'web-client' : i === 2 ? 'worktrees' : i === 6 ? 'surfaces' : undefined
+function BranchNetwork() {
   return (
-    <section id={id} className="scene" data-scene data-i={i}>
-      <div className="sticky">
-        <article className="chapter-panel">{children}</article>
+    <svg className="branch-network" viewBox="0 0 1100 720" aria-hidden="true">
+      <g className="network-base">
+        <path d="M550 360C470 317 412 249 312 176" />
+        <path d="M550 354C632 307 692 261 802 195" />
+        <path d="M558 369C660 383 730 415 856 466" />
+        <path d="M544 373C453 404 389 444 284 502" />
+        <path d="M552 379C557 440 548 492 556 582" />
+      </g>
+      <g className="network-secondary">
+        <path d="M311 176C268 151 232 145 193 151" />
+        <path d="M802 195C850 179 892 181 931 203" />
+        <path d="M856 466C900 470 938 492 966 520" />
+        <path d="M284 502C237 512 203 536 178 563" />
+        <path d="M556 582C599 607 630 635 655 670" />
+      </g>
+      <g className="network-active active-claude">
+        <path d="M550 360C470 317 412 249 312 176" />
+      </g>
+      <g className="network-active active-astra">
+        <path d="M550 354C632 307 692 261 802 195" />
+      </g>
+      <g className="network-active active-runtime">
+        <path d="M558 369C660 383 730 415 856 466" />
+      </g>
+      <g className="network-active active-parallel">
+        <path d="M544 373C453 404 389 444 284 502" />
+        <path d="M552 379C557 440 548 492 556 582" />
+      </g>
+      <g className="network-projects">
+        <path d="M550 360C451 314 333 302 202 327" />
+        <path d="M550 360C651 317 779 309 930 340" />
+      </g>
+    </svg>
+  )
+}
+
+function WorktreeNode({
+  className,
+  branch,
+  meta,
+  state,
+  children,
+}: {
+  className: string
+  branch: string
+  meta: string
+  state: string
+  children?: ReactNode
+}) {
+  return (
+    <div className={'worktree-node ' + className}>
+      <div className="node-head">
+        <LiveDot />
+        <b>{branch}</b>
+        <span>{state}</span>
       </div>
-    </section>
+      <div className="node-meta">{meta}</div>
+      <div className="node-detail">{children}</div>
+    </div>
+  )
+}
+
+function WorktreeNodes() {
+  return (
+    <div className="worktree-layer">
+      <WorktreeNode className="node-claude" branch="feat/auth-passkeys" meta="Claude · Sonnet 4.5" state="coding…">
+        <p>Implementing WebAuthn recovery</p>
+        <div className="node-progress"><i /><span>tests 28 / 32</span></div>
+      </WorktreeNode>
+
+      <WorktreeNode className="node-astra" branch="PR #128" meta="ChatGPT Astra · reviewing" state="reviewing…">
+        <p>4 comments · 2 suggested fixes</p>
+        <div className="node-checks"><span>CI ✓</span><span>diff +214 −39</span></div>
+      </WorktreeNode>
+
+      <WorktreeNode className="node-runtime" branch="feat/live-preview" meta="Branch runtime" state="3 live">
+        <div className="runtime-row"><span>web</span><code>:5173</code></div>
+        <div className="runtime-row"><span>api</span><code>:7001</code></div>
+        <div className="runtime-row"><span>tests</span><code>42 / 42 ✓</code></div>
+      </WorktreeNode>
+
+      <WorktreeNode className="node-tests" branch="tests/refactor" meta="Vitest · watch" state="passing">
+        <p>42 / 42 · watching files</p>
+      </WorktreeNode>
+
+      <WorktreeNode className="node-events" branch="github/events" meta="Realtime relay" state="live">
+        <p>PRs · checks · branch state</p>
+      </WorktreeNode>
+    </div>
+  )
+}
+
+function ProjectClusters() {
+  return (
+    <div className="project-clusters">
+      <div className="project-cluster cluster-orchard">
+        <small>orchard-api</small>
+        <span><LiveDot /> Claude</span>
+        <span><LiveDot /> dev server :7001</span>
+      </div>
+      <div className="project-cluster cluster-docs">
+        <small>docs-site</small>
+        <span><LiveDot /> preview :4173</span>
+      </div>
+    </div>
+  )
+}
+
+function GithubActivity() {
+  return (
+    <div className="github-activity">
+      <div className="github-title"><span>GitHub realtime</span><LiveDot /></div>
+      <div><time>18:42:07</time><b>CI passed</b><span>feat/auth</span></div>
+      <div><time>18:42:11</time><b>PR #128 updated</b><span>pr/review</span></div>
+      <div><time>18:42:12</time><b>Bonsai refreshed</b><span className="good">✓</span></div>
+    </div>
+  )
+}
+
+function SurfaceRail() {
+  return (
+    <div className="surface-rail">
+      <div className="surface-web">
+        <small>Web</small>
+        <b>Supervise everything.</b>
+        <span>/app</span>
+      </div>
+      <div>
+        <small>TUI</small>
+        <b>Keyboard-first focus.</b>
+      </div>
+      <div>
+        <small>CLI</small>
+        <b>Automate it.</b>
+      </div>
+    </div>
+  )
+}
+
+function ProductScene() {
+  return (
+    <div className="product-stage" aria-hidden="true">
+      <div className="product-camera">
+        <div className="scene-halo" />
+        <svg className="branch-ghost" viewBox="0 0 1100 720">
+          <path d="M550 359C466 312 398 242 303 177M550 355C630 312 704 251 803 195M558 370C655 382 741 423 856 467M543 373C446 405 377 455 284 502M552 378C555 443 548 505 556 582" />
+        </svg>
+        <BranchNetwork />
+        <AppPreview />
+        <WorktreeNodes />
+        <ProjectClusters />
+        <GithubActivity />
+        <SurfaceRail />
+      </div>
+    </div>
+  )
+}
+
+function StoryCard({
+  eyebrow,
+  title,
+  body,
+  className = '',
+}: {
+  eyebrow: string
+  title: ReactNode
+  body: ReactNode
+  className?: string
+}) {
+  return (
+    <article className={'story-card ' + className}>
+      <small>{eyebrow}</small>
+      <h2>{title}</h2>
+      <p>{body}</p>
+    </article>
   )
 }
 
 export function ParallaxLanding() {
   const rootRef = useRef<HTMLDivElement>(null)
-  const [copied, setCopied] = useState(false)
   const [platform, setPlatform] = useState<InstallPlatform>('unix')
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
 
-    document.body.classList.add('parallax-body')
-    document.documentElement.classList.add('parallax-html')
+    document.documentElement.classList.add('bonsai-landing-html')
+    document.body.classList.add('bonsai-landing-body')
 
-    const scenes = Array.from(root.querySelectorAll<HTMLElement>('[data-scene]'))
-    const camera = root.querySelector<HTMLElement>('[data-camera]')
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
-    let raf = 0
-    let active = -1
+    let frame = 0
 
-    const render = () => {
-      raf = 0
-      if (!camera) return
-
-      const pos = window.scrollY + window.innerHeight * 0.48
-      const anchors = scenes.map((scene) => scene.offsetTop + scene.offsetHeight * 0.5)
-      let from = 0
-      while (from < anchors.length - 1 && pos >= anchors[from + 1]) from += 1
-
-      const to = Math.min(from + 1, anchors.length - 1)
-      const raw = from === to ? 0 : clamp((pos - anchors[from]) / Math.max(1, anchors[to] - anchors[from]))
-      // Give every chapter a short "settled" window at each end, then use
-      // smootherstep for the actual camera travel. This keeps the branch in
-      // focus long enough to read and removes the pendulum-like movement.
-      const travel = clamp((raw - 0.12) / 0.76)
-      const t = smoother(travel)
-      const c0 = CAMERA[Math.min(from, CAMERA.length - 1)]
-      const c1 = CAMERA[Math.min(to, CAMERA.length - 1)]
-      const c = reduced.matches
-        ? CAMERA[0]
-        : {
-            x: lerp(c0.x, c1.x, t),
-            y: lerp(c0.y, c1.y, t),
-            s: lerp(c0.s, c1.s, t),
-            r: lerp(c0.r, c1.r, t),
-          }
-
-      camera.style.setProperty('--x', c.x + 'vw')
-      camera.style.setProperty('--y', c.y + 'vh')
-      camera.style.setProperty('--s', String(c.s))
-      camera.style.setProperty('--r', c.r + 'deg')
-      root.style.setProperty('--reticle-left', 50 + c.x * 0.94 + '%')
-
-      const next = raw < 0.5 ? from : to
-      if (next !== active) {
-        active = next
-        root.dataset.stage = String(active)
-        scenes.forEach((scene, i) => scene.classList.toggle('active', i === active))
-      }
-
-      const journey = clamp(window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight))
-      root.style.setProperty('--meter-height', journey * 100 + '%')
-      root.style.setProperty('--scan-top', 12 + journey * 76 + '%')
+    const setNumber = (name: string, value: number) => {
+      root.style.setProperty(name, value.toFixed(4))
+    }
+    const setDimension = (name: string, value: number, unit: 'vw' | 'vh') => {
+      root.style.setProperty(name, value.toFixed(3) + unit)
     }
 
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(render)
+    const render = () => {
+      frame = 0
+      const maxScroll = Math.max(1, root.scrollHeight - window.innerHeight)
+      const localScroll = clamp((window.scrollY - root.offsetTop) / maxScroll)
+      const progress = localScroll
+      const mobile = window.innerWidth < 820
+
+      const network = range(progress, 0.18, 0.31)
+      const claude = band(progress, 0.32, 0.38, 0.44, 0.50)
+      const astra = band(progress, 0.44, 0.50, 0.56, 0.62)
+      const runtime = band(progress, 0.56, 0.62, 0.68, 0.74)
+      const parallel = range(progress, 0.65, 0.75)
+      const multi = range(progress, 0.77, 0.86)
+      const github = range(progress, 0.79, 0.87)
+      const reveal = range(progress, 0.87, 0.95)
+      const install = range(progress, 0.955, 0.985)
+
+      const settle = range(progress, 0.04, 0.18)
+      const focusZoom = Math.max(claude, astra, runtime)
+      let cameraX = lerp(18, 0, settle)
+      let cameraY = claude * 4.5 - runtime * 4.5
+      let cameraScale = lerp(0.86, 1, settle) + focusZoom * 0.13 - multi * 0.12 + reveal * 0.08
+
+      if (progress > 0.18) {
+        cameraX += claude * -1.6 + astra * 1.2 + runtime * 1.8
+      }
+
+      if (mobile) {
+        cameraX = 0
+        cameraY = lerp(11, 3, settle) + claude * 2 - runtime * 2
+        cameraScale = lerp(0.7, 0.82, settle) + focusZoom * 0.05 - multi * 0.04 + reveal * 0.04
+      }
+
+      if (reduced.matches) {
+        cameraX = 0
+        cameraY = mobile ? 5 : 0
+        cameraScale = mobile ? 0.78 : 0.96
+      }
+
+      const baseNode = network * 0.28 + parallel * 0.44
+      const claudeOpacity = clamp(baseNode + claude * 0.72)
+      const astraOpacity = clamp(baseNode + astra * 0.72)
+      const runtimeOpacity = clamp(baseNode + runtime * 0.72)
+      const testsOpacity = clamp(baseNode * 0.9 + parallel * 0.2)
+      const eventsOpacity = clamp(baseNode * 0.9 + parallel * 0.2 + github * 0.25)
+
+      setNumber('--page-progress', progress)
+      setDimension('--camera-x-vw', cameraX, 'vw')
+      setDimension('--camera-y-vh', cameraY, 'vh')
+      setNumber('--camera-scale', cameraScale)
+      setNumber('--network-opacity', reduced.matches ? 0.9 : network)
+      setNumber('--claude-focus', reduced.matches ? 0.18 : claude)
+      setNumber('--astra-focus', reduced.matches ? 0.18 : astra)
+      setNumber('--runtime-focus', reduced.matches ? 0.18 : runtime)
+      setNumber('--parallel', reduced.matches ? 0.9 : parallel)
+      setNumber('--multi', reduced.matches ? 0.9 : multi)
+      setNumber('--github', reduced.matches ? 0.9 : github)
+      setNumber('--reveal', reduced.matches ? 0.9 : reveal)
+      setNumber('--stage-opacity', reduced.matches ? 1 - install : 1 - install)
+      setNumber('--app-opacity', clamp(1 - focusZoom * 0.18 + reveal * 0.18))
+      setNumber('--claude-o', reduced.matches ? 0.7 : claudeOpacity)
+      setNumber('--astra-o', reduced.matches ? 0.7 : astraOpacity)
+      setNumber('--runtime-o', reduced.matches ? 0.7 : runtimeOpacity)
+      setNumber('--tests-o', reduced.matches ? 0.62 : testsOpacity)
+      setNumber('--events-o', reduced.matches ? 0.62 : eventsOpacity)
+      setNumber('--claude-s', 0.94 + (reduced.matches ? 0 : claude) * 0.08)
+      setNumber('--astra-s', 0.94 + (reduced.matches ? 0 : astra) * 0.08)
+      setNumber('--runtime-s', 0.94 + (reduced.matches ? 0 : runtime) * 0.08)
+    }
+
+    const requestRender = () => {
+      if (!frame) frame = requestAnimationFrame(render)
     }
 
     render()
-    addEventListener('scroll', onScroll, { passive: true })
-    addEventListener('resize', onScroll)
-    reduced.addEventListener('change', onScroll)
+    window.addEventListener('scroll', requestRender, { passive: true })
+    window.addEventListener('resize', requestRender)
+    reduced.addEventListener('change', requestRender)
 
     return () => {
-      if (raf) cancelAnimationFrame(raf)
-      removeEventListener('scroll', onScroll)
-      removeEventListener('resize', onScroll)
-      reduced.removeEventListener('change', onScroll)
-      document.body.classList.remove('parallax-body')
-      document.documentElement.classList.remove('parallax-html')
+      if (frame) cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', requestRender)
+      window.removeEventListener('resize', requestRender)
+      reduced.removeEventListener('change', requestRender)
+      document.documentElement.classList.remove('bonsai-landing-html')
+      document.body.classList.remove('bonsai-landing-body')
     }
   }, [])
 
-  const copy = async () => {
+  const copyInstall = async () => {
     try {
       await navigator.clipboard.writeText(INSTALL_COMMANDS[platform])
       setCopied(true)
-      setTimeout(() => setCopied(false), 1400)
+      window.setTimeout(() => setCopied(false), 1400)
     } catch {
       setCopied(false)
     }
   }
 
   return (
-    <div className="parallax-landing" ref={rootRef} data-stage="0">
-      <Tree/>
+    <div className="bonsai-landing" ref={rootRef}>
+      <ProductScene />
 
-      <header className="nav-shell">
-        <a className="nav-island nav-brand" href="#top" aria-label="Bonsai home">
-          <span><Brand/></span><b>BONSAI</b>
+      <header className="site-nav">
+        <a className="nav-island nav-logo" href="#top" aria-label="Bonsai home">
+          <BrandMark />
+          <b>Bonsai</b>
         </a>
-
-        <nav className="nav-island nav-center" aria-label="Landing navigation">
-          <a href="#top"><small>01</small><span>Showcase</span></a>
-          <a href="#web-client"><small>02</small><span>Web /app</span></a>
-          <a href="#worktrees"><small>03</small><span>Worktrees</span></a>
-          <a href="#surfaces"><small>04</small><span>Surfaces</span></a>
-          <a href="#install"><small>05</small><span>Install</span></a>
+        <nav className="nav-island nav-links" aria-label="Landing page">
+          <a href="#product">Product</a>
+          <a href="#worktrees">Worktrees</a>
+          <a href="#install">Install</a>
         </nav>
-
-        <a className="nav-island nav-github" href="https://github.com/Tiago-0liveira/bonsai" target="_blank" rel="noreferrer">
-          <span>GitHub</span><b>↗</b>
-        </a>
+        <div className="nav-actions">
+          <a className="nav-island nav-github" href="https://github.com/Tiago-0liveira/bonsai">GitHub ↗</a>
+          <a className="nav-island nav-app" href="/app">Open app</a>
+        </div>
       </header>
 
-      <div className="meter" aria-hidden="true"><i><b/></i><span>depth / 06</span></div>
-
       <main>
-        <section id="top" className="scene hero active" data-scene data-i="0">
-          <div className="sticky">
-            <div className="hero-copy">
-              <div className="status"><i/><b>LOCAL CORE ONLINE</b><span>browser connected</span></div>
-              <p className="eyebrow">[ PARALLEL WORKTREE CONTROL PLANE ] — WEB + TUI + CLI</p>
-              <h1>Grow branches.<br/><em>Watch them work.</em></h1>
-              <h2 className="parallel-heading">Run multiple projects in parallel. <span>Supervise them from /app.</span></h2>
-              <p className="lede">Bonsai connects its browser client to the server running on your machine, so every worktree can keep coding, reviewing, testing and serving while the full workspace stays accessible in one place.</p>
-
-              <div className="hero-actions">
-                <a className="hero-primary" href="/app">Open /app <span>↗</span></a>
-                <a className="hero-secondary" href="#web-client">Explore the canvas <span>↓</span></a>
-              </div>
-
-              <div className="pills"><span>multi-project canvas</span><span>parallel agents</span><span>GitHub realtime</span></div>
-              <small className="scrollcue">↓ scroll — the camera moves into the tree, one worktree at a time</small>
+        <section className="hero-moment" id="top">
+          <div className="hero-copy">
+            <div className="eyebrow"><LiveDot /> Local developer workspace</div>
+            <h1>Run every branch at once.</h1>
+            <p>
+              Bonsai connects the browser to your local server so worktrees, agents, processes,
+              changed files, PRs, CI, logs, and projects stay visible in one place.
+            </p>
+            <div className="hero-actions">
+              <a className="button-primary" href="/app">Open /app <span>→</span></a>
+              <a className="button-secondary" href="#install">Install Bonsai</a>
+            </div>
+            <div className="hero-capabilities" aria-label="Bonsai capabilities">
+              <span>worktrees + agents</span>
+              <span>processes + logs</span>
+              <span>PRs + CI</span>
+              <span>multiple projects</span>
             </div>
           </div>
         </section>
 
-        {chapters.map((chapter, index) => (
-          <Scene key={chapter.eyebrow} i={index + 1}>
-            <div className="chapter-index"><span>{String(index + 1).padStart(2, '0')}</span><i/></div>
-            <p className="eyebrow">[ {chapter.eyebrow} ]</p>
-            <h2>{chapter.title}</h2>
-            <div className="body">{chapter.body}</div>
-            <div className="telemetry">{chapter.telemetry}</div>
-          </Scene>
-        ))}
+        <section className="one-workspace moment" id="product">
+          <div className="story-pin">
+            <StoryCard
+              eyebrow="One workspace"
+              title={<>The product becomes<br />the branch map.</>}
+              body={<>The <strong>/app</strong> canvas stays at the center. As you scroll, its live worktrees grow outward as a quiet branch system instead of a separate diagram.</>}
+            />
+          </div>
+        </section>
 
-        <section id="install" className="install">
+        <section className="parallel-moment moment" id="worktrees">
+          <div className="parallel-step">
+            <div className="story-pin">
+              <StoryCard
+                eyebrow="Worktree · agent"
+                title={<>Claude keeps coding.<br /><em>You keep moving.</em></>}
+                body={<>An isolated branch keeps its agent, filesystem, process, and Git state while the rest of the workspace remains visible.</>}
+              />
+            </div>
+          </div>
+
+          <div className="parallel-step">
+            <div className="story-pin align-right">
+              <StoryCard
+                eyebrow="Pull request review"
+                title={<>Astra reviews the PR.<br /><em>Claude is still running.</em></>}
+                body={<>Review, checks, comments, and suggested fixes stay attached to their own worktree. Background work shrinks to a live state—it never disappears.</>}
+              />
+            </div>
+          </div>
+
+          <div className="parallel-step">
+            <div className="story-pin">
+              <StoryCard
+                eyebrow="Branch runtime"
+                title={<>Every worktree can run<br /><em>its own stack.</em></>}
+                body={<>Dev servers, tests, and long-running processes stay bound to the branch that started them, with detected local URLs reachable from the web client.</>}
+              />
+            </div>
+          </div>
+
+          <div className="parallel-step parallel-payoff">
+            <div className="story-pin centered-copy">
+              <StoryCard
+                eyebrow="Parallel by default"
+                title={<>Not switching tasks.<br /><em>Running them together.</em></>}
+                body={<>Coding, review, servers, tests, and GitHub events remain alive at the same time. The camera changes focus; the work keeps going.</>}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="scale-moment moment" id="projects">
+          <div className="scale-step">
+            <div className="story-pin">
+              <StoryCard
+                eyebrow="Multiple projects"
+                title={<>One browser.<br /><em>Every worktree still alive.</em></>}
+                body={<>Pull back from one repository and supervise Bonsai, an API, and a docs site from the same local control surface. GitHub realtime updates land inside the workspace instead of becoming a separate slide.</>}
+              />
+            </div>
+          </div>
+
+          <div className="scale-step final-reveal">
+            <div className="story-pin centered-copy">
+              <StoryCard
+                eyebrow="Bonsai / app"
+                title={<>Everything that&apos;s running.<br /><em>One place to see it.</em></>}
+                body={<>Use the web client for the overview, the TUI for keyboard-first focus, and the CLI for automation. They share the same local worktree model.</>}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="install-moment" id="install">
           <div className="install-panel">
-            <p className="eyebrow">[ INSTALL / OFFICIAL RELEASE SCRIPTS ]</p>
-            <h2>Install Bonsai.<br/><em>No Go toolchain required.</em></h2>
-            <p>The official install scripts download the latest release, verify its SHA256 checksum and place the binary on your machine. Then run <code>bonsai serve</code> and open the hosted web client.</p>
+            <div className="eyebrow"><LiveDot /> Local first</div>
+            <h2>Start growing branches.</h2>
+            <p>Install the release binary, start the local server, then open the web client. Go is not required.</p>
 
-            <div className="platform-switch" role="tablist" aria-label="Install platform">
-              <button type="button" className={platform === 'unix' ? 'active' : ''} onClick={() => setPlatform('unix')} role="tab" aria-selected={platform === 'unix'}>Linux / macOS</button>
-              <button type="button" className={platform === 'windows' ? 'active' : ''} onClick={() => setPlatform('windows')} role="tab" aria-selected={platform === 'windows'}>Windows PowerShell</button>
+            <div className="platform-switch" role="group" aria-label="Operating system">
+              <button
+                className={platform === 'unix' ? 'selected' : ''}
+                type="button"
+                onClick={() => setPlatform('unix')}
+              >
+                Linux / macOS
+              </button>
+              <button
+                className={platform === 'windows' ? 'selected' : ''}
+                type="button"
+                onClick={() => setPlatform('windows')}
+              >
+                Windows
+              </button>
             </div>
 
             <div className="install-command">
-              <span>❯</span><code>{INSTALL_COMMANDS[platform]}</code>
-              <button type="button" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
+              <span>$</span>
+              <code>{INSTALL_COMMANDS[platform]}</code>
+              <button type="button" onClick={copyInstall}>{copied ? 'Copied' : 'Copy'}</button>
             </div>
 
-            <div className="after-install"><code>bonsai serve</code><span>→</span><code>/app</code><span>→</span><b>connected</b></div>
-            <div className="actions"><a className="primary" href="/app">Open Bonsai</a><a className="secondary" href="https://github.com/Tiago-0liveira/bonsai" target="_blank" rel="noreferrer">View source ↗</a></div>
+            <div className="serve-command"><span>then</span><code>bonsai serve</code></div>
+
+            <div className="install-actions">
+              <a className="button-primary" href="/app">Open /app <span>→</span></a>
+              <a className="button-secondary" href="https://github.com/Tiago-0liveira/bonsai">View on GitHub ↗</a>
+            </div>
           </div>
         </section>
       </main>
 
-      <footer><span>bonsai</span><span>MIT</span><a href="https://github.com/Tiago-0liveira/bonsai/tree/main/docs" target="_blank" rel="noreferrer">docs ↗</a><i/><span>parallel branches · one local core</span></footer>
+      <footer>
+        <span>Bonsai</span>
+        <span>Local worktrees · parallel agents · one workspace</span>
+        <a href="https://github.com/Tiago-0liveira/bonsai">GitHub ↗</a>
+      </footer>
     </div>
   )
 }
