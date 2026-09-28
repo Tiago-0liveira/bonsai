@@ -257,7 +257,7 @@ export function ParallaxLanding() {
               <div className="status"><i/><b>LOCAL CORE ONLINE</b><span>web · tui · cli</span></div>
               <p className="eyebrow">[ PARALLEL WORKTREE CONTROL PLANE ] — LOCAL-FIRST</p>
               <h1>Grow branches.<br/><em>Watch them work.</em></h1>
-              <h2 className="parallel-heading">The browser is your canopy view.</h2>
+              <h2 className="parallel-heading">Work in parallel. <span>The browser is your canopy view.</span></h2>
               <p className="lede">Connect <strong>/app</strong> to the Bonsai server on your machine and watch projects, worktrees, agents, processes and GitHub state evolve in parallel.</p>
               <div className="pills"><span>multi-project canvas</span><span>GitHub realtime</span><span>local filesystem + git</span></div>
               <small className="scrollcue">↓ descend into the tree</small>
