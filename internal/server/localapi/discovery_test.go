@@ -57,9 +57,9 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	if len(r.List()) != 2 {
 		t.Fatal(r.List())
 	}
-	p, ok := r.Lookup(config.PathID("project", a))
+	p, ok := r.Lookup(config.ProjectID(a))
 	if !ok || p.info.RootID != config.PathID("root", filepath.Dir(a)) {
-		t.Fatal(p.info)
+		t.Fatalf("project lookup failed: path=%q id=%q project=%+v projects=%+v", a, config.ProjectID(a), p.info, r.List())
 	}
 	if owner, ok := r.Worktree(context.Background(), local.ID("local", linked)); !ok || owner.info.ID != p.info.ID {
 		t.Fatal(owner.info, ok)
