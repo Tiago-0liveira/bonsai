@@ -43,6 +43,14 @@ func TestValidateBrowserOrigin(t *testing.T) {
 	if err := validateBrowserOrigin(ProductionBrowserOrigin, BrowserSecurityProduction); err != nil {
 		t.Fatal(err)
 	}
+	if err := validateBrowserOrigin("https://app.bonsai.tiagoliv.com", BrowserSecurityProduction); err != nil {
+		t.Fatalf("custom production origin rejected: %v", err)
+	}
+	for _, origin := range []string{"", "null", "http://app.example.com", "https://app.example.com/path", "https://user@app.example.com"} {
+		if err := validateBrowserOrigin(origin, BrowserSecurityProduction); err == nil {
+			t.Fatalf("production accepted invalid origin %q", origin)
+		}
+	}
 	for _, origin := range []string{"http://localhost:7003", "http://127.0.0.1:7003"} {
 		if err := validateBrowserOrigin(origin, BrowserSecurityDevelopment); err != nil {
 			t.Fatalf("development origin %q rejected: %v", origin, err)
