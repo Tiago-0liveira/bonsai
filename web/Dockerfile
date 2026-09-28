@@ -39,8 +39,6 @@ RUN printf '%s\n' \
     '    X-Frame-Options "DENY"' \
     '    Permissions-Policy "loopback-network=(self), local-network=(self), local-network-access=(self)"' \
     '  }' \
-    '  @runtimeConfig path /config.js' \
-    '  header @runtimeConfig Cache-Control "no-store"' \
     '  @assets path /assets/*' \
     '  header @assets Cache-Control "public, max-age=31536000, immutable"' \
     '  try_files {path} /index.html' \
@@ -53,4 +51,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -qO- "http://127.0.0.1:${PORT}/" >/dev/null || exit 1
 
-CMD ["sh", "-ec", "if ! printf '%s' \"$BONSAI_RELAY_ORIGIN\" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?$'; then echo 'BONSAI_RELAY_ORIGIN must be an HTTPS origin such as https://relay.example.com' >&2; exit 1; fi; printf 'window.__BONSAI_CONFIG__ = { relayOrigin: \"%s\" };\\n' \"$BONSAI_RELAY_ORIGIN\" > /srv/config.js; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+CMD ["sh", "-ec", "if ! printf '%s' \"$BONSAI_RELAY_ORIGIN\" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?
+; then echo 'BONSAI_RELAY_ORIGIN must be an HTTPS origin such as https://relay.example.com' >&2; exit 1; fi; sed -i \"s|__BONSAI_RELAY_ORIGIN__|$BONSAI_RELAY_ORIGIN|g\" /srv/index.html; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
