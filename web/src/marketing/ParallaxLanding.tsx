@@ -5,8 +5,8 @@ type Camera = { x: number; y: number; s: number; r: number }
 type InstallPlatform = 'unix' | 'windows'
 
 const CAMERA: Camera[] = [
-  { x: 24, y: 2, s: .88, r: 0 },
-  { x: 2, y: 3, s: 1.24, r: -.2 },
+  { x: 31, y: 2, s: .86, r: 0 },
+  { x: 0, y: 3, s: 1.26, r: -.2 },
   { x: 29, y: 14, s: 1.98, r: 1.1 },
   { x: -30, y: 14, s: 2.12, r: -1.1 },
   { x: -31, y: -7, s: 2.08, r: -.7 },
@@ -108,6 +108,11 @@ function Tree() {
           </g>
           <path className="trunk-silhouette" d="M561 738C571 688 583 638 575 588C568 541 543 505 545 460C547 414 579 377 597 335C621 279 616 222 596 170C589 152 594 142 604 139C616 135 623 147 627 165C641 227 649 279 630 338C614 389 583 425 582 466C580 510 608 545 613 590C619 641 603 693 597 739Z"/>
 
+          <g className="bark-lines">
+            <path d="M584 700C593 652 594 610 586 570M575 541C566 503 568 468 579 437M590 407C603 377 614 348 617 317M611 285C613 250 608 216 600 184"/>
+            <path d="M598 676C604 641 605 609 600 578M591 526C587 497 590 470 599 447M607 415C618 389 626 362 629 337"/>
+          </g>
+
           <g className="primary-branches">
             <path className="branch-stroke b1" d="M588 575C536 532 488 508 429 506C366 505 319 531 267 569"/>
             <path className="twig b1" d="M431 506C389 479 347 468 299 474"/>
@@ -140,13 +145,20 @@ function Tree() {
             <g className="pad pad-h"><path d="M822 540C844 511 879 503 913 512C939 489 985 496 1002 526C1031 530 1044 552 1029 572C1004 588 971 586 943 579C905 596 864 589 846 566C831 564 823 555 822 540Z"/><path className="leaf-lines" d="M849 547h80m-48-21h92m-62 41h96"/></g>
           </g>
 
-          <g className="roots"><path d="M585 724C525 731 468 748 414 781M589 724C657 729 724 750 786 782M581 729C558 748 543 768 530 794M596 729C617 751 632 772 643 795"/><g className="root-chip" transform="translate(505 736)"><rect width="196" height="54" rx="4"/><text x="14" y="21">LOCAL BONSAI CORE</text><text className="sub" x="14" y="40">WEB · TUI · CLI</text></g></g>
+          <g className="pot">
+            <path className="pot-rim" d="M427 716H777L758 747H447Z"/>
+            <path className="pot-body" d="M451 746H754L720 806H486Z"/>
+            <path className="pot-line" d="M481 766H724M499 786H705"/>
+          </g>
+          <g className="roots"><path d="M585 724C525 731 468 748 414 781M589 724C657 729 724 750 786 782M581 729C558 748 543 768 530 794M596 729C617 751 632 772 643 795"/><g className="root-chip" transform="translate(505 742)"><rect width="196" height="54" rx="4"/><text x="14" y="21">LOCAL BONSAI CORE</text><text className="sub" x="14" y="40">WEB · TUI · CLI</text></g></g>
 
           <WorkNode n={1} x={250} y={560} title="project / bonsai" meta="11 worktrees · 2 agents" state="CONNECTED"/>
           <WorkNode n={2} x={238} y={132} title="feat/auth-passkeys" meta="Claude · Sonnet 4.5" state="RUNNING"/>
           <WorkNode n={3} x={804} y={126} title="pr/128-review" meta="ChatGPT Astra · review" state="PR #128"/>
           <WorkNode n={4} x={846} y={340} title="feat/live-preview" meta="web :5173 · api :7001" state="3 PROC"/>
           <WorkNode n={5} x={840} y={566} title="github/events" meta="Actions · PR · SSE" state="LIVE"/>
+          <WorkNode n={6} x={118} y={334} title="orchard-api / feat/cache" meta="Claude · Haiku · background" state="PROJECT 02"/>
+          <WorkNode n={7} x={842} y={654} title="docs-site / copy-refresh" meta="tests + preview · :4173" state="PROJECT 03"/>
         </svg>
         <div className="depth d1">local://worktree-graph</div><div className="depth d2">branch isolation / realtime state</div>
       </div>
@@ -257,7 +269,7 @@ export function ParallaxLanding() {
               <div className="status"><i/><b>LOCAL CORE ONLINE</b><span>web · tui · cli</span></div>
               <p className="eyebrow">[ PARALLEL WORKTREE CONTROL PLANE ] — LOCAL-FIRST</p>
               <h1>Grow branches.<br/><em>Watch them work.</em></h1>
-              <h2 className="parallel-heading">Work in parallel. <span>The browser is your canopy view.</span></h2>
+              <h2 className="parallel-heading">Work in parallel. <span>See the whole workspace in /app.</span></h2>
               <p className="lede">Connect <strong>/app</strong> to the Bonsai server on your machine and watch projects, worktrees, agents, processes and GitHub state evolve in parallel.</p>
               <div className="pills"><span>multi-project canvas</span><span>GitHub realtime</span><span>local filesystem + git</span></div>
               <small className="scrollcue">↓ descend into the tree</small>
