@@ -20,11 +20,16 @@ func TestValidateProductionServeSpecAndPortCollision(t *testing.T) {
 	if err := validateServeSpec(spec); err != nil {
 		t.Fatal(err)
 	}
+	custom := spec
+	custom.BrowserOrigin = "https://app.bonsai.tiagoliv.com"
+	if err := validateServeSpec(custom); err != nil {
+		t.Fatalf("custom production origin rejected: %v", err)
+	}
 
 	invalid := []procstore.ServeSpec{
 		func() procstore.ServeSpec { v := spec; v.APIPort = 0; return v }(),
 		func() procstore.ServeSpec { v := spec; v.BrowserOrigin = ""; return v }(),
-		func() procstore.ServeSpec { v := spec; v.BrowserOrigin = "https://evil.example"; return v }(),
+		func() procstore.ServeSpec { v := spec; v.BrowserOrigin = "http://app.example.com"; return v }(),
 		func() procstore.ServeSpec { v := spec; v.Mode = procstore.ServeModeDevelopment; return v }(),
 		func() procstore.ServeSpec { v := spec; v.WebhookPort = 7002; return v }(),
 		func() procstore.ServeSpec { v := spec; v.WebPort = 7003; return v }(),
