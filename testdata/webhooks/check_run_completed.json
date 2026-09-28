@@ -1,0 +1,6 @@
+{
+  "action": "completed",
+  "check_run": {"head_sha": "0123456789abcdef0123456789abcdef01234567"},
+  "repository": {"id": 123},
+  "installation": {"id": 456}
+}

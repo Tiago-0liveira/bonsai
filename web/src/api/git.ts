@@ -1,14 +1,16 @@
 import { useBonsaiStore } from '../stores/bonsai'
 import type { CreateWorktreeInput, Project, PullRequest, Worktree } from '../types'
+import { invalidateLocalSession, localFetch, markLocalConnectionLost, openLocalEvents } from './local'
 
 export interface Branch { name: string; remote: boolean; local_head_sha?: string; local_remote_ref_sha?: string; remote_head_sha?: string }
 interface Repository { id: string; workspace_id: string; full_name: string; default_branch: string }
+interface GitHubRepository { id: number; full_name: string; default_branch: string; private?: boolean }
 interface RemotePR { number: number; title: string; body: string; state: string; draft: boolean; head: string; base: string; head_sha: string; author: string; created_at: string; updated_at: string; mergeable?: string; comments?: { author: string; body: string; created_at: string }[]; reviews?: { author: string; body: string; submitted_at: string }[]; commits?: { sha: string; message: string; author: string; created_at: string }[]; files?: { path: string; additions: number; deletions: number; patch: string }[] }
 interface LocalWorktree { id: string; repository_id: string; branch: string; main: boolean; local_head_sha: string; status?: { ahead: number; behind: number; staged: number; modified: number; untracked: number; files: unknown[]; git_state: string; dirty: boolean; last_commit?: { when: string; subject: string; sha: string } } }
-export interface Snapshot { repository: Repository; online: boolean; sequence: number; local?: { branches: Branch[]; worktrees: LocalWorktree[] }; remote?: { repository: Repository; branches: { name: string; remote_head_sha: string }[]; pull_requests: RemotePR[] }; metadata: Record<string, { tag: string; merge_target_branch: string; stack_preference: 'auto' | 'never' }> }
+export interface Snapshot { repository: Repository; online: boolean; sequence: number; local?: { branches: Branch[]; worktrees: LocalWorktree[] }; remote?: { repository: GitHubRepository; branches: { name: string; remote_head_sha: string }[]; pull_requests: RemotePR[] }; metadata: Record<string, { tag: string; merge_target_branch: string; stack_preference: 'auto' | 'never' }> }
 export class APIError extends Error { constructor(public code: string, message: string) { super(message) } }
 export async function request<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
-  const response = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(method !== 'GET' ? { 'Idempotency-Key': crypto.randomUUID() } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) })
+  const response = await localFetch(path, { method, headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method !== 'GET' ? { 'Idempotency-Key': crypto.randomUUID() } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) })
   const contentType = response.headers.get('content-type') ?? ''
   if (response.status !== 204 && !contentType.includes('application/json')) throw new APIError('backend_unavailable', 'Bonsai API is unavailable.')
   if (!response.ok) { const data = await response.json().catch(() => ({})); throw new APIError(data.error?.code ?? 'request_failed', data.error?.message ?? `Request failed (${response.status})`) }
@@ -21,8 +23,11 @@ function pullRequest(repo: string, p: RemotePR): PullRequest {
   return { id: `${repo}:${p.number}`, number: p.number, title: p.title, description: p.body ?? '', branch: p.head, base: p.base, status: p.state === 'merged' ? 'Merged' : p.state === 'closed' ? 'Closed' : p.draft ? 'Draft' : 'Open', author: p.author, createdAt: p.created_at, updatedAt: p.updated_at, mergeable: p.mergeable === 'mergeable', checks: [], commits: (p.commits ?? []).map(c => ({ sha: c.sha, message: c.message, author: c.author, time: c.created_at })), conversation: [...(p.comments ?? []).map(c => ({ author: c.author, body: c.body, time: c.created_at, kind: 'comment' as const })), ...(p.reviews ?? []).map(c => ({ author: c.author, body: c.body, time: c.submitted_at, kind: 'review' as const }))], files: (p.files ?? []).map(f => ({ path: f.path, additions: f.additions, deletions: f.deletions, diff: (f.patch ?? '').split('\n') })) }
 }
 const heads = new Map<string, string>()
+const githubRepositoryProjects = new Map<number, string>()
+export function projectForGitHubRepository(repositoryId: number) { return githubRepositoryProjects.get(repositoryId) }
 export function applySnapshot(snapshot: Snapshot) {
   const state = useBonsaiStore.getState(), id = snapshot.repository.id
+  if (snapshot.remote?.repository.id) githubRepositoryProjects.set(snapshot.remote.repository.id, id)
   const remote = snapshot.remote?.pull_requests ?? []
   const prs = remote.map(p => { const mapped = pullRequest(id, p); heads.set(mapped.id, p.head_sha); const previous = state.pullRequests.find(v => v.id === mapped.id); return previous?.updatedAt === mapped.updatedAt ? { ...previous, status: mapped.status } : mapped })
   const trees: Worktree[] = (snapshot.local?.worktrees ?? []).map(w => {
@@ -78,23 +83,50 @@ export async function reviewPullRequest(id: string, body: string, kind: 'comment
   try { await request(`/api/projects/${encodeURIComponent(repo)}/pull-requests/${p.number}/reviews`, { body, event: kind === 'approve' ? 'APPROVE' : kind === 'request-changes' ? 'REQUEST_CHANGES' : 'COMMENT', commit_id: heads.get(id) }); await loadPullRequest(id) } catch (error) { report(error) }
 }
 export function startGitBackend() {
-  let closed = false, events: EventSource | undefined
+  let closed = false, events: WebSocket | undefined
   const connect = async () => {
     try {
       const repos = await request<Repository[]>('/api/projects'); if (closed) return
       const state = useBonsaiStore.getState(), active = repos.find(r => r.id === state.activeProjectId) ?? repos[0]
       useBonsaiStore.setState({ projects: repos.map(project), activeProjectId: active?.id ?? '', activeWorkspaceId: active?.workspace_id ?? '', gitError: '', worktrees: [], pullRequests: [] })
-      const snapshots = await Promise.all(repos.map(r => refreshProject(r.id)))
+      await Promise.all(repos.map(r => refreshProject(r.id)))
       if (closed) return
-      const cursor = snapshots.length ? Math.min(...snapshots.map(s => s.sequence)) : 0
-      events?.close(); events = new EventSource(`/api/events?after=${cursor}`)
-      events.addEventListener('git', event => { const data = JSON.parse((event as MessageEvent).data) as { project_id: string }; void refreshProject(data.project_id).catch(report) })
-      events.addEventListener('reset', () => { events?.close(); void connect() })
-      events.onopen = () => { for (const r of repos) void refreshProject(r.id, useBonsaiStore.getState().gitOnline[r.id]).catch(report) }
-    } catch (error) { if (!closed) useBonsaiStore.setState({ gitError: error instanceof APIError ? (error.code === 'unauthorized' ? 'Sign in with GitHub to connect your repositories.' : error.message) : String(error) }) }
+
+      if (events) { events.onclose = null; events.close() }
+      events = await openLocalEvents()
+      if (closed) { events.close(); return }
+      events.onmessage = event => {
+        let data: { type?: string; project_id?: string }
+        try { data = JSON.parse(String(event.data)) as { type?: string; project_id?: string } } catch { return }
+        if (data.type === 'ready') {
+          for (const repo of repos) void refreshProject(repo.id, true).catch(report)
+        } else if (data.type && data.type !== 'heartbeat') {
+          // Local events invalidate local canonical state. Raw WebSocket payloads
+          // never become Zustand state directly.
+          const id = data.project_id || useBonsaiStore.getState().activeProjectId
+          if (id) void refreshProject(id, true).catch(report)
+        }
+      }
+      events.onclose = event => {
+        if (closed) return
+        if (event.code === 1008) invalidateLocalSession()
+        markLocalConnectionLost(event.code === 1008
+          ? 'The local event session expired. Reconnect to create a fresh capability.'
+          : 'The local Bonsai event connection closed. Reconnect when Bonsai is available.')
+      }
+      events.onerror = () => { if (!closed) events?.close() }
+    } catch (error) {
+      if (!closed) {
+        useBonsaiStore.setState({ gitError: error instanceof APIError ? error.message : String(error) })
+        markLocalConnectionLost(error instanceof Error ? error.message : String(error))
+      }
+    }
   }
   void connect()
-  return () => { closed = true; events?.close() }
+  return () => {
+    closed = true
+    if (events) { events.onclose = null; events.close() }
+  }
 }
 
 export async function localCommand(action: string, args: Record<string, unknown> = {}) {

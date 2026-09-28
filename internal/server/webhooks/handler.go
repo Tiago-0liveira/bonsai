@@ -36,6 +36,12 @@ type Handler struct {
 func New(secret []byte, st *store.Store, process func(context.Context, Delivery) error) *Handler {
 	return &Handler{Secret: secret, Store: st, Process: process, wake: make(chan struct{}, 1)}
 }
+func Sign(secret, body []byte) string {
+	h := hmac.New(sha256.New, secret)
+	h.Write(body)
+	return "sha256=" + hex.EncodeToString(h.Sum(nil))
+}
+
 func Verify(secret, body []byte, signature string) bool {
 	if len(secret) == 0 || !strings.HasPrefix(signature, "sha256=") {
 		return false
@@ -44,9 +50,8 @@ func Verify(secret, body []byte, signature string) bool {
 	if e != nil {
 		return false
 	}
-	h := hmac.New(sha256.New, secret)
-	h.Write(body)
-	return hmac.Equal(given, h.Sum(nil))
+	expected, _ := hex.DecodeString(strings.TrimPrefix(Sign(secret, body), "sha256="))
+	return hmac.Equal(given, expected)
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {

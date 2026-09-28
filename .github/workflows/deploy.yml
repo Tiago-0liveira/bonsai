@@ -1,0 +1,115 @@
+name: Deploy
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "cmd/bonsai-relay/**"
+      - "internal/server/relay/**"
+      - "internal/server/webhooks/**"
+      - "go.mod"
+      - "go.sum"
+      - "web/**"
+      - ".github/workflows/deploy.yml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  relay-image:
+    name: Build relay image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: bonsai-relay:ci
+          cache-from: type=gha,scope=relay
+          cache-to: type=gha,mode=max,scope=relay
+
+  web-image:
+    name: Build web image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          file: ./web/Dockerfile
+          push: false
+          tags: bonsai-web:ci
+          build-args: |
+            VITE_BONSAI_RELAY_ORIGIN=${{ vars.BONSAI_RELAY_ORIGIN || 'https://api.bonsai.dev' }}
+            VITE_BONSAI_LOCAL_API_ORIGIN=http://127.0.0.1:7001
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  deploy-relay:
+    name: Deploy relay to Zeabur
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [relay-image, web-image]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Authenticate and deploy relay
+        env:
+          ZEABUR_TOKEN: ${{ secrets.ZEABUR_TOKEN }}
+          ZEABUR_PROJECT_ID: ${{ vars.ZEABUR_PROJECT_ID }}
+          ZEABUR_ENVIRONMENT_ID: ${{ vars.ZEABUR_ENVIRONMENT_ID }}
+        run: |
+          set -euo pipefail
+          : "${ZEABUR_TOKEN:?Configure the ZEABUR_TOKEN GitHub secret}"
+          : "${ZEABUR_PROJECT_ID:?Configure the ZEABUR_PROJECT_ID GitHub variable}"
+          : "${ZEABUR_ENVIRONMENT_ID:?Configure the ZEABUR_ENVIRONMENT_ID GitHub variable}"
+          npx --yes zeabur@latest auth login --token "$ZEABUR_TOKEN"
+          npx --yes zeabur@latest context set project --id "$ZEABUR_PROJECT_ID" -i=false
+          npx --yes zeabur@latest context set env --id "$ZEABUR_ENVIRONMENT_ID" -i=false
+          npx --yes zeabur@latest context set service --name bonsai-relay -i=false
+          npx --yes zeabur@latest deploy -i=false
+
+  deploy-web:
+    name: Deploy web to Zeabur
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [relay-image, web-image]
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Authenticate and deploy web
+        env:
+          ZEABUR_TOKEN: ${{ secrets.ZEABUR_TOKEN }}
+          ZEABUR_PROJECT_ID: ${{ vars.ZEABUR_PROJECT_ID }}
+          ZEABUR_ENVIRONMENT_ID: ${{ vars.ZEABUR_ENVIRONMENT_ID }}
+        run: |
+          set -euo pipefail
+          : "${ZEABUR_TOKEN:?Configure the ZEABUR_TOKEN GitHub secret}"
+          : "${ZEABUR_PROJECT_ID:?Configure the ZEABUR_PROJECT_ID GitHub variable}"
+          : "${ZEABUR_ENVIRONMENT_ID:?Configure the ZEABUR_ENVIRONMENT_ID GitHub variable}"
+          npx --yes zeabur@latest auth login --token "$ZEABUR_TOKEN"
+          npx --yes zeabur@latest context set project --id "$ZEABUR_PROJECT_ID" -i=false
+          npx --yes zeabur@latest context set env --id "$ZEABUR_ENVIRONMENT_ID" -i=false
+          npx --yes zeabur@latest context set service --name bonsai-web -i=false
+          npx --yes zeabur@latest deploy -i=false

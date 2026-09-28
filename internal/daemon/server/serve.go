@@ -1,11 +1,10 @@
 package server
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,7 +27,6 @@ type serveRuntime struct {
 	Spec       procstore.ServeSpec `json:"spec"`
 	StartedAt  time.Time           `json:"started_at"`
 	ProcessIDs map[string]int      `json:"process_ids"`
-	SecretFile string              `json:"secret_file"`
 }
 
 func (s *Server) serveDir() string {
@@ -53,10 +51,6 @@ func safeServeID(id string) string {
 
 func (s *Server) serveStatePath(id string) string {
 	return filepath.Join(s.serveDir(), safeServeID(id)+".json")
-}
-
-func (s *Server) serveSecretPath(id string) string {
-	return filepath.Join(s.serveDir(), safeServeID(id)+".secret")
 }
 
 func (s *Server) writeServeRuntime(rt *serveRuntime) error {
@@ -99,29 +93,20 @@ func (s *Server) loadServeGroups() {
 	}
 }
 
-func (s *Server) newServeSecret(id string) (string, error) {
-	if err := os.MkdirAll(s.serveDir(), 0o700); err != nil {
-		return "", err
-	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	path := s.serveSecretPath(id)
-	if err := os.WriteFile(path, []byte(hex.EncodeToString(raw)), 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
 func (s *Server) removeServeArtifacts(id string) {
 	_ = os.Remove(s.serveStatePath(id))
-	_ = os.Remove(s.serveSecretPath(id))
+	_ = os.Remove(s.serveDevSecretPath(id))
 }
 
 func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("missing serve specification")
+	}
+	if spec.Mode == "" {
+		spec.Mode = procstore.ServeModeProduction
+	}
+	if spec.Mode == procstore.ServeModeDevelopment {
+		return s.serveStartDevStack(spec)
 	}
 	if err := validateServeSpec(*spec); err != nil {
 		return nil, err
@@ -132,7 +117,11 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	s.mu.Unlock()
 	if existing != nil {
 		group := s.serveSnapshot(existing)
-		if group.State == "ready" || group.State == "degraded" {
+		modern := normalizedServeMode(existing.Spec) == procstore.ServeModeProduction &&
+			existing.Spec.BrowserOrigin != "" &&
+			len(existing.ProcessIDs) == 1 &&
+			existing.ProcessIDs["api"] != 0
+		if modern && group.State == "ready" {
 			group.Reused = true
 			return group, nil
 		}
@@ -141,32 +130,17 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 		}
 	}
 
-	if err := checkServePorts(spec.APIPort, spec.WebhookPort, spec.WebPort); err != nil {
+	if err := checkServePorts(spec.APIPort); err != nil {
 		return nil, err
 	}
 	if _, err := os.Stat(spec.Executable); err != nil {
 		return nil, fmt.Errorf("bonsai executable: %w", err)
 	}
-	if _, err := os.Stat(spec.ServerConfig); err != nil {
-		return nil, fmt.Errorf("serve server config: %w", err)
-	}
-	webDir := filepath.Join(spec.WorkspacePath, "web")
-	if fi, err := os.Stat(webDir); err != nil || !fi.IsDir() {
-		if err == nil {
-			err = fmt.Errorf("not a directory")
-		}
-		return nil, fmt.Errorf("serve web directory %s: %w", webDir, err)
-	}
 
-	secretFile, err := s.newServeSecret(spec.WorkspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("create serve session secret: %w", err)
-	}
 	rt := &serveRuntime{
 		Spec:       *spec,
 		StartedAt:  time.Now().UTC(),
 		ProcessIDs: map[string]int{},
-		SecretFile: secretFile,
 	}
 	s.mu.Lock()
 	s.serveGroups[spec.WorkspaceID] = rt
@@ -183,13 +157,18 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	if spec.StartupTimeoutSeconds > 0 {
 		timeout = time.Duration(spec.StartupTimeoutSeconds) * time.Second
 	}
-	env := serveEnvironment(*spec)
-	start := func(name, program string, args []string, cwd string, extra map[string]string, port int, required bool, policy procstore.Policy) error {
-		processEnv := cloneStringMap(env)
-		for key, value := range extra {
-			processEnv[key] = value
-		}
-		id, err := s.spawnServeProcess(rt, name, program, args, cwd, processEnv, port, required, policy)
+	start := func(name, program string, args []string, cwd string, port int) error {
+		id, err := s.spawnServeProcess(
+			rt,
+			name,
+			program,
+			args,
+			cwd,
+			serveEnvironment(*spec),
+			port,
+			true,
+			procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 3},
+		)
 		if err != nil {
 			return err
 		}
@@ -199,85 +178,49 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 		return nil
 	}
 
-	corePolicy := procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 3}
-	secretEnv := map[string]string{"BONSAI_SERVE_SECRET_FILE": secretFile}
-	if err := start("api", spec.Executable,
-		[]string{"__serve-api", "--config", spec.ServerConfig, "--port", strconv.Itoa(spec.APIPort),
-			"--browser-origin", fmt.Sprintf("http://127.0.0.1:%d", spec.WebPort), "--session-secret-file", secretFile},
-		spec.WorkspacePath, secretEnv, spec.APIPort, true, corePolicy); err != nil {
+	if err := start(
+		"api",
+		spec.Executable,
+		serveAPIArgs(s.root, *spec, "production"),
+		spec.WorkspacePath,
+		spec.APIPort,
+	); err != nil {
 		s.cleanupFailedServe(rt)
 		return nil, err
-	}
-	if err := start("webhook", spec.Executable,
-		[]string{"__serve-webhook", "--config", spec.ServerConfig, "--port", strconv.Itoa(spec.WebhookPort), "--api-port", strconv.Itoa(spec.APIPort), "--session-secret-file", secretFile},
-		spec.WorkspacePath, secretEnv, spec.WebhookPort, true, corePolicy); err != nil {
-		s.cleanupFailedServe(rt)
-		return nil, err
-	}
-	if err := start("web", "npm",
-		[]string{"run", "start", "--", "--host", "127.0.0.1", "--port", strconv.Itoa(spec.WebPort), "--strictPort"},
-		webDir, nil, spec.WebPort, true, corePolicy); err != nil {
-		s.cleanupFailedServe(rt)
-		return nil, err
-	}
-
-	seen := map[string]bool{"api": true, "webhook": true, "web": true}
-	for _, sidecar := range spec.Sidecars {
-		if sidecar.Name == "" {
-			s.cleanupFailedServe(rt)
-			return nil, fmt.Errorf("sidecar name is required")
-		}
-		if seen[sidecar.Name] {
-			s.cleanupFailedServe(rt)
-			return nil, fmt.Errorf("duplicate serve process name %q", sidecar.Name)
-		}
-		seen[sidecar.Name] = true
-		if len(sidecar.Command) == 0 || strings.TrimSpace(sidecar.Command[0]) == "" {
-			s.cleanupFailedServe(rt)
-			return nil, fmt.Errorf("sidecar %q has no command", sidecar.Name)
-		}
-		cwd := sidecar.Cwd
-		if cwd == "" {
-			cwd = spec.WorkspacePath
-		} else if !filepath.IsAbs(cwd) {
-			cwd = filepath.Join(spec.WorkspacePath, cwd)
-		}
-		mode := sidecar.Restart
-		if !procstore.ValidMode(mode) {
-			mode = procstore.PolicyOnFailure
-		}
-		max := sidecar.MaxRestarts
-		if max <= 0 {
-			max = 3
-		}
-		if err := start(sidecar.Name, sidecar.Command[0], append([]string(nil), sidecar.Command[1:]...),
-			cwd, sidecar.Environment, 0, sidecar.Required, procstore.Policy{Mode: mode, MaxRestarts: max}); err != nil {
-			if sidecar.Required {
-				s.cleanupFailedServe(rt)
-				return nil, err
-			}
-		}
 	}
 
 	group := s.serveSnapshot(rt)
-	if group.State != "ready" && group.State != "degraded" {
+	if group.State != "ready" {
 		s.cleanupFailedServe(rt)
 		return nil, fmt.Errorf("serve group did not become ready")
 	}
 	return group, nil
 }
 
+func normalizedServeMode(spec procstore.ServeSpec) procstore.ServeMode {
+	if spec.Mode == "" {
+		return procstore.ServeModeProduction
+	}
+	return spec.Mode
+}
+
 func validateServeSpec(spec procstore.ServeSpec) error {
-	if spec.WorkspaceID == "" || spec.WorkspacePath == "" || spec.Executable == "" || spec.ServerConfig == "" {
-		return fmt.Errorf("serve requires workspace id/path, executable, and server config")
+	if normalizedServeMode(spec) != procstore.ServeModeProduction {
+		return fmt.Errorf("production serve requires production mode")
 	}
-	for name, port := range map[string]int{"api": spec.APIPort, "webhook": spec.WebhookPort, "web": spec.WebPort} {
-		if port < 1 || port > 65535 {
-			return fmt.Errorf("%s port %d is invalid", name, port)
-		}
+	if spec.WorkspaceID == "" || spec.WorkspacePath == "" || spec.Executable == "" {
+		return fmt.Errorf("serve requires workspace id/path and executable")
 	}
-	if spec.APIPort == spec.WebhookPort || spec.APIPort == spec.WebPort || spec.WebhookPort == spec.WebPort {
-		return fmt.Errorf("api, webhook, and web ports must be distinct")
+	if spec.APIPort < 1 || spec.APIPort > 65535 {
+		return fmt.Errorf("api port %d is invalid", spec.APIPort)
+	}
+	u, err := url.Parse(strings.TrimSpace(spec.BrowserOrigin))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
+	}
+	if spec.WebhookPort != 0 || spec.WebPort != 0 || len(spec.Sidecars) != 0 {
+		return fmt.Errorf("production serve cannot supervise development services")
 	}
 	return nil
 }
@@ -293,17 +236,22 @@ func checkServePorts(ports ...int) error {
 	return nil
 }
 
+func serveAPIArgs(repoRoot string, spec procstore.ServeSpec, securityMode string) []string {
+	return []string{
+		"__serve-api",
+		"--repo", repoRoot,
+		"--port", strconv.Itoa(spec.APIPort),
+		"--browser-origin", spec.BrowserOrigin,
+		"--security-mode", securityMode,
+	}
+}
+
 func serveEnvironment(spec procstore.ServeSpec) map[string]string {
 	return map[string]string{
-		"BONSAI_API_HOST":     "127.0.0.1",
-		"BONSAI_API_PORT":     strconv.Itoa(spec.APIPort),
-		"BONSAI_WEBHOOK_HOST": "127.0.0.1",
-		"BONSAI_WEBHOOK_PORT": strconv.Itoa(spec.WebhookPort),
-		"BONSAI_WEB_HOST":     "127.0.0.1",
-		"BONSAI_WEB_PORT":     strconv.Itoa(spec.WebPort),
-		"BONSAI_WORKSPACE":    spec.WorkspacePath,
-		"BONSAI_SERVE_GROUP":  spec.WorkspaceID,
-		"PORT":                strconv.Itoa(spec.WebPort),
+		"BONSAI_API_HOST":    "127.0.0.1",
+		"BONSAI_API_PORT":    strconv.Itoa(spec.APIPort),
+		"BONSAI_WORKSPACE":   spec.WorkspacePath,
+		"BONSAI_SERVE_GROUP": spec.WorkspaceID,
 	}
 }
 
@@ -410,8 +358,10 @@ func (s *Server) serveStatus(id string) (*procstore.ServeGroup, error) {
 
 func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 	group := &procstore.ServeGroup{
-		ID: rt.Spec.WorkspaceID, WorkspaceID: rt.Spec.WorkspaceID, WorkspacePath: rt.Spec.WorkspacePath,
-		State: "ready", StartedAt: rt.StartedAt, APIPort: rt.Spec.APIPort, WebhookPort: rt.Spec.WebhookPort, WebPort: rt.Spec.WebPort,
+		ID: rt.Spec.WorkspaceID, Mode: normalizedServeMode(rt.Spec),
+		WorkspaceID: rt.Spec.WorkspaceID, WorkspacePath: rt.Spec.WorkspacePath,
+		State: "ready", StartedAt: rt.StartedAt, APIPort: rt.Spec.APIPort,
+		WebhookPort: rt.Spec.WebhookPort, WebPort: rt.Spec.WebPort, BrowserOrigin: rt.Spec.BrowserOrigin,
 	}
 	names := make([]string, 0, len(rt.ProcessIDs))
 	for name := range rt.ProcessIDs {
@@ -503,7 +453,7 @@ func (s *Server) stopServeRuntime(rt *serveRuntime) error {
 		names = append(names, name)
 	}
 	sort.Slice(names, func(i, j int) bool {
-		order := map[string]int{"api": 3, "webhook": 2, "web": 1}
+		order := map[string]int{"api": 1}
 		ai, aok := order[names[i]]
 		aj, bok := order[names[j]]
 		if aok != bok {
@@ -586,6 +536,9 @@ func (s *Server) serveRestart(id, processName string) (*procstore.ServeGroup, er
 	if rt == nil {
 		return nil, fmt.Errorf("no serve group for workspace")
 	}
+	if normalizedServeMode(rt.Spec) == procstore.ServeModeDevelopment {
+		return s.serveRestartDevStack(rt, processName)
+	}
 	var names []string
 	if processName != "" {
 		if _, ok := rt.ProcessIDs[processName]; !ok {
@@ -593,19 +546,10 @@ func (s *Server) serveRestart(id, processName string) (*procstore.ServeGroup, er
 		}
 		names = append(names, processName)
 	} else {
-		for _, core := range []string{"api", "webhook", "web"} {
-			if _, ok := rt.ProcessIDs[core]; ok {
-				names = append(names, core)
-			}
+		if _, ok := rt.ProcessIDs["api"]; !ok {
+			return nil, fmt.Errorf("serve group has no api process")
 		}
-		var sidecars []string
-		for name := range rt.ProcessIDs {
-			if name != "api" && name != "webhook" && name != "web" {
-				sidecars = append(sidecars, name)
-			}
-		}
-		sort.Strings(sidecars)
-		names = append(names, sidecars...)
+		names = append(names, "api")
 	}
 	timeout := serveDefaultStartupTimeout
 	if rt.Spec.StartupTimeoutSeconds > 0 {

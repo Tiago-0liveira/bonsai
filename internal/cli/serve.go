@@ -18,15 +18,18 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 )
 
-type stringListFlag []string
+func hostedWebOrigin() string {
+	if value := strings.TrimSpace(os.Getenv("BONSAI_FRONTEND_ORIGIN")); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	return localapi.ProductionBrowserOrigin
+}
 
-func (v *stringListFlag) String() string { return strings.Join(*v, ",") }
-
-func (v *stringListFlag) Set(value string) error {
-	*v = append(*v, value)
-	return nil
+func hostedWebURL() string {
+	return hostedWebOrigin() + "/app"
 }
 
 func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer) error {
@@ -54,7 +57,7 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 		if len(args) != 0 {
 			return fmt.Errorf("usage: bonsai serve status")
 		}
-		group, err := c.ServeStatus(workspaceID)
+		group, err := serveGroupForMode(c, workspaceID, procstore.ServeModeProduction)
 		if err != nil {
 			return err
 		}
@@ -64,31 +67,34 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 		if len(args) != 0 {
 			return fmt.Errorf("usage: bonsai serve attach")
 		}
-		group, err := c.ServeStatus(workspaceID)
+		group, err := requireServeGroupMode(c, workspaceID, procstore.ServeModeProduction)
 		if err != nil {
 			return err
-		}
-		if group == nil {
-			return fmt.Errorf("no serve group for this workspace")
 		}
 		return runServeTUI(in, out, c, group)
 
 	case "logs":
-		return cmdServeLogs(c, workspaceID, args, out, errOut)
+		return cmdServeLogsForMode(c, workspaceID, procstore.ServeModeProduction, "bonsai serve", args, out, errOut)
 
 	case "stop":
 		if len(args) != 0 {
 			return fmt.Errorf("usage: bonsai serve stop")
 		}
+		if _, err := requireServeGroupMode(c, workspaceID, procstore.ServeModeProduction); err != nil {
+			return err
+		}
 		if err := c.ServeStop(workspaceID); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "serve group stopped")
+		fmt.Fprintln(out, "local API stopped")
 		return nil
 
 	case "restart":
-		if len(args) > 1 {
-			return fmt.Errorf("usage: bonsai serve restart [process]")
+		if len(args) > 1 || (len(args) == 1 && args[0] != "api") {
+			return fmt.Errorf("usage: bonsai serve restart [api]")
+		}
+		if _, err := requireServeGroupMode(c, workspaceID, procstore.ServeModeProduction); err != nil {
+			return err
 		}
 		name := ""
 		if len(args) == 1 {
@@ -106,99 +112,41 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	var detached bool
 	fs.BoolVar(&detached, "d", false, "wait for readiness, then detach")
 	fs.BoolVar(&detached, "auto-detach", false, "wait for readiness, then detach")
-	apiPort := fs.Int("api-port", 0, "override API port")
-	webhookPort := fs.Int("webhook-port", 0, "override webhook port")
-	webPort := fs.Int("web-port", 0, "override web port")
-	serverConfig := fs.String("server-config", "", "Git API server config JSON")
-	var scripts stringListFlag
-	fs.Var(&scripts, "sidecar-script", "sidecar script (repeatable)")
+	apiPort := fs.Int("api-port", 0, "override local API port")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--sidecar-script PATH]")
+		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--api-port PORT]")
 	}
 
 	cfg, err := config.LoadFor(repoDir)
 	if err != nil {
 		return err
 	}
+	for _, key := range cfg.DeprecatedServeKeys {
+		fmt.Fprintf(errOut, "warning: %s is deprecated and ignored by normal bonsai serve; use the internal development stack instead\n", key)
+	}
 	if *apiPort == 0 {
 		*apiPort = cfg.Serve.APIPort
 	}
-	if *webhookPort == 0 {
-		*webhookPort = cfg.Serve.WebhookPort
-	}
-	if *webPort == 0 {
-		*webPort = cfg.Serve.WebPort
-	}
-	if *serverConfig == "" {
-		*serverConfig = cfg.Serve.ServerConfig
-	}
-	if *serverConfig == "" {
-		*serverConfig = os.Getenv("BONSAI_SERVER_CONFIG")
-	}
-	if *serverConfig == "" {
-		candidate := filepath.Join(workspace, "server.json")
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			*serverConfig = candidate
-		}
-	}
-	if *serverConfig == "" {
-		return fmt.Errorf("serve requires serve.server_config, --server-config, BONSAI_SERVER_CONFIG, or %s", filepath.Join(workspace, "server.json"))
-	}
-	if !filepath.IsAbs(*serverConfig) {
-		*serverConfig = filepath.Join(workspace, *serverConfig)
-	}
-	*serverConfig, err = filepath.Abs(*serverConfig)
-	if err != nil {
-		return err
+	if group, err := c.ServeStatus(workspaceID); err == nil && group != nil && normalizedGroupMode(group) == procstore.ServeModeDevelopment {
+		return fmt.Errorf("development stack is active for this workspace; stop it with bonsai __serve-dev-stack stop")
 	}
 
 	executable, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	sidecars := make([]procstore.ServeSidecar, 0, len(cfg.Serve.Sidecars)+len(scripts))
-	for _, sc := range cfg.Serve.Sidecars {
-		sidecars = append(sidecars, procstore.ServeSidecar{
-			Name:        sc.Name,
-			Command:     append([]string(nil), sc.Command...),
-			Cwd:         sc.Cwd,
-			Environment: cloneServeEnv(sc.Environment),
-			Restart:     sc.Restart,
-			MaxRestarts: sc.MaxRestarts,
-			Required:    sc.Required,
-		})
-	}
-	for i, script := range scripts {
-		if !filepath.IsAbs(script) {
-			script = filepath.Join(workspace, script)
-		}
-		script, err = filepath.Abs(script)
-		if err != nil {
-			return err
-		}
-		sidecars = append(sidecars, procstore.ServeSidecar{
-			Name:     "script-" + strconv.Itoa(i+1),
-			Command:  []string{script},
-			Cwd:      workspace,
-			Restart:  procstore.PolicyOnFailure,
-			Required: true,
-		})
-	}
-
 	spec := procstore.ServeSpec{
+		Mode:                   procstore.ServeModeProduction,
 		WorkspaceID:            workspaceID,
 		WorkspacePath:          workspace,
 		Executable:             executable,
-		ServerConfig:           *serverConfig,
 		APIPort:                *apiPort,
-		WebhookPort:            *webhookPort,
-		WebPort:                *webPort,
+		BrowserOrigin:          hostedWebOrigin(),
 		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
 		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
-		Sidecars:               sidecars,
 	}
 	group, err := c.ServeStart(spec)
 	if err != nil {
@@ -206,17 +154,55 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	}
 	if detached {
 		if group.Reused {
-			fmt.Fprintln(out, "serve group already healthy")
+			fmt.Fprintln(out, "local API already healthy")
 		} else {
-			fmt.Fprintln(out, "serve group ready; detached")
+			fmt.Fprintln(out, "local API ready; detached")
 		}
 		return printServeStatus(out, group)
+	}
+	if err := printServeAccess(out, group); err != nil {
+		return err
 	}
 	return runServeTUI(in, out, c, group)
 }
 
-func cmdServeLogs(c *client.Client, workspaceID string, args []string, out, errOut io.Writer) error {
-	fs := flag.NewFlagSet("serve logs", flag.ContinueOnError)
+func normalizedGroupMode(group *procstore.ServeGroup) procstore.ServeMode {
+	if group == nil || group.Mode == "" {
+		return procstore.ServeModeProduction
+	}
+	return group.Mode
+}
+
+func serveGroupForMode(c *client.Client, workspaceID string, mode procstore.ServeMode) (*procstore.ServeGroup, error) {
+	group, err := c.ServeStatus(workspaceID)
+	if err != nil || group == nil {
+		return group, err
+	}
+	if normalizedGroupMode(group) != mode {
+		return nil, nil
+	}
+	return group, nil
+}
+
+func requireServeGroupMode(c *client.Client, workspaceID string, mode procstore.ServeMode) (*procstore.ServeGroup, error) {
+	group, err := c.ServeStatus(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil {
+		return nil, fmt.Errorf("no serve group for this workspace")
+	}
+	if normalizedGroupMode(group) != mode {
+		if mode == procstore.ServeModeProduction {
+			return nil, fmt.Errorf("development stack is active; use bonsai __serve-dev-stack")
+		}
+		return nil, fmt.Errorf("production local API is active; use bonsai serve")
+	}
+	return group, nil
+}
+
+func cmdServeLogsForMode(c *client.Client, workspaceID string, mode procstore.ServeMode, command string, args []string, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet(command+" logs", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	follow := fs.Bool("f", false, "follow combined logs")
 	n := fs.Int("n", 200, "number of recent lines")
@@ -227,14 +213,10 @@ func cmdServeLogs(c *client.Client, workspaceID string, args []string, out, errO
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: bonsai serve logs [-f] [-n N] [--process NAME] [--grep TEXT] [-i]")
+		return fmt.Errorf("usage: %s logs [-f] [-n N] [--process NAME] [--grep TEXT] [-i]", command)
 	}
-	group, err := c.ServeStatus(workspaceID)
-	if err != nil {
+	if _, err := requireServeGroupMode(c, workspaceID, mode); err != nil {
 		return err
-	}
-	if group == nil {
-		return fmt.Errorf("no serve group for this workspace")
 	}
 	ctx := context.Background()
 	stop := func() {}
@@ -248,28 +230,33 @@ func cmdServeLogs(c *client.Client, workspaceID string, args []string, out, errO
 	})
 }
 
-func cloneServeEnv(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
 func serveWorkspaceID(path string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(path)))
 	return hex.EncodeToString(sum[:8])
 }
 
-func printServeStatus(out io.Writer, group *procstore.ServeGroup) error {
+func printServeAccess(out io.Writer, group *procstore.ServeGroup) error {
 	if group == nil {
-		fmt.Fprintln(out, "no serve group for this workspace")
 		return nil
 	}
-	fmt.Fprintf(out, "Bonsai Serve — %s — %s\n", group.WorkspacePath, group.State)
+	if normalizedGroupMode(group) == procstore.ServeModeDevelopment {
+		return printDevServeStatus(out, group)
+	}
+	fmt.Fprintf(out, "Bonsai local API\n  http://127.0.0.1:%d\n\n", group.APIPort)
+	fmt.Fprintf(out, "Web client\n  %s\n", hostedWebURL())
+	return nil
+}
+
+func printServeStatus(out io.Writer, group *procstore.ServeGroup) error {
+	if group == nil {
+		fmt.Fprintln(out, "no local API for this workspace")
+		return nil
+	}
+	if normalizedGroupMode(group) == procstore.ServeModeDevelopment {
+		return printDevServeStatus(out, group)
+	}
+	fmt.Fprintf(out, "Bonsai local API — %s — %s\n", group.WorkspacePath, group.State)
+	fmt.Fprintf(out, "Web client: %s\n", hostedWebURL())
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "PROCESS\tSTATUS\tPID\tADDRESS")
 	for _, process := range group.Processes {

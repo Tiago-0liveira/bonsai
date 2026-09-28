@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Bell, Check, ChevronDown, Command, Search, Sprout } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
+import { getRelayConnectionSnapshot, relayLoginURL, subscribeRelayConnection } from '../../api/relayClient'
 
 const nav = [
   { label: 'Canvas', to: '/' },
@@ -95,6 +96,32 @@ function HeaderSelect({
   )
 }
 
+function RelayStatus() {
+  const relay = useSyncExternalStore(
+    subscribeRelayConnection,
+    getRelayConnectionSnapshot,
+    getRelayConnectionSnapshot,
+  )
+  const label = relay.status === 'connected'
+    ? 'GitHub realtime connected'
+    : relay.status === 'authorization-expired'
+      ? 'Connect GitHub'
+      : relay.status === 'connecting'
+        ? 'GitHub realtime connecting'
+        : relay.status === 'offline'
+          ? 'GitHub realtime offline'
+          : 'GitHub realtime disconnected'
+  const dot = relay.status === 'connected'
+    ? 'bg-[rgb(var(--green))]'
+    : relay.status === 'offline'
+      ? 'bg-[rgb(var(--orange))]'
+      : 'bg-[rgb(var(--muted-2))]'
+  const content = <><span className={`h-1.5 w-1.5 rounded-full ${dot}`} /><span className="hidden min-[1180px]:inline">{label}</span></>
+  return relay.status === 'authorization-expired'
+    ? <a href={relayLoginURL()} title={relay.message ?? label} className="bonsai-focus flex h-7 items-center gap-2 rounded-md px-2 text-[10px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">{content}</a>
+    : <span title={relay.message ?? label} className="flex h-7 items-center gap-2 rounded-md px-2 text-[10px] text-[rgb(var(--muted))]">{content}</span>
+}
+
 export function TopBar() {
   const allWorkspaceProjects = useBonsaiStore(state => state.projects)
   const workspaces = [...new Set(allWorkspaceProjects.map(p => p.workspaceId))].map(id => ({ id, name: id }))
@@ -157,6 +184,7 @@ export function TopBar() {
       </nav>
 
       <div className="flex items-center gap-1.5 justify-self-end">
+        <RelayStatus />
         <button
           className="bonsai-focus flex h-7 items-center gap-2 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel))] px-2.5 text-[12px] text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--panel-2))]"
           onClick={() => setPaletteOpen(true)}

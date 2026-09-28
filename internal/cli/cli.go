@@ -65,6 +65,15 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdPath(repoDir, args[1:], out)
 	}
 
+	// Internal contributor/testing commands intentionally stay out of public help
+	// and skip the normal update-check path.
+	switch args[0] {
+	case "__serve-dev-stack":
+		return cmdServeDevStack(repoDir, args[1:], in, out, errOut)
+	case "__dev-webhook":
+		return cmdDevWebhook(repoDir, args[1:], out, errOut)
+	}
+
 	// Periodic update check for standard CLI commands
 	_ = updater.PeriodicCheckHook(context.Background(), version.String(), in, out, errOut)
 
@@ -443,7 +452,7 @@ Usage:
   bonsai restart <id>             restart a process
   bonsai attach <id>              stream a process log (Ctrl-C detaches)
   bonsai daemon status|stop       control the background daemon
-  bonsai serve [-d]               run API + webhook + web via the daemon
+  bonsai serve [-d]               run the secured loopback API via the daemon
   bonsai serve status|attach      inspect/attach the workspace serve group
   bonsai serve logs [-f]           combined daemon-owned serve logs
   bonsai serve logs --process X   logs for one serve process

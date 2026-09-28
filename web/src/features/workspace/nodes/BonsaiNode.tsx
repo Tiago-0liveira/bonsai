@@ -1,5 +1,5 @@
 import { openGitHub } from '../../../api/git'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
@@ -272,9 +272,14 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
+  const canvasCommand = useBonsaiStore((state) => state.canvasCommand)
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
+
+  useEffect(() => {
+    if (canvasCommand.type === 'layout' && canvasCommand.nonce) setHistoryOpen(false)
+  }, [canvasCommand.nonce, canvasCommand.type])
 
   if (data.kind === 'default-branch') return <DefaultBranchCard data={data} />
   if (data.kind === 'env') return <EnvCard data={data} />

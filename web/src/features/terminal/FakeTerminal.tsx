@@ -43,7 +43,7 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     let disposed = false
 
     const fitSafely = () => {
-      if (disposed || !host.isConnected || terminalRef.current !== terminal) return
+      if (disposed || !host.isConnected || host.clientWidth < 2 || host.clientHeight < 2 || terminalRef.current !== terminal) return
       try {
         fit.fit()
       } catch {
@@ -71,7 +71,10 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
       observer.disconnect()
       terminalRef.current = null
       fitRef.current = null
-      terminal.dispose()
+      // xterm schedules viewport synchronization on animation frames. Keep its
+      // render services alive long enough for already-queued work to drain when
+      // a dock panel is removed, then dispose the detached terminal.
+      requestAnimationFrame(() => requestAnimationFrame(() => terminal.dispose()))
     }
   }, [])
 
@@ -83,7 +86,8 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     terminal.write('\x1b[2J\x1b[3J\x1b[H')
     lines.forEach((line) => terminal.writeln(line))
     const frame = requestAnimationFrame(() => {
-      if (terminalRef.current !== terminal || fitRef.current !== fit) return
+      const host = hostRef.current
+      if (terminalRef.current !== terminal || fitRef.current !== fit || !host?.isConnected || host.clientWidth < 2 || host.clientHeight < 2) return
       try {
         fit.fit()
         terminal.scrollToBottom()

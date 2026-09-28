@@ -98,6 +98,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const viewport = useBonsaiStore((state) => state.viewport)
   const setViewport = useBonsaiStore((state) => state.setViewport)
   const canvasCommand = useBonsaiStore((state) => state.canvasCommand)
+  const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const envVariables = useBonsaiStore((state) => state.envVariables)
   const lastCommand = useRef(0)
@@ -111,7 +112,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     agentOwners: Map<string, string>
     stacks: Map<string, string[]>
   } | null>(null)
-  const { fitView, getNodes } = useReactFlow()
+  const { fitView, getEdges, getNodes } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const fitViewRef = useRef(fitView)
 
@@ -604,18 +605,34 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       void fitViewRef.current({ padding: 0.14, duration: 300 })
       return
     }
-    const positions = computeGlobalPlacements(nodes, edges, nodePlacements)
-    setNodes((current) =>
-      current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
-    )
-    const generated = storablePositions(nodes, positions)
-    setGeneratedNodePlacements(generated)
-    requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
+
+    // Layout commands first collapse branch-local detail in NodeShell. Wait for
+    // React Flow to observe the resulting node dimensions before measuring the
+    // graph, otherwise the next layout pass sees different geometry and drifts.
+    let secondFrame = 0
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        const currentNodes = getNodes()
+        const currentEdges = getEdges()
+        const currentPlacements = useBonsaiStore.getState().nodePlacements
+        const positions = computeGlobalPlacements(currentNodes, currentEdges, currentPlacements)
+        setNodes((current) =>
+          current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
+        )
+        const generated = storablePositions(currentNodes, positions)
+        setGeneratedNodePlacements(generated)
+        requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
+      })
+    })
+    return () => {
+      cancelAnimationFrame(firstFrame)
+      if (secondFrame) cancelAnimationFrame(secondFrame)
+    }
   }, [
-    canvasCommand,
-    edges,
-    nodePlacements,
-    nodes,
+    canvasCommand.nonce,
+    canvasCommand.type,
+    getEdges,
+    getNodes,
     setGeneratedNodePlacements,
     setNodes,
   ])
@@ -631,15 +648,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     }
   }
 
-  const autoLayout = () => {
-    const positions = computeGlobalPlacements(nodes, edges, nodePlacements)
-    setNodes((current) =>
-      current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
-    )
-    const generated = storablePositions(nodes, positions)
-    setGeneratedNodePlacements(generated)
-    requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
-  }
+  const autoLayout = () => requestCanvasAction('layout')
 
   const beginDrag: OnNodeDrag<Node> = (_, node) => {
     const companionIds = new Set<string>()

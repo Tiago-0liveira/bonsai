@@ -113,18 +113,28 @@ type ServeSidecar struct {
 	Required    bool              `json:"required,omitempty"`
 }
 
-// ServeSpec is the daemon request for one workspace development stack.
+type ServeMode string
+
+const (
+	ServeModeProduction  ServeMode = "production"
+	ServeModeDevelopment ServeMode = "development"
+)
+
+// ServeSpec is the daemon request for one workspace serve group. Production
+// specs contain only the local API. Development specs may add the local webhook
+// relay, Vite frontend, and explicitly configured development sidecars.
 type ServeSpec struct {
+	Mode                   ServeMode      `json:"mode,omitempty"`
 	WorkspaceID            string         `json:"workspace_id"`
 	WorkspacePath          string         `json:"workspace_path"`
 	Executable             string         `json:"executable"`
-	ServerConfig           string         `json:"server_config"`
 	APIPort                int            `json:"api_port"`
-	WebhookPort            int            `json:"webhook_port"`
-	WebPort                int            `json:"web_port"`
+	WebhookPort            int            `json:"webhook_port,omitempty"`
+	WebPort                int            `json:"web_port,omitempty"`
+	BrowserOrigin          string         `json:"browser_origin"`
+	Sidecars               []ServeSidecar `json:"sidecars,omitempty"`
 	StartupTimeoutSeconds  int            `json:"startup_timeout_seconds,omitempty"`
 	ShutdownTimeoutSeconds int            `json:"shutdown_timeout_seconds,omitempty"`
-	Sidecars               []ServeSidecar `json:"sidecars,omitempty"`
 }
 
 // ServeProcess is the public status view for one process in a ServeGroup.
@@ -144,13 +154,15 @@ type ServeProcess struct {
 // ServeGroup is the daemon-owned status snapshot for one workspace stack.
 type ServeGroup struct {
 	ID            string         `json:"id"`
+	Mode          ServeMode      `json:"mode,omitempty"`
 	WorkspaceID   string         `json:"workspace_id"`
 	WorkspacePath string         `json:"workspace_path"`
 	State         string         `json:"state"`
 	StartedAt     time.Time      `json:"started_at"`
 	APIPort       int            `json:"api_port"`
-	WebhookPort   int            `json:"webhook_port"`
-	WebPort       int            `json:"web_port"`
+	WebhookPort   int            `json:"webhook_port,omitempty"`
+	WebPort       int            `json:"web_port,omitempty"`
+	BrowserOrigin string         `json:"browser_origin,omitempty"`
 	Reused        bool           `json:"reused,omitempty"`
 	Processes     []ServeProcess `json:"processes"`
 }
