@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Tiago-0liveira/bonsai/internal/server/relay"
@@ -27,16 +28,45 @@ func main() {
 	}
 }
 
-func run() error {
-	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: bonsai-server <config.json>")
+func envOverride(current string, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
 	}
-	body, err := os.ReadFile(os.Args[1])
-	if err != nil {
-		return err
+	return current
+}
+
+func loadConfig() (config, error) {
+	if len(os.Args) > 2 {
+		return config{}, fmt.Errorf("usage: bonsai-server [config.json]")
 	}
 	var file config
-	if err := json.Unmarshal(body, &file); err != nil {
+	if len(os.Args) == 2 {
+		body, err := os.ReadFile(os.Args[1])
+		if err != nil {
+			return config{}, err
+		}
+		if err := json.Unmarshal(body, &file); err != nil {
+			return config{}, err
+		}
+	}
+
+	file.Address = envOverride(file.Address, "BONSAI_RELAY_ADDRESS")
+	if file.Address == "" {
+		if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
+			file.Address = "0.0.0.0:" + port
+		}
+	}
+	file.Database = envOverride(file.Database, "BONSAI_RELAY_DATABASE")
+	file.ExternalURL = envOverride(file.ExternalURL, "BONSAI_RELAY_EXTERNAL_URL", "BONSAI_RELAY_ORIGIN")
+	file.FrontendOrigin = envOverride(file.FrontendOrigin, "BONSAI_RELAY_FRONTEND_ORIGIN", "BONSAI_FRONTEND_ORIGIN")
+	return file, nil
+}
+
+func run() error {
+	file, err := loadConfig()
+	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
