@@ -149,7 +149,7 @@ func TestProjectRoutingAndLegacyMetadataPreservation(t *testing.T) {
 		p.daemon = d
 		r.entries[info.ID] = p
 	}
-	aID, bID := config.PathID("project", a), config.PathID("project", b)
+	aID, bID := config.ProjectID(a), config.ProjectID(b)
 	for _, project := range []string{aID, bID} {
 		w := authorizedRequest(t, s, "GET", "/api/projects/"+project+"/worktrees", "", nil)
 		if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(project)) {
