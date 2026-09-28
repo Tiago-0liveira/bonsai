@@ -52,10 +52,12 @@ The internet service is implemented in `internal/server/relay` and exposed by
 alias for the same relay-only server; it no longer registers project, Git,
 device, daemon, process, agent, or filesystem routes.
 
-The intended production origins are fixed:
+The default production origins are:
 
 - frontend: `https://app.bonsai.dev`
 - relay: `https://api.bonsai.dev`
+
+Deployments may select different exact HTTPS origins with `BONSAI_FRONTEND_ORIGIN` and `BONSAI_RELAY_ORIGIN`. These remain single, explicit origins: the relay and local API do not use wildcard CORS.
 
 The relay surface is intentionally small:
 
@@ -74,20 +76,33 @@ to open the credentialed EventSource.
 
 ### Relay configuration
 
-Create a GitHub App and configure:
+Create a GitHub App and configure the URLs from the deployed relay origin. With the default relay they are:
 
 - callback URL: `https://api.bonsai.dev/auth/github/callback`
 - webhook URL: `https://api.bonsai.dev/webhooks/github`
 - expiring user access tokens enabled
 - webhook events required by Bonsai's normalized event allowlist
 
-The relay needs only:
+For example, a relay at `https://relay.bonsai.tiagoliv.com` uses `https://relay.bonsai.tiagoliv.com/auth/github/callback` and `https://relay.bonsai.tiagoliv.com/webhooks/github`.
+
+The relay needs these credentials:
 
 ```text
 GITHUB_APP_CLIENT_ID
 GITHUB_APP_CLIENT_SECRET
 GITHUB_WEBHOOK_SECRET
 ```
+
+Container deployments can configure runtime networking with:
+
+```text
+PORT
+BONSAI_RELAY_DATABASE
+BONSAI_RELAY_ORIGIN
+BONSAI_FRONTEND_ORIGIN
+```
+
+`BONSAI_RELAY_EXTERNAL_URL` and `BONSAI_RELAY_FRONTEND_ORIGIN` remain supported as more specific aliases and take precedence over the shorter origin variables.
 
 It does not need a daemon credential, local Bonsai capability, repository path,
 shell credential, static web root, GitHub App private key, or Bonsai account
@@ -119,7 +134,7 @@ Relay session secrets are random and stored only as hashes. The browser receives
 the secret only in a Secure, HttpOnly, SameSite=Lax cookie. Session records
 contain only GitHub user/install/repository authorization metadata and expiry.
 
-`POST /auth/logout` requires the exact `https://app.bonsai.dev` Origin,
+`POST /auth/logout` requires the exact configured frontend Origin,
 removes the session, and immediately closes active SSE subscribers for that
 session.
 
