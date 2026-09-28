@@ -119,12 +119,12 @@ function Brand() {
   )
 }
 
-function WorkNode({
+function BranchTask({
   n,
   x,
   y,
   title,
-  meta,
+  detail,
   state,
   warm = false,
 }: {
@@ -132,18 +132,20 @@ function WorkNode({
   x: number
   y: number
   title: string
-  meta: string
+  detail: string
   state: string
   warm?: boolean
 }) {
   return (
-    <g className={'worknode wn' + n} transform={'translate(' + x + ' ' + y + ')'}>
-      <rect className="worknode-shell" width="270" height="82" rx="7"/>
-      <path className="worknode-rail" d="M1 1V81"/>
-      <circle className={warm ? 'worknode-dot warm' : 'worknode-dot'} cx="19" cy="19" r="4"/>
-      <text className="worknode-title" x="31" y="23">{title}</text>
-      <text className="worknode-meta" x="16" y="49">{meta}</text>
-      <text className={warm ? 'worknode-state warm' : 'worknode-state'} x="254" y="68" textAnchor="end">{state}</text>
+    <g className={'branch-task bt' + n + (warm ? ' warm' : '')} transform={'translate(' + x + ' ' + y + ')'}>
+      <rect className="branch-task-shell" width="194" height="60" rx="7"/>
+      <path className="branch-task-stem" d="M8 30H-22"/>
+      <circle className="branch-task-dot" cx="15" cy="16" r="4"/>
+      <text className="branch-task-title" x="27" y="20">{title}</text>
+      <text className="branch-task-detail" x="14" y="38">{detail}</text>
+      <rect className="branch-task-track" x="14" y="49" width="106" height="2" rx="1"/>
+      <rect className="branch-task-progress" x="14" y="49" width="68" height="2" rx="1"/>
+      <text className="branch-task-state" x="179" y="52" textAnchor="end">{state}</text>
     </g>
   )
 }
@@ -163,11 +165,12 @@ function FoliagePad({
 }) {
   return (
     <g className={'pad ' + className} transform={'translate(' + cx + ' ' + cy + ') scale(' + sx + ' ' + sy + ')'}>
-      <ellipse cx="-72" cy="8" rx="62" ry="30"/>
-      <ellipse cx="-24" cy="-9" rx="72" ry="35"/>
-      <ellipse cx="38" cy="2" rx="69" ry="34"/>
-      <ellipse cx="85" cy="15" rx="48" ry="25"/>
-      <path className="leaf-lines" d="M-116 11h78M-57-12h103M12 7h114M-12 27h94"/>
+      <ellipse cx="-82" cy="8" rx="54" ry="22"/>
+      <ellipse cx="-38" cy="-8" rx="67" ry="28"/>
+      <ellipse cx="18" cy="-3" rx="73" ry="30"/>
+      <ellipse cx="72" cy="8" rx="59" ry="25"/>
+      <ellipse cx="108" cy="18" rx="34" ry="18"/>
+      <path className="leaf-lines" d="M-119 7h73M-74-11h94M-26 11h112M31-8h96M50 23h83"/>
     </g>
   )
 }
@@ -187,87 +190,94 @@ function Tree() {
               <feGaussianBlur stdDeviation="6" result="b"/>
               <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
             </filter>
-            <linearGradient id="trunkFill" x1=".15" y1=".05" x2=".86" y2=".96">
-              <stop offset="0" stopColor="#8b6348"/>
-              <stop offset=".38" stopColor="#684a37"/>
-              <stop offset=".7" stopColor="#493126"/>
-              <stop offset="1" stopColor="#261710"/>
+            <linearGradient id="trunkFill" x1=".1" y1=".05" x2=".9" y2=".95">
+              <stop offset="0" stopColor="#936b4d"/>
+              <stop offset=".3" stopColor="#72503b"/>
+              <stop offset=".63" stopColor="#503528"/>
+              <stop offset="1" stopColor="#25160f"/>
             </linearGradient>
             <linearGradient id="branchStroke" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#815d46"/>
-              <stop offset=".52" stopColor="#5f4333"/>
-              <stop offset="1" stopColor="#36251d"/>
+              <stop offset="0" stopColor="#825f48"/>
+              <stop offset=".52" stopColor="#5f4232"/>
+              <stop offset="1" stopColor="#38261d"/>
             </linearGradient>
           </defs>
 
           <g className="rings">
-            <circle cx="603" cy="405" r="326"/>
-            <circle cx="603" cy="405" r="251"/>
-            <circle cx="603" cy="405" r="176"/>
-            <path d="M603 40V777M236 405H972"/>
+            <circle cx="602" cy="406" r="326"/>
+            <circle cx="602" cy="406" r="250"/>
+            <circle cx="602" cy="406" r="176"/>
+            <path d="M602 42V775M235 406H971"/>
           </g>
 
-          <path className="bonsai-shadow" d="M538 751C548 710 560 676 555 641C550 604 529 573 535 535C542 491 568 468 573 431C578 394 562 362 571 324C582 278 613 247 610 208C607 176 591 153 598 127C604 103 626 87 647 94C669 101 674 121 666 146C658 174 669 196 669 222C670 267 638 301 634 340C630 377 643 412 633 452C623 493 596 519 593 554C590 592 611 622 614 661C617 700 604 728 593 751Z"/>
-          <path className="trunk-silhouette" d="M551 748C561 710 570 677 566 642C562 606 544 575 550 537C557 496 580 472 584 435C589 397 575 365 584 329C595 284 624 251 621 211C619 183 606 160 612 138C617 120 632 108 646 112C660 116 663 131 658 149C650 177 660 198 660 224C661 264 632 298 628 339C624 378 637 414 626 451C616 489 590 517 586 553C582 593 601 625 604 662C607 700 595 727 585 749Z"/>
+          <path className="bonsai-shadow" d="M526 742C544 704 538 669 516 629C493 586 499 544 532 505C569 461 577 428 557 390C536 349 543 311 577 277C607 247 620 219 608 188C597 160 600 136 619 115C632 100 650 98 662 109C675 120 671 140 657 157C644 173 646 191 655 210C673 247 662 286 627 322C598 352 595 379 612 412C634 454 623 498 587 541C557 576 554 607 570 643C590 687 582 718 566 746Z"/>
+          <path className="trunk-silhouette" d="M538 738C555 701 550 668 529 628C508 588 512 550 543 513C578 471 588 433 569 395C549 355 555 319 588 287C618 258 630 226 618 194C607 166 611 142 628 123C639 110 652 107 661 115C670 123 667 139 654 154C641 170 642 190 651 209C668 245 658 281 624 316C592 349 589 379 607 414C628 456 617 495 582 537C551 574 549 607 565 642C584 684 577 714 562 741Z"/>
 
+          <path className="deadwood" d="M555 697C567 663 565 633 551 603C539 578 542 552 557 530M577 501C594 476 600 451 593 426M586 388C577 359 581 335 599 312M614 276C626 253 632 227 626 204"/>
           <g className="bark-lines">
-            <path d="M570 704C580 671 580 634 573 602M565 566C559 530 565 497 578 468M588 433C598 404 603 374 600 345M606 311C617 282 630 258 632 229M631 195C628 169 630 147 640 125"/>
-            <path d="M589 711C596 680 595 650 590 620M582 583C579 551 585 521 596 493M607 459C616 433 619 405 615 378M617 341C625 314 637 288 640 260"/>
-            <path d="M556 678C550 650 550 625 554 600M552 548C550 521 557 500 570 482"/>
+            <path d="M546 710C559 677 558 650 546 620M540 583C536 554 544 527 559 505M576 474C588 448 590 425 584 401M582 363C584 339 595 319 608 301M622 264C631 239 631 217 624 195"/>
+            <path d="M566 715C579 684 578 658 568 631M563 594C561 565 569 542 582 520M594 489C604 465 607 441 601 419M600 381C603 354 614 335 625 317"/>
           </g>
 
           <g className="primary-branches">
-            <path className="branch-stroke b1" d="M581 595C531 577 493 551 452 533C401 511 345 519 286 552"/>
-            <path className="twig b1" d="M452 533C409 548 377 574 347 605"/>
-            <path className="branch-stroke b2" d="M575 484C533 461 500 430 468 391C431 347 376 340 309 356"/>
-            <path className="twig b2" d="M468 391C431 378 397 383 361 401"/>
-            <path className="branch-stroke b3" d="M613 408C659 390 704 360 738 316C774 270 822 246 881 232"/>
-            <path className="twig b3" d="M739 316C786 315 826 330 866 359"/>
-            <path className="branch-stroke b4" d="M602 519C653 501 696 474 734 437C773 399 820 383 881 390"/>
-            <path className="twig b4" d="M734 437C779 444 817 462 852 489"/>
-            <path className="branch-stroke b5" d="M594 632C650 620 706 598 755 564C801 532 850 522 914 539"/>
-            <path className="twig b5" d="M755 564C799 574 835 596 867 626"/>
-            <path className="branch-stroke apex" d="M603 337C615 302 617 269 608 236C600 205 601 177 613 152"/>
+            <path className="branch-stroke b1" d="M554 614C497 600 451 573 404 552C359 532 314 537 268 565"/>
+            <path className="twig b1" d="M420 558C382 573 350 594 321 621"/>
+            <path className="branch-stroke b2" d="M557 515C504 505 462 478 421 441C381 405 331 400 279 416"/>
+            <path className="twig b2" d="M424 442C389 433 355 439 322 459"/>
+            <path className="branch-stroke b3" d="M573 395C522 384 481 354 440 322C400 291 354 290 307 306"/>
+            <path className="twig b3" d="M441 322C406 309 375 312 342 330"/>
+
+            <path className="branch-stroke b4" d="M568 565C637 555 694 532 751 495C803 461 858 459 919 477"/>
+            <path className="twig b4" d="M749 496C795 502 833 519 870 546"/>
+            <path className="branch-stroke b5" d="M594 460C660 445 715 413 763 376C812 338 865 333 927 346"/>
+            <path className="twig b5" d="M763 376C810 382 850 399 888 424"/>
+            <path className="branch-stroke b6" d="M608 337C667 318 716 283 756 247C800 209 850 200 908 211"/>
+            <path className="twig b6" d="M757 247C801 251 839 266 876 290"/>
+            <path className="branch-stroke apex" d="M606 292C619 261 622 231 614 203C607 178 611 153 627 132"/>
           </g>
 
           <g className="fine-twigs">
-            <path d="M349 527C326 513 302 509 273 513M366 552C337 561 317 577 298 596M390 520C370 499 346 486 318 481"/>
-            <path d="M395 353C372 335 347 328 317 331M418 378C389 389 365 404 344 427M438 365C422 340 402 320 378 307"/>
-            <path d="M798 266C822 250 847 243 877 245M812 305C841 306 865 316 891 333M834 238C853 220 875 209 903 205"/>
-            <path d="M811 405C838 396 863 395 891 401M817 451C847 462 872 478 894 501M847 386C868 371 892 364 921 366"/>
-            <path d="M842 537C869 529 895 531 924 539M837 584C868 597 894 615 916 638M879 528C901 515 925 510 953 513"/>
-            <path d="M607 230C623 209 639 198 662 188M607 195C594 176 585 157 586 136"/>
+            <path d="M347 541C324 526 300 520 271 523M365 558C337 569 316 585 298 605M388 542C365 521 340 510 311 508"/>
+            <path d="M354 405C330 390 307 385 277 388M378 425C349 435 325 451 305 474M402 420C385 395 366 378 340 366"/>
+            <path d="M381 292C359 278 336 273 307 278M403 311C376 322 354 337 334 358M426 304C410 281 389 264 366 253"/>
+            <path d="M812 465C840 455 866 454 897 460M821 501C850 511 875 526 898 548M858 452C879 438 903 432 932 434"/>
+            <path d="M823 344C851 335 877 334 907 340M832 381C863 391 887 405 910 427M870 330C892 316 916 311 943 314"/>
+            <path d="M818 218C843 207 867 203 896 207M829 254C858 259 883 270 907 290M862 205C882 189 904 182 932 183"/>
+            <path d="M616 215C634 197 648 188 669 181M613 179C603 160 600 143 604 127"/>
           </g>
 
           <g className="foliage">
-            <FoliagePad className="p1" cx={301} cy={523} sx={1.02} sy={0.86}/>
-            <FoliagePad className="p2" cx={320} cy={343} sx={1.08} sy={0.88}/>
-            <FoliagePad className="p3" cx={872} cy={224} sx={1.08} sy={0.9}/>
-            <FoliagePad className="p4" cx={885} cy={386} sx={1.12} sy={0.9}/>
-            <FoliagePad className="p5" cx={918} cy={536} sx={1.08} sy={0.9}/>
-            <FoliagePad className="p6" cx={616} cy={142} sx={0.82} sy={0.78}/>
+            <FoliagePad className="p1" cx={302} cy={548} sx={1.03} sy={0.9}/>
+            <FoliagePad className="p2" cx={296} cy={405} sx={0.98} sy={0.86}/>
+            <FoliagePad className="p3" cx={322} cy={292} sx={0.88} sy={0.8}/>
+            <FoliagePad className="p4" cx={896} cy={468} sx={1.05} sy={0.9}/>
+            <FoliagePad className="p5" cx={906} cy={337} sx={1.02} sy={0.88}/>
+            <FoliagePad className="p6" cx={884} cy={208} sx={0.95} sy={0.82}/>
+            <FoliagePad className="p7" cx={627} cy={126} sx={0.72} sy={0.72}/>
           </g>
 
           <g className="roots">
-            <path d="M573 724C530 727 486 741 445 766M583 724C633 727 683 741 731 769M569 730C550 745 534 765 523 790M590 730C609 748 623 768 636 792"/>
+            <path d="M548 716C505 720 461 738 421 768M559 717C616 719 673 739 726 771M545 722C520 741 502 764 490 790M570 722C595 742 615 766 629 793"/>
           </g>
           <g className="pot">
-            <path className="pot-rim" d="M432 725H766L748 753H451Z"/>
-            <path className="pot-body" d="M457 752H742L716 806H483Z"/>
-            <path className="pot-line" d="M485 771H716M501 790H700"/>
+            <path className="pot-rim" d="M420 724H770L752 753H440Z"/>
+            <path className="pot-body" d="M446 752H746L719 806H480Z"/>
+            <path className="pot-line" d="M477 772H716M496 790H699"/>
           </g>
-          <g className="root-chip" transform="translate(514 741)">
-            <rect width="170" height="48" rx="5"/>
+          <g className="root-chip" transform="translate(511 744)">
+            <rect width="174" height="47" rx="5"/>
             <text x="13" y="20">LOCAL CORE</text>
             <text className="sub" x="13" y="37">WEB · TUI · CLI</text>
           </g>
 
-          <WorkNode n={1} x={690} y={594} title="bonsai / workspace" meta="11 branches · 2 agents · 36 files" state="/APP"/>
-          <WorkNode n={2} x={700} y={154} title="feat/auth-passkeys" meta="Claude · Sonnet 4.5 · coding" state="RUNNING"/>
-          <WorkNode n={3} x={724} y={326} title="pr/128-review" meta="ChatGPT Astra · PR review" state="4 COMMENTS" warm/>
-          <WorkNode n={4} x={720} y={500} title="feat/live-preview" meta="web :5173 · api :7001 · tests" state="3 PROC"/>
-          <WorkNode n={5} x={430} y={586} title="github/events" meta="Actions · PR · relay · refresh" state="REALTIME"/>
-          <WorkNode n={6} x={760} y={674} title="orchard-api / feat/cache" meta="project 02 · background agent" state="PARALLEL"/>
+          <g className="branch-jobs">
+            <BranchTask n={1} x={235} y={250} title="feat/auth-passkeys" detail="Claude · Sonnet 4.5" state="CODING"/>
+            <BranchTask n={2} x={780} y={176} title="pr/128-review" detail="ChatGPT Astra · security" state="REVIEW" warm/>
+            <BranchTask n={3} x={795} y={327} title="feat/live-preview" detail="web :5173 · api :7001" state="3 PROC"/>
+            <BranchTask n={4} x={798} y={492} title="feat/payments" detail="tests · watch · 42/42" state="PASS"/>
+            <BranchTask n={5} x={225} y={500} title="orchard-api/cache" detail="Claude · Haiku · project 02" state="RUN"/>
+            <BranchTask n={6} x={470} y={594} title="github/events" detail="PR · checks · relay" state="LIVE"/>
+          </g>
         </svg>
 
         <div className="depth d1">local://worktree-graph</div>
