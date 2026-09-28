@@ -23,6 +23,13 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	switch req.Kind {
+	case protocol.KindGit:
+		if req.Git == nil {
+			writeResult(enc, nil, fmt.Errorf("missing Git command"))
+			return
+		}
+		result := s.gitCommand(*req.Git)
+		writeResult(enc, &protocol.Response{Git: &result}, nil)
 	case protocol.KindSpawn:
 		rec, err := s.spawn(req)
 		writeResult(enc, &protocol.Response{Record: rec}, err)
@@ -46,7 +53,26 @@ func (s *Server) handleConn(conn net.Conn) {
 		err := s.remove(req.ID)
 		writeResult(enc, &protocol.Response{}, err)
 
-	case protocol.KindLogs, protocol.KindAttach:
+	case protocol.KindServeStart:
+		group, err := s.serveStart(req.ServeSpec)
+		writeResult(enc, &protocol.Response{ServeGroup: group}, err)
+
+	case protocol.KindServeStatus:
+		group, err := s.serveStatus(req.ServeGroup)
+		writeResult(enc, &protocol.Response{ServeGroup: group}, err)
+
+	case protocol.KindServeStop:
+		err := s.serveStop(req.ServeGroup)
+		writeResult(enc, &protocol.Response{}, err)
+
+	case protocol.KindServeRestart:
+		group, err := s.serveRestart(req.ServeGroup, req.ProcessName)
+		writeResult(enc, &protocol.Response{ServeGroup: group}, err)
+
+	case protocol.KindServeLogs:
+		s.streamServeLogs(conn, enc, req)
+
+	case protocol.KindLogs, "attach":
 		s.streamLogs(conn, enc, req)
 
 	case protocol.KindPTYAttach:

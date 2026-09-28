@@ -102,24 +102,96 @@ func IsActive(status string) bool {
 // Record is the persisted metadata for one managed process. It is the source of
 // truth for discovery: readable without touching the daemon socket.
 type Record struct {
-	ID         int       `json:"id"`
-	Label      string    `json:"label"`
-	Command    string    `json:"command"` // display/shell command; structured commands also set Program/Args
-	Program    string    `json:"program,omitempty"`
-	Args       []string  `json:"args,omitempty"`
-	Worktree   string    `json:"worktree"` // owning Git worktree root
-	WorkingDir string    `json:"working_dir,omitempty"`
-	Branch     string    `json:"branch,omitempty"`
-	IOMode     string    `json:"io_mode,omitempty"`
-	PTYCols    int       `json:"pty_cols,omitempty"`
-	PTYRows    int       `json:"pty_rows,omitempty"`
-	PID        int       `json:"pid"`
-	Status     string    `json:"status"`
-	Policy     Policy    `json:"policy"`
-	Restarts   int       `json:"restarts"`
-	StartedAt  time.Time `json:"started_at"`
-	ExitError  string    `json:"exit_error,omitempty"`
-	LastURL    string    `json:"last_url,omitempty"`
+	ID             int               `json:"id"`
+	Label          string            `json:"label"`
+	Command        string            `json:"command"` // display/shell command; structured commands also set Program/Args
+	Program        string            `json:"program,omitempty"`
+	Args           []string          `json:"args,omitempty"`
+	Environment    map[string]string `json:"environment,omitempty"`
+	Worktree       string            `json:"worktree"` // owning Git worktree root
+	WorkingDir     string            `json:"working_dir,omitempty"`
+	Branch         string            `json:"branch,omitempty"`
+	IOMode         string            `json:"io_mode,omitempty"`
+	PTYCols        int               `json:"pty_cols,omitempty"`
+	PTYRows        int               `json:"pty_rows,omitempty"`
+	PID            int               `json:"pid"`
+	ProcessGroupID int               `json:"process_group_id,omitempty"`
+	ExpectedPort   int               `json:"expected_port,omitempty"`
+	Status         string            `json:"status"`
+	Policy         Policy            `json:"policy"`
+	Restarts       int               `json:"restarts"`
+	StartedAt      time.Time         `json:"started_at"`
+	ExitCode       *int              `json:"exit_code,omitempty"`
+	ExitError      string            `json:"exit_error,omitempty"`
+	LastURL        string            `json:"last_url,omitempty"`
+	ServeGroup     string            `json:"serve_group,omitempty"`
+	ServeName      string            `json:"serve_name,omitempty"`
+	ServeRequired  bool              `json:"serve_required,omitempty"`
+}
+
+// ServeSidecar describes one generic daemon-supervised companion process.
+type ServeSidecar struct {
+	Name        string            `json:"name"`
+	Command     []string          `json:"command"`
+	Cwd         string            `json:"cwd,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
+	Restart     string            `json:"restart,omitempty"`
+	MaxRestarts int               `json:"max_restarts,omitempty"`
+	Required    bool              `json:"required,omitempty"`
+}
+
+type ServeMode string
+
+const (
+	ServeModeProduction  ServeMode = "production"
+	ServeModeDevelopment ServeMode = "development"
+)
+
+// ServeSpec is the daemon request for one workspace serve group. Production
+// specs contain only the local API. Development specs may add the local webhook
+// relay, Vite frontend, and explicitly configured development sidecars.
+type ServeSpec struct {
+	Mode                   ServeMode      `json:"mode,omitempty"`
+	WorkspaceID            string         `json:"workspace_id"`
+	WorkspacePath          string         `json:"workspace_path"`
+	Executable             string         `json:"executable"`
+	APIPort                int            `json:"api_port"`
+	WebhookPort            int            `json:"webhook_port,omitempty"`
+	WebPort                int            `json:"web_port,omitempty"`
+	BrowserOrigin          string         `json:"browser_origin"`
+	Sidecars               []ServeSidecar `json:"sidecars,omitempty"`
+	StartupTimeoutSeconds  int            `json:"startup_timeout_seconds,omitempty"`
+	ShutdownTimeoutSeconds int            `json:"shutdown_timeout_seconds,omitempty"`
+}
+
+// ServeProcess is the public status view for one process in a ServeGroup.
+type ServeProcess struct {
+	Name           string    `json:"name"`
+	ID             int       `json:"id"`
+	PID            int       `json:"pid"`
+	ProcessGroupID int       `json:"process_group_id,omitempty"`
+	ExpectedPort   int       `json:"expected_port,omitempty"`
+	State          string    `json:"state"`
+	Required       bool      `json:"required"`
+	StartedAt      time.Time `json:"started_at,omitempty"`
+	ExitCode       *int      `json:"exit_code,omitempty"`
+	ExitError      string    `json:"exit_error,omitempty"`
+}
+
+// ServeGroup is the daemon-owned status snapshot for one workspace stack.
+type ServeGroup struct {
+	ID            string         `json:"id"`
+	Mode          ServeMode      `json:"mode,omitempty"`
+	WorkspaceID   string         `json:"workspace_id"`
+	WorkspacePath string         `json:"workspace_path"`
+	State         string         `json:"state"`
+	StartedAt     time.Time      `json:"started_at"`
+	APIPort       int            `json:"api_port"`
+	WebhookPort   int            `json:"webhook_port,omitempty"`
+	WebPort       int            `json:"web_port,omitempty"`
+	BrowserOrigin string         `json:"browser_origin,omitempty"`
+	Reused        bool           `json:"reused,omitempty"`
+	Processes     []ServeProcess `json:"processes"`
 }
 
 // Store is the on-disk state for a single repo, rooted at its main worktree.
@@ -202,7 +274,7 @@ func (s *Store) WriteRecord(r *Record) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.RecordPath(r.ID), data, 0o644)
+	return writeAtomic(s.RecordPath(r.ID), data, 0o600)
 }
 
 // ReadRecord loads the record for id.

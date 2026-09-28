@@ -318,8 +318,10 @@ func (s *Server) startPTYLocked(mp *managedProc, cmd *exec.Cmd, logw *logWriter,
 	mp.ptyPumpDone = pumpDone
 	mp.waitDone = done
 	mp.rec.PID = cmd.Process.Pid
+	mp.rec.ProcessGroupID = cmd.Process.Pid
 	mp.rec.Status = procstore.StatusRunning
 	mp.rec.StartedAt = time.Now()
+	mp.rec.ExitCode = nil
 	mp.rec.ExitError = ""
 	_ = s.store.WriteRecord(mp.rec)
 

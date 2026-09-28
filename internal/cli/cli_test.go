@@ -114,6 +114,9 @@ func TestHelpAndShellInitOutsideRepo(t *testing.T) {
 	if !strings.Contains(out, "bonsai") {
 		t.Errorf("help output looks wrong: %q", out)
 	}
+	if strings.Contains(out, "__serve-dev-stack") || strings.Contains(out, "__dev-webhook") {
+		t.Errorf("internal development commands leaked into public help: %q", out)
+	}
 
 	out, err = runIn(t, noRepo, "shell-init")
 	if err != nil {

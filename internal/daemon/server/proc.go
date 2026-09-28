@@ -3,8 +3,10 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -64,19 +66,24 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	s.nextID++
 	mp := &managedProc{
 		rec: &procstore.Record{
-			ID:         id,
-			Label:      req.Label,
-			Command:    req.Command,
-			Program:    req.Program,
-			Args:       append([]string(nil), req.Args...),
-			Worktree:   req.Worktree,
-			WorkingDir: workingDir,
-			Branch:     req.Branch,
-			IOMode:     ioMode,
-			PTYCols:    ptyCols,
-			PTYRows:    ptyRows,
-			Policy:     policy,
-			Status:     procstore.StatusStarting,
+			ID:            id,
+			Label:         req.Label,
+			Command:       req.Command,
+			Program:       req.Program,
+			Args:          append([]string(nil), req.Args...),
+			Environment:   cloneEnvironment(req.Environment),
+			Worktree:      req.Worktree,
+			WorkingDir:    workingDir,
+			Branch:        req.Branch,
+			IOMode:        ioMode,
+			PTYCols:       ptyCols,
+			PTYRows:       ptyRows,
+			Policy:        policy,
+			ExpectedPort:  req.ExpectedPort,
+			ServeGroup:    req.ServeGroup,
+			ServeName:     req.ServeName,
+			ServeRequired: req.ServeRequired,
+			Status:        procstore.StatusStarting,
 		},
 		generation: 1,
 	}
@@ -139,12 +146,27 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 		cmd = coreexec.Command(workingDir, mp.rec.Command)
 	}
 	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
+	keys := make([]string, 0, len(mp.rec.Environment))
+	for key := range mp.rec.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		cmd.Env = append(cmd.Env, key+"="+mp.rec.Environment[key])
+	}
+
 	if procstore.EffectiveIOMode(mp.rec.IOMode) == procstore.IOModePTY {
 		return s.startPTYLocked(mp, cmd, logw, expectedGen)
 	}
 
-	cmd.Stdout = logw
-	cmd.Stderr = logw
+	var stdout io.Writer = logw
+	var stderr io.Writer = logw
+	if mp.rec.ServeGroup != "" {
+		stdout = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "OUT", next: logw}
+		stderr = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "ERR", next: logw}
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	coreexec.SetProcessGroup(cmd)
 
 	if mp.generation != expectedGen || mp.rec.Status != procstore.StatusStarting {
@@ -170,10 +192,15 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	mp.logw = logw
 	mp.waitDone = make(chan struct{})
 	mp.rec.PID = cmd.Process.Pid
+	mp.rec.ProcessGroupID = cmd.Process.Pid
 	mp.rec.Status = procstore.StatusRunning
 	mp.rec.StartedAt = time.Now()
+	mp.rec.ExitCode = nil
 	mp.rec.ExitError = ""
 	_ = s.store.WriteRecord(mp.rec)
+	if mp.rec.ServeGroup != "" {
+		s.appendServeLog(mp.rec.ServeGroup, mp.rec.ServeName, "SYS", []byte("started\n"))
+	}
 
 	started := mp.rec.StartedAt
 	done := mp.waitDone
@@ -197,6 +224,8 @@ func (s *Server) onExit(mp *managedProc, werr error, started time.Time, done cha
 
 	failed := werr != nil
 	ran := time.Since(started).Round(time.Millisecond)
+	code := exitCodeOf(werr)
+	mp.rec.ExitCode = &code
 
 	// If a user kill was initiated while running, transition to StatusStopped.
 	if mp.rec.Status == procstore.StatusStopping {
@@ -640,4 +669,15 @@ func (s *Server) resolvePolicy(req *protocol.Request) procstore.Policy {
 		return cfg.PolicyFor(req.Label, req.Command)
 	}
 	return procstore.DefaultPolicy()
+}
+
+func cloneEnvironment(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
