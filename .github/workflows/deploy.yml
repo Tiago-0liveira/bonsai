@@ -52,7 +52,7 @@ jobs:
           push: false
           tags: bonsai-web:ci
           build-args: |
-            VITE_BONSAI_RELAY_ORIGIN=https://api.bonsai.dev
+            VITE_BONSAI_RELAY_ORIGIN=${{ vars.BONSAI_RELAY_ORIGIN || 'https://api.bonsai.dev' }}
             VITE_BONSAI_LOCAL_API_ORIGIN=http://127.0.0.1:7001
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
