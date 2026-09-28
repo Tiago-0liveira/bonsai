@@ -5,9 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/git/local"
 )
 
@@ -32,6 +35,53 @@ func repoFixture(t *testing.T, path string) string {
 	}
 	return canonical
 }
+func TestProjectIDMatchesGitReportedMainPath(t *testing.T) {
+	repo := repoFixture(t, filepath.Join(t.TempDir(), "repo"))
+	trees, err := coregit.ListWorktreesContext(context.Background(), repo)
+	if err != nil || len(trees) == 0 {
+		t.Fatal(trees, err)
+	}
+	if got, want := config.ProjectID(trees[0].Path), config.ProjectID(repo); got != want {
+		t.Fatalf("git-reported main path changed project id: git=%q caller=%q gitID=%q callerID=%q", trees[0].Path, repo, got, want)
+	}
+}
+
+func TestProjectIDMatchesGitReportedMainPathThroughNativeAlias(t *testing.T) {
+	repo := repoFixture(t, filepath.Join(t.TempDir(), "repo"))
+	alias := ""
+	if runtime.GOOS == "windows" {
+		alias = strings.ToUpper(repo)
+		if _, err := os.Stat(alias); err != nil {
+			t.Fatalf("case-variant repository path unavailable: %v", err)
+		}
+	} else {
+		alias = filepath.Join(t.TempDir(), "repo-alias")
+		if err := os.Symlink(repo, alias); err != nil {
+			t.Skipf("symlink alias unavailable: %v", err)
+		}
+	}
+	trees, err := coregit.ListWorktreesContext(context.Background(), alias)
+	if err != nil || len(trees) == 0 {
+		t.Fatal(trees, err)
+	}
+	if got, want := config.ProjectID(trees[0].Path), config.ProjectID(alias); got != want {
+		t.Fatalf("native alias changed project id: git=%q alias=%q gitID=%q aliasID=%q", trees[0].Path, alias, got, want)
+	}
+}
+
+func TestProjectIDMatchesGitReportedMainPathFromLinkedWorktree(t *testing.T) {
+	repo := repoFixture(t, filepath.Join(t.TempDir(), "repo"))
+	linked := filepath.Join(t.TempDir(), "linked")
+	gitFixture(t, repo, "worktree", "add", "-b", "linked-id-test", linked)
+	trees, err := coregit.ListWorktreesContext(context.Background(), linked)
+	if err != nil || len(trees) == 0 {
+		t.Fatal(trees, err)
+	}
+	if got, want := config.ProjectID(trees[0].Path), config.ProjectID(repo); got != want {
+		t.Fatalf("linked worktree reported a different main project id: git=%q main=%q gitID=%q mainID=%q", trees[0].Path, repo, got, want)
+	}
+}
+
 func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	root := t.TempDir()
 	a := repoFixture(t, filepath.Join(root, "team", "one"))
