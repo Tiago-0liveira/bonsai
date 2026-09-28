@@ -35,7 +35,7 @@ func WithBrowserWorktreeRoot(ctx context.Context, settingsPath, main string, cre
 		if !ok {
 			return fmt.Errorf("repository has no configured project root; add its directory in Settings")
 		}
-		root := filepath.Join(owner.Path, ".bonsai", "worktrees", PathID("project", main))
+		root := filepath.Join(owner.Path, ".bonsai", "worktrees", ProjectID(main))
 		cfg, err := Load(main)
 		if err != nil {
 			return err
