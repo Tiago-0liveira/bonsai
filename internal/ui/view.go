@@ -11,8 +11,8 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
-	"github.com/Tiago-0liveira/bonsai/internal/core/gh"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 

@@ -23,6 +23,13 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	switch req.Kind {
+	case protocol.KindGit:
+		if req.Git == nil {
+			writeResult(enc, nil, fmt.Errorf("missing Git command"))
+			return
+		}
+		result := s.gitCommand(*req.Git)
+		writeResult(enc, &protocol.Response{Git: &result}, nil)
 	case protocol.KindSpawn:
 		rec, err := s.spawn(req)
 		writeResult(enc, &protocol.Response{Record: rec}, err)
