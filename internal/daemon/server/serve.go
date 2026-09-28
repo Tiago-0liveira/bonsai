@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -213,8 +214,10 @@ func validateServeSpec(spec procstore.ServeSpec) error {
 	if spec.APIPort < 1 || spec.APIPort > 65535 {
 		return fmt.Errorf("api port %d is invalid", spec.APIPort)
 	}
-	if spec.BrowserOrigin != "https://app.bonsai.dev" {
-		return fmt.Errorf("production browser origin must be exactly https://app.bonsai.dev")
+	u, err := url.Parse(strings.TrimSpace(spec.BrowserOrigin))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
 	}
 	if spec.WebhookPort != 0 || spec.WebPort != 0 || len(spec.Sidecars) != 0 {
 		return fmt.Errorf("production serve cannot supervise development services")
