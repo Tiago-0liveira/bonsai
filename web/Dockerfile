@@ -25,6 +25,8 @@ ENV PORT=8080 \
     BONSAI_RELAY_ORIGIN=https://api.bonsai.dev
 
 COPY --from=build /app/dist /srv
+COPY docker-entrypoint.sh /usr/local/bin/bonsai-web-entrypoint
+RUN chmod +x /usr/local/bin/bonsai-web-entrypoint
 
 # Keep the Docker deployment behavior aligned with the production security
 # boundary while letting the relay origin be selected at container runtime.
@@ -51,5 +53,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -qO- "http://127.0.0.1:${PORT}/" >/dev/null || exit 1
 
-CMD ["sh", "-ec", "if ! printf '%s' \"$BONSAI_RELAY_ORIGIN\" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?
-; then echo 'BONSAI_RELAY_ORIGIN must be an HTTPS origin such as https://relay.example.com' >&2; exit 1; fi; sed -i \"s|__BONSAI_RELAY_ORIGIN__|$BONSAI_RELAY_ORIGIN|g\" /srv/index.html; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+ENTRYPOINT ["/usr/local/bin/bonsai-web-entrypoint"]
