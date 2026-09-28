@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -82,6 +83,23 @@ func CanonicalDirectory(path string) (string, error) {
 }
 func PathID(kind, path string) string {
 	return fmt.Sprintf("%s-v1-%x", kind, sha256.Sum256([]byte(filepath.Clean(path))))[:len(kind)+36]
+}
+
+// ProjectID hashes a stable filesystem identity for an existing repository path.
+// Git and callers can spell the same path differently through symlinks or, on
+// Windows, casing; resolve those differences before exposing the public ID.
+func ProjectID(path string) string {
+	identity := filepath.Clean(path)
+	if absolute, err := filepath.Abs(identity); err == nil {
+		identity = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(identity); err == nil {
+		identity = filepath.Clean(resolved)
+	}
+	if runtime.GOOS == "windows" {
+		identity = strings.ToLower(identity)
+	}
+	return PathID("project", identity)
 }
 func ContainsPath(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
