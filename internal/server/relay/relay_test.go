@@ -42,6 +42,40 @@ func newTestServer(t *testing.T) (*Server, Config) {
 	return s, cfg
 }
 
+func TestConfiguredHTTPSOrigins(t *testing.T) {
+	cfg := Config{
+		Database:           filepath.Join(t.TempDir(), "relay.json"),
+		ExternalURL:        "https://relay.bonsai.tiagoliv.com/",
+		FrontendOrigin:     "https://app.bonsai.tiagoliv.com/",
+		GitHubClientID:     "client",
+		GitHubClientSecret: "secret",
+		WebhookSecret:      "webhook-secret",
+	}
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.externalURL != "https://relay.bonsai.tiagoliv.com" {
+		t.Fatalf("external URL = %q", s.externalURL)
+	}
+	if s.frontendOrigin != "https://app.bonsai.tiagoliv.com" {
+		t.Fatalf("frontend origin = %q", s.frontendOrigin)
+	}
+
+	for _, mutate := range []func(*Config){
+		func(v *Config) { v.ExternalURL = "http://relay.example.com" },
+		func(v *Config) { v.FrontendOrigin = "http://app.example.com" },
+		func(v *Config) { v.FrontendOrigin = "https://app.example.com/path" },
+	} {
+		candidate := cfg
+		candidate.Database = filepath.Join(t.TempDir(), "relay.json")
+		mutate(&candidate)
+		if _, err := NewServer(candidate); err == nil {
+			t.Fatalf("invalid origin configuration accepted: %+v", candidate)
+		}
+	}
+}
+
 func putTestSession(t *testing.T, s *Server, secret string, user int64, grants ...RepositoryGrant) RelaySession {
 	t.Helper()
 	now := time.Now().UTC()
