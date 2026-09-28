@@ -37,8 +37,16 @@ pnpm build
 
 Production defaults:
 
-- local API: `http://127.0.0.1:7001`
+- local API: `http://127.0.0.1:7001` (intentionally fixed to loopback)
 - GitHub relay: `https://api.bonsai.dev`
+
+Docker deployments can override the hosted relay at runtime with:
+
+```sh
+BONSAI_RELAY_ORIGIN=https://relay.example.com
+```
+
+The container writes that origin into `/config.js` at startup and uses the same value in its CSP. Non-container Vite builds can use `VITE_BONSAI_RELAY_ORIGIN` at build time.
 
 The development supervisor overrides the relay to
 `http://127.0.0.1:7002` and runs Vite at `http://127.0.0.1:7003`. Relay
