@@ -1,17 +1,14 @@
 import { useBonsaiStore } from '../stores/bonsai'
 import { projectForGitHubRepository, refreshProject, report } from './git'
 
-declare global {
-  interface Window {
-    __BONSAI_CONFIG__?: {
-      relayOrigin?: string
-    }
-  }
-}
-
-const runtimeRelayOrigin = typeof window !== 'undefined' ? window.__BONSAI_CONFIG__?.relayOrigin : undefined
+const runtimeRelayOrigin = typeof document !== 'undefined'
+  ? document.querySelector<HTMLMetaElement>('meta[name="bonsai-relay-origin"]')?.content
+  : undefined
+const runtimeRelayConfigured = runtimeRelayOrigin && runtimeRelayOrigin !== '__BONSAI_RELAY_ORIGIN__'
+  ? runtimeRelayOrigin
+  : undefined
 const buildRelayOrigin = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_RELAY_ORIGIN
-const configuredRelayOrigin = (runtimeRelayOrigin || buildRelayOrigin)?.replace(/\/$/, '')
+const configuredRelayOrigin = (runtimeRelayConfigured || buildRelayOrigin)?.replace(/\/$/, '')
 export const RELAY_HTTP_ORIGIN = configuredRelayOrigin || 'https://api.bonsai.dev'
 const relayUsesCloudSession = RELAY_HTTP_ORIGIN.startsWith('https://')
 
