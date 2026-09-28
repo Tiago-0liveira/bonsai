@@ -73,16 +73,19 @@ jobs:
           ZEABUR_TOKEN: ${{ secrets.ZEABUR_TOKEN }}
           ZEABUR_PROJECT_ID: ${{ vars.ZEABUR_PROJECT_ID }}
           ZEABUR_ENVIRONMENT_ID: ${{ vars.ZEABUR_ENVIRONMENT_ID }}
+          ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_RELAY_SERVICE_ID }}
         run: |
           set -euo pipefail
           : "${ZEABUR_TOKEN:?Configure the ZEABUR_TOKEN GitHub secret}"
           : "${ZEABUR_PROJECT_ID:?Configure the ZEABUR_PROJECT_ID GitHub variable}"
           : "${ZEABUR_ENVIRONMENT_ID:?Configure the ZEABUR_ENVIRONMENT_ID GitHub variable}"
+          : "${ZEABUR_SERVICE_ID:?Configure the ZEABUR_RELAY_SERVICE_ID GitHub variable}"
           npx --yes zeabur@latest auth login --token "$ZEABUR_TOKEN"
-          npx --yes zeabur@latest context set project --id "$ZEABUR_PROJECT_ID" -i=false
-          npx --yes zeabur@latest context set env --id "$ZEABUR_ENVIRONMENT_ID" -i=false
-          npx --yes zeabur@latest context set service --name bonsai-relay -i=false
-          npx --yes zeabur@latest deploy -i=false
+          npx --yes zeabur@latest deploy \
+            --project-id "$ZEABUR_PROJECT_ID" \
+            --service-id "$ZEABUR_SERVICE_ID" \
+            --environment-id "$ZEABUR_ENVIRONMENT_ID" \
+            -i=false
 
   deploy-web:
     name: Deploy web to Zeabur
@@ -103,13 +106,16 @@ jobs:
           ZEABUR_TOKEN: ${{ secrets.ZEABUR_TOKEN }}
           ZEABUR_PROJECT_ID: ${{ vars.ZEABUR_PROJECT_ID }}
           ZEABUR_ENVIRONMENT_ID: ${{ vars.ZEABUR_ENVIRONMENT_ID }}
+          ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_WEB_SERVICE_ID }}
         run: |
           set -euo pipefail
           : "${ZEABUR_TOKEN:?Configure the ZEABUR_TOKEN GitHub secret}"
           : "${ZEABUR_PROJECT_ID:?Configure the ZEABUR_PROJECT_ID GitHub variable}"
           : "${ZEABUR_ENVIRONMENT_ID:?Configure the ZEABUR_ENVIRONMENT_ID GitHub variable}"
+          : "${ZEABUR_SERVICE_ID:?Configure the ZEABUR_WEB_SERVICE_ID GitHub variable}"
           npx --yes zeabur@latest auth login --token "$ZEABUR_TOKEN"
-          npx --yes zeabur@latest context set project --id "$ZEABUR_PROJECT_ID" -i=false
-          npx --yes zeabur@latest context set env --id "$ZEABUR_ENVIRONMENT_ID" -i=false
-          npx --yes zeabur@latest context set service --name bonsai-web -i=false
-          npx --yes zeabur@latest deploy -i=false
+          npx --yes zeabur@latest deploy \
+            --project-id "$ZEABUR_PROJECT_ID" \
+            --service-id "$ZEABUR_SERVICE_ID" \
+            --environment-id "$ZEABUR_ENVIRONMENT_ID" \
+            -i=false
