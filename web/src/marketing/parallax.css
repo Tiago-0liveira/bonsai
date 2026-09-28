@@ -119,7 +119,7 @@
   transition: left .85s cubic-bezier(.22, .61, .36, 1);
 }
 
-.parallax-landing[data-stage="0"] .reticle { left: 79%; }
+.parallax-landing[data-stage="0"] .reticle { left: 82%; }
 
 .reticle::before,
 .reticle::after {
@@ -141,9 +141,9 @@
 .reticle span:last-child { top: 50%; left: -10%; right: -10%; height: 1px; }
 
 .camera {
-  --x: 30vw;
-  --y: 0vh;
-  --s: .78;
+  --x: 34vw;
+  --y: 1vh;
+  --s: .72;
   --r: 0deg;
   position: absolute;
   left: 50%;
@@ -157,6 +157,7 @@
     rotate(var(--r));
   transform-origin: 50% 50%;
   will-change: transform;
+  backface-visibility: hidden;
 }
 
 .tree { width: 100%; height: 100%; overflow: visible; }
@@ -276,8 +277,11 @@
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
-  transform: scale(.86);
-  transition: opacity .34s ease, transform .44s cubic-bezier(.2, .7, .2, 1);
+  transform: scale(.84);
+  transition:
+    opacity .42s ease,
+    transform .58s cubic-bezier(.16, 1, .3, 1),
+    filter .58s cubic-bezier(.16, 1, .3, 1);
 }
 
 .worknode-shell {
@@ -355,15 +359,16 @@
 .parallax-landing[data-stage="4"] .wn4,
 .parallax-landing[data-stage="5"] .wn5 {
   opacity: 1;
-  transform: scale(1);
+  transform: scale(1.06);
+  filter: drop-shadow(0 18px 24px rgb(0 0 0 / .34));
 }
 
 .parallax-landing[data-stage="1"] .wn2,
 .parallax-landing[data-stage="1"] .wn3,
 .parallax-landing[data-stage="1"] .wn4,
 .parallax-landing[data-stage="1"] .wn5 {
-  opacity: .2;
-  transform: scale(.9);
+  opacity: .16;
+  transform: scale(.88);
 }
 
 .parallax-landing[data-stage="3"] .b3,
@@ -572,10 +577,10 @@
 .scene {
   position: relative;
   z-index: 5;
-  min-height: 148vh;
+  min-height: 156vh;
 }
 
-.hero { min-height: 138vh; }
+.hero { min-height: 142vh; }
 
 .sticky {
   position: sticky;
@@ -733,9 +738,11 @@
   margin-left: 0;
   padding: 24px 28px 26px 0;
   background: linear-gradient(90deg, rgb(28 17 11 / .95), rgb(28 17 11 / .74) 74%, transparent);
-  opacity: .23;
-  transform: translateY(24px);
-  transition: opacity .4s, transform .5s;
+  opacity: .16;
+  transform: translateY(18px);
+  transition:
+    opacity .52s ease,
+    transform .68s cubic-bezier(.16, 1, .3, 1);
 }
 
 .chapter-panel::before {
@@ -750,7 +757,7 @@
 
 .scene.active .chapter-panel {
   opacity: 1;
-  transform: none;
+  transform: translateY(0);
 }
 
 .chapter-index {
@@ -1265,7 +1272,7 @@ footer i { flex: 1; }
 
   .parallax-landing[data-stage="0"] .camera { opacity: .82; }
   .reticle { width: 88vw; }
-  .parallax-landing[data-stage="0"] .reticle { left: 78%; }
+  .parallax-landing[data-stage="0"] .reticle { left: 82%; }
 
   .world::after {
     background: linear-gradient(180deg, rgb(28 17 11 / .18), rgb(28 17 11 / .74) 52%, rgb(28 17 11 / .97) 100%);
@@ -1366,7 +1373,7 @@ footer i { flex: 1; }
   .parallax-body { scroll-behavior: auto; }
 
   .camera {
-    transform: translate(-50%, -50%) translate3d(28vw, 0, 0) scale(.78) !important;
+    transform: translate(-50%, -50%) translate3d(31vw, 0, 0) scale(.74) !important;
   }
 
   .haze,
