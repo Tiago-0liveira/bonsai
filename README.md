@@ -278,12 +278,11 @@ The hardened loopback API and the separate GitHub webhook relay are documented i
 public tunnel, or cloud daemon bridge. Detaching with `q` or Ctrl+C leaves the
 API running; `X` in the serve view or `bonsai serve stop` explicitly stops it.
 
-Production browser access is restricted to the exact origin
-`https://app.bonsai.dev` and exact Host `127.0.0.1:7001`. Normal
+Production browser access is restricted to one exact HTTPS frontend origin and
+exact Host `127.0.0.1:7001`. The frontend defaults to
+`https://app.bonsai.dev` and can be selected with `BONSAI_FRONTEND_ORIGIN`. Normal
 `bonsai serve` never enables development origins and never supervises a local
-webhook relay, Vite server, or tunnel. Start it, then open
-`https://app.bonsai.dev/app`. The API never uses browser cookies for local
-authorization.
+webhook relay, Vite server, or tunnel. Start it, then open the configured hosted frontend's `/app` route. The API never uses browser cookies for local authorization.
 
 Contributors can reproduce the production topology entirely on loopback with
 the hidden `bonsai __serve-dev-stack` harness. It is intentionally absent from
