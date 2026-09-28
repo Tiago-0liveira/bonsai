@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -140,6 +141,25 @@ func TestProjectRootAliasesAndOwnership(t *testing.T) {
 		}
 	}
 }
+func TestProjectIDCanonicalizesFilesystemAliases(t *testing.T) {
+	root, err := CanonicalDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err == nil {
+		if ProjectID(alias) != ProjectID(root) {
+			t.Fatalf("symlink changed project id: %q != %q", ProjectID(alias), ProjectID(root))
+		}
+	}
+	if runtime.GOOS == "windows" {
+		alternateCase := strings.ToUpper(root)
+		if ProjectID(alternateCase) != ProjectID(root) {
+			t.Fatalf("path casing changed project id: %q != %q", ProjectID(alternateCase), ProjectID(root))
+		}
+	}
+}
+
 func TestMissingSavedRootSurvivesRead(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "root")
 	os.Mkdir(root, 0700)
