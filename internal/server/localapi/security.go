@@ -36,15 +36,21 @@ func validateBrowserOrigin(origin string, mode BrowserSecurityMode) error {
 	}
 	switch mode {
 	case BrowserSecurityProduction:
-		if origin != ProductionBrowserOrigin {
-			return fmt.Errorf("production browser origin must be exactly %s", ProductionBrowserOrigin)
-		}
-		return nil
+		return validateProductionOrigin(origin)
 	case BrowserSecurityDevelopment:
 		return validateDevelopmentOrigin(origin)
 	default:
 		return fmt.Errorf("unknown browser security mode %q", mode)
 	}
+}
+
+func validateProductionOrigin(origin string) error {
+	u, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
+	}
+	return nil
 }
 
 func validateDevelopmentOrigin(origin string) error {
