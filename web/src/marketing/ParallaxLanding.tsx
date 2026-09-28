@@ -8,13 +8,13 @@ const CAMERA: Camera[] = [
   // Start with the whole bonsai parked safely to the right of the hero copy.
   { x: 34, y: 1, s: 0.72, r: 0 },
   // Ease into the whole workspace before visiting individual branches.
-  { x: 7, y: 1, s: 0.96, r: 0 },
-  // From here on, movements stay intentionally small: zoom into a branch,
-  // settle, then drift to the next branch instead of whipping side to side.
-  { x: 10, y: 9, s: 1.56, r: 0 },
-  { x: -9, y: 10, s: 1.52, r: 0 },
-  { x: -8, y: -1, s: 1.48, r: 0 },
-  { x: -7, y: -11, s: 1.44, r: 0 },
+  { x: 4, y: 1, s: 0.96, r: 0 },
+  // The branch tour mostly travels vertically through the tree. Horizontal
+  // movement stays within a few viewport units so the tree never pendulums.
+  { x: -3, y: 10, s: 1.52, r: 0 },
+  { x: -4, y: 2, s: 1.50, r: 0 },
+  { x: -3, y: -7, s: 1.46, r: 0 },
+  { x: 3, y: -11, s: 1.42, r: 0 },
   { x: 0, y: -6, s: 1.04, r: 0 },
 ]
 
@@ -25,7 +25,6 @@ const INSTALL_COMMANDS: Record<InstallPlatform, string> = {
 
 const clamp = (v: number) => Math.max(0, Math.min(1, v))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
-const smooth = (t: number) => t * t * (3 - 2 * t)
 const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10)
 
 const chapters = [
@@ -263,12 +262,12 @@ function Tree() {
             <text className="sub" x="13" y="37">WEB · TUI · CLI</text>
           </g>
 
-          <WorkNode n={1} x={112} y={598} title="bonsai / workspace" meta="11 branches · 2 agents · 36 files" state="/APP"/>
-          <WorkNode n={2} x={112} y={286} title="feat/auth-passkeys" meta="Claude · Sonnet 4.5 · coding" state="RUNNING"/>
-          <WorkNode n={3} x={816} y={128} title="pr/128-review" meta="ChatGPT Astra · PR review" state="4 COMMENTS" warm/>
-          <WorkNode n={4} x={825} y={338} title="feat/live-preview" meta="web :5173 · api :7001 · tests" state="3 PROC"/>
-          <WorkNode n={5} x={822} y={548} title="github/events" meta="Actions · PR · relay · refresh" state="REALTIME"/>
-          <WorkNode n={6} x={98} y={684} title="orchard-api / feat/cache" meta="project 02 · background agent" state="PARALLEL"/>
+          <WorkNode n={1} x={690} y={594} title="bonsai / workspace" meta="11 branches · 2 agents · 36 files" state="/APP"/>
+          <WorkNode n={2} x={700} y={154} title="feat/auth-passkeys" meta="Claude · Sonnet 4.5 · coding" state="RUNNING"/>
+          <WorkNode n={3} x={724} y={326} title="pr/128-review" meta="ChatGPT Astra · PR review" state="4 COMMENTS" warm/>
+          <WorkNode n={4} x={720} y={500} title="feat/live-preview" meta="web :5173 · api :7001 · tests" state="3 PROC"/>
+          <WorkNode n={5} x={430} y={586} title="github/events" meta="Actions · PR · relay · refresh" state="REALTIME"/>
+          <WorkNode n={6} x={760} y={674} title="orchard-api / feat/cache" meta="project 02 · background agent" state="PARALLEL"/>
         </svg>
 
         <div className="depth d1">local://worktree-graph</div>
@@ -340,6 +339,7 @@ export function ParallaxLanding() {
       camera.style.setProperty('--y', c.y + 'vh')
       camera.style.setProperty('--s', String(c.s))
       camera.style.setProperty('--r', c.r + 'deg')
+      root.style.setProperty('--reticle-left', 50 + c.x * 0.94 + '%')
 
       const next = raw < 0.5 ? from : to
       if (next !== active) {
