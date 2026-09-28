@@ -5,6 +5,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -448,4 +449,97 @@ func (c *Client) Logs(id int, follow bool, tailLines int, grep string, insensiti
 // can be added without altering the Logs API.
 func (c *Client) Attach(id int, onChunk func(string) error) error {
 	return c.Logs(id, true, 0, "", false, onChunk)
+}
+
+// ServeStart starts or reuses the daemon-owned development stack for a workspace.
+func (c *Client) ServeStart(spec procstore.ServeSpec) (*procstore.ServeGroup, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindServeStart, ServeSpec: &spec})
+	if err != nil {
+		return nil, err
+	}
+	return resp.ServeGroup, nil
+}
+
+// ServeStatus returns the current serve group for workspaceID, if one exists.
+func (c *Client) ServeStatus(workspaceID string) (*procstore.ServeGroup, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindServeStatus, ServeGroup: workspaceID})
+	if err != nil {
+		return nil, err
+	}
+	return resp.ServeGroup, nil
+}
+
+// ServeStop gracefully stops every process in a serve group.
+func (c *Client) ServeStop(workspaceID string) error {
+	if err := c.ensureDaemon(); err != nil {
+		return err
+	}
+	_, err := c.roundtrip(&protocol.Request{Kind: protocol.KindServeStop, ServeGroup: workspaceID})
+	return err
+}
+
+// ServeRestart restarts one named process, or the entire group when processName is empty.
+func (c *Client) ServeRestart(workspaceID, processName string) (*procstore.ServeGroup, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{
+		Kind: protocol.KindServeRestart, ServeGroup: workspaceID, ProcessName: processName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.ServeGroup, nil
+}
+
+// ServeLogs reads or follows the daemon-owned combined serve-group log.
+func (c *Client) ServeLogs(ctx context.Context, workspaceID, processName string, follow bool, tailLines int, grep string, insensitive bool, onChunk func(string) error) error {
+	if err := c.ensureDaemon(); err != nil {
+		return err
+	}
+	conn, err := c.dial()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	req := &protocol.Request{
+		Kind: protocol.KindServeLogs, ServeGroup: workspaceID, ProcessName: processName,
+		Follow: follow, TailLines: tailLines, Grep: grep, GrepInsensitive: insensitive,
+	}
+	if err := protocol.NewEncoder(conn).WriteRequest(req); err != nil {
+		return err
+	}
+	if ctx != nil && ctx.Done() != nil {
+		go func() {
+			<-ctx.Done()
+			_ = conn.Close()
+		}()
+	}
+	dec := protocol.NewDecoder(conn)
+	for {
+		resp, err := dec.ReadResponse()
+		if err != nil {
+			if ctx != nil && ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		if resp.Error != "" {
+			return errors.New(resp.Error)
+		}
+		if resp.LogChunk != "" {
+			if err := onChunk(resp.LogChunk); err != nil {
+				return err
+			}
+		}
+		if resp.EOF {
+			return nil
+		}
+	}
 }

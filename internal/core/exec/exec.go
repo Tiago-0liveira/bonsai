@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Process is a single running (or finished) subprocess with captured output.
@@ -360,6 +361,18 @@ func SetProcessGroup(cmd *exec.Cmd) {
 // KillProcessTree terminates cmd and all child processes it spawned.
 func KillProcessTree(cmd *exec.Cmd) {
 	killProcessTree(cmd)
+}
+
+// TerminateProcessTree requests graceful process-group termination, then
+// force-kills any descendants that remain after grace.
+func TerminateProcessTree(cmd *exec.Cmd, grace time.Duration) {
+	terminateProcessTree(cmd, grace)
+}
+
+// TerminatePIDTree requests graceful process-tree termination for an adopted
+// process where no *exec.Cmd remains, then force-kills descendants after grace.
+func TerminatePIDTree(pid int, grace time.Duration) {
+	terminatePIDTree(pid, grace)
 }
 
 // ShellCmd builds an interactive shell *exec.Cmd rooted at path, suitable for

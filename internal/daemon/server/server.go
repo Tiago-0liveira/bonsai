@@ -61,9 +61,16 @@ type Server struct {
 	store         *procstore.Store
 	logCap        int64
 
-	mu     sync.Mutex
-	procs  map[int]*managedProc
-	nextID int
+	mu          sync.Mutex
+	procs       map[int]*managedProc
+	nextID      int
+	serveGroups map[string]*serveRuntime
+
+	serveLogMu       sync.Mutex
+	serveLogRings    map[string]*serveLogRing
+	serveLogPartials map[string]string
+	serveLogSubs     map[string]map[int]chan string
+	serveLogNextSub  int
 
 	ln        net.Listener
 	lock      *procstore.FileLock
@@ -162,19 +169,24 @@ func NewServer(root string) (*Server, error) {
 	}
 
 	s := &Server{
-		root:   store.Root(),
-		store:  store,
-		logCap: logCap,
-		procs:  map[int]*managedProc{},
-		ln:     ln,
-		lock:   lock,
-		done:   make(chan struct{}),
+		root:             store.Root(),
+		store:            store,
+		logCap:           logCap,
+		procs:            map[int]*managedProc{},
+		serveGroups:      map[string]*serveRuntime{},
+		serveLogRings:    map[string]*serveLogRing{},
+		serveLogPartials: map[string]string{},
+		serveLogSubs:     map[string]map[int]chan string{},
+		ln:               ln,
+		lock:             lock,
+		done:             make(chan struct{}),
 	}
 
 	_ = os.WriteFile(store.PidPath(), []byte(strconv.Itoa(os.Getpid())+"\n"+strconv.Itoa(protocol.Version)+"\n"), 0o644)
 	_ = procstore.Register(s.root, store.SockPath(), os.Getpid())
 
 	s.adoptExisting()
+	s.loadServeGroups()
 	return s, nil
 }
 
@@ -343,6 +355,7 @@ func (s *Server) shutdown(killChildren bool) {
 }
 
 func (s *Server) cleanup() {
+	s.closeAllServeLogSubscribers()
 	_ = s.ln.Close()
 	_ = os.Remove(s.store.SockPath())
 	_ = os.Remove(s.store.PidPath())

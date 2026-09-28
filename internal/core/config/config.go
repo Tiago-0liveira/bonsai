@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -87,6 +88,28 @@ type ProcessPolicy struct {
 	MaxRestarts int    `mapstructure:"max_restarts"`
 }
 
+// ServeSidecar configures a generic process that runs with the workspace stack.
+type ServeSidecar struct {
+	Name        string            `mapstructure:"name"`
+	Command     []string          `mapstructure:"command"`
+	Cwd         string            `mapstructure:"cwd"`
+	Environment map[string]string `mapstructure:"environment"`
+	Restart     string            `mapstructure:"restart"`
+	MaxRestarts int               `mapstructure:"max_restarts"`
+	Required    bool              `mapstructure:"required"`
+}
+
+// ServeConfig configures the daemon-owned local API, webhook, web, and sidecars.
+type ServeConfig struct {
+	APIPort         int            `mapstructure:"api_port"`
+	WebhookPort     int            `mapstructure:"webhook_port"`
+	WebPort         int            `mapstructure:"web_port"`
+	ServerConfig    string         `mapstructure:"server_config"`
+	StartupTimeout  int            `mapstructure:"startup_timeout_seconds"`
+	ShutdownTimeout int            `mapstructure:"shutdown_timeout_seconds"`
+	Sidecars        []ServeSidecar `mapstructure:"sidecars"`
+}
+
 // Config is the parsed .bonsai.yaml.
 type Config struct {
 	// Upstream is the ref ahead/behind metrics compare against, e.g. origin/main.
@@ -110,6 +133,8 @@ type Config struct {
 	PkgMgr PackageManager `mapstructure:"pkgmgr"`
 	// Processes sets per-process restart policies for the background daemon.
 	Processes []ProcessPolicy `mapstructure:"processes"`
+	// Serve configures the daemon-owned local development/runtime stack.
+	Serve ServeConfig `mapstructure:"serve"`
 }
 
 // PolicyFor resolves the restart policy for a process, matching label first then
@@ -196,6 +221,11 @@ func Load(dir string) (*Config, error) {
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
 	v.SetDefault("pkgmgr.search_depth", 2)
+	v.SetDefault("serve.api_port", 7001)
+	v.SetDefault("serve.webhook_port", 7002)
+	v.SetDefault("serve.web_port", 7003)
+	v.SetDefault("serve.startup_timeout_seconds", 30)
+	v.SetDefault("serve.shutdown_timeout_seconds", 5)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, notFound := err.(viper.ConfigFileNotFoundError); !notFound {
@@ -206,6 +236,11 @@ func Load(dir string) (*Config, error) {
 	cfg := &Config{}
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+	if path := v.ConfigFileUsed(); path != "" {
+		if err := restoreServeEnvironmentCase(path, cfg); err != nil {
+			return nil, fmt.Errorf("read serve environment: %w", err)
+		}
 	}
 
 	if cfg.Upstream == "" {
@@ -239,6 +274,11 @@ func LoadFile(path string) (*Config, error) {
 	v.SetDefault("notifications.process", true)
 	v.SetDefault("notifications.ci", false)
 	v.SetDefault("pkgmgr.search_depth", 2)
+	v.SetDefault("serve.api_port", 7001)
+	v.SetDefault("serve.webhook_port", 7002)
+	v.SetDefault("serve.web_port", 7003)
+	v.SetDefault("serve.startup_timeout_seconds", 30)
+	v.SetDefault("serve.shutdown_timeout_seconds", 5)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
@@ -247,6 +287,9 @@ func LoadFile(path string) (*Config, error) {
 	cfg := &Config{}
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+	if err := restoreServeEnvironmentCase(path, cfg); err != nil {
+		return nil, fmt.Errorf("read serve environment: %w", err)
 	}
 	if cfg.Upstream == "" {
 		cfg.Upstream = "origin/main"
@@ -259,3 +302,38 @@ func (c *Config) CreateHooks() []string { return c.Hooks.OnWorktreeCreate }
 
 // DeleteHooks returns the commands to run before a worktree is deleted.
 func (c *Config) DeleteHooks() []string { return c.Hooks.OnWorktreeDelete }
+
+// restoreServeEnvironmentCase reparses only sidecar environment maps from YAML.
+// Viper intentionally normalizes configuration keys to lowercase, which is
+// correct for Bonsai config keys but would silently change case-sensitive
+// environment variable names such as API_TOKEN or NODE_OPTIONS.
+func restoreServeEnvironmentCase(path string, cfg *Config) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var raw struct {
+		Serve struct {
+			Sidecars []struct {
+				Name        string            `yaml:"name"`
+				Environment map[string]string `yaml:"environment"`
+			} `yaml:"sidecars"`
+		} `yaml:"serve"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for i := range cfg.Serve.Sidecars {
+		if i < len(raw.Serve.Sidecars) && raw.Serve.Sidecars[i].Name == cfg.Serve.Sidecars[i].Name {
+			cfg.Serve.Sidecars[i].Environment = raw.Serve.Sidecars[i].Environment
+			continue
+		}
+		for _, sidecar := range raw.Serve.Sidecars {
+			if sidecar.Name == cfg.Serve.Sidecars[i].Name {
+				cfg.Serve.Sidecars[i].Environment = sidecar.Environment
+				break
+			}
+		}
+	}
+	return nil
+}

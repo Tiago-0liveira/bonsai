@@ -95,6 +95,8 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdAttach(repoDir, args[1:], out)
 	case "daemon":
 		return cmdDaemon(repoDir, args[1:], out)
+	case "serve":
+		return cmdServe(repoDir, args[1:], in, out, errOut)
 	default:
 		printUsage(errOut)
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -441,6 +443,12 @@ Usage:
   bonsai restart <id>             restart a process
   bonsai attach <id>              stream a process log (Ctrl-C detaches)
   bonsai daemon status|stop       control the background daemon
+  bonsai serve [-d]               run API + webhook + web via the daemon
+  bonsai serve status|attach      inspect/attach the workspace serve group
+  bonsai serve logs [-f]           combined daemon-owned serve logs
+  bonsai serve logs --process X   logs for one serve process
+  bonsai serve restart [process]  restart one/all serve processes
+  bonsai serve stop               stop the workspace serve group
   bonsai alias list               list aliases
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias
