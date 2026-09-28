@@ -15,7 +15,7 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 6
+const Version = 7
 
 // Request kinds.
 const (
@@ -26,7 +26,11 @@ const (
 	KindRestart      = "restart"
 	KindSetPolicy    = "setPolicy"
 	KindLogs         = "logs"
-	KindAttach       = "attach"
+	KindAttach       = "attach" // legacy output-only attach; PTY uses KindPTYAttach
+	KindPTYAttach    = "ptyAttach"
+	KindPTYInput     = "ptyInput"
+	KindPTYResize    = "ptyResize"
+	KindPTYDetach    = "ptyDetach"
 	KindRemove       = "remove"
 	KindServeStart   = "serveStart"
 	KindServeStatus  = "serveStatus"
@@ -35,6 +39,12 @@ const (
 	KindServeLogs    = "serveLogs"
 	KindPing         = "ping"
 	KindShutdown     = "shutdown"
+
+	// PTY response event kinds.
+	KindPTYAttached = "ptyAttached"
+	KindPTYOutput   = "ptyOutput"
+	KindPTYExit     = "ptyExit"
+	KindPTYError    = "ptyError"
 )
 
 // Request is a single client command.
@@ -56,6 +66,9 @@ type Request struct {
 	ServeName     string            `json:"serve_name,omitempty"`
 	ServeRequired bool              `json:"serve_required,omitempty"`
 	Policy        *procstore.Policy `json:"policy,omitempty"`
+	PTY           bool              `json:"pty,omitempty"`
+	PTYCols       int               `json:"pty_cols,omitempty"`
+	PTYRows       int               `json:"pty_rows,omitempty"`
 
 	// Serve-group lifecycle.
 	ServeSpec   *procstore.ServeSpec `json:"serve,omitempty"`
@@ -72,6 +85,10 @@ type Request struct {
 	Grep            string `json:"grep,omitempty"`
 	GrepInsensitive bool   `json:"grep_i,omitempty"`
 
+	// PTY attach/control.
+	AfterSeq uint64 `json:"after_seq,omitempty"`
+	Data     []byte `json:"data,omitempty"`
+
 	// Shutdown.
 	Force bool `json:"force,omitempty"`
 }
@@ -81,11 +98,23 @@ type Response struct {
 	Git   *gitbridge.Result `json:"git,omitempty"`
 	OK    bool              `json:"ok"`
 	Error string            `json:"error,omitempty"`
+	Kind  string            `json:"kind,omitempty"`
 
 	Record     *procstore.Record     `json:"record,omitempty"`  // spawn/restart
 	Records    []*procstore.Record   `json:"records,omitempty"` // list
 	Killed     []int                 `json:"killed,omitempty"`  // kill
 	ServeGroup *procstore.ServeGroup `json:"serve_group,omitempty"`
+
+	// PTY stream metadata/events. Data is []byte so encoding/json preserves
+	// arbitrary terminal bytes using base64 rather than assuming UTF-8.
+	ID        int    `json:"id,omitempty"`
+	Seq       uint64 `json:"seq,omitempty"`
+	Data      []byte `json:"data,omitempty"`
+	PTYCols   int    `json:"pty_cols,omitempty"`
+	PTYRows   int    `json:"pty_rows,omitempty"`
+	NextSeq   uint64 `json:"next_seq,omitempty"`
+	ExitCode  int    `json:"exit_code,omitempty"`
+	ExitError string `json:"exit_error,omitempty"`
 
 	// Ping.
 	Version   int `json:"version,omitempty"`

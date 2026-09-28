@@ -19,6 +19,30 @@ import (
 	"time"
 )
 
+// Process I/O modes. Empty mode in records written by older Bonsai versions
+// is interpreted as pipe mode for backwards compatibility.
+const (
+	IOModePipe = "pipe"
+	IOModePTY  = "pty"
+)
+
+// EffectiveIOMode normalizes persisted I/O mode values.
+func EffectiveIOMode(mode string) string {
+	if mode == "" {
+		return IOModePipe
+	}
+	return mode
+}
+
+// ValidIOMode reports whether mode is a supported process I/O mode.
+func ValidIOMode(mode string) bool {
+	switch EffectiveIOMode(mode) {
+	case IOModePipe, IOModePTY:
+		return true
+	}
+	return false
+}
+
 // Restart policy modes.
 const (
 	PolicyNo        = "no"         // never restart
@@ -87,6 +111,9 @@ type Record struct {
 	Worktree       string            `json:"worktree"` // owning Git worktree root
 	WorkingDir     string            `json:"working_dir,omitempty"`
 	Branch         string            `json:"branch,omitempty"`
+	IOMode         string            `json:"io_mode,omitempty"`
+	PTYCols        int               `json:"pty_cols,omitempty"`
+	PTYRows        int               `json:"pty_rows,omitempty"`
 	PID            int               `json:"pid"`
 	ProcessGroupID int               `json:"process_group_id,omitempty"`
 	ExpectedPort   int               `json:"expected_port,omitempty"`

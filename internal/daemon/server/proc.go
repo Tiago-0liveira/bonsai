@@ -13,6 +13,7 @@ import (
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/notify"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	corepty "github.com/Tiago-0liveira/bonsai/internal/core/pty"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
 
@@ -43,7 +44,22 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	if workingDir == "" {
 		workingDir = req.Worktree
 	}
+	ioMode := procstore.IOModePipe
+	ptyCols, ptyRows := 0, 0
 	policy := s.resolvePolicy(req)
+	if req.PTY {
+		var err error
+		ptyCols, ptyRows, err = corepty.NormalizeSize(req.PTYCols, req.PTYRows)
+		if err != nil {
+			return nil, err
+		}
+		ioMode = procstore.IOModePTY
+		if req.Policy == nil {
+			policy = procstore.Policy{Mode: procstore.PolicyNo, MaxRestarts: procstore.DefaultPolicy().MaxRestarts}
+		}
+	} else if req.PTYCols != 0 || req.PTYRows != 0 {
+		return nil, fmt.Errorf("PTY dimensions require pty mode")
+	}
 
 	s.mu.Lock()
 	id := s.nextID
@@ -59,6 +75,9 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 			Worktree:      req.Worktree,
 			WorkingDir:    workingDir,
 			Branch:        req.Branch,
+			IOMode:        ioMode,
+			PTYCols:       ptyCols,
+			PTYRows:       ptyRows,
 			Policy:        policy,
 			ExpectedPort:  req.ExpectedPort,
 			ServeGroup:    req.ServeGroup,
@@ -126,14 +145,6 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	} else {
 		cmd = coreexec.Command(workingDir, mp.rec.Command)
 	}
-	var stdout io.Writer = logw
-	var stderr io.Writer = logw
-	if mp.rec.ServeGroup != "" {
-		stdout = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "OUT", next: logw}
-		stderr = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "ERR", next: logw}
-	}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
 	cmd.Env = append(os.Environ(), "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
 	keys := make([]string, 0, len(mp.rec.Environment))
 	for key := range mp.rec.Environment {
@@ -143,6 +154,19 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	for _, key := range keys {
 		cmd.Env = append(cmd.Env, key+"="+mp.rec.Environment[key])
 	}
+
+	if procstore.EffectiveIOMode(mp.rec.IOMode) == procstore.IOModePTY {
+		return s.startPTYLocked(mp, cmd, logw, expectedGen)
+	}
+
+	var stdout io.Writer = logw
+	var stderr io.Writer = logw
+	if mp.rec.ServeGroup != "" {
+		stdout = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "OUT", next: logw}
+		stderr = &serveStreamWriter{server: s, group: mp.rec.ServeGroup, process: mp.rec.ServeName, stream: "ERR", next: logw}
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	coreexec.SetProcessGroup(cmd)
 
 	if mp.generation != expectedGen || mp.rec.Status != procstore.StatusStarting {
