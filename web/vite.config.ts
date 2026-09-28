@@ -16,14 +16,14 @@ const baseSecurityHeaders = {
 
 const productionSecurityHeaders = {
   ...baseSecurityHeaders,
-  'Content-Security-Policy': `default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${localApiOrigin} ${localWebSocketOrigin} ${relayOrigin}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://api.bonsai.dev`,
+  'Content-Security-Policy': `default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${localApiOrigin} ${localWebSocketOrigin} ${relayOrigin}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' ${relayOrigin}`,
 }
 
 // Vite dev injects the React Refresh preamble and CSS <style> elements for HMR.
 // Keep these allowances confined to the loopback-only development server.
 const developmentSecurityHeaders = {
   ...baseSecurityHeaders,
-  'Content-Security-Policy': `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${devWebSocketOrigin} ${localApiOrigin} ${localWebSocketOrigin} ${relayOrigin}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://api.bonsai.dev`,
+  'Content-Security-Policy': `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${devWebSocketOrigin} ${localApiOrigin} ${localWebSocketOrigin} ${relayOrigin}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' ${relayOrigin}`,
 }
 
 export default defineConfig({
