@@ -1382,3 +1382,241 @@ footer i { flex: 1; }
   .worknode,
   .reticle { transition: none; }
 }
+
+
+/* bonsai branch-workspace pass ------------------------------------------- */
+
+.deadwood {
+  fill: none;
+  stroke: #d2a279;
+  stroke-width: 5;
+  stroke-linecap: round;
+  opacity: .14;
+}
+
+.primary-branches .branch-stroke {
+  stroke-width: 11;
+}
+
+.primary-branches .twig {
+  stroke-width: 5.4;
+}
+
+.parallax-landing[data-stage]:not([data-stage="0"]) .branch-stroke,
+.parallax-landing[data-stage]:not([data-stage="0"]) .twig {
+  opacity: .3;
+  filter: none;
+}
+
+.parallax-landing[data-stage]:not([data-stage="0"]) .foliage .pad {
+  opacity: .46;
+  filter: none;
+}
+
+.foliage .pad ellipse {
+  stroke-width: 1.35;
+  fill: #213329;
+}
+
+.foliage .pad ellipse:nth-child(2) { fill: #294033; }
+.foliage .pad ellipse:nth-child(3) { fill: #203127; }
+.foliage .pad ellipse:nth-child(4) { fill: #263a2e; }
+.foliage .pad ellipse:nth-child(5) { fill: #1d2d23; }
+
+.foliage .leaf-lines {
+  opacity: .24;
+  stroke-width: 2.8;
+}
+
+/* The running things now live on the tree itself rather than as large cards
+   floating outside the camera. Keep every worktree faintly alive so the
+   parallelism is visible even while one branch is in focus. */
+.branch-task {
+  opacity: .38;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition:
+    opacity .46s ease,
+    transform .62s cubic-bezier(.16, 1, .3, 1),
+    filter .62s cubic-bezier(.16, 1, .3, 1);
+}
+
+.branch-task-shell {
+  fill: rgb(18 13 10 / .94);
+  stroke: rgb(87 74 64 / .82);
+  stroke-width: 1;
+}
+
+.branch-task-stem {
+  fill: none;
+  stroke: #4c694f;
+  stroke-width: 1.25;
+  stroke-dasharray: 3 4;
+  opacity: .72;
+}
+
+.branch-task-dot {
+  fill: var(--green);
+  filter: url(#glow);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: branchTaskPulse 1.8s ease-in-out infinite;
+}
+
+.branch-task.warm .branch-task-dot {
+  fill: var(--terracotta);
+}
+
+.branch-task-title {
+  fill: #efdcd1;
+  font: 600 9px "JetBrains Mono", ui-monospace, monospace;
+}
+
+.branch-task-detail {
+  fill: #91a094;
+  font: 500 7.5px "JetBrains Mono", ui-monospace, monospace;
+}
+
+.branch-task-track {
+  fill: #2f332f;
+}
+
+.branch-task-progress {
+  fill: var(--green);
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: branchTaskProgress 2.8s ease-in-out infinite;
+}
+
+.branch-task.warm .branch-task-progress {
+  fill: var(--terracotta);
+  animation-duration: 3.3s;
+}
+
+.branch-task-state {
+  fill: var(--green);
+  font: 700 6.8px "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: .05em;
+}
+
+.branch-task.warm .branch-task-state {
+  fill: var(--terracotta);
+}
+
+.parallax-landing[data-stage="0"] .branch-task {
+  opacity: .14;
+  transform: scale(.94);
+}
+
+.parallax-landing[data-stage="1"] .branch-task {
+  opacity: .58;
+  transform: scale(.98);
+}
+
+.parallax-landing[data-stage="2"] .bt1,
+.parallax-landing[data-stage="3"] .bt2,
+.parallax-landing[data-stage="4"] .bt3,
+.parallax-landing[data-stage="5"] .bt6 {
+  opacity: 1;
+  transform: scale(1.08);
+  filter: drop-shadow(0 13px 18px rgb(0 0 0 / .35));
+}
+
+.parallax-landing[data-stage="2"] .b3,
+.parallax-landing[data-stage="3"] .b6,
+.parallax-landing[data-stage="4"] .b5,
+.parallax-landing[data-stage="5"] .b1 {
+  opacity: 1;
+  stroke: var(--green);
+  filter: url(#glow);
+}
+
+.parallax-landing[data-stage="3"] .b6 {
+  stroke: var(--terracotta);
+}
+
+.parallax-landing[data-stage="2"] .p3,
+.parallax-landing[data-stage="3"] .p6,
+.parallax-landing[data-stage="4"] .p5,
+.parallax-landing[data-stage="5"] .p1 {
+  opacity: .92;
+  filter: url(#glow);
+}
+
+.parallax-landing[data-stage="6"] .branch-task {
+  opacity: .66;
+  transform: scale(.98);
+}
+
+.parallax-landing[data-stage="6"] .branch-stroke,
+.parallax-landing[data-stage="6"] .twig {
+  opacity: .55;
+}
+
+.parallax-landing[data-stage="6"] .foliage .pad {
+  opacity: .66;
+}
+
+/* Keep content panels wholly inside the readable column. The previous
+   decorative rail sat outside the panel and could clip at the viewport edge. */
+.scene,
+.sticky,
+.chapter-panel {
+  overflow: visible;
+}
+
+.chapter-panel {
+  padding-left: 24px;
+  border-left: 1px solid rgb(107 251 154 / .24);
+  background: linear-gradient(
+    90deg,
+    rgb(28 17 11 / .97),
+    rgb(28 17 11 / .78) 74%,
+    transparent
+  );
+}
+
+.chapter-panel::before {
+  display: none;
+}
+
+@keyframes branchTaskPulse {
+  0%, 100% { opacity: .72; transform: scale(.9); }
+  50% { opacity: 1; transform: scale(1.18); }
+}
+
+@keyframes branchTaskProgress {
+  0%, 100% { transform: scaleX(.46); opacity: .72; }
+  50% { transform: scaleX(1); opacity: 1; }
+}
+
+@media (max-width: 1080px) {
+  .branch-task { opacity: .32; }
+  .branch-task-title { font-size: 8.5px; }
+  .branch-task-detail { font-size: 7px; }
+}
+
+@media (max-width: 820px) {
+  .chapter-panel {
+    padding-left: 19px;
+    border-left-color: rgb(107 251 154 / .18);
+  }
+
+  .branch-task {
+    opacity: .26;
+  }
+
+  .parallax-landing[data-stage="2"] .bt1,
+  .parallax-landing[data-stage="3"] .bt2,
+  .parallax-landing[data-stage="4"] .bt3,
+  .parallax-landing[data-stage="5"] .bt6 {
+    opacity: .78;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .branch-task-dot,
+  .branch-task-progress {
+    animation: none;
+  }
+}
