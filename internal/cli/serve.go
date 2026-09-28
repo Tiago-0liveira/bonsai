@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -20,7 +21,16 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 )
 
-const hostedWebURL = "https://app.bonsai.dev/app"
+func hostedWebOrigin() string {
+	if value := strings.TrimSpace(os.Getenv("BONSAI_FRONTEND_ORIGIN")); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	return localapi.ProductionBrowserOrigin
+}
+
+func hostedWebURL() string {
+	return hostedWebOrigin() + "/app"
+}
 
 func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer) error {
 	action := "start"
@@ -134,7 +144,7 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 		WorkspacePath:          workspace,
 		Executable:             executable,
 		APIPort:                *apiPort,
-		BrowserOrigin:          localapi.ProductionBrowserOrigin,
+		BrowserOrigin:          hostedWebOrigin(),
 		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
 		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
 	}
@@ -233,7 +243,7 @@ func printServeAccess(out io.Writer, group *procstore.ServeGroup) error {
 		return printDevServeStatus(out, group)
 	}
 	fmt.Fprintf(out, "Bonsai local API\n  http://127.0.0.1:%d\n\n", group.APIPort)
-	fmt.Fprintf(out, "Web client\n  %s\n", hostedWebURL)
+	fmt.Fprintf(out, "Web client\n  %s\n", hostedWebURL())
 	return nil
 }
 
@@ -246,7 +256,7 @@ func printServeStatus(out io.Writer, group *procstore.ServeGroup) error {
 		return printDevServeStatus(out, group)
 	}
 	fmt.Fprintf(out, "Bonsai local API — %s — %s\n", group.WorkspacePath, group.State)
-	fmt.Fprintf(out, "Web client: %s\n", hostedWebURL)
+	fmt.Fprintf(out, "Web client: %s\n", hostedWebURL())
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "PROCESS\tSTATUS\tPID\tADDRESS")
 	for _, process := range group.Processes {
