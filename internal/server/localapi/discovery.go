@@ -171,7 +171,7 @@ func newProjectRegistry(path, launch string) *discoveredProjectRegistry {
 	return &discoveredProjectRegistry{scan: scanRoot, path: path, launch: launch, entries: map[string]projectServices{}, owners: map[string]string{}}
 }
 func (r *discoveredProjectRegistry) Default() projectServices {
-	p, _ := r.Lookup(config.PathID("project", r.launch))
+	p, _ := r.Lookup(config.ProjectID(r.launch))
 	return p
 }
 func (r *discoveredProjectRegistry) Lookup(id string) (projectServices, bool) {
@@ -293,7 +293,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 			if !ok {
 				continue
 			}
-			id := config.PathID("project", main)
+			id := config.ProjectID(main)
 			p, exists := r.entries[id]
 			if !exists || p.state == nil {
 				state, e := gitstore.Open(filepath.Join(procstore.New(main).Dir(), "local-api-state.json"))
