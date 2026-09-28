@@ -115,7 +115,7 @@ function classifyProbeFailure(permission: PermissionState | 'unknown', error?: u
   if (permission === 'denied') {
     publish({
       status: 'permission-denied',
-      message: 'This browser denied access to devices on your local network. Allow local network access for app.bonsai.dev, then try again.',
+      message: 'This browser denied access to devices on your local network. Allow local network access for this Bonsai site, then try again.',
     })
     return
   }
