@@ -5,13 +5,17 @@ type Camera = { x: number; y: number; s: number; r: number }
 type InstallPlatform = 'unix' | 'windows'
 
 const CAMERA: Camera[] = [
-  { x: 30, y: 0, s: 0.78, r: 0 },
-  { x: 1, y: 2, s: 1.08, r: -0.15 },
-  { x: 26, y: 13, s: 2.05, r: 0.65 },
-  { x: -27, y: 15, s: 2.12, r: -0.55 },
-  { x: -28, y: 0, s: 2.08, r: 0.5 },
-  { x: -27, y: -14, s: 2.02, r: 0.35 },
-  { x: 0, y: -11, s: 1.16, r: 0 },
+  // Start with the whole bonsai parked safely to the right of the hero copy.
+  { x: 34, y: 1, s: 0.72, r: 0 },
+  // Ease into the whole workspace before visiting individual branches.
+  { x: 7, y: 1, s: 0.96, r: 0 },
+  // From here on, movements stay intentionally small: zoom into a branch,
+  // settle, then drift to the next branch instead of whipping side to side.
+  { x: 10, y: 9, s: 1.56, r: 0 },
+  { x: -9, y: 10, s: 1.52, r: 0 },
+  { x: -8, y: -1, s: 1.48, r: 0 },
+  { x: -7, y: -11, s: 1.44, r: 0 },
+  { x: 0, y: -6, s: 1.04, r: 0 },
 ]
 
 const INSTALL_COMMANDS: Record<InstallPlatform, string> = {
@@ -22,6 +26,7 @@ const INSTALL_COMMANDS: Record<InstallPlatform, string> = {
 const clamp = (v: number) => Math.max(0, Math.min(1, v))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 const smooth = (t: number) => t * t * (3 - 2 * t)
+const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10)
 
 const chapters = [
   {
@@ -315,7 +320,11 @@ export function ParallaxLanding() {
 
       const to = Math.min(from + 1, anchors.length - 1)
       const raw = from === to ? 0 : clamp((pos - anchors[from]) / Math.max(1, anchors[to] - anchors[from]))
-      const t = smooth(raw)
+      // Give every chapter a short "settled" window at each end, then use
+      // smootherstep for the actual camera travel. This keeps the branch in
+      // focus long enough to read and removes the pendulum-like movement.
+      const travel = clamp((raw - 0.12) / 0.76)
+      const t = smoother(travel)
       const c0 = CAMERA[Math.min(from, CAMERA.length - 1)]
       const c1 = CAMERA[Math.min(to, CAMERA.length - 1)]
       const c = reduced.matches
@@ -413,7 +422,7 @@ export function ParallaxLanding() {
               </div>
 
               <div className="pills"><span>multi-project canvas</span><span>parallel agents</span><span>GitHub realtime</span></div>
-              <small className="scrollcue">↓ scroll to enter individual worktrees</small>
+              <small className="scrollcue">↓ scroll — the camera moves into the tree, one worktree at a time</small>
             </div>
           </div>
         </section>
