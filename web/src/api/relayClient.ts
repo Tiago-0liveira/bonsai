@@ -1,9 +1,19 @@
 import { useBonsaiStore } from '../stores/bonsai'
 import { projectForGitHubRepository, refreshProject, report } from './git'
 
-const configuredRelayOrigin = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_RELAY_ORIGIN)?.replace(/\/$/, '')
+declare global {
+  interface Window {
+    __BONSAI_CONFIG__?: {
+      relayOrigin?: string
+    }
+  }
+}
+
+const runtimeRelayOrigin = typeof window !== 'undefined' ? window.__BONSAI_CONFIG__?.relayOrigin : undefined
+const buildRelayOrigin = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_RELAY_ORIGIN
+const configuredRelayOrigin = (runtimeRelayOrigin || buildRelayOrigin)?.replace(/\/$/, '')
 export const RELAY_HTTP_ORIGIN = configuredRelayOrigin || 'https://api.bonsai.dev'
-const relayUsesCloudSession = RELAY_HTTP_ORIGIN === 'https://api.bonsai.dev'
+const relayUsesCloudSession = RELAY_HTTP_ORIGIN.startsWith('https://')
 
 export type RelayConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'authorization-expired' | 'offline'
 
