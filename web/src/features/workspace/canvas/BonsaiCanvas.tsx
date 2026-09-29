@@ -606,13 +606,34 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       return
     }
 
-    // Layout commands first collapse branch-local detail in NodeShell. Wait for
-    // React Flow to observe the resulting node dimensions before measuring the
-    // graph, otherwise the next layout pass sees different geometry and drifts.
-    let secondFrame = 0
-    const firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
+    // Layout commands first collapse branch-local detail in NodeShell. React
+    // Flow updates measured node dimensions through ResizeObserver, which can
+    // land several frames after that React state change. Wait for measurements
+    // to stay stable before laying out so repeated commands are idempotent.
+    let frame = 0
+    let cancelled = false
+    let attempts = 0
+    let stableFrames = 0
+    let previousMeasurements = ''
+    const settleAndLayout = () => {
+      frame = requestAnimationFrame(() => {
+        if (cancelled) return
+        attempts++
         const currentNodes = getNodes()
+        const measurements = currentNodes
+          .map((node) => {
+            const width = node.measured?.width ?? node.width ?? 0
+            const height = node.measured?.height ?? node.height ?? 0
+            return node.id + ':' + width + 'x' + height
+          })
+          .sort()
+          .join('|')
+        stableFrames = measurements === previousMeasurements ? stableFrames + 1 : 0
+        previousMeasurements = measurements
+        if (attempts < 4 || (stableFrames < 2 && attempts < 12)) {
+          settleAndLayout()
+          return
+        }
         const currentEdges = getEdges()
         const currentPlacements = useBonsaiStore.getState().nodePlacements
         const positions = computeGlobalPlacements(currentNodes, currentEdges, currentPlacements)
@@ -623,10 +644,11 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         setGeneratedNodePlacements(generated)
         requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
       })
-    })
+    }
+    settleAndLayout()
     return () => {
-      cancelAnimationFrame(firstFrame)
-      if (secondFrame) cancelAnimationFrame(secondFrame)
+      cancelled = true
+      if (frame) cancelAnimationFrame(frame)
     }
   }, [
     canvasCommand.nonce,
