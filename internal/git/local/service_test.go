@@ -198,7 +198,6 @@ func TestDynamicWorktreePlacementAndSymlinkContainment(t *testing.T) {
 	}
 }
 
-
 func TestStatusHeadStatesAndDivergenceAvailability(t *testing.T) {
 	s, dir, id := setup(t)
 	ctx := context.Background()
