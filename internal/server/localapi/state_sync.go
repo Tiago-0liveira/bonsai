@@ -286,7 +286,19 @@ func (s *stateSync) Snapshot(projectID string) (browserSnapshot, bool) {
 	snapshot := cloneSnapshot(p.snapshot)
 	s.mu.Unlock()
 	if project.info.Available {
-		s.Queue(projectID, refreshAll, false)
+		var scope refreshScope
+		if snapshot.Local == nil || snapshot.Freshness["local"].State == "loading" {
+			scope |= refreshLocal
+		}
+		if snapshot.Freshness["processes"].State == "loading" {
+			scope |= refreshProcesses
+		}
+		if snapshot.Local != nil && snapshot.Freshness["provider"].State == "loading" {
+			scope |= refreshProvider
+		}
+		if scope != 0 {
+			s.Queue(projectID, scope, false)
+		}
 	}
 	return snapshot, true
 }
@@ -332,6 +344,8 @@ func (s *stateSync) refreshLocal(projectID string) {
 	if !ok || !project.info.Available {
 		return
 	}
+	before, _ := s.CachedSnapshot(projectID)
+	previousIdentity := localIdentityToken(before)
 	ctx, cancel := context.WithTimeout(context.Background(), localReadTimeout)
 	defer cancel()
 
@@ -391,7 +405,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 		local.Worktrees[i].RepositoryID = projectID
 	}
 	metadata, metadataErr := metadataSnapshotFor(project)
-	s.commitProject(project, "local", func(snapshot *browserSnapshot) {
+	committed := s.commitProject(project, "local", func(snapshot *browserSnapshot) {
 		snapshot.Local = &local
 		if metadataErr == nil {
 			snapshot.Metadata = metadata
@@ -405,7 +419,12 @@ func (s *stateSync) refreshLocal(projectID string) {
 		snapshot.Online = true
 		resetWorktreeAssociationsForHeads(snapshot)
 	})
-	s.queueProvider(projectID, false)
+	if committed {
+		after, ok := s.CachedSnapshot(projectID)
+		if ok && (previousIdentity != localIdentityToken(after) || after.Freshness["provider"].State == "loading") {
+			s.queueProvider(projectID, false)
+		}
+	}
 }
 
 func descriptorFromLocal(info ProjectInfo, local *domain.RepositoryState) ProjectInfo {
