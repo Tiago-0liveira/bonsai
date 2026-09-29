@@ -34,3 +34,37 @@ jobs:
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+
+
+  package-changed-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify changed Go formatting
+        shell: bash
+        run: |
+          mapfile -t files < <(git diff --name-only 5bd81497a901ccfb00613c1c3d23d76669c9440f...HEAD -- '*.go')
+          if ((${#files[@]})); then
+            unformatted="$(gofmt -l "${files[@]}")"
+            if [[ -n "$unformatted" ]]; then
+              printf 'Unformatted Go files:\n%s\n' "$unformatted"
+              exit 1
+            fi
+          fi
+      - name: Package requested change set
+        shell: bash
+        run: |
+          mkdir -p bundle
+          while IFS= read -r file; do
+            [[ "$file" == ".github/workflows/frontend.yml" ]] && continue
+            mkdir -p "bundle/$(dirname "$file")"
+            cp "$file" "bundle/$file"
+          done < <(git diff --name-only 5bd81497a901ccfb00613c1c3d23d76669c9440f...HEAD)
+          (cd bundle && zip -qr ../bonsai-ws-state-sync-changes.zip .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bonsai-ws-state-sync-changes
+          path: bonsai-ws-state-sync-changes.zip
+          if-no-files-found: error
