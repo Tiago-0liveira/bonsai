@@ -101,7 +101,7 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
         <button disabled={saving} onClick={() => void saveSelection()} className="bonsai-focus rounded bg-[rgb(var(--purple))] px-4 py-2 text-white disabled:opacity-50">{saving ? 'Saving…' : 'Use selected repositories'}</button>
       </div>
     </> : settings && <>
-      <p className="text-sm text-[rgb(var(--muted))]">Choose folders on this computer where Bonsai should discover Git repositories. Discovery includes up to four levels of subfolders; discovered repositories are activated only after you select them.</p>
+      <p className="text-sm text-[rgb(var(--muted))]">Choose folders on this computer where Bonsai should discover Git repositories. Discovery includes up to three levels of subfolders; discovered repositories are activated only after you select them.</p>
       <ul className="space-y-3">
         {settings.roots.map(root => {
           const diagnostic = settings.diagnostics.find(d => d.root_id === root.id)
