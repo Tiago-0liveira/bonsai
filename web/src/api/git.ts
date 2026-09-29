@@ -669,7 +669,7 @@ export function reconcileCatalog(repos: Repository[]) {
     gitBranches: Object.fromEntries(Object.entries(state.gitBranches).filter(([id]) => ids.has(id))),
     gitOnline: Object.fromEntries(repos.map(r => [r.id, r.available !== false && (state.gitOnline[r.id] ?? false)])),
     syncFreshness: Object.fromEntries(Object.entries(state.syncFreshness).filter(([id]) => ids.has(id))),
-    dockWorktreeId: worktrees.some(w => w.id === state.dockWorktreeId)
+    dockWorktreeId: worktrees.some(w => w.id === state.dockWorktreeId) || !state.worktrees.length
       ? state.dockWorktreeId
       : worktrees.find(w => w.projectId === active?.id)?.id ?? '',
     dockRuntimeId: state.dockRuntimeId && liveRuntimeIds.has(state.dockRuntimeId) ? state.dockRuntimeId : '',
