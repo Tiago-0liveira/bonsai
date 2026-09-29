@@ -763,7 +763,7 @@ export function startGitBackend() {
         catalogInvalidated = true
         return
       }
-      void refreshCatalog(true).catch(report)
+      void Promise.all([loadProjectRoots(), refreshCatalog(true)]).catch(report)
     }
   }
 
@@ -796,7 +796,7 @@ export function startGitBackend() {
 
       if (catalogInvalidated) {
         catalogInvalidated = false
-        await refreshCatalog(true)
+        await Promise.all([loadProjectRoots(), refreshCatalog(true)])
       }
       for (const projectId of queuedProjects) {
         queuedProjects.delete(projectId)
