@@ -1,5 +1,5 @@
 import { openGitHub } from '../../../api/git'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
@@ -268,7 +268,8 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
 }
 
 function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolean }) {
-  const [historyOpen, setHistoryOpen] = useState(false)
+  const historyOpen = useBonsaiStore((state) => state.expandedHistoryWorktreeIds.includes(data.entityId))
+  const toggleWorktreeHistory = useBonsaiStore((state) => state.toggleWorktreeHistory)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
@@ -284,10 +285,6 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
-
-  useEffect(() => {
-    if (canvasCommand.type === 'layout' && canvasCommand.nonce) setHistoryOpen(false)
-  }, [canvasCommand.nonce, canvasCommand.type])
 
   if (data.kind === 'default-branch') return <DefaultBranchCard data={data} />
   if (data.kind === 'env') return <EnvCard data={data} />
@@ -385,7 +382,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation()
-                      setHistoryOpen((value) => !value)
+                      toggleWorktreeHistory(data.entityId)
                     }}
                     className="nodrag flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[8px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--bg)/.45)] hover:text-[rgb(var(--text))]"
                   >
