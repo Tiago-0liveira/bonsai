@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,17 +15,20 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
+	daemonwatcher "github.com/Tiago-0liveira/bonsai/internal/daemon/watcher"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
+	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
 )
 
 const (
-	localRefreshInterval   = 5 * time.Second
-	processRefreshInterval = 2 * time.Second
-	localReadTimeout       = 20 * time.Second
-	processReadTimeout     = 5 * time.Second
-	localRefreshWorkers    = 4
-	providerRefreshWorkers = 2
+	processRefreshInterval  = 30 * time.Second
+	providerRefreshInterval = 2 * time.Minute
+	watcherRecoveryInterval = 30 * time.Second
+	localReadTimeout        = 20 * time.Second
+	processReadTimeout      = 5 * time.Second
+	localRefreshWorkers     = 4
+	providerRefreshWorkers  = 2
 )
 
 type refreshScope uint8
@@ -63,10 +67,12 @@ type stateSync struct {
 	now      func() time.Time
 
 	mu       sync.Mutex
-	runCtx   context.Context
-	closed   bool
-	projects map[string]*projectProjection
-	jobs     map[string]*syncJobState
+	runCtx       context.Context
+	closed       bool
+	running      bool
+	projects     map[string]*projectProjection
+	jobs         map[string]*syncJobState
+	watchCancels map[string]context.CancelFunc
 
 	localSem    chan struct{}
 	providerSem chan struct{}
@@ -80,9 +86,10 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		epoch:       randomID(),
 		now:         func() time.Time { return time.Now().UTC() },
 		runCtx:      context.Background(),
-		projects:    map[string]*projectProjection{},
-		jobs:        map[string]*syncJobState{},
-		localSem:    make(chan struct{}, localRefreshWorkers),
+		projects:     map[string]*projectProjection{},
+		jobs:         map[string]*syncJobState{},
+		watchCancels: map[string]context.CancelFunc{},
+		localSem:     make(chan struct{}, localRefreshWorkers),
 		providerSem: make(chan struct{}, providerRefreshWorkers),
 		providers:   newProviderCache(),
 	}
@@ -91,15 +98,23 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 func (s *stateSync) Run(ctx context.Context) {
 	s.mu.Lock()
 	s.runCtx = ctx
+	s.running = true
 	s.mu.Unlock()
 	s.ReconcileCatalog()
-	localTicker := time.NewTicker(localRefreshInterval)
+	s.syncWatchers()
+
 	processTicker := time.NewTicker(processRefreshInterval)
-	defer localTicker.Stop()
+	providerTicker := time.NewTicker(providerRefreshInterval)
 	defer processTicker.Stop()
+	defer providerTicker.Stop()
 	defer func() {
 		s.mu.Lock()
 		s.closed = true
+		s.running = false
+		for id, cancel := range s.watchCancels {
+			cancel()
+			delete(s.watchCancels, id)
+		}
 		s.mu.Unlock()
 	}()
 	for {
@@ -110,14 +125,13 @@ func (s *stateSync) Run(ctx context.Context) {
 			if s.events.count() > 0 {
 				s.RefreshAll(refreshProcesses, false)
 			}
-		case <-localTicker.C:
+		case <-providerTicker.C:
 			if s.events.count() > 0 {
-				s.RefreshAll(refreshLocal|refreshProvider, false)
+				s.RefreshAll(refreshProvider, false)
 			}
 		}
 	}
 }
-
 func (s *stateSync) ReconcileCatalog() {
 	infos := s.registry.List()
 	present := make(map[string]ProjectInfo, len(infos))
@@ -151,6 +165,7 @@ func (s *stateSync) ReconcileCatalog() {
 		p.snapshot = next
 	}
 	s.mu.Unlock()
+	s.syncWatchers()
 }
 
 func (s *stateSync) SubscriberReady() {
@@ -357,50 +372,12 @@ func (s *stateSync) refreshLocal(projectID string) {
 	ctx, cancel := s.readContext(localReadTimeout)
 	defer cancel()
 
-	branches, branchesErr := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
-		var value []domain.Branch
-		err := json.Unmarshal(raw, &value)
-		return value, err
-	})
-	worktrees, worktreesErr := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
-		var value []domain.Worktree
-		err := json.Unmarshal(raw, &value)
-		return value, err
-	})
-	if branchesErr == nil && worktreesErr == nil {
-		local := domain.RepositoryState{
-			ID:        projectID,
-			Branches:  branches.([]domain.Branch),
-			Worktrees: worktrees.([]domain.Worktree),
-		}
-		for i := range local.Worktrees {
-			local.Worktrees[i].RepositoryID = projectID
-		}
-		metadata, _ := metadataSnapshotFor(project)
-		s.commitProject(project, "local", func(snapshot *browserSnapshot) {
-			if snapshot.Local != nil {
-				local.DefaultBranch = snapshot.Local.DefaultBranch
-				local.Remotes = append([]domain.RemoteIdentity(nil), snapshot.Local.Remotes...)
-			}
-			snapshot.Local = &local
-			snapshot.Metadata = metadata
-			f := snapshot.Freshness["local"]
-			f.State, f.Error = "loading", nil
-			snapshot.Freshness["local"] = f
-			snapshot.Repository = descriptorFromLocal(project.info, &local)
-			snapshot.Online = true
-		})
-	}
-
 	value, err := s.gitPayload(ctx, project, "git.repository.refresh", func(raw json.RawMessage) (any, error) {
 		var state domain.RepositoryState
 		err := json.Unmarshal(raw, &state)
 		return state, err
 	})
 	if err != nil {
-		if branchesErr != nil {
-			err = fmt.Errorf("inventory: %v; status: %w", branchesErr, err)
-		}
 		s.commitProject(project, "local", func(snapshot *browserSnapshot) {
 			snapshot.Online = true
 			snapshot.Freshness["local"] = failedFreshness(snapshot.Freshness["local"], snapshot.Local != nil, err)
@@ -429,12 +406,14 @@ func (s *stateSync) refreshLocal(projectID string) {
 	})
 	if committed {
 		after, ok := s.CachedSnapshot(projectID)
-		if ok && (previousIdentity != localIdentityToken(after) || after.Freshness["provider"].State == "loading") {
+		if ok && previousIdentity != localIdentityToken(after) {
+			s.queueProcesses(projectID)
+			s.queueProvider(projectID, false)
+		} else if ok && after.Freshness["provider"].State == "loading" {
 			s.queueProvider(projectID, false)
 		}
 	}
 }
-
 func descriptorFromLocal(info ProjectInfo, local *domain.RepositoryState) ProjectInfo {
 	out := info
 	if local == nil {
@@ -586,14 +565,171 @@ func (s *stateSync) commitProject(expected projectServices, component string, mu
 	next.Repository.Available = project.info.Available
 	mutate(&next)
 	next.Epoch = s.epoch
+	if snapshotsSemanticallyEqual(p.snapshot, next) {
+		s.mu.Unlock()
+		return false
+	}
 	next.Sequence = p.snapshot.Sequence + 1
 	p.snapshot = next
-	sequence := next.Sequence
+	published := cloneSnapshot(next)
 	s.mu.Unlock()
-	s.events.publish(localEvent{Type: "project", ProjectID: expected.info.ID, Component: component, Epoch: s.epoch, Sequence: sequence})
+	s.events.publish(localEvent{
+		Type:      "project_update",
+		ProjectID: expected.info.ID,
+		Component: component,
+		Epoch:     published.Epoch,
+		Sequence:  published.Sequence,
+		Snapshot:  &published,
+	})
 	return true
 }
 
+func snapshotsSemanticallyEqual(a, b browserSnapshot) bool {
+	left := semanticSnapshot(a)
+	right := semanticSnapshot(b)
+	leftJSON, _ := json.Marshal(left)
+	rightJSON, _ := json.Marshal(right)
+	return bytes.Equal(leftJSON, rightJSON)
+}
+
+func semanticSnapshot(in browserSnapshot) browserSnapshot {
+	out := cloneSnapshot(in)
+	out.Epoch = ""
+	out.Sequence = 0
+	for key, freshness := range out.Freshness {
+		freshness.UpdatedAt = nil
+		out.Freshness[key] = freshness
+	}
+	if out.Remote != nil {
+		out.Remote.UpdatedAt = time.Time{}
+	}
+	for id, state := range out.WorktreeState {
+		state.CI.Freshness.UpdatedAt = nil
+		out.WorktreeState[id] = state
+	}
+	return out
+}
+
+func (s *stateSync) syncWatchers() {
+	infos := s.registry.List()
+	desired := make(map[string]ProjectInfo, len(infos))
+	for _, info := range infos {
+		if info.Available {
+			desired[info.ID] = info
+		}
+	}
+
+	type watcherStart struct {
+		ctx  context.Context
+		info ProjectInfo
+	}
+	var starts []watcherStart
+
+	s.mu.Lock()
+	if !s.running || s.closed {
+		s.mu.Unlock()
+		return
+	}
+	for id, cancel := range s.watchCancels {
+		info, ok := desired[id]
+		projection := s.projects[id]
+		if ok && projection != nil && projection.path == info.Path {
+			continue
+		}
+		cancel()
+		delete(s.watchCancels, id)
+	}
+	for id, info := range desired {
+		if s.watchCancels[id] != nil {
+			continue
+		}
+		watchCtx, cancel := context.WithCancel(s.runCtx)
+		s.watchCancels[id] = cancel
+		starts = append(starts, watcherStart{ctx: watchCtx, info: info})
+	}
+	s.mu.Unlock()
+
+	for _, start := range starts {
+		go s.runProjectWatcher(start.ctx, start.info)
+	}
+}
+
+func (s *stateSync) runProjectWatcher(ctx context.Context, info ProjectInfo) {
+	service, err := gitlocal.New([]gitlocal.Config{{
+		ID:   localRepositoryID,
+		Root: info.Path,
+		WithWorktreeRoot: func(_ context.Context, fn func(string) error) error {
+			return fn(filepath.Join(info.Path, ".bonsai", "worktrees"))
+		},
+	}})
+	if err != nil {
+		s.Queue(info.ID, refreshLocal, false)
+		return
+	}
+	w := daemonwatcher.Watcher{
+		Local:        service,
+		RepositoryID: localRepositoryID,
+		Roots:        []string{info.Path},
+		Interval:     watcherRecoveryInterval,
+		WorktreePaths: func(context.Context) map[string]string {
+			snapshot, ok := s.CachedSnapshot(info.ID)
+			if !ok || snapshot.Local == nil {
+				return nil
+			}
+			paths := make(map[string]string, len(snapshot.Local.Worktrees))
+			for _, worktree := range snapshot.Local.Worktrees {
+				paths[worktree.ID] = worktree.Path
+			}
+			return paths
+		},
+		Publish: func(_ context.Context, local domain.RepositoryState) error {
+			s.commitWatchedLocal(info.ID, local)
+			return nil
+		},
+	}
+	_ = w.Run(ctx)
+}
+
+func (s *stateSync) commitWatchedLocal(projectID string, local domain.RepositoryState) {
+	project, ok := s.registry.Lookup(projectID)
+	if !ok || !project.info.Available {
+		return
+	}
+	before, _ := s.CachedSnapshot(projectID)
+	previousIdentity := localIdentityToken(before)
+	local.ID = projectID
+	for i := range local.Worktrees {
+		local.Worktrees[i].RepositoryID = projectID
+	}
+	metadata, metadataErr := metadataSnapshotFor(project)
+	committed := s.commitProject(project, "local", func(snapshot *browserSnapshot) {
+		snapshot.Local = &local
+		if metadataErr == nil {
+			snapshot.Metadata = metadata
+		}
+		now := s.now()
+		snapshot.Freshness["local"] = browserFreshness{State: "ready", UpdatedAt: &now}
+		if metadataErr != nil {
+			snapshot.Freshness["local"] = failedFreshness(snapshot.Freshness["local"], true, metadataErr)
+		}
+		snapshot.Repository = descriptorFromLocal(project.info, &local)
+		snapshot.Online = true
+		resetWorktreeAssociationsForHeads(snapshot)
+	})
+	if !committed {
+		return
+	}
+	after, ok := s.CachedSnapshot(projectID)
+	if !ok {
+		return
+	}
+	if previousIdentity != localIdentityToken(after) {
+		s.queueProcesses(projectID)
+		s.queueProvider(projectID, false)
+	} else if after.Freshness["provider"].State == "loading" {
+		s.queueProvider(projectID, false)
+	}
+}
 func (s *stateSync) commit(projectID, component string, mutate func(*browserSnapshot)) bool {
 	project, ok := s.registry.Lookup(projectID)
 	if !ok {
