@@ -7,7 +7,7 @@ export type AgentPresentation = 'canvas' | 'history' | 'archived'
 export type BoardStatus = string
 export type BoardKind = string
 export type PrStatus = 'Draft' | 'Open' | 'Closed' | 'Merged'
-export type CiStatus = 'running' | 'passed' | 'failed' | 'waiting'
+export type CiStatus = 'unknown' | 'none' | 'running' | 'passed' | 'failed' | 'waiting'
 export type DockPanelKey = 'files' | 'prs'
 export type StackPreference = 'auto' | 'never'
 export type FileGitStatus = 'modified' | 'untracked' | 'added' | 'deleted' | 'committed'
@@ -126,13 +126,33 @@ export interface StartAgentInput {
   prompt: string
 }
 
+export type ProcessLifecycleStatus = 'starting' | 'running' | 'backoff' | 'stopping' | 'stopped' | 'done' | 'failed' | 'lost' | 'orphan'
+
 export interface Process {
   id: string
+  projectId: string
+  daemonId: number
   worktreeId: string
   name: string
   command: string
   status: Health
+  lifecycleStatus: ProcessLifecycleStatus
+  pid?: number
   port?: number
+  url?: string
+  startedAt?: string
+  exitCode?: number
+  exitError?: string
+  serveGroup?: string
+  serveName?: string
+}
+
+export type SyncFreshnessState = 'loading' | 'ready' | 'stale' | 'error' | 'unavailable'
+
+export interface SyncFreshness {
+  state: SyncFreshnessState
+  updatedAt?: string
+  error?: { code: string; message: string }
 }
 
 export interface PullRequest {
