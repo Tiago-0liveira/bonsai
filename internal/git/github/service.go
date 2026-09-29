@@ -26,9 +26,10 @@ type PullRequest struct {
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
 	State     string    `json:"state"`
-	Head      string    `json:"head"`
-	Base      string    `json:"base"`
-	HeadSHA   string    `json:"head_sha"`
+	Head           string    `json:"head"`
+	HeadRepository string    `json:"head_repository,omitempty"`
+	Base           string    `json:"base"`
+	HeadSHA        string    `json:"head_sha"`
 	URL       string    `json:"url"`
 	Draft     bool      `json:"draft"`
 	Author    string    `json:"author"`
