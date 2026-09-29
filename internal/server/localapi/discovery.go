@@ -23,6 +23,7 @@ import (
 
 const discoveryDepth = config.ProjectDiscoveryDepth
 const discoveryLimit = 10000
+const discoveryRefreshTimeout = time.Minute
 
 type RootDiagnostic struct {
 	RootID    string   `json:"root_id"`
@@ -341,7 +342,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 	for _, id := range selection.Selected {
 		selected[id] = true
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, discoveryRefreshTimeout)
 	defer cancel()
 	scans := make([]rootScan, len(cfg.Roots))
 	jobs := make(chan int)
@@ -351,13 +352,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				rootContext, cancelRoot := context.WithTimeout(ctx, 3*time.Second)
-				scans[i] = r.scan(rootContext, cfg.Roots[i])
-				if rootContext.Err() != nil {
-					scans[i].complete = false
-					scans[i].diagnostic.Messages = append(scans[i].diagnostic.Messages, "Scan timed out; select a deeper folder or retry when the directory is available.")
-				}
-				cancelRoot()
+				scans[i] = r.scan(ctx, cfg.Roots[i])
 			}
 		}()
 	}
