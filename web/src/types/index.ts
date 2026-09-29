@@ -71,6 +71,10 @@ export interface Worktree {
   prStatus?: PrStatus
   ciStatus: CiStatus
   ciFailed: number
+  checkedSha?: string
+  upstream?: string
+  divergenceAvailable?: boolean
+  gitStatusError?: string
   ahead: number
   behind: number
   dirtyFiles: number
