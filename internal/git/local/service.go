@@ -173,11 +173,11 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 		}
 	}
 	return domain.RepositoryState{
-		ID: id,
+		ID:            id,
 		DefaultBranch: defaultBranch,
-		Branches: b,
-		Worktrees: w,
-		Remotes: remoteIdentities(ctx, r.Root),
+		Branches:      b,
+		Worktrees:     w,
+		Remotes:       remoteIdentities(ctx, r.Root),
 	}, nil
 }
 func (s *Service) ListBranches(ctx context.Context, id string) ([]domain.Branch, error) {
@@ -226,7 +226,6 @@ func (s *Service) ListWorktrees(ctx context.Context, id string) ([]domain.Worktr
 	}
 	return result, nil
 }
-
 
 func remoteIdentities(ctx context.Context, dir string) []domain.RemoteIdentity {
 	out, err := run(ctx, dir, "remote")
