@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -516,8 +519,17 @@ func (s *stateSync) refreshProcesses(projectID string) {
 		}
 		for _, record := range records {
 			summary := processSummary(projectID, record)
-			if haveLocalInventory && !validWorktrees[summary.WorktreeID] {
+			if haveLocalInventory {
 				summary.WorktreeID = ""
+				for _, worktree := range snapshot.Local.Worktrees {
+					if sameWorktreePath(record.Worktree, worktree.Path) {
+						summary.WorktreeID = worktree.ID
+						break
+					}
+				}
+				if summary.WorktreeID == "" && validWorktrees[publicWorktreeID(record.Worktree)] {
+					summary.WorktreeID = publicWorktreeID(record.Worktree)
+				}
 			}
 			summaries = append(summaries, summary)
 		}
@@ -525,6 +537,27 @@ func (s *stateSync) refreshProcesses(projectID string) {
 		now := s.now()
 		snapshot.Freshness["processes"] = browserFreshness{State: "ready", UpdatedAt: &now}
 	})
+}
+
+func sameWorktreePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	cleanA, cleanB := filepath.Clean(a), filepath.Clean(b)
+	if cleanA == cleanB || (runtime.GOOS == "windows" && strings.EqualFold(cleanA, cleanB)) {
+		return true
+	}
+	infoA, errA := os.Stat(cleanA)
+	infoB, errB := os.Stat(cleanB)
+	if errA == nil && errB == nil && os.SameFile(infoA, infoB) {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(cleanA)
+	resolvedB, errB := filepath.EvalSymlinks(cleanB)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return resolvedA == resolvedB || (runtime.GOOS == "windows" && strings.EqualFold(resolvedA, resolvedB))
 }
 
 func (s *stateSync) readContext(timeout time.Duration) (context.Context, context.CancelFunc) {
