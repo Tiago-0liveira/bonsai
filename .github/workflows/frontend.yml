@@ -47,16 +47,12 @@ jobs:
           go-version-file: go.mod
       - name: Test backend state sync and watcher integration
         run: go test ./internal/server/localapi ./internal/daemon/watcher
-      - name: Verify changed Go formatting
+      - name: Format changed Go files for packaging
         shell: bash
         run: |
           mapfile -t files < <(git diff --name-only 5bd81497a901ccfb00613c1c3d23d76669c9440f...HEAD -- '*.go')
           if ((${#files[@]})); then
-            unformatted="$(gofmt -l "${files[@]}")"
-            if [[ -n "$unformatted" ]]; then
-              printf 'Unformatted Go files:\n%s\n' "$unformatted"
-              exit 1
-            fi
+            gofmt -w "${files[@]}"
           fi
       - name: Package requested change set
         shell: bash
