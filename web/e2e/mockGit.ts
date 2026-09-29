@@ -142,14 +142,14 @@ function ciRollup(values: { status: string; conclusion: string }[]) {
 
 function bonsaiSnapshot(metadata: Record<string, Metadata>) {
   const repository = repositories[0]
-  const worktreeState = Object.fromEntries([
+  const associations: Array<[string, (typeof pullRequests)[number] | undefined]> = [
     ['wt-web', pullRequests.find(pr => pr.number === 24)],
     ['wt-docs', pullRequests.find(pr => pr.number === 25)],
     ['wt-daemon', pullRequests.find(pr => pr.number === 23)],
     ['wt-release', pullRequests.find(pr => pr.number === 22)],
     ['wt-review', pullRequests.find(pr => pr.number === 21)],
-  ].map(([id, pr]) => {
-    const pull = pr as (typeof pullRequests)[number] | undefined
+  ]
+  const worktreeState = Object.fromEntries(associations.map(([id, pull]) => {
     const values = pull ? (checks[pull.head_sha] ?? []) : []
     return [id, {
       ...(pull ? { pull_request: { ...pull, head_repository: repository.full_name } } : {}),
