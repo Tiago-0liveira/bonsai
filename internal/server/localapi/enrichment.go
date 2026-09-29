@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	providerReadyTTL       = 60 * time.Second
-	providerPendingTTL     = 15 * time.Second
-	providerErrorBackoff   = 15 * time.Second
+	providerReadyTTL        = 60 * time.Second
+	providerPendingTTL      = 15 * time.Second
+	providerErrorBackoff    = 15 * time.Second
 	providerMaxErrorBackoff = 60 * time.Second
-	providerReadTimeout    = 30 * time.Second
+	providerReadTimeout     = 30 * time.Second
 )
 
 type providerRepoEntry struct {
@@ -453,4 +453,3 @@ func checksRollup(checks []githubdomain.Check) string {
 	}
 	return "passed"
 }
-
