@@ -22,7 +22,7 @@ test('application waits for an explicit local connection and remains usable with
   await page.route('http://127.0.0.1:7001/**', async route => {
     const url = new URL(route.request().url())
     if (url.pathname === '/health') { healthCalls++; await route.fulfill({ json: { ok: true } }); return }
-    if (url.pathname === '/version') { await route.fulfill({ json: { version: 'e2e', api_version: 2 } }); return }
+    if (url.pathname === '/version') { await route.fulfill({ json: { version: 'e2e', api_version: 3 } }); return }
     if (url.pathname === '/api/session') { sessionCalls++; await route.fulfill({ status: 201, json: { token: `session-${sessionCalls}`, expires_at: new Date(Date.now() + 60_000).toISOString() } }); return }
     if (url.pathname === '/api/projects') { await route.fulfill({ json: [] }); return }
     await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Not Found' } } })
@@ -47,7 +47,7 @@ test('reload requires a fresh local capability', async ({ page }) => {
   await page.route('http://127.0.0.1:7001/**', async route => {
     const path = new URL(route.request().url()).pathname
     if (path === '/health') return route.fulfill({ json: { ok: true } })
-    if (path === '/version') return route.fulfill({ json: { version: 'e2e', api_version: 2 } })
+    if (path === '/version') return route.fulfill({ json: { version: 'e2e', api_version: 3 } })
     if (path === '/api/session') {
       sessions++
       return route.fulfill({ status: 201, json: { token: `capability-${sessions}`, expires_at: new Date(Date.now() + 60_000).toISOString() } })
