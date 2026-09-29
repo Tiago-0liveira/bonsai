@@ -655,41 +655,49 @@ func (s *stateSync) syncWatchers() {
 }
 
 func (s *stateSync) runProjectWatcher(ctx context.Context, info ProjectInfo) {
-	service, err := gitlocal.New([]gitlocal.Config{{
-		ID:   localRepositoryID,
-		Root: info.Path,
-		WithWorktreeRoot: func(_ context.Context, fn func(string) error) error {
-			return fn(filepath.Join(info.Path, ".bonsai", "worktrees"))
-		},
-	}})
-	if err != nil {
+	for ctx.Err() == nil {
+		service, err := gitlocal.New([]gitlocal.Config{{
+			ID:   localRepositoryID,
+			Root: info.Path,
+			WithWorktreeRoot: func(_ context.Context, fn func(string) error) error {
+				return fn(filepath.Join(info.Path, ".bonsai", "worktrees"))
+			},
+		}})
+		if err == nil {
+			w := daemonwatcher.Watcher{
+				Local:        service,
+				RepositoryID: localRepositoryID,
+				Roots:        []string{info.Path},
+				Interval:     watcherRecoveryInterval,
+				WorktreePaths: func(context.Context) map[string]string {
+					snapshot, ok := s.CachedSnapshot(info.ID)
+					if !ok || snapshot.Local == nil {
+						return nil
+					}
+					paths := make(map[string]string, len(snapshot.Local.Worktrees))
+					for _, worktree := range snapshot.Local.Worktrees {
+						paths[worktree.ID] = worktree.Path
+					}
+					return paths
+				},
+				Publish: func(_ context.Context, local domain.RepositoryState) error {
+					s.commitWatchedLocal(info.ID, local)
+					return nil
+				},
+			}
+			err = w.Run(ctx)
+		}
+		if ctx.Err() != nil {
+			return
+		}
 		s.Queue(info.ID, refreshLocal, false)
-		return
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
 	}
-	w := daemonwatcher.Watcher{
-		Local:        service,
-		RepositoryID: localRepositoryID,
-		Roots:        []string{info.Path},
-		Interval:     watcherRecoveryInterval,
-		WorktreePaths: func(context.Context) map[string]string {
-			snapshot, ok := s.CachedSnapshot(info.ID)
-			if !ok || snapshot.Local == nil {
-				return nil
-			}
-			paths := make(map[string]string, len(snapshot.Local.Worktrees))
-			for _, worktree := range snapshot.Local.Worktrees {
-				paths[worktree.ID] = worktree.Path
-			}
-			return paths
-		},
-		Publish: func(_ context.Context, local domain.RepositoryState) error {
-			s.commitWatchedLocal(info.ID, local)
-			return nil
-		},
-	}
-	_ = w.Run(ctx)
 }
-
 func (s *stateSync) commitWatchedLocal(projectID string, local domain.RepositoryState) {
 	project, ok := s.registry.Lookup(projectID)
 	if !ok || !project.info.Available {
