@@ -6,11 +6,11 @@ vi.mock('../stores/bonsai', () => ({
 
 vi.mock('./git', () => ({
   projectForGitHubRepository: vi.fn((id: number) => id === 123 ? ['bonsai'] : []),
-  refreshProject: vi.fn().mockResolvedValue(undefined),
+  requestProjectRefresh: vi.fn().mockResolvedValue(undefined),
   report: vi.fn(),
 }))
 
-import { refreshProject } from './git'
+import { requestProjectRefresh } from './git'
 import { startRelayInvalidation } from './relayClient'
 
 class FakeEventSource {
@@ -56,10 +56,10 @@ describe('relay invalidation client', () => {
     FakeEventSource.latest?.message({ repository_id: 123, event: 'pull_request', action: 'synchronize' })
     FakeEventSource.latest?.message({ repository_id: 123, event: 'pull_request', action: 'synchronize' })
 
-    expect(refreshProject).not.toHaveBeenCalled()
+    expect(requestProjectRefresh).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(250)
-    expect(refreshProject).toHaveBeenCalledTimes(1)
-    expect(refreshProject).toHaveBeenCalledWith('bonsai', true)
+    expect(requestProjectRefresh).toHaveBeenCalledTimes(1)
+    expect(requestProjectRefresh).toHaveBeenCalledWith('bonsai', 'provider')
     stop()
   })
 })
