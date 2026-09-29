@@ -40,6 +40,10 @@ body.bonsai-landing-body #root {
   --showcase-progress: .5;
   --showcase-drift: 0px;
   --showcase-depth: 1;
+  --card-a-drift: 0px;
+  --card-b-drift: 0px;
+  --agent-drift: 0px;
+  --process-drift: 0px;
 
   min-height: 100vh;
   overflow: clip;
@@ -481,25 +485,25 @@ body.bonsai-landing-body #root {
 .worktree-a {
   top: 11%;
   left: 4%;
-  transform: translateY(calc((var(--showcase-progress) - .5) * -16px));
+  transform: translateY(var(--card-a-drift));
 }
 
 .worktree-b {
   top: 11%;
   right: 4%;
-  transform: translateY(calc((var(--showcase-progress) - .5) * 13px));
+  transform: translateY(var(--card-b-drift));
 }
 
 .agent-card {
   bottom: 7%;
   left: 21%;
-  transform: translateY(calc((var(--showcase-progress) - .5) * 12px));
+  transform: translateY(var(--agent-drift));
 }
 
 .process-card {
   right: 13%;
   bottom: 7%;
-  transform: translateY(calc((var(--showcase-progress) - .5) * -10px));
+  transform: translateY(var(--process-drift));
 }
 
 .card-kicker,

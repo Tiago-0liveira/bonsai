@@ -238,8 +238,13 @@ export function ParallaxLanding() {
       const raw = Math.max(0, Math.min(1, (window.innerHeight - rect.top) / Math.max(1, span)))
       const progress = reduced.matches ? 0.5 : raw
 
+      const centered = progress - 0.5
       root.style.setProperty('--showcase-progress', progress.toFixed(4))
-      root.style.setProperty('--showcase-drift', ((progress - 0.5) * 18).toFixed(2) + 'px')
+      root.style.setProperty('--showcase-drift', (centered * 18).toFixed(2) + 'px')
+      root.style.setProperty('--card-a-drift', (centered * -16).toFixed(2) + 'px')
+      root.style.setProperty('--card-b-drift', (centered * 13).toFixed(2) + 'px')
+      root.style.setProperty('--agent-drift', (centered * 12).toFixed(2) + 'px')
+      root.style.setProperty('--process-drift', (centered * -10).toFixed(2) + 'px')
       root.style.setProperty('--showcase-depth', (1 + Math.sin(progress * Math.PI) * 0.025).toFixed(4))
     }
 
