@@ -125,7 +125,6 @@ func processSummary(projectID string, record *procstore.Record) browserProcessSu
 	}
 }
 
-
 func publicWorktreeID(path string) string {
 	if canonical, err := filepath.EvalSymlinks(path); err == nil {
 		path = canonical
