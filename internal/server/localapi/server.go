@@ -150,7 +150,8 @@ func (s *Server) Handler() http.Handler {
 			writeAPIError(w, http.StatusNotFound, "project_unavailable", "Project or worktree is not in the configured roots. Add its directory in Settings.")
 			return
 		}
-		if !project.info.Available {
+		allowStaleSnapshot := r.Method == http.MethodGet && path[1] == "projects" && len(path) == 4 && path[3] == "git"
+		if !project.info.Available && !allowStaleSnapshot {
 			writeAPIError(w, http.StatusServiceUnavailable, "project_unavailable", "Project directory is unavailable")
 			return
 		}
