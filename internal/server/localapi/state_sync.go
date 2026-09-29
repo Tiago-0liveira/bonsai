@@ -508,6 +508,7 @@ func (s *stateSync) refreshProcesses(projectID string) {
 	summaries := make([]browserProcessSummary, 0, len(records))
 	s.commitProject(project, "processes", func(snapshot *browserSnapshot) {
 		validWorktrees := map[string]bool{}
+		haveLocalInventory := snapshot.Local != nil
 		if snapshot.Local != nil {
 			for _, worktree := range snapshot.Local.Worktrees {
 				validWorktrees[worktree.ID] = true
@@ -515,7 +516,7 @@ func (s *stateSync) refreshProcesses(projectID string) {
 		}
 		for _, record := range records {
 			summary := processSummary(projectID, record)
-			if !validWorktrees[summary.WorktreeID] {
+			if haveLocalInventory && !validWorktrees[summary.WorktreeID] {
 				summary.WorktreeID = ""
 			}
 			summaries = append(summaries, summary)
@@ -580,7 +581,9 @@ func (s *stateSync) MarkStale(projectID string, scope refreshScope) {
 			snapshot.Freshness["provider"] = staleFreshness(snapshot.Freshness["provider"])
 		}
 	})
-	s.Queue(projectID, scope, scope&refreshProvider != 0)
+	if s.events.count() > 0 {
+		s.Queue(projectID, scope, scope&refreshProvider != 0)
+	}
 }
 
 func staleFreshness(current browserFreshness) browserFreshness {
