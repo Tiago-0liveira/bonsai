@@ -22,20 +22,20 @@ type PRFilter struct {
 	Base  string
 }
 type PullRequest struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body"`
-	State     string    `json:"state"`
+	Number         int       `json:"number"`
+	Title          string    `json:"title"`
+	Body           string    `json:"body"`
+	State          string    `json:"state"`
 	Head           string    `json:"head"`
 	HeadRepository string    `json:"head_repository,omitempty"`
 	Base           string    `json:"base"`
 	HeadSHA        string    `json:"head_sha"`
-	URL       string    `json:"url"`
-	Draft     bool      `json:"draft"`
-	Author    string    `json:"author"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	NodeID    string    `json:"node_id"`
+	URL            string    `json:"url"`
+	Draft          bool      `json:"draft"`
+	Author         string    `json:"author"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	NodeID         string    `json:"node_id"`
 }
 type PullRequestDetail struct {
 	PullRequest
