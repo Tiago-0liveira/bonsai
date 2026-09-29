@@ -72,7 +72,6 @@ func TestRateLimitAndUnknownMergeability(t *testing.T) {
 	}
 }
 
-
 func TestPullRequestIncludesHeadRepositoryIdentity(t *testing.T) {
 	var raw rawPR
 	if err := json.Unmarshal([]byte(`{
