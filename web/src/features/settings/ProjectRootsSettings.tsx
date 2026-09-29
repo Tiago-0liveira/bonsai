@@ -20,6 +20,7 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
   }, [settings?.selection_revision, settings?.repositories])
 
   const discovered = settings?.repositories ?? []
+  const discoveryNotes = settings?.diagnostics.flatMap(diagnostic => diagnostic.messages) ?? []
   const selectedCount = useMemo(() => discovered.filter(repository => selectedIds.has(repository.id)).length, [discovered, selectedIds])
 
   const add = async (event: FormEvent) => {
@@ -71,6 +72,10 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
 
     {settings && selectingRepositories ? <>
       <p className="text-sm text-[rgb(var(--muted))]">Choose which discovered repositories Bonsai should activate, watch, and synchronize. Unchecked repositories remain discovered but inactive.</p>
+      {discoveryNotes.length > 0 && <div role="status" className="rounded border border-amber-400 p-3 text-sm">
+        <p className="font-medium">Discovery notes</p>
+        {discoveryNotes.map(message => <p className="mt-1 text-[rgb(var(--muted))]" key={message}>{message}</p>)}
+      </div>}
       {discovered.length > 0 ? <>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm">{selectedCount} of {discovered.length} selected</p>
