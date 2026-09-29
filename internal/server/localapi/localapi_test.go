@@ -289,7 +289,7 @@ func TestWebSocketAuthentication(t *testing.T) {
 	if err := conn.ReadJSON(&ready); err != nil {
 		t.Fatal(err)
 	}
-	if ready["type"] != "ready" {
+	if ready["type"] != "ready" || ready["epoch"] != s.stateSync.epoch || ready["epoch"] == "" {
 		t.Fatalf("first event = %#v", ready)
 	}
 }
