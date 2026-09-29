@@ -10,15 +10,15 @@ import (
 )
 
 type rawPR struct {
-	Number               int
-	Title, Body, State   string
-	Head                  struct {
+	Number             int
+	Title, Body, State string
+	Head               struct {
 		Ref, SHA string
 		Repo     *struct {
 			FullName string `json:"full_name"`
 		}
 	}
-	Base                  struct{ Ref, SHA string }
+	Base                 struct{ Ref, SHA string }
 	User                 struct{ Login string }
 	Draft                bool
 	Merged               bool
