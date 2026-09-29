@@ -368,3 +368,50 @@ func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 		t.Fatal("removed project was republished by a late local read")
 	}
 }
+
+
+func TestStateSyncDeduplicatesSemanticProjectUpdates(t *testing.T) {
+	root := t.TempDir()
+	projectID := "project-v1-dedupe"
+	project := projectServices{
+		info: ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
+	}
+	registry := &syncTestRegistry{entries: map[string]projectServices{projectID: project}}
+	hub := newEventHub()
+	_, events := hub.subscribe()
+	syncer := newStateSync(registry, hub)
+	syncer.ReconcileCatalog()
+
+	local := domain.RepositoryState{
+		ID: projectID,
+		Worktrees: []domain.Worktree{{ID: "wt", RepositoryID: projectID, Path: root, Branch: "main", Main: true}},
+	}
+	firstTime := time.Unix(100, 0).UTC()
+	if !syncer.commitProject(project, "local", func(snapshot *browserSnapshot) {
+		snapshot.Local = &local
+		snapshot.Freshness["local"] = browserFreshness{State: "ready", UpdatedAt: &firstTime}
+	}) {
+		t.Fatal("first semantic state was not published")
+	}
+	event := <-events
+	if event.Type != "project_update" || event.Snapshot == nil || event.Sequence != 1 || event.Snapshot.Sequence != 1 {
+		t.Fatalf("unexpected project event: %+v", event)
+	}
+
+	secondTime := time.Unix(200, 0).UTC()
+	if syncer.commitProject(project, "local", func(snapshot *browserSnapshot) {
+		snapshot.Local = &local
+		snapshot.Freshness["local"] = browserFreshness{State: "ready", UpdatedAt: &secondTime}
+	}) {
+		t.Fatal("timestamp-only refresh was published")
+	}
+	snapshot, _ := syncer.CachedSnapshot(projectID)
+	if snapshot.Sequence != 1 {
+		t.Fatalf("timestamp-only refresh incremented sequence: %d", snapshot.Sequence)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("timestamp-only refresh emitted event: %+v", event)
+	default:
+	}
+}
