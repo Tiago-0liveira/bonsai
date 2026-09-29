@@ -13,7 +13,7 @@ describe('canonical Git snapshots', () => {
     applySnapshot(snapshot)
     expect(useBonsaiStore.getState().gitBranches.repo[0]).toMatchObject({ local_remote_ref_sha: 'fetched', remote_head_sha: 'newer-remote' })
     expect(useBonsaiStore.getState().worktrees[0].dirtyFiles).toBe(0)
-    applySnapshot({ ...snapshot, online: false })
+    applySnapshot({ ...snapshot, sequence: 2, online: false })
     expect(useBonsaiStore.getState().worktrees[0].status).toBe('idle')
   })
   it('constructs recursive file trees without fabricated contents', () => {
@@ -185,6 +185,26 @@ describe('synchronized snapshot ordering', () => {
       status: 'warning',
       port: 5173,
     })
+  })
+
+  it('does not rewrite Zustand or increment gitRevision for an identical newer snapshot', () => {
+    const snapshot: Snapshot = {
+      epoch: 'epoch-a',
+      repository,
+      sequence: 1,
+      online: true,
+      metadata: {},
+      freshness: { local: { state: 'ready', updated_at: '2026-01-01T00:00:00Z' } },
+      local: { branches: [], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'main', main: true, local_head_sha: 'one' }] },
+    }
+    expect(applySnapshot(snapshot)).toBe(true)
+    const revision = useBonsaiStore.getState().gitRevision
+    expect(applySnapshot({
+      ...snapshot,
+      sequence: 2,
+      freshness: { local: { state: 'ready', updated_at: '2026-01-02T00:00:00Z' } },
+    })).toBe(false)
+    expect(useBonsaiStore.getState().gitRevision).toBe(revision)
   })
 
   it('does not associate a same-named PR when the backend left the worktree unassociated', () => {
