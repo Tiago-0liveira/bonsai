@@ -669,7 +669,6 @@ export const useBonsaiStore = create<BonsaiState>()(
       })),
       canvasCommand: { type: 'fit', nonce: 0 },
       requestCanvasAction: (type) => set((state) => ({
-        expandedHistoryWorktreeIds: type === 'layout' ? [] : state.expandedHistoryWorktreeIds,
         canvasCommand: { type, nonce: state.canvasCommand.nonce + 1 },
       })),
 
