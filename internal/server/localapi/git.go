@@ -157,7 +157,6 @@ func (s *Server) executeGitMutation(w http.ResponseWriter, r *http.Request, kind
 	}
 	projectID := s.registry.Default().info.ID
 	s.stateSync.MarkStale(projectID, refreshAll)
-	snapshot, _ := s.stateSync.CachedSnapshot(projectID)
 	var value any
 	if len(result.Payload) > 0 {
 		value = json.RawMessage(result.Payload)
@@ -165,7 +164,6 @@ func (s *Server) executeGitMutation(w http.ResponseWriter, r *http.Request, kind
 	writeJSON(w, http.StatusOK, map[string]any{
 		"command_id": result.ID,
 		"result":     value,
-		"snapshot":   snapshot,
 	})
 }
 
