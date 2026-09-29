@@ -320,12 +320,19 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 		}
 
 		sha := ciSHA(before.Local, worktree, state.PullRequest, identity)
-		if sha == "" {
-			state.CI.Freshness = browserFreshness{State: "unavailable", Error: &browserStateError{Code: "sha_unavailable", Message: "No local or remote commit SHA is known for checks"}}
+		checkRepository := identity.FullName
+		if headRepo != "" {
+			checkRepository = headRepo
+		}
+		if state.PullRequest != nil && state.PullRequest.HeadRepository != "" {
+			checkRepository = state.PullRequest.HeadRepository
+		}
+		if sha == "" || checkRepository == "" {
+			state.CI.Freshness = browserFreshness{State: "unavailable", Error: &browserStateError{Code: "sha_unavailable", Message: "No provider repository and commit SHA are known for checks"}}
 			states[worktree.ID] = state
 			continue
 		}
-		checks, freshness := s.providers.checksFor(ctx, project.github, identity.FullName, sha, s.now(), force)
+		checks, freshness := s.providers.checksFor(ctx, project.github, checkRepository, sha, s.now(), force)
 		state.CI.CheckedSHA = sha
 		state.CI.Checks = checks
 		state.CI.Status = checksRollup(checks)
