@@ -76,6 +76,29 @@ describe('branch-block global layout', () => {
     expect(separated).toBe(true)
   })
 
+  it('reserves expanded History rows above an agent shelf', () => {
+    const worktree = node('a', 'worktree', {
+      tag: 'feat',
+      historyItems: [{ id: 'history-a' }, { id: 'history-b' }],
+    })
+    const agent = node('agent', 'agent')
+    const nodes = [node('project', 'project'), worktree, agent]
+    const edges = [
+      edge('project', 'a', 'hierarchy'),
+      edge('a', 'agent', 'agent'),
+    ]
+    const positions = computeGlobalPlacements(nodes, edges)
+    const worktreeHeight = getNodeSize(worktree).height
+
+    expect(positions.agent.y).toBeGreaterThanOrEqual(
+      positions.a.y + worktreeHeight + LAYOUT.agentTopGap,
+    )
+    expect(rectsOverlap(
+      getNodeRect(worktree, positions.a),
+      getNodeRect(agent, positions.agent),
+    )).toBe(false)
+  })
+
   it('lays six agents in a local wrapped shelf beneath their worktree', () => {
     const worktree = node('a', 'worktree', { tag: 'feat' })
     const agents = Array.from({ length: 6 }, (_, index) => node('agent-' + index, 'agent'))
