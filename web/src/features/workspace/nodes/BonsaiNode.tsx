@@ -108,7 +108,11 @@ function CiBadge({ status, failed = 0, compact = false, label = 'CI' }: { status
         ? { text: compact ? 'running' : label + ' running', icon: LoaderCircle, tone: 'text-[rgb(var(--blue))] border-[rgb(var(--blue)/.30)]' }
         : status === 'failed'
           ? { text: compact ? 'failed' : label + ' failed' + (failed ? ' · ' + failed : ''), icon: CircleX, tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.30)]' }
-          : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
+          : status === 'none'
+            ? { text: compact ? 'none' : label + ' no checks', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
+            : status === 'unknown'
+              ? { text: compact ? 'unknown' : label + ' unknown', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
+              : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
   const Icon = meta.icon
   return (
     <span className={'inline-flex items-center gap-1 rounded border bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] ' + meta.tone}>
