@@ -298,7 +298,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     }
 
     if (path === '/version') {
-      await route.fulfill({ json: { version: 'e2e', api_version: 3 } })
+      await route.fulfill({ json: { version: 'e2e', api_version: 2 } })
       return
     }
 
