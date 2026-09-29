@@ -1,11 +1,14 @@
 package localapi
 
 import (
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
+	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
@@ -104,7 +107,7 @@ func processSummary(projectID string, record *procstore.Record) browserProcessSu
 		worktreeID = publicWorktreeID(record.Worktree)
 	}
 	return browserProcessSummary{
-		ID:           projectID + ":" + itoa(record.ID),
+		ID:           projectID + ":" + strconv.Itoa(record.ID),
 		DaemonID:     record.ID,
 		ProjectID:    projectID,
 		WorktreeID:   worktreeID,
@@ -120,4 +123,12 @@ func processSummary(projectID string, record *procstore.Record) browserProcessSu
 		ServeGroup:   record.ServeGroup,
 		ServeName:    record.ServeName,
 	}
+}
+
+
+func publicWorktreeID(path string) string {
+	if canonical, err := filepath.EvalSymlinks(path); err == nil {
+		path = canonical
+	}
+	return gitlocal.ID(localRepositoryID, path)
 }
