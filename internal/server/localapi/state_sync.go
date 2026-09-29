@@ -60,6 +60,7 @@ type stateSync struct {
 	now      func() time.Time
 
 	mu       sync.Mutex
+	runCtx   context.Context
 	closed   bool
 	projects map[string]*projectProjection
 	jobs     map[string]*syncJobState
@@ -75,6 +76,7 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		events:      events,
 		epoch:       randomID(),
 		now:         func() time.Time { return time.Now().UTC() },
+		runCtx:      context.Background(),
 		projects:    map[string]*projectProjection{},
 		jobs:        map[string]*syncJobState{},
 		localSem:    make(chan struct{}, localRefreshWorkers),
@@ -84,6 +86,9 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 }
 
 func (s *stateSync) Run(ctx context.Context) {
+	s.mu.Lock()
+	s.runCtx = ctx
+	s.mu.Unlock()
 	s.ReconcileCatalog()
 	localTicker := time.NewTicker(localRefreshInterval)
 	processTicker := time.NewTicker(processRefreshInterval)
@@ -346,7 +351,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 	}
 	before, _ := s.CachedSnapshot(projectID)
 	previousIdentity := localIdentityToken(before)
-	ctx, cancel := context.WithTimeout(context.Background(), localReadTimeout)
+	ctx, cancel := s.readContext(localReadTimeout)
 	defer cancel()
 
 	branches, branchesErr := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
@@ -484,7 +489,7 @@ func (s *stateSync) refreshProcesses(projectID string) {
 	if !ok || !project.info.Available {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), processReadTimeout)
+	ctx, cancel := s.readContext(processReadTimeout)
 	defer cancel()
 	var records []*procstore.Record
 	var err error
@@ -521,12 +526,23 @@ func (s *stateSync) refreshProcesses(projectID string) {
 	})
 }
 
+func (s *stateSync) readContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	s.mu.Lock()
+	base := s.runCtx
+	s.mu.Unlock()
+	return context.WithTimeout(base, timeout)
+}
+
 func (s *stateSync) commitProject(expected projectServices, component string, mutate func(*browserSnapshot)) bool {
 	project, ok := s.registry.Lookup(expected.info.ID)
 	if !ok || project.state != expected.state {
 		return false
 	}
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false
+	}
 	p := s.projects[expected.info.ID]
 	if p == nil || p.path != project.info.Path {
 		s.mu.Unlock()
