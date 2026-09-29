@@ -3,14 +3,14 @@ package localapi
 import "sync"
 
 type localEvent struct {
-	Type      string            `json:"type"`
-	ProjectID string            `json:"project_id,omitempty"`
-	EntityID  string            `json:"entity_id,omitempty"`
-	Component string            `json:"component,omitempty"`
-	Epoch     string            `json:"epoch,omitempty"`
-	Sequence  uint64            `json:"sequence,omitempty"`
-	Projects  []ProjectInfo     `json:"projects"`
-	Snapshot  *browserSnapshot  `json:"snapshot,omitempty"`
+	Type      string           `json:"type"`
+	ProjectID string           `json:"project_id,omitempty"`
+	EntityID  string           `json:"entity_id,omitempty"`
+	Component string           `json:"component,omitempty"`
+	Epoch     string           `json:"epoch,omitempty"`
+	Sequence  uint64           `json:"sequence,omitempty"`
+	Projects  []ProjectInfo    `json:"projects"`
+	Snapshot  *browserSnapshot `json:"snapshot,omitempty"`
 }
 
 type eventHub struct {
