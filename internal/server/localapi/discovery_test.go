@@ -115,9 +115,14 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	linkedInfo, err := os.Stat(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
 	linkedID := ""
 	for _, tree := range trees {
-		if !tree.Bare && equivalentPath(tree.Path, linked) {
+		treeInfo, statErr := os.Stat(tree.Path)
+		if !tree.Bare && statErr == nil && os.SameFile(linkedInfo, treeInfo) {
 			linkedID = local.ID("local", tree.Path)
 			break
 		}
