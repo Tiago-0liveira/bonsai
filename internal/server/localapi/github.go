@@ -366,7 +366,7 @@ func (s *Server) githubMutation(
 		writeAPIError(w, http.StatusBadGateway, "github_error", runErr.Error())
 		return
 	}
-	s.stateSync.MarkStale(s.registry.Default().info.ID, refreshProvider)
+	s.stateSync.Queue(s.registry.Default().info.ID, refreshProvider, true)
 	writeJSON(w, http.StatusOK, value)
 }
 
