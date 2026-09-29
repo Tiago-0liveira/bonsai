@@ -16,8 +16,8 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	daemonwatcher "github.com/Tiago-0liveira/bonsai/internal/daemon/watcher"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
-	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
+	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 )
 
 const (
@@ -65,7 +65,7 @@ type stateSync struct {
 	epoch    string
 	now      func() time.Time
 
-	mu       sync.Mutex
+	mu           sync.Mutex
 	runCtx       context.Context
 	closed       bool
 	running      bool
@@ -80,17 +80,17 @@ type stateSync struct {
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 	return &stateSync{
-		registry:    registry,
-		events:      events,
-		epoch:       randomID(),
-		now:         func() time.Time { return time.Now().UTC() },
-		runCtx:      context.Background(),
+		registry:     registry,
+		events:       events,
+		epoch:        randomID(),
+		now:          func() time.Time { return time.Now().UTC() },
+		runCtx:       context.Background(),
 		projects:     map[string]*projectProjection{},
 		jobs:         map[string]*syncJobState{},
 		watchCancels: map[string]context.CancelFunc{},
 		localSem:     make(chan struct{}, localRefreshWorkers),
-		providerSem: make(chan struct{}, providerRefreshWorkers),
-		providers:   newProviderCache(),
+		providerSem:  make(chan struct{}, providerRefreshWorkers),
+		providers:    newProviderCache(),
 	}
 }
 

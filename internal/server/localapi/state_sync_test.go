@@ -379,7 +379,6 @@ func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	}
 }
 
-
 func TestStateSyncDeduplicatesSemanticProjectUpdates(t *testing.T) {
 	root := t.TempDir()
 	projectID := "project-v1-dedupe"
@@ -393,7 +392,7 @@ func TestStateSyncDeduplicatesSemanticProjectUpdates(t *testing.T) {
 	syncer.ReconcileCatalog()
 
 	local := domain.RepositoryState{
-		ID: projectID,
+		ID:        projectID,
 		Worktrees: []domain.Worktree{{ID: "wt", RepositoryID: projectID, Path: root, Branch: "main", Main: true}},
 	}
 	firstTime := time.Unix(100, 0).UTC()
