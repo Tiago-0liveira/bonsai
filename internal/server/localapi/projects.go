@@ -154,7 +154,7 @@ func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "metadata_write_failed", err.Error())
 		return
 	}
-	s.stateSync.MarkStale(s.registry.Default().info.ID, refreshLocal)
+	s.stateSync.Queue(s.registry.Default().info.ID, refreshLocal, false)
 	current.RepositoryID = s.registry.Default().info.ID
 	writeJSON(w, http.StatusOK, current)
 }
