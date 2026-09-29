@@ -19,7 +19,10 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   if (type === 'env') return { width: 150, height: 56 }
   if (type === 'worktree') {
     const historyItems = node.data?.historyItems as unknown[] | undefined
-    const historyAllowance = historyItems?.length ? 28 : 0
+    // The History header is always visible when entries exist. Reserve the
+    // expanded rows as well so opening History never collides with an agent
+    // shelf laid out beneath the worktree.
+    const historyAllowance = historyItems?.length ? 34 + historyItems.length * 32 : 0
     return { width: 230, height: 154 + historyAllowance }
   }
   if (type === 'stack') {
