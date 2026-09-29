@@ -175,10 +175,10 @@ func scanRoot(ctx context.Context, root config.ProjectRoot) rootScan {
 }
 
 type discoveredProjectRegistry struct {
-	scan         func(context.Context, config.ProjectRoot) rootScan
-	mu           sync.RWMutex
-	refreshMu    sync.Mutex
-	path, launch string
+	scan              func(context.Context, config.ProjectRoot) rootScan
+	mu                sync.RWMutex
+	refreshMu         sync.Mutex
+	path, launch      string
 	entries           map[string]projectServices
 	owners            map[string]string
 	diagnostics       []RootDiagnostic
