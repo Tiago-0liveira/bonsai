@@ -6,6 +6,9 @@ type localEvent struct {
 	Type      string `json:"type"`
 	ProjectID string `json:"project_id,omitempty"`
 	EntityID  string `json:"entity_id,omitempty"`
+	Component string `json:"component,omitempty"`
+	Epoch     string `json:"epoch,omitempty"`
+	Sequence  uint64 `json:"sequence,omitempty"`
 }
 
 type eventHub struct {
@@ -49,4 +52,11 @@ func (h *eventHub) publish(event localEvent) {
 			close(ch)
 		}
 	}
+}
+
+
+func (h *eventHub) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subscribers)
 }
