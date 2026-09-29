@@ -10,22 +10,27 @@ import (
 )
 
 type rootSettingsResponse struct {
-	Version     int                  `json:"version"`
-	Revision    uint64               `json:"revision"`
-	Roots       []config.ProjectRoot `json:"roots"`
-	Diagnostics []RootDiagnostic     `json:"diagnostics"`
-	Suggestions []string             `json:"suggestions"`
+	Version           int                  `json:"version"`
+	Revision          uint64               `json:"revision"`
+	SelectionRevision uint64               `json:"selection_revision"`
+	Roots             []config.ProjectRoot `json:"roots"`
+	Diagnostics       []RootDiagnostic     `json:"diagnostics"`
+	Suggestions       []string             `json:"suggestions"`
+	Repositories      []ProjectCandidate   `json:"repositories"`
 }
 
 func (s *Server) registerSettingsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/settings/project-roots", s.rootSettings)
 	mux.HandleFunc("POST /api/settings/project-roots", s.changeRootSettings)
 	mux.HandleFunc("DELETE /api/settings/project-roots/{rootId}", s.changeRootSettings)
+	mux.HandleFunc("POST /api/settings/project-selection", s.changeProjectSelection)
 }
 func (s *Server) rootSettingsValue(cfg config.ProjectRoots) rootSettingsResponse {
-	out := rootSettingsResponse{Version: cfg.Version, Revision: cfg.Revision, Roots: cfg.Roots, Diagnostics: []RootDiagnostic{}, Suggestions: []string{}}
+	out := rootSettingsResponse{Version: cfg.Version, Revision: cfg.Revision, Roots: cfg.Roots, Diagnostics: []RootDiagnostic{}, Suggestions: []string{}, Repositories: []ProjectCandidate{}}
 	scans := map[string]RootDiagnostic{}
 	if registry, ok := s.registry.(*discoveredProjectRegistry); ok {
+		out.SelectionRevision = registry.SelectionRevision()
+		out.Repositories = registry.Candidates()
 		for _, d := range registry.Diagnostics() {
 			scans[d.RootID] = d
 		}
@@ -107,4 +112,42 @@ func (s *Server) changeRootSettings(w http.ResponseWriter, r *http.Request) {
 		s.eventHub.publish(localEvent{Type: "catalog"})
 	}
 	writeJSON(w, 200, s.rootSettingsValue(cfg))
+}
+
+
+func (s *Server) changeProjectSelection(w http.ResponseWriter, r *http.Request) {
+	registry, ok := s.registry.(*discoveredProjectRegistry)
+	if !ok {
+		writeAPIError(w, http.StatusNotImplemented, "settings_unavailable", "Project selection is unavailable")
+		return
+	}
+	var body struct {
+		SelectionRevision *uint64  `json:"selection_revision"`
+		ProjectIDs        []string `json:"project_ids"`
+	}
+	if !decodeStrictJSON(w, r, &body) {
+		return
+	}
+	if body.SelectionRevision == nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid", "selection_revision is required")
+		return
+	}
+	if err := registry.UpdateSelection(*body.SelectionRevision, body.ProjectIDs); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errProjectSelectionRevision) {
+			status = http.StatusConflict
+		}
+		writeAPIError(w, status, "selection_update_failed", err.Error())
+		return
+	}
+	if err := s.Reconcile(r.Context()); err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "selection_reconcile_failed", err.Error())
+		return
+	}
+	cfg, err := config.ReadProjectRoots(s.rootsPath)
+	if err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "settings_unavailable", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.rootSettingsValue(cfg))
 }
