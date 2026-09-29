@@ -12,6 +12,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
+	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
 )
 
 const (
@@ -331,11 +332,13 @@ func (s *stateSync) refreshLocal(projectID string) {
 
 	branches, branchesErr := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
 		var value []domain.Branch
-		return value, json.Unmarshal(raw, &value)
+		err := json.Unmarshal(raw, &value)
+		return value, err
 	})
 	worktrees, worktreesErr := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
 		var value []domain.Worktree
-		return value, json.Unmarshal(raw, &value)
+		err := json.Unmarshal(raw, &value)
+		return value, err
 	})
 	if branchesErr == nil && worktreesErr == nil {
 		local := domain.RepositoryState{
@@ -364,7 +367,8 @@ func (s *stateSync) refreshLocal(projectID string) {
 
 	value, err := s.gitPayload(ctx, project, "git.repository.refresh", func(raw json.RawMessage) (any, error) {
 		var state domain.RepositoryState
-		return state, json.Unmarshal(raw, &state)
+		err := json.Unmarshal(raw, &state)
+		return state, err
 	})
 	if err != nil {
 		if branchesErr != nil {
@@ -570,8 +574,8 @@ func cloneSnapshot(in browserSnapshot) browserSnapshot {
 	}
 	if in.Remote != nil {
 		remote := *in.Remote
-		remote.Branches = append([]githubRemoteBranch(nil), in.Remote.Branches...)
-		remote.PullRequests = append([]githubPullRequest(nil), in.Remote.PullRequests...)
+		remote.Branches = append([]githubdomain.RemoteBranch(nil), in.Remote.Branches...)
+		remote.PullRequests = append([]githubdomain.PullRequest(nil), in.Remote.PullRequests...)
 		out.Remote = &remote
 	}
 	out.Metadata = make(map[string]worktreeMetadata, len(in.Metadata))
@@ -589,7 +593,7 @@ func cloneSnapshot(in browserSnapshot) browserSnapshot {
 	}
 	out.WorktreeState = make(map[string]browserWorktreeState, len(in.WorktreeState))
 	for key, value := range in.WorktreeState {
-		value.CI.Checks = append([]githubCheck(nil), value.CI.Checks...)
+		value.CI.Checks = append([]githubdomain.Check(nil), value.CI.Checks...)
 		if value.CI.Freshness.Error != nil {
 			copyError := *value.CI.Freshness.Error
 			value.CI.Freshness.Error = &copyError
@@ -601,38 +605,6 @@ func cloneSnapshot(in browserSnapshot) browserSnapshot {
 		out.WorktreeState[key] = value
 	}
 	return out
-}
-
-// Aliases keep cloneSnapshot compact without leaking backend implementation types.
-type githubRemoteBranch = struct {
-	Name          string `json:"name"`
-	RemoteHeadSHA string `json:"remote_head_sha"`
-	Protected     bool   `json:"protected"`
-}
-
-type githubPullRequest = struct {
-	Number         int
-	Title          string
-	Body           string
-	State          string
-	Head           string
-	HeadRepository string
-	Base           string
-	HeadSHA        string
-	URL            string
-	Draft          bool
-	Author         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	NodeID         string
-}
-
-type githubCheck = struct {
-	ID         int64
-	Name       string
-	Status     string
-	Conclusion string
-	URL        string
 }
 
 func resetWorktreeAssociationsForHeads(snapshot *browserSnapshot) {
@@ -647,7 +619,7 @@ func resetWorktreeAssociationsForHeads(snapshot *browserSnapshot) {
 		if checked != "" && worktree.HeadSHA != "" && checked != worktree.HeadSHA {
 			state.PullRequest = nil
 			state.PRDiagnostic = ""
-			state.CI = browserCIState{Status: "unknown", Checks: []githubCheck{}, Freshness: browserFreshness{State: "stale"}}
+			state.CI.Freshness = staleFreshness(state.CI.Freshness)
 			snapshot.WorktreeState[worktree.ID] = state
 		}
 	}
