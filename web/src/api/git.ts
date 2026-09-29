@@ -468,9 +468,13 @@ const refreshing = new Map<string, Promise<Snapshot>>()
 const refreshAgain = new Set<string>()
 const refreshAgainForced = new Set<string>()
 
+async function requestRefreshSnapshot(id: string, scope: 'local' | 'provider' | 'all'): Promise<Snapshot> {
+  return request<Snapshot>(`/api/projects/${encodeURIComponent(id)}/refresh`, { scope })
+}
+
 export async function requestProjectRefresh(id: string, scope: 'local' | 'provider' | 'all' = 'all'): Promise<Snapshot> {
   const generation = activeGeneration
-  const snapshot = await request<Snapshot>(`/api/projects/${encodeURIComponent(id)}/refresh`, { scope })
+  const snapshot = await requestRefreshSnapshot(id, scope)
   applySnapshot(snapshot, generation)
   return snapshot
 }
@@ -484,7 +488,7 @@ export function refreshProject(id: string, fresh = false): Promise<Snapshot> {
   }
   const generation = activeGeneration
   const load = fresh
-    ? requestProjectRefresh(id, 'all')
+    ? requestRefreshSnapshot(id, 'all')
     : request<Snapshot>(`/api/projects/${encodeURIComponent(id)}/git`)
   const pending = load.then(snapshot => {
     const applied = applySnapshot(snapshot, generation)
