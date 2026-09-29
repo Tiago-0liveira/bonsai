@@ -1,7 +1,7 @@
 const configuredLocalOrigin = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_LOCAL_API_ORIGIN)?.replace(/\/$/, '')
 export const LOCAL_API_HTTP = configuredLocalOrigin || 'http://127.0.0.1:7001'
 export const LOCAL_API_WS = LOCAL_API_HTTP.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/events'
-export const LOCAL_API_PROTOCOL_VERSION = 2
+export const LOCAL_API_PROTOCOL_VERSION = 3
 
 export type LocalConnectionStatus =
   | 'not-attempted'
@@ -254,6 +254,8 @@ export interface LocalEvent {
   project_id?: string
   component?: string
   sequence?: number
+  projects?: unknown[]
+  snapshot?: unknown
 }
 
 export interface LocalEventConnection {
