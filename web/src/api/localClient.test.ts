@@ -94,6 +94,7 @@ class FakeWebSocket {
 
 describe('local event authentication', () => {
   it('does not resolve the event connection until authenticated ready supplies an epoch', async () => {
+    vi.restoreAllMocks()
     __resetLocalClientForTests()
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
