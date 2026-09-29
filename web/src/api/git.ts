@@ -1,4 +1,3 @@
-import { loadProjectRoots } from './settings'
 import { useBonsaiStore } from '../stores/bonsai'
 import type {
   CiStatus,
@@ -226,12 +225,12 @@ const heads = new Map<string, string>()
 const githubRepositoryProjects = new Map<number, Set<string>>()
 interface SequenceGuard {
   epoch: string
-  invalidated: number
   applied: number
 }
 const sequenceGuards = new Map<string, SequenceGuard>()
 let activeEpoch = ''
 let activeGeneration = 0
+type StoreState = ReturnType<typeof useBonsaiStore.getState>
 
 export function projectForGitHubRepository(repositoryId: number) {
   return [...(githubRepositoryProjects.get(repositoryId) ?? [])]
@@ -254,17 +253,9 @@ function setEpoch(epoch: string) {
 function guardFor(projectId: string, epoch: string) {
   const current = sequenceGuards.get(projectId)
   if (current?.epoch === epoch) return current
-  const next: SequenceGuard = { epoch, invalidated: 0, applied: 0 }
+  const next: SequenceGuard = { epoch, applied: -1 }
   sequenceGuards.set(projectId, next)
   return next
-}
-
-function invalidateSequence(projectId: string, epoch: string, sequence: number) {
-  if (!epoch || !Number.isFinite(sequence)) return
-  if (activeEpoch && epoch !== activeEpoch) return
-  if (!activeEpoch) setEpoch(epoch)
-  const guard = guardFor(projectId, epoch)
-  guard.invalidated = Math.max(guard.invalidated, sequence)
 }
 
 function processHealth(status: ProcessLifecycleStatus): Process['status'] {
@@ -314,17 +305,15 @@ function ciStatus(value: WorktreeProjection['ci'] | undefined): CiStatus {
   return value?.status ?? 'unknown'
 }
 
-export function applySnapshot(snapshot: Snapshot, generation = activeGeneration): boolean {
-  const state = useBonsaiStore.getState()
+function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activeGeneration): Partial<StoreState> | undefined {
   const id = snapshot.repository.id
-  if (!state.projects.some(p => p.id === id)) return false
-  if (generation !== activeGeneration) return false
+  if (!state.projects.some(p => p.id === id)) return undefined
+  if (generation !== activeGeneration) return undefined
 
   const epoch = snapshot.epoch || activeEpoch || 'legacy'
-  if (activeEpoch && snapshot.epoch && snapshot.epoch !== activeEpoch) return false
+  if (activeEpoch && snapshot.epoch && snapshot.epoch !== activeEpoch) return undefined
   const guard = guardFor(id, epoch)
-  const required = Math.max(guard.applied, guard.invalidated)
-  if (snapshot.sequence < required) return false
+  if (snapshot.sequence <= guard.applied) return undefined
 
   for (const projects of githubRepositoryProjects.values()) projects.delete(id)
   if (snapshot.remote?.repository.id) {
@@ -446,8 +435,7 @@ export function applySnapshot(snapshot: Snapshot, generation = activeGeneration)
   const openRuntimeIds = state.openRuntimeIds.filter(runtimeId => liveRuntimeIds.has(runtimeId))
   const dockRuntimeId = state.dockRuntimeId && liveRuntimeIds.has(state.dockRuntimeId) ? state.dockRuntimeId : ''
 
-  guard.applied = Math.max(guard.applied, snapshot.sequence)
-  useBonsaiStore.setState({
+  const patch: Partial<StoreState> = {
     selection,
     projects: state.projects.map(value => value.id === id ? p : value),
     worktrees: allTrees,
@@ -456,58 +444,81 @@ export function applySnapshot(snapshot: Snapshot, generation = activeGeneration)
     gitBranches: { ...state.gitBranches, [id]: branches },
     gitOnline: { ...state.gitOnline, [id]: snapshot.online },
     syncFreshness: { ...state.syncFreshness, [id]: freshness },
-    gitRevision: state.gitRevision + 1,
     dockWorktreeId,
     dockRuntimeId,
     openRuntimeIds,
-  })
+  }
+  const currentSemantic = {
+    selection: state.selection,
+    projects: state.projects,
+    worktrees: state.worktrees,
+    processes: state.processes,
+    pullRequests: state.pullRequests,
+    gitBranches: state.gitBranches,
+    gitOnline: state.gitOnline,
+    syncFreshness: state.syncFreshness,
+    dockWorktreeId: state.dockWorktreeId,
+    dockRuntimeId: state.dockRuntimeId,
+    openRuntimeIds: state.openRuntimeIds,
+  }
+  const nextSemantic = {
+    selection,
+    projects: patch.projects,
+    worktrees: patch.worktrees,
+    processes: patch.processes,
+    pullRequests: patch.pullRequests,
+    gitBranches: patch.gitBranches,
+    gitOnline: patch.gitOnline,
+    syncFreshness: patch.syncFreshness,
+    dockWorktreeId,
+    dockRuntimeId,
+    openRuntimeIds,
+  }
+  guard.applied = Math.max(guard.applied, snapshot.sequence)
+  if (JSON.stringify(currentSemantic) === JSON.stringify(nextSemantic)) return undefined
+  patch.gitRevision = state.gitRevision + 1
+  return patch
+}
+
+export function applySnapshot(snapshot: Snapshot, generation = activeGeneration): boolean {
+  const state = useBonsaiStore.getState()
+  const patch = snapshotPatch(snapshot, state, generation)
+  if (!patch) return false
+  useBonsaiStore.setState(patch)
   return true
 }
 
-const refreshing = new Map<string, Promise<Snapshot>>()
-const refreshAgain = new Set<string>()
-const refreshAgainForced = new Set<string>()
-
-async function requestRefreshSnapshot(id: string, scope: 'local' | 'provider' | 'all'): Promise<Snapshot> {
-  return request<Snapshot>(`/api/projects/${encodeURIComponent(id)}/refresh`, { scope })
+function applySnapshots(snapshots: Snapshot[], generation = activeGeneration): boolean {
+  let working = useBonsaiStore.getState()
+  let changed = false
+  for (const snapshot of snapshots) {
+    const patch = snapshotPatch(snapshot, working, generation)
+    if (!patch) continue
+    working = { ...working, ...patch }
+    changed = true
+  }
+  if (changed) useBonsaiStore.setState(working)
+  return changed
 }
 
-export async function requestProjectRefresh(id: string, scope: 'local' | 'provider' | 'all' = 'all'): Promise<Snapshot> {
-  const generation = activeGeneration
-  const snapshot = await requestRefreshSnapshot(id, scope)
-  applySnapshot(snapshot, generation)
+async function requestRefresh(id: string, scope: 'local' | 'provider' | 'all'): Promise<void> {
+  await request<{ accepted: boolean }>(`/api/projects/${encodeURIComponent(id)}/refresh`, { scope })
+}
+
+export async function requestProjectRefresh(id: string, scope: 'local' | 'provider' | 'all' = 'all'): Promise<void> {
+  await requestRefresh(id, scope)
+}
+
+// Explicit/manual recovery helper. Live synchronization never calls this path.
+export async function refreshProject(id: string, fresh = false): Promise<Snapshot | undefined> {
+  if (fresh) {
+    await requestRefresh(id, 'all')
+    return undefined
+  }
+  const snapshot = await request<Snapshot>(`/api/projects/${encodeURIComponent(id)}/git`)
+  applySnapshot(snapshot)
   return snapshot
 }
-
-export function refreshProject(id: string, fresh = false): Promise<Snapshot> {
-  const existing = refreshing.get(id)
-  if (existing) {
-    refreshAgain.add(id)
-    if (fresh) refreshAgainForced.add(id)
-    return existing
-  }
-  const generation = activeGeneration
-  const load = fresh
-    ? requestRefreshSnapshot(id, 'all')
-    : request<Snapshot>(`/api/projects/${encodeURIComponent(id)}/git`)
-  const pending = load.then(snapshot => {
-    const applied = applySnapshot(snapshot, generation)
-    const guard = sequenceGuards.get(id)
-    if (!applied && guard && snapshot.sequence < guard.invalidated) refreshAgain.add(id)
-    return snapshot
-  }).finally(() => {
-    refreshing.delete(id)
-    if (refreshAgain.delete(id) && generation === activeGeneration) {
-      const forced = refreshAgainForced.delete(id)
-      void refreshProject(id, forced).catch(report)
-    } else {
-      refreshAgainForced.delete(id)
-    }
-  })
-  refreshing.set(id, pending)
-  return pending
-}
-
 export async function createWorktree(input?: CreateWorktreeInput | string) {
   const state = useBonsaiStore.getState()
   const p = state.projects.find(value => value.id === state.activeProjectId)
@@ -517,7 +528,7 @@ export async function createWorktree(input?: CreateWorktreeInput | string) {
     return
   }
   try {
-    const response = await request<{ result: LocalWorktree; snapshot: Snapshot }>(
+    const response = await request<{ result: LocalWorktree }>(
       `/api/projects/${encodeURIComponent(p.id)}/worktrees`,
       {
         mode: input.sourceType === 'origin' ? 'remote' : input.sourceType,
@@ -525,7 +536,6 @@ export async function createWorktree(input?: CreateWorktreeInput | string) {
         base: input.sourceRef,
       },
     )
-    applySnapshot(response.snapshot)
     await updateMetadata(response.result.id, {
       merge_target_branch: input.mergeTargetBranch,
       tag: state.worktreeTags.find(t => t.id === input.tagId)?.name ?? '',
@@ -544,7 +554,6 @@ export async function updateMetadata(id: string, patch: Record<string, string>) 
   const wt = useBonsaiStore.getState().worktrees.find(w => w.id === id)
   if (!wt) return
   await request(`/api/worktrees/${encodeURIComponent(id)}/metadata`, patch, 'PATCH')
-  await refreshProject(wt.projectId)
 }
 export async function loadPullRequest(id: string) {
   const index = id.lastIndexOf(':')
@@ -607,6 +616,18 @@ export async function reviewPullRequest(id: string, body: string, kind: 'comment
 }
 export function reconcileCatalog(repos: Repository[]) {
   const state = useBonsaiStore.getState()
+  const unchanged = repos.length === state.projects.length && repos.every(repo => {
+    const current = state.projects.find(project => project.id === repo.id)
+    return current
+      && current.path === repo.path
+      && current.rootId === repo.root_id
+      && current.available === repo.available
+      && current.workspaceId === repo.workspace_id
+      && current.name === (repo.name ?? current.name)
+      && current.repository === (current.repository || repo.full_name)
+      && current.defaultBranch === (current.defaultBranch || repo.default_branch)
+  })
+  if (unchanged) return
   const ids = new Set(repos.map(r => r.id))
   const launch = repos.find(r => r.launch)
   const previousId = state.activeProjectId === 'local' ? launch?.id : state.activeProjectId
@@ -678,50 +699,25 @@ export function reconcileCatalog(repos: Repository[]) {
   })
 }
 
-async function refreshProjectsBounded(repos: Repository[], generation: number, limit = 4) {
-  const queue = repos.filter(repo => repo.available !== false).slice()
-  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
-    while (queue.length > 0 && generation === activeGeneration) {
-      const repo = queue.shift()
-      if (!repo) return
-      try {
-        await refreshProject(repo.id)
-      } catch (error) {
-        if (generation !== activeGeneration) return
-        useBonsaiStore.setState(state => ({
-          projects: state.projects.map(p => p.id === repo.id ? { ...p, health: 'idle' as const } : p),
-          gitError: error instanceof Error ? error.message : String(error),
-        }))
-      }
-    }
-  })
-  await Promise.all(workers)
-}
-
 let catalogRequest: Promise<void> | undefined
-let catalogAgain = false
-export function refreshCatalog(loadSnapshots = true): Promise<void> {
-  if (catalogRequest) {
-    catalogAgain = catalogAgain || loadSnapshots
-    return catalogRequest
-  }
+export function refreshCatalog(loadSnapshots = false): Promise<void> {
+  if (catalogRequest) return catalogRequest
   const generation = activeGeneration
   catalogRequest = (async () => {
-    let shouldLoad = loadSnapshots
-    do {
-      catalogAgain = false
-      const repos = await request<Repository[]>('/api/projects')
-      if (generation !== activeGeneration) return
-      reconcileCatalog(repos)
-      if (shouldLoad) await refreshProjectsBounded(repos, generation)
-      shouldLoad = catalogAgain
-    } while (catalogAgain && generation === activeGeneration)
+    const repos = await request<Repository[]>('/api/projects')
+    if (generation !== activeGeneration) return
+    reconcileCatalog(repos)
+    if (loadSnapshots) {
+      const snapshots = await Promise.all(
+        repos.filter(repo => repo.available !== false).map(repo => request<Snapshot>(`/api/projects/${encodeURIComponent(repo.id)}/git`)),
+      )
+      if (generation === activeGeneration) applySnapshots(snapshots, generation)
+    }
   })().finally(() => {
     catalogRequest = undefined
   })
   return catalogRequest
 }
-
 function markConnectionStateStale() {
   useBonsaiStore.setState(state => ({
     projects: state.projects.map(project => ({ ...project, health: project.health === 'error' ? 'error' : 'idle' })),
@@ -739,8 +735,8 @@ export function startGitBackend() {
   let closed = false
   let socket: WebSocket | undefined
   let bootstrapping = true
-  let catalogInvalidated = false
-  const queuedProjects = new Set<string>()
+  let bootstrapCatalog: Repository[] = []
+  const bootstrapSnapshots = new Map<string, Snapshot>()
   const generation = ++activeGeneration
 
   const onEvent = (data: LocalEvent) => {
@@ -749,21 +745,31 @@ export function startGitBackend() {
       setEpoch(data.epoch)
       return
     }
-    if (data.type === 'project' && data.project_id && data.epoch && typeof data.sequence === 'number') {
-      invalidateSequence(data.project_id, data.epoch, data.sequence)
+    if (data.type === 'catalog' && Array.isArray(data.projects)) {
+      const repos = data.projects as Repository[]
       if (bootstrapping) {
-        queuedProjects.add(data.project_id)
-        return
+        bootstrapCatalog = repos
+      } else {
+        reconcileCatalog(repos)
       }
-      void refreshProject(data.project_id).catch(report)
       return
     }
-    if (data.type === 'catalog') {
+    if ((data.type === 'project_snapshot' || data.type === 'project_update') && data.snapshot) {
+      const snapshot = data.snapshot as Snapshot
+      if (data.epoch && snapshot.epoch && data.epoch !== snapshot.epoch) return
       if (bootstrapping) {
-        catalogInvalidated = true
-        return
+        const previous = bootstrapSnapshots.get(snapshot.repository.id)
+        if (!previous || snapshot.sequence >= previous.sequence) bootstrapSnapshots.set(snapshot.repository.id, snapshot)
+      } else {
+        applySnapshot(snapshot, generation)
       }
-      void Promise.all([loadProjectRoots(), refreshCatalog(true)]).catch(report)
+      return
+    }
+    if (data.type === 'bootstrap_complete') {
+      reconcileCatalog(bootstrapCatalog)
+      applySnapshots([...bootstrapSnapshots.values()], generation)
+      bootstrapSnapshots.clear()
+      bootstrapping = false
     }
   }
 
@@ -787,23 +793,6 @@ export function startGitBackend() {
       socket.onerror = () => {
         if (!closed) socket?.close()
       }
-
-      await loadProjectRoots()
-      if (closed || generation !== activeGeneration) return
-      await refreshCatalog(true)
-      if (closed || generation !== activeGeneration) return
-      bootstrapping = false
-
-      if (catalogInvalidated) {
-        catalogInvalidated = false
-        await Promise.all([loadProjectRoots(), refreshCatalog(true)])
-      }
-      for (const projectId of queuedProjects) {
-        queuedProjects.delete(projectId)
-        if (useBonsaiStore.getState().projects.some(project => project.id === projectId)) {
-          void refreshProject(projectId).catch(report)
-        }
-      }
     } catch (error) {
       if (!closed && generation === activeGeneration) {
         useBonsaiStore.setState({ gitError: error instanceof Error ? error.message : String(error) })
@@ -820,7 +809,6 @@ export function startGitBackend() {
     }
   }
 }
-
 export async function localCommand(action: string, args: Record<string, unknown> = {}) {
   const id = useBonsaiStore.getState().dockWorktreeId
   if (!id) {
@@ -828,11 +816,10 @@ export async function localCommand(action: string, args: Record<string, unknown>
     return
   }
   try {
-    const response = await request<{ result?: { state?: string; conflicted_paths?: string[]; error?: string }; snapshot: Snapshot }>(
+    const response = await request<{ result?: { state?: string; conflicted_paths?: string[]; error?: string } }>(
       `/api/worktrees/${encodeURIComponent(id)}/${action}`,
       args,
     )
-    applySnapshot(response.snapshot)
     const op = response.result
     useBonsaiStore.setState({
       notice: op?.state === 'conflict'
@@ -855,11 +842,7 @@ export function __resetGitSyncForTests() {
   activeEpoch = ''
   activeGeneration = 0
   sequenceGuards.clear()
-  refreshing.clear()
-  refreshAgain.clear()
-  refreshAgainForced.clear()
   githubRepositoryProjects.clear()
   heads.clear()
   catalogRequest = undefined
-  catalogAgain = false
 }
