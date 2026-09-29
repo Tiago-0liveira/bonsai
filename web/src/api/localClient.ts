@@ -261,9 +261,7 @@ export interface LocalEventConnection {
   epoch: string
 }
 
-export async function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}): Promise<LocalEventConnection> {
-  if (snapshot.status !== 'connected') throw new Error('Connect to local Bonsai before opening local events.')
-  const value = await currentSession()
+function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) => void): Promise<LocalEventConnection> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(LOCAL_API_WS)
     let settled = false
@@ -311,6 +309,12 @@ export async function openLocalEvents(onEvent: (event: LocalEvent) => void = () 
       socket.send(JSON.stringify({ type: 'authenticate', token: value.token }))
     }, { once: true })
   })
+}
+
+export function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}): Promise<LocalEventConnection> {
+  if (snapshot.status !== 'connected') return Promise.reject(new Error('Connect to local Bonsai before opening local events.'))
+  if (sessionUsable(session)) return connectEventSocket(session, onEvent)
+  return currentSession().then(value => connectEventSocket(value, onEvent))
 }
 
 export function __resetLocalClientForTests() {
