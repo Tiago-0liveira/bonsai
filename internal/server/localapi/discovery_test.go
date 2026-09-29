@@ -111,8 +111,22 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	if !ok || p.info.RootID != config.PathID("root", filepath.Dir(a)) {
 		t.Fatalf("project lookup failed: path=%q id=%q project=%+v projects=%+v", a, config.ProjectID(a), p.info, r.List())
 	}
-	if owner, ok := r.Worktree(context.Background(), local.ID("local", linked)); !ok || owner.info.ID != p.info.ID {
-		t.Fatal(owner.info, ok)
+	trees, err := coregit.ListWorktreesContext(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedID := ""
+	for _, tree := range trees {
+		if !tree.Bare && equivalentPath(tree.Path, linked) {
+			linkedID = local.ID("local", tree.Path)
+			break
+		}
+	}
+	if linkedID == "" {
+		t.Fatalf("linked worktree missing from git listing: linked=%q trees=%+v", linked, trees)
+	}
+	if owner, ok := r.Worktree(context.Background(), linkedID); !ok || owner.info.ID != p.info.ID {
+		t.Fatalf("git-listed worktree id did not resolve owner: id=%q owner=%+v ok=%v", linkedID, owner.info, ok)
 	}
 	before := r.List()
 	if changed, err := r.Refresh(context.Background()); changed || err != nil {
