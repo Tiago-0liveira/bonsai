@@ -99,6 +99,7 @@ func (s *Server) projectRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	projectID := s.registry.Default().info.ID
 	s.stateSync.MarkStale(projectID, scope)
+	s.stateSync.Queue(projectID, scope, scope&refreshProvider != 0)
 	snapshot, ok := s.stateSync.CachedSnapshot(projectID)
 	if !ok {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
