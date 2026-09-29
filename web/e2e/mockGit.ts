@@ -122,6 +122,7 @@ function status(ahead: number, behind: number, files: number, gitState: string) 
   return {
     ahead,
     behind,
+    divergence_available: true,
     staged: 0,
     modified: files,
     untracked: 0,
@@ -132,12 +133,39 @@ function status(ahead: number, behind: number, files: number, gitState: string) 
   }
 }
 
+function ciRollup(values: { status: string; conclusion: string }[]) {
+  if (!values.length) return 'none'
+  if (values.some(value => value.status !== 'completed')) return 'running'
+  if (values.some(value => !['success', 'neutral', 'skipped'].includes(value.conclusion))) return 'failed'
+  return 'passed'
+}
+
 function bonsaiSnapshot(metadata: Record<string, Metadata>) {
   const repository = repositories[0]
+  const worktreeState = Object.fromEntries([
+    ['wt-web', pullRequests.find(pr => pr.number === 24)],
+    ['wt-docs', pullRequests.find(pr => pr.number === 25)],
+    ['wt-daemon', pullRequests.find(pr => pr.number === 23)],
+    ['wt-release', pullRequests.find(pr => pr.number === 22)],
+    ['wt-review', pullRequests.find(pr => pr.number === 21)],
+  ].map(([id, pr]) => {
+    const pull = pr as (typeof pullRequests)[number] | undefined
+    const values = pull ? (checks[pull.head_sha] ?? []) : []
+    return [id, {
+      ...(pull ? { pull_request: { ...pull, head_repository: repository.full_name } } : {}),
+      ci: {
+        status: ciRollup(values),
+        checked_sha: pull?.head_sha,
+        checks: values,
+        freshness: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      },
+    }]
+  }))
   return {
+    epoch: 'e2e-epoch',
     repository,
     online: true,
-    sequence: 0,
+    sequence: 1,
     metadata,
     local: {
       branches: [
@@ -160,20 +188,39 @@ function bonsaiSnapshot(metadata: Record<string, Metadata>) {
     remote: {
       repository,
       branches: [],
-      pull_requests: pullRequests,
+      pull_requests: pullRequests.map(pr => ({ ...pr, head_repository: repository.full_name })),
+      updated_at: '2026-09-27T00:00:00Z',
     },
+    freshness: {
+      local: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      processes: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+    },
+    worktree_state: worktreeState,
+    processes: [
+      { id: 'bonsai:1', daemon_id: 1, project_id: 'bonsai', worktree_id: 'wt-web', label: 'Vite', command: 'pnpm dev', status: 'running', pid: 1001, expected_port: 5173 },
+      { id: 'bonsai:2', daemon_id: 2, project_id: 'bonsai', worktree_id: 'wt-daemon', label: 'bonsaid', command: 'go run . daemon', status: 'backoff', pid: 1002 },
+    ],
   }
 }
 
 function emptySnapshot(projectId: string) {
   const repository = repositories.find((item) => item.id === projectId)!
   return {
+    epoch: 'e2e-epoch',
     repository,
     online: true,
-    sequence: 0,
+    sequence: 1,
     metadata: {},
     local: { branches: [{ name: 'main', remote: false }], worktrees: [] },
-    remote: { repository, branches: [], pull_requests: [] },
+    remote: { repository, branches: [], pull_requests: [], updated_at: '2026-09-27T00:00:00Z' },
+    freshness: {
+      local: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      processes: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+    },
+    worktree_state: {},
+    processes: [],
   }
 }
 
@@ -183,7 +230,7 @@ export async function mockLocalEventSocket(page: Page) {
       try {
         const payload = JSON.parse(String(message)) as { type?: string }
         if (payload.type === 'authenticate') {
-          socket.send(JSON.stringify({ type: 'ready', sequence: 0 }))
+          socket.send(JSON.stringify({ type: 'ready', epoch: 'e2e-epoch' }))
         }
       } catch {
         // Invalid fixture messages are ignored just like production events.
@@ -215,7 +262,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false) {
     }
 
     if (path === '/version') {
-      await route.fulfill({ json: { version: 'e2e', api_version: 2 } })
+      await route.fulfill({ json: { version: 'e2e', api_version: 3 } })
       return
     }
 
@@ -242,6 +289,13 @@ export async function mockGitBackend(page: Page, emptyRoots = false) {
     if (snapshotMatch) {
       const projectId = decodeURIComponent(snapshotMatch[1])
       await route.fulfill({ json: projectId === 'bonsai' ? bonsaiSnapshot(metadata) : emptySnapshot(projectId) })
+      return
+    }
+
+    const refreshMatch = path.match(/^\/api\/projects\/([^/]+)\/refresh$/)
+    if (refreshMatch && request.method() === 'POST') {
+      const projectId = decodeURIComponent(refreshMatch[1])
+      await route.fulfill({ status: 202, json: projectId === 'bonsai' ? bonsaiSnapshot(metadata) : emptySnapshot(projectId) })
       return
     }
 
