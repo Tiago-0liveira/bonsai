@@ -13,7 +13,7 @@ describe('bonsai store', () => {
     __resetLocalClientForTests()
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 'test', api_version: 1 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 'test', api_version: 2 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'test-session', expires_at: new Date(Date.now() + 60_000).toISOString() }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
       .mockRejectedValue(new Error('daemon offline')))
     await connectLocalBonsai()

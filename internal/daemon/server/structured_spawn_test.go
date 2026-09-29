@@ -156,6 +156,21 @@ func TestStructuredSpawnKeepsWorktreeOwnerAndNestedWorkingDir(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
+	// The helper can write its output before cmd.Wait/onExit finishes persisting
+	// the terminal record. Wait for that state before TempDir cleanup removes the
+	// process store, otherwise teardown can race a final .bonsai/procs write.
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		list = s.list()
+		if len(list) == 1 && procstore.IsTerminal(list[0].Status) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("restarted structured child did not reach a terminal state: %+v", list)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func equivalentPath(a, b string) bool {

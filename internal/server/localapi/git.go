@@ -33,6 +33,7 @@ func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 
 	// Compatibility with the current Bonsai Web route shape while requests now
 	// terminate directly at the loopback API instead of a cloud daemon bridge.
+	mux.HandleFunc("POST /api/projects/{projectId}/fetch", s.gitMutation("git.fetch", false))
 	mux.HandleFunc("GET /api/projects/{projectId}/branches", s.projectGitRead("git.branches"))
 	mux.HandleFunc("GET /api/projects/{projectId}/worktrees", s.projectGitRead("git.worktrees"))
 	mux.HandleFunc("POST /api/projects/{projectId}/worktrees", s.compatCreateWorktree)
@@ -197,6 +198,14 @@ func (s *Server) runGit(w http.ResponseWriter, r *http.Request, kind, worktree s
 		writeDomainError(w, result.Error)
 		return nil, false
 	}
+	if len(result.Payload) > 0 {
+		payload, err := publicGitPayload(kind, s.registry.Default().info.ID, result.Payload)
+		if err != nil {
+			writeAPIError(w, http.StatusBadGateway, "invalid_daemon_response", err.Error())
+			return nil, false
+		}
+		result.Payload = payload
+	}
 	return result, true
 }
 
@@ -313,4 +322,39 @@ func writeDomainError(w http.ResponseWriter, e *domain.Error) {
 		status = http.StatusInternalServerError
 	}
 	writeAPIError(w, status, e.Code, e.Message)
+}
+
+// Only repository identities cross the public/daemon boundary. Operation IDs,
+// worktree IDs and file contents must remain byte-for-byte untouched.
+func publicGitPayload(kind, id string, raw json.RawMessage) (json.RawMessage, error) {
+	switch kind {
+	case "git.repository.refresh":
+		var value domain.RepositoryState
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil, err
+		}
+		value.ID = id
+		for i := range value.Worktrees {
+			value.Worktrees[i].RepositoryID = id
+		}
+		return json.Marshal(value)
+	case "git.worktrees":
+		var value []domain.Worktree
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil, err
+		}
+		for i := range value {
+			value[i].RepositoryID = id
+		}
+		return json.Marshal(value)
+	case "git.worktree.create":
+		var value domain.Worktree
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil, err
+		}
+		value.RepositoryID = id
+		return json.Marshal(value)
+	default:
+		return raw, nil
+	}
 }

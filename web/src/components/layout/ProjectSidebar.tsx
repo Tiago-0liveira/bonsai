@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router'
 import { useState, type FormEvent } from 'react'
 import {
   Activity,
@@ -21,6 +22,7 @@ const links = [
 ]
 
 export function ProjectSidebar() {
+  const navigate = useNavigate()
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const query = useBonsaiStore((state) => state.projectQuery)
@@ -120,7 +122,7 @@ export function ProjectSidebar() {
           return (
             <button
               key={project.id}
-              title={sidebarCollapsed ? project.name : undefined}
+              title={project.path ?? (sidebarCollapsed ? project.name : undefined)}
               onClick={() => setActiveProject(project.id)}
               className={
                 'bonsai-focus mb-0.5 flex w-full items-center rounded-md text-left transition-colors ' +
@@ -155,6 +157,7 @@ export function ProjectSidebar() {
         {links.map(({ label, icon: Icon }) => (
           <button
             key={label}
+            onClick={() => { if (label === 'Settings') void navigate({ to: '/settings' }) }}
             title={sidebarCollapsed ? label : undefined}
             className={
               'bonsai-focus flex w-full items-center rounded-md py-2 text-left text-[12px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))] ' +

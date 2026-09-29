@@ -103,8 +103,7 @@ export function startRelayInvalidation() {
         try {
           const payload = JSON.parse(event.data) as { repository_id?: number }
           if (!payload.repository_id) return
-          const projectId = projectForGitHubRepository(payload.repository_id)
-          if (projectId) debounceRefresh(projectId)
+          for (const projectId of projectForGitHubRepository(payload.repository_id)) debounceRefresh(projectId)
         } catch {
           // Relay payloads only invalidate local state; malformed messages are ignored.
         }

@@ -1,3 +1,4 @@
+import type { ProjectRootsSettings } from '../api/settings'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { agents as initialAgents } from '../mock/agents'
@@ -40,6 +41,10 @@ interface TerminalSession {
 }
 
 interface BonsaiState {
+  rootSettings: ProjectRootsSettings | null
+  rootsLoading: boolean
+  rootsSaving: boolean
+  rootsError: string
   selection: Selection
   setSelection: (selection: Selection) => void
   projectQuery: string
@@ -229,6 +234,10 @@ export const useBonsaiStore = create<BonsaiState>()(
       gitOnline: {},
       gitRevision: 0,
       gitError: '',
+      rootSettings: null,
+      rootsLoading: false,
+      rootsSaving: false,
+      rootsError: '',
       projects: [],
       activeWorkspaceId: '',
       activeProjectId: '',

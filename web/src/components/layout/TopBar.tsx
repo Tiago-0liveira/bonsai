@@ -9,6 +9,7 @@ const nav = [
   { label: 'Table', to: '/tables' },
   { label: 'GitHub', to: '/github' },
   { label: 'Logs', to: '/logs' },
+  { label: 'Settings', to: '/settings' },
 ] as const
 
 function HeaderSelect({
@@ -175,12 +176,7 @@ export function TopBar() {
             {item.label}
           </Link>
         ))}
-        <button
-          onClick={() => setNotice('Settings are mocked in this frontend prototype')}
-          className="flex h-full items-center px-2.5 text-[12px] text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--text))]"
-        >
-          Settings
-        </button>
+
       </nav>
 
       <div className="flex items-center gap-1.5 justify-self-end">

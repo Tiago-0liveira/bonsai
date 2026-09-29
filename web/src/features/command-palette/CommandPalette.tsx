@@ -107,7 +107,7 @@ export function CommandPalette() {
             <CommandItem icon={GitPullRequest} label="Open PRs" onSelect={() => run(() => navigate({ to: '/pull-requests' }))} />
             <CommandItem icon={Table2} label="Open Tables" onSelect={() => run(() => navigate({ to: '/tables' }))} />
             <CommandItem icon={FileCode2} label="Open Files" onSelect={() => run(() => navigate({ to: '/files' }))} />
-            <CommandItem icon={Settings} label="Open Settings" hint="mock" onSelect={() => run(() => setNotice('Settings are mocked in this prototype'))} />
+            <CommandItem icon={Settings} label="Open Settings" onSelect={() => run(() => void navigate({ to: '/settings' }))} />
           </Command.Group>
         </Command.List>
       </Command>

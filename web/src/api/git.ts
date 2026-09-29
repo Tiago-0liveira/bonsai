@@ -1,9 +1,10 @@
+import { loadProjectRoots } from './settings'
 import { useBonsaiStore } from '../stores/bonsai'
 import type { CreateWorktreeInput, Project, PullRequest, Worktree } from '../types'
 import { invalidateLocalSession, localFetch, markLocalConnectionLost, openLocalEvents } from './local'
 
 export interface Branch { name: string; remote: boolean; local_head_sha?: string; local_remote_ref_sha?: string; remote_head_sha?: string }
-interface Repository { id: string; workspace_id: string; full_name: string; default_branch: string }
+export interface Repository { launch?: boolean; available?: boolean; name?: string; path?: string; root_id?: string; id: string; workspace_id: string; full_name: string; default_branch: string }
 interface GitHubRepository { id: number; full_name: string; default_branch: string; private?: boolean }
 interface RemotePR { number: number; title: string; body: string; state: string; draft: boolean; head: string; base: string; head_sha: string; author: string; created_at: string; updated_at: string; mergeable?: string; comments?: { author: string; body: string; created_at: string }[]; reviews?: { author: string; body: string; submitted_at: string }[]; commits?: { sha: string; message: string; author: string; created_at: string }[]; files?: { path: string; additions: number; deletions: number; patch: string }[] }
 interface LocalWorktree { id: string; repository_id: string; branch: string; main: boolean; local_head_sha: string; status?: { ahead: number; behind: number; staged: number; modified: number; untracked: number; files: unknown[]; git_state: string; dirty: boolean; last_commit?: { when: string; subject: string; sha: string } } }
@@ -18,16 +19,22 @@ export async function request<T>(path: string, body?: unknown, method = body ===
   return response.json() as Promise<T>
 }
 export function report(error: unknown) { useBonsaiStore.setState({ notice: error instanceof Error ? error.message : String(error) }) }
-function project(r: Repository): Project { return { id: r.id, workspaceId: r.workspace_id, name: r.full_name.split('/').at(-1) ?? r.id, repository: r.full_name, description: '', health: 'idle', defaultBranch: r.default_branch, worktreeIds: [], openPrCount: 0 } }
+function project(r: Repository): Project { return { id: r.id, path: r.path, rootId: r.root_id, available: r.available, workspaceId: r.workspace_id, name: r.name ?? r.full_name.split('/').at(-1) ?? r.id, repository: r.full_name, description: '', health: 'idle', defaultBranch: r.default_branch, worktreeIds: [], openPrCount: 0 } }
 function pullRequest(repo: string, p: RemotePR): PullRequest {
   return { id: `${repo}:${p.number}`, number: p.number, title: p.title, description: p.body ?? '', branch: p.head, base: p.base, status: p.state === 'merged' ? 'Merged' : p.state === 'closed' ? 'Closed' : p.draft ? 'Draft' : 'Open', author: p.author, createdAt: p.created_at, updatedAt: p.updated_at, mergeable: p.mergeable === 'mergeable', checks: [], commits: (p.commits ?? []).map(c => ({ sha: c.sha, message: c.message, author: c.author, time: c.created_at })), conversation: [...(p.comments ?? []).map(c => ({ author: c.author, body: c.body, time: c.created_at, kind: 'comment' as const })), ...(p.reviews ?? []).map(c => ({ author: c.author, body: c.body, time: c.submitted_at, kind: 'review' as const }))], files: (p.files ?? []).map(f => ({ path: f.path, additions: f.additions, deletions: f.deletions, diff: (f.patch ?? '').split('\n') })) }
 }
 const heads = new Map<string, string>()
-const githubRepositoryProjects = new Map<number, string>()
-export function projectForGitHubRepository(repositoryId: number) { return githubRepositoryProjects.get(repositoryId) }
+const githubRepositoryProjects = new Map<number, Set<string>>()
+export function projectForGitHubRepository(repositoryId: number) { return [...(githubRepositoryProjects.get(repositoryId) ?? [])] }
 export function applySnapshot(snapshot: Snapshot) {
   const state = useBonsaiStore.getState(), id = snapshot.repository.id
-  if (snapshot.remote?.repository.id) githubRepositoryProjects.set(snapshot.remote.repository.id, id)
+  if (!state.projects.some(p => p.id === id)) return
+  for (const projects of githubRepositoryProjects.values()) projects.delete(id)
+  if (snapshot.remote?.repository.id) {
+    const repositoryId = snapshot.remote.repository.id
+    const projects = githubRepositoryProjects.get(repositoryId) ?? new Set<string>()
+    projects.add(id); githubRepositoryProjects.set(repositoryId, projects)
+  }
   const remote = snapshot.remote?.pull_requests ?? []
   const prs = remote.map(p => { const mapped = pullRequest(id, p); heads.set(mapped.id, p.head_sha); const previous = state.pullRequests.find(v => v.id === mapped.id); return previous?.updatedAt === mapped.updatedAt ? { ...previous, status: mapped.status } : mapped })
   const trees: Worktree[] = (snapshot.local?.worktrees ?? []).map(w => {
@@ -39,7 +46,10 @@ export function applySnapshot(snapshot: Snapshot) {
   if (main) p.defaultBranchInfo = { commitSha: main.sha, commitMessage: main.subject, lastActivity: main.when, ciStatus: 'waiting' }
   const branches = [...(snapshot.local?.branches ?? [])]
   for (const b of snapshot.remote?.branches ?? []) { const local = branches.find(v => v.name === `origin/${b.name}`); if (local) local.remote_head_sha = b.remote_head_sha; else branches.push({ name: `origin/${b.name}`, remote: true, remote_head_sha: b.remote_head_sha }) }
-  useBonsaiStore.setState({ projects: state.projects.map(v => v.id === id ? p : v), worktrees: [...state.worktrees.filter(w => w.projectId !== id), ...trees], pullRequests: [...state.pullRequests.filter(v => !v.id.startsWith(`${id}:`)), ...prs], gitBranches: { ...state.gitBranches, [id]: branches }, gitOnline: { ...state.gitOnline, [id]: snapshot.online }, gitRevision: state.gitRevision + 1, dockWorktreeId: state.dockWorktreeId || trees[0]?.id || '' })
+  const allTrees = [...state.worktrees.filter(w => w.projectId !== id), ...trees]
+  const selection = state.selection.type === 'worktree' && state.worktrees.some(w => w.id === state.selection.id && w.projectId === id) && !trees.some(w => w.id === state.selection.id) ? { type: 'project' as const, id } : state.selection
+  const dockWorktreeId = (state.dockWorktreeId && !state.worktrees.some(w => w.id === state.dockWorktreeId)) || allTrees.some(w => w.id === state.dockWorktreeId) ? state.dockWorktreeId : allTrees.find(w => w.projectId === state.activeProjectId)?.id ?? ''
+  useBonsaiStore.setState({ selection, projects: state.projects.map(v => v.id === id ? p : v), worktrees: [...state.worktrees.filter(w => w.projectId !== id), ...trees], pullRequests: [...state.pullRequests.filter(v => !v.id.startsWith(`${id}:`)), ...prs], gitBranches: { ...state.gitBranches, [id]: branches }, gitOnline: { ...state.gitOnline, [id]: snapshot.online }, gitRevision: state.gitRevision + 1, dockWorktreeId })
 }
 const refreshing = new Map<string, Promise<Snapshot>>()
 const refreshAgain = new Set<string>()
@@ -82,30 +92,72 @@ export async function reviewPullRequest(id: string, body: string, kind: 'comment
   const repo = id.slice(0, id.lastIndexOf(':')), p = useBonsaiStore.getState().pullRequests.find(p => p.id === id); if (!p) return
   try { await request(`/api/projects/${encodeURIComponent(repo)}/pull-requests/${p.number}/reviews`, { body, event: kind === 'approve' ? 'APPROVE' : kind === 'request-changes' ? 'REQUEST_CHANGES' : 'COMMENT', commit_id: heads.get(id) }); await loadPullRequest(id) } catch (error) { report(error) }
 }
+export function reconcileCatalog(repos: Repository[]) {
+  const state = useBonsaiStore.getState(), ids = new Set(repos.map(r => r.id))
+  const launch = repos.find(r => r.launch)
+  const previousId = state.activeProjectId === 'local' ? launch?.id : state.activeProjectId
+  const active = repos.find(r => r.id === previousId) ?? repos[0]
+  const worktrees = state.worktrees.filter(w => ids.has(w.projectId) || (w.projectId === 'local' && launch)).map(w => w.projectId === 'local' && launch ? { ...w, projectId: launch.id } : w)
+  let selection = state.selection
+  if (selection.type === 'project' && selection.id === 'local' && launch) selection = { type: 'project', id: launch.id }
+  if ((selection.type === 'project' && !ids.has(selection.id)) || (selection.type === 'worktree' && state.worktrees.some(w => w.id === selection.id) && !worktrees.some(w => w.id === selection.id))) selection = { type: 'project', id: active?.id ?? '' }
+  for (const projects of githubRepositoryProjects.values()) for (const id of projects) if (!ids.has(id)) projects.delete(id)
+  const migrateKey = (key: string) => {
+    if (!launch) return key
+    if (key === 'local') return launch.id
+    for (const prefix of ['default:', 'env:', 'stack:']) {
+      if (key === `${prefix}local` || key.startsWith(`${prefix}local:`)) return `${prefix}${launch.id}${key.slice(prefix.length + 5)}`
+    }
+    return key
+  }
+  const nodePlacements = Object.fromEntries(Object.entries(state.nodePlacements).map(([key, value]) => [migrateKey(key), state.nodePlacements[migrateKey(key)] ?? value]))
+  useBonsaiStore.setState({
+    nodePlacements,
+    collapsedBranchIds: state.collapsedBranchIds.map(migrateKey),
+    collapsedTagGroups: state.collapsedTagGroups.map(key => launch && key.startsWith('local:') ? launch.id + key.slice(5) : key),
+    projects: repos.map(r => { const previous = state.projects.find(p => p.id === r.id); return previous ? { ...previous, path: r.path, rootId: r.root_id, available: r.available, name: r.name ?? previous.name, health: r.available === false ? 'idle' : previous.health } : project(r) }),
+    activeProjectId: active?.id ?? '', activeWorkspaceId: active?.workspace_id ?? '', selection, worktrees,
+    pullRequests: state.pullRequests.filter(p => ids.has(p.id.slice(0, p.id.lastIndexOf(':')))),
+    gitBranches: Object.fromEntries(Object.entries(state.gitBranches).filter(([id]) => ids.has(id))),
+    gitOnline: Object.fromEntries(repos.map(r => [r.id, r.available !== false && (state.gitOnline[r.id] ?? false)])),
+    dockWorktreeId: worktrees.some(w => w.id === state.dockWorktreeId) || !state.worktrees.length ? state.dockWorktreeId : worktrees.find(w => w.projectId === active?.id)?.id ?? '',
+    gitError: '',
+  })
+}
+let catalogRequest: Promise<void> | undefined
+let catalogAgain = false
+export function refreshCatalog(): Promise<void> {
+  if (catalogRequest) { catalogAgain = true; return catalogRequest }
+  catalogRequest = (async () => {
+    do {
+      catalogAgain = false
+      const repos = await request<Repository[]>('/api/projects')
+      reconcileCatalog(repos)
+      await Promise.allSettled(repos.filter(r => r.available !== false).map(r => refreshProject(r.id).catch(error => {
+        useBonsaiStore.setState(state => ({ projects: state.projects.map(p => p.id === r.id ? { ...p, health: 'idle' as const } : p), gitOnline: { ...state.gitOnline, [r.id]: false }, gitError: error instanceof Error ? error.message : String(error) }))
+      })))
+      const state = useBonsaiStore.getState()
+      useBonsaiStore.setState({
+        selection: state.selection.type === 'worktree' && !state.worktrees.some(w => w.id === state.selection.id) ? { type: 'project', id: state.activeProjectId } : state.selection,
+        dockWorktreeId: state.worktrees.some(w => w.id === state.dockWorktreeId) ? state.dockWorktreeId : state.worktrees.find(w => w.projectId === state.activeProjectId)?.id ?? '',
+      })
+    } while (catalogAgain)
+  })().finally(() => { catalogRequest = undefined })
+  return catalogRequest
+}
 export function startGitBackend() {
   let closed = false, events: WebSocket | undefined
+  const reload = async () => { await Promise.all([loadProjectRoots(), refreshCatalog()]) }
   const connect = async () => {
     try {
-      const repos = await request<Repository[]>('/api/projects'); if (closed) return
-      const state = useBonsaiStore.getState(), active = repos.find(r => r.id === state.activeProjectId) ?? repos[0]
-      useBonsaiStore.setState({ projects: repos.map(project), activeProjectId: active?.id ?? '', activeWorkspaceId: active?.workspace_id ?? '', gitError: '', worktrees: [], pullRequests: [] })
-      await Promise.all(repos.map(r => refreshProject(r.id)))
-      if (closed) return
-
-      if (events) { events.onclose = null; events.close() }
+      await reload(); if (closed) return
       events = await openLocalEvents()
       if (closed) { events.close(); return }
       events.onmessage = event => {
         let data: { type?: string; project_id?: string }
-        try { data = JSON.parse(String(event.data)) as { type?: string; project_id?: string } } catch { return }
-        if (data.type === 'ready') {
-          for (const repo of repos) void refreshProject(repo.id, true).catch(report)
-        } else if (data.type && data.type !== 'heartbeat') {
-          // Local events invalidate local canonical state. Raw WebSocket payloads
-          // never become Zustand state directly.
-          const id = data.project_id || useBonsaiStore.getState().activeProjectId
-          if (id) void refreshProject(id, true).catch(report)
-        }
+        try { data = JSON.parse(String(event.data)) as typeof data } catch { return }
+        if (data.type === 'ready' || data.type === 'catalog') void reload().catch(report)
+        else if (data.type && data.type !== 'heartbeat' && data.project_id) void refreshProject(data.project_id, true).catch(report)
       }
       events.onclose = event => {
         if (closed) return
@@ -116,17 +168,11 @@ export function startGitBackend() {
       }
       events.onerror = () => { if (!closed) events?.close() }
     } catch (error) {
-      if (!closed) {
-        useBonsaiStore.setState({ gitError: error instanceof APIError ? error.message : String(error) })
-        markLocalConnectionLost(error instanceof Error ? error.message : String(error))
-      }
+      if (!closed) useBonsaiStore.setState({ gitError: error instanceof Error ? error.message : String(error) })
     }
   }
   void connect()
-  return () => {
-    closed = true
-    if (events) { events.onclose = null; events.close() }
-  }
+  return () => { closed = true; if (events) { events.onclose = null; events.close() } }
 }
 
 export async function localCommand(action: string, args: Record<string, unknown> = {}) {

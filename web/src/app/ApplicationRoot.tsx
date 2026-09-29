@@ -1,3 +1,5 @@
+import { ProjectRootsSettings } from '../features/settings/ProjectRootsSettings'
+import { useBonsaiStore } from '../stores/bonsai'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { RouterProvider } from '@tanstack/react-router'
 import '@xyflow/react/dist/style.css'
@@ -75,6 +77,9 @@ function LocalConnectionGate() {
 }
 
 function ConnectedApplication() {
+  const settings = useBonsaiStore(s => s.rootSettings)
+  const [dismissedRevision, setDismissedRevision] = useState<number | null>(null)
+
   useEffect(() => {
     const stopLocal = startGitBackend()
     const stopRelay = startRelayInvalidation()
@@ -83,7 +88,10 @@ function ConnectedApplication() {
       stopLocal()
     }
   }, [])
-  return <RouterProvider router={router} />
+  return <>
+    <RouterProvider router={router} />
+    {settings?.roots.length === 0 && dismissedRevision !== settings.revision && <div role="dialog" aria-label="Choose project folders" className="fixed inset-0 z-50 overflow-auto bg-[rgb(var(--bg))]"><ProjectRootsSettings onDismiss={() => setDismissedRevision(settings.revision)} /></div>}
+  </>
 }
 
 export function ApplicationRoot() {

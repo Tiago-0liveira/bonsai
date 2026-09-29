@@ -7,6 +7,10 @@ import (
 )
 
 func (s *Server) registerProcessRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/projects/{projectId}/processes", s.processes)
+	mux.HandleFunc("GET /api/projects/{projectId}/processes/{id}/logs", s.processLogs)
+	mux.HandleFunc("POST /api/projects/{projectId}/processes/{id}/restart", s.processRestart)
+	mux.HandleFunc("DELETE /api/projects/{projectId}/processes/{id}", s.processStop)
 	mux.HandleFunc("GET /api/processes", s.processes)
 	mux.HandleFunc("GET /api/processes/{id}/logs", s.processLogs)
 	mux.HandleFunc("POST /api/processes/{id}/restart", s.processRestart)

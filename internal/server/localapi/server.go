@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -23,7 +24,7 @@ import (
 const (
 	localRepositoryID  = "local"
 	localBrowserUserID = "local-browser"
-	localAPIVersion    = 1
+	localAPIVersion    = 2
 )
 
 type daemonClient interface {
@@ -35,10 +36,11 @@ type daemonClient interface {
 }
 
 type Config struct {
-	RepoDir       string
-	Address       string
-	BrowserOrigin string
-	SecurityMode  BrowserSecurityMode
+	RepoDir          string
+	Address          string
+	BrowserOrigin    string
+	SecurityMode     BrowserSecurityMode
+	ProjectRootsPath string
 }
 
 type Server struct {
@@ -50,7 +52,8 @@ type Server struct {
 	sessions      *sessionStore
 	state         *gitstore.Store
 	eventHub      *eventHub
-	sequence      atomic.Uint64
+	sequence      *atomic.Uint64
+	rootsPath     string
 }
 
 func New(cfg Config) (*Server, error) {
@@ -64,6 +67,9 @@ func New(cfg Config) (*Server, error) {
 	if root, err := git.MainRoot(cfg.RepoDir); err == nil {
 		cfg.RepoDir = root
 	}
+	if canonical, err := config.CanonicalDirectory(cfg.RepoDir); err == nil {
+		cfg.RepoDir = canonical
+	}
 	if err := requireLoopback(cfg.Address); err != nil {
 		return nil, err
 	}
@@ -73,33 +79,107 @@ func New(cfg Config) (*Server, error) {
 	if err := validateBrowserOrigin(cfg.BrowserOrigin, cfg.SecurityMode); err != nil {
 		return nil, err
 	}
-	state, err := gitstore.Open(filepath.Join(procstore.New(cfg.RepoDir).Dir(), "local-api-state.json"))
-	if err != nil {
-		return nil, fmt.Errorf("open local API state: %w", err)
+	var err error
+	rootsPath := cfg.ProjectRootsPath
+	if rootsPath == "" {
+		rootsPath, err = config.ProjectRootsPath()
+		if err != nil {
+			return nil, err
+		}
+	}
+	registry := newProjectRegistry(rootsPath, cfg.RepoDir)
+	if _, err := registry.Refresh(context.Background()); err != nil {
+		return nil, err
 	}
 	return &Server{
 		repoDir:       cfg.RepoDir,
 		expectedHost:  cfg.Address,
 		browserOrigin: cfg.BrowserOrigin,
 		securityMode:  cfg.SecurityMode,
-		registry:      newStaticProjectRegistry(cfg.RepoDir),
+		registry:      registry,
+		rootsPath:     rootsPath,
+		sequence:      &atomic.Uint64{},
 		sessions:      newSessionStore(),
-		state:         state,
 		eventHub:      newEventHub(),
 	}, nil
 }
 
-func (s *Server) Handler() http.Handler {
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /version", s.version)
 	mux.HandleFunc("POST /api/session", s.createSession)
+	s.registerSettingsRoutes(mux)
 	s.registerProjectRoutes(mux)
 	s.registerGitRoutes(mux)
 	s.registerProcessRoutes(mux)
 	s.registerGitHubRoutes(mux)
 	mux.HandleFunc("GET /events", s.events)
-	return s.securityMiddleware(mux)
+	return mux
+}
+
+// Resolve ownership once per request, then bind all repository handlers to that
+// entry. The shared server, sessions, event hub and catalog are never mutated.
+func (s *Server) Handler() http.Handler {
+	routes := s.routes()
+	return s.securityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(path) < 2 || path[0] != "api" || path[1] == "settings" || path[1] == "session" || (path[1] == "projects" && len(path) == 2) {
+			routes.ServeHTTP(w, r)
+			return
+		}
+		scopedRoute := path[1] == "projects" || path[1] == "worktrees" || path[1] == "repository" || path[1] == "branches" || path[1] == "github" || path[1] == "processes"
+		if !scopedRoute {
+			routes.ServeHTTP(w, r)
+			return
+		}
+		var project projectServices
+		var ok bool
+		switch {
+		case path[1] == "projects" && len(path) > 2:
+			project, ok = s.registry.Lookup(path[2])
+		case path[1] == "worktrees" && len(path) > 2:
+			project, ok = s.registry.Worktree(r.Context(), path[2])
+		default:
+			project = s.registry.Default()
+			ok = project.daemon != nil
+		}
+		if !ok {
+			writeAPIError(w, http.StatusNotFound, "project_unavailable", "Project or worktree is not in the configured roots. Add its directory in Settings.")
+			return
+		}
+		if !project.info.Available {
+			writeAPIError(w, http.StatusServiceUnavailable, "project_unavailable", "Project directory is unavailable")
+			return
+		}
+		scoped := *s
+		scoped.registry = &scopedProjectRegistry{project: project}
+		scoped.repoDir = project.info.Path
+		scoped.state = project.state
+		scoped.routes().ServeHTTP(w, r)
+	}))
+}
+func (s *Server) Reconcile(ctx context.Context) error {
+	changed, err := s.registry.Refresh(ctx)
+	if changed || err != nil {
+		s.sequence.Add(1)
+		s.eventHub.publish(localEvent{Type: "catalog"})
+	}
+	return err
+}
+func (s *Server) reconcilePeriodically(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.Reconcile(ctx); err != nil {
+				log.Printf("Project discovery: %v", err)
+			}
+		}
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -126,6 +206,7 @@ func Run(cfg Config) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go s.reconcilePeriodically(ctx)
 
 	server := &http.Server{
 		Addr:              cfg.Address,
