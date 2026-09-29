@@ -26,9 +26,11 @@ import type {
   EnvVariable,
   NodePlacement,
   Project,
+  Process,
   PullRequest,
   Selection,
   StartAgentInput,
+  SyncFreshness,
   ViewportState,
   Worktree,
   WorktreeTag,
@@ -54,6 +56,8 @@ interface BonsaiState {
   gitOnline: Record<string, boolean>
   gitRevision: number
   gitError: string
+  syncFreshness: Record<string, Record<string, SyncFreshness>>
+  processes: Process[]
   projects: Project[]
   activeWorkspaceId: string
   activeProjectId: string
@@ -234,6 +238,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       gitOnline: {},
       gitRevision: 0,
       gitError: '',
+      syncFreshness: {},
+      processes: [],
       rootSettings: null,
       rootsLoading: false,
       rootsSaving: false,
