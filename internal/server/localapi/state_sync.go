@@ -126,14 +126,19 @@ func (s *stateSync) ReconcileCatalog() {
 	for _, info := range infos {
 		p := s.ensureLocked(info)
 		next := cloneSnapshot(p.snapshot)
+		previousRepository := next.Repository
 		next.Repository = info
+		if previousRepository.FullName != "" && previousRepository.FullName != previousRepository.Name {
+			next.Repository.FullName = previousRepository.FullName
+		}
+		if previousRepository.DefaultBranch != "" {
+			next.Repository.DefaultBranch = previousRepository.DefaultBranch
+		}
 		next.Online = info.Available
 		if !info.Available {
-			markUnavailable(next.Freshness, "local", "project_unavailable", "Project directory is unavailable")
-			markUnavailable(next.Freshness, "processes", "project_unavailable", "Project directory is unavailable")
-			if next.Remote == nil {
-				markUnavailable(next.Freshness, "provider", "project_unavailable", "Project directory is unavailable")
-			}
+			next.Freshness["local"] = unavailableOrStale(next.Freshness["local"], "project_unavailable", "Project directory is unavailable")
+			next.Freshness["processes"] = unavailableOrStale(next.Freshness["processes"], "project_unavailable", "Project directory is unavailable")
+			next.Freshness["provider"] = unavailableOrStale(next.Freshness["provider"], "project_unavailable", "Project directory is unavailable")
 		}
 		p.snapshot = next
 	}
@@ -350,7 +355,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 			local.Worktrees[i].RepositoryID = projectID
 		}
 		metadata, _ := metadataSnapshotFor(project)
-		s.commit(projectID, "local", func(snapshot *browserSnapshot) {
+		s.commitProject(project, "local", func(snapshot *browserSnapshot) {
 			if snapshot.Local != nil {
 				local.DefaultBranch = snapshot.Local.DefaultBranch
 				local.Remotes = append([]domain.RemoteIdentity(nil), snapshot.Local.Remotes...)
@@ -374,7 +379,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 		if branchesErr != nil {
 			err = fmt.Errorf("inventory: %v; status: %w", branchesErr, err)
 		}
-		s.commit(projectID, "local", func(snapshot *browserSnapshot) {
+		s.commitProject(project, "local", func(snapshot *browserSnapshot) {
 			snapshot.Online = true
 			snapshot.Freshness["local"] = failedFreshness(snapshot.Freshness["local"], snapshot.Local != nil, err)
 		})
@@ -386,7 +391,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 		local.Worktrees[i].RepositoryID = projectID
 	}
 	metadata, metadataErr := metadataSnapshotFor(project)
-	s.commit(projectID, "local", func(snapshot *browserSnapshot) {
+	s.commitProject(project, "local", func(snapshot *browserSnapshot) {
 		snapshot.Local = &local
 		if metadataErr == nil {
 			snapshot.Metadata = metadata
@@ -470,14 +475,14 @@ func (s *stateSync) refreshProcesses(projectID string) {
 		records, err = project.daemon.List()
 	}
 	if err != nil {
-		s.commit(projectID, "processes", func(snapshot *browserSnapshot) {
+		s.commitProject(project, "processes", func(snapshot *browserSnapshot) {
 			snapshot.Freshness["processes"] = failedFreshness(snapshot.Freshness["processes"], snapshot.Processes != nil, err)
 		})
 		return
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
 	summaries := make([]browserProcessSummary, 0, len(records))
-	s.commit(projectID, "processes", func(snapshot *browserSnapshot) {
+	s.commitProject(project, "processes", func(snapshot *browserSnapshot) {
 		validWorktrees := map[string]bool{}
 		if snapshot.Local != nil {
 			for _, worktree := range snapshot.Local.Worktrees {
@@ -497,13 +502,13 @@ func (s *stateSync) refreshProcesses(projectID string) {
 	})
 }
 
-func (s *stateSync) commit(projectID, component string, mutate func(*browserSnapshot)) bool {
-	project, ok := s.registry.Lookup(projectID)
-	if !ok {
+func (s *stateSync) commitProject(expected projectServices, component string, mutate func(*browserSnapshot)) bool {
+	project, ok := s.registry.Lookup(expected.info.ID)
+	if !ok || project.state != expected.state {
 		return false
 	}
 	s.mu.Lock()
-	p := s.projects[projectID]
+	p := s.projects[expected.info.ID]
 	if p == nil || p.path != project.info.Path {
 		s.mu.Unlock()
 		return false
@@ -516,8 +521,16 @@ func (s *stateSync) commit(projectID, component string, mutate func(*browserSnap
 	p.snapshot = next
 	sequence := next.Sequence
 	s.mu.Unlock()
-	s.events.publish(localEvent{Type: "project", ProjectID: projectID, Component: component, Epoch: s.epoch, Sequence: sequence})
+	s.events.publish(localEvent{Type: "project", ProjectID: expected.info.ID, Component: component, Epoch: s.epoch, Sequence: sequence})
 	return true
+}
+
+func (s *stateSync) commit(projectID, component string, mutate func(*browserSnapshot)) bool {
+	project, ok := s.registry.Lookup(projectID)
+	if !ok {
+		return false
+	}
+	return s.commitProject(project, component, mutate)
 }
 
 func (s *stateSync) MarkStale(projectID string, scope refreshScope) {
@@ -554,6 +567,16 @@ func failedFreshness(current browserFreshness, hadValue bool, err error) browser
 		code = "unavailable"
 	}
 	return browserFreshness{State: state, UpdatedAt: current.UpdatedAt, Error: &browserStateError{Code: code, Message: err.Error()}}
+}
+
+func unavailableOrStale(current browserFreshness, code, message string) browserFreshness {
+	state := "unavailable"
+	if current.UpdatedAt != nil || current.State == "ready" || current.State == "stale" {
+		state = "stale"
+	}
+	current.State = state
+	current.Error = &browserStateError{Code: code, Message: message}
+	return current
 }
 
 func markUnavailable(freshness map[string]browserFreshness, component, code, message string) {
@@ -617,8 +640,6 @@ func resetWorktreeAssociationsForHeads(snapshot *browserSnapshot) {
 		state := snapshot.WorktreeState[worktree.ID]
 		checked := state.CI.CheckedSHA
 		if checked != "" && worktree.HeadSHA != "" && checked != worktree.HeadSHA {
-			state.PullRequest = nil
-			state.PRDiagnostic = ""
 			state.CI.Freshness = staleFreshness(state.CI.Freshness)
 			snapshot.WorktreeState[worktree.ID] = state
 		}
