@@ -155,12 +155,9 @@ func (s *Server) executeGitMutation(w http.ResponseWriter, r *http.Request, kind
 	if !ok {
 		return
 	}
-	s.publishProjectEvent(worktree)
-	snapshot, err := s.browserSnapshot(r.Context())
-	if err != nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
-		return
-	}
+	projectID := s.registry.Default().info.ID
+	s.stateSync.MarkStale(projectID, refreshAll)
+	snapshot, _ := s.stateSync.CachedSnapshot(projectID)
 	var value any
 	if len(result.Payload) > 0 {
 		value = json.RawMessage(result.Payload)
