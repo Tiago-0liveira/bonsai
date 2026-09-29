@@ -2,7 +2,6 @@ package localapi
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -63,10 +62,11 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		}
 		if entry.running {
 			wait := entry.wait
+			cached := cloneRemote(entry.value)
 			c.mu.Unlock()
 			select {
 			case <-ctx.Done():
-				return cloneRemote(entry.value), browserFreshness{State: "error", Error: &browserStateError{Code: "cancelled", Message: ctx.Err().Error()}}
+				return cached, browserFreshness{State: "error", Error: &browserStateError{Code: "cancelled", Message: ctx.Err().Error()}}
 			case <-wait:
 				continue
 			}
@@ -140,10 +140,16 @@ func (c *providerCache) checksFor(ctx context.Context, service githubdomain.GitH
 		}
 		if entry.running {
 			wait := entry.wait
+			cached := append([]githubdomain.Check(nil), entry.value...)
+			var updatedAt *time.Time
+			if entry.updatedAt != nil {
+				copy := *entry.updatedAt
+				updatedAt = &copy
+			}
 			c.mu.Unlock()
 			select {
 			case <-ctx.Done():
-				return append([]githubdomain.Check(nil), entry.value...), browserFreshness{State: "error", UpdatedAt: entry.updatedAt, Error: &browserStateError{Code: "cancelled", Message: ctx.Err().Error()}}
+				return cached, browserFreshness{State: "error", UpdatedAt: updatedAt, Error: &browserStateError{Code: "cancelled", Message: ctx.Err().Error()}}
 			case <-wait:
 				continue
 			}
@@ -268,7 +274,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	}
 	identity, ok := preferredRemote(before.Local.Remotes)
 	if !ok || identity.FullName == "" {
-		s.commitProviderIfCurrent(projectID, localIdentityToken(before), func(snapshot *browserSnapshot) {
+		s.commitProviderIfCurrent(project, localIdentityToken(before), func(snapshot *browserSnapshot) {
 			snapshot.Remote = nil
 			markUnavailable(snapshot.Freshness, "provider", "provider_unavailable", "No supported provider remote is configured")
 			for _, worktree := range snapshot.Local.Worktrees {
@@ -284,7 +290,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	defer cancel()
 	remote, providerFreshness := s.providers.repository(ctx, project.github, identity.FullName, s.now(), force)
 	if remote == nil {
-		s.commitProviderIfCurrent(projectID, token, func(snapshot *browserSnapshot) {
+		s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 			snapshot.Freshness["provider"] = providerFreshness
 			for id, state := range snapshot.WorktreeState {
 				state.CI.Freshness = staleFreshness(state.CI.Freshness)
@@ -330,7 +336,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 		states[worktree.ID] = state
 	}
 
-	s.commitProviderIfCurrent(projectID, token, func(snapshot *browserSnapshot) {
+	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.Remote = remote
 		snapshot.Freshness["provider"] = providerFreshness
 		snapshot.WorktreeState = states
@@ -343,13 +349,13 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	})
 }
 
-func (s *stateSync) commitProviderIfCurrent(projectID, token string, mutate func(*browserSnapshot)) {
-	current, ok := s.CachedSnapshot(projectID)
+func (s *stateSync) commitProviderIfCurrent(project projectServices, token string, mutate func(*browserSnapshot)) {
+	current, ok := s.CachedSnapshot(project.info.ID)
 	if !ok || localIdentityToken(current) != token {
-		s.queueProvider(projectID, false)
+		s.queueProvider(project.info.ID, false)
 		return
 	}
-	s.commit(projectID, "provider", func(snapshot *browserSnapshot) {
+	s.commitProject(project, "provider", func(snapshot *browserSnapshot) {
 		if localIdentityToken(*snapshot) != token {
 			return
 		}
@@ -441,6 +447,3 @@ func checksRollup(checks []githubdomain.Check) string {
 	return "passed"
 }
 
-func providerCacheKey(repository, sha string) string {
-	return fmt.Sprintf("%s@%s", repository, sha)
-}
