@@ -1,4 +1,5 @@
 import { ProjectRootsSettings } from '../features/settings/ProjectRootsSettings'
+import { loadProjectRoots } from '../api/settings'
 import { useBonsaiStore } from '../stores/bonsai'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { RouterProvider } from '@tanstack/react-router'
@@ -78,9 +79,10 @@ function LocalConnectionGate() {
 
 function ConnectedApplication() {
   const settings = useBonsaiStore(s => s.rootSettings)
-  const [dismissedRevision, setDismissedRevision] = useState<number | null>(null)
+  const [dismissedSetup, setDismissedSetup] = useState<string | null>(null)
 
   useEffect(() => {
+    void loadProjectRoots().catch(() => undefined)
     const stopLocal = startGitBackend()
     const stopRelay = startRelayInvalidation()
     return () => {
@@ -88,9 +90,16 @@ function ConnectedApplication() {
       stopLocal()
     }
   }, [])
+
+  const setupKey = settings ? `${settings.revision}:${settings.selection_revision}` : ''
+  const needsSetup = Boolean(settings && (
+    settings.roots.length === 0
+    || (settings.repositories.length > 0 && !settings.repositories.some(repository => repository.selected))
+  ))
+
   return <>
     <RouterProvider router={router} />
-    {settings?.roots.length === 0 && dismissedRevision !== settings.revision && <div role="dialog" aria-label="Choose project folders" className="fixed inset-0 z-50 overflow-auto bg-[rgb(var(--bg))]"><ProjectRootsSettings onDismiss={() => setDismissedRevision(settings.revision)} /></div>}
+    {settings && needsSetup && dismissedSetup !== setupKey && <div role="dialog" aria-label="Choose project folders" className="fixed inset-0 z-50 overflow-auto bg-[rgb(var(--bg))]"><ProjectRootsSettings onDismiss={() => setDismissedSetup(setupKey)} /></div>}
   </>
 }
 
