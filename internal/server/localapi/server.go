@@ -23,7 +23,7 @@ import (
 const (
 	localRepositoryID  = "local"
 	localBrowserUserID = "local-browser"
-	localAPIVersion    = 2
+	localAPIVersion    = 3
 )
 
 type daemonClient interface {
@@ -166,7 +166,7 @@ func (s *Server) Reconcile(ctx context.Context) error {
 	changed, err := s.registry.Refresh(ctx)
 	s.stateSync.ReconcileCatalog()
 	if changed || err != nil {
-		s.eventHub.publish(localEvent{Type: "catalog", Epoch: s.stateSync.epoch})
+		s.eventHub.publish(localEvent{Type: "catalog", Epoch: s.stateSync.epoch, Projects: s.registry.List()})
 	}
 	return err
 }
