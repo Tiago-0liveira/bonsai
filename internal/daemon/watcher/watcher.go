@@ -120,6 +120,20 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if err != nil {
 				return
 			}
+			// Repository refresh is intentionally lightweight for browser
+			// synchronization. The filesystem watcher additionally needs a
+			// content-sensitive revision so same-shape dirty edits are not
+			// semantically deduplicated.
+			for i := range snapshot.Worktrees {
+				st, statusErr := w.Local.Status(ctx, snapshot.Worktrees[i].ID)
+				if statusErr != nil {
+					continue
+				}
+				snapshot.Worktrees[i].Status = &st
+				snapshot.Worktrees[i].StatusError = nil
+				snapshot.Worktrees[i].HeadSHA = st.HeadSHA
+				snapshot.Worktrees[i].Branch = st.Branch
+			}
 		}
 		b, _ := json.Marshal(snapshot)
 		if string(b) == last {
