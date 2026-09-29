@@ -181,10 +181,12 @@ func (*syncTestGitHub) PullRequest(context.Context, string, int) (githubdomain.P
 func (*syncTestGitHub) CreatePullRequest(context.Context, githubdomain.CreatePullRequestRequest) (githubdomain.PullRequest, error) {
 	return githubdomain.PullRequest{}, nil
 }
-func (*syncTestGitHub) ReviewPullRequest(context.Context, githubdomain.ReviewRequest) error { return nil }
-func (*syncTestGitHub) ReadyPullRequest(context.Context, string, int) error                  { return nil }
-func (*syncTestGitHub) ClosePullRequest(context.Context, string, int) error                  { return nil }
-func (*syncTestGitHub) ReopenPullRequest(context.Context, string, int) error                 { return nil }
+func (*syncTestGitHub) ReviewPullRequest(context.Context, githubdomain.ReviewRequest) error {
+	return nil
+}
+func (*syncTestGitHub) ReadyPullRequest(context.Context, string, int) error  { return nil }
+func (*syncTestGitHub) ClosePullRequest(context.Context, string, int) error  { return nil }
+func (*syncTestGitHub) ReopenPullRequest(context.Context, string, int) error { return nil }
 func (*syncTestGitHub) MergePullRequest(context.Context, githubdomain.MergePullRequestRequest) error {
 	return nil
 }
@@ -220,7 +222,7 @@ func TestStateSyncPublishesLocalAndProcessesWhileProviderIsBlocked(t *testing.T)
 	projectID := "project-v1-test"
 	registry := &syncTestRegistry{entries: map[string]projectServices{
 		projectID: {
-			info: ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
+			info:   ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
 			daemon: daemon,
 			github: provider,
 		},
@@ -316,7 +318,7 @@ func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	daemon := &syncTestDaemon{root: root, repositoryBlock: release}
 	registry := &syncTestRegistry{entries: map[string]projectServices{
 		projectID: {
-			info: ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
+			info:   ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
 			daemon: daemon,
 			github: &syncTestGitHub{},
 		},
