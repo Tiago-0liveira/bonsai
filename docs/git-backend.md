@@ -45,6 +45,43 @@ The local event endpoint is `ws://127.0.0.1:7001/events`. The first WebSocket
 message authenticates with the local capability. Local events are canonical
 refresh signals for local state.
 
+### Worktree state synchronization
+
+Local API protocol 3 keeps one in-memory projection per discovered project. The
+projection is a cache, not a second Git database or process supervisor: repository
+and process truth still comes from each repository daemon and persisted process
+records. An authenticated WebSocket subscription is registered before the server
+sends `ready`; `ready` includes a backend epoch. Every committed project
+projection has a monotonically increasing per-project sequence, and invalidation
+events include `{project_id, epoch, sequence}`. Browsers discard older responses
+and repeat a trailing read when an event overtakes an in-flight request.
+
+A cold project publishes known worktree/branch inventory first, then full local
+status and processes independently. While browsers are subscribed, local Git is
+reconciled every 5 seconds and process state every 2 seconds; project-root
+discovery remains on its 30-second scan. One inaccessible worktree produces an
+explicit status error without erasing healthy siblings. Missing/deleted upstream
+tracking is represented as unavailable divergence, not `0 ahead / 0 behind`.
+
+GitHub enrichment is asynchronous. Provider repository/PR/branch data is cached
+for 60 seconds; checks refresh after 15 seconds while pending. Provider reads are
+coalesced across clients and local clones, use bounded worker pools, and retain
+last successful values as stale on failure. PR association uses provider
+repository identity plus head branch so fork PRs are not matched only by branch
+name. CI keeps the checked SHA and distinguishes `unknown`, `none`, `running`,
+`passed`, and `failed`. The rollup uses the existing combined check-runs and
+commit-status API; it does not make a second workflow-runs request.
+
+`POST /api/projects/{projectId}/refresh` accepts a scoped `local`, `provider`,
+or `all` invalidation and immediately returns cached projection state while work
+is queued. Relay SSE uses the provider scope for every matching local clone.
+Ordinary snapshot reads do not force provider requests.
+
+No bootstrap, reconnect, poll, snapshot read, or provider enrichment performs
+`git fetch`. Ahead/behind therefore describes the last fetched local tracking
+refs. Fetch, pull, push, and remote-worktree creation remain explicit user
+operations.
+
 ## Internet GitHub relay
 
 The internet service is implemented in `internal/server/relay` and exposed by
