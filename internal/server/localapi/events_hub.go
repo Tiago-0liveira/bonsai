@@ -9,7 +9,7 @@ type localEvent struct {
 	Component string            `json:"component,omitempty"`
 	Epoch     string            `json:"epoch,omitempty"`
 	Sequence  uint64            `json:"sequence,omitempty"`
-	Projects  []ProjectInfo     `json:"projects,omitempty"`
+	Projects  []ProjectInfo     `json:"projects"`
 	Snapshot  *browserSnapshot  `json:"snapshot,omitempty"`
 }
 
