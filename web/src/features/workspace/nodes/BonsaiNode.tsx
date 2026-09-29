@@ -114,10 +114,14 @@ function CiBadge({ status, failed = 0, compact = false, label = 'CI' }: { status
               ? { text: compact ? 'unknown' : label + ' unknown', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
               : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
   const Icon = meta.icon
+  const text = compact ? label + ' ' + meta.text : meta.text
+  const failedSuffix = status === 'failed' && failed && !compact ? ' · ' + failed : ''
+  const coreText = failedSuffix && text.endsWith(failedSuffix) ? text.slice(0, -failedSuffix.length) : text
   return (
     <span className={'inline-flex items-center gap-1 rounded border bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] ' + meta.tone}>
       <Icon size={9} className={status === 'running' ? 'animate-spin' : ''} />
-      {compact ? label + ' ' + meta.text : meta.text}
+      <span>{coreText}</span>
+      {failedSuffix && <span>{failedSuffix}</span>}
     </span>
   )
 }
