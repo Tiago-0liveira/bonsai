@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
@@ -239,6 +240,33 @@ func TestDiscoveryRootItselfAndNoSymlinkTraversal(t *testing.T) {
 	scan = scanRoot(context.Background(), config.ProjectRoot{Path: root})
 	if len(scan.repos) != 1 || scan.diagnostic.Truncated {
 		t.Fatal(scan)
+	}
+}
+
+func TestDiscoveryRefreshAllowsMoreThanThreeSecondsPerRoot(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if _, err := config.UpdateProjectRoots(path, "add", 0, root, ""); err != nil {
+		t.Fatal(err)
+	}
+	r := newProjectRegistry(path, root)
+	var remaining time.Duration
+	r.scan = func(ctx context.Context, root config.ProjectRoot) rootScan {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("discovery scan should have a safety deadline")
+		}
+		remaining = time.Until(deadline)
+		return rootScan{
+			diagnostic: RootDiagnostic{RootID: root.ID, Available: true, Messages: []string{}},
+			complete:   true,
+		}
+	}
+	if _, err := r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if remaining <= 5*time.Second {
+		t.Fatalf("root discovery deadline is still too short: %v", remaining)
 	}
 }
 
