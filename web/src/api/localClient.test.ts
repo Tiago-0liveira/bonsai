@@ -22,7 +22,7 @@ describe('local Bonsai client', () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
-      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 2 }))
       .mockResolvedValueOnce(jsonResponse({ token: 'secret-session', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
 
@@ -98,7 +98,7 @@ describe('local event authentication', () => {
     __resetLocalClientForTests()
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
-      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 2 }))
       .mockResolvedValueOnce(jsonResponse({ token: 'event-session', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
     await connectLocalBonsai()
 
