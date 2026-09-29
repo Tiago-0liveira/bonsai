@@ -49,7 +49,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	subscriptionID, events := s.eventHub.subscribe()
 	defer s.eventHub.unsubscribe(subscriptionID)
-	if err := conn.WriteJSON(map[string]any{"type": "ready", "sequence": s.sequence.Load()}); err != nil {
+	s.stateSync.SubscriberReady()
+	if err := conn.WriteJSON(map[string]any{"type": "ready", "epoch": s.stateSync.epoch}); err != nil {
 		return
 	}
 
@@ -84,7 +85,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-ticker.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "sequence": s.sequence.Load()}); err != nil {
+			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "epoch": s.stateSync.epoch}); err != nil {
 				return
 			}
 		}

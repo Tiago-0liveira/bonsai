@@ -4,6 +4,7 @@ import {
   connectLocalBonsai,
   getLocalConnectionSnapshot,
   localFetch,
+  openLocalEvents,
 } from './localClient'
 
 function jsonResponse(value: unknown, status = 200) {
@@ -64,5 +65,66 @@ describe('local Bonsai client', () => {
     await connectLocalBonsai()
     expect(getLocalConnectionSnapshot().status).toBe('bonsai-not-running')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+class FakeWebSocket {
+  static latest: FakeWebSocket | undefined
+  private listeners = new Map<string, Set<(event: Event | MessageEvent) => void>>()
+  sent: string[] = []
+  constructor(_url: string) { FakeWebSocket.latest = this }
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    const fn = typeof listener === 'function' ? listener : (event: Event) => listener.handleEvent(event)
+    const set = this.listeners.get(type) ?? new Set()
+    set.add(fn as (event: Event | MessageEvent) => void)
+    this.listeners.set(type, set)
+  }
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    if (typeof listener === 'function') this.listeners.get(type)?.delete(listener as (event: Event | MessageEvent) => void)
+  }
+  send(value: string) { this.sent.push(value) }
+  close() { this.emit('close', new CloseEvent('close')) }
+  open() { this.emit('open', new Event('open')) }
+  message(value: unknown) { this.emit('message', new MessageEvent('message', { data: JSON.stringify(value) })) }
+  private emit(type: string, event: Event | MessageEvent) {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event)
+  }
+}
+
+describe('local event authentication', () => {
+  it('does not resolve the event connection until authenticated ready supplies an epoch', async () => {
+    vi.restoreAllMocks()
+    __resetLocalClientForTests()
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 2 }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'event-session', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
+    await connectLocalBonsai()
+
+    const original = globalThis.WebSocket
+    Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: FakeWebSocket })
+    try {
+      const events: unknown[] = []
+      let resolved = false
+      const pending = openLocalEvents(event => events.push(event)).then(value => {
+        resolved = true
+        return value
+      })
+      const socket = FakeWebSocket.latest
+      expect(socket).toBeDefined()
+      socket?.open()
+      expect(socket?.sent).toEqual([JSON.stringify({ type: 'authenticate', token: 'event-session' })])
+      await Promise.resolve()
+      expect(resolved).toBe(false)
+
+      socket?.message({ type: 'ready', epoch: 'backend-epoch' })
+      const connection = await pending
+      expect(connection.epoch).toBe('backend-epoch')
+      expect(events).toContainEqual({ type: 'ready', epoch: 'backend-epoch' })
+    } finally {
+      Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: original })
+      FakeWebSocket.latest = undefined
+    }
   })
 })

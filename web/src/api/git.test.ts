@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useBonsaiStore } from '../stores/bonsai'
-import { applySnapshot, reconcileCatalog, projectForGitHubRepository, type Snapshot } from './git'
+import { __resetGitSyncForTests, applySnapshot, reconcileCatalog, projectForGitHubRepository, type Snapshot } from './git'
 import { fileTree, flattenFiles } from './files'
 
 describe('canonical Git snapshots', () => {
-  beforeEach(() => useBonsaiStore.setState({ projects: [{ id: 'repo', workspaceId: 'workspace', name: 'repo', repository: 'owner/repo', description: '', health: 'idle', defaultBranch: 'main', worktreeIds: [], openPrCount: 0 }], worktrees: [], pullRequests: [], gitBranches: {}, gitOnline: {}, agents: [] }))
+  beforeEach(() => {
+    __resetGitSyncForTests()
+    useBonsaiStore.setState({ projects: [{ id: 'repo', workspaceId: 'workspace', name: 'repo', repository: 'owner/repo', description: '', health: 'idle', defaultBranch: 'main', worktreeIds: [], openPrCount: 0 }], worktrees: [], pullRequests: [], gitBranches: {}, gitOnline: {}, syncFreshness: {}, processes: [], agents: [] })
+  })
   it('keeps fetched refs distinct from newer GitHub branch heads', () => {
     const snapshot: Snapshot = { repository: { id: 'repo', workspace_id: 'workspace', full_name: 'owner/repo', default_branch: 'main' }, online: true, sequence: 1, metadata: {}, local: { branches: [{ name: 'origin/main', remote: true, local_remote_ref_sha: 'fetched' }], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'main', main: true, local_head_sha: 'local' }] }, remote: { repository: { id: 123, full_name: 'owner/repo', default_branch: 'main' }, branches: [{ name: 'main', remote_head_sha: 'newer-remote' }], pull_requests: [] } }
     applySnapshot(snapshot)
@@ -46,5 +49,175 @@ describe('catalog reconciliation', () => {
     applySnapshot(snapshot('one'))
     expect(projectForGitHubRepository(999)).toEqual(['two'])
     expect(useBonsaiStore.getState().projects.map(p => p.id)).toEqual(['two'])
+  })
+})
+
+
+describe('synchronized snapshot ordering', () => {
+  beforeEach(() => {
+    __resetGitSyncForTests()
+    useBonsaiStore.setState({
+      projects: [{ id: 'repo', workspaceId: 'workspace', name: 'repo', repository: 'owner/repo', description: '', health: 'idle', defaultBranch: 'main', worktreeIds: [], openPrCount: 0 }],
+      worktrees: [],
+      processes: [],
+      pullRequests: [],
+      gitBranches: {},
+      gitOnline: {},
+      syncFreshness: {},
+      agents: [],
+    })
+  })
+
+  const repository = { id: 'repo', workspace_id: 'workspace', full_name: 'owner/repo', default_branch: 'main' }
+
+  it('discards an older projection that resolves after a newer sequence', () => {
+    const newer: Snapshot = {
+      epoch: 'epoch-a',
+      repository,
+      sequence: 2,
+      online: true,
+      metadata: {},
+      local: { branches: [], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'newer', main: true, local_head_sha: 'two' }] },
+    }
+    const older: Snapshot = {
+      ...newer,
+      sequence: 1,
+      local: { branches: [], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'older', main: true, local_head_sha: 'one' }] },
+    }
+    expect(applySnapshot(newer)).toBe(true)
+    expect(applySnapshot(older)).toBe(false)
+    expect(useBonsaiStore.getState().worktrees[0].branch).toBe('newer')
+  })
+
+  it('uses backend PR association, SHA-specific CI, partial status errors, and live processes', () => {
+    const pr = {
+      number: 42,
+      title: 'Feature',
+      body: '',
+      state: 'open',
+      draft: false,
+      head: 'feature',
+      head_repository: 'owner/repo',
+      base: 'main',
+      head_sha: 'remote-feature',
+      author: 'dev',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    }
+    const snapshot: Snapshot = {
+      epoch: 'epoch-a',
+      repository,
+      sequence: 3,
+      online: true,
+      metadata: {},
+      freshness: {
+        local: { state: 'ready', updated_at: '2026-01-01T00:00:00Z' },
+        processes: { state: 'ready', updated_at: '2026-01-01T00:00:00Z' },
+        provider: { state: 'ready', updated_at: '2026-01-01T00:00:00Z' },
+      },
+      local: {
+        branches: [],
+        worktrees: [{
+          id: 'wt',
+          repository_id: 'repo',
+          branch: 'feature',
+          main: false,
+          local_head_sha: 'local-feature',
+          status_error: { code: 'status_unavailable', message: 'worktree disappeared' },
+          status: {
+            ahead: 7,
+            behind: 4,
+            staged: 0,
+            modified: 0,
+            untracked: 0,
+            files: [],
+            git_state: 'normal',
+            dirty: false,
+            upstream: 'origin/feature',
+            divergence_available: false,
+          },
+        }],
+      },
+      remote: {
+        repository: { id: 123, full_name: 'owner/repo', default_branch: 'main' },
+        branches: [],
+        pull_requests: [pr],
+      },
+      worktree_state: {
+        wt: {
+          pull_request: pr,
+          ci: {
+            status: 'none',
+            checked_sha: 'remote-feature',
+            checks: [],
+            freshness: { state: 'ready', updated_at: '2026-01-01T00:00:00Z' },
+          },
+        },
+      },
+      processes: [{
+        id: 'repo:7',
+        daemon_id: 7,
+        project_id: 'repo',
+        worktree_id: 'wt',
+        label: 'dev server',
+        command: 'pnpm dev',
+        status: 'orphan',
+        pid: 321,
+        expected_port: 5173,
+      }],
+    }
+    expect(applySnapshot(snapshot)).toBe(true)
+    const state = useBonsaiStore.getState()
+    expect(state.worktrees[0]).toMatchObject({
+      prNumber: 42,
+      ciStatus: 'none',
+      checkedSha: 'remote-feature',
+      divergenceAvailable: false,
+      ahead: 0,
+      behind: 0,
+      gitStatusError: 'worktree disappeared',
+    })
+    expect(state.processes[0]).toMatchObject({
+      id: 'repo:7',
+      daemonId: 7,
+      worktreeId: 'wt',
+      lifecycleStatus: 'orphan',
+      status: 'warning',
+      port: 5173,
+    })
+  })
+
+  it('does not associate a same-named PR when the backend left the worktree unassociated', () => {
+    const snapshot: Snapshot = {
+      epoch: 'epoch-a',
+      repository,
+      sequence: 1,
+      online: true,
+      metadata: {},
+      local: { branches: [], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'feature', main: false, local_head_sha: 'local' }] },
+      remote: {
+        repository: { id: 123, full_name: 'owner/repo', default_branch: 'main' },
+        branches: [],
+        pull_requests: [{
+          number: 9,
+          title: 'Fork PR',
+          body: '',
+          state: 'open',
+          draft: false,
+          head: 'feature',
+          head_repository: 'fork/repo',
+          base: 'main',
+          head_sha: 'fork-head',
+          author: 'forker',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        }],
+      },
+      worktree_state: {
+        wt: { ci: { status: 'unknown', checks: [], freshness: { state: 'unavailable' } } },
+      },
+    }
+    applySnapshot(snapshot)
+    expect(useBonsaiStore.getState().worktrees[0].prNumber).toBeUndefined()
   })
 })

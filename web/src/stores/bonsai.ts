@@ -26,9 +26,11 @@ import type {
   EnvVariable,
   NodePlacement,
   Project,
+  Process,
   PullRequest,
   Selection,
   StartAgentInput,
+  SyncFreshness,
   ViewportState,
   Worktree,
   WorktreeTag,
@@ -54,6 +56,8 @@ interface BonsaiState {
   gitOnline: Record<string, boolean>
   gitRevision: number
   gitError: string
+  syncFreshness: Record<string, Record<string, SyncFreshness>>
+  processes: Process[]
   projects: Project[]
   activeWorkspaceId: string
   activeProjectId: string
@@ -159,6 +163,8 @@ interface BonsaiState {
   setSubtreeMoveRoot: (id: string | null) => void
   viewport: ViewportState
   setViewport: (viewport: ViewportState) => void
+  expandedHistoryWorktreeIds: string[]
+  toggleWorktreeHistory: (id: string) => void
   canvasCommand: { type: 'fit' | 'layout'; nonce: number }
   requestCanvasAction: (type: 'fit' | 'layout') => void
 
@@ -234,6 +240,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       gitOnline: {},
       gitRevision: 0,
       gitError: '',
+      syncFreshness: {},
+      processes: [],
       rootSettings: null,
       rootsLoading: false,
       rootsSaving: false,
@@ -653,8 +661,16 @@ export const useBonsaiStore = create<BonsaiState>()(
       setSubtreeMoveRoot: (subtreeMoveRootId) => set({ subtreeMoveRootId }),
       viewport: { x: 0, y: 0, zoom: 0.82 },
       setViewport: (viewport) => set({ viewport }),
+      expandedHistoryWorktreeIds: [],
+      toggleWorktreeHistory: (id) => set((state) => ({
+        expandedHistoryWorktreeIds: state.expandedHistoryWorktreeIds.includes(id)
+          ? state.expandedHistoryWorktreeIds.filter((item) => item !== id)
+          : [...state.expandedHistoryWorktreeIds, id],
+      })),
       canvasCommand: { type: 'fit', nonce: 0 },
-      requestCanvasAction: (type) => set((state) => ({ canvasCommand: { type, nonce: state.canvasCommand.nonce + 1 } })),
+      requestCanvasAction: (type) => set((state) => ({
+        canvasCommand: { type, nonce: state.canvasCommand.nonce + 1 },
+      })),
 
       paletteOpen: false,
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),

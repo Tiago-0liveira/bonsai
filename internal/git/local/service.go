@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,24 +150,35 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 		return domain.RepositoryState{}, e
 	}
 
-	paths, e := core.ListWorktreesContext(ctx, r.Root)
-	if e != nil {
-		return domain.RepositoryState{}, e
-	}
-	byID := map[string]string{}
-	for _, tree := range paths {
-		byID[ID(id, tree.Path)] = tree.Path
-	}
 	for i := range w {
-		st, err := status(ctx, byID[w[i].ID])
+		st, err := statusOverview(ctx, w[i].Path)
 		if err != nil {
-			return domain.RepositoryState{}, err
+			w[i].StatusError = &domain.StateError{Code: domain.Code(err), Message: err.Error()}
+			if w[i].StatusError.Code == "" {
+				w[i].StatusError.Code = "status_unavailable"
+			}
+			continue
 		}
 		w[i].Status = &st
 	}
 
 	def, _ := trimmed(ctx, r.Root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
-	return domain.RepositoryState{ID: id, DefaultBranch: strings.TrimPrefix(def, "refs/remotes/origin/"), Branches: b, Worktrees: w}, nil
+	defaultBranch := strings.TrimPrefix(def, "refs/remotes/origin/")
+	if defaultBranch == "" {
+		for _, tree := range w {
+			if tree.Main && tree.Branch != "" && tree.Branch != "(detached)" {
+				defaultBranch = tree.Branch
+				break
+			}
+		}
+	}
+	return domain.RepositoryState{
+		ID:            id,
+		DefaultBranch: defaultBranch,
+		Branches:      b,
+		Worktrees:     w,
+		Remotes:       remoteIdentities(ctx, r.Root),
+	}, nil
 }
 func (s *Service) ListBranches(ctx context.Context, id string) ([]domain.Branch, error) {
 	r, e := s.repo(id)
@@ -210,7 +222,55 @@ func (s *Service) ListWorktrees(ctx context.Context, id string) ([]domain.Worktr
 		if t.Bare {
 			continue
 		}
-		result = append(result, domain.Worktree{ID: ID(id, t.Path), RepositoryID: id, Branch: t.Branch, HeadSHA: t.HEAD, Main: t.IsMain})
+		result = append(result, domain.Worktree{ID: ID(id, t.Path), RepositoryID: id, Path: t.Path, Branch: t.Branch, HeadSHA: t.HEAD, Main: t.IsMain})
 	}
 	return result, nil
+}
+
+func remoteIdentities(ctx context.Context, dir string) []domain.RemoteIdentity {
+	out, err := run(ctx, dir, "remote")
+	if err != nil {
+		return nil
+	}
+	identities := []domain.RemoteIdentity{}
+	for _, name := range strings.Fields(out) {
+		raw, err := trimmed(ctx, dir, "remote", "get-url", name)
+		if err != nil || raw == "" {
+			continue
+		}
+		identities = append(identities, sanitizeRemoteIdentity(name, raw))
+	}
+	return identities
+}
+
+func sanitizeRemoteIdentity(name, raw string) domain.RemoteIdentity {
+	identity := domain.RemoteIdentity{Name: name}
+	host, path := "", ""
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return identity
+		}
+		host = strings.ToLower(u.Hostname())
+		path = u.Path
+	} else {
+		value := raw
+		if at := strings.LastIndex(value, "@"); at >= 0 {
+			value = value[at+1:]
+		}
+		if colon := strings.Index(value, ":"); colon > 0 {
+			host = strings.ToLower(value[:colon])
+			path = value[colon+1:]
+		}
+	}
+	identity.Host = host
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(path, ".git"), "/"), "/")
+	if len(parts) != 2 {
+		return identity
+	}
+	identity.Owner, identity.Repository = parts[0], parts[1]
+	if strings.EqualFold(host, "github.com") && identity.Owner != "" && identity.Repository != "" {
+		identity.FullName = identity.Owner + "/" + identity.Repository
+	}
+	return identity
 }

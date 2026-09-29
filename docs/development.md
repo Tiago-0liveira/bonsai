@@ -131,7 +131,7 @@ and the rule that normal `bonsai serve` cannot supervise development services.
 
 ## Project roots and multi-repository routing
 
-Local API protocol **2** requires the browser and backend to be upgraded together.
+Local API protocol **3** requires the browser and backend to be upgraded together.
 The per-repository launch daemon still supervises the API; project discovery does
 not change either serve lifecycle. A launch repository is not implicitly added to
 the browser catalog, and legacy unscoped routes only resolve it if configured.
@@ -185,3 +185,33 @@ state is excluded from browser persistence; existing `local` project selections
 migrate to the configured launch descriptor while stable worktree IDs and layout
 preferences are kept. CI's Linux/macOS/Windows matrix exercises the native path
 and locking code; the race suite covers concurrent stores and API reconciliation.
+
+
+## Worktree synchronization validation
+
+Protocol 3 deliberately separates local reconciliation from provider enrichment.
+When testing the browser/backend boundary, connect the WebSocket first and wait
+for authenticated `ready` before loading settings, the project catalog, and
+project projections. A reconnect receives a backend epoch; project snapshots and
+events are ordered by their per-project sequence inside that epoch. Tests should
+exercise events before/during/after bootstrap, out-of-order responses, root
+removal during an in-flight read, and slow-client disconnect followed by full
+reconciliation.
+
+The server polls local Git every 5 seconds and processes every 2 seconds while
+there are browser subscribers. Project discovery remains every 30 seconds.
+Provider metadata has a 60-second normal TTL and pending checks a 15-second TTL.
+These intervals are initial bounded defaults; do not add component-owned polling
+or a second filesystem watcher to reduce them.
+
+Provider loss must leave local worktrees and process controls usable. Failed
+reads preserve the last successful value as stale and expose a structured error;
+a successful empty result is the only thing that clears an authoritative list.
+Use the Playwright delayed-provider fixture to verify that local worktrees render
+before PR/CI enrichment.
+
+Bootstrap and polling must not execute `git fetch`. For network-sensitive
+changes, capture Git command traffic or use a local bare remote and assert its
+tracking refs change only after an explicit fetch/pull operation. Run race tests
+for `internal/server/localapi`, `internal/daemon/client`, and touched local Git
+packages in addition to the normal cross-platform CI matrix.

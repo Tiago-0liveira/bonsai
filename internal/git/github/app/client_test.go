@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github"
@@ -68,5 +69,21 @@ func TestRateLimitAndUnknownMergeability(t *testing.T) {
 	_, e := c.Repository(context.Background(), "owner/repo")
 	if domain.Code(e) != "rate_limited" {
 		t.Fatal(e)
+	}
+}
+
+func TestPullRequestIncludesHeadRepositoryIdentity(t *testing.T) {
+	var raw rawPR
+	if err := json.Unmarshal([]byte(`{
+		"number": 12,
+		"state": "open",
+		"head": {"ref": "feature", "sha": "abc", "repo": {"full_name": "fork/widgets"}},
+		"base": {"ref": "main", "sha": "def"}
+	}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	pull := raw.domain()
+	if pull.Head != "feature" || pull.HeadSHA != "abc" || pull.HeadRepository != "fork/widgets" {
+		t.Fatalf("pull request identity = %+v", pull)
 	}
 }

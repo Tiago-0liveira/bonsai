@@ -39,6 +39,11 @@ func (c *Client) dial() (net.Conn, error) {
 	return net.DialTimeout("unix", c.store.SockPath(), time.Second)
 }
 
+func (c *Client) dialContext(ctx context.Context) (net.Conn, error) {
+	dialer := net.Dialer{Timeout: time.Second}
+	return dialer.DialContext(ctx, "unix", c.store.SockPath())
+}
+
 // alive reports whether a daemon is currently reachable.
 func (c *Client) alive() bool {
 	conn, err := c.dial()
@@ -154,18 +159,40 @@ func (c *Client) autostart() error {
 
 // roundtrip sends one request and returns the single terminal response frame.
 func (c *Client) roundtrip(req *protocol.Request) (*protocol.Response, error) {
-	conn, err := c.dial()
+	return c.roundtripContext(context.Background(), req)
+}
+
+func (c *Client) roundtripContext(ctx context.Context, req *protocol.Request) (*protocol.Response, error) {
+	conn, err := c.dialContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	cancelled := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-cancelled:
+		}
+	}()
+	defer close(cancelled)
 	if err := protocol.NewEncoder(conn).WriteRequest(req); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	dec := protocol.NewDecoder(conn)
 	for {
 		resp, err := dec.ReadResponse()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, err
 		}
 		if resp.Error != "" {
@@ -213,15 +240,22 @@ func (c *Client) SpawnExec(worktree, branch, workingDir, label, program string, 
 // List returns every process record for the repo. With no live daemon it reads
 // the registry directly, marking stale active records as "lost".
 func (c *Client) List() ([]*procstore.Record, error) {
+	return c.ListContext(context.Background())
+}
+
+func (c *Client) ListContext(ctx context.Context) ([]*procstore.Record, error) {
 	if c.alive() {
 		if err := c.CheckCompatibility(); err != nil {
 			return nil, err
 		}
-		resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindList})
+		resp, err := c.roundtripContext(ctx, &protocol.Request{Kind: protocol.KindList})
 		if err != nil {
 			return nil, err
 		}
 		return resp.Records, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	recs, err := c.store.ListRecords()
 	if err != nil {
@@ -456,10 +490,14 @@ func (c *Client) Attach(id int, onChunk func(string) error) error {
 // The HTTP API uses this boundary instead of opening repositories or invoking
 // git/gh itself.
 func (c *Client) Git(command gitbridge.Command) (*gitbridge.Result, error) {
+	return c.GitContext(context.Background(), command)
+}
+
+func (c *Client) GitContext(ctx context.Context, command gitbridge.Command) (*gitbridge.Result, error) {
 	if err := c.ensureDaemon(); err != nil {
 		return nil, err
 	}
-	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindGit, Git: &command})
+	resp, err := c.roundtripContext(ctx, &protocol.Request{Kind: protocol.KindGit, Git: &command})
 	if err != nil {
 		return nil, err
 	}

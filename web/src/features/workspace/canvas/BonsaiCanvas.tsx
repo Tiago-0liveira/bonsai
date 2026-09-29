@@ -65,6 +65,18 @@ interface DragSnapshot {
   positions: Record<string, { x: number; y: number }>
 }
 
+function canonicalLayoutNodes(nodes: Node[]) {
+  return nodes.map((node) => {
+    if (node.type !== 'worktree') return node
+    return {
+      ...node,
+      // Ignore transient expanded/collapsed DOM height, but keep History
+      // metadata so geometry can reserve the full expansion deterministically.
+      measured: node.measured ? { ...node.measured, height: undefined } : undefined,
+    }
+  })
+}
+
 function storablePositions(
   nodes: Node[],
   positions: Record<string, { x: number; y: number }>,
@@ -606,21 +618,24 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       return
     }
 
-    // Layout commands first collapse branch-local detail in NodeShell. Wait for
-    // React Flow to observe the resulting node dimensions before measuring the
-    // graph, otherwise the next layout pass sees different geometry and drifts.
+    // History expansion changes measured worktree height but is presentation
+    // state, not graph topology. Compute against canonical collapsed worktree
+    // dimensions, commit placements first, then collapse History. Consumers that
+    // wait for History to disappear therefore observe the completed layout.
     let secondFrame = 0
     const firstFrame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(() => {
         const currentNodes = getNodes()
+        const layoutNodes = canonicalLayoutNodes(currentNodes)
         const currentEdges = getEdges()
         const currentPlacements = useBonsaiStore.getState().nodePlacements
-        const positions = computeGlobalPlacements(currentNodes, currentEdges, currentPlacements)
+        const positions = computeGlobalPlacements(layoutNodes, currentEdges, currentPlacements)
         setNodes((current) =>
           current.map((node) => ({ ...node, position: positions[node.id] ?? node.position })),
         )
         const generated = storablePositions(currentNodes, positions)
         setGeneratedNodePlacements(generated)
+        useBonsaiStore.setState({ expandedHistoryWorktreeIds: [] })
         requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
       })
     })

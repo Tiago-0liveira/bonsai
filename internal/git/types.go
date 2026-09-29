@@ -5,11 +5,19 @@ import "time"
 
 type RepositoryState struct {
 	// AffectedWorktrees is an in-process watcher hint, never canonical wire state.
-	AffectedWorktrees []string   `json:"-"`
-	ID                string     `json:"id"`
-	DefaultBranch     string     `json:"default_branch"`
-	Branches          []Branch   `json:"branches"`
-	Worktrees         []Worktree `json:"worktrees"`
+	AffectedWorktrees []string         `json:"-"`
+	ID                string           `json:"id"`
+	DefaultBranch     string           `json:"default_branch"`
+	Branches          []Branch         `json:"branches"`
+	Worktrees         []Worktree       `json:"worktrees"`
+	Remotes           []RemoteIdentity `json:"remotes,omitempty"`
+}
+type RemoteIdentity struct {
+	Name       string `json:"name"`
+	Host       string `json:"host,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	Repository string `json:"repository,omitempty"`
+	FullName   string `json:"full_name,omitempty"`
 }
 type Branch struct {
 	Name              string `json:"name"`
@@ -19,31 +27,39 @@ type Branch struct {
 	Upstream          string `json:"upstream,omitempty"`
 	Remote            bool   `json:"remote"`
 }
+type StateError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
 type Worktree struct {
 	ID           string             `json:"id"`
 	RepositoryID string             `json:"repository_id"`
+	Path         string             `json:"path,omitempty"`
 	Branch       string             `json:"branch"`
 	HeadSHA      string             `json:"local_head_sha"`
 	Main         bool               `json:"main"`
 	Status       *WorkingTreeStatus `json:"status,omitempty"`
+	StatusError  *StateError        `json:"status_error,omitempty"`
 }
 type WorkingTreeStatus struct {
-	ContentVersion    string       `json:"content_version"`
-	Branch            string       `json:"branch"`
-	HeadSHA           string       `json:"local_head_sha"`
-	Upstream          string       `json:"upstream"`
-	LocalRemoteRefSHA string       `json:"local_remote_ref_sha"`
-	Ahead             int          `json:"ahead"`
-	Behind            int          `json:"behind"`
-	Staged            int          `json:"staged"`
-	Modified          int          `json:"modified"`
-	Untracked         int          `json:"untracked"`
-	Conflicted        []string     `json:"conflicted"`
-	Files             []FileStatus `json:"files"`
-	LastCommit        *Commit      `json:"last_commit,omitempty"`
-	StashCount        int          `json:"stash_count"`
-	Dirty             bool         `json:"dirty"`
-	GitState          string       `json:"git_state"`
+	ContentVersion      string       `json:"content_version"`
+	Branch              string       `json:"branch"`
+	HeadState           string       `json:"head_state,omitempty"`
+	HeadSHA             string       `json:"local_head_sha"`
+	Upstream            string       `json:"upstream"`
+	LocalRemoteRefSHA   string       `json:"local_remote_ref_sha"`
+	DivergenceAvailable bool         `json:"divergence_available"`
+	Ahead               int          `json:"ahead"`
+	Behind              int          `json:"behind"`
+	Staged              int          `json:"staged"`
+	Modified            int          `json:"modified"`
+	Untracked           int          `json:"untracked"`
+	Conflicted          []string     `json:"conflicted"`
+	Files               []FileStatus `json:"files"`
+	LastCommit          *Commit      `json:"last_commit,omitempty"`
+	StashCount          int          `json:"stash_count"`
+	Dirty               bool         `json:"dirty"`
+	GitState            string       `json:"git_state"`
 }
 type FileStatus struct {
 	Path     string `json:"path"`

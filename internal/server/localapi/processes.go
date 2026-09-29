@@ -36,6 +36,7 @@ func (s *Server) processRestart(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "process_restart_failed", err.Error())
 		return
 	}
+	s.stateSync.MarkStale(s.registry.Default().info.ID, refreshProcesses)
 	writeJSON(w, http.StatusOK, record)
 }
 
@@ -49,6 +50,7 @@ func (s *Server) processStop(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "process_stop_failed", err.Error())
 		return
 	}
+	s.stateSync.MarkStale(s.registry.Default().info.ID, refreshProcesses)
 	writeJSON(w, http.StatusOK, map[string]any{"killed": killed})
 }
 

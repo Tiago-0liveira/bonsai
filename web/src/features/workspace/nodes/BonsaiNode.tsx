@@ -1,5 +1,4 @@
 import { openGitHub } from '../../../api/git'
-import { useEffect, useState } from 'react'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
@@ -108,12 +107,20 @@ function CiBadge({ status, failed = 0, compact = false, label = 'CI' }: { status
         ? { text: compact ? 'running' : label + ' running', icon: LoaderCircle, tone: 'text-[rgb(var(--blue))] border-[rgb(var(--blue)/.30)]' }
         : status === 'failed'
           ? { text: compact ? 'failed' : label + ' failed' + (failed ? ' · ' + failed : ''), icon: CircleX, tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.30)]' }
-          : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
+          : status === 'none'
+            ? { text: compact ? 'none' : label + ' no checks', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
+            : status === 'unknown'
+              ? { text: compact ? 'unknown' : label + ' unknown', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
+              : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
   const Icon = meta.icon
+  const text = compact ? label + ' ' + meta.text : meta.text
+  const failedSuffix = status === 'failed' && failed && !compact ? ' · ' + failed : ''
+  const coreText = failedSuffix && text.endsWith(failedSuffix) ? text.slice(0, -failedSuffix.length) : text
   return (
     <span className={'inline-flex items-center gap-1 rounded border bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] ' + meta.tone}>
       <Icon size={9} className={status === 'running' ? 'animate-spin' : ''} />
-      {compact ? label + ' ' + meta.text : meta.text}
+      <span>{coreText}</span>
+      {failedSuffix && <span>{failedSuffix}</span>}
     </span>
   )
 }
@@ -260,7 +267,8 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
 }
 
 function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolean }) {
-  const [historyOpen, setHistoryOpen] = useState(false)
+  const historyOpen = useBonsaiStore((state) => state.expandedHistoryWorktreeIds.includes(data.entityId))
+  const toggleWorktreeHistory = useBonsaiStore((state) => state.toggleWorktreeHistory)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
@@ -272,14 +280,9 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
-  const canvasCommand = useBonsaiStore((state) => state.canvasCommand)
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
-
-  useEffect(() => {
-    if (canvasCommand.type === 'layout' && canvasCommand.nonce) setHistoryOpen(false)
-  }, [canvasCommand.nonce, canvasCommand.type])
 
   if (data.kind === 'default-branch') return <DefaultBranchCard data={data} />
   if (data.kind === 'env') return <EnvCard data={data} />
@@ -377,7 +380,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation()
-                      setHistoryOpen((value) => !value)
+                      toggleWorktreeHistory(data.entityId)
                     }}
                     className="nodrag flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[8px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--bg)/.45)] hover:text-[rgb(var(--text))]"
                   >

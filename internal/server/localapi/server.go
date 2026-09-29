@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -52,7 +51,7 @@ type Server struct {
 	sessions      *sessionStore
 	state         *gitstore.Store
 	eventHub      *eventHub
-	sequence      *atomic.Uint64
+	stateSync     *stateSync
 	rootsPath     string
 }
 
@@ -91,17 +90,20 @@ func New(cfg Config) (*Server, error) {
 	if _, err := registry.Refresh(context.Background()); err != nil {
 		return nil, err
 	}
-	return &Server{
+	events := newEventHub()
+	s := &Server{
 		repoDir:       cfg.RepoDir,
 		expectedHost:  cfg.Address,
 		browserOrigin: cfg.BrowserOrigin,
 		securityMode:  cfg.SecurityMode,
 		registry:      registry,
 		rootsPath:     rootsPath,
-		sequence:      &atomic.Uint64{},
 		sessions:      newSessionStore(),
-		eventHub:      newEventHub(),
-	}, nil
+		eventHub:      events,
+	}
+	s.stateSync = newStateSync(registry, events)
+	s.stateSync.ReconcileCatalog()
+	return s, nil
 }
 
 func (s *Server) routes() *http.ServeMux {
@@ -148,7 +150,8 @@ func (s *Server) Handler() http.Handler {
 			writeAPIError(w, http.StatusNotFound, "project_unavailable", "Project or worktree is not in the configured roots. Add its directory in Settings.")
 			return
 		}
-		if !project.info.Available {
+		allowStaleSnapshot := r.Method == http.MethodGet && path[1] == "projects" && len(path) == 4 && path[3] == "git"
+		if !project.info.Available && !allowStaleSnapshot {
 			writeAPIError(w, http.StatusServiceUnavailable, "project_unavailable", "Project directory is unavailable")
 			return
 		}
@@ -161,9 +164,9 @@ func (s *Server) Handler() http.Handler {
 }
 func (s *Server) Reconcile(ctx context.Context) error {
 	changed, err := s.registry.Refresh(ctx)
+	s.stateSync.ReconcileCatalog()
 	if changed || err != nil {
-		s.sequence.Add(1)
-		s.eventHub.publish(localEvent{Type: "catalog"})
+		s.eventHub.publish(localEvent{Type: "catalog", Epoch: s.stateSync.epoch})
 	}
 	return err
 }
@@ -207,6 +210,7 @@ func Run(cfg Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go s.reconcilePeriodically(ctx)
+	go s.stateSync.Run(ctx)
 
 	server := &http.Server{
 		Addr:              cfg.Address,

@@ -122,6 +122,7 @@ function status(ahead: number, behind: number, files: number, gitState: string) 
   return {
     ahead,
     behind,
+    divergence_available: true,
     staged: 0,
     modified: files,
     untracked: 0,
@@ -132,12 +133,39 @@ function status(ahead: number, behind: number, files: number, gitState: string) 
   }
 }
 
+function ciRollup(values: { status: string; conclusion: string }[]) {
+  if (!values.length) return 'none'
+  if (values.some(value => value.status !== 'completed')) return 'running'
+  if (values.some(value => !['success', 'neutral', 'skipped'].includes(value.conclusion))) return 'failed'
+  return 'passed'
+}
+
 function bonsaiSnapshot(metadata: Record<string, Metadata>) {
   const repository = repositories[0]
+  const associations: Array<[string, (typeof pullRequests)[number] | undefined]> = [
+    ['wt-web', pullRequests.find(pr => pr.number === 24)],
+    ['wt-docs', pullRequests.find(pr => pr.number === 25)],
+    ['wt-daemon', pullRequests.find(pr => pr.number === 23)],
+    ['wt-release', pullRequests.find(pr => pr.number === 22)],
+    ['wt-review', pullRequests.find(pr => pr.number === 21)],
+  ]
+  const worktreeState = Object.fromEntries(associations.map(([id, pull]) => {
+    const values = pull ? (checks[pull.head_sha] ?? []) : []
+    return [id, {
+      ...(pull ? { pull_request: { ...pull, head_repository: repository.full_name } } : {}),
+      ci: {
+        status: ciRollup(values),
+        checked_sha: pull?.head_sha,
+        checks: values,
+        freshness: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      },
+    }]
+  }))
   return {
+    epoch: 'e2e-epoch',
     repository,
     online: true,
-    sequence: 0,
+    sequence: 1,
     metadata,
     local: {
       branches: [
@@ -160,30 +188,58 @@ function bonsaiSnapshot(metadata: Record<string, Metadata>) {
     remote: {
       repository,
       branches: [],
-      pull_requests: pullRequests,
+      pull_requests: pullRequests.map(pr => ({ ...pr, head_repository: repository.full_name })),
+      updated_at: '2026-09-27T00:00:00Z',
     },
+    freshness: {
+      local: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      processes: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+    },
+    worktree_state: worktreeState,
+    processes: [
+      { id: 'bonsai:1', daemon_id: 1, project_id: 'bonsai', worktree_id: 'wt-web', label: 'Vite', command: 'pnpm dev', status: 'running', pid: 1001, expected_port: 5173 },
+      { id: 'bonsai:2', daemon_id: 2, project_id: 'bonsai', worktree_id: 'wt-daemon', label: 'bonsaid', command: 'go run . daemon', status: 'backoff', pid: 1002 },
+    ],
   }
 }
 
 function emptySnapshot(projectId: string) {
   const repository = repositories.find((item) => item.id === projectId)!
   return {
+    epoch: 'e2e-epoch',
     repository,
     online: true,
-    sequence: 0,
+    sequence: 1,
     metadata: {},
     local: { branches: [{ name: 'main', remote: false }], worktrees: [] },
-    remote: { repository, branches: [], pull_requests: [] },
+    remote: { repository, branches: [], pull_requests: [], updated_at: '2026-09-27T00:00:00Z' },
+    freshness: {
+      local: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      processes: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+      provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
+    },
+    worktree_state: {},
+    processes: [],
   }
 }
 
-export async function mockLocalEventSocket(page: Page) {
+export async function mockLocalEventSocket(page: Page, delayedProvider = false) {
   await page.routeWebSocket('ws://127.0.0.1:7001/events', socket => {
     socket.onMessage(message => {
       try {
         const payload = JSON.parse(String(message)) as { type?: string }
         if (payload.type === 'authenticate') {
-          socket.send(JSON.stringify({ type: 'ready', sequence: 0 }))
+          socket.send(JSON.stringify({ type: 'ready', epoch: 'e2e-epoch' }))
+          if (delayedProvider) {
+            setTimeout(() => socket.send(JSON.stringify({
+              type: 'project',
+              project_id: 'bonsai',
+              component: 'provider',
+              epoch: 'e2e-epoch',
+              sequence: 2,
+            })), 1_000)
+          }
         }
       } catch {
         // Invalid fixture messages are ignored just like production events.
@@ -192,8 +248,8 @@ export async function mockLocalEventSocket(page: Page) {
   })
 }
 
-export async function mockGitBackend(page: Page, emptyRoots = false) {
-  await mockLocalEventSocket(page)
+export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false) {
+  await mockLocalEventSocket(page, delayedProvider)
   const rootSettings = { version: 1, revision: 0, roots: emptyRoots ? [] as { id: string; path: string }[] : [{ id: 'root-fixture', path: '/projects' }], diagnostics: [], suggestions: ['/projects'] }
   const metadata: Record<string, Metadata> = {
     'wt-main': { tag: 'production', merge_target_branch: 'main', stack_preference: 'auto' },
@@ -202,6 +258,33 @@ export async function mockGitBackend(page: Page, emptyRoots = false) {
     'wt-daemon': { tag: 'bug', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-release': { tag: 'chore', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-review': { tag: 'review-code', merge_target_branch: 'chore/release-automation', stack_preference: 'auto' },
+  }
+  let bonsaiSnapshotReads = 0
+
+  const projectSnapshot = (projectId: string) => {
+    if (projectId !== 'bonsai') return emptySnapshot(projectId)
+    bonsaiSnapshotReads++
+    const full = bonsaiSnapshot(metadata)
+    if (!delayedProvider || bonsaiSnapshotReads > 1) return { ...full, sequence: delayedProvider ? 2 : 1 }
+    const localOnlyState = Object.fromEntries(
+      (full.local.worktrees as Array<{ id: string }>).map(worktree => [worktree.id, {
+        ci: {
+          status: 'unknown',
+          checks: [],
+          freshness: { state: 'unavailable', error: { code: 'provider_unavailable', message: 'GitHub is offline' } },
+        },
+      }]),
+    )
+    return {
+      ...full,
+      sequence: 1,
+      remote: undefined,
+      worktree_state: localOnlyState,
+      freshness: {
+        ...full.freshness,
+        provider: { state: 'error', error: { code: 'provider_unavailable', message: 'GitHub is offline' } },
+      },
+    }
   }
 
   await page.route('http://127.0.0.1:7001/**', async (route) => {
@@ -241,7 +324,14 @@ export async function mockGitBackend(page: Page, emptyRoots = false) {
     const snapshotMatch = path.match(/^\/api\/projects\/([^/]+)\/git$/)
     if (snapshotMatch) {
       const projectId = decodeURIComponent(snapshotMatch[1])
-      await route.fulfill({ json: projectId === 'bonsai' ? bonsaiSnapshot(metadata) : emptySnapshot(projectId) })
+      await route.fulfill({ json: projectSnapshot(projectId) })
+      return
+    }
+
+    const refreshMatch = path.match(/^\/api\/projects\/([^/]+)\/refresh$/)
+    if (refreshMatch && request.method() === 'POST') {
+      const projectId = decodeURIComponent(refreshMatch[1])
+      await route.fulfill({ status: 202, json: projectSnapshot(projectId) })
       return
     }
 

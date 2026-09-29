@@ -18,7 +18,8 @@ function branchIssues(worktree: Worktree, pr?: PullRequest) {
   if (worktree.gitState?.includes('conflict') || pr?.mergeable === false) issues.push('Resolve merge conflicts')
   const failed = pr ? pr.checks.filter((check) => check.status === 'failed').length : worktree.ciFailed
   if (failed || worktree.ciStatus === 'failed') issues.push(failed ? `${failed} failing check${failed === 1 ? '' : 's'}` : 'Checks failed')
-  if (worktree.behind) issues.push(`${worktree.behind} commit${worktree.behind === 1 ? '' : 's'} behind ${worktree.mergeTargetBranch}`)
+  if (worktree.gitStatusError) issues.push('Git status unavailable: ' + worktree.gitStatusError)
+  if (worktree.divergenceAvailable && worktree.behind) issues.push(`${worktree.behind} commit${worktree.behind === 1 ? '' : 's'} behind ${worktree.upstream || worktree.mergeTargetBranch}`)
   return issues
 }
 
@@ -136,8 +137,8 @@ export function Inspector() {
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={worktree.dirtyFiles} label="Uncommitted" icon={FileDiff} tone={worktree.dirtyFiles ? 'text-[rgb(var(--orange))]' : ''} />
-                <Metric value={worktree.ahead} label="Ahead" icon={ArrowUp} />
-                <Metric value={worktree.behind} label="Behind" icon={ArrowDown} tone={worktree.behind ? 'text-[rgb(var(--orange))]' : ''} />
+                <Metric value={worktree.divergenceAvailable ? worktree.ahead : '—'} label="Ahead" icon={ArrowUp} />
+                <Metric value={worktree.divergenceAvailable ? worktree.behind : '—'} label="Behind" icon={ArrowDown} tone={worktree.divergenceAvailable && worktree.behind ? 'text-[rgb(var(--orange))]' : ''} />
               </div>
               {issues.length > 0 && <div className="inspector-alert"><div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-[rgb(var(--orange))]"><AlertCircle size={13} />Before merging</div>{issues.map((issue) => <p key={issue} className="mt-1 text-[11px] leading-5 text-[rgb(var(--muted))]">{issue}</p>)}</div>}
               <Section title="Pull request" meta={pr && <span className="inspector-count">{pr.status}</span>}>
