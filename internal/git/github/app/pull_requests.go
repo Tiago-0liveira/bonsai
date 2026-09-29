@@ -12,7 +12,13 @@ import (
 type rawPR struct {
 	Number               int
 	Title, Body, State   string
-	Head, Base           struct{ Ref, SHA string }
+	Head                  struct {
+		Ref, SHA string
+		Repo     *struct {
+			FullName string `json:"full_name"`
+		}
+	}
+	Base                  struct{ Ref, SHA string }
 	User                 struct{ Login string }
 	Draft                bool
 	Merged               bool
@@ -30,7 +36,11 @@ func (p rawPR) domain() gh.PullRequest {
 	if p.Merged || p.MergedAt != nil {
 		state = "merged"
 	}
-	return gh.PullRequest{Number: p.Number, Title: p.Title, Body: p.Body, State: state, Head: p.Head.Ref, Base: p.Base.Ref, HeadSHA: p.Head.SHA, URL: p.HTMLURL, Draft: p.Draft, Author: p.User.Login, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, NodeID: p.NodeID}
+	headRepository := ""
+	if p.Head.Repo != nil {
+		headRepository = p.Head.Repo.FullName
+	}
+	return gh.PullRequest{Number: p.Number, Title: p.Title, Body: p.Body, State: state, Head: p.Head.Ref, HeadRepository: headRepository, Base: p.Base.Ref, HeadSHA: p.Head.SHA, URL: p.HTMLURL, Draft: p.Draft, Author: p.User.Login, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, NodeID: p.NodeID}
 }
 func (c *Client) PullRequests(ctx context.Context, repo string, f gh.PRFilter) ([]gh.PullRequest, error) {
 	p, e := repoPath(repo)
