@@ -286,7 +286,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 		return
 	}
 	token := localIdentityToken(before)
-	ctx, cancel := context.WithTimeout(context.Background(), providerReadTimeout)
+	ctx, cancel := s.readContext(providerReadTimeout)
 	defer cancel()
 	remote, providerFreshness := s.providers.repository(ctx, project.github, identity.FullName, s.now(), force)
 	if remote == nil {
