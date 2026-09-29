@@ -179,13 +179,14 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 }
 func TestDiscoveryLimitsMissingAndCancellation(t *testing.T) {
 	root := t.TempDir()
-	repoFixture(t, filepath.Join(root, "a", "b", "c", "d", "included"))
+	repoFixture(t, filepath.Join(root, "a", "b", "included"))
+	repoFixture(t, filepath.Join(root, "a", "b", "c", "too-deep"))
 	repoFixture(t, filepath.Join(root, "node_modules", "hidden"))
 	repoFixture(t, filepath.Join(root, "visible"))
 	gitFixture(t, root, "init", "--bare", "bare.git")
 	canonical, _ := config.CanonicalDirectory(root)
 	scan := scanRoot(context.Background(), config.ProjectRoot{ID: "root", Path: canonical})
-	if len(scan.repos) != 1 || !scan.diagnostic.Truncated || len(scan.diagnostic.Messages) < 2 {
+	if len(scan.repos) != 2 || !scan.diagnostic.Truncated || len(scan.diagnostic.Messages) < 2 {
 		t.Fatal(scan)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
