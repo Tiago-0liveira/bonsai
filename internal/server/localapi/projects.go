@@ -49,6 +49,7 @@ func (r *scopedProjectRegistry) List() []ProjectInfo {
 func (s *Server) registerProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects", s.projects)
 	mux.HandleFunc("GET /api/projects/{projectId}/git", s.projectSnapshot)
+	mux.HandleFunc("POST /api/projects/{projectId}/refresh", s.projectRefresh)
 	mux.HandleFunc("PATCH /api/worktrees/{id}/metadata", s.patchWorktreeMetadata)
 }
 
@@ -60,12 +61,50 @@ func (s *Server) projectSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !s.requireLocalProject(w, r) {
 		return
 	}
-	snapshot, err := s.browserSnapshot(r.Context())
-	if err != nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+	projectID := s.registry.Default().info.ID
+	snapshot, ok := s.stateSync.Snapshot(projectID)
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) projectRefresh(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLocalProject(w, r) {
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" || len(key) > 128 {
+		writeAPIError(w, http.StatusBadRequest, "invalid", "Idempotency-Key is required for refresh requests")
+		return
+	}
+	var input struct {
+		Scope string `json:"scope"`
+	}
+	if !decodeStrictJSON(w, r, &input) {
+		return
+	}
+	var scope refreshScope
+	switch input.Scope {
+	case "local":
+		scope = refreshLocal | refreshProcesses
+	case "provider":
+		scope = refreshProvider
+	case "all", "":
+		scope = refreshAll
+	default:
+		writeAPIError(w, http.StatusBadRequest, "invalid", "refresh scope must be local, provider, or all")
+		return
+	}
+	projectID := s.registry.Default().info.ID
+	s.stateSync.MarkStale(projectID, scope)
+	snapshot, ok := s.stateSync.CachedSnapshot(projectID)
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, snapshot)
 }
 
 func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +158,7 @@ func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "metadata_write_failed", err.Error())
 		return
 	}
-	s.publishProjectEvent(id)
+	s.stateSync.MarkStale(s.registry.Default().info.ID, refreshLocal)
 	current.RepositoryID = s.registry.Default().info.ID
 	writeJSON(w, http.StatusOK, current)
 }
