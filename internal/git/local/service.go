@@ -163,9 +163,18 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 	}
 
 	def, _ := trimmed(ctx, r.Root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+	defaultBranch := strings.TrimPrefix(def, "refs/remotes/origin/")
+	if defaultBranch == "" {
+		for _, tree := range w {
+			if tree.Main && tree.Branch != "" && tree.Branch != "(detached)" {
+				defaultBranch = tree.Branch
+				break
+			}
+		}
+	}
 	return domain.RepositoryState{
 		ID: id,
-		DefaultBranch: strings.TrimPrefix(def, "refs/remotes/origin/"),
+		DefaultBranch: defaultBranch,
 		Branches: b,
 		Worktrees: w,
 		Remotes: remoteIdentities(ctx, r.Root),
