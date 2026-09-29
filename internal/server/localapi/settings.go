@@ -114,7 +114,6 @@ func (s *Server) changeRootSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.rootSettingsValue(cfg))
 }
 
-
 func (s *Server) changeProjectSelection(w http.ResponseWriter, r *http.Request) {
 	registry, ok := s.registry.(*discoveredProjectRegistry)
 	if !ok {
