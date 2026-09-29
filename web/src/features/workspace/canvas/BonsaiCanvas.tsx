@@ -70,7 +70,8 @@ function canonicalLayoutNodes(nodes: Node[]) {
     if (node.type !== 'worktree') return node
     return {
       ...node,
-      data: { ...node.data, historyItems: [] },
+      // Ignore transient expanded/collapsed DOM height, but keep History
+      // metadata so geometry can reserve the full expansion deterministically.
       measured: node.measured ? { ...node.measured, height: undefined } : undefined,
     }
   })
