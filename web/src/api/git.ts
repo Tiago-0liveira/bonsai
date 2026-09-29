@@ -551,8 +551,6 @@ export async function createWorktree(input?: CreateWorktreeInput | string) {
   }
 }
 export async function updateMetadata(id: string, patch: Record<string, string>) {
-  const wt = useBonsaiStore.getState().worktrees.find(w => w.id === id)
-  if (!wt) return
   await request(`/api/worktrees/${encodeURIComponent(id)}/metadata`, patch, 'PATCH')
 }
 export async function loadPullRequest(id: string) {
@@ -737,6 +735,7 @@ export function startGitBackend() {
   let bootstrapping = true
   let bootstrapCatalog: Repository[] = []
   const bootstrapSnapshots = new Map<string, Snapshot>()
+  const pendingSnapshots = new Map<string, Snapshot>()
   const generation = ++activeGeneration
 
   const onEvent = (data: LocalEvent) => {
@@ -751,6 +750,11 @@ export function startGitBackend() {
         bootstrapCatalog = repos
       } else {
         reconcileCatalog(repos)
+        for (const [projectId, snapshot] of pendingSnapshots) {
+          if (!useBonsaiStore.getState().projects.some(project => project.id === projectId)) continue
+          pendingSnapshots.delete(projectId)
+          applySnapshot(snapshot, generation)
+        }
       }
       return
     }
@@ -760,6 +764,9 @@ export function startGitBackend() {
       if (bootstrapping) {
         const previous = bootstrapSnapshots.get(snapshot.repository.id)
         if (!previous || snapshot.sequence >= previous.sequence) bootstrapSnapshots.set(snapshot.repository.id, snapshot)
+      } else if (!useBonsaiStore.getState().projects.some(project => project.id === snapshot.repository.id)) {
+        const previous = pendingSnapshots.get(snapshot.repository.id)
+        if (!previous || snapshot.sequence >= previous.sequence) pendingSnapshots.set(snapshot.repository.id, snapshot)
       } else {
         applySnapshot(snapshot, generation)
       }
