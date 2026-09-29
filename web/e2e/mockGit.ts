@@ -224,13 +224,22 @@ function emptySnapshot(projectId: string) {
   }
 }
 
-export async function mockLocalEventSocket(page: Page) {
+export async function mockLocalEventSocket(page: Page, delayedProvider = false) {
   await page.routeWebSocket('ws://127.0.0.1:7001/events', socket => {
     socket.onMessage(message => {
       try {
         const payload = JSON.parse(String(message)) as { type?: string }
         if (payload.type === 'authenticate') {
           socket.send(JSON.stringify({ type: 'ready', epoch: 'e2e-epoch' }))
+          if (delayedProvider) {
+            setTimeout(() => socket.send(JSON.stringify({
+              type: 'project',
+              project_id: 'bonsai',
+              component: 'provider',
+              epoch: 'e2e-epoch',
+              sequence: 2,
+            })), 1_000)
+          }
         }
       } catch {
         // Invalid fixture messages are ignored just like production events.
@@ -239,8 +248,8 @@ export async function mockLocalEventSocket(page: Page) {
   })
 }
 
-export async function mockGitBackend(page: Page, emptyRoots = false) {
-  await mockLocalEventSocket(page)
+export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false) {
+  await mockLocalEventSocket(page, delayedProvider)
   const rootSettings = { version: 1, revision: 0, roots: emptyRoots ? [] as { id: string; path: string }[] : [{ id: 'root-fixture', path: '/projects' }], diagnostics: [], suggestions: ['/projects'] }
   const metadata: Record<string, Metadata> = {
     'wt-main': { tag: 'production', merge_target_branch: 'main', stack_preference: 'auto' },
@@ -249,6 +258,33 @@ export async function mockGitBackend(page: Page, emptyRoots = false) {
     'wt-daemon': { tag: 'bug', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-release': { tag: 'chore', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-review': { tag: 'review-code', merge_target_branch: 'chore/release-automation', stack_preference: 'auto' },
+  }
+  let bonsaiSnapshotReads = 0
+
+  const projectSnapshot = (projectId: string) => {
+    if (projectId !== 'bonsai') return emptySnapshot(projectId)
+    bonsaiSnapshotReads++
+    const full = bonsaiSnapshot(metadata)
+    if (!delayedProvider || bonsaiSnapshotReads > 1) return { ...full, sequence: delayedProvider ? 2 : 1 }
+    const localOnlyState = Object.fromEntries(
+      (full.local.worktrees as Array<{ id: string }>).map(worktree => [worktree.id, {
+        ci: {
+          status: 'unknown',
+          checks: [],
+          freshness: { state: 'unavailable', error: { code: 'provider_unavailable', message: 'GitHub is offline' } },
+        },
+      }]),
+    )
+    return {
+      ...full,
+      sequence: 1,
+      remote: undefined,
+      worktree_state: localOnlyState,
+      freshness: {
+        ...full.freshness,
+        provider: { state: 'error', error: { code: 'provider_unavailable', message: 'GitHub is offline' } },
+      },
+    }
   }
 
   await page.route('http://127.0.0.1:7001/**', async (route) => {
@@ -288,14 +324,14 @@ export async function mockGitBackend(page: Page, emptyRoots = false) {
     const snapshotMatch = path.match(/^\/api\/projects\/([^/]+)\/git$/)
     if (snapshotMatch) {
       const projectId = decodeURIComponent(snapshotMatch[1])
-      await route.fulfill({ json: projectId === 'bonsai' ? bonsaiSnapshot(metadata) : emptySnapshot(projectId) })
+      await route.fulfill({ json: projectSnapshot(projectId) })
       return
     }
 
     const refreshMatch = path.match(/^\/api\/projects\/([^/]+)\/refresh$/)
     if (refreshMatch && request.method() === 'POST') {
       const projectId = decodeURIComponent(refreshMatch[1])
-      await route.fulfill({ status: 202, json: projectId === 'bonsai' ? bonsaiSnapshot(metadata) : emptySnapshot(projectId) })
+      await route.fulfill({ status: 202, json: projectSnapshot(projectId) })
       return
     }
 
