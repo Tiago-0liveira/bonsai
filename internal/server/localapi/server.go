@@ -23,7 +23,7 @@ import (
 const (
 	localRepositoryID  = "local"
 	localBrowserUserID = "local-browser"
-	localAPIVersion    = 3
+	localAPIVersion    = 2
 )
 
 type daemonClient interface {
