@@ -54,7 +54,6 @@ func (h *eventHub) publish(event localEvent) {
 	}
 }
 
-
 func (h *eventHub) count() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
