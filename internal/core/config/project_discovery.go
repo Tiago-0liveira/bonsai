@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const ProjectDiscoveryDepth = 4
+const ProjectDiscoveryDepth = 3
 
 // SkipProjectDirectory is shared by discovery and daemon-side ownership so a
 // linked worktree hidden behind a skipped directory cannot change placement.
