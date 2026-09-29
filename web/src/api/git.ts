@@ -448,6 +448,15 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     dockRuntimeId,
     openRuntimeIds,
   }
+  const semanticFreshness = (value: typeof state.syncFreshness) => Object.fromEntries(
+    Object.entries(value).map(([projectId, components]) => [
+      projectId,
+      Object.fromEntries(Object.entries(components).map(([component, freshness]) => [
+        component,
+        { state: freshness.state, error: freshness.error },
+      ])),
+    ]),
+  )
   const currentSemantic = {
     selection: state.selection,
     projects: state.projects,
@@ -456,7 +465,7 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     pullRequests: state.pullRequests,
     gitBranches: state.gitBranches,
     gitOnline: state.gitOnline,
-    syncFreshness: state.syncFreshness,
+    syncFreshness: semanticFreshness(state.syncFreshness),
     dockWorktreeId: state.dockWorktreeId,
     dockRuntimeId: state.dockRuntimeId,
     openRuntimeIds: state.openRuntimeIds,
@@ -469,7 +478,7 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     pullRequests: patch.pullRequests,
     gitBranches: patch.gitBranches,
     gitOnline: patch.gitOnline,
-    syncFreshness: patch.syncFreshness,
+    syncFreshness: semanticFreshness(patch.syncFreshness as typeof state.syncFreshness),
     dockWorktreeId,
     dockRuntimeId,
     openRuntimeIds,
