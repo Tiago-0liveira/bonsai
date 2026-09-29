@@ -252,6 +252,34 @@ func TestStateSyncPublishesLocalAndProcessesWhileProviderIsBlocked(t *testing.T)
 	}
 }
 
+func TestProcessRefreshUsesCanonicalInventoryWorktreeID(t *testing.T) {
+	root := t.TempDir()
+	projectID := "project-v1-process-id"
+	daemon := &syncTestDaemon{records: []*procstore.Record{{
+		ID: 11, Label: "worker", Command: "go run .", Worktree: root, Status: procstore.StatusRunning,
+	}}}
+	project := projectServices{
+		info:   ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
+		daemon: daemon,
+		github: &syncTestGitHub{},
+	}
+	registry := &syncTestRegistry{entries: map[string]projectServices{projectID: project}}
+	syncer := newStateSync(registry, newEventHub())
+	syncer.ReconcileCatalog()
+	if !syncer.commitProject(project, "seed", func(snapshot *browserSnapshot) {
+		snapshot.Local = &domain.RepositoryState{ID: projectID, Worktrees: []domain.Worktree{{
+			ID: "stable-inventory-id", RepositoryID: projectID, Path: root, Branch: "main", Main: true,
+		}}}
+	}) {
+		t.Fatal("failed to seed local inventory")
+	}
+	syncer.refreshProcesses(projectID)
+	snapshot, _ := syncer.CachedSnapshot(projectID)
+	if len(snapshot.Processes) != 1 || snapshot.Processes[0].WorktreeID != "stable-inventory-id" {
+		t.Fatalf("process did not adopt inventory worktree id: %+v", snapshot.Processes)
+	}
+}
+
 func TestProviderCacheCoalescesConcurrentRepositoryReads(t *testing.T) {
 	release := make(chan struct{})
 	provider := &syncTestGitHub{block: release}
