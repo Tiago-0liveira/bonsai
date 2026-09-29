@@ -42,7 +42,6 @@ import {
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { flattenFiles, useFiles, useLocalDiff } from '../../api/files'
 import { loadPullRequest } from '../../api/git'
-import { processes } from '../../mock/processes'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { Agent, EditorPreference, Process, PullRequest, RepoFile, Worktree } from '../../types'
 import { FakeTerminal } from './FakeTerminal'
@@ -179,6 +178,7 @@ function BranchSidebar() {
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const worktrees = useBonsaiStore((state) => state.worktrees)
   const agents = useBonsaiStore((state) => state.agents)
+  const processes = useBonsaiStore((state) => state.processes)
   const dockWorktreeId = useBonsaiStore((state) => state.dockWorktreeId)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const project = projects.find((item) => item.id === activeProjectId)
