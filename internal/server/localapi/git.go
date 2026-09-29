@@ -156,7 +156,7 @@ func (s *Server) executeGitMutation(w http.ResponseWriter, r *http.Request, kind
 		return
 	}
 	projectID := s.registry.Default().info.ID
-	s.stateSync.MarkStale(projectID, refreshAll)
+	s.stateSync.Queue(projectID, refreshAll, true)
 	var value any
 	if len(result.Payload) > 0 {
 		value = json.RawMessage(result.Payload)
