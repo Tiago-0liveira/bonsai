@@ -35,6 +35,21 @@ func repoFixture(t *testing.T, path string) string {
 	}
 	return canonical
 }
+func selectAllDiscovered(t *testing.T, r *discoveredProjectRegistry) {
+	t.Helper()
+	candidates := r.Candidates()
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ID)
+	}
+	if err := r.UpdateSelection(r.SelectionRevision(), ids); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProjectIDMatchesGitReportedMainPath(t *testing.T) {
 	repo := repoFixture(t, filepath.Join(t.TempDir(), "repo"))
 	trees, err := coregit.ListWorktreesContext(context.Background(), repo)
@@ -104,6 +119,10 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	if _, err = r.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if len(r.Candidates()) != 2 || len(r.List()) != 0 {
+		t.Fatalf("discovery should not activate projects before selection: candidates=%+v active=%+v", r.Candidates(), r.List())
+	}
+	selectAllDiscovered(t, r)
 	if len(r.List()) != 2 {
 		t.Fatal(r.List())
 	}
@@ -149,6 +168,7 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	if _, err = only.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	selectAllDiscovered(t, only)
 	if len(only.List()) != 1 || only.List()[0].Path != a {
 		t.Fatal(only.List())
 	}
@@ -181,6 +201,7 @@ func TestDiscoveryLimitsMissingAndCancellation(t *testing.T) {
 	if _, err = r.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	selectAllDiscovered(t, r)
 	if err = os.Rename(filepath.Join(root, "visible"), filepath.Join(root, "offline")); err != nil {
 		t.Fatal(err)
 	}
