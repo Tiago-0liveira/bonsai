@@ -224,21 +224,67 @@ function emptySnapshot(projectId: string) {
   }
 }
 
-export async function mockLocalEventSocket(page: Page, delayedProvider = false) {
+type MockWireSnapshot = Record<string, unknown>
+
+export async function mockLocalEventSocket(
+  page: Page,
+  bootstrap: () => { projects: typeof repositories; snapshots: MockWireSnapshot[] } = () => ({ projects: [], snapshots: [] }),
+  delayedUpdate?: () => MockWireSnapshot | undefined,
+) {
+  let sendEvent: ((event: Record<string, unknown>) => void) | undefined
+
+  const publishCatalog = (projects: typeof repositories, snapshots: MockWireSnapshot[] = []) => {
+    sendEvent?.({ type: 'catalog', epoch: 'e2e-epoch', projects })
+    for (const snapshot of snapshots) {
+      const repository = snapshot.repository as { id?: string } | undefined
+      sendEvent?.({
+        type: 'project_update',
+        project_id: repository?.id,
+        component: 'local',
+        epoch: 'e2e-epoch',
+        sequence: snapshot.sequence,
+        snapshot,
+      })
+    }
+  }
+
+  const publishUpdate = (snapshot: MockWireSnapshot, component = 'local') => {
+    const repository = snapshot.repository as { id?: string } | undefined
+    sendEvent?.({
+      type: 'project_update',
+      project_id: repository?.id,
+      component,
+      epoch: 'e2e-epoch',
+      sequence: snapshot.sequence,
+      snapshot,
+    })
+  }
+
   await page.routeWebSocket('ws://127.0.0.1:7001/events', socket => {
+    sendEvent = event => socket.send(JSON.stringify(event))
     socket.onMessage(message => {
       try {
         const payload = JSON.parse(String(message)) as { type?: string }
         if (payload.type === 'authenticate') {
-          socket.send(JSON.stringify({ type: 'ready', epoch: 'e2e-epoch' }))
-          if (delayedProvider) {
-            setTimeout(() => socket.send(JSON.stringify({
-              type: 'project',
-              project_id: 'bonsai',
-              component: 'provider',
+          sendEvent?.({ type: 'ready', epoch: 'e2e-epoch' })
+          const initial = bootstrap()
+          sendEvent?.({ type: 'catalog', epoch: 'e2e-epoch', projects: initial.projects })
+          for (const snapshot of initial.snapshots) {
+            const repository = snapshot.repository as { id?: string } | undefined
+            sendEvent?.({
+              type: 'project_snapshot',
+              project_id: repository?.id,
               epoch: 'e2e-epoch',
-              sequence: 2,
-            })), 1_000)
+              sequence: snapshot.sequence,
+              snapshot,
+            })
+          }
+          sendEvent?.({ type: 'bootstrap_complete', epoch: 'e2e-epoch' })
+          if (delayedUpdate) {
+            setTimeout(() => {
+              const snapshot = delayedUpdate()
+              if (snapshot) publishUpdate(snapshot, 'provider')
+            }, 1_000)
           }
         }
       } catch {
@@ -246,11 +292,40 @@ export async function mockLocalEventSocket(page: Page, delayedProvider = false) 
       }
     })
   })
+
+  return { publishCatalog, publishUpdate }
 }
 
 export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false) {
-  await mockLocalEventSocket(page, delayedProvider)
-  const rootSettings = { version: 1, revision: 0, roots: emptyRoots ? [] as { id: string; path: string }[] : [{ id: 'root-fixture', path: '/projects' }], diagnostics: [], suggestions: ['/projects'] }
+  const rootSettings: {
+    version: number
+    revision: number
+    selection_revision: number
+    roots: { id: string; path: string }[]
+    diagnostics: unknown[]
+    suggestions: string[]
+    repositories: { id: string; root_id: string; name: string; path: string; selected: boolean; available: boolean }[]
+  } = {
+    version: 1,
+    revision: 0,
+    selection_revision: 0,
+    roots: emptyRoots ? [] : [{ id: 'root-fixture', path: '/projects' }],
+    diagnostics: [],
+    suggestions: ['/projects'],
+    repositories: [],
+  }
+  const discoveredRepositories = (selectedIds = new Set<string>()) => rootSettings.roots.length
+    ? repositories.map(repository => ({
+        id: repository.id,
+        root_id: rootSettings.roots[0].id,
+        name: repository.full_name.split('/').at(-1) ?? repository.id,
+        path: `${rootSettings.roots[0].path}/${repository.id}`,
+        selected: selectedIds.has(repository.id),
+        available: true,
+      }))
+    : []
+  if (!emptyRoots) rootSettings.repositories = discoveredRepositories(new Set(repositories.map(repository => repository.id)))
+
   const metadata: Record<string, Metadata> = {
     'wt-main': { tag: 'production', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-web': { tag: 'feat', merge_target_branch: 'main', stack_preference: 'auto' },
@@ -259,13 +334,16 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     'wt-release': { tag: 'chore', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-review': { tag: 'review-code', merge_target_branch: 'chore/release-automation', stack_preference: 'auto' },
   }
-  let bonsaiSnapshotReads = 0
+  let providerReady = !delayedProvider
+  const sequences = new Map(repositories.map(repository => [repository.id, 1]))
 
-  const projectSnapshot = (projectId: string) => {
-    if (projectId !== 'bonsai') return emptySnapshot(projectId)
-    bonsaiSnapshotReads++
-    const full = bonsaiSnapshot(metadata)
-    if (!delayedProvider || bonsaiSnapshotReads > 1) return { ...full, sequence: delayedProvider ? 2 : 1 }
+  const projectSnapshot = (projectId: string, bump = false): MockWireSnapshot => {
+    const current = sequences.get(projectId) ?? 1
+    const sequence = bump ? current + 1 : current
+    sequences.set(projectId, sequence)
+    if (projectId !== 'bonsai') return { ...emptySnapshot(projectId), sequence }
+    const full = { ...bonsaiSnapshot(metadata), sequence }
+    if (providerReady) return full
     const localOnlyState = Object.fromEntries(
       (full.local.worktrees as Array<{ id: string }>).map(worktree => [worktree.id, {
         ci: {
@@ -277,7 +355,6 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     )
     return {
       ...full,
-      sequence: 1,
       remote: undefined,
       worktree_state: localOnlyState,
       freshness: {
@@ -286,6 +363,24 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       },
     }
   }
+
+  const activeRepositories = () => repositories.filter(repository =>
+    rootSettings.repositories.some(candidate => candidate.id === repository.id && candidate.selected),
+  )
+
+  const socket = await mockLocalEventSocket(
+    page,
+    () => {
+      const projects = activeRepositories()
+      return { projects, snapshots: projects.map(repository => projectSnapshot(repository.id)) }
+    },
+    delayedProvider
+      ? () => {
+          providerReady = true
+          return projectSnapshot('bonsai', true)
+        }
+      : undefined,
+  )
 
   await page.route('http://127.0.0.1:7001/**', async (route) => {
     const request = route.request()
@@ -308,16 +403,33 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     }
 
     if (path.startsWith('/api/settings/project-roots')) {
+      const selectedIds = new Set(rootSettings.repositories.filter(repository => repository.selected).map(repository => repository.id))
       if (request.method() === 'POST') {
         const body = request.postDataJSON() as { path: string; revision: number }
-        rootSettings.roots.push({ id: `root-${rootSettings.revision}`, path: body.path }); rootSettings.revision++
+        rootSettings.roots.push({ id: `root-${rootSettings.revision}`, path: body.path })
+        rootSettings.revision++
       } else if (request.method() === 'DELETE') {
-        rootSettings.roots = rootSettings.roots.filter(root => root.id !== path.split('/').at(-1)); rootSettings.revision++
+        rootSettings.roots = rootSettings.roots.filter(root => root.id !== path.split('/').at(-1))
+        rootSettings.revision++
       }
-      await route.fulfill({ json: rootSettings }); return
+      rootSettings.repositories = discoveredRepositories(selectedIds)
+      await route.fulfill({ json: rootSettings })
+      const projects = activeRepositories()
+      socket.publishCatalog(projects, projects.map(repository => projectSnapshot(repository.id)))
+      return
+    }
+    if (path === '/api/settings/project-selection' && request.method() === 'POST') {
+      const body = request.postDataJSON() as { selection_revision: number; project_ids: string[] }
+      rootSettings.selection_revision++
+      const selectedIds = new Set(body.project_ids)
+      rootSettings.repositories = discoveredRepositories(selectedIds)
+      await route.fulfill({ json: rootSettings })
+      const projects = activeRepositories()
+      socket.publishCatalog(projects, projects.map(repository => projectSnapshot(repository.id)))
+      return
     }
     if (path === '/api/projects') {
-      await route.fulfill({ json: rootSettings.roots.length ? repositories : [] })
+      await route.fulfill({ json: activeRepositories() })
       return
     }
 
@@ -330,8 +442,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
 
     const refreshMatch = path.match(/^\/api\/projects\/([^/]+)\/refresh$/)
     if (refreshMatch && request.method() === 'POST') {
-      const projectId = decodeURIComponent(refreshMatch[1])
-      await route.fulfill({ status: 202, json: projectSnapshot(projectId) })
+      await route.fulfill({ status: 202, json: { accepted: true } })
       return
     }
 
@@ -341,6 +452,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       const patch = request.postDataJSON() as Partial<Metadata>
       metadata[id] = { ...metadata[id], ...patch }
       await route.fulfill({ json: metadata[id] })
+      socket.publishUpdate(projectSnapshot('bonsai', true))
       return
     }
 
