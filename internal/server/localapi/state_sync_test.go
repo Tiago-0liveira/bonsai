@@ -54,9 +54,11 @@ func (r *syncTestRegistry) remove(id string) {
 }
 
 type syncTestDaemon struct {
-	root            string
-	repositoryBlock <-chan struct{}
-	records         []*procstore.Record
+	root                string
+	repositoryBlock     <-chan struct{}
+	repositoryStarted   chan struct{}
+	repositoryStartOnce sync.Once
+	records             []*procstore.Record
 }
 
 func (d *syncTestDaemon) result(command gitbridge.Command) (*gitbridge.Result, error) {
@@ -108,6 +110,9 @@ func (d *syncTestDaemon) Git(command gitbridge.Command) (*gitbridge.Result, erro
 }
 func (d *syncTestDaemon) GitContext(ctx context.Context, command gitbridge.Command) (*gitbridge.Result, error) {
 	if command.Type == "git.repository.refresh" && d.repositoryBlock != nil {
+		if d.repositoryStarted != nil {
+			d.repositoryStartOnce.Do(func() { close(d.repositoryStarted) })
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -342,8 +347,9 @@ func TestChecksRollupPreservesNoneRunningFailureAndUnknown(t *testing.T) {
 func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	root := t.TempDir()
 	release := make(chan struct{})
+	started := make(chan struct{})
 	projectID := "project-v1-removed"
-	daemon := &syncTestDaemon{root: root, repositoryBlock: release}
+	daemon := &syncTestDaemon{root: root, repositoryBlock: release, repositoryStarted: started}
 	registry := &syncTestRegistry{entries: map[string]projectServices{
 		projectID: {
 			info:   ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
@@ -354,7 +360,11 @@ func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	syncer := newStateSync(registry, newEventHub())
 	syncer.ReconcileCatalog()
 	syncer.Queue(projectID, refreshLocal, false)
-	waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool { return snapshot.Local != nil })
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("local refresh did not start")
+	}
 
 	registry.remove(projectID)
 	syncer.ReconcileCatalog()
