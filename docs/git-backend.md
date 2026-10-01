@@ -77,10 +77,39 @@ or `all` invalidation and immediately returns cached projection state while work
 is queued. Relay SSE uses the provider scope for every matching local clone.
 Ordinary snapshot reads do not force provider requests.
 
-No bootstrap, reconnect, poll, snapshot read, or provider enrichment performs
-`git fetch`. Ahead/behind therefore describes the last fetched local tracking
-refs. Fetch, pull, push, and remote-worktree creation remain explicit user
-operations.
+An active canvas sends an authenticated, idempotent
+`POST /api/projects/{projectId}/sync` on initial load and every five minutes.
+Explicit Sync uses the same queue. Multiple tabs coalesce into one daemon job
+per clone; local inventory is published before network Git work. Snapshot GETs
+and local status polling stay free of Git network mutations.
+
+The daemon fetches origin with pruning and an explicit full branch refspec,
+covering narrow clones without changing their configuration. It then pulls the
+main working copy with `--ff-only --no-rebase --no-autostash` only when clean,
+attached, and tracking a valid origin upstream with no active Git operation.
+Dirty, detached, unborn, missing-upstream, and diverged cases are reported as
+skips. Fetch, pull, and provider outcomes and successful timestamps remain
+separate; errors preserve useful local state and previous successful freshness.
+Repositories without origin skip automatic Git network operations. Push remains
+explicit. Ahead/behind describes the fetched local tracking refs.
+
+Canonical snapshots include connection reasons, a stable Local / unlinked
+worktree group, and branch candidates identified by full ref and remote identity.
+The main working copy is excluded from the group. Provider-only branches require
+fetching before checkout; fork/deleted-head PRs cannot manufacture origin refs.
+Branch timestamps are tip commit times; PR timestamps are provider update times;
+Last synced is the successful fetch completion time. Freshness-only browser
+updates preserve canvas placement and viewport state.
+
+PR catalogs list all states and resume in batches of five pages per enrichment
+job. Initial pages are published as they arrive; the previous complete catalog
+remains visible during replacement. The PR catalog and worktree associations are
+published before CI checks finish. Updated ordering supports incremental refresh
+between daily complete reconciliations. The canvas exposes worktree creation and
+confirmed deletion.
+Deletion retains branches and PRs, rechecks dirty state and Git operations, and
+requires tracked processes and agents to stop. Creation and removal use durable
+mutation journals; metadata retries after creation do not create another tree.
 
 ## Internet GitHub relay
 

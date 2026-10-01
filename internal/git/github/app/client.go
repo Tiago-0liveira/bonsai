@@ -123,7 +123,10 @@ func pages[T any](ctx context.Context, c *Client, repo, path string) ([]T, error
 	if strings.Contains(path, "?") {
 		join = "&"
 	}
-	for page := 1; page <= 100; page++ {
+	for page := 1; ; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var batch []T
 		h, e := c.request(ctx, repo, "GET", path+join+"per_page=100&page="+strconv.Itoa(page), nil, &batch)
 		if e != nil {
@@ -134,7 +137,6 @@ func pages[T any](ctx context.Context, c *Client, repo, path string) ([]T, error
 			return items, nil
 		}
 	}
-	return nil, domain.E("too_large", "GitHub pagination exceeds 100 pages")
 }
 func pullPath(repo string, n int) (string, error) {
 	p, e := repoPath(repo)

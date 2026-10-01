@@ -55,6 +55,10 @@ export interface WorktreeTag {
 }
 
 export interface Worktree {
+	path?: string
+	main?: boolean
+	headSha?: string
+	connection?: { state: 'linked' | 'unlinked' | 'unknown'; reason?: string; statusUnknown?: boolean }
   id: string
   projectId: string
   branch: string
@@ -83,6 +87,7 @@ export interface Worktree {
 }
 
 export interface CreateWorktreeInput {
+	projectId?: string
   sourceType: WorktreeSourceType
   sourceRef: string
   branchName?: string
@@ -160,6 +165,7 @@ export interface SyncFreshness {
 }
 
 export interface PullRequest {
+	headRepository?: string
   id: string
   number: number
   title: string

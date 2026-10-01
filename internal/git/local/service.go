@@ -10,8 +10,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	core "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
@@ -20,6 +22,7 @@ import (
 type Config struct {
 	ID, Root, WorktreeRoot string
 	WithWorktreeRoot       func(context.Context, func(string) error) error
+	BeforeRemove           func(context.Context, string) error
 }
 type repository struct {
 	Config
@@ -172,34 +175,41 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 			}
 		}
 	}
-	return domain.RepositoryState{
+	state := domain.RepositoryState{
 		ID:            id,
 		DefaultBranch: defaultBranch,
 		Branches:      b,
 		Worktrees:     w,
 		Remotes:       remoteIdentities(ctx, r.Root),
-	}, nil
+	}
+	domain.ClassifyWorktrees(&state, nil)
+	return state, nil
 }
 func (s *Service) ListBranches(ctx context.Context, id string) ([]domain.Branch, error) {
 	r, e := s.repo(id)
 	if e != nil {
 		return nil, e
 	}
-	out, e := run(ctx, r.Root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(symref)", "refs/heads/", "refs/remotes/")
+	out, e := run(ctx, r.Root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(symref)%00%(upstream)%00%(committerdate:unix)", "refs/heads/", "refs/remotes/")
 	if e != nil {
 		return nil, e
 	}
 	result := []domain.Branch{}
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		p := strings.Split(line, "\x00")
-		if len(p) != 4 || p[3] != "" {
+		if len(p) != 6 || p[3] != "" {
 			continue
 		}
-		b := domain.Branch{Upstream: p[2]}
+		b := domain.Branch{Ref: p[0], Upstream: p[2], UpstreamRef: p[4]}
+		if sec, err := strconv.ParseInt(p[5], 10, 64); err == nil {
+			when := time.Unix(sec, 0).UTC()
+			b.LastCommitAt = &when
+		}
 		b.Remote = strings.HasPrefix(p[0], "refs/remotes/")
 		if b.Remote {
 			b.Name = strings.TrimPrefix(p[0], "refs/remotes/")
 			b.LocalRemoteRefSHA = p[1]
+			b.RemoteName, _, _ = strings.Cut(b.Name, "/")
 		} else {
 			b.Name = strings.TrimPrefix(p[0], "refs/heads/")
 			b.LocalHeadSHA = p[1]

@@ -118,8 +118,7 @@ func (d *syncTestDaemon) GitContext(ctx context.Context, command gitbridge.Comma
 			return nil, ctx.Err()
 		case <-d.repositoryBlock:
 		}
-		copy := *d
-		copy.repositoryBlock = nil
+		copy := syncTestDaemon{root: d.root, records: d.records}
 		return copy.result(command)
 	}
 	return d.result(command)
@@ -144,6 +143,7 @@ type syncTestGitHub struct {
 	prCalls         int
 	checkCalls      int
 	block           <-chan struct{}
+	checksBlock     <-chan struct{}
 }
 
 func (g *syncTestGitHub) Repository(ctx context.Context, repo string) (githubdomain.RemoteRepository, error) {
@@ -174,10 +174,17 @@ func (g *syncTestGitHub) PullRequests(context.Context, string, githubdomain.PRFi
 		Base: "main", HeadSHA: "remote-head", UpdatedAt: time.Unix(10, 0),
 	}}, nil
 }
-func (g *syncTestGitHub) Checks(context.Context, string, string) ([]githubdomain.Check, error) {
+func (g *syncTestGitHub) Checks(ctx context.Context, _ string, _ string) ([]githubdomain.Check, error) {
 	g.mu.Lock()
 	g.checkCalls++
 	g.mu.Unlock()
+	if g.checksBlock != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-g.checksBlock:
+		}
+	}
 	return []githubdomain.Check{{Name: "ci", Status: "completed", Conclusion: "success"}}, nil
 }
 func (*syncTestGitHub) PullRequest(context.Context, string, int) (githubdomain.PullRequestDetail, error) {
@@ -249,12 +256,37 @@ func TestStateSyncPublishesLocalAndProcessesWhileProviderIsBlocked(t *testing.T)
 
 	close(providerRelease)
 	enriched := waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool {
-		return snapshot.Remote != nil && snapshot.Freshness["provider"].State == "ready"
+		return snapshot.Remote != nil && snapshot.Freshness["provider"].State == "ready" && snapshot.WorktreeState[gitlocal.ID(localRepositoryID, root)].CI.Status == "passed"
 	})
 	state := enriched.WorktreeState[gitlocal.ID(localRepositoryID, root)]
 	if state.PullRequest == nil || state.PullRequest.Number != 1 || state.CI.Status != "passed" || state.CI.CheckedSHA != "remote-head" {
 		t.Fatalf("enrichment = %+v", state)
 	}
+}
+
+func TestStateSyncPublishesPRsBeforeChecksFinish(t *testing.T) {
+	root := t.TempDir()
+	checksRelease := make(chan struct{})
+	provider := &syncTestGitHub{checksBlock: checksRelease}
+	projectID := "project-v1-pr-first"
+	registry := &syncTestRegistry{entries: map[string]projectServices{projectID: {
+		info:   ProjectInfo{ID: projectID, Path: root, Available: true, FullName: "repo"},
+		daemon: &syncTestDaemon{root: root}, github: provider,
+	}}}
+	syncer := newStateSync(registry, newEventHub())
+	syncer.ReconcileCatalog()
+	syncer.SubscriberReady()
+	first := waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool {
+		return snapshot.Remote != nil && len(snapshot.Remote.PullRequests) == 1
+	})
+	worktreeID := gitlocal.ID(localRepositoryID, root)
+	if first.WorktreeState[worktreeID].PullRequest == nil || first.WorktreeState[worktreeID].CI.Freshness.State != "loading" {
+		t.Fatalf("PR was not published before checks: %+v", first.WorktreeState[worktreeID])
+	}
+	close(checksRelease)
+	waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool {
+		return snapshot.WorktreeState[worktreeID].CI.Status == "passed"
+	})
 }
 
 func TestProcessRefreshUsesCanonicalInventoryWorktreeID(t *testing.T) {

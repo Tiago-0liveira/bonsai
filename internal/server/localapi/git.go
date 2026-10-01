@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
+	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
 const maxRequestBody = 1 << 20
@@ -156,14 +158,21 @@ func (s *Server) executeGitMutation(w http.ResponseWriter, r *http.Request, kind
 		return
 	}
 	projectID := s.registry.Default().info.ID
+	metadataError := ""
+	if kind == "git.worktree.remove" && s.state != nil {
+		if err := s.state.Update(func(data gitstore.Data) error { delete(data["worktree_metadata"], worktree); return nil }); err != nil {
+			metadataError = err.Error()
+		}
+	}
 	s.stateSync.Queue(projectID, refreshAll, true)
 	var value any
 	if len(result.Payload) > 0 {
 		value = json.RawMessage(result.Payload)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"command_id": result.ID,
-		"result":     value,
+		"command_id":     result.ID,
+		"result":         value,
+		"metadata_error": metadataError,
 	})
 }
 
@@ -176,7 +185,7 @@ func (s *Server) runGit(w http.ResponseWriter, r *http.Request, kind, worktree s
 			return nil, false
 		}
 	}
-	result, err := s.registry.Default().daemon.Git(gitbridge.Command{
+	command := gitbridge.Command{
 		ID:           id,
 		UserID:       localBrowserUserID,
 		RepositoryID: localRepositoryID,
@@ -184,7 +193,56 @@ func (s *Server) runGit(w http.ResponseWriter, r *http.Request, kind, worktree s
 		Type:         kind,
 		Arguments:    args,
 		CreatedAt:    time.Now().UTC(),
-	})
+	}
+	if mutation && s.state != nil {
+		var saved *gitbridge.Result
+		err := s.state.Update(func(data gitstore.Data) error {
+			if old, ok := gitstore.Get[apiGitMutation](data, "api_git_mutations", id); ok {
+				if old.Command.Type != kind || old.Command.WorktreeID != worktree || string(old.Command.Arguments) != string(args) {
+					return domain.ErrInvalid
+				}
+				command, saved = old.Command, old.Result
+				return nil
+			}
+			return gitstore.Put(data, "api_git_mutations", id, apiGitMutation{Command: command})
+		})
+		if err != nil {
+			writeDomainError(w, &domain.Error{Code: domain.Code(err), Message: err.Error()})
+			return nil, false
+		}
+		if saved != nil {
+			return saved, true
+		}
+	}
+	if kind == "git.worktree.remove" {
+		project := s.registry.Default()
+		payload, err := s.stateSync.gitPayload(r.Context(), project, "git.worktrees", func(raw json.RawMessage) (any, error) {
+			var trees []domain.Worktree
+			err := json.Unmarshal(raw, &trees)
+			return trees, err
+		})
+		if err != nil {
+			writeAPIError(w, 503, "status_unavailable", err.Error())
+			return nil, false
+		}
+		records, err := project.daemon.List()
+		if err != nil {
+			writeAPIError(w, 503, "processes_unavailable", "Cannot verify running processes: "+err.Error())
+			return nil, false
+		}
+		for _, tree := range payload.([]domain.Worktree) {
+			if tree.ID != worktree {
+				continue
+			}
+			for _, process := range records {
+				if procstore.IsActive(process.Status) && sameWorktreePath(tree.Path, process.Worktree) {
+					writeAPIError(w, 409, "processes_running", "Stop running processes before deleting this worktree")
+					return nil, false
+				}
+			}
+		}
+	}
+	result, err := s.registry.Default().daemon.Git(command)
 	if err != nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "daemon_unavailable", err.Error())
 		return nil, false
@@ -201,13 +259,28 @@ func (s *Server) runGit(w http.ResponseWriter, r *http.Request, kind, worktree s
 		}
 		result.Payload = payload
 	}
+	if mutation && s.state != nil {
+		if err := s.state.Update(func(data gitstore.Data) error {
+			return gitstore.Put(data, "api_git_mutations", id, apiGitMutation{Command: command, Result: result})
+		}); err != nil {
+			writeAPIError(w, http.StatusConflict, "outcome_unknown", domain.ErrUncertain.Error())
+			return nil, false
+		}
+	}
 	return result, true
+}
+
+type apiGitMutation struct {
+	Command gitbridge.Command `json:"command"`
+	Result  *gitbridge.Result `json:"result,omitempty"`
 }
 
 func allowedArguments(kind string) []string {
 	switch kind {
-	case "git.fetch", "git.pull":
+	case "git.fetch":
 		return nil
+	case "git.pull":
+		return []string{"fast_forward_only"}
 	case "git.worktree.create":
 		return []string{"mode", "branch", "base"}
 	case "git.worktree.remove":

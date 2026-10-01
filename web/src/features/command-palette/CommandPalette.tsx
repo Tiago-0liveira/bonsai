@@ -26,7 +26,7 @@ export function CommandPalette() {
   const open = useBonsaiStore((state) => state.paletteOpen)
   const setOpen = useBonsaiStore((state) => state.setPaletteOpen)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
-  const createMockWorktree = useBonsaiStore((state) => state.createMockWorktree)
+  const setWorktreeDialogOpen = useBonsaiStore(state => state.setWorktreeDialogOpen)
   const startMockAgent = useBonsaiStore((state) => state.startMockAgent)
   const selection = useBonsaiStore((state) => state.selection)
   const agents = useBonsaiStore((state) => state.agents)
@@ -87,7 +87,7 @@ export function CommandPalette() {
           <Command.Group heading="Workspace" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">
             <CommandItem icon={LocateFixed} label="Fit canvas" onSelect={() => run(() => requestCanvasAction('fit'))} />
             <CommandItem icon={Network} label="Auto-layout canvas" onSelect={() => run(() => requestCanvasAction('layout'))} />
-            <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(createMockWorktree)} />
+            <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
             <CommandItem icon={Bot} label="Start agent" onSelect={() => run(startMockAgent)} />
             <CommandItem icon={Square} label="Stop agent" onSelect={() => run(stopAgent)} />
             <CommandItem icon={TerminalSquare} label="Open terminal" onSelect={() => run(() => openTerminal(selection.type === 'agent' ? selection.id : undefined))} />

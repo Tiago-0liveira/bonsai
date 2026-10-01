@@ -11,6 +11,7 @@ type RepositoryState struct {
 	Branches          []Branch         `json:"branches"`
 	Worktrees         []Worktree       `json:"worktrees"`
 	Remotes           []RemoteIdentity `json:"remotes,omitempty"`
+	Groups            []WorktreeGroup  `json:"groups"`
 }
 type RemoteIdentity struct {
 	Name       string `json:"name"`
@@ -20,12 +21,16 @@ type RemoteIdentity struct {
 	FullName   string `json:"full_name,omitempty"`
 }
 type Branch struct {
-	Name              string `json:"name"`
-	LocalHeadSHA      string `json:"local_head_sha,omitempty"`
-	LocalRemoteRefSHA string `json:"local_remote_ref_sha,omitempty"`
-	RemoteHeadSHA     string `json:"remote_head_sha,omitempty"`
-	Upstream          string `json:"upstream,omitempty"`
-	Remote            bool   `json:"remote"`
+	Ref               string     `json:"ref"`
+	UpstreamRef       string     `json:"upstream_ref,omitempty"`
+	RemoteName        string     `json:"remote_name,omitempty"`
+	LastCommitAt      *time.Time `json:"last_commit_at,omitempty"`
+	Name              string     `json:"name"`
+	LocalHeadSHA      string     `json:"local_head_sha,omitempty"`
+	LocalRemoteRefSHA string     `json:"local_remote_ref_sha,omitempty"`
+	RemoteHeadSHA     string     `json:"remote_head_sha,omitempty"`
+	Upstream          string     `json:"upstream,omitempty"`
+	Remote            bool       `json:"remote"`
 }
 type StateError struct {
 	Code    string `json:"code"`
@@ -40,6 +45,35 @@ type Worktree struct {
 	Main         bool               `json:"main"`
 	Status       *WorkingTreeStatus `json:"status,omitempty"`
 	StatusError  *StateError        `json:"status_error,omitempty"`
+	Connection   WorktreeConnection `json:"connection"`
+}
+
+type WorktreeConnection struct {
+	State         string `json:"state"` // linked | unlinked | unknown
+	Reason        string `json:"reason,omitempty"`
+	StatusUnknown bool   `json:"status_unknown,omitempty"`
+}
+
+type WorktreeGroup struct {
+	ID          string   `json:"id"`
+	Kind        string   `json:"kind"`
+	WorktreeIDs []string `json:"worktree_ids"`
+}
+
+type PullPolicy struct {
+	FastForwardOnly bool `json:"fast_forward_only"`
+}
+
+type SyncOutcome struct {
+	State       string     `json:"state"` // ready | skipped | error | running
+	Reason      string     `json:"reason,omitempty"`
+	Error       string     `json:"error,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+type RepositorySync struct {
+	Fetch SyncOutcome `json:"fetch"`
+	Pull  SyncOutcome `json:"pull"`
 }
 type WorkingTreeStatus struct {
 	ContentVersion      string       `json:"content_version"`

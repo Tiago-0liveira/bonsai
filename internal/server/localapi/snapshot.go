@@ -26,10 +26,29 @@ type browserFreshness struct {
 }
 
 type browserRemoteSnapshot struct {
-	Repository   githubdomain.RemoteRepository `json:"repository"`
-	Branches     []githubdomain.RemoteBranch   `json:"branches"`
-	PullRequests []githubdomain.PullRequest    `json:"pull_requests"`
-	UpdatedAt    time.Time                     `json:"updated_at"`
+	Repository        githubdomain.RemoteRepository `json:"repository"`
+	Branches          []githubdomain.RemoteBranch   `json:"branches"`
+	PullRequests      []githubdomain.PullRequest    `json:"pull_requests"`
+	UpdatedAt         time.Time                     `json:"updated_at"`
+	PRCatalogComplete bool                          `json:"pr_catalog_complete"`
+	PRCatalogLoading  bool                          `json:"pr_catalog_loading"`
+}
+
+type browserBranchCandidate struct {
+	ID                string                     `json:"id"`
+	Ref               string                     `json:"ref"`
+	Name              string                     `json:"name"`
+	Source            string                     `json:"source"` // local | remote | provider
+	Remote            string                     `json:"remote,omitempty"`
+	UpstreamRef       string                     `json:"upstream_ref,omitempty"`
+	LocalBranch       string                     `json:"local_branch,omitempty"`
+	HeadSHA           string                     `json:"head_sha,omitempty"`
+	LastCommitAt      *time.Time                 `json:"last_commit_at,omitempty"`
+	PullRequests      []githubdomain.PullRequest `json:"pull_requests"`
+	WorktreeIDs       []string                   `json:"worktree_ids"`
+	CreationMode      string                     `json:"creation_mode,omitempty"`
+	SourceRef         string                     `json:"source_ref,omitempty"`
+	UnavailableReason string                     `json:"unavailable_reason,omitempty"`
 }
 
 type browserCIState struct {
@@ -64,16 +83,18 @@ type browserProcessSummary struct {
 }
 
 type browserSnapshot struct {
-	Epoch         string                          `json:"epoch"`
-	Repository    browserRepository               `json:"repository"`
-	Local         *domain.RepositoryState         `json:"local,omitempty"`
-	Remote        *browserRemoteSnapshot          `json:"remote,omitempty"`
-	Online        bool                            `json:"online"`
-	Sequence      uint64                          `json:"sequence"`
-	Metadata      map[string]worktreeMetadata     `json:"metadata"`
-	Processes     []browserProcessSummary         `json:"processes"`
-	Freshness     map[string]browserFreshness     `json:"freshness"`
-	WorktreeState map[string]browserWorktreeState `json:"worktree_state"`
+	BranchCandidates []browserBranchCandidate        `json:"branch_candidates"`
+	Sync             domain.RepositorySync           `json:"sync"`
+	Epoch            string                          `json:"epoch"`
+	Repository       browserRepository               `json:"repository"`
+	Local            *domain.RepositoryState         `json:"local,omitempty"`
+	Remote           *browserRemoteSnapshot          `json:"remote,omitempty"`
+	Online           bool                            `json:"online"`
+	Sequence         uint64                          `json:"sequence"`
+	Metadata         map[string]worktreeMetadata     `json:"metadata"`
+	Processes        []browserProcessSummary         `json:"processes"`
+	Freshness        map[string]browserFreshness     `json:"freshness"`
+	WorktreeState    map[string]browserWorktreeState `json:"worktree_state"`
 }
 
 type worktreeMetadata struct {

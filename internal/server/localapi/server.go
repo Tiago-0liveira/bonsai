@@ -142,6 +142,26 @@ func (s *Server) Handler() http.Handler {
 			project, ok = s.registry.Lookup(path[2])
 		case path[1] == "worktrees" && len(path) > 2:
 			project, ok = s.registry.Worktree(r.Context(), path[2])
+			// Completed removal remains replayable after the worktree leaves the
+			// inventory. The durable request journal supplies repository ownership.
+			if !ok && r.Method == http.MethodDelete {
+				key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+				for _, info := range s.registry.List() {
+					candidate, exists := s.registry.Lookup(info.ID)
+					if !exists || candidate.state == nil {
+						continue
+					}
+					_ = candidate.state.View(func(data gitstore.Data) error {
+						if old, exists := gitstore.Get[apiGitMutation](data, "api_git_mutations", key); exists && old.Command.Type == "git.worktree.remove" && old.Command.WorktreeID == path[2] {
+							project, ok = candidate, true
+						}
+						return nil
+					})
+					if ok {
+						break
+					}
+				}
+			}
 		default:
 			project = s.registry.Default()
 			ok = project.daemon != nil

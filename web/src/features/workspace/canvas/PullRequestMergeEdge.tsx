@@ -12,8 +12,9 @@ export function PullRequestMergeEdge(props: EdgeProps) {
   const pullRequests = useBonsaiStore((state) => state.pullRequests)
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const prNumber = Number(props.data?.prNumber ?? 0)
+  const projectId = String(props.data?.projectId ?? '')
   const targetBranch = String(props.data?.targetBranch ?? '')
-  const pr = pullRequests.find((item) => item.number === prNumber)
+  const pr = pullRequests.find((item) => item.id === `${projectId}:${prNumber}`)
 
   const [path, labelX, labelY] = getBezierPath({
     sourceX: props.sourceX,

@@ -45,6 +45,11 @@ type contextDaemonClient interface {
 }
 
 type syncJobState struct {
+	syncRunning     bool
+	activeUntil     time.Time
+	lastSyncAttempt time.Time
+	syncRetryAt     time.Time
+	syncBackoff     time.Duration
 	localRunning    bool
 	localPending    bool
 	processRunning  bool
@@ -75,6 +80,7 @@ type stateSync struct {
 
 	localSem    chan struct{}
 	providerSem chan struct{}
+	gitSyncSem  chan struct{}
 	providers   *providerCache
 }
 
@@ -90,6 +96,7 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		watchCancels: map[string]context.CancelFunc{},
 		localSem:     make(chan struct{}, localRefreshWorkers),
 		providerSem:  make(chan struct{}, providerRefreshWorkers),
+		gitSyncSem:   make(chan struct{}, 2),
 		providers:    newProviderCache(),
 	}
 }
@@ -104,8 +111,10 @@ func (s *stateSync) Run(ctx context.Context) {
 
 	processTicker := time.NewTicker(processRefreshInterval)
 	providerTicker := time.NewTicker(providerRefreshInterval)
+	syncTicker := time.NewTicker(time.Minute)
 	defer processTicker.Stop()
 	defer providerTicker.Stop()
+	defer syncTicker.Stop()
 	defer func() {
 		s.mu.Lock()
 		s.closed = true
@@ -128,6 +137,8 @@ func (s *stateSync) Run(ctx context.Context) {
 			if s.events.count() > 0 {
 				s.RefreshAll(refreshProvider, false)
 			}
+		case <-syncTicker.C:
+			s.syncActiveProjects()
 		}
 	}
 }
@@ -270,7 +281,8 @@ func (s *stateSync) queueProvider(projectID string, force bool) {
 		return
 	}
 	j.providerRunning = true
-	j.providerForce = force
+	// This flag belongs to the pending job, not the job starting now.
+	j.providerForce = false
 	s.mu.Unlock()
 	go func() {
 		s.providerSem <- struct{}{}
@@ -370,6 +382,39 @@ func (s *stateSync) refreshLocal(projectID string) {
 	previousIdentity := localIdentityToken(before)
 	ctx, cancel := s.readContext(localReadTimeout)
 	defer cancel()
+	if before.Local == nil {
+		inventory, inventoryErr := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
+			var trees []domain.Worktree
+			err := json.Unmarshal(raw, &trees)
+			return trees, err
+		})
+		if inventoryErr == nil {
+			local := domain.RepositoryState{ID: projectID, DefaultBranch: project.info.DefaultBranch, Worktrees: inventory.([]domain.Worktree)}
+			for i := range local.Worktrees {
+				local.Worktrees[i].RepositoryID = projectID
+				if local.DefaultBranch == "" && local.Worktrees[i].Main {
+					local.DefaultBranch = local.Worktrees[i].Branch
+				}
+			}
+			branches, err := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
+				var branches []domain.Branch
+				err := json.Unmarshal(raw, &branches)
+				return branches, err
+			})
+			if err == nil {
+				local.Branches = branches.([]domain.Branch)
+			}
+			s.commitProject(project, "local", func(snapshot *browserSnapshot) {
+				if snapshot.Local != nil {
+					return
+				}
+				snapshot.Local = &local
+				snapshot.Repository = descriptorFromLocal(project.info, &local)
+				snapshot.Freshness["local"] = browserFreshness{State: "loading"}
+			})
+			s.queueProcesses(projectID)
+		}
+	}
 
 	value, err := s.gitPayload(ctx, project, "git.repository.refresh", func(raw json.RawMessage) (any, error) {
 		var state domain.RepositoryState
@@ -563,6 +608,10 @@ func (s *stateSync) commitProject(expected projectServices, component string, mu
 	next := cloneSnapshot(p.snapshot)
 	next.Repository.Available = project.info.Available
 	mutate(&next)
+	if next.Local != nil {
+		domain.ClassifyWorktrees(next.Local, p.snapshot.Local)
+	}
+	deriveBranchCandidates(&next)
 	next.Epoch = s.epoch
 	if snapshotsSemanticallyEqual(p.snapshot, next) {
 		s.mu.Unlock()
@@ -596,11 +645,10 @@ func semanticSnapshot(in browserSnapshot) browserSnapshot {
 	out.Epoch = ""
 	out.Sequence = 0
 	for key, freshness := range out.Freshness {
-		freshness.UpdatedAt = nil
+		if key != "provider" {
+			freshness.UpdatedAt = nil
+		}
 		out.Freshness[key] = freshness
-	}
-	if out.Remote != nil {
-		out.Remote.UpdatedAt = time.Time{}
 	}
 	for id, state := range out.WorktreeState {
 		state.CI.Freshness.UpdatedAt = nil
@@ -667,7 +715,18 @@ func (s *stateSync) runProjectWatcher(ctx context.Context, info ProjectInfo) {
 				Local:        service,
 				RepositoryID: localRepositoryID,
 				Roots:        []string{info.Path},
-				Interval:     watcherRecoveryInterval,
+				DiscoverRoots: func(context.Context) []string {
+					roots := []string{info.Path}
+					if snapshot, ok := s.CachedSnapshot(info.ID); ok && snapshot.Local != nil {
+						for _, tree := range snapshot.Local.Worktrees {
+							if tree.Path != "" && tree.Path != info.Path {
+								roots = append(roots, tree.Path)
+							}
+						}
+					}
+					return roots
+				},
+				Interval: watcherRecoveryInterval,
 				WorktreePaths: func(context.Context) map[string]string {
 					snapshot, ok := s.CachedSnapshot(info.ID)
 					if !ok || snapshot.Local == nil {
@@ -807,8 +866,10 @@ func cloneSnapshot(in browserSnapshot) browserSnapshot {
 		local.Branches = append([]domain.Branch(nil), in.Local.Branches...)
 		local.Worktrees = append([]domain.Worktree(nil), in.Local.Worktrees...)
 		local.Remotes = append([]domain.RemoteIdentity(nil), in.Local.Remotes...)
+		local.Groups = append([]domain.WorktreeGroup(nil), in.Local.Groups...)
 		out.Local = &local
 	}
+	out.BranchCandidates = append([]browserBranchCandidate(nil), in.BranchCandidates...)
 	if in.Remote != nil {
 		remote := *in.Remote
 		remote.Branches = append([]githubdomain.RemoteBranch(nil), in.Remote.Branches...)

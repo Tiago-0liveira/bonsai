@@ -50,6 +50,7 @@ func (s *Server) registerProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects", s.projects)
 	mux.HandleFunc("GET /api/projects/{projectId}/git", s.projectSnapshot)
 	mux.HandleFunc("POST /api/projects/{projectId}/refresh", s.projectRefresh)
+	mux.HandleFunc("POST /api/projects/{projectId}/sync", s.projectSync)
 	mux.HandleFunc("PATCH /api/worktrees/{id}/metadata", s.patchWorktreeMetadata)
 }
 

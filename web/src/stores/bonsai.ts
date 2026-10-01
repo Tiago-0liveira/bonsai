@@ -8,7 +8,7 @@ import {
   boardPriorities as initialBoardPriorities,
   boardTypes as initialBoardTypes,
 } from '../mock/board'
-import { localCommand, createWorktree, changePullRequest, reviewPullRequest, updateMetadata, report, type Branch } from '../api/git'
+import { localCommand, createWorktree, changePullRequest, reviewPullRequest, updateMetadata, report, type Branch, type BranchCandidate, type RepositorySync, type WorktreeGroup } from '../api/git'
 import { worktreeTags as initialWorktreeTags } from '../mock/tags'
 import type {
   Agent,
@@ -52,6 +52,11 @@ interface BonsaiState {
   projectQuery: string
   setProjectQuery: (query: string) => void
 
+  branchCandidates: Record<string, BranchCandidate[]>
+  worktreeGroups: Record<string, WorktreeGroup[]>
+  repositorySync: Record<string, RepositorySync>
+  expandedAutomaticGroups: string[]
+  toggleAutomaticGroup: (id: string) => void
   gitBranches: Record<string, Branch[]>
   gitOnline: Record<string, boolean>
   gitRevision: number
@@ -81,7 +86,11 @@ interface BonsaiState {
 
   worktreeDialogOpen: boolean
   setWorktreeDialogOpen: (open: boolean) => void
-  createMockWorktree: (input?: CreateWorktreeInput | string) => void
+  worktreeDialogTarget: { projectId: string; sourceType?: CreateWorktreeInput['sourceType']; sourceRef?: string; branchName?: string } | null
+  openCreateWorktree: (projectId: string, candidate?: BranchCandidate) => void
+  deleteWorktreeId: string
+  setDeleteWorktreeId: (id: string) => void
+  createWorktree: typeof createWorktree
 
   startAgentDialogOpen: boolean
   startAgentTargetWorktreeId: string
@@ -236,6 +245,11 @@ export const useBonsaiStore = create<BonsaiState>()(
       projectQuery: '',
       setProjectQuery: (projectQuery) => set({ projectQuery }),
 
+      branchCandidates: {},
+      worktreeGroups: {},
+      repositorySync: {},
+      expandedAutomaticGroups: [],
+      toggleAutomaticGroup: (id) => set(state => ({ expandedAutomaticGroups: state.expandedAutomaticGroups.includes(id) ? state.expandedAutomaticGroups.filter(value => value !== id) : [...state.expandedAutomaticGroups, id] })),
       gitBranches: {},
       gitOnline: {},
       gitRevision: 0,
@@ -334,8 +348,12 @@ export const useBonsaiStore = create<BonsaiState>()(
       },
 
       worktreeDialogOpen: false,
-      setWorktreeDialogOpen: (worktreeDialogOpen) => set({ worktreeDialogOpen }),
-      createMockWorktree: (input) => { void createWorktree(input) },
+      worktreeDialogTarget: null,
+      setWorktreeDialogOpen: (worktreeDialogOpen) => set({ worktreeDialogOpen, worktreeDialogTarget: worktreeDialogOpen ? { projectId: get().activeProjectId } : null }),
+      openCreateWorktree: (projectId, candidate) => set({ worktreeDialogOpen: true, worktreeDialogTarget: { projectId, sourceType: candidate ? (candidate.creation_mode === 'existing' ? 'existing' : 'origin') : undefined, sourceRef: candidate?.source_ref, branchName: candidate ? (candidate.local_branch || candidate.name) : undefined } }),
+      deleteWorktreeId: '',
+      setDeleteWorktreeId: (deleteWorktreeId) => set({ deleteWorktreeId }),
+      createWorktree,
 
       startAgentDialogOpen: false,
       startAgentTargetWorktreeId: '',
@@ -751,6 +769,8 @@ export const useBonsaiStore = create<BonsaiState>()(
         boardTypes: state.boardTypes,
         agents: state.agents,
         collapsedTagGroups: state.collapsedTagGroups,
+		detachedStackWorktreeIds: state.detachedStackWorktreeIds,
+        expandedAutomaticGroups: state.expandedAutomaticGroups,
         envVariables: state.envVariables,
       }),
     },

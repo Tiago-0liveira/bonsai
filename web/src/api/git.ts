@@ -20,10 +20,22 @@ import {
 export interface Branch {
   name: string
   remote: boolean
+  ref?: string
+  remote_name?: string
+  upstream_ref?: string
+  last_commit_at?: string
   upstream?: string
   local_head_sha?: string
   local_remote_ref_sha?: string
   remote_head_sha?: string
+}
+export interface WorktreeGroup { id: string; kind: string; worktree_ids: string[] }
+export interface SyncOutcome { state: 'ready' | 'skipped' | 'error' | 'running'; reason?: string; error?: string; completed_at?: string }
+export interface RepositorySync { fetch: SyncOutcome; pull: SyncOutcome }
+export interface BranchCandidate {
+  id: string; ref: string; name: string; source: 'local' | 'remote' | 'provider'; remote?: string
+  local_branch?: string; upstream_ref?: string; head_sha?: string; last_commit_at?: string; pull_requests: RemotePR[]
+  worktree_ids: string[]; creation_mode?: 'existing' | 'remote'; source_ref?: string; unavailable_reason?: string
 }
 export interface Repository {
   launch?: boolean
@@ -49,7 +61,7 @@ interface RemoteCheck {
   conclusion: string
   url?: string
 }
-interface RemotePR {
+export interface RemotePR {
   number: number
   title: string
   body: string
@@ -99,6 +111,7 @@ interface LocalWorktree {
   local_head_sha: string
   status?: LocalStatus
   status_error?: { code: string; message: string }
+  connection?: { state: 'linked' | 'unlinked' | 'unknown'; reason?: string; status_unknown?: boolean }
 }
 interface ProcessSummary {
   id: string
@@ -129,10 +142,13 @@ interface WorktreeProjection {
 }
 export interface Snapshot {
   epoch?: string
+  branch_candidates?: BranchCandidate[]
+  sync?: RepositorySync
   repository: Repository
   online: boolean
   sequence: number
   local?: {
+    groups?: WorktreeGroup[]
     default_branch?: string
     branches: Branch[]
     worktrees: LocalWorktree[]
@@ -143,6 +159,8 @@ export interface Snapshot {
     branches: { name: string; remote_head_sha: string }[]
     pull_requests: RemotePR[]
     updated_at?: string
+    pr_catalog_complete?: boolean
+    pr_catalog_loading?: boolean
   }
   metadata: Record<string, { tag: string; merge_target_branch: string; stack_preference: 'auto' | 'never' }>
   processes?: ProcessSummary[]
@@ -154,12 +172,12 @@ export class APIError extends Error {
     super(message)
   }
 }
-export async function request<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
+export async function request<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST', idempotencyKey: string = crypto.randomUUID()): Promise<T> {
   const response = await localFetch(path, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(method !== 'GET' ? { 'Idempotency-Key': crypto.randomUUID() } : {}),
+      ...(method !== 'GET' ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
@@ -193,13 +211,14 @@ function project(r: Repository): Project {
     openPrCount: 0,
   }
 }
-function pullRequest(repo: string, p: RemotePR): PullRequest {
+export function pullRequest(repo: string, p: RemotePR): PullRequest {
   return {
     id: `${repo}:${p.number}`,
     number: p.number,
     title: p.title,
     description: p.body ?? '',
     branch: p.head,
+    headRepository: p.head_repository,
     base: p.base,
     status: p.state === 'merged' ? 'Merged' : p.state === 'closed' ? 'Closed' : p.draft ? 'Draft' : 'Open',
     author: p.author,
@@ -221,6 +240,7 @@ function pullRequest(repo: string, p: RemotePR): PullRequest {
   }
 }
 
+const pendingCreatedWorktrees = new Map<string, string>()
 const heads = new Map<string, string>()
 const githubRepositoryProjects = new Map<number, Set<string>>()
 interface SequenceGuard {
@@ -368,6 +388,10 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
       id: w.id,
       projectId: id,
       branch: w.branch,
+      path: w.path,
+      main: w.main,
+      headSha: w.local_head_sha,
+      connection: w.connection ? { state: w.connection.state, reason: w.connection.reason, statusUnknown: w.connection.status_unknown } : undefined,
       kind: w.main ? 'Production' : 'Feature',
       tag: meta?.tag || (w.main ? 'production' : 'untagged'),
       sourceType: 'existing',
@@ -392,7 +416,7 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
   })
 
   const p = project(snapshot.repository)
-  const mainTree = (snapshot.local?.worktrees ?? []).find(w => w.branch === p.defaultBranch || w.main)
+  const mainTree = (snapshot.local?.worktrees ?? []).find(w => w.main)
   const mainCommit = mainTree?.status?.last_commit
   const mainProjection = mainTree ? snapshot.worktree_state?.[mainTree.id] : undefined
   p.health = !snapshot.online
@@ -413,30 +437,47 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     }
   }
 
-  const branches = [...(snapshot.local?.branches ?? [])]
-  for (const branch of snapshot.remote?.branches ?? []) {
-    const local = branches.find(value => value.name === `origin/${branch.name}`)
-    if (local) local.remote_head_sha = branch.remote_head_sha
-    else branches.push({ name: `origin/${branch.name}`, remote: true, remote_head_sha: branch.remote_head_sha })
-  }
+  const branches = snapshot.local?.branches ?? []
+  const candidates = snapshot.branch_candidates ?? []
+  const groups = snapshot.local?.groups ?? []
+  const sync = snapshot.sync ?? state.repositorySync[id]
 
   const nextProcesses = (snapshot.processes ?? []).map(mapProcess)
   const allTrees = [...state.worktrees.filter(w => w.projectId !== id), ...trees]
   const allProcesses = [...state.processes.filter(process => process.projectId !== id), ...nextProcesses]
-  const selection = state.selection.type === 'worktree'
+  const removedWorktreeIds = new Set(state.worktrees.filter(w => w.projectId === id && !trees.some(tree => tree.id === w.id)).map(w => w.id))
+  const agents = state.agents.filter(agent => !removedWorktreeIds.has(agent.worktreeId))
+  const pendingCreatedId = pendingCreatedWorktrees.get(id)
+  const createdVisible = pendingCreatedId && trees.some(w => w.id === pendingCreatedId)
+  if (createdVisible) pendingCreatedWorktrees.delete(id)
+  const selection = createdVisible && state.activeProjectId === id
+    ? { type: 'worktree' as const, id: pendingCreatedId }
+    : state.selection.type === 'agent' && !agents.some(agent => agent.id === state.selection.id)
+      ? { type: 'project' as const, id: state.activeProjectId }
+      : state.selection.type === 'worktree'
     && state.worktrees.some(w => w.id === state.selection.id && w.projectId === id)
     && !trees.some(w => w.id === state.selection.id)
     ? { type: 'project' as const, id }
     : state.selection
-  const dockWorktreeId = state.dockWorktreeId && allTrees.some(w => w.id === state.dockWorktreeId)
+  const dockWorktreeId = createdVisible && state.activeProjectId === id
+    ? pendingCreatedId
+    : state.dockWorktreeId && allTrees.some(w => w.id === state.dockWorktreeId)
     ? state.dockWorktreeId
     : allTrees.find(w => w.projectId === state.activeProjectId)?.id ?? ''
-  const liveRuntimeIds = new Set([...state.agents.map(agent => agent.id), ...allProcesses.map(process => process.id)])
+  const liveRuntimeIds = new Set([...agents.map(agent => agent.id), ...allProcesses.map(process => process.id)])
   const openRuntimeIds = state.openRuntimeIds.filter(runtimeId => liveRuntimeIds.has(runtimeId))
   const dockRuntimeId = state.dockRuntimeId && liveRuntimeIds.has(state.dockRuntimeId) ? state.dockRuntimeId : ''
 
   const patch: Partial<StoreState> = {
     selection,
+    agents,
+    nodePlacements: Object.fromEntries(Object.entries(state.nodePlacements).filter(([nodeId]) => !removedWorktreeIds.has(nodeId) && !state.agents.some(agent => agent.id === nodeId && removedWorktreeIds.has(agent.worktreeId)))),
+    detachedStackWorktreeIds: [...new Set([...state.detachedStackWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)), ...(createdVisible ? [pendingCreatedId] : [])])],
+    expandedHistoryWorktreeIds: state.expandedHistoryWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)),
+    terminalSessions: state.terminalSessions.filter(session => !session.agentId || agents.some(agent => agent.id === session.agentId)),
+    branchCandidates: { ...state.branchCandidates, [id]: candidates },
+    worktreeGroups: { ...state.worktreeGroups, [id]: groups },
+    repositorySync: sync ? { ...state.repositorySync, [id]: sync } : state.repositorySync,
     projects: state.projects.map(value => value.id === id ? p : value),
     worktrees: allTrees,
     processes: allProcesses,
@@ -459,6 +500,9 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
   )
   const currentSemantic = {
     selection: state.selection,
+    agents: state.agents,
+    detachedStackWorktreeIds: state.detachedStackWorktreeIds,
+    worktreeGroups: state.worktreeGroups,
     projects: state.projects,
     worktrees: state.worktrees,
     processes: state.processes,
@@ -472,6 +516,9 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
   }
   const nextSemantic = {
     selection,
+    agents: patch.agents,
+    detachedStackWorktreeIds: patch.detachedStackWorktreeIds,
+    worktreeGroups: patch.worktreeGroups,
     projects: patch.projects,
     worktrees: patch.worktrees,
     processes: patch.processes,
@@ -484,7 +531,11 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     openRuntimeIds,
   }
   guard.applied = Math.max(guard.applied, snapshot.sequence)
-  if (JSON.stringify(currentSemantic) === JSON.stringify(nextSemantic)) return undefined
+  if (JSON.stringify(currentSemantic) === JSON.stringify(nextSemantic)) {
+    const updates = { syncFreshness: patch.syncFreshness, repositorySync: patch.repositorySync, branchCandidates: patch.branchCandidates }
+    if (JSON.stringify(updates) === JSON.stringify({ syncFreshness: state.syncFreshness, repositorySync: state.repositorySync, branchCandidates: state.branchCandidates })) return undefined
+    return updates
+  }
   patch.gitRevision = state.gitRevision + 1
   return patch
 }
@@ -528,41 +579,76 @@ export async function refreshProject(id: string, fresh = false): Promise<Snapsho
   applySnapshot(snapshot)
   return snapshot
 }
-export async function createWorktree(input?: CreateWorktreeInput | string) {
+export function syncProject(id: string, initial = false) {
+  return request<{ accepted: boolean }>(`/api/projects/${encodeURIComponent(id)}/sync`, { initial })
+}
+export class WorktreeMetadataError extends Error {
+  constructor(public worktreeId: string, cause: unknown) {
+    super(`Worktree created. Settings could not be saved: ${cause instanceof Error ? cause.message : String(cause)}`)
+  }
+}
+export async function createWorktree(input: CreateWorktreeInput, options: { idempotencyKey?: string; worktreeId?: string } = {}): Promise<string> {
   const state = useBonsaiStore.getState()
-  const p = state.projects.find(value => value.id === state.activeProjectId)
-  if (!p) return
-  if (!input || typeof input === 'string') {
-    useBonsaiStore.setState({ worktreeDialogOpen: true })
-    return
+  const projectId = input.projectId ?? state.activeProjectId
+  if (!state.projects.some(value => value.id === projectId)) throw new Error('Project is unavailable')
+  let worktreeId = options.worktreeId
+  if (!worktreeId) {
+    const response = await request<{ result: LocalWorktree }>(
+      `/api/projects/${encodeURIComponent(projectId)}/worktrees`,
+      { mode: input.sourceType === 'origin' ? 'remote' : input.sourceType,
+        branch: input.branchName || (input.sourceType === 'origin' ? input.sourceRef.split('/').slice(1).join('/') : input.sourceRef),
+        base: input.sourceRef }, 'POST', options.idempotencyKey,
+    )
+    worktreeId = response.result.id
+  }
+  pendingCreatedWorktrees.set(projectId, worktreeId)
+  const canonical = useBonsaiStore.getState()
+  if (canonical.worktrees.some(worktree => worktree.id === worktreeId)) {
+    pendingCreatedWorktrees.delete(projectId)
+    useBonsaiStore.setState({ detachedStackWorktreeIds: [...new Set([...canonical.detachedStackWorktreeIds, worktreeId])] })
+    if (canonical.activeProjectId === projectId) canonical.setSelection({ type: 'worktree', id: worktreeId })
   }
   try {
-    const response = await request<{ result: LocalWorktree }>(
-      `/api/projects/${encodeURIComponent(p.id)}/worktrees`,
-      {
-        mode: input.sourceType === 'origin' ? 'remote' : input.sourceType,
-        branch: input.sourceType === 'new' ? input.branchName : input.sourceRef.replace(/^origin\//, ''),
-        base: input.sourceRef,
-      },
-    )
-    await updateMetadata(response.result.id, {
-      merge_target_branch: input.mergeTargetBranch,
-      tag: state.worktreeTags.find(t => t.id === input.tagId)?.name ?? '',
-    })
-    useBonsaiStore.setState({
-      selection: { type: 'worktree', id: response.result.id },
-      dockWorktreeId: response.result.id,
-      worktreeDialogOpen: false,
-      notice: 'Worktree created',
-    })
+    await updateMetadata(worktreeId, { merge_target_branch: input.mergeTargetBranch, tag: state.worktreeTags.find(t => t.id === input.tagId)?.name ?? '' })
   } catch (error) {
-    report(error)
+    throw new WorktreeMetadataError(worktreeId, error)
   }
+  // Selection is applied by the canonical snapshot only when this project is
+  // still active. An in-flight request cannot redirect a project switch.
+  await refreshProject(projectId).catch(report)
+  return worktreeId
+}
+export async function deleteWorktree(id: string, confirmDiscard = false, idempotencyKey?: string) {
+  return request<{ metadata_error?: string }>(`/api/worktrees/${encodeURIComponent(id)}`, { confirm_discard: confirmDiscard }, 'DELETE', idempotencyKey)
+}
+export async function stopWorktreeProcesses(projectId: string, daemonIds: number[]) {
+  for (const id of daemonIds) await request(`/api/projects/${encodeURIComponent(projectId)}/processes/${id}`, {}, 'DELETE')
 }
 export async function updateMetadata(id: string, patch: Record<string, string>) {
   await request(`/api/worktrees/${encodeURIComponent(id)}/metadata`, patch, 'PATCH')
 }
-export async function loadPullRequest(id: string) {
+export async function fetchClosedPullRequests(projectId: string): Promise<PullRequest[]> {
+  const rows = await request<RemotePR[]>(`/api/projects/${encodeURIComponent(projectId)}/pull-requests?state=closed`)
+  return (rows ?? []).map(row => pullRequest(projectId, row))
+}
+
+const pullRequestLoads = new Map<string, Promise<void>>()
+const pullRequestLoadedAt = new Map<string, number>()
+const pullRequestLoadedVersion = new Map<string, string>()
+function pullRequestVersion(id: string) {
+  return `${heads.get(id)}:${useBonsaiStore.getState().pullRequests.find(pr => pr.id === id)?.updatedAt}`
+}
+
+export function loadPullRequest(id: string, force = false): Promise<void> {
+  const pending = pullRequestLoads.get(id)
+  if (pending) return pending
+  if (!force && pullRequestLoadedVersion.get(id) === pullRequestVersion(id) && Date.now() - (pullRequestLoadedAt.get(id) ?? 0) < 60_000) return Promise.resolve()
+  const loading = fetchPullRequest(id).finally(() => pullRequestLoads.delete(id))
+  pullRequestLoads.set(id, loading)
+  return loading
+}
+
+async function fetchPullRequest(id: string) {
   const index = id.lastIndexOf(':')
   const repo = id.slice(0, index)
   const number = id.slice(index + 1)
@@ -576,9 +662,11 @@ export async function loadPullRequest(id: string) {
     if (heads.get(id) && heads.get(id) !== remote.head_sha) return
     heads.set(id, remote.head_sha)
     mapped.checks = checks.map(check => ({ name: check.name, status: checkStatus(check) }))
+    pullRequestLoadedAt.set(id, Date.now())
     useBonsaiStore.setState(state => ({
-      pullRequests: state.pullRequests.map(value => value.id === id ? mapped : value),
+      pullRequests: [...state.pullRequests.filter(value => value.id !== id), mapped],
     }))
+    pullRequestLoadedVersion.set(id, pullRequestVersion(id))
   } catch (error) {
     report(error)
   }
@@ -600,7 +688,7 @@ export async function changePullRequest(id: string, status: PullRequest['status'
       action === 'merge' ? { method: 'merge', head_sha: heads.get(id) } : {},
     )
     await requestProjectRefresh(repo, 'provider')
-    await loadPullRequest(id)
+    await loadPullRequest(id, true)
   } catch (error) {
     report(error)
   }
@@ -616,7 +704,7 @@ export async function reviewPullRequest(id: string, body: string, kind: 'comment
       commit_id: heads.get(id),
     })
     await requestProjectRefresh(repo, 'provider')
-    await loadPullRequest(id)
+    await loadPullRequest(id, true)
   } catch (error) {
     report(error)
   }
@@ -694,6 +782,9 @@ export function reconcileCatalog(repos: Repository[]) {
     worktrees,
     processes,
     pullRequests: state.pullRequests.filter(p => ids.has(p.id.slice(0, p.id.lastIndexOf(':')))),
+    branchCandidates: Object.fromEntries(Object.entries(state.branchCandidates).filter(([id]) => ids.has(id))),
+    worktreeGroups: Object.fromEntries(Object.entries(state.worktreeGroups).filter(([id]) => ids.has(id))),
+    repositorySync: Object.fromEntries(Object.entries(state.repositorySync).filter(([id]) => ids.has(id))),
     gitBranches: Object.fromEntries(Object.entries(state.gitBranches).filter(([id]) => ids.has(id))),
     gitOnline: Object.fromEntries(repos.map(r => [r.id, r.available !== false && (state.gitOnline[r.id] ?? false)])),
     syncFreshness: Object.fromEntries(Object.entries(state.syncFreshness).filter(([id]) => ids.has(id))),
@@ -741,6 +832,9 @@ function markConnectionStateStale() {
 export function startGitBackend() {
   let closed = false
   let socket: WebSocket | undefined
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined
+  let retryDelay = 1000
   let bootstrapping = true
   let bootstrapCatalog: Repository[] = []
   const bootstrapSnapshots = new Map<string, Snapshot>()
@@ -749,6 +843,8 @@ export function startGitBackend() {
 
   const onEvent = (data: LocalEvent) => {
     if (closed || generation !== activeGeneration) return
+    clearTimeout(heartbeatTimer)
+    heartbeatTimer = setTimeout(() => socket?.close(), 75_000)
     if (data.type === 'ready' && data.epoch) {
       setEpoch(data.epoch)
       return
@@ -789,22 +885,41 @@ export function startGitBackend() {
     }
   }
 
+  const scheduleReconnect = () => {
+    if (closed || generation !== activeGeneration) return
+    clearTimeout(reconnectTimer)
+    reconnectTimer = setTimeout(() => { void connect() }, retryDelay)
+    retryDelay = Math.min(retryDelay * 2, 30_000)
+  }
+
   const connect = async () => {
     try {
+      bootstrapping = true
+      bootstrapCatalog = []
+      bootstrapSnapshots.clear()
+      pendingSnapshots.clear()
       const connection = await openLocalEvents(onEvent)
       if (closed || generation !== activeGeneration) {
         connection.socket.close()
         return
       }
       socket = connection.socket
+      retryDelay = 1000
+      useBonsaiStore.setState({ gitError: '' })
+      clearTimeout(heartbeatTimer)
+      heartbeatTimer = setTimeout(() => socket?.close(), 75_000)
       setEpoch(connection.epoch)
       socket.onclose = event => {
         if (closed || generation !== activeGeneration) return
         markConnectionStateStale()
-        if (event.code === 1008) invalidateLocalSession()
-        markLocalConnectionLost(event.code === 1008
-          ? 'The local event session expired. Reconnect to create a fresh capability.'
-          : 'The local Bonsai event connection closed. Reconnect when Bonsai is available.')
+        clearTimeout(heartbeatTimer)
+        if (event.code === 1008) {
+          invalidateLocalSession()
+          markLocalConnectionLost('The local event session expired. Reconnect to create a fresh capability.')
+        } else {
+          useBonsaiStore.setState({ gitError: 'Local updates disconnected. Reconnecting…' })
+          scheduleReconnect()
+        }
       }
       socket.onerror = () => {
         if (!closed) socket?.close()
@@ -812,12 +927,15 @@ export function startGitBackend() {
     } catch (error) {
       if (!closed && generation === activeGeneration) {
         useBonsaiStore.setState({ gitError: error instanceof Error ? error.message : String(error) })
+        scheduleReconnect()
       }
     }
   }
   void connect()
   return () => {
     closed = true
+    clearTimeout(reconnectTimer)
+    clearTimeout(heartbeatTimer)
     if (generation === activeGeneration) activeGeneration++
     if (socket) {
       socket.onclose = null
@@ -860,5 +978,9 @@ export function __resetGitSyncForTests() {
   sequenceGuards.clear()
   githubRepositoryProjects.clear()
   heads.clear()
+  pullRequestLoads.clear()
+  pullRequestLoadedAt.clear()
+  pullRequestLoadedVersion.clear()
+  pendingCreatedWorktrees.clear()
   catalogRequest = undefined
 }

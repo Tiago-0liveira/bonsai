@@ -292,6 +292,30 @@ func TestWebSocketAuthentication(t *testing.T) {
 	if ready["type"] != "ready" || ready["epoch"] != s.stateSync.epoch || ready["epoch"] == "" {
 		t.Fatalf("first event = %#v", ready)
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		var event localEvent
+		if err := conn.ReadJSON(&event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "bootstrap_complete" {
+			break
+		}
+	}
+	// Updates must continue on the same socket after the initial catalog.
+	s.eventHub.publish(localEvent{Type: "project_update", ProjectID: "live", Epoch: s.stateSync.epoch, Sequence: 42})
+	for {
+		var event localEvent
+		if err := conn.ReadJSON(&event); err != nil {
+			t.Fatal(err)
+		}
+		if event.ProjectID == "live" {
+			if event.Type != "project_update" || event.Sequence != 42 {
+				t.Fatalf("unexpected live update: %+v", event)
+			}
+			break
+		}
+	}
 }
 
 func TestDevelopmentModeStillRequiresCapabilityAndExactOrigin(t *testing.T) {

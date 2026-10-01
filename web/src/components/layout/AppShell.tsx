@@ -11,6 +11,7 @@ import { CommandPalette } from '../../features/command-palette/CommandPalette'
 import { Inspector } from '../../features/inspector/Inspector'
 import { BottomWorkspace } from '../../features/terminal/BottomWorkspace'
 import { CreateWorktreeDialog } from '../../features/workspace/CreateWorktreeDialog'
+import { DeleteWorktreeDialog } from '../../features/workspace/DeleteWorktreeDialog'
 import { EnvEditor } from '../../features/workspace/EnvEditor'
 import { StartAgentDialog } from '../../features/workspace/StartAgentDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
@@ -98,6 +99,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
 
         <CreateWorktreeDialog />
+        <DeleteWorktreeDialog />
         <StartAgentDialog />
         <EnvEditor />
         <CommandPalette />

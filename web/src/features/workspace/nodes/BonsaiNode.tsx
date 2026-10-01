@@ -24,6 +24,7 @@ import {
   Settings2,
   Square,
   TerminalSquare,
+  Trash2,
   Undo2,
   X,
 } from 'lucide-react'
@@ -36,6 +37,8 @@ export interface StackItemData {
   prNumber?: number
   prStatus?: PrStatus
   ciStatus: CiStatus
+  connectionLabel?: string
+  dirtyFiles?: number
   hasRunningAgent: boolean
 }
 
@@ -67,6 +70,8 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   tagBackground?: string
   tagBorder?: string
   tagCount?: number
+  groupId?: string
+  connectionLabel?: string
   stackCount?: number
   stackItems?: StackItemData[]
   historyItems?: HistoryItemData[]
@@ -217,6 +222,8 @@ function EnvCard({ data }: { data: BonsaiGraphData }) {
 }
 
 function StackCard({ data }: { data: BonsaiGraphData }) {
+  const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
+  const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const ejectWorktreeFromStack = useBonsaiStore((state) => state.ejectWorktreeFromStack)
@@ -228,7 +235,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
       <MoveSubtreeGrip id={data.entityId} />
       <button
         type="button"
-        onClick={(event) => { event.stopPropagation(); if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
+        onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId); else if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
         className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5 text-left"
         style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--purple))'}` }}
       >
@@ -246,8 +253,13 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
               onClick={(event) => { event.stopPropagation(); setSelection({ type: 'worktree', id: item.id }) }}
               className="min-w-0 flex-1 truncate text-left font-mono text-[9px] hover:text-[rgb(var(--text))]"
             >
-              {item.branch}
+              <span className="block truncate">{item.branch}</span>
+              {item.connectionLabel && <span className="block text-[8px] text-[rgb(var(--orange))]">{item.connectionLabel} · {item.dirtyFiles ?? 0} changed</span>}
             </button>
+            <ContextMenu.Root>
+              <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
+              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-1"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
+            </ContextMenu.Root>
             <PrBadge status={item.prStatus} number={item.prNumber} />
             <CiBadge status={item.ciStatus} compact />
             <button
@@ -281,6 +293,8 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setNotice = useBonsaiStore((state) => state.setNotice)
+  const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
+  const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
 
@@ -368,6 +382,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
                 target <span className="truncate font-mono text-[rgb(var(--muted))]">{data.mergeTargetBranch}</span>
               </div>
               <div className="flex flex-wrap gap-1.5 px-2.5 py-2">
+                {data.connectionLabel && <span className="text-[8px] text-[rgb(var(--orange))]">{data.connectionLabel}</span>}
                 <CiBadge status={data.ciStatus} failed={data.ciFailed} />
               </div>
               <div className="flex items-center justify-between border-t border-[rgb(var(--border))] px-2.5 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">
@@ -466,7 +481,8 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
             <>
               <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
               <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
-              {data.tag && (data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.tag} stack</MenuItem>}
+              {(data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => data.groupId ? toggleAutomaticGroup(data.groupId) : toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.groupId ? 'Local / unlinked' : data.tag} stack</MenuItem>}
+              <MenuItem onSelect={() => setDeleteWorktreeId(data.entityId)}><Trash2 size={13} /> Delete worktree</MenuItem>
             </>
           )}
 

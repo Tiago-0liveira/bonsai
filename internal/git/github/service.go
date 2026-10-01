@@ -21,6 +21,15 @@ type PRFilter struct {
 	Head  string
 	Base  string
 }
+type PullRequestPage struct {
+	Items    []PullRequest
+	NextPage int
+}
+
+// PagedPullRequests is optional so provider adapters can migrate separately.
+type PagedPullRequests interface {
+	PullRequestPage(context.Context, string, PRFilter, int) (PullRequestPage, error)
+}
 type PullRequest struct {
 	Number         int       `json:"number"`
 	Title          string    `json:"title"`

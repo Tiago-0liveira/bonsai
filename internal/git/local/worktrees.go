@@ -56,19 +56,33 @@ func (s *Service) createWorktree(ctx context.Context, r *repository, req domain.
 		}
 		args = append(args, "-b", req.Branch, "--", path, base)
 	case "remote":
-		if !strings.HasPrefix(req.Base, "origin/") {
-			return domain.Worktree{}, domain.E("invalid", "remote worktrees require an origin branch")
+		base := strings.TrimPrefix(req.Base, "refs/remotes/")
+		remote, name, ok := strings.Cut(base, "/")
+		if !ok || remote == "" || name == "HEAD" {
+			return domain.Worktree{}, domain.ErrInvalid
 		}
-		if e = branch(ctx, r.Root, strings.TrimPrefix(req.Base, "origin/")); e != nil {
+		if e = branch(ctx, r.Root, name); e != nil {
 			return domain.Worktree{}, e
 		}
-		if _, e = run(ctx, r.Root, "fetch", "origin", "--prune"); e != nil {
+		if _, e = ref(ctx, r.Root, "refs/remotes/"+base); e != nil {
 			return domain.Worktree{}, e
 		}
-		if _, e = ref(ctx, r.Root, "refs/remotes/"+req.Base); e != nil {
-			return domain.Worktree{}, e
+		// The selected local branch may have been created since the panel loaded.
+		// Attach it, instead of creating another branch with the same name.
+		if _, err := ref(ctx, r.Root, "refs/heads/"+req.Branch); err == nil {
+			trees, err := s.ListWorktrees(ctx, r.ID)
+			if err != nil {
+				return domain.Worktree{}, err
+			}
+			for _, t := range trees {
+				if t.Branch == req.Branch {
+					return domain.Worktree{}, domain.E("busy", "branch is already checked out")
+				}
+			}
+			args = append(args, "--", path, req.Branch)
+		} else {
+			args = append(args, "--track", "-b", req.Branch, "--", path, "refs/remotes/"+base)
 		}
-		args = append(args, "--track", "-b", req.Branch, "--", path, req.Base)
 	default:
 		return domain.Worktree{}, domain.ErrInvalid
 	}
@@ -105,6 +119,11 @@ func (s *Service) RemoveWorktree(ctx context.Context, req domain.RemoveWorktreeR
 	defer unlock()
 	if path == r.Root {
 		return domain.E("forbidden", "cannot remove main worktree")
+	}
+	if r.BeforeRemove != nil {
+		if err := r.BeforeRemove(ctx, path); err != nil {
+			return err
+		}
 	}
 	st, e := status(ctx, path)
 	if e != nil {

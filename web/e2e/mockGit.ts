@@ -296,7 +296,7 @@ export async function mockLocalEventSocket(
   return { publishCatalog, publishUpdate }
 }
 
-export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false) {
+export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false) {
   const rootSettings: {
     version: number
     revision: number
@@ -334,6 +334,10 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     'wt-release': { tag: 'chore', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-review': { tag: 'review-code', merge_target_branch: 'chore/release-automation', stack_preference: 'auto' },
   }
+  const createdTrees: Array<{ id: string; repository_id: string; path: string; branch: string; main: boolean; local_head_sha: string; status: ReturnType<typeof status>; connection: { state: string; reason?: string } }> = []
+  const removedTrees = new Set<string>()
+  let syncTime = '2026-09-27T00:00:00Z'
+  const unlinkedTrees = ['one', 'two'].map(name => ({ id: 'wt-local-' + name, repository_id: 'bonsai', path: '/trees/local-' + name, branch: 'local/' + name, main: false, local_head_sha: 'sha-local', status: status(0, 0, name === 'one' ? 1 : 0, 'normal'), connection: { state: 'unlinked', reason: 'no_upstream' } }))
   let providerReady = !delayedProvider
   const sequences = new Map(repositories.map(repository => [repository.id, 1]))
 
@@ -343,6 +347,13 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     sequences.set(projectId, sequence)
     if (projectId !== 'bonsai') return { ...emptySnapshot(projectId), sequence }
     const full = { ...bonsaiSnapshot(metadata), sequence }
+    if (management) {
+      const extra = [...unlinkedTrees, ...createdTrees].filter(tree => !removedTrees.has(tree.id))
+      const candidates = [{ id: 'refs/remotes/origin/discovered', ref: 'refs/remotes/origin/discovered', name: 'discovered', source: 'remote', remote: 'origin', head_sha: 'sha', last_commit_at: '2026-09-27T00:00:00Z', pull_requests: [], worktree_ids: createdTrees.filter(tree => !removedTrees.has(tree.id)).map(tree => tree.id), creation_mode: createdTrees.some(tree => !removedTrees.has(tree.id)) ? '' : 'remote', source_ref: 'origin/discovered' }]
+      return { ...full, branch_candidates: candidates,
+        sync: { fetch: { state: 'ready', completed_at: syncTime }, pull: { state: 'skipped', reason: 'dirty_worktree' } },
+        local: { ...full.local, branches: [...full.local.branches, { name: 'origin/discovered', ref: 'refs/remotes/origin/discovered', remote: true }], worktrees: [...full.local.worktrees.filter(tree => !removedTrees.has(tree.id)), ...extra], groups: [{ id: 'unlinked:bonsai', kind: 'unlinked', worktree_ids: unlinkedTrees.filter(tree => !removedTrees.has(tree.id)).map(tree => tree.id) }] } }
+    }
     if (providerReady) return full
     const localOnlyState = Object.fromEntries(
       (full.local.worktrees as Array<{ id: string }>).map(worktree => [worktree.id, {
@@ -440,9 +451,35 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       return
     }
 
+    if (/^\/api\/projects\/[^/]+\/sync$/.test(path) && request.method() === 'POST') {
+      syncTime = new Date().toISOString()
+      await route.fulfill({ status: 202, json: { accepted: true } })
+      if (management) socket.publishUpdate(projectSnapshot('bonsai', true), 'sync')
+      return
+    }
+
     const refreshMatch = path.match(/^\/api\/projects\/([^/]+)\/refresh$/)
     if (refreshMatch && request.method() === 'POST') {
       await route.fulfill({ status: 202, json: { accepted: true } })
+      return
+    }
+
+    if (management && path === '/api/projects/bonsai/worktrees' && request.method() === 'POST') {
+      const body = request.postDataJSON() as { mode: string; branch: string; base: string }
+      const tree = { id: 'wt-created', repository_id: 'bonsai', path: '/trees/' + body.branch, branch: body.branch, main: false, local_head_sha: 'sha-created', status: status(0, 0, 0, 'normal'), connection: { state: 'linked' } }
+      createdTrees.push(tree)
+      await route.fulfill({ json: { result: tree } })
+      socket.publishUpdate(projectSnapshot('bonsai', true))
+      return
+    }
+    if (management && /^\/api\/worktrees\/[^/]+$/.test(path) && request.method() === 'DELETE') {
+      const id = path.split('/').at(-1)!
+      const tree = [...unlinkedTrees, ...createdTrees].find(tree => tree.id === id)
+      const body = request.postDataJSON() as { confirm_discard: boolean }
+      if (tree?.status.dirty && !body.confirm_discard) { await route.fulfill({ status: 409, json: { error: { code: 'dirty_worktree', message: 'Worktree contains uncommitted changes' } } }); return }
+      removedTrees.add(id)
+      await route.fulfill({ json: { result: null } })
+      socket.publishUpdate(projectSnapshot('bonsai', true))
       return
     }
 
@@ -486,6 +523,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
   await page.route('https://api.bonsai.dev/**', async (route) => {
     await route.fulfill({ status: 401, body: 'authentication required' })
   })
+  return { publish: () => socket.publishUpdate(projectSnapshot('bonsai', true)) }
 }
 
 export async function openConnectedApp(page: Page) {

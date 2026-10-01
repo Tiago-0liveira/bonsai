@@ -11,7 +11,7 @@ describe('canonical Git snapshots', () => {
   it('keeps fetched refs distinct from newer GitHub branch heads', () => {
     const snapshot: Snapshot = { repository: { id: 'repo', workspace_id: 'workspace', full_name: 'owner/repo', default_branch: 'main' }, online: true, sequence: 1, metadata: {}, local: { branches: [{ name: 'origin/main', remote: true, local_remote_ref_sha: 'fetched' }], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'main', main: true, local_head_sha: 'local' }] }, remote: { repository: { id: 123, full_name: 'owner/repo', default_branch: 'main' }, branches: [{ name: 'main', remote_head_sha: 'newer-remote' }], pull_requests: [] } }
     applySnapshot(snapshot)
-    expect(useBonsaiStore.getState().gitBranches.repo[0]).toMatchObject({ local_remote_ref_sha: 'fetched', remote_head_sha: 'newer-remote' })
+    expect(useBonsaiStore.getState().gitBranches.repo[0]).toMatchObject({ local_remote_ref_sha: 'fetched' })
     expect(useBonsaiStore.getState().worktrees[0].dirtyFiles).toBe(0)
     applySnapshot({ ...snapshot, sequence: 2, online: false })
     expect(useBonsaiStore.getState().worktrees[0].status).toBe('idle')
@@ -187,7 +187,7 @@ describe('synchronized snapshot ordering', () => {
     })
   })
 
-  it('does not rewrite Zustand or increment gitRevision for an identical newer snapshot', () => {
+  it('applies freshness-only updates without incrementing gitRevision', () => {
     const snapshot: Snapshot = {
       epoch: 'epoch-a',
       repository,
@@ -203,7 +203,8 @@ describe('synchronized snapshot ordering', () => {
       ...snapshot,
       sequence: 2,
       freshness: { local: { state: 'ready', updated_at: '2026-01-02T00:00:00Z' } },
-    })).toBe(false)
+    })).toBe(true)
+    expect(useBonsaiStore.getState().syncFreshness.repo.local.updatedAt).toBe('2026-01-02T00:00:00Z')
     expect(useBonsaiStore.getState().gitRevision).toBe(revision)
   })
 

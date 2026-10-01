@@ -1,3 +1,5 @@
+import { usePullRequestCatalog } from './usePullRequestCatalog'
+import { PullRequestTabs } from './PullRequestTabs'
 import { loadPullRequest } from '../../api/git'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -68,11 +70,10 @@ function PrOperations({ pr }: { pr: PullRequest }) {
 }
 
 export function PullRequestsPage() {
-  const allPullRequests = useBonsaiStore((state) => state.pullRequests)
   const projects = useBonsaiStore((state) => state.projects)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const addReview = useBonsaiStore((state) => state.addPullRequestReview)
-  const pullRequests = useMemo(() => allPullRequests.filter(p => p.id.startsWith(activeProjectId + ':')), [allPullRequests, activeProjectId])
+  const { rows: pullRequests, tab, setTab, message, retry } = usePullRequestCatalog(activeProjectId)
   const project = projects.find((item) => item.id === activeProjectId)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState(pullRequests[0]?.id ?? '')
@@ -81,8 +82,7 @@ export function PullRequestsPage() {
   const [review, setReview] = useState('')
   const selected = pullRequests.find((pr) => pr.id === selectedId) ?? pullRequests[0]
 
-  const revision = useBonsaiStore(s => s.gitRevision)
-  useEffect(() => { if (selected?.id) void loadPullRequest(selected.id) }, [selected?.id, revision])
+  useEffect(() => { if (selected?.id) void loadPullRequest(selected.id) }, [selected?.id, selected?.updatedAt])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -92,11 +92,12 @@ export function PullRequestsPage() {
     )
   }, [pullRequests, query])
 
-  if (!selected) return <div className="grid h-full place-items-center text-[11px] text-[rgb(var(--muted-2))]">No pull requests.</div>
 
-  const checksPassed = selected.checks.filter((check) => check.status === 'success').length
+
+  const checksPassed = selected?.checks.filter((check) => check.status === 'success').length ?? 0
 
   const submitReview = (kind: 'comment' | 'approve' | 'request-changes') => {
+    if (!selected) return
     addReview(selected.id, review, kind)
     setReview('')
   }
@@ -109,6 +110,7 @@ export function PullRequestsPage() {
           <span className="font-medium">Pull Requests</span>
           <span className="ml-auto rounded bg-[rgb(var(--panel-3))] px-1.5 py-0.5 text-[9px] text-[rgb(var(--muted))]">{pullRequests.length}</span>
         </div>
+        <PullRequestTabs value={tab} onChange={value => { setTab(value); if (value === 'closed') retry() }} />
         <div className="border-b border-[rgb(var(--border))] p-2">
           <label className="flex h-8 items-center gap-2 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
             <Search size={11} className="text-[rgb(var(--muted-2))]" />
@@ -116,6 +118,7 @@ export function PullRequestsPage() {
           </label>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
+          {!filtered.length && <p className="p-3 text-[10px] text-[rgb(var(--muted))]">{message}</p>}
           {filtered.map((pr) => {
             const success = pr.checks.filter((check) => check.status === 'success').length
             return (
@@ -125,7 +128,7 @@ export function PullRequestsPage() {
                 onClick={() => setSelectedId(pr.id)}
                 className={
                   'w-full border-b border-[rgb(var(--border))] px-3 py-3 text-left transition-colors ' +
-                  (pr.id === selected.id ? 'bg-[rgb(var(--purple)/.08)]' : 'hover:bg-[rgb(var(--panel-2))]')
+                  (pr.id === selected?.id ? 'bg-[rgb(var(--purple)/.08)]' : 'hover:bg-[rgb(var(--panel-2))]')
                 }
               >
                 <div className="flex items-start gap-2">
@@ -148,7 +151,7 @@ export function PullRequestsPage() {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-auto">
+      {selected ? <main className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-[920px] px-6 py-5">
           <header className="border-b border-[rgb(var(--border))] pb-4">
             <div className="flex items-start gap-3">
@@ -246,7 +249,7 @@ export function PullRequestsPage() {
             </div>
           </section>
         </div>
-      </main>
+      </main> : <div className="grid flex-1 place-items-center text-[11px] text-[rgb(var(--muted))]">{message}</div>}
     </div>
   )
 }

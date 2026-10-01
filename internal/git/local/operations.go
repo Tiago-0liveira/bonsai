@@ -110,6 +110,9 @@ func (s *Service) Pull(ctx context.Context, id string) error {
 func (s *Service) PullOperation(ctx context.Context, id string) (domain.Operation, error) {
 	return s.operate(ctx, id, "pull", "", "")
 }
+func (s *Service) PullWithPolicy(ctx context.Context, id string, policy domain.PullPolicy) (domain.Operation, error) {
+	return s.operatePolicy(ctx, id, "pull", "", "", policy)
+}
 func (s *Service) Rebase(ctx context.Context, id, target string) (domain.Operation, error) {
 	return s.operate(ctx, id, "rebase", target, "")
 }
@@ -123,6 +126,9 @@ func (s *Service) Abort(ctx context.Context, id, opID string) (domain.Operation,
 	return s.operate(ctx, id, "", opID, "abort")
 }
 func (s *Service) operate(ctx context.Context, id, kind, target, action string) (domain.Operation, error) {
+	return s.operatePolicy(ctx, id, kind, target, action, domain.PullPolicy{})
+}
+func (s *Service) operatePolicy(ctx context.Context, id, kind, target, action string, policy domain.PullPolicy) (domain.Operation, error) {
 	r, dir, e := s.target(ctx, id)
 	if e != nil {
 		return domain.Operation{}, e
@@ -167,6 +173,9 @@ func (s *Service) operate(ctx context.Context, id, kind, target, action string) 
 		switch kind {
 		case "pull":
 			args = []string{"pull", "--no-rebase", "--no-edit"}
+			if policy.FastForwardOnly {
+				args = []string{"pull", "--ff-only", "--no-rebase", "--no-autostash", "--no-edit"}
+			}
 		case "rebase", "merge":
 			sha, e := ref(ctx, dir, target)
 			if e != nil {
