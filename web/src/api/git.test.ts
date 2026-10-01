@@ -11,9 +11,9 @@ describe('canonical Git snapshots', () => {
   it('keeps fetched refs distinct from newer GitHub branch heads', () => {
     const snapshot: Snapshot = { repository: { id: 'repo', workspace_id: 'workspace', full_name: 'owner/repo', default_branch: 'main' }, online: true, sequence: 1, metadata: {}, local: { branches: [{ name: 'origin/main', remote: true, local_remote_ref_sha: 'fetched' }], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'main', main: true, local_head_sha: 'local' }] }, remote: { repository: { id: 123, full_name: 'owner/repo', default_branch: 'main' }, branches: [{ name: 'main', remote_head_sha: 'newer-remote' }], pull_requests: [] } }
     applySnapshot(snapshot)
-    expect(useBonsaiStore.getState().gitBranches.repo[0]).toMatchObject({ local_remote_ref_sha: 'fetched', remote_head_sha: 'newer-remote' })
+    expect(useBonsaiStore.getState().gitBranches.repo[0]).toMatchObject({ local_remote_ref_sha: 'fetched' })
     expect(useBonsaiStore.getState().worktrees[0].dirtyFiles).toBe(0)
-    applySnapshot({ ...snapshot, online: false })
+    applySnapshot({ ...snapshot, sequence: 2, online: false })
     expect(useBonsaiStore.getState().worktrees[0].status).toBe('idle')
   })
   it('constructs recursive file trees without fabricated contents', () => {
@@ -185,6 +185,27 @@ describe('synchronized snapshot ordering', () => {
       status: 'warning',
       port: 5173,
     })
+  })
+
+  it('applies freshness-only updates without incrementing gitRevision', () => {
+    const snapshot: Snapshot = {
+      epoch: 'epoch-a',
+      repository,
+      sequence: 1,
+      online: true,
+      metadata: {},
+      freshness: { local: { state: 'ready', updated_at: '2026-01-01T00:00:00Z' } },
+      local: { branches: [], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'main', main: true, local_head_sha: 'one' }] },
+    }
+    expect(applySnapshot(snapshot)).toBe(true)
+    const revision = useBonsaiStore.getState().gitRevision
+    expect(applySnapshot({
+      ...snapshot,
+      sequence: 2,
+      freshness: { local: { state: 'ready', updated_at: '2026-01-02T00:00:00Z' } },
+    })).toBe(true)
+    expect(useBonsaiStore.getState().syncFreshness.repo.local.updatedAt).toBe('2026-01-02T00:00:00Z')
+    expect(useBonsaiStore.getState().gitRevision).toBe(revision)
   })
 
   it('does not associate a same-named PR when the backend left the worktree unassociated', () => {

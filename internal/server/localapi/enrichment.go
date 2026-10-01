@@ -19,13 +19,19 @@ const (
 )
 
 type providerRepoEntry struct {
-	value     *browserRemoteSnapshot
-	expiresAt time.Time
-	retryAt   time.Time
-	backoff   time.Duration
-	running   bool
-	wait      chan struct{}
-	lastErr   error
+	nextPage              int
+	pending               []githubdomain.PullRequest
+	boundary              time.Time
+	startedAt             time.Time
+	fullReconcileAt       time.Time
+	catalogUpdatedThrough time.Time
+	value                 *browserRemoteSnapshot
+	expiresAt             time.Time
+	retryAt               time.Time
+	backoff               time.Duration
+	running               bool
+	wait                  chan struct{}
+	lastErr               error
 }
 
 type providerChecksEntry struct {
@@ -89,11 +95,15 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 
 		repo, repoErr := service.Repository(ctx, repository)
 		branches, branchErr := service.Branches(ctx, repository)
-		prs, prErr := service.PullRequests(ctx, repository, githubdomain.PRFilter{State: "all"})
+		prs, complete, prErr := readPRCatalog(ctx, service, repository, entry, now)
 		err := firstError(repoErr, branchErr, prErr)
 		var value *browserRemoteSnapshot
 		if err == nil {
-			value = &browserRemoteSnapshot{Repository: repo, Branches: branches, PullRequests: prs, UpdatedAt: now}
+			value = &browserRemoteSnapshot{Repository: repo, Branches: branches, PullRequests: prs, UpdatedAt: now, PRCatalogComplete: complete, PRCatalogLoading: !complete}
+			if !complete && entry.value != nil {
+				value.UpdatedAt = entry.value.UpdatedAt
+				value.PRCatalogComplete = entry.value.PRCatalogComplete
+			}
 		}
 
 		c.mu.Lock()
@@ -102,6 +112,9 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		if err == nil {
 			entry.value = value
 			entry.expiresAt = now.Add(providerReadyTTL)
+			if !complete {
+				entry.expiresAt = now
+			}
 			entry.retryAt = time.Time{}
 			entry.backoff = 0
 			entry.lastErr = nil
@@ -125,7 +138,11 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 			return cached, providerFailureFreshness(cached != nil, valueTime(cached), lastErr)
 		}
 		updated := value.UpdatedAt
-		return cloneRemote(value), browserFreshness{State: "ready", UpdatedAt: &updated}
+		state := "ready"
+		if !complete {
+			state = "loading"
+		}
+		return cloneRemote(value), browserFreshness{State: state, UpdatedAt: &updated}
 	}
 }
 
@@ -301,22 +318,31 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	}
 
 	states := map[string]browserWorktreeState{}
+	type checkTarget struct{ repository, sha string }
+	checkTargets := map[string]checkTarget{}
 	for _, worktree := range before.Local.Worktrees {
-		state := browserWorktreeState{CI: browserCIState{Status: "unknown", Checks: []githubdomain.Check{}, Freshness: providerFreshness}}
+		state := browserWorktreeState{CI: browserCIState{Status: "unknown", Checks: []githubdomain.Check{}, Freshness: browserFreshness{State: "loading"}}}
 		headRepo, headBranch := worktreeProviderHead(before.Local, worktree, identity)
 		candidates := []githubdomain.PullRequest{}
+		openCandidates := []githubdomain.PullRequest{}
 		if headRepo != "" && headBranch != "" {
 			for _, pull := range remote.PullRequests {
-				if pull.State == "open" && pull.Head == headBranch && strings.EqualFold(pull.HeadRepository, headRepo) {
+				if pull.Head == headBranch && strings.EqualFold(pull.HeadRepository, headRepo) {
 					candidates = append(candidates, pull)
+					if pull.State == "open" {
+						openCandidates = append(openCandidates, pull)
+					}
 				}
 			}
 		}
-		if len(candidates) == 1 {
+		if len(openCandidates) == 1 {
+			pull := openCandidates[0]
+			state.PullRequest = &pull
+		} else if len(openCandidates) == 0 && len(candidates) == 1 {
 			pull := candidates[0]
 			state.PullRequest = &pull
-		} else if len(candidates) > 1 {
-			state.PRDiagnostic = "ambiguous open pull requests for provider head"
+		} else if len(openCandidates) > 1 || len(candidates) > 1 {
+			state.PRDiagnostic = "ambiguous pull requests for provider head"
 		}
 
 		sha := ciSHA(before.Local, worktree, state.PullRequest, identity)
@@ -332,17 +358,13 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 			states[worktree.ID] = state
 			continue
 		}
-		checks, freshness := s.providers.checksFor(ctx, project.github, checkRepository, sha, s.now(), force)
 		state.CI.CheckedSHA = sha
-		state.CI.Checks = checks
-		state.CI.Status = checksRollup(checks)
-		state.CI.Freshness = freshness
-		if freshness.State == "error" && freshness.UpdatedAt == nil {
-			state.CI.Status = "unknown"
-		}
+		checkTargets[worktree.ID] = checkTarget{repository: checkRepository, sha: sha}
 		states[worktree.ID] = state
 	}
 
+	// The PR catalog and worktree links are useful immediately. CI requests can
+	// take much longer, especially when a repository has many worktrees.
 	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.Remote = remote
 		snapshot.Freshness["provider"] = providerFreshness
@@ -354,6 +376,35 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 			snapshot.Repository.DefaultBranch = remote.Repository.DefaultBranch
 		}
 	})
+	for _, worktree := range before.Local.Worktrees {
+		target, ok := checkTargets[worktree.ID]
+		if !ok {
+			continue
+		}
+		checks, freshness := s.providers.checksFor(ctx, project.github, target.repository, target.sha, s.now(), force)
+		state := states[worktree.ID]
+		state.CI.Checks = checks
+		state.CI.Status = checksRollup(checks)
+		state.CI.Freshness = freshness
+		if freshness.State == "error" && freshness.UpdatedAt == nil {
+			state.CI.Status = "unknown"
+		}
+		states[worktree.ID] = state
+	}
+	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
+		snapshot.WorktreeState = states
+	})
+	if remote.PRCatalogLoading && providerFreshness.Error == nil {
+		go func() {
+			ctx, cancel := s.readContext(2 * time.Second)
+			defer cancel()
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+				s.queueProvider(projectID, false)
+			}
+		}()
+	}
 }
 
 func (s *stateSync) commitProviderIfCurrent(project projectServices, token string, mutate func(*browserSnapshot)) {

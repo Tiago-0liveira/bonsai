@@ -16,6 +16,9 @@ import {
 import { LocateFixed, Network, Plus } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
 import type { Health, Worktree } from '../../../types'
+import { report, syncProject } from '../../../api/git'
+import { connectionLabel } from '../connectionLabel'
+import { groupCanvasWorktrees } from './worktreeGroups'
 import { getTagPresentation } from '../tagStyles'
 import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
 import { computeGlobalPlacements } from './layout/globalLayout'
@@ -96,6 +99,9 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const worktrees = useBonsaiStore((state) => state.worktrees)
   const tags = useBonsaiStore((state) => state.worktreeTags)
   const agents = useBonsaiStore((state) => state.agents)
+  const worktreeGroups = useBonsaiStore(state => state.worktreeGroups)
+  const expandedAutomaticGroups = useBonsaiStore(state => state.expandedAutomaticGroups)
+  const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const collapsedTagGroups = useBonsaiStore((state) => state.collapsedTagGroups)
   const detachedStackWorktreeIds = useBonsaiStore((state) => state.detachedStackWorktreeIds)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
@@ -132,12 +138,22 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     fitViewRef.current = fitView
   }, [fitView])
 
+  const activeProject = projects.find(project => project.id === activeProjectId)
+  const activeAvailable = !!activeProject && activeProject.available !== false
+  useEffect(() => {
+    if (!activeProjectId || !activeAvailable) return
+    const activate = () => { void syncProject(activeProjectId, true).catch(report) }
+    activate()
+    const timer = window.setInterval(activate, 5 * 60 * 1000)
+    return () => window.clearInterval(timer)
+  }, [activeProjectId, activeAvailable])
+
   const graph = useMemo(() => {
     const project = projects.find((item) => item.id === activeProjectId) ?? projects[0]
     if (!project) return { nodes: [] as Node[], edges: [] as Edge[], projectId: '', topologyKey: 'empty' }
 
     const allProjectWorktrees = worktrees.filter((worktree) => worktree.projectId === project.id)
-    const projectWorktrees = allProjectWorktrees.filter((worktree) => worktree.branch !== project.defaultBranch)
+    const projectWorktrees = allProjectWorktrees.filter(worktree => !worktree.main && (worktree.main !== undefined || worktree.branch !== project.defaultBranch))
     const projectWorktreeIds = new Set(projectWorktrees.map((worktree) => worktree.id))
     const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) !== 'archived')
     const runningAgents = projectAgents.filter((agent) => agent.state === 'running').length
@@ -145,41 +161,36 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const failedChecks = projectWorktrees.reduce((total, worktree) => total + worktree.ciFailed, 0)
     const runningCi = projectWorktrees.filter((worktree) => worktree.ciStatus === 'running').length
 
-    const groups = new Map<string, Worktree[]>()
-    projectWorktrees.forEach((worktree) => {
-      const items = groups.get(worktree.tag) ?? []
-      items.push(worktree)
-      groups.set(worktree.tag, items)
-    })
+    const groups = groupCanvasWorktrees(projectWorktrees, worktreeGroups[project.id] ?? [])
 
     const visibleEntries: Array<
-      | { type: 'stack'; id: string; tag: string; items: Worktree[] }
-      | { type: 'worktree'; id: string; worktree: Worktree; items: Worktree[] }
+      | { type: 'stack'; id: string; tag: string; groupId?: string; items: Worktree[] }
+      | { type: 'worktree'; id: string; worktree: Worktree; groupId?: string; items: Worktree[] }
     > = []
     const visibleNodeForWorktree = new Map<string, string>()
 
-    groups.forEach((items, tag) => {
+    groups.forEach(({ items, label: tag, groupId }) => {
       const stackable = items.filter(
         (item) => item.stackPreference !== 'never' && !detachedStackWorktreeIds.includes(item.id),
       )
       const separate = items.filter(
         (item) => item.stackPreference === 'never' || detachedStackWorktreeIds.includes(item.id),
       )
-      const collapsed = stackable.length > 1 && collapsedTagGroups.includes(project.id + ':' + tag)
+      const collapsed = stackable.length > 1 && (groupId ? !expandedAutomaticGroups.includes(groupId) : collapsedTagGroups.includes(project.id + ':' + tag))
 
       if (collapsed) {
-        const stackId = 'stack:' + project.id + ':' + tag
-        visibleEntries.push({ type: 'stack', id: stackId, tag, items: stackable })
+        const stackId = groupId ? 'stack:' + groupId : 'stack:' + project.id + ':' + tag
+        visibleEntries.push({ type: 'stack', id: stackId, tag, groupId, items: stackable })
         stackable.forEach((item) => visibleNodeForWorktree.set(item.id, stackId))
       } else {
         stackable.forEach((worktree) => {
-          visibleEntries.push({ type: 'worktree', id: worktree.id, worktree, items })
+          visibleEntries.push({ type: 'worktree', id: worktree.id, worktree, groupId, items })
           visibleNodeForWorktree.set(worktree.id, worktree.id)
         })
       }
 
       separate.forEach((worktree) => {
-        visibleEntries.push({ type: 'worktree', id: worktree.id, worktree, items })
+        visibleEntries.push({ type: 'worktree', id: worktree.id, worktree, groupId, items })
         visibleNodeForWorktree.set(worktree.id, worktree.id)
       })
     })
@@ -262,6 +273,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
             entityId: entry.id,
             kind: 'stack',
             title: entry.tag,
+            groupId: entry.groupId,
             tag: entry.tag,
             tagColor: presentation.foreground,
             tagBackground: presentation.background,
@@ -272,6 +284,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
             stackItems: entry.items.map((worktree) => ({
               id: worktree.id,
               branch: worktree.branch,
+              connectionLabel: connectionLabel(worktree.connection?.reason, worktree.headSha, worktree.connection?.statusUnknown),
+              dirtyFiles: worktree.dirtyFiles,
               prNumber: worktree.prNumber,
               prStatus: worktree.prStatus,
               ciStatus: worktree.ciStatus,
@@ -300,6 +314,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           entityId: worktree.id,
           kind: 'worktree',
           title: worktree.branch,
+          groupId: entry.groupId,
+          connectionLabel: connectionLabel(worktree.connection?.reason, worktree.headSha, worktree.connection?.statusUnknown),
           subtitle: worktree.ahead + '↑ ' + worktree.behind + '↓',
           health: worktree.status,
           tag: worktree.tag,
@@ -396,6 +412,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           type: 'prMerge',
           data: {
             relationship: 'merge-pr',
+            projectId: project.id,
             prNumber: worktree.prNumber,
             targetBranch: parentWorktree.branch,
           },
@@ -426,6 +443,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     projects,
     tags,
     worktrees,
+    worktreeGroups,
+    expandedAutomaticGroups,
   ])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes)
@@ -655,7 +674,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const onNodeClick: NodeMouseHandler = (_, node) => {
     const data = node.data as BonsaiGraphData
     if (data.kind === 'stack') {
-      if (data.tag) toggleTagGroup(activeProjectId, data.tag)
+      if (data.groupId) toggleAutomaticGroup(data.groupId)
+      else if (data.tag) toggleTagGroup(activeProjectId, data.tag)
       return
     }
     if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent') {

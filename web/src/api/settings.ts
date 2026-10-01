@@ -1,13 +1,23 @@
 import { useBonsaiStore } from '../stores/bonsai'
-import { refreshCatalog, request } from './git'
+import { request } from './git'
 
 export interface ProjectRoot { id: string; path: string }
+export interface ProjectCandidate {
+  id: string
+  root_id: string
+  name: string
+  path: string
+  selected: boolean
+  available: boolean
+}
 export interface ProjectRootsSettings {
   version: number
   revision: number
+  selection_revision: number
   roots: ProjectRoot[]
   diagnostics: { root_id: string; available: boolean; truncated: boolean; messages: string[] }[]
   suggestions: string[]
+  repositories: ProjectCandidate[]
 }
 export async function loadProjectRoots() {
   useBonsaiStore.setState({ rootsLoading: true })
@@ -25,11 +35,32 @@ export async function changeProjectRoot(path?: string, removeId?: string) {
   if (!settings) return
   useBonsaiStore.setState({ rootsSaving: true, rootsError: '' })
   try {
-    const next = await request<ProjectRootsSettings>(`/api/settings/project-roots${removeId ? `/${encodeURIComponent(removeId)}` : ''}`, { revision: settings.revision, ...(removeId ? {} : { path }) }, removeId ? 'DELETE' : 'POST')
+    const next = await request<ProjectRootsSettings>(
+      `/api/settings/project-roots${removeId ? `/${encodeURIComponent(removeId)}` : ''}`,
+      { revision: settings.revision, ...(removeId ? {} : { path }) },
+      removeId ? 'DELETE' : 'POST',
+    )
     useBonsaiStore.setState({ rootSettings: next })
-    await refreshCatalog()
+    return next
   } catch (error) {
-    // A stale revision requires the latest settings before the next attempt.
+    const message = error instanceof Error ? error.message : String(error)
+    await loadProjectRoots().catch(() => undefined)
+    useBonsaiStore.setState({ rootsError: message })
+    throw error
+  } finally { useBonsaiStore.setState({ rootsSaving: false }) }
+}
+export async function changeProjectSelection(projectIds: string[]) {
+  const settings = useBonsaiStore.getState().rootSettings
+  if (!settings) return
+  useBonsaiStore.setState({ rootsSaving: true, rootsError: '' })
+  try {
+    const next = await request<ProjectRootsSettings>('/api/settings/project-selection', {
+      selection_revision: settings.selection_revision,
+      project_ids: projectIds,
+    })
+    useBonsaiStore.setState({ rootSettings: next })
+    return next
+  } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await loadProjectRoots().catch(() => undefined)
     useBonsaiStore.setState({ rootsError: message })

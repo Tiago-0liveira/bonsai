@@ -28,7 +28,8 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   if (type === 'stack') {
     const count = Math.max(Number(node.data?.stackCount) || 1,
       Array.isArray(node.data?.stackItems) ? node.data.stackItems.length : 0)
-    return { width: 286, height: 50 + count * 37 }
+    const connectionRows = ((node.data?.stackItems ?? []) as Array<{ connectionLabel?: string }>).filter(item => item.connectionLabel).length
+    return { width: 286, height: 50 + count * 37 + connectionRows * 13 }
   }
   return { width: 188, height: 98 }
 }

@@ -26,16 +26,17 @@ type audit struct {
 	Result  Result  `json:"result"`
 }
 type arguments struct {
-	Mode           string   `json:"mode"`
-	Branch         string   `json:"branch"`
-	Base           string   `json:"base"`
-	Target         string   `json:"target"`
-	Path           string   `json:"path"`
-	Paths          []string `json:"paths"`
-	Message        string   `json:"message"`
-	SetUpstream    bool     `json:"set_upstream"`
-	ConfirmDiscard bool     `json:"confirm_discard"`
-	OperationID    string   `json:"operation_id"`
+	FastForwardOnly bool     `json:"fast_forward_only"`
+	Mode            string   `json:"mode"`
+	Branch          string   `json:"branch"`
+	Base            string   `json:"base"`
+	Target          string   `json:"target"`
+	Path            string   `json:"path"`
+	Paths           []string `json:"paths"`
+	Message         string   `json:"message"`
+	SetUpstream     bool     `json:"set_upstream"`
+	ConfirmDiscard  bool     `json:"confirm_discard"`
+	OperationID     string   `json:"operation_id"`
 }
 
 func failure(id string, e error) Result {
@@ -112,6 +113,15 @@ func (x *Executor) Execute(ctx context.Context, c Command) Result {
 	var value any
 	ctx = domain.WithOperationID(ctx, c.ID)
 	switch c.Type {
+	case "git.repository.sync":
+		syncer, ok := x.Local.(interface {
+			SyncRepository(context.Context, string, domain.PullPolicy) (domain.RepositorySync, error)
+		})
+		if !ok {
+			e = domain.ErrInvalid
+		} else {
+			value, e = syncer.SyncRepository(ctx, c.RepositoryID, domain.PullPolicy{FastForwardOnly: a.FastForwardOnly})
+		}
 	case "git.repository.refresh":
 		value, e = x.Local.Repository(ctx, c.RepositoryID)
 	case "git.branches":
@@ -138,7 +148,18 @@ func (x *Executor) Execute(ctx context.Context, c Command) Result {
 	case "git.worktree.remove":
 		e = x.Local.RemoveWorktree(ctx, domain.RemoveWorktreeRequest{WorktreeID: c.WorktreeID, ConfirmDiscard: a.ConfirmDiscard})
 	case "git.pull":
-		value, e = x.Local.PullOperation(ctx, c.WorktreeID)
+		if a.FastForwardOnly {
+			puller, ok := x.Local.(interface {
+				PullWithPolicy(context.Context, string, domain.PullPolicy) (domain.Operation, error)
+			})
+			if !ok {
+				e = domain.ErrInvalid
+			} else {
+				value, e = puller.PullWithPolicy(ctx, c.WorktreeID, domain.PullPolicy{FastForwardOnly: true})
+			}
+		} else {
+			value, e = x.Local.PullOperation(ctx, c.WorktreeID)
+		}
 	case "git.push":
 		e = x.Local.Push(ctx, c.WorktreeID, a.SetUpstream)
 	case "git.commit":

@@ -23,6 +23,7 @@ import (
 
 const discoveryDepth = config.ProjectDiscoveryDepth
 const discoveryLimit = 10000
+const discoveryRefreshTimeout = time.Minute
 
 type RootDiagnostic struct {
 	RootID    string   `json:"root_id"`
@@ -30,6 +31,24 @@ type RootDiagnostic struct {
 	Truncated bool     `json:"truncated"`
 	Messages  []string `json:"messages"`
 }
+
+type ProjectCandidate struct {
+	ID        string `json:"id"`
+	RootID    string `json:"root_id"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Selected  bool   `json:"selected"`
+	Available bool   `json:"available"`
+}
+
+type projectSelectionConfig struct {
+	Version  int      `json:"version"`
+	Revision uint64   `json:"revision"`
+	Selected []string `json:"selected"`
+}
+
+var errProjectSelectionRevision = errors.New("project selection revision changed")
+
 type discoveredRepository struct {
 	main      string
 	paths     []string
@@ -157,14 +176,16 @@ func scanRoot(ctx context.Context, root config.ProjectRoot) rootScan {
 }
 
 type discoveredProjectRegistry struct {
-	scan         func(context.Context, config.ProjectRoot) rootScan
-	mu           sync.RWMutex
-	refreshMu    sync.Mutex
-	path, launch string
-	entries      map[string]projectServices
-	owners       map[string]string
-	diagnostics  []RootDiagnostic
-	revision     uint64
+	scan              func(context.Context, config.ProjectRoot) rootScan
+	mu                sync.RWMutex
+	refreshMu         sync.Mutex
+	path, launch      string
+	entries           map[string]projectServices
+	owners            map[string]string
+	diagnostics       []RootDiagnostic
+	candidates        []ProjectCandidate
+	revision          uint64
+	selectionRevision uint64
 }
 
 func newProjectRegistry(path, launch string) *discoveredProjectRegistry {
@@ -226,6 +247,86 @@ func (r *discoveredProjectRegistry) Diagnostics() []RootDiagnostic {
 	defer r.mu.RUnlock()
 	return append([]RootDiagnostic{}, r.diagnostics...)
 }
+func (r *discoveredProjectRegistry) Candidates() []ProjectCandidate {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]ProjectCandidate{}, r.candidates...)
+}
+func (r *discoveredProjectRegistry) SelectionRevision() uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.selectionRevision
+}
+func (r *discoveredProjectRegistry) selectionPath() string {
+	return r.path + ".repositories.json"
+}
+func readProjectSelection(path string) (projectSelectionConfig, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return projectSelectionConfig{Version: 1, Selected: []string{}}, nil
+	}
+	if err != nil {
+		return projectSelectionConfig{}, err
+	}
+	var cfg projectSelectionConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return projectSelectionConfig{}, err
+	}
+	if cfg.Version == 0 {
+		cfg.Version = 1
+	}
+	if cfg.Version != 1 {
+		return projectSelectionConfig{}, fmt.Errorf("unsupported project selection version %d", cfg.Version)
+	}
+	if cfg.Selected == nil {
+		cfg.Selected = []string{}
+	}
+	return cfg, nil
+}
+func writeProjectSelection(path string, cfg projectSelectionConfig) error {
+	raw, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0600)
+}
+func (r *discoveredProjectRegistry) UpdateSelection(expected uint64, ids []string) error {
+	r.refreshMu.Lock()
+	defer r.refreshMu.Unlock()
+
+	r.mu.RLock()
+	if expected != r.selectionRevision {
+		r.mu.RUnlock()
+		return errProjectSelectionRevision
+	}
+	allowed := make(map[string]bool, len(r.candidates))
+	for _, candidate := range r.candidates {
+		allowed[candidate.ID] = true
+	}
+	r.mu.RUnlock()
+
+	selected := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if !allowed[id] {
+			return fmt.Errorf("unknown discovered repository %q", id)
+		}
+		if !seen[id] {
+			seen[id] = true
+			selected = append(selected, id)
+		}
+	}
+	sort.Strings(selected)
+	return writeProjectSelection(r.selectionPath(), projectSelectionConfig{
+		Version:  1,
+		Revision: expected + 1,
+		Selected: selected,
+	})
+}
 func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 	r.refreshMu.Lock()
 	defer r.refreshMu.Unlock()
@@ -233,7 +334,15 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	selection, err := readProjectSelection(r.selectionPath())
+	if err != nil {
+		return false, err
+	}
+	selected := make(map[string]bool, len(selection.Selected))
+	for _, id := range selection.Selected {
+		selected[id] = true
+	}
+	ctx, cancel := context.WithTimeout(ctx, discoveryRefreshTimeout)
 	defer cancel()
 	scans := make([]rootScan, len(cfg.Roots))
 	jobs := make(chan int)
@@ -243,13 +352,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				rootContext, cancelRoot := context.WithTimeout(ctx, 3*time.Second)
-				scans[i] = r.scan(rootContext, cfg.Roots[i])
-				if rootContext.Err() != nil {
-					scans[i].complete = false
-					scans[i].diagnostic.Messages = append(scans[i].diagnostic.Messages, "Scan timed out; select a deeper folder or retry when the directory is available.")
-				}
-				cancelRoot()
+				scans[i] = r.scan(ctx, cfg.Roots[i])
 			}
 		}()
 	}
@@ -285,6 +388,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 		next := map[string]projectServices{}
 		owners := map[string]string{}
 		diagnostics := []RootDiagnostic{}
+		candidates := []ProjectCandidate{}
 		for _, scan := range scans {
 			diagnostics = append(diagnostics, scan.diagnostic)
 		}
@@ -294,6 +398,17 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 				continue
 			}
 			id := config.ProjectID(main)
+			candidates = append(candidates, ProjectCandidate{
+				ID:        id,
+				RootID:    root.ID,
+				Name:      filepath.Base(main),
+				Path:      main,
+				Selected:  selected[id],
+				Available: true,
+			})
+			if !selected[id] {
+				continue
+			}
 			p, exists := r.entries[id]
 			if !exists || p.state == nil {
 				state, e := gitstore.Open(filepath.Join(procstore.New(main).Dir(), "local-api-state.json"))
@@ -313,7 +428,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 			}
 		}
 		for id, p := range r.entries {
-			if _, ok := next[id]; ok {
+			if _, ok := next[id]; ok || !selected[id] {
 				continue
 			}
 			for _, scan := range scans {
@@ -324,6 +439,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 				}
 			}
 		}
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].Path < candidates[j].Path })
 		before, _ := json.Marshal(r.listUnlocked())
 		after := []ProjectInfo{}
 		for _, p := range next {
@@ -333,11 +449,13 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 		afterBytes, _ := json.Marshal(after)
 		oldDiagnostics, _ := json.Marshal(r.diagnostics)
 		newDiagnostics, _ := json.Marshal(diagnostics)
-		changed = string(before) != string(afterBytes) || r.revision != cfg.Revision || string(oldDiagnostics) != string(newDiagnostics)
+		changed = string(before) != string(afterBytes) || r.revision != cfg.Revision || r.selectionRevision != selection.Revision || string(oldDiagnostics) != string(newDiagnostics)
 		r.entries = next
 		r.owners = owners
 		r.diagnostics = diagnostics
+		r.candidates = candidates
 		r.revision = cfg.Revision
+		r.selectionRevision = selection.Revision
 		return nil
 	})
 	return changed, err

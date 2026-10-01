@@ -65,8 +65,19 @@ func TestRootSettingsAPIRevisionsReplayAndSecurity(t *testing.T) {
 	if stale := authorizedRequest(t, s, "POST", "/api/settings/project-roots", "second-browser", body); stale.Code != 409 {
 		t.Fatal(stale.Code)
 	}
-	if len(s.registry.List()) != 1 {
-		t.Fatal(s.registry.List())
+	if len(cfg.Repositories) != 1 || cfg.Repositories[0].Selected || len(s.registry.List()) != 0 {
+		t.Fatalf("root discovery activated repository before selection: settings=%+v active=%+v", cfg.Repositories, s.registry.List())
+	}
+	selected := authorizedRequest(t, s, "POST", "/api/settings/project-selection", "select", map[string]any{
+		"selection_revision": cfg.SelectionRevision,
+		"project_ids":        []string{cfg.Repositories[0].ID},
+	})
+	if selected.Code != 200 {
+		t.Fatal(selected.Code, selected.Body.String())
+	}
+	json.Unmarshal(selected.Body.Bytes(), &cfg)
+	if len(s.registry.List()) != 1 || !cfg.Repositories[0].Selected {
+		t.Fatal(cfg.Repositories, s.registry.List())
 	}
 	// The launch repo is not configured: unscoped routes must not choose this project.
 	if legacy := authorizedRequest(t, s, "GET", "/api/processes", "", nil); legacy.Code != 404 {
@@ -141,6 +152,8 @@ func TestProjectRoutingAndLegacyMetadataPreservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := s.registry.(*discoveredProjectRegistry)
+	selectAllDiscovered(t, r)
+	s.stateSync.ReconcileCatalog()
 	daemons := map[string]*routingDaemon{}
 	for _, info := range r.List() {
 		p, _ := r.Lookup(info.ID)

@@ -23,7 +23,7 @@ import (
 const (
 	localRepositoryID  = "local"
 	localBrowserUserID = "local-browser"
-	localAPIVersion    = 2
+	localAPIVersion    = 3
 )
 
 type daemonClient interface {
@@ -142,6 +142,26 @@ func (s *Server) Handler() http.Handler {
 			project, ok = s.registry.Lookup(path[2])
 		case path[1] == "worktrees" && len(path) > 2:
 			project, ok = s.registry.Worktree(r.Context(), path[2])
+			// Completed removal remains replayable after the worktree leaves the
+			// inventory. The durable request journal supplies repository ownership.
+			if !ok && r.Method == http.MethodDelete {
+				key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+				for _, info := range s.registry.List() {
+					candidate, exists := s.registry.Lookup(info.ID)
+					if !exists || candidate.state == nil {
+						continue
+					}
+					_ = candidate.state.View(func(data gitstore.Data) error {
+						if old, exists := gitstore.Get[apiGitMutation](data, "api_git_mutations", key); exists && old.Command.Type == "git.worktree.remove" && old.Command.WorktreeID == path[2] {
+							project, ok = candidate, true
+						}
+						return nil
+					})
+					if ok {
+						break
+					}
+				}
+			}
 		default:
 			project = s.registry.Default()
 			ok = project.daemon != nil
@@ -166,7 +186,7 @@ func (s *Server) Reconcile(ctx context.Context) error {
 	changed, err := s.registry.Refresh(ctx)
 	s.stateSync.ReconcileCatalog()
 	if changed || err != nil {
-		s.eventHub.publish(localEvent{Type: "catalog", Epoch: s.stateSync.epoch})
+		s.eventHub.publish(localEvent{Type: "catalog", Epoch: s.stateSync.epoch, Projects: s.registry.List()})
 	}
 	return err
 }

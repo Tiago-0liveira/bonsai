@@ -71,6 +71,10 @@ export function Inspector() {
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const setWorktreeTag = useBonsaiStore((state) => state.setWorktreeTag)
+  const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
+  const worktreeGroups = useBonsaiStore(state => state.worktreeGroups)
+  const expandedAutomaticGroups = useBonsaiStore(state => state.expandedAutomaticGroups)
+  const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setWorktreeStackPreference = useBonsaiStore((state) => state.setWorktreeStackPreference)
   const setWorktreeMergeTarget = useBonsaiStore((state) => state.setWorktreeMergeTarget)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
@@ -84,8 +88,8 @@ export function Inspector() {
   const projectWorktreeIds = new Set(projectWorktrees.map((item) => item.id))
   const projectAgents = agents.filter((item) => projectWorktreeIds.has(item.worktreeId) && presentation(item) === 'canvas')
   const branchAgents = projectAgents.filter((item) => item.worktreeId === worktree?.id)
-  const pr = pullRequests.find((item) => item.number === worktree?.prNumber && item.branch === worktree?.branch)
-  const attention = projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.number === item.prNumber && request.branch === item.branch)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length)
+  const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
+  const attention = projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length)
   const issues = worktree ? branchIssues(worktree, pr) : []
   const output = agent ? (terminalOutput[agent.terminalId] ?? []).filter((line) => line.trim()).slice(-5) : []
 
@@ -93,8 +97,9 @@ export function Inspector() {
   if (!project) return null
 
   const submitTag = (event: FormEvent) => { event.preventDefault(); if (worktree) setWorktreeTag(worktree.id, tagDraft) }
-  const groupCount = worktree ? projectWorktrees.filter((item) => item.tag === worktree.tag).length : 0
-  const groupCollapsed = worktree ? collapsedTagGroups.includes(project.id + ':' + worktree.tag) : false
+  const automaticGroup = worktree ? (worktreeGroups[project.id] ?? []).find(group => group.worktree_ids.includes(worktree.id)) : undefined
+  const groupCount = automaticGroup?.worktree_ids.length ?? (worktree ? projectWorktrees.filter(item => item.tag === worktree.tag).length : 0)
+  const groupCollapsed = automaticGroup ? !expandedAutomaticGroups.includes(automaticGroup.id) : worktree ? collapsedTagGroups.includes(project.id + ':' + worktree.tag) : false
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
 
   return (
@@ -135,6 +140,7 @@ export function Inspector() {
                 <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><ArrowRight size={12} /><span className="truncate">{worktree.mergeTargetBranch}</span></div>
                 <div className="mt-4"><QuickButton icon={Bot} label="Start agent" primary onClick={() => openStartAgentDialog(worktree.id)} /></div>
               </div>
+              {!worktree.main && <button type="button" onClick={() => setDeleteWorktreeId(worktree.id)} className="bonsai-focus rounded border border-[rgb(var(--red)/.4)] px-3 py-2 text-[11px] text-[rgb(var(--red))]">Delete worktree</button>}
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={worktree.dirtyFiles} label="Uncommitted" icon={FileDiff} tone={worktree.dirtyFiles ? 'text-[rgb(var(--orange))]' : ''} />
                 <Metric value={worktree.divergenceAvailable ? worktree.ahead : '—'} label="Ahead" icon={ArrowUp} />
@@ -173,16 +179,16 @@ export function Inspector() {
                     value={worktree.stackPreference ?? 'auto'}
                     onChange={(value) => setWorktreeStackPreference(worktree.id, value as 'auto' | 'never')}
                     options={[
-                      { value: 'auto', label: 'Automatic', description: 'Stack with other worktrees sharing this tag.' },
+                      { value: 'auto', label: 'Automatic', description: 'Use the automatic connection group, or group by tag.' },
                       { value: 'never', label: 'Always keep separate', description: 'Never include this worktree in a collapsed stack.' },
                     ]}
                   />
                   {groupCount > 1 && (
                     <button
-                      onClick={() => toggleTagGroup(project.id, worktree.tag)}
+                      onClick={() => automaticGroup ? toggleAutomaticGroup(automaticGroup.id) : toggleTagGroup(project.id, worktree.tag)}
                       className="bonsai-focus mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] text-[10px] text-[rgb(var(--muted))] hover:text-[rgb(var(--text))]"
                     >
-                      <Layers3 size={11} /> {groupCollapsed ? 'Expand' : 'Collapse'} {worktree.tag} group
+                      <Layers3 size={11} /> {groupCollapsed ? 'Expand' : 'Collapse'} {automaticGroup ? 'Local / unlinked' : worktree.tag} group
                     </button>
                   )}
                 </section>

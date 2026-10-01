@@ -13,7 +13,7 @@ describe('bonsai store', () => {
     __resetLocalClientForTests()
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 'test', api_version: 2 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 'test', api_version: 3 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'test-session', expires_at: new Date(Date.now() + 60_000).toISOString() }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
       .mockRejectedValue(new Error('daemon offline')))
     await connectLocalBonsai()
@@ -116,8 +116,7 @@ describe('bonsai store', () => {
 
   it('sends worktree creation to the daemon API and preserves state on failure', async () => {
     const previous = useBonsaiStore.getState().worktrees
-    useBonsaiStore.getState().createMockWorktree({ sourceType: 'existing', sourceRef: 'feat/local-experiment', tagId: 'review-code', mergeTargetBranch: 'main' })
-    await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
+    await expect(useBonsaiStore.getState().createWorktree({ sourceType: 'existing', sourceRef: 'feat/local-experiment', tagId: 'review-code', mergeTargetBranch: 'main' })).rejects.toThrow('daemon offline')
     expect(useBonsaiStore.getState().worktrees).toBe(previous)
     expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:7001/api/projects/bonsai/worktrees', expect.objectContaining({ method: 'POST', credentials: 'omit', body: JSON.stringify({ mode: 'existing', branch: 'feat/local-experiment', base: 'feat/local-experiment' }) }))
   })

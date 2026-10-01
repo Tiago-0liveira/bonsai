@@ -50,6 +50,7 @@ func (s *Server) registerProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects", s.projects)
 	mux.HandleFunc("GET /api/projects/{projectId}/git", s.projectSnapshot)
 	mux.HandleFunc("POST /api/projects/{projectId}/refresh", s.projectRefresh)
+	mux.HandleFunc("POST /api/projects/{projectId}/sync", s.projectSync)
 	mux.HandleFunc("PATCH /api/worktrees/{id}/metadata", s.patchWorktreeMetadata)
 }
 
@@ -100,12 +101,7 @@ func (s *Server) projectRefresh(w http.ResponseWriter, r *http.Request) {
 	projectID := s.registry.Default().info.ID
 	s.stateSync.MarkStale(projectID, scope)
 	s.stateSync.Queue(projectID, scope, scope&refreshProvider != 0)
-	snapshot, ok := s.stateSync.CachedSnapshot(projectID)
-	if !ok {
-		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
-		return
-	}
-	writeJSON(w, http.StatusAccepted, snapshot)
+	writeJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
 }
 
 func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
@@ -159,8 +155,13 @@ func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "metadata_write_failed", err.Error())
 		return
 	}
-	s.stateSync.MarkStale(s.registry.Default().info.ID, refreshLocal)
-	current.RepositoryID = s.registry.Default().info.ID
+	project := s.registry.Default()
+	if metadata, metadataErr := metadataSnapshotFor(project); metadataErr == nil {
+		s.stateSync.commitProject(project, "local", func(snapshot *browserSnapshot) {
+			snapshot.Metadata = metadata
+		})
+	}
+	current.RepositoryID = project.info.ID
 	writeJSON(w, http.StatusOK, current)
 }
 

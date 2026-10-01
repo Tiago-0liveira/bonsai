@@ -54,9 +54,11 @@ func (r *syncTestRegistry) remove(id string) {
 }
 
 type syncTestDaemon struct {
-	root            string
-	repositoryBlock <-chan struct{}
-	records         []*procstore.Record
+	root                string
+	repositoryBlock     <-chan struct{}
+	repositoryStarted   chan struct{}
+	repositoryStartOnce sync.Once
+	records             []*procstore.Record
 }
 
 func (d *syncTestDaemon) result(command gitbridge.Command) (*gitbridge.Result, error) {
@@ -108,13 +110,15 @@ func (d *syncTestDaemon) Git(command gitbridge.Command) (*gitbridge.Result, erro
 }
 func (d *syncTestDaemon) GitContext(ctx context.Context, command gitbridge.Command) (*gitbridge.Result, error) {
 	if command.Type == "git.repository.refresh" && d.repositoryBlock != nil {
+		if d.repositoryStarted != nil {
+			d.repositoryStartOnce.Do(func() { close(d.repositoryStarted) })
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-d.repositoryBlock:
 		}
-		copy := *d
-		copy.repositoryBlock = nil
+		copy := syncTestDaemon{root: d.root, records: d.records}
 		return copy.result(command)
 	}
 	return d.result(command)
@@ -139,6 +143,7 @@ type syncTestGitHub struct {
 	prCalls         int
 	checkCalls      int
 	block           <-chan struct{}
+	checksBlock     <-chan struct{}
 }
 
 func (g *syncTestGitHub) Repository(ctx context.Context, repo string) (githubdomain.RemoteRepository, error) {
@@ -169,10 +174,17 @@ func (g *syncTestGitHub) PullRequests(context.Context, string, githubdomain.PRFi
 		Base: "main", HeadSHA: "remote-head", UpdatedAt: time.Unix(10, 0),
 	}}, nil
 }
-func (g *syncTestGitHub) Checks(context.Context, string, string) ([]githubdomain.Check, error) {
+func (g *syncTestGitHub) Checks(ctx context.Context, _ string, _ string) ([]githubdomain.Check, error) {
 	g.mu.Lock()
 	g.checkCalls++
 	g.mu.Unlock()
+	if g.checksBlock != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-g.checksBlock:
+		}
+	}
 	return []githubdomain.Check{{Name: "ci", Status: "completed", Conclusion: "success"}}, nil
 }
 func (*syncTestGitHub) PullRequest(context.Context, string, int) (githubdomain.PullRequestDetail, error) {
@@ -244,12 +256,37 @@ func TestStateSyncPublishesLocalAndProcessesWhileProviderIsBlocked(t *testing.T)
 
 	close(providerRelease)
 	enriched := waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool {
-		return snapshot.Remote != nil && snapshot.Freshness["provider"].State == "ready"
+		return snapshot.Remote != nil && snapshot.Freshness["provider"].State == "ready" && snapshot.WorktreeState[gitlocal.ID(localRepositoryID, root)].CI.Status == "passed"
 	})
 	state := enriched.WorktreeState[gitlocal.ID(localRepositoryID, root)]
 	if state.PullRequest == nil || state.PullRequest.Number != 1 || state.CI.Status != "passed" || state.CI.CheckedSHA != "remote-head" {
 		t.Fatalf("enrichment = %+v", state)
 	}
+}
+
+func TestStateSyncPublishesPRsBeforeChecksFinish(t *testing.T) {
+	root := t.TempDir()
+	checksRelease := make(chan struct{})
+	provider := &syncTestGitHub{checksBlock: checksRelease}
+	projectID := "project-v1-pr-first"
+	registry := &syncTestRegistry{entries: map[string]projectServices{projectID: {
+		info:   ProjectInfo{ID: projectID, Path: root, Available: true, FullName: "repo"},
+		daemon: &syncTestDaemon{root: root}, github: provider,
+	}}}
+	syncer := newStateSync(registry, newEventHub())
+	syncer.ReconcileCatalog()
+	syncer.SubscriberReady()
+	first := waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool {
+		return snapshot.Remote != nil && len(snapshot.Remote.PullRequests) == 1
+	})
+	worktreeID := gitlocal.ID(localRepositoryID, root)
+	if first.WorktreeState[worktreeID].PullRequest == nil || first.WorktreeState[worktreeID].CI.Freshness.State != "loading" {
+		t.Fatalf("PR was not published before checks: %+v", first.WorktreeState[worktreeID])
+	}
+	close(checksRelease)
+	waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool {
+		return snapshot.WorktreeState[worktreeID].CI.Status == "passed"
+	})
 }
 
 func TestProcessRefreshUsesCanonicalInventoryWorktreeID(t *testing.T) {
@@ -342,8 +379,9 @@ func TestChecksRollupPreservesNoneRunningFailureAndUnknown(t *testing.T) {
 func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	root := t.TempDir()
 	release := make(chan struct{})
+	started := make(chan struct{})
 	projectID := "project-v1-removed"
-	daemon := &syncTestDaemon{root: root, repositoryBlock: release}
+	daemon := &syncTestDaemon{root: root, repositoryBlock: release, repositoryStarted: started}
 	registry := &syncTestRegistry{entries: map[string]projectServices{
 		projectID: {
 			info:   ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
@@ -354,7 +392,11 @@ func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	syncer := newStateSync(registry, newEventHub())
 	syncer.ReconcileCatalog()
 	syncer.Queue(projectID, refreshLocal, false)
-	waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool { return snapshot.Local != nil })
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("local refresh did not start")
+	}
 
 	registry.remove(projectID)
 	syncer.ReconcileCatalog()
@@ -366,5 +408,51 @@ func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	syncer.mu.Unlock()
 	if exists {
 		t.Fatal("removed project was republished by a late local read")
+	}
+}
+
+func TestStateSyncDeduplicatesSemanticProjectUpdates(t *testing.T) {
+	root := t.TempDir()
+	projectID := "project-v1-dedupe"
+	project := projectServices{
+		info: ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true, WorkspaceID: "local"},
+	}
+	registry := &syncTestRegistry{entries: map[string]projectServices{projectID: project}}
+	hub := newEventHub()
+	_, events := hub.subscribe()
+	syncer := newStateSync(registry, hub)
+	syncer.ReconcileCatalog()
+
+	local := domain.RepositoryState{
+		ID:        projectID,
+		Worktrees: []domain.Worktree{{ID: "wt", RepositoryID: projectID, Path: root, Branch: "main", Main: true}},
+	}
+	firstTime := time.Unix(100, 0).UTC()
+	if !syncer.commitProject(project, "local", func(snapshot *browserSnapshot) {
+		snapshot.Local = &local
+		snapshot.Freshness["local"] = browserFreshness{State: "ready", UpdatedAt: &firstTime}
+	}) {
+		t.Fatal("first semantic state was not published")
+	}
+	event := <-events
+	if event.Type != "project_update" || event.Snapshot == nil || event.Sequence != 1 || event.Snapshot.Sequence != 1 {
+		t.Fatalf("unexpected project event: %+v", event)
+	}
+
+	secondTime := time.Unix(200, 0).UTC()
+	if syncer.commitProject(project, "local", func(snapshot *browserSnapshot) {
+		snapshot.Local = &local
+		snapshot.Freshness["local"] = browserFreshness{State: "ready", UpdatedAt: &secondTime}
+	}) {
+		t.Fatal("timestamp-only refresh was published")
+	}
+	snapshot, _ := syncer.CachedSnapshot(projectID)
+	if snapshot.Sequence != 1 {
+		t.Fatalf("timestamp-only refresh incremented sequence: %d", snapshot.Sequence)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("timestamp-only refresh emitted event: %+v", event)
+	default:
 	}
 }

@@ -1,3 +1,5 @@
+import { usePullRequestCatalog } from '../github/usePullRequestCatalog'
+import { PullRequestTabs } from '../github/PullRequestTabs'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
@@ -511,7 +513,7 @@ function FilesDiffPanel() {
   const requestOpenFile = useBonsaiStore((state) => state.requestOpenFile)
   const [view, setView] = useState<'flat' | 'tree'>('tree')
   const worktree = worktrees.find((item) => item.id === dockWorktreeId)
-  const pr = pullRequests.find((item) => item.number === worktree?.prNumber)
+  const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
   const patch = useLocalDiff(dockWorktreeId)
   useEffect(() => { if (pr?.id) void loadPullRequest(pr.id) }, [pr?.id])
   const files = flattenFiles(repoFiles).filter((item) => item.type === 'file')
@@ -656,7 +658,8 @@ function PullRequestDetails({ pr }: { pr: PullRequest }) {
 }
 
 function PullRequestsPanel() {
-  const pullRequests = useBonsaiStore((state) => state.pullRequests)
+  const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
+  const { rows: pullRequests, tab, setTab, message, retry } = usePullRequestCatalog(activeProjectId)
   const setRightPanel = useBonsaiStore((state) => state.setRightPanel)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
@@ -695,6 +698,7 @@ function PullRequestsPanel() {
         <span className="dock-count">{pullRequests.length}</span>
         <button onClick={() => setRightPanel('prs', false)} className="bonsai-focus ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))]" title="Close pull requests"><X size={12} /></button>
       </div>
+      <PullRequestTabs value={tab} onChange={value => { setTab(value); if (value === 'closed') retry() }} />
       <div className="flex shrink-0 items-center gap-1.5 border-b border-[rgb(var(--border)/.5)] p-2">
         <label className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
           <Search size={9} className="text-[rgb(var(--muted-2))]" />
@@ -710,6 +714,7 @@ function PullRequestsPanel() {
 
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
+        {!filtered.length && <p className="p-3 text-[9px] text-[rgb(var(--muted-2))]">{message}</p>}
         {filtered.map((pr) => {
           const expanded = selectedId === pr.id
           const success = pr.checks.filter((check) => check.status === 'success').length

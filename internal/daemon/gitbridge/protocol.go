@@ -37,6 +37,9 @@ var reads = map[string]bool{"git.repository.refresh": true, "git.branches": true
 
 func IsRead(kind string) bool { return reads[kind] }
 func Allowed(kind string) bool {
+	if kind == "git.repository.sync" {
+		return true
+	}
 	return IsRead(kind) || map[string]bool{"git.fetch": true, "git.worktree.create": true, "git.worktree.remove": true, "git.pull": true, "git.push": true, "git.commit": true, "git.stage": true, "git.unstage": true, "git.rebase": true, "git.merge": true, "git.operation.continue": true, "git.operation.abort": true}[kind]
 }
 

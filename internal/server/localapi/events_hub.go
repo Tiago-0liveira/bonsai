@@ -3,12 +3,14 @@ package localapi
 import "sync"
 
 type localEvent struct {
-	Type      string `json:"type"`
-	ProjectID string `json:"project_id,omitempty"`
-	EntityID  string `json:"entity_id,omitempty"`
-	Component string `json:"component,omitempty"`
-	Epoch     string `json:"epoch,omitempty"`
-	Sequence  uint64 `json:"sequence,omitempty"`
+	Type      string           `json:"type"`
+	ProjectID string           `json:"project_id,omitempty"`
+	EntityID  string           `json:"entity_id,omitempty"`
+	Component string           `json:"component,omitempty"`
+	Epoch     string           `json:"epoch,omitempty"`
+	Sequence  uint64           `json:"sequence,omitempty"`
+	Projects  []ProjectInfo    `json:"projects"`
+	Snapshot  *browserSnapshot `json:"snapshot,omitempty"`
 }
 
 type eventHub struct {
@@ -25,7 +27,7 @@ func (h *eventHub) subscribe() (int, <-chan localEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.nextID++
-	ch := make(chan localEvent, 8)
+	ch := make(chan localEvent, 64)
 	h.subscribers[h.nextID] = ch
 	return h.nextID, ch
 }

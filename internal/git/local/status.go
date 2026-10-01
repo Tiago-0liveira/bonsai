@@ -43,7 +43,7 @@ func statusWithContent(ctx context.Context, dir string, hashContents bool) (doma
 		return st, e
 	}
 	if st.Upstream != "" {
-		if sha, err := trimmed(ctx, dir, "rev-parse", "--verify", "--end-of-options", st.Upstream); err == nil {
+		if sha, err := trimmed(ctx, dir, "rev-parse", "--verify", "--end-of-options", "@{upstream}^{commit}"); err == nil {
 			st.LocalRemoteRefSHA = sha
 			st.DivergenceAvailable = true
 		} else {

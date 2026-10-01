@@ -5,6 +5,7 @@ import (
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,32 +44,55 @@ func (p rawPR) domain() gh.PullRequest {
 	return gh.PullRequest{Number: p.Number, Title: p.Title, Body: p.Body, State: state, Head: p.Head.Ref, HeadRepository: headRepository, Base: p.Base.Ref, HeadSHA: p.Head.SHA, URL: p.HTMLURL, Draft: p.Draft, Author: p.User.Login, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, NodeID: p.NodeID}
 }
 func (c *Client) PullRequests(ctx context.Context, repo string, f gh.PRFilter) ([]gh.PullRequest, error) {
+	out := []gh.PullRequest{}
+	for page := 1; page != 0; {
+		batch, err := c.PullRequestPage(ctx, repo, f, page)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, batch.Items...)
+		page = batch.NextPage
+	}
+	return out, nil
+}
+
+func (c *Client) PullRequestPage(ctx context.Context, repo string, f gh.PRFilter, page int) (gh.PullRequestPage, error) {
+	if page < 1 {
+		return gh.PullRequestPage{}, domain.ErrInvalid
+	}
 	p, e := repoPath(repo)
 	if e != nil {
-		return nil, e
+		return gh.PullRequestPage{}, e
 	}
 	if f.State == "" {
 		f.State = "open"
 	}
 	if f.State != "open" && f.State != "closed" && f.State != "all" {
-		return nil, domain.ErrInvalid
+		return gh.PullRequestPage{}, domain.ErrInvalid
 	}
 	q := url.Values{"state": {f.State}, "sort": {"updated"}, "direction": {"desc"}}
+	q.Set("per_page", "100")
+	q.Set("page", strconv.Itoa(page))
 	if f.Head != "" {
 		q.Set("head", f.Head)
 	}
 	if f.Base != "" {
 		q.Set("base", f.Base)
 	}
-	rows, e := pages[rawPR](ctx, c, repo, p+"/pulls?"+q.Encode())
+	var rows []rawPR
+	h, e := c.request(ctx, repo, "GET", p+"/pulls?"+q.Encode(), nil, &rows)
 	if e != nil {
-		return nil, e
+		return gh.PullRequestPage{}, e
 	}
 	out := []gh.PullRequest{}
 	for _, p := range rows {
 		out = append(out, p.domain())
 	}
-	return out, nil
+	batch := gh.PullRequestPage{Items: out}
+	if strings.Contains(h.Get("Link"), `rel="next"`) {
+		batch.NextPage = page + 1
+	}
+	return batch, nil
 }
 func (c *Client) PullRequest(ctx context.Context, repo string, n int) (gh.PullRequestDetail, error) {
 	p, e := pullPath(repo, n)

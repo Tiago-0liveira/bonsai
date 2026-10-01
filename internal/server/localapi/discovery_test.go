@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
@@ -35,6 +36,21 @@ func repoFixture(t *testing.T, path string) string {
 	}
 	return canonical
 }
+func selectAllDiscovered(t *testing.T, r *discoveredProjectRegistry) {
+	t.Helper()
+	candidates := r.Candidates()
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ID)
+	}
+	if err := r.UpdateSelection(r.SelectionRevision(), ids); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProjectIDMatchesGitReportedMainPath(t *testing.T) {
 	repo := repoFixture(t, filepath.Join(t.TempDir(), "repo"))
 	trees, err := coregit.ListWorktreesContext(context.Background(), repo)
@@ -104,6 +120,10 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	if _, err = r.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if len(r.Candidates()) != 2 || len(r.List()) != 0 {
+		t.Fatalf("discovery should not activate projects before selection: candidates=%+v active=%+v", r.Candidates(), r.List())
+	}
+	selectAllDiscovered(t, r)
 	if len(r.List()) != 2 {
 		t.Fatal(r.List())
 	}
@@ -149,6 +169,7 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 	if _, err = only.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	selectAllDiscovered(t, only)
 	if len(only.List()) != 1 || only.List()[0].Path != a {
 		t.Fatal(only.List())
 	}
@@ -158,13 +179,14 @@ func TestDiscoveryOverlappingRootsClonesAndLinkedWorktrees(t *testing.T) {
 }
 func TestDiscoveryLimitsMissingAndCancellation(t *testing.T) {
 	root := t.TempDir()
-	repoFixture(t, filepath.Join(root, "a", "b", "c", "d", "included"))
+	repoFixture(t, filepath.Join(root, "a", "b", "included"))
+	repoFixture(t, filepath.Join(root, "a", "b", "c", "too-deep"))
 	repoFixture(t, filepath.Join(root, "node_modules", "hidden"))
 	repoFixture(t, filepath.Join(root, "visible"))
 	gitFixture(t, root, "init", "--bare", "bare.git")
 	canonical, _ := config.CanonicalDirectory(root)
 	scan := scanRoot(context.Background(), config.ProjectRoot{ID: "root", Path: canonical})
-	if len(scan.repos) != 1 || !scan.diagnostic.Truncated || len(scan.diagnostic.Messages) < 2 {
+	if len(scan.repos) != 2 || !scan.diagnostic.Truncated || len(scan.diagnostic.Messages) < 2 {
 		t.Fatal(scan)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -181,6 +203,7 @@ func TestDiscoveryLimitsMissingAndCancellation(t *testing.T) {
 	if _, err = r.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	selectAllDiscovered(t, r)
 	if err = os.Rename(filepath.Join(root, "visible"), filepath.Join(root, "offline")); err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +241,33 @@ func TestDiscoveryRootItselfAndNoSymlinkTraversal(t *testing.T) {
 	scan = scanRoot(context.Background(), config.ProjectRoot{Path: root})
 	if len(scan.repos) != 1 || scan.diagnostic.Truncated {
 		t.Fatal(scan)
+	}
+}
+
+func TestDiscoveryRefreshAllowsMoreThanThreeSecondsPerRoot(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if _, err := config.UpdateProjectRoots(path, "add", 0, root, ""); err != nil {
+		t.Fatal(err)
+	}
+	r := newProjectRegistry(path, root)
+	var remaining time.Duration
+	r.scan = func(ctx context.Context, root config.ProjectRoot) rootScan {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("discovery scan should have a safety deadline")
+		}
+		remaining = time.Until(deadline)
+		return rootScan{
+			diagnostic: RootDiagnostic{RootID: root.ID, Available: true, Messages: []string{}},
+			complete:   true,
+		}
+	}
+	if _, err := r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if remaining <= 5*time.Second {
+		t.Fatalf("root discovery deadline is still too short: %v", remaining)
 	}
 }
 
