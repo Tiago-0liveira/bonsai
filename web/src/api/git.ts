@@ -108,6 +108,7 @@ interface LocalWorktree {
   path?: string
   branch: string
   main: boolean
+  missing?: boolean
   local_head_sha: string
   status?: LocalStatus
   status_error?: { code: string; message: string }
@@ -246,6 +247,7 @@ const githubRepositoryProjects = new Map<number, Set<string>>()
 interface SequenceGuard {
   epoch: string
   applied: number
+  localWorktrees?: string
 }
 const sequenceGuards = new Map<string, SequenceGuard>()
 let activeEpoch = ''
@@ -354,7 +356,7 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     const previous = state.pullRequests.find(v => v.id === mapped.id)
     const projection = Object.values(snapshot.worktree_state ?? {}).find(v => v.pull_request?.number === p.number)
     if (projection?.ci?.checks) {
-      mapped.checks = projection.ci.checks.map(c => ({ name: c.name, status: checkStatus(c) }))
+      mapped.checks = projection.ci.checks.map(c => ({ id: c.id, name: c.name, status: checkStatus(c) }))
     } else if (previous?.updatedAt === mapped.updatedAt) {
       mapped.checks = previous.checks
     }
@@ -390,6 +392,7 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
       branch: w.branch,
       path: w.path,
       main: w.main,
+      missing: w.missing,
       headSha: w.local_head_sha,
       connection: w.connection ? { state: w.connection.state, reason: w.connection.reason, statusUnknown: w.connection.status_unknown } : undefined,
       kind: w.main ? 'Production' : 'Feature',
@@ -531,12 +534,17 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     openRuntimeIds,
   }
   guard.applied = Math.max(guard.applied, snapshot.sequence)
+  // Provider and process updates do not invalidate local files or diffs. Include
+  // raw file status entries so path changes with unchanged counts still reload.
+  const localWorktrees = JSON.stringify(snapshot.local?.worktrees ?? [])
+  const filesChanged = guard.localWorktrees !== localWorktrees
+  guard.localWorktrees = localWorktrees
   if (JSON.stringify(currentSemantic) === JSON.stringify(nextSemantic)) {
-    const updates = { syncFreshness: patch.syncFreshness, repositorySync: patch.repositorySync, branchCandidates: patch.branchCandidates }
+    const updates = { syncFreshness: patch.syncFreshness, repositorySync: patch.repositorySync, branchCandidates: patch.branchCandidates, ...(filesChanged ? { gitRevision: state.gitRevision + 1 } : {}) }
     if (JSON.stringify(updates) === JSON.stringify({ syncFreshness: state.syncFreshness, repositorySync: state.repositorySync, branchCandidates: state.branchCandidates })) return undefined
     return updates
   }
-  patch.gitRevision = state.gitRevision + 1
+  if (filesChanged) patch.gitRevision = state.gitRevision + 1
   return patch
 }
 
@@ -661,7 +669,7 @@ async function fetchPullRequest(id: string) {
     const checks = await request<RemoteCheck[]>(`/api/projects/${encodeURIComponent(repo)}/checks/${remote.head_sha}`)
     if (heads.get(id) && heads.get(id) !== remote.head_sha) return
     heads.set(id, remote.head_sha)
-    mapped.checks = checks.map(check => ({ name: check.name, status: checkStatus(check) }))
+    mapped.checks = checks.map(check => ({ id: check.id, name: check.name, status: checkStatus(check) }))
     pullRequestLoadedAt.set(id, Date.now())
     useBonsaiStore.setState(state => ({
       pullRequests: [...state.pullRequests.filter(value => value.id !== id), mapped],

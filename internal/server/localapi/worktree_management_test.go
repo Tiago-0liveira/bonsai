@@ -169,3 +169,49 @@ func TestWorktreeDeletionRequiresStoppingTrackedProcesses(t *testing.T) {
 		t.Fatal("removed active worktree", err)
 	}
 }
+
+func TestMissingWorktreeDeletionClearsMetadataAndRemainsReplayable(t *testing.T) {
+	s, svc := managementServer(t, nil)
+	ctx := context.Background()
+	wt, err := svc.CreateWorktree(ctx, domain.CreateWorktreeRequest{RepositoryID: localRepositoryID, Mode: "new", Branch: "missing", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := managementRequest(t, s, http.MethodPatch, "/api/worktrees/"+wt.ID+"/metadata", "missing-meta", `{"tag":"feat"}`)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if err := os.RemoveAll(filepath.Dir(wt.Path)); err != nil {
+		t.Fatal(err)
+	}
+	removed := managementRequest(t, s, http.MethodDelete, "/api/worktrees/"+wt.ID, "missing-remove", `{}`)
+	if removed.Code != 200 {
+		t.Fatal(removed.Code, removed.Body.String())
+	}
+	repeated := managementRequest(t, s, http.MethodDelete, "/api/worktrees/"+wt.ID, "missing-remove", `{}`)
+	if repeated.Code != 200 || repeated.Body.String() != removed.Body.String() {
+		t.Fatal(repeated.Code, repeated.Body.String())
+	}
+	trees, err := svc.ListWorktrees(ctx, localRepositoryID)
+	if err != nil || len(trees) != 1 || !trees[0].Main {
+		t.Fatal(trees, err)
+	}
+	if err := s.registry.Default().state.View(func(data gitstore.Data) error {
+		if _, ok := data["worktree_metadata"][wt.ID]; ok {
+			t.Error("missing worktree metadata survived removal")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	branches, err := svc.ListBranches(ctx, localRepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, branch := range branches {
+		if branch.Name == "missing" {
+			return
+		}
+	}
+	t.Fatal("removed the local branch")
+}

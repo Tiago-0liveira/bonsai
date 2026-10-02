@@ -57,6 +57,7 @@ export interface WorktreeTag {
 export interface Worktree {
 	path?: string
 	main?: boolean
+  missing?: boolean
 	headSha?: string
 	connection?: { state: 'linked' | 'unlinked' | 'unknown'; reason?: string; statusUnknown?: boolean }
   id: string
@@ -177,7 +178,7 @@ export interface PullRequest {
   createdAt: string
   updatedAt: string
   mergeable?: boolean
-  checks: { name: string; status: 'success' | 'running' | 'failed' }[]
+  checks: { id?: number; name: string; status: 'success' | 'running' | 'failed' }[]
   commits: { sha: string; message: string; author: string; time?: string }[]
   conversation: { author: string; body: string; time: string; kind?: 'comment' | 'review' | 'system' | 'checks' }[]
   files: { path: string; additions: number; deletions: number; diff: string[] }[]

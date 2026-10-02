@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -144,6 +145,26 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		}
 		return cloneRemote(value), browserFreshness{State: state, UpdatedAt: &updated}
 	}
+}
+
+// cachedChecks keeps the last result visible while the same provider commit is
+// refreshed. Both repository and SHA must match; another commit starts loading.
+func (c *providerCache) cachedChecks(repository, sha string, now time.Time) ([]githubdomain.Check, browserFreshness, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry := c.checks[repository+"\x00"+sha]
+	if entry == nil || entry.updatedAt == nil {
+		return nil, browserFreshness{}, false
+	}
+	checks := append([]githubdomain.Check(nil), entry.value...)
+	updated := *entry.updatedAt
+	freshness := browserFreshness{State: "ready", UpdatedAt: &updated}
+	if entry.lastErr != nil {
+		freshness = providerFailureFreshness(true, &updated, entry.lastErr)
+	} else if !now.Before(entry.expiresAt) {
+		freshness.State = "stale"
+	}
+	return checks, freshness, true
 }
 
 func (c *providerCache) checksFor(ctx context.Context, service githubdomain.GitHubService, repository, sha string, now time.Time, force bool) ([]githubdomain.Check, browserFreshness) {
@@ -359,6 +380,11 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 			continue
 		}
 		state.CI.CheckedSHA = sha
+		if checks, freshness, ok := s.providers.cachedChecks(checkRepository, sha, s.now()); ok {
+			state.CI.Checks = checks
+			state.CI.Status = checksRollup(checks)
+			state.CI.Freshness = freshness
+		}
 		checkTargets[worktree.ID] = checkTarget{repository: checkRepository, sha: sha}
 		states[worktree.ID] = state
 	}
@@ -368,7 +394,9 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.Remote = remote
 		snapshot.Freshness["provider"] = providerFreshness
-		snapshot.WorktreeState = states
+		// The checks loop continues building states after this publication.
+		// Keep the published map independent of those writes.
+		snapshot.WorktreeState = maps.Clone(states)
 		if remote.Repository.FullName != "" {
 			snapshot.Repository.FullName = remote.Repository.FullName
 		}
@@ -392,7 +420,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 		states[worktree.ID] = state
 	}
 	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
-		snapshot.WorktreeState = states
+		snapshot.WorktreeState = maps.Clone(states)
 	})
 	if remote.PRCatalogLoading && providerFreshness.Error == nil {
 		go func() {

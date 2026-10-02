@@ -55,4 +55,18 @@ describe('worktree dialogs', () => {
     expect(remove).toHaveBeenCalledTimes(2)
     expect(remove.mock.calls[1]).toEqual(remove.mock.calls[0])
   })
+  it('explains missing directories and removes their registrations without discarding files', async () => {
+    const tree = { ...worktrees[0], id: 'missing', main: false, missing: true, dirtyFiles: 2, gitState: 'merge', path: '/trees/missing' }
+    useBonsaiStore.setState({ worktrees: [tree], deleteWorktreeId: tree.id })
+    const remove = vi.spyOn(gitAPI, 'deleteWorktree').mockResolvedValue({})
+    vi.spyOn(gitAPI, 'refreshProject').mockResolvedValue(undefined)
+    render(<DeleteWorktreeDialog />)
+    expect(screen.getByText('The worktree directory is missing. Only its stale Git registration will be removed.')).toBeVisible()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    const button = screen.getByRole('button', { name: 'Remove registration' })
+    expect(button).toBeEnabled()
+    fireEvent.click(button)
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('missing', false, expect.any(String)))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
 })

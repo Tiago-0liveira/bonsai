@@ -110,6 +110,10 @@ confirmed deletion.
 Deletion retains branches and PRs, rechecks dirty state and Git operations, and
 requires tracked processes and agents to stop. Creation and removal use durable
 mutation journals; metadata retries after creation do not create another tree.
+Worktrees whose directories have disappeared remain visible as missing Git
+registrations. Confirmed removal clears only the selected registration and its
+metadata, retaining the branch and respecting Git's worktree locks and tracked
+process protections. Other stale registrations are not automatically pruned.
 
 ## Internet GitHub relay
 

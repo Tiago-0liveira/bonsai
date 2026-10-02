@@ -18,6 +18,19 @@ it('shares concurrent PR detail requests and caches successful loads', async () 
   expect(localFetch).toHaveBeenCalledTimes(4)
 })
 
+it('retains provider IDs for same-name checks loaded with PR details', async () => {
+  localFetch.mockResolvedValueOnce(response({ number: 7, state: 'open', head_sha: 'sha', head: 'feature', base: 'main' }))
+    .mockResolvedValueOnce(response([
+      { id: 101, name: 'verify', status: 'completed', conclusion: 'success' },
+      { id: 102, name: 'verify', status: 'completed', conclusion: 'failure' },
+    ]))
+  await loadPullRequest('repo:7')
+  expect(useBonsaiStore.getState().pullRequests.find(pr => pr.id === 'repo:7')?.checks).toEqual([
+    { id: 101, name: 'verify', status: 'success' },
+    { id: 102, name: 'verify', status: 'failed' },
+  ])
+})
+
 it('reconnects the event stream and applies updates after bootstrap', async () => {
   vi.useFakeTimers()
   const sockets = [0, 1].map(() => ({ close: vi.fn(), onclose: null as null | ((event: { code: number }) => void), onerror: null }))

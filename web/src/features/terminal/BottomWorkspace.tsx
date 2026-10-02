@@ -643,8 +643,8 @@ function PullRequestDetails({ pr }: { pr: PullRequest }) {
       </button>
       {checksOpen && (
         <div className="mt-1">
-          {pr.checks.map((check) => (
-            <div key={check.name} className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[8px] text-[rgb(var(--muted))]">
+          {pr.checks.map((check, index) => (
+            <div key={check.id || `${check.name}:${index}`} className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[8px] text-[rgb(var(--muted))]">
               {checkIcon(check.status)}
               <span className="min-w-0 flex-1 truncate">{check.name}</span>
               <span className="capitalize text-[rgb(var(--muted-2))]">{check.status}</span>

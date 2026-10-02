@@ -228,7 +228,7 @@ export function PullRequestsPage() {
                   Checks
                   <span className="ml-auto text-[9px] text-[rgb(var(--muted-2))]">{checksPassed}/{selected.checks.length} successful</span>
                 </div>
-                <div className="p-1.5">{selected.checks.map((check) => <CheckRow key={check.name} {...check} />)}</div>
+                <div className="p-1.5">{selected.checks.map((check, index) => <CheckRow key={check.id || `${check.name}:${index}`} {...check} />)}</div>
               </div>
 
               <div className="rounded-lg border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] p-3">

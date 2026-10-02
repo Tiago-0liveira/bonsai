@@ -101,7 +101,9 @@ select { color-scheme: dark; }
 .dock-resize { border-radius: 8px; transition: background 150ms; }
 .dock-resize:hover, .dock-resize[data-resize-handle-active] { background: rgb(var(--purple) / .13); }
 
-.inspector-shell { background: linear-gradient(160deg, rgb(var(--panel-2) / .8), rgb(var(--panel)) 35%); }
+.inspector-shell { overflow-wrap: anywhere; background: linear-gradient(160deg, rgb(var(--panel-2) / .8), rgb(var(--panel)) 35%); }
+/* Radix uses a table wrapper that can grow past a vertical-only viewport. */
+.inspector-viewport > div { display: block !important; width: 100%; }
 .inspector-hero { padding: 14px; border: 1px solid rgb(var(--border)); border-radius: 12px; background: radial-gradient(ellipse at top left, rgb(var(--purple) / .10), transparent 85%), rgb(var(--panel-2) / .4); }
 .inspector-section { padding-top: 2px; }
 .inspector-section + .inspector-section { border-top: 1px solid rgb(var(--border) / .6); padding-top: 16px; }

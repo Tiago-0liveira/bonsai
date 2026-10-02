@@ -103,13 +103,13 @@ export function Inspector() {
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
 
   return (
-    <aside aria-label="Inspector" className="desktop-inspector inspector-shell flex w-[310px] shrink-0 flex-col border-l border-[rgb(var(--border))]">
+    <aside aria-label="Inspector" className="desktop-inspector inspector-shell flex min-h-0 min-w-0 w-[310px] shrink-0 flex-col overflow-hidden border-l border-[rgb(var(--border))]">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[rgb(var(--border)/.7)] px-4">
         <SlidersHorizontal size={13} className="text-[rgb(var(--purple))]" /><span className="text-[12px] font-semibold">Inspector</span>
         <span className="ml-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] px-2 py-0.5 text-[9px] capitalize text-[rgb(var(--muted))]">{selection.type}</span>
       </div>
       <ScrollArea.Root className="min-h-0 flex-1 overflow-hidden">
-        <ScrollArea.Viewport className="h-full w-full">
+        <ScrollArea.Viewport className="inspector-viewport h-full w-full">
           <div className="space-y-4 p-4">
             {selection.type === 'project' && <>
               <div className="inspector-hero">
@@ -151,7 +151,7 @@ export function Inspector() {
                 {pr ? <>
                   <button onClick={() => inspectPullRequest(pr.id)} className="bonsai-focus inspector-link !items-start !px-0"><GitPullRequest size={15} className="mt-0.5 shrink-0 text-[rgb(var(--purple))]" /><span className="min-w-0 flex-1"><span className="block text-[11px] font-medium leading-5">#{pr.number} {pr.title}</span><span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">{pr.files.length} files · {pr.commits.length} commits · View review</span></span><ChevronRight size={13} className="mt-1 shrink-0" /></button>
                   <div className="mt-2"><QuickButton icon={GitPullRequest} label="Open on GitHub" onClick={() => openGitHub('pull/' + pr.number, worktree.projectId)} /></div>
-                  <div className="mt-2 space-y-2 rounded-lg bg-[rgb(var(--bg)/.6)] p-2.5">{pr.checks.length ? pr.checks.map((check) => <div key={check.name} className="flex items-center gap-2 text-[10px]">
+                  <div className="mt-2 space-y-2 rounded-lg bg-[rgb(var(--bg)/.6)] p-2.5">{pr.checks.length ? pr.checks.map((check, index) => <div key={check.id || `${check.name}:${index}`} className="flex items-center gap-2 text-[10px]">
                     {check.status === 'failed' ? <XCircle size={12} className="shrink-0 text-[rgb(var(--red))]" /> : check.status === 'success' ? <CheckCircle2 size={12} className="shrink-0 text-[rgb(var(--green))]" /> : <CircleDot size={12} className="shrink-0 text-[rgb(var(--orange))]" />}
                     <span className="min-w-0 flex-1 break-words text-[rgb(var(--muted))]">{check.name}</span><span className="text-[9px] text-[rgb(var(--muted))]">{check.status === 'success' ? 'Passed' : check.status === 'failed' ? 'Failed' : 'Running'}</span>
                   </div>) : <p className="inspector-empty">No checks reported.</p>}</div>

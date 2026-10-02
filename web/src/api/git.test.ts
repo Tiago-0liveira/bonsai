@@ -20,6 +20,33 @@ describe('canonical Git snapshots', () => {
     const tree = fileTree([{ path: 'src/nested/a.ts', status: '.M' }, { path: 'new.txt', status: '??' }])
     expect(flattenFiles(tree).filter(f => f.type === 'file').map(f => [f.path, f.gitStatus, f.content])).toEqual([['src/nested/a.ts', 'modified', undefined], ['new.txt', 'untracked', undefined]])
   })
+  it('retains provider IDs for same-name checks in snapshots', () => {
+    applySnapshot({
+      repository: { id: 'repo', workspace_id: 'workspace', full_name: 'owner/repo', default_branch: 'main' },
+      online: true, sequence: 1, metadata: {},
+      worktree_state: {
+        wt: {
+          pull_request: {
+            number: 7, title: 'Feature', body: '', state: 'open', draft: false,
+            head: 'feature', base: 'main', head_sha: 'sha', author: 'dev',
+            created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+          },
+          ci: {
+            status: 'failed',
+            freshness: { state: 'ready' },
+            checks: [
+              { id: 101, name: 'verify', status: 'completed', conclusion: 'success' },
+              { id: 102, name: 'verify', status: 'completed', conclusion: 'failure' },
+            ],
+          },
+        },
+      },
+    })
+    expect(useBonsaiStore.getState().pullRequests[0].checks).toEqual([
+      { id: 101, name: 'verify', status: 'success' },
+      { id: 102, name: 'verify', status: 'failed' },
+    ])
+  })
 })
 
 describe('catalog reconciliation', () => {
@@ -122,6 +149,7 @@ describe('synchronized snapshot ordering', () => {
           repository_id: 'repo',
           branch: 'feature',
           main: false,
+          missing: true,
           local_head_sha: 'local-feature',
           status_error: { code: 'status_unavailable', message: 'worktree disappeared' },
           status: {
@@ -170,6 +198,7 @@ describe('synchronized snapshot ordering', () => {
     const state = useBonsaiStore.getState()
     expect(state.worktrees[0]).toMatchObject({
       prNumber: 42,
+      missing: true,
       ciStatus: 'none',
       checkedSha: 'remote-feature',
       divergenceAvailable: false,

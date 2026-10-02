@@ -43,6 +43,7 @@ type Worktree struct {
 	Branch       string             `json:"branch"`
 	HeadSHA      string             `json:"local_head_sha"`
 	Main         bool               `json:"main"`
+	Missing      bool               `json:"missing,omitempty"`
 	Status       *WorkingTreeStatus `json:"status,omitempty"`
 	StatusError  *StateError        `json:"status_error,omitempty"`
 	Connection   WorktreeConnection `json:"connection"`

@@ -283,7 +283,7 @@ func TestRepositoryKeepsSiblingWorktreesWhenOneStatusFails(t *testing.T) {
 	var failed, healthy int
 	for _, tree := range state.Worktrees {
 		if tree.ID == worktree.ID {
-			if tree.StatusError == nil || tree.Status != nil {
+			if !tree.Missing || tree.StatusError == nil || tree.StatusError.Code != "worktree_missing" || tree.Status != nil {
 				t.Fatalf("missing worktree status = %+v", tree)
 			}
 			failed++
