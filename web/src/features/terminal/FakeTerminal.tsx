@@ -41,9 +41,19 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     })
     const fit = new FitAddon()
     let disposed = false
+    let survivedFrame = false
+    let opened = false
 
     const fitSafely = () => {
-      if (disposed || !host.isConnected || host.clientWidth < 2 || host.clientHeight < 2 || terminalRef.current !== terminal) return
+      if (disposed || !survivedFrame || !host.isConnected || host.closest('[inert]') || host.clientWidth < 2 || host.clientHeight < 2) return
+      if (!opened) {
+        terminal.loadAddon(fit)
+        terminal.open(host)
+        opened = true
+        terminalRef.current = terminal
+        fitRef.current = fit
+        linesRef.current.forEach((line) => terminal.writeln(line))
+      }
       try {
         fit.fit()
       } catch {
@@ -52,16 +62,11 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     }
 
     const observer = new ResizeObserver(() => fitSafely())
+    observer.observe(host)
     // StrictMode can dispose an effect before xterm's deferred viewport setup runs.
     // Open only once the host survives to a frame, so that setup has a live renderer.
     const frame = requestAnimationFrame(() => {
-      if (disposed || !host.isConnected) return
-      terminal.loadAddon(fit)
-      terminal.open(host)
-      terminalRef.current = terminal
-      fitRef.current = fit
-      linesRef.current.forEach((line) => terminal.writeln(line))
-      observer.observe(host)
+      survivedFrame = true
       fitSafely()
     })
 
@@ -87,7 +92,7 @@ export function FakeTerminal({ terminalId }: { terminalId?: string }) {
     lines.forEach((line) => terminal.writeln(line))
     const frame = requestAnimationFrame(() => {
       const host = hostRef.current
-      if (terminalRef.current !== terminal || fitRef.current !== fit || !host?.isConnected || host.clientWidth < 2 || host.clientHeight < 2) return
+      if (terminalRef.current !== terminal || fitRef.current !== fit || !host?.isConnected || host.closest('[inert]') || host.clientWidth < 2 || host.clientHeight < 2) return
       try {
         fit.fit()
         terminal.scrollToBottom()

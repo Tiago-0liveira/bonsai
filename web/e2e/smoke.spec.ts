@@ -39,7 +39,8 @@ test('renders the Bonsai workspace and core dialogs without page errors', async 
   await expect(page.getByRole('button', { name: 'Agent', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Agent', exact: true }).click()
   await expect(page.getByText('Start agent', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('Project-level launches require an explicit branch choice.')).toBeVisible()
+  await expect(page.getByRole('dialog')).toContainText('Agent execution is unavailable')
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Start agent', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'Close start agent' }).click()
 
   await page.locator('.react-flow__node-worktree').first().click()
@@ -91,5 +92,5 @@ test('connection PR catalog reaches the dock, GitHub page, and matching worktree
   await expect(page.getByText('#23 fix(daemon): stabilize lifecycle cleanup').first()).toBeVisible()
   await page.getByRole('button', { name: 'Project', exact: true }).click()
   await page.getByRole('option', { name: 'sprout-lab', exact: true }).click()
-  await expect(page.getByRole('main').getByText('No pull requests.')).toBeVisible()
+  await expect(page.getByRole('main').getByText('No open pull requests.').first()).toBeVisible()
 })

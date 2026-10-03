@@ -1,5 +1,5 @@
 import { openGitHub } from '../../api/git'
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import {
   Archive, ArrowDown, ArrowRight, ArrowUp, Bot, CheckCircle2, ChevronRight,
@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
+import { useProjectWorktrees, useProjectAgents, useProjectPullRequests } from '../../stores/projectSelectors'
 import type { Agent, PullRequest, Worktree } from '../../types'
 
 const presentation = (agent: Agent) => agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
@@ -30,8 +31,8 @@ function Section({ title, meta, children }: { title: string; meta?: ReactNode; c
   </section>
 }
 
-function QuickButton({ icon: Icon, label, onClick, danger = false, primary = false }: { icon: LucideIcon; label: string; onClick: () => void; danger?: boolean; primary?: boolean }) {
-  return <button type="button" onClick={onClick} className={'bonsai-focus inspector-action ' + (danger ? 'inspector-action-danger' : primary ? 'inspector-action-primary' : '')}>
+function QuickButton({ icon: Icon, label, onClick, danger = false, primary = false, unavailable = false }: { icon: LucideIcon; label: string; onClick: () => void; danger?: boolean; primary?: boolean; unavailable?: boolean }) {
+  return <button type="button" onClick={onClick} disabled={unavailable} title={unavailable ? 'Unavailable in the connected app' : undefined} className={'disabled:opacity-40 bonsai-focus inspector-action ' + (danger ? 'inspector-action-danger' : primary ? 'inspector-action-primary' : '')}>
     <Icon size={13} className="shrink-0" />{label}
   </button>
 }
@@ -53,13 +54,15 @@ function AgentRow({ agent, onClick }: { agent: Agent; onClick: () => void }) {
 
 export function Inspector() {
   const selection = useBonsaiStore((state) => state.selection)
-  const projects = useBonsaiStore((state) => state.projects)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
-  const worktrees = useBonsaiStore((state) => state.worktrees)
+  const worktrees = useProjectWorktrees(activeProjectId)
   const tags = useBonsaiStore((state) => state.worktreeTags)
-  const agents = useBonsaiStore((state) => state.agents)
-  const pullRequests = useBonsaiStore((state) => state.pullRequests)
-  const terminalOutput = useBonsaiStore((state) => state.terminalOutput)
+  const agents = useProjectAgents(activeProjectId)
+  const pullRequests = useProjectPullRequests(activeProjectId)
+  const terminalLines = useBonsaiStore(state => {
+    const selected = state.selection.type === 'agent' ? state.agents.find(agent => agent.id === state.selection.id) : undefined
+    return selected ? state.terminalOutput[selected.terminalId] : undefined
+  })
   const collapsedTagGroups = useBonsaiStore((state) => state.collapsedTagGroups)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
@@ -72,7 +75,7 @@ export function Inspector() {
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const setWorktreeTag = useBonsaiStore((state) => state.setWorktreeTag)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
-  const worktreeGroups = useBonsaiStore(state => state.worktreeGroups)
+  const worktreeGroups = useBonsaiStore(state => state.worktreeGroups[activeProjectId])
   const expandedAutomaticGroups = useBonsaiStore(state => state.expandedAutomaticGroups)
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setWorktreeStackPreference = useBonsaiStore((state) => state.setWorktreeStackPreference)
@@ -83,21 +86,21 @@ export function Inspector() {
 
   const agent = selection.type === 'agent' ? agents.find((item) => item.id === selection.id) : undefined
   const worktree = worktrees.find((item) => item.id === (selection.type === 'worktree' ? selection.id : agent?.worktreeId))
-  const project = projects.find((item) => item.id === (worktree?.projectId ?? activeProjectId))
-  const projectWorktrees = worktrees.filter((item) => item.projectId === project?.id)
+  const project = useBonsaiStore(state => state.projects.find(item => item.id === (worktree?.projectId ?? activeProjectId)))
+  const projectWorktrees = worktrees
   const projectWorktreeIds = new Set(projectWorktrees.map((item) => item.id))
   const projectAgents = agents.filter((item) => projectWorktreeIds.has(item.worktreeId) && presentation(item) === 'canvas')
   const branchAgents = projectAgents.filter((item) => item.worktreeId === worktree?.id)
   const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
-  const attention = projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length)
+  const attention = useMemo(() => projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length), [projectWorktrees, pullRequests])
   const issues = worktree ? branchIssues(worktree, pr) : []
-  const output = agent ? (terminalOutput[agent.terminalId] ?? []).filter((line) => line.trim()).slice(-5) : []
+  const output = agent ? (terminalLines ?? []).filter((line) => line.trim()).slice(-5) : []
 
   useEffect(() => { setTagDraft(worktree?.tag ?? '') }, [worktree?.id, worktree?.tag])
   if (!project) return null
 
   const submitTag = (event: FormEvent) => { event.preventDefault(); if (worktree) setWorktreeTag(worktree.id, tagDraft) }
-  const automaticGroup = worktree ? (worktreeGroups[project.id] ?? []).find(group => group.worktree_ids.includes(worktree.id)) : undefined
+  const automaticGroup = worktree ? (worktreeGroups ?? []).find(group => group.worktree_ids.includes(worktree.id)) : undefined
   const groupCount = automaticGroup?.worktree_ids.length ?? (worktree ? projectWorktrees.filter(item => item.tag === worktree.tag).length : 0)
   const groupCollapsed = automaticGroup ? !expandedAutomaticGroups.includes(automaticGroup.id) : worktree ? collapsedTagGroups.includes(project.id + ':' + worktree.tag) : false
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
@@ -129,7 +132,7 @@ export function Inspector() {
                 </button>)}</div> : <p className="flex items-center gap-2 text-[11px] text-[rgb(var(--muted))]"><CheckCircle2 size={14} className="text-[rgb(var(--green))]" />No branch blockers reported.</p>}
               </Section>
               <Section title="Agents" meta={<span className="inspector-count">{projectAgents.length}</span>}>
-                {projectAgents.length ? projectAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">Start an agent to work on a branch.</p>}
+                {projectAgents.length ? projectAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">Agent execution is unavailable.</p>}
               </Section>
             </>}
 
@@ -158,7 +161,7 @@ export function Inspector() {
                 </> : <p className="inspector-empty">{worktree.prNumber ? `PR #${worktree.prNumber} details are unavailable.` : 'No pull request linked to this branch.'}</p>}
               </Section>
               <Section title="Agents on this branch" meta={<span className="inspector-count">{branchAgents.length}</span>}>
-                {branchAgents.length ? branchAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">No active sessions. Start an agent above.</p>}
+                {branchAgents.length ? branchAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">Agent execution is unavailable.</p>}
               </Section>
               <details key={worktree.id} className="inspector-settings"><summary className="bonsai-focus flex cursor-pointer items-center gap-2 text-[11px] font-medium"><SlidersHorizontal size={13} className="text-[rgb(var(--muted))]" />Branch settings<ChevronRight size={12} className="inspector-disclosure ml-auto" /></summary>
                 <section className="mt-4">
@@ -215,10 +218,10 @@ export function Inspector() {
                 <h2 className="text-[16px] font-semibold tracking-tight">{agent.name}</h2>
                 <p className="mt-2 text-[12px] leading-5 text-[rgb(var(--muted))]">{agent.task}</p>
                 <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{agent.runtime} runtime<span className="ml-auto capitalize">{presentation(agent)}</span></div>
-                <div className="mt-4"><QuickButton icon={TerminalSquare} label="Open terminal" primary onClick={() => openTerminal(agent.id)} /></div>
+                <div className="mt-4"><QuickButton icon={TerminalSquare} unavailable label="Open terminal" primary onClick={() => openTerminal(agent.id)} /></div>
               </div>
               {worktree && <button onClick={() => setSelection({ type: 'worktree', id: worktree.id })} className="bonsai-focus inspector-link rounded-lg border border-[rgb(var(--border))]"><GitBranch size={13} className="shrink-0 text-[rgb(var(--purple))]" /><span className="min-w-0 flex-1"><span className="block truncate font-mono text-[10px]">{worktree.branch}</span><span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">{worktree.dirtyFiles} uncommitted · {issues.length ? issues.length + ' branch issues' : 'View branch details'}</span></span><ChevronRight size={12} /></button>}
-              <Section title="Latest terminal output" meta={<TerminalSquare size={12} className="text-[rgb(var(--muted))]" />}>
+              <Section title="Recorded agent output" meta={<TerminalSquare size={12} className="text-[rgb(var(--muted))]" />}>
                 {output.length ? <pre className="inspector-output">{output.join('\n')}</pre> : <p className="inspector-empty">No output captured for this session yet.</p>}
               </Section>
               <Section title="Instructions"><p className="whitespace-pre-wrap break-words text-[11px] leading-[1.8] text-[rgb(var(--muted))]">{agent.prompt || 'No instructions recorded.'}</p></Section>
@@ -231,10 +234,10 @@ export function Inspector() {
                 </dl>
               </Section>
               <div className="grid grid-cols-2 gap-2">
-                {presentation(agent) === 'canvas' && (agent.state === 'running' ? <QuickButton icon={Square} label="Stop agent" onClick={() => setAgentState(agent.id, 'finished')} /> : <QuickButton icon={RotateCcw} label="Restart" onClick={() => setAgentState(agent.id, 'running')} />)}
+                {presentation(agent) === 'canvas' && (agent.state === 'running' ? <QuickButton icon={Square} unavailable label="Stop agent" onClick={() => setAgentState(agent.id, 'finished')} /> : <QuickButton icon={RotateCcw} unavailable label="Restart" onClick={() => setAgentState(agent.id, 'running')} />)}
                 {presentation(agent) === 'canvas' && agent.state === 'finished' && <QuickButton icon={History} label="Move to history" onClick={() => moveAgentToHistory(agent.id)} />}
                 {presentation(agent) === 'history' && <QuickButton icon={Undo2} label="Restore to canvas" onClick={() => restoreAgentFromHistory(agent.id)} />}
-                {presentation(agent) === 'archived' ? <QuickButton icon={Undo2} label="Restore" onClick={() => restoreAgent(agent.id)} /> : <QuickButton icon={Archive} label={agent.state === 'running' ? 'Stop + archive' : 'Archive'} danger onClick={() => archiveAgent(agent.id)} />}
+                {presentation(agent) === 'archived' ? <QuickButton icon={Undo2} label="Restore" onClick={() => restoreAgent(agent.id)} /> : <QuickButton icon={Archive} label="Archive" danger onClick={() => archiveAgent(agent.id)} />}
               </div>
             </>}
             {!worktree && !agent && selection.type !== 'project' && <p className="inspector-empty py-8 text-center">Select a project, worktree, or agent.</p>}

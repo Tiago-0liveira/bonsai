@@ -5,7 +5,7 @@ test.beforeEach(async ({ page }) => {
   await mockGitBackend(page)
 })
 
-test('inspector leads from branch blockers to the matching review and agent session', async ({ page }) => {
+test('inspector leads from branch blockers to the matching review and unavailable agent controls', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await openConnectedApp(page)
@@ -26,15 +26,12 @@ test('inspector leads from branch blockers to the matching review and agent sess
   await expect(page.getByRole('textbox', { name: 'Search pull requests' })).toHaveValue('')
   await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toBeVisible()
 
-  await inspector.getByRole('button', { name: /Lifecycle fix/ }).click()
-  await expect(inspector.getByRole('heading', { name: 'Latest terminal output' })).toBeVisible()
-  await expect(inspector.locator('pre')).toContainText('[bonsaid] tracing process lifecycle')
-  await inspector.getByRole('button', { name: 'Open terminal', exact: true }).click()
-  await expect(page.locator('.runtime-tile-active')).toContainText('Lifecycle fix')
-
-  await inspector.getByRole('button', { name: 'Stop agent', exact: true }).click()
-  await expect(inspector.getByRole('button', { name: 'Restart', exact: true })).toBeVisible()
-  await expect(inspector.getByRole('button', { name: 'Move to history', exact: true })).toBeVisible()
+  await expect(inspector.getByText('Agent execution is unavailable.', { exact: true })).toBeVisible()
+  await inspector.getByRole('button', { name: 'Start agent', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('Agent execution is unavailable')
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Start agent', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Close start agent' }).click()
+  await expect(page.locator('.react-flow__node-agent')).toHaveCount(0)
   expect(errors).toEqual([])
 })
 

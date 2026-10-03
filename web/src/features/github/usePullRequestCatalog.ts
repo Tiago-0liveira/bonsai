@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { create } from 'zustand'
 import { fetchClosedPullRequests } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { PullRequest } from '../../types'
+import { useProjectPullRequests } from '../../stores/projectSelectors'
+
+const EMPTY_PULL_REQUESTS: PullRequest[] = []
 
 type ClosedCatalog = { rows: PullRequest[]; loading: boolean; error?: string; loadedAt?: number }
 const useClosedCatalog = create<Record<string, ClosedCatalog>>(() => ({}))
@@ -24,13 +27,13 @@ export function usePullRequestCatalog(projectId: string) {
   const repository = useBonsaiStore(state => state.projects.find(project => project.id === projectId)?.repository)
   const key = `${projectId}:${repository}`
   const closed = useClosedCatalog(state => state[key])
-  const all = useBonsaiStore(state => state.pullRequests)
+  const all = useProjectPullRequests(projectId)
   const freshness = useBonsaiStore(state => state.syncFreshness[projectId]?.provider)
   useEffect(() => { setTab('open') }, [key])
   useEffect(() => { if (tab === 'closed') void loadClosed(key, projectId) }, [tab, key, projectId])
-  const rows = tab === 'open'
-    ? all.filter(pr => pr.id.startsWith(`${projectId}:`) && (pr.status === 'Open' || pr.status === 'Draft'))
-    : (closed?.rows ?? []).map(pr => all.find(detail => detail.id === pr.id && (detail.status === 'Closed' || detail.status === 'Merged')) ?? pr)
+  const rows = useMemo(() => tab === 'open'
+    ? all.filter(pr => pr.status === 'Open' || pr.status === 'Draft')
+    : (closed?.rows ?? EMPTY_PULL_REQUESTS).map(pr => all.find(detail => detail.id === pr.id && (detail.status === 'Closed' || detail.status === 'Merged')) ?? pr), [tab, all, closed?.rows])
   const loading = tab === 'closed' ? !closed || closed.loading : !freshness || freshness.state === 'loading'
   const error = tab === 'closed' ? closed?.error : freshness?.error?.message
   return { tab, setTab, rows, message: error ?? (loading ? 'Loading pull requests…' : `No ${tab} pull requests.`), retry: () => void loadClosed(key, projectId) }

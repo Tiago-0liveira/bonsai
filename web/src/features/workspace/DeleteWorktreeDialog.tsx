@@ -5,6 +5,11 @@ import { useBonsaiStore } from '../../stores/bonsai'
 const activeProcessStates = new Set(['starting', 'running', 'backoff', 'stopping', 'orphan'])
 
 export function DeleteWorktreeDialog() {
+  const visible = useBonsaiStore(state => state.deleteWorktreeId)
+  return visible ? <DeleteWorktreeDialogBody /> : null
+}
+
+function DeleteWorktreeDialogBody() {
   const id = useBonsaiStore(state => state.deleteWorktreeId)
   const close = useBonsaiStore(state => state.setDeleteWorktreeId)
   const worktree = useBonsaiStore(state => state.worktrees.find(tree => tree.id === id))

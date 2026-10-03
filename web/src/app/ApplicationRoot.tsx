@@ -1,6 +1,7 @@
+import { WorkspaceStorageError } from '../components/layout/WorkspaceStorageError'
 import { ProjectRootsSettings } from '../features/settings/ProjectRootsSettings'
 import { loadProjectRoots } from '../api/settings'
-import { useBonsaiStore } from '../stores/bonsai'
+import { workspacePreferences, useBonsaiStore } from '../stores/bonsai'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { RouterProvider } from '@tanstack/react-router'
 import '@xyflow/react/dist/style.css'
@@ -104,14 +105,22 @@ function ConnectedApplication() {
 }
 
 export function ApplicationRoot() {
+  useEffect(() => {
+    const stopLifecycle = workspacePreferences.attachLifecycle()
+    const stopNavigation = router.subscribe('onBeforeNavigate', workspacePreferences.flush)
+    return () => { stopNavigation(); stopLifecycle() }
+  }, [])
   const connection = useSyncExternalStore(
     subscribeLocalConnection,
     getLocalConnectionSnapshot,
     getLocalConnectionSnapshot,
   )
   return (
-    <div className="app-surface">
-      {connection.status === 'connected' ? <ConnectedApplication /> : <LocalConnectionGate />}
+    <div className="app-surface flex flex-col">
+      <WorkspaceStorageError />
+      <div className="min-h-0 flex-1">
+        {connection.status === 'connected' ? <ConnectedApplication /> : <LocalConnectionGate />}
+      </div>
     </div>
   )
 }

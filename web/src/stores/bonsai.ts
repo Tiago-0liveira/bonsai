@@ -1,7 +1,7 @@
 import type { ProjectRootsSettings } from '../api/settings'
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
-import { agents as initialAgents } from '../mock/agents'
+import { AGENT_UNAVAILABLE, SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
+import { createPreferenceBoundary } from './preferenceBoundary'
 import {
   boardItems as initialBoardItems,
   boardLists as initialBoardLists,
@@ -42,7 +42,7 @@ interface TerminalSession {
   agentId?: string
 }
 
-interface BonsaiState {
+export interface BonsaiState {
   rootSettings: ProjectRootsSettings | null
   rootsLoading: boolean
   rootsSaving: boolean
@@ -190,12 +190,6 @@ interface BonsaiState {
   appendTerminalCommand: (command: string) => void
 }
 
-const initialTerminalOutput: Record<string, string[]> = {
-  'term-ui': ['$ pnpm dev', 'VITE v5.4.19  ready in 412 ms', '➜  Local:   http://localhost:5173/', '', '[bonsai] workspace mock state connected'],
-  'term-tests': ['$ pnpm test --watch', '✓ src/stores/bonsai.test.ts', 'Watching for file changes…'],
-  'term-daemon': ['$ go run . daemon', '[bonsaid] tracing process lifecycle…'],
-}
-
 function slugify(value: string) { return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') }
 
 function uniqueAdd(items: string[], id: string) {
@@ -209,9 +203,8 @@ function withoutPlacements(placements: Record<string, NodePlacement>, ids: strin
 }
 
 export const useBonsaiStore = create<BonsaiState>()(
-  persist(
     (set, get) => ({
-      selection: { type: 'project', id: 'bonsai' },
+      selection: { type: 'project', id: '' },
       setSelection: (selection) => {
         const state = get()
         let dockWorktreeId = state.dockWorktreeId
@@ -302,7 +295,7 @@ export const useBonsaiStore = create<BonsaiState>()(
 
       worktrees: [],
       worktreeTags: initialWorktreeTags,
-      agents: initialAgents,
+      agents: [],
       collapsedTagGroups: ['bonsai:feat'],
       detachedStackWorktreeIds: [],
       toggleTagGroup: (projectId, tag) =>
@@ -357,56 +350,9 @@ export const useBonsaiStore = create<BonsaiState>()(
 
       startAgentDialogOpen: false,
       startAgentTargetWorktreeId: '',
-      openStartAgentDialog: (worktreeId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId }),
+      openStartAgentDialog: (worktreeId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId, notice: AGENT_UNAVAILABLE }),
       setStartAgentDialogOpen: (startAgentDialogOpen) => set({ startAgentDialogOpen }),
-      createAgent: (input) =>
-        set((state) => {
-          const worktree = state.worktrees.find((item) => item.id === input.worktreeId)
-          if (!worktree) return { notice: 'Choose a worktree before starting an agent' }
-          const id = 'agent-' + Date.now().toString(36)
-          const terminalId = 'term-' + id
-          const agent: Agent = {
-            id,
-            worktreeId: input.worktreeId,
-            name: input.name.trim() || input.provider + ' agent',
-            provider: input.provider,
-            model: input.model,
-            reasoningEffort: input.reasoningEffort,
-            fastMode: input.fastMode,
-            workType: input.workType,
-            prompt: input.prompt,
-            archived: false,
-            presentation: 'canvas',
-            state: 'running',
-            task: input.prompt.slice(0, 90) || input.workType,
-            runtime: 'just now',
-            terminalId,
-            createdAt: 'just now',
-          }
-          return {
-            agents: [...state.agents, agent],
-            worktrees: state.worktrees.map((item) => item.id === input.worktreeId ? { ...item, agentIds: [...item.agentIds, id] } : item),
-            selection: { type: 'agent', id },
-            dockWorktreeId: input.worktreeId,
-            dockRuntimeId: id,
-            openRuntimeIds: uniqueAdd(state.openRuntimeIds, id),
-            activeTerminalId: terminalId,
-            terminalSessions: [...state.terminalSessions, { id: terminalId, label: agent.name, agentId: id }],
-            terminalOutput: {
-              ...state.terminalOutput,
-              [terminalId]: [
-                '# ' + agent.name,
-                '# ' + input.provider + ' · ' + input.model + ' · ' + input.reasoningEffort + (input.fastMode ? ' · Fast' : ''),
-                '# ' + input.workType,
-                '$ ' + input.prompt,
-              ],
-            },
-            startAgentDialogOpen: false,
-            startAgentTargetWorktreeId: '',
-            dockState: 'normal',
-            notice: 'Started ' + agent.name + ' on ' + worktree.branch,
-          }
-        }),
+      createAgent: () => set({ notice: AGENT_UNAVAILABLE }),
       startMockAgent: () => {
         const state = get()
         const target =
@@ -415,13 +361,13 @@ export const useBonsaiStore = create<BonsaiState>()(
             : state.selection.type === 'agent'
               ? state.agents.find((item) => item.id === state.selection.id)?.worktreeId ?? ''
               : ''
-        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target })
+        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target, notice: AGENT_UNAVAILABLE })
       },
       moveAgentToHistory: (id) =>
         set((state) => ({
           agents: state.agents.map((agent) =>
             agent.id === id
-              ? { ...agent, presentation: 'history', archived: false, state: agent.state === 'running' ? 'finished' : agent.state, finishedAt: agent.finishedAt ?? 'just now' }
+              ? { ...agent, presentation: 'history', archived: false }
               : agent,
           ),
           openRuntimeIds: state.openRuntimeIds.filter((runtimeId) => runtimeId !== id),
@@ -438,7 +384,7 @@ export const useBonsaiStore = create<BonsaiState>()(
         set((state) => ({
           agents: state.agents.map((agent) =>
             agent.id === id
-              ? { ...agent, presentation: 'archived', archived: true, state: agent.state === 'running' ? 'finished' : agent.state, finishedAt: agent.finishedAt ?? 'just now' }
+              ? { ...agent, presentation: 'archived', archived: true }
               : agent,
           ),
           openRuntimeIds: state.openRuntimeIds.filter((runtimeId) => runtimeId !== id),
@@ -451,47 +397,23 @@ export const useBonsaiStore = create<BonsaiState>()(
           agents: state.agents.map((agent) => agent.id === id ? { ...agent, presentation: 'canvas', archived: false } : agent),
           notice: 'Agent restored',
         })),
-      setAgentState: (id, agentState) =>
-        set((state) => ({
-          agents: state.agents.map((agent) => agent.id === id ? { ...agent, state: agentState, finishedAt: agentState === 'finished' ? 'just now' : agent.finishedAt } : agent),
-          notice: 'Agent moved to ' + agentState,
-        })),
+      setAgentState: () => set({ notice: AGENT_UNAVAILABLE }),
 
       envEditorOpen: false,
       setEnvEditorOpen: (envEditorOpen) => set({ envEditorOpen }),
-      envVariables: {
-        bonsai: [
-          { id: 'env-1', key: 'BONSAI_API_URL', value: 'http://localhost:8080', secret: false },
-          { id: 'env-2', key: 'GITHUB_TOKEN', value: 'ghp_example_token', secret: true },
-          { id: 'env-3', key: 'NODE_ENV', value: 'development', secret: false },
-        ],
-      },
-      addEnvVariable: (projectId) =>
-        set((state) => ({
-          envVariables: {
-            ...state.envVariables,
-            [projectId]: [...(state.envVariables[projectId] ?? []), { id: 'env-' + Date.now().toString(36), key: '', value: '', secret: true }],
-          },
-        })),
-      updateEnvVariable: (projectId, id, patch) =>
-        set((state) => ({
-          envVariables: {
-            ...state.envVariables,
-            [projectId]: (state.envVariables[projectId] ?? []).map((item) => item.id === id ? { ...item, ...patch } : item),
-          },
-        })),
-      removeEnvVariable: (projectId, id) =>
-        set((state) => ({
-          envVariables: {
-            ...state.envVariables,
-            [projectId]: (state.envVariables[projectId] ?? []).filter((item) => item.id !== id),
-          },
-        })),
+      envVariables: {},
+      addEnvVariable: () => set({ notice: ENV_UNAVAILABLE }),
+      updateEnvVariable: () => set({ notice: ENV_UNAVAILABLE }),
+      removeEnvVariable: () => set({ notice: ENV_UNAVAILABLE }),
 
       dockState: 'normal',
-      setDockState: (dockState) => set({ dockState }),
+      setDockState: (dockState) => set((state) => state.dockState === dockState ? state : { dockState }),
       dockHeight: 30,
-      setDockHeight: (dockHeight) => set({ dockHeight: Math.min(72, Math.max(14, dockHeight)) }),
+      setDockHeight: (height) => set((state) => {
+        if (!Number.isFinite(height)) return state
+        const dockHeight = Math.min(72, Math.max(14, height))
+        return Math.abs(state.dockHeight - dockHeight) < 0.01 ? state : { dockHeight }
+      }),
       activeDockTab: 'terminal',
       setActiveDockTab: (activeDockTab) => set({ activeDockTab }),
       dockWorktreeId: '',
@@ -502,9 +424,10 @@ export const useBonsaiStore = create<BonsaiState>()(
         set((state) => {
           if (state.dockRuntimeId === dockRuntimeId) return state
           const agent = state.agents.find((item) => item.id === dockRuntimeId)
+          const process = state.processes.find((item) => item.id === dockRuntimeId)
           return {
             dockRuntimeId,
-            dockWorktreeId: agent?.worktreeId ?? state.dockWorktreeId,
+            dockWorktreeId: agent?.worktreeId ?? process?.worktreeId ?? state.dockWorktreeId,
             activeTerminalId: agent?.terminalId ?? state.activeTerminalId,
             openRuntimeIds: dockRuntimeId ? uniqueAdd(state.openRuntimeIds, dockRuntimeId) : state.openRuntimeIds,
           }
@@ -513,10 +436,14 @@ export const useBonsaiStore = create<BonsaiState>()(
       openRuntime: (id) =>
         set((state) => {
           const agent = state.agents.find((item) => item.id === id)
+          const process = state.processes.find((item) => item.id === id)
+          if (!agent && !process) return state
+          const dockWorktreeId = agent?.worktreeId ?? process!.worktreeId
+          if (state.dockRuntimeId === id && state.dockWorktreeId === dockWorktreeId && state.openRuntimeIds.includes(id)) return state
           return {
             openRuntimeIds: uniqueAdd(state.openRuntimeIds, id),
             dockRuntimeId: id,
-            dockWorktreeId: agent?.worktreeId ?? state.dockWorktreeId,
+            dockWorktreeId,
             activeTerminalId: agent?.terminalId ?? state.activeTerminalId,
           }
         }),
@@ -560,14 +487,14 @@ export const useBonsaiStore = create<BonsaiState>()(
           set({ editorPromptOpen: true, pendingOpenFile: path, selectedFilePath: path })
           return
         }
-        set({ selectedFilePath: path, notice: 'Opening ' + path + ' in ' + state.editorPreference + ' (mock)' })
+        set({ selectedFilePath: path, notice: 'Opening files in an external editor is unavailable in the connected app.' })
       },
       setEditorPreference: (editorPreference) => {
         const state = get()
         set({
           editorPreference,
           editorPromptOpen: false,
-          notice: state.pendingOpenFile ? 'Opening ' + state.pendingOpenFile + ' in ' + editorPreference + ' (mock)' : 'Editor preference saved',
+          notice: state.pendingOpenFile ? 'Editor preference saved. Opening files in an external editor is unavailable in the connected app.' : 'Editor preference saved',
           pendingOpenFile: '',
         })
       },
@@ -695,30 +622,10 @@ export const useBonsaiStore = create<BonsaiState>()(
       notice: '',
       setNotice: (notice) => set({ notice }),
 
-      terminalSessions: [
-        { id: 'term-ui', label: 'UI builder', agentId: 'agent-ui' },
-        { id: 'term-tests', label: 'Tests', agentId: 'agent-tests' },
-      ],
-      activeTerminalId: 'term-ui',
-      terminalOutput: initialTerminalOutput,
-      openTerminal: (agentId) => {
-        const state = get()
-        const agent = agentId ? state.agents.find((item) => item.id === agentId) : undefined
-        const id = agent?.terminalId ?? 'term-' + Date.now()
-        const exists = state.terminalSessions.some((session) => session.id === id)
-        set({
-          activeDockTab: 'terminal',
-          dockState: 'normal',
-          dockWorktreeId: agent?.worktreeId ?? state.dockWorktreeId,
-          dockRuntimeId: agent?.id ?? state.dockRuntimeId,
-          openRuntimeIds: agent ? uniqueAdd(state.openRuntimeIds, agent.id) : state.openRuntimeIds,
-          activeTerminalId: id,
-          terminalSessions: exists ? state.terminalSessions : [...state.terminalSessions, { id, label: agent?.name ?? 'Shell', agentId }],
-          terminalOutput: state.terminalOutput[id]
-            ? state.terminalOutput
-            : { ...state.terminalOutput, [id]: ['# ' + (agent?.name ?? 'Bonsai shell'), agent ? '# ' + agent.task : '# Frontend-only mock terminal', '$ '] },
-        })
-      },
+      terminalSessions: [],
+      activeTerminalId: '',
+      terminalOutput: {},
+      openTerminal: () => set({ notice: SHELL_UNAVAILABLE }),
       setActiveTerminalId: (activeTerminalId) => set((state) => state.activeTerminalId === activeTerminalId ? state : { activeTerminalId }),
       appendTerminalCommand: (command) => {
         if (command.trim().startsWith('git ')) {
@@ -728,51 +635,9 @@ export const useBonsaiStore = create<BonsaiState>()(
           else set({ notice: 'Use the Git API or local Git for this operation.' })
           return
         }
-        const { activeTerminalId, terminalOutput } = get()
-        const lines = terminalOutput[activeTerminalId] ?? []
-        const result =
-          command.includes('test') || command.includes('go test')
-            ? ['running tests…', '✓ all mock checks passed']
-            : command.includes('dev')
-              ? ['starting development server…', 'ready on http://localhost:5173']
-              : ['command completed (mock)']
-        set({
-          activeDockTab: 'terminal',
-          dockState: 'normal',
-          terminalOutput: { ...terminalOutput, [activeTerminalId]: [...lines, '$ ' + command, ...result] },
-          notice: 'Ran “' + command + '” in the mock terminal',
-        })
+        set({ notice: SHELL_UNAVAILABLE })
       },
     }),
-    {
-      name: 'bonsai-web-workspace-v6',
-      partialize: (state) => ({
-        selection: state.selection,
-        activeWorkspaceId: state.activeWorkspaceId,
-        activeProjectId: state.activeProjectId,
-        sidebarCollapsed: state.sidebarCollapsed,
-        dockState: state.dockState,
-        dockHeight: state.dockHeight,
-        activeDockTab: state.activeDockTab,
-        dockWorktreeId: state.dockWorktreeId,
-        dockRuntimeId: state.dockRuntimeId,
-        openRuntimeIds: state.openRuntimeIds,
-        collapsedBranchIds: state.collapsedBranchIds,
-        rightPanels: state.rightPanels,
-        selectedFilePath: state.selectedFilePath,
-        editorPreference: state.editorPreference,
-        nodePlacements: state.nodePlacements,
-        viewport: state.viewport,
-        boardItems: state.boardItems,
-        boardLists: state.boardLists,
-        boardPriorities: state.boardPriorities,
-        boardTypes: state.boardTypes,
-        agents: state.agents,
-        collapsedTagGroups: state.collapsedTagGroups,
-		detachedStackWorktreeIds: state.detachedStackWorktreeIds,
-        expandedAutomaticGroups: state.expandedAutomaticGroups,
-        envVariables: state.envVariables,
-      }),
-    },
-  ),
 )
+
+export const workspacePreferences = createPreferenceBoundary(useBonsaiStore)

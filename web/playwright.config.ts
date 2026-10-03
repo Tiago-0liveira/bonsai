@@ -8,10 +8,10 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: 'pnpm build && node e2e/https-preview.mjs',
+    command: 'pnpm build --mode e2e && node e2e/https-preview.mjs',
     url: 'https://127.0.0.1:4173',
     ignoreHTTPSErrors: true,
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 })
