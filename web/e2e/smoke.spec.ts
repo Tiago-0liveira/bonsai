@@ -39,7 +39,7 @@ test('renders the Bonsai workspace and core dialogs without page errors', async 
   await expect(page.getByRole('button', { name: 'Agent', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Agent', exact: true }).click()
   await expect(page.getByText('Start agent', { exact: true }).first()).toBeVisible()
-  await expect(page.getByRole('dialog')).toContainText('Agent execution is unavailable')
+  await expect(page.getByRole('dialog')).toContainText('Antigravity')
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Start agent', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'Close start agent' }).click()
 

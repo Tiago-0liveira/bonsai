@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -362,10 +363,12 @@ func (s *stateSync) ensureLocked(info ProjectInfo) *projectProjection {
 			Online:        info.Available,
 			Metadata:      map[string]worktreeMetadata{},
 			Processes:     []browserProcessSummary{},
+			Agents:        []agentterminal.Summary{},
 			Freshness:     map[string]browserFreshness{},
 			WorktreeState: map[string]browserWorktreeState{},
 		},
 	}
+	p.snapshot.Freshness["agents"] = browserFreshness{State: "ready"}
 	p.snapshot.Freshness["local"] = browserFreshness{State: "loading"}
 	p.snapshot.Freshness["processes"] = browserFreshness{State: "loading"}
 	p.snapshot.Freshness["provider"] = browserFreshness{State: "loading"}
@@ -861,6 +864,7 @@ func markUnavailable(freshness map[string]browserFreshness, component, code, mes
 
 func cloneSnapshot(in browserSnapshot) browserSnapshot {
 	out := in
+	out.Agents = append(in.Agents[:0:0], in.Agents...)
 	if in.Local != nil {
 		local := *in.Local
 		local.Branches = append([]domain.Branch(nil), in.Local.Branches...)

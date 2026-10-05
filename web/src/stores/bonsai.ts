@@ -1,6 +1,7 @@
+import { startAgent, stopAgent, mapAgent } from '../api/agents'
 import type { ProjectRootsSettings } from '../api/settings'
 import { create } from 'zustand'
-import { AGENT_UNAVAILABLE, SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
+import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
 import { createPreferenceBoundary } from './preferenceBoundary'
 import {
   boardItems as initialBoardItems,
@@ -96,7 +97,7 @@ export interface BonsaiState {
   startAgentTargetWorktreeId: string
   openStartAgentDialog: (worktreeId?: string) => void
   setStartAgentDialogOpen: (open: boolean) => void
-  createAgent: (input: StartAgentInput) => void
+  createAgent: (input: StartAgentInput) => Promise<void>
   startMockAgent: () => void
   moveAgentToHistory: (id: string) => void
   restoreAgentFromHistory: (id: string) => void
@@ -121,6 +122,7 @@ export interface BonsaiState {
   setDockWorktreeId: (id: string) => void
   dockRuntimeId: string
   setDockRuntimeId: (id: string) => void
+  dismissedRuntimeIds: string[]
   openRuntimeIds: string[]
   openRuntime: (id: string) => void
   closeRuntime: (id: string) => void
@@ -233,7 +235,7 @@ export const useBonsaiStore = create<BonsaiState>()(
           state.dockRuntimeId === dockRuntimeId
         ) return
 
-        set({ selection, dockWorktreeId, dockRuntimeId, openRuntimeIds, activeTerminalId, dockState: 'normal' })
+        set({ selection, dockWorktreeId, dockRuntimeId, openRuntimeIds, activeTerminalId, dismissedRuntimeIds: selection.type === 'agent' ? state.dismissedRuntimeIds.filter(id => id !== selection.id) : state.dismissedRuntimeIds, dockState: 'normal' })
       },
       projectQuery: '',
       setProjectQuery: (projectQuery) => set({ projectQuery }),
@@ -350,9 +352,16 @@ export const useBonsaiStore = create<BonsaiState>()(
 
       startAgentDialogOpen: false,
       startAgentTargetWorktreeId: '',
-      openStartAgentDialog: (worktreeId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId, notice: AGENT_UNAVAILABLE }),
+      openStartAgentDialog: (worktreeId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId }),
       setStartAgentDialogOpen: (startAgentDialogOpen) => set({ startAgentDialogOpen }),
-      createAgent: () => set({ notice: AGENT_UNAVAILABLE }),
+      createAgent: async (input) => {
+        const tree = get().worktrees.find(w => w.id === input.worktreeId)
+        if (!tree || input.provider !== 'Antigravity' || !input.accountId) throw new Error('Select an Antigravity profile and worktree.')
+        const result = await startAgent(tree.projectId, { worktree_id: tree.id, account_id: input.accountId, name: input.name, model: input.model, prompt: input.prompt, full_access: input.fullAccess, cols: 80, rows: 24 }, input.requestKey ?? crypto.randomUUID())
+        if (!result.id) throw new Error(result.error || 'Start was interrupted. Close this dialog and start again.')
+        set(state => ({ agents: state.agents.some(a => a.id === result.id) ? state.agents : [...state.agents, mapAgent(result)], worktrees: state.worktrees.map(w => w.id === tree.id ? { ...w, agentIds: uniqueAdd(w.agentIds, result.id) } : w), startAgentDialogOpen: false }))
+        get().setSelection({ type: 'agent', id: result.id })
+      },
       startMockAgent: () => {
         const state = get()
         const target =
@@ -361,7 +370,7 @@ export const useBonsaiStore = create<BonsaiState>()(
             : state.selection.type === 'agent'
               ? state.agents.find((item) => item.id === state.selection.id)?.worktreeId ?? ''
               : ''
-        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target, notice: AGENT_UNAVAILABLE })
+        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target })
       },
       moveAgentToHistory: (id) =>
         set((state) => ({
@@ -397,7 +406,12 @@ export const useBonsaiStore = create<BonsaiState>()(
           agents: state.agents.map((agent) => agent.id === id ? { ...agent, presentation: 'canvas', archived: false } : agent),
           notice: 'Agent restored',
         })),
-      setAgentState: () => set({ notice: AGENT_UNAVAILABLE }),
+      setAgentState: (id, next) => {
+        const agent = get().agents.find(a => a.id === id)
+        const project = agent?.projectId ?? get().worktrees.find(w => w.id === agent?.worktreeId)?.projectId
+        if (project && agent?.providerId === 'antigravity' && next === 'finished') void stopAgent(project, id, `stop-${id}`).catch(report)
+        else set({ notice: 'This agent action is unavailable.' })
+      },
 
       envEditorOpen: false,
       setEnvEditorOpen: (envEditorOpen) => set({ envEditorOpen }),
@@ -432,6 +446,7 @@ export const useBonsaiStore = create<BonsaiState>()(
             openRuntimeIds: dockRuntimeId ? uniqueAdd(state.openRuntimeIds, dockRuntimeId) : state.openRuntimeIds,
           }
         }),
+      dismissedRuntimeIds: [],
       openRuntimeIds: [],
       openRuntime: (id) =>
         set((state) => {
@@ -442,6 +457,7 @@ export const useBonsaiStore = create<BonsaiState>()(
           if (state.dockRuntimeId === id && state.dockWorktreeId === dockWorktreeId && state.openRuntimeIds.includes(id)) return state
           return {
             openRuntimeIds: uniqueAdd(state.openRuntimeIds, id),
+            dismissedRuntimeIds: state.dismissedRuntimeIds.filter(value => value !== id),
             dockRuntimeId: id,
             dockWorktreeId,
             activeTerminalId: agent?.terminalId ?? state.activeTerminalId,
@@ -452,6 +468,7 @@ export const useBonsaiStore = create<BonsaiState>()(
           const next = state.openRuntimeIds.filter((item) => item !== id)
           return {
             openRuntimeIds: next,
+            dismissedRuntimeIds: uniqueAdd(state.dismissedRuntimeIds, id),
             dockRuntimeId: state.dockRuntimeId === id ? (next[0] ?? '') : state.dockRuntimeId,
           }
         }),
@@ -625,7 +642,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       terminalSessions: [],
       activeTerminalId: '',
       terminalOutput: {},
-      openTerminal: () => set({ notice: SHELL_UNAVAILABLE }),
+      openTerminal: (id) => { if (id && get().agents.some(a => a.id === id && a.providerId === 'antigravity')) { get().openRuntime(id); get().setDockState('normal') } else set({ notice: SHELL_UNAVAILABLE }) },
       setActiveTerminalId: (activeTerminalId) => set((state) => state.activeTerminalId === activeTerminalId ? state : { activeTerminalId }),
       appendTerminalCommand: (command) => {
         if (command.trim().startsWith('git ')) {

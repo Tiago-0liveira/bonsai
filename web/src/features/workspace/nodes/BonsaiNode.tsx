@@ -452,7 +452,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                     <span className="truncate text-[10px] font-semibold">{data.title}</span>
                   </div>
                   <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.provider} · {data.model}</div>
-                  <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>
+                  {(data.reasoningEffort || data.runtime) && <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>}
                 </div>
               </div>
               <div className="mt-2 line-clamp-1 text-[9px] text-[rgb(var(--muted))]">{data.task}</div>
@@ -472,7 +472,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           {data.kind === 'project' && (
             <>
               <MenuItem onSelect={() => setWorktreeDialogOpen(true)}><Plus size={13} /> Add worktree</MenuItem>
-              <MenuItem unavailable onSelect={() => openStartAgentDialog()}><Bot size={13} /> Start agent</MenuItem>
+              <MenuItem onSelect={() => openStartAgentDialog()}><Bot size={13} /> Start agent</MenuItem>
               <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
               <MenuItem onSelect={() => requestCanvasAction('layout')}><Network size={13} /> Auto-layout children</MenuItem>
               <MenuItem onSelect={() => setNotice('Project settings are mocked')}><Settings2 size={13} /> Project settings</MenuItem>
@@ -481,7 +481,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
 
           {data.kind === 'worktree' && (
             <>
-              <MenuItem unavailable onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
+              <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
               <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
               {(data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => data.groupId ? toggleAutomaticGroup(data.groupId) : toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.groupId ? 'Local / unlinked' : data.tag} stack</MenuItem>}
               <MenuItem onSelect={() => setDeleteWorktreeId(data.entityId)}><Trash2 size={13} /> Delete worktree</MenuItem>
@@ -490,11 +490,11 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
 
           {data.kind === 'agent' && (
             <>
-              <MenuItem unavailable onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
+              <MenuItem unavailable={agent?.providerId !== 'antigravity'} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
               <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart</MenuItem>
-              <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
+              <MenuItem unavailable={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
               {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
                 <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
               )}

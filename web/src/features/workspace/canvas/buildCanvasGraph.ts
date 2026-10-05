@@ -37,7 +37,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
   if (!project) return { nodes: [] as Node[], edges: [] as Edge[], projectId: '', topologyKey: 'empty' }
 
   const allProjectWorktrees = worktrees.filter((worktree) => worktree.projectId === project.id)
-  const projectWorktrees = allProjectWorktrees.filter(worktree => !worktree.main && (worktree.main !== undefined || worktree.branch !== project.defaultBranch))
+  const projectWorktrees = allProjectWorktrees.filter(worktree => (!worktree.main && (worktree.main !== undefined || worktree.branch !== project.defaultBranch)) || agents.some(a => a.worktreeId === worktree.id && !a.archived))
   const projectWorktreeIds = new Set(projectWorktrees.map((worktree) => worktree.id))
   const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) !== 'archived')
   const runningAgents = projectAgents.filter((agent) => agent.state === 'running').length
@@ -234,7 +234,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
           title: agent.name,
           agentState: agent.state,
           provider: agent.provider,
-          model: agent.model,
+          model: agent.profileName ?? agent.model,
           reasoningEffort: agent.reasoningEffort + (agent.fastMode ? ' · Fast' : ''),
           task: agent.task,
           runtime: agent.runtime,

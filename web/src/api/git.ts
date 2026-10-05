@@ -142,6 +142,7 @@ export interface WorktreeProjection {
   }
 }
 export interface Snapshot {
+  agents?: import('./agents').AgentSummary[]
   epoch?: string
   branch_candidates?: BranchCandidate[]
   sync?: RepositorySync
@@ -254,7 +255,8 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     if (value.pull_request) heads.set(`${id}:${value.pull_request.number}`, value.pull_request.head_sha)
   }
   const removedWorktreeIds = new Set(state.worktrees.filter(w => w.projectId === id && !trees.some(tree => tree.id === w.id)).map(w => w.id))
-  const agents = removedWorktreeIds.size ? state.agents.filter(agent => !removedWorktreeIds.has(agent.worktreeId)) : state.agents
+  const mappedAgents = entityPatch.agents ?? state.agents
+  const agents = removedWorktreeIds.size ? mappedAgents.filter(agent => !removedWorktreeIds.has(agent.worktreeId)) : mappedAgents
   const pendingCreatedId = pendingCreatedWorktrees.get(id)
   const createdVisible = pendingCreatedId && trees.some(w => w.id === pendingCreatedId)
   if (createdVisible) pendingCreatedWorktrees.delete(id)

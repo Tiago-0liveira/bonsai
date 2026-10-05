@@ -48,7 +48,7 @@ function AgentRow({ agent, onClick }: { agent: Agent; onClick: () => void }) {
   return <button onClick={onClick} className="bonsai-focus inspector-link">
     <span className={'inspector-avatar ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : 'text-[rgb(var(--muted))]')}><Bot size={14} /></span>
     <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{agent.name}</span><span className="mt-0.5 block truncate text-[10px] text-[rgb(var(--muted))]">{agent.task}</span></span>
-    <span className="shrink-0 text-right text-[9px] text-[rgb(var(--muted))]"><span className="block capitalize">{agent.state}</span><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
+    <span className="shrink-0 text-right text-[9px] text-[rgb(var(--muted))]"><span className="block capitalize">{agent.lifecycleState ?? agent.state}</span><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
   </button>
 }
 
@@ -131,7 +131,7 @@ export function Inspector() {
                 </button>)}</div> : <p className="flex items-center gap-2 text-[11px] text-[rgb(var(--muted))]"><CheckCircle2 size={14} className="text-[rgb(var(--green))]" />No branch blockers reported.</p>}
               </Section>
               <Section title="Agents" meta={<span className="inspector-count">{projectAgents.length}</span>}>
-                {projectAgents.length ? projectAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">Agent execution is unavailable.</p>}
+                {projectAgents.length ? projectAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">No agent sessions.</p>}
               </Section>
             </>}
 
@@ -160,7 +160,7 @@ export function Inspector() {
                 </> : <p className="inspector-empty">{worktree.prNumber ? `PR #${worktree.prNumber} details are unavailable.` : 'No pull request linked to this branch.'}</p>}
               </Section>
               <Section title="Agents on this branch" meta={<span className="inspector-count">{branchAgents.length}</span>}>
-                {branchAgents.length ? branchAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">Agent execution is unavailable.</p>}
+                {branchAgents.length ? branchAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">No agent sessions.</p>}
               </Section>
               <details key={worktree.id} className="inspector-settings"><summary className="bonsai-focus flex cursor-pointer items-center gap-2 text-[11px] font-medium"><SlidersHorizontal size={13} className="text-[rgb(var(--muted))]" />Branch settings<ChevronRight size={12} className="inspector-disclosure ml-auto" /></summary>
                 <section className="mt-4">
@@ -213,27 +213,27 @@ export function Inspector() {
 
             {agent && <>
               <div className="inspector-hero">
-                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><Bot size={13} />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.state}</span></div>
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><Bot size={13} />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.lifecycleState ?? agent.state}</span></div>
                 <h2 className="text-[16px] font-semibold tracking-tight">{agent.name}</h2>
                 <p className="mt-2 text-[12px] leading-5 text-[rgb(var(--muted))]">{agent.task}</p>
-                <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{agent.runtime} runtime<span className="ml-auto capitalize">{presentation(agent)}</span></div>
-                <div className="mt-4"><QuickButton icon={TerminalSquare} unavailable label="Open terminal" primary onClick={() => openTerminal(agent.id)} /></div>
+                <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{agent.providerId === 'antigravity' ? 'API session' : `${agent.runtime} runtime`}<span className="ml-auto capitalize">{presentation(agent)}</span></div>
+                <div className="mt-4"><QuickButton icon={TerminalSquare} unavailable={agent.providerId !== 'antigravity'} label="Open terminal" primary onClick={() => openTerminal(agent.id)} /></div>
               </div>
               {worktree && <button onClick={() => setSelection({ type: 'worktree', id: worktree.id })} className="bonsai-focus inspector-link rounded-lg border border-[rgb(var(--border))]"><GitBranch size={13} className="shrink-0 text-[rgb(var(--purple))]" /><span className="min-w-0 flex-1"><span className="block truncate font-mono text-[10px]">{worktree.branch}</span><span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">{worktree.dirtyFiles} uncommitted · {issues.length ? issues.length + ' branch issues' : 'View branch details'}</span></span><ChevronRight size={12} /></button>}
-              <Section title="Recorded agent output" meta={<TerminalSquare size={12} className="text-[rgb(var(--muted))]" />}>
+              {agent.providerId !== 'antigravity' && <><Section title="Recorded agent output" meta={<TerminalSquare size={12} className="text-[rgb(var(--muted))]" />}>
                 {output.length ? <pre className="inspector-output">{output.join('\n')}</pre> : <p className="inspector-empty">No output captured for this session yet.</p>}
               </Section>
-              <Section title="Instructions"><p className="whitespace-pre-wrap break-words text-[11px] leading-[1.8] text-[rgb(var(--muted))]">{agent.prompt || 'No instructions recorded.'}</p></Section>
+              <Section title="Instructions"><p className="whitespace-pre-wrap break-words text-[11px] leading-[1.8] text-[rgb(var(--muted))]">{agent.prompt || 'No instructions recorded.'}</p></Section></>}
               <Section title="Session">
                 <dl className="space-y-2.5 text-[10px]">
-                  <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Model</dt><dd className="break-all text-right">{agent.model}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Reasoning</dt><dd>{agent.reasoningEffort}{agent.fastMode ? ' · Fast' : ''}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">{agent.providerId === 'antigravity' ? 'Profile' : 'Model'}</dt><dd className="break-all text-right">{agent.profileName ?? agent.model}</dd></div>
+                  {agent.providerId !== 'antigravity' && <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Reasoning</dt><dd>{agent.reasoningEffort}{agent.fastMode ? ' · Fast' : ''}</dd></div>}
                   <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Started</dt><dd>{agent.createdAt}</dd></div>
                   {agent.state === 'finished' && agent.finishedAt && <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Finished</dt><dd>{agent.finishedAt}</dd></div>}
                 </dl>
               </Section>
               <div className="grid grid-cols-2 gap-2">
-                {presentation(agent) === 'canvas' && (agent.state === 'running' ? <QuickButton icon={Square} unavailable label="Stop agent" onClick={() => setAgentState(agent.id, 'finished')} /> : <QuickButton icon={RotateCcw} unavailable label="Restart" onClick={() => setAgentState(agent.id, 'running')} />)}
+                {presentation(agent) === 'canvas' && (agent.state === 'running' ? <QuickButton icon={Square} unavailable={agent.providerId !== 'antigravity'} label="Stop agent" onClick={() => setAgentState(agent.id, 'finished')} /> : <QuickButton icon={RotateCcw} unavailable label="Restart" onClick={() => setAgentState(agent.id, 'running')} />)}
                 {presentation(agent) === 'canvas' && agent.state === 'finished' && <QuickButton icon={History} label="Move to history" onClick={() => moveAgentToHistory(agent.id)} />}
                 {presentation(agent) === 'history' && <QuickButton icon={Undo2} label="Restore to canvas" onClick={() => restoreAgentFromHistory(agent.id)} />}
                 {presentation(agent) === 'archived' ? <QuickButton icon={Undo2} label="Restore" onClick={() => restoreAgent(agent.id)} /> : <QuickButton icon={Archive} label="Archive" danger onClick={() => archiveAgent(agent.id)} />}

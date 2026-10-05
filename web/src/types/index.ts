@@ -103,9 +103,13 @@ export interface EnvVariable {
   secret: boolean
 }
 
-export type AgentProvider = 'Claude' | 'Codex' | 'Gemini'
+export type AgentProvider = 'Claude' | 'Codex' | 'Gemini' | 'Antigravity'
 
 export interface Agent {
+  projectId?: string
+  profileName?: string
+  providerId?: 'antigravity'
+  lifecycleState?: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
   id: string
   worktreeId: string
   name: string
@@ -126,6 +130,9 @@ export interface Agent {
 }
 
 export interface StartAgentInput {
+  fullAccess?: boolean
+  accountId?: string
+  requestKey?: string
   worktreeId: string
   name: string
   provider: AgentProvider

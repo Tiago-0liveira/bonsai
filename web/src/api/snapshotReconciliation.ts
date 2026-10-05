@@ -1,3 +1,4 @@
+import { mapAgent } from './agents'
 import type { CiStatus, Process, ProcessLifecycleStatus, Project, PullRequest, SyncFreshness, Worktree } from '../types'
 import type { Snapshot, Repository, RemotePR, RemoteCheck, WireFreshness, ProcessSummary, WorktreeProjection } from './git'
 import type { BonsaiState } from '../stores/bonsai'
@@ -106,6 +107,8 @@ function ciStatus(value: WorktreeProjection['ci'] | undefined): CiStatus {
 // Mapping has no transport, ordering, store writes or selection side effects.
 export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState): Partial<BonsaiState> {
   const id = snapshot.repository.id
+  const nextAgents = snapshot.agents?.map(a => mapAgent(a, state.agents.find(old => old.id === a.id)))
+  const scopedAgents = nextAgents ?? state.agents.filter(a => a.projectId === id || state.worktrees.some(w => w.id === a.worktreeId && w.projectId === id))
   const remoteByNumber = new Map<number, RemotePR>()
   for (const value of snapshot.remote?.pull_requests ?? []) remoteByNumber.set(value.number, value)
   for (const projection of Object.values(snapshot.worktree_state ?? {})) {
@@ -161,7 +164,7 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
       mergeTargetBranch: pr?.base ?? (meta?.merge_target_branch || snapshot.repository.default_branch),
       stackPreference: meta?.stack_preference || 'auto',
       status,
-      agentIds: state.agents.filter(a => a.worktreeId === w.id).map(a => a.id),
+      agentIds: scopedAgents.filter(a => a.worktreeId === w.id).map(a => a.id),
       prNumber: pr?.number,
       prStatus: pr?.status,
       ciStatus: ciStatus(ci),
@@ -208,6 +211,7 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
   const nextProcesses = (snapshot.processes ?? []).map(mapProcess)
 
   return changedPatch(state, {
+    agents: nextAgents ? replaceScope(state.agents, nextAgents, a => a.projectId === id || state.worktrees.some(w => w.id === a.worktreeId && w.projectId === id)) : state.agents,
     projects: state.projects.map(value => value.id === id ? shareEqual(value, p) : value),
     worktrees: replaceScope(state.worktrees, trees, value => value.projectId === id),
     processes: replaceScope(state.processes, nextProcesses, value => value.projectId === id),

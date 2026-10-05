@@ -14,7 +14,7 @@ const process = (id: string, worktreeId = 'wt-web', projectId = 'bonsai'): Proce
 describe('asynchronous runtime selection', () => {
   beforeEach(() => {
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
-    useBonsaiStore.setState({ projects, worktrees, activeProjectId: 'bonsai', dockWorktreeId: 'wt-web', agents: [], processes: [], dockRuntimeId: '', openRuntimeIds: [], openRuntime: vi.fn(openRuntime) })
+    useBonsaiStore.setState({ projects, worktrees, activeProjectId: 'bonsai', dockWorktreeId: 'wt-web', agents: [], processes: [], dockRuntimeId: '', openRuntimeIds: [], dismissedRuntimeIds: [], openRuntime: vi.fn(openRuntime) })
   })
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); useBonsaiStore.setState({ openRuntime }) })
 
@@ -48,6 +48,16 @@ describe('asynchronous runtime selection', () => {
     expect(useBonsaiStore.getState().dockRuntimeId).toBe('')
     act(() => useBonsaiStore.setState({ processes: [process('first'), process('second', 'second-tree', 'sprout-lab')] }))
     expect(useBonsaiStore.getState()).toMatchObject({ dockRuntimeId: 'second', dockWorktreeId: 'second-tree' })
+  })
+
+  it('closing the last runtime detaches until explicitly reopened', () => {
+    useBonsaiStore.setState({ processes: [process('only')] })
+    render(<RuntimeWorkspace />)
+    expect(useBonsaiStore.getState().openRuntimeIds).toEqual(['only'])
+    act(() => useBonsaiStore.getState().closeRuntime('only'))
+    expect(useBonsaiStore.getState().openRuntimeIds).toEqual([])
+    act(() => useBonsaiStore.getState().openRuntime('only'))
+    expect(useBonsaiStore.getState().openRuntimeIds).toEqual(['only'])
   })
 
   it('opening an already selected process produces no store update', () => {

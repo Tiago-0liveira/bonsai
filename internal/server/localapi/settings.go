@@ -72,6 +72,29 @@ func (s *Server) rootSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.rootSettingsValue(cfg))
 }
 func (s *Server) changeRootSettings(w http.ResponseWriter, r *http.Request) {
+	if s.agents != nil {
+		s.agents.mu.Lock()
+		defer s.agents.mu.Unlock()
+	}
+	if r.Method == http.MethodDelete {
+		cfg, err := config.ReadProjectRoots(s.rootsPath)
+		if err != nil {
+			writeAPIError(w, 503, "settings_unavailable", "Cannot read project roots")
+			return
+		}
+		for _, p := range s.registry.List() {
+			authorized := false
+			for _, root := range cfg.Roots {
+				if root.ID != r.PathValue("rootId") && config.ContainsPath(root.Path, p.Path) {
+					authorized = true
+				}
+			}
+			if !authorized && s.hasLiveAgents(p.ID, "") {
+				writeAPIError(w, 409, "agents_running", "Stop agents before removing project roots")
+				return
+			}
+		}
+	}
 	var path string
 	var revision *uint64
 	if r.Method == http.MethodPost {
@@ -115,6 +138,10 @@ func (s *Server) changeRootSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) changeProjectSelection(w http.ResponseWriter, r *http.Request) {
+	if s.agents != nil {
+		s.agents.mu.Lock()
+		defer s.agents.mu.Unlock()
+	}
 	registry, ok := s.registry.(*discoveredProjectRegistry)
 	if !ok {
 		writeAPIError(w, http.StatusNotImplemented, "settings_unavailable", "Project selection is unavailable")
@@ -130,6 +157,18 @@ func (s *Server) changeProjectSelection(w http.ResponseWriter, r *http.Request) 
 	if body.SelectionRevision == nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid", "selection_revision is required")
 		return
+	}
+	for _, p := range s.registry.List() {
+		keep := false
+		for _, id := range body.ProjectIDs {
+			if id == p.ID {
+				keep = true
+			}
+		}
+		if !keep && s.hasLiveAgents(p.ID, "") {
+			writeAPIError(w, 409, "agents_running", "Stop agents before deselecting this project")
+			return
+		}
 	}
 	if err := registry.UpdateSelection(*body.SelectionRevision, body.ProjectIDs); err != nil {
 		status := http.StatusBadRequest

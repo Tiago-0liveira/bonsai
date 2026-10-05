@@ -33,6 +33,21 @@ describe('stable snapshot reconciliation and consumers', () => {
   })
   afterEach(cleanup)
 
+  it('retains authoritative sessions across bootstrap and scopes removal to one project', () => {
+    const a = snapshot('a', 2)
+    a.agents = [{ id: 'session-a', project_id: 'a', worktree_id: 'a-feature', account_id: 'account', provider: 'antigravity', profile_name: 'Profile', name: 'Agent', state: 'starting', created_at: 'today' }]
+    applySnapshot(a)
+    expect(useBonsaiStore.getState().agents[0]).toMatchObject({ id: 'session-a', lifecycleState: 'starting' })
+    expect(useBonsaiStore.getState().worktrees.find(w => w.id === 'a-feature')?.agentIds).toEqual(['session-a'])
+    const b = snapshot('b', 2); b.agents = []
+    applySnapshot(b)
+    expect(useBonsaiStore.getState().agents).toHaveLength(1)
+    applySnapshot({ ...a, sequence: 3, agents: [{ ...a.agents[0], state: 'running' }] })
+    expect(useBonsaiStore.getState().agents[0].lifecycleState).toBe('running')
+    applySnapshot({ ...a, sequence: 4, agents: [] })
+    expect(useBonsaiStore.getState().agents).toHaveLength(0)
+  })
+
   it('returns a narrow process patch and preserves unrelated collection and entity identity', () => {
     const before = useBonsaiStore.getState()
     const next = snapshot('a', 2)

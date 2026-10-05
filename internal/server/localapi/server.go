@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"log"
 	"net/http"
@@ -43,6 +45,7 @@ type Config struct {
 }
 
 type Server struct {
+	agents        *agentAPI
 	repoDir       string
 	expectedHost  string
 	browserOrigin string
@@ -103,6 +106,15 @@ func New(cfg Config) (*Server, error) {
 	}
 	s.stateSync = newStateSync(registry, events)
 	s.stateSync.ReconcileCatalog()
+	runtime, err := agentruntime.New(nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.agents = &agentAPI{runtime: runtime, registry: s.registry}
+	s.agents.manager = agentterminal.New(runtime.Accounts, runtime.Sessions, runtime.Registry, s.publishAgents)
+	if err := s.recoverAgents(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -111,6 +123,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /version", s.version)
 	mux.HandleFunc("POST /api/session", s.createSession)
+	s.registerAgentRoutes(mux)
 	s.registerSettingsRoutes(mux)
 	s.registerProjectRoutes(mux)
 	s.registerGitRoutes(mux)
@@ -183,7 +196,23 @@ func (s *Server) Handler() http.Handler {
 	}))
 }
 func (s *Server) Reconcile(ctx context.Context) error {
+	if s.agents != nil {
+		s.agents.manager.CheckDirectories()
+	}
+	previous := s.registry.List()
 	changed, err := s.registry.Refresh(ctx)
+	if s.agents != nil {
+		for _, info := range previous {
+			current, ok := s.registry.Lookup(info.ID)
+			if !ok || !current.info.Available {
+				for _, session := range s.agents.manager.List(info.ID) {
+					if session.Active() {
+						_ = s.agents.manager.Stop(info.ID, session.ID)
+					}
+				}
+			}
+		}
+	}
 	s.stateSync.ReconcileCatalog()
 	if changed || err != nil {
 		s.eventHub.publish(localEvent{Type: "catalog", Epoch: s.stateSync.epoch, Projects: s.registry.List()})
@@ -227,6 +256,7 @@ func Run(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	defer s.agents.manager.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go s.reconcilePeriodically(ctx)

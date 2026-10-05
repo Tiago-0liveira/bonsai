@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -83,6 +84,7 @@ type browserProcessSummary struct {
 }
 
 type browserSnapshot struct {
+	Agents           []agentterminal.Summary         `json:"agents"`
 	BranchCandidates []browserBranchCandidate        `json:"branch_candidates"`
 	Sync             domain.RepositorySync           `json:"sync"`
 	Epoch            string                          `json:"epoch"`

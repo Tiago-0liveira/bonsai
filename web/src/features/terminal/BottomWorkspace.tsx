@@ -49,7 +49,7 @@ import { useProjectWorktrees, useProjectAgents, useProjectProcesses } from '../.
 import { panelPreferences } from '../../stores/panelPreferences'
 import { agentById, worktreeById, branchTreeSelector, type BranchTreeIndex } from './branchTree'
 import type { Agent, EditorPreference, Process, PullRequest, RepoFile, Worktree } from '../../types'
-import { AGENT_UNAVAILABLE } from '../../stores/execution'
+import { AgentTerminal } from './AgentTerminal'
 
 function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle' | 'running' | 'finished' }) {
   const className =
@@ -64,7 +64,7 @@ function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle
 }
 
 function ProviderMark({ provider }: { provider: Agent['provider'] }) {
-  const label = provider === 'Codex' ? 'O' : provider === 'Claude' ? 'A' : 'G'
+  const label = provider === 'Codex' ? 'O' : provider === 'Claude' ? 'A' : 'AG'
   return (
     <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[9px] font-semibold text-[rgb(var(--muted))]">
       {label}
@@ -141,8 +141,8 @@ const BranchAgentRow = memo(function BranchAgentRow({ id, indent }: { id: string
   const setSelection = useBonsaiStore(state => state.setSelection)
   if (!agent) return null
   return <button type="button" onClick={() => setSelection({ type: 'agent', id })} style={{ paddingLeft: 24 + indent }} className="bonsai-focus flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-[8px] text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">
-    <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[7px] font-semibold">{agent.provider === 'Codex' ? 'O' : agent.provider === 'Claude' ? 'A' : 'G'}</span>
-    <span className="min-w-0 flex-1"><span className="block truncate">{agent.name}</span><span className="block truncate text-[6.5px] text-[rgb(var(--muted-2))]">{agent.model} · {agent.reasoningEffort}</span></span>
+    <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[7px] font-semibold">{agent.provider === 'Codex' ? 'O' : agent.provider === 'Claude' ? 'A' : 'AG'}</span>
+    <span className="min-w-0 flex-1"><span className="block truncate">{agent.name}</span><span className="block truncate text-[6.5px] text-[rgb(var(--muted-2))]">{agent.profileName ?? `${agent.model} · ${agent.reasoningEffort}`}</span></span>
     <StatusDot status={agent.state} />
   </button>
 })
@@ -190,6 +190,7 @@ type RuntimeEntry =
   | { id: string; type: 'process'; process: Process }
 
 function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
+  const [terminalActions, setTerminalActions] = useState<HTMLDivElement | null>(null)
   const active = useBonsaiStore((state) => state.dockRuntimeId === runtime.id)
   const closeRuntime = useBonsaiStore((state) => state.closeRuntime)
   const setDockRuntimeId = useBonsaiStore((state) => state.setDockRuntimeId)
@@ -212,7 +213,7 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
         <GripVertical size={9} className="shrink-0 text-[rgb(var(--muted-2))]" />
         {runtime.type === 'agent' ? (
           <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[7px] font-semibold">
-            {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'G'}
+            {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'AG'}
           </span>
         ) : (
           <span className="grid h-5 w-5 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))]"><TerminalSquare size={9} /></span>
@@ -221,10 +222,11 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
           <div className="truncate text-[11px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</div>
           <div className="truncate text-[9px] text-[rgb(var(--muted))]">
             {runtime.type === 'agent'
-              ? runtime.agent.model + ' · ' + runtime.agent.reasoningEffort + (runtime.agent.fastMode ? ' · Fast' : '')
+              ? runtime.agent.profileName ?? (runtime.agent.model + ' · ' + runtime.agent.reasoningEffort + (runtime.agent.fastMode ? ' · Fast' : ''))
               : runtime.process.command}
           </div>
         </div>
+        {runtime.type === 'agent' && <div ref={setTerminalActions} className="flex shrink-0 items-center gap-2" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} />}
         <StatusDot status={runtime.type === 'agent' ? runtime.agent.state : runtime.process.status} />
         <button
           type="button"
@@ -235,13 +237,14 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
           }}
           className="grid h-5 w-5 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
           title="Close runtime card"
+          aria-label="Close runtime card"
         >
           <X size={9} />
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {runtime.type === 'agent' ? (
-          <p className="p-2.5 text-[10px] text-[rgb(var(--muted))]">{AGENT_UNAVAILABLE}</p>
+          <AgentTerminal agent={runtime.agent} actionsHost={terminalActions} />
         ) : (
           <div className="h-full min-h-0 overflow-auto p-2.5 font-mono text-[8px] leading-4 text-[rgb(var(--muted))]">
             <div className="font-semibold">Process status</div>
@@ -266,6 +269,7 @@ export function RuntimeWorkspace() {
   const dockWorktreeId = useBonsaiStore((state) => state.dockWorktreeId)
   const dockRuntimeId = useBonsaiStore((state) => state.dockRuntimeId)
   const openRuntimeIds = useBonsaiStore((state) => state.openRuntimeIds)
+  const dismissedRuntimeIds = useBonsaiStore(state => state.dismissedRuntimeIds)
   const openRuntime = useBonsaiStore((state) => state.openRuntime)
   const reorderOpenRuntime = useBonsaiStore((state) => state.reorderOpenRuntime)
   const rightPanels = useBonsaiStore((state) => state.rightPanels)
@@ -287,8 +291,8 @@ export function RuntimeWorkspace() {
   const openEntries = openRuntimeIds.map((id) => availableMap.get(id)).filter((item): item is RuntimeEntry => Boolean(item))
   const preferredRuntimeId = availableMap.get(dockRuntimeId)?.id
     ?? openEntries[0]?.id
-    ?? available.find((runtime) => runtime.type === 'agent' ? runtime.agent.state === 'running' : runtime.process.status === 'healthy')?.id
-    ?? available[0]?.id
+    ?? available.find((runtime) => !dismissedRuntimeIds.includes(runtime.id) && (runtime.type === 'agent' ? runtime.agent.state === 'running' : runtime.process.status === 'healthy'))?.id
+    ?? available.find(runtime => !dismissedRuntimeIds.includes(runtime.id))?.id
     ?? ''
   const needsOpening = Boolean(preferredRuntimeId) &&
     (dockRuntimeId !== preferredRuntimeId || !openRuntimeIds.includes(preferredRuntimeId))
@@ -314,7 +318,7 @@ export function RuntimeWorkspace() {
   const runtimeOptions = available.map((runtime) => ({
     value: runtime.id,
     label: runtime.type === 'agent' ? runtime.agent.name : runtime.process.name,
-    description: runtime.type === 'agent' ? runtime.agent.provider + ' · ' + runtime.agent.model : runtime.process.command,
+    description: runtime.type === 'agent' ? runtime.agent.provider + ' · ' + (runtime.agent.profileName ?? runtime.agent.model) : runtime.process.command,
     meta: openRuntimeIds.includes(runtime.id) ? 'open' : undefined,
   }))
 
@@ -336,7 +340,7 @@ export function RuntimeWorkspace() {
                 >
                   {runtime.type === 'agent' ? (
                     <span className="grid h-4 w-4 shrink-0 place-items-center rounded border border-[rgb(var(--border))] text-[6px] font-semibold">
-                      {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'G'}
+                      {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'AG'}
                     </span>
                   ) : <TerminalSquare size={9} />}
                   <span className="min-w-0 flex-1">
@@ -380,7 +384,7 @@ export function RuntimeWorkspace() {
           </DndContext>
         ) : (
           <div className="grid h-full place-items-center rounded-md border border-dashed border-[rgb(var(--border))] text-[9px] text-[rgb(var(--muted-2))]">
-            Open a managed process to view its status. Interactive shells are unavailable.
+            Open an agent terminal or managed process above. Generic shells are unavailable.
           </div>
         )}
       </div>
