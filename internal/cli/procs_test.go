@@ -63,7 +63,11 @@ func setupCLIRepo(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = server.Serve(root) }()
+	daemonDone := make(chan struct{})
+	go func() {
+		defer close(daemonDone)
+		_ = server.Serve(root)
+	}()
 
 	c := client.For(root)
 	deadline := time.Now().Add(3 * time.Second)
@@ -73,7 +77,14 @@ func setupCLIRepo(t *testing.T) string {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Cleanup(func() { shutdownAndWait(t, root) })
+	t.Cleanup(func() {
+		shutdownAndWait(t, root)
+		select {
+		case <-daemonDone:
+		case <-time.After(3 * time.Second):
+			t.Error("daemon cleanup did not finish")
+		}
+	})
 	return root
 }
 
