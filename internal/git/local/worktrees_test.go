@@ -23,10 +23,24 @@ func TestRemoveMissingWorktreeRegistration(t *testing.T) {
 				t.Fatal(err)
 			}
 			head := git(t, root, "rev-parse", "feature/orchestrate-v1")
+			// Resolve the ID while the directory still exists, as a client
+			// would before the worktree is removed outside Bonsai.
+			registered, err := s.ListWorktrees(ctx, "repo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var id string
+			for _, tree := range registered {
+				if tree.Branch == "feature/orchestrate-v1" {
+					id = tree.ID
+				}
+			}
+			if id == "" {
+				t.Fatal("missing registered worktree")
+			}
 			if err := os.RemoveAll(parent); err != nil {
 				t.Fatal(err)
 			}
-			id := ID("repo", missing)
 			if _, err := s.Status(ctx, id); err == nil {
 				t.Fatal("status should still reject a missing directory")
 			}

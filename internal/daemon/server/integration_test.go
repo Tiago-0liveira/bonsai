@@ -148,7 +148,23 @@ func newExternalDaemonClient(t *testing.T) (*client.Client, string) {
 	t.Setenv("BONSAI_DAEMON_BIN", getTestBonsaiBin(t))
 	root := t.TempDir()
 	c := client.For(root)
-	t.Cleanup(func() { _ = c.Shutdown(true) })
+	t.Cleanup(func() {
+		if err := c.Shutdown(true); err != nil {
+			t.Error(err)
+		}
+		// The socket closes before registry cleanup finishes. Wait for the
+		// daemon lock to be released before TempDir removes its config files.
+		if !waitFor(t, 3*time.Second, func() bool {
+			lock, err := procstore.TryLock(procstore.New(root).LockPath())
+			if err != nil {
+				return false
+			}
+			_ = lock.Unlock()
+			return true
+		}) {
+			t.Error("daemon cleanup did not finish")
+		}
+	})
 	return c, root
 }
 
