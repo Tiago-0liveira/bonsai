@@ -283,6 +283,7 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     nodePlacements: removedWorktreeIds.size ? Object.fromEntries(Object.entries(state.nodePlacements).filter(([nodeId]) => !removedWorktreeIds.has(nodeId) && !state.agents.some(agent => agent.id === nodeId && removedWorktreeIds.has(agent.worktreeId)))) : state.nodePlacements,
     detachedStackWorktreeIds: removedWorktreeIds.size || createdVisible ? [...new Set([...state.detachedStackWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)), ...(createdVisible ? [pendingCreatedId] : [])])] : state.detachedStackWorktreeIds,
     expandedHistoryWorktreeIds: removedWorktreeIds.size ? state.expandedHistoryWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)) : state.expandedHistoryWorktreeIds,
+    collapsedBranchIds: removedWorktreeIds.size ? state.collapsedBranchIds.filter(nodeId => !removedWorktreeIds.has(nodeId)) : state.collapsedBranchIds,
     terminalSessions: agents === state.agents ? state.terminalSessions : state.terminalSessions.filter(session => !session.agentId || agents.some(agent => agent.id === session.agentId)),
     dockWorktreeId,
     dockRuntimeId,

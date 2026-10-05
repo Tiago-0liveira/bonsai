@@ -81,4 +81,13 @@ describe('PR label geometry triggers', () => {
     select(expanded, [])
     expect(place).toHaveBeenCalledTimes(4)
   })
+  it('publishes changed edge display data without recalculating label geometry', () => {
+    const place = vi.spyOn(labelGeometry, 'placePrLabels')
+    const select = createPrLabelSelector()
+    const first = select(nodes, edges)
+    const updated = select(nodes, edges.map(edge => ({ ...edge, data: { ...edge.data, label: 'Updated PR title' } })))
+    expect(updated[0].data?.label).toBe('Updated PR title')
+    expect(updated[0].data?.labelPlacement).toBe(first[0].data?.labelPlacement)
+    expect(place).toHaveBeenCalledTimes(1)
+  })
 })

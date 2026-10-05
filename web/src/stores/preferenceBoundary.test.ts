@@ -68,12 +68,52 @@ describe('dedicated preference writer', () => {
     expect(disk).toHaveBeenCalledTimes(1)
   })
 
+  it('flushes on becoming hidden and removes the visibility listener on teardown', () => {
+    const stop = writer.attachLifecycle()
+    const disk = vi.spyOn(Storage.prototype, 'setItem')
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    store.setState({ dockHeight: 44 })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(disk).not.toHaveBeenCalled()
+    visibility.mockReturnValue('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(disk).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!).state.dockHeight).toBe(44)
+    stop()
+    store.setState({ dockHeight: 48 })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(disk).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(PREFERENCE_WRITE_DELAY)
+    expect(disk).toHaveBeenCalledTimes(2)
+  })
+
   it('deduplicates direct retry writes against the actual serialized storage record', () => {
     const disk = vi.spyOn(Storage.prototype, 'setItem')
     const value = { state: { dockHeight: 42 }, version: 1 }
     workspaceStorage.setItem(WORKSPACE_STORAGE_KEY, value)
     workspaceStorage.setItem(WORKSPACE_STORAGE_KEY, value)
     expect(disk).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains a failed deferred save for a lifecycle retry without writing on live updates', () => {
+    const stop = writer.attachLifecycle()
+    const disk = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw new DOMException('Storage is temporarily full', 'QuotaExceededError')
+    })
+    store.setState({ dockHeight: 46 })
+    vi.advanceTimersByTime(PREFERENCE_WRITE_DELAY)
+    expect(disk).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull()
+    expect(useWorkspaceStorageStatus.getState().error).toContain('could not be saved')
+
+    store.setState({ notice: 'Live status changed' })
+    vi.runAllTimers()
+    expect(disk).toHaveBeenCalledTimes(1)
+    window.dispatchEvent(new Event('pagehide'))
+    expect(disk).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!).state.dockHeight).toBe(46)
+    stop()
+    expect(disk).toHaveBeenCalledTimes(2)
   })
 
   it('coalesces horizontal panel layouts and flushes the latest layout before the library autosave timer', () => {

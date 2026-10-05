@@ -28,6 +28,9 @@ export function createPreferenceBoundary(store: StoreApi<BonsaiState>) {
     const payload = JSON.stringify(state)
     if (payload === saved) return
     if (workspaceStorage.setItem(WORKSPACE_STORAGE_KEY, { state, version: WORKSPACE_STORAGE_VERSION })) saved = payload
+    // Keep failed saves eligible for an explicit or lifecycle flush. Do not
+    // schedule retries on live updates or spin while storage is unavailable.
+    else pending = true
   }
   const rehydrate = () => {
     cancel()

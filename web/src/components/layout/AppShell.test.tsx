@@ -35,13 +35,17 @@ describe('workspace panel lifecycle', () => {
   })
   afterEach(cleanup)
 
-  it('preserves both mounts, draft inputs and panel elements across dock states in Strict Mode', () => {
+  it.each(['normal', 'collapsed', 'maximized'] as const)('preserves mounts, drafts and panels when starting %s in Strict Mode', initialState => {
+    useBonsaiStore.setState({ dockState: initialState })
     const { container } = render(<StrictMode><AppShell><MainProbe /></AppShell></StrictMode>)
     const baseline = { ...mounts }
     const mainPanel = container.querySelector('[data-panel-id="main-workspace"]')
     const dockPanel = container.querySelector('[data-panel-id="bottom-workspace"]')
     const mainInput = screen.getByLabelText('Main draft')
     const dockInput = screen.getByLabelText('Dock draft')
+    expect(dockPanel).toHaveAttribute('data-panel-size', initialState === 'collapsed' ? '0.0' : initialState === 'maximized' ? '68.0' : '37.0')
+    // Open before entering drafts, including when restoring a collapsed session.
+    if (initialState === 'collapsed') fireEvent.click(screen.getByRole('button', { name: 'Open workspace' }))
     fireEvent.change(mainInput, { target: { value: 'unsaved main' } })
     fireEvent.change(dockInput, { target: { value: 'unsaved dock' } })
 

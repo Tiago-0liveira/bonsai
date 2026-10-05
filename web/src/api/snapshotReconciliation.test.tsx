@@ -26,7 +26,7 @@ function snapshot(id = 'a', sequence = 1): Snapshot {
 describe('stable snapshot reconciliation and consumers', () => {
   beforeEach(() => {
     __resetGitSyncForTests()
-    useBonsaiStore.setState({ projects: [], worktrees: [], processes: [], pullRequests: [], agents: [], branchCandidates: {}, worktreeGroups: {}, repositorySync: {}, gitBranches: {}, gitOnline: {}, syncFreshness: {}, nodePlacements: {}, openRuntimeIds: [], dockRuntimeId: '', dockWorktreeId: '', selection: { type: 'project', id: 'a' }, activeProjectId: 'a', detachedStackWorktreeIds: [], expandedHistoryWorktreeIds: [], terminalSessions: [] })
+    useBonsaiStore.setState({ projects: [], worktrees: [], processes: [], pullRequests: [], agents: [], branchCandidates: {}, worktreeGroups: {}, repositorySync: {}, gitBranches: {}, gitOnline: {}, syncFreshness: {}, nodePlacements: {}, openRuntimeIds: [], dockRuntimeId: '', dockWorktreeId: '', selection: { type: 'project', id: 'a' }, activeProjectId: 'a', detachedStackWorktreeIds: [], expandedHistoryWorktreeIds: [], collapsedBranchIds: [], terminalSessions: [] })
     reconcileCatalog([snapshot('a').repository, snapshot('b').repository])
     applySnapshot(snapshot('a'))
     applySnapshot(snapshot('b'))
@@ -121,5 +121,39 @@ describe('stable snapshot reconciliation and consumers', () => {
     expect(useBonsaiStore.getState().nodePlacements).toEqual({})
     expect(useBonsaiStore.getState().collapsedTagGroups).toEqual([])
     expect(useBonsaiStore.getState().expandedAutomaticGroups).toEqual([])
+  })
+
+  it('retains surviving entity identities when worktrees are reordered and removed', () => {
+    const before = useBonsaiStore.getState()
+    const next = snapshot('a', 2)
+    next.local!.worktrees = [next.local!.worktrees[2], next.local!.worktrees[0]]
+    next.worktree_state = {}
+    next.processes = []
+    applySnapshot(next)
+    const after = useBonsaiStore.getState()
+    expect(after.worktrees.filter(tree => tree.projectId === 'a').map(tree => tree.id)).toEqual(['a-other', 'a-main'])
+    for (const tree of after.worktrees) expect(tree).toBe(before.worktrees.find(value => value.id === tree.id))
+    expect(after.projects.find(project => project.id === 'b')).toBe(before.projects.find(project => project.id === 'b'))
+    const notify = vi.fn()
+    const unsubscribe = useBonsaiStore.subscribe(notify)
+    applySnapshot({ ...next, sequence: 3 })
+    expect(notify).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
+  it('removes deleted worktree collapse preferences while retaining other projects and surviving placements', () => {
+    useBonsaiStore.setState({
+      collapsedBranchIds: ['a-feature', 'a-other', 'b-other'],
+      nodePlacements: { 'a-feature': { x: 1, y: 1, mode: 'manual' }, 'b-other': { x: 2, y: 2, mode: 'manual' } },
+    })
+    const before = useBonsaiStore.getState()
+    const next = snapshot('a', 2)
+    next.local!.worktrees = next.local!.worktrees.filter(tree => tree.id !== 'a-feature')
+    next.worktree_state = {}
+    next.processes = []
+    applySnapshot(next)
+    expect(useBonsaiStore.getState().collapsedBranchIds).toEqual(['a-other', 'b-other'])
+    expect(useBonsaiStore.getState().nodePlacements).toEqual({ 'b-other': before.nodePlacements['b-other'] })
+    expect(useBonsaiStore.getState().nodePlacements['b-other']).toBe(before.nodePlacements['b-other'])
   })
 })

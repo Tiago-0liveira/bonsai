@@ -61,4 +61,29 @@ describe('asynchronous runtime selection', () => {
     expect(notify).not.toHaveBeenCalled()
     unsubscribe()
   })
+
+  it('waits for the selected worktree runtime when another worktree receives a process first', () => {
+    render(<RuntimeWorkspace />)
+    act(() => useBonsaiStore.setState({ processes: [process('other', 'wt-daemon')] }))
+    expect(useBonsaiStore.getState().openRuntime).not.toHaveBeenCalled()
+    expect(useBonsaiStore.getState().dockWorktreeId).toBe('wt-web')
+
+    act(() => useBonsaiStore.setState({ processes: [process('other', 'wt-daemon'), process('selected')] }))
+    expect(useBonsaiStore.getState()).toMatchObject({ dockRuntimeId: 'selected', dockWorktreeId: 'wt-web' })
+    act(() => useBonsaiStore.getState().setDockWorktreeId('wt-daemon'))
+    expect(useBonsaiStore.getState()).toMatchObject({ dockRuntimeId: 'other', dockWorktreeId: 'wt-daemon' })
+    expect(useBonsaiStore.getState().openRuntime).toHaveBeenCalledTimes(2)
+  })
+
+  it('prefers a healthy arrival but preserves a valid user selection when health changes', () => {
+    render(<RuntimeWorkspace />)
+    const stopped: Process = { ...process('stopped'), status: 'idle', lifecycleStatus: 'stopped' }
+    act(() => useBonsaiStore.setState({ processes: [stopped, process('healthy')] }))
+    expect(useBonsaiStore.getState().dockRuntimeId).toBe('healthy')
+
+    act(() => useBonsaiStore.getState().openRuntime('stopped'))
+    act(() => useBonsaiStore.setState({ processes: [stopped, { ...process('healthy'), status: 'error', lifecycleStatus: 'failed' }, process('new')] }))
+    expect(useBonsaiStore.getState().dockRuntimeId).toBe('stopped')
+    expect(useBonsaiStore.getState().openRuntime).toHaveBeenCalledTimes(2)
+  })
 })

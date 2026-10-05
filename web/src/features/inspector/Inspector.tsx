@@ -63,7 +63,6 @@ export function Inspector() {
     const selected = state.selection.type === 'agent' ? state.agents.find(agent => agent.id === state.selection.id) : undefined
     return selected ? state.terminalOutput[selected.terminalId] : undefined
   })
-  const collapsedTagGroups = useBonsaiStore((state) => state.collapsedTagGroups)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
   const moveAgentToHistory = useBonsaiStore((state) => state.moveAgentToHistory)
@@ -76,7 +75,6 @@ export function Inspector() {
   const setWorktreeTag = useBonsaiStore((state) => state.setWorktreeTag)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
   const worktreeGroups = useBonsaiStore(state => state.worktreeGroups[activeProjectId])
-  const expandedAutomaticGroups = useBonsaiStore(state => state.expandedAutomaticGroups)
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setWorktreeStackPreference = useBonsaiStore((state) => state.setWorktreeStackPreference)
   const setWorktreeMergeTarget = useBonsaiStore((state) => state.setWorktreeMergeTarget)
@@ -88,21 +86,22 @@ export function Inspector() {
   const worktree = worktrees.find((item) => item.id === (selection.type === 'worktree' ? selection.id : agent?.worktreeId))
   const project = useBonsaiStore(state => state.projects.find(item => item.id === (worktree?.projectId ?? activeProjectId)))
   const projectWorktrees = worktrees
-  const projectWorktreeIds = new Set(projectWorktrees.map((item) => item.id))
-  const projectAgents = agents.filter((item) => projectWorktreeIds.has(item.worktreeId) && presentation(item) === 'canvas')
+  const projectAgents = useMemo(() => agents.filter(item => presentation(item) === 'canvas'), [agents])
   const branchAgents = projectAgents.filter((item) => item.worktreeId === worktree?.id)
   const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
   const attention = useMemo(() => projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length), [projectWorktrees, pullRequests])
   const issues = worktree ? branchIssues(worktree, pr) : []
   const output = agent ? (terminalLines ?? []).filter((line) => line.trim()).slice(-5) : []
+  const automaticGroup = worktree ? (worktreeGroups ?? []).find(group => group.worktree_ids.includes(worktree.id)) : undefined
+  const groupCollapsed = useBonsaiStore(state => automaticGroup
+    ? !state.expandedAutomaticGroups.includes(automaticGroup.id)
+    : Boolean(worktree && project && state.collapsedTagGroups.includes(project.id + ':' + worktree.tag)))
 
   useEffect(() => { setTagDraft(worktree?.tag ?? '') }, [worktree?.id, worktree?.tag])
   if (!project) return null
 
   const submitTag = (event: FormEvent) => { event.preventDefault(); if (worktree) setWorktreeTag(worktree.id, tagDraft) }
-  const automaticGroup = worktree ? (worktreeGroups ?? []).find(group => group.worktree_ids.includes(worktree.id)) : undefined
   const groupCount = automaticGroup?.worktree_ids.length ?? (worktree ? projectWorktrees.filter(item => item.tag === worktree.tag).length : 0)
-  const groupCollapsed = automaticGroup ? !expandedAutomaticGroups.includes(automaticGroup.id) : worktree ? collapsedTagGroups.includes(project.id + ':' + worktree.tag) : false
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
 
   return (
