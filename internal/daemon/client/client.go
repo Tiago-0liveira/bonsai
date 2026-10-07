@@ -347,6 +347,9 @@ func (c *Client) Restart(id int) (*procstore.Record, error) {
 // SetPolicy changes a process's restart policy. With a live daemon the change is
 // immediate; otherwise it is written straight to the on-disk record.
 func (c *Client) SetPolicy(id int, policy procstore.Policy) (*procstore.Record, error) {
+	if err := procstore.ValidatePolicy(policy); err != nil {
+		return nil, err
+	}
 	if c.alive() {
 		if err := c.CheckCompatibility(); err != nil {
 			return nil, err
@@ -595,6 +598,53 @@ func (c *Client) ServeLogs(ctx context.Context, workspaceID, processName string,
 			}
 		}
 		if resp.EOF {
+			return nil
+		}
+	}
+}
+
+// StreamProcess replays retained bytes and follows all attempts until cancelled.
+// Cancellation closes the socket even when no output is being produced.
+func (c *Client) StreamProcess(ctx context.Context, id int, generation string, offset int64, onFrame func(*protocol.Response) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := c.ensureDaemon(); err != nil {
+		return err
+	}
+	conn, err := c.dialContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	if err = protocol.NewEncoder(conn).WriteRequest(&protocol.Request{Kind: protocol.KindProcessStream, ID: id, Generation: generation, Offset: offset}); err != nil {
+		return err
+	}
+	dec := protocol.NewDecoder(conn)
+	for {
+		frame, err := dec.ReadResponse()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+		if frame.Error != "" {
+			return errors.New(frame.Error)
+		}
+		if err := onFrame(frame); err != nil {
+			return err
+		}
+		if frame.EOF {
 			return nil
 		}
 	}

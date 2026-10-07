@@ -66,21 +66,27 @@ type browserWorktreeState struct {
 }
 
 type browserProcessSummary struct {
-	ID           string    `json:"id"`
-	DaemonID     int       `json:"daemon_id"`
-	ProjectID    string    `json:"project_id"`
-	WorktreeID   string    `json:"worktree_id,omitempty"`
-	Label        string    `json:"label"`
-	Command      string    `json:"command"`
-	Status       string    `json:"status"`
-	PID          int       `json:"pid,omitempty"`
-	ExpectedPort int       `json:"expected_port,omitempty"`
-	URL          string    `json:"url,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	ExitCode     *int      `json:"exit_code,omitempty"`
-	ExitError    string    `json:"exit_error,omitempty"`
-	ServeGroup   string    `json:"serve_group,omitempty"`
-	ServeName    string    `json:"serve_name,omitempty"`
+	ID           string           `json:"id"`
+	DaemonID     int              `json:"daemon_id"`
+	ProjectID    string           `json:"project_id"`
+	WorktreeID   string           `json:"worktree_id,omitempty"`
+	Label        string           `json:"label"`
+	Command      string           `json:"command"`
+	Status       string           `json:"status"`
+	PID          int              `json:"pid,omitempty"`
+	ExpectedPort int              `json:"expected_port,omitempty"`
+	URL          string           `json:"url,omitempty"`
+	StartedAt    time.Time        `json:"started_at,omitempty"`
+	ExitCode     *int             `json:"exit_code,omitempty"`
+	ExitError    string           `json:"exit_error,omitempty"`
+	ServeGroup   string           `json:"serve_group,omitempty"`
+	ServeName    string           `json:"serve_name,omitempty"`
+	Policy       procstore.Policy `json:"policy"`
+	Restarts     int              `json:"restarts"`
+	RetryCount   int              `json:"retry_count"`
+	Attempt      int              `json:"attempt"`
+	Revision     uint64           `json:"revision"`
+	RetryAt      *time.Time       `json:"retry_at,omitempty"`
 }
 
 type browserSnapshot struct {
@@ -145,6 +151,12 @@ func processSummary(projectID string, record *procstore.Record) browserProcessSu
 		ExitError:    record.ExitError,
 		ServeGroup:   record.ServeGroup,
 		ServeName:    record.ServeName,
+		Policy:       record.Policy,
+		Restarts:     record.Restarts,
+		RetryCount:   record.RetryCount,
+		Attempt:      record.Attempt,
+		Revision:     record.Revision,
+		RetryAt:      record.RetryAt,
 	}
 }
 

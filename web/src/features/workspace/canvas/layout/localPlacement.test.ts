@@ -6,7 +6,7 @@ import {
   placeAddedNodesLocally,
   placeExpandedStackLocally,
   placeMissingNodes,
-  refreshGeneratedAgentShelves,
+  refreshGeneratedRuntimeShelves,
   relocateGeneratedBranches,
 } from './localPlacement'
 import type { NodePlacements } from './types'
@@ -94,7 +94,7 @@ describe('local canvas placement', () => {
       'generated-agent': { x: 320, y: 450, mode: 'generated' },
     }
 
-    const result = refreshGeneratedAgentShelves(nodes, edges, placements)
+    const result = refreshGeneratedRuntimeShelves(nodes, edges, placements)
     expect(result['manual-agent']).toBeUndefined()
     expect(result['generated-agent']).toBeDefined()
   })
@@ -205,7 +205,7 @@ describe('shelf changes after Auto-layout', () => {
     nodes.push({ ...node('a3', 'agent'), measured: { width: 188, height: 87 } })
     edges.push(edge('owner', 'a3', 'agent'))
     const before = structuredClone(placements)
-    const result = refreshGeneratedAgentShelves(nodes, edges, placements, new Set(['owner']))
+    const result = refreshGeneratedRuntimeShelves(nodes, edges, placements, new Set(['owner']))
     expect(Object.keys(result).sort()).toEqual(['a0', 'a1', 'a2', 'a3'])
     expect(placements).toEqual(before)
     expect(result.a1.x - result.a0.x).toBe(202)
@@ -221,7 +221,7 @@ describe('shelf changes after Auto-layout', () => {
 
   it('compacts a removal only in its owning shelf', () => {
     const { nodes, edges, placements } = graph()
-    const result = refreshGeneratedAgentShelves(nodes.filter((item) => item.id !== 'a1'),
+    const result = refreshGeneratedRuntimeShelves(nodes.filter((item) => item.id !== 'a1'),
       edges.filter((item) => item.target !== 'a1'), placements, new Set(['owner']))
     expect(Object.keys(result).sort()).toEqual(['a0', 'a2'])
     expect(result.a0.y).toBe(result.a2.y)
@@ -233,7 +233,7 @@ describe('shelf changes after Auto-layout', () => {
     const { nodes, edges, placements } = graph()
     nodes.find((item) => item.id === 'owner')!.measured = { width: 230, height: 420 }
     placements.a1 = { ...placements.a1, mode: 'manual' }
-    const result = refreshGeneratedAgentShelves(nodes, edges, placements, new Set(['owner']))
+    const result = refreshGeneratedRuntimeShelves(nodes, edges, placements, new Set(['owner']))
     expect(result.a1).toBeUndefined()
     expect(result.a0.y).toBe(placements.owner.y + 420 + 24)
     expect(rectsOverlap(getNodeRect(nodes.find((item) => item.id === 'a0')!, result.a0),

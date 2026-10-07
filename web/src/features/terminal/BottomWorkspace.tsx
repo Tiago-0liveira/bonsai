@@ -50,6 +50,7 @@ import { panelPreferences } from '../../stores/panelPreferences'
 import { agentById, worktreeById, branchTreeSelector, type BranchTreeIndex } from './branchTree'
 import type { Agent, EditorPreference, Process, PullRequest, RepoFile, Worktree } from '../../types'
 import { AgentTerminal } from './AgentTerminal'
+import { ProcessTerminal } from './ProcessTerminal'
 
 function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle' | 'running' | 'finished' }) {
   const className =
@@ -246,12 +247,7 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
         {runtime.type === 'agent' ? (
           <AgentTerminal agent={runtime.agent} actionsHost={terminalActions} />
         ) : (
-          <div className="h-full min-h-0 overflow-auto p-2.5 font-mono text-[8px] leading-4 text-[rgb(var(--muted))]">
-            <div className="font-semibold">Process status</div>
-            <div>Command: {runtime.process.command}</div>
-            <div>Status: {runtime.process.lifecycleStatus}</div>
-            {runtime.process.port && <div>Configured port: {runtime.process.port}</div>}
-          </div>
+          <ProcessTerminal process={runtime.process} />
         )}
       </div>
     </section>
@@ -261,7 +257,6 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
 export function RuntimeWorkspace() {
   const hostRef = useRef<HTMLElement | null>(null)
   const [wideHeader, setWideHeader] = useState(false)
-  const project = useBonsaiStore(state => state.projects.find(item => item.id === state.activeProjectId))
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const worktrees = useProjectWorktrees(activeProjectId)
   const agents = useProjectAgents(activeProjectId)
@@ -269,8 +264,8 @@ export function RuntimeWorkspace() {
   const dockWorktreeId = useBonsaiStore((state) => state.dockWorktreeId)
   const dockRuntimeId = useBonsaiStore((state) => state.dockRuntimeId)
   const openRuntimeIds = useBonsaiStore((state) => state.openRuntimeIds)
-  const dismissedRuntimeIds = useBonsaiStore(state => state.dismissedRuntimeIds)
   const openRuntime = useBonsaiStore((state) => state.openRuntime)
+  const focusRuntime = useBonsaiStore(state => state.focusRuntime)
   const reorderOpenRuntime = useBonsaiStore((state) => state.reorderOpenRuntime)
   const rightPanels = useBonsaiStore((state) => state.rightPanels)
   const toggleRightPanel = useBonsaiStore((state) => state.toggleRightPanel)
@@ -279,23 +274,16 @@ export function RuntimeWorkspace() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
   const projectWorktrees = worktrees.filter((item) => item.projectId === activeProjectId)
-  const fallbackWorktree = projectWorktrees.find((item) => item.branch !== project?.defaultBranch) ?? projectWorktrees[0]
-  const worktree = projectWorktrees.find((item) => item.id === dockWorktreeId) ?? fallbackWorktree
-  const worktreeAgents = agents.filter((item) => item.worktreeId === worktree?.id && agentPresentation(item) === 'canvas')
-  const worktreeProcesses = processes.filter((item) => item.worktreeId === worktree?.id)
+  const worktree = projectWorktrees.find((item) => item.id === dockWorktreeId)
+  const worktreeAgents = agents.filter((item) => item.worktreeId === worktree?.id && agentPresentation(item) !== 'archived')
+  const worktreeProcesses = processes.filter(item => worktree ? item.worktreeId === worktree.id
+    : !dockWorktreeId && !projectWorktrees.some(tree => tree.id === item.worktreeId))
   const available: RuntimeEntry[] = [
     ...worktreeAgents.map((agent) => ({ id: agent.id, type: 'agent' as const, agent })),
     ...worktreeProcesses.map((process) => ({ id: process.id, type: 'process' as const, process })),
   ]
   const availableMap = new Map(available.map((runtime) => [runtime.id, runtime]))
   const openEntries = openRuntimeIds.map((id) => availableMap.get(id)).filter((item): item is RuntimeEntry => Boolean(item))
-  const preferredRuntimeId = availableMap.get(dockRuntimeId)?.id
-    ?? openEntries[0]?.id
-    ?? available.find((runtime) => !dismissedRuntimeIds.includes(runtime.id) && (runtime.type === 'agent' ? runtime.agent.state === 'running' : runtime.process.status === 'healthy'))?.id
-    ?? available.find(runtime => !dismissedRuntimeIds.includes(runtime.id))?.id
-    ?? ''
-  const needsOpening = Boolean(preferredRuntimeId) &&
-    (dockRuntimeId !== preferredRuntimeId || !openRuntimeIds.includes(preferredRuntimeId))
 
   useEffect(() => {
     const host = hostRef.current
@@ -304,10 +292,6 @@ export function RuntimeWorkspace() {
     observer.observe(host)
     return () => observer.disconnect()
   }, [])
-
-  useEffect(() => {
-    if (needsOpening) openRuntime(preferredRuntimeId)
-  }, [preferredRuntimeId, needsOpening, openRuntime])
 
   const onDragEnd = (event: DragEndEvent) => {
     const active = String(event.active.id)
@@ -332,7 +316,7 @@ export function RuntimeWorkspace() {
                 <button
                   key={runtime.id}
                   type="button"
-                  onClick={() => openRuntime(runtime.id)}
+                  onClick={() => focusRuntime(runtime.id)}
                   className={
                     'flex h-7 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-2 text-left ' +
                     (dockRuntimeId === runtime.id ? 'bg-[rgb(var(--panel-2))] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')

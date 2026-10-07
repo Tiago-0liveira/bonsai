@@ -154,6 +154,13 @@ export interface Process {
   command: string
   status: Health
   lifecycleStatus: ProcessLifecycleStatus
+  revision?: number
+  pendingSnapshot?: boolean
+  policy?: { mode: 'no' | 'on-failure' | 'always'; max_restarts: number }
+  restarts?: number
+  retryCount?: number
+  attempt?: number
+  retryAt?: string
   pid?: number
   port?: number
   url?: string
@@ -163,6 +170,8 @@ export interface Process {
   serveGroup?: string
   serveName?: string
 }
+
+export type CanvasProcess = Pick<Process, 'id' | 'projectId' | 'worktreeId' | 'name' | 'command' | 'status' | 'lifecycleStatus'>
 
 export type SyncFreshnessState = 'loading' | 'ready' | 'stale' | 'error' | 'unavailable'
 
@@ -245,6 +254,22 @@ export type Selection =
   | { type: 'project'; id: string }
   | { type: 'worktree'; id: string }
   | { type: 'agent'; id: string }
+  | { type: 'process'; id: string }
+
+export interface RuntimeReference {
+  kind: 'agent' | 'process'
+  id: string
+}
+
+export interface RuntimeViewPreference {
+  open: RuntimeReference[]
+  active: RuntimeReference | null
+}
+
+export type TerminalViewPreferences = Record<string, {
+  lastWorktreeId: string
+  worktrees: Record<string, RuntimeViewPreference>
+}>
 
 export type DockState = 'collapsed' | 'normal' | 'maximized'
 export type DockTab = 'agent' | 'terminal' | 'tests' | 'files' | 'pr' | 'checks' | 'logs'

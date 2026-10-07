@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -43,7 +44,15 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 	if workingDir == "" {
 		workingDir = req.Worktree
 	}
+	for _, value := range append([]string{req.Worktree, workingDir, req.Program, req.Command}, req.Args...) {
+		if strings.ContainsRune(value, 0) {
+			return nil, fmt.Errorf("process invocation cannot contain NUL bytes")
+		}
+	}
 	policy := s.resolvePolicy(req)
+	if err := procstore.ValidatePolicy(policy); err != nil {
+		return nil, err
+	}
 
 	s.mu.Lock()
 	id := s.nextID
@@ -68,15 +77,19 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 		},
 		generation: 1,
 	}
+	if err := s.store.ReserveID(id); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	if err := s.store.WriteRecord(mp.rec); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	s.procs[id] = mp
 	s.mu.Unlock()
 
 	if err := s.start(mp, 1); err != nil {
-		s.mu.Lock()
-		delete(s.procs, id)
-		s.mu.Unlock()
-		_ = s.store.RemoveRecord(id)
-		return nil, err
+		s.onExit(mp, err, time.Now(), make(chan struct{}), 1)
 	}
 
 	s.mu.Lock()
@@ -99,6 +112,10 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	if cap <= 0 {
 		cap = logCap
 	}
+	mp.rec.Attempt++
+	mp.rec.RetryAt = nil
+	mp.rec.PID = 0
+	mp.rec.ProcessGroupID = 0
 	var urlBuf []byte
 	logw, err := newLogWriter(s.store.LogPath(mp.rec.ID), cap, func(chunk []byte) {
 		mp.mu.Lock()
@@ -150,6 +167,7 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 		return errGenerationMismatch
 	}
 
+	mp.logw = logw
 	s.appendMarker(mp.rec.ID, procstore.Marker{Kind: procstore.MarkerStart, Text: startText(mp.rec)})
 	if err := cmd.Start(); err != nil {
 		s.appendMarker(mp.rec.ID, procstore.Marker{
@@ -160,6 +178,9 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 		_ = logw.Close()
 		mp.rec.Status = procstore.StatusFailed
 		mp.rec.ExitError = err.Error()
+		code := -1
+		mp.rec.ExitCode = &code
+		mp.rec.RetryAt = nil
 		_ = s.store.WriteRecord(mp.rec)
 		return err
 	}
@@ -202,9 +223,16 @@ func (s *Server) onExit(mp *managedProc, werr error, started time.Time, done cha
 	ran := time.Since(started).Round(time.Millisecond)
 	code := exitCodeOf(werr)
 	mp.rec.ExitCode = &code
+	if werr != nil {
+		mp.rec.ExitError = werr.Error()
+	} else {
+		mp.rec.ExitError = ""
+	}
+	mp.rec.RetryAt = nil
 
 	// If a user kill was initiated while running, transition to StatusStopped.
 	if mp.rec.Status == procstore.StatusStopping {
+		mp.rec.RetryAt = nil
 		mp.rec.Status = procstore.StatusStopped
 		s.appendMarker(mp.rec.ID, procstore.Marker{
 			Kind: procstore.MarkerStopped,
@@ -223,6 +251,7 @@ func (s *Server) onExit(mp *managedProc, werr error, started time.Time, done cha
 		mp.consecFails = 0
 	}
 
+	mp.rec.RetryCount = mp.consecFails
 	restart := false
 	switch mp.rec.Policy.Mode {
 	case procstore.PolicyAlways:
@@ -233,13 +262,15 @@ func (s *Server) onExit(mp *managedProc, werr error, started time.Time, done cha
 
 	if restart {
 		mp.consecFails++
+		mp.rec.RetryCount = mp.consecFails
 		mp.rec.Restarts++
 		mp.generation++
 		scheduledGen := mp.generation
 		mp.rec.Status = procstore.StatusBackoff
-		_ = s.store.WriteRecord(mp.rec)
-
 		delay := backoff(mp.consecFails)
+		retryAt := time.Now().Add(delay)
+		mp.rec.RetryAt = &retryAt
+		_ = s.store.WriteRecord(mp.rec)
 		s.appendMarker(mp.rec.ID, procstore.Marker{
 			Kind: procstore.MarkerRestart,
 			Code: exitCodeOf(werr),
@@ -259,10 +290,14 @@ func (s *Server) onExit(mp *managedProc, werr error, started time.Time, done cha
 	if failed {
 		mp.rec.Status = procstore.StatusFailed
 		mp.rec.ExitError = werr.Error()
+		text := fmt.Sprintf("%s · ran %s", exitText(werr), ran)
+		if mp.rec.Policy.Mode != procstore.PolicyNo && mp.rec.Policy.MaxRestarts > 0 && mp.consecFails >= mp.rec.Policy.MaxRestarts {
+			text += " · retries exhausted"
+		}
 		s.appendMarker(mp.rec.ID, procstore.Marker{
 			Kind: procstore.MarkerExit,
 			Code: exitCodeOf(werr),
-			Text: fmt.Sprintf("%s · ran %s", exitText(werr), ran),
+			Text: text,
 		})
 	} else {
 		mp.rec.Status = procstore.StatusDone
@@ -331,26 +366,12 @@ func (s *Server) executeScheduledRestart(id int, scheduledGen uint64) {
 		if errors.Is(err, errGenerationMismatch) {
 			return
 		}
-		mp.mu.Lock()
-		mp.rec.Status = procstore.StatusFailed
-		mp.rec.ExitError = err.Error()
-		_ = s.store.WriteRecord(mp.rec)
-		mp.mu.Unlock()
-
-		s.appendMarker(id, procstore.Marker{
-			Kind: procstore.MarkerExit,
-			Code: -1,
-			Text: "restart failed · " + err.Error(),
-		})
-
+		s.onExit(mp, err, time.Now(), make(chan struct{}), scheduledGen)
 		if s.notifyEnabled() {
 			notify.Send("bonsai", fmt.Sprintf("restart failed: %s", label))
 		}
-
-		s.mu.Lock()
-		s.armIdleLocked()
-		s.mu.Unlock()
 	}
+
 }
 
 // killManaged terminates a process and invalidates any pending restart.
@@ -371,6 +392,7 @@ func (s *Server) killManaged(mp *managedProc) bool {
 			mp.restartTimer = nil
 		}
 		mp.generation++
+		mp.rec.RetryAt = nil
 		mp.rec.Status = procstore.StatusStopped
 		s.appendMarker(mp.rec.ID, procstore.Marker{
 			Kind: procstore.MarkerStopped,
@@ -387,6 +409,7 @@ func (s *Server) killManaged(mp *managedProc) bool {
 
 	if status == procstore.StatusStarting {
 		mp.generation++
+		mp.rec.RetryAt = nil
 		mp.rec.Status = procstore.StatusStopped
 		s.appendMarker(mp.rec.ID, procstore.Marker{
 			Kind: procstore.MarkerStopped,
@@ -431,6 +454,7 @@ func (s *Server) killManaged(mp *managedProc) bool {
 		mp.mu.Lock()
 		if mp.rec.Status == procstore.StatusStopping {
 			if stopped {
+				mp.rec.RetryAt = nil
 				mp.rec.Status = procstore.StatusStopped
 				mp.rec.ExitError = ""
 				s.appendMarker(mp.rec.ID, procstore.Marker{
@@ -468,6 +492,7 @@ func (s *Server) killManaged(mp *managedProc) bool {
 		mp.mu.Lock()
 		if mp.rec.Status == procstore.StatusStopping {
 			if stopped {
+				mp.rec.RetryAt = nil
 				mp.rec.Status = procstore.StatusStopped
 				mp.rec.ExitError = ""
 				s.appendMarker(mp.rec.ID, procstore.Marker{
@@ -530,6 +555,7 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 
 	mp.mu.Lock()
 	mp.consecFails = 0
+	mp.rec.RetryCount = 0
 	mp.generation++
 	gen := mp.generation
 	mp.rec.Status = procstore.StatusStarting
@@ -540,31 +566,9 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 		if errors.Is(err, errGenerationMismatch) {
 			return nil, err
 		}
-
-		// start() already records failures from cmd.Start. Failures that happen
-		// earlier (for example opening the log file) still leave the record in
-		// StatusStarting, so make that transition terminal here as well.
-		mp.mu.Lock()
-		transitioned := mp.generation == gen && mp.rec.Status == procstore.StatusStarting
-		if transitioned {
-			mp.rec.Status = procstore.StatusFailed
-			mp.rec.ExitError = err.Error()
-			_ = s.store.WriteRecord(mp.rec)
-		}
-		mp.mu.Unlock()
-		if transitioned {
-			s.appendMarker(id, procstore.Marker{
-				Kind: procstore.MarkerExit,
-				Code: -1,
-				Text: "restart failed · " + err.Error(),
-			})
-		}
-
-		s.mu.Lock()
-		s.armIdleLocked()
-		s.mu.Unlock()
-		return nil, err
+		s.onExit(mp, err, time.Now(), make(chan struct{}), gen)
 	}
+
 	s.mu.Lock()
 	s.armIdleLocked()
 	s.mu.Unlock()
@@ -595,12 +599,13 @@ func backoff(consecFails int) time.Duration {
 
 // appendMarker writes a delimiter line to the process's log.
 func (s *Server) appendMarker(id int, mk procstore.Marker) {
-	f, err := os.OpenFile(s.store.LogPath(id), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	// Lifecycle callers hold mp.mu. Use a short-lived writer after cmd.Wait closes output.
+	w, err := newLogWriter(s.store.LogPath(id), 0, nil)
 	if err != nil {
 		return
 	}
-	_, _ = f.WriteString(mk.Encode())
-	_ = f.Close()
+	_, _ = w.Write([]byte(mk.Encode()))
+	_ = w.Close()
 }
 
 func startText(r *procstore.Record) string {
@@ -609,8 +614,8 @@ func startText(r *procstore.Record) string {
 		what = r.Command
 	}
 	when := time.Now().Format("15:04:05")
-	if r.Restarts > 0 {
-		return fmt.Sprintf("restart #%d · %s · %s", r.Restarts, what, when)
+	if r.Attempt > 1 {
+		return fmt.Sprintf("restarted · attempt %d · %s · %s", r.Attempt, what, when)
 	}
 	return fmt.Sprintf("started · %s · %s", what, when)
 }
@@ -634,12 +639,8 @@ func exitText(err error) string {
 }
 
 func (s *Server) resolvePolicy(req *protocol.Request) procstore.Policy {
-	if req.Policy != nil && procstore.ValidMode(req.Policy.Mode) {
-		p := *req.Policy
-		if p.MaxRestarts <= 0 {
-			p.MaxRestarts = procstore.DefaultPolicy().MaxRestarts
-		}
-		return p
+	if req.Policy != nil {
+		return *req.Policy
 	}
 	if cfg, err := config.Load(s.root); err == nil {
 		return cfg.PolicyFor(req.Label, req.Command)

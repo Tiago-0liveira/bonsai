@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,6 +43,17 @@ func ValidMode(mode string) bool {
 		return true
 	}
 	return false
+}
+
+// ValidatePolicy applies equally to launch and policy updates. Zero means no retries.
+func ValidatePolicy(p Policy) error {
+	if !ValidMode(p.Mode) {
+		return fmt.Errorf("restart mode must be no, on-failure or always")
+	}
+	if p.MaxRestarts < 0 || p.MaxRestarts > 100 {
+		return fmt.Errorf("maximum retries must be between 0 and 100")
+	}
+	return nil
 }
 
 // Process status values.
@@ -79,6 +91,10 @@ func IsActive(status string) bool {
 // truth for discovery: readable without touching the daemon socket.
 type Record struct {
 	ID             int               `json:"id"`
+	Revision       uint64            `json:"revision"`
+	Attempt        int               `json:"attempt"`
+	RetryCount     int               `json:"retry_count"`
+	RetryAt        *time.Time        `json:"retry_at,omitempty"`
 	Label          string            `json:"label"`
 	Command        string            `json:"command"` // display/shell command; structured commands also set Program/Args
 	Program        string            `json:"program,omitempty"`
@@ -243,6 +259,7 @@ func (s *Store) WriteRecord(r *Record) error {
 	if err := os.MkdirAll(s.ProcsDir(), 0o755); err != nil {
 		return err
 	}
+	r.Revision++
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
@@ -294,6 +311,7 @@ func (s *Store) ListRecords() ([]*Record, error) {
 func (s *Store) RemoveRecord(id int) error {
 	_ = os.Remove(s.LogPath(id))
 	_ = os.Remove(s.LogPath(id) + ".1")
+	_ = os.Remove(s.LogPath(id) + ".cursor")
 	err := os.Remove(s.RecordPath(id))
 	if os.IsNotExist(err) {
 		return nil
@@ -327,6 +345,28 @@ func (s *Store) ReadCombinedLog(id int) ([]byte, error) {
 		return combined, nil
 	}
 	return nil, err
+}
+
+// LastAllocatedID survives explicit record removal so a later daemon never reuses
+// a browser process identity. Legacy stores without a counter return zero.
+func (s *Store) LastAllocatedID() (int, error) {
+	data, err := os.ReadFile(filepath.Join(s.Dir(), "process-id"))
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	id, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || id < 0 {
+		return 0, fmt.Errorf("invalid persisted process ID counter")
+	}
+	return id, nil
+}
+
+// ReserveID must be called under the daemon's allocation lock, before execution.
+func (s *Store) ReserveID(id int) error {
+	return writeAtomic(filepath.Join(s.Dir(), "process-id"), []byte(strconv.Itoa(id)), 0600)
 }
 
 // MaxID returns the highest existing record id (0 if none), so a restarting

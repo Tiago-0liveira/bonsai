@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -927,8 +928,8 @@ func TestAutomaticRestartFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Restart fires, fails to start, transitions to StatusFailed
-	if !waitFor(t, 3*time.Second, func() bool {
+	// Failed starts also count against the remaining retry budget (1s + 2s + 4s).
+	if !waitFor(t, 9*time.Second, func() bool {
 		r := recByID(t, c, rec.ID)
 		return r != nil && r.Status == procstore.StatusFailed && r.ExitError != ""
 	}) {
@@ -1285,8 +1286,9 @@ func TestManualRestartLogOpenFailureBecomesFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := c.Restart(rec.ID); err == nil {
-		t.Fatal("expected restart to fail when log path is a directory")
+	restarted, err := c.Restart(rec.ID)
+	if err != nil || restarted == nil || restarted.Status != procstore.StatusFailed || restarted.ExitError == "" {
+		t.Fatalf("restart must return retained failure diagnostics: %+v %v", restarted, err)
 	}
 	r := recByID(t, c, rec.ID)
 	if r == nil || r.Status != procstore.StatusFailed || r.ExitError == "" {
@@ -1959,5 +1961,114 @@ func TestLogStreamingGrepAcrossChunkBoundary(t *testing.T) {
 	}
 	if got != payload {
 		t.Fatalf("expected complete intact line of length %d, got %d", len(payload), len(got))
+	}
+}
+
+func TestProcessByteStreamReplayRetriesRestartAndCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fixture")
+	}
+	c, root := newDaemon(t)
+	rec, err := c.Spawn(root, "", "instant", "printf 'INITIAL'; printf '\\033[32mFINAL_WITHOUT_NEWLINE\\033[0m'; exit 2", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	finished := errors.New("finished")
+	var output strings.Builder
+	var generation string
+	var offset int64
+	err = c.StreamProcess(ctx, rec.ID, "", 0, func(frame *protocol.Response) error {
+		if frame.Gap {
+			t.Fatal("unexpected gap")
+		}
+		if generation != "" && generation != frame.Generation {
+			t.Fatal("attempt changed stream identity")
+		}
+		if frame.Offset != offset+int64(len(frame.Data)) {
+			t.Fatal("noncontiguous output")
+		}
+		generation, offset = frame.Generation, frame.Offset
+		output.Write(frame.Data)
+		if frame.Record != nil && frame.Record.Status == procstore.StatusFailed {
+			if frame.Record.Attempt != 2 {
+				t.Fatalf("attempts %+v", frame.Record)
+			}
+			return finished
+		}
+		return nil
+	})
+	if !errors.Is(err, finished) {
+		t.Fatal(err)
+	}
+	if strings.Count(output.String(), "INITIAL") != 2 || strings.Count(output.String(), "FINAL_WITHOUT_NEWLINE") != 2 || !strings.Contains(output.String(), "retries exhausted") {
+		t.Fatalf("output=%q", output.String())
+	}
+	if _, err := c.Restart(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	var manual strings.Builder
+	err = c.StreamProcess(ctx, rec.ID, generation, offset, func(frame *protocol.Response) error {
+		if frame.Gap || frame.Generation != generation || frame.Offset != offset+int64(len(frame.Data)) {
+			t.Fatalf("manual frame %+v", frame)
+		}
+		offset = frame.Offset
+		manual.Write(frame.Data)
+		if frame.Record != nil && frame.Record.Status == procstore.StatusFailed {
+			return finished
+		}
+		return nil
+	})
+	if !errors.Is(err, finished) || strings.Count(manual.String(), "INITIAL") != 2 {
+		t.Fatalf("manual=%q err=%v", manual.String(), err)
+	}
+	silentCtx, stop := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- c.StreamProcess(silentCtx, rec.ID, generation, offset, func(*protocol.Response) error { stop(); return nil })
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancel: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("silent subscription did not cancel")
+	}
+}
+
+func TestProcessIDsSurviveRemovalAndDaemonRestart(t *testing.T) {
+	c, root := newDaemon(t)
+	rec, err := c.Spawn(root, "", "first", "exit 0", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, time.Second, func() bool { return procstore.IsTerminal(recByID(t, c, rec.ID).Status) }) {
+		t.Fatal("first process did not exit")
+	}
+	if err := c.Remove(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Shutdown(false); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.NewServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); _ = srv.Run() }()
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("reopened daemon did not exit")
+		}
+	})
+	next, err := c.Spawn(root, "", "second", "exit 0", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil || next == nil || next.ID <= rec.ID {
+		t.Fatalf("reused identity: %+v %v", next, err)
 	}
 }

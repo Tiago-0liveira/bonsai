@@ -143,6 +143,12 @@ func NewServer(root string) (*Server, error) {
 		return nil, err
 	}
 
+	allocatedID, err := store.LastAllocatedID()
+	if err != nil {
+		_ = lock.Unlock()
+		return nil, err
+	}
+
 	// Remove stale socket from crashed daemon
 	_ = os.Remove(store.SockPath())
 	ln, err := net.Listen("unix", store.SockPath())
@@ -168,6 +174,7 @@ func NewServer(root string) (*Server, error) {
 	_ = os.WriteFile(store.PidPath(), []byte(strconv.Itoa(os.Getpid())+"\n"+strconv.Itoa(protocol.Version)+"\n"), 0o644)
 	_ = procstore.Register(s.root, store.SockPath(), os.Getpid())
 
+	s.nextID = allocatedID + 1
 	s.adoptExisting()
 	s.loadServeGroups()
 	return s, nil
@@ -204,7 +211,9 @@ func (s *Server) adoptExisting() {
 		}
 		s.procs[r.ID] = &managedProc{rec: r}
 	}
-	s.nextID = max + 1
+	if max+1 > s.nextID {
+		s.nextID = max + 1
+	}
 }
 
 func (s *Server) acceptLoop() {

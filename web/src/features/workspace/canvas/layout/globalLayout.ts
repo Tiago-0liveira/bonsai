@@ -23,27 +23,27 @@ interface MeasuredBlock {
 function measure(block: BranchBlock): MeasuredBlock {
   const nodeSize = layoutSize(block.node)
   const shelfRows: ShelfRow[] = []
-  for (let index = 0; index < block.agentNodes.length; index += 3) {
-    const nodes = block.agentNodes.slice(index, index + 3)
+  for (let index = 0; index < block.runtimeNodes.length; index += 3) {
+    const nodes = block.runtimeNodes.slice(index, index + 3)
     const sizes = nodes.map(layoutSize)
     shelfRows.push({
       nodes,
       sizes,
-      width: sizes.reduce((sum, size) => sum + size.width, 0) + (nodes.length - 1) * LAYOUT.agentGapX,
+      width: sizes.reduce((sum, size) => sum + size.width, 0) + (nodes.length - 1) * LAYOUT.runtimeGapX,
       height: Math.max(...sizes.map((size) => size.height)),
     })
   }
   const shelfSize = {
     width: Math.max(0, ...shelfRows.map((row) => row.width)),
     height: shelfRows.reduce((sum, row) => sum + row.height, 0) +
-      Math.max(0, shelfRows.length - 1) * LAYOUT.agentGapY,
+      Math.max(0, shelfRows.length - 1) * LAYOUT.runtimeGapY,
   }
   const children = block.childBlocks.map(measure)
   const childrenWidth =
     children.reduce((sum, child) => sum + child.size.width, 0) +
     Math.max(0, children.length - 1) * LAYOUT.branchGapX
   const childrenHeight = children.length ? Math.max(...children.map((child) => child.size.height)) : 0
-  const localHeight = nodeSize.height + (block.agentNodes.length ? LAYOUT.agentTopGap + shelfSize.height : 0)
+  const localHeight = nodeSize.height + (block.runtimeNodes.length ? LAYOUT.runtimeTopGap + shelfSize.height : 0)
   const size = {
     width: Math.max(nodeSize.width, shelfSize.width, childrenWidth),
     height: localHeight + (children.length ? LAYOUT.childTopGap + childrenHeight : 0),
@@ -64,16 +64,16 @@ function placeBlock(
   }
 
   let cursorY = y + nodeSize.height
-  if (block.agentNodes.length) {
-    cursorY += LAYOUT.agentTopGap
+  if (block.runtimeNodes.length) {
+    cursorY += LAYOUT.runtimeTopGap
     let rowY = cursorY
     measured.shelfRows.forEach((row) => {
       let rowX = x + (size.width - row.width) / 2
       row.nodes.forEach((agent, index) => {
         positions[agent.id] = { x: rowX, y: rowY }
-        rowX += row.sizes[index].width + LAYOUT.agentGapX
+        rowX += row.sizes[index].width + LAYOUT.runtimeGapX
       })
-      rowY += row.height + LAYOUT.agentGapY
+      rowY += row.height + LAYOUT.runtimeGapY
     })
     cursorY += shelfSize.height
   }

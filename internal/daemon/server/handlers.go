@@ -72,6 +72,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	case protocol.KindServeLogs:
 		s.streamServeLogs(conn, enc, req)
 
+	case protocol.KindProcessStream:
+		s.streamProcess(conn, enc, req)
+
 	case protocol.KindLogs, "attach":
 		s.streamLogs(conn, enc, req)
 
@@ -167,8 +170,11 @@ func (s *Server) kill(req *protocol.Request) ([]int, error) {
 
 // setPolicy updates a process's restart policy, effective on its next exit.
 func (s *Server) setPolicy(req *protocol.Request) (*procstore.Record, error) {
-	if req.Policy == nil || !procstore.ValidMode(req.Policy.Mode) {
+	if req.Policy == nil {
 		return nil, fmt.Errorf("invalid policy")
+	}
+	if err := procstore.ValidatePolicy(*req.Policy); err != nil {
+		return nil, err
 	}
 	s.mu.Lock()
 	mp, ok := s.procs[req.ID]
@@ -178,9 +184,6 @@ func (s *Server) setPolicy(req *protocol.Request) (*procstore.Record, error) {
 	}
 	mp.mu.Lock()
 	mp.rec.Policy = *req.Policy
-	if mp.rec.Policy.MaxRestarts <= 0 {
-		mp.rec.Policy.MaxRestarts = procstore.DefaultPolicy().MaxRestarts
-	}
 	_ = s.store.WriteRecord(mp.rec)
 	mp.mu.Unlock()
 	return s.snapshot(mp), nil

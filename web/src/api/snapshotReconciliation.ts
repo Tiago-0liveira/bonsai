@@ -3,6 +3,18 @@ import type { CiStatus, Process, ProcessLifecycleStatus, Project, PullRequest, S
 import type { Snapshot, Repository, RemotePR, RemoteCheck, WireFreshness, ProcessSummary, WorktreeProjection } from './git'
 import type { BonsaiState } from '../stores/bonsai'
 import { changedPatch, replaceScope, shareEqual } from '../stores/reconciliation'
+import type { RuntimeAuthority } from '../stores/runtimePreferences'
+
+export function snapshotRuntimeAuthority(snapshot: Snapshot): RuntimeAuthority {
+  const successful = snapshot.online && snapshot.repository.available !== false
+  const ready = (component: string, present: boolean) => successful && present
+    && (!snapshot.freshness?.[component] || snapshot.freshness[component].state === 'ready')
+  return {
+    worktrees: ready('local', snapshot.local != null),
+    agents: ready('agents', snapshot.agents !== undefined),
+    processes: ready('processes', snapshot.processes !== undefined),
+  }
+}
 
 export function project(r: Repository): Project {
   return {
@@ -74,11 +86,17 @@ function processHealth(status: ProcessLifecycleStatus): Process['status'] {
   }
 }
 
-function mapProcess(value: ProcessSummary): Process {
+export function mapProcess(value: ProcessSummary): Process {
   return {
     id: value.id,
     projectId: value.project_id,
     daemonId: value.daemon_id,
+    revision: value.revision,
+    policy: value.policy,
+    restarts: value.restarts,
+    retryCount: value.retry_count,
+    attempt: value.attempt,
+    retryAt: value.retry_at,
     worktreeId: value.worktree_id ?? '',
     name: value.label || value.command || `Process #${value.daemon_id}`,
     command: value.command,
@@ -107,7 +125,13 @@ function ciStatus(value: WorktreeProjection['ci'] | undefined): CiStatus {
 // Mapping has no transport, ordering, store writes or selection side effects.
 export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState): Partial<BonsaiState> {
   const id = snapshot.repository.id
+  const authority = snapshotRuntimeAuthority(snapshot)
   const nextAgents = snapshot.agents?.map(a => mapAgent(a, state.agents.find(old => old.id === a.id)))
+  if (nextAgents && !authority.agents) {
+    for (const old of state.agents) {
+      if ((old.projectId === id || state.worktrees.some(tree => tree.projectId === id && tree.id === old.worktreeId)) && !nextAgents.some(agent => agent.id === old.id)) nextAgents.push(old)
+    }
+  }
   const scopedAgents = nextAgents ?? state.agents.filter(a => a.projectId === id || state.worktrees.some(w => w.id === a.worktreeId && w.projectId === id))
   const remoteByNumber = new Map<number, RemotePR>()
   for (const value of snapshot.remote?.pull_requests ?? []) remoteByNumber.set(value.number, value)
@@ -180,6 +204,11 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
       gitState: st?.git_state,
     }
   })
+  if (!authority.worktrees) {
+    for (const old of state.worktrees) {
+      if (old.projectId === id && !trees.some(tree => tree.id === old.id)) trees.push(old)
+    }
+  }
 
   const p = project(snapshot.repository)
   const mainTree = (snapshot.local?.worktrees ?? []).find(w => w.main)
@@ -208,7 +237,14 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
   const groups = snapshot.local?.groups ?? []
   const sync = snapshot.sync ?? state.repositorySync[id]
 
-  const nextProcesses = (snapshot.processes ?? []).map(mapProcess)
+  const nextProcesses: Process[] = (snapshot.processes ?? []).map(value => {
+    const mapped = mapProcess(value)
+    const old = state.processes.find(p => p.id === mapped.id)
+    return old && (old.revision ?? 0) > (mapped.revision ?? 0) ? { ...old, pendingSnapshot: authority.processes ? false : old.pendingSnapshot } : { ...mapped, pendingSnapshot: authority.processes ? false : old?.pendingSnapshot }
+  })
+  for (const old of state.processes) {
+    if (old.projectId === id && (old.pendingSnapshot || !authority.processes) && !nextProcesses.some(p => p.id === old.id)) nextProcesses.push(old)
+  }
 
   return changedPatch(state, {
     agents: nextAgents ? replaceScope(state.agents, nextAgents, a => a.projectId === id || state.worktrees.some(w => w.id === a.worktreeId && w.projectId === id)) : state.agents,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +46,7 @@ func (r *syncTestRegistry) List() []ProjectInfo {
 	for _, value := range r.entries {
 		out = append(out, value.info)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 func (r *syncTestRegistry) remove(id string) {

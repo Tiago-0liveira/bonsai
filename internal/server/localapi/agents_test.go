@@ -198,6 +198,8 @@ func TestAgentBrowserFixture(t *testing.T) {
 		t.Skip("browser fixture disabled")
 	}
 	s, _, _ := terminalTestServer(t)
+	attachProcessFixture(t, s)
+	attachRestorationFixture(t, s)
 	s.browserOrigin = "https://127.0.0.1:4173"
 	if err := os.WriteFile(s.rootsPath, []byte(`{"version":1,"revision":1,"roots":[{"id":"fixture","path":"/tmp"}]}`), 0600); err != nil {
 		t.Fatal(err)

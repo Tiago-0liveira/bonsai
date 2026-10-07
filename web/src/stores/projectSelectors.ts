@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useBonsaiStore, type BonsaiState } from './bonsai'
-import type { Agent } from '../types'
+import type { Agent, CanvasProcess, Process } from '../types'
 import { shareEqual } from './reconciliation'
 
 function retainSubset<T>(previous: T[], next: T[]) {
@@ -22,6 +22,38 @@ function subsetSelector<T>(source: (state: BonsaiState) => T[], include: (value:
 
 export const projectWorktreesSelector = (id: string) => subsetSelector(state => state.worktrees, tree => tree.projectId === id)
 export const projectProcessesSelector = (id: string) => subsetSelector(state => state.processes, process => process.projectId === id)
+
+// Transport metadata (PID, revision, retry counters) does not change canvas
+// topology or presentation. Subscribe only to the fields the graph projects.
+export function projectCanvasProcessesSelector(id: string) {
+  const processes = projectProcessesSelector(id)
+  let input: Process[] | undefined
+  let result: CanvasProcess[] = []
+  return (state: BonsaiState) => {
+    const next = processes(state)
+    if (input !== next) {
+      input = next
+      result = shareEqual(result, next.map(({ id, projectId, worktreeId, name, command, status, lifecycleStatus }) => ({ id, projectId, worktreeId, name, command, status, lifecycleStatus })))
+    }
+    return result
+  }
+}
+
+export function processNodeSelector(id: string) {
+  let input: Process[] | undefined
+  let result: Pick<Process, 'id' | 'projectId' | 'daemonId' | 'lifecycleStatus' | 'exitCode' | 'exitError'> | undefined
+  return (state: BonsaiState) => {
+    if (input !== state.processes) {
+      input = state.processes
+      const process = input.find(process => process.id === id)
+      result = shareEqual(result, process ? {
+        id: process.id, projectId: process.projectId, daemonId: process.daemonId,
+        lifecycleStatus: process.lifecycleStatus, exitCode: process.exitCode, exitError: process.exitError,
+      } : undefined)
+    }
+    return result
+  }
+}
 export const projectPullRequestsSelector = (id: string) => subsetSelector(state => state.pullRequests, pr => pr.id.startsWith(`${id}:`))
 
 export function projectAgentsSelector(id: string) {
@@ -43,12 +75,14 @@ export function projectAgentsSelector(id: string) {
 
 export const useProjectWorktrees = (id: string) => useBonsaiStore(useMemo(() => projectWorktreesSelector(id), [id]))
 export const useProjectProcesses = (id: string) => useBonsaiStore(useMemo(() => projectProcessesSelector(id), [id]))
+export const useProjectCanvasProcesses = (id: string) => useBonsaiStore(useMemo(() => projectCanvasProcessesSelector(id), [id]))
 export const useProjectAgents = (id: string) => useBonsaiStore(useMemo(() => projectAgentsSelector(id), [id]))
 export const useProjectPullRequests = (id: string) => useBonsaiStore(useMemo(() => projectPullRequestsSelector(id), [id]))
 
 export function projectCanvasPreferencesSelector(id: string) {
   const trees = projectWorktreesSelector(id)
   const agents = projectAgentsSelector(id)
+  const processes = projectProcessesSelector(id)
   let previousInputs: unknown[] = []
   let result: Pick<BonsaiState, 'nodePlacements' | 'collapsedTagGroups' | 'detachedStackWorktreeIds' | 'expandedAutomaticGroups'> = {
     nodePlacements: {}, collapsedTagGroups: [], detachedStackWorktreeIds: [], expandedAutomaticGroups: [],
@@ -56,12 +90,13 @@ export function projectCanvasPreferencesSelector(id: string) {
   return (state: BonsaiState) => {
     const currentTrees = trees(state)
     const currentAgents = agents(state)
+    const currentProcesses = processes(state)
     const groups = state.worktreeGroups[id]
-    const inputs = [currentTrees, currentAgents, groups, state.nodePlacements, state.collapsedTagGroups, state.detachedStackWorktreeIds, state.expandedAutomaticGroups]
+    const inputs = [currentTrees, currentAgents, currentProcesses, groups, state.nodePlacements, state.collapsedTagGroups, state.detachedStackWorktreeIds, state.expandedAutomaticGroups]
     if (inputs.every((value, index) => value === previousInputs[index])) return result
     previousInputs = inputs
     const treeIds = new Set(currentTrees.map(tree => tree.id))
-    const nodeIds = new Set([id, ...treeIds, ...currentAgents.map(agent => agent.id)])
+    const nodeIds = new Set([id, `process-shelf:${id}`, ...treeIds, ...currentAgents.map(agent => agent.id), ...currentProcesses.map(process => process.id)])
     const groupIds = new Set(groups?.map(group => group.id))
     result = shareEqual(result, {
       nodePlacements: Object.fromEntries(Object.entries(state.nodePlacements).filter(([nodeId]) => nodeIds.has(nodeId) || nodeId.startsWith(`stack:${id}:`) || groupIds.has(nodeId.replace(/^stack:/, '')))),
