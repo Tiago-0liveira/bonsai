@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Search } from 'lucide-react'
+import { WorkspaceVisibility } from './WorkspaceVisibility'
 
 export interface BonsaiSelectOption {
   value: string
@@ -43,12 +44,20 @@ export function BonsaiSelect({
   disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const workspaceVisible = useContext(WorkspaceVisibility)
   const [query, setQuery] = useState('')
   const [position, setPosition] = useState<MenuPosition | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selected = options.find((option) => option.value === value)
+
+  useEffect(() => {
+    if (!workspaceVisible) {
+      setOpen(false)
+      setQuery('')
+    }
+  }, [workspaceVisible])
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -103,7 +112,7 @@ export function BonsaiSelect({
   }, [open])
 
   const menu =
-    open && position && typeof document !== 'undefined'
+    workspaceVisible && open && position && typeof document !== 'undefined'
       ? createPortal(
           <div
             ref={menuRef}

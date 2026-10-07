@@ -66,6 +66,8 @@ func TestResolveExactNodeInvocations(t *testing.T) {
 	}{
 		{name: "npm", packageJSON: `{"scripts":{"dev":"vite"}}`, lock: "package-lock.json", program: "npm"},
 		{name: "pnpm", packageJSON: `{"scripts":{"dev":"vite"}}`, lock: "pnpm-lock.yaml", program: "pnpm"},
+		{name: "yarn", packageJSON: `{"scripts":{"dev":"vite"}}`, lock: "yarn.lock", program: "yarn"},
+		{name: "bun", packageJSON: `{"scripts":{"dev":"vite"}}`, lock: "bun.lock", program: "bun"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -80,7 +82,11 @@ func TestResolveExactNodeInvocations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := Invocation{Program: tc.program, Args: []string{"run", "dev", "--", "--port", "3000"}, Dir: dir}
+			prefix := []string{"run", "dev"}
+			if tc.program == "npm" {
+				prefix = append(prefix, "--")
+			}
+			want := Invocation{Program: tc.program, Args: append(prefix, "--port", "3000"), Dir: dir}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("Resolve = %#v, want %#v", got, want)
 			}

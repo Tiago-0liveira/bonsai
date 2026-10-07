@@ -19,7 +19,7 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
     setSelectedIds(new Set(settings?.repositories.filter(repository => repository.selected).map(repository => repository.id) ?? []))
   }, [settings?.selection_revision, settings?.repositories])
 
-  const discovered = settings?.repositories ?? []
+  const discovered = useMemo(() => settings?.repositories ?? [], [settings?.repositories])
   const discoveryNotes = settings?.diagnostics.flatMap(diagnostic => diagnostic.messages) ?? []
   const selectedCount = useMemo(() => discovered.filter(repository => selectedIds.has(repository.id)).length, [discovered, selectedIds])
 

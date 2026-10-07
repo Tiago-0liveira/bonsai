@@ -13,6 +13,11 @@ const sourceOptions: Array<{ id: WorktreeSourceType; label: string; description:
 ]
 
 export function CreateWorktreeDialog() {
+  const visible = useBonsaiStore(state => state.worktreeDialogOpen)
+  return visible ? <CreateWorktreeDialogBody /> : null
+}
+
+function CreateWorktreeDialogBody() {
   const open = useBonsaiStore((state) => state.worktreeDialogOpen)
   const setOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const createWorktree = useBonsaiStore((state) => state.createWorktree)

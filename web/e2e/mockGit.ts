@@ -1,3 +1,4 @@
+import type { AgentSummary } from '../src/api/agents'
 import type { Page } from '@playwright/test'
 
 type Metadata = {
@@ -197,6 +198,7 @@ function bonsaiSnapshot(metadata: Record<string, Metadata>) {
       provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
     },
     worktree_state: worktreeState,
+    process_visibility: { cutoffs: {}, deleted: {} },
     processes: [
       { id: 'bonsai:1', daemon_id: 1, project_id: 'bonsai', worktree_id: 'wt-web', label: 'Vite', command: 'pnpm dev', status: 'running', pid: 1001, expected_port: 5173 },
       { id: 'bonsai:2', daemon_id: 2, project_id: 'bonsai', worktree_id: 'wt-daemon', label: 'bonsaid', command: 'go run . daemon', status: 'backoff', pid: 1002 },
@@ -220,6 +222,7 @@ function emptySnapshot(projectId: string) {
       provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
     },
     worktree_state: {},
+    process_visibility: { cutoffs: {}, deleted: {} },
     processes: [],
   }
 }
@@ -326,6 +329,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     : []
   if (!emptyRoots) rootSettings.repositories = discoveredRepositories(new Set(repositories.map(repository => repository.id)))
 
+  const agentSessions: AgentSummary[] = []
   const metadata: Record<string, Metadata> = {
     'wt-main': { tag: 'production', merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-web': { tag: 'feat', merge_target_branch: 'main', stack_preference: 'auto' },
@@ -346,7 +350,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     const sequence = bump ? current + 1 : current
     sequences.set(projectId, sequence)
     if (projectId !== 'bonsai') return { ...emptySnapshot(projectId), sequence }
-    const full = { ...bonsaiSnapshot(metadata), sequence }
+    const full = { ...bonsaiSnapshot(metadata), sequence, agents: [...agentSessions] }
     if (management) {
       const extra = [...unlinkedTrees, ...createdTrees].filter(tree => !removedTrees.has(tree.id))
       const candidates = [{ id: 'refs/remotes/origin/discovered', ref: 'refs/remotes/origin/discovered', name: 'discovered', source: 'remote', remote: 'origin', head_sha: 'sha', last_commit_at: '2026-09-27T00:00:00Z', pull_requests: [], worktree_ids: createdTrees.filter(tree => !removedTrees.has(tree.id)).map(tree => tree.id), creation_mode: createdTrees.some(tree => !removedTrees.has(tree.id)) ? '' : 'remote', source_ref: 'origin/discovered' }]
@@ -393,6 +397,15 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       : undefined,
   )
 
+  await page.routeWebSocket(/ws:\/\/127\.0\.0\.1:7001\/api\/projects\/[^/]+\/agents\/[^/]+\/terminal$/, terminal => {
+    terminal.onMessage(message => {
+      const frame = JSON.parse(String(message))
+      if (frame.type === 'attach') {
+        terminal.send(JSON.stringify({ type: 'ready', version: 1, generation: 'e2e-epoch', writer: true }))
+        terminal.send(JSON.stringify({ type: 'output', offset: 0, data: Buffer.from('Fixture terminal\r\n').toString('base64') }))
+      }
+    })
+  })
   await page.route('http://127.0.0.1:7001/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -403,6 +416,23 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       return
     }
 
+    if (path === '/api/agents/providers') {
+      await route.fulfill({ json: [
+        { id: 'antigravity', label: 'Antigravity', available: true },
+        { id: 'claude', label: 'Claude', available: false, unavailable_reason: { message: 'Not available yet' } },
+        { id: 'codex', label: 'Codex', available: false, unavailable_reason: { message: 'Not available yet' } },
+      ] }); return
+    }
+    if (path === '/api/agents/accounts') {
+      await route.fulfill({ json: [{ id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' }] }); return
+    }
+    if (path === '/api/projects/bonsai/agents' && request.method() === 'POST') {
+      const body = request.postDataJSON()
+      const session: AgentSummary = { id: 'fixture-session', project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: 'antigravity', profile_name: 'Fixture', name: 'Fixture', state: 'running', created_at: new Date().toISOString() }
+      if (!agentSessions.length) agentSessions.push(session)
+      socket.publishUpdate(projectSnapshot('bonsai', true), 'agents')
+      await route.fulfill({ status: 202, json: session }); return
+    }
     if (path === '/version') {
       await route.fulfill({ json: { version: 'e2e', api_version: 3 } })
       return

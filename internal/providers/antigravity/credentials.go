@@ -42,8 +42,8 @@ func NewCredentialManager(accounts agents.AccountStore) CredentialManager {
 	return &fileCredentialManager{accounts: accounts}
 }
 
-func (m *fileCredentialManager) Materialize(_ context.Context, account agents.Account, session agents.Session) error {
-	lock, err := agents.LockFile(credentialLockPath(m.accounts, account))
+func (m *fileCredentialManager) Materialize(ctx context.Context, account agents.Account, session agents.Session) error {
+	lock, err := agents.LockFileContext(ctx, credentialLockPath(m.accounts, account))
 	if err != nil {
 		return err
 	}
@@ -67,8 +67,8 @@ func (m *fileCredentialManager) Materialize(_ context.Context, account agents.Ac
 	return writePrivateJSON(generationPath(session), generationMarker{Generation: vault.Generation})
 }
 
-func (m *fileCredentialManager) CaptureSetup(_ context.Context, account agents.Account, session agents.Session) error {
-	lock, err := agents.LockFile(credentialLockPath(m.accounts, account))
+func (m *fileCredentialManager) CaptureSetup(ctx context.Context, account agents.Account, session agents.Session) error {
+	lock, err := agents.LockFileContext(ctx, credentialLockPath(m.accounts, account))
 	if err != nil {
 		return err
 	}
@@ -87,8 +87,8 @@ func (m *fileCredentialManager) CaptureSetup(_ context.Context, account agents.A
 	return m.writeVault(account, candidate)
 }
 
-func (m *fileCredentialManager) Reconcile(_ context.Context, account agents.Account, session agents.Session) error {
-	lock, err := agents.LockFile(credentialLockPath(m.accounts, account))
+func (m *fileCredentialManager) Reconcile(ctx context.Context, account agents.Account, session agents.Session) error {
+	lock, err := agents.LockFileContext(ctx, credentialLockPath(m.accounts, account))
 	if err != nil {
 		return err
 	}

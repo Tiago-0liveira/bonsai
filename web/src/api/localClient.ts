@@ -325,3 +325,8 @@ export function __resetLocalClientForTests() {
   snapshot = { status: 'not-attempted' }
   listeners.clear()
 }
+
+// Capabilities travel only in the first frame, never in a terminal URL.
+export async function terminalCapability(): Promise<string> {
+  return (await currentSession()).token
+}

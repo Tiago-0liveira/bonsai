@@ -15,26 +15,27 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 6
+const Version = 8
 
 // Request kinds.
 const (
-	KindGit          = "git"
-	KindSpawn        = "spawn"
-	KindList         = "list"
-	KindKill         = "kill"
-	KindRestart      = "restart"
-	KindSetPolicy    = "setPolicy"
-	KindLogs         = "logs"
-	KindAttach       = "attach"
-	KindRemove       = "remove"
-	KindServeStart   = "serveStart"
-	KindServeStatus  = "serveStatus"
-	KindServeStop    = "serveStop"
-	KindServeRestart = "serveRestart"
-	KindServeLogs    = "serveLogs"
-	KindPing         = "ping"
-	KindShutdown     = "shutdown"
+	KindGit           = "git"
+	KindSpawn         = "spawn"
+	KindList          = "list"
+	KindKill          = "kill"
+	KindRestart       = "restart"
+	KindSetPolicy     = "setPolicy"
+	KindLogs          = "logs"
+	KindProcessStream = "processStream"
+	KindAttach        = "attach"
+	KindRemove        = "remove"
+	KindServeStart    = "serveStart"
+	KindServeStatus   = "serveStatus"
+	KindServeStop     = "serveStop"
+	KindServeRestart  = "serveRestart"
+	KindServeLogs     = "serveLogs"
+	KindPing          = "ping"
+	KindShutdown      = "shutdown"
 )
 
 // Request is a single client command.
@@ -62,6 +63,7 @@ type Request struct {
 	ProcessName string               `json:"process_name,omitempty"`
 
 	// Target for kill/restart/setPolicy/logs.
+	StopFirst bool   `json:"stop_first,omitempty"`
 	ID        int    `json:"id,omitempty"`
 	All       bool   `json:"all,omitempty"`       // kill: every process
 	Worktree2 string `json:"worktree2,omitempty"` // kill: restrict to a worktree path
@@ -71,6 +73,9 @@ type Request struct {
 	TailLines       int    `json:"tail_lines,omitempty"`
 	Grep            string `json:"grep,omitempty"`
 	GrepInsensitive bool   `json:"grep_i,omitempty"`
+
+	Generation string `json:"generation,omitempty"`
+	Offset     int64  `json:"offset,omitempty"`
 
 	// Shutdown.
 	Force bool `json:"force,omitempty"`
@@ -82,10 +87,11 @@ type Response struct {
 	OK    bool              `json:"ok"`
 	Error string            `json:"error,omitempty"`
 
-	Record     *procstore.Record     `json:"record,omitempty"`  // spawn/restart
-	Records    []*procstore.Record   `json:"records,omitempty"` // list
-	Killed     []int                 `json:"killed,omitempty"`  // kill
-	ServeGroup *procstore.ServeGroup `json:"serve_group,omitempty"`
+	Visibility *procstore.ProcessVisibility `json:"process_visibility,omitempty"`
+	Record     *procstore.Record            `json:"record,omitempty"`  // spawn/restart
+	Records    []*procstore.Record          `json:"records,omitempty"` // list
+	Killed     []int                        `json:"killed,omitempty"`  // kill
+	ServeGroup *procstore.ServeGroup        `json:"serve_group,omitempty"`
 
 	// Ping.
 	Version   int `json:"version,omitempty"`
@@ -93,8 +99,12 @@ type Response struct {
 	ProcCount int `json:"proc_count,omitempty"`
 
 	// Logs stream.
-	LogChunk string `json:"log_chunk,omitempty"`
-	EOF      bool   `json:"eof,omitempty"` // final frame of a (possibly multi-frame) reply
+	LogChunk   string `json:"log_chunk,omitempty"`
+	Data       []byte `json:"data,omitempty"`
+	Offset     int64  `json:"offset"`
+	Generation string `json:"generation,omitempty"`
+	Gap        bool   `json:"gap,omitempty"`
+	EOF        bool   `json:"eof,omitempty"` // final frame of a (possibly multi-frame) reply
 }
 
 // Encoder writes newline-delimited JSON frames.

@@ -335,3 +335,22 @@ down the hosting daemon. Existing metadata and worktree IDs are preserved.
 Existing users must confirm their project folders once. `bonsai serve` still
 starts from a Git repository, but the browser catalog may be empty until folders
 are configured. There is no global discovery daemon or cloud filesystem scan.
+
+### Antigravity in the web workspace
+
+Install `agy`, then add a Bonsai profile:
+
+```sh
+bonsai agent account add antigravity personal
+```
+
+Connect the web app to `bonsai serve`, select a worktree, choose **Start agent**,
+and select your profile. The terminal uses that profile's existing settings;
+enter instructions directly in it. Claude and Codex are not available yet.
+
+Closing the dock or reloading the browser detaches without stopping the agent.
+Use **Stop agent** to terminate it and reconcile profile credentials. Sessions
+last only while the local API runs; restarting Bonsai does not restart agents.
+Recent output is bounded to 2 MiB and may show a replay-gap notice after a long
+session. Interactive PTYs require a supported Unix platform; Windows support is
+not yet available. See [development details](docs/development.md#antigravity-web-terminals).

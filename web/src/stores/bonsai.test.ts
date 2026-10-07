@@ -43,6 +43,9 @@ describe('bonsai store', () => {
       envVariables: {
         bonsai: [{ id: 'env-test', key: 'NODE_ENV', value: 'test', secret: false }],
       },
+      terminalSessions: [{ id: 'fixture-terminal', label: 'Recorded fixture' }],
+      activeTerminalId: 'fixture-terminal',
+      terminalOutput: { 'fixture-terminal': ['Recorded presentation fixture'] },
       notice: '',
     })
   })
@@ -64,17 +67,20 @@ describe('bonsai store', () => {
     expect(useBonsaiStore.getState().boardItems.find((item) => item.id === 'b1')?.status).toBe('feat')
   })
 
-  it('stopping an agent keeps it on the canvas until history is explicitly requested', () => {
-    useBonsaiStore.getState().setAgentState('agent-ui', 'finished')
-    const stopped = useBonsaiStore.getState().agents.find((agent) => agent.id === 'agent-ui')
-    expect(stopped?.state).toBe('finished')
-    expect(stopped?.presentation).toBe('canvas')
+  it('rejects agent stop and restart without changing runtime state', () => {
+    const previous = useBonsaiStore.getState().agents
+    for (const state of ['finished', 'running', 'idle'] as const) {
+      useBonsaiStore.getState().setAgentState('agent-ui', state)
+      expect(useBonsaiStore.getState().agents).toBe(previous)
+      expect(useBonsaiStore.getState().notice).toContain('unavailable')
+    }
+  })
 
+  it('changes history presentation without manufacturing a finished state', () => {
     useBonsaiStore.getState().moveAgentToHistory('agent-ui')
-    expect(useBonsaiStore.getState().agents.find((agent) => agent.id === 'agent-ui')?.presentation).toBe('history')
-
+    expect(useBonsaiStore.getState().agents.find(agent => agent.id === 'agent-ui')).toMatchObject({ state: 'running', presentation: 'history' })
     useBonsaiStore.getState().restoreAgentFromHistory('agent-ui')
-    expect(useBonsaiStore.getState().agents.find((agent) => agent.id === 'agent-ui')?.presentation).toBe('canvas')
+    expect(useBonsaiStore.getState().agents.find(agent => agent.id === 'agent-ui')?.presentation).toBe('canvas')
   })
 
   it('selects the exact child agent runtime', () => {
@@ -86,9 +92,9 @@ describe('bonsai store', () => {
     expect(state.activeTerminalId).toBe('term-tests')
   })
 
-  it('creates an agent only on the explicitly selected worktree', () => {
-    const count = useBonsaiStore.getState().agents.length
-    useBonsaiStore.getState().createAgent({
+  it('rejects unsupported provider creation without changing runtime state', async () => {
+    const previous = useBonsaiStore.getState()
+    await expect(useBonsaiStore.getState().createAgent({
       worktreeId: 'wt-daemon',
       name: 'Focused debugger',
       provider: 'Codex',
@@ -97,21 +103,73 @@ describe('bonsai store', () => {
       fastMode: true,
       workType: 'Debugging',
       prompt: 'Trace the daemon lifecycle failure.',
-    })
+    })).rejects.toThrow('Antigravity')
     const state = useBonsaiStore.getState()
-    expect(state.agents).toHaveLength(count + 1)
-    expect(state.agents.at(-1)?.worktreeId).toBe('wt-daemon')
-    expect(state.dockWorktreeId).toBe('wt-daemon')
+    for (const key of ['agents', 'worktrees', 'selection', 'terminalSessions', 'terminalOutput', 'openRuntimeIds', 'dockRuntimeId'] as const) expect(state[key]).toBe(previous[key])
   })
 
-  it('archives a running agent and removes it from open runtimes', () => {
+  it('archives presentation without claiming to stop a running agent', () => {
     useBonsaiStore.setState({ openRuntimeIds: ['agent-ui'], dockRuntimeId: 'agent-ui' })
     useBonsaiStore.getState().archiveAgent('agent-ui')
     const state = useBonsaiStore.getState()
     expect(state.agents.find((agent) => agent.id === 'agent-ui')?.archived).toBe(true)
     expect(state.agents.find((agent) => agent.id === 'agent-ui')?.presentation).toBe('archived')
-    expect(state.agents.find((agent) => agent.id === 'agent-ui')?.state).toBe('finished')
+    expect(state.agents.find((agent) => agent.id === 'agent-ui')?.state).toBe('running')
     expect(state.openRuntimeIds).not.toContain('agent-ui')
+  })
+
+  it('starts with empty simulated runtime collections', () => {
+    const initial = useBonsaiStore.getInitialState()
+    expect(initial.agents).toEqual([])
+    expect(initial.terminalSessions).toEqual([])
+    expect(initial.terminalOutput).toEqual({})
+    expect(initial.activeTerminalId).toBe('')
+  })
+
+  it.each([undefined, 'agent-ui'])('rejects shell creation for %s', (id) => {
+    const previous = useBonsaiStore.getState()
+    useBonsaiStore.getState().openTerminal(id)
+    const state = useBonsaiStore.getState()
+    expect(state.terminalSessions).toBe(previous.terminalSessions)
+    expect(state.terminalOutput).toBe(previous.terminalOutput)
+    expect(state.activeTerminalId).toBe(previous.activeTerminalId)
+    expect(state.notice).toContain('unavailable')
+  })
+
+  it.each(['pnpm test', 'go test ./...', 'cargo test', 'make test', 'pnpm dev', 'echo hello', 'git pull && pnpm dev'])('never manufactures output for %s', (command) => {
+    const previous = useBonsaiStore.getState()
+    const fetchCount = vi.mocked(fetch).mock.calls.length
+    useBonsaiStore.getState().appendTerminalCommand(command)
+    expect(useBonsaiStore.getState().terminalOutput).toBe(previous.terminalOutput)
+    expect(useBonsaiStore.getState().terminalSessions).toBe(previous.terminalSessions)
+    expect(useBonsaiStore.getState().notice).not.toMatch(/passed|completed|ready|Ran/)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(fetchCount)
+  })
+
+  it.each(['pull', 'push', 'fetch'])('keeps structured Git %s usable without shell output', async (action) => {
+    const output = useBonsaiStore.getState().terminalOutput
+    useBonsaiStore.getState().appendTerminalCommand('git ' + action)
+    await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:7001/api/worktrees/wt-web/' + action, expect.objectContaining({ method: 'POST' }))
+    expect(useBonsaiStore.getState().terminalOutput).toBe(output)
+  })
+
+  it('reports external editor unavailability while saving its preference', () => {
+    useBonsaiStore.setState({ editorPreference: 'vscode', pendingOpenFile: '' })
+    useBonsaiStore.getState().requestOpenFile('src/main.ts')
+    expect(useBonsaiStore.getState().selectedFilePath).toBe('src/main.ts')
+    expect(useBonsaiStore.getState().notice).toContain('unavailable')
+    useBonsaiStore.setState({ pendingOpenFile: 'src/main.ts' })
+    useBonsaiStore.getState().setEditorPreference('cursor')
+    expect(useBonsaiStore.getState().editorPreference).toBe('cursor')
+    expect(useBonsaiStore.getState().notice).toContain('unavailable')
+  })
+
+  it('legacy agent launch callers open profile selection without creating a session', () => {
+    const agents = useBonsaiStore.getState().agents
+    useBonsaiStore.getState().startMockAgent()
+    expect(useBonsaiStore.getState().agents).toBe(agents)
+    expect(useBonsaiStore.getState().startAgentDialogOpen).toBe(true)
   })
 
   it('sends worktree creation to the daemon API and preserves state on failure', async () => {
@@ -156,15 +214,15 @@ describe('bonsai store', () => {
     expect(useBonsaiStore.getState().rightPanels.prs).toBe(true)
   })
 
-  it('adds, updates, and removes project environment variables', () => {
+  it('rejects environment edits through the action layer', () => {
+    const variables = useBonsaiStore.getState().envVariables
     useBonsaiStore.getState().addEnvVariable('bonsai')
-    const added = useBonsaiStore.getState().envVariables.bonsai.at(-1)
-    expect(added).toBeDefined()
-    if (!added) return
-    useBonsaiStore.getState().updateEnvVariable('bonsai', added.id, { key: 'API_KEY', value: 'secret' })
-    expect(useBonsaiStore.getState().envVariables.bonsai.find((item) => item.id === added.id)?.key).toBe('API_KEY')
-    useBonsaiStore.getState().removeEnvVariable('bonsai', added.id)
-    expect(useBonsaiStore.getState().envVariables.bonsai.some((item) => item.id === added.id)).toBe(false)
+    expect(useBonsaiStore.getState().envVariables).toBe(variables)
+    useBonsaiStore.getState().updateEnvVariable('bonsai', 'env-test', { key: 'API_KEY', value: 'synthetic-marker', secret: false })
+    expect(useBonsaiStore.getState().envVariables).toBe(variables)
+    useBonsaiStore.getState().removeEnvVariable('bonsai', 'env-test')
+    expect(useBonsaiStore.getState().envVariables).toBe(variables)
+    expect(useBonsaiStore.getState().notice).toContain('unavailable')
   })
 
   it('preserves placements when stacks are toggled or detached', () => {

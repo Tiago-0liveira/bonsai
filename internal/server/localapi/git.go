@@ -177,6 +177,10 @@ func (s *Server) executeGitMutation(w http.ResponseWriter, r *http.Request, kind
 }
 
 func (s *Server) runGit(w http.ResponseWriter, r *http.Request, kind, worktree string, args json.RawMessage, mutation bool) (*gitbridge.Result, bool) {
+	if kind == "git.worktree.remove" && s.agents != nil {
+		s.agents.mu.Lock()
+		defer s.agents.mu.Unlock()
+	}
 	id := randomID()
 	if mutation {
 		id = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -215,6 +219,10 @@ func (s *Server) runGit(w http.ResponseWriter, r *http.Request, kind, worktree s
 		}
 	}
 	if kind == "git.worktree.remove" {
+		if s.hasLiveAgents(s.registry.Default().info.ID, worktree) {
+			writeAPIError(w, 409, "agents_running", "Stop agents before deleting this worktree")
+			return nil, false
+		}
 		project := s.registry.Default()
 		payload, err := s.stateSync.gitPayload(r.Context(), project, "git.worktrees", func(raw json.RawMessage) (any, error) {
 			var trees []domain.Worktree

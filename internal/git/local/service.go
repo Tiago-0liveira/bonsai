@@ -96,6 +96,20 @@ func trimmed(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(v), e
 }
 func (s *Service) target(ctx context.Context, id string) (*repository, string, error) {
+	r, path, err := s.registeredTarget(ctx, id)
+	if err != nil {
+		return nil, "", err
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return r, path, nil
+}
+
+// registeredTarget looks up Git's inventory without requiring the working
+// directory to exist. Removal must also support stale worktree registrations.
+func (s *Service) registeredTarget(ctx context.Context, id string) (*repository, string, error) {
 	for _, r := range s.repos {
 		trees, err := core.ListWorktreesContext(ctx, r.Root)
 		if err != nil {
@@ -103,11 +117,7 @@ func (s *Service) target(ctx context.Context, id string) (*repository, string, e
 		}
 		for _, t := range trees {
 			if !t.Bare && ID(r.ID, t.Path) == id {
-				p, e := filepath.EvalSymlinks(t.Path)
-				if e != nil {
-					return nil, "", e
-				}
-				return r, p, nil
+				return r, t.Path, nil
 			}
 		}
 	}
@@ -154,6 +164,10 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 	}
 
 	for i := range w {
+		if w[i].Missing {
+			w[i].StatusError = &domain.StateError{Code: "worktree_missing", Message: "Worktree directory is missing; its Git registration remains"}
+			continue
+		}
 		st, err := statusOverview(ctx, w[i].Path)
 		if err != nil {
 			w[i].StatusError = &domain.StateError{Code: domain.Code(err), Message: err.Error()}
@@ -232,7 +246,8 @@ func (s *Service) ListWorktrees(ctx context.Context, id string) ([]domain.Worktr
 		if t.Bare {
 			continue
 		}
-		result = append(result, domain.Worktree{ID: ID(id, t.Path), RepositoryID: id, Path: t.Path, Branch: t.Branch, HeadSHA: t.HEAD, Main: t.IsMain})
+		_, statErr := os.Lstat(t.Path)
+		result = append(result, domain.Worktree{ID: ID(id, t.Path), RepositoryID: id, Path: t.Path, Branch: t.Branch, HeadSHA: t.HEAD, Main: t.IsMain, Missing: os.IsNotExist(statErr)})
 	}
 	return result, nil
 }

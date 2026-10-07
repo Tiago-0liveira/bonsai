@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -70,13 +71,14 @@ type stateSync struct {
 	epoch    string
 	now      func() time.Time
 
-	mu           sync.Mutex
-	runCtx       context.Context
-	closed       bool
-	running      bool
-	projects     map[string]*projectProjection
-	jobs         map[string]*syncJobState
-	watchCancels map[string]context.CancelFunc
+	processAuthorityMu sync.Mutex // prevents a late read from overtaking deletion
+	mu                 sync.Mutex
+	runCtx             context.Context
+	closed             bool
+	running            bool
+	projects           map[string]*projectProjection
+	jobs               map[string]*syncJobState
+	watchCancels       map[string]context.CancelFunc
 
 	localSem    chan struct{}
 	providerSem chan struct{}
@@ -362,10 +364,12 @@ func (s *stateSync) ensureLocked(info ProjectInfo) *projectProjection {
 			Online:        info.Available,
 			Metadata:      map[string]worktreeMetadata{},
 			Processes:     []browserProcessSummary{},
+			Agents:        []agentterminal.Summary{},
 			Freshness:     map[string]browserFreshness{},
 			WorktreeState: map[string]browserWorktreeState{},
 		},
 	}
+	p.snapshot.Freshness["agents"] = browserFreshness{State: "ready"}
 	p.snapshot.Freshness["local"] = browserFreshness{State: "loading"}
 	p.snapshot.Freshness["processes"] = browserFreshness{State: "loading"}
 	p.snapshot.Freshness["provider"] = browserFreshness{State: "loading"}
@@ -511,6 +515,8 @@ func (s *stateSync) gitPayload(ctx context.Context, project projectServices, kin
 }
 
 func (s *stateSync) refreshProcesses(projectID string) {
+	s.processAuthorityMu.Lock()
+	defer s.processAuthorityMu.Unlock()
 	project, ok := s.registry.Lookup(projectID)
 	if !ok || !project.info.Available {
 		return
@@ -519,7 +525,12 @@ func (s *stateSync) refreshProcesses(projectID string) {
 	defer cancel()
 	var records []*procstore.Record
 	var err error
-	if daemon, ok := project.daemon.(contextDaemonClient); ok {
+	var visibility procstore.ProcessVisibility
+	if daemon, ok := project.daemon.(interface {
+		ProcessAuthorityContext(context.Context) ([]*procstore.Record, procstore.ProcessVisibility, error)
+	}); ok {
+		records, visibility, err = daemon.ProcessAuthorityContext(ctx)
+	} else if daemon, ok := project.daemon.(contextDaemonClient); ok {
 		records, err = daemon.ListContext(ctx)
 	} else {
 		records, err = project.daemon.List()
@@ -557,6 +568,7 @@ func (s *stateSync) refreshProcesses(projectID string) {
 			summaries = append(summaries, summary)
 		}
 		snapshot.Processes = summaries
+		snapshot.ProcessVisibility = visibility
 		now := s.now()
 		snapshot.Freshness["processes"] = browserFreshness{State: "ready", UpdatedAt: &now}
 	})
@@ -861,6 +873,7 @@ func markUnavailable(freshness map[string]browserFreshness, component, code, mes
 
 func cloneSnapshot(in browserSnapshot) browserSnapshot {
 	out := in
+	out.Agents = append(in.Agents[:0:0], in.Agents...)
 	if in.Local != nil {
 		local := *in.Local
 		local.Branches = append([]domain.Branch(nil), in.Local.Branches...)

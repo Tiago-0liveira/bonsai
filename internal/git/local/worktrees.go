@@ -108,7 +108,7 @@ func (s *Service) createWorktree(ctx context.Context, r *repository, req domain.
 	return domain.Worktree{}, domain.ErrNotFound
 }
 func (s *Service) RemoveWorktree(ctx context.Context, req domain.RemoveWorktreeRequest) error {
-	r, path, e := s.target(ctx, req.WorktreeID)
+	r, path, e := s.registeredTarget(ctx, req.WorktreeID)
 	if e != nil {
 		return e
 	}
@@ -120,20 +120,36 @@ func (s *Service) RemoveWorktree(ctx context.Context, req domain.RemoveWorktreeR
 	if path == r.Root {
 		return domain.E("forbidden", "cannot remove main worktree")
 	}
+	_, statErr := os.Lstat(path)
+	missing := os.IsNotExist(statErr)
+	if statErr != nil && !missing {
+		return statErr
+	}
+	if !missing {
+		path, e = filepath.EvalSymlinks(path)
+		if e != nil {
+			return e
+		}
+		if path == r.Root {
+			return domain.E("forbidden", "cannot remove main worktree")
+		}
+	}
 	if r.BeforeRemove != nil {
 		if err := r.BeforeRemove(ctx, path); err != nil {
 			return err
 		}
 	}
-	st, e := status(ctx, path)
-	if e != nil {
-		return e
-	}
-	if st.Dirty && !req.ConfirmDiscard {
-		return domain.ErrDirty
-	}
-	if st.GitState != "normal" {
-		return domain.ErrBusy
+	if !missing {
+		st, err := status(ctx, path)
+		if err != nil {
+			return err
+		}
+		if st.Dirty && !req.ConfirmDiscard {
+			return domain.ErrDirty
+		}
+		if st.GitState != "normal" {
+			return domain.ErrBusy
+		}
 	}
 	args := []string{"worktree", "remove"}
 	if req.ConfirmDiscard {

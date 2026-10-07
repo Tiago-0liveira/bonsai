@@ -1,6 +1,8 @@
 package agents
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -42,5 +44,19 @@ func TestLockFileSerializesGoroutines(t *testing.T) {
 		t.Fatal(err)
 	case <-time.After(time.Second):
 		t.Fatal("second lock did not acquire after unlock")
+	}
+}
+
+func TestLockFileContextCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lock")
+	held, err := LockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := LockFileContext(ctx, path); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v", err)
 	}
 }

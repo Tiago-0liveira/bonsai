@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'node:url'
 
 const localApiOrigin = process.env.VITE_BONSAI_LOCAL_API_ORIGIN ?? 'http://127.0.0.1:7001'
 const relayOrigin = process.env.VITE_BONSAI_RELAY_ORIGIN ?? 'https://api.bonsai.dev'
@@ -26,8 +27,25 @@ const developmentSecurityHeaders = {
   'Content-Security-Policy': `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${devWebSocketOrigin} ${localApiOrigin} ${localWebSocketOrigin} ${relayOrigin}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' ${relayOrigin}`,
 }
 
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), {
+    name: 'e2e-fixtures-and-profiling',
+    enforce: 'pre',
+    // Browser presentation fixtures bypass persistence only in the test build.
+    // The normal production build does not expose the store.
+    transform(code, id) {
+      if (mode === 'e2e' && id.endsWith('/src/stores/bonsai.ts')) {
+        return code + '\nObject.defineProperty(window, "__bonsaiTestStore", { value: useBonsaiStore });\n'
+      }
+      if (mode !== 'e2e') return
+      const count = (field: string) => `window.__bonsaiMetrics && window.__bonsaiMetrics.${field}++;`
+      if (id.endsWith('/canvas/buildCanvasGraph.ts')) return code.replace('const { project,', count('graph') + '\n  const { project,')
+      if (id.endsWith('/layout/prLabels.ts')) return code.replace('const rects = new Map', count('labels') + '\n  const rects = new Map')
+      if (id.endsWith('/layout/AppShell.tsx')) return "import { Profiler } from 'react';\n" + code.replace('{children}</main>', '<Profiler id="main-workspace" onRender={(_id, phase, duration) => window.__bonsaiMetrics?.commits.push({phase, duration})}>{children}</Profiler></main>')
+    },
+  }],
+  // The test build alone enables React's production Profiler callbacks.
+  resolve: { alias: mode === 'e2e' ? [{ find: /^react-dom(?:\/client)?$/, replacement: fileURLToPath(new URL('./node_modules/react-dom/profiling.js', import.meta.url)) }] : [] },
   server: {
     host: '127.0.0.1',
     port: webPort,
@@ -37,8 +55,13 @@ export default defineConfig({
   preview: { headers: productionSecurityHeaders },
   test: {
     environment: 'jsdom',
+    // Exercise real client panel lifecycle in jsdom; the package's Node export
+    // intentionally strips panel registration/layout effects for SSR.
+    alias: {
+      'react-resizable-panels': fileURLToPath(new URL('./node_modules/react-resizable-panels/dist/react-resizable-panels.browser.development.esm.js', import.meta.url)),
+    },
     globals: true,
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.test.{ts,tsx}'],
   },
-})
+}))

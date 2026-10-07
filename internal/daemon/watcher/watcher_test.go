@@ -86,7 +86,9 @@ func TestLinkedWorktreeChangesPublishWithoutPeriodicScan(t *testing.T) {
 		select {
 		case state := <-updates:
 			for _, tree := range state.Worktrees {
-				if tree.Path == linked && tree.Status != nil && len(tree.Status.Files) > 0 {
+				linkedInfo, linkedErr := os.Stat(linked)
+				treeInfo, treeErr := os.Stat(tree.Path)
+				if linkedErr == nil && treeErr == nil && os.SameFile(linkedInfo, treeInfo) && tree.Status != nil && len(tree.Status.Files) > 0 {
 					return
 				}
 			}

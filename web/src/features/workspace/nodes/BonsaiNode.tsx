@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { openGitHub } from '../../../api/git'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
@@ -29,7 +30,7 @@ import {
   X,
 } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
-import type { AgentState, CiStatus, DefaultBranchInfo, Health, PrStatus } from '../../../types'
+import type { AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
 
 export interface StackItemData {
   id: string
@@ -40,6 +41,7 @@ export interface StackItemData {
   connectionLabel?: string
   dirtyFiles?: number
   hasRunningAgent: boolean
+  processCount?: number
 }
 
 export interface HistoryItemData {
@@ -51,7 +53,10 @@ export interface HistoryItemData {
 
 export interface BonsaiGraphData extends Record<string, unknown> {
   entityId: string
-  kind: 'project' | 'worktree' | 'agent' | 'stack' | 'default-branch' | 'env'
+  kind: 'project' | 'worktree' | 'agent' | 'process' | 'runtime-shelf' | 'stack' | 'default-branch' | 'env'
+  command?: string
+  processStatus?: ProcessLifecycleStatus
+  associationLabel?: string
   title: string
   subtitle?: string
   health?: Health
@@ -92,13 +97,14 @@ const healthColor: Record<Health, string> = {
   idle: 'bg-[rgb(var(--muted-2))]',
 }
 
-function MenuItem({ children, onSelect }: { children: React.ReactNode; onSelect?: () => void }) {
+function MenuItem({ children, onSelect, unavailable = false }: { children: React.ReactNode; onSelect?: () => void; unavailable?: boolean }) {
   return (
     <ContextMenu.Item
       onSelect={onSelect}
-      className="flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--purple)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
+      disabled={unavailable}
+      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--purple)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
     >
-      {children}
+      {children}{unavailable && <span className="ml-auto text-[9px]">unavailable</span>}
     </ContextMenu.Item>
   )
 }
@@ -148,7 +154,7 @@ function PrBadge({ status, number }: { status?: PrStatus; number?: number }) {
   )
 }
 
-function MoveSubtreeGrip({ id }: { id: string }) {
+export function MoveSubtreeGrip({ id }: { id: string }) {
   const setSubtreeMoveRoot = useBonsaiStore((state) => state.setSubtreeMoveRoot)
   return (
     <button
@@ -254,6 +260,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
               className="min-w-0 flex-1 truncate text-left font-mono text-[9px] hover:text-[rgb(var(--text))]"
             >
               <span className="block truncate">{item.branch}</span>
+              {!!item.processCount && <span className="text-[8px] text-[rgb(var(--muted))]">{item.processCount} processes</span>}
               {item.connectionLabel && <span className="block text-[8px] text-[rgb(var(--orange))]">{item.connectionLabel} · {item.dirtyFiles ?? 0} changed</span>}
             </button>
             <ContextMenu.Root>
@@ -278,7 +285,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
   )
 }
 
-function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolean }) {
+const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolean }) {
   const historyOpen = useBonsaiStore((state) => state.expandedHistoryWorktreeIds.includes(data.entityId))
   const toggleWorktreeHistory = useBonsaiStore((state) => state.toggleWorktreeHistory)
   const setSelection = useBonsaiStore((state) => state.setSelection)
@@ -290,6 +297,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
   const restoreAgent = useBonsaiStore((state) => state.restoreAgent)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
+  const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setNotice = useBonsaiStore((state) => state.setNotice)
@@ -387,7 +395,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
               </div>
               <div className="flex items-center justify-between border-t border-[rgb(var(--border))] px-2.5 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">
                 <span>{data.subtitle}</span>
-                <span>{data.stats?.[0]?.value ?? 0} canvas agents</span>
+                <span>{data.stats?.[0]?.value ?? 0} agents · {data.stats?.[1]?.value ?? 0} processes</span>
               </div>
               {(data.historyItems?.length ?? 0) > 0 && (
                 <div className="border-t border-[rgb(var(--border))]">
@@ -450,7 +458,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
                     <span className="truncate text-[10px] font-semibold">{data.title}</span>
                   </div>
                   <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.provider} · {data.model}</div>
-                  <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>
+                  {(data.reasoningEffort || data.runtime) && <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>}
                 </div>
               </div>
               <div className="mt-2 line-clamp-1 text-[9px] text-[rgb(var(--muted))]">{data.task}</div>
@@ -471,6 +479,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
             <>
               <MenuItem onSelect={() => setWorktreeDialogOpen(true)}><Plus size={13} /> Add worktree</MenuItem>
               <MenuItem onSelect={() => openStartAgentDialog()}><Bot size={13} /> Start agent</MenuItem>
+              <MenuItem onSelect={() => openStartProcessDialog('', data.entityId)}><Play size={13} /> Start process</MenuItem>
               <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
               <MenuItem onSelect={() => requestCanvasAction('layout')}><Network size={13} /> Auto-layout children</MenuItem>
               <MenuItem onSelect={() => setNotice('Project settings are mocked')}><Settings2 size={13} /> Project settings</MenuItem>
@@ -480,6 +489,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
           {data.kind === 'worktree' && (
             <>
               <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
+              <MenuItem onSelect={() => openStartProcessDialog(data.entityId)}><Play size={13} /> Start process</MenuItem>
               <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
               {(data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => data.groupId ? toggleAutomaticGroup(data.groupId) : toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.groupId ? 'Local / unlinked' : data.tag} stack</MenuItem>}
               <MenuItem onSelect={() => setDeleteWorktreeId(data.entityId)}><Trash2 size={13} /> Delete worktree</MenuItem>
@@ -488,11 +498,11 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
 
           {data.kind === 'agent' && (
             <>
-              <MenuItem onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
+              <MenuItem unavailable={agent?.providerId !== 'antigravity'} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
               <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
-              <MenuItem onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
-              <MenuItem onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart mock</MenuItem>
-              <MenuItem onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
+              <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
+              <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart</MenuItem>
+              <MenuItem unavailable={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
               {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
                 <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
               )}
@@ -508,7 +518,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
       </ContextMenu.Portal>
     </ContextMenu.Root>
   )
-}
+})
 
 export function ProjectNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={props.selected} /> }
 export function WorktreeNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={props.selected} /> }

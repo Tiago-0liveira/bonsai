@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 type SessionService struct {
@@ -32,7 +33,9 @@ func (s *SessionService) RunForeground(ctx context.Context, accountID AccountID,
 		return errors.Join(prepareErr, s.Sessions.Cleanup(session))
 	}
 	runErr := s.Launcher.RunForeground(ctx, prepared)
-	finalizeErr := provider.FinalizeSession(ctx, FinalizeSessionRequest{Account: account, Session: session})
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	finalizeErr := provider.FinalizeSession(cleanupCtx, FinalizeSessionRequest{Account: account, Session: session})
 	cleanupErr := s.Sessions.Cleanup(session)
 	return errors.Join(runErr, finalizeErr, cleanupErr)
 }

@@ -1,13 +1,15 @@
+import { project, pullRequest, checkStatus, reconcileSnapshotEntities, snapshotRuntimeAuthority } from './snapshotReconciliation'
+import { remapProcessReferences } from '../stores/processProjection'
+import { activeRuntimePatch, reconcileRuntimePreferences, switchRuntimeScope } from '../stores/runtimePreferences'
+import { changedPatch, replaceScope } from '../stores/reconciliation'
+export { pullRequest } from './snapshotReconciliation'
 import { useBonsaiStore } from '../stores/bonsai'
 import type {
   CiStatus,
   CreateWorktreeInput,
-  Process,
   ProcessLifecycleStatus,
-  Project,
   PullRequest,
   SyncFreshness,
-  Worktree,
 } from '../types'
 import {
   invalidateLocalSession,
@@ -54,7 +56,7 @@ interface GitHubRepository {
   default_branch: string
   private?: boolean
 }
-interface RemoteCheck {
+export interface RemoteCheck {
   id?: number
   name: string
   status: string
@@ -80,7 +82,7 @@ export interface RemotePR {
   commits?: { sha: string; message: string; author: string; created_at: string }[]
   files?: { path: string; additions: number; deletions: number; patch: string }[]
 }
-interface WireFreshness {
+export interface WireFreshness {
   state: SyncFreshness['state']
   updated_at?: string
   error?: { code: string; message: string }
@@ -108,14 +110,23 @@ interface LocalWorktree {
   path?: string
   branch: string
   main: boolean
+  missing?: boolean
   local_head_sha: string
   status?: LocalStatus
   status_error?: { code: string; message: string }
   connection?: { state: 'linked' | 'unlinked' | 'unknown'; reason?: string; status_unknown?: boolean }
 }
-interface ProcessSummary {
+export interface ProcessSummary {
+  command_key?: string
+  execution_order?: number
   id: string
   daemon_id: number
+  revision?: number
+  policy?: { mode: 'no' | 'on-failure' | 'always'; max_restarts: number }
+  restarts?: number
+  retry_count?: number
+  attempt?: number
+  retry_at?: string
   project_id: string
   worktree_id?: string
   label: string
@@ -130,7 +141,7 @@ interface ProcessSummary {
   serve_group?: string
   serve_name?: string
 }
-interface WorktreeProjection {
+export interface WorktreeProjection {
   pull_request?: RemotePR
   pr_diagnostic?: string
   ci?: {
@@ -141,6 +152,8 @@ interface WorktreeProjection {
   }
 }
 export interface Snapshot {
+  process_visibility?: { cutoffs: Record<string, number>; deleted: Record<string, boolean> }
+  agents?: import('./agents').AgentSummary[]
   epoch?: string
   branch_candidates?: BranchCandidate[]
   sync?: RepositorySync
@@ -195,57 +208,13 @@ export async function request<T>(path: string, body?: unknown, method = body ===
 export function report(error: unknown) {
   useBonsaiStore.setState({ notice: error instanceof Error ? error.message : String(error) })
 }
-function project(r: Repository): Project {
-  return {
-    id: r.id,
-    path: r.path,
-    rootId: r.root_id,
-    available: r.available,
-    workspaceId: r.workspace_id,
-    name: r.name ?? r.full_name.split('/').at(-1) ?? r.id,
-    repository: r.full_name,
-    description: '',
-    health: 'idle',
-    defaultBranch: r.default_branch,
-    worktreeIds: [],
-    openPrCount: 0,
-  }
-}
-export function pullRequest(repo: string, p: RemotePR): PullRequest {
-  return {
-    id: `${repo}:${p.number}`,
-    number: p.number,
-    title: p.title,
-    description: p.body ?? '',
-    branch: p.head,
-    headRepository: p.head_repository,
-    base: p.base,
-    status: p.state === 'merged' ? 'Merged' : p.state === 'closed' ? 'Closed' : p.draft ? 'Draft' : 'Open',
-    author: p.author,
-    createdAt: p.created_at,
-    updatedAt: p.updated_at,
-    mergeable: p.mergeable === 'mergeable',
-    checks: [],
-    commits: (p.commits ?? []).map(c => ({ sha: c.sha, message: c.message, author: c.author, time: c.created_at })),
-    conversation: [
-      ...(p.comments ?? []).map(c => ({ author: c.author, body: c.body, time: c.created_at, kind: 'comment' as const })),
-      ...(p.reviews ?? []).map(c => ({ author: c.author, body: c.body, time: c.submitted_at, kind: 'review' as const })),
-    ],
-    files: (p.files ?? []).map(f => ({
-      path: f.path,
-      additions: f.additions,
-      deletions: f.deletions,
-      diff: (f.patch ?? '').split('\n'),
-    })),
-  }
-}
-
 const pendingCreatedWorktrees = new Map<string, string>()
 const heads = new Map<string, string>()
 const githubRepositoryProjects = new Map<number, Set<string>>()
 interface SequenceGuard {
   epoch: string
   applied: number
+  localWorktrees?: string
 }
 const sequenceGuards = new Map<string, SequenceGuard>()
 let activeEpoch = ''
@@ -254,14 +223,6 @@ type StoreState = ReturnType<typeof useBonsaiStore.getState>
 
 export function projectForGitHubRepository(repositoryId: number) {
   return [...(githubRepositoryProjects.get(repositoryId) ?? [])]
-}
-
-function wireFreshness(value: WireFreshness | undefined): SyncFreshness {
-  return {
-    state: value?.state ?? 'loading',
-    updatedAt: value?.updated_at,
-    error: value?.error,
-  }
 }
 
 function setEpoch(epoch: string) {
@@ -276,53 +237,6 @@ function guardFor(projectId: string, epoch: string) {
   const next: SequenceGuard = { epoch, applied: -1 }
   sequenceGuards.set(projectId, next)
   return next
-}
-
-function processHealth(status: ProcessLifecycleStatus): Process['status'] {
-  switch (status) {
-    case 'running':
-    case 'starting':
-      return 'healthy'
-    case 'backoff':
-    case 'stopping':
-    case 'orphan':
-      return 'warning'
-    case 'failed':
-    case 'lost':
-      return 'error'
-    default:
-      return 'idle'
-  }
-}
-
-function mapProcess(value: ProcessSummary): Process {
-  return {
-    id: value.id,
-    projectId: value.project_id,
-    daemonId: value.daemon_id,
-    worktreeId: value.worktree_id ?? '',
-    name: value.label || value.command || `Process #${value.daemon_id}`,
-    command: value.command,
-    status: processHealth(value.status),
-    lifecycleStatus: value.status,
-    pid: value.pid,
-    port: value.expected_port || undefined,
-    url: value.url || undefined,
-    startedAt: value.started_at || undefined,
-    exitCode: value.exit_code,
-    exitError: value.exit_error || undefined,
-    serveGroup: value.serve_group || undefined,
-    serveName: value.serve_name || undefined,
-  }
-}
-
-function checkStatus(check: RemoteCheck): 'success' | 'running' | 'failed' {
-  if (check.status !== 'completed') return 'running'
-  return ['success', 'neutral', 'skipped'].includes(check.conclusion) ? 'success' : 'failed'
-}
-
-function ciStatus(value: WorktreeProjection['ci'] | undefined): CiStatus {
-  return value?.status ?? 'unknown'
 }
 
 function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activeGeneration): Partial<StoreState> | undefined {
@@ -343,201 +257,75 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     githubRepositoryProjects.set(repositoryId, projects)
   }
 
-  const remoteByNumber = new Map<number, RemotePR>()
-  for (const value of snapshot.remote?.pull_requests ?? []) remoteByNumber.set(value.number, value)
-  for (const projection of Object.values(snapshot.worktree_state ?? {})) {
-    if (projection.pull_request) remoteByNumber.set(projection.pull_request.number, projection.pull_request)
+  const entityPatch = reconcileSnapshotEntities(snapshot, state)
+  const authority = snapshotRuntimeAuthority(snapshot)
+  const trees = (entityPatch.worktrees ?? state.worktrees).filter(w => w.projectId === id)
+  const allTrees = entityPatch.worktrees ?? state.worktrees
+  const allProcesses = entityPatch.processes ?? state.processes
+  for (const value of snapshot.remote?.pull_requests ?? []) heads.set(`${id}:${value.number}`, value.head_sha)
+  for (const value of Object.values(snapshot.worktree_state ?? {})) {
+    if (value.pull_request) heads.set(`${id}:${value.pull_request.number}`, value.pull_request.head_sha)
   }
-  const prs = [...remoteByNumber.values()].map(p => {
-    const mapped = pullRequest(id, p)
-    heads.set(mapped.id, p.head_sha)
-    const previous = state.pullRequests.find(v => v.id === mapped.id)
-    const projection = Object.values(snapshot.worktree_state ?? {}).find(v => v.pull_request?.number === p.number)
-    if (projection?.ci?.checks) {
-      mapped.checks = projection.ci.checks.map(c => ({ name: c.name, status: checkStatus(c) }))
-    } else if (previous?.updatedAt === mapped.updatedAt) {
-      mapped.checks = previous.checks
-    }
-    return previous?.updatedAt === mapped.updatedAt
-      ? { ...previous, ...mapped, status: mapped.status, checks: mapped.checks }
-      : mapped
-  })
-
-  const freshness = Object.fromEntries(
-    Object.entries(snapshot.freshness ?? {}).map(([component, value]) => [component, wireFreshness(value)]),
-  )
-  const localFreshness = freshness.local
-  const trees: Worktree[] = (snapshot.local?.worktrees ?? []).map(w => {
-    const meta = snapshot.metadata[w.id]
-    const st = w.status
-    const projection = snapshot.worktree_state?.[w.id]
-    const associated = projection?.pull_request
-    const pr = associated ? prs.find(item => item.number === associated.number) : undefined
-    const ci = projection?.ci
-    const failedChecks = (ci?.checks ?? []).filter(check => checkStatus(check) === 'failed').length
-    const status = !snapshot.online
-      ? 'idle'
-      : w.status_error || localFreshness?.state === 'error'
-        ? 'warning'
-        : st?.dirty
-          ? 'warning'
-          : st
-            ? 'healthy'
-            : 'idle'
-    return {
-      id: w.id,
-      projectId: id,
-      branch: w.branch,
-      path: w.path,
-      main: w.main,
-      headSha: w.local_head_sha,
-      connection: w.connection ? { state: w.connection.state, reason: w.connection.reason, statusUnknown: w.connection.status_unknown } : undefined,
-      kind: w.main ? 'Production' : 'Feature',
-      tag: meta?.tag || (w.main ? 'production' : 'untagged'),
-      sourceType: 'existing',
-      mergeTargetBranch: pr?.base ?? (meta?.merge_target_branch || snapshot.repository.default_branch),
-      stackPreference: meta?.stack_preference || 'auto',
-      status,
-      agentIds: state.agents.filter(a => a.worktreeId === w.id).map(a => a.id),
-      prNumber: pr?.number,
-      prStatus: pr?.status,
-      ciStatus: ciStatus(ci),
-      ciFailed: failedChecks,
-      checkedSha: ci?.checked_sha,
-      upstream: st?.upstream,
-      divergenceAvailable: st?.divergence_available,
-      gitStatusError: w.status_error?.message,
-      ahead: st?.divergence_available ? st.ahead : 0,
-      behind: st?.divergence_available ? st.behind : 0,
-      dirtyFiles: st?.files?.length ?? 0,
-      lastActivity: st?.last_commit?.when ?? '',
-      gitState: st?.git_state,
-    }
-  })
-
-  const p = project(snapshot.repository)
-  const mainTree = (snapshot.local?.worktrees ?? []).find(w => w.main)
-  const mainCommit = mainTree?.status?.last_commit
-  const mainProjection = mainTree ? snapshot.worktree_state?.[mainTree.id] : undefined
-  p.health = !snapshot.online
-    ? 'idle'
-    : localFreshness?.state === 'error'
-      ? 'error'
-      : localFreshness?.state === 'stale'
-        ? 'warning'
-        : 'healthy'
-  p.worktreeIds = trees.map(w => w.id)
-  p.openPrCount = prs.filter(value => value.status === 'Open' || value.status === 'Draft').length
-  if (mainCommit) {
-    p.defaultBranchInfo = {
-      commitSha: mainCommit.sha,
-      commitMessage: mainCommit.subject,
-      lastActivity: mainCommit.when,
-      ciStatus: ciStatus(mainProjection?.ci),
-    }
-  }
-
-  const branches = snapshot.local?.branches ?? []
-  const candidates = snapshot.branch_candidates ?? []
-  const groups = snapshot.local?.groups ?? []
-  const sync = snapshot.sync ?? state.repositorySync[id]
-
-  const nextProcesses = (snapshot.processes ?? []).map(mapProcess)
-  const allTrees = [...state.worktrees.filter(w => w.projectId !== id), ...trees]
-  const allProcesses = [...state.processes.filter(process => process.projectId !== id), ...nextProcesses]
   const removedWorktreeIds = new Set(state.worktrees.filter(w => w.projectId === id && !trees.some(tree => tree.id === w.id)).map(w => w.id))
-  const agents = state.agents.filter(agent => !removedWorktreeIds.has(agent.worktreeId))
+  const mappedAgents = entityPatch.agents ?? state.agents
+  const agents = removedWorktreeIds.size ? mappedAgents.filter(agent => !removedWorktreeIds.has(agent.worktreeId)) : mappedAgents
+  const removedRuntimeIds = new Set([
+    ...state.agents.filter(agent => !agents.some(value => value.id === agent.id)
+      && (agent.projectId === id || state.worktrees.some(tree => tree.projectId === id && tree.id === agent.worktreeId))).map(agent => agent.id),
+    ...state.processes.filter(process => authority.processes && process.projectId === id && !allProcesses.some(value => value.id === process.id)).map(process => process.id),
+    ...Object.values(state.terminalViewPreferences[id]?.worktrees ?? {}).flatMap(view => view.open.filter(ref =>
+      ref.kind === 'process' ? authority.processes && !allProcesses.some(process => process.id === ref.id)
+        : authority.agents && !agents.some(agent => agent.id === ref.id)).map(ref => ref.id)),
+  ])
   const pendingCreatedId = pendingCreatedWorktrees.get(id)
   const createdVisible = pendingCreatedId && trees.some(w => w.id === pendingCreatedId)
   if (createdVisible) pendingCreatedWorktrees.delete(id)
   const selection = createdVisible && state.activeProjectId === id
     ? { type: 'worktree' as const, id: pendingCreatedId }
-    : state.selection.type === 'agent' && !agents.some(agent => agent.id === state.selection.id)
+    : state.activeProjectId === id && state.selection.type === 'agent' && (authority.agents || state.agents.some(agent => agent.id === state.selection.id && removedWorktreeIds.has(agent.worktreeId))) && !agents.some(agent => agent.id === state.selection.id)
       ? { type: 'project' as const, id: state.activeProjectId }
+      : state.activeProjectId === id && state.selection.type === 'process' && authority.processes && !allProcesses.some(process => process.id === state.selection.id)
+      ? { type: 'project' as const, id }
       : state.selection.type === 'worktree'
-    && state.worktrees.some(w => w.id === state.selection.id && w.projectId === id)
-    && !trees.some(w => w.id === state.selection.id)
+    && authority.worktrees
+    && (state.activeProjectId === id || state.worktrees.some(w => w.id === state.selection.id && w.projectId === id))
+    && !allTrees.some(w => w.id === state.selection.id)
     ? { type: 'project' as const, id }
     : state.selection
-  const dockWorktreeId = createdVisible && state.activeProjectId === id
-    ? pendingCreatedId
-    : state.dockWorktreeId && allTrees.some(w => w.id === state.dockWorktreeId)
-    ? state.dockWorktreeId
-    : allTrees.find(w => w.projectId === state.activeProjectId)?.id ?? ''
-  const liveRuntimeIds = new Set([...agents.map(agent => agent.id), ...allProcesses.map(process => process.id)])
-  const openRuntimeIds = state.openRuntimeIds.filter(runtimeId => liveRuntimeIds.has(runtimeId))
-  const dockRuntimeId = state.dockRuntimeId && liveRuntimeIds.has(state.dockRuntimeId) ? state.dockRuntimeId : ''
+  let working = { ...state, ...entityPatch, agents }
+  if (authority.processes) working = { ...working, ...remapProcessReferences(working, state, id) }
+  if (state.activeProjectId === id && (createdVisible || (!state.dockWorktreeId && !state.terminalViewPreferences[id] && authority.worktrees))) {
+    working = { ...working, ...switchRuntimeScope(working, id, createdVisible ? pendingCreatedId : undefined) }
+  }
+  working = { ...working, ...reconcileRuntimePreferences(working, id, authority) }
 
-  const patch: Partial<StoreState> = {
+  const patch = changedPatch(state, {
+    ...entityPatch,
     selection,
     agents,
-    nodePlacements: Object.fromEntries(Object.entries(state.nodePlacements).filter(([nodeId]) => !removedWorktreeIds.has(nodeId) && !state.agents.some(agent => agent.id === nodeId && removedWorktreeIds.has(agent.worktreeId)))),
-    detachedStackWorktreeIds: [...new Set([...state.detachedStackWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)), ...(createdVisible ? [pendingCreatedId] : [])])],
-    expandedHistoryWorktreeIds: state.expandedHistoryWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)),
-    terminalSessions: state.terminalSessions.filter(session => !session.agentId || agents.some(agent => agent.id === session.agentId)),
-    branchCandidates: { ...state.branchCandidates, [id]: candidates },
-    worktreeGroups: { ...state.worktreeGroups, [id]: groups },
-    repositorySync: sync ? { ...state.repositorySync, [id]: sync } : state.repositorySync,
-    projects: state.projects.map(value => value.id === id ? p : value),
-    worktrees: allTrees,
-    processes: allProcesses,
-    pullRequests: [...state.pullRequests.filter(value => !value.id.startsWith(`${id}:`)), ...prs],
-    gitBranches: { ...state.gitBranches, [id]: branches },
-    gitOnline: { ...state.gitOnline, [id]: snapshot.online },
-    syncFreshness: { ...state.syncFreshness, [id]: freshness },
-    dockWorktreeId,
-    dockRuntimeId,
-    openRuntimeIds,
-  }
-  const semanticFreshness = (value: typeof state.syncFreshness) => Object.fromEntries(
-    Object.entries(value).map(([projectId, components]) => [
-      projectId,
-      Object.fromEntries(Object.entries(components).map(([component, freshness]) => [
-        component,
-        { state: freshness.state, error: freshness.error },
-      ])),
-    ]),
-  )
-  const currentSemantic = {
-    selection: state.selection,
-    agents: state.agents,
-    detachedStackWorktreeIds: state.detachedStackWorktreeIds,
-    worktreeGroups: state.worktreeGroups,
-    projects: state.projects,
-    worktrees: state.worktrees,
-    processes: state.processes,
-    pullRequests: state.pullRequests,
-    gitBranches: state.gitBranches,
-    gitOnline: state.gitOnline,
-    syncFreshness: semanticFreshness(state.syncFreshness),
-    dockWorktreeId: state.dockWorktreeId,
-    dockRuntimeId: state.dockRuntimeId,
-    openRuntimeIds: state.openRuntimeIds,
-  }
-  const nextSemantic = {
-    selection,
-    agents: patch.agents,
-    detachedStackWorktreeIds: patch.detachedStackWorktreeIds,
-    worktreeGroups: patch.worktreeGroups,
-    projects: patch.projects,
-    worktrees: patch.worktrees,
-    processes: patch.processes,
-    pullRequests: patch.pullRequests,
-    gitBranches: patch.gitBranches,
-    gitOnline: patch.gitOnline,
-    syncFreshness: semanticFreshness(patch.syncFreshness as typeof state.syncFreshness),
-    dockWorktreeId,
-    dockRuntimeId,
-    openRuntimeIds,
+    nodePlacements: removedWorktreeIds.size || removedRuntimeIds.size ? Object.fromEntries(Object.entries(state.nodePlacements).filter(([nodeId]) => !removedWorktreeIds.has(nodeId) && !removedRuntimeIds.has(nodeId))) : state.nodePlacements,
+    detachedStackWorktreeIds: removedWorktreeIds.size || createdVisible ? [...new Set([...state.detachedStackWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)), ...(createdVisible ? [pendingCreatedId] : [])])] : state.detachedStackWorktreeIds,
+    expandedHistoryWorktreeIds: removedWorktreeIds.size ? state.expandedHistoryWorktreeIds.filter(nodeId => !removedWorktreeIds.has(nodeId)) : state.expandedHistoryWorktreeIds,
+    collapsedBranchIds: removedWorktreeIds.size ? state.collapsedBranchIds.filter(nodeId => !removedWorktreeIds.has(nodeId)) : state.collapsedBranchIds,
+    terminalSessions: agents === state.agents ? state.terminalSessions : state.terminalSessions.filter(session => !session.agentId || agents.some(agent => agent.id === session.agentId)),
+    terminalViewPreferences: working.terminalViewPreferences,
+    dockWorktreeId: working.dockWorktreeId,
+    dockRuntimeId: working.dockRuntimeId,
+    openRuntimeIds: working.openRuntimeIds,
+    activeTerminalId: working.activeTerminalId,
+  })
+  if (authority.processes) {
+    Object.assign(patch, remapProcessReferences({ ...state, ...patch }, state, id))
+    Object.assign(patch, reconcileRuntimePreferences({ ...state, ...patch }, id, authority))
   }
   guard.applied = Math.max(guard.applied, snapshot.sequence)
-  if (JSON.stringify(currentSemantic) === JSON.stringify(nextSemantic)) {
-    const updates = { syncFreshness: patch.syncFreshness, repositorySync: patch.repositorySync, branchCandidates: patch.branchCandidates }
-    if (JSON.stringify(updates) === JSON.stringify({ syncFreshness: state.syncFreshness, repositorySync: state.repositorySync, branchCandidates: state.branchCandidates })) return undefined
-    return updates
-  }
-  patch.gitRevision = state.gitRevision + 1
-  return patch
+  // Provider and process updates do not invalidate local files or diffs. Include
+  // raw file status entries so path changes with unchanged counts still reload.
+  const localWorktrees = JSON.stringify(snapshot.local?.worktrees ?? [])
+  const filesChanged = guard.localWorktrees !== localWorktrees
+  guard.localWorktrees = localWorktrees
+  if (filesChanged) patch.gitRevision = state.gitRevision + 1
+  return Object.keys(patch).length ? patch : undefined
 }
 
 export function applySnapshot(snapshot: Snapshot, generation = activeGeneration): boolean {
@@ -661,10 +449,10 @@ async function fetchPullRequest(id: string) {
     const checks = await request<RemoteCheck[]>(`/api/projects/${encodeURIComponent(repo)}/checks/${remote.head_sha}`)
     if (heads.get(id) && heads.get(id) !== remote.head_sha) return
     heads.set(id, remote.head_sha)
-    mapped.checks = checks.map(check => ({ name: check.name, status: checkStatus(check) }))
+    mapped.checks = checks.map(check => ({ id: check.id, name: check.name, status: checkStatus(check) }))
     pullRequestLoadedAt.set(id, Date.now())
     useBonsaiStore.setState(state => ({
-      pullRequests: [...state.pullRequests.filter(value => value.id !== id), mapped],
+      ...changedPatch(state, { pullRequests: replaceScope(state.pullRequests, [mapped], value => value.id === id) }),
     }))
     pullRequestLoadedVersion.set(id, pullRequestVersion(id))
   } catch (error) {
@@ -711,8 +499,8 @@ export async function reviewPullRequest(id: string, body: string, kind: 'comment
 }
 export function reconcileCatalog(repos: Repository[]) {
   const state = useBonsaiStore.getState()
-  const unchanged = repos.length === state.projects.length && repos.every(repo => {
-    const current = state.projects.find(project => project.id === repo.id)
+  const unchanged = repos.length === state.projects.length && repos.every((repo, index) => {
+    const current = state.projects[index]?.id === repo.id ? state.projects[index] : undefined
     return current
       && current.path === repo.path
       && current.rootId === repo.root_id
@@ -724,6 +512,8 @@ export function reconcileCatalog(repos: Repository[]) {
   })
   if (unchanged) return
   const ids = new Set(repos.map(r => r.id))
+  const removedProjects = state.projects.filter(project => !ids.has(project.id) && project.id !== 'local')
+  const removedGroups = new Set(removedProjects.flatMap(project => (state.worktreeGroups[project.id] ?? []).map(group => group.id)))
   const launch = repos.find(r => r.launch)
   const previousId = state.activeProjectId === 'local' ? launch?.id : state.activeProjectId
   const active = repos.find(r => r.id === previousId) ?? repos[0]
@@ -735,6 +525,7 @@ export function reconcileCatalog(repos: Repository[]) {
   if (
     (selection.type === 'project' && !ids.has(selection.id))
     || (selection.type === 'worktree' && state.worktrees.some(w => w.id === selection.id) && !worktrees.some(w => w.id === selection.id))
+    || (state.activeProjectId !== 'local' && !ids.has(state.activeProjectId))
   ) {
     selection = { type: 'project', id: active?.id ?? '' }
   }
@@ -756,16 +547,35 @@ export function reconcileCatalog(repos: Repository[]) {
     Object.entries(state.nodePlacements).map(([key, value]) => [migrateKey(key), state.nodePlacements[migrateKey(key)] ?? value]),
   )
   const processes = state.processes.filter(value => ids.has(value.projectId))
-  const liveRuntimeIds = new Set([...state.agents.map(agent => agent.id), ...processes.map(value => value.id)])
-  useBonsaiStore.setState({
-    nodePlacements,
-    collapsedBranchIds: state.collapsedBranchIds.map(migrateKey),
-    collapsedTagGroups: state.collapsedTagGroups.map(key => launch && key.startsWith('local:') ? launch.id + key.slice(5) : key),
+  const removedTrees = new Set(state.worktrees.filter(tree => !worktrees.some(value => value.id === tree.id)).map(tree => tree.id))
+  const agents = state.agents.filter(agent => !removedTrees.has(agent.worktreeId))
+  const removedNodes = new Set([
+    ...removedTrees,
+    ...removedProjects.flatMap(project => [project.id, `default:${project.id}`, `env:${project.id}`]),
+    ...[...removedGroups].map(id => `stack:${id}`),
+    ...state.agents.filter(agent => removedTrees.has(agent.worktreeId)).map(agent => agent.id),
+    ...state.processes.filter(process => !ids.has(process.projectId)).map(process => process.id),
+    ...removedProjects.map(project => `process-shelf:${project.id}`),
+    ...Object.entries(state.terminalViewPreferences).filter(([projectId]) => !ids.has(projectId) && !(projectId === 'local' && launch))
+      .flatMap(([, project]) => Object.values(project.worktrees).flatMap(view => view.open.map(ref => ref.id))),
+  ])
+  if (selection.type === 'agent' && state.agents.some(agent => agent.id === selection.id && removedTrees.has(agent.worktreeId))) selection = { type: 'project', id: active?.id ?? '' }
+  if (selection.type === 'process' && state.processes.some(process => process.id === selection.id && !ids.has(process.projectId))) selection = { type: 'project', id: active?.id ?? '' }
+  const patch = changedPatch(state, {
+    nodePlacements: Object.fromEntries(Object.entries(nodePlacements).filter(([id]) => !removedNodes.has(id) && !removedProjects.some(project => id.startsWith(`stack:${project.id}:`)))),
+    agents,
+    terminalSessions: state.terminalSessions.filter(session => !session.agentId || agents.some(agent => agent.id === session.agentId)),
+    detachedStackWorktreeIds: state.detachedStackWorktreeIds.filter(id => !removedTrees.has(id)),
+    expandedHistoryWorktreeIds: state.expandedHistoryWorktreeIds.filter(id => !removedTrees.has(id)),
+    collapsedBranchIds: state.collapsedBranchIds.filter(id => !removedTrees.has(id)).map(migrateKey),
+    collapsedTagGroups: state.collapsedTagGroups.filter(key => !removedProjects.some(project => key.startsWith(`${project.id}:`))).map(key => launch && key.startsWith('local:') ? launch.id + key.slice(5) : key),
+    expandedAutomaticGroups: state.expandedAutomaticGroups.filter(id => !removedGroups.has(id)),
     projects: repos.map(r => {
       const previous = state.projects.find(p => p.id === r.id)
       return previous
         ? {
             ...previous,
+            workspaceId: r.workspace_id,
             path: r.path,
             rootId: r.root_id,
             available: r.available,
@@ -788,13 +598,14 @@ export function reconcileCatalog(repos: Repository[]) {
     gitBranches: Object.fromEntries(Object.entries(state.gitBranches).filter(([id]) => ids.has(id))),
     gitOnline: Object.fromEntries(repos.map(r => [r.id, r.available !== false && (state.gitOnline[r.id] ?? false)])),
     syncFreshness: Object.fromEntries(Object.entries(state.syncFreshness).filter(([id]) => ids.has(id))),
-    dockWorktreeId: worktrees.some(w => w.id === state.dockWorktreeId) || !state.worktrees.length
-      ? state.dockWorktreeId
-      : worktrees.find(w => w.projectId === active?.id)?.id ?? '',
-    dockRuntimeId: state.dockRuntimeId && liveRuntimeIds.has(state.dockRuntimeId) ? state.dockRuntimeId : '',
-    openRuntimeIds: state.openRuntimeIds.filter(id => liveRuntimeIds.has(id)),
+    terminalViewPreferences: Object.fromEntries(Object.entries(state.terminalViewPreferences).map(([id, value]) => [id === 'local' && launch ? launch.id : id, value]).filter(([id]) => ids.has(id as string))),
     gitError: '',
   })
+  const working = { ...state, ...patch }
+  if (active && (active.id !== state.activeProjectId || (!working.dockWorktreeId && working.terminalViewPreferences[active.id]))) {
+    Object.assign(patch, switchRuntimeScope(working, active.id, state.activeProjectId === 'local' && state.dockWorktreeId ? state.dockWorktreeId : undefined))
+  } else Object.assign(patch, activeRuntimePatch(working))
+  if (Object.keys(patch).length) useBonsaiStore.setState(patch)
 }
 
 let catalogRequest: Promise<void> | undefined
