@@ -4,9 +4,9 @@ import type { CanvasPosition, Rect, Size } from './types'
 export const LAYOUT = {
   branchGapX: 72,
   branchGapY: 90,
-  agentGapX: 14,
-  agentGapY: 12,
-  agentTopGap: 24,
+  runtimeGapX: 14,
+  runtimeGapY: 12,
+  runtimeTopGap: 24,
   childTopGap: 70,
   projectTopGap: 90,
   collisionPadding: 28,
@@ -17,6 +17,8 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   if (type === 'project') return { width: 300, height: 154 }
   if (type === 'defaultBranch') return { width: 232, height: 132 }
   if (type === 'env') return { width: 150, height: 56 }
+  if (type === 'process') return { width: 240, height: 112 }
+  if (type === 'runtimeShelf') return { width: 230, height: 74 }
   if (type === 'worktree') {
     const historyItems = node.data?.historyItems as unknown[] | undefined
     // The History header is always visible when entries exist. Reserve the
@@ -29,7 +31,8 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
     const count = Math.max(Number(node.data?.stackCount) || 1,
       Array.isArray(node.data?.stackItems) ? node.data.stackItems.length : 0)
     const connectionRows = ((node.data?.stackItems ?? []) as Array<{ connectionLabel?: string }>).filter(item => item.connectionLabel).length
-    return { width: 286, height: 50 + count * 37 + connectionRows * 13 }
+    const processRows = ((node.data?.stackItems ?? []) as Array<{ processCount?: number }>).filter(item => item.processCount).length
+    return { width: 286, height: 50 + count * 37 + (connectionRows + processRows) * 13 }
   }
   return { width: 188, height: 98 }
 }
@@ -71,13 +74,17 @@ export function centroid(points: CanvasPosition[]): CanvasPosition {
   }
 }
 
-export function getAgentShelfSize(count: number): Size {
-  if (count <= 0) return { width: 0, height: 0 }
-  const agent = getNodeSize({ type: 'agent', data: {} })
-  const columns = Math.min(3, count)
-  const rows = Math.ceil(count / columns)
+export function getRuntimeShelfSize(nodes: Node[]): Size {
+  const rows = []
+  for (let index = 0; index < nodes.length; index += 3) {
+    const sizes = nodes.slice(index, index + 3).map(getNodeSize)
+    rows.push({
+      width: sizes.reduce((total, size) => total + size.width, 0) + (sizes.length - 1) * LAYOUT.runtimeGapX,
+      height: Math.max(...sizes.map(size => size.height)),
+    })
+  }
   return {
-    width: columns * agent.width + Math.max(0, columns - 1) * LAYOUT.agentGapX,
-    height: rows * agent.height + Math.max(0, rows - 1) * LAYOUT.agentGapY,
+    width: Math.max(0, ...rows.map(row => row.width)),
+    height: rows.reduce((total, row) => total + row.height, 0) + Math.max(0, rows.length - 1) * LAYOUT.runtimeGapY,
   }
 }

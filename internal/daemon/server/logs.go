@@ -47,7 +47,10 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 	}
 
 	if !req.Follow {
+		lock := logPathLock(path)
+		lock.Lock()
 		data, _ := s.store.ReadCombinedLog(req.ID)
+		lock.Unlock()
 		initial := procstore.FilterLog(string(data), req.TailLines, req.Grep, req.GrepInsensitive)
 		if initial != "" {
 			_ = enc.WriteResponse(&protocol.Response{OK: true, LogChunk: initial})

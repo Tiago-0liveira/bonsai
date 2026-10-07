@@ -19,6 +19,7 @@ function snapshot(id = 'a', sequence = 1): Snapshot {
     remote: { repository: { id: id === 'a' ? 1 : 2, full_name: `owner/${id}`, default_branch: 'main' }, branches: [], pull_requests: [pr] },
     worktree_state: { [`${id}-feature`]: { pull_request: pr, ci: { status: 'running', checked_sha: 'sha', checks: [{ id: 11, name: 'verify', status: 'in_progress', conclusion: '' }], freshness: { state: 'ready' } } } },
     freshness: { local: { state: 'ready', updated_at: 'today' }, provider: { state: 'ready', updated_at: 'today' } },
+    process_visibility: { cutoffs: {}, deleted: {} },
     processes: [{ id: `${id}:process`, project_id: id, daemon_id: 1, worktree_id: `${id}-feature`, label: 'serve', command: 'serve', status: 'running' }],
   }
 }

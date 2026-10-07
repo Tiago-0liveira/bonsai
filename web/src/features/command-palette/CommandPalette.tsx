@@ -30,7 +30,9 @@ export function CommandPalette() {
   const navigate = useNavigate()
   const selection = useBonsaiStore(s => s.selection)
   const agent = useBonsaiStore(s => s.agents.find(a => selection.type === 'agent' && a.id === selection.id))
+  const process = useBonsaiStore(s => s.processes.find(p => selection.type === 'process' && p.id === selection.id))
   const openAgent = useBonsaiStore(s => s.openStartAgentDialog)
+  const openProcess = useBonsaiStore(s => s.openStartProcessDialog)
   const openTerminal = useBonsaiStore(s => s.openTerminal)
   const setAgentState = useBonsaiStore(s => s.setAgentState)
 
@@ -80,6 +82,7 @@ export function CommandPalette() {
             <CommandItem icon={Network} label="Auto-layout canvas" onSelect={() => run(() => requestCanvasAction('layout'))} />
             <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
             <CommandItem icon={Bot} label="Start agent" onSelect={() => run(() => openAgent(selection.type === 'worktree' ? selection.id : agent?.worktreeId))} />
+            <CommandItem icon={Play} label="Start process" onSelect={() => run(() => openProcess(selection.type === 'worktree' ? selection.id : agent?.worktreeId ?? process?.worktreeId))} />
             <CommandItem icon={Square} label="Stop agent" disabled={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => run(() => setAgentState(agent!.id, 'finished'))} />
             <CommandItem icon={TerminalSquare} label="Open terminal" disabled={agent?.providerId !== 'antigravity'} onSelect={() => run(() => openTerminal(agent!.id))} />
           </Command.Group>

@@ -15,7 +15,9 @@ import {
 } from '@xyflow/react'
 import { LocateFixed, Network, Plus } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
-import { useProjectWorktrees, useProjectAgents, useProjectCanvasPreferences } from '../../../stores/projectSelectors'
+import { useProjectWorktrees, useProjectAgents, useProjectCanvasProcesses, useProjectCanvasPreferences } from '../../../stores/projectSelectors'
+import { ProcessNode, ProcessShelfNode } from '../nodes/ProcessNode'
+import { getNodeSize } from './layout/geometry'
 import type { ViewportState } from '../../../types'
 import { report, syncProject } from '../../../api/git'
 import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
@@ -27,7 +29,7 @@ import {
   placeAddedNodesLocally,
   placeExpandedStackLocally,
   placeMissingNodes,
-  refreshGeneratedAgentShelves,
+  refreshGeneratedRuntimeShelves,
   relocateGeneratedBranches,
 } from './layout/localPlacement'
 import { PullRequestMergeEdge } from './PullRequestMergeEdge'
@@ -46,6 +48,8 @@ const nodeTypes = {
   worktree: WorktreeNode,
   stack: StackNode,
   agent: AgentNode,
+  process: ProcessNode,
+  runtimeShelf: ProcessShelfNode,
   defaultBranch: DefaultBranchNode,
   env: EnvNode,
 }
@@ -93,6 +97,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const { nodePlacements, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups } = useProjectCanvasPreferences(activeProject?.id ?? '')
   const tags = useBonsaiStore((state) => state.worktreeTags)
   const agents = useProjectAgents(activeProject?.id ?? '')
+  const processes = useProjectCanvasProcesses(activeProject?.id ?? '')
   const worktreeGroups = useBonsaiStore(state => state.worktreeGroups[activeProject?.id ?? ''])
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
@@ -106,10 +111,13 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const viewport = useBonsaiStore((state) => state.viewport)
   const setViewport = useBonsaiStore((state) => state.setViewport)
   const canvasCommand = useBonsaiStore((state) => state.canvasCommand)
+  const canvasReveal = useBonsaiStore(state => state.canvasReveal)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const envVariables = useBonsaiStore(state => state.envVariables[activeProject?.id ?? ''])
   const lastCommand = useRef(0)
+  const lastReveal = useRef(0)
+  const hostRef = useRef<HTMLDivElement>(null)
   const lastFocusFit = useRef<string | undefined>(undefined)
   const dragSnapshot = useRef<DragSnapshot | null>(null)
   const initializedProjects = useRef<Set<string>>(new Set())
@@ -117,10 +125,10 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     projectId: string
     ids: Set<string>
     parents: Map<string, string>
-    agentOwners: Map<string, string>
+    runtimeOwners: Map<string, string>
     stacks: Map<string, string[]>
   } | null>(null)
-  const { fitView, getEdges, getNodes } = useReactFlow()
+  const { fitView, getEdges, getNodes, getViewport, setCenter } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const fitViewRef = useRef(fitView)
 
@@ -138,9 +146,9 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   }, [activeProjectId, activeAvailable])
 
   const graph = useMemo(() => buildCanvasGraph({
-    project: activeProject, worktrees, agents, tags, worktreeGroups, collapsedTagGroups,
+    project: activeProject, worktrees, agents, processes, tags, worktreeGroups, collapsedTagGroups,
     detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envCount: envVariables?.length ?? 0,
-  }), [activeProject, worktrees, agents, tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envVariables?.length])
+  }), [activeProject, worktrees, agents, processes, tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envVariables?.length])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges)
@@ -164,8 +172,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
     const rendered = new Map(getNodes().map((node) => [node.id, node]))
     const layoutNodes = graph.nodes.map((node) => ({ ...node, measured: rendered.get(node.id)?.measured }))
-    const currentAgentOwners = new Map(graph.edges
-      .filter((edge) => edge.data?.relationship === 'agent')
+    const currentRuntimeOwners = new Map(graph.edges
+      .filter((edge) => edge.data?.relationship === 'agent' || edge.data?.relationship === 'process')
       .map((edge) => [edge.target, edge.source]))
     const placeableNodes = layoutNodes.filter(
       (node) => node.type !== 'defaultBranch' && node.type !== 'env',
@@ -197,7 +205,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
           projectId: graph.projectId,
           ids: currentIds,
           parents: currentParents,
-          agentOwners: currentAgentOwners,
+          runtimeOwners: currentRuntimeOwners,
           stacks: currentStacks,
         }
         requestAnimationFrame(() => {
@@ -260,18 +268,18 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     // Refresh only shelves whose membership or owner placement changed. A
     // sibling's add/remove operation must not undo existing Auto-layout results.
     const affectedOwners = new Set<string>()
-    currentAgentOwners.forEach((ownerId, agentId) => {
-      if (!nodePlacements[agentId] || generated[ownerId] ||
-          (previous && previous.agentOwners.get(agentId) !== ownerId)) {
+    currentRuntimeOwners.forEach((ownerId, runtimeId) => {
+      if (!nodePlacements[runtimeId] || generated[ownerId] ||
+          (previous && previous.runtimeOwners.get(runtimeId) !== ownerId)) {
         affectedOwners.add(ownerId)
       }
     })
-    previous?.agentOwners.forEach((ownerId, agentId) => {
-      if (currentAgentOwners.get(agentId) !== ownerId) affectedOwners.add(ownerId)
+    previous?.runtimeOwners.forEach((ownerId, runtimeId) => {
+      if (currentRuntimeOwners.get(runtimeId) !== ownerId) affectedOwners.add(ownerId)
     })
     if (affectedOwners.size) {
       Object.assign(generated,
-        refreshGeneratedAgentShelves(layoutNodes, graph.edges, workingPlacements, affectedOwners))
+        refreshGeneratedRuntimeShelves(layoutNodes, graph.edges, workingPlacements, affectedOwners))
     }
 
     if (Object.keys(generated).length) setGeneratedNodePlacements(generated)
@@ -279,7 +287,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       projectId: graph.projectId,
       ids: currentIds,
       parents: currentParents,
-      agentOwners: currentAgentOwners,
+      runtimeOwners: currentRuntimeOwners,
       stacks: currentStacks,
     }
   // Relayout is triggered by topology/placement changes. Status and label updates
@@ -292,6 +300,17 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     nodePlacements,
     setGeneratedNodePlacements,
   ])
+
+  useEffect(() => {
+    if (!nodesInitialized || !canvasReveal.nonce || lastReveal.current === canvasReveal.nonce || canvasReveal.projectId !== activeProjectId) return
+    const node = nodes.find(node => node.id === canvasReveal.nodeId)
+    if (!node || !nodePlacements[node.id] || !hostRef.current) return
+    lastReveal.current = canvasReveal.nonce
+    const viewport = getViewport(), size = getNodeSize(node), host = hostRef.current
+    const x = node.position.x * viewport.zoom + viewport.x, y = node.position.y * viewport.zoom + viewport.y
+    if (x >= 0 && y >= 0 && x + size.width * viewport.zoom <= host.clientWidth && y + size.height * viewport.zoom <= host.clientHeight) return
+    void setCenter(node.position.x + size.width / 2, node.position.y + size.height / 2, { zoom: viewport.zoom, duration: 250 })
+  }, [activeProjectId, canvasReveal, nodesInitialized, nodes, nodePlacements, getViewport, setCenter])
 
   useEffect(() => {
     if (!focus) {
@@ -359,7 +378,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       else if (data.tag) toggleTagGroup(activeProjectId, data.tag)
       return
     }
-    if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent') {
+    if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent' || data.kind === 'process') {
       setSelection({ type: data.kind, id: data.entityId })
     }
   }, [activeProjectId, setSelection, toggleAutomaticGroup, toggleTagGroup])
@@ -420,7 +439,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   }, [getNodes, setManualNodePlacement, setManualNodePlacements, setSubtreeMoveRoot])
 
   return (
-    <div className="relative h-full min-h-0 w-full bg-[rgb(var(--bg))]">
+    <div ref={hostRef} className="relative h-full min-h-0 w-full bg-[rgb(var(--bg))]">
       <ReactFlow
         nodes={nodes}
         edges={displayEdges}

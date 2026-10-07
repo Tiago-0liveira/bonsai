@@ -45,7 +45,12 @@ func (p *terminalTestProvider) FinalizeSession(ctx context.Context, _ agents.Fin
 }
 func terminalTestServer(t *testing.T) (*Server, string, *terminalTestProvider) {
 	t.Helper()
-	root := t.TempDir()
+	// Match production project discovery before deriving worktree identities.
+	// macOS temporary directories can contain symlinked path components.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	accounts, err := agents.NewFileAccountStore(filepath.Join(t.TempDir(), "accounts"))
 	if err != nil {
 		t.Fatal(err)
@@ -198,6 +203,8 @@ func TestAgentBrowserFixture(t *testing.T) {
 		t.Skip("browser fixture disabled")
 	}
 	s, _, _ := terminalTestServer(t)
+	attachProcessFixture(t, s)
+	attachRestorationFixture(t, s)
 	s.browserOrigin = "https://127.0.0.1:4173"
 	if err := os.WriteFile(s.rootsPath, []byte(`{"version":1,"revision":1,"roots":[{"id":"fixture","path":"/tmp"}]}`), 0600); err != nil {
 		t.Fatal(err)

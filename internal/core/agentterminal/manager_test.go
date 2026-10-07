@@ -28,7 +28,7 @@ func (p *testProvider) PrepareSession(_ context.Context, r agents.PrepareSession
 	if p.prepared != nil {
 		p.prepared <- r
 	}
-	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", p.script}, Dir: r.Session.WorkDir, EnvSet: map[string]string{"HOME": r.Session.HomeDir, "BONSAI_TEST_SET": "isolated"}, EnvUnset: []string{"BONSAI_TEST_UNSET"}}, nil
+	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", p.script, "agent-fixture"}, Dir: r.Session.WorkDir, EnvSet: map[string]string{"HOME": r.Session.HomeDir, "BONSAI_TEST_SET": "isolated"}, EnvUnset: []string{"BONSAI_TEST_UNSET"}}, nil
 }
 func (p *testProvider) FinalizeSession(ctx context.Context, _ agents.FinalizeSessionRequest) error {
 	if ctx.Err() != nil {
@@ -310,6 +310,50 @@ func TestStartOptionsOverrideProfileWithoutSaving(t *testing.T) {
 			json.Unmarshal(saved.Settings, &savedSettings)
 			if !reflect.DeepEqual(savedSettings, originalSettings) {
 				t.Fatal("launch changed stored profile settings")
+			}
+		})
+	}
+}
+
+func TestStartInteractivePrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		prompt string
+	}{
+		{name: "empty"},
+		{name: "ordinary", prompt: "Make a research report on this repository"},
+		{name: "multiline", prompt: "Research \"this repository\"\nThen summarize $(findings); `literally`."},
+		{name: "dash-prefixed", prompt: "--literal task"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Reject positional arguments just as agy does; only accept a prompt
+			// bound to its interactive flag and echo the exact value received.
+			m, _, account, _ := testManager(t, `
+if [ "$#" -eq 0 ]; then exit 0; fi
+[ "$#" -eq 1 ] || exit 1
+case "$1" in
+  --prompt-interactive=*) printf '%s' "${1#--prompt-interactive=}" ;;
+  *) exit 1 ;;
+esac`)
+			summary, err := m.Start("project", "tree", account, "", t.TempDir(), 80, 24, StartOptions{Prompt: tc.prompt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			awaitState(t, m, summary.ID, "exited")
+			status, _ := m.Get("project", summary.ID)
+			if status.ExitCode == nil || *status.ExitCode != 0 {
+				t.Fatalf("interactive prompt rejected: %+v", status)
+			}
+			_, _, frames, _, err := m.Attach("project", summary.ID, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output strings.Builder
+			for _, frame := range frames {
+				output.Write(frame.Data)
+			}
+			if got := strings.ReplaceAll(output.String(), "\r\n", "\n"); got != tc.prompt {
+				t.Fatalf("prompt = %q, want %q", got, tc.prompt)
 			}
 		})
 	}

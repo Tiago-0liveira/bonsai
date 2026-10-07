@@ -21,7 +21,7 @@ test('real API and PTY: profile launch, input, reload, stop and retained output'
   await page.locator('.xterm-helper-textarea').pressSequentially('browser-input')
   await page.locator('.xterm-helper-textarea').press('Enter')
   await expect(page.locator('.xterm-screen')).toContainText('REPLY:browser-input')
-  await page.getByRole('button', { name: 'Close runtime card' }).click()
+  await page.getByRole('button', { name: 'Close runtime card', exact: true }).click()
   await expect(page.locator('.xterm')).toHaveCount(0)
   await page.getByRole('button', { name: 'Open runtime', exact: true }).click()
   await page.getByRole('option', { name: /Fixture/ }).click()

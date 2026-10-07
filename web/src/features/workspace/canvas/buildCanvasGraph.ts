@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react'
-import type { Agent, Health, NodePlacement, Project, Worktree, WorktreeTag } from '../../../types'
+import type { Agent, CanvasProcess, Health, NodePlacement, Project, Worktree, WorktreeTag } from '../../../types'
 import type { WorktreeGroup } from '../../../api/git'
 import type { BonsaiGraphData } from '../nodes/BonsaiNode'
 import { connectionLabel } from '../connectionLabel'
@@ -10,6 +10,7 @@ export interface CanvasGraphInput {
   project?: Project
   worktrees: Worktree[]
   agents: Agent[]
+  processes?: CanvasProcess[]
   tags: WorktreeTag[]
   worktreeGroups?: WorktreeGroup[]
   collapsedTagGroups: string[]
@@ -29,7 +30,7 @@ function groupHealth(items: Worktree[]): Health {
 // Topology and status projection are pure; rendered geometry and selection are
 // reconciled separately and never written back by a status-only update.
 export function buildCanvasGraph(input: CanvasGraphInput) {
-  const { project, worktrees, agents, tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envCount } = input
+  const { project, worktrees, agents, processes = [], tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envCount } = input
   const positionFor = (id: string, fallback: { x: number; y: number }) => {
     const placement = nodePlacements[id]
     return placement ? { x: placement.x, y: placement.y } : fallback
@@ -37,7 +38,8 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
   if (!project) return { nodes: [] as Node[], edges: [] as Edge[], projectId: '', topologyKey: 'empty' }
 
   const allProjectWorktrees = worktrees.filter((worktree) => worktree.projectId === project.id)
-  const projectWorktrees = allProjectWorktrees.filter(worktree => (!worktree.main && (worktree.main !== undefined || worktree.branch !== project.defaultBranch)) || agents.some(a => a.worktreeId === worktree.id && !a.archived))
+  const projectProcesses = processes.filter(process => process.projectId === project.id)
+  const projectWorktrees = allProjectWorktrees.filter(worktree => (!worktree.main && (worktree.main !== undefined || worktree.branch !== project.defaultBranch)) || agents.some(a => a.worktreeId === worktree.id && !a.archived) || projectProcesses.some(process => process.worktreeId === worktree.id))
   const projectWorktreeIds = new Set(projectWorktrees.map((worktree) => worktree.id))
   const projectAgents = agents.filter((agent) => projectWorktreeIds.has(agent.worktreeId) && (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) !== 'archived')
   const runningAgents = projectAgents.filter((agent) => agent.state === 'running').length
@@ -97,7 +99,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         ciSummary: failedChecks ? failedChecks + ' failed checks' : runningCi ? runningCi + ' CI running' : 'CI healthy',
         stats: [
           { label: 'worktrees', value: projectWorktrees.length },
-          { label: 'running', value: runningAgents },
+          { label: 'running', value: runningAgents + projectProcesses.filter(process => ['running', 'starting'].includes(process.lifecycleStatus)).length },
           { label: 'open prs', value: activePrs },
           { label: 'ci failed', value: failedChecks },
         ],
@@ -146,6 +148,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     const fallbackPosition = { x: 40 + index * 250, y: 220 }
     if (entry.type === 'stack') {
       const stackAgents = projectAgents.filter((agent) => entry.items.some((worktree) => worktree.id === agent.worktreeId))
+      const stackProcesses = projectProcesses.filter(process => entry.items.some(tree => tree.id === process.worktreeId))
       const stackPrs = entry.items.filter((worktree) => worktree.prStatus && worktree.prStatus !== 'Closed').length
       const tagDefinition = tags.find((tag) => tag.id === entry.items[0]?.tagId || tag.name === entry.tag)
       const presentation = getTagPresentation(tagDefinition)
@@ -164,7 +167,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
           tagBorder: presentation.border,
           stackCount: entry.items.length,
           health: groupHealth(entry.items),
-          subtitle: stackAgents.length + ' agents · ' + stackPrs + ' PRs',
+          subtitle: stackAgents.length + ' agents · ' + stackProcesses.length + ' processes · ' + stackPrs + ' PRs',
           stackItems: entry.items.map((worktree) => ({
             id: worktree.id,
             branch: worktree.branch,
@@ -174,6 +177,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
             prStatus: worktree.prStatus,
             ciStatus: worktree.ciStatus,
             hasRunningAgent: projectAgents.some((agent) => agent.worktreeId === worktree.id && agent.state === 'running'),
+            processCount: stackProcesses.filter(process => process.worktreeId === worktree.id).length,
           })),
         } satisfies BonsaiGraphData,
       })
@@ -213,7 +217,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         ciStatus: worktree.ciStatus,
         ciFailed: worktree.ciFailed,
         gitState: worktree.gitState,
-        stats: [{ label: 'agents', value: canvasAgents.length }],
+        stats: [{ label: 'agents', value: canvasAgents.length }, { label: 'processes', value: projectProcesses.filter(process => process.worktreeId === worktree.id).length }],
         historyItems: historyAgents.map((agent) => ({
           id: agent.id,
           name: agent.name,
@@ -222,37 +226,59 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         })),
       } satisfies BonsaiGraphData,
     })
+  })
 
-    canvasAgents.forEach((agent, agentIndex) => {
-      nodes.push({
-        id: agent.id,
-        type: 'agent',
-        position: positionFor(agent.id, { x: 58 + agentIndex * 192, y: 420 }),
-        data: {
-          entityId: agent.id,
-          kind: 'agent',
-          title: agent.name,
-          agentState: agent.state,
-          provider: agent.provider,
-          model: agent.profileName ?? agent.model,
-          reasoningEffort: agent.reasoningEffort + (agent.fastMode ? ' · Fast' : ''),
-          task: agent.task,
-          runtime: agent.runtime,
-          worktreeId: worktree.id,
-        } satisfies BonsaiGraphData,
-      })
-      edges.push({
-        id: worktree.id + '-' + agent.id,
-        source: worktree.id,
-        target: agent.id,
-        type: 'smoothstep',
-        data: { relationship: 'agent' },
-        style: {
-          stroke: 'rgb(50 53 62)',
-          strokeWidth: 1,
-          strokeDasharray: agent.state === 'finished' ? '3 4' : undefined,
-        },
-      })
+  projectAgents.filter(agent => (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) === 'canvas').forEach((agent, agentIndex) => {
+    const ownerId = visibleNodeForWorktree.get(agent.worktreeId)
+    if (!ownerId) return
+    nodes.push({
+      id: agent.id,
+      type: 'agent',
+      position: positionFor(agent.id, { x: 58 + agentIndex * 192, y: 420 }),
+      data: {
+        entityId: agent.id,
+        kind: 'agent',
+        title: agent.name,
+        agentState: agent.state,
+        provider: agent.provider,
+        model: agent.profileName ?? agent.model,
+        reasoningEffort: agent.reasoningEffort + (agent.fastMode ? ' · Fast' : ''),
+        task: agent.task,
+        runtime: agent.runtime,
+        worktreeId: agent.worktreeId,
+      } satisfies BonsaiGraphData,
+    })
+    edges.push({
+      id: ownerId + '-' + agent.id,
+      source: ownerId,
+      target: agent.id,
+      type: 'smoothstep',
+      data: { relationship: 'agent' },
+      style: {
+        stroke: 'rgb(50 53 62)',
+        strokeWidth: 1,
+        strokeDasharray: agent.state === 'finished' ? '3 4' : undefined,
+      },
+    })
+  })
+
+  const orphanProcesses = projectProcesses.filter(process => !visibleNodeForWorktree.has(process.worktreeId))
+  const shelfId = `process-shelf:${project.id}`
+  if (orphanProcesses.length) {
+    nodes.push({ id: shelfId, type: 'runtimeShelf', position: positionFor(shelfId, { x: 40, y: 220 }), data: {
+      entityId: shelfId, kind: 'runtime-shelf', title: 'Project processes', subtitle: 'Worktree association unavailable',
+    } satisfies BonsaiGraphData })
+    edges.push({ id: `structure:${project.id}>${shelfId}`, source: project.id, target: shelfId, type: 'smoothstep', data: { relationship: 'hierarchy' } })
+  }
+  projectProcesses.forEach((process, index) => {
+    const ownerId = visibleNodeForWorktree.get(process.worktreeId) ?? shelfId
+    nodes.push({ id: process.id, type: 'process', position: positionFor(process.id, { x: 58 + index * 254, y: 420 }), data: {
+      entityId: process.id, kind: 'process', title: process.name, command: process.command,
+      health: process.status, processStatus: process.lifecycleStatus, worktreeId: process.worktreeId,
+      associationLabel: ownerId === shelfId ? 'Worktree association unavailable' : undefined,
+    } satisfies BonsaiGraphData })
+    edges.push({ id: `${ownerId}-${process.id}`, source: ownerId, target: process.id, type: 'smoothstep', data: { relationship: 'process' },
+      style: { stroke: 'rgb(50 53 62)', strokeWidth: 1 },
     })
   })
 
@@ -263,7 +289,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     const target = visibleNodeForWorktree.get(worktree.id)
     if (!target) return
     const parentWorktree = branchToWorktree.get(worktree.mergeTargetBranch)
-    const source = parentWorktree ? visibleNodeForWorktree.get(parentWorktree.id) ?? project.id : project.id
+    const source = parentWorktree && parentWorktree.id !== worktree.id ? visibleNodeForWorktree.get(parentWorktree.id) ?? project.id : project.id
     if (source === target) return
     const edgeKey = source + '>' + target
     if (!structuralKeys.has(edgeKey)) {
@@ -315,6 +341,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       '|' +
       projectWorktrees.map((worktree) => worktree.id + '>' + worktree.mergeTargetBranch).join('|') +
       '|' +
-      nodes.filter((node) => node.type === 'agent').map((node) => node.id).join('|'),
+      edges.filter(edge => edge.data?.relationship === 'agent' || edge.data?.relationship === 'process').map(edge => `${edge.source}>${edge.target}`).join('|'),
   }
 }

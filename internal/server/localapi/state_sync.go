@@ -71,13 +71,14 @@ type stateSync struct {
 	epoch    string
 	now      func() time.Time
 
-	mu           sync.Mutex
-	runCtx       context.Context
-	closed       bool
-	running      bool
-	projects     map[string]*projectProjection
-	jobs         map[string]*syncJobState
-	watchCancels map[string]context.CancelFunc
+	processAuthorityMu sync.Mutex // prevents a late read from overtaking deletion
+	mu                 sync.Mutex
+	runCtx             context.Context
+	closed             bool
+	running            bool
+	projects           map[string]*projectProjection
+	jobs               map[string]*syncJobState
+	watchCancels       map[string]context.CancelFunc
 
 	localSem    chan struct{}
 	providerSem chan struct{}
@@ -514,6 +515,8 @@ func (s *stateSync) gitPayload(ctx context.Context, project projectServices, kin
 }
 
 func (s *stateSync) refreshProcesses(projectID string) {
+	s.processAuthorityMu.Lock()
+	defer s.processAuthorityMu.Unlock()
 	project, ok := s.registry.Lookup(projectID)
 	if !ok || !project.info.Available {
 		return
@@ -522,7 +525,12 @@ func (s *stateSync) refreshProcesses(projectID string) {
 	defer cancel()
 	var records []*procstore.Record
 	var err error
-	if daemon, ok := project.daemon.(contextDaemonClient); ok {
+	var visibility procstore.ProcessVisibility
+	if daemon, ok := project.daemon.(interface {
+		ProcessAuthorityContext(context.Context) ([]*procstore.Record, procstore.ProcessVisibility, error)
+	}); ok {
+		records, visibility, err = daemon.ProcessAuthorityContext(ctx)
+	} else if daemon, ok := project.daemon.(contextDaemonClient); ok {
 		records, err = daemon.ListContext(ctx)
 	} else {
 		records, err = project.daemon.List()
@@ -560,6 +568,7 @@ func (s *stateSync) refreshProcesses(projectID string) {
 			summaries = append(summaries, summary)
 		}
 		snapshot.Processes = summaries
+		snapshot.ProcessVisibility = visibility
 		now := s.now()
 		snapshot.Freshness["processes"] = browserFreshness{State: "ready", UpdatedAt: &now}
 	})

@@ -21,3 +21,16 @@ it('ignores unrelated group preferences and terminal output while reacting to th
   expect(commits.mock.calls.length).toBeGreaterThan(baseline)
   expect(screen.getByRole('complementary', { name: 'Inspector' })).toBeInTheDocument()
 })
+
+it('inspects retained process failures and their worktree without opening a terminal on render', () => {
+  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, activeProjectId: 'bonsai',
+    selection: { type: 'process', id: 'bonsai:1' }, processes: [{ id: 'bonsai:1', projectId: 'bonsai', daemonId: 1, worktreeId: 'wt-web', name: 'Broken server', command: 'pnpm run server', status: 'error', lifecycleStatus: 'failed', exitCode: 2, exitError: 'Port in use', retryCount: 3, attempt: 4 }] }, true)
+  render(<Inspector />)
+  const inspector = screen.getByRole('complementary', { name: 'Inspector' })
+  expect(inspector).toHaveTextContent('Broken server')
+  expect(inspector).toHaveTextContent('pnpm run server')
+  expect(screen.getByRole('alert')).toHaveTextContent('Port in use')
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Restart' })).toBeEnabled()
+  expect(useBonsaiStore.getState().openRuntimeIds).toEqual([])
+})

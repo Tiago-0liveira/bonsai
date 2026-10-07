@@ -159,7 +159,8 @@ func (m *Manager) run(ctx context.Context, e *session, a agents.Account, r agent
 	prepared, err := p.PrepareSession(ctx, agents.PrepareSessionRequest{Account: a, Session: r, Args: args})
 	preparedOK := err == nil
 	if err == nil && len(options) > 0 && options[0].Prompt != "" {
-		prepared.Args = append(prepared.Args, "--prompt-interactive", "--", options[0].Prompt)
+		// Bind the prompt to the flag, including prompts that begin with a dash.
+		prepared.Args = append(prepared.Args, "--prompt-interactive="+options[0].Prompt)
 	}
 	code := -1
 	if err == nil {

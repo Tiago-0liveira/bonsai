@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,6 +43,17 @@ func ValidMode(mode string) bool {
 		return true
 	}
 	return false
+}
+
+// ValidatePolicy applies equally to launch and policy updates. Zero means no retries.
+func ValidatePolicy(p Policy) error {
+	if !ValidMode(p.Mode) {
+		return fmt.Errorf("restart mode must be no, on-failure or always")
+	}
+	if p.MaxRestarts < 0 || p.MaxRestarts > 100 {
+		return fmt.Errorf("maximum retries must be between 0 and 100")
+	}
+	return nil
 }
 
 // Process status values.
@@ -78,7 +90,13 @@ func IsActive(status string) bool {
 // Record is the persisted metadata for one managed process. It is the source of
 // truth for discovery: readable without touching the daemon socket.
 type Record struct {
+	CommandKey     string            `json:"command_key"`
+	ExecutionOrder uint64            `json:"execution_order"`
 	ID             int               `json:"id"`
+	Revision       uint64            `json:"revision"`
+	Attempt        int               `json:"attempt"`
+	RetryCount     int               `json:"retry_count"`
+	RetryAt        *time.Time        `json:"retry_at,omitempty"`
 	Label          string            `json:"label"`
 	Command        string            `json:"command"` // display/shell command; structured commands also set Program/Args
 	Program        string            `json:"program,omitempty"`
@@ -140,6 +158,8 @@ type ServeSpec struct {
 // ServeProcess is the public status view for one process in a ServeGroup.
 type ServeProcess struct {
 	Name           string    `json:"name"`
+	CommandKey     string    `json:"command_key"`
+	ExecutionOrder uint64    `json:"execution_order"`
 	ID             int       `json:"id"`
 	PID            int       `json:"pid"`
 	ProcessGroupID int       `json:"process_group_id,omitempty"`
@@ -243,6 +263,7 @@ func (s *Store) WriteRecord(r *Record) error {
 	if err := os.MkdirAll(s.ProcsDir(), 0o755); err != nil {
 		return err
 	}
+	r.Revision++
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
@@ -292,8 +313,11 @@ func (s *Store) ListRecords() ([]*Record, error) {
 
 // RemoveRecord deletes the record and its log for id.
 func (s *Store) RemoveRecord(id int) error {
-	_ = os.Remove(s.LogPath(id))
-	_ = os.Remove(s.LogPath(id) + ".1")
+	for _, path := range []string{s.LogPath(id), s.LogPath(id) + ".1", s.LogPath(id) + ".cursor", s.RecordPath(id) + ".tmp", s.LogPath(id) + ".cursor.tmp"} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	err := os.Remove(s.RecordPath(id))
 	if os.IsNotExist(err) {
 		return nil
@@ -329,6 +353,28 @@ func (s *Store) ReadCombinedLog(id int) ([]byte, error) {
 	return nil, err
 }
 
+// LastAllocatedID survives explicit record removal so a later daemon never reuses
+// a browser process identity. Legacy stores without a counter return zero.
+func (s *Store) LastAllocatedID() (int, error) {
+	data, err := os.ReadFile(filepath.Join(s.Dir(), "process-id"))
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	id, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || id < 0 {
+		return 0, fmt.Errorf("invalid persisted process ID counter")
+	}
+	return id, nil
+}
+
+// ReserveID must be called under the daemon's allocation lock, before execution.
+func (s *Store) ReserveID(id int) error {
+	return writeAtomic(filepath.Join(s.Dir(), "process-id"), []byte(strconv.Itoa(id)), 0600)
+}
+
 // MaxID returns the highest existing record id (0 if none), so a restarting
 // daemon can resume the id counter without reusing numbers.
 func (s *Store) MaxID() (int, error) {
@@ -348,8 +394,34 @@ func (s *Store) MaxID() (int, error) {
 // writeAtomic writes data to path via a temp file + rename.
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+func syncDir(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	} // Windows cannot fsync directory handles.
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

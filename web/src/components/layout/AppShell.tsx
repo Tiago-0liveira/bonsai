@@ -14,6 +14,7 @@ import { CreateWorktreeDialog } from '../../features/workspace/CreateWorktreeDia
 import { DeleteWorktreeDialog } from '../../features/workspace/DeleteWorktreeDialog'
 import { EnvEditor } from '../../features/workspace/EnvEditor'
 import { StartAgentDialog } from '../../features/workspace/StartAgentDialog'
+import { StartProcessDialog } from '../../features/workspace/StartProcessDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { relayLoginURL } from '../../api/relayClient'
 import { TopBar } from './TopBar'
@@ -134,6 +135,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <CreateWorktreeDialog />
         <DeleteWorktreeDialog />
         <StartAgentDialog />
+        <StartProcessDialog />
         <EnvEditor />
         <CommandPalette />
       </div>
