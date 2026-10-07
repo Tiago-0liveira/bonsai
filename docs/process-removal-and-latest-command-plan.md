@@ -7,10 +7,10 @@ project should show at most one process node and runtime option for each command
 in each worktree, representing its latest explicit execution. Give the user a
 project preference that keeps terminal views closed when opening the project.
 
-This document is a plan. It builds on the process nodes, live logs, and terminal
-restoration already present in the working tree; it does not implement changes.
+This plan is implemented. It builds on the process nodes, live logs, and terminal
+restoration committed in `c0b19cd` before implementation began.
 
-## Findings in the current working tree
+## Findings before implementation
 
 - `ProcessNode.tsx` offers Open output, Open inspector, Open worktree, Stop,
   and Restart. `useProcessActions.ts` has no removal action.
@@ -208,3 +208,39 @@ Primary files: `web/src/stores/runtimePreferences.ts`,
 Deliver in this order: identity and projection, durable deletion and its UI,
 then the reopening preference and migration. Validate each stage before moving
 on, followed by the full-stack acceptance scenarios.
+
+
+## Implementation notes
+
+- Command identity uses a versioned hash of worktree ownership, effective working
+  directory, executable, ordered arguments (or exact legacy shell command), and
+  serve service identity. Environment values remain outside browser summaries.
+- Explicit execution order uses an independent persisted counter. Legacy records
+  fall back to daemon ID order. Automatic retries retain the explicit order.
+- Ordinary process surfaces share the latest-command projection. Older live runs
+  remain in canonical inventory and have explicit controls under the worktree
+  inspector's advanced settings. Worktree deletion still checks all live runs.
+- Permanent deletion uses the project-scoped `/processes/{id}/remove` endpoint
+  with `{ "stop_first": true | false }`. DELETE continues to mean stop. Daemon
+  lifecycle serialization prevents concurrent restart from reviving a removed
+  execution. A persisted private deletion journal retains retry metadata until
+  artifact cleanup and visibility publication complete; startup retries pending
+  cleanup. Public snapshots never contain the private journal or environment.
+- Deletion cutoffs and deleted IDs travel with process authority. The local API
+  serializes process reads with removal commits. Browser guards reject deleted
+  status/action responses, dispose output connections, and preserve higher
+  cutoffs across delayed snapshots.
+- Workspace preferences are version 3. Each project can keep terminals closed
+  (the default) or restore its saved views. Explicitly opened views remain usable
+  across worktree switches during a project visit. Restoration waits for both
+  process inventory and visibility authority, and remaps references before
+  pruning them.
+
+Historical manual restart order in legacy records remains unrecoverable; a new
+explicit launch or restart establishes authoritative ordering, as planned.
+
+
+Validated with process-store, daemon, and local API tests under the Go race
+detector; repository `go vet ./...`; all 232 Vitest tests; web typecheck, lint,
+and production build; and 13 Playwright process-node, native process-terminal,
+restoration, worktree-management, and storage-migration scenarios.

@@ -57,6 +57,7 @@ type Server struct {
 	store       *procstore.Store
 	logCap      int64
 
+	lifecycleMu sync.Mutex // serializes explicit execution, authority reads, and deletion
 	mu          sync.Mutex
 	procs       map[int]*managedProc
 	nextID      int
@@ -183,9 +184,32 @@ func NewServer(root string) (*Server, error) {
 // adoptExisting loads records left by a previous daemon. If active records exist,
 // they are explicitly reconciled: if still alive, classified as "orphan"; if dead, classified as "lost".
 func (s *Server) adoptExisting() {
+	_ = s.store.RecoverRemovals() // failed intents remain available for explicit retry
 	recs, _ := s.store.ListRecords()
+	pending, _ := s.store.PendingRemovalRecords()
+	for _, intent := range pending {
+		found := false
+		for i, rec := range recs {
+			if rec.ID == intent.ID {
+				recs[i] = intent
+				found = true
+				break
+			}
+		}
+		if !found {
+			recs = append(recs, intent)
+		}
+	}
+	visibility, _ := s.store.ReadVisibility()
 	max := 0
 	for _, r := range recs {
+		if visibility.Deleted[r.ID] {
+			if err := s.store.RemoveRecord(r.ID); err == nil {
+				continue
+			}
+		}
+		r.CommandKey = procstore.CommandIdentity(r)
+		r.ExecutionOrder = procstore.ExecutionOrder(r)
 		if r.ID > max {
 			max = r.ID
 		}

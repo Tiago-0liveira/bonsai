@@ -1,3 +1,4 @@
+import { WORKSPACE_STORAGE_VERSION } from '../src/stores/workspacePersistence'
 import { expect, test } from '@playwright/test'
 import { mockGitBackend } from './mockGit'
 import './presentationFixtures'
@@ -42,7 +43,7 @@ test('legacy values are scrubbed before connection and stay removed across reloa
     expect(before.state.nodePlacements['wt-web']).toEqual({ x: 120, y: 240, mode: 'manual' })
     expect(before.state.nodePlacements.worker).toBeUndefined()
     expect(before.unrelated).toBe('leave-me-alone')
-    expect(JSON.parse(before.stored!).version).toBe(2)
+    expect(JSON.parse(before.stored!).version).toBe(WORKSPACE_STORAGE_VERSION)
     await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
     await expect(page.locator('.react-flow')).toBeVisible()
     await expect(page.locator('.react-flow__node-agent')).toHaveCount(0)

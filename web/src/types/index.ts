@@ -146,6 +146,8 @@ export interface StartAgentInput {
 export type ProcessLifecycleStatus = 'starting' | 'running' | 'backoff' | 'stopping' | 'stopped' | 'done' | 'failed' | 'lost' | 'orphan'
 
 export interface Process {
+  commandKey?: string
+  executionOrder?: number
   id: string
   projectId: string
   daemonId: number
@@ -259,6 +261,7 @@ export type Selection =
 export interface RuntimeReference {
   kind: 'agent' | 'process'
   id: string
+  commandKey?: string
 }
 
 export interface RuntimeViewPreference {
@@ -268,6 +271,7 @@ export interface RuntimeViewPreference {
 
 export type TerminalViewPreferences = Record<string, {
   lastWorktreeId: string
+  reopening?: 'keep_closed' | 'restore'
   worktrees: Record<string, RuntimeViewPreference>
 }>
 

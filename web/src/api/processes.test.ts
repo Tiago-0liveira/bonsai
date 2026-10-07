@@ -26,7 +26,7 @@ it('omits an inherited policy and preserves explicit zero retries', async () => 
 it('protects a launch from older snapshots and preserves newer streamed lifecycle versions', () => {
   useBonsaiStore.setState({ processes: [], projects: [], worktrees: [], agents: [], pullRequests: [] })
   applyProcessSummary(summary)
-  const snapshot = { repository: { id: 'other', full_name: 'owner/repo', default_branch: 'main' }, online: true, metadata: {}, processes: [] } as unknown as Snapshot
+  const snapshot = { repository: { id: 'other', full_name: 'owner/repo', default_branch: 'main' }, online: true, metadata: {}, process_visibility: { cutoffs: {}, deleted: {} }, processes: [] } as unknown as Snapshot
   const missing = reconcileSnapshotEntities(snapshot, useBonsaiStore.getState())
   expect(missing.processes ?? useBonsaiStore.getState().processes).toHaveLength(1)
   const older = reconcileSnapshotEntities({ ...snapshot, processes: [{ ...summary, revision: 2, status: 'running' }] }, useBonsaiStore.getState())

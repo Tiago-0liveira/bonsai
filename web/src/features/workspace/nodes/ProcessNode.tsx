@@ -28,7 +28,7 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
   const process = useBonsaiStore(useMemo(() => processNodeSelector(data.entityId), [data.entityId]))
   const worktree = useBonsaiStore(state => state.worktrees.find(tree => tree.id === data.worktreeId))
   const setSelection = useBonsaiStore(state => state.setSelection)
-  const { pending, error, canStop, canRestart, openOutput, inspect, stop, restart } = useProcessActions(process)
+  const { pending, error, canStop, canRestart, openOutput, inspect, stop, restart, remove, deleteLabel } = useProcessActions(process)
   const lifecycle = process?.lifecycleStatus ?? data.processStatus ?? 'lost'
   const status = statusPresentation[pending === 'stop' ? 'stopping' : pending === 'restart' ? 'starting' : lifecycle]
   const statusLabel = pending === 'restart' ? 'Restarting' : status.label
@@ -70,6 +70,7 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
         <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
         <ContextMenu.Item disabled={!canStop} onSelect={stop} className={menuItemClass}><Square size={13} />{pending === 'stop' ? 'Stopping process…' : 'Stop process'}</ContextMenu.Item>
         <ContextMenu.Item disabled={!canRestart} onSelect={restart} className={menuItemClass}><RotateCcw size={13} />{pending === 'restart' ? 'Restarting process…' : 'Restart process'}</ContextMenu.Item>
+        <ContextMenu.Item disabled={!process || !!pending} onSelect={remove} className={menuItemClass}>{pending === 'remove' ? 'Deleting process…' : deleteLabel}</ContextMenu.Item>
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>

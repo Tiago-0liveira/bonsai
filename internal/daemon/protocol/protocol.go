@@ -15,7 +15,7 @@ import (
 
 // Version is bumped when the wire format changes incompatibly. Ping returns it so
 // a client can detect a daemon left over from an older bonsai build.
-const Version = 7
+const Version = 8
 
 // Request kinds.
 const (
@@ -63,6 +63,7 @@ type Request struct {
 	ProcessName string               `json:"process_name,omitempty"`
 
 	// Target for kill/restart/setPolicy/logs.
+	StopFirst bool   `json:"stop_first,omitempty"`
 	ID        int    `json:"id,omitempty"`
 	All       bool   `json:"all,omitempty"`       // kill: every process
 	Worktree2 string `json:"worktree2,omitempty"` // kill: restrict to a worktree path
@@ -86,10 +87,11 @@ type Response struct {
 	OK    bool              `json:"ok"`
 	Error string            `json:"error,omitempty"`
 
-	Record     *procstore.Record     `json:"record,omitempty"`  // spawn/restart
-	Records    []*procstore.Record   `json:"records,omitempty"` // list
-	Killed     []int                 `json:"killed,omitempty"`  // kill
-	ServeGroup *procstore.ServeGroup `json:"serve_group,omitempty"`
+	Visibility *procstore.ProcessVisibility `json:"process_visibility,omitempty"`
+	Record     *procstore.Record            `json:"record,omitempty"`  // spawn/restart
+	Records    []*procstore.Record          `json:"records,omitempty"` // list
+	Killed     []int                        `json:"killed,omitempty"`  // kill
+	ServeGroup *procstore.ServeGroup        `json:"serve_group,omitempty"`
 
 	// Ping.
 	Version   int `json:"version,omitempty"`

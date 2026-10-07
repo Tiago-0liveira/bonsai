@@ -1,3 +1,5 @@
+import { useBonsaiStore } from '../stores/bonsai'
+import { processDeleted } from '../stores/processProjection'
 import { LOCAL_API_HTTP, terminalCapability, invalidateLocalSession } from './localClient'
 import type { ProcessSummary } from './git'
 import { applyProcessSummary } from './processes'
@@ -75,8 +77,14 @@ export function connectProcessStream(project: string, id: number, callbacks: Cal
       reconnect()
     }
   }
-  void connect()
-  return { dispose() { disposed = true; clearTimeout(retry); clearTimeout(deadline); socket?.close() } }
+  let unsubscribe = () => {}
+  const dispose = () => { disposed = true; unsubscribe(); clearTimeout(retry); clearTimeout(deadline); socket?.close() }
+  unsubscribe = useBonsaiStore.subscribe(state => {
+    if (processDeleted(state, project, id)) { dispose(); sessions.delete(`${project}:${id}`) }
+  })
+  if (processDeleted(useBonsaiStore.getState(), project, id)) dispose()
+  else void connect()
+  return { dispose }
 }
 
 // Start attachment as soon as launch returns, before xterm imports or panel sizing.

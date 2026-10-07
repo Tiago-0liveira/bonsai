@@ -1,3 +1,4 @@
+import { processActive } from '../../stores/processProjection'
 import { openGitHub } from '../../api/git'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
@@ -60,6 +61,7 @@ export function Inspector() {
   const tags = useBonsaiStore((state) => state.worktreeTags)
   const agents = useProjectAgents(activeProjectId)
   const processes = useProjectProcesses(activeProjectId)
+  const inventory = useBonsaiStore(state => state.processes)
   const pullRequests = useProjectPullRequests(activeProjectId)
   const terminalLines = useBonsaiStore(state => {
     const selected = state.selection.type === 'agent' ? state.agents.find(agent => agent.id === state.selection.id) : undefined
@@ -86,7 +88,7 @@ export function Inspector() {
   const [tagDraft, setTagDraft] = useState('')
 
   const agent = selection.type === 'agent' ? agents.find((item) => item.id === selection.id) : undefined
-  const process = selection.type === 'process' ? processes.find(item => item.id === selection.id) : undefined
+  const process = selection.type === 'process' ? inventory.find(item => item.id === selection.id) : undefined
   const worktree = worktrees.find((item) => item.id === (selection.type === 'worktree' ? selection.id : agent?.worktreeId ?? process?.worktreeId))
   const project = useBonsaiStore(state => state.projects.find(item => item.id === (worktree?.projectId ?? activeProjectId)))
   const projectWorktrees = worktrees
@@ -198,6 +200,13 @@ export function Inspector() {
                     </button>
                   )}
                 </section>
+
+                {inventory.some(p => p.worktreeId === worktree.id && processActive(p) && !processes.some(visible => visible.id === p.id)) && <Section title="Earlier active executions" meta={inventory.filter(p => p.worktreeId === worktree.id && processActive(p) && !processes.some(visible => visible.id === p.id)).length}>
+                  {inventory.filter(p => p.worktreeId === worktree.id && processActive(p) && !processes.some(visible => visible.id === p.id)).map(p => <div key={p.id} className="mb-3">
+                    <p className="mb-1 break-all text-[10px]">#{p.daemonId} · {p.command} · {p.lifecycleStatus}</p>
+                    <ProcessActions process={p} />
+                  </div>)}
+                </Section>}
 
                 <form onSubmit={submitTag} className="mt-4">
                   <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-[.12em] text-[rgb(var(--muted-2))]">Tag name</div>

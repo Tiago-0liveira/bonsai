@@ -39,6 +39,7 @@ test('process context menus inspect and navigate without opening output, then ex
 
 test('context menu and card controls share pending/errors and restart without opening a closed view or moving its node', async ({ page }) => {
   const node = await openProcessFixture(page)
+  await expect.poll(() => page.evaluate(() => window.__bonsaiTestStore.getState().nodePlacements['bonsai:1'])).not.toBeUndefined()
   const placement = await page.evaluate(() => window.__bonsaiTestStore.getState().nodePlacements['bonsai:1'])
   let finishStop: () => void = () => {}
   const stopRequests: string[] = []

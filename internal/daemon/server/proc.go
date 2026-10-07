@@ -34,6 +34,8 @@ func waitForProcessExit(pid int, startedAt time.Time, worktree string, timeout t
 
 // spawn creates a new managed process and starts it.
 func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if req.Worktree == "" || (req.Command == "" && req.Program == "") {
 		return nil, fmt.Errorf("spawn requires worktree and command or program")
 	}
@@ -54,6 +56,10 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 		return nil, err
 	}
 
+	order, err := s.store.NextExecutionOrder()
+	if err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	id := s.nextID
 	s.nextID++
@@ -77,6 +83,8 @@ func (s *Server) spawn(req *protocol.Request) (*procstore.Record, error) {
 		},
 		generation: 1,
 	}
+	mp.rec.CommandKey = procstore.CommandIdentity(mp.rec)
+	mp.rec.ExecutionOrder = order
 	if err := s.store.ReserveID(id); err != nil {
 		s.mu.Unlock()
 		return nil, err
@@ -525,6 +533,11 @@ func (s *Server) killManaged(mp *managedProc) bool {
 
 // restart terminates mp (if running) and starts it fresh with a new generation.
 func (s *Server) restart(id int) (*procstore.Record, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.store.RemovalPending(id) {
+		return nil, fmt.Errorf("process #%d deletion is pending; retry deletion", id)
+	}
 	s.mu.Lock()
 	mp, ok := s.procs[id]
 	s.mu.Unlock()
@@ -553,13 +566,24 @@ func (s *Server) restart(id int) (*procstore.Record, error) {
 		}
 	}
 
+	order, err := s.store.NextExecutionOrder()
+	if err != nil {
+		return nil, err
+	}
 	mp.mu.Lock()
+	mp.rec.ExecutionOrder = order
+	mp.rec.CommandKey = procstore.CommandIdentity(mp.rec)
 	mp.consecFails = 0
 	mp.rec.RetryCount = 0
 	mp.generation++
 	gen := mp.generation
 	mp.rec.Status = procstore.StatusStarting
-	_ = s.store.WriteRecord(mp.rec)
+	if err := s.store.WriteRecord(mp.rec); err != nil {
+		mp.rec.Status = procstore.StatusFailed
+		mp.rec.ExitError = "failed to persist explicit restart: " + err.Error()
+		mp.mu.Unlock()
+		return nil, err
+	}
 	mp.mu.Unlock()
 
 	if err := s.start(mp, gen); err != nil {

@@ -1,4 +1,5 @@
 import { project, pullRequest, checkStatus, reconcileSnapshotEntities, snapshotRuntimeAuthority } from './snapshotReconciliation'
+import { remapProcessReferences } from '../stores/processProjection'
 import { activeRuntimePatch, reconcileRuntimePreferences, switchRuntimeScope } from '../stores/runtimePreferences'
 import { changedPatch, replaceScope } from '../stores/reconciliation'
 export { pullRequest } from './snapshotReconciliation'
@@ -116,6 +117,8 @@ interface LocalWorktree {
   connection?: { state: 'linked' | 'unlinked' | 'unknown'; reason?: string; status_unknown?: boolean }
 }
 export interface ProcessSummary {
+  command_key?: string
+  execution_order?: number
   id: string
   daemon_id: number
   revision?: number
@@ -149,6 +152,7 @@ export interface WorktreeProjection {
   }
 }
 export interface Snapshot {
+  process_visibility?: { cutoffs: Record<string, number>; deleted: Record<string, boolean> }
   agents?: import('./agents').AgentSummary[]
   epoch?: string
   branch_candidates?: BranchCandidate[]
@@ -289,6 +293,7 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     ? { type: 'project' as const, id }
     : state.selection
   let working = { ...state, ...entityPatch, agents }
+  if (authority.processes) working = { ...working, ...remapProcessReferences(working, state, id) }
   if (state.activeProjectId === id && (createdVisible || (!state.dockWorktreeId && !state.terminalViewPreferences[id] && authority.worktrees))) {
     working = { ...working, ...switchRuntimeScope(working, id, createdVisible ? pendingCreatedId : undefined) }
   }
@@ -309,6 +314,10 @@ function snapshotPatch(snapshot: Snapshot, state: StoreState, generation = activ
     openRuntimeIds: working.openRuntimeIds,
     activeTerminalId: working.activeTerminalId,
   })
+  if (authority.processes) {
+    Object.assign(patch, remapProcessReferences({ ...state, ...patch }, state, id))
+    Object.assign(patch, reconcileRuntimePreferences({ ...state, ...patch }, id, authority))
+  }
   guard.applied = Math.max(guard.applied, snapshot.sequence)
   // Provider and process updates do not invalidate local files or diffs. Include
   // raw file status entries so path changes with unchanged counts still reload.

@@ -17,6 +17,7 @@ func (s *Server) registerProcessRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{projectId}/process-commands", s.processCommands)
 	mux.HandleFunc("GET /api/projects/{projectId}/processes/{id}/terminal", s.processTerminal)
 	mux.HandleFunc("POST /api/projects/{projectId}/processes", s.processStart)
+	mux.HandleFunc("POST /api/projects/{projectId}/processes/{id}/remove", s.processRemove)
 	mux.HandleFunc("POST /api/projects/{projectId}/process-preview", s.processPreview)
 	mux.HandleFunc("GET /api/projects/{projectId}/processes", s.processes)
 	mux.HandleFunc("GET /api/projects/{projectId}/processes/{id}/logs", s.processLogs)
@@ -233,4 +234,47 @@ func (s *Server) processPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAPIError(w, 409, "command_unavailable", "Command no longer exists. Reload the package list.")
+}
+
+func (s *Server) processRemove(w http.ResponseWriter, r *http.Request) {
+	id, ok := processID(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		StopFirst bool `json:"stop_first"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeAPIError(w, 400, "invalid", "Expected stop_first JSON option")
+		return
+	}
+	project := s.registry.Default()
+	daemon, ok := project.daemon.(interface {
+		RemoveExecution(int, bool) (procstore.ProcessVisibility, error)
+	})
+	if !ok {
+		writeAPIError(w, 503, "daemon_unavailable", "Daemon lacks deletion support")
+		return
+	}
+	s.stateSync.processAuthorityMu.Lock()
+	visibility, err := daemon.RemoveExecution(id, input.StopFirst)
+	if err == nil {
+		s.stateSync.commitProject(project, "processes", func(snapshot *browserSnapshot) {
+			processes := make([]browserProcessSummary, 0, len(snapshot.Processes))
+			for _, process := range snapshot.Processes {
+				if process.DaemonID != id {
+					processes = append(processes, process)
+				}
+			}
+			snapshot.Processes = processes
+			snapshot.ProcessVisibility = visibility
+		})
+	}
+	s.stateSync.processAuthorityMu.Unlock()
+	s.stateSync.Queue(project.info.ID, refreshProcesses, false)
+	if err != nil {
+		writeAPIError(w, 400, "process_remove_failed", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": project.info.ID + ":" + strconv.Itoa(id), "process_visibility": visibility})
 }

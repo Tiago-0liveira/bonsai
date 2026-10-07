@@ -141,7 +141,7 @@ describe('workspace migration and hydration', () => {
       dockRuntimeId: 'repo:1', openRuntimeIds: ['repo:1', 'agent-real'],
       nodePlacements: { 'repo:1': { x: 1, y: 2, mode: 'manual' }, 'repo:2': { x: 3, y: 4, mode: 'manual' }, 'agent-real': { x: 5, y: 6, mode: 'manual' } },
     })
-    expect(preferences.terminalViewPreferences).toEqual({ repo: { lastWorktreeId: 'tree', worktrees: {
+    expect(preferences.terminalViewPreferences).toEqual({ repo: { lastWorktreeId: 'tree', reopening: 'keep_closed', worktrees: {
       tree: { open: [{ kind: 'process', id: 'repo:1' }, { kind: 'agent', id: 'agent-real' }], active: { kind: 'agent', id: 'agent-real' } },
       empty: { open: [], active: null },
     } } })
@@ -159,7 +159,7 @@ describe('workspace migration and hydration', () => {
       terminalViewPreferences: { repo: { lastWorktreeId: 'saved-tree', worktrees: { 'saved-tree': { open: [ref], active: ref } } } },
     }, useBonsaiStore.getInitialState())
     expect(state.worktrees).toEqual([])
-    expect(state).toMatchObject({ dockWorktreeId: 'saved-tree', dockRuntimeId: 'repo:1', openRuntimeIds: ['repo:1'] })
+    expect(state).toMatchObject({ dockWorktreeId: 'saved-tree', dockRuntimeId: '', openRuntimeIds: [] })
   })
 
   it('reconciles in-memory simulated selection and placements when rehydrating an empty record', () => {

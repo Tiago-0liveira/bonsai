@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { connectProcessStream, ProcessMarkerRenderer } from './processStream'
+import { useBonsaiStore } from '../stores/bonsai'
+import { applyProcessSummary } from './processes'
 import { invalidateLocalSession, terminalCapability } from './localClient'
 vi.mock('./localClient', () => ({ LOCAL_API_HTTP: 'http://127.0.0.1:7001', terminalCapability: vi.fn().mockResolvedValue('capability'), invalidateLocalSession: vi.fn() }))
 vi.mock('./processes', () => ({ applyProcessSummary: vi.fn() }))
@@ -17,7 +19,7 @@ class Socket {
   close() { this.readyState = 3; this.onclose?.() }
   frame(value: object) { this.onmessage?.({ data: JSON.stringify(value) }) }
 }
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); Socket.instances = [] })
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); Socket.instances = []; useBonsaiStore.setState({ processVisibility: {} }) })
 it('resumes accepted bytes, suppresses duplicates, reports eviction and releases silent sockets', async () => {
   vi.useFakeTimers(); vi.stubGlobal('WebSocket', Socket)
   const output = vi.fn(), gap = vi.fn(), error = vi.fn()
@@ -83,4 +85,20 @@ it('preserves UTF-8 and ANSI across every byte boundary and renders embedded par
   const result: number[] = []
   for (const byte of bytes) result.push(...renderer.render(Uint8Array.of(byte)))
   expect(new TextDecoder().decode(Uint8Array.from(result))).toBe('\x1b[32mé界\x1b[0mno newline\r\n\x1b[0;36m── Restarted · attempt 2 ──\x1b[0m\r\nfinal')
+})
+
+it('disposes deleted output immediately and rejects stale frames and queued reconnects', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('WebSocket', Socket)
+  const output = vi.fn()
+  const controller = connectProcessStream('deleted-project', 8, { connection: vi.fn(), output, gap: vi.fn(), error: vi.fn() })
+  await Promise.resolve()
+  const socket = Socket.instances[0]; socket.onopen?.(); socket.close()
+  useBonsaiStore.setState({ processVisibility: { 'deleted-project': { cutoffs: {}, deleted: { 8: true } } } })
+  socket.frame({ type: 'status', status: { id: 'deleted-project:8' } })
+  socket.frame({ type: 'output', offset: 1, data: btoa('a') })
+  await vi.advanceTimersByTimeAsync(10000)
+  expect(Socket.instances).toHaveLength(1); expect(output).not.toHaveBeenCalled(); expect(applyProcessSummary).not.toHaveBeenCalled()
+  const late = connectProcessStream('deleted-project', 8, { connection: vi.fn(), output, gap: vi.fn(), error: vi.fn() })
+  await Promise.resolve(); expect(Socket.instances).toHaveLength(1)
+  controller.dispose(); late.dispose()
 })

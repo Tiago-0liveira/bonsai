@@ -5,7 +5,7 @@ import { activeRuntimePatch } from './runtimePreferences'
 import type { BonsaiState } from './bonsai'
 
 export const WORKSPACE_STORAGE_KEY = 'bonsai-web-workspace-v6'
-export const WORKSPACE_STORAGE_VERSION = 2
+export const WORKSPACE_STORAGE_VERSION = 3
 
 export interface WorkspacePreferences {
   selection: Selection
@@ -41,7 +41,7 @@ const member = <T extends string>(value: unknown, values: readonly T[]): value i
 function runtimeReference(value: unknown): RuntimeReference | undefined {
   const row = record(value)
   return row && member(row.kind, ['agent', 'process']) && typeof row.id === 'string' && row.id
-    ? { kind: row.kind, id: row.id } : undefined
+    ? { kind: row.kind, id: row.id, ...(row.kind === 'process' && typeof row.commandKey === 'string' ? { commandKey: row.commandKey } : {}) } : undefined
 }
 
 function terminalPreferences(value: unknown): TerminalViewPreferences | undefined {
@@ -52,6 +52,7 @@ function terminalPreferences(value: unknown): TerminalViewPreferences | undefine
     if (!projectId || !project || typeof project.lastWorktreeId !== 'string' || !worktrees) return []
     return [[projectId, {
       lastWorktreeId: project.lastWorktreeId,
+      reopening: project.reopening === 'restore' ? 'restore' : 'keep_closed',
       worktrees: Object.fromEntries(Object.entries(worktrees).flatMap(([worktreeId, value]) => {
         const view = record(value)
         if (!view || !Array.isArray(view.open)) return []
@@ -156,7 +157,7 @@ export function mergeWorkspacePreferences<T extends WorkspacePreferences & {
 }>(persisted: unknown, current: T): T {
   const raw = record(persisted)
   const saved = sanitizeWorkspacePreferences({ ...raw, agents: [...current.agents, ...(Array.isArray(raw?.agents) ? raw.agents : [])] })
-  const next = { ...current, ...sanitizeWorkspacePreferences(current), ...saved, terminalViewPreferences: saved.terminalViewPreferences ?? {}, agents: current.agents.filter(agent => agent.providerId === 'antigravity'), envVariables: {}, terminalSessions: [], terminalOutput: {}, activeTerminalId: '', dockRuntimeId: '', openRuntimeIds: [] as string[] }
+  const next = { ...current, ...sanitizeWorkspacePreferences(current), ...saved, terminalViewPreferences: saved.terminalViewPreferences ?? {}, agents: current.agents.filter(agent => agent.providerId === 'antigravity'), envVariables: {}, terminalSessions: [], terminalOutput: {}, activeTerminalId: '', dockRuntimeId: '', openRuntimeIds: [] as string[], visitOpenedRuntimeIds: [] as string[] }
   next.dockWorktreeId = next.terminalViewPreferences[next.activeProjectId]?.lastWorktreeId ?? next.dockWorktreeId
   // On an explicit rehydrate, canonical entities may already be available.
   if (current.projects.length) {

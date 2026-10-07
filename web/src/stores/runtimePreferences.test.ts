@@ -19,7 +19,7 @@ function snapshot(project = 'bonsai', processes: ProcessSummary[] = [], extra: P
     repository: { id: project, workspace_id: 'personal', full_name: `owner/${project}`, default_branch: 'main' },
     sequence: ++sequence, online: true, metadata: {},
     local: { worktrees: worktrees.filter(tree => tree.projectId === project).map(tree => ({ id: tree.id, repository_id: project, branch: tree.branch, main: !!tree.main, local_head_sha: 'abc' })), branches: [] },
-    processes, agents: [], freshness: { local: { state: 'ready' }, agents: { state: 'ready' }, processes: { state: 'ready' } },
+    processes, process_visibility: { cutoffs: {}, deleted: {} }, agents: [], freshness: { local: { state: 'ready' }, agents: { state: 'ready' }, processes: { state: 'ready' } },
     ...extra,
   }
 }
@@ -35,7 +35,7 @@ function reload() {
 beforeEach(() => {
   vi.restoreAllMocks(); workspacePreferences.cancel(); __resetGitSyncForTests(); sequence = 0
   localStorage.clear()
-  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, activeProjectId: 'bonsai', activeWorkspaceId: 'personal', dockWorktreeId: 'wt-web' }, true)
+  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, activeProjectId: 'bonsai', activeWorkspaceId: 'personal', dockWorktreeId: 'wt-web', processAuthorityReady: { bonsai: true }, terminalViewPreferences: { bonsai: { lastWorktreeId: 'wt-web', reopening: 'restore', worktrees: {} } } }, true)
   localStorage.clear()
 })
 afterEach(() => { workspacePreferences.cancel(); vi.restoreAllMocks() })
@@ -129,8 +129,8 @@ describe('terminal preference persistence and authority', () => {
     expect(saved()).not.toHaveProperty('terminalOutput')
     reload()
     expect(store().processes).toEqual([])
-    expect(store().openRuntimeIds).toEqual(['bonsai:3', 'bonsai:1'])
-    expect(store().dockRuntimeId).toBe('bonsai:1')
+    expect(store().openRuntimeIds).toEqual([])
+    expect(store().dockRuntimeId).toBe('')
     expect(store().nodePlacements['bonsai:1']).toEqual({ x: 30, y: 40, mode: 'manual' })
     reconcileCatalog([{ id: 'bonsai', workspace_id: 'personal', full_name: 'owner/bonsai', default_branch: 'main' }])
     applySnapshot(snapshot('bonsai', [summary(1), summary(2), summary(3)]))

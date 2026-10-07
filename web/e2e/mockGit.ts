@@ -198,6 +198,7 @@ function bonsaiSnapshot(metadata: Record<string, Metadata>) {
       provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
     },
     worktree_state: worktreeState,
+    process_visibility: { cutoffs: {}, deleted: {} },
     processes: [
       { id: 'bonsai:1', daemon_id: 1, project_id: 'bonsai', worktree_id: 'wt-web', label: 'Vite', command: 'pnpm dev', status: 'running', pid: 1001, expected_port: 5173 },
       { id: 'bonsai:2', daemon_id: 2, project_id: 'bonsai', worktree_id: 'wt-daemon', label: 'bonsaid', command: 'go run . daemon', status: 'backoff', pid: 1002 },
@@ -221,6 +222,7 @@ function emptySnapshot(projectId: string) {
       provider: { state: 'ready', updated_at: '2026-09-27T00:00:00Z' },
     },
     worktree_state: {},
+    process_visibility: { cutoffs: {}, deleted: {} },
     processes: [],
   }
 }

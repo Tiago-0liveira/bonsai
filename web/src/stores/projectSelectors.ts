@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useBonsaiStore, type BonsaiState } from './bonsai'
 import type { Agent, CanvasProcess, Process } from '../types'
+import { visibleProcesses } from './processProjection'
 import { shareEqual } from './reconciliation'
 
 function retainSubset<T>(previous: T[], next: T[]) {
@@ -21,7 +22,18 @@ function subsetSelector<T>(source: (state: BonsaiState) => T[], include: (value:
 }
 
 export const projectWorktreesSelector = (id: string) => subsetSelector(state => state.worktrees, tree => tree.projectId === id)
-export const projectProcessesSelector = (id: string) => subsetSelector(state => state.processes, process => process.projectId === id)
+export const projectProcessInventorySelector = (id: string) => subsetSelector(state => state.processes, process => process.projectId === id)
+export function projectProcessesSelector(id: string) {
+  let input: Process[] | undefined, visibility: unknown
+  let result: Process[] = []
+  return (state: BonsaiState) => {
+    if (input !== state.processes || visibility !== state.processVisibility?.[id]) {
+      input = state.processes; visibility = state.processVisibility?.[id]
+      result = retainSubset(result, visibleProcesses(state, id))
+    }
+    return result
+  }
+}
 
 // Transport metadata (PID, revision, retry counters) does not change canvas
 // topology or presentation. Subscribe only to the fields the graph projects.

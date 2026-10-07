@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2053,8 +2054,8 @@ func TestProcessIDsSurviveRemovalAndDaemonRestart(t *testing.T) {
 	if err := c.Shutdown(false); err != nil {
 		t.Fatal(err)
 	}
-	srv, err := server.NewServer(root)
-	if err != nil {
+	var srv *server.Server
+	if !waitFor(t, time.Second, func() bool { srv, err = server.NewServer(root); return err == nil }) {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
@@ -2067,8 +2068,163 @@ func TestProcessIDsSurviveRemovalAndDaemonRestart(t *testing.T) {
 			t.Error("reopened daemon did not exit")
 		}
 	})
+	_, visibility, authorityErr := c.ProcessAuthorityContext(context.Background())
+	if authorityErr != nil || !visibility.Deleted[rec.ID] || visibility.Cutoffs[rec.CommandKey] != rec.ExecutionOrder {
+		t.Fatalf("visibility lost across daemon restart: %+v %v", visibility, authorityErr)
+	}
 	next, err := c.Spawn(root, "", "second", "exit 0", &procstore.Policy{Mode: procstore.PolicyNo})
-	if err != nil || next == nil || next.ID <= rec.ID {
+	if err != nil || next == nil || next.ID <= rec.ID || next.ExecutionOrder <= rec.ExecutionOrder {
 		t.Fatalf("reused identity: %+v %v", next, err)
+	}
+}
+
+func TestExplicitExecutionOrderAndStopDeleteAuthority(t *testing.T) {
+	c, root := newDaemon(t)
+	policy := &procstore.Policy{Mode: procstore.PolicyNo}
+	first, err := c.Spawn(root, "", "old", "sleep 30", policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := c.Spawn(root, "", "new", "sleep 30", policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CommandKey == "" || latest.CommandKey != first.CommandKey || latest.ExecutionOrder <= first.ExecutionOrder {
+		t.Fatalf("identity/order: %+v %+v", first, latest)
+	}
+	restarted, err := c.Restart(first.ID)
+	if err != nil || restarted.ExecutionOrder <= latest.ExecutionOrder {
+		t.Fatalf("explicit restart: %+v %v", restarted, err)
+	}
+	if _, err := c.RemoveExecution(first.ID, false); err == nil {
+		t.Fatal("active removal must require stop")
+	}
+	visibility, err := c.RemoveExecution(first.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !visibility.Deleted[first.ID] || visibility.Cutoffs[first.CommandKey] != restarted.ExecutionOrder {
+		t.Fatalf("visibility: %+v", visibility)
+	}
+	if _, err := c.RemoveExecution(first.ID, true); err != nil {
+		t.Fatal("repeat removal", err)
+	}
+	if _, err := c.Restart(first.ID); err == nil {
+		t.Fatal("deleted execution restarted")
+	}
+	if got := recByID(t, c, latest.ID); got.Status != procstore.StatusRunning {
+		t.Fatal("other execution stopped", got)
+	}
+	records, authority, err := c.ProcessAuthorityContext(context.Background())
+	if err != nil || len(records) != 1 || !authority.Deleted[first.ID] {
+		t.Fatalf("authority: %+v %+v %v", records, authority, err)
+	}
+	next, err := c.Spawn(root, "", "after deletion", "sleep 30", policy)
+	if err != nil || next.ExecutionOrder <= restarted.ExecutionOrder {
+		t.Fatalf("new execution: %+v %v", next, err)
+	}
+	for _, suffix := range []string{".json", ".log", ".log.1", ".log.cursor"} {
+		if _, err := os.Stat(filepath.Join(root, ".bonsai", "procs", strconv.Itoa(first.ID)+suffix)); !os.IsNotExist(err) {
+			t.Fatalf("deleted artifact %s: %v", suffix, err)
+		}
+	}
+}
+
+func TestAutomaticRetryKeepsOrderAndCleanupFailureCanRetry(t *testing.T) {
+	c, root := newDaemon(t)
+	r, err := c.Spawn(root, "", "retry", "exit 2", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 4*time.Second, func() bool { p := recByID(t, c, r.ID); return p.Status == procstore.StatusFailed && p.Attempt == 2 }) {
+		t.Fatal("retry did not finish")
+	}
+	after := recByID(t, c, r.ID)
+	if after.ExecutionOrder != r.ExecutionOrder {
+		t.Fatal("automatic retry changed explicit ordering")
+	}
+	path := filepath.Join(root, ".bonsai", "procs", strconv.Itoa(r.ID)+".log.1")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(path, "blocked")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RemoveExecution(r.ID, false); err == nil {
+		t.Fatal("cleanup failure swallowed")
+	}
+	records, visibility, err := c.ProcessAuthorityContext(context.Background())
+	if err != nil || len(records) != 1 || visibility.Deleted[r.ID] {
+		t.Fatalf("failed deletion lost retry state: %+v %+v %v", records, visibility, err)
+	}
+	if _, err := c.Restart(r.ID); err == nil {
+		t.Fatal("restart raced a pending deletion")
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RemoveExecution(r.ID, false); err != nil {
+		t.Fatal("retry deletion", err)
+	}
+}
+
+func TestConcurrentRestartAndDeletionNeverLeavesLiveDeletedRecord(t *testing.T) {
+	c, root := newDaemon(t)
+	for i := 0; i < 6; i++ {
+		r, err := c.Spawn(root, "", "race", "sleep 30", &procstore.Policy{Mode: procstore.PolicyNo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		restarted := make(chan error, 1)
+		removed := make(chan error, 1)
+		go func() { _, err := c.Restart(r.ID); restarted <- err }()
+		go func() { _, err := c.RemoveExecution(r.ID, true); removed <- err }()
+		if err := <-removed; err != nil {
+			t.Fatal("delete", err)
+		}
+		<-restarted // Either the restart won first or the record was already removed.
+		records, visibility, err := c.ProcessAuthorityContext(context.Background())
+		if err != nil || !visibility.Deleted[r.ID] {
+			t.Fatalf("authority: %+v %v", visibility, err)
+		}
+		for _, record := range records {
+			if record.ID == r.ID {
+				t.Fatal("deleted process survived", record)
+			}
+		}
+	}
+}
+
+func TestManualRestartDoesNotExecuteBeforeRecordPersistence(t *testing.T) {
+	c, root := newDaemon(t)
+	r, err := c.Spawn(root, "", "persist", "exit 0", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, time.Second, func() bool { return procstore.IsTerminal(recByID(t, c, r.ID).Status) }) {
+		t.Fatal("first run did not finish")
+	}
+	before := recByID(t, c, r.ID)
+	path := procstore.New(root).RecordPath(r.ID)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Restart(r.ID); err == nil {
+		t.Fatal("restart proceeded without persisted ordering")
+	}
+	after := recByID(t, c, r.ID)
+	if after.Attempt != before.Attempt || after.Status != procstore.StatusFailed {
+		t.Fatalf("restart executed: %+v", after)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	next, err := c.Restart(r.ID)
+	if err != nil || next.ExecutionOrder <= before.ExecutionOrder || next.Attempt != before.Attempt+1 {
+		t.Fatalf("restart recovery: %+v %v", next, err)
 	}
 }

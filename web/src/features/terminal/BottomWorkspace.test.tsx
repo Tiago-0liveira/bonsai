@@ -80,11 +80,11 @@ describe('explicit runtime views', () => {
   })
 
   it('restores saved views when delayed canonical entities arrive without opening discovered siblings', () => {
-    useBonsaiStore.setState({ terminalViewPreferences: { bonsai: { lastWorktreeId: 'wt-web', worktrees: { 'wt-web': { open: [{ kind: 'process', id: 'saved' }], active: { kind: 'process', id: 'saved' } } } } } })
+    useBonsaiStore.setState({ terminalViewPreferences: { bonsai: { lastWorktreeId: 'wt-web', reopening: 'restore', worktrees: { 'wt-web': { open: [{ kind: 'process', id: 'saved' }], active: { kind: 'process', id: 'saved' } } } } } })
     useBonsaiStore.getState().setDockWorktreeId('wt-web')
     render(<StrictMode><RuntimeWorkspace /></StrictMode>)
     expect(attachments.open.size).toBe(0)
-    act(() => useBonsaiStore.setState({ processes: [process('discovered'), process('saved')] }))
+    act(() => { useBonsaiStore.setState({ processes: [process('discovered'), process('saved')], processAuthorityReady: { bonsai: true }, syncFreshness: { bonsai: { processes: { state: 'ready' } } } }); useBonsaiStore.getState().setDockWorktreeId('wt-web') })
     expect([...attachments.open]).toEqual(['saved'])
   })
 

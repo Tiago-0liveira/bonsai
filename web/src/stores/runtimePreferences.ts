@@ -14,15 +14,23 @@ export function runtimeScope(state: BonsaiState, id: string) {
   if (!projectId) return undefined
   const worktreeKnown = state.worktrees.some(tree => tree.id === runtime.worktreeId && tree.projectId === projectId)
   const worktreeId = worktreeKnown || state.syncFreshness[projectId]?.local?.state !== 'ready' ? runtime.worktreeId : ''
-  return { projectId, worktreeId, ref: { kind: agent ? 'agent' as const : 'process' as const, id }, terminalId: agent?.terminalId ?? '' }
+  return { projectId, worktreeId, ref: { kind: agent ? 'agent' as const : 'process' as const, id, ...(process?.commandKey ? { commandKey: process.commandKey } : {}) }, terminalId: agent?.terminalId ?? '' }
 }
 
 export function activeRuntimePatch(state: BonsaiState, projectId = state.activeProjectId, worktreeId = state.dockWorktreeId): Partial<BonsaiState> {
   const view = state.terminalViewPreferences[projectId]?.worktrees[worktreeId] ?? EMPTY_VIEW
-  const active = view.open.find(ref => same(ref, view.active)) ?? view.open[0]
+  const restore = state.terminalViewPreferences[projectId]?.reopening === 'restore'
+  const open = view.open.filter(ref => {
+    if (!restore && !(state.visitOpenedRuntimeIds ?? []).includes(ref.id)) return false
+    // Saved intent can attach only after the relevant inventory is authoritative.
+    if (ref.kind === 'process' && (state.visitOpenedRuntimeIds ?? []).includes(ref.id)) return true
+    if (ref.kind === 'process') return !!state.processes.find(p => p.id === ref.id && state.processAuthorityReady?.[projectId])
+    return state.syncFreshness[projectId]?.agents?.state === 'ready' || (state.visitOpenedRuntimeIds ?? []).includes(ref.id)
+  })
+  const active = open.find(ref => same(ref, view.active)) ?? open[0]
   return changedPatch(state, {
     dockWorktreeId: worktreeId,
-    openRuntimeIds: view.open.map(ref => ref.id),
+    openRuntimeIds: open.map(ref => ref.id),
     dockRuntimeId: active?.id ?? '',
     activeTerminalId: active?.kind === 'agent' ? state.agents.find(agent => agent.id === active.id)?.terminalId ?? '' : '',
   })
@@ -33,6 +41,7 @@ function saveView(state: BonsaiState, projectId: string, worktreeId: string, vie
   const terminalViewPreferences = shareEqual(state.terminalViewPreferences, {
     ...state.terminalViewPreferences,
     [projectId]: {
+      ...previous,
       lastWorktreeId: remember ? worktreeId : previous?.lastWorktreeId ?? worktreeId,
       worktrees: { ...previous?.worktrees, [worktreeId]: view },
     },
@@ -43,6 +52,9 @@ function saveView(state: BonsaiState, projectId: string, worktreeId: string, vie
 export function switchRuntimeScope(state: BonsaiState, projectId: string, worktreeId?: string): Partial<BonsaiState> {
   const project = state.projects.find(item => item.id === projectId)
   if (!project) return {}
+  const entering = projectId !== state.activeProjectId
+  const visitOpenedRuntimeIds = entering ? [] : state.visitOpenedRuntimeIds
+  const visitState = { ...state, visitOpenedRuntimeIds }
   const projectTrees = state.worktrees.filter(tree => tree.projectId === projectId)
   const trees = projectTrees.filter(tree => !tree.missing)
   const saved = state.terminalViewPreferences[projectId]?.lastWorktreeId
@@ -52,7 +64,7 @@ export function switchRuntimeScope(state: BonsaiState, projectId: string, worktr
     // Do not mistake a project visited before discovery for an explicitly
     // selected project shelf. The first local snapshot will choose a worktree.
     return changedPatch(state, {
-      activeProjectId: projectId, activeWorkspaceId: project.workspaceId,
+      activeProjectId: projectId, activeWorkspaceId: project.workspaceId, visitOpenedRuntimeIds,
       dockWorktreeId: '', dockRuntimeId: '', openRuntimeIds: [], activeTerminalId: '',
     })
   }
@@ -61,8 +73,8 @@ export function switchRuntimeScope(state: BonsaiState, projectId: string, worktr
   const view = state.terminalViewPreferences[projectId]?.worktrees[nextTree] ?? EMPTY_VIEW
   const terminalViewPreferences = saveView(state, projectId, nextTree, view)
   return changedPatch(state, {
-    activeProjectId: projectId, activeWorkspaceId: project.workspaceId, terminalViewPreferences,
-    ...activeRuntimePatch({ ...state, terminalViewPreferences }, projectId, nextTree),
+    activeProjectId: projectId, activeWorkspaceId: project.workspaceId, terminalViewPreferences, visitOpenedRuntimeIds,
+    ...activeRuntimePatch({ ...visitState, terminalViewPreferences }, projectId, nextTree),
   })
 }
 
@@ -72,13 +84,15 @@ export function openRuntimePatch(state: BonsaiState, id: string, activate = true
   if (!scope) return {}
   const { projectId, worktreeId, ref } = scope
   const previous = state.terminalViewPreferences[projectId]?.worktrees[worktreeId] ?? EMPTY_VIEW
+  const openedIds = activate && projectId === state.activeProjectId ? state.visitOpenedRuntimeIds ?? [] : []
+  const visitOpenedRuntimeIds = [...new Set([...openedIds, id])]
   const view = { open: previous.open.some(item => same(item, ref)) ? previous.open : [...previous.open, ref], active: ref }
   const terminalViewPreferences = saveView(state, projectId, worktreeId, view)
   if (!activate) return changedPatch(state, { terminalViewPreferences })
   return changedPatch(state, {
-    terminalViewPreferences,
-    ...switchRuntimeScope({ ...state, terminalViewPreferences }, projectId, worktreeId),
-    ...activeRuntimePatch({ ...state, terminalViewPreferences }, projectId, worktreeId),
+    terminalViewPreferences, visitOpenedRuntimeIds,
+    ...switchRuntimeScope({ ...state, terminalViewPreferences, visitOpenedRuntimeIds, activeProjectId: projectId }, projectId, worktreeId),
+    ...activeRuntimePatch({ ...state, terminalViewPreferences, visitOpenedRuntimeIds }, projectId, worktreeId),
   })
 }
 
@@ -140,7 +154,7 @@ export function reconcileRuntimePreferences(state: BonsaiState, projectId: strin
   const lastWorktreeId = authority.worktrees && project.lastWorktreeId && !trees.some(tree => tree.id === project.lastWorktreeId)
     ? (fallbackTrees.find(tree => !tree.main) ?? fallbackTrees[0])?.id ?? '' : project.lastWorktreeId
   const terminalViewPreferences = shareEqual(state.terminalViewPreferences, {
-    ...state.terminalViewPreferences, [projectId]: { lastWorktreeId, worktrees },
+    ...state.terminalViewPreferences, [projectId]: { ...project, lastWorktreeId, worktrees },
   })
   const dockWorktreeId = state.activeProjectId === projectId && authority.worktrees && state.dockWorktreeId && !trees.some(tree => tree.id === state.dockWorktreeId)
     ? lastWorktreeId : state.dockWorktreeId

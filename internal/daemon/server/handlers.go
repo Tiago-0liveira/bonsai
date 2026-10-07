@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
@@ -35,7 +36,11 @@ func (s *Server) handleConn(conn net.Conn) {
 		writeResult(enc, &protocol.Response{Record: rec}, err)
 
 	case protocol.KindList:
-		writeResult(enc, &protocol.Response{Records: s.list()}, nil)
+		s.lifecycleMu.Lock()
+		records := s.list()
+		visibility, err := s.store.ReadVisibility()
+		s.lifecycleMu.Unlock()
+		writeResult(enc, &protocol.Response{Records: records, Visibility: &visibility}, err)
 
 	case protocol.KindKill:
 		killed, err := s.kill(req)
@@ -50,8 +55,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		writeResult(enc, &protocol.Response{Record: rec}, err)
 
 	case protocol.KindRemove:
-		err := s.remove(req.ID)
-		writeResult(enc, &protocol.Response{}, err)
+		visibility, err := s.removeExecution(req.ID, req.StopFirst)
+		writeResult(enc, &protocol.Response{Visibility: &visibility}, err)
 
 	case protocol.KindServeStart:
 		group, err := s.serveStart(req.ServeSpec)
@@ -170,6 +175,8 @@ func (s *Server) kill(req *protocol.Request) ([]int, error) {
 
 // setPolicy updates a process's restart policy, effective on its next exit.
 func (s *Server) setPolicy(req *protocol.Request) (*procstore.Record, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if req.Policy == nil {
 		return nil, fmt.Errorf("invalid policy")
 	}
@@ -192,31 +199,78 @@ func (s *Server) setPolicy(req *protocol.Request) (*procstore.Record, error) {
 // remove drops a process from the daemon and deletes its record/log.
 // Running processes must be killed first; processes waiting in backoff are cancelled and removed.
 func (s *Server) remove(id int) error {
+	_, err := s.removeExecution(id, false)
+	return err
+}
+func (s *Server) removeExecution(id int, stopFirst bool) (procstore.ProcessVisibility, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	visibility, err := s.store.ReadVisibility()
+	if err != nil {
+		return visibility, err
+	}
 	s.mu.Lock()
-	mp, ok := s.procs[id]
+	mp := s.procs[id]
 	s.mu.Unlock()
-	if !ok {
-		return nil
+	if mp == nil {
+		return visibility, s.store.RemoveRecord(id)
 	}
 	mp.mu.Lock()
 	status := mp.rec.Status
-	if status != procstore.StatusBackoff && !procstore.IsTerminal(status) {
-		mp.mu.Unlock()
-		return fmt.Errorf("process #%d is still active", id)
+	done := mp.waitDone
+	mp.mu.Unlock()
+	if !procstore.IsTerminal(status) && status != procstore.StatusBackoff {
+		if !stopFirst {
+			return visibility, fmt.Errorf("process #%d is still active", id)
+		}
+		if !s.killManaged(mp) {
+			return visibility, fmt.Errorf("failed to confirm process #%d stopped", id)
+		}
+		if done != nil {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				return visibility, fmt.Errorf("process #%d stop timed out", id)
+			}
+		}
 	}
-
+	mp.mu.Lock()
+	if !procstore.IsTerminal(mp.rec.Status) && mp.rec.Status != procstore.StatusBackoff {
+		mp.mu.Unlock()
+		return visibility, fmt.Errorf("process #%d is still active", id)
+	}
 	if mp.restartTimer != nil {
 		mp.restartTimer.Stop()
 		mp.restartTimer = nil
 	}
 	mp.generation++
+	// Cancel retries durably before recording an intent to delete artifacts.
+	if mp.rec.Status == procstore.StatusBackoff {
+		mp.rec.Status = procstore.StatusStopped
+		mp.rec.RetryAt = nil
+	}
+	if err := s.store.WriteRecord(mp.rec); err != nil {
+		mp.mu.Unlock()
+		return visibility, err
+	}
+	err = s.store.BeginRemoval(mp.rec)
+	if err != nil {
+		mp.mu.Unlock()
+		return visibility, err
+	}
+	if err := s.store.CompleteRemoval(mp.rec); err != nil {
+		mp.mu.Unlock()
+		return visibility, err
+	}
+	visibility, err = s.store.ReadVisibility()
 	mp.mu.Unlock()
-
+	if err != nil {
+		return visibility, err
+	}
 	s.mu.Lock()
 	delete(s.procs, id)
 	s.mu.Unlock()
-	_ = s.store.RemoveRecord(id)
-	return nil
+	return visibility, nil
 }
 
 // writeResult sends a single response frame, folding an error into it.

@@ -8,10 +8,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	daemonserver "github.com/Tiago-0liveira/bonsai/internal/daemon/server"
@@ -197,4 +200,139 @@ func TestProcessAPIValidationPreviewAndFailedSummary(t *testing.T) {
 		t.Fatalf("failed summary: %+v", failure)
 	}
 
+}
+
+func TestProcessRemovalPreservesStopContractAndPublishesVisibility(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	attachProcessFixture(t, s)
+	project := s.registry.Default()
+	c := project.daemon.(*processFixtureDaemon).Client
+	first, err := c.Spawn(project.info.Path, "", "old", "sleep 30", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := c.Spawn(project.info.Path, "", "new", "sleep 30", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.stateSync.refreshProcesses(project.info.ID)
+	token, _ := s.sessions.create()
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://"+s.expectedHost+path, strings.NewReader(body))
+		r.Host = s.expectedHost
+		r.Header.Set("Origin", s.browserOrigin)
+		r.Header.Set("X-Bonsai-Session", token.Token)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	path := "/api/projects/repo/processes/" + strconv.Itoa(latest.ID)
+	refused := request("POST", path+"/remove", `{"stop_first":false}`)
+	if refused.Code != 400 {
+		t.Fatalf("active refusal: %d %s", refused.Code, refused.Body.String())
+	}
+	stopped := request("DELETE", path, "")
+	if stopped.Code != 200 {
+		t.Fatalf("stop: %d %s", stopped.Code, stopped.Body.String())
+	}
+	if _, err := procstore.New(project.info.Path).ReadRecord(latest.ID); err != nil {
+		t.Fatal("DELETE-as-stop removed record", err)
+	}
+	removed := request("POST", path+"/remove", `{"stop_first":true}`)
+	if removed.Code != 200 {
+		t.Fatalf("remove: %d %s", removed.Code, removed.Body.String())
+	}
+	var response struct {
+		Visibility procstore.ProcessVisibility `json:"process_visibility"`
+	}
+	if err := json.Unmarshal(removed.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Visibility.Deleted[latest.ID] || response.Visibility.Cutoffs[latest.CommandKey] != latest.ExecutionOrder {
+		t.Fatalf("visibility: %+v", response)
+	}
+	s.stateSync.refreshProcesses(project.info.ID)
+	records, authority, err := c.ProcessAuthorityContext(context.Background())
+	if err != nil || len(records) != 1 || records[0].ID != first.ID || records[0].Status != procstore.StatusRunning || !authority.Deleted[latest.ID] {
+		t.Fatalf("older retained run: %+v %+v %v", records, authority, err)
+	}
+	repeated := request("POST", path+"/remove", `{"stop_first":true}`)
+	if repeated.Code != 200 {
+		t.Fatalf("repeat: %d %s", repeated.Code, repeated.Body.String())
+	}
+}
+
+// Hold a completed daemon read before the local API can commit it to its cache.
+type delayedProcessAuthorityDaemon struct {
+	*processFixtureDaemon
+	firstRead   sync.Once
+	readStarted chan struct{}
+	releaseRead chan struct{}
+}
+
+func (d *delayedProcessAuthorityDaemon) ProcessAuthorityContext(ctx context.Context) ([]*procstore.Record, procstore.ProcessVisibility, error) {
+	records, visibility, err := d.Client.ProcessAuthorityContext(ctx)
+	first := false
+	d.firstRead.Do(func() { first = true; close(d.readStarted) })
+	if first {
+		select {
+		case <-d.releaseRead:
+		case <-ctx.Done():
+			return nil, visibility, ctx.Err()
+		}
+	}
+	return records, visibility, err
+}
+func TestLateProcessReadCannotOverwriteRemovalCache(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	attachProcessFixture(t, s)
+	registry := s.registry.(*syncTestRegistry)
+	project := registry.entries["repo"]
+	daemon := &delayedProcessAuthorityDaemon{processFixtureDaemon: project.daemon.(*processFixtureDaemon), readStarted: make(chan struct{}), releaseRead: make(chan struct{})}
+	project.daemon = daemon
+	registry.entries["repo"] = project
+	r, err := daemon.Client.Spawn(project.info.Path, "", "late read", "sleep 30", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan struct{})
+	go func() { defer close(readDone); s.stateSync.refreshProcesses("repo") }()
+	select {
+	case <-daemon.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("read did not start")
+	}
+	token, _ := s.sessions.create()
+	request := httptest.NewRequest("POST", "http://"+s.expectedHost+"/api/projects/repo/processes/"+strconv.Itoa(r.ID)+"/remove", strings.NewReader(`{"stop_first":true}`))
+	request.Host = s.expectedHost
+	request.Header.Set("Origin", s.browserOrigin)
+	request.Header.Set("X-Bonsai-Session", token.Token)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	removed := make(chan struct{})
+	go func() { defer close(removed); s.Handler().ServeHTTP(response, request) }()
+	// Both orders are safe: removal must commit after the pending read, or the
+	// pending read must be discarded. Releasing it cannot restore the deleted ID.
+	close(daemon.releaseRead)
+	select {
+	case <-removed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("removal blocked")
+	}
+	<-readDone
+	if response.Code != 200 {
+		t.Fatalf("remove: %d %s", response.Code, response.Body.String())
+	}
+	s.stateSync.mu.Lock()
+	snapshot := s.stateSync.projects["repo"].snapshot
+	s.stateSync.mu.Unlock()
+	for _, process := range snapshot.Processes {
+		if process.DaemonID == r.ID {
+			t.Fatal("late read restored deleted process")
+		}
+	}
+	if !snapshot.ProcessVisibility.Deleted[r.ID] {
+		t.Fatal("cached deletion authority lost")
+	}
 }

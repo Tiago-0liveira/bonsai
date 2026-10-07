@@ -649,3 +649,59 @@ func (c *Client) StreamProcess(ctx context.Context, id int, generation string, o
 		}
 	}
 }
+
+// ProcessAuthorityContext reads records and visibility in one daemon transaction.
+func (c *Client) ProcessAuthorityContext(ctx context.Context) ([]*procstore.Record, procstore.ProcessVisibility, error) {
+	if !c.alive() {
+		records, err := c.ListContext(ctx)
+		if err != nil {
+			return nil, procstore.ProcessVisibility{}, err
+		}
+		pending, err := c.store.PendingRemovalRecords()
+		if err != nil {
+			return nil, procstore.ProcessVisibility{}, err
+		}
+		for _, intent := range pending {
+			found := false
+			for i, record := range records {
+				if record.ID == intent.ID {
+					records[i] = intent
+					found = true
+					break
+				}
+			}
+			if !found {
+				records = append(records, intent)
+			}
+		}
+		visibility, err := c.store.ReadVisibility()
+		return records, visibility, err
+	}
+	if err := c.CheckCompatibility(); err != nil {
+		return nil, procstore.ProcessVisibility{}, err
+	}
+	resp, err := c.roundtripContext(ctx, &protocol.Request{Kind: protocol.KindList})
+	if err != nil {
+		return nil, procstore.ProcessVisibility{}, err
+	}
+	if resp.Visibility == nil {
+		return nil, procstore.ProcessVisibility{}, fmt.Errorf("daemon lacks process visibility authority")
+	}
+	return resp.Records, *resp.Visibility, nil
+}
+func (c *Client) RemoveExecution(id int, stopFirst bool) (procstore.ProcessVisibility, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return procstore.ProcessVisibility{}, err
+	}
+	if err := c.CheckCompatibility(); err != nil {
+		return procstore.ProcessVisibility{}, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindRemove, ID: id, StopFirst: stopFirst})
+	if err != nil {
+		return procstore.ProcessVisibility{}, err
+	}
+	if resp.Visibility == nil {
+		return procstore.ProcessVisibility{}, fmt.Errorf("daemon lacks deletion authority")
+	}
+	return *resp.Visibility, nil
+}

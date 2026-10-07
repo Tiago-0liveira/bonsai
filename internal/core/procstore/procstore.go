@@ -90,6 +90,8 @@ func IsActive(status string) bool {
 // Record is the persisted metadata for one managed process. It is the source of
 // truth for discovery: readable without touching the daemon socket.
 type Record struct {
+	CommandKey     string            `json:"command_key"`
+	ExecutionOrder uint64            `json:"execution_order"`
 	ID             int               `json:"id"`
 	Revision       uint64            `json:"revision"`
 	Attempt        int               `json:"attempt"`
@@ -156,6 +158,8 @@ type ServeSpec struct {
 // ServeProcess is the public status view for one process in a ServeGroup.
 type ServeProcess struct {
 	Name           string    `json:"name"`
+	CommandKey     string    `json:"command_key"`
+	ExecutionOrder uint64    `json:"execution_order"`
 	ID             int       `json:"id"`
 	PID            int       `json:"pid"`
 	ProcessGroupID int       `json:"process_group_id,omitempty"`
@@ -309,9 +313,11 @@ func (s *Store) ListRecords() ([]*Record, error) {
 
 // RemoveRecord deletes the record and its log for id.
 func (s *Store) RemoveRecord(id int) error {
-	_ = os.Remove(s.LogPath(id))
-	_ = os.Remove(s.LogPath(id) + ".1")
-	_ = os.Remove(s.LogPath(id) + ".cursor")
+	for _, path := range []string{s.LogPath(id), s.LogPath(id) + ".1", s.LogPath(id) + ".cursor", s.RecordPath(id) + ".tmp", s.LogPath(id) + ".cursor.tmp"} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	err := os.Remove(s.RecordPath(id))
 	if os.IsNotExist(err) {
 		return nil
@@ -388,8 +394,34 @@ func (s *Store) MaxID() (int, error) {
 // writeAtomic writes data to path via a temp file + rename.
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+func syncDir(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	} // Windows cannot fsync directory handles.
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

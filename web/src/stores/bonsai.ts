@@ -67,6 +67,9 @@ export interface BonsaiState {
   gitError: string
   syncFreshness: Record<string, Record<string, SyncFreshness>>
   processes: Process[]
+  processAuthorityReady: Record<string, boolean>
+  processVisibility: Record<string, { cutoffs: Record<string, number>; deleted: Record<string, boolean> }>
+  visitOpenedRuntimeIds: string[]
   projects: Project[]
   activeWorkspaceId: string
   activeProjectId: string
@@ -244,6 +247,9 @@ export const useBonsaiStore = create<BonsaiState>()(
       gitError: '',
       syncFreshness: {},
       processes: [],
+      processAuthorityReady: {},
+      processVisibility: {},
+      visitOpenedRuntimeIds: [],
       rootSettings: null,
       rootsLoading: false,
       rootsSaving: false,

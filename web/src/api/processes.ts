@@ -3,6 +3,9 @@ import type { ProcessSummary } from './git'
 import { mapProcess } from './snapshotReconciliation'
 import { useBonsaiStore } from '../stores/bonsai'
 import { openRuntimePatch } from '../stores/runtimePreferences'
+import { disposeProcessStream } from './processStream'
+import { processDeleted, remapProcessReferences, visibleProcesses } from '../stores/processProjection'
+import { activeRuntimePatch, closeRuntimePatch } from '../stores/runtimePreferences'
 import { changedPatch } from '../stores/reconciliation'
 
 export interface ProcessArgument {
@@ -60,19 +63,23 @@ export const startProcess = (projectId: string, worktreeId: string, commandId: s
 
 export function applyProcessSummary(summary: ProcessSummary, open = false) {
   useBonsaiStore.setState(state => {
+    if (processDeleted(state, summary.project_id, summary.daemon_id)) return state
     const old = state.processes.find(p => p.id === summary.id)
     if (!open && old && summary.revision !== undefined && (old.revision ?? 0) >= summary.revision) return state
     const process = old && (old.revision ?? 0) > (summary.revision ?? 0) ? old : { ...mapProcess(summary), pendingSnapshot: old?.pendingSnapshot ?? !old }
     const processes = old ? state.processes.map(p => p.id === process.id ? process : p) : [...state.processes, process]
-    if (!open) {
-      const patch = changedPatch(state, { processes })
+    const remapped = remapProcessReferences({ ...state, processes }, state, summary.project_id)
+    const working = { ...state, processes, ...remapped }
+    if (!open || !visibleProcesses(working, process.projectId).some(p => p.id === process.id)) {
+      const patch = changedPatch(state, { processes, ...remapped, ...activeRuntimePatch(working) })
       return Object.keys(patch).length ? patch : state
     }
     const active = state.activeProjectId === process.projectId
-    const viewPatch = openRuntimePatch({ ...state, processes }, process.id, active)
+    const viewPatch = openRuntimePatch(working, process.id, active)
     const reveal = !old || state.selection.type !== 'process' || state.selection.id !== process.id || Object.keys(viewPatch).length > 0
     const patch = changedPatch(state, {
       processes,
+      ...remapped,
       ...viewPatch,
       ...(active ? {
         selection: { type: 'process' as const, id: process.id },
@@ -97,3 +104,30 @@ export const previewProcess = (project: string, worktree: string, command: strin
   `/api/projects/${encodeURIComponent(project)}/process-preview`,
   { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ worktree_id: worktree, command_id: command, values }) },
 )
+
+export async function removeProcess(project: string, id: number, stopFirst: boolean) {
+  const result = await request<{ id: string; process_visibility: { cutoffs: Record<string, number>; deleted: Record<string, boolean> } }>(
+    `/api/projects/${encodeURIComponent(project)}/processes/${id}/remove`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stop_first: stopFirst }) },
+  )
+  disposeProcessStream(project, id)
+  useBonsaiStore.setState(state => {
+    const old = state.processVisibility[project]
+    const cutoffs = { ...old?.cutoffs }
+    for (const [key, order] of Object.entries(result.process_visibility.cutoffs ?? {})) cutoffs[key] = Math.max(order, cutoffs[key] ?? 0)
+    const processVisibility = { ...state.processVisibility, [project]: { cutoffs, deleted: { ...old?.deleted, ...result.process_visibility.deleted, [id]: true } } }
+    const processes = state.processes.filter(p => p.id !== result.id)
+    const nodePlacements = { ...state.nodePlacements }; delete nodePlacements[result.id]
+    const views = closeRuntimePatch(state, result.id)
+    const working = { ...state, ...views, processes, processVisibility, nodePlacements,
+      visitOpenedRuntimeIds: state.visitOpenedRuntimeIds.filter(value => value !== result.id),
+      ...(state.selection.type === 'process' && state.selection.id === result.id ? { selection: { type: 'project' as const, id: state.activeProjectId } } : {}),
+      ...(state.canvasReveal.nodeId === result.id ? { canvasReveal: { ...state.canvasReveal, nodeId: '' } } : {}),
+    }
+    return changedPatch(state, { processes, processVisibility, nodePlacements, ...views,
+      selection: working.selection, canvasReveal: working.canvasReveal, visitOpenedRuntimeIds: working.visitOpenedRuntimeIds,
+      ...activeRuntimePatch(working),
+    })
+  })
+  return result
+}

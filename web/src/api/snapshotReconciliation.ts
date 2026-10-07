@@ -1,3 +1,4 @@
+import { processDeleted } from '../stores/processProjection'
 import { mapAgent } from './agents'
 import type { CiStatus, Process, ProcessLifecycleStatus, Project, PullRequest, SyncFreshness, Worktree } from '../types'
 import type { Snapshot, Repository, RemotePR, RemoteCheck, WireFreshness, ProcessSummary, WorktreeProjection } from './git'
@@ -12,7 +13,7 @@ export function snapshotRuntimeAuthority(snapshot: Snapshot): RuntimeAuthority {
   return {
     worktrees: ready('local', snapshot.local != null),
     agents: ready('agents', snapshot.agents !== undefined),
-    processes: ready('processes', snapshot.processes !== undefined),
+    processes: ready('processes', snapshot.processes !== undefined && snapshot.process_visibility != null),
   }
 }
 
@@ -88,6 +89,8 @@ function processHealth(status: ProcessLifecycleStatus): Process['status'] {
 
 export function mapProcess(value: ProcessSummary): Process {
   return {
+    commandKey: value.command_key,
+    executionOrder: value.execution_order,
     id: value.id,
     projectId: value.project_id,
     daemonId: value.daemon_id,
@@ -237,16 +240,24 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
   const groups = snapshot.local?.groups ?? []
   const sync = snapshot.sync ?? state.repositorySync[id]
 
-  const nextProcesses: Process[] = (snapshot.processes ?? []).map(value => {
+  const previousVisibility = state.processVisibility?.[id]
+  const incomingVisibility = authority.processes ? snapshot.process_visibility : undefined
+  const visibility = {
+    cutoffs: { ...previousVisibility?.cutoffs }, deleted: { ...previousVisibility?.deleted, ...incomingVisibility?.deleted },
+  }
+  for (const [key, order] of Object.entries(incomingVisibility?.cutoffs ?? {})) visibility.cutoffs[key] = Math.max(order, visibility.cutoffs[key] ?? 0)
+  const nextProcesses: Process[] = (snapshot.processes ?? []).filter(value => !visibility.deleted[value.daemon_id]).map(value => {
     const mapped = mapProcess(value)
     const old = state.processes.find(p => p.id === mapped.id)
     return old && (old.revision ?? 0) > (mapped.revision ?? 0) ? { ...old, pendingSnapshot: authority.processes ? false : old.pendingSnapshot } : { ...mapped, pendingSnapshot: authority.processes ? false : old?.pendingSnapshot }
   })
   for (const old of state.processes) {
-    if (old.projectId === id && (old.pendingSnapshot || !authority.processes) && !nextProcesses.some(p => p.id === old.id)) nextProcesses.push(old)
+    if (old.projectId === id && !processDeleted({ ...state, processVisibility: { ...state.processVisibility, [id]: visibility } }, id, old.daemonId) && (old.pendingSnapshot || !authority.processes) && !nextProcesses.some(p => p.id === old.id)) nextProcesses.push(old)
   }
 
   return changedPatch(state, {
+    processAuthorityReady: { ...state.processAuthorityReady, [id]: authority.processes },
+    processVisibility: { ...state.processVisibility, [id]: visibility },
     agents: nextAgents ? replaceScope(state.agents, nextAgents, a => a.projectId === id || state.worktrees.some(w => w.id === a.worktreeId && w.projectId === id)) : state.agents,
     projects: state.projects.map(value => value.id === id ? shareEqual(value, p) : value),
     worktrees: replaceScope(state.worktrees, trees, value => value.projectId === id),
