@@ -150,24 +150,27 @@ func newExternalDaemonClient(t *testing.T) (*client.Client, string) {
 	t.Setenv("BONSAI_DAEMON_BIN", getTestBonsaiBin(t))
 	root := t.TempDir()
 	c := client.For(root)
-	t.Cleanup(func() {
-		if err := c.Shutdown(true); err != nil {
-			t.Error(err)
-		}
-		// The socket closes before registry cleanup finishes. Wait for the
-		// daemon lock to be released before TempDir removes its config files.
-		if !waitFor(t, 3*time.Second, func() bool {
-			lock, err := procstore.TryLock(procstore.New(root).LockPath())
-			if err != nil {
-				return false
-			}
-			_ = lock.Unlock()
-			return true
-		}) {
-			t.Error("daemon cleanup did not finish")
-		}
-	})
+	t.Cleanup(func() { shutdownExternalDaemon(t, c, root) })
 	return c, root
+}
+
+func shutdownExternalDaemon(t *testing.T, c *client.Client, root string) {
+	t.Helper()
+	if err := c.Shutdown(true); err != nil {
+		t.Error(err)
+	}
+	// The socket closes before registry cleanup finishes. Wait for the
+	// daemon lock to be released before TempDir removes its config files.
+	if !waitFor(t, 3*time.Second, func() bool {
+		lock, err := procstore.TryLock(procstore.New(root).LockPath())
+		if err != nil {
+			return false
+		}
+		_ = lock.Unlock()
+		return true
+	}) {
+		t.Error("daemon cleanup did not finish")
+	}
 }
 
 // crashExternalDaemon terminates the actual daemon process without asking it to
@@ -1824,6 +1827,7 @@ func TestProtocolCompatibility(t *testing.T) {
 		t.Setenv("BONSAI_DAEMON_BIN", binPath)
 
 		c := client.For(root)
+		t.Cleanup(func() { shutdownExternalDaemon(t, c, root) })
 		if err := c.CheckCompatibility(); err != nil {
 			t.Fatalf("CheckCompatibility failed: %v", err)
 		}
@@ -1842,7 +1846,6 @@ func TestProtocolCompatibility(t *testing.T) {
 		if ping.Version != protocol.Version {
 			t.Fatalf("replacement version = %d, want %d", ping.Version, protocol.Version)
 		}
-		_ = c.Shutdown(true)
 	})
 }
 

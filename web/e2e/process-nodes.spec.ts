@@ -14,7 +14,11 @@ async function openProcessFixture(page: Page) {
     })
   })
   await openConnectedApp(page)
-  return page.getByTestId('rf__node-bonsai:1')
+  const node = page.getByTestId('rf__node-bonsai:1')
+  // The canvas can render before the event socket's initial process snapshot.
+  // Wait for that authority before tests mutate the process lifecycle.
+  await expect(node.getByRole('status')).toHaveText('Running')
+  return node
 }
 
 test('process context menus inspect and navigate without opening output, then explicitly replay output', async ({ page }) => {
