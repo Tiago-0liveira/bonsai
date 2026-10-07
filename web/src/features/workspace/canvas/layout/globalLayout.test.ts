@@ -91,7 +91,7 @@ describe('branch-block global layout', () => {
     const worktreeHeight = getNodeSize(worktree).height
 
     expect(positions.agent.y).toBeGreaterThanOrEqual(
-      positions.a.y + worktreeHeight + LAYOUT.agentTopGap,
+      positions.a.y + worktreeHeight + LAYOUT.runtimeTopGap,
     )
     expect(rectsOverlap(
       getNodeRect(worktree, positions.a),
@@ -146,8 +146,8 @@ describe('Auto-layout spacing regressions', () => {
     edges.push(...agents.map((agent) => edge('a', agent.id, 'agent')))
     const positions = computeGlobalPlacements(nodes, edges)
     expectNoOverlaps(nodes, positions)
-    expect(positions['agent-0'].y - positions.a.y).toBe(440 + LAYOUT.agentTopGap)
-    expect(positions['agent-3'].y - positions['agent-0'].y).toBe(240 + LAYOUT.agentGapY)
+    expect(positions['agent-0'].y - positions.a.y).toBe(440 + LAYOUT.runtimeTopGap)
+    expect(positions['agent-3'].y - positions['agent-0'].y).toBe(240 + LAYOUT.runtimeGapY)
     expect(positions.nested.y - positions['agent-6'].y).toBe(98 + LAYOUT.childTopGap)
     expect(computeGlobalPlacements(nodes, edges, generated(positions))).toEqual(positions)
   })
@@ -206,7 +206,7 @@ describe('Auto-layout spacing regressions', () => {
     const forest = buildBranchForest(nodes, edges, {})
     const ids: string[] = []
     const visit = (blocks: typeof forest) => blocks.forEach((block) => {
-      ids.push(block.id, ...block.agentNodes.map((agent) => agent.id))
+      ids.push(block.id, ...block.runtimeNodes.map((agent) => agent.id))
       visit(block.childBlocks)
     })
     visit(forest)

@@ -29,7 +29,7 @@ export function applyCanvasSelection(nodes: Node[], selection: Selection): Node[
   let changed = false
   const next = nodes.map(node => {
     const kind = node.data.kind
-    const selected = (kind === 'project' || kind === 'worktree' || kind === 'agent') && selection.type === kind && selection.id === node.data.entityId
+    const selected = (kind === 'project' || kind === 'worktree' || kind === 'agent' || kind === 'process') && selection.type === kind && selection.id === node.data.entityId
     if (Boolean(node.selected) === selected) return node
     changed = true
     return { ...node, selected }

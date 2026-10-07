@@ -87,12 +87,14 @@ func TestCredentialMaterializationAndStaleReconciliation(t *testing.T) {
 	}
 
 	writeSessionAuth(t, b.HomeDir, "new-access", "new-refresh", "user@example.com", baseExpiry.Add(time.Hour))
-	if err := manager.Reconcile(ctx, account, b); err != nil {
-		t.Fatal(err)
-	}
 	writeSessionAuth(t, a.HomeDir, "stale-access", "stale-refresh", "user@example.com", baseExpiry.Add(-time.Minute))
-	if err := manager.Reconcile(ctx, account, a); err != nil {
-		t.Fatal(err)
+	results := make(chan error, 2)
+	go func() { results <- manager.Reconcile(ctx, account, a) }()
+	go func() { results <- manager.Reconcile(ctx, account, b) }()
+	for i := 0; i < 2; i++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	check, err := sessionStore.Create(account, t.TempDir())

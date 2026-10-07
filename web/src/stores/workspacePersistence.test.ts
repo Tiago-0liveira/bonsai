@@ -131,6 +131,37 @@ describe('workspace migration and hydration', () => {
     expect(prefs.nodePlacements).toEqual({ tree: { x: 2, y: 2, mode: 'manual' } })
   })
 
+  it('stores only scoped runtime references and preserves independent placements for open and closed real runtimes', () => {
+    const preferences = sanitizeWorkspacePreferences({
+      terminalViewPreferences: { repo: { lastWorktreeId: 'tree', prompt: marker, worktrees: {
+        tree: { open: [{ kind: 'process', id: 'repo:1', command: marker, pid: 10 }, { kind: 'agent', id: 'agent-real', output: marker }, { kind: 'process', id: 'repo:1' }, { kind: 'shell', id: 'bad' }], active: { kind: 'agent', id: 'agent-real', token: marker }, environment: { value: marker } },
+        empty: { open: [], active: null, output: marker },
+        invalid: { open: marker },
+      } } },
+      dockRuntimeId: 'repo:1', openRuntimeIds: ['repo:1', 'agent-real'],
+      nodePlacements: { 'repo:1': { x: 1, y: 2, mode: 'manual' }, 'repo:2': { x: 3, y: 4, mode: 'manual' }, 'agent-real': { x: 5, y: 6, mode: 'manual' } },
+    })
+    expect(preferences.terminalViewPreferences).toEqual({ repo: { lastWorktreeId: 'tree', reopening: 'keep_closed', worktrees: {
+      tree: { open: [{ kind: 'process', id: 'repo:1' }, { kind: 'agent', id: 'agent-real' }], active: { kind: 'agent', id: 'agent-real' } },
+      empty: { open: [], active: null },
+    } } })
+    expect(preferences.nodePlacements).toHaveProperty('repo:1')
+    expect(preferences.nodePlacements).toHaveProperty('repo:2')
+    expect(preferences.nodePlacements).toHaveProperty('agent-real')
+    expect(JSON.stringify(preferences)).not.toContain(marker)
+    expect(sanitizeWorkspacePreferences(preferences)).toEqual(preferences)
+  })
+
+  it('derives legacy dock fields from the saved scope before canonical entities load', () => {
+    const ref = { kind: 'process' as const, id: 'repo:1' }
+    const state = mergeWorkspacePreferences({
+      activeProjectId: 'repo', dockWorktreeId: 'stale-dock-field',
+      terminalViewPreferences: { repo: { lastWorktreeId: 'saved-tree', worktrees: { 'saved-tree': { open: [ref], active: ref } } } },
+    }, useBonsaiStore.getInitialState())
+    expect(state.worktrees).toEqual([])
+    expect(state).toMatchObject({ dockWorktreeId: 'saved-tree', dockRuntimeId: '', openRuntimeIds: [] })
+  })
+
   it('reconciles in-memory simulated selection and placements when rehydrating an empty record', () => {
     const current = { ...useBonsaiStore.getInitialState(), selection: { type: 'agent' as const, id: 'worker' }, agents: [{ ...agents[0], id: 'worker', worktreeId: 'tree' }], nodePlacements: { worker: { x: 0, y: 0, mode: 'manual' as const } } }
     const state = mergeWorkspacePreferences({}, current)
@@ -166,8 +197,8 @@ describe('workspace migration and hydration', () => {
     expect(state.activeProjectId).toBe('real')
     expect(state.selection).toEqual({ type: 'project', id: 'real' })
     expect(state.dockWorktreeId).toBe('real-tree')
-    expect(state.dockRuntimeId).toBe('live-process')
-    expect(state.openRuntimeIds).toEqual(['live-process'])
+    expect(state.dockRuntimeId).toBe('')
+    expect(state.openRuntimeIds).toEqual([])
     expect(state.processes).toBe(current.processes)
   })
 })

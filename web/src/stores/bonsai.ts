@@ -1,7 +1,10 @@
+import { startAgent, stopAgent, mapAgent } from '../api/agents'
 import type { ProjectRootsSettings } from '../api/settings'
 import { create } from 'zustand'
-import { AGENT_UNAVAILABLE, SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
+import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
 import { createPreferenceBoundary } from './preferenceBoundary'
+import { closeRuntimePatch, focusRuntimePatch, openRuntimePatch, reorderRuntimePatch, switchRuntimeScope } from './runtimePreferences'
+import { changedPatch } from './reconciliation'
 import {
   boardItems as initialBoardItems,
   boardLists as initialBoardLists,
@@ -31,6 +34,7 @@ import type {
   Selection,
   StartAgentInput,
   SyncFreshness,
+  TerminalViewPreferences,
   ViewportState,
   Worktree,
   WorktreeTag,
@@ -63,6 +67,9 @@ export interface BonsaiState {
   gitError: string
   syncFreshness: Record<string, Record<string, SyncFreshness>>
   processes: Process[]
+  processAuthorityReady: Record<string, boolean>
+  processVisibility: Record<string, { cutoffs: Record<string, number>; deleted: Record<string, boolean> }>
+  visitOpenedRuntimeIds: string[]
   projects: Project[]
   activeWorkspaceId: string
   activeProjectId: string
@@ -93,10 +100,15 @@ export interface BonsaiState {
   createWorktree: typeof createWorktree
 
   startAgentDialogOpen: boolean
+  startProcessDialogOpen: boolean
+  startProcessTargetWorktreeId: string
+  startProcessTargetProjectId: string
+  openStartProcessDialog: (worktreeId?: string, projectId?: string) => void
+  setStartProcessDialogOpen: (open: boolean) => void
   startAgentTargetWorktreeId: string
   openStartAgentDialog: (worktreeId?: string) => void
   setStartAgentDialogOpen: (open: boolean) => void
-  createAgent: (input: StartAgentInput) => void
+  createAgent: (input: StartAgentInput) => Promise<void>
   startMockAgent: () => void
   moveAgentToHistory: (id: string) => void
   restoreAgentFromHistory: (id: string) => void
@@ -122,6 +134,8 @@ export interface BonsaiState {
   dockRuntimeId: string
   setDockRuntimeId: (id: string) => void
   openRuntimeIds: string[]
+  terminalViewPreferences: TerminalViewPreferences
+  focusRuntime: (id: string) => void
   openRuntime: (id: string) => void
   closeRuntime: (id: string) => void
   reorderOpenRuntime: (activeId: string, overId: string) => void
@@ -175,6 +189,7 @@ export interface BonsaiState {
   expandedHistoryWorktreeIds: string[]
   toggleWorktreeHistory: (id: string) => void
   canvasCommand: { type: 'fit' | 'layout'; nonce: number }
+  canvasReveal: { projectId: string; nodeId: string; nonce: number }
   requestCanvasAction: (type: 'fit' | 'layout') => void
 
   paletteOpen: boolean
@@ -207,33 +222,16 @@ export const useBonsaiStore = create<BonsaiState>()(
       selection: { type: 'project', id: '' },
       setSelection: (selection) => {
         const state = get()
-        let dockWorktreeId = state.dockWorktreeId
-        let dockRuntimeId = state.dockRuntimeId
-        let openRuntimeIds = state.openRuntimeIds
-        let activeTerminalId = state.activeTerminalId
-
+        let scope: Partial<BonsaiState> = {}
         if (selection.type === 'worktree') {
-          dockWorktreeId = selection.id
-          dockRuntimeId = ''
+          const tree = state.worktrees.find(item => item.id === selection.id)
+          scope = switchRuntimeScope(state, tree?.projectId ?? state.activeProjectId, selection.id)
         }
-        if (selection.type === 'agent') {
-          const agent = state.agents.find((item) => item.id === selection.id)
-          if (agent) {
-            dockWorktreeId = agent.worktreeId
-            dockRuntimeId = agent.id
-            openRuntimeIds = uniqueAdd(openRuntimeIds, agent.id)
-            activeTerminalId = agent.terminalId
-          }
+        if (selection.type === 'agent' || selection.type === 'process') {
+          scope = openRuntimePatch(state, selection.id)
         }
-
-        if (
-          state.selection.type === selection.type &&
-          state.selection.id === selection.id &&
-          state.dockWorktreeId === dockWorktreeId &&
-          state.dockRuntimeId === dockRuntimeId
-        ) return
-
-        set({ selection, dockWorktreeId, dockRuntimeId, openRuntimeIds, activeTerminalId, dockState: 'normal' })
+        const patch = changedPatch(state, { ...scope, selection, dockState: 'normal' })
+        if (Object.keys(patch).length) set(patch)
       },
       projectQuery: '',
       setProjectQuery: (projectQuery) => set({ projectQuery }),
@@ -249,6 +247,9 @@ export const useBonsaiStore = create<BonsaiState>()(
       gitError: '',
       syncFreshness: {},
       processes: [],
+      processAuthorityReady: {},
+      processVisibility: {},
+      visitOpenedRuntimeIds: [],
       rootSettings: null,
       rootsLoading: false,
       rootsSaving: false,
@@ -258,33 +259,22 @@ export const useBonsaiStore = create<BonsaiState>()(
       activeProjectId: '',
       setActiveWorkspace: (activeWorkspaceId) => {
         const state = get()
-        const workspace = { name: activeWorkspaceId, projectIds: state.projects.filter(p => p.workspaceId === activeWorkspaceId).map(p => p.id) }
-        const nextProject =
-          state.projects.find((project) => workspace?.projectIds.includes(project.id)) ??
-          state.projects.find((project) => project.workspaceId === activeWorkspaceId)
-        const nextWorktree = state.worktrees.find((worktree) => worktree.projectId === nextProject?.id && worktree.branch !== nextProject?.defaultBranch)
+        const nextProject = state.projects.find(project => project.id === state.activeProjectId && project.workspaceId === activeWorkspaceId)
+          ?? state.projects.find(project => project.workspaceId === activeWorkspaceId)
         set({
+          ...(nextProject ? switchRuntimeScope(state, nextProject.id) : {}),
           activeWorkspaceId,
-          activeProjectId: nextProject?.id ?? state.activeProjectId,
           selection: nextProject ? { type: 'project', id: nextProject.id } : state.selection,
-          dockWorktreeId: nextWorktree?.id ?? '',
-          dockRuntimeId: '',
-          openRuntimeIds: [],
-          notice: nextProject ? 'Switched workspace to ' + workspace?.name : 'Workspace selected',
+          notice: nextProject ? 'Switched workspace to ' + activeWorkspaceId : 'Workspace selected',
         })
       },
       setActiveProject: (activeProjectId) => {
         const state = get()
         const project = state.projects.find((item) => item.id === activeProjectId)
         if (!project) return
-        const nextWorktree = state.worktrees.find((worktree) => worktree.projectId === project.id && worktree.branch !== project.defaultBranch)
         set({
-          activeProjectId,
-          activeWorkspaceId: project.workspaceId,
+          ...switchRuntimeScope(state, project.id),
           selection: { type: 'project', id: project.id },
-          dockWorktreeId: nextWorktree?.id ?? '',
-          dockRuntimeId: '',
-          openRuntimeIds: [],
           notice: 'Opened project ' + project.name,
         })
       },
@@ -349,10 +339,29 @@ export const useBonsaiStore = create<BonsaiState>()(
       createWorktree,
 
       startAgentDialogOpen: false,
+      startProcessDialogOpen: false,
+      startProcessTargetWorktreeId: '',
+      startProcessTargetProjectId: '',
+      openStartProcessDialog: (worktreeId = '', projectId) => set(state => ({ startProcessDialogOpen: true, startProcessTargetWorktreeId: worktreeId, startProcessTargetProjectId: projectId ?? state.worktrees.find(tree => tree.id === worktreeId)?.projectId ?? state.activeProjectId })),
+      setStartProcessDialogOpen: (startProcessDialogOpen) => set({ startProcessDialogOpen }),
       startAgentTargetWorktreeId: '',
-      openStartAgentDialog: (worktreeId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId, notice: AGENT_UNAVAILABLE }),
+      openStartAgentDialog: (worktreeId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId }),
       setStartAgentDialogOpen: (startAgentDialogOpen) => set({ startAgentDialogOpen }),
-      createAgent: () => set({ notice: AGENT_UNAVAILABLE }),
+      createAgent: async (input) => {
+        const tree = get().worktrees.find(w => w.id === input.worktreeId)
+        if (!tree || input.provider !== 'Antigravity' || !input.accountId) throw new Error('Select an Antigravity profile and worktree.')
+        const result = await startAgent(tree.projectId, { worktree_id: tree.id, account_id: input.accountId, name: input.name, model: input.model, prompt: input.prompt, full_access: input.fullAccess, cols: 80, rows: 24 }, input.requestKey ?? crypto.randomUUID())
+        if (!result.id) throw new Error(result.error || 'Start was interrupted. Close this dialog and start again.')
+        set(state => {
+          const agents = state.agents.some(a => a.id === result.id) ? state.agents : [...state.agents, mapAgent(result)]
+          const active = state.activeProjectId === tree.projectId
+          return {
+            agents, worktrees: state.worktrees.map(w => w.id === tree.id ? { ...w, agentIds: uniqueAdd(w.agentIds, result.id) } : w), startAgentDialogOpen: false,
+            ...openRuntimePatch({ ...state, agents }, result.id, active),
+            ...(active ? { selection: { type: 'agent' as const, id: result.id }, dockState: 'normal' as const } : { notice: 'Agent started in ' + tree.branch }),
+          }
+        })
+      },
       startMockAgent: () => {
         const state = get()
         const target =
@@ -361,7 +370,7 @@ export const useBonsaiStore = create<BonsaiState>()(
             : state.selection.type === 'agent'
               ? state.agents.find((item) => item.id === state.selection.id)?.worktreeId ?? ''
               : ''
-        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target, notice: AGENT_UNAVAILABLE })
+        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target })
       },
       moveAgentToHistory: (id) =>
         set((state) => ({
@@ -370,8 +379,7 @@ export const useBonsaiStore = create<BonsaiState>()(
               ? { ...agent, presentation: 'history', archived: false }
               : agent,
           ),
-          openRuntimeIds: state.openRuntimeIds.filter((runtimeId) => runtimeId !== id),
-          dockRuntimeId: state.dockRuntimeId === id ? '' : state.dockRuntimeId,
+          ...closeRuntimePatch(state, id),
           nodePlacements: withoutPlacements(state.nodePlacements, [id]),
           notice: 'Agent moved to history',
         })),
@@ -387,8 +395,7 @@ export const useBonsaiStore = create<BonsaiState>()(
               ? { ...agent, presentation: 'archived', archived: true }
               : agent,
           ),
-          openRuntimeIds: state.openRuntimeIds.filter((runtimeId) => runtimeId !== id),
-          dockRuntimeId: state.dockRuntimeId === id ? '' : state.dockRuntimeId,
+          ...closeRuntimePatch(state, id),
           nodePlacements: withoutPlacements(state.nodePlacements, [id]),
           notice: 'Agent archived',
         })),
@@ -397,7 +404,12 @@ export const useBonsaiStore = create<BonsaiState>()(
           agents: state.agents.map((agent) => agent.id === id ? { ...agent, presentation: 'canvas', archived: false } : agent),
           notice: 'Agent restored',
         })),
-      setAgentState: () => set({ notice: AGENT_UNAVAILABLE }),
+      setAgentState: (id, next) => {
+        const agent = get().agents.find(a => a.id === id)
+        const project = agent?.projectId ?? get().worktrees.find(w => w.id === agent?.worktreeId)?.projectId
+        if (project && agent?.providerId === 'antigravity' && next === 'finished') void stopAgent(project, id, `stop-${id}`).catch(report)
+        else set({ notice: 'This agent action is unavailable.' })
+      },
 
       envEditorOpen: false,
       setEnvEditorOpen: (envEditorOpen) => set({ envEditorOpen }),
@@ -418,53 +430,18 @@ export const useBonsaiStore = create<BonsaiState>()(
       setActiveDockTab: (activeDockTab) => set({ activeDockTab }),
       dockWorktreeId: '',
       setDockWorktreeId: (dockWorktreeId) =>
-        set((state) => state.dockWorktreeId === dockWorktreeId ? state : { dockWorktreeId, dockRuntimeId: '' }),
+        set((state) => {
+          const patch = switchRuntimeScope(state, state.activeProjectId, dockWorktreeId)
+          return Object.keys(patch).length ? patch : state
+        }),
       dockRuntimeId: '',
-      setDockRuntimeId: (dockRuntimeId) =>
-        set((state) => {
-          if (state.dockRuntimeId === dockRuntimeId) return state
-          const agent = state.agents.find((item) => item.id === dockRuntimeId)
-          const process = state.processes.find((item) => item.id === dockRuntimeId)
-          return {
-            dockRuntimeId,
-            dockWorktreeId: agent?.worktreeId ?? process?.worktreeId ?? state.dockWorktreeId,
-            activeTerminalId: agent?.terminalId ?? state.activeTerminalId,
-            openRuntimeIds: dockRuntimeId ? uniqueAdd(state.openRuntimeIds, dockRuntimeId) : state.openRuntimeIds,
-          }
-        }),
+      setDockRuntimeId: (id) => get().focusRuntime(id),
       openRuntimeIds: [],
-      openRuntime: (id) =>
-        set((state) => {
-          const agent = state.agents.find((item) => item.id === id)
-          const process = state.processes.find((item) => item.id === id)
-          if (!agent && !process) return state
-          const dockWorktreeId = agent?.worktreeId ?? process!.worktreeId
-          if (state.dockRuntimeId === id && state.dockWorktreeId === dockWorktreeId && state.openRuntimeIds.includes(id)) return state
-          return {
-            openRuntimeIds: uniqueAdd(state.openRuntimeIds, id),
-            dockRuntimeId: id,
-            dockWorktreeId,
-            activeTerminalId: agent?.terminalId ?? state.activeTerminalId,
-          }
-        }),
-      closeRuntime: (id) =>
-        set((state) => {
-          const next = state.openRuntimeIds.filter((item) => item !== id)
-          return {
-            openRuntimeIds: next,
-            dockRuntimeId: state.dockRuntimeId === id ? (next[0] ?? '') : state.dockRuntimeId,
-          }
-        }),
-      reorderOpenRuntime: (activeId, overId) =>
-        set((state) => {
-          const from = state.openRuntimeIds.indexOf(activeId)
-          const to = state.openRuntimeIds.indexOf(overId)
-          if (from < 0 || to < 0 || from === to) return state
-          const next = [...state.openRuntimeIds]
-          next.splice(from, 1)
-          next.splice(to, 0, activeId)
-          return { openRuntimeIds: next }
-        }),
+      terminalViewPreferences: {},
+      focusRuntime: (id) => set(state => { const patch = focusRuntimePatch(state, id); return Object.keys(patch).length ? patch : state }),
+      openRuntime: (id) => set(state => { const patch = openRuntimePatch(state, id); return Object.keys(patch).length ? patch : state }),
+      closeRuntime: (id) => set(state => { const patch = closeRuntimePatch(state, id); return Object.keys(patch).length ? patch : state }),
+      reorderOpenRuntime: (id, overId) => set(state => { const patch = reorderRuntimePatch(state, id, overId); return Object.keys(patch).length ? patch : state }),
       collapsedBranchIds: [],
       toggleBranchCollapsed: (id) =>
         set((state) => ({
@@ -510,10 +487,10 @@ export const useBonsaiStore = create<BonsaiState>()(
         if (!pr) return
         const worktree = state.worktrees.find((item) => item.projectId === state.activeProjectId && item.prNumber === pr.number && item.branch === pr.branch)
         set({
+          ...(worktree ? switchRuntimeScope(state, state.activeProjectId, worktree.id) : {}),
           inspectedPullRequestId: id,
           pullRequestFocusNonce: state.pullRequestFocusNonce + 1,
           dockState: state.dockState === 'collapsed' ? 'normal' : state.dockState,
-          dockWorktreeId: worktree?.id ?? state.dockWorktreeId,
           rightPanels: { ...state.rightPanels, prs: true },
         })
       },
@@ -613,6 +590,7 @@ export const useBonsaiStore = create<BonsaiState>()(
           : [...state.expandedHistoryWorktreeIds, id],
       })),
       canvasCommand: { type: 'fit', nonce: 0 },
+      canvasReveal: { projectId: '', nodeId: '', nonce: 0 },
       requestCanvasAction: (type) => set((state) => ({
         canvasCommand: { type, nonce: state.canvasCommand.nonce + 1 },
       })),
@@ -625,7 +603,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       terminalSessions: [],
       activeTerminalId: '',
       terminalOutput: {},
-      openTerminal: () => set({ notice: SHELL_UNAVAILABLE }),
+      openTerminal: (id) => { if (id && get().agents.some(a => a.id === id && a.providerId === 'antigravity')) { get().openRuntime(id); get().setDockState('normal') } else set({ notice: SHELL_UNAVAILABLE }) },
       setActiveTerminalId: (activeTerminalId) => set((state) => state.activeTerminalId === activeTerminalId ? state : { activeTerminalId }),
       appendTerminalCommand: (command) => {
         if (command.trim().startsWith('git ')) {

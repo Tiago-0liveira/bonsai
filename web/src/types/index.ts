@@ -103,9 +103,13 @@ export interface EnvVariable {
   secret: boolean
 }
 
-export type AgentProvider = 'Claude' | 'Codex' | 'Gemini'
+export type AgentProvider = 'Claude' | 'Codex' | 'Gemini' | 'Antigravity'
 
 export interface Agent {
+  projectId?: string
+  profileName?: string
+  providerId?: 'antigravity'
+  lifecycleState?: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
   id: string
   worktreeId: string
   name: string
@@ -126,6 +130,9 @@ export interface Agent {
 }
 
 export interface StartAgentInput {
+  fullAccess?: boolean
+  accountId?: string
+  requestKey?: string
   worktreeId: string
   name: string
   provider: AgentProvider
@@ -139,6 +146,8 @@ export interface StartAgentInput {
 export type ProcessLifecycleStatus = 'starting' | 'running' | 'backoff' | 'stopping' | 'stopped' | 'done' | 'failed' | 'lost' | 'orphan'
 
 export interface Process {
+  commandKey?: string
+  executionOrder?: number
   id: string
   projectId: string
   daemonId: number
@@ -147,6 +156,13 @@ export interface Process {
   command: string
   status: Health
   lifecycleStatus: ProcessLifecycleStatus
+  revision?: number
+  pendingSnapshot?: boolean
+  policy?: { mode: 'no' | 'on-failure' | 'always'; max_restarts: number }
+  restarts?: number
+  retryCount?: number
+  attempt?: number
+  retryAt?: string
   pid?: number
   port?: number
   url?: string
@@ -156,6 +172,8 @@ export interface Process {
   serveGroup?: string
   serveName?: string
 }
+
+export type CanvasProcess = Pick<Process, 'id' | 'projectId' | 'worktreeId' | 'name' | 'command' | 'status' | 'lifecycleStatus'>
 
 export type SyncFreshnessState = 'loading' | 'ready' | 'stale' | 'error' | 'unavailable'
 
@@ -238,6 +256,24 @@ export type Selection =
   | { type: 'project'; id: string }
   | { type: 'worktree'; id: string }
   | { type: 'agent'; id: string }
+  | { type: 'process'; id: string }
+
+export interface RuntimeReference {
+  kind: 'agent' | 'process'
+  id: string
+  commandKey?: string
+}
+
+export interface RuntimeViewPreference {
+  open: RuntimeReference[]
+  active: RuntimeReference | null
+}
+
+export type TerminalViewPreferences = Record<string, {
+  lastWorktreeId: string
+  reopening?: 'keep_closed' | 'restore'
+  worktrees: Record<string, RuntimeViewPreference>
+}>
 
 export type DockState = 'collapsed' | 'normal' | 'maximized'
 export type DockTab = 'agent' | 'terminal' | 'tests' | 'files' | 'pr' | 'checks' | 'logs'

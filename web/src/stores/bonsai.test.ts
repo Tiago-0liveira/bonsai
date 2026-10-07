@@ -92,9 +92,9 @@ describe('bonsai store', () => {
     expect(state.activeTerminalId).toBe('term-tests')
   })
 
-  it('rejects agent creation without changing agents, worktrees, selection, or terminals', () => {
+  it('rejects unsupported provider creation without changing runtime state', async () => {
     const previous = useBonsaiStore.getState()
-    useBonsaiStore.getState().createAgent({
+    await expect(useBonsaiStore.getState().createAgent({
       worktreeId: 'wt-daemon',
       name: 'Focused debugger',
       provider: 'Codex',
@@ -103,10 +103,9 @@ describe('bonsai store', () => {
       fastMode: true,
       workType: 'Debugging',
       prompt: 'Trace the daemon lifecycle failure.',
-    })
+    })).rejects.toThrow('Antigravity')
     const state = useBonsaiStore.getState()
     for (const key of ['agents', 'worktrees', 'selection', 'terminalSessions', 'terminalOutput', 'openRuntimeIds', 'dockRuntimeId'] as const) expect(state[key]).toBe(previous[key])
-    expect(state.notice).toContain('unavailable')
   })
 
   it('archives presentation without claiming to stop a running agent', () => {
@@ -166,12 +165,11 @@ describe('bonsai store', () => {
     expect(useBonsaiStore.getState().notice).toContain('unavailable')
   })
 
-  it('legacy agent launch callers only open an unavailable dialog', () => {
+  it('legacy agent launch callers open profile selection without creating a session', () => {
     const agents = useBonsaiStore.getState().agents
     useBonsaiStore.getState().startMockAgent()
     expect(useBonsaiStore.getState().agents).toBe(agents)
     expect(useBonsaiStore.getState().startAgentDialogOpen).toBe(true)
-    expect(useBonsaiStore.getState().notice).toContain('unavailable')
   })
 
   it('sends worktree creation to the daemon API and preserves state on failure', async () => {

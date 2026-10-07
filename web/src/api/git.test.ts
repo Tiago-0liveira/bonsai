@@ -182,6 +182,7 @@ describe('synchronized snapshot ordering', () => {
           },
         },
       },
+      process_visibility: { cutoffs: {}, deleted: {} },
       processes: [{
         id: 'repo:7',
         daemon_id: 7,

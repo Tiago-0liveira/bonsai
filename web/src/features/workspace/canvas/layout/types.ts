@@ -21,6 +21,6 @@ export interface Rect extends CanvasPosition, Size {}
 export interface BranchBlock {
   id: string
   node: Node
-  agentNodes: Node[]
+  runtimeNodes: Node[]
   childBlocks: BranchBlock[]
 }

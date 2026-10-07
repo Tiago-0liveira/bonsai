@@ -57,6 +57,7 @@ type Server struct {
 	store       *procstore.Store
 	logCap      int64
 
+	lifecycleMu sync.Mutex // serializes explicit execution, authority reads, and deletion
 	mu          sync.Mutex
 	procs       map[int]*managedProc
 	nextID      int
@@ -143,6 +144,12 @@ func NewServer(root string) (*Server, error) {
 		return nil, err
 	}
 
+	allocatedID, err := store.LastAllocatedID()
+	if err != nil {
+		_ = lock.Unlock()
+		return nil, err
+	}
+
 	// Remove stale socket from crashed daemon
 	_ = os.Remove(store.SockPath())
 	ln, err := net.Listen("unix", store.SockPath())
@@ -168,6 +175,7 @@ func NewServer(root string) (*Server, error) {
 	_ = os.WriteFile(store.PidPath(), []byte(strconv.Itoa(os.Getpid())+"\n"+strconv.Itoa(protocol.Version)+"\n"), 0o644)
 	_ = procstore.Register(s.root, store.SockPath(), os.Getpid())
 
+	s.nextID = allocatedID + 1
 	s.adoptExisting()
 	s.loadServeGroups()
 	return s, nil
@@ -176,9 +184,32 @@ func NewServer(root string) (*Server, error) {
 // adoptExisting loads records left by a previous daemon. If active records exist,
 // they are explicitly reconciled: if still alive, classified as "orphan"; if dead, classified as "lost".
 func (s *Server) adoptExisting() {
+	_ = s.store.RecoverRemovals() // failed intents remain available for explicit retry
 	recs, _ := s.store.ListRecords()
+	pending, _ := s.store.PendingRemovalRecords()
+	for _, intent := range pending {
+		found := false
+		for i, rec := range recs {
+			if rec.ID == intent.ID {
+				recs[i] = intent
+				found = true
+				break
+			}
+		}
+		if !found {
+			recs = append(recs, intent)
+		}
+	}
+	visibility, _ := s.store.ReadVisibility()
 	max := 0
 	for _, r := range recs {
+		if visibility.Deleted[r.ID] {
+			if err := s.store.RemoveRecord(r.ID); err == nil {
+				continue
+			}
+		}
+		r.CommandKey = procstore.CommandIdentity(r)
+		r.ExecutionOrder = procstore.ExecutionOrder(r)
 		if r.ID > max {
 			max = r.ID
 		}
@@ -204,7 +235,9 @@ func (s *Server) adoptExisting() {
 		}
 		s.procs[r.ID] = &managedProc{rec: r}
 	}
-	s.nextID = max + 1
+	if max+1 > s.nextID {
+		s.nextID = max + 1
+	}
 }
 
 func (s *Server) acceptLoop() {

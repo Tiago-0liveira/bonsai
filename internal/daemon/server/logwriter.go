@@ -9,7 +9,7 @@ import (
 // "<path>.1" once the live file passes cap bytes (one backup kept). It is
 // goroutine-safe: the child's stdout and stderr both write through it.
 type logWriter struct {
-	mu         sync.Mutex
+	mu         *sync.Mutex
 	path       string
 	cap        int64
 	f          *os.File
@@ -19,6 +19,12 @@ type logWriter struct {
 }
 
 func newLogWriter(path string, cap int64, onWrite func([]byte)) (*logWriter, error) {
+	lock := logPathLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	if _, err := loadLogCursor(path); err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
@@ -28,7 +34,7 @@ func newLogWriter(path string, cap int64, onWrite func([]byte)) (*logWriter, err
 	if fi != nil {
 		size = fi.Size()
 	}
-	return &logWriter{path: path, cap: cap, f: f, size: size, onWrite: onWrite}, nil
+	return &logWriter{mu: lock, path: path, cap: cap, f: f, size: size, onWrite: onWrite}, nil
 }
 
 func (w *logWriter) Write(p []byte) (int, error) {
@@ -36,6 +42,9 @@ func (w *logWriter) Write(p []byte) (int, error) {
 	if w.f == nil {
 		w.mu.Unlock()
 		return len(p), nil // closed; drop
+	}
+	if fi, err := w.f.Stat(); err == nil {
+		w.size = fi.Size()
 	}
 	if w.cap > 0 && w.size+int64(len(p)) > w.cap {
 		// Rotation is best-effort from the child's point of view. If rotation
@@ -72,6 +81,11 @@ func (w *logWriter) rotate() error {
 	}
 	w.f = nil
 
+	state, err := loadLogCursor(w.path)
+	if err != nil {
+		_ = w.reopenAppend()
+		return err
+	}
 	backup := w.path + ".1"
 	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
 		_ = w.reopenAppend()
@@ -86,6 +100,15 @@ func (w *logWriter) rotate() error {
 	if err != nil {
 		// Best-effort rollback. Even if the rename back fails, reopenAppend
 		// leaves w.f nil rather than pretending writes succeeded.
+		_ = os.Rename(backup, w.path)
+		_ = w.reopenAppend()
+		return err
+	}
+	state.Base += w.size
+	state.BackupSize = w.size
+	if err := saveLogCursor(w.path, state); err != nil {
+		_ = f.Close()
+		_ = os.Remove(w.path)
 		_ = os.Rename(backup, w.path)
 		_ = w.reopenAppend()
 		return err

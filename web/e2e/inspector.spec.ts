@@ -5,7 +5,7 @@ test.beforeEach(async ({ page }) => {
   await mockGitBackend(page)
 })
 
-test('inspector leads from branch blockers to the matching review and unavailable agent controls', async ({ page }) => {
+test('inspector leads from branch blockers to the matching review and profile launch controls', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await openConnectedApp(page)
@@ -26,10 +26,10 @@ test('inspector leads from branch blockers to the matching review and unavailabl
   await expect(page.getByRole('textbox', { name: 'Search pull requests' })).toHaveValue('')
   await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toBeVisible()
 
-  await expect(inspector.getByText('Agent execution is unavailable.', { exact: true })).toBeVisible()
+  await expect(inspector.getByText('No agent sessions.', { exact: true })).toBeVisible()
   await inspector.getByRole('button', { name: 'Start agent', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText('Agent execution is unavailable')
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Start agent', exact: true })).toBeDisabled()
+  await expect(page.getByRole('dialog')).toContainText('Antigravity')
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Start agent', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Close start agent' }).click()
   await expect(page.locator('.react-flow__node-agent')).toHaveCount(0)
   expect(errors).toEqual([])

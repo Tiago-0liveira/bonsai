@@ -1,15 +1,17 @@
+import { processActive } from '../../stores/processProjection'
 import { openGitHub } from '../../api/git'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import {
   Archive, ArrowDown, ArrowRight, ArrowUp, Bot, CheckCircle2, ChevronRight,
   CircleDot, Clock3, FileDiff, GitBranch, GitPullRequest, History, Layers3,
-  RotateCcw, Save, SlidersHorizontal, Square, TerminalSquare, Undo2,
+  Play, RotateCcw, Save, SlidersHorizontal, Square, TerminalSquare, Undo2,
   AlertCircle, XCircle, type LucideIcon,
 } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { useProjectWorktrees, useProjectAgents, useProjectPullRequests } from '../../stores/projectSelectors'
+import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectPullRequests } from '../../stores/projectSelectors'
+import { ProcessActions } from '../terminal/ProcessActions'
 import type { Agent, PullRequest, Worktree } from '../../types'
 
 const presentation = (agent: Agent) => agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
@@ -48,7 +50,7 @@ function AgentRow({ agent, onClick }: { agent: Agent; onClick: () => void }) {
   return <button onClick={onClick} className="bonsai-focus inspector-link">
     <span className={'inspector-avatar ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : 'text-[rgb(var(--muted))]')}><Bot size={14} /></span>
     <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{agent.name}</span><span className="mt-0.5 block truncate text-[10px] text-[rgb(var(--muted))]">{agent.task}</span></span>
-    <span className="shrink-0 text-right text-[9px] text-[rgb(var(--muted))]"><span className="block capitalize">{agent.state}</span><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
+    <span className="shrink-0 text-right text-[9px] text-[rgb(var(--muted))]"><span className="block capitalize">{agent.lifecycleState ?? agent.state}</span><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
   </button>
 }
 
@@ -58,6 +60,8 @@ export function Inspector() {
   const worktrees = useProjectWorktrees(activeProjectId)
   const tags = useBonsaiStore((state) => state.worktreeTags)
   const agents = useProjectAgents(activeProjectId)
+  const processes = useProjectProcesses(activeProjectId)
+  const inventory = useBonsaiStore(state => state.processes)
   const pullRequests = useProjectPullRequests(activeProjectId)
   const terminalLines = useBonsaiStore(state => {
     const selected = state.selection.type === 'agent' ? state.agents.find(agent => agent.id === state.selection.id) : undefined
@@ -71,6 +75,7 @@ export function Inspector() {
   const restoreAgent = useBonsaiStore((state) => state.restoreAgent)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
+  const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const setWorktreeTag = useBonsaiStore((state) => state.setWorktreeTag)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
@@ -83,7 +88,8 @@ export function Inspector() {
   const [tagDraft, setTagDraft] = useState('')
 
   const agent = selection.type === 'agent' ? agents.find((item) => item.id === selection.id) : undefined
-  const worktree = worktrees.find((item) => item.id === (selection.type === 'worktree' ? selection.id : agent?.worktreeId))
+  const process = selection.type === 'process' ? inventory.find(item => item.id === selection.id) : undefined
+  const worktree = worktrees.find((item) => item.id === (selection.type === 'worktree' ? selection.id : agent?.worktreeId ?? process?.worktreeId))
   const project = useBonsaiStore(state => state.projects.find(item => item.id === (worktree?.projectId ?? activeProjectId)))
   const projectWorktrees = worktrees
   const projectAgents = useMemo(() => agents.filter(item => presentation(item) === 'canvas'), [agents])
@@ -118,7 +124,7 @@ export function Inspector() {
                 <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><GitBranch size={12} /> Workspace overview</div>
                 <h2 className="text-lg font-semibold tracking-tight">{project.name}</h2>
                 <p className="mt-1 break-all text-[11px] text-[rgb(var(--muted))]">{project.repository}</p>
-                <div className="mt-4 grid grid-cols-2 gap-2"><QuickButton icon={GitBranch} label="Worktree" onClick={() => setWorktreeDialogOpen(true)} /><QuickButton icon={Bot} label="Agent" primary onClick={() => openStartAgentDialog()} /></div>
+                <div className="mt-4 grid grid-cols-2 gap-2"><QuickButton icon={GitBranch} label="Worktree" onClick={() => setWorktreeDialogOpen(true)} /><QuickButton icon={Bot} label="Agent" primary onClick={() => openStartAgentDialog()} /><QuickButton icon={Play} label="Start process" onClick={() => openStartProcessDialog('', project.id)} /></div>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={projectWorktrees.length} label="Branches" icon={GitBranch} />
@@ -131,16 +137,16 @@ export function Inspector() {
                 </button>)}</div> : <p className="flex items-center gap-2 text-[11px] text-[rgb(var(--muted))]"><CheckCircle2 size={14} className="text-[rgb(var(--green))]" />No branch blockers reported.</p>}
               </Section>
               <Section title="Agents" meta={<span className="inspector-count">{projectAgents.length}</span>}>
-                {projectAgents.length ? projectAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">Agent execution is unavailable.</p>}
+                {projectAgents.length ? projectAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">No agent sessions.</p>}
               </Section>
             </>}
 
-            {worktree && !agent && <>
+            {worktree && !agent && !process && <>
               <div className="inspector-hero">
                 <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--purple))]"><GitBranch size={13} />{worktree.kind}<span className="ml-auto text-[rgb(var(--muted))]">{worktree.lastActivity}</span></div>
                 <h2 className="break-words font-mono text-[14px] font-semibold leading-6">{worktree.branch}</h2>
                 <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><ArrowRight size={12} /><span className="truncate">{worktree.mergeTargetBranch}</span></div>
-                <div className="mt-4"><QuickButton icon={Bot} label="Start agent" primary onClick={() => openStartAgentDialog(worktree.id)} /></div>
+                <div className="mt-4 grid grid-cols-2 gap-2"><QuickButton icon={Bot} label="Start agent" primary onClick={() => openStartAgentDialog(worktree.id)} /><QuickButton icon={Play} label="Start process" onClick={() => openStartProcessDialog(worktree.id)} /></div>
               </div>
               {!worktree.main && <button type="button" onClick={() => setDeleteWorktreeId(worktree.id)} className="bonsai-focus rounded border border-[rgb(var(--red)/.4)] px-3 py-2 text-[11px] text-[rgb(var(--red))]">Delete worktree</button>}
               <div className="grid grid-cols-3 gap-2">
@@ -160,7 +166,7 @@ export function Inspector() {
                 </> : <p className="inspector-empty">{worktree.prNumber ? `PR #${worktree.prNumber} details are unavailable.` : 'No pull request linked to this branch.'}</p>}
               </Section>
               <Section title="Agents on this branch" meta={<span className="inspector-count">{branchAgents.length}</span>}>
-                {branchAgents.length ? branchAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">Agent execution is unavailable.</p>}
+                {branchAgents.length ? branchAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">No agent sessions.</p>}
               </Section>
               <details key={worktree.id} className="inspector-settings"><summary className="bonsai-focus flex cursor-pointer items-center gap-2 text-[11px] font-medium"><SlidersHorizontal size={13} className="text-[rgb(var(--muted))]" />Branch settings<ChevronRight size={12} className="inspector-disclosure ml-auto" /></summary>
                 <section className="mt-4">
@@ -195,6 +201,13 @@ export function Inspector() {
                   )}
                 </section>
 
+                {inventory.some(p => p.worktreeId === worktree.id && processActive(p) && !processes.some(visible => visible.id === p.id)) && <Section title="Earlier active executions" meta={inventory.filter(p => p.worktreeId === worktree.id && processActive(p) && !processes.some(visible => visible.id === p.id)).length}>
+                  {inventory.filter(p => p.worktreeId === worktree.id && processActive(p) && !processes.some(visible => visible.id === p.id)).map(p => <div key={p.id} className="mb-3">
+                    <p className="mb-1 break-all text-[10px]">#{p.daemonId} · {p.command} · {p.lifecycleStatus}</p>
+                    <ProcessActions process={p} />
+                  </div>)}
+                </Section>}
+
                 <form onSubmit={submitTag} className="mt-4">
                   <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-[.12em] text-[rgb(var(--muted-2))]">Tag name</div>
                   <div className="flex gap-1.5">
@@ -211,35 +224,54 @@ export function Inspector() {
               </details>
             </>}
 
+            {process && <>
+              <div className="inspector-hero">
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><TerminalSquare size={13} />Managed process<span className="ml-auto">{process.lifecycleStatus}</span></div>
+                <h2 className="break-words text-[16px] font-semibold">{process.name}</h2>
+                <p className="my-3 break-all font-mono text-[11px] text-[rgb(var(--muted))]">{process.command}</p>
+                <ProcessActions process={process} />
+              </div>
+              {worktree ? <button onClick={() => setSelection({ type: 'worktree', id: worktree.id })} className="bonsai-focus inspector-link"><GitBranch size={13} />{worktree.branch}<ChevronRight size={12} className="ml-auto" /></button> : <p className="inspector-empty">Worktree association unavailable.</p>}
+              {process.exitError && <p role="alert" className="break-words text-[11px] text-[rgb(var(--red))]">{process.exitError}</p>}
+              <Section title="Process details"><dl className="space-y-2 text-[10px]">
+                <div className="flex justify-between"><dt>State</dt><dd>{process.lifecycleStatus}</dd></div>
+                {process.exitCode !== undefined && <div className="flex justify-between"><dt>Exit code</dt><dd>{process.exitCode}</dd></div>}
+                <div className="flex justify-between"><dt>Attempt</dt><dd>{process.attempt ?? 1}</dd></div>
+                <div className="flex justify-between"><dt>Restart policy</dt><dd>{process.policy?.mode ?? 'no'}</dd></div>
+                <div className="flex justify-between"><dt>Retries</dt><dd>{process.retryCount ?? 0}/{process.policy?.max_restarts ?? 0}</dd></div>
+                {process.retryAt && <div className="flex justify-between"><dt>Next retry</dt><dd>{process.retryAt}</dd></div>}
+                {process.startedAt && <div className="flex justify-between gap-2"><dt>Started</dt><dd>{process.startedAt}</dd></div>}
+              </dl></Section>
+            </>}
             {agent && <>
               <div className="inspector-hero">
-                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><Bot size={13} />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.state}</span></div>
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><Bot size={13} />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.lifecycleState ?? agent.state}</span></div>
                 <h2 className="text-[16px] font-semibold tracking-tight">{agent.name}</h2>
                 <p className="mt-2 text-[12px] leading-5 text-[rgb(var(--muted))]">{agent.task}</p>
-                <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{agent.runtime} runtime<span className="ml-auto capitalize">{presentation(agent)}</span></div>
-                <div className="mt-4"><QuickButton icon={TerminalSquare} unavailable label="Open terminal" primary onClick={() => openTerminal(agent.id)} /></div>
+                <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{agent.providerId === 'antigravity' ? 'API session' : `${agent.runtime} runtime`}<span className="ml-auto capitalize">{presentation(agent)}</span></div>
+                <div className="mt-4"><QuickButton icon={TerminalSquare} unavailable={agent.providerId !== 'antigravity'} label="Open terminal" primary onClick={() => openTerminal(agent.id)} /></div>
               </div>
               {worktree && <button onClick={() => setSelection({ type: 'worktree', id: worktree.id })} className="bonsai-focus inspector-link rounded-lg border border-[rgb(var(--border))]"><GitBranch size={13} className="shrink-0 text-[rgb(var(--purple))]" /><span className="min-w-0 flex-1"><span className="block truncate font-mono text-[10px]">{worktree.branch}</span><span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">{worktree.dirtyFiles} uncommitted · {issues.length ? issues.length + ' branch issues' : 'View branch details'}</span></span><ChevronRight size={12} /></button>}
-              <Section title="Recorded agent output" meta={<TerminalSquare size={12} className="text-[rgb(var(--muted))]" />}>
+              {agent.providerId !== 'antigravity' && <><Section title="Recorded agent output" meta={<TerminalSquare size={12} className="text-[rgb(var(--muted))]" />}>
                 {output.length ? <pre className="inspector-output">{output.join('\n')}</pre> : <p className="inspector-empty">No output captured for this session yet.</p>}
               </Section>
-              <Section title="Instructions"><p className="whitespace-pre-wrap break-words text-[11px] leading-[1.8] text-[rgb(var(--muted))]">{agent.prompt || 'No instructions recorded.'}</p></Section>
+              <Section title="Instructions"><p className="whitespace-pre-wrap break-words text-[11px] leading-[1.8] text-[rgb(var(--muted))]">{agent.prompt || 'No instructions recorded.'}</p></Section></>}
               <Section title="Session">
                 <dl className="space-y-2.5 text-[10px]">
-                  <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Model</dt><dd className="break-all text-right">{agent.model}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Reasoning</dt><dd>{agent.reasoningEffort}{agent.fastMode ? ' · Fast' : ''}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">{agent.providerId === 'antigravity' ? 'Profile' : 'Model'}</dt><dd className="break-all text-right">{agent.profileName ?? agent.model}</dd></div>
+                  {agent.providerId !== 'antigravity' && <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Reasoning</dt><dd>{agent.reasoningEffort}{agent.fastMode ? ' · Fast' : ''}</dd></div>}
                   <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Started</dt><dd>{agent.createdAt}</dd></div>
                   {agent.state === 'finished' && agent.finishedAt && <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Finished</dt><dd>{agent.finishedAt}</dd></div>}
                 </dl>
               </Section>
               <div className="grid grid-cols-2 gap-2">
-                {presentation(agent) === 'canvas' && (agent.state === 'running' ? <QuickButton icon={Square} unavailable label="Stop agent" onClick={() => setAgentState(agent.id, 'finished')} /> : <QuickButton icon={RotateCcw} unavailable label="Restart" onClick={() => setAgentState(agent.id, 'running')} />)}
+                {presentation(agent) === 'canvas' && (agent.state === 'running' ? <QuickButton icon={Square} unavailable={agent.providerId !== 'antigravity'} label="Stop agent" onClick={() => setAgentState(agent.id, 'finished')} /> : <QuickButton icon={RotateCcw} unavailable label="Restart" onClick={() => setAgentState(agent.id, 'running')} />)}
                 {presentation(agent) === 'canvas' && agent.state === 'finished' && <QuickButton icon={History} label="Move to history" onClick={() => moveAgentToHistory(agent.id)} />}
                 {presentation(agent) === 'history' && <QuickButton icon={Undo2} label="Restore to canvas" onClick={() => restoreAgentFromHistory(agent.id)} />}
                 {presentation(agent) === 'archived' ? <QuickButton icon={Undo2} label="Restore" onClick={() => restoreAgent(agent.id)} /> : <QuickButton icon={Archive} label="Archive" danger onClick={() => archiveAgent(agent.id)} />}
               </div>
             </>}
-            {!worktree && !agent && selection.type !== 'project' && <p className="inspector-empty py-8 text-center">Select a project, worktree, or agent.</p>}
+            {!worktree && !agent && !process && selection.type !== 'project' && <p className="inspector-empty py-8 text-center">Select a project, worktree, agent, or process.</p>}
           </div>
         </ScrollArea.Viewport>
         <ScrollArea.Scrollbar orientation="vertical" className="w-1.5 p-[1px]"><ScrollArea.Thumb className="rounded bg-[rgb(var(--border-strong))]" /></ScrollArea.Scrollbar>

@@ -19,6 +19,7 @@ function snapshot(id = 'a', sequence = 1): Snapshot {
     remote: { repository: { id: id === 'a' ? 1 : 2, full_name: `owner/${id}`, default_branch: 'main' }, branches: [], pull_requests: [pr] },
     worktree_state: { [`${id}-feature`]: { pull_request: pr, ci: { status: 'running', checked_sha: 'sha', checks: [{ id: 11, name: 'verify', status: 'in_progress', conclusion: '' }], freshness: { state: 'ready' } } } },
     freshness: { local: { state: 'ready', updated_at: 'today' }, provider: { state: 'ready', updated_at: 'today' } },
+    process_visibility: { cutoffs: {}, deleted: {} },
     processes: [{ id: `${id}:process`, project_id: id, daemon_id: 1, worktree_id: `${id}-feature`, label: 'serve', command: 'serve', status: 'running' }],
   }
 }
@@ -32,6 +33,21 @@ describe('stable snapshot reconciliation and consumers', () => {
     applySnapshot(snapshot('b'))
   })
   afterEach(cleanup)
+
+  it('retains authoritative sessions across bootstrap and scopes removal to one project', () => {
+    const a = snapshot('a', 2)
+    a.agents = [{ id: 'session-a', project_id: 'a', worktree_id: 'a-feature', account_id: 'account', provider: 'antigravity', profile_name: 'Profile', name: 'Agent', state: 'starting', created_at: 'today' }]
+    applySnapshot(a)
+    expect(useBonsaiStore.getState().agents[0]).toMatchObject({ id: 'session-a', lifecycleState: 'starting' })
+    expect(useBonsaiStore.getState().worktrees.find(w => w.id === 'a-feature')?.agentIds).toEqual(['session-a'])
+    const b = snapshot('b', 2); b.agents = []
+    applySnapshot(b)
+    expect(useBonsaiStore.getState().agents).toHaveLength(1)
+    applySnapshot({ ...a, sequence: 3, agents: [{ ...a.agents[0], state: 'running' }] })
+    expect(useBonsaiStore.getState().agents[0].lifecycleState).toBe('running')
+    applySnapshot({ ...a, sequence: 4, agents: [] })
+    expect(useBonsaiStore.getState().agents).toHaveLength(0)
+  })
 
   it('returns a narrow process patch and preserves unrelated collection and entity identity', () => {
     const before = useBonsaiStore.getState()

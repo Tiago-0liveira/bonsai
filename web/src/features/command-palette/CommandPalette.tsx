@@ -28,6 +28,13 @@ export function CommandPalette() {
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setWorktreeDialogOpen = useBonsaiStore(state => state.setWorktreeDialogOpen)
   const navigate = useNavigate()
+  const selection = useBonsaiStore(s => s.selection)
+  const agent = useBonsaiStore(s => s.agents.find(a => selection.type === 'agent' && a.id === selection.id))
+  const process = useBonsaiStore(s => s.processes.find(p => selection.type === 'process' && p.id === selection.id))
+  const openAgent = useBonsaiStore(s => s.openStartAgentDialog)
+  const openProcess = useBonsaiStore(s => s.openStartProcessDialog)
+  const openTerminal = useBonsaiStore(s => s.openTerminal)
+  const setAgentState = useBonsaiStore(s => s.setAgentState)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -64,7 +71,7 @@ export function CommandPalette() {
           />
           <span className="bonsai-kbd">Esc</span>
         </div>
-        <p className="px-3 py-2 text-[10px] text-[rgb(var(--muted-2))]">Agent execution and interactive shells are unavailable. Git actions remain available.</p>
+        <p className="px-3 py-2 text-[10px] text-[rgb(var(--muted-2))]">Antigravity profiles support interactive terminals. Generic shells are unavailable.</p>
         <Command.List className="max-h-[420px] overflow-y-auto p-2">
           <Command.Empty className="p-8 text-center text-[12px] text-[rgb(var(--muted))]">
             No command found.
@@ -74,9 +81,10 @@ export function CommandPalette() {
             <CommandItem icon={LocateFixed} label="Fit canvas" onSelect={() => run(() => requestCanvasAction('fit'))} />
             <CommandItem icon={Network} label="Auto-layout canvas" onSelect={() => run(() => requestCanvasAction('layout'))} />
             <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
-            <CommandItem icon={Bot} label="Start agent" disabled hint="unavailable" />
-            <CommandItem icon={Square} label="Stop agent" disabled hint="unavailable" />
-            <CommandItem icon={TerminalSquare} label="Open terminal" disabled hint="unavailable" />
+            <CommandItem icon={Bot} label="Start agent" onSelect={() => run(() => openAgent(selection.type === 'worktree' ? selection.id : agent?.worktreeId))} />
+            <CommandItem icon={Play} label="Start process" onSelect={() => run(() => openProcess(selection.type === 'worktree' ? selection.id : agent?.worktreeId ?? process?.worktreeId))} />
+            <CommandItem icon={Square} label="Stop agent" disabled={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => run(() => setAgentState(agent!.id, 'finished'))} />
+            <CommandItem icon={TerminalSquare} label="Open terminal" disabled={agent?.providerId !== 'antigravity'} onSelect={() => run(() => openTerminal(agent!.id))} />
           </Command.Group>
 
           <Command.Group heading="Commands" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">

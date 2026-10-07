@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // PassThroughMode controls how arbitrary trailing args are appended.
@@ -127,6 +128,11 @@ func Resolve(cmd Command, values ArgumentValues) (Invocation, error) {
 			args = append(args, "--")
 		}
 		args = append(args, vals...)
+	}
+	for _, value := range append([]string{cmd.Invocation.Program, cmd.Invocation.WorkingDir}, args...) {
+		if strings.ContainsRune(value, 0) {
+			return Invocation{}, fmt.Errorf("pkgmgr: command arguments cannot contain NUL bytes")
+		}
 	}
 	return Invocation{Program: cmd.Invocation.Program, Args: args, Dir: cmd.Invocation.WorkingDir}, nil
 }
