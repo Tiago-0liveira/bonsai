@@ -45,6 +45,76 @@ The local event endpoint is `ws://127.0.0.1:7001/events`. The first WebSocket
 message authenticates with the local capability. Local events are canonical
 refresh signals for local state.
 
+### Worktree state synchronization
+
+Local API protocol 3 keeps one in-memory projection per discovered project. The
+projection is a cache, not a second Git database or process supervisor: repository
+and process truth still comes from each repository daemon and persisted process
+records. An authenticated WebSocket subscription is registered before the server
+sends `ready`; `ready` includes a backend epoch. Every committed project
+projection has a monotonically increasing per-project sequence, and invalidation
+events include `{project_id, epoch, sequence}`. Browsers discard older responses
+and repeat a trailing read when an event overtakes an in-flight request.
+
+A cold project publishes known worktree/branch inventory first, then full local
+status and processes independently. While browsers are subscribed, local Git is
+reconciled every 5 seconds and process state every 2 seconds; project-root
+discovery remains on its 30-second scan. One inaccessible worktree produces an
+explicit status error without erasing healthy siblings. Missing/deleted upstream
+tracking is represented as unavailable divergence, not `0 ahead / 0 behind`.
+
+GitHub enrichment is asynchronous. Provider repository/PR/branch data is cached
+for 60 seconds; checks refresh after 15 seconds while pending. Provider reads are
+coalesced across clients and local clones, use bounded worker pools, and retain
+last successful values as stale on failure. PR association uses provider
+repository identity plus head branch so fork PRs are not matched only by branch
+name. CI keeps the checked SHA and distinguishes `unknown`, `none`, `running`,
+`passed`, and `failed`. The rollup uses the existing combined check-runs and
+commit-status API; it does not make a second workflow-runs request.
+
+`POST /api/projects/{projectId}/refresh` accepts a scoped `local`, `provider`,
+or `all` invalidation and immediately returns cached projection state while work
+is queued. Relay SSE uses the provider scope for every matching local clone.
+Ordinary snapshot reads do not force provider requests.
+
+An active canvas sends an authenticated, idempotent
+`POST /api/projects/{projectId}/sync` on initial load and every five minutes.
+Explicit Sync uses the same queue. Multiple tabs coalesce into one daemon job
+per clone; local inventory is published before network Git work. Snapshot GETs
+and local status polling stay free of Git network mutations.
+
+The daemon fetches origin with pruning and an explicit full branch refspec,
+covering narrow clones without changing their configuration. It then pulls the
+main working copy with `--ff-only --no-rebase --no-autostash` only when clean,
+attached, and tracking a valid origin upstream with no active Git operation.
+Dirty, detached, unborn, missing-upstream, and diverged cases are reported as
+skips. Fetch, pull, and provider outcomes and successful timestamps remain
+separate; errors preserve useful local state and previous successful freshness.
+Repositories without origin skip automatic Git network operations. Push remains
+explicit. Ahead/behind describes the fetched local tracking refs.
+
+Canonical snapshots include connection reasons, a stable Local / unlinked
+worktree group, and branch candidates identified by full ref and remote identity.
+The main working copy is excluded from the group. Provider-only branches require
+fetching before checkout; fork/deleted-head PRs cannot manufacture origin refs.
+Branch timestamps are tip commit times; PR timestamps are provider update times;
+Last synced is the successful fetch completion time. Freshness-only browser
+updates preserve canvas placement and viewport state.
+
+PR catalogs list all states and resume in batches of five pages per enrichment
+job. Initial pages are published as they arrive; the previous complete catalog
+remains visible during replacement. The PR catalog and worktree associations are
+published before CI checks finish. Updated ordering supports incremental refresh
+between daily complete reconciliations. The canvas exposes worktree creation and
+confirmed deletion.
+Deletion retains branches and PRs, rechecks dirty state and Git operations, and
+requires tracked processes and agents to stop. Creation and removal use durable
+mutation journals; metadata retries after creation do not create another tree.
+Worktrees whose directories have disappeared remain visible as missing Git
+registrations. Confirmed removal clears only the selected registration and its
+metadata, retaining the branch and respecting Git's worktree locks and tracked
+process protections. Other stale registrations are not automatically pruned.
+
 ## Internet GitHub relay
 
 The internet service is implemented in `internal/server/relay` and exposed by

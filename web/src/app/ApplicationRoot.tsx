@@ -1,3 +1,7 @@
+import { WorkspaceStorageError } from '../components/layout/WorkspaceStorageError'
+import { ProjectRootsSettings } from '../features/settings/ProjectRootsSettings'
+import { loadProjectRoots } from '../api/settings'
+import { workspacePreferences, useBonsaiStore } from '../stores/bonsai'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { RouterProvider } from '@tanstack/react-router'
 import '@xyflow/react/dist/style.css'
@@ -75,7 +79,11 @@ function LocalConnectionGate() {
 }
 
 function ConnectedApplication() {
+  const settings = useBonsaiStore(s => s.rootSettings)
+  const [dismissedSetup, setDismissedSetup] = useState<string | null>(null)
+
   useEffect(() => {
+    void loadProjectRoots().catch(() => undefined)
     const stopLocal = startGitBackend()
     const stopRelay = startRelayInvalidation()
     return () => {
@@ -83,18 +91,36 @@ function ConnectedApplication() {
       stopLocal()
     }
   }, [])
-  return <RouterProvider router={router} />
+
+  const setupKey = settings ? `${settings.revision}:${settings.selection_revision}` : ''
+  const needsSetup = Boolean(settings && (
+    settings.roots.length === 0
+    || (settings.repositories.length > 0 && !settings.repositories.some(repository => repository.selected))
+  ))
+
+  return <>
+    <RouterProvider router={router} />
+    {settings && needsSetup && dismissedSetup !== setupKey && <div role="dialog" aria-label="Choose project folders" className="fixed inset-0 z-50 overflow-auto bg-[rgb(var(--bg))]"><ProjectRootsSettings onDismiss={() => setDismissedSetup(setupKey)} /></div>}
+  </>
 }
 
 export function ApplicationRoot() {
+  useEffect(() => {
+    const stopLifecycle = workspacePreferences.attachLifecycle()
+    const stopNavigation = router.subscribe('onBeforeNavigate', workspacePreferences.flush)
+    return () => { stopNavigation(); stopLifecycle() }
+  }, [])
   const connection = useSyncExternalStore(
     subscribeLocalConnection,
     getLocalConnectionSnapshot,
     getLocalConnectionSnapshot,
   )
   return (
-    <div className="app-surface">
-      {connection.status === 'connected' ? <ConnectedApplication /> : <LocalConnectionGate />}
+    <div className="app-surface flex flex-col">
+      <WorkspaceStorageError />
+      <div className="min-h-0 flex-1">
+        {connection.status === 'connected' ? <ConnectedApplication /> : <LocalConnectionGate />}
+      </div>
     </div>
   )
 }

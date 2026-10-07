@@ -7,7 +7,7 @@ export type AgentPresentation = 'canvas' | 'history' | 'archived'
 export type BoardStatus = string
 export type BoardKind = string
 export type PrStatus = 'Draft' | 'Open' | 'Closed' | 'Merged'
-export type CiStatus = 'running' | 'passed' | 'failed' | 'waiting'
+export type CiStatus = 'unknown' | 'none' | 'running' | 'passed' | 'failed' | 'waiting'
 export type DockPanelKey = 'files' | 'prs'
 export type StackPreference = 'auto' | 'never'
 export type FileGitStatus = 'modified' | 'untracked' | 'added' | 'deleted' | 'committed'
@@ -33,6 +33,9 @@ export interface DefaultBranchInfo {
 }
 
 export interface Project {
+  path?: string
+  rootId?: string
+  available?: boolean
   id: string
   workspaceId: string
   name: string
@@ -52,6 +55,11 @@ export interface WorktreeTag {
 }
 
 export interface Worktree {
+	path?: string
+	main?: boolean
+  missing?: boolean
+	headSha?: string
+	connection?: { state: 'linked' | 'unlinked' | 'unknown'; reason?: string; statusUnknown?: boolean }
   id: string
   projectId: string
   branch: string
@@ -68,6 +76,10 @@ export interface Worktree {
   prStatus?: PrStatus
   ciStatus: CiStatus
   ciFailed: number
+  checkedSha?: string
+  upstream?: string
+  divergenceAvailable?: boolean
+  gitStatusError?: string
   ahead: number
   behind: number
   dirtyFiles: number
@@ -76,6 +88,7 @@ export interface Worktree {
 }
 
 export interface CreateWorktreeInput {
+	projectId?: string
   sourceType: WorktreeSourceType
   sourceRef: string
   branchName?: string
@@ -90,9 +103,13 @@ export interface EnvVariable {
   secret: boolean
 }
 
-export type AgentProvider = 'Claude' | 'Codex' | 'Gemini'
+export type AgentProvider = 'Claude' | 'Codex' | 'Gemini' | 'Antigravity'
 
 export interface Agent {
+  projectId?: string
+  profileName?: string
+  providerId?: 'antigravity'
+  lifecycleState?: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
   id: string
   worktreeId: string
   name: string
@@ -113,6 +130,9 @@ export interface Agent {
 }
 
 export interface StartAgentInput {
+  fullAccess?: boolean
+  accountId?: string
+  requestKey?: string
   worktreeId: string
   name: string
   provider: AgentProvider
@@ -123,16 +143,48 @@ export interface StartAgentInput {
   prompt: string
 }
 
+export type ProcessLifecycleStatus = 'starting' | 'running' | 'backoff' | 'stopping' | 'stopped' | 'done' | 'failed' | 'lost' | 'orphan'
+
 export interface Process {
+  commandKey?: string
+  executionOrder?: number
   id: string
+  projectId: string
+  daemonId: number
   worktreeId: string
   name: string
   command: string
   status: Health
+  lifecycleStatus: ProcessLifecycleStatus
+  revision?: number
+  pendingSnapshot?: boolean
+  policy?: { mode: 'no' | 'on-failure' | 'always'; max_restarts: number }
+  restarts?: number
+  retryCount?: number
+  attempt?: number
+  retryAt?: string
+  pid?: number
   port?: number
+  url?: string
+  startedAt?: string
+  exitCode?: number
+  exitError?: string
+  serveGroup?: string
+  serveName?: string
+}
+
+export type CanvasProcess = Pick<Process, 'id' | 'projectId' | 'worktreeId' | 'name' | 'command' | 'status' | 'lifecycleStatus'>
+
+export type SyncFreshnessState = 'loading' | 'ready' | 'stale' | 'error' | 'unavailable'
+
+export interface SyncFreshness {
+  state: SyncFreshnessState
+  updatedAt?: string
+  error?: { code: string; message: string }
 }
 
 export interface PullRequest {
+	headRepository?: string
   id: string
   number: number
   title: string
@@ -144,7 +196,7 @@ export interface PullRequest {
   createdAt: string
   updatedAt: string
   mergeable?: boolean
-  checks: { name: string; status: 'success' | 'running' | 'failed' }[]
+  checks: { id?: number; name: string; status: 'success' | 'running' | 'failed' }[]
   commits: { sha: string; message: string; author: string; time?: string }[]
   conversation: { author: string; body: string; time: string; kind?: 'comment' | 'review' | 'system' | 'checks' }[]
   files: { path: string; additions: number; deletions: number; diff: string[] }[]
@@ -204,6 +256,24 @@ export type Selection =
   | { type: 'project'; id: string }
   | { type: 'worktree'; id: string }
   | { type: 'agent'; id: string }
+  | { type: 'process'; id: string }
+
+export interface RuntimeReference {
+  kind: 'agent' | 'process'
+  id: string
+  commandKey?: string
+}
+
+export interface RuntimeViewPreference {
+  open: RuntimeReference[]
+  active: RuntimeReference | null
+}
+
+export type TerminalViewPreferences = Record<string, {
+  lastWorktreeId: string
+  reopening?: 'keep_closed' | 'restore'
+  worktrees: Record<string, RuntimeViewPreference>
+}>
 
 export type DockState = 'collapsed' | 'normal' | 'maximized'
 export type DockTab = 'agent' | 'terminal' | 'tests' | 'files' | 'pr' | 'checks' | 'logs'

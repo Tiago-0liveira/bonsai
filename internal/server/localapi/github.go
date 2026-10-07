@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
-	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
@@ -231,6 +230,19 @@ func (s *Server) githubChecks(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid", "sha is required")
 		return
 	}
+	if r.PathValue("projectId") != "" {
+		value, freshness := s.stateSync.providers.checksFor(r.Context(), s.registry.Default().github, repository, sha, s.stateSync.now(), false)
+		if freshness.State == "error" && freshness.UpdatedAt == nil {
+			message := "provider checks are unavailable"
+			if freshness.Error != nil {
+				message = freshness.Error.Message
+			}
+			writeAPIError(w, http.StatusBadGateway, "github_error", message)
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+		return
+	}
 	value, err := s.registry.Default().github.Checks(r.Context(), repository, sha)
 	writeGitHubResult(w, value, err)
 }
@@ -249,16 +261,12 @@ func (s *Server) repositoryForRequest(w http.ResponseWriter, r *http.Request) (s
 		if !s.requireLocalProject(w, r) {
 			return "", false
 		}
-		discovered, err := ghcli.Discover(r.Context(), s.repoDir)
-		if err != nil {
-			writeAPIError(w, http.StatusBadGateway, "github_unavailable", err.Error())
+		snapshot, ok := s.stateSync.CachedSnapshot(s.registry.Default().info.ID)
+		if !ok || !validRepository(snapshot.Repository.FullName) {
+			writeAPIError(w, http.StatusServiceUnavailable, "github_unavailable", "Provider repository identity is not available yet")
 			return "", false
 		}
-		if !validRepository(discovered.FullName) {
-			writeAPIError(w, http.StatusBadGateway, "github_unavailable", "gh returned an invalid repository")
-			return "", false
-		}
-		return discovered.FullName, true
+		return snapshot.Repository.FullName, true
 	}
 	repository := strings.TrimSpace(r.URL.Query().Get("repository"))
 	if !validRepository(repository) {
@@ -358,7 +366,7 @@ func (s *Server) githubMutation(
 		writeAPIError(w, http.StatusBadGateway, "github_error", runErr.Error())
 		return
 	}
-	s.publishProjectEvent("")
+	s.stateSync.Queue(s.registry.Default().info.ID, refreshProvider, true)
 	writeJSON(w, http.StatusOK, value)
 }
 

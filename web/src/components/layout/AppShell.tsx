@@ -6,16 +6,20 @@ import {
   type ImperativePanelHandle,
 } from 'react-resizable-panels'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { CheckCircle2, PanelBottomOpen } from 'lucide-react'
+import { PanelBottomOpen } from 'lucide-react'
 import { CommandPalette } from '../../features/command-palette/CommandPalette'
 import { Inspector } from '../../features/inspector/Inspector'
 import { BottomWorkspace } from '../../features/terminal/BottomWorkspace'
 import { CreateWorktreeDialog } from '../../features/workspace/CreateWorktreeDialog'
+import { DeleteWorktreeDialog } from '../../features/workspace/DeleteWorktreeDialog'
 import { EnvEditor } from '../../features/workspace/EnvEditor'
 import { StartAgentDialog } from '../../features/workspace/StartAgentDialog'
+import { StartProcessDialog } from '../../features/workspace/StartProcessDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { relayLoginURL } from '../../api/relayClient'
 import { TopBar } from './TopBar'
+import { WorkspaceNotice } from './WorkspaceNotice'
+import { WorkspaceVisibility } from '../ui/WorkspaceVisibility'
 
 function MainWorkspace({ children }: { children: React.ReactNode }) {
   return (
@@ -33,21 +37,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const setDockState = useBonsaiStore((state) => state.setDockState)
   const dockHeight = useBonsaiStore((state) => state.dockHeight)
   const setDockHeight = useBonsaiStore((state) => state.setDockHeight)
-  const notice = useBonsaiStore((state) => state.notice)
-  const setNotice = useBonsaiStore((state) => state.setNotice)
+  const initialDockSize = useRef(dockState === 'collapsed' ? 0 : dockState === 'maximized' ? 68 : dockHeight).current
+  const applyingLayout = useRef(false)
+  const dockContentRef = useRef<HTMLDivElement>(null)
+  const reopenRef = useRef<HTMLButtonElement>(null)
+  const dragging = useRef(false)
+  const normalHeight = useRef(dockHeight)
 
   useEffect(() => {
-    if (dockState === 'collapsed') return
     const panel = dockRef.current
     if (!panel) return
-    panel.resize(dockState === 'maximized' ? 68 : dockHeight)
+    // Imperative resize callbacks must not overwrite the saved normal height.
+    normalHeight.current = dockHeight
+    applyingLayout.current = true
+    try {
+      if (dockState === 'collapsed') panel.collapse()
+      else panel.resize(dockState === 'maximized' ? 68 : dockHeight)
+    } finally {
+      applyingLayout.current = false
+    }
+    if (dockState === 'collapsed' && dockContentRef.current?.contains(document.activeElement)) {
+      reopenRef.current?.focus()
+    }
   }, [dockHeight, dockState])
 
-  useEffect(() => {
-    if (!notice) return
-    const timer = window.setTimeout(() => setNotice(''), 2600)
-    return () => window.clearTimeout(timer)
-  }, [notice, setNotice])
 
   return (
     <Tooltip.Provider delayDuration={250}>
@@ -55,33 +68,60 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <TopBar />
         {gitError && <div role="status" className="p-3 text-sm">{gitError}{gitError.includes('Sign in with GitHub') && <> <a href={relayLoginURL()} className="underline">Sign in with GitHub</a></>}</div>}
         <div className="min-h-0 flex-1">
-          {dockState === 'collapsed' ? (
-            <MainWorkspace>{children}</MainWorkspace>
-          ) : (
-            <PanelGroup direction="vertical">
-              <Panel minSize={24} defaultSize={100 - dockHeight}>
-                <MainWorkspace>{children}</MainWorkspace>
-              </Panel>
-              <PanelResizeHandle className="group relative h-1.5 shrink-0 cursor-row-resize border-y border-[rgb(var(--border))] bg-[rgb(var(--bg))]">
-                <div className="absolute left-1/2 top-1/2 h-px w-10 -translate-x-1/2 -translate-y-1/2 bg-[rgb(var(--border-strong))] opacity-0 transition-opacity group-hover:opacity-100" />
-              </PanelResizeHandle>
-              <Panel
-                ref={dockRef}
-                defaultSize={dockHeight}
-                minSize={14}
-                maxSize={72}
-                onResize={(size) => {
-                  if (dockState === 'normal') setDockHeight(size)
-                }}
+          <PanelGroup id="workspace-layout" direction="vertical">
+            <Panel id="main-workspace" order={1} minSize={24} defaultSize={100 - initialDockSize}>
+              <MainWorkspace>{children}</MainWorkspace>
+            </Panel>
+            <PanelResizeHandle
+              id="workspace-resize"
+              onDragging={active => {
+                dragging.current = active
+                if (!active) setDockHeight(normalHeight.current)
+              }}
+              disabled={dockState === 'collapsed'}
+              tabIndex={dockState === 'collapsed' ? -1 : 0}
+              style={{ display: dockState === 'collapsed' ? 'none' : undefined }}
+              className="group relative h-1.5 shrink-0 cursor-row-resize border-y border-[rgb(var(--border))] bg-[rgb(var(--bg))]"
+            >
+              <div className="absolute left-1/2 top-1/2 h-px w-10 -translate-x-1/2 -translate-y-1/2 bg-[rgb(var(--border-strong))] opacity-0 transition-opacity group-hover:opacity-100" />
+            </PanelResizeHandle>
+            <Panel
+              ref={dockRef}
+              id="bottom-workspace"
+              order={2}
+              collapsible
+              collapsedSize={0}
+              defaultSize={initialDockSize}
+              minSize={14}
+              maxSize={72}
+              onResize={(size) => {
+                if (applyingLayout.current) return
+                const currentState = useBonsaiStore.getState().dockState
+                if (size === 0) setDockState('collapsed')
+                else if (currentState === 'normal') {
+                  normalHeight.current = size
+                  if (!dragging.current) setDockHeight(size)
+                }
+              }}
+            >
+              <div
+                ref={dockContentRef}
+                className="h-full min-h-0 overflow-hidden"
+                aria-hidden={dockState === 'collapsed'}
+                {...(dockState === 'collapsed' ? { inert: '' } : {})}
+                style={{ visibility: dockState === 'collapsed' ? 'hidden' : undefined }}
               >
-                <BottomWorkspace />
-              </Panel>
-            </PanelGroup>
-          )}
+                <WorkspaceVisibility.Provider value={dockState !== 'collapsed'}>
+                  <BottomWorkspace />
+                </WorkspaceVisibility.Provider>
+              </div>
+            </Panel>
+          </PanelGroup>
         </div>
 
         {dockState === 'collapsed' && (
           <button
+            ref={reopenRef}
             type="button"
             onClick={() => setDockState('normal')}
             className="bonsai-focus absolute bottom-3 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))] px-3 py-1.5 text-[9px] text-[rgb(var(--muted))] shadow-xl hover:bg-[rgb(var(--panel-3))] hover:text-[rgb(var(--text))]"
@@ -90,15 +130,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         )}
 
-        {notice && (
-          <div className="pointer-events-none absolute bottom-3 right-3 z-50 flex items-center gap-2 rounded-md border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))] px-3 py-2 text-[11px] shadow-xl">
-            <CheckCircle2 size={13} className="text-[rgb(var(--green))]" />
-            {notice}
-          </div>
-        )}
+        <WorkspaceNotice />
 
         <CreateWorktreeDialog />
+        <DeleteWorktreeDialog />
         <StartAgentDialog />
+        <StartProcessDialog />
         <EnvEditor />
         <CommandPalette />
       </div>

@@ -1,12 +1,14 @@
 package server_test
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -148,8 +150,27 @@ func newExternalDaemonClient(t *testing.T) (*client.Client, string) {
 	t.Setenv("BONSAI_DAEMON_BIN", getTestBonsaiBin(t))
 	root := t.TempDir()
 	c := client.For(root)
-	t.Cleanup(func() { _ = c.Shutdown(true) })
+	t.Cleanup(func() { shutdownExternalDaemon(t, c, root) })
 	return c, root
+}
+
+func shutdownExternalDaemon(t *testing.T, c *client.Client, root string) {
+	t.Helper()
+	if err := c.Shutdown(true); err != nil {
+		t.Error(err)
+	}
+	// The socket closes before registry cleanup finishes. Wait for the
+	// daemon lock to be released before TempDir removes its config files.
+	if !waitFor(t, 3*time.Second, func() bool {
+		lock, err := procstore.TryLock(procstore.New(root).LockPath())
+		if err != nil {
+			return false
+		}
+		_ = lock.Unlock()
+		return true
+	}) {
+		t.Error("daemon cleanup did not finish")
+	}
 }
 
 // crashExternalDaemon terminates the actual daemon process without asking it to
@@ -911,8 +932,8 @@ func TestAutomaticRestartFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Restart fires, fails to start, transitions to StatusFailed
-	if !waitFor(t, 3*time.Second, func() bool {
+	// Failed starts also count against the remaining retry budget (1s + 2s + 4s).
+	if !waitFor(t, 9*time.Second, func() bool {
 		r := recByID(t, c, rec.ID)
 		return r != nil && r.Status == procstore.StatusFailed && r.ExitError != ""
 	}) {
@@ -1269,8 +1290,9 @@ func TestManualRestartLogOpenFailureBecomesFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := c.Restart(rec.ID); err == nil {
-		t.Fatal("expected restart to fail when log path is a directory")
+	restarted, err := c.Restart(rec.ID)
+	if err != nil || restarted == nil || restarted.Status != procstore.StatusFailed || restarted.ExitError == "" {
+		t.Fatalf("restart must return retained failure diagnostics: %+v %v", restarted, err)
 	}
 	r := recByID(t, c, rec.ID)
 	if r == nil || r.Status != procstore.StatusFailed || r.ExitError == "" {
@@ -1805,6 +1827,7 @@ func TestProtocolCompatibility(t *testing.T) {
 		t.Setenv("BONSAI_DAEMON_BIN", binPath)
 
 		c := client.For(root)
+		t.Cleanup(func() { shutdownExternalDaemon(t, c, root) })
 		if err := c.CheckCompatibility(); err != nil {
 			t.Fatalf("CheckCompatibility failed: %v", err)
 		}
@@ -1823,7 +1846,6 @@ func TestProtocolCompatibility(t *testing.T) {
 		if ping.Version != protocol.Version {
 			t.Fatalf("replacement version = %d, want %d", ping.Version, protocol.Version)
 		}
-		_ = c.Shutdown(true)
 	})
 }
 
@@ -1943,5 +1965,269 @@ func TestLogStreamingGrepAcrossChunkBoundary(t *testing.T) {
 	}
 	if got != payload {
 		t.Fatalf("expected complete intact line of length %d, got %d", len(payload), len(got))
+	}
+}
+
+func TestProcessByteStreamReplayRetriesRestartAndCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fixture")
+	}
+	c, root := newDaemon(t)
+	rec, err := c.Spawn(root, "", "instant", "printf 'INITIAL'; printf '\\033[32mFINAL_WITHOUT_NEWLINE\\033[0m'; exit 2", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	finished := errors.New("finished")
+	var output strings.Builder
+	var generation string
+	var offset int64
+	err = c.StreamProcess(ctx, rec.ID, "", 0, func(frame *protocol.Response) error {
+		if frame.Gap {
+			t.Fatal("unexpected gap")
+		}
+		if generation != "" && generation != frame.Generation {
+			t.Fatal("attempt changed stream identity")
+		}
+		if frame.Offset != offset+int64(len(frame.Data)) {
+			t.Fatal("noncontiguous output")
+		}
+		generation, offset = frame.Generation, frame.Offset
+		output.Write(frame.Data)
+		if frame.Record != nil && frame.Record.Status == procstore.StatusFailed {
+			if frame.Record.Attempt != 2 {
+				t.Fatalf("attempts %+v", frame.Record)
+			}
+			return finished
+		}
+		return nil
+	})
+	if !errors.Is(err, finished) {
+		t.Fatal(err)
+	}
+	if strings.Count(output.String(), "INITIAL") != 2 || strings.Count(output.String(), "FINAL_WITHOUT_NEWLINE") != 2 || !strings.Contains(output.String(), "retries exhausted") {
+		t.Fatalf("output=%q", output.String())
+	}
+	if _, err := c.Restart(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	var manual strings.Builder
+	err = c.StreamProcess(ctx, rec.ID, generation, offset, func(frame *protocol.Response) error {
+		if frame.Gap || frame.Generation != generation || frame.Offset != offset+int64(len(frame.Data)) {
+			t.Fatalf("manual frame %+v", frame)
+		}
+		offset = frame.Offset
+		manual.Write(frame.Data)
+		if frame.Record != nil && frame.Record.Status == procstore.StatusFailed {
+			return finished
+		}
+		return nil
+	})
+	if !errors.Is(err, finished) || strings.Count(manual.String(), "INITIAL") != 2 {
+		t.Fatalf("manual=%q err=%v", manual.String(), err)
+	}
+	silentCtx, stop := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- c.StreamProcess(silentCtx, rec.ID, generation, offset, func(*protocol.Response) error { stop(); return nil })
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancel: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("silent subscription did not cancel")
+	}
+}
+
+func TestProcessIDsSurviveRemovalAndDaemonRestart(t *testing.T) {
+	c, root := newDaemon(t)
+	rec, err := c.Spawn(root, "", "first", "exit 0", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, time.Second, func() bool { return procstore.IsTerminal(recByID(t, c, rec.ID).Status) }) {
+		t.Fatal("first process did not exit")
+	}
+	if err := c.Remove(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Shutdown(false); err != nil {
+		t.Fatal(err)
+	}
+	var srv *server.Server
+	if !waitFor(t, time.Second, func() bool { srv, err = server.NewServer(root); return err == nil }) {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); _ = srv.Run() }()
+	t.Cleanup(func() {
+		_ = c.Shutdown(true)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("reopened daemon did not exit")
+		}
+	})
+	_, visibility, authorityErr := c.ProcessAuthorityContext(context.Background())
+	if authorityErr != nil || !visibility.Deleted[rec.ID] || visibility.Cutoffs[rec.CommandKey] != rec.ExecutionOrder {
+		t.Fatalf("visibility lost across daemon restart: %+v %v", visibility, authorityErr)
+	}
+	next, err := c.Spawn(root, "", "second", "exit 0", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil || next == nil || next.ID <= rec.ID || next.ExecutionOrder <= rec.ExecutionOrder {
+		t.Fatalf("reused identity: %+v %v", next, err)
+	}
+}
+
+func TestExplicitExecutionOrderAndStopDeleteAuthority(t *testing.T) {
+	c, root := newDaemon(t)
+	policy := &procstore.Policy{Mode: procstore.PolicyNo}
+	first, err := c.Spawn(root, "", "old", "sleep 30", policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := c.Spawn(root, "", "new", "sleep 30", policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CommandKey == "" || latest.CommandKey != first.CommandKey || latest.ExecutionOrder <= first.ExecutionOrder {
+		t.Fatalf("identity/order: %+v %+v", first, latest)
+	}
+	restarted, err := c.Restart(first.ID)
+	if err != nil || restarted.ExecutionOrder <= latest.ExecutionOrder {
+		t.Fatalf("explicit restart: %+v %v", restarted, err)
+	}
+	if _, err := c.RemoveExecution(first.ID, false); err == nil {
+		t.Fatal("active removal must require stop")
+	}
+	visibility, err := c.RemoveExecution(first.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !visibility.Deleted[first.ID] || visibility.Cutoffs[first.CommandKey] != restarted.ExecutionOrder {
+		t.Fatalf("visibility: %+v", visibility)
+	}
+	if _, err := c.RemoveExecution(first.ID, true); err != nil {
+		t.Fatal("repeat removal", err)
+	}
+	if _, err := c.Restart(first.ID); err == nil {
+		t.Fatal("deleted execution restarted")
+	}
+	if got := recByID(t, c, latest.ID); got.Status != procstore.StatusRunning {
+		t.Fatal("other execution stopped", got)
+	}
+	records, authority, err := c.ProcessAuthorityContext(context.Background())
+	if err != nil || len(records) != 1 || !authority.Deleted[first.ID] {
+		t.Fatalf("authority: %+v %+v %v", records, authority, err)
+	}
+	next, err := c.Spawn(root, "", "after deletion", "sleep 30", policy)
+	if err != nil || next.ExecutionOrder <= restarted.ExecutionOrder {
+		t.Fatalf("new execution: %+v %v", next, err)
+	}
+	for _, suffix := range []string{".json", ".log", ".log.1", ".log.cursor"} {
+		if _, err := os.Stat(filepath.Join(root, ".bonsai", "procs", strconv.Itoa(first.ID)+suffix)); !os.IsNotExist(err) {
+			t.Fatalf("deleted artifact %s: %v", suffix, err)
+		}
+	}
+}
+
+func TestAutomaticRetryKeepsOrderAndCleanupFailureCanRetry(t *testing.T) {
+	c, root := newDaemon(t)
+	r, err := c.Spawn(root, "", "retry", "exit 2", &procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 4*time.Second, func() bool { p := recByID(t, c, r.ID); return p.Status == procstore.StatusFailed && p.Attempt == 2 }) {
+		t.Fatal("retry did not finish")
+	}
+	after := recByID(t, c, r.ID)
+	if after.ExecutionOrder != r.ExecutionOrder {
+		t.Fatal("automatic retry changed explicit ordering")
+	}
+	path := filepath.Join(root, ".bonsai", "procs", strconv.Itoa(r.ID)+".log.1")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(path, "blocked")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RemoveExecution(r.ID, false); err == nil {
+		t.Fatal("cleanup failure swallowed")
+	}
+	records, visibility, err := c.ProcessAuthorityContext(context.Background())
+	if err != nil || len(records) != 1 || visibility.Deleted[r.ID] {
+		t.Fatalf("failed deletion lost retry state: %+v %+v %v", records, visibility, err)
+	}
+	if _, err := c.Restart(r.ID); err == nil {
+		t.Fatal("restart raced a pending deletion")
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RemoveExecution(r.ID, false); err != nil {
+		t.Fatal("retry deletion", err)
+	}
+}
+
+func TestConcurrentRestartAndDeletionNeverLeavesLiveDeletedRecord(t *testing.T) {
+	c, root := newDaemon(t)
+	for i := 0; i < 6; i++ {
+		r, err := c.Spawn(root, "", "race", "sleep 30", &procstore.Policy{Mode: procstore.PolicyNo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		restarted := make(chan error, 1)
+		removed := make(chan error, 1)
+		go func() { _, err := c.Restart(r.ID); restarted <- err }()
+		go func() { _, err := c.RemoveExecution(r.ID, true); removed <- err }()
+		if err := <-removed; err != nil {
+			t.Fatal("delete", err)
+		}
+		<-restarted // Either the restart won first or the record was already removed.
+		records, visibility, err := c.ProcessAuthorityContext(context.Background())
+		if err != nil || !visibility.Deleted[r.ID] {
+			t.Fatalf("authority: %+v %v", visibility, err)
+		}
+		for _, record := range records {
+			if record.ID == r.ID {
+				t.Fatal("deleted process survived", record)
+			}
+		}
+	}
+}
+
+func TestManualRestartDoesNotExecuteBeforeRecordPersistence(t *testing.T) {
+	c, root := newDaemon(t)
+	r, err := c.Spawn(root, "", "persist", "exit 0", &procstore.Policy{Mode: procstore.PolicyNo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, time.Second, func() bool { return procstore.IsTerminal(recByID(t, c, r.ID).Status) }) {
+		t.Fatal("first run did not finish")
+	}
+	before := recByID(t, c, r.ID)
+	path := procstore.New(root).RecordPath(r.ID)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Restart(r.ID); err == nil {
+		t.Fatal("restart proceeded without persisted ordering")
+	}
+	after := recByID(t, c, r.ID)
+	if after.Attempt != before.Attempt || after.Status != procstore.StatusFailed {
+		t.Fatalf("restart executed: %+v", after)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	next, err := c.Restart(r.ID)
+	if err != nil || next.ExecutionOrder <= before.ExecutionOrder || next.Attempt != before.Attempt+1 {
+		t.Fatalf("restart recovery: %+v %v", next, err)
 	}
 }

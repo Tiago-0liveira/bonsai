@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"sync/atomic"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,7 +25,7 @@ import (
 const (
 	localRepositoryID  = "local"
 	localBrowserUserID = "local-browser"
-	localAPIVersion    = 1
+	localAPIVersion    = 3
 )
 
 type daemonClient interface {
@@ -35,13 +37,15 @@ type daemonClient interface {
 }
 
 type Config struct {
-	RepoDir       string
-	Address       string
-	BrowserOrigin string
-	SecurityMode  BrowserSecurityMode
+	RepoDir          string
+	Address          string
+	BrowserOrigin    string
+	SecurityMode     BrowserSecurityMode
+	ProjectRootsPath string
 }
 
 type Server struct {
+	agents        *agentAPI
 	repoDir       string
 	expectedHost  string
 	browserOrigin string
@@ -50,7 +54,8 @@ type Server struct {
 	sessions      *sessionStore
 	state         *gitstore.Store
 	eventHub      *eventHub
-	sequence      atomic.Uint64
+	stateSync     *stateSync
+	rootsPath     string
 }
 
 func New(cfg Config) (*Server, error) {
@@ -64,6 +69,9 @@ func New(cfg Config) (*Server, error) {
 	if root, err := git.MainRoot(cfg.RepoDir); err == nil {
 		cfg.RepoDir = root
 	}
+	if canonical, err := config.CanonicalDirectory(cfg.RepoDir); err == nil {
+		cfg.RepoDir = canonical
+	}
 	if err := requireLoopback(cfg.Address); err != nil {
 		return nil, err
 	}
@@ -73,33 +81,157 @@ func New(cfg Config) (*Server, error) {
 	if err := validateBrowserOrigin(cfg.BrowserOrigin, cfg.SecurityMode); err != nil {
 		return nil, err
 	}
-	state, err := gitstore.Open(filepath.Join(procstore.New(cfg.RepoDir).Dir(), "local-api-state.json"))
-	if err != nil {
-		return nil, fmt.Errorf("open local API state: %w", err)
+	var err error
+	rootsPath := cfg.ProjectRootsPath
+	if rootsPath == "" {
+		rootsPath, err = config.ProjectRootsPath()
+		if err != nil {
+			return nil, err
+		}
 	}
-	return &Server{
+	registry := newProjectRegistry(rootsPath, cfg.RepoDir)
+	if _, err := registry.Refresh(context.Background()); err != nil {
+		return nil, err
+	}
+	events := newEventHub()
+	s := &Server{
 		repoDir:       cfg.RepoDir,
 		expectedHost:  cfg.Address,
 		browserOrigin: cfg.BrowserOrigin,
 		securityMode:  cfg.SecurityMode,
-		registry:      newStaticProjectRegistry(cfg.RepoDir),
+		registry:      registry,
+		rootsPath:     rootsPath,
 		sessions:      newSessionStore(),
-		state:         state,
-		eventHub:      newEventHub(),
-	}, nil
+		eventHub:      events,
+	}
+	s.stateSync = newStateSync(registry, events)
+	s.stateSync.ReconcileCatalog()
+	runtime, err := agentruntime.New(nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.agents = &agentAPI{runtime: runtime, registry: s.registry}
+	s.agents.manager = agentterminal.New(runtime.Accounts, runtime.Sessions, runtime.Registry, s.publishAgents)
+	if err := s.recoverAgents(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
-func (s *Server) Handler() http.Handler {
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /version", s.version)
 	mux.HandleFunc("POST /api/session", s.createSession)
+	s.registerAgentRoutes(mux)
+	s.registerSettingsRoutes(mux)
 	s.registerProjectRoutes(mux)
 	s.registerGitRoutes(mux)
 	s.registerProcessRoutes(mux)
 	s.registerGitHubRoutes(mux)
 	mux.HandleFunc("GET /events", s.events)
-	return s.securityMiddleware(mux)
+	return mux
+}
+
+// Resolve ownership once per request, then bind all repository handlers to that
+// entry. The shared server, sessions, event hub and catalog are never mutated.
+func (s *Server) Handler() http.Handler {
+	routes := s.routes()
+	return s.securityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(path) < 2 || path[0] != "api" || path[1] == "settings" || path[1] == "session" || (path[1] == "projects" && len(path) == 2) {
+			routes.ServeHTTP(w, r)
+			return
+		}
+		scopedRoute := path[1] == "projects" || path[1] == "worktrees" || path[1] == "repository" || path[1] == "branches" || path[1] == "github" || path[1] == "processes"
+		if !scopedRoute {
+			routes.ServeHTTP(w, r)
+			return
+		}
+		var project projectServices
+		var ok bool
+		switch {
+		case path[1] == "projects" && len(path) > 2:
+			project, ok = s.registry.Lookup(path[2])
+		case path[1] == "worktrees" && len(path) > 2:
+			project, ok = s.registry.Worktree(r.Context(), path[2])
+			// Completed removal remains replayable after the worktree leaves the
+			// inventory. The durable request journal supplies repository ownership.
+			if !ok && r.Method == http.MethodDelete {
+				key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+				for _, info := range s.registry.List() {
+					candidate, exists := s.registry.Lookup(info.ID)
+					if !exists || candidate.state == nil {
+						continue
+					}
+					_ = candidate.state.View(func(data gitstore.Data) error {
+						if old, exists := gitstore.Get[apiGitMutation](data, "api_git_mutations", key); exists && old.Command.Type == "git.worktree.remove" && old.Command.WorktreeID == path[2] {
+							project, ok = candidate, true
+						}
+						return nil
+					})
+					if ok {
+						break
+					}
+				}
+			}
+		default:
+			project = s.registry.Default()
+			ok = project.daemon != nil
+		}
+		if !ok {
+			writeAPIError(w, http.StatusNotFound, "project_unavailable", "Project or worktree is not in the configured roots. Add its directory in Settings.")
+			return
+		}
+		allowStaleSnapshot := r.Method == http.MethodGet && path[1] == "projects" && len(path) == 4 && path[3] == "git"
+		if !project.info.Available && !allowStaleSnapshot {
+			writeAPIError(w, http.StatusServiceUnavailable, "project_unavailable", "Project directory is unavailable")
+			return
+		}
+		scoped := *s
+		scoped.registry = &scopedProjectRegistry{project: project}
+		scoped.repoDir = project.info.Path
+		scoped.state = project.state
+		scoped.routes().ServeHTTP(w, r)
+	}))
+}
+func (s *Server) Reconcile(ctx context.Context) error {
+	if s.agents != nil {
+		s.agents.manager.CheckDirectories()
+	}
+	previous := s.registry.List()
+	changed, err := s.registry.Refresh(ctx)
+	if s.agents != nil {
+		for _, info := range previous {
+			current, ok := s.registry.Lookup(info.ID)
+			if !ok || !current.info.Available {
+				for _, session := range s.agents.manager.List(info.ID) {
+					if session.Active() {
+						_ = s.agents.manager.Stop(info.ID, session.ID)
+					}
+				}
+			}
+		}
+	}
+	s.stateSync.ReconcileCatalog()
+	if changed || err != nil {
+		s.eventHub.publish(localEvent{Type: "catalog", Epoch: s.stateSync.epoch, Projects: s.registry.List()})
+	}
+	return err
+}
+func (s *Server) reconcilePeriodically(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.Reconcile(ctx); err != nil {
+				log.Printf("Project discovery: %v", err)
+			}
+		}
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -124,8 +256,11 @@ func Run(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	defer s.agents.manager.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go s.reconcilePeriodically(ctx)
+	go s.stateSync.Run(ctx)
 
 	server := &http.Server{
 		Addr:              cfg.Address,

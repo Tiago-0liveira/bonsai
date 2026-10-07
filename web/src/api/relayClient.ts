@@ -1,5 +1,5 @@
 import { useBonsaiStore } from '../stores/bonsai'
-import { projectForGitHubRepository, refreshProject, report } from './git'
+import { projectForGitHubRepository, requestProjectRefresh, report } from './git'
 
 const runtimeRelayOrigin = typeof document !== 'undefined'
   ? document.querySelector<HTMLMetaElement>('meta[name="bonsai-relay-origin"]')?.content
@@ -65,7 +65,7 @@ export function startRelayInvalidation() {
     if (refreshTimers.has(projectId)) return
     refreshTimers.set(projectId, setTimeout(() => {
       refreshTimers.delete(projectId)
-      void refreshProject(projectId, true).catch(report)
+      void requestProjectRefresh(projectId, 'provider').catch(report)
     }, 250))
   }
 
@@ -103,8 +103,7 @@ export function startRelayInvalidation() {
         try {
           const payload = JSON.parse(event.data) as { repository_id?: number }
           if (!payload.repository_id) return
-          const projectId = projectForGitHubRepository(payload.repository_id)
-          if (projectId) debounceRefresh(projectId)
+          for (const projectId of projectForGitHubRepository(payload.repository_id)) debounceRefresh(projectId)
         } catch {
           // Relay payloads only invalidate local state; malformed messages are ignored.
         }

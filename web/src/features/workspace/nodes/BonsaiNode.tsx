@@ -1,5 +1,5 @@
+import { memo } from 'react'
 import { openGitHub } from '../../../api/git'
-import { useEffect, useState } from 'react'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
@@ -25,11 +25,12 @@ import {
   Settings2,
   Square,
   TerminalSquare,
+  Trash2,
   Undo2,
   X,
 } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
-import type { AgentState, CiStatus, DefaultBranchInfo, Health, PrStatus } from '../../../types'
+import type { AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
 
 export interface StackItemData {
   id: string
@@ -37,7 +38,10 @@ export interface StackItemData {
   prNumber?: number
   prStatus?: PrStatus
   ciStatus: CiStatus
+  connectionLabel?: string
+  dirtyFiles?: number
   hasRunningAgent: boolean
+  processCount?: number
 }
 
 export interface HistoryItemData {
@@ -49,7 +53,10 @@ export interface HistoryItemData {
 
 export interface BonsaiGraphData extends Record<string, unknown> {
   entityId: string
-  kind: 'project' | 'worktree' | 'agent' | 'stack' | 'default-branch' | 'env'
+  kind: 'project' | 'worktree' | 'agent' | 'process' | 'runtime-shelf' | 'stack' | 'default-branch' | 'env'
+  command?: string
+  processStatus?: ProcessLifecycleStatus
+  associationLabel?: string
   title: string
   subtitle?: string
   health?: Health
@@ -68,6 +75,8 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   tagBackground?: string
   tagBorder?: string
   tagCount?: number
+  groupId?: string
+  connectionLabel?: string
   stackCount?: number
   stackItems?: StackItemData[]
   historyItems?: HistoryItemData[]
@@ -88,13 +97,14 @@ const healthColor: Record<Health, string> = {
   idle: 'bg-[rgb(var(--muted-2))]',
 }
 
-function MenuItem({ children, onSelect }: { children: React.ReactNode; onSelect?: () => void }) {
+function MenuItem({ children, onSelect, unavailable = false }: { children: React.ReactNode; onSelect?: () => void; unavailable?: boolean }) {
   return (
     <ContextMenu.Item
       onSelect={onSelect}
-      className="flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--purple)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
+      disabled={unavailable}
+      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--purple)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
     >
-      {children}
+      {children}{unavailable && <span className="ml-auto text-[9px]">unavailable</span>}
     </ContextMenu.Item>
   )
 }
@@ -108,12 +118,20 @@ function CiBadge({ status, failed = 0, compact = false, label = 'CI' }: { status
         ? { text: compact ? 'running' : label + ' running', icon: LoaderCircle, tone: 'text-[rgb(var(--blue))] border-[rgb(var(--blue)/.30)]' }
         : status === 'failed'
           ? { text: compact ? 'failed' : label + ' failed' + (failed ? ' · ' + failed : ''), icon: CircleX, tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.30)]' }
-          : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
+          : status === 'none'
+            ? { text: compact ? 'none' : label + ' no checks', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
+            : status === 'unknown'
+              ? { text: compact ? 'unknown' : label + ' unknown', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
+              : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
   const Icon = meta.icon
+  const text = compact ? label + ' ' + meta.text : meta.text
+  const failedSuffix = status === 'failed' && failed && !compact ? ' · ' + failed : ''
+  const coreText = failedSuffix && text.endsWith(failedSuffix) ? text.slice(0, -failedSuffix.length) : text
   return (
     <span className={'inline-flex items-center gap-1 rounded border bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] ' + meta.tone}>
       <Icon size={9} className={status === 'running' ? 'animate-spin' : ''} />
-      {compact ? label + ' ' + meta.text : meta.text}
+      <span>{coreText}</span>
+      {failedSuffix && <span>{failedSuffix}</span>}
     </span>
   )
 }
@@ -136,7 +154,7 @@ function PrBadge({ status, number }: { status?: PrStatus; number?: number }) {
   )
 }
 
-function MoveSubtreeGrip({ id }: { id: string }) {
+export function MoveSubtreeGrip({ id }: { id: string }) {
   const setSubtreeMoveRoot = useBonsaiStore((state) => state.setSubtreeMoveRoot)
   return (
     <button
@@ -210,6 +228,8 @@ function EnvCard({ data }: { data: BonsaiGraphData }) {
 }
 
 function StackCard({ data }: { data: BonsaiGraphData }) {
+  const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
+  const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const ejectWorktreeFromStack = useBonsaiStore((state) => state.ejectWorktreeFromStack)
@@ -221,7 +241,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
       <MoveSubtreeGrip id={data.entityId} />
       <button
         type="button"
-        onClick={(event) => { event.stopPropagation(); if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
+        onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId); else if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
         className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5 text-left"
         style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--purple))'}` }}
       >
@@ -239,8 +259,14 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
               onClick={(event) => { event.stopPropagation(); setSelection({ type: 'worktree', id: item.id }) }}
               className="min-w-0 flex-1 truncate text-left font-mono text-[9px] hover:text-[rgb(var(--text))]"
             >
-              {item.branch}
+              <span className="block truncate">{item.branch}</span>
+              {!!item.processCount && <span className="text-[8px] text-[rgb(var(--muted))]">{item.processCount} processes</span>}
+              {item.connectionLabel && <span className="block text-[8px] text-[rgb(var(--orange))]">{item.connectionLabel} · {item.dirtyFiles ?? 0} changed</span>}
             </button>
+            <ContextMenu.Root>
+              <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
+              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-1"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
+            </ContextMenu.Root>
             <PrBadge status={item.prStatus} number={item.prNumber} />
             <CiBadge status={item.ciStatus} compact />
             <button
@@ -259,8 +285,9 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
   )
 }
 
-function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolean }) {
-  const [historyOpen, setHistoryOpen] = useState(false)
+const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolean }) {
+  const historyOpen = useBonsaiStore((state) => state.expandedHistoryWorktreeIds.includes(data.entityId))
+  const toggleWorktreeHistory = useBonsaiStore((state) => state.toggleWorktreeHistory)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const setAgentState = useBonsaiStore((state) => state.setAgentState)
@@ -270,16 +297,14 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
   const restoreAgent = useBonsaiStore((state) => state.restoreAgent)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
+  const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
   const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
-  const canvasCommand = useBonsaiStore((state) => state.canvasCommand)
   const setNotice = useBonsaiStore((state) => state.setNotice)
+  const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
+  const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
-
-  useEffect(() => {
-    if (canvasCommand.type === 'layout' && canvasCommand.nonce) setHistoryOpen(false)
-  }, [canvasCommand.nonce, canvasCommand.type])
 
   if (data.kind === 'default-branch') return <DefaultBranchCard data={data} />
   if (data.kind === 'env') return <EnvCard data={data} />
@@ -365,11 +390,12 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
                 target <span className="truncate font-mono text-[rgb(var(--muted))]">{data.mergeTargetBranch}</span>
               </div>
               <div className="flex flex-wrap gap-1.5 px-2.5 py-2">
+                {data.connectionLabel && <span className="text-[8px] text-[rgb(var(--orange))]">{data.connectionLabel}</span>}
                 <CiBadge status={data.ciStatus} failed={data.ciFailed} />
               </div>
               <div className="flex items-center justify-between border-t border-[rgb(var(--border))] px-2.5 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">
                 <span>{data.subtitle}</span>
-                <span>{data.stats?.[0]?.value ?? 0} canvas agents</span>
+                <span>{data.stats?.[0]?.value ?? 0} agents · {data.stats?.[1]?.value ?? 0} processes</span>
               </div>
               {(data.historyItems?.length ?? 0) > 0 && (
                 <div className="border-t border-[rgb(var(--border))]">
@@ -377,7 +403,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation()
-                      setHistoryOpen((value) => !value)
+                      toggleWorktreeHistory(data.entityId)
                     }}
                     className="nodrag flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[8px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--bg)/.45)] hover:text-[rgb(var(--text))]"
                   >
@@ -432,7 +458,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
                     <span className="truncate text-[10px] font-semibold">{data.title}</span>
                   </div>
                   <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.provider} · {data.model}</div>
-                  <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>
+                  {(data.reasoningEffort || data.runtime) && <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>}
                 </div>
               </div>
               <div className="mt-2 line-clamp-1 text-[9px] text-[rgb(var(--muted))]">{data.task}</div>
@@ -453,6 +479,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
             <>
               <MenuItem onSelect={() => setWorktreeDialogOpen(true)}><Plus size={13} /> Add worktree</MenuItem>
               <MenuItem onSelect={() => openStartAgentDialog()}><Bot size={13} /> Start agent</MenuItem>
+              <MenuItem onSelect={() => openStartProcessDialog('', data.entityId)}><Play size={13} /> Start process</MenuItem>
               <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
               <MenuItem onSelect={() => requestCanvasAction('layout')}><Network size={13} /> Auto-layout children</MenuItem>
               <MenuItem onSelect={() => setNotice('Project settings are mocked')}><Settings2 size={13} /> Project settings</MenuItem>
@@ -462,18 +489,20 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
           {data.kind === 'worktree' && (
             <>
               <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
+              <MenuItem onSelect={() => openStartProcessDialog(data.entityId)}><Play size={13} /> Start process</MenuItem>
               <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
-              {data.tag && (data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.tag} stack</MenuItem>}
+              {(data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => data.groupId ? toggleAutomaticGroup(data.groupId) : toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.groupId ? 'Local / unlinked' : data.tag} stack</MenuItem>}
+              <MenuItem onSelect={() => setDeleteWorktreeId(data.entityId)}><Trash2 size={13} /> Delete worktree</MenuItem>
             </>
           )}
 
           {data.kind === 'agent' && (
             <>
-              <MenuItem onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
+              <MenuItem unavailable={agent?.providerId !== 'antigravity'} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
               <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
-              <MenuItem onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
-              <MenuItem onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart mock</MenuItem>
-              <MenuItem onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
+              <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
+              <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart</MenuItem>
+              <MenuItem unavailable={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
               {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
                 <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
               )}
@@ -489,7 +518,7 @@ function NodeShell({ data, selected }: { data: BonsaiGraphData; selected: boolea
       </ContextMenu.Portal>
     </ContextMenu.Root>
   )
-}
+})
 
 export function ProjectNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={props.selected} /> }
 export function WorktreeNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={props.selected} /> }

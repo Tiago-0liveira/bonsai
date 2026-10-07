@@ -1,14 +1,18 @@
 import { expect, test } from '@playwright/test'
+import { injectAgentPresentation } from './presentationFixtures'
 import { mockGitBackend, openConnectedApp } from './mockGit'
 
 test.beforeEach(async ({ page }) => {
   await mockGitBackend(page)
+
 })
 
 test('Auto-layout clears expanded History and keeps repeated layouts stable', async ({ page }) => {
   await openConnectedApp(page)
+  await injectAgentPresentation(page)
   await page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })
     .getByRole('button', { name: /Expand/ }).click()
+  await page.getByRole('button', { name: 'Fit', exact: true }).click()
   const worktree = page.getByTestId('rf__node-wt-web')
   await expect(worktree).toBeVisible()
   await worktree.getByRole('button', { name: /History.*Show/ }).click()
@@ -30,7 +34,7 @@ test('Auto-layout clears expanded History and keeps repeated layouts stable', as
   await expect.poll(overlaps).toEqual([])
 
   const placements = () => page.evaluate(() =>
-    JSON.parse(localStorage.getItem('bonsai-web-workspace-v6')!).state.nodePlacements)
+    window.__bonsaiTestStore.getState().nodePlacements)
   const first = await placements()
   await layout.click()
   await expect.poll(placements).toEqual(first)
@@ -39,15 +43,17 @@ test('Auto-layout clears expanded History and keeps repeated layouts stable', as
 
 test('adding and removing a shelf agent preserves other branches and readable PR labels', async ({ page }) => {
   await openConnectedApp(page)
+  await injectAgentPresentation(page)
   await page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })
     .getByRole('button', { name: /Expand/ }).click()
+  await page.getByRole('button', { name: 'Fit', exact: true }).click()
   const owner = page.getByTestId('rf__node-wt-web')
   await owner.getByRole('button', { name: /History.*Show/ }).click()
   await page.getByRole('button', { name: 'Auto-layout', exact: true }).click()
   // Let the explicit Fit animation finish before checking viewport stability.
   await page.waitForTimeout(400)
   const snapshot = () => page.evaluate(() => {
-    const state = JSON.parse(localStorage.getItem('bonsai-web-workspace-v6')!).state
+    const state = window.__bonsaiTestStore.getState()
     const ids = ['bonsai', 'wt-web', 'wt-docs', 'wt-daemon', 'wt-release', 'wt-review',
       'agent-daemon', 'agent-debug', 'agent-release']
     return {

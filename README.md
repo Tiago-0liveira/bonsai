@@ -307,3 +307,50 @@ The relay sends normalized notification metadata only. It cannot access local
 files, worktrees, processes, the daemon, or local Bonsai session capabilities.
 Browser relay events invalidate local state; the browser then refreshes canonical
 state from the loopback API.
+
+### Browser project folders
+
+After connecting the browser to `bonsai serve`, choose the local folders Bonsai
+should scan. You can select a suggested directory or enter an absolute path
+(or `~/projects`), then confirm **Add folder**. Nothing is registered automatically.
+The same editor is available from **Settings**. Folder settings belong to your
+local user and survive browser and backend restarts.
+
+Discovery includes each selected folder and up to four levels of descendants,
+skipping dependency, build and cache directories and directory symlinks. You can
+explicitly select a symlinked folder. Overlapping folders are supported; separate
+clones remain separate projects, even when they share a GitHub remote. Linked
+worktrees outside the selected folders remain visible through their repository.
+Unavailable folders and scan limits appear in Settings; select a deeper folder
+when a scan is truncated. The catalog reconciles every 30 seconds.
+
+New browser worktrees default to
+`<owning-folder>/.bonsai/worktrees/<project-id>/<branch-hash>`. An explicit
+`.bonsai.yaml` `worktree.root` must resolve within a configured folder. Settings
+changes affect future creation without a daemon restart. The CLI/TUI continues
+using its existing `worktree.root` and `worktree.path_template` behavior.
+Removing a folder never deletes files or worktrees, stops processes, or shuts
+down the hosting daemon. Existing metadata and worktree IDs are preserved.
+
+Existing users must confirm their project folders once. `bonsai serve` still
+starts from a Git repository, but the browser catalog may be empty until folders
+are configured. There is no global discovery daemon or cloud filesystem scan.
+
+### Antigravity in the web workspace
+
+Install `agy`, then add a Bonsai profile:
+
+```sh
+bonsai agent account add antigravity personal
+```
+
+Connect the web app to `bonsai serve`, select a worktree, choose **Start agent**,
+and select your profile. The terminal uses that profile's existing settings;
+enter instructions directly in it. Claude and Codex are not available yet.
+
+Closing the dock or reloading the browser detaches without stopping the agent.
+Use **Stop agent** to terminate it and reconcile profile credentials. Sessions
+last only while the local API runs; restarting Bonsai does not restart agents.
+Recent output is bounded to 2 MiB and may show a replay-gap notice after a long
+session. Interactive PTYs require a supported Unix platform; Windows support is
+not yet available. See [development details](docs/development.md#antigravity-web-terminals).

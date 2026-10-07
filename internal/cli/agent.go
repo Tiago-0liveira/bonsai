@@ -8,10 +8,9 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
-	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
-	"github.com/Tiago-0liveira/bonsai/internal/providers/antigravity"
 )
 
 type agentRuntime struct {
@@ -22,37 +21,11 @@ type agentRuntime struct {
 }
 
 func newAgentRuntime(in io.Reader, out, errOut io.Writer) (*agentRuntime, error) {
-	accounts, err := agents.NewFileAccountStore("")
+	r, err := agentruntime.New(in, out, errOut)
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := agents.NewFileSessionStore("")
-	if err != nil {
-		return nil, err
-	}
-	cache, err := agents.NewFileUsageCache("")
-	if err != nil {
-		return nil, err
-	}
-	launcher := agents.NewForegroundLauncher(in, out, errOut)
-	registry := agents.NewRegistry()
-	if err := registry.Register(antigravity.New(accounts, sessions, launcher)); err != nil {
-		return nil, err
-	}
-	return &agentRuntime{
-		accounts: accounts,
-		accountService: &agents.AccountService{
-			Store: accounts, Sessions: sessions, Registry: registry,
-			Launcher: launcher, Cache: cache,
-		},
-		sessionService: &agents.SessionService{
-			Accounts: accounts, Sessions: sessions, Registry: registry, Launcher: launcher,
-		},
-		usageService: &agents.UsageService{
-			Accounts: accounts, Sessions: sessions, Registry: registry,
-			Cache: cache, TTL: time.Minute, WorkerLimit: 8,
-		},
-	}, nil
+	return &agentRuntime{accounts: r.Accounts, accountService: r.AccountService, sessionService: r.SessionService, usageService: r.UsageService}, nil
 }
 
 func cmdAgent(args []string, in io.Reader, out, errOut io.Writer) error {

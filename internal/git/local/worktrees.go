@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -19,10 +20,19 @@ func (s *Service) CreateWorktree(ctx context.Context, req domain.CreateWorktreeR
 		return domain.Worktree{}, e
 	}
 	defer unlock()
+	if r.WithWorktreeRoot != nil {
+		var result domain.Worktree
+		err := r.WithWorktreeRoot(ctx, func(root string) error { var err error; result, err = s.createWorktree(ctx, r, req, root); return err })
+		return result, err
+	}
+	return s.createWorktree(ctx, r, req, r.WorktreeRoot)
+}
+func (s *Service) createWorktree(ctx context.Context, r *repository, req domain.CreateWorktreeRequest, root string) (domain.Worktree, error) {
+	var e error
 	if e = branch(ctx, r.Root, req.Branch); e != nil {
 		return domain.Worktree{}, e
 	}
-	path := filepath.Join(r.WorktreeRoot, fmt.Sprintf("%x", sha256.Sum256([]byte(req.Branch)))[:24])
+	path := filepath.Join(root, fmt.Sprintf("%x", sha256.Sum256([]byte(req.Branch)))[:24])
 	args := []string{"worktree", "add"}
 	switch req.Mode {
 	case "existing":
@@ -46,21 +56,40 @@ func (s *Service) CreateWorktree(ctx context.Context, req domain.CreateWorktreeR
 		}
 		args = append(args, "-b", req.Branch, "--", path, base)
 	case "remote":
-		if !strings.HasPrefix(req.Base, "origin/") {
-			return domain.Worktree{}, domain.E("invalid", "remote worktrees require an origin branch")
+		base := strings.TrimPrefix(req.Base, "refs/remotes/")
+		remote, name, ok := strings.Cut(base, "/")
+		if !ok || remote == "" || name == "HEAD" {
+			return domain.Worktree{}, domain.ErrInvalid
 		}
-		if e = branch(ctx, r.Root, strings.TrimPrefix(req.Base, "origin/")); e != nil {
+		if e = branch(ctx, r.Root, name); e != nil {
 			return domain.Worktree{}, e
 		}
-		if _, e = run(ctx, r.Root, "fetch", "origin", "--prune"); e != nil {
+		if _, e = ref(ctx, r.Root, "refs/remotes/"+base); e != nil {
 			return domain.Worktree{}, e
 		}
-		if _, e = ref(ctx, r.Root, "refs/remotes/"+req.Base); e != nil {
-			return domain.Worktree{}, e
+		// The selected local branch may have been created since the panel loaded.
+		// Attach it, instead of creating another branch with the same name.
+		if _, err := ref(ctx, r.Root, "refs/heads/"+req.Branch); err == nil {
+			trees, err := s.ListWorktrees(ctx, r.ID)
+			if err != nil {
+				return domain.Worktree{}, err
+			}
+			for _, t := range trees {
+				if t.Branch == req.Branch {
+					return domain.Worktree{}, domain.E("busy", "branch is already checked out")
+				}
+			}
+			args = append(args, "--", path, req.Branch)
+		} else {
+			args = append(args, "--track", "-b", req.Branch, "--", path, "refs/remotes/"+base)
 		}
-		args = append(args, "--track", "-b", req.Branch, "--", path, req.Base)
 	default:
 		return domain.Worktree{}, domain.ErrInvalid
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return domain.Worktree{}, domain.E("conflict", "worktree destination already exists")
+	} else if !os.IsNotExist(err) {
+		return domain.Worktree{}, err
 	}
 	if _, e = run(ctx, r.Root, args...); e != nil {
 		return domain.Worktree{}, e
@@ -79,7 +108,7 @@ func (s *Service) CreateWorktree(ctx context.Context, req domain.CreateWorktreeR
 	return domain.Worktree{}, domain.ErrNotFound
 }
 func (s *Service) RemoveWorktree(ctx context.Context, req domain.RemoveWorktreeRequest) error {
-	r, path, e := s.target(ctx, req.WorktreeID)
+	r, path, e := s.registeredTarget(ctx, req.WorktreeID)
 	if e != nil {
 		return e
 	}
@@ -91,15 +120,36 @@ func (s *Service) RemoveWorktree(ctx context.Context, req domain.RemoveWorktreeR
 	if path == r.Root {
 		return domain.E("forbidden", "cannot remove main worktree")
 	}
-	st, e := status(ctx, path)
-	if e != nil {
-		return e
+	_, statErr := os.Lstat(path)
+	missing := os.IsNotExist(statErr)
+	if statErr != nil && !missing {
+		return statErr
 	}
-	if st.Dirty && !req.ConfirmDiscard {
-		return domain.ErrDirty
+	if !missing {
+		path, e = filepath.EvalSymlinks(path)
+		if e != nil {
+			return e
+		}
+		if path == r.Root {
+			return domain.E("forbidden", "cannot remove main worktree")
+		}
 	}
-	if st.GitState != "normal" {
-		return domain.ErrBusy
+	if r.BeforeRemove != nil {
+		if err := r.BeforeRemove(ctx, path); err != nil {
+			return err
+		}
+	}
+	if !missing {
+		st, err := status(ctx, path)
+		if err != nil {
+			return err
+		}
+		if st.Dirty && !req.ConfirmDiscard {
+			return domain.ErrDirty
+		}
+		if st.GitState != "normal" {
+			return domain.ErrBusy
+		}
 	}
 	args := []string{"worktree", "remove"}
 	if req.ConfirmDiscard {

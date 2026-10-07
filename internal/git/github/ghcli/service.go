@@ -35,6 +35,17 @@ func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = t.Dir
 	cmd.Stdin = r.Body
+	// --include output is parsed as HTTP, so terminal styling must be disabled
+	// even when Bonsai inherits an environment that forces CLI color.
+	for _, variable := range cmd.Environ() {
+		key, _, _ := strings.Cut(variable, "=")
+		switch key {
+		case "CLICOLOR_FORCE", "FORCE_COLOR", "GH_FORCE_TTY", "NO_COLOR":
+			continue
+		}
+		cmd.Env = append(cmd.Env, variable)
+	}
+	cmd.Env = append(cmd.Env, "NO_COLOR=1")
 	// gh --include emits an HTTP status and headers even on API failures.
 	out, e := cmd.Output()
 	if len(out) == 0 && e != nil {

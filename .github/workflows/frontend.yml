@@ -1,5 +1,8 @@
 name: frontend
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
@@ -7,7 +10,7 @@ on:
       - ".github/workflows/frontend.yml"
   push:
     branches:
-      - "feat/web-frontend-prototype"
+      - main
     paths:
       - "web/**"
       - ".github/workflows/frontend.yml"
@@ -20,16 +23,21 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v4
+        with:
+          # github.sha is the PR merge revision or the triggering push revision.
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
-          version: 10.17.1
+          version: 12.9.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/package.json
-      - run: pnpm install --no-frozen-lockfile
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium

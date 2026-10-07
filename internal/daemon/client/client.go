@@ -39,6 +39,11 @@ func (c *Client) dial() (net.Conn, error) {
 	return net.DialTimeout("unix", c.store.SockPath(), time.Second)
 }
 
+func (c *Client) dialContext(ctx context.Context) (net.Conn, error) {
+	dialer := net.Dialer{Timeout: time.Second}
+	return dialer.DialContext(ctx, "unix", c.store.SockPath())
+}
+
 // alive reports whether a daemon is currently reachable.
 func (c *Client) alive() bool {
 	conn, err := c.dial()
@@ -154,18 +159,40 @@ func (c *Client) autostart() error {
 
 // roundtrip sends one request and returns the single terminal response frame.
 func (c *Client) roundtrip(req *protocol.Request) (*protocol.Response, error) {
-	conn, err := c.dial()
+	return c.roundtripContext(context.Background(), req)
+}
+
+func (c *Client) roundtripContext(ctx context.Context, req *protocol.Request) (*protocol.Response, error) {
+	conn, err := c.dialContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	cancelled := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-cancelled:
+		}
+	}()
+	defer close(cancelled)
 	if err := protocol.NewEncoder(conn).WriteRequest(req); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	dec := protocol.NewDecoder(conn)
 	for {
 		resp, err := dec.ReadResponse()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, err
 		}
 		if resp.Error != "" {
@@ -213,15 +240,22 @@ func (c *Client) SpawnExec(worktree, branch, workingDir, label, program string, 
 // List returns every process record for the repo. With no live daemon it reads
 // the registry directly, marking stale active records as "lost".
 func (c *Client) List() ([]*procstore.Record, error) {
+	return c.ListContext(context.Background())
+}
+
+func (c *Client) ListContext(ctx context.Context) ([]*procstore.Record, error) {
 	if c.alive() {
 		if err := c.CheckCompatibility(); err != nil {
 			return nil, err
 		}
-		resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindList})
+		resp, err := c.roundtripContext(ctx, &protocol.Request{Kind: protocol.KindList})
 		if err != nil {
 			return nil, err
 		}
 		return resp.Records, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	recs, err := c.store.ListRecords()
 	if err != nil {
@@ -313,6 +347,9 @@ func (c *Client) Restart(id int) (*procstore.Record, error) {
 // SetPolicy changes a process's restart policy. With a live daemon the change is
 // immediate; otherwise it is written straight to the on-disk record.
 func (c *Client) SetPolicy(id int, policy procstore.Policy) (*procstore.Record, error) {
+	if err := procstore.ValidatePolicy(policy); err != nil {
+		return nil, err
+	}
 	if c.alive() {
 		if err := c.CheckCompatibility(); err != nil {
 			return nil, err
@@ -456,10 +493,14 @@ func (c *Client) Attach(id int, onChunk func(string) error) error {
 // The HTTP API uses this boundary instead of opening repositories or invoking
 // git/gh itself.
 func (c *Client) Git(command gitbridge.Command) (*gitbridge.Result, error) {
+	return c.GitContext(context.Background(), command)
+}
+
+func (c *Client) GitContext(ctx context.Context, command gitbridge.Command) (*gitbridge.Result, error) {
 	if err := c.ensureDaemon(); err != nil {
 		return nil, err
 	}
-	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindGit, Git: &command})
+	resp, err := c.roundtripContext(ctx, &protocol.Request{Kind: protocol.KindGit, Git: &command})
 	if err != nil {
 		return nil, err
 	}
@@ -560,4 +601,107 @@ func (c *Client) ServeLogs(ctx context.Context, workspaceID, processName string,
 			return nil
 		}
 	}
+}
+
+// StreamProcess replays retained bytes and follows all attempts until cancelled.
+// Cancellation closes the socket even when no output is being produced.
+func (c *Client) StreamProcess(ctx context.Context, id int, generation string, offset int64, onFrame func(*protocol.Response) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := c.ensureDaemon(); err != nil {
+		return err
+	}
+	conn, err := c.dialContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	if err = protocol.NewEncoder(conn).WriteRequest(&protocol.Request{Kind: protocol.KindProcessStream, ID: id, Generation: generation, Offset: offset}); err != nil {
+		return err
+	}
+	dec := protocol.NewDecoder(conn)
+	for {
+		frame, err := dec.ReadResponse()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+		if frame.Error != "" {
+			return errors.New(frame.Error)
+		}
+		if err := onFrame(frame); err != nil {
+			return err
+		}
+		if frame.EOF {
+			return nil
+		}
+	}
+}
+
+// ProcessAuthorityContext reads records and visibility in one daemon transaction.
+func (c *Client) ProcessAuthorityContext(ctx context.Context) ([]*procstore.Record, procstore.ProcessVisibility, error) {
+	if !c.alive() {
+		records, err := c.ListContext(ctx)
+		if err != nil {
+			return nil, procstore.ProcessVisibility{}, err
+		}
+		pending, err := c.store.PendingRemovalRecords()
+		if err != nil {
+			return nil, procstore.ProcessVisibility{}, err
+		}
+		for _, intent := range pending {
+			found := false
+			for i, record := range records {
+				if record.ID == intent.ID {
+					records[i] = intent
+					found = true
+					break
+				}
+			}
+			if !found {
+				records = append(records, intent)
+			}
+		}
+		visibility, err := c.store.ReadVisibility()
+		return records, visibility, err
+	}
+	if err := c.CheckCompatibility(); err != nil {
+		return nil, procstore.ProcessVisibility{}, err
+	}
+	resp, err := c.roundtripContext(ctx, &protocol.Request{Kind: protocol.KindList})
+	if err != nil {
+		return nil, procstore.ProcessVisibility{}, err
+	}
+	if resp.Visibility == nil {
+		return nil, procstore.ProcessVisibility{}, fmt.Errorf("daemon lacks process visibility authority")
+	}
+	return resp.Records, *resp.Visibility, nil
+}
+func (c *Client) RemoveExecution(id int, stopFirst bool) (procstore.ProcessVisibility, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return procstore.ProcessVisibility{}, err
+	}
+	if err := c.CheckCompatibility(); err != nil {
+		return procstore.ProcessVisibility{}, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{Kind: protocol.KindRemove, ID: id, StopFirst: stopFirst})
+	if err != nil {
+		return procstore.ProcessVisibility{}, err
+	}
+	if resp.Visibility == nil {
+		return procstore.ProcessVisibility{}, fmt.Errorf("daemon lacks deletion authority")
+	}
+	return *resp.Visibility, nil
 }

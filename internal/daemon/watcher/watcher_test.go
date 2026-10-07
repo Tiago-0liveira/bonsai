@@ -53,3 +53,47 @@ func TestDirtyContentChangesAndSemanticDedupe(t *testing.T) {
 	case <-time.After(250 * time.Millisecond):
 	}
 }
+
+func TestLinkedWorktreeChangesPublishWithoutPeriodicScan(t *testing.T) {
+	root := t.TempDir()
+	linked := filepath.Join(t.TempDir(), "linked")
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}, {"commit", "--allow-empty", "-m", "initial"}, {"worktree", "add", "-b", "feature", linked}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, output)
+		}
+	}
+	svc, err := local.New([]local.Config{{ID: "repo", Root: root, WorktreeRoot: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updates := make(chan domain.RepositoryState, 10)
+	w := Watcher{Local: svc, RepositoryID: "repo", DiscoverRoots: func(context.Context) []string { return []string{root, linked} }, Interval: time.Hour, Publish: func(_ context.Context, state domain.RepositoryState) error { updates <- state; return nil }}
+	go w.Run(ctx)
+	select {
+	case <-updates:
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing initial snapshot")
+	}
+	if err := os.WriteFile(filepath.Join(linked, "changed.txt"), []byte("live update"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case state := <-updates:
+			for _, tree := range state.Worktrees {
+				linkedInfo, linkedErr := os.Stat(linked)
+				treeInfo, treeErr := os.Stat(tree.Path)
+				if linkedErr == nil && treeErr == nil && os.SameFile(linkedInfo, treeInfo) && tree.Status != nil && len(tree.Status.Files) > 0 {
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatal("external worktree edit did not publish a live snapshot")
+		}
+	}
+}

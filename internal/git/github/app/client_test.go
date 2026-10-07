@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -68,5 +70,43 @@ func TestRateLimitAndUnknownMergeability(t *testing.T) {
 	_, e := c.Repository(context.Background(), "owner/repo")
 	if domain.Code(e) != "rate_limited" {
 		t.Fatal(e)
+	}
+}
+
+func TestPullRequestIncludesHeadRepositoryIdentity(t *testing.T) {
+	var raw rawPR
+	if err := json.Unmarshal([]byte(`{
+		"number": 12,
+		"state": "open",
+		"head": {"ref": "feature", "sha": "abc", "repo": {"full_name": "fork/widgets"}},
+		"base": {"ref": "main", "sha": "def"}
+	}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	pull := raw.domain()
+	if pull.Head != "feature" || pull.HeadSHA != "abc" || pull.HeadRepository != "fork/widgets" {
+		t.Fatalf("pull request identity = %+v", pull)
+	}
+}
+
+func TestAllStatePullRequestPaginationBeyondPreviousLimit(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("state") != "all" || r.URL.Query().Get("sort") != "updated" {
+			t.Error("missing all-state, updated-order pagination")
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page < 101 {
+			w.Header().Set("Link", `<https://api.github.com/next>; rel="next"`)
+		}
+		fmt.Fprintf(w, `[{"number":%d,"state":"closed","merged_at":"2026-01-01T00:00:00Z","head":{"ref":"feature","repo":{"full_name":"fork/repo"}}}]`, page)
+	}))
+	defer server.Close()
+	c := New(testTokens{})
+	c.BaseURL = server.URL
+	prs, err := c.PullRequests(context.Background(), "owner/repo", gh.PRFilter{State: "all"})
+	if err != nil || len(prs) != 101 || calls != 101 || prs[100].State != "merged" || prs[0].HeadRepository != "fork/repo" {
+		t.Fatal(len(prs), calls, err)
 	}
 }

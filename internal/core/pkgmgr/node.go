@@ -73,10 +73,9 @@ func (nodeProvider) Commands(_ Context, detection Detection) ([]Command, error) 
 			}
 		}
 		prefix := []string{"run", name}
-		pass := PassThroughDoubleDash
-		if d.Manager == "yarn" {
-			prefix = []string{name}
-			pass = PassThroughAppend
+		pass := PassThroughAppend
+		if d.Manager == "npm" {
+			pass = PassThroughDoubleDash
 		}
 		commands = append(commands, Command{
 			ID:       id,

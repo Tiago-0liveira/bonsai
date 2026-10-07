@@ -26,6 +26,14 @@ func (s *Service) Status(ctx context.Context, id string) (domain.WorkingTreeStat
 	return status(ctx, dir)
 }
 func status(ctx context.Context, dir string) (domain.WorkingTreeStatus, error) {
+	return statusWithContent(ctx, dir, true)
+}
+
+func statusOverview(ctx context.Context, dir string) (domain.WorkingTreeStatus, error) {
+	return statusWithContent(ctx, dir, false)
+}
+
+func statusWithContent(ctx context.Context, dir string, hashContents bool) (domain.WorkingTreeStatus, error) {
 	out, e := run(ctx, dir, "status", "--porcelain=v2", "--branch", "--show-stash", "-z", "--untracked-files=all")
 	if e != nil {
 		return domain.WorkingTreeStatus{}, e
@@ -35,7 +43,14 @@ func status(ctx context.Context, dir string) (domain.WorkingTreeStatus, error) {
 		return st, e
 	}
 	if st.Upstream != "" {
-		st.LocalRemoteRefSHA, _ = trimmed(ctx, dir, "rev-parse", "--verify", "--end-of-options", st.Upstream)
+		if sha, err := trimmed(ctx, dir, "rev-parse", "--verify", "--end-of-options", "@{upstream}^{commit}"); err == nil {
+			st.LocalRemoteRefSHA = sha
+			st.DivergenceAvailable = true
+		} else {
+			st.LocalRemoteRefSHA = ""
+			st.DivergenceAvailable = false
+			st.Ahead, st.Behind = 0, 0
+		}
 	}
 	if st.HeadSHA != "" {
 		c, e := lastCommit(ctx, dir)
@@ -55,6 +70,10 @@ func status(ctx context.Context, dir string) (domain.WorkingTreeStatus, error) {
 			break
 		}
 	}
+	if !hashContents {
+		return st, nil
+	}
+
 	// File content changes matter even when porcelain status stays "modified".
 	// Hash changed regular files without spawning a Git process per file.
 	digest := sha256.New()
@@ -98,7 +117,7 @@ func status(ctx context.Context, dir string) (domain.WorkingTreeStatus, error) {
 	return st, nil
 }
 func parseStatus(out string) (domain.WorkingTreeStatus, error) {
-	st := domain.WorkingTreeStatus{Files: []domain.FileStatus{}, Conflicted: []string{}}
+	st := domain.WorkingTreeStatus{Files: []domain.FileStatus{}, Conflicted: []string{}, HeadState: "branch"}
 	records := strings.Split(out, "\x00")
 	for i := 0; i < len(records); i++ {
 		line := records[i]
@@ -114,13 +133,19 @@ func parseStatus(out string) (domain.WorkingTreeStatus, error) {
 			case "branch.oid":
 				if v != "(initial)" {
 					st.HeadSHA = v
+				} else {
+					st.HeadState = "unborn"
 				}
 			case "branch.head":
 				st.Branch = v
+				if v == "(detached)" {
+					st.HeadState = "detached"
+				}
 			case "branch.upstream":
 				st.Upstream = v
 			case "branch.ab":
 				fmt.Sscanf(v, "+%d -%d", &st.Ahead, &st.Behind)
+				st.DivergenceAvailable = true
 			case "stash":
 				st.StashCount, _ = strconv.Atoi(v)
 			}

@@ -16,9 +16,10 @@ import (
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	s, err := New(Config{
-		RepoDir:       t.TempDir(),
-		Address:       "127.0.0.1:7001",
-		BrowserOrigin: ProductionBrowserOrigin,
+		RepoDir:          t.TempDir(),
+		ProjectRootsPath: t.TempDir() + "/project-roots.json",
+		Address:          "127.0.0.1:7001",
+		BrowserOrigin:    ProductionBrowserOrigin,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -288,8 +289,32 @@ func TestWebSocketAuthentication(t *testing.T) {
 	if err := conn.ReadJSON(&ready); err != nil {
 		t.Fatal(err)
 	}
-	if ready["type"] != "ready" {
+	if ready["type"] != "ready" || ready["epoch"] != s.stateSync.epoch || ready["epoch"] == "" {
 		t.Fatalf("first event = %#v", ready)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		var event localEvent
+		if err := conn.ReadJSON(&event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "bootstrap_complete" {
+			break
+		}
+	}
+	// Updates must continue on the same socket after the initial catalog.
+	s.eventHub.publish(localEvent{Type: "project_update", ProjectID: "live", Epoch: s.stateSync.epoch, Sequence: 42})
+	for {
+		var event localEvent
+		if err := conn.ReadJSON(&event); err != nil {
+			t.Fatal(err)
+		}
+		if event.ProjectID == "live" {
+			if event.Type != "project_update" || event.Sequence != 42 {
+				t.Fatalf("unexpected live update: %+v", event)
+			}
+			break
+		}
 	}
 }
 

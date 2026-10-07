@@ -15,6 +15,8 @@ require (
 	golang.org/x/sys v0.38.0
 )
 
+require github.com/creack/pty v1.1.24
+
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

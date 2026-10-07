@@ -49,7 +49,31 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	subscriptionID, events := s.eventHub.subscribe()
 	defer s.eventHub.unsubscribe(subscriptionID)
-	if err := conn.WriteJSON(map[string]any{"type": "ready", "sequence": s.sequence.Load()}); err != nil {
+	s.stateSync.SubscriberReady()
+
+	if err := conn.WriteJSON(localEvent{Type: "ready", Epoch: s.stateSync.epoch}); err != nil {
+		return
+	}
+	if err := conn.WriteJSON(localEvent{Type: "catalog", Epoch: s.stateSync.epoch, Projects: s.registry.List()}); err != nil {
+		return
+	}
+	for _, project := range s.registry.List() {
+		snapshot, ok := s.stateSync.CachedSnapshot(project.ID)
+		if !ok {
+			continue
+		}
+		copy := snapshot
+		if err := conn.WriteJSON(localEvent{
+			Type:      "project_snapshot",
+			ProjectID: project.ID,
+			Epoch:     snapshot.Epoch,
+			Sequence:  snapshot.Sequence,
+			Snapshot:  &copy,
+		}); err != nil {
+			return
+		}
+	}
+	if err := conn.WriteJSON(localEvent{Type: "bootstrap_complete", Epoch: s.stateSync.epoch}); err != nil {
 		return
 	}
 
@@ -84,7 +108,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-ticker.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "sequence": s.sequence.Load()}); err != nil {
+			if err := conn.WriteJSON(localEvent{Type: "heartbeat", Epoch: s.stateSync.epoch}); err != nil {
 				return
 			}
 		}

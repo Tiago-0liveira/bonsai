@@ -26,15 +26,15 @@ export function CommandPalette() {
   const open = useBonsaiStore((state) => state.paletteOpen)
   const setOpen = useBonsaiStore((state) => state.setPaletteOpen)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
-  const createMockWorktree = useBonsaiStore((state) => state.createMockWorktree)
-  const startMockAgent = useBonsaiStore((state) => state.startMockAgent)
-  const selection = useBonsaiStore((state) => state.selection)
-  const agents = useBonsaiStore((state) => state.agents)
-  const setAgentState = useBonsaiStore((state) => state.setAgentState)
-  const openTerminal = useBonsaiStore((state) => state.openTerminal)
-  const appendTerminalCommand = useBonsaiStore((state) => state.appendTerminalCommand)
-  const setNotice = useBonsaiStore((state) => state.setNotice)
+  const setWorktreeDialogOpen = useBonsaiStore(state => state.setWorktreeDialogOpen)
   const navigate = useNavigate()
+  const selection = useBonsaiStore(s => s.selection)
+  const agent = useBonsaiStore(s => s.agents.find(a => selection.type === 'agent' && a.id === selection.id))
+  const process = useBonsaiStore(s => s.processes.find(p => selection.type === 'process' && p.id === selection.id))
+  const openAgent = useBonsaiStore(s => s.openStartAgentDialog)
+  const openProcess = useBonsaiStore(s => s.openStartProcessDialog)
+  const openTerminal = useBonsaiStore(s => s.openTerminal)
+  const setAgentState = useBonsaiStore(s => s.setAgentState)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -48,14 +48,6 @@ export function CommandPalette() {
   }, [open, setOpen])
 
   if (!open) return null
-
-  const stopAgent = () => {
-    const agent =
-      selection.type === 'agent'
-        ? agents.find((item) => item.id === selection.id)
-        : agents.find((item) => item.state === 'running')
-    if (agent) setAgentState(agent.id, 'finished')
-  }
 
   const run = (action: () => void | Promise<void>) => {
     setOpen(false)
@@ -74,11 +66,12 @@ export function CommandPalette() {
           <Search size={15} className="text-[rgb(var(--muted-2))]" />
           <Command.Input
             autoFocus
-            placeholder="Search commands, views, and mock actions…"
+            placeholder="Search commands and views…"
             className="h-11 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[rgb(var(--muted-2))]"
           />
           <span className="bonsai-kbd">Esc</span>
         </div>
+        <p className="px-3 py-2 text-[10px] text-[rgb(var(--muted-2))]">Antigravity profiles support interactive terminals. Generic shells are unavailable.</p>
         <Command.List className="max-h-[420px] overflow-y-auto p-2">
           <Command.Empty className="p-8 text-center text-[12px] text-[rgb(var(--muted))]">
             No command found.
@@ -87,19 +80,20 @@ export function CommandPalette() {
           <Command.Group heading="Workspace" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">
             <CommandItem icon={LocateFixed} label="Fit canvas" onSelect={() => run(() => requestCanvasAction('fit'))} />
             <CommandItem icon={Network} label="Auto-layout canvas" onSelect={() => run(() => requestCanvasAction('layout'))} />
-            <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(createMockWorktree)} />
-            <CommandItem icon={Bot} label="Start agent" onSelect={() => run(startMockAgent)} />
-            <CommandItem icon={Square} label="Stop agent" onSelect={() => run(stopAgent)} />
-            <CommandItem icon={TerminalSquare} label="Open terminal" onSelect={() => run(() => openTerminal(selection.type === 'agent' ? selection.id : undefined))} />
+            <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
+            <CommandItem icon={Bot} label="Start agent" onSelect={() => run(() => openAgent(selection.type === 'worktree' ? selection.id : agent?.worktreeId))} />
+            <CommandItem icon={Play} label="Start process" onSelect={() => run(() => openProcess(selection.type === 'worktree' ? selection.id : agent?.worktreeId ?? process?.worktreeId))} />
+            <CommandItem icon={Square} label="Stop agent" disabled={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => run(() => setAgentState(agent!.id, 'finished'))} />
+            <CommandItem icon={TerminalSquare} label="Open terminal" disabled={agent?.providerId !== 'antigravity'} onSelect={() => run(() => openTerminal(agent!.id))} />
           </Command.Group>
 
           <Command.Group heading="Commands" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">
-            <CommandItem icon={Play} label="Run pnpm dev" hint="mock" onSelect={() => run(() => appendTerminalCommand('pnpm dev'))} />
-            <CommandItem icon={Play} label="Run pnpm test" hint="mock" onSelect={() => run(() => appendTerminalCommand('pnpm test'))} />
-            <CommandItem icon={Play} label="Run cargo test" hint="mock" onSelect={() => run(() => appendTerminalCommand('cargo test'))} />
-            <CommandItem icon={Play} label="Run make test" hint="mock" onSelect={() => run(() => appendTerminalCommand('make test'))} />
-            <CommandItem icon={DownloadCloud} label="Pull" onSelect={() => run(() => appendTerminalCommand('git pull'))} />
-            <CommandItem icon={UploadCloud} label="Push" onSelect={() => run(() => appendTerminalCommand('git push'))} />
+            <CommandItem icon={Play} label="Run pnpm dev" disabled hint="unavailable" />
+            <CommandItem icon={Play} label="Run pnpm test" disabled hint="unavailable" />
+            <CommandItem icon={Play} label="Run cargo test" disabled hint="unavailable" />
+            <CommandItem icon={Play} label="Run make test" disabled hint="unavailable" />
+            <CommandItem icon={DownloadCloud} label="Pull" onSelect={() => run(() => localCommand('pull'))} />
+            <CommandItem icon={UploadCloud} label="Push" onSelect={() => run(() => localCommand('push'))} />
             <CommandItem icon={GitCommitHorizontal} label="Commit staged changes" onSelect={() => run(() => { const message = window.prompt('Commit message'); if (message?.trim()) void localCommand('commit', { message }) })} />
           </Command.Group>
 
@@ -107,7 +101,7 @@ export function CommandPalette() {
             <CommandItem icon={GitPullRequest} label="Open PRs" onSelect={() => run(() => navigate({ to: '/pull-requests' }))} />
             <CommandItem icon={Table2} label="Open Tables" onSelect={() => run(() => navigate({ to: '/tables' }))} />
             <CommandItem icon={FileCode2} label="Open Files" onSelect={() => run(() => navigate({ to: '/files' }))} />
-            <CommandItem icon={Settings} label="Open Settings" hint="mock" onSelect={() => run(() => setNotice('Settings are mocked in this prototype'))} />
+            <CommandItem icon={Settings} label="Open Settings" onSelect={() => run(() => void navigate({ to: '/settings' }))} />
           </Command.Group>
         </Command.List>
       </Command>
@@ -120,17 +114,20 @@ function CommandItem({
   label,
   hint,
   onSelect,
+  disabled = false,
 }: {
   icon: LucideIcon
   label: string
   hint?: string
-  onSelect: () => void
+  onSelect?: () => void
+  disabled?: boolean
 }) {
   return (
     <Command.Item
       value={label}
       onSelect={onSelect}
-      className="flex cursor-default select-none items-center gap-2 rounded-md px-2.5 py-2 text-[12px] text-[rgb(var(--muted))] outline-none data-[selected=true]:bg-[rgb(var(--purple)/.12)] data-[selected=true]:text-[rgb(var(--text))]"
+      disabled={disabled}
+      className="data-[disabled=true]:opacity-40 flex cursor-default select-none items-center gap-2 rounded-md px-2.5 py-2 text-[12px] text-[rgb(var(--muted))] outline-none data-[selected=true]:bg-[rgb(var(--purple)/.12)] data-[selected=true]:text-[rgb(var(--text))]"
     >
       <Icon size={14} />
       <span>{label}</span>

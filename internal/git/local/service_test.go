@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"errors"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	"os"
 	"os/exec"
@@ -144,5 +145,168 @@ func TestRemoteRefsStayLocal(t *testing.T) {
 		if b.RemoteHeadSHA != "" {
 			t.Fatal("invented GitHub state")
 		}
+	}
+}
+
+func TestDynamicWorktreePlacementAndSymlinkContainment(t *testing.T) {
+	_, repo, _ := setup(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cfg, err := config.UpdateProjectRoots(path, "add", 0, repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New([]Config{{ID: "local", Root: repo, WithWorktreeRoot: func(ctx context.Context, create func(string) error) error {
+		return config.WithBrowserWorktreeRoot(ctx, path, repo, create)
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(branch string) error {
+		_, err := svc.CreateWorktree(context.Background(), domain.CreateWorktreeRequest{RepositoryID: "local", Mode: "new", Branch: branch, Base: "main"})
+		return err
+	}
+	if err := create("one"); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".bonsai.yaml"), []byte("worktree:\n  root: "+filepath.ToSlash(outside)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := create("outside"); err == nil {
+		t.Fatal("allowed unconfigured destination")
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "escape")); err == nil {
+		if err := os.WriteFile(filepath.Join(repo, ".bonsai.yaml"), []byte("worktree:\n  root: escape/new-child\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := create("symlink"); err == nil {
+			t.Fatal("allowed symlink escape")
+		}
+		if _, err := os.Stat(filepath.Join(outside, "new-child")); !os.IsNotExist(err) {
+			t.Fatal("created escaped directory", err)
+		}
+	}
+	if _, err := config.UpdateProjectRoots(path, "remove", cfg.Revision, "", cfg.Roots[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := create("removed"); err == nil {
+		t.Fatal("used stale settings")
+	}
+	trees, err := svc.ListWorktrees(context.Background(), "local")
+	if err != nil || len(trees) != 2 {
+		t.Fatal(trees, err)
+	}
+}
+
+func TestStatusHeadStatesAndDivergenceAvailability(t *testing.T) {
+	s, dir, id := setup(t)
+	ctx := context.Background()
+
+	git(t, dir, "checkout", "--detach")
+	detached, err := s.Status(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detached.HeadState != "detached" || detached.HeadSHA == "" {
+		t.Fatalf("detached status = %+v", detached)
+	}
+
+	git(t, dir, "checkout", "main")
+	bare := filepath.Join(t.TempDir(), "remote.git")
+	git(t, filepath.Dir(bare), "init", "--bare", filepath.Base(bare))
+	git(t, dir, "remote", "add", "origin", bare)
+	git(t, dir, "push", "-u", "origin", "main")
+	if err := os.WriteFile(filepath.Join(dir, "ahead.txt"), []byte("ahead\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "ahead.txt")
+	git(t, dir, "commit", "-m", "ahead")
+	ahead, err := s.Status(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ahead.DivergenceAvailable || ahead.Ahead != 1 || ahead.Behind != 0 || ahead.LocalRemoteRefSHA == "" {
+		t.Fatalf("ahead status = %+v", ahead)
+	}
+
+	git(t, dir, "update-ref", "-d", "refs/remotes/origin/main")
+	gone, err := s.Status(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gone.Upstream != "origin/main" || gone.DivergenceAvailable || gone.LocalRemoteRefSHA != "" || gone.Ahead != 0 || gone.Behind != 0 {
+		t.Fatalf("gone-upstream status = %+v", gone)
+	}
+}
+
+func TestStatusUnbornHead(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-b", "newborn")
+	s, err := New([]Config{{ID: "repo", Root: dir, WorktreeRoot: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trees, err := s.ListWorktrees(context.Background(), "repo")
+	if err != nil || len(trees) != 1 {
+		t.Fatal(trees, err)
+	}
+	status, err := s.Status(context.Background(), trees[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.HeadState != "unborn" || status.HeadSHA != "" || status.Branch != "newborn" {
+		t.Fatalf("unborn status = %+v", status)
+	}
+}
+
+func TestRepositoryKeepsSiblingWorktreesWhenOneStatusFails(t *testing.T) {
+	s, _, _ := setup(t)
+	ctx := context.Background()
+	worktree, err := s.CreateWorktree(ctx, domain.CreateWorktreeRequest{RepositoryID: "repo", Mode: "new", Branch: "feature/missing", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, missingPath, err := s.target(ctx, worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(missingPath); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.Repository(ctx, "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Worktrees) != 2 {
+		t.Fatalf("worktrees = %+v", state.Worktrees)
+	}
+	var failed, healthy int
+	for _, tree := range state.Worktrees {
+		if tree.ID == worktree.ID {
+			if !tree.Missing || tree.StatusError == nil || tree.StatusError.Code != "worktree_missing" || tree.Status != nil {
+				t.Fatalf("missing worktree status = %+v", tree)
+			}
+			failed++
+		} else if tree.Status != nil {
+			healthy++
+		}
+	}
+	if failed != 1 || healthy != 1 {
+		t.Fatalf("partial repository state = %+v", state.Worktrees)
+	}
+}
+
+func TestSanitizeRemoteIdentityStripsCredentialsAndUnsupportedHosts(t *testing.T) {
+	https := sanitizeRemoteIdentity("origin", "https://token:secret@github.com/acme/widgets.git")
+	if https.Host != "github.com" || https.FullName != "acme/widgets" || https.Owner != "acme" || https.Repository != "widgets" {
+		t.Fatalf("https identity = %+v", https)
+	}
+	ssh := sanitizeRemoteIdentity("fork", "git@github.com:contributor/widgets.git")
+	if ssh.FullName != "contributor/widgets" || ssh.Host != "github.com" {
+		t.Fatalf("ssh identity = %+v", ssh)
+	}
+	unsupported := sanitizeRemoteIdentity("origin", "https://user:secret@gitlab.example/acme/widgets.git")
+	if unsupported.Host != "gitlab.example" || unsupported.FullName != "" {
+		t.Fatalf("unsupported identity = %+v", unsupported)
 	}
 }

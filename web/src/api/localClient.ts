@@ -1,7 +1,7 @@
 const configuredLocalOrigin = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_LOCAL_API_ORIGIN)?.replace(/\/$/, '')
 export const LOCAL_API_HTTP = configuredLocalOrigin || 'http://127.0.0.1:7001'
 export const LOCAL_API_WS = LOCAL_API_HTTP.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/events'
-export const LOCAL_API_PROTOCOL_VERSION = 1
+export const LOCAL_API_PROTOCOL_VERSION = 3
 
 export type LocalConnectionStatus =
   | 'not-attempted'
@@ -248,19 +248,75 @@ export async function localFetch(path: string, init: RequestInit = {}, retry = t
   return response
 }
 
-export async function openLocalEvents(): Promise<WebSocket> {
-  if (snapshot.status !== 'connected') throw new Error('Connect to local Bonsai before opening local events.')
-  const value = await currentSession()
+export interface LocalEvent {
+  type?: string
+  epoch?: string
+  project_id?: string
+  component?: string
+  sequence?: number
+  projects?: unknown[]
+  snapshot?: unknown
+}
+
+export interface LocalEventConnection {
+  socket: WebSocket
+  epoch: string
+}
+
+function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) => void): Promise<LocalEventConnection> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(LOCAL_API_WS)
-    const fail = () => reject(new Error('Local Bonsai event socket failed to connect'))
+    let settled = false
+
+    const fail = () => {
+      if (!settled) {
+        settled = true
+        reject(new Error('Local Bonsai event socket failed to connect'))
+      }
+    }
+    const closed = () => {
+      if (!settled) {
+        settled = true
+        reject(new Error('Local Bonsai event socket closed before authentication completed'))
+      }
+    }
     socket.addEventListener('error', fail, { once: true })
+    socket.addEventListener('close', closed, { once: true })
+    socket.addEventListener('message', event => {
+      let data: LocalEvent
+      try {
+        data = JSON.parse(String(event.data)) as LocalEvent
+      } catch {
+        return
+      }
+      if (data.type === 'ready') {
+        if (!settled) {
+          if (!data.epoch) {
+            settled = true
+            reject(new Error('Local Bonsai ready event did not include a backend epoch'))
+            socket.close()
+            return
+          }
+          settled = true
+          socket.removeEventListener('error', fail)
+          socket.removeEventListener('close', closed)
+          resolve({ socket, epoch: data.epoch })
+        }
+        onEvent(data)
+        return
+      }
+      onEvent(data)
+    })
     socket.addEventListener('open', () => {
-      socket.removeEventListener('error', fail)
       socket.send(JSON.stringify({ type: 'authenticate', token: value.token }))
-      resolve(socket)
     }, { once: true })
   })
+}
+
+export function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}): Promise<LocalEventConnection> {
+  if (snapshot.status !== 'connected') return Promise.reject(new Error('Connect to local Bonsai before opening local events.'))
+  if (sessionUsable(session)) return connectEventSocket(session, onEvent)
+  return currentSession().then(value => connectEventSocket(value, onEvent))
 }
 
 export function __resetLocalClientForTests() {
@@ -268,4 +324,9 @@ export function __resetLocalClientForTests() {
   sessionRequest = undefined
   snapshot = { status: 'not-attempted' }
   listeners.clear()
+}
+
+// Capabilities travel only in the first frame, never in a terminal URL.
+export async function terminalCapability(): Promise<string> {
+  return (await currentSession()).token
 }

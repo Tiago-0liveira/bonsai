@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"path/filepath"
 	"time"
 
@@ -19,9 +21,27 @@ const localRepositoryID = "local"
 func (s *Server) initGit() error {
 	s.gitOnce.Do(func() {
 		svc, err := local.New([]local.Config{{
-			ID:           localRepositoryID,
-			Root:         s.root,
-			WorktreeRoot: filepath.Join(s.store.Dir(), "worktrees"),
+			ID:   localRepositoryID,
+			Root: s.root,
+			BeforeRemove: func(_ context.Context, path string) error {
+				records, err := s.store.ListRecords()
+				if err != nil {
+					return err
+				}
+				for _, record := range records {
+					if procstore.IsActive(record.Status) && local.ID(localRepositoryID, record.Worktree) == local.ID(localRepositoryID, path) {
+						return domain.E("processes_running", "Stop running processes before deleting this worktree")
+					}
+				}
+				return nil
+			},
+			WithWorktreeRoot: func(ctx context.Context, create func(string) error) error {
+				path, err := config.ProjectRootsPath()
+				if err != nil {
+					return err
+				}
+				return config.WithBrowserWorktreeRoot(ctx, path, s.root, create)
+			},
 		}})
 		if err != nil {
 			s.gitErr = err

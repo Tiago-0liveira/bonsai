@@ -122,7 +122,7 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 
 		// WebSockets authenticate in their first data message so the token never
 		// appears in the URL or browser-managed cookie state.
-		if r.Method == http.MethodGet && r.URL.Path == "/events" {
+		if r.Method == http.MethodGet && (r.URL.Path == "/events" || isAgentTerminalRoute(r.URL.Path) || isProcessTerminalRoute(r.URL.Path)) {
 			next.ServeHTTP(w, r)
 			return
 		}

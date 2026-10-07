@@ -9,8 +9,8 @@ export function isStructuralEdge(edge: Edge) {
   return relationship(edge) === 'hierarchy'
 }
 
-export function isAgentEdge(edge: Edge) {
-  return relationship(edge) === 'agent'
+export function isRuntimeEdge(edge: Edge) {
+  return relationship(edge) === 'agent' || relationship(edge) === 'process'
 }
 
 export function getStructuralParentMap(edges: Edge[]) {
@@ -26,7 +26,7 @@ export function getDescendantIds(rootId: string, edges: Edge[]) {
     const source = queue.shift()
     if (!source) continue
     edges
-      .filter((edge) => edge.source === source && (isStructuralEdge(edge) || isAgentEdge(edge)))
+      .filter((edge) => edge.source === source && (isStructuralEdge(edge) || isRuntimeEdge(edge)))
       .forEach((edge) => {
         if (descendants.has(edge.target)) return
         descendants.add(edge.target)
@@ -57,18 +57,18 @@ export function buildBranchForest(nodes: Node[], edges: Edge[], placements: Node
   const project = nodes.find((node) => node.type === 'project')
   if (!project) return []
 
-  const branchNodes = nodes.filter((node) => node.type === 'worktree' || node.type === 'stack')
+  const branchNodes = nodes.filter((node) => node.type === 'worktree' || node.type === 'stack' || node.type === 'runtimeShelf')
   const branchMap = new Map(branchNodes.map((node) => [node.id, node]))
   const nodeMap = new Map(nodes.map((node) => [node.id, node]))
-  const agents = new Map<string, Node[]>()
-  const assignedAgents = new Set<string>()
+  const runtimes = new Map<string, Node[]>()
+  const assignedRuntimes = new Set<string>()
   const sortedEdges = [...edges].sort((a, b) =>
     a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
-  sortedEdges.filter(isAgentEdge).forEach((edge) => {
-    const agent = nodeMap.get(edge.target)
-    if (agent?.type !== 'agent' || !branchMap.has(edge.source) || assignedAgents.has(agent.id)) return
-    assignedAgents.add(agent.id)
-    agents.set(edge.source, [...(agents.get(edge.source) ?? []), agent])
+  sortedEdges.filter(isRuntimeEdge).forEach((edge) => {
+    const runtime = nodeMap.get(edge.target)
+    if (!runtime || (runtime.type !== 'agent' && runtime.type !== 'process') || !branchMap.has(edge.source) || assignedRuntimes.has(runtime.id)) return
+    assignedRuntimes.add(runtime.id)
+    runtimes.set(edge.source, [...(runtimes.get(edge.source) ?? []), runtime])
   })
 
   // A visible stack can have multiple incoming relationships. Give each block
@@ -112,7 +112,7 @@ export function buildBranchForest(nodes: Node[], edges: Edge[], placements: Node
   const build = (node: Node): BranchBlock => ({
     id: node.id,
     node,
-    agentNodes: [...(agents.get(node.id) ?? [])].sort((a, b) => a.id.localeCompare(b.id)),
+    runtimeNodes: [...(runtimes.get(node.id) ?? [])].sort((a, b) => a.id.localeCompare(b.id)),
     childBlocks: sortBranches(children.get(node.id) ?? [], placements).map(build),
   })
 

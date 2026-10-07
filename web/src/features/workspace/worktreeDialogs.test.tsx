@@ -1,0 +1,93 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useBonsaiStore } from '../../stores/bonsai'
+import { projects } from '../../test/fixtures/projects'
+import { worktrees } from '../../test/fixtures/worktrees'
+import { CreateWorktreeDialog } from './CreateWorktreeDialog'
+import { DeleteWorktreeDialog } from './DeleteWorktreeDialog'
+import * as gitAPI from '../../api/git'
+import { Profiler } from 'react'
+
+const realCreate = useBonsaiStore.getState().createWorktree
+describe('worktree dialogs', () => {
+  beforeEach(() => {
+    useBonsaiStore.setState({ projects, activeProjectId: 'bonsai', worktrees: [], agents: [], processes: [], pullRequests: [], branchCandidates: {}, gitBranches: { bonsai: [{ name: 'main', remote: false }, { name: 'origin/feature', remote: true }] }, worktreeDialogOpen: false, worktreeDialogTarget: null, deleteWorktreeId: '' })
+  })
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); useBonsaiStore.setState({ createWorktree: realCreate }) })
+  it('keeps closed dialog bodies unsubscribed from inventory and runtime updates', () => {
+    const commits = vi.fn()
+    render(<Profiler id="dialogs" onRender={commits}><CreateWorktreeDialog /><DeleteWorktreeDialog /></Profiler>)
+    const baseline = commits.mock.calls.length
+    act(() => useBonsaiStore.setState({ worktrees, agents: [], processes: [{ id: 'live', projectId: 'bonsai', worktreeId: 'wt-web', daemonId: 1, name: 'serve', command: 'serve', status: 'healthy', lifecycleStatus: 'running' }] }))
+    expect(commits).toHaveBeenCalledTimes(baseline)
+  })
+  it('prefills creation from a branch candidate and preserves the source through live inventory changes', () => {
+    const candidate = { id: 'refs/remotes/origin/feature', ref: 'refs/remotes/origin/feature', name: 'feature', source: 'remote' as const, remote: 'origin', worktree_ids: [], pull_requests: [], creation_mode: 'remote' as const, source_ref: 'origin/feature' }
+    useBonsaiStore.getState().openCreateWorktree('bonsai', candidate)
+    render(<CreateWorktreeDialog />)
+    expect(screen.getByRole('button', { name: 'Remote branch' })).toHaveTextContent('origin/feature')
+    act(() => { useBonsaiStore.setState({ gitBranches: { bonsai: [{ name: 'origin/another', remote: true }, { name: 'origin/feature', remote: true }] } }) })
+    expect(screen.getByRole('button', { name: 'Remote branch' })).toHaveTextContent('origin/feature')
+  })
+  it('blocks duplicate submission and shows actionable inline errors', async () => {
+    let reject!: (reason: Error) => void
+    const create = vi.fn(() => new Promise<string>((_, fail) => { reject = fail }))
+    useBonsaiStore.setState({ createWorktree: create })
+    useBonsaiStore.getState().setWorktreeDialogOpen(true)
+    render(<CreateWorktreeDialog />)
+    fireEvent.click(screen.getByRole('button', { name: 'Create worktree' }))
+    expect(screen.getByRole('button', { name: 'Creating…' })).toBeDisabled()
+    await act(async () => reject(new Error('branch is already checked out')))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('branch is already checked out'))
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+  it('keeps supported process stops before worktree deletion', async () => {
+    const tree = { ...worktrees[0], id: 'with-process', main: false, dirtyFiles: 0, gitState: 'normal' }
+    useBonsaiStore.setState({ worktrees: [tree], deleteWorktreeId: tree.id, processes: [{ id: 'proc', projectId: tree.projectId, daemonId: 42, worktreeId: tree.id, name: 'server', command: 'pnpm dev', status: 'healthy', lifecycleStatus: 'running' }] })
+    const stop = vi.spyOn(gitAPI, 'stopWorktreeProcesses').mockResolvedValue(undefined)
+    const remove = vi.spyOn(gitAPI, 'deleteWorktree').mockResolvedValue({})
+    vi.spyOn(gitAPI, 'refreshProject').mockResolvedValue(undefined)
+    render(<DeleteWorktreeDialog />)
+    fireEvent.click(screen.getByRole('button', { name: 'Stop and delete' }))
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1))
+    expect(stop).toHaveBeenCalledWith(tree.projectId, [42])
+    expect(stop.mock.invocationCallOrder[0]).toBeLessThan(remove.mock.invocationCallOrder[0])
+  })
+
+  it('requires explicit discard for dirty deletion and protects the main copy', () => {
+    const tree = { ...worktrees[0], id: 'dirty', main: false, dirtyFiles: 2, gitState: 'normal', path: '/trees/dirty' }
+    useBonsaiStore.setState({ worktrees: [tree], deleteWorktreeId: tree.id })
+    render(<DeleteWorktreeDialog />)
+    expect(screen.getByRole('button', { name: 'Delete worktree' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('button', { name: 'Delete worktree' })).toBeEnabled()
+    act(() => { useBonsaiStore.setState({ worktrees: [{ ...tree, main: true }] }) })
+    expect(screen.getByRole('button', { name: 'Delete worktree' })).toBeDisabled()
+  })
+  it('reuses deletion identity after a lost response', async () => {
+    const tree = { ...worktrees[0], id: 'retry-delete', main: false, dirtyFiles: 0, gitState: 'normal', path: '/trees/retry' }
+    useBonsaiStore.setState({ worktrees: [tree], deleteWorktreeId: tree.id })
+    const remove = vi.spyOn(gitAPI, 'deleteWorktree').mockRejectedValueOnce(new TypeError('connection lost')).mockRejectedValueOnce(new gitAPI.APIError('outcome_unknown', 'Confirming deletion'))
+    render(<DeleteWorktreeDialog />)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete worktree' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('connection lost'))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete worktree' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Confirming deletion'))
+    expect(remove).toHaveBeenCalledTimes(2)
+    expect(remove.mock.calls[1]).toEqual(remove.mock.calls[0])
+  })
+  it('explains missing directories and removes their registrations without discarding files', async () => {
+    const tree = { ...worktrees[0], id: 'missing', main: false, missing: true, dirtyFiles: 2, gitState: 'merge', path: '/trees/missing' }
+    useBonsaiStore.setState({ worktrees: [tree], deleteWorktreeId: tree.id })
+    const remove = vi.spyOn(gitAPI, 'deleteWorktree').mockResolvedValue({})
+    vi.spyOn(gitAPI, 'refreshProject').mockResolvedValue(undefined)
+    render(<DeleteWorktreeDialog />)
+    expect(screen.getByText('The worktree directory is missing. Only its stale Git registration will be removed.')).toBeVisible()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    const button = screen.getByRole('button', { name: 'Remove registration' })
+    expect(button).toBeEnabled()
+    fireEvent.click(button)
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('missing', false, expect.any(String)))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+})

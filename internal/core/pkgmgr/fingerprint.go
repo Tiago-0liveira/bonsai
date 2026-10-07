@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const discoverySchemaVersion = 1
+const discoverySchemaVersion = 2
 
 var providerVersions = map[string]string{
 	"node":   "1",

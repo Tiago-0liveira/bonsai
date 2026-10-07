@@ -1,9 +1,11 @@
 package agents
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var lockMu sync.Map
@@ -13,13 +15,25 @@ type FileLock struct {
 	mu *sync.Mutex
 }
 
-func LockFile(path string) (*FileLock, error) {
+func LockFile(path string) (*FileLock, error) { return LockFileContext(context.Background(), path) }
+
+func LockFileContext(ctx context.Context, path string) (*FileLock, error) {
 	if err := ensurePrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	v, _ := lockMu.LoadOrStore(filepath.Clean(path), &sync.Mutex{})
 	mu := v.(*sync.Mutex)
-	mu.Lock()
+	for !mu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		mu.Unlock()
+		return nil, err
+	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -27,7 +41,26 @@ func LockFile(path string) (*FileLock, error) {
 		return nil, err
 	}
 	_ = f.Chmod(0o600)
-	if err := lockOSFile(f); err != nil {
+	err = nil
+	for {
+		locked, lockErr := tryLockOSFile(f)
+		if lockErr != nil {
+			err = lockErr
+			break
+		}
+		if locked {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+		if err != nil {
+			break
+		}
+	}
+	if err != nil {
 		_ = f.Close()
 		mu.Unlock()
 		return nil, err
