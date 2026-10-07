@@ -40,13 +40,16 @@ func TestNodeManagerActualArgv(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				// Installed package managers can start slowly on busy Windows runners
+				// while the rest of the Go suite launches subprocesses in parallel.
+				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				cmd := exec.CommandContext(ctx, invocation.Program, invocation.Args...)
 				cmd.Dir = invocation.Dir
 				output, err := cmd.CombinedOutput()
+				contextErr := ctx.Err()
 				cancel()
 				if err != nil {
-					t.Fatalf("%s %v: %v\n%s", manager, invocation.Args, err, output)
+					t.Fatalf("%s %v: %v (context: %v)\n%s", manager, invocation.Args, err, contextErr, output)
 				}
 				data, err := os.ReadFile(filepath.Join(dir, "argv.json"))
 				if err != nil {

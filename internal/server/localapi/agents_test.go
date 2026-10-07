@@ -45,7 +45,12 @@ func (p *terminalTestProvider) FinalizeSession(ctx context.Context, _ agents.Fin
 }
 func terminalTestServer(t *testing.T) (*Server, string, *terminalTestProvider) {
 	t.Helper()
-	root := t.TempDir()
+	// Match production project discovery before deriving worktree identities.
+	// macOS temporary directories can contain symlinked path components.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	accounts, err := agents.NewFileAccountStore(filepath.Join(t.TempDir(), "accounts"))
 	if err != nil {
 		t.Fatal(err)
