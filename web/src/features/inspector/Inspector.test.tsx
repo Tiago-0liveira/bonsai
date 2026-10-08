@@ -5,6 +5,7 @@ import { Inspector } from './Inspector'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { projects } from '../../test/fixtures/projects'
 import { worktrees } from '../../test/fixtures/worktrees'
+import { pullRequests } from '../../test/fixtures/pullRequests'
 
 afterEach(cleanup)
 
@@ -33,4 +34,17 @@ it('inspects retained process failures and their worktree without opening a term
   expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Restart' })).toBeEnabled()
   expect(useBonsaiStore.getState().openRuntimeIds).toEqual([])
+})
+
+it.each([
+  [true, 'no conflicts'],
+  [false, 'conflicts'],
+  [undefined, 'checking…'],
+])('shows PR mergeability %s as "%s"', (mergeable, text) => {
+  const pr = { ...pullRequests[0], id: 'bonsai:24', mergeable }
+  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees: [worktrees[1]], activeProjectId: 'bonsai', pullRequests: [pr],
+    selection: { type: 'worktree', id: worktrees[1].id } }, true)
+  render(<Inspector />)
+  expect(screen.getByRole('button', { name: /Pull request/ })).toHaveTextContent(new RegExp(`${text}$`))
+  expect(screen.queryByText('Resolve merge conflicts') === null).toBe(mergeable !== false)
 })

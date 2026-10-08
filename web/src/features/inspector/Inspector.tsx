@@ -90,7 +90,10 @@ function IconButton({ icon: Icon, label, onClick }: { icon: LucideIcon; label: s
 function PullRequestCard({ pr, onOpen }: { pr?: PullRequest; onOpen: () => void }) {
   if (!pr) return <div className={card + ' p-3.5'}><div className={cardLabel}>Pull request</div><p className="mt-2 text-[12px] text-muted-2">No pull request linked to this branch.</p></div>
   const chip = PR_CHIP[pr.status]
-  const conflicts = pr.mergeable === false
+  const mergeability = pr.mergeable === false
+    ? { text: 'conflicts', tone: 'text-danger', icon: XCircle }
+    : pr.mergeable ? { text: 'no conflicts', tone: 'text-ok', icon: CheckCircle2 } : { text: 'checking…', tone: 'text-muted-2', icon: Clock3 }
+  const MergeIcon = mergeability.icon
   return <button type="button" onClick={onOpen} title="Open in GitHub tab" className={'bonsai-focus block w-full p-3.5 text-left transition-colors hover:border-border-strong ' + card}>
     <span className="flex items-center justify-between gap-2"><span className={cardLabel}>Pull request</span><span className={'font-mono text-[10px] font-medium tracking-[.08em] ' + chip.className}>{chip.label}</span></span>
     <span className="mt-3 flex items-start gap-2.5">
@@ -100,7 +103,7 @@ function PullRequestCard({ pr, onOpen }: { pr?: PullRequest; onOpen: () => void 
     <span className="mt-1.5 block truncate pl-[26px] font-mono text-[11px] text-muted-2">{pr.branch} → {pr.base}</span>
     <span className="mt-3 flex items-center gap-2 border-t border-border-subtle pt-3 font-mono text-[11px] text-muted-2">
       <span>{pr.files.length} {pr.files.length === 1 ? 'file' : 'files'} · {pr.commits.length} {pr.commits.length === 1 ? 'commit' : 'commits'}</span>
-      <span className={'ml-auto flex items-center gap-1.5 ' + (conflicts ? 'text-danger' : 'text-ok')}>{conflicts ? <XCircle size={13} /> : <CheckCircle2 size={13} />}{conflicts ? 'conflicts' : 'no conflicts'}</span>
+      <span className={'ml-auto flex items-center gap-1.5 ' + mergeability.tone}><MergeIcon size={13} />{mergeability.text}</span>
     </span>
   </button>
 }
