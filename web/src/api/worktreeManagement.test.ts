@@ -7,7 +7,7 @@ vi.mock('./local', () => ({ localFetch, invalidateLocalSession: vi.fn(), markLoc
 const repository = { id: 'repo', workspace_id: 'workspace', full_name: 'owner/repo', default_branch: 'main' }
 const snapshot = (sequence: number, present = true): Snapshot => ({ repository, sequence, online: true, metadata: {}, local: { branches: [], groups: [], worktrees: present ? [{ id: 'created', repository_id: 'repo', branch: 'feature', main: false, path: '/trees/feature', local_head_sha: 'sha' }] : [] } })
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
-const input = { projectId: 'repo', sourceType: 'origin' as const, sourceRef: 'origin/feature', tagId: 'feat', mergeTargetBranch: 'main' }
+const input = { projectId: 'repo', sourceType: 'origin' as const, sourceRef: 'origin/feature', mergeTargetBranch: 'main' }
 
 describe('worktree mutation reconciliation', () => {
   beforeEach(() => {

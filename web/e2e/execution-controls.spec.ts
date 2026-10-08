@@ -47,7 +47,6 @@ test('palette and context menus disable unsupported execution while Git remains 
 test('managed process cards expose retained logs and controls without implying a shell or listening URL', async ({ page }) => {
   await mockGitBackend(page)
   await openConnectedApp(page)
-  await page.locator('.react-flow__node-stack').filter({ hasText: 'feat' }).getByRole('button', { name: /Expand/ }).click()
   await page.getByTestId('rf__node-wt-web').click()
   await page.getByRole('button', { name: 'Open runtime', exact: true }).click()
   await page.getByRole('option', { name: /Vite/ }).click()

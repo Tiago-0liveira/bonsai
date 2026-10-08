@@ -63,14 +63,6 @@ test('github', async ({ page }, testInfo) => {
   expect(errors).toEqual([])
 })
 
-test('table', async ({ page }, testInfo) => {
-  const errors = trackPageErrors(page)
-  await openConnectedApp(page)
-  await page.getByRole('link', { name: 'Table', exact: true }).click()
-  await capture(page, testInfo, 'table')
-  expect(errors).toEqual([])
-})
-
 test('logs', async ({ page }, testInfo) => {
   const errors = trackPageErrors(page)
   await openConnectedApp(page)

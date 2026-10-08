@@ -47,20 +47,20 @@ function DeleteWorktreeDialogBody() {
   }
   return (
     <div className="absolute inset-0 z-[90] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
-      <div role="dialog" aria-modal="true" aria-label="Delete worktree" className="w-full max-w-lg space-y-4 rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] p-5 shadow-2xl">
-        <h2 className="text-sm font-semibold">Delete worktree</h2>
-        <p className="break-all font-mono text-xs">{worktree.branch}<br /><span className="text-[rgb(var(--muted))]">{worktree.path ?? 'Path unavailable'}</span></p>
-        <p className="text-xs text-[rgb(var(--muted))]">The local branch and remote pull request will be retained.</p>
-        {worktree.missing && <p className="text-xs text-[rgb(var(--warn))]">The worktree directory is missing. Only its stale Git registration will be removed.</p>}
-        {worktree.main && <p role="alert" className="text-xs text-[rgb(var(--danger))]">The main working copy cannot be deleted.</p>}
-        {busy && <p role="alert" className="text-xs text-[rgb(var(--warn))]">Finish the active Git operation before deleting this worktree.</p>}
-        {!!runningAgents.length && <p role="alert" className="text-xs text-[rgb(var(--warn))]">Stop active agents before deleting this worktree.</p>}
-        {!!running.length && <p className="text-xs text-[rgb(var(--warn))]">{running.length} running process(es) will be stopped before removal.</p>}
+      <div role="dialog" aria-modal="true" aria-label="Delete worktree" className="w-full max-w-lg space-y-4 rounded-[14px] border border-border-strong bg-panel shadow-overlay p-5">
+        <h2 className="text-[13px] font-semibold">Delete worktree</h2>
+        <p className="break-all font-mono text-xs">{worktree.branch}<br /><span className="text-muted">{worktree.path ?? 'Path unavailable'}</span></p>
+        <p className="text-xs text-muted">The local branch and remote pull request will be retained.</p>
+        {worktree.missing && <p className="text-xs text-warn">The worktree directory is missing. Only its stale Git registration will be removed.</p>}
+        {worktree.main && <p role="alert" className="text-xs text-danger">The main working copy cannot be deleted.</p>}
+        {busy && <p role="alert" className="text-xs text-warn">Finish the active Git operation before deleting this worktree.</p>}
+        {!!runningAgents.length && <p role="alert" className="text-xs text-warn">Stop active agents before deleting this worktree.</p>}
+        {!!running.length && <p className="text-xs text-warn">{running.length} running process(es) will be stopped before removal.</p>}
         {!worktree.missing && <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={discard} disabled={pending} onChange={event => { setDiscard(event.target.checked); key.current = crypto.randomUUID() }} />Discard uncommitted changes, including untracked files{worktree.dirtyFiles ? ` (${worktree.dirtyFiles} changed files)` : ''}</label>}
-        {error && <p role="alert" className="text-xs text-[rgb(var(--danger))]">{error}</p>}
+        {error && <p role="alert" className="text-xs text-danger">{error}</p>}
         <div className="flex justify-end gap-3">
-          <button type="button" disabled={pending} onClick={() => close('')} className="bonsai-focus rounded px-3 py-2 text-xs">Cancel</button>
-          <button type="button" disabled={pending || worktree.main || !!busy || !!runningAgents.length || (!worktree.missing && !!worktree.dirtyFiles && !discard)} onClick={() => void remove()} className="bonsai-focus rounded border border-[rgb(var(--danger)/.5)] bg-[rgb(var(--danger)/.12)] px-3 py-2 text-xs disabled:opacity-40">{pending ? 'Deleting…' : running.length ? 'Stop and delete' : worktree.missing ? 'Remove registration' : 'Delete worktree'}</button>
+          <button type="button" disabled={pending} onClick={() => close('')} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px] text-muted hover:text-text">Cancel</button>
+          <button type="button" disabled={pending || worktree.main || !!busy || !!runningAgents.length || (!worktree.missing && !!worktree.dirtyFiles && !discard)} onClick={() => void remove()} className="bonsai-focus btn-danger-tint h-8 rounded-[7px] px-3 text-[12px] disabled:opacity-40">{pending ? 'Deleting…' : running.length ? 'Stop and delete' : worktree.missing ? 'Remove registration' : 'Delete worktree'}</button>
         </div>
       </div>
     </div>

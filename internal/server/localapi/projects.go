@@ -112,7 +112,6 @@ func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	var patch struct {
 		MergeTargetBranch *string `json:"merge_target_branch"`
-		Tag               *string `json:"tag"`
 		StackPreference   *string `json:"stack_preference"`
 	}
 	if !decodeStrictJSON(w, r, &patch) {
@@ -121,12 +120,6 @@ func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
 	if patch.MergeTargetBranch != nil {
 		if len(*patch.MergeTargetBranch) > 255 {
 			writeAPIError(w, http.StatusBadRequest, "invalid", "merge target branch is too long")
-			return
-		}
-	}
-	if patch.Tag != nil {
-		if len(*patch.Tag) > 100 {
-			writeAPIError(w, http.StatusBadRequest, "invalid", "tag is too long")
 			return
 		}
 	}
@@ -143,9 +136,6 @@ func (s *Server) patchWorktreeMetadata(w http.ResponseWriter, r *http.Request) {
 		current.RepositoryID = localRepositoryID
 		if patch.MergeTargetBranch != nil {
 			current.MergeTargetBranch = *patch.MergeTargetBranch
-		}
-		if patch.Tag != nil {
-			current.Tag = *patch.Tag
 		}
 		if patch.StackPreference != nil {
 			current.StackPreference = *patch.StackPreference

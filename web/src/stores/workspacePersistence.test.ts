@@ -3,7 +3,6 @@ import { workspacePreferences, useBonsaiStore } from './bonsai'
 import { applySnapshot, __resetGitSyncForTests } from '../api/git'
 import { agents } from '../mock/agents'
 import { projects } from '../test/fixtures/projects'
-import { boardItems, boardLists, boardPriorities, boardTypes } from '../mock/board'
 import { createWorkspaceStorage, mergeWorkspacePreferences, retryWorkspaceStorage, sanitizeWorkspacePreferences, useWorkspaceStorageStatus, WORKSPACE_STORAGE_KEY, WORKSPACE_STORAGE_VERSION } from './workspacePersistence'
 
 const marker = 'SYNTHETIC_ENV_VALUE_MUST_DISAPPEAR'
@@ -18,9 +17,9 @@ const legacy = () => ({
     processes: [{ id: 'old-process', command: marker }],
     envVariables: { repo: [{ id: 'secret', key: 'SECRET', value: marker, secret: true }, { id: 'plain', key: 'PLAIN', value: marker, secret: false }] },
     nodePlacements: { tree: { x: 10, y: 20, mode: 'manual', value: marker }, worker: { x: 30, y: 40, mode: 'manual' }, 'agent-orphan': { x: 50, y: 60, mode: 'manual' } },
-    boardItems: [{ ...boardItems[0], title: 'My saved draft', metadata: { value: marker } }],
-    boardLists, boardPriorities, boardTypes,
-    collapsedBranchIds: ['tree'], collapsedTagGroups: ['repo:feat'], detachedStackWorktreeIds: ['tree'], expandedAutomaticGroups: ['unlinked:repo'],
+    // Keys written by removed features must be dropped on load.
+    boardItems: [{ id: 'b1', title: 'Old card', kind: 'Task', status: 'feat', assignee: '', priority: 'High' }], boardLists: [], boardPriorities: [], boardTypes: [], collapsedTagGroups: ['repo:feat'],
+    collapsedBranchIds: ['tree'], detachedStackWorktreeIds: ['tree'], expandedAutomaticGroups: ['unlinked:repo'],
     notice: marker, unknownField: marker,
   }, version: 0,
 })
@@ -57,10 +56,7 @@ describe('workspace migration and hydration', () => {
     expect(state.sidebarCollapsed).toBe(true)
     expect(state.dockHeight).toBe(42)
     expect(state.editorPreference).toBe('cursor')
-    expect(state.boardItems[0].title).toBe('My saved draft')
-    expect(state.boardLists).toEqual(boardLists)
-    expect(state.boardPriorities).toEqual(boardPriorities)
-    expect(state.boardTypes).toEqual(boardTypes)
+    for (const key of ['boardItems', 'boardLists', 'boardPriorities', 'boardTypes', 'collapsedTagGroups']) expect(state).not.toHaveProperty(key)
     expect(state.viewport).toEqual({ x: 15, y: 25, zoom: 0.75 })
     expect(state.rightPanels).toEqual({ files: false, prs: true })
     expect(read().version).toBe(WORKSPACE_STORAGE_VERSION)
@@ -83,7 +79,7 @@ describe('workspace migration and hydration', () => {
     localStorage.setItem(WORKSPACE_STORAGE_KEY, sanitized)
     await workspacePreferences.rehydrate()
     expect(useBonsaiStore.getState().agents).toEqual([])
-    expect(useBonsaiStore.getState().boardItems[0].title).toBe('My saved draft')
+    expect(useBonsaiStore.getState().detachedStackWorktreeIds).toEqual(['tree'])
   })
 
   it('sanitizes explicit rehydration even for a record claiming the current or a future version', async () => {
@@ -171,12 +167,12 @@ describe('workspace migration and hydration', () => {
   })
 
   it('validates nested preference fields instead of merging malformed data or unknown properties', () => {
-    const prefs = sanitizeWorkspacePreferences({ ...legacy().state, dockHeight: 999, rightPanels: { files: marker }, viewport: { x: marker, y: 0, zoom: 1 }, collapsedBranchIds: [null], boardTypes: [{ id: 'type', name: 'Custom', value: marker }, null] })
+    const prefs = sanitizeWorkspacePreferences({ ...legacy().state, dockHeight: 999, rightPanels: { files: marker }, viewport: { x: marker, y: 0, zoom: 1 }, collapsedBranchIds: [null], detachedStackWorktreeIds: [{ id: marker }] })
     expect(prefs.dockHeight).toBe(72)
     expect(prefs).not.toHaveProperty('rightPanels')
     expect(prefs).not.toHaveProperty('viewport')
     expect(prefs).not.toHaveProperty('collapsedBranchIds')
-    expect(prefs.boardTypes).toEqual([{ id: 'type', name: 'Custom' }])
+    expect(prefs).not.toHaveProperty('detachedStackWorktreeIds')
     expect(JSON.stringify(prefs)).not.toContain(marker)
     expect(sanitizeWorkspacePreferences(prefs)).toEqual(prefs)
   })

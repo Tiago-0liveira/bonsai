@@ -42,10 +42,7 @@ function childAnchor(node: Node, parent: Node | undefined, nodes: Node[], edges:
 }
 
 function stackId(nodes: Node[], node: Node) {
-  if (node.data?.groupId) return 'stack:' + String(node.data.groupId)
-  const project = nodes.find((candidate) => candidate.type === 'project')
-  const tag = String(node.data?.tag ?? '')
-  return project && tag ? 'stack:' + project.id + ':' + tag : ''
+  return node.data?.groupId ? 'stack:' + String(node.data.groupId) : ''
 }
 
 export function placeMissingNodes(nodes: Node[], edges: Edge[], placements: NodePlacements, missingIds: string[]) {

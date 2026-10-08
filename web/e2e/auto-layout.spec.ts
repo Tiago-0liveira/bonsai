@@ -11,8 +11,6 @@ test.beforeEach(async ({ page }) => {
 test('Auto-layout clears expanded History and keeps repeated layouts stable', async ({ page }) => {
   await openConnectedApp(page)
   await injectAgentPresentation(page)
-  await page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })
-    .getByRole('button', { name: /Expand/ }).click()
   await page.getByRole('button', { name: 'Fit', exact: true }).click()
   const worktree = page.getByTestId('rf__node-wt-web')
   await expect(worktree).toBeVisible()
@@ -45,8 +43,6 @@ test('Auto-layout clears expanded History and keeps repeated layouts stable', as
 test('adding and removing a shelf agent preserves other branches and readable PR labels', async ({ page }) => {
   await openConnectedApp(page)
   await injectAgentPresentation(page)
-  await page.locator('.react-flow__node-stack').filter({ hasText: 'feat' })
-    .getByRole('button', { name: /Expand/ }).click()
   await page.getByRole('button', { name: 'Fit', exact: true }).click()
   const owner = page.getByTestId('rf__node-wt-web')
   await owner.getByRole('button', { name: /History.*Show/ }).click()

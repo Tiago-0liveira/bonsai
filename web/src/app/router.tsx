@@ -6,7 +6,6 @@ import {
   createRouter,
 } from '@tanstack/react-router'
 import { AppShell } from '../components/layout/AppShell'
-import { BoardPage } from '../features/board/BoardPage'
 import { FilesPage } from '../features/files/FilesPage'
 import { PullRequestsPage } from '../features/github/PullRequestsPage'
 import { LogsPage } from '../features/logs/LogsPage'
@@ -25,14 +24,13 @@ const worktreesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/wo
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/agents', component: () => <WorkspacePage focus="agents" /> })
 const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: '/github', component: PullRequestsPage })
 const prsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pull-requests', component: PullRequestsPage })
-const tablesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/tables', component: BoardPage })
 const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/files', component: FilesPage })
 const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsPage })
 
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage })
 
 const routeTree = rootRoute.addChildren([
-  settingsRoute, workspaceRoute, worktreesRoute, agentsRoute, githubRoute, prsRoute, tablesRoute, filesRoute, logsRoute,
+  settingsRoute, workspaceRoute, worktreesRoute, agentsRoute, githubRoute, prsRoute, filesRoute, logsRoute,
 ])
 
 export const router = createRouter({ routeTree, basepath: '/app' })

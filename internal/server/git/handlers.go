@@ -316,7 +316,6 @@ func (s *Service) metadata(w http.ResponseWriter, r *http.Request) {
 	}
 	var patch struct {
 		MergeTargetBranch *string `json:"merge_target_branch"`
-		Tag               *string `json:"tag"`
 		StackPreference   *string `json:"stack_preference"`
 	}
 	if e = decode(w, r, &patch); e != nil {
@@ -333,12 +332,6 @@ func (s *Service) metadata(w http.ResponseWriter, r *http.Request) {
 				return domain.ErrInvalid
 			}
 			meta.MergeTargetBranch = *patch.MergeTargetBranch
-		}
-		if patch.Tag != nil {
-			if len(*patch.Tag) > 100 {
-				return domain.ErrInvalid
-			}
-			meta.Tag = *patch.Tag
 		}
 		if patch.StackPreference != nil {
 			if *patch.StackPreference != "auto" && *patch.StackPreference != "never" {

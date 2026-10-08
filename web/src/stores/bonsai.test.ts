@@ -1,9 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { agents } from '../mock/agents'
-import { boardItems, boardLists, boardPriorities, boardTypes } from '../mock/board'
 import { projects } from '../test/fixtures/projects'
 import { pullRequests } from '../test/fixtures/pullRequests'
-import { worktreeTags } from '../mock/tags'
 import { worktrees } from '../test/fixtures/worktrees'
 import { __resetLocalClientForTests, connectLocalBonsai } from '../api/localClient'
 import { useBonsaiStore } from './bonsai'
@@ -24,15 +22,9 @@ describe('bonsai store', () => {
       activeWorkspaceId: 'personal',
       activeProjectId: 'bonsai',
       sidebarCollapsed: false,
-      boardItems,
-      boardLists,
-      boardPriorities,
-      boardTypes,
       pullRequests,
       agents,
       worktrees,
-      worktreeTags,
-      collapsedTagGroups: ['bonsai:feat'],
       detachedStackWorktreeIds: [],
       nodePlacements: {},
       dockWorktreeId: 'wt-web',
@@ -51,21 +43,6 @@ describe('bonsai store', () => {
   })
 
   afterEach(() => vi.unstubAllGlobals())
-
-  it('moves board items between user-defined lists', () => {
-    useBonsaiStore.getState().moveBoardItem('b1', 'bug')
-    expect(useBonsaiStore.getState().boardItems.find((item) => item.id === 'b1')?.status).toBe('bug')
-  })
-
-  it('adds and removes dynamic table lists while moving cards', () => {
-    useBonsaiStore.getState().addBoardList()
-    const list = useBonsaiStore.getState().boardLists.at(-1)
-    expect(list).toBeDefined()
-    if (!list) return
-    useBonsaiStore.getState().moveBoardItem('b1', list.id)
-    useBonsaiStore.getState().removeBoardList(list.id, 'feat')
-    expect(useBonsaiStore.getState().boardItems.find((item) => item.id === 'b1')?.status).toBe('feat')
-  })
 
   it('rejects agent stop and restart without changing runtime state', () => {
     const previous = useBonsaiStore.getState().agents
@@ -174,7 +151,7 @@ describe('bonsai store', () => {
 
   it('sends worktree creation to the daemon API and preserves state on failure', async () => {
     const previous = useBonsaiStore.getState().worktrees
-    await expect(useBonsaiStore.getState().createWorktree({ sourceType: 'existing', sourceRef: 'feat/local-experiment', tagId: 'review-code', mergeTargetBranch: 'main' })).rejects.toThrow('daemon offline')
+    await expect(useBonsaiStore.getState().createWorktree({ sourceType: 'existing', sourceRef: 'feat/local-experiment', mergeTargetBranch: 'main' })).rejects.toThrow('daemon offline')
     expect(useBonsaiStore.getState().worktrees).toBe(previous)
     expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:7001/api/projects/bonsai/worktrees', expect.objectContaining({ method: 'POST', credentials: 'omit', body: JSON.stringify({ mode: 'existing', branch: 'feat/local-experiment', base: 'feat/local-experiment' }) }))
   })
@@ -188,7 +165,8 @@ describe('bonsai store', () => {
   it('temporarily detaches a worktree from a stack and restores it when the group toggles', () => {
     useBonsaiStore.getState().ejectWorktreeFromStack('wt-web')
     expect(useBonsaiStore.getState().detachedStackWorktreeIds).toContain('wt-web')
-    useBonsaiStore.getState().toggleTagGroup('bonsai', 'feat')
+    useBonsaiStore.setState({ worktreeGroups: { bonsai: [{ id: 'unlinked:bonsai', kind: 'unlinked', worktree_ids: ['wt-web', 'wt-docs'] }] } })
+    useBonsaiStore.getState().toggleAutomaticGroup('unlinked:bonsai')
     expect(useBonsaiStore.getState().detachedStackWorktreeIds).not.toContain('wt-web')
   })
 
@@ -228,15 +206,15 @@ describe('bonsai store', () => {
   it('preserves placements when stacks are toggled or detached', () => {
     useBonsaiStore.getState().setManualNodePlacement('wt-web', { x: 120, y: 240 })
     useBonsaiStore.getState().setGeneratedNodePlacements({
-      'stack:bonsai:feat': { x: 400, y: 260 },
+      'stack:unlinked:bonsai': { x: 400, y: 260 },
     })
 
-    useBonsaiStore.getState().toggleTagGroup('bonsai', 'feat')
+    useBonsaiStore.getState().toggleAutomaticGroup('unlinked:bonsai')
     useBonsaiStore.getState().ejectWorktreeFromStack('wt-web')
 
     const placements = useBonsaiStore.getState().nodePlacements
     expect(placements['wt-web']).toEqual({ x: 120, y: 240, mode: 'manual' })
-    expect(placements['stack:bonsai:feat']).toEqual({ x: 400, y: 260, mode: 'generated' })
+    expect(placements['stack:unlinked:bonsai']).toEqual({ x: 400, y: 260, mode: 'generated' })
   })
 
   it('preserves manual placement across merge-target and metadata changes', () => {

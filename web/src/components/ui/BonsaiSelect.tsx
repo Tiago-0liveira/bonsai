@@ -118,7 +118,7 @@ export function BonsaiSelect({
             ref={menuRef}
             role="presentation"
             data-bonsai-select-menu={ariaLabel}
-            className="fixed z-[300] flex overflow-hidden rounded-lg border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))] shadow-[0_20px_60px_rgb(0_0_0/.62)]"
+            className="fixed z-[300] flex overflow-hidden rounded-[10px] border border-border-strong bg-panel-3 shadow-overlay"
             style={{
               left: position.left,
               top: position.top,
@@ -128,14 +128,14 @@ export function BonsaiSelect({
             }}
           >
             {searchable && (
-              <label className="m-1.5 flex h-8 shrink-0 items-center gap-2 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
-                <Search size={11} className="text-[rgb(var(--muted-2))]" />
+              <label className="m-1.5 flex h-8 shrink-0 items-center gap-2 rounded-[7px] border border-border bg-well px-2.5 focus-within:border-accent/55">
+                <Search size={11} className="text-muted-2" />
                 <input
                   autoFocus
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Filter…"
-                  className="min-w-0 flex-1 bg-transparent text-[10px] outline-none placeholder:text-[rgb(var(--muted-2))]"
+                  className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-muted-2"
                 />
               </label>
             )}
@@ -156,19 +156,19 @@ export function BonsaiSelect({
                     }}
                     className={
                       'flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ' +
-                      (active ? 'bg-[rgb(var(--accent)/.12)]' : 'hover:bg-[rgb(var(--panel-3))]')
+                      (active ? 'bg-accent/12' : 'hover:bg-panel-4')
                     }
                   >
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[10px] text-[rgb(var(--text))]">{option.label}</span>
-                      {option.description && <span className="mt-0.5 block truncate text-[8px] text-[rgb(var(--muted-2))]">{option.description}</span>}
+                      <span className="block truncate text-[12px] text-text">{option.label}</span>
+                      {option.description && <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-2">{option.description}</span>}
                     </span>
-                    {option.meta && <span className="mt-0.5 shrink-0 text-[8px] text-[rgb(var(--muted-2))]">{option.meta}</span>}
-                    {active && <Check size={11} className="mt-0.5 shrink-0 text-[rgb(var(--accent))]" />}
+                    {option.meta && <span className="mt-0.5 shrink-0 font-mono text-[10px] text-muted-2">{option.meta}</span>}
+                    {active && <Check size={11} className="mt-0.5 shrink-0 text-accent" />}
                   </button>
                 )
               })}
-              {!visible.length && <div className="px-2 py-5 text-center text-[9px] text-[rgb(var(--muted-2))]">No matching options</div>}
+              {!visible.length && <div className="px-2 py-5 text-center text-[11px] text-muted-2">No matching options</div>}
             </div>
           </div>,
           document.body,
@@ -192,13 +192,13 @@ export function BonsaiSelect({
           })
         }}
         className={
-          'bonsai-focus flex w-full items-center gap-2 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2.5 text-left text-[rgb(var(--text))] outline-none transition-colors hover:border-[rgb(var(--border-strong))] disabled:cursor-not-allowed disabled:opacity-50 ' +
-          (compact ? 'h-7 text-[9px]' : 'h-9 text-[11px]')
+          'bonsai-focus flex w-full items-center gap-2 rounded-[7px] border border-border bg-well px-2.5 text-left text-text outline-none transition-colors hover:border-border-strong focus:border-accent/55 disabled:cursor-not-allowed disabled:opacity-50 ' +
+          (compact ? 'h-7 text-[11px]' : 'h-8 text-[12px]')
         }
       >
-        <span className={'min-w-0 flex-1 truncate ' + (!selected ? 'text-[rgb(var(--muted-2))]' : '')}>{selected?.label ?? placeholder}</span>
-        {selected?.meta && <span className="shrink-0 text-[8px] text-[rgb(var(--muted-2))]">{selected.meta}</span>}
-        <ChevronDown size={12} className={'shrink-0 text-[rgb(var(--muted-2))] transition-transform ' + (open ? 'rotate-180' : '')} />
+        <span className={'min-w-0 flex-1 truncate ' + (!selected ? 'text-muted-2' : '')}>{selected?.label ?? placeholder}</span>
+        {selected?.meta && <span className="shrink-0 font-mono text-[10px] text-muted-2">{selected.meta}</span>}
+        <ChevronDown size={12} className={'shrink-0 text-muted-2 transition-transform ' + (open ? 'rotate-180' : '')} />
       </button>
       {menu}
     </div>

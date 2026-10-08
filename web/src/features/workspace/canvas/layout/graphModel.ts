@@ -43,10 +43,6 @@ function sortBranches(nodes: Node[], placements: NodePlacements) {
     if (ax !== undefined && bx !== undefined && ax !== bx) return ax - bx
     if (ax !== undefined && bx === undefined) return -1
     if (ax === undefined && bx !== undefined) return 1
-    const aTag = String(a.data?.tag ?? '')
-    const bTag = String(b.data?.tag ?? '')
-    const byTag = aTag.localeCompare(bTag)
-    if (byTag) return byTag
     const byTitle = String(a.data?.title ?? '').localeCompare(String(b.data?.title ?? ''))
     if (byTitle) return byTitle
     return a.id.localeCompare(b.id)

@@ -1,11 +1,8 @@
 export type Health = 'healthy' | 'warning' | 'error' | 'idle'
 export type WorktreeKind = 'Production' | 'Feature' | 'Bug' | 'Refactor' | 'Chore'
 export type WorktreeSourceType = 'existing' | 'origin' | 'new'
-export type TagColor = 'purple' | 'blue' | 'green' | 'orange' | 'red' | 'cyan' | 'pink'
 export type AgentState = 'running' | 'idle' | 'finished'
 export type AgentPresentation = 'canvas' | 'history' | 'archived'
-export type BoardStatus = string
-export type BoardKind = string
 export type PrStatus = 'Draft' | 'Open' | 'Closed' | 'Merged'
 export type CiStatus = 'unknown' | 'none' | 'running' | 'passed' | 'failed' | 'waiting'
 export type DockPanelKey = 'files' | 'prs'
@@ -48,12 +45,6 @@ export interface Project {
   openPrCount: number
 }
 
-export interface WorktreeTag {
-  id: string
-  name: string
-  color: TagColor
-}
-
 export interface Worktree {
 	path?: string
 	main?: boolean
@@ -64,8 +55,6 @@ export interface Worktree {
   projectId: string
   branch: string
   kind: WorktreeKind
-  tag: string
-  tagId?: string
   sourceType: WorktreeSourceType
   remoteBranch?: string
   mergeTargetBranch: string
@@ -92,7 +81,6 @@ export interface CreateWorktreeInput {
   sourceType: WorktreeSourceType
   sourceRef: string
   branchName?: string
-  tagId: string
   mergeTargetBranch: string
 }
 
@@ -200,36 +188,6 @@ export interface PullRequest {
   commits: { sha: string; message: string; author: string; time?: string }[]
   conversation: { author: string; body: string; time: string; kind?: 'comment' | 'review' | 'system' | 'checks' }[]
   files: { path: string; additions: number; deletions: number; diff: string[] }[]
-}
-
-export interface BoardList {
-  id: string
-  name: string
-  color: TagColor
-  priority: string
-  itemType: string
-  order: number
-  archived?: boolean
-}
-
-export interface BoardPriority {
-  id: string
-  name: string
-  rank: number
-}
-
-export interface BoardType {
-  id: string
-  name: string
-}
-
-export interface BoardItem {
-  id: string
-  title: string
-  kind: BoardKind
-  status: BoardStatus
-  assignee: string
-  priority: string
 }
 
 export interface RepoFile {

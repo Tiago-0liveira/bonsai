@@ -132,10 +132,9 @@ describe('stable snapshot reconciliation and consumers', () => {
     next.processes = []
     applySnapshot(next)
     expect(useBonsaiStore.getState()).toMatchObject({ agents: [], selection: { type: 'project', id: 'a' }, dockRuntimeId: '', openRuntimeIds: [], nodePlacements: { 'b-other': { x: 3, y: 3 } } })
-    useBonsaiStore.setState({ worktreeGroups: { b: [{ id: 'unlinked:b', kind: 'unlinked', worktree_ids: ['b-other'] }] }, collapsedTagGroups: ['b:feat'], expandedAutomaticGroups: ['unlinked:b'], nodePlacements: { ...useBonsaiStore.getState().nodePlacements, 'stack:b:feat': { x: 1, y: 1, mode: 'manual' }, 'stack:unlinked:b': { x: 2, y: 2, mode: 'manual' } } })
+    useBonsaiStore.setState({ worktreeGroups: { b: [{ id: 'unlinked:b', kind: 'unlinked', worktree_ids: ['b-other'] }] }, expandedAutomaticGroups: ['unlinked:b'], nodePlacements: { ...useBonsaiStore.getState().nodePlacements, 'stack:unlinked:b': { x: 2, y: 2, mode: 'manual' } } })
     reconcileCatalog([snapshot('a').repository])
     expect(useBonsaiStore.getState().nodePlacements).toEqual({})
-    expect(useBonsaiStore.getState().collapsedTagGroups).toEqual([])
     expect(useBonsaiStore.getState().expandedAutomaticGroups).toEqual([])
   })
 

@@ -56,14 +56,14 @@ describe('dedicated preference writer', () => {
     expect(JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!).state).toMatchObject({ dockHeight: 46, viewport: { x: 1, y: 2, zoom: 0.6 } })
   })
 
-  it('saves board edits immediately along with any pending layout, without a stale later write', () => {
+  it('saves detached-stack edits immediately along with any pending layout, without a stale later write', () => {
     const disk = vi.spyOn(Storage.prototype, 'setItem')
     store.setState({ dockHeight: 40 })
-    store.setState({ boardItems: store.getState().boardItems.map((item, index) => index === 0 ? { ...item, title: 'My edited card' } : item) })
+    store.setState({ detachedStackWorktreeIds: ['tree'] })
     expect(disk).toHaveBeenCalledTimes(1)
     const saved = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!).state
     expect(saved.dockHeight).toBe(40)
-    expect(saved.boardItems[0].title).toBe('My edited card')
+    expect(saved.detachedStackWorktreeIds).toEqual(['tree'])
     vi.runAllTimers()
     expect(disk).toHaveBeenCalledTimes(1)
   })

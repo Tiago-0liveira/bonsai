@@ -113,65 +113,65 @@ function StartProcessForm() {
     }
   }
 
-  const labelClass = 'mb-1.5 block text-[9px] font-semibold uppercase tracking-[.11em] text-[rgb(var(--muted-2))]'
-  const inputClass = 'bonsai-focus w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2.5 py-2 text-[11px] outline-none'
+  const labelClass = 'mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.11em] text-muted-2'
+  const inputClass = 'bonsai-focus w-full rounded-[7px] border border-border bg-well px-2.5 py-1.5 text-[12px] outline-none placeholder:text-muted-2 focus:border-accent/55'
 
   return (
     <div className="absolute inset-0 z-[85] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
-      <form onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="start-process-title" className="w-full max-w-[720px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-[0_30px_100px_rgb(0_0_0/.65)]">
-        <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-4">
-          <Play size={15} className="mr-2 text-[rgb(var(--accent))]" />
-          <div><div id="start-process-title" className="text-[12px] font-semibold">Start process</div><div className="text-[9px] text-[rgb(var(--muted-2))]">Choose the worktree, package and command.</div></div>
-          <button type="button" disabled={pending} onClick={() => close(false)} aria-label="Close start process" className="bonsai-focus ml-auto grid h-7 w-7 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]"><X size={14} /></button>
+      <form onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="start-process-title" className="w-full max-w-[720px] overflow-hidden rounded-[14px] border border-border-strong bg-panel shadow-overlay">
+        <div className="flex h-11 items-center border-b border-border-subtle px-4">
+          <Play size={15} className="mr-2 text-accent" />
+          <div><div id="start-process-title" className="text-[13px] font-semibold">Start process</div><div className="font-mono text-[10px] text-muted-2">Choose the worktree, package and command.</div></div>
+          <button type="button" disabled={pending} onClick={() => close(false)} aria-label="Close start process" className="bonsai-focus ml-auto grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-panel-3 hover:text-text"><X size={14} /></button>
         </div>
         <div className="max-h-[72vh] space-y-5 overflow-auto p-4">
           <label className="block"><span className={labelClass}>Worktree</span>
-            <BonsaiSelect ariaLabel="Process worktree and branch" disabled={pending} searchable value={worktreeId} onChange={id => { if (id !== worktreeId) { setCatalog(null); setCommandId(''); setWorktreeId(id) } }} placeholder="Choose a worktree" options={availableWorktrees.map(tree => ({ value: tree.id, label: tree.branch, description: tree.path, meta: tree.tag }))} />
+            <BonsaiSelect ariaLabel="Process worktree and branch" disabled={pending} searchable value={worktreeId} onChange={id => { if (id !== worktreeId) { setCatalog(null); setCommandId(''); setWorktreeId(id) } }} placeholder="Choose a worktree" options={availableWorktrees.map(tree => ({ value: tree.id, label: tree.branch, description: tree.path }))} />
           </label>
           <section>
-            <div className="mb-2 flex items-center justify-between"><span className={labelClass}>Packages</span><button type="button" disabled={!worktreeId || loading || pending} onClick={() => setReload(value => value + 1)} className="bonsai-focus rounded px-2 text-[9px] text-[rgb(var(--muted))] disabled:opacity-40">Refresh</button></div>
-            {!worktreeId && <p className="text-[11px] text-[rgb(var(--muted))]">Choose a worktree to discover its packages and build tools.</p>}
-            {loading && <p role="status" className="text-[11px] text-[rgb(var(--muted))]">Finding packages…</p>}
-            {catalog && !providers.length && <p className="text-[11px] text-[rgb(var(--muted))]">No packages or build tools found in this worktree.</p>}
+            <div className="mb-2 flex items-center justify-between"><span className={labelClass}>Packages</span><button type="button" disabled={!worktreeId || loading || pending} onClick={() => setReload(value => value + 1)} className="bonsai-focus rounded px-2 font-mono text-[10px] text-muted disabled:opacity-40">Refresh</button></div>
+            {!worktreeId && <p className="text-[11px] text-muted">Choose a worktree to discover its packages and build tools.</p>}
+            {loading && <p role="status" className="text-[11px] text-muted">Finding packages…</p>}
+            {catalog && !providers.length && <p className="text-[11px] text-muted">No packages or build tools found in this worktree.</p>}
             <div className="grid grid-cols-2 gap-2">
               {providers.map(provider => {
                 const id = JSON.stringify([provider.id, provider.root])
                 const active = packageId === id
                 const count = (catalog?.commands ?? []).filter(command => command.provider === provider.id && (command.project_root || command.invocation.working_dir) === provider.root).length
-                return <button type="button" key={id} disabled={pending} aria-pressed={active} onClick={() => { setPackageId(id); setCommandId(''); setValues({}) }} className={'bonsai-focus min-w-0 rounded-lg border p-3 text-left transition-colors ' + (active ? 'border-[rgb(var(--accent)/.56)] bg-[rgb(var(--accent)/.10)]' : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] hover:border-[rgb(var(--border-strong))]')}>
-                  <div className="flex items-center gap-2 text-[11px] font-medium"><Package size={13} className="shrink-0 text-[rgb(var(--accent))]" />{provider.name}<span className="ml-auto text-[9px] text-[rgb(var(--muted-2))]">{count} commands</span></div>
-                  <div title={provider.root} className="mt-1.5 truncate font-mono text-[9px] text-[rgb(var(--muted-2))]">{scope(provider.root)}</div>
+                return <button type="button" key={id} disabled={pending} aria-pressed={active} onClick={() => { setPackageId(id); setCommandId(''); setValues({}) }} className={'bonsai-focus min-w-0 rounded-[10px] border p-3 text-left transition-colors ' + (active ? 'border-accent/55 bg-accent/10' : 'border-border bg-well hover:border-border-strong')}>
+                  <div className="flex items-center gap-2 text-[11px] font-medium"><Package size={13} className="shrink-0 text-accent" />{provider.name}<span className="ml-auto font-mono text-[10px] text-muted-2">{count} commands</span></div>
+                  <div title={provider.root} className="mt-1.5 truncate font-mono text-[10px] text-muted-2">{scope(provider.root)}</div>
                 </button>
               })}
             </div>
           </section>
           {packageId && <label className="block"><span className={labelClass}>Command</span><BonsaiSelect ariaLabel="Process command" disabled={pending || !commands.length} searchable value={commandId} onChange={id => { setCommandId(id); setValues({}) }} placeholder={commands.length ? 'Choose a command' : 'No commands found in this package'} options={commands.map(command => ({ value: command.id, label: command.name, description: command.raw || command.description, meta: command.provider }))} /></label>}
-          {selected && <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--bg))] p-3"><div className={labelClass}>Run command</div><code className="block break-all text-[11px]">{preview ? [preview.program, ...(preview.args ?? [])].map(arg => /^[a-zA-Z0-9_./:=@-]+$/.test(arg) ? arg : JSON.stringify(arg)).join(' ') : previewError || 'Resolving command…'}</code><div className="mt-2 break-all text-[9px] text-[rgb(var(--muted-2))]">{selected.invocation.working_dir}</div></div>}
+          {selected && <div className="rounded-[10px] border border-border bg-well p-3"><div className={labelClass}>Run command</div><code className="block break-all text-[11px]">{preview ? [preview.program, ...(preview.args ?? [])].map(arg => /^[a-zA-Z0-9_./:=@-]+$/.test(arg) ? arg : JSON.stringify(arg)).join(' ') : previewError || 'Resolving command…'}</code><div className="mt-2 break-all text-[9px] text-muted-2">{selected.invocation.working_dir}</div></div>}
           {selected?.args?.map(arg => <label key={arg.id} className="block"><span className={labelClass}>{arg.name || arg.id}{arg.required ? ' *' : ''}</span>
             {arg.type === 'bool' ? <BonsaiSelect ariaLabel={arg.name || arg.id} disabled={pending} value={values[arg.id] ?? ''} onChange={value => setValues(current => ({ ...current, [arg.id]: value }))} options={[{ value: '', label: 'Use default' }, { value: 'true', label: 'Enabled' }, { value: 'false', label: 'Disabled' }]} />
               : arg.choices?.length ? <BonsaiSelect ariaLabel={arg.name || arg.id} disabled={pending} value={values[arg.id] ?? ''} onChange={value => setValues(current => ({ ...current, [arg.id]: value }))} placeholder={arg.default || 'Choose a value'} options={arg.choices.map(value => ({ value, label: value }))} />
                 : arg.variadic || arg.kind === 'passthrough' ? <textarea aria-label={arg.name || arg.id} disabled={pending} value={values[arg.id] ?? ''} onChange={event => setValues(current => ({ ...current, [arg.id]: event.target.value }))} placeholder="One argument per line" rows={3} className={inputClass} />
                   : <input aria-label={arg.name || arg.id} required={arg.required && arg.default === undefined} disabled={pending} value={values[arg.id] ?? ''} onChange={event => setValues(current => ({ ...current, [arg.id]: event.target.value }))} placeholder={arg.default} className={inputClass} />}
-            {arg.description && <span className="mt-1 block text-[9px] text-[rgb(var(--muted-2))]">{arg.description}</span>}
+            {arg.description && <span className="mt-1 block font-mono text-[10px] text-muted-2">{arg.description}</span>}
           </label>)}
           <label className="block"><span className={labelClass}>Restart policy</span>
             <BonsaiSelect ariaLabel="Restart policy" disabled={pending} value={policyMode} onChange={value => setPolicyMode(value as typeof policyMode)} options={[
               { value: 'inherit', label: 'Use project default', description: inherited ? `${inherited.mode} · ${inherited.max_restarts} additional attempts` : 'Choose a command to resolve the default' },
               { value: 'no', label: 'Never' }, { value: 'on-failure', label: 'On failure' }, { value: 'always', label: 'Always' },
             ]} />
-            {policyMode === 'inherit' && inherited && <span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">Project default: {inherited.mode} · maximum {inherited.max_restarts} retries</span>}
+            {policyMode === 'inherit' && inherited && <span className="mt-1 block text-[10px] text-muted">Project default: {inherited.mode} · maximum {inherited.max_restarts} retries</span>}
           </label>
           {effectiveMode && effectiveMode !== 'no' && <label className="block"><span className={labelClass}>Maximum retries</span>
             <input aria-label="Maximum retries" type="number" min={0} max={100} step={1} disabled={pending || policyMode === 'inherit'} value={policyMode === 'inherit' ? inherited?.max_restarts ?? 5 : maxRetries} onChange={event => setMaxRetries(event.target.value)} className={inputClass} />
-            <span className="mt-1 block text-[9px] text-[rgb(var(--muted))]">Additional attempts after the initial launch (0–100). Zero disables retries.</span>
+            <span className="mt-1 block font-mono text-[10px] text-muted">Additional attempts after the initial launch (0–100). Zero disables retries.</span>
           </label>}
-          {previewError && <p role="alert" className="text-[11px] text-[rgb(var(--danger))]">{previewError}</p>}
-          {catalog?.warnings?.map((warning, index) => <p key={index} className="text-[10px] text-[rgb(var(--warn))]">{warning.message}</p>)}
-          {error && <p role="alert" className="text-[11px] text-[rgb(var(--danger))]">{error}</p>}
+          {previewError && <p role="alert" className="text-[11px] text-danger">{previewError}</p>}
+          {catalog?.warnings?.map((warning, index) => <p key={index} className="text-[10px] text-warn">{warning.message}</p>)}
+          {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
         </div>
-        <div className="flex items-center justify-between border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.45)] px-4 py-3">
-          <div className="text-[9px] text-[rgb(var(--muted-2))]">{catalog ? `${providers.length} packages · ${catalog.commands?.length ?? 0} commands` : 'Run a package command in your worktree'}</div>
-          <div className="flex gap-2"><button type="button" disabled={pending} onClick={() => close(false)} className="bonsai-focus rounded-md px-3 py-2 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]">Cancel</button><button type="submit" disabled={!canStart} className="bonsai-focus rounded-md border border-[rgb(var(--accent)/.45)] bg-[rgb(var(--accent)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Starting…' : 'Start process'}</button></div>
+        <div className="flex items-center justify-between border-t border-border-subtle bg-well/45 px-4 py-3">
+          <div className="font-mono text-[10px] text-muted-2">{catalog ? `${providers.length} packages · ${catalog.commands?.length ?? 0} commands` : 'Run a package command in your worktree'}</div>
+          <div className="flex gap-2"><button type="button" disabled={pending} onClick={() => close(false)} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px] text-muted hover:text-text">Cancel</button><button type="submit" disabled={!canStart} className="bonsai-focus btn-primary h-8 px-3 text-[12px] disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Starting…' : 'Start process'}</button></div>
         </div>
       </form>
     </div>

@@ -13,7 +13,6 @@ import {
   Search,
   Settings,
   Square,
-  Table2,
   TerminalSquare,
   UploadCloud,
   DownloadCloud,
@@ -61,23 +60,23 @@ export function CommandPalette() {
         if (event.target === event.currentTarget) setOpen(false)
       }}
     >
-      <Command className="mx-auto w-full max-w-[620px] overflow-hidden rounded-lg border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-2xl">
-        <div className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3">
-          <Search size={15} className="text-[rgb(var(--muted-2))]" />
+      <Command className="mx-auto w-full max-w-[620px] overflow-hidden rounded-[14px] border border-border-strong bg-panel shadow-overlay">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-3">
+          <Search size={15} className="text-muted-2" />
           <Command.Input
             autoFocus
             placeholder="Search commands and views…"
-            className="h-11 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[rgb(var(--muted-2))]"
+            className="h-11 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-2"
           />
           <span className="bonsai-kbd">Esc</span>
         </div>
-        <p className="px-3 py-2 text-[10px] text-[rgb(var(--muted-2))]">Antigravity profiles support interactive terminals. Generic shells are unavailable.</p>
+        <p className="px-3 py-2 font-mono text-[10px] text-muted-2">Antigravity profiles support interactive terminals. Generic shells are unavailable.</p>
         <Command.List className="max-h-[420px] overflow-y-auto p-2">
-          <Command.Empty className="p-8 text-center text-[12px] text-[rgb(var(--muted))]">
+          <Command.Empty className="p-8 text-center text-[12px] text-muted">
             No command found.
           </Command.Empty>
 
-          <Command.Group heading="Workspace" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">
+          <Command.Group heading="Workspace" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-muted-2">
             <CommandItem icon={LocateFixed} label="Fit canvas" onSelect={() => run(() => requestCanvasAction('fit'))} />
             <CommandItem icon={Network} label="Auto-layout canvas" onSelect={() => run(() => requestCanvasAction('layout'))} />
             <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
@@ -87,7 +86,7 @@ export function CommandPalette() {
             <CommandItem icon={TerminalSquare} label="Open terminal" disabled={agent?.providerId !== 'antigravity'} onSelect={() => run(() => openTerminal(agent!.id))} />
           </Command.Group>
 
-          <Command.Group heading="Commands" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">
+          <Command.Group heading="Commands" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-muted-2">
             <CommandItem icon={Play} label="Run pnpm dev" disabled hint="unavailable" />
             <CommandItem icon={Play} label="Run pnpm test" disabled hint="unavailable" />
             <CommandItem icon={Play} label="Run cargo test" disabled hint="unavailable" />
@@ -97,9 +96,8 @@ export function CommandPalette() {
             <CommandItem icon={GitCommitHorizontal} label="Commit staged changes" onSelect={() => run(() => { const message = window.prompt('Commit message'); if (message?.trim()) void localCommand('commit', { message }) })} />
           </Command.Group>
 
-          <Command.Group heading="Navigate" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-[rgb(var(--muted-2))]">
+          <Command.Group heading="Navigate" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-muted-2">
             <CommandItem icon={GitPullRequest} label="Open PRs" onSelect={() => run(() => navigate({ to: '/pull-requests' }))} />
-            <CommandItem icon={Table2} label="Open Tables" onSelect={() => run(() => navigate({ to: '/tables' }))} />
             <CommandItem icon={FileCode2} label="Open Files" onSelect={() => run(() => navigate({ to: '/files' }))} />
             <CommandItem icon={Settings} label="Open Settings" onSelect={() => run(() => void navigate({ to: '/settings' }))} />
           </Command.Group>
@@ -127,11 +125,11 @@ function CommandItem({
       value={label}
       onSelect={onSelect}
       disabled={disabled}
-      className="data-[disabled=true]:opacity-40 flex cursor-default select-none items-center gap-2 rounded-md px-2.5 py-2 text-[12px] text-[rgb(var(--muted))] outline-none data-[selected=true]:bg-[rgb(var(--accent)/.12)] data-[selected=true]:text-[rgb(var(--text))]"
+      className="data-[disabled=true]:opacity-40 flex cursor-default select-none items-center gap-2 h-8 rounded-[7px] px-2.5 text-[12px] text-muted outline-none aria-selected:bg-accent/12 aria-selected:text-text"
     >
       <Icon size={14} />
       <span>{label}</span>
-      {hint && <span className="ml-auto text-[10px] text-[rgb(var(--muted-2))]">{hint}</span>}
+      {hint && <span className="ml-auto font-mono text-[10px] text-muted-2">{hint}</span>}
     </Command.Item>
   )
 }

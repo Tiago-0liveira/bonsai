@@ -64,74 +64,74 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
   return <section className="mx-auto w-full max-w-2xl space-y-5 p-6" aria-labelledby="project-roots-title">
     <div className="flex items-center justify-between gap-4">
       <h1 id="project-roots-title" className="text-xl font-semibold">{selectingRepositories ? 'Repositories found' : 'Project folders'}</h1>
-      {onDismiss && <button className="bonsai-focus rounded border px-3 py-1" onClick={onDismiss}>Later</button>}
+      {onDismiss && <button className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px]" onClick={onDismiss}>Later</button>}
     </div>
 
-    {error && <div role="alert" className="rounded border border-danger p-3 text-sm">{error} <button onClick={() => void loadProjectRoots().catch(() => undefined)} className="underline">Reload settings</button></div>}
+    {error && <div role="alert" className="rounded-[10px] border border-danger/35 bg-danger-solid/20 p-3 text-sm text-danger">{error} <button onClick={() => void loadProjectRoots().catch(() => undefined)} className="underline">Reload settings</button></div>}
     {loading && <p role="status">Loading project folders…</p>}
 
     {settings && selectingRepositories ? <>
-      <p className="text-sm text-[rgb(var(--muted))]">Choose which discovered repositories Bonsai should activate, watch, and synchronize. Unchecked repositories remain discovered but inactive.</p>
-      {discoveryNotes.length > 0 && <div role="status" className="rounded border border-warn-solid p-3 text-sm">
+      <p className="text-sm text-muted">Choose which discovered repositories Bonsai should activate, watch, and synchronize. Unchecked repositories remain discovered but inactive.</p>
+      {discoveryNotes.length > 0 && <div role="status" className="rounded-[10px] border border-warn-solid/22 bg-warn-solid/8 p-3 text-sm text-warn">
         <p className="font-medium">Discovery notes</p>
-        {discoveryNotes.map(message => <p className="mt-1 text-[rgb(var(--muted))]" key={message}>{message}</p>)}
+        {discoveryNotes.map(message => <p className="mt-1 text-muted" key={message}>{message}</p>)}
       </div>}
       {discovered.length > 0 ? <>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm">{selectedCount} of {discovered.length} selected</p>
           <div className="flex gap-2">
-            <button disabled={saving} onClick={() => setSelectedIds(new Set(discovered.map(repository => repository.id)))} className="bonsai-focus rounded border px-3 py-1 text-sm">Select all</button>
-            <button disabled={saving} onClick={() => setSelectedIds(new Set())} className="bonsai-focus rounded border px-3 py-1 text-sm">Select none</button>
+            <button disabled={saving} onClick={() => setSelectedIds(new Set(discovered.map(repository => repository.id)))} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px]">Select all</button>
+            <button disabled={saving} onClick={() => setSelectedIds(new Set())} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px]">Select none</button>
           </div>
         </div>
         <ul className="space-y-2">
-          {discovered.map(repository => <li key={repository.id} className="rounded border border-[rgb(var(--border))] p-3">
+          {discovered.map(repository => <li key={repository.id} className="rounded-[10px] border border-border bg-panel-2 p-3">
             <label className="flex cursor-pointer items-start gap-3">
               <input type="checkbox" checked={selectedIds.has(repository.id)} onChange={() => toggleRepository(repository.id)} disabled={saving} className="mt-1" />
               <span className="min-w-0">
                 <span className="block font-medium">{repository.name}</span>
-                <span className="block break-all font-mono text-xs text-[rgb(var(--muted))]">{repository.path}</span>
+                <span className="block break-all font-mono text-xs text-muted">{repository.path}</span>
               </span>
             </label>
           </li>)}
         </ul>
       </> : <p>No Git repositories were found in the configured folders.</p>}
       <div className="flex justify-between gap-3">
-        <button disabled={saving} onClick={() => setSelectingRepositories(false)} className="bonsai-focus rounded border px-4 py-2">Back to folders</button>
-        <button disabled={saving} onClick={() => void saveSelection()} className="bonsai-focus rounded bg-[rgb(var(--accent-solid))] px-4 py-2 text-[rgb(var(--accent-fg))] disabled:opacity-50">{saving ? 'Saving…' : 'Use selected repositories'}</button>
+        <button disabled={saving} onClick={() => setSelectingRepositories(false)} className="bonsai-focus btn-bordered h-9 rounded-[7px] px-4 text-[12px]">Back to folders</button>
+        <button disabled={saving} onClick={() => void saveSelection()} className="bonsai-focus btn-primary h-9 px-4 text-[12px] disabled:opacity-50">{saving ? 'Saving…' : 'Use selected repositories'}</button>
       </div>
     </> : settings && <>
-      <p className="text-sm text-[rgb(var(--muted))]">Choose folders on this computer where Bonsai should discover Git repositories. Discovery includes up to three levels of subfolders; discovered repositories are activated only after you select them.</p>
+      <p className="text-sm text-muted">Choose folders on this computer where Bonsai should discover Git repositories. Discovery includes up to three levels of subfolders; discovered repositories are activated only after you select them.</p>
       <ul className="space-y-3">
         {settings.roots.map(root => {
           const diagnostic = settings.diagnostics.find(d => d.root_id === root.id)
-          return <li key={root.id} className="rounded border border-[rgb(var(--border))] p-3">
+          return <li key={root.id} className="rounded-[10px] border border-border bg-panel-2 p-3">
             <div className="flex items-center justify-between gap-3">
               <span className="break-all font-mono text-sm">{root.path}</span>
-              <button disabled={saving} onClick={() => void remove(root.id)} className="bonsai-focus rounded border px-3 py-1" aria-label={`Remove ${root.path}`}>Remove</button>
+              <button disabled={saving} onClick={() => void remove(root.id)} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px]" aria-label={`Remove ${root.path}`}>Remove</button>
             </div>
             {diagnostic && !diagnostic.available && <p className="mt-2 text-sm">Folder unavailable</p>}
-            {diagnostic?.messages.map(message => <p className="mt-2 text-sm text-[rgb(var(--muted))]" key={message}>{message}</p>)}
+            {diagnostic?.messages.map(message => <p className="mt-2 text-sm text-muted" key={message}>{message}</p>)}
           </li>
         })}
       </ul>
       {settings.roots.length === 0 && <p>No project folders configured yet.</p>}
-      {discovered.length > 0 && <button disabled={saving} onClick={() => setSelectingRepositories(true)} className="bonsai-focus w-full rounded border border-[rgb(var(--border))] px-4 py-3 text-left">
+      {discovered.length > 0 && <button disabled={saving} onClick={() => setSelectingRepositories(true)} className="bonsai-focus btn-bordered w-full rounded-[10px] px-4 py-3 text-left">
         <span className="block font-medium">Review discovered repositories</span>
-        <span className="block text-sm text-[rgb(var(--muted))]">{settings.repositories.filter(repository => repository.selected).length} of {discovered.length} active</span>
+        <span className="block text-sm text-muted">{settings.repositories.filter(repository => repository.selected).length} of {discovered.length} active</span>
       </button>}
       {settings.suggestions.length > 0 && <div className="space-y-2">
         <p className="text-sm font-medium">Suggested folders</p>
-        <div className="flex flex-wrap gap-2">{settings.suggestions.filter(suggestion => !settings.roots.some(root => root.path === suggestion)).map(suggestion => <button key={suggestion} disabled={saving} onClick={() => setPath(suggestion)} className="bonsai-focus rounded border border-[rgb(var(--border))] px-3 py-2 text-sm">{suggestion}</button>)}</div>
+        <div className="flex flex-wrap gap-2">{settings.suggestions.filter(suggestion => !settings.roots.some(root => root.path === suggestion)).map(suggestion => <button key={suggestion} disabled={saving} onClick={() => setPath(suggestion)} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px]">{suggestion}</button>)}</div>
       </div>}
       <form onSubmit={add} className="space-y-2">
         <label htmlFor="project-root-path" className="block text-sm font-medium">Folder path</label>
         <div className="flex gap-2">
-          <input id="project-root-path" value={path} onChange={event => setPath(event.target.value)} placeholder="~/projects or an absolute path" className="bonsai-focus min-w-0 flex-1 rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3 py-2" />
-          <button type="submit" disabled={saving || !path.trim()} className="bonsai-focus rounded bg-[rgb(var(--accent-solid))] px-4 py-2 text-[rgb(var(--accent-fg))] disabled:opacity-50">{saving ? 'Scanning…' : 'Add folder'}</button>
+          <input id="project-root-path" value={path} onChange={event => setPath(event.target.value)} placeholder="~/projects or an absolute path" className="bonsai-focus h-9 min-w-0 flex-1 rounded-[7px] border border-border bg-well px-2.5 text-[12px] placeholder:text-muted-2 focus:border-accent/55" />
+          <button type="submit" disabled={saving || !path.trim()} className="bonsai-focus btn-primary h-9 px-4 text-[12px] disabled:opacity-50">{saving ? 'Scanning…' : 'Add folder'}</button>
         </div>
       </form>
-      <p className="text-xs text-[rgb(var(--muted))]">Removing a folder only changes discovery and future worktree placement. Your files, worktrees and running processes stay on disk.</p>
+      <p className="text-xs text-muted">Removing a folder only changes discovery and future worktree placement. Your files, worktrees and running processes stay on disk.</p>
     </>}
   </section>
 }

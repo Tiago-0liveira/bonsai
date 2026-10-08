@@ -187,7 +187,6 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
       headSha: w.local_head_sha,
       connection: w.connection ? { state: w.connection.state, reason: w.connection.reason, statusUnknown: w.connection.status_unknown } : undefined,
       kind: w.main ? 'Production' : 'Feature',
-      tag: meta?.tag || (w.main ? 'production' : 'untagged'),
       sourceType: 'existing',
       mergeTargetBranch: pr?.base ?? (meta?.merge_target_branch || snapshot.repository.default_branch),
       stackPreference: meta?.stack_preference || 'auto',

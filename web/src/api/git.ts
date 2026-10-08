@@ -175,7 +175,7 @@ export interface Snapshot {
     pr_catalog_complete?: boolean
     pr_catalog_loading?: boolean
   }
-  metadata: Record<string, { tag: string; merge_target_branch: string; stack_preference: 'auto' | 'never' }>
+  metadata: Record<string, { merge_target_branch: string; stack_preference: 'auto' | 'never' }>
   processes?: ProcessSummary[]
   freshness?: Record<string, WireFreshness>
   worktree_state?: Record<string, WorktreeProjection>
@@ -397,7 +397,7 @@ export async function createWorktree(input: CreateWorktreeInput, options: { idem
     if (canonical.activeProjectId === projectId) canonical.setSelection({ type: 'worktree', id: worktreeId })
   }
   try {
-    await updateMetadata(worktreeId, { merge_target_branch: input.mergeTargetBranch, tag: state.worktreeTags.find(t => t.id === input.tagId)?.name ?? '' })
+    await updateMetadata(worktreeId, { merge_target_branch: input.mergeTargetBranch })
   } catch (error) {
     throw new WorktreeMetadataError(worktreeId, error)
   }
@@ -568,7 +568,6 @@ export function reconcileCatalog(repos: Repository[]) {
     detachedStackWorktreeIds: state.detachedStackWorktreeIds.filter(id => !removedTrees.has(id)),
     expandedHistoryWorktreeIds: state.expandedHistoryWorktreeIds.filter(id => !removedTrees.has(id)),
     collapsedBranchIds: state.collapsedBranchIds.filter(id => !removedTrees.has(id)).map(migrateKey),
-    collapsedTagGroups: state.collapsedTagGroups.filter(key => !removedProjects.some(project => key.startsWith(`${project.id}:`))).map(key => launch && key.startsWith('local:') ? launch.id + key.slice(5) : key),
     expandedAutomaticGroups: state.expandedAutomaticGroups.filter(id => !removedGroups.has(id)),
     projects: repos.map(r => {
       const previous = state.projects.find(p => p.id === r.id)
