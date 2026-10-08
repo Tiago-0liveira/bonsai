@@ -82,16 +82,26 @@ test('real daemon: launch opens logs, retries and restart retain history, duplic
   }))
   const scrolled = await launch(page, 'scroll', 'Never')
   const viewport = scrolled.terminal.locator('.xterm-viewport')
+  // Let the initial burst finish rendering; xterm re-syncs the viewport after each write,
+  // which would undo a scroll made while earlier output is still being parsed.
+  await expect(scrolled.terminal.locator('.xterm-screen')).toContainText('FINAL_WITHOUT_NEWLINE')
   await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-  // The scroll event is dispatched on the next frame. Output that xterm writes before it
-  // runs still sees a viewport pinned to the bottom and scrolls back down, so wait for it.
-  await viewport.evaluate(async element => {
-    element.scrollTop = 0
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-  })
+  // xterm ignores the scroll event that follows its own scrollTop sync, so a DOM scrollTop of 0
+  // does not prove its buffer moved. The rendered rows do: INITIAL_OUTPUT is the first line.
+  const frames = () => viewport.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  const atTop = async () => {
+    await viewport.evaluate(element => { element.scrollTop = 10 }); await frames()
+    await viewport.evaluate(element => { element.scrollTop = 0 }); await frames()
+    return (await viewport.evaluate(element => element.scrollTop)) === 0 &&
+      /INITIAL_OUTPUT/.test(await scrolled.terminal.locator('.xterm-screen').innerText())
+  }
+  await expect.poll(atTop).toBe(true)
   const before = ticks
   await expect.poll(() => ticks).toBeGreaterThan(before)
-  await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBe(0)
+  // Give xterm a frame to render the live tick, then check it did not follow it to the bottom.
+  await frames()
+  expect(await viewport.evaluate(element => element.scrollTop)).toBe(0)
+  await expect(scrolled.terminal.locator('.xterm-screen')).toContainText('INITIAL_OUTPUT')
   await scrolled.terminal.getByRole('button', { name: 'Stop process', exact: true }).click()
   const backoff = await launch(page, 'fail', 'On failure', 3, 'CANCEL_RETRY')
   await expect(backoff.terminal).toContainText('backoff', { timeout: 5000 })
