@@ -23,6 +23,7 @@ import { report, syncProject } from '../../../api/git'
 import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
 import { computeGlobalPlacements } from './layout/globalLayout'
 import { buildCanvasGraph } from './buildCanvasGraph'
+import { useActiveTheme } from '../../../theme/themeStore'
 import { applyCanvasSelection, createPrLabelSelector, reconcileCanvasNodes } from './graphReconciliation'
 import { reconcileById, shareEqual } from '../../../stores/reconciliation'
 import {
@@ -128,6 +129,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     runtimeOwners: Map<string, string>
     stacks: Map<string, string[]>
   } | null>(null)
+  const theme = useActiveTheme()
   const { fitView, getEdges, getNodes, getViewport, setCenter } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const fitViewRef = useRef(fitView)
@@ -462,6 +464,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         panOnDrag
         zoomOnDoubleClick={false}
         proOptions={{ hideAttribution: true }}
+        colorMode={theme.mode}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="rgb(var(--text) / .07)" />
         <Controls position="bottom-left" showInteractive={false} />

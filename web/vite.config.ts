@@ -44,6 +44,8 @@ export default defineConfig(({ mode }) => ({
       if (id.endsWith('/layout/AppShell.tsx')) return "import { Profiler } from 'react';\n" + code.replace('{children}</main>', '<Profiler id="main-workspace" onRender={(_id, phase, duration) => window.__bonsaiMetrics?.commits.push({phase, duration})}>{children}</Profiler></main>')
     },
   }],
+  // font-src 'self' blocks data: URIs, so small font subsets must stay files.
+  build: { assetsInlineLimit: (file: string) => file.endsWith('.woff2') ? false : undefined },
   // The test build alone enables React's production Profiler callbacks.
   resolve: { alias: mode === 'e2e' ? [{ find: /^react-dom(?:\/client)?$/, replacement: fileURLToPath(new URL('./node_modules/react-dom/profiling.js', import.meta.url)) }] : [] },
   server: {

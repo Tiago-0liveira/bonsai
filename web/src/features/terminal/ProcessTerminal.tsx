@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { Process } from '../../types'
+import { TERMINAL_FONT, bindTerminalAppearance, terminalTheme } from '../../theme/terminal'
+import { getActiveTheme } from '../../theme/themeStore'
 import { prepareProcessStream, disposeProcessStream, ProcessMarkerRenderer, type ProcessConnection } from '../../api/processStream'
 import { processHistory, restartProcess, stopProcess } from '../../api/processes'
 
@@ -17,6 +19,7 @@ export function ProcessTerminal({ process }: { process: Process }) {
     setConnection('connecting'); setError('')
     let terminal: Terminal | undefined, fit: FitAddon | undefined
     let disposed = false, queued = 0
+    let unbind: (() => void) | undefined
     const renderer = new ProcessMarkerRenderer()
     const stream = prepareProcessStream(process.projectId, process.daemonId)
     const resize = () => {
@@ -26,10 +29,10 @@ export function ProcessTerminal({ process }: { process: Process }) {
     const observer = new ResizeObserver(resize)
     observer.observe(element)
     const frame = requestAnimationFrame(() => {
-      void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]).then(([xterm, addon]) => {
+      void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit'), document.fonts?.load('11px "JetBrains Mono Variable"').catch(() => undefined)]).then(([xterm, addon]) => {
         if (disposed) return
-        terminal = new xterm.Terminal({ disableStdin: true, convertEol: true, fontSize: 12, scrollback: 5000, theme: { background: '#0c0e11', foreground: '#d7d9df' } })
-        fit = new addon.FitAddon(); terminal.loadAddon(fit); terminal.open(element); resize()
+        terminal = new xterm.Terminal({ disableStdin: true, convertEol: true, fontSize: 11, fontFamily: TERMINAL_FONT, scrollback: 5000, theme: terminalTheme(getActiveTheme()) })
+        fit = new addon.FitAddon(); terminal.loadAddon(fit); terminal.open(element); unbind = bindTerminalAppearance(terminal, resize); resize()
         stream.attach({
           connection: setConnection, error: setError,
           gap() { renderer.reset(); terminal?.writeln('\r\n[Retained output has a gap; earlier history is unavailable.]') },
@@ -45,7 +48,7 @@ export function ProcessTerminal({ process }: { process: Process }) {
       }).catch(() => { if (!disposed) setError('Unable to load the process terminal.') })
     })
     return () => {
-      disposed = true; cancelAnimationFrame(frame); observer.disconnect()
+      disposed = true; cancelAnimationFrame(frame); observer.disconnect(); unbind?.()
       disposeProcessStream(process.projectId, process.daemonId)
       requestAnimationFrame(() => requestAnimationFrame(() => terminal?.dispose()))
     }
