@@ -53,14 +53,14 @@ export function projectCanvasProcessesSelector(id: string) {
 
 export function processNodeSelector(id: string) {
   let input: Process[] | undefined
-  let result: Pick<Process, 'id' | 'projectId' | 'daemonId' | 'lifecycleStatus' | 'exitCode' | 'exitError'> | undefined
+  let result: Pick<Process, 'id' | 'projectId' | 'daemonId' | 'lifecycleStatus' | 'exitCode' | 'exitError' | 'port'> | undefined
   return (state: BonsaiState) => {
     if (input !== state.processes) {
       input = state.processes
       const process = input.find(process => process.id === id)
       result = shareEqual(result, process ? {
         id: process.id, projectId: process.projectId, daemonId: process.daemonId,
-        lifecycleStatus: process.lifecycleStatus, exitCode: process.exitCode, exitError: process.exitError,
+        lifecycleStatus: process.lifecycleStatus, exitCode: process.exitCode, exitError: process.exitError, port: process.port,
       } : undefined)
     }
     return result

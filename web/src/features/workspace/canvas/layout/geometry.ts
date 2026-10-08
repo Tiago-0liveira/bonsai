@@ -17,7 +17,7 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   if (type === 'project') return { width: 300, height: 154 }
   if (type === 'defaultBranch') return { width: 232, height: 132 }
   if (type === 'env') return { width: 150, height: 56 }
-  if (type === 'process') return { width: 240, height: 112 }
+  if (type === 'process') return { width: 153, height: 54 }
   if (type === 'runtimeShelf') return { width: 230, height: 74 }
   if (type === 'worktree') {
     const historyItems = node.data?.historyItems as unknown[] | undefined
