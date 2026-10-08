@@ -50,6 +50,8 @@ export function bindTerminalAppearance(terminal: AppearanceTarget, onMetrics: ()
   const unsubscribe = subscribeTheme(apply)
   void document.fonts?.ready.then(() => {
     if (!active) return
+    // xterm ignores assigning the current value, so switch away and back to force a cell re-measure.
+    terminal.options.fontFamily = 'monospace'
     terminal.options.fontFamily = TERMINAL_FONT
     onMetrics()
   }).catch(() => { /* font loading is best effort */ })

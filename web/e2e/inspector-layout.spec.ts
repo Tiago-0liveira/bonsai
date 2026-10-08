@@ -48,9 +48,9 @@ test('project cards fit long diagnostics and the last section remains reachable 
     const lastSection = inspector.locator('.inspector-section').last()
     const lastBox = (await lastSection.boundingBox())!
     expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(box.y + box.height)
-    // The inspector lives in the left rail beside the dock, so it must end inside the viewport.
+    // The inspector lives in the left rail beside the dock, so it must end at the rail's 16px bottom inset.
     const inspectorBox = (await inspector.boundingBox())!
-    expect(inspectorBox.y + inspectorBox.height).toBeLessThanOrEqual(720)
+    expect(inspectorBox.y + inspectorBox.height).toBeLessThanOrEqual(720 - 16)
   }
   await page.getByTitle('Maximize workspace').click()
   const viewport = inspector.locator('[data-radix-scroll-area-viewport]')
