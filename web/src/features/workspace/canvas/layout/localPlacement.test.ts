@@ -226,7 +226,7 @@ describe('shelf changes after Auto-layout', () => {
     expect(Object.keys(result).sort()).toEqual(['a0', 'a2'])
     expect(result.a0.y).toBe(result.a2.y)
     expect(result.a2.x - result.a0.x).toBe(202)
-    expect((result.a0.x + result.a2.x + 188) / 2).toBe(placements.owner.x + 115)
+    expect((result.a0.x + result.a2.x + 188) / 2).toBe(placements.owner.x + 150)
   })
 
   it('uses measured History height and treats manual agents as fixed obstacles', () => {

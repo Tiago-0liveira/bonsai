@@ -21,11 +21,10 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   if (type === 'runtimeShelf') return { width: 230, height: 74 }
   if (type === 'worktree') {
     const historyItems = node.data?.historyItems as unknown[] | undefined
-    // The History header is always visible when entries exist. Reserve the
+    // The History footer is always visible when entries exist. Reserve the
     // expanded rows as well so opening History never collides with an agent
     // shelf laid out beneath the worktree.
-    const historyAllowance = historyItems?.length ? 34 + historyItems.length * 32 : 0
-    return { width: 230, height: 154 + historyAllowance }
+    return { width: 300, height: 66 + (historyItems?.length ? 26 + historyItems.length * 24 : 0) }
   }
   if (type === 'stack') {
     const count = Math.max(Number(node.data?.stackCount) || 1,

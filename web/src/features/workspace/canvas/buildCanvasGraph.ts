@@ -81,6 +81,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     })
   })
 
+  const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
   const rootDefault = positionFor(project.id, { x: 420, y: 34 })
   const defaultBranchId = 'default:' + project.id
   const envId = 'env:' + project.id
@@ -205,6 +206,8 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         groupId: entry.groupId,
         connectionLabel: connectionLabel(worktree.connection?.reason, worktree.headSha, worktree.connection?.statusUnknown),
         subtitle: worktree.ahead + '↑ ' + worktree.behind + '↓',
+        ahead: worktree.ahead,
+        behind: worktree.behind,
         health: worktree.status,
         tag: worktree.tag,
         tagColor: presentation.foreground,
@@ -212,6 +215,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         tagBorder: presentation.border,
         tagCount: entry.items.length,
         mergeTargetBranch: worktree.mergeTargetBranch,
+        targetIsWorktree: Boolean(branchToWorktree.get(worktree.mergeTargetBranch)),
         prNumber: worktree.prNumber,
         prStatus: worktree.prStatus,
         ciStatus: worktree.ciStatus,
@@ -282,7 +286,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     })
   })
 
-  const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
   const structuralKeys = new Set<string>()
 
   projectWorktrees.forEach((worktree) => {
