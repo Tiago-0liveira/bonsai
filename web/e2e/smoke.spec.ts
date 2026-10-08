@@ -12,7 +12,6 @@ test('renders the Bonsai workspace and core dialogs without page errors', async 
   await expect(page.getByText('bonsai', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Canvas', { exact: true }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: 'New worktree' })).toBeVisible()
-  await expect(page.getByText('.env', { exact: true }).first()).toBeVisible()
   await expect(page.getByText(/visible nodes/)).toHaveCount(0)
 
   await page.getByRole('button', { name: 'New worktree' }).click()

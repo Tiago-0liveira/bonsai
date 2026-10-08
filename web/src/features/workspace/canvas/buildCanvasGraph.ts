@@ -17,7 +17,6 @@ export interface CanvasGraphInput {
   detachedStackWorktreeIds: string[]
   expandedAutomaticGroups: string[]
   nodePlacements: Record<string, NodePlacement>
-  envCount: number
 }
 
 function groupHealth(items: Worktree[]): Health {
@@ -30,7 +29,7 @@ function groupHealth(items: Worktree[]): Health {
 // Topology and status projection are pure; rendered geometry and selection are
 // reconciled separately and never written back by a status-only update.
 export function buildCanvasGraph(input: CanvasGraphInput) {
-  const { project, worktrees, agents, processes = [], tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envCount } = input
+  const { project, worktrees, agents, processes = [], tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements } = input
   const positionFor = (id: string, fallback: { x: number; y: number }) => {
     const placement = nodePlacements[id]
     return placement ? { x: placement.x, y: placement.y } : fallback
@@ -84,7 +83,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
   const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
   const rootDefault = positionFor(project.id, { x: 420, y: 34 })
   const defaultBranchId = 'default:' + project.id
-  const envId = 'env:' + project.id
   const nodes: Node[] = [
     {
       id: project.id,
@@ -117,19 +115,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         kind: 'default-branch',
         title: project.defaultBranch,
         defaultBranchInfo: project.defaultBranchInfo,
-      } satisfies BonsaiGraphData,
-    },
-    {
-      id: envId,
-      type: 'env',
-      draggable: false,
-      selectable: false,
-      position: { x: rootDefault.x + 370 + 34, y: rootDefault.y + 15 },
-      data: {
-        entityId: envId,
-        kind: 'env',
-        title: '.env',
-        envCount: envCount,
       } satisfies BonsaiGraphData,
     },
   ]

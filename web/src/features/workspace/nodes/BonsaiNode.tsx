@@ -53,7 +53,7 @@ export interface HistoryItemData {
 
 export interface BonsaiGraphData extends Record<string, unknown> {
   entityId: string
-  kind: 'project' | 'worktree' | 'agent' | 'process' | 'runtime-shelf' | 'stack' | 'default-branch' | 'env'
+  kind: 'project' | 'worktree' | 'agent' | 'process' | 'runtime-shelf' | 'stack' | 'default-branch'
   command?: string
   processStatus?: ProcessLifecycleStatus
   associationLabel?: string
@@ -89,7 +89,6 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   ciStatus?: CiStatus
   ciFailed?: number
   gitState?: string
-  envCount?: number
   worktreeId?: string
 }
 
@@ -217,25 +216,6 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
   )
 }
 
-function EnvCard({ data }: { data: BonsaiGraphData }) {
-  const setEnvEditorOpen = useBonsaiStore((state) => state.setEnvEditorOpen)
-  return (
-    <button
-      type="button"
-      onClick={() => setEnvEditorOpen(true)}
-      className="bonsai-focus group flex w-[150px] items-center gap-2 rounded-[10px] border border-border bg-panel p-2.5 text-left shadow-card hover:border-warn-solid"
-    >
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-warn-solid/14 text-warn">
-        <KeyRound size={13} />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-[10px] font-semibold">.env</span>
-        <span className="mt-0.5 block text-[8px] text-[rgb(var(--muted-2))]">{data.envCount ?? 0} variables</span>
-      </span>
-    </button>
-  )
-}
-
 function StackCard({ data }: { data: BonsaiGraphData }) {
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
@@ -316,7 +296,6 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
 
   if (data.kind === 'default-branch') return <DefaultBranchCard data={data} />
-  if (data.kind === 'env') return <EnvCard data={data} />
   if (data.kind === 'stack') return <StackCard data={data} />
 
   const shellWidth = data.kind === 'agent' ? 'w-[153px] h-[54px] flex flex-col px-2 pb-[5px] pt-[7px]' : data.kind === 'project' ? 'w-[370px] px-3.5 py-3' : 'w-[300px]'
@@ -541,4 +520,3 @@ export function WorktreeNode(props: NodeProps) { return <NodeShell data={props.d
 export function AgentNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={props.selected} /> }
 export function StackNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
 export function DefaultBranchNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
-export function EnvNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }

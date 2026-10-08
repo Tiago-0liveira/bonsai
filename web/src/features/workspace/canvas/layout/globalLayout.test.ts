@@ -22,7 +22,6 @@ function baseGraph() {
   const nodes = [
     node('project', 'project'),
     node('default:project', 'defaultBranch'),
-    node('env:project', 'env'),
     node('a', 'worktree', { tag: 'feat' }),
     node('b', 'worktree', { tag: 'bug' }),
     node('nested', 'worktree', { tag: 'feat' }),
@@ -43,12 +42,11 @@ describe('branch-block global layout', () => {
     expect(second).toEqual(first)
   })
 
-  it('keeps default branch left, env right, and nested worktrees below their parent', () => {
+  it('keeps default branch left and nested worktrees below their parent', () => {
     const { nodes, edges } = baseGraph()
     const positions = computeGlobalPlacements(nodes, edges)
 
     expect(positions['default:project'].x).toBeLessThan(positions.project.x)
-    expect(positions['env:project'].x).toBeGreaterThan(positions.project.x)
     expect(positions.nested.y).toBeGreaterThan(positions.a.y)
   })
 
@@ -155,10 +153,9 @@ describe('Auto-layout spacing regressions', () => {
   it('leaves space below every header companion', () => {
     const { nodes, edges } = baseGraph()
     nodes.find((item) => item.type === 'defaultBranch')!.measured = { width: 232, height: 430 }
-    nodes.find((item) => item.type === 'env')!.measured = { width: 150, height: 500 }
     const positions = computeGlobalPlacements(nodes, edges)
     expectNoOverlaps(nodes, positions)
-    expect(positions.a.y).toBe(positions['env:project'].y + 500 + LAYOUT.projectTopGap)
+    expect(positions.a.y).toBe(positions['default:project'].y + 430 + LAYOUT.projectTopGap)
   })
 
   it('reserves all stack rows before measurements exist', () => {

@@ -5,7 +5,6 @@ import { getDescendantIds, layoutGraph } from './layout'
 const nodes: Node[] = [
   { id: 'project', type: 'project', position: { x: 0, y: 0 }, data: {} },
   { id: 'default:project', type: 'defaultBranch', position: { x: 0, y: 0 }, data: {} },
-  { id: 'env:project', type: 'env', position: { x: 0, y: 0 }, data: {} },
   { id: 'parent', type: 'worktree', position: { x: 0, y: 0 }, data: {} },
   { id: 'child', type: 'worktree', position: { x: 0, y: 0 }, data: {} },
   { id: 'agent', type: 'agent', position: { x: 0, y: 0 }, data: {} },
@@ -30,10 +29,8 @@ describe('workspace hierarchy layout', () => {
     const agent = laidOut.find((node) => node.id === 'agent')
     const project = laidOut.find((node) => node.id === 'project')
     const defaultBranch = laidOut.find((node) => node.id === 'default:project')
-    const env = laidOut.find((node) => node.id === 'env:project')
     expect(child?.position.y).toBeGreaterThan(parent?.position.y ?? 0)
     expect(agent?.position.y).toBeGreaterThan(child?.position.y ?? 0)
     expect(defaultBranch?.position.x).toBeLessThan(project?.position.x ?? 0)
-    expect(env?.position.x).toBeGreaterThan(project?.position.x ?? 0)
   })
 })
