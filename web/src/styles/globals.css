@@ -4,21 +4,33 @@
 
 :root {
   color-scheme: dark;
-  --bg: 8 9 11;
-  --panel: 12 14 17;
-  --panel-2: 17 19 23;
-  --panel-3: 22 24 29;
-  --border: 43 46 54;
-  --border-strong: 65 68 78;
-  --text: 232 233 236;
-  --muted: 139 143 154;
-  --muted-2: 94 99 112;
-  --purple: 151 109 255;
-  --purple-soft: 151 109 255 / .12;
-  --green: 75 214 140;
-  --blue: 92 157 255;
-  --orange: 245 166 75;
-  --red: 243 103 114;
+  --bg: 28 17 11;
+  --well: 22 12 7;
+  --panel: 37 25 19;
+  --panel-2: 41 29 23;
+  --panel-3: 52 39 33;
+  --panel-4: 63 50 43;
+  --border-subtle: 47 33 26;
+  --border: 61 39 29;
+  --border-strong: 74 51 40;
+  --text: 245 222 212;
+  --muted: 188 202 187;
+  --muted-2: 134 148 134;
+  --faint: 107 83 72;
+  --accent: 107 251 154;
+  --accent-solid: 74 222 128;
+  --accent-fg: 0 33 12;
+  --ok: 164 240 205;
+  --warn: 255 182 148;
+  --warn-solid: 217 119 70;
+  --danger: 255 180 171;
+  --danger-solid: 147 0 10;
+  /* Legacy aliases: removed in P2-7 */
+  --purple: var(--accent); --green: var(--accent); --blue: var(--ok); --orange: var(--warn); --red: var(--danger);
+  --shadow-island: inset 0 1px 0 rgb(var(--accent-solid) / .12), 0 16px 32px -12px rgb(10 7 5 / .75);
+  --shadow-topbar: inset 0 1px 0 rgb(var(--accent-solid) / .14), 0 14px 28px -12px rgb(10 7 5 / .75);
+  --shadow-card:   inset 0 1px 0 rgb(var(--text) / .04), 0 14px 28px -16px rgb(10 7 5 / .85);
+  --shadow-overlay: 0 16px 32px -8px rgb(10 7 5 / .75), 0 0 0 1px rgb(var(--border));
   --font-sans: "Hanken Grotesk Variable", "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
