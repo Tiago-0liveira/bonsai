@@ -205,27 +205,27 @@ function EditorPreferenceDialog() {
 
   return (
     <div className="fixed inset-0 z-[120] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
-      <div className="w-full max-w-[430px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-2xl">
-        <div className="flex h-11 items-center border-b border-[rgb(var(--border))] px-3">
-          <FileCode2 size={13} className="mr-2 text-[rgb(var(--accent))]" />
+      <div className="w-full max-w-[430px] overflow-hidden rounded-[14px] border border-border-strong bg-panel shadow-overlay">
+        <div className="flex h-11 items-center border-b border-border-subtle px-3">
+          <FileCode2 size={13} className="mr-2 text-accent" />
           <div>
-            <div className="text-[11px] font-semibold">Open files with…</div>
-            <div className="max-w-[300px] truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{path}</div>
+            <div className="text-[13px] font-semibold">Open files with…</div>
+            <div className="max-w-[300px] truncate font-mono text-[10px] text-muted-2">{path}</div>
           </div>
-          <button onClick={close} className="ml-auto grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]"><X size={11} /></button>
+          <button onClick={close} className="ml-auto grid h-6 w-6 place-items-center rounded text-muted hover:bg-panel-3 hover:text-text"><X size={11} /></button>
         </div>
         <div className="space-y-1 p-2">
           {choices.map((choice) => (
-            <button key={choice.id} onClick={() => setEditorPreference(choice.id)} className="flex w-full items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left hover:border-[rgb(var(--border))] hover:bg-[rgb(var(--panel-2))]">
-              <span className="grid h-8 w-8 place-items-center rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))]"><ExternalLink size={12} /></span>
+            <button key={choice.id} onClick={() => setEditorPreference(choice.id)} className="flex w-full items-center gap-3 rounded-[10px] border border-transparent px-3 py-2.5 text-left hover:border-border hover:bg-panel-2">
+              <span className="grid h-8 w-8 place-items-center rounded-[7px] border border-border bg-well"><ExternalLink size={12} /></span>
               <span className="min-w-0">
-                <span className="block text-[10px] font-medium">{choice.label}</span>
-                <span className="mt-0.5 block text-[8px] text-[rgb(var(--muted-2))]">{choice.description}</span>
+                <span className="block text-[12px] font-medium">{choice.label}</span>
+                <span className="mt-0.5 block font-mono text-[10px] text-muted-2">{choice.description}</span>
               </span>
             </button>
           ))}
         </div>
-        <div className="border-t border-[rgb(var(--border))] px-3 py-2 text-[8px] text-[rgb(var(--muted-2))]">This saves your editor preference. Opening an external editor is unavailable in the connected app.</div>
+        <div className="border-t border-border-subtle px-3 py-2 font-mono text-[10px] text-muted-2">This saves your editor preference. Opening an external editor is unavailable in the connected app.</div>
       </div>
     </div>
   )

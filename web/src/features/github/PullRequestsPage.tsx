@@ -23,16 +23,16 @@ import type { PullRequest } from '../../types'
 
 function CheckRow({ name, status }: PullRequest['checks'][number]) {
   return (
-    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[10px]">
+    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px]">
       {status === 'success' ? (
-        <CheckCircle2 size={13} className="text-[rgb(var(--ok))]" />
+        <CheckCircle2 size={13} className="text-ok" />
       ) : status === 'failed' ? (
-        <XCircle size={13} className="text-[rgb(var(--danger))]" />
+        <XCircle size={13} className="text-danger" />
       ) : (
-        <CircleDot size={13} className="text-[rgb(var(--warn))]" />
+        <CircleDot size={13} className="text-warn" />
       )}
       <span className="min-w-0 flex-1 truncate">{name}</span>
-      <span className="capitalize text-[rgb(var(--muted-2))]">{status}</span>
+      <span className="font-mono text-[10px] capitalize text-muted-2">{status}</span>
     </div>
   )
 }
@@ -42,7 +42,7 @@ function PrOperations({ pr }: { pr: PullRequest }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {pr.status === 'Draft' && (
-        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--accent)/.35)] bg-[rgb(var(--accent)/.08)] px-2.5 text-[10px] text-[rgb(var(--accent))]">
+        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 btn-accent-tint rounded-[7px] px-2.5 text-[11px]">
           <GitPullRequest size={11} /> Mark ready
         </button>
       )}
@@ -51,17 +51,17 @@ function PrOperations({ pr }: { pr: PullRequest }) {
           <button
             disabled={!pr.mergeable}
             onClick={() => setStatus(pr.id, 'Merged')}
-            className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--accent)/.4)] bg-[rgb(var(--accent)/.12)] px-2.5 text-[10px] text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-35"
+            className="bonsai-focus flex h-8 items-center gap-1.5 btn-accent-tint rounded-[7px] px-2.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-35"
           >
             <GitMerge size={11} /> Merge
           </button>
-          <button onClick={() => setStatus(pr.id, 'Closed')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--danger)/.3)] px-2.5 text-[10px] text-[rgb(var(--danger))]">
+          <button onClick={() => setStatus(pr.id, 'Closed')} className="bonsai-focus flex h-8 items-center gap-1.5 btn-danger-tint rounded-[7px] px-2.5 text-[11px]">
             <X size={11} /> Close
           </button>
         </>
       )}
       {pr.status === 'Closed' && (
-        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--accent)/.35)] px-2.5 text-[10px] text-[rgb(var(--accent))]">
+        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 btn-accent-tint rounded-[7px] px-2.5 text-[11px]">
           <GitPullRequest size={11} /> Reopen
         </button>
       )}
@@ -104,22 +104,22 @@ export function PullRequestsPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 bg-[rgb(var(--bg))]">
-      <aside className="flex w-[330px] shrink-0 flex-col border-r border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
-        <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-3">
-          <GitPullRequest size={14} className="mr-2 text-[rgb(var(--muted))]" />
-          <span className="font-medium">Pull Requests</span>
-          <span className="ml-auto rounded bg-[rgb(var(--panel-3))] px-1.5 py-0.5 text-[9px] text-[rgb(var(--muted))]">{pullRequests.length}</span>
+    <div className="island flex h-full min-h-0 overflow-hidden">
+      <aside className="flex w-[330px] shrink-0 flex-col border-r border-border-subtle">
+        <div className="island-title h-11 !px-3 !text-[13px] !normal-case !tracking-normal !font-semibold !text-text">
+          <GitPullRequest size={14} className="mr-2 text-muted" />
+          <span>Pull Requests</span>
+          <span className="island-count ml-auto">{pullRequests.length}</span>
         </div>
         <PullRequestTabs value={tab} onChange={value => { setTab(value); if (value === 'closed') retry() }} />
-        <div className="border-b border-[rgb(var(--border))] p-2">
-          <label className="flex h-8 items-center gap-2 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
-            <Search size={11} className="text-[rgb(var(--muted-2))]" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" className="min-w-0 flex-1 bg-transparent text-[10px] outline-none placeholder:text-[rgb(var(--muted-2))]" />
+        <div className="border-b border-border-subtle p-2">
+          <label className="flex h-8 items-center gap-2 rounded-[7px] border border-border bg-well px-2.5 focus-within:border-accent/55">
+            <Search size={11} className="text-muted-2" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-muted-2" />
           </label>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
-          {!filtered.length && <p className="p-3 text-[10px] text-[rgb(var(--muted))]">{message}</p>}
+          {!filtered.length && <p className="p-3 text-[10px] text-muted">{message}</p>}
           {filtered.map((pr) => {
             const success = pr.checks.filter((check) => check.status === 'success').length
             return (
@@ -128,16 +128,16 @@ export function PullRequestsPage() {
                 type="button"
                 onClick={() => setSelectedId(pr.id)}
                 className={
-                  'w-full border-b border-[rgb(var(--border))] px-3 py-3 text-left transition-colors ' +
-                  (pr.id === selected?.id ? 'bg-[rgb(var(--accent)/.08)]' : 'hover:bg-[rgb(var(--panel-2))]')
+                  'w-full border-b border-border-subtle px-3 py-3 text-left transition-colors ' +
+                  (pr.id === selected?.id ? 'bg-accent/9' : 'hover:bg-panel-2')
                 }
               >
                 <div className="flex items-start gap-2">
-                  <GitPullRequest size={12} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--accent))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--muted))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
+                  <GitPullRequest size={12} className={pr.status === 'Open' ? 'mt-0.5 text-accent' : pr.status === 'Merged' ? 'mt-0.5 text-ok' : pr.status === 'Draft' ? 'mt-0.5 text-muted' : 'mt-0.5 text-muted-2'} />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] font-medium leading-4">#{pr.number} {pr.title}</span>
-                    <span className="mt-1 block truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{pr.branch} → {pr.base}</span>
-                    <span className="mt-1.5 flex items-center gap-2 text-[8px] text-[rgb(var(--muted-2))]">
+                    <span className="block text-[12px] font-medium leading-4">#{pr.number} {pr.title}</span>
+                    <span className="mt-1 block truncate font-mono text-[10px] text-muted-2">{pr.branch} → {pr.base}</span>
+                    <span className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-muted-2">
                       <span>{pr.status}</span>
                       <span>·</span>
                       <span>{success}/{pr.checks.length} checks</span>
@@ -154,25 +154,25 @@ export function PullRequestsPage() {
 
       {selected ? <main className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-[920px] px-6 py-5">
-          <header className="border-b border-[rgb(var(--border))] pb-4">
+          <header className="border-b border-border-subtle pb-4">
             <div className="flex items-start gap-3">
-              <span className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[rgb(var(--accent)/.35)] bg-[rgb(var(--accent)/.08)] text-[rgb(var(--accent))]">
+              <span className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-accent/35 bg-accent/10 text-accent">
                 <GitPullRequest size={15} />
               </span>
               <div className="min-w-0 flex-1">
-                <h1 className="text-[17px] font-semibold leading-6">{selected.title} <span className="font-normal text-[rgb(var(--muted-2))]">#{selected.number}</span></h1>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[rgb(var(--muted))]">
-                  <span className={'rounded-full px-2 py-1 text-[9px] ' + (selected.status === 'Open' ? 'bg-[rgb(var(--accent)/.12)] text-[rgb(var(--accent))]' : selected.status === 'Draft' ? 'bg-[rgb(var(--panel-3))] text-[rgb(var(--muted))]' : 'bg-[rgb(var(--panel-3))]')}>{selected.status}</span>
+                <h1 className="text-[17px] font-semibold leading-6">{selected.title} <span className="font-normal text-muted-2">#{selected.number}</span></h1>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-muted">
+                  <span className={'rounded-full px-2 py-1 font-mono text-[10px] ' + (selected.status === 'Open' ? 'bg-accent/12 text-accent' : selected.status === 'Merged' ? 'bg-ok/12 text-ok' : selected.status === 'Draft' ? 'bg-panel-3 text-muted' : 'bg-panel-3 text-muted-2')}>{selected.status}</span>
                   <span>{selected.author ?? 'unknown'} wants to merge</span>
-                  <span className="rounded bg-[rgb(var(--panel-2))] px-1.5 py-0.5 font-mono">{selected.branch}</span>
+                  <span className="rounded bg-panel-2 px-1.5 py-0.5 font-mono">{selected.branch}</span>
                   <span>into</span>
-                  <span className="rounded bg-[rgb(var(--panel-2))] px-1.5 py-0.5 font-mono">{selected.base}</span>
+                  <span className="rounded bg-panel-2 px-1.5 py-0.5 font-mono">{selected.base}</span>
                   <span>· updated {selected.updatedAt}</span>
                 </div>
               </div>
               <button
                 onClick={() => project?.repository.includes('/') && window.open('https://github.com/' + project.repository + '/pull/' + selected.number, '_blank', 'noopener,noreferrer')}
-                className="bonsai-focus grid h-8 w-8 place-items-center rounded-md border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
+                className="bonsai-focus grid h-8 w-8 place-items-center rounded-md border border-border text-muted hover:bg-panel-3 hover:text-text"
                 title="Open on GitHub"
               >
                 <ExternalLink size={12} />
@@ -181,29 +181,29 @@ export function PullRequestsPage() {
             <div className="mt-3 flex justify-end"><PrOperations pr={selected} /></div>
           </header>
 
-          <section className="mt-4 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
-            <button onClick={() => setDescriptionOpen((value) => !value)} className="flex h-10 w-full items-center gap-2 px-3 text-left text-[10px] font-medium">
+          <section className="mt-4 rounded-[10px] border border-border bg-panel-2">
+            <button onClick={() => setDescriptionOpen((value) => !value)} className="flex h-10 w-full items-center gap-2 px-3 text-left text-[11px] font-medium">
               {descriptionOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
               Description
             </button>
-            {descriptionOpen && <div className="border-t border-[rgb(var(--border))] px-4 py-3 text-[11px] leading-5 text-[rgb(var(--muted))]">{selected.description}</div>}
+            {descriptionOpen && <div className="border-t border-border-subtle px-4 py-3 text-[12px] leading-5 text-muted">{selected.description}</div>}
           </section>
 
-          <section className="mt-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
+          <section className="mt-3 rounded-[10px] border border-border bg-panel-2">
             <button onClick={() => setCommitsOpen((value) => !value)} className="flex h-10 w-full items-center gap-2 px-3 text-left text-[10px] font-medium">
               {commitsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
               <GitCommitHorizontal size={11} />
               {selected.commits.length} commits
-              <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">latest {selected.commits.at(-1)?.time ?? selected.updatedAt}</span>
+              <span className="ml-auto font-mono text-[10px] text-muted-2">latest {selected.commits.at(-1)?.time ?? selected.updatedAt}</span>
             </button>
             {commitsOpen && (
-              <div className="border-t border-[rgb(var(--border))] px-3">
+              <div className="border-t border-border-subtle px-3">
                 {selected.commits.map((commit) => (
-                  <div key={commit.sha} className="flex items-center gap-3 border-b border-[rgb(var(--border))] py-2.5 text-[10px] last:border-0">
-                    <GitCommitHorizontal size={11} className="text-[rgb(var(--muted-2))]" />
+                  <div key={commit.sha} className="flex items-center gap-3 border-b border-border-subtle py-2.5 text-[11px] last:border-0">
+                    <GitCommitHorizontal size={11} className="text-muted-2" />
                     <span className="min-w-0 flex-1 truncate">{commit.message}</span>
-                    <span className="text-[8px] text-[rgb(var(--muted-2))]">{commit.author} · {commit.time}</span>
-                    <span className="font-mono text-[8px] text-[rgb(var(--accent))]">{commit.sha}</span>
+                    <span className="font-mono text-[10px] text-muted-2">{commit.author} · {commit.time}</span>
+                    <span className="font-mono text-[10px] text-accent">{commit.sha}</span>
                   </div>
                 ))}
               </div>
@@ -214,43 +214,43 @@ export function PullRequestsPage() {
             <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold"><MessageSquare size={12} /> Conversation</div>
             <div className="space-y-3">
               {selected.conversation.map((comment, index) => (
-                <div key={index} className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
-                  <div className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2 text-[9px] text-[rgb(var(--muted-2))]">
-                    <span className="font-medium text-[rgb(var(--text))]">{comment.author}</span>
+                <div key={index} className="rounded-[10px] border border-border bg-panel-2">
+                  <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2 font-mono text-[10px] text-muted-2">
+                    <span className="font-medium text-text">{comment.author}</span>
                     <span>{comment.kind === 'review' ? 'reviewed' : 'commented'} {comment.time}</span>
                   </div>
-                  <div className="px-3 py-3 text-[11px] leading-5 text-[rgb(var(--muted))]">{comment.body}</div>
+                  <div className="px-3 py-3 text-[12px] leading-5 text-muted">{comment.body}</div>
                 </div>
               ))}
 
-              <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
-                <div className="flex items-center border-b border-[rgb(var(--border))] px-3 py-2 text-[10px] font-medium">
-                  <CheckCircle2 size={12} className="mr-2 text-[rgb(var(--ok))]" />
+              <div className="rounded-[10px] border border-border bg-panel-2">
+                <div className="flex items-center border-b border-border-subtle px-3 py-2 text-[11px] font-medium">
+                  <CheckCircle2 size={12} className="mr-2 text-ok" />
                   Checks
-                  <span className="ml-auto text-[9px] text-[rgb(var(--muted-2))]">{checksPassed}/{selected.checks.length} successful</span>
+                  <span className="ml-auto font-mono text-[10px] text-muted-2">{checksPassed}/{selected.checks.length} successful</span>
                 </div>
                 <div className="p-1.5">{selected.checks.map((check, index) => <CheckRow key={check.id || `${check.name}:${index}`} {...check} />)}</div>
               </div>
 
-              <div className="rounded-lg border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] p-3">
+              <div className="rounded-[10px] border border-border-strong bg-panel-2 p-3">
                 <div className="mb-2 text-[10px] font-medium">Add a review</div>
                 <textarea
                   value={review}
                   onChange={(event) => setReview(event.target.value)}
                   rows={5}
                   placeholder="Leave a comment or review…"
-                  className="bonsai-focus w-full resize-y rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3 py-2.5 text-[11px] leading-5 outline-none"
+                  className="bonsai-focus w-full resize-y rounded-[7px] border border-border bg-well px-3 py-2.5 text-[12px] leading-5 outline-none placeholder:text-muted-2 focus:border-accent/55"
                 />
                 <div className="mt-2 flex flex-wrap justify-end gap-2">
-                  <button onClick={() => submitReview('request-changes')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--danger)/.3)] px-2.5 text-[9px] text-[rgb(var(--danger))]"><XCircle size={11} /> Request changes</button>
-                  <button onClick={() => submitReview('approve')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--ok)/.3)] px-2.5 text-[9px] text-[rgb(var(--ok))]"><Check size={11} /> Approve</button>
-                  <button disabled={!review.trim()} onClick={() => submitReview('comment')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md bg-[rgb(var(--accent-solid))] px-3 text-[9px] font-medium text-[rgb(var(--accent-fg))] disabled:opacity-35"><Send size={11} /> Comment</button>
+                  <button onClick={() => submitReview('request-changes')} className="bonsai-focus btn-danger-tint flex h-8 items-center gap-1.5 rounded-[7px] px-2.5 text-[11px]"><XCircle size={11} /> Request changes</button>
+                  <button onClick={() => submitReview('approve')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-[7px] border border-ok/35 bg-ok/12 px-2.5 text-[11px] text-ok"><Check size={11} /> Approve</button>
+                  <button disabled={!review.trim()} onClick={() => submitReview('comment')} className="bonsai-focus btn-primary flex h-8 items-center gap-1.5 px-3 text-[11px] disabled:opacity-35"><Send size={11} /> Comment</button>
                 </div>
               </div>
             </div>
           </section>
         </div>
-      </main> : <div className="grid flex-1 place-items-center text-[11px] text-[rgb(var(--muted))]">{message}</div>}
+      </main> : <div className="grid flex-1 place-items-center text-[11px] text-muted">{message}</div>}
     </div>
   )
 }

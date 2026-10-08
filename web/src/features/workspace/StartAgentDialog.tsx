@@ -70,20 +70,20 @@ function StartAgentForm() {
       <form
         onSubmit={submit}
         role="dialog" aria-modal="true" aria-labelledby="start-agent-title"
-        className="w-full max-w-[720px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-[0_30px_100px_rgb(0_0_0/.65)]"
+        className="w-full max-w-[720px] overflow-hidden rounded-[14px] border border-border-strong bg-panel shadow-overlay"
       >
-        <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-4">
-          <Bot size={15} className="mr-2 text-[rgb(var(--accent))]" />
+        <div className="flex h-11 items-center border-b border-border-subtle px-4">
+          <Bot size={15} className="mr-2 text-accent" />
           <div>
-            <div id="start-agent-title" className="text-[12px] font-semibold">Start agent</div>
-            <div className="text-[9px] text-[rgb(var(--muted-2))]">Choose the worktree, profile and task.</div>
+            <div id="start-agent-title" className="text-[13px] font-semibold">Start agent</div>
+            <div className="font-mono text-[10px] text-muted-2">Choose the worktree, profile and task.</div>
           </div>
           <button
             type="button"
             disabled={pending}
             onClick={() => setOpen(false)}
             aria-label="Close start agent"
-            className="bonsai-focus ml-auto grid h-7 w-7 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]"
+            className="bonsai-focus ml-auto grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-panel-3 hover:text-text"
           >
             <X size={14} />
           </button>
@@ -91,7 +91,7 @@ function StartAgentForm() {
 
         <div className="max-h-[72vh] space-y-5 overflow-auto p-4">
           <label className="block">
-            <span className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[.11em] text-[rgb(var(--muted-2))]">Worktree</span>
+            <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Worktree</span>
             <BonsaiSelect
               ariaLabel="Worktree and branch"
               disabled={pending}
@@ -107,15 +107,15 @@ function StartAgentForm() {
               }))}
             />
             {!targetWorktreeId && (
-              <span className="mt-1.5 block text-[9px] text-[rgb(var(--muted-2))]">
+              <span className="mt-1.5 block font-mono text-[10px] text-muted-2">
                 Project-level launches require an explicit branch choice.
               </span>
             )}
           </label>
 
           <section>
-            <div className="mb-2 text-[9px] font-semibold uppercase tracking-[.11em] text-[rgb(var(--muted-2))]">Provider</div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Provider</div>
+            <div className="grid grid-cols-3 gap-1 rounded-[9px] border border-border bg-well p-1">
               {['Antigravity', 'Claude', 'Codex'].map((label) => {
                 const item = { id: label, label, connected: label === 'Antigravity' && !!available?.available, description: label === 'Antigravity' ? 'Launch with your saved profile.' : 'Not available yet' }
                 const active = item.id === 'Antigravity'
@@ -125,23 +125,17 @@ function StartAgentForm() {
                     key={item.id}
                     disabled={!item.connected}
                     aria-pressed={active}
-                    className={
-                      'bonsai-focus rounded-lg border p-3 text-left transition-colors disabled:opacity-40 ' +
-                      (active
-                        ? 'border-[rgb(var(--accent)/.56)] bg-[rgb(var(--accent)/.10)]'
-                        : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] hover:border-[rgb(var(--border-strong))]')
-                    }
+                    title={item.description}
+                    className={'bonsai-focus flex h-[30px] items-center justify-center gap-2 rounded-[7px] text-[12px] transition-colors disabled:opacity-40 ' + (active ? 'bg-panel-3 text-text' : 'text-muted hover:text-text')}
                   >
-                    <div className="flex items-center gap-2 text-[11px] font-medium">
-                      <Sparkles size={13} className={active ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--muted))]'} />
-                      {item.label}
-                      {item.connected ? (
-                        <span className="ml-auto flex items-center gap-1 text-[8px] text-[rgb(var(--accent))]"><span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--accent-solid))]" />connected</span>
-                      ) : (
-                        <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">not connected</span>
-                      )}
-                    </div>
-                    <div className="mt-1.5 text-[9px] leading-4 text-[rgb(var(--muted-2))]">{item.description}</div>
+                    <Sparkles size={13} className={active ? 'text-accent' : 'text-muted'} />
+                    <span>{item.label}</span>
+                    {item.connected ? (
+                      <span className="flex items-center gap-1 font-mono text-[10px] text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent-solid" />connected</span>
+                    ) : (
+                      <span className="font-mono text-[10px] text-muted-2">not connected</span>
+                    )}
+                    <span className="sr-only">{item.description}</span>
                   </button>
                 )
               })}
@@ -150,22 +144,22 @@ function StartAgentForm() {
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
-              <span className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[.1em] text-[rgb(var(--muted-2))]">Profile</span>
+              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Profile</span>
               <BonsaiSelect ariaLabel="Profile" disabled={pending || loading} value={accountId} placeholder={loading ? 'Loading profiles…' : 'Choose a profile'} onChange={id => { setAccountId(id); setFullAccess(accounts.find(account => account.id === id)?.full_access ?? false) }} options={accounts.map(account => ({ value: account.id, label: account.name }))} />
             </label>
             <label className="block">
-              <span className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[.1em] text-[rgb(var(--muted-2))]">Model</span>
-              <input aria-label="Agent model" disabled={pending} value={model} onChange={event => setModel(event.target.value)} placeholder="Use profile default" className="bonsai-focus h-9 w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2.5 text-[11px] outline-none" />
+              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Model</span>
+              <input aria-label="Agent model" disabled={pending} value={model} onChange={event => setModel(event.target.value)} placeholder="Use profile default" className="bonsai-focus h-8 w-full rounded-[7px] border border-border bg-well px-2.5 text-[12px] outline-none placeholder:text-muted-2 focus:border-accent/55" />
             </label>
           </div>
-          <div className="flex items-center gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--bg))] p-3">
-            <Shield size={15} className={fullAccess ? 'text-[rgb(var(--warn))]' : 'text-[rgb(var(--muted))]'} />
-            <div className="flex-1"><div className="text-[11px] font-medium">Full access</div><p className="mt-1 text-[9px] text-[rgb(var(--muted-2))]">Allow Antigravity to run tools without permission prompts.</p></div>
-            <button type="button" role="switch" aria-label="Antigravity full access" aria-checked={fullAccess} disabled={pending} onClick={() => setFullAccess(value => !value)} className={'bonsai-focus flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors ' + (fullAccess ? 'border-[rgb(var(--warn)/.5)] bg-[rgb(var(--warn)/.3)]' : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))]')}><span className={'h-3.5 w-3.5 rounded-full bg-[rgb(var(--text))] transition-transform ' + (fullAccess ? 'translate-x-4' : '')} /></button>
+          <div className="flex items-center gap-3 rounded-[10px] border border-border bg-well p-3">
+            <Shield size={15} className={fullAccess ? 'text-warn' : 'text-muted'} />
+            <div className="flex-1"><div className="text-[12px] font-medium">Full access</div><p className="mt-1 font-mono text-[10px] text-muted-2">Allow Antigravity to run tools without permission prompts.</p></div>
+            <button type="button" role="switch" aria-label="Antigravity full access" aria-checked={fullAccess} disabled={pending} onClick={() => setFullAccess(value => !value)} className={'bonsai-focus flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors ' + (fullAccess ? 'border-warn-solid/22 bg-warn-solid/30' : 'border-border-strong bg-panel-3')}><span className={'h-3.5 w-3.5 rounded-full bg-text transition-transform ' + (fullAccess ? 'translate-x-4' : '')} /></button>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
-              <span className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[.1em] text-[rgb(var(--muted-2))]">Agent name</span>
+              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Agent name</span>
               <input
                 aria-label="Agent name"
                 maxLength={128}
@@ -173,11 +167,11 @@ function StartAgentForm() {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="e.g. Login refactor"
-                className="bonsai-focus h-9 w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2.5 text-[11px] outline-none"
+                className="bonsai-focus h-8 w-full rounded-[7px] border border-border bg-well px-2.5 text-[12px] outline-none placeholder:text-muted-2 focus:border-accent/55"
               />
             </label>
             <label className="block">
-              <span className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[.1em] text-[rgb(var(--muted-2))]">Work type</span>
+              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Work type</span>
               <BonsaiSelect
                 ariaLabel="Agent work type"
                 disabled={pending}
@@ -192,7 +186,7 @@ function StartAgentForm() {
           </div>
 
           <label className="block">
-            <span className="mb-1.5 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[.1em] text-[rgb(var(--muted-2))]">
+            <span className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">
               <Gauge size={10} /> Prompt
             </span>
             <textarea
@@ -202,26 +196,26 @@ function StartAgentForm() {
               onChange={(event) => setPrompt(event.target.value)}
               placeholder="Describe the exact work this agent should execute…"
               rows={6}
-              className="bonsai-focus w-full resize-y rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3 py-2.5 text-[11px] leading-5 outline-none"
+              className="bonsai-focus w-full resize-y rounded-[7px] border border-border bg-well px-3 py-2.5 text-[12px] leading-5 outline-none placeholder:text-muted-2 focus:border-accent/55"
             />
           </label>
-          {!loading && !accounts.length && !error && <p className="text-[10px] text-[rgb(var(--muted))]">Set up a profile with <code>bonsai agent account add antigravity &lt;name&gt;</code></p>}
-          {available && !available.available && <p className="text-[10px] text-[rgb(var(--muted))]">{available.unavailable_reason?.message}</p>}
-          {error && <p role="alert" className="text-[11px] text-[rgb(var(--danger))]">{error}</p>}
+          {!loading && !accounts.length && !error && <p className="text-[10px] text-muted">Set up a profile with <code>bonsai agent account add antigravity &lt;name&gt;</code></p>}
+          {available && !available.available && <p className="text-[10px] text-muted">{available.unavailable_reason?.message}</p>}
+          {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
         </div>
 
-        <div className="flex items-center justify-between border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.45)] px-4 py-3">
-          <div className="text-[9px] text-[rgb(var(--muted-2))]">
+        <div className="flex items-center justify-between border-t border-border-subtle bg-well/45 px-4 py-3">
+          <div className="font-mono text-[10px] text-muted-2">
             Antigravity · {fullAccess ? 'Full access' : 'Ask permissions'}
           </div>
           <div className="flex gap-2">
-            <button type="button" disabled={pending} onClick={() => setOpen(false)} className="bonsai-focus rounded-md px-3 py-2 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]">
+            <button type="button" disabled={pending} onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px] text-muted hover:text-text">
               Cancel
             </button>
             <button
               type="submit"
               disabled={!canStart}
-              className="bonsai-focus rounded-md border border-[rgb(var(--accent)/.45)] bg-[rgb(var(--accent)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
+              className="bonsai-focus btn-primary h-8 px-3 text-[12px] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {pending ? 'Starting…' : 'Start agent'}
             </button>

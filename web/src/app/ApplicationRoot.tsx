@@ -100,7 +100,7 @@ function ConnectedApplication() {
 
   return <>
     <RouterProvider router={router} />
-    {settings && needsSetup && dismissedSetup !== setupKey && <div role="dialog" aria-label="Choose project folders" className="fixed inset-0 z-50 overflow-auto bg-[rgb(var(--bg))]"><ProjectRootsSettings onDismiss={() => setDismissedSetup(setupKey)} /></div>}
+    {settings && needsSetup && dismissedSetup !== setupKey && <div role="dialog" aria-label="Choose project folders" className="fixed inset-0 z-50 overflow-auto bg-bg"><ProjectRootsSettings onDismiss={() => setDismissedSetup(setupKey)} /></div>}
   </>
 }
 

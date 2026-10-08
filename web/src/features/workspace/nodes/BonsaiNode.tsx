@@ -313,7 +313,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
       ? 'rounded-[14px] bg-panel ' + (selected ? 'border-accent-solid' : 'border-accent-solid/55') + ' shadow-[0_0_0_4px_rgb(var(--accent-solid)/.08),inset_0_1px_0_rgb(var(--accent-solid)/.16),0_14px_28px_-16px_rgb(10_7_5/.85)]'
     : data.kind === 'agent'
       ? 'rounded-[10px] bg-panel-2 ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : (waiting ? 'border-warn-solid/55' : 'border-border-strong') + ' shadow-card hover:border-border-strong')
-      : 'rounded-lg bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
+      : 'rounded-lg bg-[rgb(var(--panel-2))] shadow-card ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
 
   const selectNode = () => {
     if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent') {
