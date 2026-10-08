@@ -63,7 +63,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
   }, [agent.id, agent.projectId])
   return <div className="flex h-full min-h-0 flex-col">
     {actionsHost && createPortal(<>
-      <span title={`Session ${lifecycle}; terminal ${connection}`} className={'flex h-6 items-center gap-1.5 rounded-md border px-2 text-[9px] ' + (connection === 'connected' ? 'border-[rgb(var(--green)/.2)] bg-[rgb(var(--green)/.06)] text-[rgb(var(--green))]' : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]')}>
+      <span title={`Session ${lifecycle}; terminal ${connection}`} className={'flex h-6 items-center gap-1.5 rounded-md border px-2 text-[9px] ' + (connection === 'connected' ? 'border-[rgb(var(--accent)/.2)] bg-[rgb(var(--accent)/.06)] text-[rgb(var(--accent))]' : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]')}>
         {connection === 'connected' ? <Wifi size={10} /> : <WifiOff size={10} />}
         {lifecycle} · {connection}
       </span>

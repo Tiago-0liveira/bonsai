@@ -48,7 +48,7 @@ function Metric({ value, label, icon: Icon, tone = '' }: { value: number | strin
 
 function AgentRow({ agent, onClick }: { agent: Agent; onClick: () => void }) {
   return <button onClick={onClick} className="bonsai-focus inspector-link">
-    <span className={'inspector-avatar ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : 'text-[rgb(var(--muted))]')}><Bot size={14} /></span>
+    <span className={'inspector-avatar ' + (agent.state === 'running' ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--muted))]')}><Bot size={14} /></span>
     <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{agent.name}</span><span className="mt-0.5 block truncate text-[10px] text-[rgb(var(--muted))]">{agent.task}</span></span>
     <span className="shrink-0 text-right text-[9px] text-[rgb(var(--muted))]"><span className="block capitalize">{agent.lifecycleState ?? agent.state}</span><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
   </button>
@@ -128,13 +128,13 @@ export function Inspector() {
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={projectWorktrees.length} label="Branches" icon={GitBranch} />
-                <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-[rgb(var(--green))]" />
+                <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-[rgb(var(--accent))]" />
                 <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-[rgb(var(--orange))]" />
               </div>
               <Section title="Needs attention" meta={<span className="inspector-count">{attention.length}</span>}>
                 {attention.length ? <div className="space-y-2">{attention.map(({ worktree: item, issues: reasons }) => <button key={item.id} onClick={() => setSelection({ type: 'worktree', id: item.id })} className="bonsai-focus inspector-attention">
                   <AlertCircle size={14} className="mt-0.5 shrink-0 text-[rgb(var(--orange))]" /><span className="min-w-0 flex-1"><span className="block truncate font-mono text-[10px] text-[rgb(var(--text))]">{item.branch}</span><span className="mt-1 block text-[10px] leading-4 text-[rgb(var(--muted))]">{reasons.join(' · ')}</span></span><ChevronRight size={12} className="mt-0.5 shrink-0 text-[rgb(var(--muted))]" />
-                </button>)}</div> : <p className="flex items-center gap-2 text-[11px] text-[rgb(var(--muted))]"><CheckCircle2 size={14} className="text-[rgb(var(--green))]" />No branch blockers reported.</p>}
+                </button>)}</div> : <p className="flex items-center gap-2 text-[11px] text-[rgb(var(--muted))]"><CheckCircle2 size={14} className="text-[rgb(var(--ok))]" />No branch blockers reported.</p>}
               </Section>
               <Section title="Agents" meta={<span className="inspector-count">{projectAgents.length}</span>}>
                 {projectAgents.length ? projectAgents.map((item) => <AgentRow key={item.id} agent={item} onClick={() => setSelection({ type: 'agent', id: item.id })} />) : <p className="inspector-empty">No agent sessions.</p>}
@@ -160,7 +160,7 @@ export function Inspector() {
                   <button onClick={() => inspectPullRequest(pr.id)} className="bonsai-focus inspector-link !items-start !px-0"><GitPullRequest size={15} className="mt-0.5 shrink-0 text-[rgb(var(--accent))]" /><span className="min-w-0 flex-1"><span className="block text-[11px] font-medium leading-5">#{pr.number} {pr.title}</span><span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">{pr.files.length} files · {pr.commits.length} commits · View review</span></span><ChevronRight size={13} className="mt-1 shrink-0" /></button>
                   <div className="mt-2"><QuickButton icon={GitPullRequest} label="Open on GitHub" onClick={() => openGitHub('pull/' + pr.number, worktree.projectId)} /></div>
                   <div className="mt-2 space-y-2 rounded-lg bg-[rgb(var(--bg)/.6)] p-2.5">{pr.checks.length ? pr.checks.map((check, index) => <div key={check.id || `${check.name}:${index}`} className="flex items-center gap-2 text-[10px]">
-                    {check.status === 'failed' ? <XCircle size={12} className="shrink-0 text-[rgb(var(--red))]" /> : check.status === 'success' ? <CheckCircle2 size={12} className="shrink-0 text-[rgb(var(--green))]" /> : <CircleDot size={12} className="shrink-0 text-[rgb(var(--orange))]" />}
+                    {check.status === 'failed' ? <XCircle size={12} className="shrink-0 text-[rgb(var(--red))]" /> : check.status === 'success' ? <CheckCircle2 size={12} className="shrink-0 text-[rgb(var(--ok))]" /> : <CircleDot size={12} className="shrink-0 text-[rgb(var(--orange))]" />}
                     <span className="min-w-0 flex-1 break-words text-[rgb(var(--muted))]">{check.name}</span><span className="text-[9px] text-[rgb(var(--muted))]">{check.status === 'success' ? 'Passed' : check.status === 'failed' ? 'Failed' : 'Running'}</span>
                   </div>) : <p className="inspector-empty">No checks reported.</p>}</div>
                 </> : <p className="inspector-empty">{worktree.prNumber ? `PR #${worktree.prNumber} details are unavailable.` : 'No pull request linked to this branch.'}</p>}
@@ -245,7 +245,7 @@ export function Inspector() {
             </>}
             {agent && <>
               <div className="inspector-hero">
-                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><Bot size={13} />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--green))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.lifecycleState ?? agent.state}</span></div>
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><Bot size={13} />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--accent))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.lifecycleState ?? agent.state}</span></div>
                 <h2 className="text-[16px] font-semibold tracking-tight">{agent.name}</h2>
                 <p className="mt-2 text-[12px] leading-5 text-[rgb(var(--muted))]">{agent.task}</p>
                 <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{agent.providerId === 'antigravity' ? 'API session' : `${agent.runtime} runtime`}<span className="ml-auto capitalize">{presentation(agent)}</span></div>

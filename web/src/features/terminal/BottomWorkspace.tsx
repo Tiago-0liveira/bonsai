@@ -55,7 +55,7 @@ import { ProcessTerminal } from './ProcessTerminal'
 function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle' | 'running' | 'finished' }) {
   const className =
     status === 'healthy' || status === 'running'
-      ? 'bg-[rgb(var(--green))]'
+      ? 'bg-[rgb(var(--accent-solid))]'
       : status === 'warning'
         ? 'bg-[rgb(var(--orange))]'
         : status === 'error'
@@ -171,13 +171,13 @@ function BranchSidebar() {
               onClick={() => setSelection({ type: 'worktree', id: defaultWorktree.id })}
               className={
                 'bonsai-focus flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-[9px] ' +
-                (defaultSelected ? 'bg-[rgb(var(--green)/.08)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
+                (defaultSelected ? 'bg-[rgb(var(--accent)/.08)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
               }
             >
-              <GitBranch size={10} className="shrink-0 text-[rgb(var(--green))]" />
+              <GitBranch size={10} className="shrink-0 text-[rgb(var(--accent))]" />
               <span className="min-w-0 flex-1 truncate font-mono">{defaultWorktree.branch}</span>
             </button>
-            <span className="ml-1 rounded bg-[rgb(var(--green)/.10)] px-1 py-0.5 text-[6.5px] text-[rgb(var(--green))]">default</span>
+            <span className="ml-1 rounded bg-[rgb(var(--accent)/.10)] px-1 py-0.5 text-[6.5px] text-[rgb(var(--accent))]">default</span>
           </div>
         )}
         {index.roots.map(id => <BranchTreeItem key={id} worktreeId={id} index={index} depth={0} visited={EMPTY_VISITED} />)}
@@ -379,7 +379,7 @@ export function RuntimeWorkspace() {
 function GitStatus({ status }: { status?: RepoFile['gitStatus'] }) {
   if (!status || status === 'committed') return null
   const label = status === 'modified' ? 'M' : status === 'untracked' ? 'U' : status === 'added' ? 'A' : 'D'
-  const tone = status === 'deleted' ? 'text-[rgb(var(--red))]' : status === 'untracked' ? 'text-[rgb(var(--green))]' : 'text-[rgb(var(--orange))]'
+  const tone = status === 'deleted' ? 'text-[rgb(var(--red))]' : status === 'untracked' ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--orange))]'
   return <span className={'ml-auto shrink-0 font-mono text-[8px] ' + tone}>{label}</span>
 }
 
@@ -508,7 +508,7 @@ function FilesDiffPanel() {
             <div key={file.path} className="mb-2 overflow-hidden rounded-md border border-[rgb(var(--border))]">
               <div className="flex items-center border-b border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 py-1.5 font-mono text-[8px]">
                 <span className="min-w-0 flex-1 truncate">{file.path}</span>
-                <span className="text-[rgb(var(--green))]">+{file.additions}</span>
+                <span className="text-[rgb(var(--accent))]">+{file.additions}</span>
                 <span className="ml-1 text-[rgb(var(--red))]">-{file.deletions}</span>
               </div>
               <pre className="overflow-auto p-2 font-mono text-[8px] leading-4 text-[rgb(var(--muted))]">{file.diff.join('\n')}</pre>
@@ -523,7 +523,7 @@ function FilesDiffPanel() {
 }
 
 function checkIcon(status: 'success' | 'running' | 'failed') {
-  if (status === 'success') return <CheckCircle2 size={11} className="text-[rgb(var(--green))]" />
+  if (status === 'success') return <CheckCircle2 size={11} className="text-[rgb(var(--ok))]" />
   if (status === 'failed') return <XCircle size={11} className="text-[rgb(var(--red))]" />
   return <CircleDot size={11} className="text-[rgb(var(--orange))]" />
 }
@@ -538,8 +538,8 @@ function PullRequestOperations({ pr }: { pr: PullRequest }) {
           <button onClick={() => setStatus(pr.id, 'Closed')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--red)/.3)] px-2 text-[8px] text-[rgb(var(--red))]"><X size={9} /> Close</button>
         </>
       )}
-      {pr.status === 'Draft' && <button onClick={() => setStatus(pr.id, 'Open')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--green)/.3)] px-2 text-[8px] text-[rgb(var(--green))]"><GitPullRequest size={9} /> Open PR</button>}
-      {pr.status === 'Closed' && <button onClick={() => setStatus(pr.id, 'Open')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--green)/.3)] px-2 text-[8px] text-[rgb(var(--green))]"><GitPullRequest size={9} /> Reopen</button>}
+      {pr.status === 'Draft' && <button onClick={() => setStatus(pr.id, 'Open')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.3)] px-2 text-[8px] text-[rgb(var(--accent))]"><GitPullRequest size={9} /> Open PR</button>}
+      {pr.status === 'Closed' && <button onClick={() => setStatus(pr.id, 'Open')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.3)] px-2 text-[8px] text-[rgb(var(--accent))]"><GitPullRequest size={9} /> Reopen</button>}
     </div>
   )
 }
@@ -630,7 +630,7 @@ function PullRequestsPanel() {
   return (
     <aside className="dock-pane flex h-full min-w-0 flex-col">
       <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
-        <GitPullRequest size={13} className="shrink-0 text-[rgb(var(--green))]" />
+        <GitPullRequest size={13} className="shrink-0 text-[rgb(var(--accent))]" />
         <span className="dock-title min-w-0 truncate">Pull requests</span>
         <span className="dock-count">{pullRequests.length}</span>
         <button onClick={() => setRightPanel('prs', false)} className="bonsai-focus ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))]" title="Close pull requests"><X size={12} /></button>
@@ -658,7 +658,7 @@ function PullRequestsPanel() {
           return (
             <div key={pr.id} ref={expanded ? selectedRef : undefined} className="border-b border-[rgb(var(--border)/.55)]">
               <button type="button" onClick={() => setSelectedId(expanded ? null : pr.id)} className="flex w-full items-start gap-2 px-2.5 py-2.5 text-left hover:bg-[rgb(var(--panel-2))]">
-                <GitPullRequest size={11} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--green))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--muted))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
+                <GitPullRequest size={11} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--accent))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--muted))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[9px] font-medium">#{pr.number} {pr.title}</span>
                   <span className="mt-1 block truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{pr.branch} → {pr.base}</span>

@@ -113,7 +113,7 @@ function RelayStatus() {
           ? 'GitHub realtime offline'
           : 'GitHub realtime disconnected'
   const dot = relay.status === 'connected'
-    ? 'bg-[rgb(var(--green))]'
+    ? 'bg-[rgb(var(--accent-solid))]'
     : relay.status === 'offline'
       ? 'bg-[rgb(var(--orange))]'
       : 'bg-[rgb(var(--muted-2))]'
@@ -141,7 +141,7 @@ export function TopBar() {
     <header className="grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3">
       <div className="flex min-w-0 items-center justify-self-start">
         <Link to="/" className="flex shrink-0 items-center gap-2 pr-2 font-semibold tracking-tight">
-          <span className="grid h-7 w-7 place-items-center text-[rgb(var(--green))]">
+          <span className="grid h-7 w-7 place-items-center text-[rgb(var(--accent))]">
             <Sprout size={19} />
           </span>
           <span>bonsai</span>

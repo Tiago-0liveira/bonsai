@@ -10,7 +10,7 @@ import { MoveSubtreeGrip, type BonsaiGraphData } from './BonsaiNode'
 
 const statusPresentation: Record<ProcessLifecycleStatus, { label: string; tone: string }> = {
   starting: { label: 'Starting', tone: 'text-[rgb(var(--blue))] border-[rgb(var(--blue)/.25)] bg-[rgb(var(--blue)/.08)]' },
-  running: { label: 'Running', tone: 'text-[rgb(var(--green))] border-[rgb(var(--green)/.25)] bg-[rgb(var(--green)/.08)]' },
+  running: { label: 'Running', tone: 'text-[rgb(var(--accent))] border-[rgb(var(--accent)/.25)] bg-[rgb(var(--accent)/.08)]' },
   backoff: { label: 'Retrying', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
   stopping: { label: 'Stopping', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
   stopped: { label: 'Stopped', tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))] bg-[rgb(var(--bg)/.4)]' },

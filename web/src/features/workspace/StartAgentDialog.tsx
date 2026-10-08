@@ -136,7 +136,7 @@ function StartAgentForm() {
                       <Sparkles size={13} className={active ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--muted))]'} />
                       {item.label}
                       {item.connected ? (
-                        <span className="ml-auto flex items-center gap-1 text-[8px] text-[rgb(var(--green))]"><span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--green))]" />connected</span>
+                        <span className="ml-auto flex items-center gap-1 text-[8px] text-[rgb(var(--accent))]"><span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--accent-solid))]" />connected</span>
                       ) : (
                         <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">not connected</span>
                       )}
