@@ -12,7 +12,6 @@ vi.mock('../../api/git', async importOriginal => ({
   ...await importOriginal<typeof import('../../api/git')>(),
   loadPullRequest: vi.fn(),
 }))
-vi.mock('../terminal/FakeTerminal', () => ({ FakeTerminal: () => null }))
 
 const scrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
 beforeAll(() => Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() }))

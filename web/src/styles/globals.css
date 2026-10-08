@@ -59,6 +59,14 @@ select { color-scheme: dark; }
 .bonsai-kbd { border: 1px solid rgb(var(--border)); background: rgb(var(--panel-2)); border-radius: 5px; padding: 1px 6px; color: rgb(var(--muted)); font-size: 11px; }
 .bonsai-focus:focus-visible { outline: 1px solid rgb(var(--purple)); outline-offset: 2px; }
 
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: rgb(var(--border-strong));
+  --xy-handle-background-color: rgb(var(--panel-3));
+  --xy-handle-border-color: rgb(var(--border-strong));
+  --xy-selection-background-color: rgb(var(--accent) / .08);
+  --xy-selection-border: 1px dashed rgb(var(--accent) / .55);
+}
 .react-flow__node { font-family: inherit; }
 .react-flow__edge-path { transition: stroke 120ms ease; }
 .react-flow__controls { box-shadow: none !important; border: 1px solid rgb(var(--border)) !important; border-radius: 7px !important; overflow: hidden; }
@@ -139,3 +147,42 @@ select { color-scheme: dark; }
 .inspector-settings summary { list-style: none; }
 .inspector-settings summary::-webkit-details-marker { display: none; }
 .inspector-settings[open] .inspector-disclosure { transform: rotate(90deg); }
+
+/*
+ * xterm theming without injected <style> elements. The production CSP
+ * (style-src-elem 'self') blocks the <style> that xterm's DOM renderer
+ * writes, so its theme, font and cursor rules never apply. These static rules
+ * mirror terminalTheme() in src/theme/terminal.ts (a unit test keeps the ANSI
+ * 0-15 mapping in sync) and follow the active theme through the tokens.
+ * Colors 16-255 have no rule here and fall back to the default foreground.
+ */
+.xterm .xterm-rows { color: rgb(var(--text)); font-family: var(--font-mono); font-size: 11px; font-kerning: none; white-space: pre; }
+.xterm .xterm-rows .xterm-dim { color: rgb(var(--text) / .5); }
+.xterm .xterm-rows span:not(.xterm-bold) { font-weight: normal; }
+.xterm .xterm-rows span.xterm-bold { font-weight: bold; }
+.xterm .xterm-rows span.xterm-italic { font-style: italic; }
+.xterm .xterm-viewport, .xterm .xterm-screen { background: rgb(var(--well)); }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-block { background-color: rgb(var(--accent)); color: rgb(var(--well)); }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-outline { outline: 1px solid rgb(var(--accent)); outline-offset: -1px; }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-bar { box-shadow: 1px 0 0 rgb(var(--accent)) inset; }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-underline { border-bottom: 1px solid rgb(var(--accent)); height: calc(100% - 1px); }
+.xterm .xterm-selection { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
+.xterm .xterm-selection div { position: absolute; background-color: rgb(var(--accent) / .28); }
+.xterm .xterm-fg-257 { color: rgb(var(--well)); }
+.xterm .xterm-bg-257 { background-color: rgb(var(--text)); }
+.xterm .xterm-fg-0 { color: rgb(var(--well)); } .xterm .xterm-bg-0 { background-color: rgb(var(--well)); }
+.xterm .xterm-fg-1 { color: rgb(var(--danger)); } .xterm .xterm-bg-1 { background-color: rgb(var(--danger)); }
+.xterm .xterm-fg-2 { color: rgb(var(--accent-solid)); } .xterm .xterm-bg-2 { background-color: rgb(var(--accent-solid)); }
+.xterm .xterm-fg-3 { color: rgb(var(--warn)); } .xterm .xterm-bg-3 { background-color: rgb(var(--warn)); }
+.xterm .xterm-fg-4 { color: rgb(var(--ok)); } .xterm .xterm-bg-4 { background-color: rgb(var(--ok)); }
+.xterm .xterm-fg-5 { color: rgb(var(--warn-solid)); } .xterm .xterm-bg-5 { background-color: rgb(var(--warn-solid)); }
+.xterm .xterm-fg-6 { color: rgb(var(--ok)); } .xterm .xterm-bg-6 { background-color: rgb(var(--ok)); }
+.xterm .xterm-fg-7 { color: rgb(var(--muted)); } .xterm .xterm-bg-7 { background-color: rgb(var(--muted)); }
+.xterm .xterm-fg-8 { color: rgb(var(--muted-2)); } .xterm .xterm-bg-8 { background-color: rgb(var(--muted-2)); }
+.xterm .xterm-fg-9 { color: rgb(var(--danger)); } .xterm .xterm-bg-9 { background-color: rgb(var(--danger)); }
+.xterm .xterm-fg-10 { color: rgb(var(--accent)); } .xterm .xterm-bg-10 { background-color: rgb(var(--accent)); }
+.xterm .xterm-fg-11 { color: rgb(var(--warn)); } .xterm .xterm-bg-11 { background-color: rgb(var(--warn)); }
+.xterm .xterm-fg-12 { color: rgb(var(--ok)); } .xterm .xterm-bg-12 { background-color: rgb(var(--ok)); }
+.xterm .xterm-fg-13 { color: rgb(var(--warn)); } .xterm .xterm-bg-13 { background-color: rgb(var(--warn)); }
+.xterm .xterm-fg-14 { color: rgb(var(--ok)); } .xterm .xterm-bg-14 { background-color: rgb(var(--ok)); }
+.xterm .xterm-fg-15 { color: rgb(var(--text)); } .xterm .xterm-bg-15 { background-color: rgb(var(--text)); }

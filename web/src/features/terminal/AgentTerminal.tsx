@@ -6,6 +6,8 @@ import type { FitAddon } from '@xterm/addon-fit'
 import { connectAgentTerminal, type TerminalConnection } from '../../api/agentTerminal'
 import { stopAgent } from '../../api/agents'
 import type { Agent } from '../../types'
+import { TERMINAL_FONT, bindTerminalAppearance, terminalTheme } from '../../theme/terminal'
+import { getActiveTheme } from '../../theme/themeStore'
 
 export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHost: HTMLElement | null }) {
   const host = useRef<HTMLDivElement>(null)
@@ -20,6 +22,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
     let fit: FitAddon | undefined
     let controller: ReturnType<typeof connectAgentTerminal> | undefined
     let input: { dispose(): void } | undefined
+    let unbind: (() => void) | undefined
     let disposed = false
     const resize = () => {
       if (!terminal || !fit || !element.isConnected || element.closest('[inert]') || element.clientWidth < 2 || element.clientHeight < 2) return
@@ -29,12 +32,13 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
     observer.observe(element)
     // Delay opening until the effect survives StrictMode's initial teardown.
     const frame = requestAnimationFrame(() => {
-      void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]).then(([xterm, addon]) => {
+      void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit'), document.fonts?.load('11px "JetBrains Mono Variable"').catch(() => undefined)]).then(([xterm, addon]) => {
         if (disposed) return
-        terminal = new xterm.Terminal({ cursorBlink: true, fontSize: 12, scrollback: 2000, theme: { background: '#0c0e11', foreground: '#d7d9df' } })
+        terminal = new xterm.Terminal({ cursorBlink: true, fontSize: 11, fontFamily: TERMINAL_FONT, scrollback: 2000, theme: terminalTheme(getActiveTheme()) })
         fit = new addon.FitAddon()
         terminal.loadAddon(fit)
         terminal.open(element)
+        unbind = bindTerminalAppearance(terminal, resize)
         resize()
         controller = connectAgentTerminal(agent.projectId!, agent.id, {
           connection: setConnection,
@@ -52,6 +56,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
       cancelAnimationFrame(frame)
       observer.disconnect()
       input?.dispose()
+      unbind?.()
       controller?.dispose()
       requestAnimationFrame(() => requestAnimationFrame(() => terminal?.dispose()))
     }
