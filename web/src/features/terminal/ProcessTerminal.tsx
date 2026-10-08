@@ -67,15 +67,17 @@ export function ProcessTerminal({ process }: { process: Process }) {
   }
   const terminalStatus = ['done', 'failed', 'stopped', 'lost'].includes(process.lifecycleStatus)
   return <div data-process-id={process.id} className="flex h-full min-h-0 flex-col">
-    <div className="flex shrink-0 flex-wrap items-center gap-2 px-2 py-1 text-[9px] text-[rgb(var(--muted))]">
-      <span role="status">{process.lifecycleStatus} · {connection}{process.exitCode !== undefined ? ` · exit ${process.exitCode}` : ''}</span>
-      {(connection === 'disconnected' || (connection !== 'connected' && error)) && <button onClick={() => setAttachment(value => value + 1)}>Reconnect output</button>}
-      <span title={process.retryAt ? `Next retry: ${process.retryAt}` : undefined}>{process.policy?.mode} · retries {process.retryCount ?? 0}/{process.policy?.max_restarts ?? 0} · attempt {process.attempt ?? 1}</span>
-      <button disabled={!!pending || terminalStatus || process.lifecycleStatus === 'stopping'} onClick={() => void action('stop', () => stopProcess(process.projectId, process.daemonId))}>{pending === 'stop' ? 'Stopping…' : 'Stop process'}</button>
-      <button disabled={!!pending} onClick={() => void action('restart', () => restartProcess(process.projectId, process.daemonId))}>{pending === 'restart' ? 'Restarting…' : 'Restart process'}</button>
-      <button disabled={!!pending} onClick={() => void action('history', download)}>Download retained logs</button>
-    </div>
-    {(error || process.exitError) && <p role="alert" className="shrink-0 break-all px-2 text-[10px] text-[rgb(var(--danger))]">{error || process.exitError}</p>}
+    {(error || process.exitError) && <p role="alert" className="shrink-0 break-all px-2 pt-1 text-[10px] text-danger">{error || process.exitError}</p>}
     <div ref={host} className="min-h-0 flex-1 overflow-hidden" />
+    <div className="flex min-h-[26px] shrink-0 flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-border-subtle px-2 font-mono text-[10px] text-muted-2">
+      <span role="status">{process.lifecycleStatus} · {connection}{process.exitCode !== undefined ? ` · exit ${process.exitCode}` : ''}</span>
+      <span title={process.retryAt ? `Next retry: ${process.retryAt}` : undefined}>{process.policy?.mode} · retries {process.retryCount ?? 0}/{process.policy?.max_restarts ?? 0} · attempt {process.attempt ?? 1}</span>
+      <span className="ml-auto flex flex-wrap items-center gap-1">
+        {(connection === 'disconnected' || (connection !== 'connected' && error)) && <button className="bonsai-focus btn-ghost !h-5 px-2 text-[10px] disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setAttachment(value => value + 1)}>Reconnect output</button>}
+        <button className="bonsai-focus btn-ghost !h-5 px-2 text-[10px] disabled:cursor-not-allowed disabled:opacity-40" disabled={!!pending || terminalStatus || process.lifecycleStatus === 'stopping'} onClick={() => void action('stop', () => stopProcess(process.projectId, process.daemonId))}>{pending === 'stop' ? 'Stopping…' : 'Stop process'}</button>
+        <button className="bonsai-focus btn-ghost !h-5 px-2 text-[10px] disabled:cursor-not-allowed disabled:opacity-40" disabled={!!pending} onClick={() => void action('restart', () => restartProcess(process.projectId, process.daemonId))}>{pending === 'restart' ? 'Restarting…' : 'Restart process'}</button>
+        <button className="bonsai-focus btn-ghost !h-5 px-2 text-[10px] disabled:cursor-not-allowed disabled:opacity-40" disabled={!!pending} onClick={() => void action('history', download)}>Download retained logs</button>
+      </span>
+    </div>
   </div>
 }

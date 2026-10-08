@@ -95,9 +95,9 @@ export function FilesDiffPanel({ embedded = false }: { embedded?: boolean }) {
     <Wrapper className={embedded ? 'flex h-full min-h-0 min-w-0 flex-col' : 'dock-pane flex h-full min-w-0 flex-col'}>
       <Tabs.Root defaultValue="files" className="flex min-h-0 flex-1 flex-col">
         <div className={'flex shrink-0 items-center px-2 ' + (embedded ? 'h-9 border-b border-border-subtle' : 'dock-heading')}>
-          <Tabs.List className="dock-tabs flex h-full items-center gap-1">
-            <Tabs.Trigger value="files" className="bonsai-focus dock-tab">Files</Tabs.Trigger>
-            <Tabs.Trigger value="diff" className="bonsai-focus dock-tab">Git Diff</Tabs.Trigger>
+          <Tabs.List className="flex h-full items-center gap-1">
+            <Tabs.Trigger value="files" className="bonsai-focus h-6 rounded-md px-2.5 text-[11px] font-medium text-muted transition-colors hover:text-text data-[state=active]:bg-panel-3 data-[state=active]:text-text">Files</Tabs.Trigger>
+            <Tabs.Trigger value="diff" className="bonsai-focus h-6 rounded-md px-2.5 text-[11px] font-medium text-muted transition-colors hover:text-text data-[state=active]:bg-panel-3 data-[state=active]:text-text">Git Diff</Tabs.Trigger>
           </Tabs.List>
           <div className="ml-auto flex items-center gap-1">
             <button onClick={() => setView(view === 'tree' ? 'flat' : 'tree')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title={view === 'tree' ? 'Flat file list' : 'File tree'}>

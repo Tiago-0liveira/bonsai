@@ -72,22 +72,22 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
       <div
         {...attributes}
         {...listeners}
-        className="runtime-heading flex h-10 shrink-0 cursor-grab items-center gap-2 px-2.5 active:cursor-grabbing"
+        className="runtime-heading flex h-[26px] shrink-0 cursor-grab items-center gap-2 px-2 active:cursor-grabbing"
         title="Drag runtime card"
       >
-        <GripVertical size={9} className="shrink-0 text-[rgb(var(--muted-2))]" />
+        <GripVertical size={9} className="shrink-0 text-muted-2" />
         {runtime.type === 'agent' ? (
-          <ProviderBadge provider={runtime.agent.provider} size={20} />
+          <ProviderBadge provider={runtime.agent.provider} size={18} />
         ) : (
-          <span className="grid h-5 w-5 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))]"><TerminalSquare size={9} /></span>
+          <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[5px] bg-panel-4 text-muted"><TerminalSquare size={10} /></span>
         )}
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[11px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</div>
-          <div className="truncate text-[9px] text-[rgb(var(--muted))]">
+        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="shrink-0 truncate text-[12px] font-semibold text-text">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</span>
+          <span className="min-w-0 truncate font-mono text-[10px] text-muted-2">
             {runtime.type === 'agent'
               ? runtime.agent.profileName ?? (runtime.agent.model + ' · ' + runtime.agent.reasoningEffort + (runtime.agent.fastMode ? ' · Fast' : ''))
               : runtime.process.command}
-          </div>
+          </span>
         </div>
         {runtime.type === 'agent' && <div ref={setTerminalActions} className="flex shrink-0 items-center gap-2" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} />}
         <StatusDot status={runtime.type === 'agent' ? runtime.agent.state : runtime.process.status} />
@@ -98,7 +98,7 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
             event.stopPropagation()
             closeRuntime(runtime.id)
           }}
-          className="grid h-5 w-5 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
+          className="bonsai-focus icon-btn-20 shrink-0 hover:text-text"
           title="Close runtime card"
           aria-label="Close runtime card"
         >
@@ -153,8 +153,11 @@ export function RuntimeWorkspace() {
   }))
 
   return (
-    <section ref={hostRef} className="dock-pane flex h-full min-h-0 min-w-0 flex-col">
-      <div className="dock-heading flex shrink-0 items-center gap-2 px-2.5">
+    <section ref={hostRef} className="island dock-pane flex h-full min-h-0 min-w-0 flex-col">
+      <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
+        <TerminalSquare size={13} className="shrink-0 text-ok" />
+        <span className="dock-title">Terminals</span>
+        <span className="island-count">{openRuntimeIds.length}</span>
         {wideHeader ? (
           <>
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
@@ -164,17 +167,14 @@ export function RuntimeWorkspace() {
                   type="button"
                   onClick={() => focusRuntime(runtime.id)}
                   className={
-                    'flex h-7 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-2 text-left ' +
-                    (dockRuntimeId === runtime.id ? 'bg-[rgb(var(--panel-2))] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
+                    'bonsai-focus flex h-6 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-2 text-left text-[12px] ' +
+                    (dockRuntimeId === runtime.id ? 'bg-panel-3 text-text' : 'text-muted hover:bg-panel-2 hover:text-text')
                   }
                 >
                   {runtime.type === 'agent' ? (
                     <ProviderBadge provider={runtime.agent.provider} size={16} />
-                  ) : <TerminalSquare size={9} />}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[10px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</span>
-                    {runtime.type === 'agent' && <span className="block truncate text-[8px] text-[rgb(var(--muted))]">{runtime.agent.provider} · {runtime.agent.model}</span>}
-                  </span>
+                  ) : <TerminalSquare size={12} className="shrink-0" />}
+                  <span className="min-w-0 truncate">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</span>
                 </button>
               ))}
             </div>
@@ -189,12 +189,12 @@ export function RuntimeWorkspace() {
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <button type="button" onClick={() => toggleRightPanel('prs')} title="Toggle pull requests" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[8px] ' + (rightPanels.prs ? 'bg-[rgb(var(--accent)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
-            <GitPullRequest size={10} /> PRs
+          <button type="button" onClick={() => toggleRightPanel('prs')} title="Toggle pull requests" className={'bonsai-focus btn-ghost text-[11px] ' + (rightPanels.prs ? '!bg-accent/[.12] !text-text' : '')}>
+            <GitPullRequest size={11} /> PRs
           </button>
-          <span className="mx-0.5 h-4 w-px bg-[rgb(var(--border))]" />
-          <button onClick={() => setDockState('collapsed')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Minimize workspace"><Minus size={11} /></button>
-          <button onClick={() => setDockState(dockState === 'maximized' ? 'normal' : 'maximized')} className="bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]" title="Maximize workspace"><Maximize2 size={11} /></button>
+          <span className="mx-0.5 h-4 w-px bg-border" />
+          <button onClick={() => setDockState('collapsed')} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0" title="Minimize workspace"><Minus size={11} /></button>
+          <button onClick={() => setDockState(dockState === 'maximized' ? 'normal' : 'maximized')} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0" title="Maximize workspace"><Maximize2 size={11} /></button>
         </div>
       </div>
 
@@ -323,11 +323,11 @@ function PullRequestsPanel() {
   }, [pullRequests, query, sort])
 
   return (
-    <aside className="dock-pane flex h-full min-w-0 flex-col">
+    <aside className="island dock-pane flex h-full min-w-0 flex-col">
       <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
         <GitPullRequest size={13} className="shrink-0 text-[rgb(var(--accent))]" />
         <span className="dock-title min-w-0 truncate">Pull requests</span>
-        <span className="dock-count">{pullRequests.length}</span>
+        <span className="island-count">{pullRequests.length}</span>
         <button onClick={() => setRightPanel('prs', false)} className="bonsai-focus ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))]" title="Close pull requests"><X size={12} /></button>
       </div>
       <PullRequestTabs value={tab} onChange={value => { setTab(value); if (value === 'closed') retry() }} />
@@ -414,7 +414,7 @@ function EditorPreferenceDialog() {
 
 function HorizontalResizeHandle() {
   return (
-    <PanelResizeHandle className="dock-resize group relative w-2 shrink-0 cursor-col-resize">
+    <PanelResizeHandle className="dock-resize group relative w-3 shrink-0 cursor-col-resize">
       <div className="absolute left-1/2 top-1/2 h-9 w-px -translate-x-1/2 -translate-y-1/2 bg-[rgb(var(--border-strong))] opacity-0 transition-opacity group-hover:opacity-100" />
     </PanelResizeHandle>
   )
@@ -426,7 +426,7 @@ export function BottomWorkspace() {
 
   return (
     <>
-      <PanelGroup autoSaveId="bonsai-bottom-panels-v1" storage={panelPreferences.storage} onLayout={layout => panelPreferences.remember(panelIds, layout)} direction="horizontal" className="bottom-workspace h-full min-h-0 p-2 pt-1">
+      <PanelGroup autoSaveId="bonsai-bottom-panels-v1" storage={panelPreferences.storage} onLayout={layout => panelPreferences.remember(panelIds, layout)} direction="horizontal" className="bottom-workspace h-full min-h-0">
         <Panel id="runtime" order={1} defaultSize={rightPanels.prs ? 82 : 100} minSize={26}>
           <RuntimeWorkspace />
         </Panel>

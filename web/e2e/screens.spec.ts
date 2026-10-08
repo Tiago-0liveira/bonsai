@@ -28,6 +28,17 @@ test('canvas', async ({ page }, testInfo) => {
   expect(errors).toEqual([])
 })
 
+test('canvas-runtime-open', async ({ page }, testInfo) => {
+  const errors = trackPageErrors(page)
+  await openConnectedApp(page)
+  await page.getByRole('button', { name: 'feat/web-workspace', exact: true }).click()
+  await page.getByRole('button', { name: 'Open runtime', exact: true }).click()
+  await page.locator('[data-bonsai-select-menu="Open runtime"] [role="option"]').first().click()
+  await expect(page.locator('.runtime-tile')).toHaveCount(1)
+  await capture(page, testInfo, 'canvas-runtime-open')
+  expect(errors).toEqual([])
+})
+
 test('canvas-dock-collapsed', async ({ page }, testInfo) => {
   const errors = trackPageErrors(page)
   await openConnectedApp(page)

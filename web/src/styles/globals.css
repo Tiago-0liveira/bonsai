@@ -79,42 +79,23 @@ select { color-scheme: dark; }
   .top-nav-secondary { display: none; }
 }
 
-/* Dock surfaces share one quiet frame, with color reserved for focus and status. */
-.bottom-workspace { background: rgb(var(--bg)); }
-.dock-pane {
-  overflow: hidden;
-  border: 1px solid rgb(var(--border) / .8);
-  border-radius: 10px;
-  background: rgb(var(--panel));
-}
-.dock-heading {
-  height: 42px;
-  background: linear-gradient(180deg, rgb(var(--panel-3) / .7), rgb(var(--panel-2) / .45));
-  border-bottom: 1px solid rgb(var(--border) / .7);
-}
-.dock-title { font-size: 11px; font-weight: 600; letter-spacing: .01em; }
+/* Dock surfaces are islands; .dock-pane stays as a hook for tests. */
+.bottom-workspace { background: transparent; }
+.dock-pane { overflow: hidden; }
+.dock-heading { height: 34px; border-bottom: 1px solid rgb(var(--border-subtle)); }
+.dock-title { font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; text-transform: uppercase; letter-spacing: .08em; color: rgb(var(--muted)); }
 .dock-count, .inspector-count {
-  border: 1px solid rgb(var(--border) / .65);
   border-radius: 5px;
-  padding: 1px 5px;
-  font-size: 9px;
+  padding: 0 5px;
+  background: rgb(var(--panel-4));
+  font-family: var(--font-mono);
+  font-size: 9.5px;
   color: rgb(var(--muted));
   font-variant-numeric: tabular-nums;
 }
-.dock-tab {
-  height: 28px;
-  padding: 0 9px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 500;
-  color: rgb(var(--muted));
-}
-.dock-tab[data-state=active] { background: rgb(var(--accent) / .12); color: rgb(var(--text)); box-shadow: inset 0 0 0 1px rgb(var(--accent) / .2); }
-.dock-tab:hover { color: rgb(var(--text)); }
-.runtime-tile { border: 1px solid rgb(var(--border) / .8); border-radius: 8px; background: rgb(var(--well)); }
-.runtime-tile-active { border-color: rgb(var(--accent) / .4); box-shadow: 0 0 0 1px rgb(var(--accent) / .05); }
-.runtime-heading { border-bottom: 1px solid rgb(var(--border) / .65); background: rgb(var(--panel-2)); }
-.runtime-tile-active .runtime-heading { background: linear-gradient(100deg, rgb(var(--accent) / .09), rgb(var(--panel-2)) 75%); }
+.runtime-tile { border: 1px solid rgb(var(--border-subtle)); border-radius: 10px; background: rgb(var(--well)); }
+.runtime-tile-active { border-color: rgb(var(--accent-solid) / .4); }
+.runtime-heading { border-bottom: 1px solid rgb(var(--border-subtle)); }
 .dock-resize { border-radius: 8px; transition: background 150ms; }
 .dock-resize:hover, .dock-resize[data-resize-handle-active] { background: rgb(var(--accent) / .13); }
 
@@ -139,25 +120,28 @@ select { color-scheme: dark; }
 .inspector-settings[open] .inspector-disclosure { transform: rotate(90deg); }
 
 /* Shell recipes (islands, ground, buttons). Colors come from tokens only. */
-.island { background: rgb(var(--panel) / .94); backdrop-filter: blur(14px); border: 1px solid rgb(var(--border)); border-radius: 14px; box-shadow: var(--shadow-island); }
-.island-topbar { border-radius: 12px; box-shadow: var(--shadow-topbar); }
-.island-title { display: flex; align-items: center; height: 30px; padding: 0 12px; border-bottom: 1px solid rgb(var(--border-subtle)); font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: rgb(var(--muted)); }
-.island-count { padding: 0 5px; border-radius: 5px; background: rgb(var(--panel-4)); font-family: var(--font-mono); font-size: 9.5px; color: rgb(var(--muted)); }
-.shell-ground {
-  background:
-    radial-gradient(ellipse at 40% 45%, transparent 48%, rgb(var(--well) / .55) 100%),
-    radial-gradient(640px 380px at 38% 46%, rgb(var(--accent-solid) / .06), transparent 70%),
-    rgb(var(--bg));
+/* In the components layer so utility classes (h-6, px-0) can override them. */
+@layer components {
+  .island { background: rgb(var(--panel) / .94); backdrop-filter: blur(14px); border: 1px solid rgb(var(--border)); border-radius: 14px; box-shadow: var(--shadow-island); }
+  .island-topbar { border-radius: 12px; box-shadow: var(--shadow-topbar); }
+  .island-title { display: flex; align-items: center; height: 30px; padding: 0 12px; border-bottom: 1px solid rgb(var(--border-subtle)); font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: rgb(var(--muted)); }
+  .island-count { padding: 0 5px; border-radius: 5px; background: rgb(var(--panel-4)); font-family: var(--font-mono); font-size: 9.5px; color: rgb(var(--muted)); }
+  .shell-ground {
+    background:
+      radial-gradient(ellipse at 40% 45%, transparent 48%, rgb(var(--well) / .55) 100%),
+      radial-gradient(640px 380px at 38% 46%, rgb(var(--accent-solid) / .06), transparent 70%),
+      rgb(var(--bg));
+  }
+  .btn-ghost { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; color: rgb(var(--muted)); transition: background 120ms, color 120ms; }
+  .btn-ghost:hover { background: rgb(var(--panel-3)); color: rgb(var(--text)); }
+  .btn-bordered { border: 1px solid rgb(var(--border)); background: rgb(var(--panel-2)); transition: border-color 120ms; }
+  .btn-bordered:hover { border-color: rgb(var(--warn-solid)); }
+  .btn-primary { border-radius: 8px; background: rgb(var(--accent-solid)); color: rgb(var(--accent-fg)); font-weight: 600; }
+  .btn-accent-tint { background: rgb(var(--accent) / .12); color: rgb(var(--accent)); border: 1px solid rgb(var(--accent) / .35); }
+  .btn-danger-tint { background: rgb(var(--danger-solid) / .28); color: rgb(var(--danger)); border: 1px solid rgb(var(--danger) / .35); }
+  .chip { border-radius: 5px; padding: 0 6px; font-family: var(--font-mono); font-size: 9.5px; line-height: 16px; }
+  .icon-btn-20 { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid rgb(var(--border)); border-radius: 6px; background: rgb(var(--panel-2)); color: rgb(var(--muted)); }
 }
-.btn-ghost { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; color: rgb(var(--muted)); transition: background 120ms, color 120ms; }
-.btn-ghost:hover { background: rgb(var(--panel-3)); color: rgb(var(--text)); }
-.btn-bordered { border: 1px solid rgb(var(--border)); background: rgb(var(--panel-2)); transition: border-color 120ms; }
-.btn-bordered:hover { border-color: rgb(var(--warn-solid)); }
-.btn-primary { border-radius: 8px; background: rgb(var(--accent-solid)); color: rgb(var(--accent-fg)); font-weight: 600; }
-.btn-accent-tint { background: rgb(var(--accent) / .12); color: rgb(var(--accent)); border: 1px solid rgb(var(--accent) / .35); }
-.btn-danger-tint { background: rgb(var(--danger-solid) / .28); color: rgb(var(--danger)); border: 1px solid rgb(var(--danger) / .35); }
-.chip { border-radius: 5px; padding: 0 6px; font-family: var(--font-mono); font-size: 9.5px; line-height: 16px; }
-.icon-btn-20 { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid rgb(var(--border)); border-radius: 6px; background: rgb(var(--panel-2)); color: rgb(var(--muted)); }
 
 /*
  * xterm theming without injected <style> elements. The production CSP
