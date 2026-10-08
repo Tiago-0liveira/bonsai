@@ -91,9 +91,9 @@ export interface BonsaiGraphData extends Record<string, unknown> {
 }
 
 const healthColor: Record<Health, string> = {
-  healthy: 'bg-[rgb(var(--green))]',
-  warning: 'bg-[rgb(var(--orange))]',
-  error: 'bg-[rgb(var(--red))]',
+  healthy: 'bg-[rgb(var(--accent-solid))]',
+  warning: 'bg-[rgb(var(--warn-solid))]',
+  error: 'bg-[rgb(var(--danger))]',
   idle: 'bg-[rgb(var(--muted-2))]',
 }
 
@@ -102,7 +102,7 @@ function MenuItem({ children, onSelect, unavailable = false }: { children: React
     <ContextMenu.Item
       onSelect={onSelect}
       disabled={unavailable}
-      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--purple)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
+      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--accent)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
     >
       {children}{unavailable && <span className="ml-auto text-[9px]">unavailable</span>}
     </ContextMenu.Item>
@@ -113,16 +113,16 @@ function CiBadge({ status, failed = 0, compact = false, label = 'CI' }: { status
   if (!status) return null
   const meta =
     status === 'passed'
-      ? { text: compact ? 'passed' : label + ' passed', icon: CircleCheck, tone: 'text-[rgb(var(--green))] border-[rgb(var(--green)/.30)]' }
+      ? { text: compact ? 'passed' : label + ' passed', icon: CircleCheck, tone: 'text-[rgb(var(--ok))] border-[rgb(var(--ok)/.30)]' }
       : status === 'running'
-        ? { text: compact ? 'running' : label + ' running', icon: LoaderCircle, tone: 'text-[rgb(var(--blue))] border-[rgb(var(--blue)/.30)]' }
+        ? { text: compact ? 'running' : label + ' running', icon: LoaderCircle, tone: 'text-[rgb(var(--accent))] border-[rgb(var(--accent)/.30)]' }
         : status === 'failed'
-          ? { text: compact ? 'failed' : label + ' failed' + (failed ? ' · ' + failed : ''), icon: CircleX, tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.30)]' }
+          ? { text: compact ? 'failed' : label + ' failed' + (failed ? ' · ' + failed : ''), icon: CircleX, tone: 'text-[rgb(var(--danger))] border-[rgb(var(--danger)/.30)]' }
           : status === 'none'
             ? { text: compact ? 'none' : label + ' no checks', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
             : status === 'unknown'
               ? { text: compact ? 'unknown' : label + ' unknown', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
-              : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.30)]' }
+              : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.30)]' }
   const Icon = meta.icon
   const text = compact ? label + ' ' + meta.text : meta.text
   const failedSuffix = status === 'failed' && failed && !compact ? ' · ' + failed : ''
@@ -140,14 +140,14 @@ function PrBadge({ status, number }: { status?: PrStatus; number?: number }) {
   if (!status && !number) return null
   const tone =
     status === 'Open'
-      ? 'border-[rgb(var(--green)/.25)] text-[rgb(var(--green))]'
+      ? 'border-[rgb(var(--accent)/.25)] bg-[rgb(var(--bg))] text-[rgb(var(--accent))]'
       : status === 'Draft'
-        ? 'border-[rgb(var(--purple)/.25)] text-[rgb(var(--purple))]'
+        ? 'border-[rgb(var(--border))] bg-[rgb(var(--panel-3))] text-[rgb(var(--muted))]'
         : status === 'Merged'
-          ? 'border-[rgb(var(--blue)/.25)] text-[rgb(var(--blue))]'
-          : 'border-[rgb(var(--border))] text-[rgb(var(--muted))]'
+          ? 'border-[rgb(var(--ok)/.25)] bg-[rgb(var(--bg))] text-[rgb(var(--ok))]'
+          : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]'
   return (
-    <span className={'inline-flex items-center gap-1 rounded border bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] ' + tone}>
+    <span className={'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[8px] ' + tone}>
       <GitPullRequest size={9} />
       {number ? '#' + number : status}
     </span>
@@ -173,16 +173,16 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const info = data.defaultBranchInfo
   return (
-    <div className="w-[232px] overflow-hidden rounded-lg border border-[rgb(var(--green)/.28)] bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)]">
-      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-[rgb(var(--green)/.5)] !bg-[rgb(var(--panel-3))]" />
+    <div className="w-[232px] overflow-hidden rounded-lg border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)]">
+      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-[rgb(var(--accent)/.5)] !bg-[rgb(var(--panel-3))]" />
       <div className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5">
-        <span className="grid h-7 w-7 place-items-center rounded-md border border-[rgb(var(--green)/.28)] bg-[rgb(var(--green)/.08)] text-[rgb(var(--green))]">
+        <span className="grid h-7 w-7 place-items-center rounded-md border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--accent)/.08)] text-[rgb(var(--accent))]">
           <GitBranch size={13} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[11px] font-semibold">{data.title}</span>
-            <span className="rounded bg-[rgb(var(--green)/.11)] px-1.5 py-0.5 text-[7px] text-[rgb(var(--green))]">default</span>
+            <span className="rounded bg-[rgb(var(--accent)/.11)] px-1.5 py-0.5 text-[7px] text-[rgb(var(--accent))]">default</span>
           </div>
           <div className="mt-0.5 text-[8px] text-[rgb(var(--muted-2))]">read-only</div>
         </div>
@@ -214,9 +214,9 @@ function EnvCard({ data }: { data: BonsaiGraphData }) {
     <button
       type="button"
       onClick={() => setEnvEditorOpen(true)}
-      className="bonsai-focus group flex w-[150px] items-center gap-2 rounded-lg border border-[rgb(var(--orange)/.28)] bg-[rgb(var(--panel-2))] p-2.5 text-left shadow-[0_6px_20px_rgb(0_0_0/.10)] hover:border-[rgb(var(--orange)/.5)]"
+      className="bonsai-focus group flex w-[150px] items-center gap-2 rounded-lg border border-[rgb(var(--warn)/.28)] bg-[rgb(var(--panel-2))] p-2.5 text-left shadow-[0_6px_20px_rgb(0_0_0/.10)] hover:border-[rgb(var(--warn)/.5)]"
     >
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[rgb(var(--orange)/.26)] bg-[rgb(var(--orange)/.07)] text-[rgb(var(--orange))]">
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[rgb(var(--warn)/.26)] bg-[rgb(var(--warn)/.07)] text-[rgb(var(--warn))]">
         <KeyRound size={13} />
       </span>
       <span className="min-w-0">
@@ -243,7 +243,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
         type="button"
         onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId); else if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
         className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5 text-left"
-        style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--purple))'}` }}
+        style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--accent))'}` }}
       >
         <Layers3 size={12} style={{ color: data.tagColor }} />
         <span className="font-semibold" style={{ color: data.tagColor }}>{data.tag}</span>
@@ -253,7 +253,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
       <div>
         {(data.stackItems ?? []).map((item) => (
           <div key={item.id} className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2 last:border-0">
-            <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (item.hasRunningAgent ? 'bg-[rgb(var(--green))] shadow-[0_0_7px_rgb(var(--green)/.8)]' : 'bg-[rgb(var(--muted-2))]')} title={item.hasRunningAgent ? 'Agent running' : 'No agent running'} />
+            <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (item.hasRunningAgent ? 'bg-[rgb(var(--accent-solid))] shadow-[0_0_7px_rgb(var(--accent-solid)/.8)]' : 'bg-[rgb(var(--muted-2))]')} title={item.hasRunningAgent ? 'Agent running' : 'No agent running'} />
             <button
               type="button"
               onClick={(event) => { event.stopPropagation(); setSelection({ type: 'worktree', id: item.id }) }}
@@ -261,7 +261,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             >
               <span className="block truncate">{item.branch}</span>
               {!!item.processCount && <span className="text-[8px] text-[rgb(var(--muted))]">{item.processCount} processes</span>}
-              {item.connectionLabel && <span className="block text-[8px] text-[rgb(var(--orange))]">{item.connectionLabel} · {item.dirtyFiles ?? 0} changed</span>}
+              {item.connectionLabel && <span className="block text-[8px] text-[rgb(var(--warn))]">{item.connectionLabel} · {item.dirtyFiles ?? 0} changed</span>}
             </button>
             <ContextMenu.Root>
               <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
@@ -331,19 +331,19 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           className={
             'group relative ' + shellWidth +
             ' rounded-lg border bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] transition-[border-color,background-color] ' +
-            (selected ? 'border-[rgb(var(--purple))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
+            (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
           }
         >
           {data.kind !== 'project' && (
             <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
           )}
           {data.kind === 'project' && (
-            <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-[rgb(var(--green)/.5)] !bg-[rgb(var(--panel-3))]" />
+            <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-[rgb(var(--accent)/.5)] !bg-[rgb(var(--panel-3))]" />
           )}
           {data.kind === 'worktree' && (
             <>
-              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-[rgb(var(--purple)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge source" />
-              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-[rgb(var(--purple)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge target" />
+              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge source" />
+              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge target" />
             </>
           )}
 
@@ -352,7 +352,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           {data.kind === 'project' && (
             <>
               <div className="flex items-start gap-3 border-b border-[rgb(var(--border))] p-3.5">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[rgb(var(--green)/.28)] bg-[rgb(var(--green)/.07)] text-[rgb(var(--green))]">{icon}</div>
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--accent)/.07)] text-[rgb(var(--accent))]">{icon}</div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className={'h-2 w-2 rounded-full ' + healthColor[status]} />
@@ -386,11 +386,11 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                 </div>
               </div>
               <div className="flex items-center gap-1.5 px-2.5 pt-2 text-[8px] text-[rgb(var(--muted-2))]">
-                <GitPullRequest size={9} className="text-[rgb(var(--purple))]" />
+                <GitPullRequest size={9} className="text-[rgb(var(--accent))]" />
                 target <span className="truncate font-mono text-[rgb(var(--muted))]">{data.mergeTargetBranch}</span>
               </div>
               <div className="flex flex-wrap gap-1.5 px-2.5 py-2">
-                {data.connectionLabel && <span className="text-[8px] text-[rgb(var(--orange))]">{data.connectionLabel}</span>}
+                {data.connectionLabel && <span className="text-[8px] text-[rgb(var(--warn))]">{data.connectionLabel}</span>}
                 <CiBadge status={data.ciStatus} failed={data.ciFailed} />
               </div>
               <div className="flex items-center justify-between border-t border-[rgb(var(--border))] px-2.5 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">

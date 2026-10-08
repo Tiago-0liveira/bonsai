@@ -32,6 +32,7 @@ import {
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { BoardItem, BoardList, BoardStatus, TagColor } from '../../types'
+import { tagPalette } from '../workspace/tagStyles'
 
 const colors: TagColor[] = ['purple', 'blue', 'green', 'orange', 'red', 'cyan', 'pink']
 
@@ -42,19 +43,6 @@ function iconForKind(kind: string): LucideIcon {
   if (normalized.includes('problem')) return TriangleAlert
   if (normalized.includes('feature')) return Sparkles
   return ListTodo
-}
-
-function colorClass(color: TagColor) {
-  const map: Record<TagColor, string> = {
-    purple: 'text-[rgb(var(--purple))]',
-    blue: 'text-[rgb(var(--blue))]',
-    green: 'text-[rgb(var(--green))]',
-    orange: 'text-[rgb(var(--orange))]',
-    red: 'text-[rgb(var(--red))]',
-    cyan: 'text-cyan-400',
-    pink: 'text-pink-400',
-  }
-  return map[color]
 }
 
 export function BoardPage() {
@@ -121,11 +109,11 @@ function BoardColumn({ list, items }: { list: BoardList; items: BoardItem[] }) {
       ref={setNodeRef}
       className={
         'w-[285px] min-w-[285px] self-start overflow-hidden rounded-lg border bg-[rgb(var(--panel))] transition-colors ' +
-        (isOver ? 'border-[rgb(var(--purple))]' : 'border-[rgb(var(--border))]')
+        (isOver ? 'border-[rgb(var(--accent))]' : 'border-[rgb(var(--border))]')
       }
     >
       <div className="flex h-11 items-center border-b border-[rgb(var(--border))] px-3">
-        <Tag size={12} className={'mr-2 ' + colorClass(list.color)} />
+        <Tag size={12} className="mr-2" style={{ color: tagPalette[list.color].foreground }} />
         <span className="font-medium">{list.name}</span>
         <span className="ml-2 rounded-full bg-[rgb(var(--panel-3))] px-1.5 py-0.5 text-[9px] text-[rgb(var(--muted))]">{items.length}</span>
         <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">{list.priority} · {list.itemType}</span>
@@ -191,10 +179,10 @@ function TableConfig({ onClose }: { onClose: () => void }) {
   const alternatives = sorted.filter((list) => list.id !== pendingDelete)
 
   return (
-    <div className="absolute inset-0 z-50 flex justify-end bg-black/45 backdrop-blur-[1px]">
+    <div className="absolute inset-0 z-50 flex justify-end bg-well/70 backdrop-blur-[1px]">
       <aside className="flex h-full w-[520px] max-w-[92vw] flex-col border-l border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-2xl">
         <div className="flex h-12 shrink-0 items-center border-b border-[rgb(var(--border))] px-4">
-          <Settings2 size={14} className="mr-2 text-[rgb(var(--purple))]" />
+          <Settings2 size={14} className="mr-2 text-[rgb(var(--accent))]" />
           <div>
             <div className="text-[12px] font-semibold">Configure table</div>
             <div className="text-[9px] text-[rgb(var(--muted-2))]">Lists, priorities and types are project workflow primitives.</div>
@@ -219,7 +207,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
                     <div className="flex gap-1">
                       <button disabled={index === 0} onClick={() => moveList(list.id, -1)} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] disabled:opacity-30"><ArrowUp size={10} /></button>
                       <button disabled={index === sorted.length - 1} onClick={() => moveList(list.id, 1)} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] disabled:opacity-30"><ArrowDown size={10} /></button>
-                      <button onClick={() => { setPendingDelete(list.id); setMoveTo(sorted.find((item) => item.id !== list.id)?.id ?? '') }} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--red))]"><Trash2 size={10} /></button>
+                      <button onClick={() => { setPendingDelete(list.id); setMoveTo(sorted.find((item) => item.id !== list.id)?.id ?? '') }} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--danger))]"><Trash2 size={10} /></button>
                     </div>
                   </div>
                 </div>
@@ -233,7 +221,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
               {priorities.map((priority) => (
                 <span key={priority.id} className="inline-flex items-center gap-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 py-1 text-[9px]">
                   {priority.name}
-                  <button onClick={() => removePriority(priority.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--red))]"><X size={9} /></button>
+                  <button onClick={() => removePriority(priority.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--danger))]"><X size={9} /></button>
                 </span>
               ))}
             </div>
@@ -249,7 +237,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
               {types.map((type) => (
                 <span key={type.id} className="inline-flex items-center gap-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 py-1 text-[9px]">
                   {type.name}
-                  <button onClick={() => removeType(type.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--red))]"><X size={9} /></button>
+                  <button onClick={() => removeType(type.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--danger))]"><X size={9} /></button>
                 </span>
               ))}
             </div>
@@ -261,7 +249,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
         </div>
 
         {pendingDelete && deleteList && (
-          <div className="border-t border-[rgb(var(--red)/.3)] bg-[rgb(var(--red)/.05)] p-3">
+          <div className="border-t border-[rgb(var(--danger)/.3)] bg-[rgb(var(--danger)/.05)] p-3">
             <div className="text-[10px] font-medium">Remove “{deleteList.name}”?</div>
             {deleteHasItems && (
               <div className="mt-2">
@@ -274,7 +262,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
               <button
                 disabled={(deleteHasItems && !moveTo) || alternatives.length === 0}
                 onClick={() => { removeList(pendingDelete, moveTo || alternatives[0]?.id || ''); setPendingDelete('') }}
-                className="rounded-md border border-[rgb(var(--red)/.35)] bg-[rgb(var(--red)/.1)] px-2 py-1.5 text-[9px] text-[rgb(var(--red))] disabled:opacity-35"
+                className="rounded-md border border-[rgb(var(--danger)/.35)] bg-[rgb(var(--danger)/.1)] px-2 py-1.5 text-[9px] text-[rgb(var(--danger))] disabled:opacity-35"
               >
                 Remove list
               </button>

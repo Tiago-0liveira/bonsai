@@ -9,18 +9,18 @@ import { useProcessActions } from '../../terminal/useProcessActions'
 import { MoveSubtreeGrip, type BonsaiGraphData } from './BonsaiNode'
 
 const statusPresentation: Record<ProcessLifecycleStatus, { label: string; tone: string }> = {
-  starting: { label: 'Starting', tone: 'text-[rgb(var(--blue))] border-[rgb(var(--blue)/.25)] bg-[rgb(var(--blue)/.08)]' },
-  running: { label: 'Running', tone: 'text-[rgb(var(--green))] border-[rgb(var(--green)/.25)] bg-[rgb(var(--green)/.08)]' },
-  backoff: { label: 'Retrying', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
-  stopping: { label: 'Stopping', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
+  starting: { label: 'Starting', tone: 'text-[rgb(var(--accent))] border-[rgb(var(--accent)/.25)] bg-[rgb(var(--accent)/.08)]' },
+  running: { label: 'Running', tone: 'text-[rgb(var(--accent))] border-[rgb(var(--accent)/.25)] bg-[rgb(var(--accent)/.08)]' },
+  backoff: { label: 'Retrying', tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.25)] bg-[rgb(var(--warn)/.08)]' },
+  stopping: { label: 'Stopping', tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.25)] bg-[rgb(var(--warn)/.08)]' },
   stopped: { label: 'Stopped', tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))] bg-[rgb(var(--bg)/.4)]' },
   done: { label: 'Completed', tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))] bg-[rgb(var(--bg)/.4)]' },
-  failed: { label: 'Failed', tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.25)] bg-[rgb(var(--red)/.08)]' },
-  lost: { label: 'Lost', tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.25)] bg-[rgb(var(--red)/.08)]' },
-  orphan: { label: 'Orphaned', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
+  failed: { label: 'Failed', tone: 'text-[rgb(var(--danger))] border-[rgb(var(--danger)/.25)] bg-[rgb(var(--danger)/.08)]' },
+  lost: { label: 'Lost', tone: 'text-[rgb(var(--danger))] border-[rgb(var(--danger)/.25)] bg-[rgb(var(--danger)/.08)]' },
+  orphan: { label: 'Orphaned', tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.25)] bg-[rgb(var(--warn)/.08)]' },
 }
 
-const menuItemClass = 'flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-[rgb(var(--purple)/.12)] data-[highlighted]:text-[rgb(var(--text))]'
+const menuItemClass = 'flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-[rgb(var(--accent)/.12)] data-[highlighted]:text-[rgb(var(--text))]'
 const iconButtonClass = 'bonsai-focus grid h-6 w-6 place-items-center rounded text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--panel-3))] hover:text-[rgb(var(--text))] disabled:cursor-default disabled:opacity-30'
 
 export function ProcessNode({ data: raw, selected }: NodeProps) {
@@ -37,10 +37,10 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
 
   return <ContextMenu.Root>
     <ContextMenu.Trigger asChild>
-      <div data-process-node-id={data.entityId} className={'flex h-[112px] w-[240px] flex-col rounded-lg border bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] transition-[border-color,background-color] ' + (selected ? 'border-[rgb(var(--purple))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')}>
+      <div data-process-node-id={data.entityId} className={'flex h-[112px] w-[240px] flex-col rounded-lg border bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] transition-[border-color,background-color] ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')}>
         <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
         <div className="flex h-10 shrink-0 items-center gap-2 px-3">
-          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-[rgb(var(--purple)/.20)] bg-[rgb(var(--purple)/.06)] text-[rgb(var(--purple))]"><TerminalSquare size={12} /></span>
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-[rgb(var(--accent)/.20)] bg-[rgb(var(--accent)/.06)] text-[rgb(var(--accent))]"><TerminalSquare size={12} /></span>
           <span title={data.title} className="min-w-0 flex-1 truncate text-[11px] font-semibold">{data.title}</span>
           <span role="status" title={process?.exitError} className={'inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[8px] font-medium ' + status.tone}>
             {transitioning ? <LoaderCircle size={8} className="animate-spin motion-reduce:animate-none" /> : <span className="h-1 w-1 rounded-full bg-current" />}
@@ -51,12 +51,12 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
           <span aria-hidden className="shrink-0 font-mono text-[11px] text-[rgb(var(--muted-2))]">›</span>
           <div className="min-w-0 flex-1">
             <code title={data.command} className={(error ? 'block truncate' : 'line-clamp-2') + ' break-all font-mono text-[10px] leading-[14px] text-[rgb(var(--muted))]'}>{data.command}</code>
-            {error && <p role="alert" title={error} className="truncate text-[9px] text-[rgb(var(--red))]">{error}</p>}
+            {error && <p role="alert" title={error} className="truncate text-[9px] text-[rgb(var(--danger))]">{error}</p>}
           </div>
         </div>
         <div className="nodrag nopan flex h-8 shrink-0 items-center gap-1 rounded-b-lg border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.3)] px-2" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
           <span title={process?.exitError || data.associationLabel || detail} className="min-w-0 flex-1 truncate pl-1 font-mono text-[8px] text-[rgb(var(--muted-2))]">{detail}</span>
-          <button type="button" disabled={!process} onClick={openOutput} className="bonsai-focus flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[9px] font-medium text-[rgb(var(--purple))] transition-colors hover:bg-[rgb(var(--purple)/.10)] disabled:opacity-30"><TerminalSquare size={10} />Open output</button>
+          <button type="button" disabled={!process} onClick={openOutput} className="bonsai-focus flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[9px] font-medium text-[rgb(var(--accent))] transition-colors hover:bg-[rgb(var(--accent)/.10)] disabled:opacity-30"><TerminalSquare size={10} />Open output</button>
           <button type="button" aria-label="Stop process" title={pending === 'stop' ? 'Stopping process…' : 'Stop process'} disabled={!canStop} onClick={stop} className={iconButtonClass}>{pending === 'stop' ? <LoaderCircle size={11} className="animate-spin motion-reduce:animate-none" /> : <Square size={11} />}</button>
           <button type="button" aria-label="Restart process" title={pending === 'restart' ? 'Restarting process…' : 'Restart process'} disabled={!canRestart} onClick={restart} className={iconButtonClass}><RotateCcw size={11} className={pending === 'restart' ? 'animate-spin motion-reduce:animate-none' : ''} /></button>
         </div>

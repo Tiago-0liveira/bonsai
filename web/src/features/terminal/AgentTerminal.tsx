@@ -63,17 +63,17 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
   }, [agent.id, agent.projectId])
   return <div className="flex h-full min-h-0 flex-col">
     {actionsHost && createPortal(<>
-      <span title={`Session ${lifecycle}; terminal ${connection}`} className={'flex h-6 items-center gap-1.5 rounded-md border px-2 text-[9px] ' + (connection === 'connected' ? 'border-[rgb(var(--green)/.2)] bg-[rgb(var(--green)/.06)] text-[rgb(var(--green))]' : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]')}>
+      <span title={`Session ${lifecycle}; terminal ${connection}`} className={'flex h-6 items-center gap-1.5 rounded-md border px-2 text-[9px] ' + (connection === 'connected' ? 'border-[rgb(var(--accent)/.2)] bg-[rgb(var(--accent)/.06)] text-[rgb(var(--accent))]' : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]')}>
         {connection === 'connected' ? <Wifi size={10} /> : <WifiOff size={10} />}
         {lifecycle} · {connection}
       </span>
-      <button type="button" className="bonsai-focus flex h-6 items-center gap-1.5 rounded-md border border-[rgb(var(--red)/.25)] bg-[rgb(var(--red)/.08)] px-2 text-[9px] font-medium text-[rgb(var(--red))] transition-colors hover:border-[rgb(var(--red)/.5)] hover:bg-[rgb(var(--red)/.15)] disabled:cursor-not-allowed disabled:opacity-40" disabled={stopping || lifecycle === 'exited' || lifecycle === 'failed' || lifecycle === 'stopping'} onClick={() => {
+      <button type="button" className="bonsai-focus flex h-6 items-center gap-1.5 rounded-md border border-[rgb(var(--danger)/.25)] bg-[rgb(var(--danger)/.08)] px-2 text-[9px] font-medium text-[rgb(var(--danger))] transition-colors hover:border-[rgb(var(--danger)/.5)] hover:bg-[rgb(var(--danger)/.15)] disabled:cursor-not-allowed disabled:opacity-40" disabled={stopping || lifecycle === 'exited' || lifecycle === 'failed' || lifecycle === 'stopping'} onClick={() => {
         if (!agent.projectId || stopping) return
         setStopping(true)
         void stopAgent(agent.projectId, agent.id, `stop-${agent.id}`).catch(error => setError(String(error.message))).finally(() => setStopping(false))
       }}><Square size={9} fill="currentColor" />{stopping || lifecycle === 'stopping' ? 'Stopping…' : 'Stop agent'}</button>
     </>, actionsHost)}
-    {error && <p role="alert" className="px-2 text-xs text-red-400">{error}</p>}
+    {error && <p role="alert" className="px-2 text-xs text-danger">{error}</p>}
     <div ref={host} className="min-h-0 flex-1 overflow-hidden" />
   </div>
 }

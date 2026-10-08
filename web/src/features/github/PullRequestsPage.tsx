@@ -25,11 +25,11 @@ function CheckRow({ name, status }: PullRequest['checks'][number]) {
   return (
     <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[10px]">
       {status === 'success' ? (
-        <CheckCircle2 size={13} className="text-[rgb(var(--green))]" />
+        <CheckCircle2 size={13} className="text-[rgb(var(--ok))]" />
       ) : status === 'failed' ? (
-        <XCircle size={13} className="text-[rgb(var(--red))]" />
+        <XCircle size={13} className="text-[rgb(var(--danger))]" />
       ) : (
-        <CircleDot size={13} className="text-[rgb(var(--orange))]" />
+        <CircleDot size={13} className="text-[rgb(var(--warn))]" />
       )}
       <span className="min-w-0 flex-1 truncate">{name}</span>
       <span className="capitalize text-[rgb(var(--muted-2))]">{status}</span>
@@ -42,7 +42,7 @@ function PrOperations({ pr }: { pr: PullRequest }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {pr.status === 'Draft' && (
-        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--green)/.35)] bg-[rgb(var(--green)/.08)] px-2.5 text-[10px] text-[rgb(var(--green))]">
+        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--accent)/.35)] bg-[rgb(var(--accent)/.08)] px-2.5 text-[10px] text-[rgb(var(--accent))]">
           <GitPullRequest size={11} /> Mark ready
         </button>
       )}
@@ -51,17 +51,17 @@ function PrOperations({ pr }: { pr: PullRequest }) {
           <button
             disabled={!pr.mergeable}
             onClick={() => setStatus(pr.id, 'Merged')}
-            className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--purple)/.4)] bg-[rgb(var(--purple)/.12)] px-2.5 text-[10px] text-[rgb(var(--purple))] disabled:cursor-not-allowed disabled:opacity-35"
+            className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--accent)/.4)] bg-[rgb(var(--accent)/.12)] px-2.5 text-[10px] text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-35"
           >
             <GitMerge size={11} /> Merge
           </button>
-          <button onClick={() => setStatus(pr.id, 'Closed')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--red)/.3)] px-2.5 text-[10px] text-[rgb(var(--red))]">
+          <button onClick={() => setStatus(pr.id, 'Closed')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--danger)/.3)] px-2.5 text-[10px] text-[rgb(var(--danger))]">
             <X size={11} /> Close
           </button>
         </>
       )}
       {pr.status === 'Closed' && (
-        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--green)/.35)] px-2.5 text-[10px] text-[rgb(var(--green))]">
+        <button onClick={() => setStatus(pr.id, 'Open')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--accent)/.35)] px-2.5 text-[10px] text-[rgb(var(--accent))]">
           <GitPullRequest size={11} /> Reopen
         </button>
       )}
@@ -128,11 +128,11 @@ export function PullRequestsPage() {
                 onClick={() => setSelectedId(pr.id)}
                 className={
                   'w-full border-b border-[rgb(var(--border))] px-3 py-3 text-left transition-colors ' +
-                  (pr.id === selected?.id ? 'bg-[rgb(var(--purple)/.08)]' : 'hover:bg-[rgb(var(--panel-2))]')
+                  (pr.id === selected?.id ? 'bg-[rgb(var(--accent)/.08)]' : 'hover:bg-[rgb(var(--panel-2))]')
                 }
               >
                 <div className="flex items-start gap-2">
-                  <GitPullRequest size={12} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--green))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--purple))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
+                  <GitPullRequest size={12} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--accent))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--muted))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
                   <span className="min-w-0 flex-1">
                     <span className="block text-[10px] font-medium leading-4">#{pr.number} {pr.title}</span>
                     <span className="mt-1 block truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{pr.branch} → {pr.base}</span>
@@ -155,13 +155,13 @@ export function PullRequestsPage() {
         <div className="mx-auto max-w-[920px] px-6 py-5">
           <header className="border-b border-[rgb(var(--border))] pb-4">
             <div className="flex items-start gap-3">
-              <span className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[rgb(var(--green)/.35)] bg-[rgb(var(--green)/.08)] text-[rgb(var(--green))]">
+              <span className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[rgb(var(--accent)/.35)] bg-[rgb(var(--accent)/.08)] text-[rgb(var(--accent))]">
                 <GitPullRequest size={15} />
               </span>
               <div className="min-w-0 flex-1">
                 <h1 className="text-[17px] font-semibold leading-6">{selected.title} <span className="font-normal text-[rgb(var(--muted-2))]">#{selected.number}</span></h1>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[rgb(var(--muted))]">
-                  <span className={'rounded-full px-2 py-1 text-[9px] ' + (selected.status === 'Open' ? 'bg-[rgb(var(--green)/.12)] text-[rgb(var(--green))]' : selected.status === 'Draft' ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--purple))]' : 'bg-[rgb(var(--panel-3))]')}>{selected.status}</span>
+                  <span className={'rounded-full px-2 py-1 text-[9px] ' + (selected.status === 'Open' ? 'bg-[rgb(var(--accent)/.12)] text-[rgb(var(--accent))]' : selected.status === 'Draft' ? 'bg-[rgb(var(--panel-3))] text-[rgb(var(--muted))]' : 'bg-[rgb(var(--panel-3))]')}>{selected.status}</span>
                   <span>{selected.author ?? 'unknown'} wants to merge</span>
                   <span className="rounded bg-[rgb(var(--panel-2))] px-1.5 py-0.5 font-mono">{selected.branch}</span>
                   <span>into</span>
@@ -202,7 +202,7 @@ export function PullRequestsPage() {
                     <GitCommitHorizontal size={11} className="text-[rgb(var(--muted-2))]" />
                     <span className="min-w-0 flex-1 truncate">{commit.message}</span>
                     <span className="text-[8px] text-[rgb(var(--muted-2))]">{commit.author} · {commit.time}</span>
-                    <span className="font-mono text-[8px] text-[rgb(var(--purple))]">{commit.sha}</span>
+                    <span className="font-mono text-[8px] text-[rgb(var(--accent))]">{commit.sha}</span>
                   </div>
                 ))}
               </div>
@@ -224,7 +224,7 @@ export function PullRequestsPage() {
 
               <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel))]">
                 <div className="flex items-center border-b border-[rgb(var(--border))] px-3 py-2 text-[10px] font-medium">
-                  <CheckCircle2 size={12} className="mr-2 text-[rgb(var(--green))]" />
+                  <CheckCircle2 size={12} className="mr-2 text-[rgb(var(--ok))]" />
                   Checks
                   <span className="ml-auto text-[9px] text-[rgb(var(--muted-2))]">{checksPassed}/{selected.checks.length} successful</span>
                 </div>
@@ -241,8 +241,8 @@ export function PullRequestsPage() {
                   className="bonsai-focus w-full resize-y rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3 py-2.5 text-[11px] leading-5 outline-none"
                 />
                 <div className="mt-2 flex flex-wrap justify-end gap-2">
-                  <button onClick={() => submitReview('request-changes')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--red)/.3)] px-2.5 text-[9px] text-[rgb(var(--red))]"><XCircle size={11} /> Request changes</button>
-                  <button onClick={() => submitReview('approve')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--green)/.3)] px-2.5 text-[9px] text-[rgb(var(--green))]"><Check size={11} /> Approve</button>
+                  <button onClick={() => submitReview('request-changes')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--danger)/.3)] px-2.5 text-[9px] text-[rgb(var(--danger))]"><XCircle size={11} /> Request changes</button>
+                  <button onClick={() => submitReview('approve')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--ok)/.3)] px-2.5 text-[9px] text-[rgb(var(--ok))]"><Check size={11} /> Approve</button>
                   <button disabled={!review.trim()} onClick={() => submitReview('comment')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md bg-[rgb(var(--accent-solid))] px-3 text-[9px] font-medium text-[rgb(var(--accent-fg))] disabled:opacity-35"><Send size={11} /> Comment</button>
                 </div>
               </div>

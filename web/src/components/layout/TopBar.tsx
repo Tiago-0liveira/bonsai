@@ -82,12 +82,12 @@ function HeaderSelect({
                 className={
                   'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[11px] transition-colors ' +
                   (active
-                    ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]'
+                    ? 'bg-[rgb(var(--accent)/.12)] text-[rgb(var(--text))]'
                     : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))] hover:text-[rgb(var(--text))]')
                 }
               >
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {active && <Check size={12} className="text-[rgb(var(--purple))]" />}
+                {active && <Check size={12} className="text-[rgb(var(--accent))]" />}
               </button>
             )
           })}
@@ -113,9 +113,9 @@ function RelayStatus() {
           ? 'GitHub realtime offline'
           : 'GitHub realtime disconnected'
   const dot = relay.status === 'connected'
-    ? 'bg-[rgb(var(--green))]'
+    ? 'bg-[rgb(var(--accent-solid))]'
     : relay.status === 'offline'
-      ? 'bg-[rgb(var(--orange))]'
+      ? 'bg-[rgb(var(--warn-solid))]'
       : 'bg-[rgb(var(--muted-2))]'
   const content = <><span className={`h-1.5 w-1.5 rounded-full ${dot}`} /><span className="hidden min-[1180px]:inline">{label}</span></>
   return relay.status === 'authorization-expired'
@@ -141,7 +141,7 @@ export function TopBar() {
     <header className="grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3">
       <div className="flex min-w-0 items-center justify-self-start">
         <Link to="/" className="flex shrink-0 items-center gap-2 pr-2 font-semibold tracking-tight">
-          <span className="grid h-7 w-7 place-items-center text-[rgb(var(--green))]">
+          <span className="grid h-7 w-7 place-items-center text-[rgb(var(--accent))]">
             <Sprout size={19} />
           </span>
           <span>bonsai</span>
@@ -170,7 +170,7 @@ export function TopBar() {
             className="relative flex h-full items-center px-2.5 text-[12px] text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--text))]"
             activeProps={{
               className:
-                'relative flex h-full items-center px-2.5 text-[12px] text-[rgb(var(--text))] after:absolute after:bottom-0 after:left-2 after:right-2 after:h-px after:bg-[rgb(var(--purple))]',
+                'relative flex h-full items-center px-2.5 text-[12px] text-[rgb(var(--text))] after:absolute after:bottom-0 after:left-2 after:right-2 after:h-px after:bg-[rgb(var(--accent))]',
             }}
           >
             {item.label}

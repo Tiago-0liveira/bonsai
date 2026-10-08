@@ -66,14 +66,14 @@ function StartAgentForm() {
   }
 
   return (
-    <div className="absolute inset-0 z-[85] grid place-items-center bg-black/60 p-6 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-[85] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
       <form
         onSubmit={submit}
         role="dialog" aria-modal="true" aria-labelledby="start-agent-title"
         className="w-full max-w-[720px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-[0_30px_100px_rgb(0_0_0/.65)]"
       >
         <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-4">
-          <Bot size={15} className="mr-2 text-[rgb(var(--purple))]" />
+          <Bot size={15} className="mr-2 text-[rgb(var(--accent))]" />
           <div>
             <div id="start-agent-title" className="text-[12px] font-semibold">Start agent</div>
             <div className="text-[9px] text-[rgb(var(--muted-2))]">Choose the worktree, profile and task.</div>
@@ -128,15 +128,15 @@ function StartAgentForm() {
                     className={
                       'bonsai-focus rounded-lg border p-3 text-left transition-colors disabled:opacity-40 ' +
                       (active
-                        ? 'border-[rgb(var(--purple)/.56)] bg-[rgb(var(--purple)/.10)]'
+                        ? 'border-[rgb(var(--accent)/.56)] bg-[rgb(var(--accent)/.10)]'
                         : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] hover:border-[rgb(var(--border-strong))]')
                     }
                   >
                     <div className="flex items-center gap-2 text-[11px] font-medium">
-                      <Sparkles size={13} className={active ? 'text-[rgb(var(--purple))]' : 'text-[rgb(var(--muted))]'} />
+                      <Sparkles size={13} className={active ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--muted))]'} />
                       {item.label}
                       {item.connected ? (
-                        <span className="ml-auto flex items-center gap-1 text-[8px] text-[rgb(var(--green))]"><span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--green))]" />connected</span>
+                        <span className="ml-auto flex items-center gap-1 text-[8px] text-[rgb(var(--accent))]"><span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--accent-solid))]" />connected</span>
                       ) : (
                         <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">not connected</span>
                       )}
@@ -159,9 +159,9 @@ function StartAgentForm() {
             </label>
           </div>
           <div className="flex items-center gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--bg))] p-3">
-            <Shield size={15} className={fullAccess ? 'text-[rgb(var(--orange))]' : 'text-[rgb(var(--muted))]'} />
+            <Shield size={15} className={fullAccess ? 'text-[rgb(var(--warn))]' : 'text-[rgb(var(--muted))]'} />
             <div className="flex-1"><div className="text-[11px] font-medium">Full access</div><p className="mt-1 text-[9px] text-[rgb(var(--muted-2))]">Allow Antigravity to run tools without permission prompts.</p></div>
-            <button type="button" role="switch" aria-label="Antigravity full access" aria-checked={fullAccess} disabled={pending} onClick={() => setFullAccess(value => !value)} className={'bonsai-focus flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors ' + (fullAccess ? 'border-[rgb(var(--orange)/.5)] bg-[rgb(var(--orange)/.3)]' : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))]')}><span className={'h-3.5 w-3.5 rounded-full bg-[rgb(var(--text))] transition-transform ' + (fullAccess ? 'translate-x-4' : '')} /></button>
+            <button type="button" role="switch" aria-label="Antigravity full access" aria-checked={fullAccess} disabled={pending} onClick={() => setFullAccess(value => !value)} className={'bonsai-focus flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors ' + (fullAccess ? 'border-[rgb(var(--warn)/.5)] bg-[rgb(var(--warn)/.3)]' : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))]')}><span className={'h-3.5 w-3.5 rounded-full bg-[rgb(var(--text))] transition-transform ' + (fullAccess ? 'translate-x-4' : '')} /></button>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
@@ -207,7 +207,7 @@ function StartAgentForm() {
           </label>
           {!loading && !accounts.length && !error && <p className="text-[10px] text-[rgb(var(--muted))]">Set up a profile with <code>bonsai agent account add antigravity &lt;name&gt;</code></p>}
           {available && !available.available && <p className="text-[10px] text-[rgb(var(--muted))]">{available.unavailable_reason?.message}</p>}
-          {error && <p role="alert" className="text-[11px] text-[rgb(var(--red))]">{error}</p>}
+          {error && <p role="alert" className="text-[11px] text-[rgb(var(--danger))]">{error}</p>}
         </div>
 
         <div className="flex items-center justify-between border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.45)] px-4 py-3">
@@ -221,7 +221,7 @@ function StartAgentForm() {
             <button
               type="submit"
               disabled={!canStart}
-              className="bonsai-focus rounded-md border border-[rgb(var(--purple)/.45)] bg-[rgb(var(--purple)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
+              className="bonsai-focus rounded-md border border-[rgb(var(--accent)/.45)] bg-[rgb(var(--accent)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
             >
               {pending ? 'Starting…' : 'Start agent'}
             </button>

@@ -1,6 +1,6 @@
 import type { TagColor, WorktreeTag } from '../../types'
 
-const palette: Record<TagColor, { foreground: string; border: string; background: string }> = {
+export const tagPalette: Record<TagColor, { foreground: string; border: string; background: string }> = {
   purple: { foreground: '#b79cff', border: 'rgba(151,109,255,.42)', background: 'rgba(151,109,255,.12)' },
   blue: { foreground: '#7eb0ff', border: 'rgba(92,157,255,.42)', background: 'rgba(92,157,255,.12)' },
   green: { foreground: '#65dfa0', border: 'rgba(75,214,140,.42)', background: 'rgba(75,214,140,.11)' },
@@ -11,5 +11,5 @@ const palette: Record<TagColor, { foreground: string; border: string; background
 }
 
 export function getTagPresentation(tag: WorktreeTag | undefined) {
-  return palette[tag?.color ?? 'purple']
+  return tagPalette[tag?.color ?? 'purple']
 }

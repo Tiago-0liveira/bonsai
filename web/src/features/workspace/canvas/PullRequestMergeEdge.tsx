@@ -56,11 +56,11 @@ export function PullRequestMergeEdge(props: EdgeProps) {
             event.stopPropagation()
             setNotice(pr ? 'Opened PR #' + pr.number + ' · ' + pr.title : 'PR relationship')
           }}
-          className="nodrag nopan pointer-events-auto absolute flex items-center gap-1.5 rounded-full border border-[rgb(var(--purple)/.5)] bg-[rgb(var(--panel-2))] px-2 py-1 text-[8px] font-medium text-[rgb(var(--text))] shadow-lg hover:bg-[rgb(var(--panel-3))]"
+          className="nodrag nopan pointer-events-auto absolute flex items-center gap-1.5 rounded-full border border-[rgb(var(--accent)/.5)] bg-[rgb(var(--panel-2))] px-2 py-1 text-[8px] font-medium text-[rgb(var(--text))] shadow-lg hover:bg-[rgb(var(--panel-3))]"
           style={{ ...PR_LABEL_SIZE, transform: `translate(-50%, -50%) translate(${label?.x ?? labelX}px,${label?.y ?? labelY}px)` }}
           title={pr ? pr.title : 'Pull request merge relationship'}
         >
-          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[rgb(var(--purple)/.15)] text-[rgb(var(--purple))]">
+          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[rgb(var(--accent)/.15)] text-[rgb(var(--accent))]">
             <GitPullRequest size={11} />
           </span>
           <span className="shrink-0">{prNumber ? '#' + prNumber : 'PR'}</span>

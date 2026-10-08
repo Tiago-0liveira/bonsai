@@ -10,6 +10,6 @@ export function ProcessActions({ process }: { process: ProcessActionTarget }) {
       <button type="button" className={buttonClass} disabled={!canRestart} onClick={restart}>{pending === 'restart' ? 'Restarting…' : 'Restart'}</button>
       <button type="button" className={buttonClass} disabled={!!pending} onClick={remove}>{pending === 'remove' ? 'Deleting…' : deleteLabel}</button>
     </div>
-    {error && <p role="alert" title={error} className="mt-1 truncate text-[10px] text-[rgb(var(--red))]">{error}</p>}
+    {error && <p role="alert" title={error} className="mt-1 truncate text-[10px] text-[rgb(var(--danger))]">{error}</p>}
   </div>
 }
