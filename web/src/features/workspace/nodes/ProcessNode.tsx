@@ -43,7 +43,7 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
   return <ContextMenu.Root>
     <ContextMenu.Trigger asChild>
       <div data-process-node-id={data.entityId} title={data.command} className={'group relative flex h-[54px] w-[153px] flex-col rounded-[10px] border bg-bg px-2 pb-[5px] pt-[7px] transition-[border-color,box-shadow] ' + tone}>
-        <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+        <Handle type="target" position={Position.Top} className="!h-2 !w-2" />
         <div className="flex h-5 shrink-0 items-center gap-1.5">
           {spinning
             ? <LoaderCircle size={8} aria-hidden className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />

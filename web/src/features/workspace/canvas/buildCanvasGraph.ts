@@ -1,4 +1,4 @@
-import type { Edge, Node } from '@xyflow/react'
+import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import type { Agent, CanvasProcess, Health, NodePlacement, Project, Worktree, WorktreeTag } from '../../../types'
 import type { WorktreeGroup } from '../../../api/git'
 import type { BonsaiGraphData } from '../nodes/BonsaiNode'
@@ -141,7 +141,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       target: project.id,
       type: 'straight',
       data: { relationship: 'default' },
-      style: { stroke: 'rgb(var(--accent-solid) / .45)', strokeWidth: 1.3 },
+      style: { stroke: 'rgb(var(--accent-solid) / .45)', strokeWidth: 1.5 },
     },
   ]
 
@@ -306,7 +306,10 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         data: { relationship: 'hierarchy' },
         style: nested
           ? { stroke: 'transparent', strokeWidth: 0.1 }
-          : { stroke: 'rgb(var(--border-strong))', strokeWidth: 1 },
+          : source === project.id
+            ? { stroke: 'rgb(var(--accent-solid) / .7)', strokeWidth: 2 }
+            : { stroke: 'rgb(var(--border-strong))', strokeWidth: 1 },
+        markerStart: nested || source !== project.id ? undefined : { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'rgb(var(--accent-solid))' },
       })
     }
 
@@ -323,6 +326,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         sourceHandle: 'pr-source',
         targetHandle: 'pr-target',
         type: 'prMerge',
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'rgb(var(--ok))' },
         data: {
           relationship: 'merge-pr',
           projectId: project.id,

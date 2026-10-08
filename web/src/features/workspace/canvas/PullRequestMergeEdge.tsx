@@ -33,11 +33,8 @@ export function PullRequestMergeEdge(props: EdgeProps) {
       <BaseEdge
         id={props.id}
         path={path}
-        style={{
-          stroke: 'rgb(var(--ok) / .72)',
-          strokeWidth: 1.6,
-          strokeDasharray: '6 5',
-        }}
+        markerEnd={props.markerEnd}
+        style={{ stroke: 'rgb(var(--ok) / .8)', strokeWidth: 2 }}
       />
       {label?.anchor && (
         <path

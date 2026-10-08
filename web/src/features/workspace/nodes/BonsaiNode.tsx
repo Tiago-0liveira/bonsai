@@ -183,7 +183,7 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
   const info = data.defaultBranchInfo
   return (
     <div className="w-[232px] overflow-hidden rounded-xl border border-border bg-panel shadow-card">
-      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-[rgb(var(--accent)/.5)] !bg-[rgb(var(--panel-3))]" />
+      <Handle type="source" position={Position.Right} className="!h-2 !w-2" />
       <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2.5">
         <span className="grid h-7 w-7 place-items-center rounded-md bg-accent/12 text-accent">
           <GitBranch size={13} />
@@ -246,7 +246,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
 
   return (
     <div className="group relative w-[286px] overflow-hidden rounded-xl border border-border bg-panel shadow-card">
-      <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+      <Handle type="target" position={Position.Top} className="!h-2 !w-2" />
       <MoveSubtreeGrip id={data.entityId} />
       <button
         type="button"
@@ -289,7 +289,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
           </div>
         ))}
       </div>
-      <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+      <Handle type="source" position={Position.Bottom} className="!h-2 !w-2" />
     </div>
   )
 }
@@ -350,15 +350,15 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           className={'group relative ' + shellWidth + ' border transition-[border-color,background-color,box-shadow] ' + shellTone}
         >
           {data.kind !== 'project' && (
-            <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+            <Handle type="target" position={Position.Top} className="!h-2 !w-2" />
           )}
           {data.kind === 'project' && (
-            <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-[rgb(var(--accent)/.5)] !bg-[rgb(var(--panel-3))]" />
+            <Handle type="target" position={Position.Left} className="!h-2 !w-2" />
           )}
           {data.kind === 'worktree' && (
             <>
-              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge source" />
-              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge target" />
+              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-ok/60" title="PR merge source" />
+              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-ok/60" title="PR merge target" />
             </>
           )}
 
@@ -482,7 +482,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           )}
 
           {(data.kind === 'project' || data.kind === 'worktree') && (
-            <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+            <Handle type="source" position={Position.Bottom} className="!h-2 !w-2" />
           )}
         </div>
       </ContextMenu.Trigger>
