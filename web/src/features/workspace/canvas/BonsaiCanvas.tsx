@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Background,
   BackgroundVariant,
-  Controls,
   ReactFlow,
   useEdgesState,
   useNodesInitialized,
@@ -13,7 +12,7 @@ import {
   type NodeMouseHandler,
   type OnNodeDrag,
 } from '@xyflow/react'
-import { LocateFixed, Network, Plus } from 'lucide-react'
+import { Maximize, Minus, Network, Plus, Square } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectCanvasProcesses, useProjectCanvasPreferences } from '../../../stores/projectSelectors'
 import { ProcessNode, ProcessShelfNode } from '../nodes/ProcessNode'
@@ -130,7 +129,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     stacks: Map<string, string[]>
   } | null>(null)
   const theme = useActiveTheme()
-  const { fitView, getEdges, getNodes, getViewport, setCenter } = useReactFlow()
+  const { fitView, getEdges, getNodes, getViewport, setCenter, zoomIn, zoomOut } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const fitViewRef = useRef(fitView)
 
@@ -467,26 +466,30 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         colorMode={theme.mode}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="rgb(var(--text) / .07)" />
-        <Controls position="bottom-left" showInteractive={false} />
       </ReactFlow>
 
-      <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2">
-        <div className="pointer-events-auto flex items-center rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel)/.94)] p-0.5 shadow-lg backdrop-blur">
-          <button onClick={() => void fitViewRef.current({ padding: 0.14, duration: 300 })} className="bonsai-focus flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">
-            <LocateFixed size={12} /> Fit
-          </button>
-          <button onClick={autoLayout} className="bonsai-focus flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">
-            <Network size={12} /> Auto-layout
-          </button>
-        </div>
+      <div className="island island-topbar absolute right-1 top-1 z-10 flex h-[30px] items-center gap-0.5 px-1">
+        <button aria-label="Fit" title="Fit" onClick={() => void fitViewRef.current({ padding: 0.14, duration: 300 })} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+          <Maximize size={13} />
+        </button>
+        <button aria-label="Auto-layout" title="Auto-layout" onClick={autoLayout} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+          <Network size={13} />
+        </button>
+        <span className="mx-1 h-4 w-px bg-border" />
+        <button aria-label="Zoom out" title="Zoom out" onClick={() => void zoomOut()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+          <Minus size={13} />
+        </button>
+        <button aria-label="Zoom in" title="Zoom in" onClick={() => void zoomIn()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+          <Plus size={13} />
+        </button>
+        <button aria-label="Fit view" title="Fit view" onClick={() => void fitView()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+          <Square size={12} />
+        </button>
+        <span className="mx-1 h-4 w-px bg-border" />
+        <button onClick={() => setWorktreeDialogOpen(true)} className="bonsai-focus btn-accent-tint inline-flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium">
+          <Plus size={12} /> New worktree
+        </button>
       </div>
-
-      <button
-        onClick={() => setWorktreeDialogOpen(true)}
-        className="bonsai-focus absolute right-3 top-3 flex items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel)/.94)] px-2.5 py-2 text-[10px] text-[rgb(var(--muted))] shadow-lg backdrop-blur hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]"
-      >
-        <Plus size={12} /> New worktree
-      </button>
     </div>
   )
 }

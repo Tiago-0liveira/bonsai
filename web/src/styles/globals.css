@@ -67,9 +67,6 @@ select { color-scheme: dark; }
 }
 .react-flow__node { font-family: inherit; }
 .react-flow__edge-path { transition: stroke 120ms ease; }
-.react-flow__controls { box-shadow: none !important; border: 1px solid rgb(var(--border)) !important; border-radius: 7px !important; overflow: hidden; }
-.react-flow__controls-button { background: rgb(var(--panel-2)) !important; border-bottom-color: rgb(var(--border)) !important; fill: rgb(var(--muted)) !important; }
-.react-flow__controls-button:hover { background: rgb(var(--panel-3)) !important; }
 
 .xterm { height: 100%; padding: 10px 12px; }
 .xterm-viewport { scrollbar-color: rgb(var(--border-strong)) transparent; }
