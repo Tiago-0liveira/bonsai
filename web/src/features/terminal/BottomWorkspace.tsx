@@ -143,7 +143,7 @@ export function RuntimeWorkspace() {
                   onClick={() => focusRuntime(runtime.id)}
                   className={
                     'bonsai-focus flex h-6 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-2 text-left text-[12px] ' +
-                    (dockRuntimeId === runtime.id ? 'bg-panel-3 text-text' : 'text-muted hover:bg-panel-2 hover:text-text')
+                    'border bg-bg ' + (dockRuntimeId === runtime.id ? 'border-accent/40 text-text' : 'border-border-subtle text-muted hover:border-border hover:text-text')
                   }
                 >
                   {runtime.type === 'agent' ? (

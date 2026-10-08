@@ -73,11 +73,11 @@ const PR_CHIP: Record<PullRequest['status'], { label: string; className: string 
   Closed: { label: 'CLOSED', className: 'text-muted-2' },
 }
 
-const card = 'rounded-xl border border-border bg-panel-2'
+const card = 'rounded-xl border border-border bg-bg'
 const cardLabel = 'font-mono text-[10px] font-medium uppercase tracking-[.08em] text-muted-2'
 
 function StatTile({ label, children }: { label: string; children: ReactNode }) {
-  return <div className="min-w-0 rounded-xl border border-border bg-panel-2 px-3 py-2.5">
+  return <div className="min-w-0 rounded-xl border border-border bg-bg px-3 py-2.5">
     <div className={cardLabel}>{label}</div>
     <div className="mt-1 flex items-baseline gap-2 font-mono text-[15px] font-semibold tabular-nums">{children}</div>
   </div>
@@ -88,22 +88,21 @@ function IconButton({ icon: Icon, label, onClick }: { icon: LucideIcon; label: s
 }
 
 function PullRequestCard({ pr, onOpen }: { pr?: PullRequest; onOpen: () => void }) {
-  if (!pr) return <div className={card + ' p-3.5'}><div className={cardLabel}>Pull request</div><p className="mt-2 text-[12px] text-muted-2">No pull request linked to this branch.</p></div>
+  if (!pr) return <div className={card + ' px-3.5 py-3'}><div className={cardLabel}>Pull request</div><p className="mt-1.5 text-[12px] text-muted-2">No pull request linked to this branch.</p></div>
   const chip = PR_CHIP[pr.status]
   const mergeability = pr.mergeable === false
     ? { text: 'conflicts', tone: 'text-danger', icon: XCircle }
     : pr.mergeable ? { text: 'no conflicts', tone: 'text-ok', icon: CheckCircle2 } : { text: 'checking…', tone: 'text-muted-2', icon: Clock3 }
   const MergeIcon = mergeability.icon
-  return <button type="button" onClick={onOpen} title="Open in GitHub tab" className={'bonsai-focus block w-full p-3.5 text-left transition-colors hover:border-border-strong ' + card}>
+  return <button type="button" onClick={onOpen} title="Open in GitHub tab" className={'bonsai-focus block w-full px-3.5 py-3 text-left transition-colors hover:border-border-strong ' + card}>
     <span className="flex items-center justify-between gap-2"><span className={cardLabel}>Pull request</span><span className={'font-mono text-[10px] font-medium tracking-[.08em] ' + chip.className}>{chip.label}</span></span>
-    <span className="mt-3 flex items-start gap-2.5">
-      <GitPullRequest size={16} className="mt-0.5 shrink-0 text-accent" />
-      <span className="min-w-0 flex-1 text-[13.5px] font-semibold leading-5 text-text"><span className="font-mono text-accent">#{pr.number}</span> {pr.title}</span>
+    <span className="mt-2 flex items-start gap-2.5">
+      <GitPullRequest size={15} className="mt-0.5 shrink-0 text-accent" />
+      <span className="min-w-0 flex-1 text-[13px] font-semibold leading-5 text-text"><span className="font-mono text-accent">#{pr.number}</span> {pr.title}</span>
     </span>
-    <span className="mt-1.5 block truncate pl-[26px] font-mono text-[11px] text-muted-2">{pr.branch} → {pr.base}</span>
-    <span className="mt-3 flex items-center gap-2 border-t border-border-subtle pt-3 font-mono text-[11px] text-muted-2">
-      <span>{pr.files.length} {pr.files.length === 1 ? 'file' : 'files'} · {pr.commits.length} {pr.commits.length === 1 ? 'commit' : 'commits'}</span>
-      <span className={'ml-auto flex items-center gap-1.5 ' + mergeability.tone}><MergeIcon size={13} />{mergeability.text}</span>
+    <span className="mt-1 flex items-center gap-2 pl-[25px] font-mono text-[11px] text-muted-2">
+      <span className="min-w-0 flex-1 truncate">{pr.branch} → {pr.base}</span>
+      <span className={'flex shrink-0 items-center gap-1.5 ' + mergeability.tone}><MergeIcon size={12} />{mergeability.text}</span>
     </span>
   </button>
 }
@@ -306,8 +305,8 @@ export function Inspector() {
                 </StatTile>
               </div>
               {issues.length > 0 && <div className="inspector-alert"><div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-warn"><AlertCircle size={13} />Before merging</div>{issues.map((issue) => <p key={issue} className="mt-1 text-[11px] leading-5 text-muted">{issue}</p>)}</div>}
-              {pr && <CiCard checks={pr.checks} />}
               <PullRequestCard pr={pr} onOpen={() => { if (pr) { inspectPullRequest(pr.id); void router?.navigate({ to: '/github' }) } }} />
+              {pr && <CiCard checks={pr.checks} />}
               <RuntimeCard
                 processes={branchProcesses}
                 agents={branchAgents}
@@ -425,9 +424,9 @@ export function Inspector() {
         <ScrollArea.Scrollbar orientation="vertical" className="w-1.5 p-[1px]"><ScrollArea.Thumb className="rounded bg-[rgb(var(--border-strong))]" /></ScrollArea.Scrollbar>
       </ScrollArea.Root>
           {worktree && !agent && !process && (
-            <div className={'grid shrink-0 gap-2 px-4 pb-4 pt-1 ' + (worktree.main ? 'grid-cols-1' : 'grid-cols-[1.2fr_1fr]')}>
-              <button type="button" aria-label="Launch" onClick={() => openStartAgentDialog(worktree.id)} className="bonsai-focus btn-primary flex h-11 items-center justify-center gap-2 text-[14px]"><Play size={15} fill="currentColor" />Launch</button>
-              {!worktree.main && <button type="button" aria-label="Delete worktree" onClick={() => setDeleteWorktreeId(worktree.id)} className="bonsai-focus btn-danger-tint flex h-11 items-center justify-center gap-2 rounded-lg px-4 text-[14px] font-medium"><Trash2 size={15} />Delete</button>}
+            <div className={'grid shrink-0 gap-2 px-4 pb-3 pt-1 ' + (worktree.main ? 'grid-cols-1' : 'grid-cols-[1.2fr_1fr]')}>
+              <button type="button" aria-label="Launch" onClick={() => openStartAgentDialog(worktree.id)} className="bonsai-focus btn-primary flex h-8 items-center justify-center gap-1.5 text-[12px]"><Play size={12} fill="currentColor" />Launch</button>
+              {!worktree.main && <button type="button" aria-label="Delete worktree" onClick={() => setDeleteWorktreeId(worktree.id)} className="bonsai-focus btn-danger-tint flex h-8 items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-medium"><Trash2 size={12} />Delete</button>}
             </div>
           )}
         </Tabs.Content>
