@@ -32,6 +32,7 @@ import {
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { BoardItem, BoardList, BoardStatus, TagColor } from '../../types'
+import { tagPalette } from '../workspace/tagStyles'
 
 const colors: TagColor[] = ['purple', 'blue', 'green', 'orange', 'red', 'cyan', 'pink']
 
@@ -42,19 +43,6 @@ function iconForKind(kind: string): LucideIcon {
   if (normalized.includes('problem')) return TriangleAlert
   if (normalized.includes('feature')) return Sparkles
   return ListTodo
-}
-
-function colorClass(color: TagColor) {
-  const map: Record<TagColor, string> = {
-    purple: 'text-[rgb(var(--accent))]',
-    blue: 'text-[rgb(var(--blue))]',
-    green: 'text-[rgb(var(--green))]',
-    orange: 'text-[rgb(var(--warn))]',
-    red: 'text-[rgb(var(--danger))]',
-    cyan: 'text-cyan-400',
-    pink: 'text-pink-400',
-  }
-  return map[color]
 }
 
 export function BoardPage() {
@@ -125,7 +113,7 @@ function BoardColumn({ list, items }: { list: BoardList; items: BoardItem[] }) {
       }
     >
       <div className="flex h-11 items-center border-b border-[rgb(var(--border))] px-3">
-        <Tag size={12} className={'mr-2 ' + colorClass(list.color)} />
+        <Tag size={12} className="mr-2" style={{ color: tagPalette[list.color].foreground }} />
         <span className="font-medium">{list.name}</span>
         <span className="ml-2 rounded-full bg-[rgb(var(--panel-3))] px-1.5 py-0.5 text-[9px] text-[rgb(var(--muted))]">{items.length}</span>
         <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">{list.priority} · {list.itemType}</span>
