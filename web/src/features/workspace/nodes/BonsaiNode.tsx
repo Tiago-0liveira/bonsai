@@ -104,7 +104,7 @@ function MenuItem({ children, onSelect, unavailable = false }: { children: React
     <ContextMenu.Item
       onSelect={onSelect}
       disabled={unavailable}
-      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--accent)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
+      className="flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-muted outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent/12 data-[highlighted]:text-text"
     >
       {children}{unavailable && <span className="ml-auto text-[9px]">unavailable</span>}
     </ContextMenu.Item>
@@ -182,16 +182,16 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const info = data.defaultBranchInfo
   return (
-    <div className="w-[232px] overflow-hidden rounded-lg border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)]">
+    <div className="w-[232px] overflow-hidden rounded-xl border border-border bg-panel shadow-card">
       <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-[rgb(var(--accent)/.5)] !bg-[rgb(var(--panel-3))]" />
-      <div className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5">
-        <span className="grid h-7 w-7 place-items-center rounded-md border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--accent)/.08)] text-[rgb(var(--accent))]">
+      <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2.5">
+        <span className="grid h-7 w-7 place-items-center rounded-md bg-accent/12 text-accent">
           <GitBranch size={13} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[11px] font-semibold">{data.title}</span>
-            <span className="rounded bg-[rgb(var(--accent)/.11)] px-1.5 py-0.5 text-[7px] text-[rgb(var(--accent))]">default</span>
+            <span className="chip bg-accent-solid/14 text-accent">default</span>
           </div>
           <div className="mt-0.5 text-[8px] text-[rgb(var(--muted-2))]">read-only</div>
         </div>
@@ -199,7 +199,7 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
       <button
         type="button"
         onClick={() => info?.commitSha ? openGitHub('commit/' + info.commitSha) : setNotice('No commit loaded')}
-        className="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-[rgb(var(--bg)/.45)]"
+        className="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-panel-2"
       >
         <GitCommitHorizontal size={11} className="mt-0.5 shrink-0 text-[rgb(var(--muted-2))]" />
         <span className="min-w-0 flex-1">
@@ -207,7 +207,7 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
           <span className="mt-1 block font-mono text-[8px] text-[rgb(var(--muted-2))]">{info?.commitSha ?? '—'} · {info?.lastActivity ?? '—'}</span>
         </span>
       </button>
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-[rgb(var(--border))] px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-border-subtle px-3 py-2">
         <CiBadge status={info?.ciStatus} compact label="CI" />
         {info?.cdStatus && <CiBadge status={info.cdStatus} compact label="CD" />}
         {info?.releaseTag && <span className="rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted))]">{info.releaseTag}</span>}
@@ -223,9 +223,9 @@ function EnvCard({ data }: { data: BonsaiGraphData }) {
     <button
       type="button"
       onClick={() => setEnvEditorOpen(true)}
-      className="bonsai-focus group flex w-[150px] items-center gap-2 rounded-lg border border-[rgb(var(--warn)/.28)] bg-[rgb(var(--panel-2))] p-2.5 text-left shadow-[0_6px_20px_rgb(0_0_0/.10)] hover:border-[rgb(var(--warn)/.5)]"
+      className="bonsai-focus group flex w-[150px] items-center gap-2 rounded-[10px] border border-border bg-panel p-2.5 text-left shadow-card hover:border-warn-solid"
     >
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[rgb(var(--warn)/.26)] bg-[rgb(var(--warn)/.07)] text-[rgb(var(--warn))]">
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-warn-solid/14 text-warn">
         <KeyRound size={13} />
       </span>
       <span className="min-w-0">
@@ -245,23 +245,23 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
   const setSelection = useBonsaiStore((state) => state.setSelection)
 
   return (
-    <div className="group relative w-[286px] overflow-hidden rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] shadow-[0_8px_24px_rgb(0_0_0/.16)]">
+    <div className="group relative w-[286px] overflow-hidden rounded-xl border border-border bg-panel shadow-card">
       <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
       <MoveSubtreeGrip id={data.entityId} />
       <button
         type="button"
         onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId); else if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
-        className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5 text-left"
+        className="flex w-full items-center gap-2 border-b border-border-subtle px-3 py-2.5 text-left"
         style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--accent))'}` }}
       >
         <Layers3 size={12} style={{ color: data.tagColor }} />
         <span className="font-semibold" style={{ color: data.tagColor }}>{data.tag}</span>
-        <span className="rounded bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted))]">{data.stackCount}</span>
+        <span className="chip bg-panel-4 text-muted">{data.stackCount}</span>
         <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">Expand</span>
       </button>
       <div>
         {(data.stackItems ?? []).map((item) => (
-          <div key={item.id} className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2 last:border-0">
+          <div key={item.id} className="flex items-center gap-2 border-b border-border-subtle px-3 py-2 last:border-0">
             <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (item.hasRunningAgent ? 'bg-[rgb(var(--accent-solid))] shadow-[0_0_7px_rgb(var(--accent-solid)/.8)]' : 'bg-[rgb(var(--muted-2))]')} title={item.hasRunningAgent ? 'Agent running' : 'No agent running'} />
             <button
               type="button"
@@ -274,7 +274,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             </button>
             <ContextMenu.Root>
               <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
-              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-1"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
+              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
             </ContextMenu.Root>
             <PrBadge status={item.prStatus} number={item.prNumber} />
             <CiBadge status={item.ciStatus} compact />
@@ -282,7 +282,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
               type="button"
               onClick={(event) => { event.stopPropagation(); ejectWorktreeFromStack(item.id) }}
               title="Detach this worktree from the stack until the group is toggled"
-              className="nodrag grid h-5 w-5 shrink-0 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--bg))] hover:text-[rgb(var(--text))]"
+              className="nodrag grid h-5 w-5 shrink-0 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-panel-3 hover:text-text"
             >
               <X size={10} />
             </button>
@@ -488,7 +488,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
       </ContextMenu.Trigger>
 
       <ContextMenu.Portal>
-        <ContextMenu.Content className="z-[100] min-w-48 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-1 shadow-2xl">
+        <ContextMenu.Content className="z-[100] min-w-48 rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay">
           <MenuItem onSelect={selectNode}><ExternalLink size={13} /> Open inspector</MenuItem>
 
           {data.kind === 'project' && (
@@ -496,7 +496,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
               <MenuItem onSelect={() => setWorktreeDialogOpen(true)}><Plus size={13} /> Add worktree</MenuItem>
               <MenuItem onSelect={() => openStartAgentDialog()}><Bot size={13} /> Start agent</MenuItem>
               <MenuItem onSelect={() => openStartProcessDialog('', data.entityId)}><Play size={13} /> Start process</MenuItem>
-              <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
+              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
               <MenuItem onSelect={() => requestCanvasAction('layout')}><Network size={13} /> Auto-layout children</MenuItem>
               <MenuItem onSelect={() => setNotice('Project settings are mocked')}><Settings2 size={13} /> Project settings</MenuItem>
             </>
@@ -515,14 +515,14 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           {data.kind === 'agent' && (
             <>
               <MenuItem unavailable={agent?.providerId !== 'antigravity'} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
-              <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
+              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart</MenuItem>
               <MenuItem unavailable={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
               {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
                 <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
               )}
-              <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
+              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
               {(agent?.presentation ?? (agent?.archived ? 'archived' : 'canvas')) === 'archived' ? (
                 <MenuItem onSelect={() => restoreAgent(data.entityId)}><Undo2 size={13} /> Restore agent</MenuItem>
               ) : (

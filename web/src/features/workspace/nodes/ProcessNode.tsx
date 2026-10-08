@@ -20,7 +20,7 @@ const statusLabels: Record<ProcessLifecycleStatus, string> = {
   orphan: 'Orphaned',
 }
 
-const menuItemClass = 'flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-[rgb(var(--accent)/.12)] data-[highlighted]:text-[rgb(var(--text))]'
+const menuItemClass = 'flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-muted outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent/12 data-[highlighted]:text-text'
 const iconButtonClass = 'bonsai-focus icon-btn-20 transition-colors hover:bg-panel-3 hover:text-text disabled:cursor-default disabled:opacity-30 disabled:hover:bg-panel-2 disabled:hover:text-muted'
 
 export function ProcessNode({ data: raw, selected }: NodeProps) {
@@ -65,11 +65,11 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
       </div>
     </ContextMenu.Trigger>
     <ContextMenu.Portal>
-      <ContextMenu.Content aria-label="Process actions" className="nodrag nopan z-[100] min-w-48 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-1 shadow-2xl" onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+      <ContextMenu.Content aria-label="Process actions" className="nodrag nopan z-[100] min-w-48 rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay" onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
         <ContextMenu.Item disabled={!process} onSelect={openOutput} className={menuItemClass}><TerminalSquare size={13} />Open output</ContextMenu.Item>
         <ContextMenu.Item disabled={!process} onSelect={inspect} className={menuItemClass}><ExternalLink size={13} />Open inspector</ContextMenu.Item>
         <ContextMenu.Item disabled={!worktree} onSelect={() => { if (worktree) setSelection({ type: 'worktree', id: worktree.id }) }} className={menuItemClass}><GitBranch size={13} />Open worktree</ContextMenu.Item>
-        <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
+        <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
         <ContextMenu.Item disabled={!canStop} onSelect={stop} className={menuItemClass}><Square size={13} />{pending === 'stop' ? 'Stopping process…' : 'Stop process'}</ContextMenu.Item>
         <ContextMenu.Item disabled={!canRestart} onSelect={restart} className={menuItemClass}><RotateCcw size={13} />{pending === 'restart' ? 'Restarting process…' : 'Restart process'}</ContextMenu.Item>
         <ContextMenu.Item disabled={!process || !!pending} onSelect={remove} className={menuItemClass}>{pending === 'remove' ? 'Deleting process…' : deleteLabel}</ContextMenu.Item>
@@ -79,11 +79,11 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
 }
 
 export function ProcessShelfNode({ data }: NodeProps) {
-  return <div className="group relative h-[74px] w-[230px] rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-3">
+  return <div className="group relative h-[74px] w-[230px] rounded-xl border border-border bg-panel p-3 shadow-card">
     <MoveSubtreeGrip id={String(data.entityId)} />
     <Handle type="target" position={Position.Top} />
-    <div className="text-[11px] font-semibold">{String(data.title)}</div>
-    <div className="mt-1 text-[10px] text-[rgb(var(--muted))]">{String(data.subtitle)}</div>
+    <div className="text-[11px] font-semibold text-text">{String(data.title)}</div>
+    <div className="mt-1 text-[10px] text-muted">{String(data.subtitle)}</div>
     <Handle type="source" position={Position.Bottom} />
   </div>
 }
