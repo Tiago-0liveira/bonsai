@@ -7,7 +7,7 @@ import { projects } from '../../../test/fixtures/projects'
 import { worktrees } from '../../../test/fixtures/worktrees'
 import * as labelGeometry from './layout/prLabels'
 
-const input = (): CanvasGraphInput => ({ project: projects[0], worktrees: worktrees.filter(tree => tree.projectId === projects[0].id), agents: [], tags: [], collapsedTagGroups: [], detachedStackWorktreeIds: [], expandedAutomaticGroups: [], nodePlacements: {}, envCount: 0 })
+const input = (): CanvasGraphInput => ({ project: projects[0], worktrees: worktrees.filter(tree => tree.projectId === projects[0].id), agents: [], tags: [], collapsedTagGroups: [], detachedStackWorktreeIds: [], expandedAutomaticGroups: [], nodePlacements: {} })
 beforeEach(() => vi.restoreAllMocks())
 describe('incremental canvas identity', () => {
   it('retains unrelated node/data/geometry references on a worktree status update', () => {

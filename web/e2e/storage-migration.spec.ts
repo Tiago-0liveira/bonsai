@@ -47,7 +47,7 @@ test('legacy values are scrubbed before connection and stay removed across reloa
     await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
     await expect(page.locator('.react-flow')).toBeVisible()
     await expect(page.locator('.react-flow__node-agent')).toHaveCount(0)
-    await page.locator('.react-flow__node-env').click()
+    await page.evaluate(() => window.__bonsaiTestStore.getState().setEnvEditorOpen(true))
     const env = page.getByRole('complementary', { name: 'Environment variables' })
     await expect(env).toContainText('Environment editing is unavailable')
     await expect(env.getByRole('button', { name: 'Add variable' })).toBeDisabled()

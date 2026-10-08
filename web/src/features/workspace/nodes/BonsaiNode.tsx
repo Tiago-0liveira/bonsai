@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { Fragment, memo } from 'react'
 import { openGitHub } from '../../../api/git'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
@@ -9,7 +9,6 @@ import {
   CircleX,
   Clock3,
   ExternalLink,
-  FolderGit2,
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
@@ -30,7 +29,8 @@ import {
   X,
 } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
-import type { AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
+import { ProviderBadge } from '../../../components/ui/ProviderBadge'
+import type { AgentProvider, AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
 
 export interface StackItemData {
   id: string
@@ -53,7 +53,7 @@ export interface HistoryItemData {
 
 export interface BonsaiGraphData extends Record<string, unknown> {
   entityId: string
-  kind: 'project' | 'worktree' | 'agent' | 'process' | 'runtime-shelf' | 'stack' | 'default-branch' | 'env'
+  kind: 'project' | 'worktree' | 'agent' | 'process' | 'runtime-shelf' | 'stack' | 'default-branch'
   command?: string
   processStatus?: ProcessLifecycleStatus
   associationLabel?: string
@@ -81,20 +81,21 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   stackItems?: StackItemData[]
   historyItems?: HistoryItemData[]
   mergeTargetBranch?: string
+  targetIsWorktree?: boolean
+  ahead?: number
+  behind?: number
   prNumber?: number
   prStatus?: PrStatus
   ciStatus?: CiStatus
   ciFailed?: number
   gitState?: string
-  envCount?: number
   worktreeId?: string
 }
 
-const healthColor: Record<Health, string> = {
-  healthy: 'bg-[rgb(var(--accent-solid))]',
-  warning: 'bg-[rgb(var(--warn-solid))]',
-  error: 'bg-[rgb(var(--danger))]',
-  idle: 'bg-[rgb(var(--muted-2))]',
+const agentDot: Record<AgentState, string> = {
+  running: 'bg-accent-solid shadow-[0_0_0_3px_rgb(var(--accent-solid)/.20)]',
+  idle: 'bg-warn-solid shadow-[0_0_0_3px_rgb(var(--warn-solid)/.25)]',
+  finished: 'bg-muted-2 shadow-[0_0_0_3px_rgb(var(--muted-2)/.15)]',
 }
 
 function MenuItem({ children, onSelect, unavailable = false }: { children: React.ReactNode; onSelect?: () => void; unavailable?: boolean }) {
@@ -102,33 +103,40 @@ function MenuItem({ children, onSelect, unavailable = false }: { children: React
     <ContextMenu.Item
       onSelect={onSelect}
       disabled={unavailable}
-      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--accent)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
+      className="flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-muted outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent/12 data-[highlighted]:text-text"
     >
       {children}{unavailable && <span className="ml-auto text-[9px]">unavailable</span>}
     </ContextMenu.Item>
   )
 }
 
-function CiBadge({ status, failed = 0, compact = false, label = 'CI' }: { status?: CiStatus; failed?: number; compact?: boolean; label?: string }) {
+function CiBadge({ status, failed = 0, compact = false, label = 'CI', iconOnly = false }: { status?: CiStatus; failed?: number; compact?: boolean; label?: string; iconOnly?: boolean }) {
   if (!status) return null
   const meta =
     status === 'passed'
-      ? { text: compact ? 'passed' : label + ' passed', icon: CircleCheck, tone: 'text-[rgb(var(--ok))] border-[rgb(var(--ok)/.30)]' }
+      ? { text: compact ? 'passed' : label + ' passed', icon: CircleCheck, tone: 'text-ok border-ok/30', tint: 'bg-ok/10 text-ok' }
       : status === 'running'
-        ? { text: compact ? 'running' : label + ' running', icon: LoaderCircle, tone: 'text-[rgb(var(--accent))] border-[rgb(var(--accent)/.30)]' }
+        ? { text: compact ? 'running' : label + ' running', icon: LoaderCircle, tone: 'text-accent border-accent/30', tint: 'bg-accent/12 text-accent' }
         : status === 'failed'
-          ? { text: compact ? 'failed' : label + ' failed' + (failed ? ' · ' + failed : ''), icon: CircleX, tone: 'text-[rgb(var(--danger))] border-[rgb(var(--danger)/.30)]' }
+          ? { text: compact ? 'failed' : label + ' failed' + (failed ? ' · ' + failed : ''), icon: CircleX, tone: 'text-danger border-danger/30', tint: 'bg-danger-solid/28 text-danger' }
           : status === 'none'
-            ? { text: compact ? 'none' : label + ' no checks', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
+            ? { text: compact ? 'none' : label + ' no checks', icon: Clock3, tone: 'text-muted border-border', tint: 'bg-panel-3 text-muted-2' }
             : status === 'unknown'
-              ? { text: compact ? 'unknown' : label + ' unknown', icon: Clock3, tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))]' }
-              : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.30)]' }
+              ? { text: compact ? 'unknown' : label + ' unknown', icon: Clock3, tone: 'text-muted border-border', tint: 'bg-panel-3 text-muted-2' }
+              : { text: compact ? 'waiting' : label + ' waiting', icon: Clock3, tone: 'text-warn border-warn/30', tint: 'bg-panel-3 text-muted-2' }
   const Icon = meta.icon
   const text = compact ? label + ' ' + meta.text : meta.text
   const failedSuffix = status === 'failed' && failed && !compact ? ' · ' + failed : ''
   const coreText = failedSuffix && text.endsWith(failedSuffix) ? text.slice(0, -failedSuffix.length) : text
+  if (iconOnly) {
+    return (
+      <span role="img" title={text} aria-label={text} className={'inline-grid h-5 w-[22px] shrink-0 place-items-center rounded-[5px] ' + meta.tint}>
+        <Icon size={11} className={status === 'running' ? 'animate-spin motion-reduce:animate-none' : ''} />
+      </span>
+    )
+  }
   return (
-    <span className={'inline-flex items-center gap-1 rounded border bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] ' + meta.tone}>
+    <span className={'inline-flex items-center gap-1 rounded border bg-bg px-1.5 py-0.5 text-[8px] ' + meta.tone}>
       <Icon size={9} className={status === 'running' ? 'animate-spin' : ''} />
       <span>{coreText}</span>
       {failedSuffix && <span>{failedSuffix}</span>}
@@ -140,15 +148,15 @@ function PrBadge({ status, number }: { status?: PrStatus; number?: number }) {
   if (!status && !number) return null
   const tone =
     status === 'Open'
-      ? 'border-[rgb(var(--accent)/.25)] bg-[rgb(var(--bg))] text-[rgb(var(--accent))]'
-      : status === 'Draft'
-        ? 'border-[rgb(var(--border))] bg-[rgb(var(--panel-3))] text-[rgb(var(--muted))]'
-        : status === 'Merged'
-          ? 'border-[rgb(var(--ok)/.25)] bg-[rgb(var(--bg))] text-[rgb(var(--ok))]'
-          : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]'
+      ? 'bg-accent/12 text-accent'
+      : status === 'Merged'
+        ? 'bg-ok/10 text-ok'
+        : status === 'Closed'
+          ? 'bg-panel-3 text-muted-2'
+          : 'bg-panel-3 text-muted'
   return (
-    <span className={'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[8px] ' + tone}>
-      <GitPullRequest size={9} />
+    <span className={'inline-flex h-5 shrink-0 items-center gap-1 rounded-[5px] px-1.5 font-mono text-[10.5px] ' + tone}>
+      <GitPullRequest size={10} />
       {number ? '#' + number : status}
     </span>
   )
@@ -173,16 +181,16 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const info = data.defaultBranchInfo
   return (
-    <div className="w-[232px] overflow-hidden rounded-lg border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)]">
-      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-[rgb(var(--accent)/.5)] !bg-[rgb(var(--panel-3))]" />
-      <div className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5">
-        <span className="grid h-7 w-7 place-items-center rounded-md border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--accent)/.08)] text-[rgb(var(--accent))]">
+    <div className="w-[232px] overflow-hidden rounded-xl border border-border bg-panel shadow-card">
+      <Handle type="source" position={Position.Right} className="!h-2 !w-2" />
+      <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2.5">
+        <span className="grid h-7 w-7 place-items-center rounded-md bg-accent/12 text-accent">
           <GitBranch size={13} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[11px] font-semibold">{data.title}</span>
-            <span className="rounded bg-[rgb(var(--accent)/.11)] px-1.5 py-0.5 text-[7px] text-[rgb(var(--accent))]">default</span>
+            <span className="chip bg-accent-solid/14 text-accent">default</span>
           </div>
           <div className="mt-0.5 text-[8px] text-[rgb(var(--muted-2))]">read-only</div>
         </div>
@@ -190,7 +198,7 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
       <button
         type="button"
         onClick={() => info?.commitSha ? openGitHub('commit/' + info.commitSha) : setNotice('No commit loaded')}
-        className="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-[rgb(var(--bg)/.45)]"
+        className="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-panel-2"
       >
         <GitCommitHorizontal size={11} className="mt-0.5 shrink-0 text-[rgb(var(--muted-2))]" />
         <span className="min-w-0 flex-1">
@@ -198,32 +206,13 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
           <span className="mt-1 block font-mono text-[8px] text-[rgb(var(--muted-2))]">{info?.commitSha ?? '—'} · {info?.lastActivity ?? '—'}</span>
         </span>
       </button>
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-[rgb(var(--border))] px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-border-subtle px-3 py-2">
         <CiBadge status={info?.ciStatus} compact label="CI" />
         {info?.cdStatus && <CiBadge status={info.cdStatus} compact label="CD" />}
         {info?.releaseTag && <span className="rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted))]">{info.releaseTag}</span>}
         {info?.deployedAt && <span className="ml-auto text-[7px] text-[rgb(var(--muted-2))]">{info.deployedAt}</span>}
       </div>
     </div>
-  )
-}
-
-function EnvCard({ data }: { data: BonsaiGraphData }) {
-  const setEnvEditorOpen = useBonsaiStore((state) => state.setEnvEditorOpen)
-  return (
-    <button
-      type="button"
-      onClick={() => setEnvEditorOpen(true)}
-      className="bonsai-focus group flex w-[150px] items-center gap-2 rounded-lg border border-[rgb(var(--warn)/.28)] bg-[rgb(var(--panel-2))] p-2.5 text-left shadow-[0_6px_20px_rgb(0_0_0/.10)] hover:border-[rgb(var(--warn)/.5)]"
-    >
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[rgb(var(--warn)/.26)] bg-[rgb(var(--warn)/.07)] text-[rgb(var(--warn))]">
-        <KeyRound size={13} />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-[10px] font-semibold">.env</span>
-        <span className="mt-0.5 block text-[8px] text-[rgb(var(--muted-2))]">{data.envCount ?? 0} variables</span>
-      </span>
-    </button>
   )
 }
 
@@ -236,23 +225,23 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
   const setSelection = useBonsaiStore((state) => state.setSelection)
 
   return (
-    <div className="group relative w-[286px] overflow-hidden rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] shadow-[0_8px_24px_rgb(0_0_0/.16)]">
-      <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+    <div className="group relative w-[286px] overflow-hidden rounded-xl border border-border bg-panel shadow-card">
+      <Handle type="target" position={Position.Top} className="!h-2 !w-2" />
       <MoveSubtreeGrip id={data.entityId} />
       <button
         type="button"
         onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId); else if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
-        className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5 text-left"
+        className="flex w-full items-center gap-2 border-b border-border-subtle px-3 py-2.5 text-left"
         style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--accent))'}` }}
       >
         <Layers3 size={12} style={{ color: data.tagColor }} />
         <span className="font-semibold" style={{ color: data.tagColor }}>{data.tag}</span>
-        <span className="rounded bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted))]">{data.stackCount}</span>
+        <span className="chip bg-panel-4 text-muted">{data.stackCount}</span>
         <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">Expand</span>
       </button>
       <div>
         {(data.stackItems ?? []).map((item) => (
-          <div key={item.id} className="flex items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2 last:border-0">
+          <div key={item.id} className="flex items-center gap-2 border-b border-border-subtle px-3 py-2 last:border-0">
             <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (item.hasRunningAgent ? 'bg-[rgb(var(--accent-solid))] shadow-[0_0_7px_rgb(var(--accent-solid)/.8)]' : 'bg-[rgb(var(--muted-2))]')} title={item.hasRunningAgent ? 'Agent running' : 'No agent running'} />
             <button
               type="button"
@@ -265,7 +254,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             </button>
             <ContextMenu.Root>
               <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
-              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-1"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
+              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
             </ContextMenu.Root>
             <PrBadge status={item.prStatus} number={item.prNumber} />
             <CiBadge status={item.ciStatus} compact />
@@ -273,14 +262,14 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
               type="button"
               onClick={(event) => { event.stopPropagation(); ejectWorktreeFromStack(item.id) }}
               title="Detach this worktree from the stack until the group is toggled"
-              className="nodrag grid h-5 w-5 shrink-0 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--bg))] hover:text-[rgb(var(--text))]"
+              className="nodrag grid h-5 w-5 shrink-0 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-panel-3 hover:text-text"
             >
               <X size={10} />
             </button>
           </div>
         ))}
       </div>
-      <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+      <Handle type="source" position={Position.Bottom} className="!h-2 !w-2" />
     </div>
   )
 }
@@ -307,16 +296,24 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
 
   if (data.kind === 'default-branch') return <DefaultBranchCard data={data} />
-  if (data.kind === 'env') return <EnvCard data={data} />
   if (data.kind === 'stack') return <StackCard data={data} />
 
-  const status: Health =
-    data.kind === 'agent'
-      ? data.agentState === 'running' ? 'healthy' : data.agentState === 'finished' ? 'idle' : 'warning'
-      : (data.health ?? 'idle')
-
-  const shellWidth = data.kind === 'project' ? 'w-[300px]' : data.kind === 'agent' ? 'w-[188px]' : 'w-[230px]'
-  const icon = data.kind === 'project' ? <FolderGit2 size={15} /> : data.kind === 'worktree' ? <GitBranch size={13} /> : <Bot size={13} />
+  const shellWidth = data.kind === 'agent' ? 'w-[153px] h-[54px] flex flex-col px-2 pb-[5px] pt-[7px]' : data.kind === 'project' ? 'w-[370px] px-3.5 py-3' : 'w-[300px]'
+  const waiting = data.kind === 'agent' && data.agentState === 'idle'
+  const hubCiRunning = data.kind === 'project' && !!data.ciSummary?.includes('running')
+  const hubCiFailed = data.kind === 'project' && !!data.ciSummary?.includes('failed')
+  const hubCiTone = hubCiFailed ? 'bg-danger-solid/28 text-danger' : hubCiRunning ? 'bg-accent/12 text-accent' : 'bg-ok/10 text-ok'
+  const HubCiIcon = hubCiFailed ? CircleX : hubCiRunning ? LoaderCircle : CircleCheck
+  const agentTitle = data.kind === 'agent'
+    ? [[data.provider, data.model].filter(Boolean).join(' · '), [data.reasoningEffort, data.runtime].filter(Boolean).join(' · ')].filter(Boolean).join('\n')
+    : undefined
+  const shellTone = data.kind === 'worktree'
+    ? 'rounded-xl bg-panel ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : 'border-border shadow-card hover:border-border-strong')
+    : data.kind === 'project'
+      ? 'rounded-[14px] bg-panel ' + (selected ? 'border-accent-solid' : 'border-accent-solid/55') + ' shadow-[0_0_0_4px_rgb(var(--accent-solid)/.08),inset_0_1px_0_rgb(var(--accent-solid)/.16),0_14px_28px_-16px_rgb(10_7_5/.85)]'
+    : data.kind === 'agent'
+      ? 'rounded-[10px] bg-panel-2 ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : (waiting ? 'border-warn-solid/55' : 'border-border-strong') + ' shadow-card hover:border-border-strong')
+      : 'rounded-lg bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
 
   const selectNode = () => {
     if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent') {
@@ -328,22 +325,19 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
-          className={
-            'group relative ' + shellWidth +
-            ' rounded-lg border bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] transition-[border-color,background-color] ' +
-            (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
-          }
+          title={agentTitle}
+          className={'group relative ' + shellWidth + ' border transition-[border-color,background-color,box-shadow] ' + shellTone}
         >
           {data.kind !== 'project' && (
-            <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+            <Handle type="target" position={Position.Top} className="!h-2 !w-2" />
           )}
           {data.kind === 'project' && (
-            <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-[rgb(var(--accent)/.5)] !bg-[rgb(var(--panel-3))]" />
+            <Handle type="target" position={Position.Left} className="!h-2 !w-2" />
           )}
           {data.kind === 'worktree' && (
             <>
-              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge source" />
-              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge target" />
+              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-ok/60" title="PR merge source" />
+              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-ok/60" title="PR merge target" />
             </>
           )}
 
@@ -351,23 +345,22 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
 
           {data.kind === 'project' && (
             <>
-              <div className="flex items-start gap-3 border-b border-[rgb(var(--border))] p-3.5">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--accent)/.07)] text-[rgb(var(--accent))]">{icon}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={'h-2 w-2 rounded-full ' + healthColor[status]} />
-                    <span className="truncate text-[13px] font-semibold">{data.title}</span>
-                  </div>
-                  <div className="mt-1 truncate font-mono text-[10px] text-[rgb(var(--muted-2))]">{data.subtitle}</div>
-                  <div className="mt-1.5 text-[9px] text-[rgb(var(--muted))]">{data.ciSummary}</div>
-                </div>
+              <div className="flex h-5 items-center gap-2">
+                <GitBranch size={13} className="shrink-0 text-accent" />
+                <span title={data.defaultBranch ?? data.title} className="min-w-0 truncate font-mono text-[13px] font-semibold text-text">{data.defaultBranch ?? data.title}</span>
+                <span className="chip shrink-0 bg-accent-solid/14 uppercase tracking-[.04em] text-accent">default</span>
+                <span className={'chip ml-auto inline-flex shrink-0 items-center gap-1 ' + hubCiTone}>
+                  <HubCiIcon size={10} className={hubCiRunning ? 'animate-spin motion-reduce:animate-none' : ''} />
+                  {data.ciSummary}
+                </span>
               </div>
-              <div className="grid grid-cols-4 divide-x divide-[rgb(var(--border))]">
-                {(data.stats ?? []).slice(0, 4).map((stat) => (
-                  <div key={stat.label} className="px-2 py-2 text-center">
-                    <div className="text-[12px] font-semibold">{stat.value}</div>
-                    <div className="mt-0.5 truncate text-[8px] uppercase tracking-wide text-[rgb(var(--muted-2))]">{stat.label}</div>
-                  </div>
+              <div title={data.title + ' · ' + data.subtitle} className="mt-1 h-4 truncate font-mono text-[10px] leading-4 text-muted-2">{data.title} · {data.subtitle}</div>
+              <div className="mt-1 flex h-4 items-center gap-1.5 whitespace-nowrap font-mono text-[10px] leading-4 text-muted-2">
+                {(data.stats ?? []).slice(0, 4).map((stat, index) => (
+                  <Fragment key={stat.label}>
+                    {index > 0 && <span aria-hidden>·</span>}
+                    <span className={stat.label === 'ci failed' && Number(stat.value) > 0 ? 'text-danger' : ''}>{stat.value} {stat.label}</span>
+                  </Fragment>
                 ))}
               </div>
             </>
@@ -375,59 +368,53 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
 
           {data.kind === 'worktree' && (
             <>
-              <div className="flex items-start gap-2 border-b border-[rgb(var(--border))] p-2.5 pr-8">
-                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md border bg-[rgb(var(--bg))]" style={{ color: data.tagColor, borderColor: data.tagBorder }}>{icon}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[11px] font-semibold">{data.title}</div>
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <span className="rounded border px-1.5 py-0.5 text-[8px] font-medium" style={{ color: data.tagColor, borderColor: data.tagBorder, background: data.tagBackground }}>{data.tag}</span>
-                    {data.prNumber && <PrBadge status={data.prStatus} number={data.prNumber} />}
-                  </div>
+              <div className="px-3 py-[9px]">
+                <div className="flex h-5 items-center gap-1.5">
+                  <GitBranch size={13} className="shrink-0 text-muted-2" />
+                  <span title={data.title} className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-text">{data.title}</span>
+                  {data.connectionLabel && <span className="shrink-0 font-mono text-[10px] text-warn">{data.connectionLabel}</span>}
+                  <span className="chip shrink-0 border" style={{ color: data.tagColor, borderColor: data.tagBorder, background: data.tagBackground }}>{data.tag}</span>
+                </div>
+                <div className="mt-1.5 flex h-5 items-center gap-1.5">
+                  <CiBadge status={data.ciStatus} failed={data.ciFailed} iconOnly />
+                  <PrBadge status={data.prStatus} number={data.prNumber} />
+                  <span className="shrink-0 font-mono text-[10px] text-muted-2">
+                    ↑{data.ahead ?? 0} <span className={(data.behind ?? 0) > 0 ? 'text-warn' : ''}>↓{data.behind ?? 0}</span>
+                  </span>
+                  <span title={'Merge target ' + data.mergeTargetBranch} className={'ml-auto min-w-0 truncate font-mono text-[10px] ' + (data.targetIsWorktree ? 'text-ok' : 'text-muted-2')}>→ {data.mergeTargetBranch}</span>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 px-2.5 pt-2 text-[8px] text-[rgb(var(--muted-2))]">
-                <GitPullRequest size={9} className="text-[rgb(var(--accent))]" />
-                target <span className="truncate font-mono text-[rgb(var(--muted))]">{data.mergeTargetBranch}</span>
-              </div>
-              <div className="flex flex-wrap gap-1.5 px-2.5 py-2">
-                {data.connectionLabel && <span className="text-[8px] text-[rgb(var(--warn))]">{data.connectionLabel}</span>}
-                <CiBadge status={data.ciStatus} failed={data.ciFailed} />
-              </div>
-              <div className="flex items-center justify-between border-t border-[rgb(var(--border))] px-2.5 py-1.5 text-[9px] text-[rgb(var(--muted-2))]">
-                <span>{data.subtitle}</span>
-                <span>{data.stats?.[0]?.value ?? 0} agents · {data.stats?.[1]?.value ?? 0} processes</span>
-              </div>
               {(data.historyItems?.length ?? 0) > 0 && (
-                <div className="border-t border-[rgb(var(--border))]">
+                <div>
                   <button
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation()
                       toggleWorktreeHistory(data.entityId)
                     }}
-                    className="nodrag flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[8px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--bg)/.45)] hover:text-[rgb(var(--text))]"
+                    className="nodrag flex h-[26px] w-full items-center gap-1.5 border-t border-border-subtle px-3 text-left text-[10px] text-muted hover:bg-panel-2 hover:text-text"
                   >
-                    <History size={9} />
+                    <History size={10} />
                     <span>History</span>
-                    <span className="rounded bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[7px] text-[rgb(var(--muted-2))]">{data.historyItems?.length}</span>
-                    <span className="ml-auto text-[7px] text-[rgb(var(--muted-2))]">{historyOpen ? 'Hide' : 'Show'}</span>
+                    <span className="chip bg-panel-4 text-muted">{data.historyItems?.length}</span>
+                    <span className="ml-auto font-mono text-[9.5px] text-muted-2">{historyOpen ? 'Hide' : 'Show'}</span>
                   </button>
                   {historyOpen && (
-                    <div className="bg-[rgb(var(--bg)/.28)] px-1.5 pb-1.5">
+                    <div>
                       {(data.historyItems ?? []).map((item) => (
-                        <div key={item.id} className="flex items-center gap-1.5 rounded px-1.5 py-1.5 text-[8px] hover:bg-[rgb(var(--panel-3))]">
-                          <Bot size={8} className="shrink-0 text-[rgb(var(--muted-2))]" />
+                        <div key={item.id} className="flex h-6 items-center gap-1.5 px-3 text-[10px] hover:bg-panel-2">
+                          <Bot size={10} className="shrink-0 text-muted-2" />
                           <button
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation()
                               setSelection({ type: 'agent', id: item.id })
                             }}
-                            className="nodrag min-w-0 flex-1 truncate text-left"
+                            className="nodrag min-w-0 flex-1 truncate text-left text-muted hover:text-text"
                           >
                             {item.name}
                           </button>
-                          <span className="shrink-0 text-[7px] text-[rgb(var(--muted-2))]">{item.finishedAt}</span>
+                          <span className="shrink-0 font-mono text-[9.5px] text-muted-2">{item.finishedAt}</span>
                           <button
                             type="button"
                             title="Restore agent to canvas"
@@ -435,9 +422,9 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                               event.stopPropagation()
                               restoreAgentFromHistory(item.id)
                             }}
-                            className="nodrag grid h-5 w-5 place-items-center rounded text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--bg))] hover:text-[rgb(var(--text))]"
+                            className="nodrag grid h-5 w-5 place-items-center rounded text-muted-2 hover:bg-panel-3 hover:text-text"
                           >
-                            <Undo2 size={8} />
+                            <Undo2 size={10} />
                           </button>
                         </div>
                       ))}
@@ -449,30 +436,38 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           )}
 
           {data.kind === 'agent' && (
-            <div className="p-2.5">
-              <div className="flex items-center gap-2">
-                <div className="grid h-7 w-7 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]">{icon}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className={'h-1.5 w-1.5 rounded-full ' + healthColor[status]} />
-                    <span className="truncate text-[10px] font-semibold">{data.title}</span>
-                  </div>
-                  <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.provider} · {data.model}</div>
-                  {(data.reasoningEffort || data.runtime) && <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>}
+            <>
+              <div className="flex h-5 shrink-0 items-center gap-1.5">
+                <ProviderBadge provider={(agent?.provider ?? data.provider) as AgentProvider} size={18} />
+                <span title={data.title} className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-text">{data.title}</span>
+                <span aria-hidden className={'h-1.5 w-1.5 shrink-0 rounded-full ' + agentDot[data.agentState ?? 'finished']} />
+              </div>
+              <div className="flex h-5 shrink-0 items-center gap-[3px]">
+                <span title={data.task} className={'min-w-0 flex-1 truncate font-mono text-[9.5px] ' + (waiting ? 'text-warn' : 'text-muted-2')}>{data.task}</span>
+                <div className="nodrag nopan flex shrink-0" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    aria-label="Open terminal"
+                    title="Open terminal"
+                    disabled={agent?.providerId !== 'antigravity'}
+                    onClick={() => openTerminal(data.entityId)}
+                    className="bonsai-focus icon-btn-20 transition-colors hover:bg-panel-3 hover:text-text disabled:cursor-default disabled:opacity-30 disabled:hover:bg-panel-2 disabled:hover:text-muted"
+                  >
+                    <TerminalSquare size={11} />
+                  </button>
                 </div>
               </div>
-              <div className="mt-2 line-clamp-1 text-[9px] text-[rgb(var(--muted))]">{data.task}</div>
-            </div>
+            </>
           )}
 
           {(data.kind === 'project' || data.kind === 'worktree') && (
-            <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-[rgb(var(--border-strong))] !bg-[rgb(var(--panel-3))]" />
+            <Handle type="source" position={Position.Bottom} className="!h-2 !w-2" />
           )}
         </div>
       </ContextMenu.Trigger>
 
       <ContextMenu.Portal>
-        <ContextMenu.Content className="z-[100] min-w-48 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] p-1 shadow-2xl">
+        <ContextMenu.Content className="z-[100] min-w-48 rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay">
           <MenuItem onSelect={selectNode}><ExternalLink size={13} /> Open inspector</MenuItem>
 
           {data.kind === 'project' && (
@@ -480,7 +475,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
               <MenuItem onSelect={() => setWorktreeDialogOpen(true)}><Plus size={13} /> Add worktree</MenuItem>
               <MenuItem onSelect={() => openStartAgentDialog()}><Bot size={13} /> Start agent</MenuItem>
               <MenuItem onSelect={() => openStartProcessDialog('', data.entityId)}><Play size={13} /> Start process</MenuItem>
-              <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
+              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
               <MenuItem onSelect={() => requestCanvasAction('layout')}><Network size={13} /> Auto-layout children</MenuItem>
               <MenuItem onSelect={() => setNotice('Project settings are mocked')}><Settings2 size={13} /> Project settings</MenuItem>
             </>
@@ -499,14 +494,14 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           {data.kind === 'agent' && (
             <>
               <MenuItem unavailable={agent?.providerId !== 'antigravity'} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
-              <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
+              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart</MenuItem>
               <MenuItem unavailable={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
               {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
                 <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
               )}
-              <ContextMenu.Separator className="my-1 h-px bg-[rgb(var(--border))]" />
+              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
               {(agent?.presentation ?? (agent?.archived ? 'archived' : 'canvas')) === 'archived' ? (
                 <MenuItem onSelect={() => restoreAgent(data.entityId)}><Undo2 size={13} /> Restore agent</MenuItem>
               ) : (
@@ -525,4 +520,3 @@ export function WorktreeNode(props: NodeProps) { return <NodeShell data={props.d
 export function AgentNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={props.selected} /> }
 export function StackNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
 export function DefaultBranchNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }
-export function EnvNode(props: NodeProps) { return <NodeShell data={props.data as BonsaiGraphData} selected={false} /> }

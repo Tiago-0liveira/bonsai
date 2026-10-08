@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { mockGitBackend, openConnectedApp } from './mockGit'
+import { waitForViewportToSettle } from './viewport'
 
 test('remote branch creation and canonical state add and remove the node', async ({ page }) => {
   await mockGitBackend(page, false, false, true)
   await openConnectedApp(page)
-  await page.waitForTimeout(450)
+  await waitForViewportToSettle(page)
   const viewport = () => page.locator('.react-flow__viewport').getAttribute('style')
   const placements = () => page.evaluate(() => JSON.parse(localStorage.getItem('bonsai-web-workspace-v6')!).state.nodePlacements)
   const beforeViewport = await viewport()
@@ -39,7 +40,7 @@ test('automatic unlinked stack shows reasons and dirty deletion requires discard
   const stack = page.getByTestId('rf__node-stack:unlinked:bonsai')
   await expect(stack).toContainText('Local / unlinked')
   await expect(stack.getByText(/No upstream/)).toHaveCount(2)
-  await page.waitForTimeout(450)
+  await waitForViewportToSettle(page)
   const unrelated = page.getByTestId('rf__node-wt-release')
   const before = await unrelated.boundingBox()
   const beforeViewport = await page.locator('.react-flow__viewport').getAttribute('style')
@@ -62,7 +63,7 @@ test('automatic unlinked stack shows reasons and dirty deletion requires discard
 test('automatic group expansion preserves unrelated nodes and viewport', async ({ page }) => {
   await mockGitBackend(page, false, false, true)
   await openConnectedApp(page)
-  await page.waitForTimeout(450)
+  await waitForViewportToSettle(page)
   const baseline = () => page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem('bonsai-web-workspace-v6')!).state
     return { placement: state.nodePlacements['wt-release'], viewport: document.querySelector('.react-flow__viewport')?.getAttribute('style') }

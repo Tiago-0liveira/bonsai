@@ -36,7 +36,6 @@ import { PullRequestMergeEdge } from './PullRequestMergeEdge'
 import {
   AgentNode,
   DefaultBranchNode,
-  EnvNode,
   ProjectNode,
   StackNode,
   WorktreeNode,
@@ -51,7 +50,6 @@ const nodeTypes = {
   process: ProcessNode,
   runtimeShelf: ProcessShelfNode,
   defaultBranch: DefaultBranchNode,
-  env: EnvNode,
 }
 
 const edgeTypes = {
@@ -83,7 +81,7 @@ function storablePositions(
 ) {
   const result: Record<string, { x: number; y: number }> = {}
   nodes.forEach((node) => {
-    if (node.type === 'defaultBranch' || node.type === 'env') return
+    if (node.type === 'defaultBranch') return
     const position = positions[node.id]
     if (position) result[node.id] = position
   })
@@ -114,7 +112,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const canvasReveal = useBonsaiStore(state => state.canvasReveal)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
-  const envVariables = useBonsaiStore(state => state.envVariables[activeProject?.id ?? ''])
   const lastCommand = useRef(0)
   const lastReveal = useRef(0)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -148,8 +145,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
 
   const graph = useMemo(() => buildCanvasGraph({
     project: activeProject, worktrees, agents, processes, tags, worktreeGroups, collapsedTagGroups,
-    detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envCount: envVariables?.length ?? 0,
-  }), [activeProject, worktrees, agents, processes, tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envVariables?.length])
+    detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements,
+  }), [activeProject, worktrees, agents, processes, tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges)
@@ -177,7 +174,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
       .filter((edge) => edge.data?.relationship === 'agent' || edge.data?.relationship === 'process')
       .map((edge) => [edge.target, edge.source]))
     const placeableNodes = layoutNodes.filter(
-      (node) => node.type !== 'defaultBranch' && node.type !== 'env',
+      (node) => node.type !== 'defaultBranch',
     )
     const currentIds = new Set(placeableNodes.map((node) => node.id))
     const currentParents = getStructuralParentMap(graph.edges)
@@ -391,7 +388,6 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const companionIds = new Set<string>()
     if (node.type === 'project') {
       companionIds.add('default:' + activeProjectId)
-      companionIds.add('env:' + activeProjectId)
     }
     if (subtreeMoveRootId === node.id) getDescendantIds(node.id, getEdges()).forEach((id) => companionIds.add(id))
     const positions: Record<string, { x: number; y: number }> = {}
@@ -431,7 +427,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const persisted = Object.fromEntries(
       Object.entries(positions).filter(([id]) => {
         const moved = getNodes().find((candidate) => candidate.id === id)
-        return moved?.type !== 'defaultBranch' && moved?.type !== 'env'
+        return moved?.type !== 'defaultBranch'
       }),
     )
     setManualNodePlacements(persisted)
@@ -440,7 +436,11 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   }, [getNodes, setManualNodePlacement, setManualNodePlacements, setSubtreeMoveRoot])
 
   return (
-    <div ref={hostRef} className="relative h-full min-h-0 w-full bg-[rgb(var(--bg))]">
+    <div
+      ref={hostRef}
+      className="relative h-full min-h-0 w-full bg-bg"
+      style={{ backgroundImage: 'radial-gradient(ellipse at 40% 45%, transparent 48%, rgb(var(--well) / .55) 100%), radial-gradient(640px 380px at 38% 46%, rgb(var(--accent-solid) / .06), transparent 70%)' }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={displayEdges}

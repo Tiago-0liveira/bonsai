@@ -20,8 +20,6 @@ test('canvas identity, viewport and dock drafts survive resize, maximize and col
   await expect.poll(() => viewport.getAttribute('style')).not.toBe(initialViewport)
   await page.waitForTimeout(200) // Wheel zoom animation.
   const savedViewport = await viewport.getAttribute('style')
-  const dockSearch = page.getByRole('textbox', { name: 'Search pull requests' })
-  await dockSearch.fill('unsaved dock query')
   const dock = page.locator('[data-panel-id="bottom-workspace"]')
   const height = () => page.evaluate(() => window.__bonsaiTestStore.getState().dockHeight)
   const beforeResize = await height()
@@ -42,7 +40,6 @@ test('canvas identity, viewport and dock drafts survive resize, maximize and col
   await expect(dock.locator('[inert]')).toHaveAttribute('aria-hidden', 'true')
   await page.getByRole('button', { name: 'Open workspace' }).click()
   await expect(dock).toHaveAttribute('data-panel-size', normalHeight.toFixed(1))
-  await expect(dockSearch).toHaveValue('unsaved dock query')
   await page.getByTitle('Maximize workspace').click()
   await page.getByTitle('Maximize workspace').click()
   await expect(dock).toHaveAttribute('data-panel-size', normalHeight.toFixed(1))

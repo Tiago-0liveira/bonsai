@@ -13,7 +13,7 @@ import { agents } from '../../../mock/agents'
 import type { Process } from '../../../types'
 
 const process = (id: number, worktreeId = 'wt-web'): Process => ({ id: `bonsai:${id}`, projectId: 'bonsai', daemonId: id, worktreeId, name: 'Same command', command: 'pnpm dev', status: 'healthy', lifecycleStatus: 'running' })
-const input = (): CanvasGraphInput => ({ project: projects[0], worktrees, agents: [], processes: [], tags: [], collapsedTagGroups: [], detachedStackWorktreeIds: [], expandedAutomaticGroups: [], nodePlacements: {}, envCount: 0 })
+const input = (): CanvasGraphInput => ({ project: projects[0], worktrees, agents: [], processes: [], tags: [], collapsedTagGroups: [], detachedStackWorktreeIds: [], expandedAutomaticGroups: [], nodePlacements: {} })
 
 describe('process graph and runtime layout', () => {
   it('projects a process immediately on a feature worktree and selects its stable node', () => {

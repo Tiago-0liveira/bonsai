@@ -36,11 +36,3 @@ export function useFileContent(path: string) {
   }, [id, path, revision])
   return result.id === id && result.path === path ? result.content : ''
 }
-export function useLocalDiff(id: string) {
-  const revision = useBonsaiStore(s => s.gitRevision), [result, setResult] = useState({ id: '', patch: '' })
-  useEffect(() => { let stale = false; if (!id) return
-    const timer = setTimeout(() => { void request<{ patch: string }>(`/api/worktrees/${encodeURIComponent(id)}/diff`).then(v => { if (!stale) setResult({ id, patch: v.patch }) }).catch(error => { if (!stale) report(error) }) }, 100)
-    return () => { stale = true; clearTimeout(timer) }
-  }, [id, revision])
-  return result.id === id ? result.patch : ''
-}

@@ -115,14 +115,6 @@ export function computeGlobalPlacements(
     }
   }
 
-  const envNode = nodes.find((node) => node.type === 'env')
-  if (envNode) {
-    positions[envNode.id] = {
-      x: rootX + projectSize.width + 34,
-      y: rootY + 48,
-    }
-  }
-
   const headerBottom = Math.max(...nodes
     .filter((node) => positions[node.id])
     .map((node) => positions[node.id].y + layoutSize(node).height))

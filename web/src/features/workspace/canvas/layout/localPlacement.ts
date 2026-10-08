@@ -12,7 +12,7 @@ function pos(node: Node, placements: NodePlacements, pending: Record<string, Can
 function fixedRects(nodes: Node[], placements: NodePlacements, pending: Record<string, CanvasPosition>, excluded: Set<string>): Rect[] {
   return nodes
     .filter((node) => !excluded.has(node.id) &&
-      (placements[node.id] || pending[node.id] || node.type === 'defaultBranch' || node.type === 'env'))
+      (placements[node.id] || pending[node.id] || node.type === 'defaultBranch'))
     .map((node) => getNodeRect(node, pos(node, placements, pending)))
 }
 

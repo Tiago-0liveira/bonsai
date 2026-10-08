@@ -1,4 +1,4 @@
-import type { Edge, Node } from '@xyflow/react'
+import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import type { Agent, CanvasProcess, Health, NodePlacement, Project, Worktree, WorktreeTag } from '../../../types'
 import type { WorktreeGroup } from '../../../api/git'
 import type { BonsaiGraphData } from '../nodes/BonsaiNode'
@@ -17,7 +17,6 @@ export interface CanvasGraphInput {
   detachedStackWorktreeIds: string[]
   expandedAutomaticGroups: string[]
   nodePlacements: Record<string, NodePlacement>
-  envCount: number
 }
 
 function groupHealth(items: Worktree[]): Health {
@@ -30,7 +29,7 @@ function groupHealth(items: Worktree[]): Health {
 // Topology and status projection are pure; rendered geometry and selection are
 // reconciled separately and never written back by a status-only update.
 export function buildCanvasGraph(input: CanvasGraphInput) {
-  const { project, worktrees, agents, processes = [], tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements, envCount } = input
+  const { project, worktrees, agents, processes = [], tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements } = input
   const positionFor = (id: string, fallback: { x: number; y: number }) => {
     const placement = nodePlacements[id]
     return placement ? { x: placement.x, y: placement.y } : fallback
@@ -81,9 +80,9 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     })
   })
 
+  const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
   const rootDefault = positionFor(project.id, { x: 420, y: 34 })
   const defaultBranchId = 'default:' + project.id
-  const envId = 'env:' + project.id
   const nodes: Node[] = [
     {
       id: project.id,
@@ -118,19 +117,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         defaultBranchInfo: project.defaultBranchInfo,
       } satisfies BonsaiGraphData,
     },
-    {
-      id: envId,
-      type: 'env',
-      draggable: false,
-      selectable: false,
-      position: { x: rootDefault.x + 334, y: rootDefault.y + 42 },
-      data: {
-        entityId: envId,
-        kind: 'env',
-        title: '.env',
-        envCount: envCount,
-      } satisfies BonsaiGraphData,
-    },
   ]
 
   const edges: Edge[] = [
@@ -140,7 +126,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       target: project.id,
       type: 'straight',
       data: { relationship: 'default' },
-      style: { stroke: 'rgb(var(--accent-solid) / .45)', strokeWidth: 1.3 },
+      style: { stroke: 'rgb(var(--accent-solid) / .45)', strokeWidth: 1.5 },
     },
   ]
 
@@ -205,6 +191,8 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         groupId: entry.groupId,
         connectionLabel: connectionLabel(worktree.connection?.reason, worktree.headSha, worktree.connection?.statusUnknown),
         subtitle: worktree.ahead + '↑ ' + worktree.behind + '↓',
+        ahead: worktree.ahead,
+        behind: worktree.behind,
         health: worktree.status,
         tag: worktree.tag,
         tagColor: presentation.foreground,
@@ -212,6 +200,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         tagBorder: presentation.border,
         tagCount: entry.items.length,
         mergeTargetBranch: worktree.mergeTargetBranch,
+        targetIsWorktree: Boolean(branchToWorktree.get(worktree.mergeTargetBranch)),
         prNumber: worktree.prNumber,
         prStatus: worktree.prStatus,
         ciStatus: worktree.ciStatus,
@@ -282,7 +271,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     })
   })
 
-  const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
   const structuralKeys = new Set<string>()
 
   projectWorktrees.forEach((worktree) => {
@@ -303,7 +291,10 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         data: { relationship: 'hierarchy' },
         style: nested
           ? { stroke: 'transparent', strokeWidth: 0.1 }
-          : { stroke: 'rgb(var(--border-strong))', strokeWidth: 1 },
+          : source === project.id
+            ? { stroke: 'rgb(var(--accent-solid) / .7)', strokeWidth: 2 }
+            : { stroke: 'rgb(var(--border-strong))', strokeWidth: 1 },
+        markerStart: nested || source !== project.id ? undefined : { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'rgb(var(--accent-solid))' },
       })
     }
 
@@ -320,6 +311,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         sourceHandle: 'pr-source',
         targetHandle: 'pr-target',
         type: 'prMerge',
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'rgb(var(--ok))' },
         data: {
           relationship: 'merge-pr',
           projectId: project.id,

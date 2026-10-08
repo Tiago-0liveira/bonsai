@@ -83,7 +83,12 @@ test('real daemon: launch opens logs, retries and restart retain history, duplic
   const scrolled = await launch(page, 'scroll', 'Never')
   const viewport = scrolled.terminal.locator('.xterm-viewport')
   await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-  await viewport.evaluate(element => { element.scrollTop = 0 })
+  // The scroll event is dispatched on the next frame. Output that xterm writes before it
+  // runs still sees a viewport pinned to the bottom and scrolls back down, so wait for it.
+  await viewport.evaluate(async element => {
+    element.scrollTop = 0
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  })
   const before = ticks
   await expect.poll(() => ticks).toBeGreaterThan(before)
   await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBe(0)

@@ -46,7 +46,8 @@ export function pullRequest(repo: string, p: RemotePR): PullRequest {
     author: p.author,
     createdAt: p.created_at,
     updatedAt: p.updated_at,
-    mergeable: p.mergeable === 'mergeable',
+    // GitHub reports mergeability lazily: anything but an explicit answer stays unknown.
+    mergeable: p.mergeable === 'mergeable' ? true : p.mergeable === 'conflicting' ? false : undefined,
     checks: [],
     commits: (p.commits ?? []).map(c => ({ sha: c.sha, message: c.message, author: c.author, time: c.created_at })),
     conversation: [

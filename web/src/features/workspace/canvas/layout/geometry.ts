@@ -14,18 +14,16 @@ export const LAYOUT = {
 
 function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   const type = node.type ?? 'agent'
-  if (type === 'project') return { width: 300, height: 154 }
+  if (type === 'project') return { width: 370, height: 86 }
   if (type === 'defaultBranch') return { width: 232, height: 132 }
-  if (type === 'env') return { width: 150, height: 56 }
-  if (type === 'process') return { width: 240, height: 112 }
+  if (type === 'process') return { width: 153, height: 54 }
   if (type === 'runtimeShelf') return { width: 230, height: 74 }
   if (type === 'worktree') {
     const historyItems = node.data?.historyItems as unknown[] | undefined
-    // The History header is always visible when entries exist. Reserve the
+    // The History footer is always visible when entries exist. Reserve the
     // expanded rows as well so opening History never collides with an agent
     // shelf laid out beneath the worktree.
-    const historyAllowance = historyItems?.length ? 34 + historyItems.length * 32 : 0
-    return { width: 230, height: 154 + historyAllowance }
+    return { width: 300, height: 66 + (historyItems?.length ? 26 + historyItems.length * 24 : 0) }
   }
   if (type === 'stack') {
     const count = Math.max(Number(node.data?.stackCount) || 1,
@@ -34,7 +32,7 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
     const processRows = ((node.data?.stackItems ?? []) as Array<{ processCount?: number }>).filter(item => item.processCount).length
     return { width: 286, height: 50 + count * 37 + (connectionRows + processRows) * 13 }
   }
-  return { width: 188, height: 98 }
+  return { width: 153, height: 54 }
 }
 
 type SizedNode = Pick<Node, 'type' | 'data'> & Partial<Pick<Node, 'measured'>>

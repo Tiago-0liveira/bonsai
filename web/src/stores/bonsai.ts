@@ -490,8 +490,6 @@ export const useBonsaiStore = create<BonsaiState>()(
           ...(worktree ? switchRuntimeScope(state, state.activeProjectId, worktree.id) : {}),
           inspectedPullRequestId: id,
           pullRequestFocusNonce: state.pullRequestFocusNonce + 1,
-          dockState: state.dockState === 'collapsed' ? 'normal' : state.dockState,
-          rightPanels: { ...state.rightPanels, prs: true },
         })
       },
       setPullRequestStatus: (id, status) => { void changePullRequest(id, status) },

@@ -4,7 +4,6 @@ import {
   getBezierPath,
   type EdgeProps,
 } from '@xyflow/react'
-import { GitPullRequest } from 'lucide-react'
 import { PR_LABEL_SIZE, type PrLabelPlacement } from './layout/prLabels'
 import { useBonsaiStore } from '../../../stores/bonsai'
 
@@ -33,11 +32,8 @@ export function PullRequestMergeEdge(props: EdgeProps) {
       <BaseEdge
         id={props.id}
         path={path}
-        style={{
-          stroke: 'rgb(var(--ok) / .72)',
-          strokeWidth: 1.6,
-          strokeDasharray: '6 5',
-        }}
+        markerEnd={props.markerEnd}
+        style={{ stroke: 'rgb(var(--ok) / .8)', strokeWidth: 2 }}
       />
       {label?.anchor && (
         <path
@@ -56,15 +52,13 @@ export function PullRequestMergeEdge(props: EdgeProps) {
             event.stopPropagation()
             setNotice(pr ? 'Opened PR #' + pr.number + ' · ' + pr.title : 'PR relationship')
           }}
-          className="nodrag nopan pointer-events-auto absolute flex items-center gap-1.5 rounded-full border border-[rgb(var(--accent)/.5)] bg-[rgb(var(--panel-2))] px-2 py-1 text-[8px] font-medium text-[rgb(var(--text))] shadow-lg hover:bg-[rgb(var(--panel-3))]"
+          className="nodrag nopan pointer-events-auto absolute grid place-items-center"
           style={{ ...PR_LABEL_SIZE, transform: `translate(-50%, -50%) translate(${label?.x ?? labelX}px,${label?.y ?? labelY}px)` }}
           title={pr ? pr.title : 'Pull request merge relationship'}
         >
-          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[rgb(var(--accent)/.15)] text-[rgb(var(--accent))]">
-            <GitPullRequest size={11} />
+          <span className="h-[18px] max-w-full truncate rounded-full border border-ok/40 bg-bg px-2 font-mono text-[10px] leading-[16px] text-ok">
+            PR {prNumber ? '#' + prNumber : ''} → {targetBranch}
           </span>
-          <span className="shrink-0">{prNumber ? '#' + prNumber : 'PR'}</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-[rgb(var(--muted))]">→ {targetBranch}</span>
         </button>
       </EdgeLabelRenderer>
     </>
