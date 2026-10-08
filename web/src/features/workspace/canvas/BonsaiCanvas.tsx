@@ -440,7 +440,11 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   }, [getNodes, setManualNodePlacement, setManualNodePlacements, setSubtreeMoveRoot])
 
   return (
-    <div ref={hostRef} className="relative h-full min-h-0 w-full bg-[rgb(var(--bg))]">
+    <div
+      ref={hostRef}
+      className="relative h-full min-h-0 w-full bg-bg"
+      style={{ backgroundImage: 'radial-gradient(ellipse at 40% 45%, transparent 48%, rgb(var(--well) / .55) 100%), radial-gradient(640px 380px at 38% 46%, rgb(var(--accent-solid) / .06), transparent 70%)' }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={displayEdges}
