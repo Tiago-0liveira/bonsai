@@ -11,14 +11,13 @@ afterEach(cleanup)
 
 it('ignores unrelated group preferences and terminal output while reacting to the selected group', () => {
   useBonsaiStore.setState({ projects, worktrees, agents: [], pullRequests: [], activeProjectId: 'bonsai',
-    selection: { type: 'worktree', id: 'wt-web' }, collapsedTagGroups: [], expandedAutomaticGroups: [], worktreeGroups: {}, terminalOutput: {} })
+    selection: { type: 'worktree', id: 'wt-web' }, expandedAutomaticGroups: [], worktreeGroups: { bonsai: [{ id: 'unlinked:bonsai', kind: 'unlinked', worktree_ids: ['wt-web', 'wt-docs'] }] }, terminalOutput: {} })
   const commits = vi.fn()
   render(<Profiler id="inspector" onRender={commits}><Inspector /></Profiler>)
   const baseline = commits.mock.calls.length
-  act(() => useBonsaiStore.setState({ collapsedTagGroups: ['sprout-lab:feat'], expandedAutomaticGroups: ['other-group'], terminalOutput: { other: ['new output'] } }))
+  act(() => useBonsaiStore.setState({ expandedAutomaticGroups: ['other-group'], terminalOutput: { other: ['new output'] } }))
   expect(commits).toHaveBeenCalledTimes(baseline)
-  const tree = worktrees.find(tree => tree.id === 'wt-web')!
-  act(() => useBonsaiStore.setState({ collapsedTagGroups: ['sprout-lab:feat', `bonsai:${tree.tag}`] }))
+  act(() => useBonsaiStore.setState({ expandedAutomaticGroups: ['other-group', 'unlinked:bonsai'] }))
   expect(commits.mock.calls.length).toBeGreaterThan(baseline)
   expect(screen.getByRole('complementary', { name: 'Inspector' })).toBeInTheDocument()
 })

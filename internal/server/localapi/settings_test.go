@@ -83,7 +83,7 @@ func TestRootSettingsAPIRevisionsReplayAndSecurity(t *testing.T) {
 	if legacy := authorizedRequest(t, s, "GET", "/api/processes", "", nil); legacy.Code != 404 {
 		t.Fatal(legacy.Code)
 	}
-	if unknown := authorizedRequest(t, s, "PATCH", "/api/worktrees/made-up/metadata", "patch", map[string]string{"tag": "bad"}); unknown.Code != 404 {
+	if unknown := authorizedRequest(t, s, "PATCH", "/api/worktrees/made-up/metadata", "patch", map[string]string{"stack_preference": "never"}); unknown.Code != 404 {
 		t.Fatal(unknown.Code)
 	}
 	if removed := authorizedRequest(t, s, "DELETE", "/api/settings/project-roots/"+cfg.Roots[0].ID, "remove", map[string]int{"revision": 1}); removed.Code != 200 {
@@ -143,7 +143,7 @@ func TestProjectRoutingAndLegacyMetadataPreservation(t *testing.T) {
 	id := local.ID("local", a)
 	if err = legacy.Update(func(data gitstore.Data) error {
 		gitstore.Put(data, "github_commands", "audit", githubAudit{State: "done", Hash: "kept"})
-		return gitstore.Put(data, "worktree_metadata", id, worktreeMetadata{WorktreeID: id, RepositoryID: "local", Tag: "old", MergeTargetBranch: "main"})
+		return gitstore.Put(data, "worktree_metadata", id, worktreeMetadata{WorktreeID: id, RepositoryID: "local", StackPreference: "auto", MergeTargetBranch: "main"})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -179,13 +179,13 @@ func TestProjectRoutingAndLegacyMetadataPreservation(t *testing.T) {
 	if w := authorizedRequest(t, s, "GET", "/api/repository", "", nil); w.Code != 200 || len(daemons[aID].calls) != 2 || len(daemons[bID].calls) != 1 {
 		t.Fatal(w.Code, "wrong legacy owner")
 	}
-	if w := authorizedRequest(t, s, "PATCH", "/api/worktrees/"+id+"/metadata", "metadata", map[string]string{"tag": "new"}); w.Code != 200 {
+	if w := authorizedRequest(t, s, "PATCH", "/api/worktrees/"+id+"/metadata", "metadata", map[string]string{"stack_preference": "never"}); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
 	legacy.View(func(data gitstore.Data) error {
 		meta, _ := gitstore.Get[worktreeMetadata](data, "worktree_metadata", id)
 		audit, ok := gitstore.Get[githubAudit](data, "github_commands", "audit")
-		if meta.RepositoryID != "local" || meta.Tag != "new" || meta.MergeTargetBranch != "main" || !ok || audit.Hash != "kept" {
+		if meta.RepositoryID != "local" || meta.StackPreference != "never" || meta.MergeTargetBranch != "main" || !ok || audit.Hash != "kept" {
 			t.Fatal(meta, audit)
 		}
 		return nil

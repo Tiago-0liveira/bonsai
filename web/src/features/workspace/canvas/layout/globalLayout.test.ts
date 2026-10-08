@@ -22,9 +22,9 @@ function baseGraph() {
   const nodes = [
     node('project', 'project'),
     node('default:project', 'defaultBranch'),
-    node('a', 'worktree', { tag: 'feat' }),
-    node('b', 'worktree', { tag: 'bug' }),
-    node('nested', 'worktree', { tag: 'feat' }),
+    node('a', 'worktree'),
+    node('b', 'worktree'),
+    node('nested', 'worktree'),
   ]
   const edges = [
     edge('project', 'a', 'hierarchy'),
@@ -76,7 +76,6 @@ describe('branch-block global layout', () => {
 
   it('reserves expanded History rows above an agent shelf', () => {
     const worktree = node('a', 'worktree', {
-      tag: 'feat',
       historyItems: [{ id: 'history-a' }, { id: 'history-b' }],
     })
     const agent = node('agent', 'agent')
@@ -98,7 +97,7 @@ describe('branch-block global layout', () => {
   })
 
   it('lays six agents in a local wrapped shelf beneath their worktree', () => {
-    const worktree = node('a', 'worktree', { tag: 'feat' })
+    const worktree = node('a', 'worktree')
     const agents = Array.from({ length: 6 }, (_, index) => node('agent-' + index, 'agent'))
     const nodes = [node('project', 'project'), worktree, ...agents]
     const edges = [
@@ -180,7 +179,7 @@ describe('Auto-layout spacing regressions', () => {
 
   it('orders disconnected branches together with connected roots on consecutive runs', () => {
     const { nodes, edges } = baseGraph()
-    nodes.push(node('orphan', 'worktree', { tag: 'aaa' }))
+    nodes.push(node('orphan', 'worktree'))
     const previous: NodePlacements = {
       orphan: { x: -500, y: 300, mode: 'manual' },
       a: { x: 0, y: 300, mode: 'manual' },

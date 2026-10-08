@@ -92,13 +92,11 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const activeProject = useBonsaiStore(state => state.projects.find(project => project.id === activeProjectId) ?? state.projects[0])
   const worktrees = useProjectWorktrees(activeProject?.id ?? '')
-  const { nodePlacements, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups } = useProjectCanvasPreferences(activeProject?.id ?? '')
-  const tags = useBonsaiStore((state) => state.worktreeTags)
+  const { nodePlacements, detachedStackWorktreeIds, expandedAutomaticGroups } = useProjectCanvasPreferences(activeProject?.id ?? '')
   const agents = useProjectAgents(activeProject?.id ?? '')
   const processes = useProjectCanvasProcesses(activeProject?.id ?? '')
   const worktreeGroups = useBonsaiStore(state => state.worktreeGroups[activeProject?.id ?? ''])
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
-  const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const selection = useBonsaiStore((state) => state.selection)
   const setSelection = useBonsaiStore((state) => state.setSelection)
   const setManualNodePlacement = useBonsaiStore((state) => state.setManualNodePlacement)
@@ -144,9 +142,9 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
   }, [activeProjectId, activeAvailable])
 
   const graph = useMemo(() => buildCanvasGraph({
-    project: activeProject, worktrees, agents, processes, tags, worktreeGroups, collapsedTagGroups,
+    project: activeProject, worktrees, agents, processes, worktreeGroups,
     detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements,
-  }), [activeProject, worktrees, agents, processes, tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements])
+  }), [activeProject, worktrees, agents, processes, worktreeGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges)
@@ -373,13 +371,12 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
     const data = node.data as BonsaiGraphData
     if (data.kind === 'stack') {
       if (data.groupId) toggleAutomaticGroup(data.groupId)
-      else if (data.tag) toggleTagGroup(activeProjectId, data.tag)
       return
     }
     if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent' || data.kind === 'process') {
       setSelection({ type: data.kind, id: data.entityId })
     }
-  }, [activeProjectId, setSelection, toggleAutomaticGroup, toggleTagGroup])
+  }, [setSelection, toggleAutomaticGroup])
 
   const autoLayout = useCallback(() => requestCanvasAction('layout'), [requestCanvasAction])
   const onMoveEnd = useCallback((_: unknown, nextViewport: ViewportState) => setViewport(nextViewport), [setViewport])

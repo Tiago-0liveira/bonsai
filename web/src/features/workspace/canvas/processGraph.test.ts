@@ -13,7 +13,7 @@ import { agents } from '../../../mock/agents'
 import type { Process } from '../../../types'
 
 const process = (id: number, worktreeId = 'wt-web'): Process => ({ id: `bonsai:${id}`, projectId: 'bonsai', daemonId: id, worktreeId, name: 'Same command', command: 'pnpm dev', status: 'healthy', lifecycleStatus: 'running' })
-const input = (): CanvasGraphInput => ({ project: projects[0], worktrees, agents: [], processes: [], tags: [], collapsedTagGroups: [], detachedStackWorktreeIds: [], expandedAutomaticGroups: [], nodePlacements: {} })
+const input = (): CanvasGraphInput => ({ project: projects[0], worktrees, agents: [], processes: [], detachedStackWorktreeIds: [], expandedAutomaticGroups: [], nodePlacements: {} })
 
 describe('process graph and runtime layout', () => {
   it('projects a process immediately on a feature worktree and selects its stable node', () => {
@@ -37,10 +37,10 @@ describe('process graph and runtime layout', () => {
 
   it('keeps agent and process nodes attached to collapsed stacks with real ownership and counts', () => {
     const data = input()
-    data.worktrees = worktrees.map(tree => ({ ...tree, tag: 'together', stackPreference: 'auto' }))
+    data.worktrees = worktrees.map(tree => ({ ...tree, stackPreference: 'auto' as const }))
+    data.worktreeGroups = [{ id: 'unlinked:bonsai', kind: 'unlinked', worktree_ids: worktrees.map(tree => tree.id) }]
     data.agents = [{ ...agents[0], worktreeId: 'wt-web', presentation: 'canvas' }]
     data.processes = [process(1), process(2, 'wt-daemon')]
-    data.collapsedTagGroups = ['bonsai:together']
     const graph = buildCanvasGraph(data), stack = graph.nodes.find(node => node.type === 'stack')!
     expect(stack.data.subtitle).toContain('2 processes')
     expect(graph.nodes.find(node => node.id === 'bonsai:1')?.data.worktreeId).toBe('wt-web')
@@ -62,7 +62,8 @@ describe('process graph and runtime layout', () => {
     data.agents = agents.filter(agent => agent.worktreeId === 'wt-web').map(agent => ({ ...agent, presentation: 'canvas' }))
     data.processes = [process(1), process(2), process(3), process(4, ''), process(5, 'wt-daemon')]
     for (const collapsed of [false, true]) {
-      data.collapsedTagGroups = collapsed ? ['bonsai:feat'] : []
+      data.worktreeGroups = [{ id: 'unlinked:bonsai', kind: 'unlinked', worktree_ids: worktrees.map(tree => tree.id) }]
+      data.expandedAutomaticGroups = collapsed ? [] : ['unlinked:bonsai']
       const graph = buildCanvasGraph(data), positions = computeGlobalPlacements(graph.nodes, graph.edges)
       for (let i = 0; i < graph.nodes.length; i++) {
         const node = graph.nodes[i]

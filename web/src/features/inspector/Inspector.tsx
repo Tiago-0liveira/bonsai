@@ -182,7 +182,6 @@ export function Inspector() {
   const selection = useBonsaiStore((state) => state.selection)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const worktrees = useProjectWorktrees(activeProjectId)
-  const tags = useBonsaiStore((state) => state.worktreeTags)
   const agents = useProjectAgents(activeProjectId)
   const processes = useProjectProcesses(activeProjectId)
   const inventory = useBonsaiStore(state => state.processes)
@@ -201,17 +200,14 @@ export function Inspector() {
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
   const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
-  const setWorktreeTag = useBonsaiStore((state) => state.setWorktreeTag)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
   const worktreeGroups = useBonsaiStore(state => state.worktreeGroups[activeProjectId])
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setWorktreeStackPreference = useBonsaiStore((state) => state.setWorktreeStackPreference)
   const setWorktreeMergeTarget = useBonsaiStore((state) => state.setWorktreeMergeTarget)
-  const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const inspectPullRequest = useBonsaiStore((state) => state.inspectPullRequest)
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const router = useRouter({ warn: false })
-  const [tagDraft, setTagDraft] = useState('')
 
   const agent = selection.type === 'agent' ? agents.find((item) => item.id === selection.id) : undefined
   const process = selection.type === 'process' ? inventory.find(item => item.id === selection.id) : undefined
@@ -227,15 +223,11 @@ export function Inspector() {
   const issues = worktree ? branchIssues(worktree, pr) : []
   const output = agent ? (terminalLines ?? []).filter((line) => line.trim()).slice(-5) : []
   const automaticGroup = worktree ? (worktreeGroups ?? []).find(group => group.worktree_ids.includes(worktree.id)) : undefined
-  const groupCollapsed = useBonsaiStore(state => automaticGroup
-    ? !state.expandedAutomaticGroups.includes(automaticGroup.id)
-    : Boolean(worktree && project && state.collapsedTagGroups.includes(project.id + ':' + worktree.tag)))
+  const groupCollapsed = useBonsaiStore(state => automaticGroup ? !state.expandedAutomaticGroups.includes(automaticGroup.id) : false)
 
-  useEffect(() => { setTagDraft(worktree?.tag ?? '') }, [worktree?.id, worktree?.tag])
   if (!project) return null
 
-  const submitTag = (event: FormEvent) => { event.preventDefault(); if (worktree) setWorktreeTag(worktree.id, tagDraft) }
-  const groupCount = automaticGroup?.worktree_ids.length ?? (worktree ? projectWorktrees.filter(item => item.tag === worktree.tag).length : 0)
+  const groupCount = automaticGroup?.worktree_ids.length ?? 0
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
 
   return (
@@ -280,7 +272,6 @@ export function Inspector() {
                 <div className="min-w-0 flex-1 pt-0.5">
                   <div className="flex items-center gap-2">
                     <h2 className="min-w-0 truncate font-mono text-[16px] font-bold leading-6 text-text" title={worktree.branch}>{worktree.branch}</h2>
-                    {worktree.tag && <span className="chip shrink-0 border border-accent/30 bg-accent-solid/14 text-accent">{worktree.tag}</span>}
                   </div>
                   <p className="mt-0.5 truncate font-mono text-[11px] text-muted-2" title={worktree.path}>from {worktree.mergeTargetBranch}{worktree.path ? ' · ' + worktree.path : ''}</p>
                 </div>
@@ -334,16 +325,16 @@ export function Inspector() {
                     value={worktree.stackPreference ?? 'auto'}
                     onChange={(value) => setWorktreeStackPreference(worktree.id, value as 'auto' | 'never')}
                     options={[
-                      { value: 'auto', label: 'Automatic', description: 'Use the automatic connection group, or group by tag.' },
+                      { value: 'auto', label: 'Automatic', description: 'Use the automatic connection group.' },
                       { value: 'never', label: 'Always keep separate', description: 'Never include this worktree in a collapsed stack.' },
                     ]}
                   />
-                  {groupCount > 1 && (
+                  {automaticGroup && groupCount > 1 && (
                     <button
-                      onClick={() => automaticGroup ? toggleAutomaticGroup(automaticGroup.id) : toggleTagGroup(project.id, worktree.tag)}
+                      onClick={() => toggleAutomaticGroup(automaticGroup.id)}
                       className="bonsai-focus mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] text-[10px] text-[rgb(var(--muted))] hover:text-[rgb(var(--text))]"
                     >
-                      <Layers3 size={11} /> {groupCollapsed ? 'Expand' : 'Collapse'} {automaticGroup ? 'Local / unlinked' : worktree.tag} group
+                      <Layers3 size={11} /> {groupCollapsed ? 'Expand' : 'Collapse'} Local / unlinked group
                     </button>
                   )}
                 </section>
@@ -354,19 +345,6 @@ export function Inspector() {
                     <ProcessActions process={p} />
                   </div>)}
                 </Section>}
-
-                <form onSubmit={submitTag} className="mt-4">
-                  <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-[.12em] text-[rgb(var(--muted-2))]">Tag name</div>
-                  <div className="flex gap-1.5">
-                    <input aria-label="Tag name" value={tagDraft} onChange={(event) => setTagDraft(event.target.value)} className="bonsai-focus h-8 min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 text-[10px] outline-none" />
-                    <button aria-label="Save tag" type="submit" className="bonsai-focus grid h-8 w-8 place-items-center rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] text-[rgb(var(--muted))]"><Save size={11} /></button>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {tags.map((tag) => (
-                      <button key={tag.id} type="button" onClick={() => { setTagDraft(tag.name); setWorktreeTag(worktree.id, tag.name) }} className="rounded border border-[rgb(var(--border))] px-1.5 py-0.5 text-[8px] text-[rgb(var(--muted-2))] hover:text-[rgb(var(--text))]">{tag.name}</button>
-                    ))}
-                  </div>
-                </form>
 
               </details>
             </>}

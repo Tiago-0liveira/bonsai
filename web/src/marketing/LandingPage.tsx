@@ -3,7 +3,6 @@ import './landing.css'
 
 type WorktreeCardProps = {
   branch: string
-  tag?: string
   ahead?: number
   behind?: number
   changed?: number
@@ -12,11 +11,11 @@ type WorktreeCardProps = {
   className?: string
 }
 
-function WorktreeCard({ branch, tag = 'feature', ahead = 0, behind = 0, changed = 0, pr, ci, className = '' }: WorktreeCardProps) {
+function WorktreeCard({ branch, ahead = 0, behind = 0, changed = 0, pr, ci, className = '' }: WorktreeCardProps) {
   return (
     <article className={`marketing-node marketing-worktree ${className}`}>
       <div className="node-title-row"><strong>{branch}</strong><span className="node-status-dot" /></div>
-      <div className="node-meta"><span>{tag}</span><span>↑ {ahead}</span><span>↓ {behind}</span></div>
+      <div className="node-meta"><span>↑ {ahead}</span><span>↓ {behind}</span></div>
       <div className="node-foot"><span>{changed} changed</span>{pr && <span>{pr}</span>}{ci && <span className={`ci-${ci}`}>CI {ci}</span>}</div>
     </article>
   )
@@ -157,8 +156,8 @@ export function LandingPage() {
             <Topology />
             <div className="main-node marketing-node" data-parallax="0.15"><span>main</span><small>clean · synced</small></div>
             <WorktreeCard branch="feat/web-client" ahead={7} changed={3} pr="PR #26" ci="running" className="worktree-a" />
-            <WorktreeCard branch="fix/daemon-cleanup" tag="bug" ahead={3} behind={1} changed={2} pr="PR #23" ci="failed" className="worktree-b" />
-            <WorktreeCard branch="feat/release-flow" tag="feature" ahead={2} behind={0} pr="PR #22" ci="passing" className="worktree-c" />
+            <WorktreeCard branch="fix/daemon-cleanup" ahead={3} behind={1} changed={2} pr="PR #23" ci="failed" className="worktree-b" />
+            <WorktreeCard branch="feat/release-flow" ahead={2} behind={0} pr="PR #22" ci="passing" className="worktree-c" />
             <div className="graph-caption" data-parallax="1">parallel work has a shape</div>
           </div>
         </div>
@@ -168,7 +167,7 @@ export function LandingPage() {
         <div className="graph-field chaos-field">
           <Topology />
           <WorktreeCard branch="feat/web-client" ahead={7} changed={3} className="worktree-a faint" />
-          <WorktreeCard branch="fix/daemon-cleanup" tag="bug" changed={2} className="worktree-b faint" />
+          <WorktreeCard branch="fix/daemon-cleanup" changed={2} className="worktree-b faint" />
           <WorktreeCard branch="feat/release-flow" className="worktree-c faint" />
           <div className="ghost-terminal ghost-one" data-parallax="1">$ pnpm dev<br /><span>localhost:5173</span></div>
           <div className="ghost-terminal ghost-two" data-parallax="0.82">agent · review/auth<br /><span>waiting for tests…</span></div>
@@ -192,7 +191,7 @@ export function LandingPage() {
       <ScrollScene id="agents" eyebrow="branch-local agents" title="Give every agent its own ground to work on." copy={<p>Start an agent on a specific worktree. Implementation can move on one branch while tests run on another and a review agent inspects a third — without sharing one mutable checkout.</p>}>
         <div className="agent-forest">
           <div className="agent-column column-a"><WorktreeCard branch="feat/web-client" changed={3} pr="PR #26" /><div className="agent-tether" /><AgentCard provider="Codex" task="Implementation · connect hosted client to local Bonsai API" /><AgentCard provider="Claude" task="Review · local capability flow" state="reviewing" runtime="02:41" /></div>
-          <div className="agent-column column-b" data-parallax="0.35"><WorktreeCard branch="fix/daemon-cleanup" tag="bug" changed={2} /><div className="agent-tether" /><AgentCard provider="Codex" task="Testing · lifecycle cleanup" runtime="06:03" /></div>
+          <div className="agent-column column-b" data-parallax="0.35"><WorktreeCard branch="fix/daemon-cleanup" changed={2} /><div className="agent-tether" /><AgentCard provider="Codex" task="Testing · lifecycle cleanup" runtime="06:03" /></div>
           <div className="agent-column column-c" data-parallax="0.55"><WorktreeCard branch="feat/release-flow" /><div className="agent-tether" /><AgentCard provider="Gemini" task="Research · release artifact flow" state="finished" runtime="08:17" /></div>
         </div>
       </ScrollScene>
@@ -211,7 +210,7 @@ export function LandingPage() {
           <div className="nested-card nested-main marketing-node">main</div>
           <WorktreeCard branch="feat/web" className="nested-one" />
           <WorktreeCard branch="feat/web-auth" changed={2} pr="PR #31" className="nested-two" />
-          <WorktreeCard branch="review/auth-cleanup" tag="review" changed={1} pr="PR #34" ci="passing" className="nested-three" />
+          <WorktreeCard branch="review/auth-cleanup" changed={1} pr="PR #34" ci="passing" className="nested-three" />
           <span className="merge-note merge-note-one">merge target</span><span className="merge-note merge-note-two">merge target</span>
         </div>
       </ScrollScene>

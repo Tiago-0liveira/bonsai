@@ -103,7 +103,6 @@ function StartAgentForm() {
                 value: item.id,
                 label: item.branch,
                 description: item.mergeTargetBranch ? 'merges into ' + item.mergeTargetBranch : item.path,
-                meta: item.tag,
               }))}
             />
             {!targetWorktreeId && (

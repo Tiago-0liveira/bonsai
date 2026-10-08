@@ -5,22 +5,10 @@ import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
 import { createPreferenceBoundary } from './preferenceBoundary'
 import { closeRuntimePatch, focusRuntimePatch, openRuntimePatch, reorderRuntimePatch, switchRuntimeScope } from './runtimePreferences'
 import { changedPatch } from './reconciliation'
-import {
-  boardItems as initialBoardItems,
-  boardLists as initialBoardLists,
-  boardPriorities as initialBoardPriorities,
-  boardTypes as initialBoardTypes,
-} from '../mock/board'
 import { localCommand, createWorktree, changePullRequest, reviewPullRequest, updateMetadata, report, type Branch, type BranchCandidate, type RepositorySync, type WorktreeGroup } from '../api/git'
-import { worktreeTags as initialWorktreeTags } from '../mock/tags'
 import type {
   Agent,
   AgentState,
-  BoardItem,
-  BoardList,
-  BoardPriority,
-  BoardStatus,
-  BoardType,
   CreateWorktreeInput,
   DockPanelKey,
   DockState,
@@ -37,7 +25,6 @@ import type {
   TerminalViewPreferences,
   ViewportState,
   Worktree,
-  WorktreeTag,
 } from '../types'
 
 interface TerminalSession {
@@ -81,14 +68,10 @@ export interface BonsaiState {
   toggleSidebar: () => void
 
   worktrees: Worktree[]
-  worktreeTags: WorktreeTag[]
   agents: Agent[]
-  collapsedTagGroups: string[]
   detachedStackWorktreeIds: string[]
-  toggleTagGroup: (projectId: string, tag: string) => void
   ejectWorktreeFromStack: (id: string) => void
   setWorktreeStackPreference: (id: string, preference: 'auto' | 'never') => void
-  setWorktreeTag: (id: string, tag: string) => void
   setWorktreeMergeTarget: (id: string, branch: string) => void
 
   worktreeDialogOpen: boolean
@@ -162,20 +145,6 @@ export interface BonsaiState {
   setPullRequestStatus: (id: string, status: PullRequest['status']) => void
   addPullRequestReview: (id: string, body: string, kind: 'comment' | 'approve' | 'request-changes') => void
 
-  boardItems: BoardItem[]
-  boardLists: BoardList[]
-  boardPriorities: BoardPriority[]
-  boardTypes: BoardType[]
-  moveBoardItem: (id: string, status: BoardStatus) => void
-  addBoardList: () => void
-  updateBoardList: (id: string, patch: Partial<Pick<BoardList, 'name' | 'color' | 'priority' | 'itemType'>>) => void
-  removeBoardList: (id: string, moveTo: string) => void
-  moveBoardList: (id: string, direction: -1 | 1) => void
-  addBoardPriority: (name: string) => void
-  removeBoardPriority: (id: string) => void
-  addBoardType: (name: string) => void
-  removeBoardType: (id: string) => void
-
   nodePlacements: Record<string, NodePlacement>
   setManualNodePlacement: (id: string, position: { x: number; y: number }) => void
   setManualNodePlacements: (positions: Record<string, { x: number; y: number }>) => void
@@ -204,8 +173,6 @@ export interface BonsaiState {
   setActiveTerminalId: (id: string) => void
   appendTerminalCommand: (command: string) => void
 }
-
-function slugify(value: string) { return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') }
 
 function uniqueAdd(items: string[], id: string) {
   return items.includes(id) ? items : [...items, id]
@@ -240,7 +207,13 @@ export const useBonsaiStore = create<BonsaiState>()(
       worktreeGroups: {},
       repositorySync: {},
       expandedAutomaticGroups: [],
-      toggleAutomaticGroup: (id) => set(state => ({ expandedAutomaticGroups: state.expandedAutomaticGroups.includes(id) ? state.expandedAutomaticGroups.filter(value => value !== id) : [...state.expandedAutomaticGroups, id] })),
+      toggleAutomaticGroup: (id) => set(state => {
+        const memberIds = new Set(Object.values(state.worktreeGroups).flat().filter(group => group.id === id).flatMap(group => group.worktree_ids))
+        return {
+          expandedAutomaticGroups: state.expandedAutomaticGroups.includes(id) ? state.expandedAutomaticGroups.filter(value => value !== id) : [...state.expandedAutomaticGroups, id],
+          detachedStackWorktreeIds: state.detachedStackWorktreeIds.filter(worktreeId => !memberIds.has(worktreeId)),
+        }
+      }),
       gitBranches: {},
       gitOnline: {},
       gitRevision: 0,
@@ -284,28 +257,14 @@ export const useBonsaiStore = create<BonsaiState>()(
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 
       worktrees: [],
-      worktreeTags: initialWorktreeTags,
       agents: [],
-      collapsedTagGroups: ['bonsai:feat'],
       detachedStackWorktreeIds: [],
-      toggleTagGroup: (projectId, tag) =>
-        set((state) => {
-          const key = projectId + ':' + tag
-          const groupIds = state.worktrees.filter((item) => item.projectId === projectId && item.tag === tag).map((item) => item.id)
-          return {
-            collapsedTagGroups: state.collapsedTagGroups.includes(key)
-              ? state.collapsedTagGroups.filter((item) => item !== key)
-              : [...state.collapsedTagGroups, key],
-            detachedStackWorktreeIds: state.detachedStackWorktreeIds.filter((id) => !groupIds.includes(id)),
-          }
-        }),
       ejectWorktreeFromStack: (id) =>
         set((state) => ({
           detachedStackWorktreeIds: uniqueAdd(state.detachedStackWorktreeIds, id),
           notice: 'Detached worktree from this stack until the group is toggled',
         })),
       setWorktreeStackPreference: (id, stackPreference) => { void updateMetadata(id, { stack_preference: stackPreference }).catch(report) },
-      setWorktreeTag: (id, tag) => { void updateMetadata(id, { tag }).catch(report) },
       setWorktreeMergeTarget: (id, branch) => {
         const state = get()
         const worktree = state.worktrees.find((item) => item.id === id)
@@ -494,51 +453,6 @@ export const useBonsaiStore = create<BonsaiState>()(
       },
       setPullRequestStatus: (id, status) => { void changePullRequest(id, status) },
       addPullRequestReview: (id, body, kind) => { void reviewPullRequest(id, body, kind) },
-
-      boardItems: initialBoardItems,
-      boardLists: initialBoardLists,
-      boardPriorities: initialBoardPriorities,
-      boardTypes: initialBoardTypes,
-      moveBoardItem: (id, status) => set((state) => ({ boardItems: state.boardItems.map((item) => item.id === id ? { ...item, status } : item) })),
-      addBoardList: () =>
-        set((state) => {
-          const id = 'list-' + Date.now().toString(36)
-          return {
-            boardLists: [...state.boardLists, { id, name: 'new-list', color: 'purple', priority: state.boardPriorities[0]?.name ?? 'High', itemType: state.boardTypes[0]?.name ?? 'Task', order: state.boardLists.length }],
-          }
-        }),
-      updateBoardList: (id, patch) => set((state) => ({ boardLists: state.boardLists.map((list) => list.id === id ? { ...list, ...patch } : list) })),
-      removeBoardList: (id, moveTo) =>
-        set((state) => ({
-          boardItems: state.boardItems.map((item) => item.status === id ? { ...item, status: moveTo } : item),
-          boardLists: state.boardLists.filter((list) => list.id !== id).map((list, index) => ({ ...list, order: index })),
-          notice: 'List removed',
-        })),
-      moveBoardList: (id, direction) =>
-        set((state) => {
-          const sorted = [...state.boardLists].sort((a, b) => a.order - b.order)
-          const index = sorted.findIndex((item) => item.id === id)
-          const nextIndex = index + direction
-          if (index < 0 || nextIndex < 0 || nextIndex >= sorted.length) return state
-          const swap = sorted[nextIndex]
-          sorted[nextIndex] = sorted[index]
-          sorted[index] = swap
-          return { boardLists: sorted.map((list, order) => ({ ...list, order })) }
-        }),
-      addBoardPriority: (name) =>
-        set((state) => {
-          const trimmed = name.trim()
-          if (!trimmed || state.boardPriorities.some((item) => item.name.toLowerCase() === trimmed.toLowerCase())) return state
-          return { boardPriorities: [...state.boardPriorities, { id: slugify(trimmed) || Date.now().toString(36), name: trimmed, rank: state.boardPriorities.length }] }
-        }),
-      removeBoardPriority: (id) => set((state) => ({ boardPriorities: state.boardPriorities.filter((item) => item.id !== id) })),
-      addBoardType: (name) =>
-        set((state) => {
-          const trimmed = name.trim()
-          if (!trimmed || state.boardTypes.some((item) => item.name.toLowerCase() === trimmed.toLowerCase())) return state
-          return { boardTypes: [...state.boardTypes, { id: slugify(trimmed) || Date.now().toString(36), name: trimmed }] }
-        }),
-      removeBoardType: (id) => set((state) => ({ boardTypes: state.boardTypes.filter((item) => item.id !== id) })),
 
       nodePlacements: {},
       setManualNodePlacement: (id, position) =>

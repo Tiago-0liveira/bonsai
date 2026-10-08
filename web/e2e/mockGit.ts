@@ -2,7 +2,6 @@ import type { AgentSummary } from '../src/api/agents'
 import type { Page } from '@playwright/test'
 
 type Metadata = {
-  tag: string
   merge_target_branch: string
   stack_preference: 'auto' | 'never'
 }
@@ -331,12 +330,12 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
 
   const agentSessions: AgentSummary[] = []
   const metadata: Record<string, Metadata> = {
-    'wt-main': { tag: 'production', merge_target_branch: 'main', stack_preference: 'auto' },
-    'wt-web': { tag: 'feat', merge_target_branch: 'main', stack_preference: 'auto' },
-    'wt-docs': { tag: 'feat', merge_target_branch: 'feat/web-workspace', stack_preference: 'auto' },
-    'wt-daemon': { tag: 'bug', merge_target_branch: 'main', stack_preference: 'auto' },
-    'wt-release': { tag: 'chore', merge_target_branch: 'main', stack_preference: 'auto' },
-    'wt-review': { tag: 'review-code', merge_target_branch: 'chore/release-automation', stack_preference: 'auto' },
+    'wt-main': { merge_target_branch: 'main', stack_preference: 'auto' },
+    'wt-web': { merge_target_branch: 'main', stack_preference: 'auto' },
+    'wt-docs': { merge_target_branch: 'feat/web-workspace', stack_preference: 'auto' },
+    'wt-daemon': { merge_target_branch: 'main', stack_preference: 'auto' },
+    'wt-release': { merge_target_branch: 'main', stack_preference: 'auto' },
+    'wt-review': { merge_target_branch: 'chore/release-automation', stack_preference: 'auto' },
   }
   const createdTrees: Array<{ id: string; repository_id: string; path: string; branch: string; main: boolean; local_head_sha: string; status: ReturnType<typeof status>; connection: { state: string; reason?: string } }> = []
   const removedTrees = new Set<string>()

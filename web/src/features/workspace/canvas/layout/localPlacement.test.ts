@@ -28,40 +28,40 @@ describe('local canvas placement', () => {
   it('places a newly detached worktree beside a still-visible stack without prior coordinates', () => {
     const nodes = [
       node('project', 'project'),
-      node('stack:project:feat', 'stack', { tag: 'feat', stackItems: [{ id: 'b' }, { id: 'c' }] }),
-      node('a', 'worktree', { tag: 'feat' }),
+      node('stack:unlinked:project', 'stack', { groupId: 'unlinked:project', stackItems: [{ id: 'b' }, { id: 'c' }] }),
+      node('a', 'worktree', { groupId: 'unlinked:project' }),
     ]
     const placements: NodePlacements = {
       project: { x: 420, y: 34, mode: 'generated' },
-      'stack:project:feat': { x: 300, y: 280, mode: 'generated' },
+      'stack:unlinked:project': { x: 300, y: 280, mode: 'generated' },
     }
 
     const result = placeAddedNodesLocally(nodes, placements, ['a'])
     expect(result.a).toBeDefined()
-    expect(result.a.x).toBeGreaterThan(placements['stack:project:feat'].x)
+    expect(result.a.x).toBeGreaterThan(placements['stack:unlinked:project'].x)
   })
 
   it('recenters a newly collapsed stack on its member positions', () => {
     const nodes = [
-      node('stack:project:feat', 'stack', { stackItems: [{ id: 'a' }, { id: 'b' }], stackCount: 2 }),
+      node('stack:unlinked:project', 'stack', { stackItems: [{ id: 'a' }, { id: 'b' }], stackCount: 2 }),
     ]
     const placements: NodePlacements = {
       a: { x: 100, y: 200, mode: 'manual' },
       b: { x: 500, y: 400, mode: 'generated' },
-      'stack:project:feat': { x: 20, y: 20, mode: 'generated' },
+      'stack:unlinked:project': { x: 20, y: 20, mode: 'generated' },
     }
 
-    const result = placeAddedNodesLocally(nodes, placements, ['stack:project:feat'])
-    expect(result['stack:project:feat']).toBeDefined()
-    expect(result['stack:project:feat'].x).toBeGreaterThan(100)
-    expect(result['stack:project:feat'].y).toBeGreaterThan(100)
+    const result = placeAddedNodesLocally(nodes, placements, ['stack:unlinked:project'])
+    expect(result['stack:unlinked:project']).toBeDefined()
+    expect(result['stack:unlinked:project'].x).toBeGreaterThan(100)
+    expect(result['stack:unlinked:project'].y).toBeGreaterThan(100)
   })
 
   it('expands missing stack members around the disappearing stack anchor without moving unrelated nodes', () => {
     const nodes = [
-      node('a', 'worktree', { tag: 'feat' }),
-      node('b', 'worktree', { tag: 'feat' }),
-      node('unrelated', 'worktree', { tag: 'bug' }),
+      node('a', 'worktree'),
+      node('b', 'worktree'),
+      node('unrelated', 'worktree'),
     ]
     const placements: NodePlacements = {
       unrelated: { x: 900, y: 280, mode: 'manual' },
@@ -102,7 +102,7 @@ describe('local canvas placement', () => {
   it('places a new main-target worktree below the project without moving the project', () => {
     const nodes = [
       node('project', 'project'),
-      node('created', 'worktree', { tag: 'feat' }),
+      node('created', 'worktree'),
     ]
     const edges = [edge('project', 'created', 'hierarchy')]
     const placements: NodePlacements = {

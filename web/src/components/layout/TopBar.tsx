@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Bell, Check, ChevronDown, Command, Folder, GitBranch, LayoutGrid, ScrollText, Search, SlidersHorizontal, Sprout, Table } from 'lucide-react'
+import { Bell, Check, ChevronDown, Command, Folder, GitBranch, LayoutGrid, ScrollText, Search, SlidersHorizontal, Sprout } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { getRelayConnectionSnapshot, relayLoginURL, subscribeRelayConnection } from '../../api/relayClient'
 
 const nav = [
   { label: 'Canvas', to: '/', icon: LayoutGrid },
-  { label: 'Table', to: '/tables', icon: Table },
   { label: 'GitHub', to: '/github', icon: GitBranch },
   { label: 'Logs', to: '/logs', icon: ScrollText },
   { label: 'Settings', to: '/settings', icon: SlidersHorizontal },

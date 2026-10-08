@@ -105,7 +105,7 @@ func TestWorktreeCreateAndDeleteHTTPIdempotencyDirtyProtectionAndMetadata(t *tes
 		t.Fatal(err)
 	}
 	id := created.Result.ID
-	w := managementRequest(t, s, http.MethodPatch, "/api/worktrees/"+id+"/metadata", "meta", `{"tag":"feat"}`)
+	w := managementRequest(t, s, http.MethodPatch, "/api/worktrees/"+id+"/metadata", "meta", `{"stack_preference":"never"}`)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
@@ -177,7 +177,7 @@ func TestMissingWorktreeDeletionClearsMetadataAndRemainsReplayable(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := managementRequest(t, s, http.MethodPatch, "/api/worktrees/"+wt.ID+"/metadata", "missing-meta", `{"tag":"feat"}`)
+	w := managementRequest(t, s, http.MethodPatch, "/api/worktrees/"+wt.ID+"/metadata", "missing-meta", `{"stack_preference":"never"}`)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}

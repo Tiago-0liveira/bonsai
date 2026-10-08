@@ -17,7 +17,8 @@ test('legacy values are scrubbed before connection and stay removed across reloa
       dockRuntimeId: 'worker', openRuntimeIds: ['worker'], terminalOutput: { shell: [marker] },
       envVariables: { bonsai: [{ id: 'secret', key: 'SECRET', value: marker, secret: true }, { id: 'plain', key: 'PLAIN', value: marker, secret: false }] },
       dockHeight: 42, editorPreference: 'cursor',
-      boardItems: [{ id: 'custom', title: 'User-authored draft', kind: 'Task', status: 'feat', assignee: '', priority: 'High' }],
+      // Keys written by removed features must be dropped on load.
+      boardItems: [{ id: 'custom', title: 'Old draft', kind: 'Task', status: 'feat', assignee: '', priority: 'High' }], collapsedTagGroups: ['bonsai:feat'],
       nodePlacements: { worker: { x: 0, y: 0, mode: 'manual' }, 'wt-web': { x: 120, y: 240, mode: 'manual' } },
     } }))
   }, { key, marker })
@@ -38,7 +39,8 @@ test('legacy values are scrubbed before connection and stay removed across reloa
     expect(before.state.terminalSessions).toEqual([])
     expect(before.state.openRuntimeIds).toEqual([])
     expect(before.state.selection).toEqual({ type: 'worktree', id: 'wt-web' })
-    expect(before.state.boardItems[0].title).toBe('User-authored draft')
+    expect(before.state).not.toHaveProperty('boardItems')
+    expect(before.state).not.toHaveProperty('collapsedTagGroups')
     expect(before.state.editorPreference).toBe('cursor')
     expect(before.state.nodePlacements['wt-web']).toEqual({ x: 120, y: 240, mode: 'manual' })
     expect(before.state.nodePlacements.worker).toBeUndefined()

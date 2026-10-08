@@ -4,7 +4,6 @@ import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { WorktreeMetadataError } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { WorktreeSourceType } from '../../types'
-import { getTagPresentation } from './tagStyles'
 
 const sourceOptions: Array<{ id: WorktreeSourceType; label: string; description: string; icon: typeof GitBranch }> = [
   { id: 'existing', label: 'Existing branch', description: 'Attach a local branch that is not checked out.', icon: GitBranch },
@@ -25,7 +24,6 @@ function CreateWorktreeDialogBody() {
   const target = useBonsaiStore(state => state.worktreeDialogTarget)
   const activeProjectId = target?.projectId ?? ''
   const worktrees = useBonsaiStore((state) => state.worktrees)
-  const tags = useBonsaiStore((state) => state.worktreeTags)
 
   const project = projects.find((item) => item.id === activeProjectId)
   const projectWorktrees = worktrees.filter((item) => item.projectId === activeProjectId)
@@ -40,7 +38,6 @@ function CreateWorktreeDialogBody() {
   const [sourceType, setSourceType] = useState<WorktreeSourceType>('new')
   const [sourceRef, setSourceRef] = useState(project?.defaultBranch ?? 'main')
   const [branchName, setBranchName] = useState('feat/new-worktree')
-  const [tagId, setTagId] = useState('feat')
   const [mergeTargetBranch, setMergeTargetBranch] = useState(project?.defaultBranch ?? 'main')
 
   const [pending, setPending] = useState(false)
@@ -53,7 +50,6 @@ function CreateWorktreeDialogBody() {
     setSourceType(target?.sourceType ?? 'new')
     setSourceRef(target?.sourceRef ?? defaultBase)
     setBranchName(target?.branchName ?? 'feat/new-worktree')
-    setTagId(tags.find(tag => tag.id === 'feat')?.id ?? tags[0]?.id ?? '')
     setMergeTargetBranch(project?.defaultBranch ?? 'main')
     setError('')
     setCreatedId('')
@@ -78,7 +74,7 @@ function CreateWorktreeDialogBody() {
       setOpen(false)
       return
     }
-    const input = { projectId: project.id, sourceType, sourceRef, branchName: sourceType === 'new' ? branchName : selectedLocal, tagId, mergeTargetBranch }
+    const input = { projectId: project.id, sourceType, sourceRef, branchName: sourceType === 'new' ? branchName : selectedLocal, mergeTargetBranch }
     const payload = JSON.stringify(input)
     if (submission.current.payload !== payload) submission.current = { payload, key: crypto.randomUUID() }
     submitting.current = true
@@ -160,27 +156,6 @@ function CreateWorktreeDialogBody() {
             )}
           </div>
 
-          <section>
-            <div className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Worktree tag</div>
-            <div className="flex flex-wrap gap-2">
-              {tags.map((tag) => {
-                const presentation = getTagPresentation(tag)
-                const active = tag.id === tagId
-                return (
-                  <button
-                    type="button"
-                    key={tag.id}
-                    onClick={() => setTagId(tag.id)}
-                    className="bonsai-focus rounded-[7px] border px-2.5 py-1.5 text-[11px] font-medium"
-                    style={{ color: presentation.foreground, borderColor: active ? presentation.foreground : presentation.border, background: active ? presentation.background : 'rgb(var(--well))' }}
-                  >
-                    {tag.name}
-                  </button>
-                )
-              })}
-            </div>
-          </section>
-
           <label className="block">
             <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Merges into</span>
             <BonsaiSelect ariaLabel="Merge target" searchable value={mergeTargetBranch} onChange={setMergeTargetBranch} options={mergeOptions} />
@@ -191,7 +166,7 @@ function CreateWorktreeDialogBody() {
 
         <div className="flex items-center justify-end gap-2 border-t border-border-subtle bg-well/45 px-4 py-3">
           <button type="button" onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px] text-muted hover:text-text">Cancel</button>
-          <button type="submit" disabled={pending || !tagId || !sourceRef || (sourceType === 'new' && !branchName.trim())} className="bonsai-focus btn-primary h-8 px-3 text-[12px] disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Creating…' : createdId ? 'Retry saving settings' : existingWorktree ? 'Open worktree' : 'Create worktree'}</button>
+          <button type="submit" disabled={pending || !sourceRef || (sourceType === 'new' && !branchName.trim())} className="bonsai-focus btn-primary h-8 px-3 text-[12px] disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Creating…' : createdId ? 'Retry saving settings' : existingWorktree ? 'Open worktree' : 'Create worktree'}</button>
         </div>
       </form>
     </div>

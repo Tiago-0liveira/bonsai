@@ -1,9 +1,8 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react'
-import type { Agent, CanvasProcess, Health, NodePlacement, Project, Worktree, WorktreeTag } from '../../../types'
+import type { Agent, CanvasProcess, Health, NodePlacement, Project, Worktree } from '../../../types'
 import type { WorktreeGroup } from '../../../api/git'
 import type { BonsaiGraphData } from '../nodes/BonsaiNode'
 import { connectionLabel } from '../connectionLabel'
-import { getTagPresentation } from '../tagStyles'
 import { groupCanvasWorktrees } from './worktreeGroups'
 
 export interface CanvasGraphInput {
@@ -11,9 +10,7 @@ export interface CanvasGraphInput {
   worktrees: Worktree[]
   agents: Agent[]
   processes?: CanvasProcess[]
-  tags: WorktreeTag[]
   worktreeGroups?: WorktreeGroup[]
-  collapsedTagGroups: string[]
   detachedStackWorktreeIds: string[]
   expandedAutomaticGroups: string[]
   nodePlacements: Record<string, NodePlacement>
@@ -29,7 +26,7 @@ function groupHealth(items: Worktree[]): Health {
 // Topology and status projection are pure; rendered geometry and selection are
 // reconciled separately and never written back by a status-only update.
 export function buildCanvasGraph(input: CanvasGraphInput) {
-  const { project, worktrees, agents, processes = [], tags, worktreeGroups, collapsedTagGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements } = input
+  const { project, worktrees, agents, processes = [], worktreeGroups, detachedStackWorktreeIds, expandedAutomaticGroups, nodePlacements } = input
   const positionFor = (id: string, fallback: { x: number; y: number }) => {
     const placement = nodePlacements[id]
     return placement ? { x: placement.x, y: placement.y } : fallback
@@ -49,23 +46,23 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
   const groups = groupCanvasWorktrees(projectWorktrees, worktreeGroups ?? [])
 
   const visibleEntries: Array<
-    | { type: 'stack'; id: string; tag: string; groupId?: string; items: Worktree[] }
+    | { type: 'stack'; id: string; label: string; groupId: string; items: Worktree[] }
     | { type: 'worktree'; id: string; worktree: Worktree; groupId?: string; items: Worktree[] }
   > = []
   const visibleNodeForWorktree = new Map<string, string>()
 
-  groups.forEach(({ items, label: tag, groupId }) => {
+  groups.forEach(({ items, label, groupId }) => {
     const stackable = items.filter(
       (item) => item.stackPreference !== 'never' && !detachedStackWorktreeIds.includes(item.id),
     )
     const separate = items.filter(
       (item) => item.stackPreference === 'never' || detachedStackWorktreeIds.includes(item.id),
     )
-    const collapsed = stackable.length > 1 && (groupId ? !expandedAutomaticGroups.includes(groupId) : collapsedTagGroups.includes(project.id + ':' + tag))
+    const collapsed = Boolean(groupId) && stackable.length > 1 && !expandedAutomaticGroups.includes(groupId as string)
 
-    if (collapsed) {
-      const stackId = groupId ? 'stack:' + groupId : 'stack:' + project.id + ':' + tag
-      visibleEntries.push({ type: 'stack', id: stackId, tag, groupId, items: stackable })
+    if (collapsed && groupId) {
+      const stackId = 'stack:' + groupId
+      visibleEntries.push({ type: 'stack', id: stackId, label, groupId, items: stackable })
       stackable.forEach((item) => visibleNodeForWorktree.set(item.id, stackId))
     } else {
       stackable.forEach((worktree) => {
@@ -136,8 +133,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       const stackAgents = projectAgents.filter((agent) => entry.items.some((worktree) => worktree.id === agent.worktreeId))
       const stackProcesses = projectProcesses.filter(process => entry.items.some(tree => tree.id === process.worktreeId))
       const stackPrs = entry.items.filter((worktree) => worktree.prStatus && worktree.prStatus !== 'Closed').length
-      const tagDefinition = tags.find((tag) => tag.id === entry.items[0]?.tagId || tag.name === entry.tag)
-      const presentation = getTagPresentation(tagDefinition)
       nodes.push({
         id: entry.id,
         type: 'stack',
@@ -145,12 +140,8 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         data: {
           entityId: entry.id,
           kind: 'stack',
-          title: entry.tag,
+          title: entry.label,
           groupId: entry.groupId,
-          tag: entry.tag,
-          tagColor: presentation.foreground,
-          tagBackground: presentation.background,
-          tagBorder: presentation.border,
           stackCount: entry.items.length,
           health: groupHealth(entry.items),
           subtitle: stackAgents.length + ' agents · ' + stackProcesses.length + ' processes · ' + stackPrs + ' PRs',
@@ -178,8 +169,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     const historyAgents = worktreeAgents.filter(
       (agent) => (agent.presentation ?? (agent.archived ? 'archived' : 'canvas')) === 'history',
     )
-    const tagDefinition = tags.find((tag) => tag.id === worktree.tagId || tag.name === worktree.tag)
-    const presentation = getTagPresentation(tagDefinition)
     nodes.push({
       id: worktree.id,
       type: 'worktree',
@@ -194,11 +183,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         ahead: worktree.ahead,
         behind: worktree.behind,
         health: worktree.status,
-        tag: worktree.tag,
-        tagColor: presentation.foreground,
-        tagBackground: presentation.background,
-        tagBorder: presentation.border,
-        tagCount: entry.items.length,
+        groupCount: entry.groupId ? entry.items.length : 0,
         mergeTargetBranch: worktree.mergeTargetBranch,
         targetIsWorktree: Boolean(branchToWorktree.get(worktree.mergeTargetBranch)),
         prNumber: worktree.prNumber,

@@ -70,11 +70,7 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   defaultBranch?: string
   defaultBranchInfo?: DefaultBranchInfo
   ciSummary?: string
-  tag?: string
-  tagColor?: string
-  tagBackground?: string
-  tagBorder?: string
-  tagCount?: number
+  groupCount?: number
   groupId?: string
   connectionLabel?: string
   stackCount?: number
@@ -220,7 +216,6 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
-  const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const ejectWorktreeFromStack = useBonsaiStore((state) => state.ejectWorktreeFromStack)
   const setSelection = useBonsaiStore((state) => state.setSelection)
 
@@ -230,12 +225,12 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
       <MoveSubtreeGrip id={data.entityId} />
       <button
         type="button"
-        onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId); else if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
+        onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId) }}
         className="flex w-full items-center gap-2 border-b border-border-subtle px-3 py-2.5 text-left"
-        style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--accent))'}` }}
+        style={{ boxShadow: 'inset 3px 0 0 rgb(var(--accent))' }}
       >
-        <Layers3 size={12} style={{ color: data.tagColor }} />
-        <span className="font-semibold" style={{ color: data.tagColor }}>{data.tag}</span>
+        <Layers3 size={12} className="text-accent" />
+        <span className="font-semibold text-accent">{data.title}</span>
         <span className="chip bg-panel-4 text-muted">{data.stackCount}</span>
         <span className="ml-auto text-[8px] text-[rgb(var(--muted-2))]">Expand</span>
       </button>
@@ -287,7 +282,6 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
   const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
-  const toggleTagGroup = useBonsaiStore((state) => state.toggleTagGroup)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
@@ -373,7 +367,6 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                   <GitBranch size={13} className="shrink-0 text-muted-2" />
                   <span title={data.title} className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-text">{data.title}</span>
                   {data.connectionLabel && <span className="shrink-0 font-mono text-[10px] text-warn">{data.connectionLabel}</span>}
-                  <span className="chip shrink-0 border" style={{ color: data.tagColor, borderColor: data.tagBorder, background: data.tagBackground }}>{data.tag}</span>
                 </div>
                 <div className="mt-1.5 flex h-5 items-center gap-1.5">
                   <CiBadge status={data.ciStatus} failed={data.ciFailed} iconOnly />
@@ -486,7 +479,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
               <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
               <MenuItem onSelect={() => openStartProcessDialog(data.entityId)}><Play size={13} /> Start process</MenuItem>
               <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
-              {(data.tagCount ?? 0) > 1 && <MenuItem onSelect={() => data.groupId ? toggleAutomaticGroup(data.groupId) : toggleTagGroup(activeProjectId, data.tag as string)}><Layers3 size={13} /> Toggle {data.groupId ? 'Local / unlinked' : data.tag} stack</MenuItem>}
+              {data.groupId && (data.groupCount ?? 0) > 1 && <MenuItem onSelect={() => toggleAutomaticGroup(data.groupId as string)}><Layers3 size={13} /> Toggle Local / unlinked stack</MenuItem>}
               <MenuItem onSelect={() => setDeleteWorktreeId(data.entityId)}><Trash2 size={13} /> Delete worktree</MenuItem>
             </>
           )}

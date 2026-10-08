@@ -112,7 +112,6 @@ type worktreeMetadata struct {
 	WorktreeID        string `json:"worktree_id"`
 	RepositoryID      string `json:"repository_id"`
 	MergeTargetBranch string `json:"merge_target_branch"`
-	Tag               string `json:"tag"`
 	StackPreference   string `json:"stack_preference"`
 }
 

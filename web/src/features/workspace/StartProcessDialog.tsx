@@ -126,7 +126,7 @@ function StartProcessForm() {
         </div>
         <div className="max-h-[72vh] space-y-5 overflow-auto p-4">
           <label className="block"><span className={labelClass}>Worktree</span>
-            <BonsaiSelect ariaLabel="Process worktree and branch" disabled={pending} searchable value={worktreeId} onChange={id => { if (id !== worktreeId) { setCatalog(null); setCommandId(''); setWorktreeId(id) } }} placeholder="Choose a worktree" options={availableWorktrees.map(tree => ({ value: tree.id, label: tree.branch, description: tree.path, meta: tree.tag }))} />
+            <BonsaiSelect ariaLabel="Process worktree and branch" disabled={pending} searchable value={worktreeId} onChange={id => { if (id !== worktreeId) { setCatalog(null); setCommandId(''); setWorktreeId(id) } }} placeholder="Choose a worktree" options={availableWorktrees.map(tree => ({ value: tree.id, label: tree.branch, description: tree.path }))} />
           </label>
           <section>
             <div className="mb-2 flex items-center justify-between"><span className={labelClass}>Packages</span><button type="button" disabled={!worktreeId || loading || pending} onClick={() => setReload(value => value + 1)} className="bonsai-focus rounded px-2 font-mono text-[10px] text-muted disabled:opacity-40">Refresh</button></div>

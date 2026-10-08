@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { PersistStorage, StorageValue } from 'zustand/middleware'
-import type { Agent, BoardItem, BoardList, BoardPriority, BoardType, DockState, DockTab, EditorPreference, NodePlacement, RuntimeReference, Selection, TerminalViewPreferences, ViewportState } from '../types'
+import type { Agent, DockState, DockTab, EditorPreference, NodePlacement, RuntimeReference, Selection, TerminalViewPreferences, ViewportState } from '../types'
 import { activeRuntimePatch } from './runtimePreferences'
 import type { BonsaiState } from './bonsai'
 
@@ -22,11 +22,6 @@ export interface WorkspacePreferences {
   editorPreference?: EditorPreference
   nodePlacements: Record<string, NodePlacement>
   viewport: ViewportState
-  boardItems: BoardItem[]
-  boardLists: BoardList[]
-  boardPriorities: BoardPriority[]
-  boardTypes: BoardType[]
-  collapsedTagGroups: string[]
   detachedStackWorktreeIds: string[]
   expandedAutomaticGroups: string[]
   terminalViewPreferences: TerminalViewPreferences
@@ -94,7 +89,7 @@ export function sanitizeWorkspacePreferences(value: unknown): Partial<WorkspaceP
   if (finite(raw.dockHeight)) result.dockHeight = Math.min(72, Math.max(14, raw.dockHeight))
   if (member(raw.activeDockTab, ['agent', 'terminal', 'tests', 'files', 'pr', 'checks', 'logs'])) result.activeDockTab = raw.activeDockTab
   if (member(raw.editorPreference, ['vscode', 'cursor', 'zed', 'system'])) result.editorPreference = raw.editorPreference
-  for (const key of ['collapsedBranchIds', 'collapsedTagGroups', 'detachedStackWorktreeIds', 'expandedAutomaticGroups'] as const) {
+  for (const key of ['collapsedBranchIds', 'detachedStackWorktreeIds', 'expandedAutomaticGroups'] as const) {
     if (strings(raw[key])) result[key] = [...raw[key]]
   }
   const panels = record(raw.rightPanels)
@@ -127,26 +122,6 @@ export function sanitizeWorkspacePreferences(value: unknown): Partial<WorkspaceP
     return [[id, { x: placement.x, y: placement.y, mode: placement.mode }]]
   }))
 
-  const items = rows<BoardItem>(raw.boardItems, row => {
-    const { id, title, kind, status, assignee, priority } = row
-    return typeof id === 'string' && typeof title === 'string' && typeof kind === 'string' && typeof status === 'string' && typeof assignee === 'string' && typeof priority === 'string' ? { id, title, kind, status, assignee, priority } : undefined
-  })
-  const lists = rows<BoardList>(raw.boardLists, row => {
-    const { id, name, color, priority, itemType, order, archived } = row
-    return typeof id === 'string' && typeof name === 'string' && member(color, ['purple', 'blue', 'green', 'orange', 'red', 'cyan', 'pink']) && typeof priority === 'string' && typeof itemType === 'string' && finite(order) ? { id, name, color, priority, itemType, order, ...(typeof archived === 'boolean' ? { archived } : {}) } : undefined
-  })
-  const priorities = rows<BoardPriority>(raw.boardPriorities, row => {
-    const { id, name, rank } = row
-    return typeof id === 'string' && typeof name === 'string' && finite(rank) ? { id, name, rank } : undefined
-  })
-  const types = rows<BoardType>(raw.boardTypes, row => {
-    const { id, name } = row
-    return typeof id === 'string' && typeof name === 'string' ? { id, name } : undefined
-  })
-  if (items) result.boardItems = items
-  if (lists) result.boardLists = lists
-  if (priorities) result.boardPriorities = priorities
-  if (types) result.boardTypes = types
   return result
 }
 
