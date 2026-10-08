@@ -111,7 +111,7 @@ export function Inspector() {
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
 
   return (
-    <aside aria-label="Inspector" className="desktop-inspector inspector-shell flex min-h-0 min-w-0 w-[310px] shrink-0 flex-col overflow-hidden border-l border-[rgb(var(--border))]">
+    <aside aria-label="Inspector" className="inspector-shell flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[rgb(var(--border)/.7)] px-4">
         <SlidersHorizontal size={13} className="text-[rgb(var(--accent))]" /><span className="text-[12px] font-semibold">Inspector</span>
         <span className="ml-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] px-2 py-0.5 text-[9px] capitalize text-[rgb(var(--muted))]">{selection.type}</span>

@@ -624,8 +624,8 @@ function PullRequestsPanel() {
         <button onClick={() => setRightPanel('prs', false)} className="bonsai-focus ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))]" title="Close pull requests"><X size={12} /></button>
       </div>
       <PullRequestTabs value={tab} onChange={value => { setTab(value); if (value === 'closed') retry() }} />
-      <div className="flex shrink-0 items-center gap-1.5 border-b border-[rgb(var(--border)/.5)] p-2">
-        <label className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[rgb(var(--border)/.5)] p-2">
+        <label className="flex h-7 min-w-[96px] flex-1 items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
           <Search size={9} className="text-[rgb(var(--muted-2))]" />
           <input aria-label="Search pull requests" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search PRs" className="min-w-0 flex-1 bg-transparent text-[8px] outline-none placeholder:text-[rgb(var(--muted-2))]" />
         </label>

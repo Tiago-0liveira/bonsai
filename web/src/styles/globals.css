@@ -75,7 +75,8 @@ select { color-scheme: dark; }
 .xterm-viewport { scrollbar-color: rgb(var(--border-strong)) transparent; }
 
 @media (max-width: 1100px) {
-  .desktop-inspector { display: none; }
+  .desktop-rail { display: none; }
+  .shell-main { left: 16px; }
 }
 @media (max-width: 800px) {
   .top-nav-secondary { display: none; }
