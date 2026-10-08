@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { injectAgentPresentation } from './presentationFixtures'
 import { mockGitBackend, openConnectedApp } from './mockGit'
+import { waitForViewportToSettle } from './viewport'
 
 test.beforeEach(async ({ page }) => {
   await mockGitBackend(page)
@@ -51,7 +52,7 @@ test('adding and removing a shelf agent preserves other branches and readable PR
   await owner.getByRole('button', { name: /History.*Show/ }).click()
   await page.getByRole('button', { name: 'Auto-layout', exact: true }).click()
   // Let the explicit Fit animation finish before checking viewport stability.
-  await page.waitForTimeout(400)
+  await waitForViewportToSettle(page)
   const snapshot = () => page.evaluate(() => {
     const state = window.__bonsaiTestStore.getState()
     const ids = ['bonsai', 'wt-web', 'wt-docs', 'wt-daemon', 'wt-release', 'wt-review',
@@ -85,7 +86,7 @@ test('adding and removing a shelf agent preserves other branches and readable PR
 
   // The reported hidden-label case has four agents in two rows.
   await page.getByRole('button', { name: 'Auto-layout', exact: true }).click()
-  await page.waitForTimeout(400)
+  await waitForViewportToSettle(page)
   await expect(page.locator('[data-pr-edge-label]')).toHaveCount(2)
   await expect.poll(overlaps).toEqual([])
   const beforeRemoval = await snapshot()
