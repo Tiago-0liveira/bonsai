@@ -6,11 +6,12 @@ import {
   type ImperativePanelHandle,
 } from 'react-resizable-panels'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { PanelBottomOpen } from 'lucide-react'
+import { ChevronUp, TerminalSquare } from 'lucide-react'
 import { CommandPalette } from '../../features/command-palette/CommandPalette'
 import { BranchesIsland } from '../../features/branches/BranchesIsland'
 import { Inspector } from '../../features/inspector/Inspector'
 import { BottomWorkspace } from '../../features/terminal/BottomWorkspace'
+import { useOpenRuntimeEntries } from '../../features/terminal/openRuntimeEntries'
 import { CreateWorktreeDialog } from '../../features/workspace/CreateWorktreeDialog'
 import { DeleteWorktreeDialog } from '../../features/workspace/DeleteWorktreeDialog'
 import { EnvEditor } from '../../features/workspace/EnvEditor'
@@ -21,11 +22,53 @@ import { relayLoginURL } from '../../api/relayClient'
 import { TopBar } from './TopBar'
 import { WorkspaceNotice } from './WorkspaceNotice'
 import { WorkspaceVisibility } from '../ui/WorkspaceVisibility'
+import { ProviderBadge } from '../ui/ProviderBadge'
 
 function MainWorkspace({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full min-h-0 overflow-hidden rounded-[14px]">
       <main className="min-w-0 flex-1">{children}</main>
+    </div>
+  )
+}
+
+function runtimeDot(entry: ReturnType<typeof useOpenRuntimeEntries>['openEntries'][number]) {
+  if (entry.type === 'agent') return entry.agent.state === 'running' ? 'bg-accent-solid' : entry.agent.state === 'idle' ? 'bg-warn-solid' : 'bg-muted-2'
+  return entry.process.status === 'healthy' ? 'bg-accent-solid' : entry.process.status === 'warning' ? 'bg-warn-solid' : 'bg-muted-2'
+}
+
+// Rendered only while the dock is collapsed so the open-runtime lookup does not re-render the shell otherwise.
+function CollapsedTerminalsBar({ reopenRef }: { reopenRef: React.RefObject<HTMLButtonElement> }) {
+  const { openEntries } = useOpenRuntimeEntries()
+  const openRuntimeIds = useBonsaiStore((state) => state.openRuntimeIds)
+  const focusRuntime = useBonsaiStore((state) => state.focusRuntime)
+  const setDockState = useBonsaiStore((state) => state.setDockState)
+  return (
+    <div className="island mt-3 flex h-[34px] shrink-0 items-center gap-2 rounded-[12px] px-3">
+      <TerminalSquare size={13} className="shrink-0 text-ok" />
+      <span className="font-mono text-[10.5px] uppercase tracking-[.08em] text-muted">Terminals</span>
+      <span className="island-count">{openRuntimeIds.length}</span>
+      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+        {openEntries.map((entry) => {
+          const name = entry.type === 'agent' ? entry.agent.name : entry.process.name
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => { focusRuntime(entry.id); setDockState('normal') }}
+              className="bonsai-focus flex h-6 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-2 text-left text-[12px] text-text hover:bg-panel-2"
+            >
+              {entry.type === 'agent' ? <ProviderBadge provider={entry.agent.provider} size={16} /> : <TerminalSquare size={12} className="shrink-0 text-muted" />}
+              <span className="min-w-0 truncate">{name}</span>
+              <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + runtimeDot(entry)} />
+            </button>
+          )
+        })}
+      </div>
+      <span className="flex-1" />
+      <button ref={reopenRef} type="button" onClick={() => setDockState('normal')} className="bonsai-focus btn-ghost shrink-0 text-[11px]">
+        <ChevronUp size={12} /> Open workspace
+      </button>
     </div>
   )
 }
@@ -124,19 +167,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </Panel>
               </PanelGroup>
             </div>
+            {dockState === 'collapsed' && <CollapsedTerminalsBar reopenRef={reopenRef} />}
           </div>
         </div>
-
-        {dockState === 'collapsed' && (
-          <button
-            ref={reopenRef}
-            type="button"
-            onClick={() => setDockState('normal')}
-            className="bonsai-focus absolute bottom-3 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))] px-3 py-1.5 text-[9px] text-[rgb(var(--muted))] shadow-xl hover:bg-[rgb(var(--panel-3))] hover:text-[rgb(var(--text))]"
-          >
-            <PanelBottomOpen size={11} /> Open workspace
-          </button>
-        )}
 
         <WorkspaceNotice />
 

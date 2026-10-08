@@ -49,17 +49,10 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses } from '../../stores/projectSelectors'
 import { panelPreferences } from '../../stores/panelPreferences'
 import { StatusDot } from '../branches/BranchesIsland'
+import { useOpenRuntimeEntries, type RuntimeEntry } from './openRuntimeEntries'
 import type { Agent, EditorPreference, Process, PullRequest, RepoFile, Worktree } from '../../types'
 import { AgentTerminal } from './AgentTerminal'
 import { ProcessTerminal } from './ProcessTerminal'
-
-function agentPresentation(agent: Agent) {
-  return agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
-}
-
-type RuntimeEntry =
-  | { id: string; type: 'agent'; agent: Agent }
-  | { id: string; type: 'process'; process: Process }
 
 function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
   const [terminalActions, setTerminalActions] = useState<HTMLDivElement | null>(null)
@@ -126,11 +119,6 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
 export function RuntimeWorkspace() {
   const hostRef = useRef<HTMLElement | null>(null)
   const [wideHeader, setWideHeader] = useState(false)
-  const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
-  const worktrees = useProjectWorktrees(activeProjectId)
-  const agents = useProjectAgents(activeProjectId)
-  const processes = useProjectProcesses(activeProjectId)
-  const dockWorktreeId = useBonsaiStore((state) => state.dockWorktreeId)
   const dockRuntimeId = useBonsaiStore((state) => state.dockRuntimeId)
   const openRuntimeIds = useBonsaiStore((state) => state.openRuntimeIds)
   const openRuntime = useBonsaiStore((state) => state.openRuntime)
@@ -141,18 +129,7 @@ export function RuntimeWorkspace() {
   const dockState = useBonsaiStore((state) => state.dockState)
   const setDockState = useBonsaiStore((state) => state.setDockState)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
-
-  const projectWorktrees = worktrees.filter((item) => item.projectId === activeProjectId)
-  const worktree = projectWorktrees.find((item) => item.id === dockWorktreeId)
-  const worktreeAgents = agents.filter((item) => item.worktreeId === worktree?.id && agentPresentation(item) !== 'archived')
-  const worktreeProcesses = processes.filter(item => worktree ? item.worktreeId === worktree.id
-    : !dockWorktreeId && !projectWorktrees.some(tree => tree.id === item.worktreeId))
-  const available: RuntimeEntry[] = [
-    ...worktreeAgents.map((agent) => ({ id: agent.id, type: 'agent' as const, agent })),
-    ...worktreeProcesses.map((process) => ({ id: process.id, type: 'process' as const, process })),
-  ]
-  const availableMap = new Map(available.map((runtime) => [runtime.id, runtime]))
-  const openEntries = openRuntimeIds.map((id) => availableMap.get(id)).filter((item): item is RuntimeEntry => Boolean(item))
+  const { worktree, available, openEntries } = useOpenRuntimeEntries()
 
   useEffect(() => {
     const host = hostRef.current
