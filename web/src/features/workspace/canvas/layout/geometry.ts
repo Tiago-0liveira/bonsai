@@ -14,7 +14,7 @@ export const LAYOUT = {
 
 function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
   const type = node.type ?? 'agent'
-  if (type === 'project') return { width: 300, height: 154 }
+  if (type === 'project') return { width: 370, height: 86 }
   if (type === 'defaultBranch') return { width: 232, height: 132 }
   if (type === 'env') return { width: 150, height: 56 }
   if (type === 'process') return { width: 153, height: 54 }

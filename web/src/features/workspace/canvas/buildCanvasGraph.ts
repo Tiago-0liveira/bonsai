@@ -124,7 +124,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       type: 'env',
       draggable: false,
       selectable: false,
-      position: { x: rootDefault.x + 334, y: rootDefault.y + 42 },
+      position: { x: rootDefault.x + 370 + 34, y: rootDefault.y + 15 },
       data: {
         entityId: envId,
         kind: 'env',

@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { Fragment, memo } from 'react'
 import { openGitHub } from '../../../api/git'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
@@ -9,7 +9,6 @@ import {
   CircleX,
   Clock3,
   ExternalLink,
-  FolderGit2,
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
@@ -92,13 +91,6 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   gitState?: string
   envCount?: number
   worktreeId?: string
-}
-
-const healthColor: Record<Health, string> = {
-  healthy: 'bg-[rgb(var(--accent-solid))]',
-  warning: 'bg-[rgb(var(--warn-solid))]',
-  error: 'bg-[rgb(var(--danger))]',
-  idle: 'bg-[rgb(var(--muted-2))]',
 }
 
 const agentDot: Record<AgentState, string> = {
@@ -327,22 +319,22 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
   if (data.kind === 'env') return <EnvCard data={data} />
   if (data.kind === 'stack') return <StackCard data={data} />
 
-  const status: Health =
-    data.kind === 'agent'
-      ? data.agentState === 'running' ? 'healthy' : data.agentState === 'finished' ? 'idle' : 'warning'
-      : (data.health ?? 'idle')
-
-  const shellWidth = data.kind === 'agent' ? 'w-[153px] h-[54px] flex flex-col px-2 pb-[5px] pt-[7px]' : 'w-[300px]'
+  const shellWidth = data.kind === 'agent' ? 'w-[153px] h-[54px] flex flex-col px-2 pb-[5px] pt-[7px]' : data.kind === 'project' ? 'w-[370px] px-3.5 py-3' : 'w-[300px]'
   const waiting = data.kind === 'agent' && data.agentState === 'idle'
+  const hubCiRunning = data.kind === 'project' && !!data.ciSummary?.includes('running')
+  const hubCiFailed = data.kind === 'project' && !!data.ciSummary?.includes('failed')
+  const hubCiTone = hubCiFailed ? 'bg-danger-solid/28 text-danger' : hubCiRunning ? 'bg-accent/12 text-accent' : 'bg-ok/10 text-ok'
+  const HubCiIcon = hubCiFailed ? CircleX : hubCiRunning ? LoaderCircle : CircleCheck
   const agentTitle = data.kind === 'agent'
     ? [[data.provider, data.model].filter(Boolean).join(' · '), [data.reasoningEffort, data.runtime].filter(Boolean).join(' · ')].filter(Boolean).join('\n')
     : undefined
   const shellTone = data.kind === 'worktree'
     ? 'rounded-xl bg-panel ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : 'border-border shadow-card hover:border-border-strong')
+    : data.kind === 'project'
+      ? 'rounded-[14px] bg-panel ' + (selected ? 'border-accent-solid' : 'border-accent-solid/55') + ' shadow-[0_0_0_4px_rgb(var(--accent-solid)/.08),inset_0_1px_0_rgb(var(--accent-solid)/.16),0_14px_28px_-16px_rgb(10_7_5/.85)]'
     : data.kind === 'agent'
       ? 'rounded-[10px] bg-panel-2 ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : (waiting ? 'border-warn-solid/55' : 'border-border-strong') + ' shadow-card hover:border-border-strong')
       : 'rounded-lg bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
-  const icon = data.kind === 'project' ? <FolderGit2 size={15} /> : data.kind === 'worktree' ? <GitBranch size={13} /> : <Bot size={13} />
 
   const selectNode = () => {
     if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent') {
@@ -374,23 +366,22 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
 
           {data.kind === 'project' && (
             <>
-              <div className="flex items-start gap-3 border-b border-[rgb(var(--border))] p-3.5">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[rgb(var(--accent)/.28)] bg-[rgb(var(--accent)/.07)] text-[rgb(var(--accent))]">{icon}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={'h-2 w-2 rounded-full ' + healthColor[status]} />
-                    <span className="truncate text-[13px] font-semibold">{data.title}</span>
-                  </div>
-                  <div className="mt-1 truncate font-mono text-[10px] text-[rgb(var(--muted-2))]">{data.subtitle}</div>
-                  <div className="mt-1.5 text-[9px] text-[rgb(var(--muted))]">{data.ciSummary}</div>
-                </div>
+              <div className="flex h-5 items-center gap-2">
+                <GitBranch size={13} className="shrink-0 text-accent" />
+                <span title={data.defaultBranch ?? data.title} className="min-w-0 truncate font-mono text-[13px] font-semibold text-text">{data.defaultBranch ?? data.title}</span>
+                <span className="chip shrink-0 bg-accent-solid/14 uppercase tracking-[.04em] text-accent">default</span>
+                <span className={'chip ml-auto inline-flex shrink-0 items-center gap-1 ' + hubCiTone}>
+                  <HubCiIcon size={10} className={hubCiRunning ? 'animate-spin motion-reduce:animate-none' : ''} />
+                  {data.ciSummary}
+                </span>
               </div>
-              <div className="grid grid-cols-4 divide-x divide-[rgb(var(--border))]">
-                {(data.stats ?? []).slice(0, 4).map((stat) => (
-                  <div key={stat.label} className="px-2 py-2 text-center">
-                    <div className="text-[12px] font-semibold">{stat.value}</div>
-                    <div className="mt-0.5 truncate text-[8px] uppercase tracking-wide text-[rgb(var(--muted-2))]">{stat.label}</div>
-                  </div>
+              <div title={data.title + ' · ' + data.subtitle} className="mt-1 h-4 truncate font-mono text-[10px] leading-4 text-muted-2">{data.title} · {data.subtitle}</div>
+              <div className="mt-1 flex h-4 items-center gap-1.5 whitespace-nowrap font-mono text-[10px] leading-4 text-muted-2">
+                {(data.stats ?? []).slice(0, 4).map((stat, index) => (
+                  <Fragment key={stat.label}>
+                    {index > 0 && <span aria-hidden>·</span>}
+                    <span className={stat.label === 'ci failed' && Number(stat.value) > 0 ? 'text-danger' : ''}>{stat.value} {stat.label}</span>
+                  </Fragment>
                 ))}
               </div>
             </>
