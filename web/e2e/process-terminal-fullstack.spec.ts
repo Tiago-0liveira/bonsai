@@ -82,16 +82,23 @@ test('real daemon: launch opens logs, retries and restart retain history, duplic
   }))
   const scrolled = await launch(page, 'scroll', 'Never')
   const viewport = scrolled.terminal.locator('.xterm-viewport')
+  // Let the initial burst finish rendering; xterm re-syncs the viewport after each write,
+  // which would undo a scroll made while earlier output is still being parsed.
+  await expect(scrolled.terminal.locator('.xterm-screen')).toContainText('FINAL_WITHOUT_NEWLINE')
   await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-  // The scroll event is dispatched on the next frame. Output that xterm writes before it
-  // runs still sees a viewport pinned to the bottom and scrolls back down, so wait for it.
-  await viewport.evaluate(async element => {
+  // The scroll event is dispatched on the next frame. Output xterm writes before it runs
+  // still sees a viewport pinned to the bottom and scrolls back down, so retry until the
+  // position holds once xterm has processed the event.
+  await expect.poll(() => viewport.evaluate(async element => {
     element.scrollTop = 0
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-  })
+    return element.scrollTop
+  })).toBe(0)
   const before = ticks
   await expect.poll(() => ticks).toBeGreaterThan(before)
-  await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBe(0)
+  // Give xterm a frame to render the live tick, then check it did not follow it to the bottom.
+  await viewport.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  expect(await viewport.evaluate(element => element.scrollTop)).toBe(0)
   await scrolled.terminal.getByRole('button', { name: 'Stop process', exact: true }).click()
   const backoff = await launch(page, 'fail', 'On failure', 3, 'CANCEL_RETRY')
   await expect(backoff.terminal).toContainText('backoff', { timeout: 5000 })
