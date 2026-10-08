@@ -2,6 +2,7 @@ import { processActive } from '../../stores/processProjection'
 import { openGitHub } from '../../api/git'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
+import * as Tabs from '@radix-ui/react-tabs'
 import {
   Archive, ArrowDown, ArrowRight, ArrowUp, Bot, CheckCircle2, ChevronRight,
   CircleDot, Clock3, FileDiff, GitBranch, GitPullRequest, History, Layers3,
@@ -11,8 +12,9 @@ import {
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectPullRequests } from '../../stores/projectSelectors'
+import { FilesDiffPanel } from '../files/FilesDiffPanel'
 import { ProcessActions } from '../terminal/ProcessActions'
-import type { Agent, PullRequest, Worktree } from '../../types'
+import type { Agent, PullRequest, SyncFreshnessState, Worktree } from '../../types'
 
 const presentation = (agent: Agent) => agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
 
@@ -25,6 +27,22 @@ function branchIssues(worktree: Worktree, pr?: PullRequest) {
   if (worktree.divergenceAvailable && worktree.behind) issues.push(`${worktree.behind} commit${worktree.behind === 1 ? '' : 's'} behind ${worktree.upstream || worktree.mergeTargetBranch}`)
   return issues
 }
+
+const FRESHNESS: Record<SyncFreshnessState, { dot: string; text: string; label: string }> = {
+  ready: { dot: 'bg-accent-solid', text: 'text-muted-2', label: 'live' },
+  stale: { dot: 'bg-warn-solid', text: 'text-muted-2', label: 'stale' },
+  loading: { dot: 'bg-muted-2', text: 'text-muted-2', label: 'syncing' },
+  error: { dot: 'bg-danger', text: 'text-muted-2', label: 'offline' },
+  unavailable: { dot: 'bg-danger', text: 'text-muted-2', label: 'offline' },
+}
+
+function FreshnessLabel({ state }: { state?: SyncFreshnessState }) {
+  if (!state) return null
+  const view = FRESHNESS[state]
+  return <span className={'ml-auto flex items-center gap-1.5 font-mono text-[10px] normal-case tracking-normal ' + view.text}><span className={'h-1.5 w-1.5 rounded-full ' + view.dot} />{view.label}</span>
+}
+
+const tabTrigger = 'bonsai-focus h-full uppercase text-muted transition-colors hover:text-text data-[state=active]:text-text data-[state=active]:shadow-[inset_0_-2px_0_0_rgb(var(--accent-solid))]'
 
 function Section({ title, meta, children }: { title: string; meta?: ReactNode; children: ReactNode }) {
   return <section className="inspector-section">
@@ -94,6 +112,7 @@ export function Inspector() {
   const projectWorktrees = worktrees
   const projectAgents = useMemo(() => agents.filter(item => presentation(item) === 'canvas'), [agents])
   const branchAgents = projectAgents.filter((item) => item.worktreeId === worktree?.id)
+  const freshness = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local?.state)
   const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
   const attention = useMemo(() => projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length), [projectWorktrees, pullRequests])
   const issues = worktree ? branchIssues(worktree, pr) : []
@@ -111,11 +130,16 @@ export function Inspector() {
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
 
   return (
-    <aside aria-label="Inspector" className="inspector-shell flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[rgb(var(--border)/.7)] px-4">
-        <SlidersHorizontal size={13} className="text-[rgb(var(--accent))]" /><span className="text-[12px] font-semibold">Inspector</span>
-        <span className="ml-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] px-2 py-0.5 text-[9px] capitalize text-[rgb(var(--muted))]">{selection.type}</span>
-      </div>
+    <aside aria-label="Inspector" className="island flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <Tabs.Root defaultValue="inspector" className="flex min-h-0 flex-1 flex-col">
+        <div className="island-title shrink-0 gap-[22px]">
+          <Tabs.List className="flex h-full items-center gap-[22px]">
+            <Tabs.Trigger value="inspector" className={tabTrigger}>Inspector</Tabs.Trigger>
+            <Tabs.Trigger value="files" className={tabTrigger}>Files</Tabs.Trigger>
+          </Tabs.List>
+          <FreshnessLabel state={freshness} />
+        </div>
+        <Tabs.Content value="inspector" className="flex min-h-0 flex-1 flex-col outline-none">
       <ScrollArea.Root className="min-h-0 flex-1 overflow-hidden">
         <ScrollArea.Viewport className="inspector-viewport h-full w-full">
           <div className="space-y-4 p-4">
@@ -276,6 +300,11 @@ export function Inspector() {
         </ScrollArea.Viewport>
         <ScrollArea.Scrollbar orientation="vertical" className="w-1.5 p-[1px]"><ScrollArea.Thumb className="rounded bg-[rgb(var(--border-strong))]" /></ScrollArea.Scrollbar>
       </ScrollArea.Root>
+        </Tabs.Content>
+        <Tabs.Content value="files" className="min-h-0 flex-1 outline-none">
+          <FilesDiffPanel embedded />
+        </Tabs.Content>
+      </Tabs.Root>
     </aside>
   )
 }
