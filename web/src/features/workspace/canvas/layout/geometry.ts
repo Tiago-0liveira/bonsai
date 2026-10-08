@@ -33,7 +33,7 @@ function estimateNodeSize(node: Pick<Node, 'type' | 'data'>): Size {
     const processRows = ((node.data?.stackItems ?? []) as Array<{ processCount?: number }>).filter(item => item.processCount).length
     return { width: 286, height: 50 + count * 37 + (connectionRows + processRows) * 13 }
   }
-  return { width: 188, height: 98 }
+  return { width: 153, height: 54 }
 }
 
 type SizedNode = Pick<Node, 'type' | 'data'> & Partial<Pick<Node, 'measured'>>

@@ -30,7 +30,8 @@ import {
   X,
 } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
-import type { AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
+import { ProviderBadge } from '../../../components/ui/ProviderBadge'
+import type { AgentProvider, AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
 
 export interface StackItemData {
   id: string
@@ -98,6 +99,12 @@ const healthColor: Record<Health, string> = {
   warning: 'bg-[rgb(var(--warn-solid))]',
   error: 'bg-[rgb(var(--danger))]',
   idle: 'bg-[rgb(var(--muted-2))]',
+}
+
+const agentDot: Record<AgentState, string> = {
+  running: 'bg-accent-solid shadow-[0_0_0_3px_rgb(var(--accent-solid)/.20)]',
+  idle: 'bg-warn-solid shadow-[0_0_0_3px_rgb(var(--warn-solid)/.25)]',
+  finished: 'bg-muted-2 shadow-[0_0_0_3px_rgb(var(--muted-2)/.15)]',
 }
 
 function MenuItem({ children, onSelect, unavailable = false }: { children: React.ReactNode; onSelect?: () => void; unavailable?: boolean }) {
@@ -325,10 +332,16 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
       ? data.agentState === 'running' ? 'healthy' : data.agentState === 'finished' ? 'idle' : 'warning'
       : (data.health ?? 'idle')
 
-  const shellWidth = data.kind === 'project' ? 'w-[300px]' : data.kind === 'agent' ? 'w-[188px]' : 'w-[300px]'
+  const shellWidth = data.kind === 'agent' ? 'w-[153px] h-[54px] flex flex-col px-2 pb-[5px] pt-[7px]' : 'w-[300px]'
+  const waiting = data.kind === 'agent' && data.agentState === 'idle'
+  const agentTitle = data.kind === 'agent'
+    ? [[data.provider, data.model].filter(Boolean).join(' · '), [data.reasoningEffort, data.runtime].filter(Boolean).join(' · ')].filter(Boolean).join('\n')
+    : undefined
   const shellTone = data.kind === 'worktree'
     ? 'rounded-xl bg-panel ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : 'border-border shadow-card hover:border-border-strong')
-    : 'rounded-lg bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
+    : data.kind === 'agent'
+      ? 'rounded-[10px] bg-panel-2 ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : (waiting ? 'border-warn-solid/55' : 'border-border-strong') + ' shadow-card hover:border-border-strong')
+      : 'rounded-lg bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
   const icon = data.kind === 'project' ? <FolderGit2 size={15} /> : data.kind === 'worktree' ? <GitBranch size={13} /> : <Bot size={13} />
 
   const selectNode = () => {
@@ -341,6 +354,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
+          title={agentTitle}
           className={'group relative ' + shellWidth + ' border transition-[border-color,background-color,box-shadow] ' + shellTone}
         >
           {data.kind !== 'project' && (
@@ -452,20 +466,28 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           )}
 
           {data.kind === 'agent' && (
-            <div className="p-2.5">
-              <div className="flex items-center gap-2">
-                <div className="grid h-7 w-7 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]">{icon}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className={'h-1.5 w-1.5 rounded-full ' + healthColor[status]} />
-                    <span className="truncate text-[10px] font-semibold">{data.title}</span>
-                  </div>
-                  <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.provider} · {data.model}</div>
-                  {(data.reasoningEffort || data.runtime) && <div className="mt-0.5 truncate text-[8px] text-[rgb(var(--muted-2))]">{data.reasoningEffort} · {data.runtime}</div>}
+            <>
+              <div className="flex h-5 shrink-0 items-center gap-1.5">
+                <ProviderBadge provider={(agent?.provider ?? data.provider) as AgentProvider} size={18} />
+                <span title={data.title} className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-text">{data.title}</span>
+                <span aria-hidden className={'h-1.5 w-1.5 shrink-0 rounded-full ' + agentDot[data.agentState ?? 'finished']} />
+              </div>
+              <div className="flex h-5 shrink-0 items-center gap-[3px]">
+                <span title={data.task} className={'min-w-0 flex-1 truncate font-mono text-[9.5px] ' + (waiting ? 'text-warn' : 'text-muted-2')}>{data.task}</span>
+                <div className="nodrag nopan flex shrink-0" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    aria-label="Open terminal"
+                    title="Open terminal"
+                    disabled={agent?.providerId !== 'antigravity'}
+                    onClick={() => openTerminal(data.entityId)}
+                    className="bonsai-focus icon-btn-20 transition-colors hover:bg-panel-3 hover:text-text disabled:cursor-default disabled:opacity-30 disabled:hover:bg-panel-2 disabled:hover:text-muted"
+                  >
+                    <TerminalSquare size={11} />
+                  </button>
                 </div>
               </div>
-              <div className="mt-2 line-clamp-1 text-[9px] text-[rgb(var(--muted))]">{data.task}</div>
-            </div>
+            </>
           )}
 
           {(data.kind === 'project' || data.kind === 'worktree') && (
