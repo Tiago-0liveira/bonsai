@@ -67,12 +67,12 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
       {onDismiss && <button className="bonsai-focus rounded border px-3 py-1" onClick={onDismiss}>Later</button>}
     </div>
 
-    {error && <div role="alert" className="rounded border border-red-400 p-3 text-sm">{error} <button onClick={() => void loadProjectRoots().catch(() => undefined)} className="underline">Reload settings</button></div>}
+    {error && <div role="alert" className="rounded border border-danger p-3 text-sm">{error} <button onClick={() => void loadProjectRoots().catch(() => undefined)} className="underline">Reload settings</button></div>}
     {loading && <p role="status">Loading project folders…</p>}
 
     {settings && selectingRepositories ? <>
       <p className="text-sm text-[rgb(var(--muted))]">Choose which discovered repositories Bonsai should activate, watch, and synchronize. Unchecked repositories remain discovered but inactive.</p>
-      {discoveryNotes.length > 0 && <div role="status" className="rounded border border-amber-400 p-3 text-sm">
+      {discoveryNotes.length > 0 && <div role="status" className="rounded border border-warn-solid p-3 text-sm">
         <p className="font-medium">Discovery notes</p>
         {discoveryNotes.map(message => <p className="mt-1 text-[rgb(var(--muted))]" key={message}>{message}</p>)}
       </div>}

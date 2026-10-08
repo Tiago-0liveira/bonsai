@@ -690,7 +690,7 @@ function EditorPreferenceDialog() {
   ]
 
   return (
-    <div className="fixed inset-0 z-[120] grid place-items-center bg-black/60 p-6 backdrop-blur-[2px]">
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
       <div className="w-full max-w-[430px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-2xl">
         <div className="flex h-11 items-center border-b border-[rgb(var(--border))] px-3">
           <FileCode2 size={13} className="mr-2 text-[rgb(var(--accent))]" />

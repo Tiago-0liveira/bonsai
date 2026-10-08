@@ -56,7 +56,7 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/55 p-[10vh_16px] backdrop-blur-[2px]"
+      className="fixed inset-0 z-[100] bg-well/70 p-[10vh_16px] backdrop-blur-[2px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) setOpen(false)
       }}

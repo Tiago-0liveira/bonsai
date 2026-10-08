@@ -73,7 +73,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
         void stopAgent(agent.projectId, agent.id, `stop-${agent.id}`).catch(error => setError(String(error.message))).finally(() => setStopping(false))
       }}><Square size={9} fill="currentColor" />{stopping || lifecycle === 'stopping' ? 'Stopping…' : 'Stop agent'}</button>
     </>, actionsHost)}
-    {error && <p role="alert" className="px-2 text-xs text-red-400">{error}</p>}
+    {error && <p role="alert" className="px-2 text-xs text-danger">{error}</p>}
     <div ref={host} className="min-h-0 flex-1 overflow-hidden" />
   </div>
 }

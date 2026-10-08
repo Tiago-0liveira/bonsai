@@ -179,7 +179,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
   const alternatives = sorted.filter((list) => list.id !== pendingDelete)
 
   return (
-    <div className="absolute inset-0 z-50 flex justify-end bg-black/45 backdrop-blur-[1px]">
+    <div className="absolute inset-0 z-50 flex justify-end bg-well/70 backdrop-blur-[1px]">
       <aside className="flex h-full w-[520px] max-w-[92vw] flex-col border-l border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-2xl">
         <div className="flex h-12 shrink-0 items-center border-b border-[rgb(var(--border))] px-4">
           <Settings2 size={14} className="mr-2 text-[rgb(var(--accent))]" />

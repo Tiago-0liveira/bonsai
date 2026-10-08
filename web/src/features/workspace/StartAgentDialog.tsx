@@ -66,7 +66,7 @@ function StartAgentForm() {
   }
 
   return (
-    <div className="absolute inset-0 z-[85] grid place-items-center bg-black/60 p-6 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-[85] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
       <form
         onSubmit={submit}
         role="dialog" aria-modal="true" aria-labelledby="start-agent-title"

@@ -117,7 +117,7 @@ function StartProcessForm() {
   const inputClass = 'bonsai-focus w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2.5 py-2 text-[11px] outline-none'
 
   return (
-    <div className="absolute inset-0 z-[85] grid place-items-center bg-black/60 p-6 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-[85] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
       <form onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="start-process-title" className="w-full max-w-[720px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-[0_30px_100px_rgb(0_0_0/.65)]">
         <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-4">
           <Play size={15} className="mr-2 text-[rgb(var(--accent))]" />

@@ -46,7 +46,7 @@ function DeleteWorktreeDialogBody() {
     } finally { submitting.current = false; setPending(false) }
   }
   return (
-    <div className="absolute inset-0 z-[90] grid place-items-center bg-black/55 p-6 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-[90] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
       <div role="dialog" aria-modal="true" aria-label="Delete worktree" className="w-full max-w-lg space-y-4 rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] p-5 shadow-2xl">
         <h2 className="text-sm font-semibold">Delete worktree</h2>
         <p className="break-all font-mono text-xs">{worktree.branch}<br /><span className="text-[rgb(var(--muted))]">{worktree.path ?? 'Path unavailable'}</span></p>

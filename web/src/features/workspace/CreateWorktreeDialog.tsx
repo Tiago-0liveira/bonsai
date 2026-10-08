@@ -109,7 +109,7 @@ function CreateWorktreeDialogBody() {
   }))
 
   return (
-    <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55 p-6 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-[80] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
       <form role="dialog" aria-modal="true" aria-label="New worktree" onSubmit={submit} className="w-full max-w-[620px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-[0_28px_90px_rgb(0_0_0/.62)]">
         <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-4">
           <GitFork size={15} className="mr-2 text-[rgb(var(--accent))]" />
