@@ -1,5 +1,6 @@
 import { usePullRequestCatalog } from '../github/usePullRequestCatalog'
 import { PullRequestTabs } from '../github/PullRequestTabs'
+import { ProviderBadge } from '../../components/ui/ProviderBadge'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
@@ -62,15 +63,6 @@ function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle
           ? 'bg-[rgb(var(--danger))]'
           : 'bg-[rgb(var(--muted-2))]'
   return <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + className} />
-}
-
-function ProviderMark({ provider }: { provider: Agent['provider'] }) {
-  const label = provider === 'Codex' ? 'O' : provider === 'Claude' ? 'A' : 'AG'
-  return (
-    <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[9px] font-semibold text-[rgb(var(--muted))]">
-      {label}
-    </span>
-  )
 }
 
 function agentPresentation(agent: Agent) {
@@ -142,7 +134,7 @@ const BranchAgentRow = memo(function BranchAgentRow({ id, indent }: { id: string
   const setSelection = useBonsaiStore(state => state.setSelection)
   if (!agent) return null
   return <button type="button" onClick={() => setSelection({ type: 'agent', id })} style={{ paddingLeft: 24 + indent }} className="bonsai-focus flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-[8px] text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">
-    <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[7px] font-semibold">{agent.provider === 'Codex' ? 'O' : agent.provider === 'Claude' ? 'A' : 'AG'}</span>
+    <ProviderBadge provider={agent.provider} size={16} />
     <span className="min-w-0 flex-1"><span className="block truncate">{agent.name}</span><span className="block truncate text-[6.5px] text-[rgb(var(--muted-2))]">{agent.profileName ?? `${agent.model} · ${agent.reasoningEffort}`}</span></span>
     <StatusDot status={agent.state} />
   </button>
@@ -213,9 +205,7 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
       >
         <GripVertical size={9} className="shrink-0 text-[rgb(var(--muted-2))]" />
         {runtime.type === 'agent' ? (
-          <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[7px] font-semibold">
-            {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'AG'}
-          </span>
+          <ProviderBadge provider={runtime.agent.provider} size={20} />
         ) : (
           <span className="grid h-5 w-5 place-items-center rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))]"><TerminalSquare size={9} /></span>
         )}
@@ -323,9 +313,7 @@ export function RuntimeWorkspace() {
                   }
                 >
                   {runtime.type === 'agent' ? (
-                    <span className="grid h-4 w-4 shrink-0 place-items-center rounded border border-[rgb(var(--border))] text-[6px] font-semibold">
-                      {runtime.agent.provider === 'Codex' ? 'O' : runtime.agent.provider === 'Claude' ? 'A' : 'AG'}
-                    </span>
+                    <ProviderBadge provider={runtime.agent.provider} size={16} />
                   ) : <TerminalSquare size={9} />}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[10px] font-medium">{runtime.type === 'agent' ? runtime.agent.name : runtime.process.name}</span>
