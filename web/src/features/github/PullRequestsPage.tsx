@@ -51,7 +51,7 @@ function PrOperations({ pr }: { pr: PullRequest }) {
           <button
             disabled={!pr.mergeable}
             onClick={() => setStatus(pr.id, 'Merged')}
-            className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--purple)/.4)] bg-[rgb(var(--purple)/.12)] px-2.5 text-[10px] text-[rgb(var(--purple))] disabled:cursor-not-allowed disabled:opacity-35"
+            className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--accent)/.4)] bg-[rgb(var(--accent)/.12)] px-2.5 text-[10px] text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-35"
           >
             <GitMerge size={11} /> Merge
           </button>
@@ -128,11 +128,11 @@ export function PullRequestsPage() {
                 onClick={() => setSelectedId(pr.id)}
                 className={
                   'w-full border-b border-[rgb(var(--border))] px-3 py-3 text-left transition-colors ' +
-                  (pr.id === selected?.id ? 'bg-[rgb(var(--purple)/.08)]' : 'hover:bg-[rgb(var(--panel-2))]')
+                  (pr.id === selected?.id ? 'bg-[rgb(var(--accent)/.08)]' : 'hover:bg-[rgb(var(--panel-2))]')
                 }
               >
                 <div className="flex items-start gap-2">
-                  <GitPullRequest size={12} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--green))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--purple))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
+                  <GitPullRequest size={12} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--green))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--muted))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
                   <span className="min-w-0 flex-1">
                     <span className="block text-[10px] font-medium leading-4">#{pr.number} {pr.title}</span>
                     <span className="mt-1 block truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{pr.branch} → {pr.base}</span>
@@ -161,7 +161,7 @@ export function PullRequestsPage() {
               <div className="min-w-0 flex-1">
                 <h1 className="text-[17px] font-semibold leading-6">{selected.title} <span className="font-normal text-[rgb(var(--muted-2))]">#{selected.number}</span></h1>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[rgb(var(--muted))]">
-                  <span className={'rounded-full px-2 py-1 text-[9px] ' + (selected.status === 'Open' ? 'bg-[rgb(var(--green)/.12)] text-[rgb(var(--green))]' : selected.status === 'Draft' ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--purple))]' : 'bg-[rgb(var(--panel-3))]')}>{selected.status}</span>
+                  <span className={'rounded-full px-2 py-1 text-[9px] ' + (selected.status === 'Open' ? 'bg-[rgb(var(--green)/.12)] text-[rgb(var(--green))]' : selected.status === 'Draft' ? 'bg-[rgb(var(--panel-3))] text-[rgb(var(--muted))]' : 'bg-[rgb(var(--panel-3))]')}>{selected.status}</span>
                   <span>{selected.author ?? 'unknown'} wants to merge</span>
                   <span className="rounded bg-[rgb(var(--panel-2))] px-1.5 py-0.5 font-mono">{selected.branch}</span>
                   <span>into</span>
@@ -202,7 +202,7 @@ export function PullRequestsPage() {
                     <GitCommitHorizontal size={11} className="text-[rgb(var(--muted-2))]" />
                     <span className="min-w-0 flex-1 truncate">{commit.message}</span>
                     <span className="text-[8px] text-[rgb(var(--muted-2))]">{commit.author} · {commit.time}</span>
-                    <span className="font-mono text-[8px] text-[rgb(var(--purple))]">{commit.sha}</span>
+                    <span className="font-mono text-[8px] text-[rgb(var(--accent))]">{commit.sha}</span>
                   </div>
                 ))}
               </div>

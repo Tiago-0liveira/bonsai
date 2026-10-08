@@ -46,7 +46,7 @@ function iconForKind(kind: string): LucideIcon {
 
 function colorClass(color: TagColor) {
   const map: Record<TagColor, string> = {
-    purple: 'text-[rgb(var(--purple))]',
+    purple: 'text-[rgb(var(--accent))]',
     blue: 'text-[rgb(var(--blue))]',
     green: 'text-[rgb(var(--green))]',
     orange: 'text-[rgb(var(--orange))]',
@@ -121,7 +121,7 @@ function BoardColumn({ list, items }: { list: BoardList; items: BoardItem[] }) {
       ref={setNodeRef}
       className={
         'w-[285px] min-w-[285px] self-start overflow-hidden rounded-lg border bg-[rgb(var(--panel))] transition-colors ' +
-        (isOver ? 'border-[rgb(var(--purple))]' : 'border-[rgb(var(--border))]')
+        (isOver ? 'border-[rgb(var(--accent))]' : 'border-[rgb(var(--border))]')
       }
     >
       <div className="flex h-11 items-center border-b border-[rgb(var(--border))] px-3">
@@ -194,7 +194,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
     <div className="absolute inset-0 z-50 flex justify-end bg-black/45 backdrop-blur-[1px]">
       <aside className="flex h-full w-[520px] max-w-[92vw] flex-col border-l border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-2xl">
         <div className="flex h-12 shrink-0 items-center border-b border-[rgb(var(--border))] px-4">
-          <Settings2 size={14} className="mr-2 text-[rgb(var(--purple))]" />
+          <Settings2 size={14} className="mr-2 text-[rgb(var(--accent))]" />
           <div>
             <div className="text-[12px] font-semibold">Configure table</div>
             <div className="text-[9px] text-[rgb(var(--muted-2))]">Lists, priorities and types are project workflow primitives.</div>

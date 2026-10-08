@@ -127,7 +127,7 @@ function CommandItem({
       value={label}
       onSelect={onSelect}
       disabled={disabled}
-      className="data-[disabled=true]:opacity-40 flex cursor-default select-none items-center gap-2 rounded-md px-2.5 py-2 text-[12px] text-[rgb(var(--muted))] outline-none data-[selected=true]:bg-[rgb(var(--purple)/.12)] data-[selected=true]:text-[rgb(var(--text))]"
+      className="data-[disabled=true]:opacity-40 flex cursor-default select-none items-center gap-2 rounded-md px-2.5 py-2 text-[12px] text-[rgb(var(--muted))] outline-none data-[selected=true]:bg-[rgb(var(--accent)/.12)] data-[selected=true]:text-[rgb(var(--text))]"
     >
       <Icon size={14} />
       <span>{label}</span>

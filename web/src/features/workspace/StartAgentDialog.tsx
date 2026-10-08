@@ -73,7 +73,7 @@ function StartAgentForm() {
         className="w-full max-w-[720px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-[0_30px_100px_rgb(0_0_0/.65)]"
       >
         <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-4">
-          <Bot size={15} className="mr-2 text-[rgb(var(--purple))]" />
+          <Bot size={15} className="mr-2 text-[rgb(var(--accent))]" />
           <div>
             <div id="start-agent-title" className="text-[12px] font-semibold">Start agent</div>
             <div className="text-[9px] text-[rgb(var(--muted-2))]">Choose the worktree, profile and task.</div>
@@ -128,12 +128,12 @@ function StartAgentForm() {
                     className={
                       'bonsai-focus rounded-lg border p-3 text-left transition-colors disabled:opacity-40 ' +
                       (active
-                        ? 'border-[rgb(var(--purple)/.56)] bg-[rgb(var(--purple)/.10)]'
+                        ? 'border-[rgb(var(--accent)/.56)] bg-[rgb(var(--accent)/.10)]'
                         : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] hover:border-[rgb(var(--border-strong))]')
                     }
                   >
                     <div className="flex items-center gap-2 text-[11px] font-medium">
-                      <Sparkles size={13} className={active ? 'text-[rgb(var(--purple))]' : 'text-[rgb(var(--muted))]'} />
+                      <Sparkles size={13} className={active ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--muted))]'} />
                       {item.label}
                       {item.connected ? (
                         <span className="ml-auto flex items-center gap-1 text-[8px] text-[rgb(var(--green))]"><span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--green))]" />connected</span>
@@ -221,7 +221,7 @@ function StartAgentForm() {
             <button
               type="submit"
               disabled={!canStart}
-              className="bonsai-focus rounded-md border border-[rgb(var(--purple)/.45)] bg-[rgb(var(--purple)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
+              className="bonsai-focus rounded-md border border-[rgb(var(--accent)/.45)] bg-[rgb(var(--accent)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
             >
               {pending ? 'Starting…' : 'Start agent'}
             </button>

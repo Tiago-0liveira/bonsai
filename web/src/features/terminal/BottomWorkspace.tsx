@@ -112,7 +112,7 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
           onClick={() => setSelection({ type: 'worktree', id: worktree.id })}
           className={
             'bonsai-focus flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-[9px] ' +
-            (selected ? 'bg-[rgb(var(--purple)/.11)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
+            (selected ? 'bg-[rgb(var(--accent)/.11)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
           }
         >
           <GitBranch size={10} className="shrink-0" />
@@ -158,7 +158,7 @@ function BranchSidebar() {
   return (
     <aside className="dock-pane flex h-full min-w-0 flex-col">
       <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
-        <GitBranch size={13} className="text-[rgb(var(--purple))]" />
+        <GitBranch size={13} className="text-[rgb(var(--accent))]" />
         <span className="dock-title">Branches</span>
         <span className="dock-count ml-auto">{index.count}</span>
       </div>
@@ -345,10 +345,10 @@ export function RuntimeWorkspace() {
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <button type="button" onClick={() => toggleRightPanel('files')} title="Toggle Files / Git Diff" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[8px] ' + (rightPanels.files ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
+          <button type="button" onClick={() => toggleRightPanel('files')} title="Toggle Files / Git Diff" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[8px] ' + (rightPanels.files ? 'bg-[rgb(var(--accent)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
             <Files size={10} /> Files
           </button>
-          <button type="button" onClick={() => toggleRightPanel('prs')} title="Toggle pull requests" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[8px] ' + (rightPanels.prs ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
+          <button type="button" onClick={() => toggleRightPanel('prs')} title="Toggle pull requests" className={'bonsai-focus flex h-6 items-center gap-1 rounded px-1.5 text-[8px] ' + (rightPanels.prs ? 'bg-[rgb(var(--accent)/.12)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')}>
             <GitPullRequest size={10} /> PRs
           </button>
           <span className="mx-0.5 h-4 w-px bg-[rgb(var(--border))]" />
@@ -534,7 +534,7 @@ function PullRequestOperations({ pr }: { pr: PullRequest }) {
     <div className="flex flex-wrap gap-1.5">
       {pr.status === 'Open' && (
         <>
-          <button disabled={!pr.mergeable} onClick={() => setStatus(pr.id, 'Merged')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--purple)/.35)] bg-[rgb(var(--purple)/.08)] px-2 text-[8px] text-[rgb(var(--purple))] disabled:opacity-35"><GitMerge size={9} /> Merge</button>
+          <button disabled={!pr.mergeable} onClick={() => setStatus(pr.id, 'Merged')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.35)] bg-[rgb(var(--accent)/.08)] px-2 text-[8px] text-[rgb(var(--accent))] disabled:opacity-35"><GitMerge size={9} /> Merge</button>
           <button onClick={() => setStatus(pr.id, 'Closed')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--red)/.3)] px-2 text-[8px] text-[rgb(var(--red))]"><X size={9} /> Close</button>
         </>
       )}
@@ -658,7 +658,7 @@ function PullRequestsPanel() {
           return (
             <div key={pr.id} ref={expanded ? selectedRef : undefined} className="border-b border-[rgb(var(--border)/.55)]">
               <button type="button" onClick={() => setSelectedId(expanded ? null : pr.id)} className="flex w-full items-start gap-2 px-2.5 py-2.5 text-left hover:bg-[rgb(var(--panel-2))]">
-                <GitPullRequest size={11} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--green))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--purple))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
+                <GitPullRequest size={11} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--green))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--muted))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[9px] font-medium">#{pr.number} {pr.title}</span>
                   <span className="mt-1 block truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{pr.branch} → {pr.base}</span>
@@ -693,7 +693,7 @@ function EditorPreferenceDialog() {
     <div className="fixed inset-0 z-[120] grid place-items-center bg-black/60 p-6 backdrop-blur-[2px]">
       <div className="w-full max-w-[430px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-2xl">
         <div className="flex h-11 items-center border-b border-[rgb(var(--border))] px-3">
-          <FileCode2 size={13} className="mr-2 text-[rgb(var(--purple))]" />
+          <FileCode2 size={13} className="mr-2 text-[rgb(var(--accent))]" />
           <div>
             <div className="text-[11px] font-semibold">Open files with…</div>
             <div className="max-w-[300px] truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{path}</div>

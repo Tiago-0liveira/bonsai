@@ -102,7 +102,7 @@ function MenuItem({ children, onSelect, unavailable = false }: { children: React
     <ContextMenu.Item
       onSelect={onSelect}
       disabled={unavailable}
-      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--purple)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
+      className="data-[disabled]:opacity-40 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[highlighted]:bg-[rgb(var(--accent)/.12)] data-[highlighted]:text-[rgb(var(--text))]"
     >
       {children}{unavailable && <span className="ml-auto text-[9px]">unavailable</span>}
     </ContextMenu.Item>
@@ -140,14 +140,14 @@ function PrBadge({ status, number }: { status?: PrStatus; number?: number }) {
   if (!status && !number) return null
   const tone =
     status === 'Open'
-      ? 'border-[rgb(var(--green)/.25)] text-[rgb(var(--green))]'
+      ? 'border-[rgb(var(--green)/.25)] bg-[rgb(var(--bg))] text-[rgb(var(--green))]'
       : status === 'Draft'
-        ? 'border-[rgb(var(--purple)/.25)] text-[rgb(var(--purple))]'
+        ? 'border-[rgb(var(--border))] bg-[rgb(var(--panel-3))] text-[rgb(var(--muted))]'
         : status === 'Merged'
-          ? 'border-[rgb(var(--blue)/.25)] text-[rgb(var(--blue))]'
-          : 'border-[rgb(var(--border))] text-[rgb(var(--muted))]'
+          ? 'border-[rgb(var(--blue)/.25)] bg-[rgb(var(--bg))] text-[rgb(var(--blue))]'
+          : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]'
   return (
-    <span className={'inline-flex items-center gap-1 rounded border bg-[rgb(var(--bg))] px-1.5 py-0.5 text-[8px] ' + tone}>
+    <span className={'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[8px] ' + tone}>
       <GitPullRequest size={9} />
       {number ? '#' + number : status}
     </span>
@@ -243,7 +243,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
         type="button"
         onClick={(event) => { event.stopPropagation(); if (data.groupId) toggleAutomaticGroup(data.groupId); else if (data.tag) toggleTagGroup(activeProjectId, data.tag) }}
         className="flex w-full items-center gap-2 border-b border-[rgb(var(--border))] px-3 py-2.5 text-left"
-        style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--purple))'}` }}
+        style={{ boxShadow: `inset 3px 0 0 ${data.tagColor ?? 'rgb(var(--accent))'}` }}
       >
         <Layers3 size={12} style={{ color: data.tagColor }} />
         <span className="font-semibold" style={{ color: data.tagColor }}>{data.tag}</span>
@@ -331,7 +331,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           className={
             'group relative ' + shellWidth +
             ' rounded-lg border bg-[rgb(var(--panel-2))] shadow-[0_6px_20px_rgb(0_0_0/.10)] transition-[border-color,background-color] ' +
-            (selected ? 'border-[rgb(var(--purple))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
+            (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
           }
         >
           {data.kind !== 'project' && (
@@ -342,8 +342,8 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
           )}
           {data.kind === 'worktree' && (
             <>
-              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-[rgb(var(--purple)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge source" />
-              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-[rgb(var(--purple)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge target" />
+              <Handle id="pr-source" type="source" position={Position.Left} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge source" />
+              <Handle id="pr-target" type="target" position={Position.Right} className="!h-2.5 !w-2.5 !border-[rgb(var(--accent)/.75)] !bg-[rgb(var(--panel-3))]" title="PR merge target" />
             </>
           )}
 
@@ -386,7 +386,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                 </div>
               </div>
               <div className="flex items-center gap-1.5 px-2.5 pt-2 text-[8px] text-[rgb(var(--muted-2))]">
-                <GitPullRequest size={9} className="text-[rgb(var(--purple))]" />
+                <GitPullRequest size={9} className="text-[rgb(var(--accent))]" />
                 target <span className="truncate font-mono text-[rgb(var(--muted))]">{data.mergeTargetBranch}</span>
               </div>
               <div className="flex flex-wrap gap-1.5 px-2.5 py-2">

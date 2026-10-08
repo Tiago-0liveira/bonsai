@@ -82,12 +82,12 @@ function HeaderSelect({
                 className={
                   'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[11px] transition-colors ' +
                   (active
-                    ? 'bg-[rgb(var(--purple)/.12)] text-[rgb(var(--text))]'
+                    ? 'bg-[rgb(var(--accent)/.12)] text-[rgb(var(--text))]'
                     : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))] hover:text-[rgb(var(--text))]')
                 }
               >
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {active && <Check size={12} className="text-[rgb(var(--purple))]" />}
+                {active && <Check size={12} className="text-[rgb(var(--accent))]" />}
               </button>
             )
           })}
@@ -170,7 +170,7 @@ export function TopBar() {
             className="relative flex h-full items-center px-2.5 text-[12px] text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--text))]"
             activeProps={{
               className:
-                'relative flex h-full items-center px-2.5 text-[12px] text-[rgb(var(--text))] after:absolute after:bottom-0 after:left-2 after:right-2 after:h-px after:bg-[rgb(var(--purple))]',
+                'relative flex h-full items-center px-2.5 text-[12px] text-[rgb(var(--text))] after:absolute after:bottom-0 after:left-2 after:right-2 after:h-px after:bg-[rgb(var(--accent))]',
             }}
           >
             {item.label}

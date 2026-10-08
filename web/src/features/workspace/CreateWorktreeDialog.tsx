@@ -112,7 +112,7 @@ function CreateWorktreeDialogBody() {
     <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55 p-6 backdrop-blur-[2px]">
       <form role="dialog" aria-modal="true" aria-label="New worktree" onSubmit={submit} className="w-full max-w-[620px] overflow-hidden rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] shadow-[0_28px_90px_rgb(0_0_0/.62)]">
         <div className="flex h-12 items-center border-b border-[rgb(var(--border))] px-4">
-          <GitFork size={15} className="mr-2 text-[rgb(var(--purple))]" />
+          <GitFork size={15} className="mr-2 text-[rgb(var(--accent))]" />
           <div>
             <div className="text-[12px] font-semibold">New worktree</div>
             <div className="text-[9px] text-[rgb(var(--muted-2))]">{project.repository}</div>
@@ -130,11 +130,11 @@ function CreateWorktreeDialogBody() {
                 const Icon = option.icon
                 const active = option.id === sourceType
                 return (
-                  <button type="button" key={option.id} onClick={() => changeSourceType(option.id)} className={'bonsai-focus rounded-lg border p-3 text-left transition-colors ' + (active ? 'border-[rgb(var(--purple)/.55)] bg-[rgb(var(--purple)/.10)]' : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] hover:border-[rgb(var(--border-strong))]')}>
+                  <button type="button" key={option.id} onClick={() => changeSourceType(option.id)} className={'bonsai-focus rounded-lg border p-3 text-left transition-colors ' + (active ? 'border-[rgb(var(--accent)/.55)] bg-[rgb(var(--accent)/.10)]' : 'border-[rgb(var(--border))] bg-[rgb(var(--bg))] hover:border-[rgb(var(--border-strong))]')}>
                     <div className="flex items-center gap-2 text-[11px] font-medium">
-                      <Icon size={13} className={active ? 'text-[rgb(var(--purple))]' : 'text-[rgb(var(--muted))]'} />
+                      <Icon size={13} className={active ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--muted))]'} />
                       {option.label}
-                      {active && <Check size={11} className="ml-auto text-[rgb(var(--purple))]" />}
+                      {active && <Check size={11} className="ml-auto text-[rgb(var(--accent))]" />}
                     </div>
                     <p className="mt-1.5 text-[9px] leading-4 text-[rgb(var(--muted-2))]">{option.description}</p>
                   </button>
@@ -194,7 +194,7 @@ function CreateWorktreeDialogBody() {
 
         <div className="flex items-center justify-end gap-2 border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.45)] px-4 py-3">
           <button type="button" onClick={() => setOpen(false)} className="bonsai-focus rounded-md px-3 py-2 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]">Cancel</button>
-          <button type="submit" disabled={pending || !tagId || !sourceRef || (sourceType === 'new' && !branchName.trim())} className="bonsai-focus rounded-md border border-[rgb(var(--purple)/.45)] bg-[rgb(var(--purple)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Creating…' : createdId ? 'Retry saving settings' : existingWorktree ? 'Open worktree' : 'Create worktree'}</button>
+          <button type="submit" disabled={pending || !tagId || !sourceRef || (sourceType === 'new' && !branchName.trim())} className="bonsai-focus rounded-md border border-[rgb(var(--accent)/.45)] bg-[rgb(var(--accent)/.16)] px-3 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Creating…' : createdId ? 'Retry saving settings' : existingWorktree ? 'Open worktree' : 'Create worktree'}</button>
         </div>
       </form>
     </div>

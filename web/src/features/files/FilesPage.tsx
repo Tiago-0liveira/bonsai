@@ -61,7 +61,7 @@ const TreeNode = memo(function TreeNode({
         }}
         style={{ paddingLeft: 8 + depth * 14 }}
         className={`bonsai-focus flex w-full items-center gap-1.5 rounded py-1.5 pr-2 text-left text-[11px] ${
-          selected ? 'bg-[rgb(var(--purple)/.10)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]'
+          selected ? 'bg-[rgb(var(--accent)/.10)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]'
         }`}
       >
         {isFolder ? open ? <ChevronDown size={11} /> : <ChevronRight size={11} /> : <span className="w-[11px]" />}
