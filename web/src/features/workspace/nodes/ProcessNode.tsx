@@ -9,15 +9,15 @@ import { useProcessActions } from '../../terminal/useProcessActions'
 import { MoveSubtreeGrip, type BonsaiGraphData } from './BonsaiNode'
 
 const statusPresentation: Record<ProcessLifecycleStatus, { label: string; tone: string }> = {
-  starting: { label: 'Starting', tone: 'text-[rgb(var(--blue))] border-[rgb(var(--blue)/.25)] bg-[rgb(var(--blue)/.08)]' },
+  starting: { label: 'Starting', tone: 'text-[rgb(var(--accent))] border-[rgb(var(--accent)/.25)] bg-[rgb(var(--accent)/.08)]' },
   running: { label: 'Running', tone: 'text-[rgb(var(--accent))] border-[rgb(var(--accent)/.25)] bg-[rgb(var(--accent)/.08)]' },
-  backoff: { label: 'Retrying', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
-  stopping: { label: 'Stopping', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
+  backoff: { label: 'Retrying', tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.25)] bg-[rgb(var(--warn)/.08)]' },
+  stopping: { label: 'Stopping', tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.25)] bg-[rgb(var(--warn)/.08)]' },
   stopped: { label: 'Stopped', tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))] bg-[rgb(var(--bg)/.4)]' },
   done: { label: 'Completed', tone: 'text-[rgb(var(--muted))] border-[rgb(var(--border))] bg-[rgb(var(--bg)/.4)]' },
-  failed: { label: 'Failed', tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.25)] bg-[rgb(var(--red)/.08)]' },
-  lost: { label: 'Lost', tone: 'text-[rgb(var(--red))] border-[rgb(var(--red)/.25)] bg-[rgb(var(--red)/.08)]' },
-  orphan: { label: 'Orphaned', tone: 'text-[rgb(var(--orange))] border-[rgb(var(--orange)/.25)] bg-[rgb(var(--orange)/.08)]' },
+  failed: { label: 'Failed', tone: 'text-[rgb(var(--danger))] border-[rgb(var(--danger)/.25)] bg-[rgb(var(--danger)/.08)]' },
+  lost: { label: 'Lost', tone: 'text-[rgb(var(--danger))] border-[rgb(var(--danger)/.25)] bg-[rgb(var(--danger)/.08)]' },
+  orphan: { label: 'Orphaned', tone: 'text-[rgb(var(--warn))] border-[rgb(var(--warn)/.25)] bg-[rgb(var(--warn)/.08)]' },
 }
 
 const menuItemClass = 'flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-[12px] text-[rgb(var(--muted))] outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-[rgb(var(--accent)/.12)] data-[highlighted]:text-[rgb(var(--text))]'
@@ -51,7 +51,7 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
           <span aria-hidden className="shrink-0 font-mono text-[11px] text-[rgb(var(--muted-2))]">›</span>
           <div className="min-w-0 flex-1">
             <code title={data.command} className={(error ? 'block truncate' : 'line-clamp-2') + ' break-all font-mono text-[10px] leading-[14px] text-[rgb(var(--muted))]'}>{data.command}</code>
-            {error && <p role="alert" title={error} className="truncate text-[9px] text-[rgb(var(--red))]">{error}</p>}
+            {error && <p role="alert" title={error} className="truncate text-[9px] text-[rgb(var(--danger))]">{error}</p>}
           </div>
         </div>
         <div className="nodrag nopan flex h-8 shrink-0 items-center gap-1 rounded-b-lg border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.3)] px-2" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>

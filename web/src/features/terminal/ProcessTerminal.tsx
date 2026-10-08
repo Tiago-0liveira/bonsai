@@ -75,7 +75,7 @@ export function ProcessTerminal({ process }: { process: Process }) {
       <button disabled={!!pending} onClick={() => void action('restart', () => restartProcess(process.projectId, process.daemonId))}>{pending === 'restart' ? 'Restarting…' : 'Restart process'}</button>
       <button disabled={!!pending} onClick={() => void action('history', download)}>Download retained logs</button>
     </div>
-    {(error || process.exitError) && <p role="alert" className="shrink-0 break-all px-2 text-[10px] text-[rgb(var(--red))]">{error || process.exitError}</p>}
+    {(error || process.exitError) && <p role="alert" className="shrink-0 break-all px-2 text-[10px] text-[rgb(var(--danger))]">{error || process.exitError}</p>}
     <div ref={host} className="min-h-0 flex-1 overflow-hidden" />
   </div>
 }

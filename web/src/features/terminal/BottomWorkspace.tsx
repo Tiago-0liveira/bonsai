@@ -57,9 +57,9 @@ function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle
     status === 'healthy' || status === 'running'
       ? 'bg-[rgb(var(--accent-solid))]'
       : status === 'warning'
-        ? 'bg-[rgb(var(--orange))]'
+        ? 'bg-[rgb(var(--warn-solid))]'
         : status === 'error'
-          ? 'bg-[rgb(var(--red))]'
+          ? 'bg-[rgb(var(--danger))]'
           : 'bg-[rgb(var(--muted-2))]'
   return <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + className} />
 }
@@ -379,7 +379,7 @@ export function RuntimeWorkspace() {
 function GitStatus({ status }: { status?: RepoFile['gitStatus'] }) {
   if (!status || status === 'committed') return null
   const label = status === 'modified' ? 'M' : status === 'untracked' ? 'U' : status === 'added' ? 'A' : 'D'
-  const tone = status === 'deleted' ? 'text-[rgb(var(--red))]' : status === 'untracked' ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--orange))]'
+  const tone = status === 'deleted' ? 'text-[rgb(var(--danger))]' : status === 'untracked' ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--warn))]'
   return <span className={'ml-auto shrink-0 font-mono text-[8px] ' + tone}>{label}</span>
 }
 
@@ -420,7 +420,7 @@ function FileTreeRows({ nodes, depth = 0 }: { nodes: RepoFile[]; depth?: number 
                 {open ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
                 <Folder size={10} />
                 <span className="min-w-0 flex-1 truncate">{node.name}</span>
-                {countChanged(node.children ?? []) > 0 && <span className="text-[7px] text-[rgb(var(--orange))]">{countChanged(node.children ?? [])}</span>}
+                {countChanged(node.children ?? []) > 0 && <span className="text-[7px] text-[rgb(var(--warn))]">{countChanged(node.children ?? [])}</span>}
               </button>
               {open && node.children && <FileTreeRows nodes={node.children} depth={depth + 1} />}
             </div>
@@ -509,7 +509,7 @@ function FilesDiffPanel() {
               <div className="flex items-center border-b border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 py-1.5 font-mono text-[8px]">
                 <span className="min-w-0 flex-1 truncate">{file.path}</span>
                 <span className="text-[rgb(var(--accent))]">+{file.additions}</span>
-                <span className="ml-1 text-[rgb(var(--red))]">-{file.deletions}</span>
+                <span className="ml-1 text-[rgb(var(--danger))]">-{file.deletions}</span>
               </div>
               <pre className="overflow-auto p-2 font-mono text-[8px] leading-4 text-[rgb(var(--muted))]">{file.diff.join('\n')}</pre>
             </div>
@@ -524,8 +524,8 @@ function FilesDiffPanel() {
 
 function checkIcon(status: 'success' | 'running' | 'failed') {
   if (status === 'success') return <CheckCircle2 size={11} className="text-[rgb(var(--ok))]" />
-  if (status === 'failed') return <XCircle size={11} className="text-[rgb(var(--red))]" />
-  return <CircleDot size={11} className="text-[rgb(var(--orange))]" />
+  if (status === 'failed') return <XCircle size={11} className="text-[rgb(var(--danger))]" />
+  return <CircleDot size={11} className="text-[rgb(var(--warn))]" />
 }
 
 function PullRequestOperations({ pr }: { pr: PullRequest }) {
@@ -535,7 +535,7 @@ function PullRequestOperations({ pr }: { pr: PullRequest }) {
       {pr.status === 'Open' && (
         <>
           <button disabled={!pr.mergeable} onClick={() => setStatus(pr.id, 'Merged')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.35)] bg-[rgb(var(--accent)/.08)] px-2 text-[8px] text-[rgb(var(--accent))] disabled:opacity-35"><GitMerge size={9} /> Merge</button>
-          <button onClick={() => setStatus(pr.id, 'Closed')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--red)/.3)] px-2 text-[8px] text-[rgb(var(--red))]"><X size={9} /> Close</button>
+          <button onClick={() => setStatus(pr.id, 'Closed')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--danger)/.3)] px-2 text-[8px] text-[rgb(var(--danger))]"><X size={9} /> Close</button>
         </>
       )}
       {pr.status === 'Draft' && <button onClick={() => setStatus(pr.id, 'Open')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.3)] px-2 text-[8px] text-[rgb(var(--accent))]"><GitPullRequest size={9} /> Open PR</button>}

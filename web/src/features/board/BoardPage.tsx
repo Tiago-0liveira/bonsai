@@ -49,8 +49,8 @@ function colorClass(color: TagColor) {
     purple: 'text-[rgb(var(--accent))]',
     blue: 'text-[rgb(var(--blue))]',
     green: 'text-[rgb(var(--green))]',
-    orange: 'text-[rgb(var(--orange))]',
-    red: 'text-[rgb(var(--red))]',
+    orange: 'text-[rgb(var(--warn))]',
+    red: 'text-[rgb(var(--danger))]',
     cyan: 'text-cyan-400',
     pink: 'text-pink-400',
   }
@@ -219,7 +219,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
                     <div className="flex gap-1">
                       <button disabled={index === 0} onClick={() => moveList(list.id, -1)} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] disabled:opacity-30"><ArrowUp size={10} /></button>
                       <button disabled={index === sorted.length - 1} onClick={() => moveList(list.id, 1)} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] disabled:opacity-30"><ArrowDown size={10} /></button>
-                      <button onClick={() => { setPendingDelete(list.id); setMoveTo(sorted.find((item) => item.id !== list.id)?.id ?? '') }} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--red))]"><Trash2 size={10} /></button>
+                      <button onClick={() => { setPendingDelete(list.id); setMoveTo(sorted.find((item) => item.id !== list.id)?.id ?? '') }} className="bonsai-focus grid h-8 w-7 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--danger))]"><Trash2 size={10} /></button>
                     </div>
                   </div>
                 </div>
@@ -233,7 +233,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
               {priorities.map((priority) => (
                 <span key={priority.id} className="inline-flex items-center gap-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 py-1 text-[9px]">
                   {priority.name}
-                  <button onClick={() => removePriority(priority.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--red))]"><X size={9} /></button>
+                  <button onClick={() => removePriority(priority.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--danger))]"><X size={9} /></button>
                 </span>
               ))}
             </div>
@@ -249,7 +249,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
               {types.map((type) => (
                 <span key={type.id} className="inline-flex items-center gap-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2 py-1 text-[9px]">
                   {type.name}
-                  <button onClick={() => removeType(type.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--red))]"><X size={9} /></button>
+                  <button onClick={() => removeType(type.id)} className="text-[rgb(var(--muted-2))] hover:text-[rgb(var(--danger))]"><X size={9} /></button>
                 </span>
               ))}
             </div>
@@ -261,7 +261,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
         </div>
 
         {pendingDelete && deleteList && (
-          <div className="border-t border-[rgb(var(--red)/.3)] bg-[rgb(var(--red)/.05)] p-3">
+          <div className="border-t border-[rgb(var(--danger)/.3)] bg-[rgb(var(--danger)/.05)] p-3">
             <div className="text-[10px] font-medium">Remove “{deleteList.name}”?</div>
             {deleteHasItems && (
               <div className="mt-2">
@@ -274,7 +274,7 @@ function TableConfig({ onClose }: { onClose: () => void }) {
               <button
                 disabled={(deleteHasItems && !moveTo) || alternatives.length === 0}
                 onClick={() => { removeList(pendingDelete, moveTo || alternatives[0]?.id || ''); setPendingDelete('') }}
-                className="rounded-md border border-[rgb(var(--red)/.35)] bg-[rgb(var(--red)/.1)] px-2 py-1.5 text-[9px] text-[rgb(var(--red))] disabled:opacity-35"
+                className="rounded-md border border-[rgb(var(--danger)/.35)] bg-[rgb(var(--danger)/.1)] px-2 py-1.5 text-[9px] text-[rgb(var(--danger))] disabled:opacity-35"
               >
                 Remove list
               </button>

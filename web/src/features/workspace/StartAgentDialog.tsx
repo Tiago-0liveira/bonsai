@@ -159,9 +159,9 @@ function StartAgentForm() {
             </label>
           </div>
           <div className="flex items-center gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--bg))] p-3">
-            <Shield size={15} className={fullAccess ? 'text-[rgb(var(--orange))]' : 'text-[rgb(var(--muted))]'} />
+            <Shield size={15} className={fullAccess ? 'text-[rgb(var(--warn))]' : 'text-[rgb(var(--muted))]'} />
             <div className="flex-1"><div className="text-[11px] font-medium">Full access</div><p className="mt-1 text-[9px] text-[rgb(var(--muted-2))]">Allow Antigravity to run tools without permission prompts.</p></div>
-            <button type="button" role="switch" aria-label="Antigravity full access" aria-checked={fullAccess} disabled={pending} onClick={() => setFullAccess(value => !value)} className={'bonsai-focus flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors ' + (fullAccess ? 'border-[rgb(var(--orange)/.5)] bg-[rgb(var(--orange)/.3)]' : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))]')}><span className={'h-3.5 w-3.5 rounded-full bg-[rgb(var(--text))] transition-transform ' + (fullAccess ? 'translate-x-4' : '')} /></button>
+            <button type="button" role="switch" aria-label="Antigravity full access" aria-checked={fullAccess} disabled={pending} onClick={() => setFullAccess(value => !value)} className={'bonsai-focus flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors ' + (fullAccess ? 'border-[rgb(var(--warn)/.5)] bg-[rgb(var(--warn)/.3)]' : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--panel-2))]')}><span className={'h-3.5 w-3.5 rounded-full bg-[rgb(var(--text))] transition-transform ' + (fullAccess ? 'translate-x-4' : '')} /></button>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
@@ -207,7 +207,7 @@ function StartAgentForm() {
           </label>
           {!loading && !accounts.length && !error && <p className="text-[10px] text-[rgb(var(--muted))]">Set up a profile with <code>bonsai agent account add antigravity &lt;name&gt;</code></p>}
           {available && !available.available && <p className="text-[10px] text-[rgb(var(--muted))]">{available.unavailable_reason?.message}</p>}
-          {error && <p role="alert" className="text-[11px] text-[rgb(var(--red))]">{error}</p>}
+          {error && <p role="alert" className="text-[11px] text-[rgb(var(--danger))]">{error}</p>}
         </div>
 
         <div className="flex items-center justify-between border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.45)] px-4 py-3">

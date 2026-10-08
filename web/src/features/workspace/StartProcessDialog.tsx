@@ -165,9 +165,9 @@ function StartProcessForm() {
             <input aria-label="Maximum retries" type="number" min={0} max={100} step={1} disabled={pending || policyMode === 'inherit'} value={policyMode === 'inherit' ? inherited?.max_restarts ?? 5 : maxRetries} onChange={event => setMaxRetries(event.target.value)} className={inputClass} />
             <span className="mt-1 block text-[9px] text-[rgb(var(--muted))]">Additional attempts after the initial launch (0–100). Zero disables retries.</span>
           </label>}
-          {previewError && <p role="alert" className="text-[11px] text-[rgb(var(--red))]">{previewError}</p>}
-          {catalog?.warnings?.map((warning, index) => <p key={index} className="text-[10px] text-[rgb(var(--orange))]">{warning.message}</p>)}
-          {error && <p role="alert" className="text-[11px] text-[rgb(var(--red))]">{error}</p>}
+          {previewError && <p role="alert" className="text-[11px] text-[rgb(var(--danger))]">{previewError}</p>}
+          {catalog?.warnings?.map((warning, index) => <p key={index} className="text-[10px] text-[rgb(var(--warn))]">{warning.message}</p>)}
+          {error && <p role="alert" className="text-[11px] text-[rgb(var(--danger))]">{error}</p>}
         </div>
         <div className="flex items-center justify-between border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.45)] px-4 py-3">
           <div className="text-[9px] text-[rgb(var(--muted-2))]">{catalog ? `${providers.length} packages · ${catalog.commands?.length ?? 0} commands` : 'Run a package command in your worktree'}</div>

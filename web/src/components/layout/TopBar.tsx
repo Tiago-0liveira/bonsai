@@ -115,7 +115,7 @@ function RelayStatus() {
   const dot = relay.status === 'connected'
     ? 'bg-[rgb(var(--accent-solid))]'
     : relay.status === 'offline'
-      ? 'bg-[rgb(var(--orange))]'
+      ? 'bg-[rgb(var(--warn-solid))]'
       : 'bg-[rgb(var(--muted-2))]'
   const content = <><span className={`h-1.5 w-1.5 rounded-full ${dot}`} /><span className="hidden min-[1180px]:inline">{label}</span></>
   return relay.status === 'authorization-expired'

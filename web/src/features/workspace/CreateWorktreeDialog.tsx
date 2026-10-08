@@ -190,7 +190,7 @@ function CreateWorktreeDialogBody() {
             <span className="mt-1.5 block text-[9px] text-[rgb(var(--muted-2))]">Non-default targets become explicit PR relationships on the canvas.</span>
           </label>
         </fieldset>
-        {error && <p role="alert" className="px-4 pb-3 text-[11px] text-[rgb(var(--red))]">{error}</p>}
+        {error && <p role="alert" className="px-4 pb-3 text-[11px] text-[rgb(var(--danger))]">{error}</p>}
 
         <div className="flex items-center justify-end gap-2 border-t border-[rgb(var(--border))] bg-[rgb(var(--bg)/.45)] px-4 py-3">
           <button type="button" onClick={() => setOpen(false)} className="bonsai-focus rounded-md px-3 py-2 text-[11px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]">Cancel</button>

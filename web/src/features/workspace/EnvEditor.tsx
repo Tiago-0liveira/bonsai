@@ -10,7 +10,7 @@ export function EnvEditor() {
   return (
     <aside aria-label="Environment variables" className="absolute right-3 top-14 z-50 w-[420px] max-w-[calc(100%-24px)] rounded-xl border border-[rgb(var(--border-strong))] bg-[rgb(var(--panel))] p-3 shadow-2xl">
       <div className="flex items-center gap-2">
-        <KeyRound size={14} className="text-[rgb(var(--orange))]" />
+        <KeyRound size={14} className="text-[rgb(var(--warn))]" />
         <h2 className="text-[11px] font-semibold">Environment variables</h2>
         <button type="button" onClick={() => setOpen(false)} aria-label="Close environment editor" className="bonsai-focus ml-auto p-1"><X size={13} /></button>
       </div>

@@ -27,9 +27,9 @@ function CheckRow({ name, status }: PullRequest['checks'][number]) {
       {status === 'success' ? (
         <CheckCircle2 size={13} className="text-[rgb(var(--ok))]" />
       ) : status === 'failed' ? (
-        <XCircle size={13} className="text-[rgb(var(--red))]" />
+        <XCircle size={13} className="text-[rgb(var(--danger))]" />
       ) : (
-        <CircleDot size={13} className="text-[rgb(var(--orange))]" />
+        <CircleDot size={13} className="text-[rgb(var(--warn))]" />
       )}
       <span className="min-w-0 flex-1 truncate">{name}</span>
       <span className="capitalize text-[rgb(var(--muted-2))]">{status}</span>
@@ -55,7 +55,7 @@ function PrOperations({ pr }: { pr: PullRequest }) {
           >
             <GitMerge size={11} /> Merge
           </button>
-          <button onClick={() => setStatus(pr.id, 'Closed')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--red)/.3)] px-2.5 text-[10px] text-[rgb(var(--red))]">
+          <button onClick={() => setStatus(pr.id, 'Closed')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--danger)/.3)] px-2.5 text-[10px] text-[rgb(var(--danger))]">
             <X size={11} /> Close
           </button>
         </>
@@ -241,7 +241,7 @@ export function PullRequestsPage() {
                   className="bonsai-focus w-full resize-y rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3 py-2.5 text-[11px] leading-5 outline-none"
                 />
                 <div className="mt-2 flex flex-wrap justify-end gap-2">
-                  <button onClick={() => submitReview('request-changes')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--red)/.3)] px-2.5 text-[9px] text-[rgb(var(--red))]"><XCircle size={11} /> Request changes</button>
+                  <button onClick={() => submitReview('request-changes')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--danger)/.3)] px-2.5 text-[9px] text-[rgb(var(--danger))]"><XCircle size={11} /> Request changes</button>
                   <button onClick={() => submitReview('approve')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--ok)/.3)] px-2.5 text-[9px] text-[rgb(var(--ok))]"><Check size={11} /> Approve</button>
                   <button disabled={!review.trim()} onClick={() => submitReview('comment')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md bg-[rgb(var(--accent-solid))] px-3 text-[9px] font-medium text-[rgb(var(--accent-fg))] disabled:opacity-35"><Send size={11} /> Comment</button>
                 </div>
