@@ -2,6 +2,7 @@ import { processActive } from '../../stores/processProjection'
 import { openGitHub } from '../../api/git'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
+import * as Tabs from '@radix-ui/react-tabs'
 import {
   Archive, ArrowDown, ArrowRight, ArrowUp, Bot, CheckCircle2, ChevronRight,
   CircleDot, Clock3, FileDiff, GitBranch, GitPullRequest, History, Layers3,
@@ -11,8 +12,9 @@ import {
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectPullRequests } from '../../stores/projectSelectors'
+import { FilesDiffPanel } from '../files/FilesDiffPanel'
 import { ProcessActions } from '../terminal/ProcessActions'
-import type { Agent, PullRequest, Worktree } from '../../types'
+import type { Agent, PullRequest, SyncFreshnessState, Worktree } from '../../types'
 
 const presentation = (agent: Agent) => agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
 
@@ -26,23 +28,82 @@ function branchIssues(worktree: Worktree, pr?: PullRequest) {
   return issues
 }
 
+const FRESHNESS: Record<SyncFreshnessState, { dot: string; text: string; label: string }> = {
+  ready: { dot: 'bg-accent-solid', text: 'text-muted-2', label: 'live' },
+  stale: { dot: 'bg-warn-solid', text: 'text-muted-2', label: 'stale' },
+  loading: { dot: 'bg-muted-2', text: 'text-muted-2', label: 'syncing' },
+  error: { dot: 'bg-danger', text: 'text-muted-2', label: 'offline' },
+  unavailable: { dot: 'bg-danger', text: 'text-muted-2', label: 'offline' },
+}
+
+function FreshnessLabel({ state }: { state?: SyncFreshnessState }) {
+  if (!state) return null
+  const view = FRESHNESS[state]
+  return <span className={'ml-auto flex items-center gap-1.5 font-mono text-[10px] normal-case tracking-normal ' + view.text}><span className={'h-1.5 w-1.5 rounded-full ' + view.dot} />{view.label}</span>
+}
+
+const tabTrigger = 'bonsai-focus h-full uppercase text-muted transition-colors hover:text-text data-[state=active]:text-text data-[state=active]:shadow-[inset_0_-2px_0_0_rgb(var(--accent-solid))]'
+
 function Section({ title, meta, children }: { title: string; meta?: ReactNode; children: ReactNode }) {
   return <section className="inspector-section">
-    <div className="mb-2.5 flex items-center justify-between gap-2"><h3 className="text-[11px] font-semibold text-[rgb(var(--text))]">{title}</h3>{meta}</div>
+    <div className="mb-2.5 flex items-center justify-between gap-2"><h3 className="font-mono text-[9.5px] font-medium uppercase tracking-[.08em] text-muted-2">{title}</h3>{meta}</div>
     {children}
   </section>
 }
 
 function QuickButton({ icon: Icon, label, onClick, danger = false, primary = false, unavailable = false }: { icon: LucideIcon; label: string; onClick: () => void; danger?: boolean; primary?: boolean; unavailable?: boolean }) {
-  return <button type="button" onClick={onClick} disabled={unavailable} title={unavailable ? 'Unavailable in the connected app' : undefined} className={'disabled:opacity-40 bonsai-focus inspector-action ' + (danger ? 'inspector-action-danger' : primary ? 'inspector-action-primary' : '')}>
+  return <button type="button" onClick={onClick} disabled={unavailable} title={unavailable ? 'Unavailable in the connected app' : undefined} className={'disabled:opacity-40 bonsai-focus inspector-action ' + (danger ? 'btn-danger-tint' : primary ? 'btn-primary' : 'btn-bordered')}>
     <Icon size={13} className="shrink-0" />{label}
   </button>
 }
 
 function Metric({ value, label, icon: Icon, tone = '' }: { value: number | string; label: string; icon: LucideIcon; tone?: string }) {
-  return <div className="min-w-0 rounded-lg border border-[rgb(var(--border)/.65)] bg-[rgb(var(--bg)/.5)] p-2.5">
-    <div className={'flex items-center gap-1.5 text-[17px] font-semibold tabular-nums ' + tone}><Icon size={12} className="opacity-70" />{value}</div>
-    <div className="mt-1 text-[10px] text-[rgb(var(--muted))]">{label}</div>
+  return <div className="min-w-0 rounded-[10px] border border-border bg-panel-2 px-2.5 py-2">
+    <div className={'flex items-center gap-1.5 font-mono text-[13px] font-semibold tabular-nums ' + (tone || 'text-text')}><Icon size={12} className="opacity-70" />{value}</div>
+    <div className="mt-1 font-mono text-[9.5px] uppercase tracking-[.06em] text-muted-2">{label}</div>
+  </div>
+}
+
+const PR_CHIP: Record<PullRequest['status'], { label: string; className: string }> = {
+  Open: { label: '● OPEN', className: 'bg-accent/[.12] text-accent' },
+  Draft: { label: 'DRAFT', className: 'bg-panel-3 text-muted' },
+  Merged: { label: 'MERGED', className: 'bg-ok/[.12] text-ok' },
+  Closed: { label: 'CLOSED', className: 'bg-panel-3 text-muted' },
+}
+
+function PullRequestCard({ pr, onInspect }: { pr: PullRequest; onInspect: () => void }) {
+  const chip = PR_CHIP[pr.status]
+  const conflicts = pr.mergeable === false
+  return <button type="button" onClick={onInspect} className="bonsai-focus block w-full rounded-xl border border-border bg-panel-2 p-3 text-left transition-colors hover:border-border-strong">
+    <span className="flex items-start gap-2">
+      <span className="min-w-0 flex-1 text-[13px] leading-5 text-text"><span className="font-mono text-accent">#{pr.number}</span> {pr.title}</span>
+      <span className={'chip shrink-0 ' + chip.className}>{chip.label}</span>
+    </span>
+    <span className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-muted-2">
+      <span className="min-w-0 flex-1 truncate">{pr.branch} → {pr.base}</span>
+      <span className={conflicts ? 'text-danger' : 'text-ok'}>{conflicts ? 'conflicts' : 'no conflicts'}</span>
+    </span>
+    <span className="mt-1 block text-[10px] text-muted-2">{pr.files.length} files · {pr.commits.length} commits · View review</span>
+  </button>
+}
+
+function CiCard({ checks }: { checks: PullRequest['checks'] }) {
+  if (!checks.length) return <p className="inspector-empty mt-2">No checks reported.</p>
+  const success = checks.filter(check => check.status === 'success').length
+  const state = checks.some(check => check.status === 'failed') ? 'failing' : success === checks.length ? 'passing' : 'running'
+  const tone = { failing: 'text-danger', passing: 'text-ok', running: 'text-accent' }[state]
+  const segment = { success: 'bg-ok', running: 'bg-accent-solid', failed: 'bg-danger' }
+  return <div className="mt-2 rounded-xl border border-border bg-panel-2 p-3">
+    <div className="flex items-center justify-between font-mono text-[9.5px] uppercase">
+      <span className="text-muted-2">CI/CD</span>
+      <span className={tone}>{state.toUpperCase()} · {success} OF {checks.length}</span>
+    </div>
+    <div className="mt-2 flex gap-1" aria-hidden>{checks.map((check, index) => <span key={check.id || `${check.name}:${index}`} className={'h-1 flex-1 rounded-full ' + segment[check.status]} />)}</div>
+    <div className="mt-2.5 space-y-2">{checks.map((check, index) => <div key={check.id || `${check.name}:${index}`} className="flex items-center gap-2 text-[12px]">
+      {check.status === 'failed' ? <XCircle size={12} className="shrink-0 text-danger" /> : check.status === 'success' ? <CheckCircle2 size={12} className="shrink-0 text-ok" /> : <CircleDot size={12} className="shrink-0 text-accent" />}
+      <span className="min-w-0 flex-1 break-words text-text">{check.name}</span>
+      <span className="font-mono text-[10px] text-muted-2">{check.status === 'success' ? 'Passed' : check.status === 'failed' ? 'Failed' : 'Running'}</span>
+    </div>)}</div>
   </div>
 }
 
@@ -94,6 +155,7 @@ export function Inspector() {
   const projectWorktrees = worktrees
   const projectAgents = useMemo(() => agents.filter(item => presentation(item) === 'canvas'), [agents])
   const branchAgents = projectAgents.filter((item) => item.worktreeId === worktree?.id)
+  const freshness = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local?.state)
   const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
   const attention = useMemo(() => projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length), [projectWorktrees, pullRequests])
   const issues = worktree ? branchIssues(worktree, pr) : []
@@ -111,11 +173,16 @@ export function Inspector() {
   const mergeTargets = projectWorktrees.filter((item) => item.id !== worktree?.id).map((item) => item.branch)
 
   return (
-    <aside aria-label="Inspector" className="desktop-inspector inspector-shell flex min-h-0 min-w-0 w-[310px] shrink-0 flex-col overflow-hidden border-l border-[rgb(var(--border))]">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[rgb(var(--border)/.7)] px-4">
-        <SlidersHorizontal size={13} className="text-[rgb(var(--accent))]" /><span className="text-[12px] font-semibold">Inspector</span>
-        <span className="ml-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--panel-2))] px-2 py-0.5 text-[9px] capitalize text-[rgb(var(--muted))]">{selection.type}</span>
-      </div>
+    <aside aria-label="Inspector" className="island [overflow-wrap:anywhere] flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <Tabs.Root defaultValue="inspector" className="flex min-h-0 flex-1 flex-col">
+        <div className="island-title shrink-0 gap-[22px]">
+          <Tabs.List className="flex h-full items-center gap-[22px]">
+            <Tabs.Trigger value="inspector" className={tabTrigger}>Inspector</Tabs.Trigger>
+            <Tabs.Trigger value="files" className={tabTrigger}>Files</Tabs.Trigger>
+          </Tabs.List>
+          <FreshnessLabel state={freshness} />
+        </div>
+        <Tabs.Content value="inspector" className="flex min-h-0 flex-1 flex-col outline-none">
       <ScrollArea.Root className="min-h-0 flex-1 overflow-hidden">
         <ScrollArea.Viewport className="inspector-viewport h-full w-full">
           <div className="space-y-4 p-4">
@@ -128,12 +195,12 @@ export function Inspector() {
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={projectWorktrees.length} label="Branches" icon={GitBranch} />
-                <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-[rgb(var(--accent))]" />
-                <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-[rgb(var(--warn))]" />
+                <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-accent" />
+                <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-warn" />
               </div>
               <Section title="Needs attention" meta={<span className="inspector-count">{attention.length}</span>}>
                 {attention.length ? <div className="space-y-2">{attention.map(({ worktree: item, issues: reasons }) => <button key={item.id} onClick={() => setSelection({ type: 'worktree', id: item.id })} className="bonsai-focus inspector-attention">
-                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-[rgb(var(--warn))]" /><span className="min-w-0 flex-1"><span className="block truncate font-mono text-[10px] text-[rgb(var(--text))]">{item.branch}</span><span className="mt-1 block text-[10px] leading-4 text-[rgb(var(--muted))]">{reasons.join(' · ')}</span></span><ChevronRight size={12} className="mt-0.5 shrink-0 text-[rgb(var(--muted))]" />
+                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-[rgb(var(--warn))]" /><span className="min-w-0 flex-1"><span className="block truncate font-mono text-[10px] text-warn">{item.branch}</span><span className="mt-1 block text-[10px] leading-4 text-[rgb(var(--muted))]">{reasons.join(' · ')}</span></span><ChevronRight size={12} className="mt-0.5 shrink-0 text-[rgb(var(--muted))]" />
                 </button>)}</div> : <p className="flex items-center gap-2 text-[11px] text-[rgb(var(--muted))]"><CheckCircle2 size={14} className="text-[rgb(var(--ok))]" />No branch blockers reported.</p>}
               </Section>
               <Section title="Agents" meta={<span className="inspector-count">{projectAgents.length}</span>}>
@@ -143,26 +210,32 @@ export function Inspector() {
 
             {worktree && !agent && !process && <>
               <div className="inspector-hero">
-                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--accent))]"><GitBranch size={13} />{worktree.kind}<span className="ml-auto text-[rgb(var(--muted))]">{worktree.lastActivity}</span></div>
-                <h2 className="break-words font-mono text-[14px] font-semibold leading-6">{worktree.branch}</h2>
-                <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><ArrowRight size={12} /><span className="truncate">{worktree.mergeTargetBranch}</span></div>
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[9px] bg-accent/[.12] text-accent"><GitBranch size={17} /></span>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="break-words font-mono text-[15px] font-semibold leading-5 text-text">{worktree.branch}</h2>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      {worktree.tag && <span className="chip bg-accent/[.12] text-accent">{worktree.tag}</span>}
+                      <span className="font-mono text-[10px] text-muted-2">{worktree.kind}</span>
+                      <span className="ml-auto font-mono text-[10px] text-muted-2">{worktree.lastActivity}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 font-mono text-[10px] text-muted-2"><ArrowRight size={11} /><span className="truncate">from {worktree.mergeTargetBranch}</span></div>
                 <div className="mt-4 grid grid-cols-2 gap-2"><QuickButton icon={Bot} label="Start agent" primary onClick={() => openStartAgentDialog(worktree.id)} /><QuickButton icon={Play} label="Start process" onClick={() => openStartProcessDialog(worktree.id)} /></div>
               </div>
-              {!worktree.main && <button type="button" onClick={() => setDeleteWorktreeId(worktree.id)} className="bonsai-focus rounded border border-[rgb(var(--danger)/.4)] px-3 py-2 text-[11px] text-[rgb(var(--danger))]">Delete worktree</button>}
+              {!worktree.main && <button type="button" onClick={() => setDeleteWorktreeId(worktree.id)} className="bonsai-focus btn-danger-tint h-[34px] rounded-lg px-3 text-[11px] font-medium">Delete worktree</button>}
               <div className="grid grid-cols-3 gap-2">
-                <Metric value={worktree.dirtyFiles} label="Uncommitted" icon={FileDiff} tone={worktree.dirtyFiles ? 'text-[rgb(var(--warn))]' : ''} />
+                <Metric value={worktree.dirtyFiles} label="Uncommitted" icon={FileDiff} tone={worktree.dirtyFiles ? 'text-warn' : ''} />
                 <Metric value={worktree.divergenceAvailable ? worktree.ahead : '—'} label="Ahead" icon={ArrowUp} />
-                <Metric value={worktree.divergenceAvailable ? worktree.behind : '—'} label="Behind" icon={ArrowDown} tone={worktree.divergenceAvailable && worktree.behind ? 'text-[rgb(var(--warn))]' : ''} />
+                <Metric value={worktree.divergenceAvailable ? worktree.behind : '—'} label="Behind" icon={ArrowDown} tone={worktree.divergenceAvailable && worktree.behind ? 'text-warn' : ''} />
               </div>
-              {issues.length > 0 && <div className="inspector-alert"><div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-[rgb(var(--warn))]"><AlertCircle size={13} />Before merging</div>{issues.map((issue) => <p key={issue} className="mt-1 text-[11px] leading-5 text-[rgb(var(--muted))]">{issue}</p>)}</div>}
-              <Section title="Pull request" meta={pr && <span className="inspector-count">{pr.status}</span>}>
+              {issues.length > 0 && <div className="inspector-alert"><div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-warn"><AlertCircle size={13} />Before merging</div>{issues.map((issue) => <p key={issue} className="mt-1 text-[11px] leading-5 text-[rgb(var(--muted))]">{issue}</p>)}</div>}
+              <Section title="Pull request">
                 {pr ? <>
-                  <button onClick={() => inspectPullRequest(pr.id)} className="bonsai-focus inspector-link !items-start !px-0"><GitPullRequest size={15} className="mt-0.5 shrink-0 text-[rgb(var(--accent))]" /><span className="min-w-0 flex-1"><span className="block text-[11px] font-medium leading-5">#{pr.number} {pr.title}</span><span className="mt-1 block text-[10px] text-[rgb(var(--muted))]">{pr.files.length} files · {pr.commits.length} commits · View review</span></span><ChevronRight size={13} className="mt-1 shrink-0" /></button>
+                  <PullRequestCard pr={pr} onInspect={() => inspectPullRequest(pr.id)} />
                   <div className="mt-2"><QuickButton icon={GitPullRequest} label="Open on GitHub" onClick={() => openGitHub('pull/' + pr.number, worktree.projectId)} /></div>
-                  <div className="mt-2 space-y-2 rounded-lg bg-[rgb(var(--bg)/.6)] p-2.5">{pr.checks.length ? pr.checks.map((check, index) => <div key={check.id || `${check.name}:${index}`} className="flex items-center gap-2 text-[10px]">
-                    {check.status === 'failed' ? <XCircle size={12} className="shrink-0 text-[rgb(var(--danger))]" /> : check.status === 'success' ? <CheckCircle2 size={12} className="shrink-0 text-[rgb(var(--ok))]" /> : <CircleDot size={12} className="shrink-0 text-[rgb(var(--warn))]" />}
-                    <span className="min-w-0 flex-1 break-words text-[rgb(var(--muted))]">{check.name}</span><span className="text-[9px] text-[rgb(var(--muted))]">{check.status === 'success' ? 'Passed' : check.status === 'failed' ? 'Failed' : 'Running'}</span>
-                  </div>) : <p className="inspector-empty">No checks reported.</p>}</div>
+                  <CiCard checks={pr.checks} />
                 </> : <p className="inspector-empty">{worktree.prNumber ? `PR #${worktree.prNumber} details are unavailable.` : 'No pull request linked to this branch.'}</p>}
               </Section>
               <Section title="Agents on this branch" meta={<span className="inspector-count">{branchAgents.length}</span>}>
@@ -276,6 +349,11 @@ export function Inspector() {
         </ScrollArea.Viewport>
         <ScrollArea.Scrollbar orientation="vertical" className="w-1.5 p-[1px]"><ScrollArea.Thumb className="rounded bg-[rgb(var(--border-strong))]" /></ScrollArea.Scrollbar>
       </ScrollArea.Root>
+        </Tabs.Content>
+        <Tabs.Content value="files" className="min-h-0 flex-1 outline-none">
+          <FilesDiffPanel embedded />
+        </Tabs.Content>
+      </Tabs.Root>
     </aside>
   )
 }
