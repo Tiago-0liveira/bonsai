@@ -1,5 +1,7 @@
 import React, { Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
+import '@fontsource-variable/hanken-grotesk'
+import '@fontsource-variable/jetbrains-mono'
 import './styles/globals.css'
 import './styles/surfaces.css'
 

@@ -463,7 +463,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' | 'agents' }) {
         zoomOnDoubleClick={false}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="rgb(44 47 55)" />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="rgb(var(--text) / .07)" />
         <Controls position="bottom-left" showInteractive={false} />
       </ReactFlow>
 

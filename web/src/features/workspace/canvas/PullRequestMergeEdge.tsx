@@ -34,7 +34,7 @@ export function PullRequestMergeEdge(props: EdgeProps) {
         id={props.id}
         path={path}
         style={{
-          stroke: 'rgb(151 109 255 / .72)',
+          stroke: 'rgb(var(--ok) / .72)',
           strokeWidth: 1.6,
           strokeDasharray: '6 5',
         }}
@@ -43,7 +43,7 @@ export function PullRequestMergeEdge(props: EdgeProps) {
         <path
           d={`M${label.anchor.x},${label.anchor.y} L${label.x},${label.y}`}
           fill="none"
-          stroke="rgb(151 109 255 / .5)"
+          style={{ stroke: 'rgb(var(--ok) / .5)' }}
           strokeDasharray="3 4"
           className="pointer-events-none"
         />

@@ -1,19 +1,19 @@
 html, body, #root { min-height: 100%; }
 body { overflow-x: hidden; overflow-y: auto; }
 .app-surface { width: 100%; height: 100dvh; overflow: hidden; background: rgb(var(--bg)); }
-.surface-loading { min-height: 100dvh; display: grid; place-items: center; background: #241d18; color: #eee7dc; font: 500 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.local-connect { min-height: 100dvh; display: grid; place-items: center; padding: 32px; background: radial-gradient(circle at 50% 20%, #2b231d 0, #241d18 48%, #1c1713 100%); color: #eee7dc; }
-.local-connect-card { width: min(560px, 100%); border: 1px solid rgba(203,187,167,.22); border-radius: 18px; background: rgba(43,35,29,.72); padding: 34px; box-shadow: 0 24px 80px rgba(0,0,0,.22); }
-.local-connect-mark { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 22px; border: 1px solid rgba(137,164,125,.45); border-radius: 9px; color: #89a47d; font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.local-connect-kicker { margin: 0 0 10px; color: #89a47d; font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+.surface-loading { min-height: 100dvh; display: grid; place-items: center; background: rgb(var(--bg)); color: rgb(var(--text)); font: 500 13px/1.5 var(--font-mono); }
+.local-connect { min-height: 100dvh; display: grid; place-items: center; padding: 32px; background: radial-gradient(circle at 50% 20%, rgb(var(--panel)) 0, rgb(var(--bg)) 48%, rgb(var(--well)) 100%); color: rgb(var(--text)); }
+.local-connect-card { width: min(560px, 100%); border: 1px solid rgb(var(--border)); border-radius: 14px; background: rgb(var(--panel) / .94); backdrop-filter: blur(14px); padding: 34px; box-shadow: var(--shadow-island); }
+.local-connect-mark { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 22px; border: 1px solid rgb(var(--accent-solid) / .45); border-radius: 9px; color: rgb(var(--accent)); font: 700 14px var(--font-mono); }
+.local-connect-kicker { margin: 0 0 10px; color: rgb(var(--accent)); font: 600 11px/1.4 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
 .local-connect h1 { margin: 0; font-size: clamp(28px, 5vw, 44px); letter-spacing: -.035em; line-height: 1.05; }
-.local-connect p { color: #cbbba7; line-height: 1.65; }
-.local-connect-command { display: flex; gap: 8px; align-items: center; margin-top: 20px; color: #8a725d; }
-.local-connect code { color: #eee7dc; background: #1c1713; border: 1px solid rgba(203,187,167,.16); border-radius: 6px; padding: 5px 8px; }
+.local-connect p { color: rgb(var(--muted)); line-height: 1.65; }
+.local-connect-command { display: flex; gap: 8px; align-items: center; margin-top: 20px; color: rgb(var(--muted-2)); }
+.local-connect code { color: rgb(var(--text)); background: rgb(var(--well)); border: 1px solid rgb(var(--border-subtle)); border-radius: 6px; padding: 5px 8px; }
 .local-connect-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
-.local-connect button { min-height: 42px; border-radius: 9px; border: 1px solid rgba(137,164,125,.45); padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; background: #6f8f67; color: #1c1713; font-weight: 700; cursor: pointer; }
+.local-connect button { min-height: 42px; border-radius: 8px; border: 1px solid rgb(var(--accent-solid)); padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; background: rgb(var(--accent-solid)); color: rgb(var(--accent-fg)); font-weight: 700; cursor: pointer; }
 .local-connect button:disabled { cursor: wait; opacity: .65; }
-.local-connect .local-connect-secondary { background: transparent; color: #ded2c1; border-color: rgba(203,187,167,.28); }
-.local-connect button:focus-visible { outline: 2px solid #89a47d; outline-offset: 3px; }
-.local-connect-note { margin-top: 18px; padding-top: 18px; border-top: 1px solid rgba(203,187,167,.14); font-size: 12px; }
+.local-connect .local-connect-secondary { background: transparent; color: rgb(var(--text)); border-color: rgb(var(--border-strong)); }
+.local-connect button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }
+.local-connect-note { margin-top: 18px; padding-top: 18px; border-top: 1px solid rgb(var(--border-subtle)); font-size: 12px; }
 @media (max-width: 640px) { .local-connect { padding: 18px; } .local-connect-card { padding: 24px; } }

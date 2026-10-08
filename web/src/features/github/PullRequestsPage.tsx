@@ -243,7 +243,7 @@ export function PullRequestsPage() {
                 <div className="mt-2 flex flex-wrap justify-end gap-2">
                   <button onClick={() => submitReview('request-changes')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--red)/.3)] px-2.5 text-[9px] text-[rgb(var(--red))]"><XCircle size={11} /> Request changes</button>
                   <button onClick={() => submitReview('approve')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md border border-[rgb(var(--green)/.3)] px-2.5 text-[9px] text-[rgb(var(--green))]"><Check size={11} /> Approve</button>
-                  <button disabled={!review.trim()} onClick={() => submitReview('comment')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md bg-[rgb(var(--purple))] px-3 text-[9px] font-medium text-white disabled:opacity-35"><Send size={11} /> Comment</button>
+                  <button disabled={!review.trim()} onClick={() => submitReview('comment')} className="bonsai-focus flex h-8 items-center gap-1.5 rounded-md bg-[rgb(var(--accent-solid))] px-3 text-[9px] font-medium text-[rgb(var(--accent-fg))] disabled:opacity-35"><Send size={11} /> Comment</button>
                 </div>
               </div>
             </div>

@@ -140,7 +140,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       target: project.id,
       type: 'straight',
       data: { relationship: 'default' },
-      style: { stroke: 'rgb(75 214 140 / .45)', strokeWidth: 1.3 },
+      style: { stroke: 'rgb(var(--accent-solid) / .45)', strokeWidth: 1.3 },
     },
   ]
 
@@ -255,7 +255,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       type: 'smoothstep',
       data: { relationship: 'agent' },
       style: {
-        stroke: 'rgb(50 53 62)',
+        stroke: 'rgb(var(--border-strong))',
         strokeWidth: 1,
         strokeDasharray: agent.state === 'finished' ? '3 4' : undefined,
       },
@@ -278,7 +278,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       associationLabel: ownerId === shelfId ? 'Worktree association unavailable' : undefined,
     } satisfies BonsaiGraphData })
     edges.push({ id: `${ownerId}-${process.id}`, source: ownerId, target: process.id, type: 'smoothstep', data: { relationship: 'process' },
-      style: { stroke: 'rgb(50 53 62)', strokeWidth: 1 },
+      style: { stroke: 'rgb(var(--border-strong))', strokeWidth: 1 },
     })
   })
 
@@ -303,7 +303,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         data: { relationship: 'hierarchy' },
         style: nested
           ? { stroke: 'transparent', strokeWidth: 0.1 }
-          : { stroke: 'rgb(62 65 75)', strokeWidth: 1 },
+          : { stroke: 'rgb(var(--border-strong))', strokeWidth: 1 },
       })
     }
 
