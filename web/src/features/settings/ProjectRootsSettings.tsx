@@ -98,7 +98,7 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
       </> : <p>No Git repositories were found in the configured folders.</p>}
       <div className="flex justify-between gap-3">
         <button disabled={saving} onClick={() => setSelectingRepositories(false)} className="bonsai-focus rounded border px-4 py-2">Back to folders</button>
-        <button disabled={saving} onClick={() => void saveSelection()} className="bonsai-focus rounded bg-[rgb(var(--purple))] px-4 py-2 text-white disabled:opacity-50">{saving ? 'Saving…' : 'Use selected repositories'}</button>
+        <button disabled={saving} onClick={() => void saveSelection()} className="bonsai-focus rounded bg-[rgb(var(--accent-solid))] px-4 py-2 text-[rgb(var(--accent-fg))] disabled:opacity-50">{saving ? 'Saving…' : 'Use selected repositories'}</button>
       </div>
     </> : settings && <>
       <p className="text-sm text-[rgb(var(--muted))]">Choose folders on this computer where Bonsai should discover Git repositories. Discovery includes up to three levels of subfolders; discovered repositories are activated only after you select them.</p>
@@ -128,7 +128,7 @@ export function ProjectRootsSettings({ onDismiss }: { onDismiss?: () => void }) 
         <label htmlFor="project-root-path" className="block text-sm font-medium">Folder path</label>
         <div className="flex gap-2">
           <input id="project-root-path" value={path} onChange={event => setPath(event.target.value)} placeholder="~/projects or an absolute path" className="bonsai-focus min-w-0 flex-1 rounded border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-3 py-2" />
-          <button type="submit" disabled={saving || !path.trim()} className="bonsai-focus rounded bg-[rgb(var(--purple))] px-4 py-2 text-white disabled:opacity-50">{saving ? 'Scanning…' : 'Add folder'}</button>
+          <button type="submit" disabled={saving || !path.trim()} className="bonsai-focus rounded bg-[rgb(var(--accent-solid))] px-4 py-2 text-[rgb(var(--accent-fg))] disabled:opacity-50">{saving ? 'Scanning…' : 'Add folder'}</button>
         </div>
       </form>
       <p className="text-xs text-[rgb(var(--muted))]">Removing a folder only changes discovery and future worktree placement. Your files, worktrees and running processes stay on disk.</p>
