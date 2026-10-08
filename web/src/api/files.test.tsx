@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBonsaiStore } from '../stores/bonsai'
-import { flattenFiles, useFileContent, useFiles, useLocalDiff } from './files'
+import { flattenFiles, useFileContent, useFiles } from './files'
 
 const { localFetch } = vi.hoisted(() => ({ localFetch: vi.fn() }))
 vi.mock('./local', () => ({ localFetch }))
@@ -78,21 +78,6 @@ describe('background file refreshes', () => {
     const nextWorktree = deferredResponse()
     localFetch.mockReturnValueOnce(nextWorktree.promise)
     act(() => useBonsaiStore.setState({ dockWorktreeId: 'second' }))
-    expect(result.current).toBe('')
-  })
-
-  it('keeps the diff visible until its replacement loads and hides it on a worktree switch', async () => {
-    localFetch.mockResolvedValueOnce(response({ patch: 'old diff' }))
-    const { result, rerender } = renderHook(({ id }) => useLocalDiff(id), { initialProps: { id: 'first' } })
-    await finishRefresh()
-    const pending = deferredResponse()
-    localFetch.mockReturnValueOnce(pending.promise)
-    act(() => useBonsaiStore.setState({ gitRevision: 1 }))
-    await finishRefresh()
-    expect(result.current).toBe('old diff')
-    await act(async () => { pending.resolve(response({ patch: 'new diff' })) })
-    expect(result.current).toBe('new diff')
-    rerender({ id: 'second' })
     expect(result.current).toBe('')
   })
 })

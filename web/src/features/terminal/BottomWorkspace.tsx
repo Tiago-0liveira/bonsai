@@ -1,7 +1,5 @@
-import { usePullRequestCatalog } from '../github/usePullRequestCatalog'
-import { PullRequestTabs } from '../github/PullRequestTabs'
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DndContext,
   PointerSensor,
@@ -16,41 +14,20 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import * as Tabs from '@radix-ui/react-tabs'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import {
-  Archive,
-  Bot,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleDot,
   ExternalLink,
   FileCode2,
-  Files,
-  Folder,
-  GitBranch,
-  GitCommitHorizontal,
-  GitMerge,
-  GitPullRequest,
   GripVertical,
-  ListTree,
   Maximize2,
   Minus,
-  Search,
   TerminalSquare,
   X,
-  XCircle,
 } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { flattenFiles, useFiles, useLocalDiff } from '../../api/files'
-import { loadPullRequest } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { useProjectWorktrees, useProjectAgents, useProjectProcesses } from '../../stores/projectSelectors'
-import { panelPreferences } from '../../stores/panelPreferences'
 import { StatusDot } from '../branches/BranchesIsland'
 import { useOpenRuntimeEntries, type RuntimeEntry } from './openRuntimeEntries'
-import type { Agent, EditorPreference, Process, PullRequest, RepoFile, Worktree } from '../../types'
+import type { EditorPreference } from '../../types'
 import { AgentTerminal } from './AgentTerminal'
 import { ProcessTerminal } from './ProcessTerminal'
 
@@ -124,8 +101,6 @@ export function RuntimeWorkspace() {
   const openRuntime = useBonsaiStore((state) => state.openRuntime)
   const focusRuntime = useBonsaiStore(state => state.focusRuntime)
   const reorderOpenRuntime = useBonsaiStore((state) => state.reorderOpenRuntime)
-  const rightPanels = useBonsaiStore((state) => state.rightPanels)
-  const toggleRightPanel = useBonsaiStore((state) => state.toggleRightPanel)
   const dockState = useBonsaiStore((state) => state.dockState)
   const setDockState = useBonsaiStore((state) => state.setDockState)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
@@ -189,9 +164,6 @@ export function RuntimeWorkspace() {
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <button type="button" onClick={() => toggleRightPanel('prs')} title="Toggle pull requests" className={'bonsai-focus btn-ghost text-[11px] ' + (rightPanels.prs ? '!bg-accent/[.12] !text-text' : '')}>
-            <GitPullRequest size={11} /> PRs
-          </button>
           <span className="mx-0.5 h-4 w-px bg-border" />
           <button onClick={() => setDockState('collapsed')} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0" title="Minimize workspace"><Minus size={11} /></button>
           <button onClick={() => setDockState(dockState === 'maximized' ? 'normal' : 'maximized')} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0" title="Maximize workspace"><Maximize2 size={11} /></button>
@@ -214,159 +186,6 @@ export function RuntimeWorkspace() {
         )}
       </div>
     </section>
-  )
-}
-
-function checkIcon(status: 'success' | 'running' | 'failed') {
-  if (status === 'success') return <CheckCircle2 size={11} className="text-[rgb(var(--ok))]" />
-  if (status === 'failed') return <XCircle size={11} className="text-[rgb(var(--danger))]" />
-  return <CircleDot size={11} className="text-[rgb(var(--warn))]" />
-}
-
-function PullRequestOperations({ pr }: { pr: PullRequest }) {
-  const setStatus = useBonsaiStore((state) => state.setPullRequestStatus)
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {pr.status === 'Open' && (
-        <>
-          <button disabled={!pr.mergeable} onClick={() => setStatus(pr.id, 'Merged')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.35)] bg-[rgb(var(--accent)/.08)] px-2 text-[8px] text-[rgb(var(--accent))] disabled:opacity-35"><GitMerge size={9} /> Merge</button>
-          <button onClick={() => setStatus(pr.id, 'Closed')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--danger)/.3)] px-2 text-[8px] text-[rgb(var(--danger))]"><X size={9} /> Close</button>
-        </>
-      )}
-      {pr.status === 'Draft' && <button onClick={() => setStatus(pr.id, 'Open')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.3)] px-2 text-[8px] text-[rgb(var(--accent))]"><GitPullRequest size={9} /> Open PR</button>}
-      {pr.status === 'Closed' && <button onClick={() => setStatus(pr.id, 'Open')} className="flex h-6 items-center gap-1 rounded border border-[rgb(var(--accent)/.3)] px-2 text-[8px] text-[rgb(var(--accent))]"><GitPullRequest size={9} /> Reopen</button>}
-    </div>
-  )
-}
-
-function PullRequestDetails({ pr }: { pr: PullRequest }) {
-  const project = useBonsaiStore(state => state.projects.find(item => item.id === state.activeProjectId))
-  const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
-  const [checksOpen, setChecksOpen] = useState(true)
-  const success = pr.checks.filter((check) => check.status === 'success').length
-  const latest = pr.commits.at(-1)
-
-  return (
-    <div className="bg-[rgb(var(--bg)/.48)] px-2.5 pb-2.5">
-      <div className="flex items-center gap-2 pt-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[8px] text-[rgb(var(--muted-2))]">
-          <GitCommitHorizontal size={9} />
-          <span>{pr.commits.length} commit{pr.commits.length === 1 ? '' : 's'}</span>
-          <span>·</span>
-          <span className="truncate font-mono">{latest?.sha}</span>
-          <span>·</span>
-          <span>{latest?.time ?? pr.updatedAt}</span>
-        </div>
-        <button
-          onClick={() => project?.repository.includes('/') && window.open('https://github.com/' + project.repository + '/pull/' + pr.number, '_blank', 'noopener,noreferrer')}
-          className="bonsai-focus grid h-6 w-6 place-items-center rounded border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--text))]"
-          title="Open pull request URL"
-        >
-          <ExternalLink size={10} />
-        </button>
-      </div>
-
-      {latest && <div className="mt-1 truncate text-[8px] text-[rgb(var(--muted))]">{latest.message}</div>}
-
-      <button onClick={() => setChecksOpen((open) => !open)} className="mt-2 flex h-7 w-full items-center gap-1.5 rounded-md border border-[rgb(var(--border))] px-2 text-left text-[9px] text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]">
-        {checksOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-        CI checks
-        <span className="ml-auto">{success}/{pr.checks.length}</span>
-      </button>
-      {checksOpen && (
-        <div className="mt-1">
-          {pr.checks.map((check, index) => (
-            <div key={check.id || `${check.name}:${index}`} className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[8px] text-[rgb(var(--muted))]">
-              {checkIcon(check.status)}
-              <span className="min-w-0 flex-1 truncate">{check.name}</span>
-              <span className="capitalize text-[rgb(var(--muted-2))]">{check.status}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="mt-2"><PullRequestOperations pr={pr} /></div>
-    </div>
-  )
-}
-
-function PullRequestsPanel() {
-  const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
-  const { rows: pullRequests, tab, setTab, message, retry } = usePullRequestCatalog(activeProjectId)
-  const setRightPanel = useBonsaiStore((state) => state.setRightPanel)
-  const [query, setQuery] = useState('')
-  const [sort, setSort] = useState('recent')
-  const selectedId = useBonsaiStore((state) => state.inspectedPullRequestId)
-  const focusNonce = useBonsaiStore((state) => state.pullRequestFocusNonce)
-  const setSelectedId = useBonsaiStore((state) => state.setInspectedPullRequestId)
-  const selectedRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    setQuery('')
-  }, [focusNonce])
-
-  useEffect(() => {
-    if (selectedId) void loadPullRequest(selectedId)
-  }, [selectedId])
-
-  useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [selectedId, query, focusNonce])
-
-  const filtered = useMemo(() => {
-    const items = pullRequests.filter((pr) => {
-      const needle = query.trim().toLowerCase()
-      return !needle || (pr.title + ' ' + pr.branch + ' ' + pr.number).toLowerCase().includes(needle)
-    })
-    if (sort === 'number') return [...items].sort((a, b) => b.number - a.number)
-    if (sort === 'checks') return [...items].sort((a, b) => a.checks.filter((check) => check.status === 'failed').length - b.checks.filter((check) => check.status === 'failed').length)
-    return items
-  }, [pullRequests, query, sort])
-
-  return (
-    <aside className="island dock-pane flex h-full min-w-0 flex-col">
-      <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
-        <GitPullRequest size={13} className="shrink-0 text-[rgb(var(--accent))]" />
-        <span className="dock-title min-w-0 truncate">Pull requests</span>
-        <span className="island-count">{pullRequests.length}</span>
-        <button onClick={() => setRightPanel('prs', false)} className="bonsai-focus ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-3))]" title="Close pull requests"><X size={12} /></button>
-      </div>
-      <PullRequestTabs value={tab} onChange={value => { setTab(value); if (value === 'closed') retry() }} />
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[rgb(var(--border)/.5)] p-2">
-        <label className="flex h-7 min-w-[96px] flex-1 items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--bg))] px-2">
-          <Search size={9} className="text-[rgb(var(--muted-2))]" />
-          <input aria-label="Search pull requests" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search PRs" className="min-w-0 flex-1 bg-transparent text-[8px] outline-none placeholder:text-[rgb(var(--muted-2))]" />
-        </label>
-        <div className="w-[92px] shrink-0">
-          <BonsaiSelect ariaLabel="Sort pull requests" compact value={sort} onChange={setSort} options={[
-            { value: 'recent', label: 'Recent' },
-            { value: 'number', label: 'Number' },
-            { value: 'checks', label: 'Checks' },
-          ]} />
-        </div>
-
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {!filtered.length && <p className="p-3 text-[9px] text-[rgb(var(--muted-2))]">{message}</p>}
-        {filtered.map((pr) => {
-          const expanded = selectedId === pr.id
-          const success = pr.checks.filter((check) => check.status === 'success').length
-          return (
-            <div key={pr.id} ref={expanded ? selectedRef : undefined} className="border-b border-[rgb(var(--border)/.55)]">
-              <button type="button" onClick={() => setSelectedId(expanded ? null : pr.id)} className="flex w-full items-start gap-2 px-2.5 py-2.5 text-left hover:bg-[rgb(var(--panel-2))]">
-                <GitPullRequest size={11} className={pr.status === 'Open' ? 'mt-0.5 text-[rgb(var(--accent))]' : pr.status === 'Draft' ? 'mt-0.5 text-[rgb(var(--muted))]' : 'mt-0.5 text-[rgb(var(--muted-2))]'} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[9px] font-medium">#{pr.number} {pr.title}</span>
-                  <span className="mt-1 block truncate font-mono text-[8px] text-[rgb(var(--muted-2))]">{pr.branch} → {pr.base}</span>
-                </span>
-                <span className="shrink-0 text-[8px] text-[rgb(var(--muted-2))]">{success}/{pr.checks.length}</span>
-                {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-              </button>
-              {expanded && <PullRequestDetails pr={pr} />}
-            </div>
-          )
-        })}
-      </div>
-    </aside>
   )
 }
 
@@ -412,33 +231,12 @@ function EditorPreferenceDialog() {
   )
 }
 
-function HorizontalResizeHandle() {
-  return (
-    <PanelResizeHandle className="dock-resize group relative w-3 shrink-0 cursor-col-resize">
-      <div className="absolute left-1/2 top-1/2 h-9 w-px -translate-x-1/2 -translate-y-1/2 bg-[rgb(var(--border-strong))] opacity-0 transition-opacity group-hover:opacity-100" />
-    </PanelResizeHandle>
-  )
-}
-
 export function BottomWorkspace() {
-  const rightPanels = useBonsaiStore((state) => state.rightPanels)
-  const panelIds = ['runtime', ...(rightPanels.prs ? ['prs'] : [])]
-
   return (
     <>
-      <PanelGroup autoSaveId="bonsai-bottom-panels-v1" storage={panelPreferences.storage} onLayout={layout => panelPreferences.remember(panelIds, layout)} direction="horizontal" className="bottom-workspace h-full min-h-0">
-        <Panel id="runtime" order={1} defaultSize={rightPanels.prs ? 82 : 100} minSize={26}>
-          <RuntimeWorkspace />
-        </Panel>
-        {rightPanels.prs && (
-          <>
-            <HorizontalResizeHandle />
-            <Panel id="prs" order={2} defaultSize={18} minSize={14} maxSize={40}>
-              <PullRequestsPanel />
-            </Panel>
-          </>
-        )}
-      </PanelGroup>
+      <div className="bottom-workspace h-full min-h-0">
+        <RuntimeWorkspace />
+      </div>
       <EditorPreferenceDialog />
     </>
   )

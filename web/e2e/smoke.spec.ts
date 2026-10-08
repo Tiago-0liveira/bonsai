@@ -79,12 +79,11 @@ test('expanding a stack keeps unrelated branches fixed', async ({ page }) => {
   }
 })
 
-test('connection PR catalog reaches the dock, GitHub page, and matching worktree', async ({ page }) => {
+test('connection PR catalog reaches the GitHub page and matching worktree', async ({ page }) => {
   await mockGitBackend(page)
   await openConnectedApp(page)
 
-  const pullRequests = page.locator('.dock-pane').filter({ has: page.getByText('Pull requests', { exact: true }) })
-  await expect(pullRequests).toContainText('#23 fix(daemon): stabilize lifecycle cleanup')
+  await expect(page.locator('.dock-pane').getByText('Pull requests', { exact: true })).toHaveCount(0)
   await expect(page.getByTestId('rf__node-wt-daemon')).toContainText('#23')
 
   await page.getByRole('link', { name: 'GitHub', exact: true }).click()

@@ -5,7 +5,6 @@ import { projects } from '../../test/fixtures/projects'
 import { worktrees } from '../../test/fixtures/worktrees'
 import { pullRequests } from '../../test/fixtures/pullRequests'
 import { Inspector } from '../inspector/Inspector'
-import { BottomWorkspace } from '../terminal/BottomWorkspace'
 import { PullRequestsPage } from './PullRequestsPage'
 
 vi.mock('../../api/git', async importOriginal => ({
@@ -30,7 +29,6 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 describe.each([
   ['GitHub page', PullRequestsPage],
   ['inspector', Inspector],
-  ['bottom workspace', BottomWorkspace],
 ] as const)('%s check keys', (_, Component) => {
   it.each([true, false])('renders same-name checks without warnings (provider IDs: %s)', withIds => {
     const pr = {

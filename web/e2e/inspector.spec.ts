@@ -14,17 +14,12 @@ test('inspector leads from branch blockers to the matching review and profile la
   await expect(inspector.getByText('Resolve merge conflicts', { exact: true })).toBeVisible()
   await expect(inspector.getByText('1 commit behind main', { exact: true })).toBeVisible()
 
-  // A review link must reveal the selected PR even after closing the entire dock.
-  await page.getByTitle('Minimize workspace').click()
+  // The PR card in the inspector opens the GitHub tab on that pull request.
   await inspector.getByRole('button', { name: /#23 fix\(daemon\)/ }).click()
-  await expect(page.getByTitle('Minimize workspace')).toBeVisible()
-  await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toBeVisible()
-  await expect(page.locator('#prs').getByText('go test ./...', { exact: true })).toBeVisible()
-  await page.getByRole('textbox', { name: 'Search pull requests' }).fill('no matching review')
-  await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toHaveCount(0)
-  await inspector.getByRole('button', { name: /#23 fix\(daemon\)/ }).click()
-  await expect(page.getByRole('textbox', { name: 'Search pull requests' })).toHaveValue('')
-  await expect(page.getByText('test: reproduce interrupted shutdown', { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/github$/)
+  await expect(page.getByRole('heading', { name: /#23/ })).toBeVisible()
+  await expect(page.getByText('go test ./...', { exact: true }).first()).toBeVisible()
+  await page.getByRole('link', { name: 'Canvas', exact: true }).click()
 
   await expect(inspector.getByText('No agent sessions.', { exact: true })).toBeVisible()
   await inspector.getByRole('button', { name: 'Start agent', exact: true }).click()
