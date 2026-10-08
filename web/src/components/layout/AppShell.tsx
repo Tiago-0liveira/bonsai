@@ -8,6 +8,7 @@ import {
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { PanelBottomOpen } from 'lucide-react'
 import { CommandPalette } from '../../features/command-palette/CommandPalette'
+import { BranchesIsland } from '../../features/branches/BranchesIsland'
 import { Inspector } from '../../features/inspector/Inspector'
 import { BottomWorkspace } from '../../features/terminal/BottomWorkspace'
 import { CreateWorktreeDialog } from '../../features/workspace/CreateWorktreeDialog'
@@ -68,7 +69,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="pointer-events-none absolute inset-0">
           <aside className="desktop-rail pointer-events-auto absolute bottom-4 left-4 top-[68px] flex w-[400px] flex-col gap-3">
             <Inspector />
-            {/* Branches island slot (P3-7). */}
+            <BranchesIsland />
           </aside>
           <div className="shell-main pointer-events-auto absolute bottom-4 left-[428px] right-4 top-[68px] flex flex-col">
             {gitError && <div role="status" className="island mb-3 shrink-0 px-3 py-2 text-sm text-warn">{gitError}{gitError.includes('Sign in with GitHub') && <> <a href={relayLoginURL()} className="underline">Sign in with GitHub</a></>}</div>}

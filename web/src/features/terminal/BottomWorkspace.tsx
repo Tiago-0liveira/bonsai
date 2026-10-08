@@ -48,134 +48,13 @@ import { loadPullRequest } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses } from '../../stores/projectSelectors'
 import { panelPreferences } from '../../stores/panelPreferences'
-import { agentById, worktreeById, branchTreeSelector, type BranchTreeIndex } from './branchTree'
+import { StatusDot } from '../branches/BranchesIsland'
 import type { Agent, EditorPreference, Process, PullRequest, RepoFile, Worktree } from '../../types'
 import { AgentTerminal } from './AgentTerminal'
 import { ProcessTerminal } from './ProcessTerminal'
 
-function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle' | 'running' | 'finished' }) {
-  const className =
-    status === 'healthy' || status === 'running'
-      ? 'bg-[rgb(var(--accent-solid))]'
-      : status === 'warning'
-        ? 'bg-[rgb(var(--warn-solid))]'
-        : status === 'error'
-          ? 'bg-[rgb(var(--danger))]'
-          : 'bg-[rgb(var(--muted-2))]'
-  return <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + className} />
-}
-
 function agentPresentation(agent: Agent) {
   return agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
-}
-
-const EMPTY_VISITED = new Set<string>()
-const EMPTY_IDS: string[] = []
-
-const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, visited }: {
-  worktreeId: string; index: BranchTreeIndex; depth: number; visited: Set<string>
-}) {
-  const worktree = useBonsaiStore(state => worktreeById(state.worktrees, worktreeId))
-  const selected = useBonsaiStore(state => state.dockWorktreeId === worktreeId)
-  const collapsed = useBonsaiStore(state => state.collapsedBranchIds.includes(worktreeId))
-  const toggleBranchCollapsed = useBonsaiStore(state => state.toggleBranchCollapsed)
-  const setSelection = useBonsaiStore(state => state.setSelection)
-  const nextVisited = useMemo(() => new Set([...visited, worktreeId]), [visited, worktreeId])
-  const children = index.children[worktreeId] ?? EMPTY_IDS
-  const canvasAgents = index.canvasAgents[worktreeId] ?? EMPTY_IDS
-  const historyAgents = index.historyAgents[worktreeId] ?? EMPTY_IDS
-  if (!worktree || visited.has(worktreeId)) return null
-  const expandable = canvasAgents.length > 0 || historyAgents.length > 0 || children.length > 0
-  const indent = depth * 10
-
-  return (
-    <div>
-      <div className="grid h-7 grid-cols-[18px_minmax(0,1fr)_28px] items-center" style={{ paddingLeft: indent }}>
-        <button
-          type="button"
-          onClick={() => expandable && toggleBranchCollapsed(worktree.id)}
-          className="grid h-6 w-[18px] place-items-center rounded text-[rgb(var(--muted-2))] hover:text-[rgb(var(--text))]"
-          title={collapsed ? 'Expand branch' : 'Collapse branch'}
-        >
-          {expandable ? (collapsed ? <ChevronRight size={9} /> : <ChevronDown size={9} />) : <span className="h-1 w-1 rounded-full bg-[rgb(var(--muted-2))]" />}
-        </button>
-        <button
-          type="button"
-          onClick={() => setSelection({ type: 'worktree', id: worktree.id })}
-          className={
-            'bonsai-focus flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-[9px] ' +
-            (selected ? 'bg-[rgb(var(--accent)/.11)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
-          }
-        >
-          <GitBranch size={10} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate font-mono">{worktree.branch}</span>
-          {canvasAgents.length > 0 && <span className="text-[7px] text-[rgb(var(--muted-2))]">{canvasAgents.length}</span>}
-        </button>
-        <span className="grid place-items-center"><StatusDot status={worktree.status} /></span>
-      </div>
-
-      {!collapsed && (
-        <>
-          {canvasAgents.map(id => <BranchAgentRow key={id} id={id} indent={indent} />)}
-          {historyAgents.length > 0 && (
-            <div style={{ paddingLeft: 28 + indent }} className="flex h-6 items-center gap-1.5 pr-2 text-[7.5px] text-[rgb(var(--muted-2))]">
-              <Archive size={8} /> <span>History</span><span>· {historyAgents.length}</span>
-            </div>
-          )}
-          {children.map(id => <BranchTreeItem key={id} worktreeId={id} index={index} depth={depth + 1} visited={nextVisited} />)}
-        </>
-      )}
-    </div>
-  )
-})
-
-const BranchAgentRow = memo(function BranchAgentRow({ id, indent }: { id: string; indent: number }) {
-  const agent = useBonsaiStore(state => agentById(state.agents, id))
-  const setSelection = useBonsaiStore(state => state.setSelection)
-  if (!agent) return null
-  return <button type="button" onClick={() => setSelection({ type: 'agent', id })} style={{ paddingLeft: 24 + indent }} className="bonsai-focus flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-[8px] text-[rgb(var(--muted-2))] hover:bg-[rgb(var(--panel-2))] hover:text-[rgb(var(--text))]">
-    <ProviderBadge provider={agent.provider} size={16} />
-    <span className="min-w-0 flex-1"><span className="block truncate">{agent.name}</span><span className="block truncate text-[6.5px] text-[rgb(var(--muted-2))]">{agent.profileName ?? `${agent.model} · ${agent.reasoningEffort}`}</span></span>
-    <StatusDot status={agent.state} />
-  </button>
-})
-
-function BranchSidebar() {
-  const activeProjectId = useBonsaiStore(state => state.activeProjectId)
-  const index = useBonsaiStore(useMemo(() => branchTreeSelector(activeProjectId), [activeProjectId]))
-  const defaultWorktree = useBonsaiStore(state => worktreeById(state.worktrees, index.defaultId ?? ''))
-  const defaultSelected = useBonsaiStore(state => state.dockWorktreeId === index.defaultId)
-  const setSelection = useBonsaiStore(state => state.setSelection)
-
-  return (
-    <aside className="dock-pane flex h-full min-w-0 flex-col">
-      <div className="dock-heading flex shrink-0 items-center gap-2 px-3">
-        <GitBranch size={13} className="text-[rgb(var(--accent))]" />
-        <span className="dock-title">Branches</span>
-        <span className="dock-count ml-auto">{index.count}</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto p-1">
-        {defaultWorktree && (
-          <div className="grid h-7 grid-cols-[18px_minmax(0,1fr)_auto] items-center">
-            <span />
-            <button
-              type="button"
-              onClick={() => setSelection({ type: 'worktree', id: defaultWorktree.id })}
-              className={
-                'bonsai-focus flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-[9px] ' +
-                (defaultSelected ? 'bg-[rgb(var(--accent)/.08)] text-[rgb(var(--text))]' : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--panel-2))]')
-              }
-            >
-              <GitBranch size={10} className="shrink-0 text-[rgb(var(--accent))]" />
-              <span className="min-w-0 flex-1 truncate font-mono">{defaultWorktree.branch}</span>
-            </button>
-            <span className="ml-1 rounded bg-[rgb(var(--accent)/.10)] px-1 py-0.5 text-[6.5px] text-[rgb(var(--accent))]">default</span>
-          </div>
-        )}
-        {index.roots.map(id => <BranchTreeItem key={id} worktreeId={id} index={index} depth={0} visited={EMPTY_VISITED} />)}
-      </div>
-    </aside>
-  )
 }
 
 type RuntimeEntry =
@@ -566,22 +445,18 @@ function HorizontalResizeHandle() {
 
 export function BottomWorkspace() {
   const rightPanels = useBonsaiStore((state) => state.rightPanels)
-  const panelIds = ['branches', 'runtime', ...(rightPanels.prs ? ['prs'] : [])]
+  const panelIds = ['runtime', ...(rightPanels.prs ? ['prs'] : [])]
 
   return (
     <>
       <PanelGroup autoSaveId="bonsai-bottom-panels-v1" storage={panelPreferences.storage} onLayout={layout => panelPreferences.remember(panelIds, layout)} direction="horizontal" className="bottom-workspace h-full min-h-0 p-2 pt-1">
-        <Panel id="branches" order={1} defaultSize={14} minSize={9} maxSize={26}>
-          <BranchSidebar />
-        </Panel>
-        <HorizontalResizeHandle />
-        <Panel id="runtime" order={2} defaultSize={86 - (rightPanels.prs ? 18 : 0)} minSize={26}>
+        <Panel id="runtime" order={1} defaultSize={rightPanels.prs ? 82 : 100} minSize={26}>
           <RuntimeWorkspace />
         </Panel>
         {rightPanels.prs && (
           <>
             <HorizontalResizeHandle />
-            <Panel id="prs" order={3} defaultSize={18} minSize={14} maxSize={40}>
+            <Panel id="prs" order={2} defaultSize={18} minSize={14} maxSize={40}>
               <PullRequestsPanel />
             </Panel>
           </>

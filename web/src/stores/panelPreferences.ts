@@ -19,7 +19,7 @@ export function createPanelPreferences() {
       if (value && typeof value === 'object') for (const [key, row] of Object.entries(value)) {
         const ids = key.split(',')
         const sizes: unknown = row?.layout
-        if (ids.includes('branches') && ids.includes('runtime') && ids.every(id => ['branches', 'runtime', 'files', 'prs'].includes(id)) &&
+        if (ids.includes('runtime') && ids.every(id => ['runtime', 'prs', 'files'].includes(id)) &&
           Array.isArray(sizes) && sizes.length === ids.length && sizes.every(size => typeof size === 'number' && Number.isFinite(size) && size >= 0 && size <= 100) && Math.abs(sizes.reduce((a, b) => a + b, 0) - 100) < 0.01) {
           layouts[key] = { layout: sizes, expandToSizes: {} }
         }
