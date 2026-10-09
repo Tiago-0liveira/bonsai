@@ -449,6 +449,8 @@ func renderClaudeUsageTable(out io.Writer, rows []usageDashboardRow, now time.Ti
 
 // usageModelCells renders "opus 80% · sonnet 90%" from the per-model weekly limits.
 func usageModelCells(limits []*agents.UsageLimit) string {
+	limits = append([]*agents.UsageLimit(nil), limits...)
+	sort.Slice(limits, func(i, j int) bool { return limits[i].ID < limits[j].ID })
 	parts := make([]string, 0, len(limits))
 	for _, limit := range limits {
 		if fraction, ok := usageFraction(limit); ok {
