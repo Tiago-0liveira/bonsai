@@ -1,4 +1,4 @@
-import { startAgent, stopAgent, mapAgent } from '../api/agents'
+import { startAgent, stopAgent, mapAgent, isLiveAgent, providerIdFor } from '../api/agents'
 import type { ProjectRootsSettings } from '../api/settings'
 import { create } from 'zustand'
 import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
@@ -308,8 +308,13 @@ export const useBonsaiStore = create<BonsaiState>()(
       setStartAgentDialogOpen: (startAgentDialogOpen) => set({ startAgentDialogOpen }),
       createAgent: async (input) => {
         const tree = get().worktrees.find(w => w.id === input.worktreeId)
-        if (!tree || input.provider !== 'Antigravity' || !input.accountId) throw new Error('Select an Antigravity profile and worktree.')
-        const result = await startAgent(tree.projectId, { worktree_id: tree.id, account_id: input.accountId, name: input.name, model: input.model, prompt: input.prompt, full_access: input.fullAccess, cols: 80, rows: 24 }, input.requestKey ?? crypto.randomUUID())
+        const providerId = providerIdFor(input.provider)
+        if (!tree || !providerId || !input.accountId) throw new Error('Select a profile and worktree.')
+        // Launch options are provider specific; the API rejects the ones a provider does not support.
+        const options = providerId === 'claude'
+          ? { ...(input.permissionMode ? { permission_mode: input.permissionMode } : {}), ...(input.effort ? { effort: input.effort } : {}) }
+          : { full_access: input.fullAccess }
+        const result = await startAgent(tree.projectId, { worktree_id: tree.id, account_id: input.accountId, name: input.name, model: input.model, prompt: input.prompt, ...options, cols: 80, rows: 24 }, input.requestKey ?? crypto.randomUUID())
         if (!result.id) throw new Error(result.error || 'Start was interrupted. Close this dialog and start again.')
         set(state => {
           const agents = state.agents.some(a => a.id === result.id) ? state.agents : [...state.agents, mapAgent(result)]
@@ -366,7 +371,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       setAgentState: (id, next) => {
         const agent = get().agents.find(a => a.id === id)
         const project = agent?.projectId ?? get().worktrees.find(w => w.id === agent?.worktreeId)?.projectId
-        if (project && agent?.providerId === 'antigravity' && next === 'finished') void stopAgent(project, id, `stop-${id}`).catch(report)
+        if (project && isLiveAgent(agent) && next === 'finished') void stopAgent(project, id, `stop-${id}`).catch(report)
         else set({ notice: 'This agent action is unavailable.' })
       },
 
@@ -515,7 +520,7 @@ export const useBonsaiStore = create<BonsaiState>()(
       terminalSessions: [],
       activeTerminalId: '',
       terminalOutput: {},
-      openTerminal: (id) => { if (id && get().agents.some(a => a.id === id && a.providerId === 'antigravity')) { get().openRuntime(id); get().setDockState('normal') } else set({ notice: SHELL_UNAVAILABLE }) },
+      openTerminal: (id) => { if (id && get().agents.some(a => a.id === id && isLiveAgent(a))) { get().openRuntime(id); get().setDockState('normal') } else set({ notice: SHELL_UNAVAILABLE }) },
       setActiveTerminalId: (activeTerminalId) => set((state) => state.activeTerminalId === activeTerminalId ? state : { activeTerminalId }),
       appendTerminalCommand: (command) => {
         if (command.trim().startsWith('git ')) {

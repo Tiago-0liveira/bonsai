@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/gorilla/websocket"
 )
@@ -224,7 +226,29 @@ func TestAgentBrowserFixture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	// A real Claude provider over the fake binary, so the browser can run several
+	// sessions of one profile. Token mode needs no login and seeding is off, so
+	// nothing reads or writes the real ~/.claude.
+	testdata, err := filepath.Abs(filepath.Join("..", "..", "providers", "claude", "testdata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(testdata, "fakeclaude.sh"), filepath.Join(bin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("FAKE_CLAUDE_FIXTURES", testdata)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	launcher := agents.NewForegroundLauncher(strings.NewReader(""), io.Discard, io.Discard)
+	runtime := s.agents.runtime
+	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)); err != nil {
+		t.Fatal(err)
+	}
+	service := &agents.AccountService{Store: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Launcher: launcher}
+	noSeed := false
+	if _, err := service.Setup(context.Background(), claude.ProviderID, "Work", agents.SetupOptions{Secret: strings.NewReader("sk-ant-oat01-FIXTUREFIXTUREFIXTUREFIXTUREFIXTURE\n"), Seed: &noSeed}); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("tcp", s.expectedHost)
 	if err != nil {
 		t.Fatal(err)

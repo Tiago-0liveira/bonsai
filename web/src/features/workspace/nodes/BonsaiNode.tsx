@@ -1,5 +1,6 @@
 import { Fragment, memo } from 'react'
 import { openGitHub } from '../../../api/git'
+import { isLiveAgent } from '../../../api/agents'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
@@ -442,7 +443,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                     type="button"
                     aria-label="Open terminal"
                     title="Open terminal"
-                    disabled={agent?.providerId !== 'antigravity'}
+                    disabled={!isLiveAgent(agent)}
                     onClick={() => openTerminal(data.entityId)}
                     className="bonsai-focus icon-btn-20 transition-colors hover:bg-panel-3 hover:text-text disabled:cursor-default disabled:opacity-30 disabled:hover:bg-panel-2 disabled:hover:text-muted"
                   >
@@ -486,11 +487,11 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
 
           {data.kind === 'agent' && (
             <>
-              <MenuItem unavailable={agent?.providerId !== 'antigravity'} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
+              <MenuItem unavailable={!isLiveAgent(agent)} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
               <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
               <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart</MenuItem>
-              <MenuItem unavailable={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
+              <MenuItem unavailable={!isLiveAgent(agent) || agent?.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
               {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
                 <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
               )}

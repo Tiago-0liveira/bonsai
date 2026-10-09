@@ -418,17 +418,21 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     if (path === '/api/agents/providers') {
       await route.fulfill({ json: [
         { id: 'antigravity', label: 'Antigravity', available: true },
-        { id: 'claude', label: 'Claude', available: false, unavailable_reason: { message: 'Not available yet' } },
+        { id: 'claude', label: 'Claude', available: true, version: '2.1.295' },
         { id: 'codex', label: 'Codex', available: false, unavailable_reason: { message: 'Not available yet' } },
       ] }); return
     }
     if (path === '/api/agents/accounts') {
-      await route.fulfill({ json: [{ id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' }] }); return
+      await route.fulfill({ json: [
+        { id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' },
+        { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] },
+      ] }); return
     }
     if (path === '/api/projects/bonsai/agents' && request.method() === 'POST') {
       const body = request.postDataJSON()
-      const session: AgentSummary = { id: 'fixture-session', project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: 'antigravity', profile_name: 'Fixture', name: 'Fixture', state: 'running', created_at: new Date().toISOString() }
-      if (!agentSessions.length) agentSessions.push(session)
+      const claude = body.account_id === 'claude-profile'
+      const session: AgentSummary = { id: claude ? `claude-session-${agentSessions.length + 1}` : 'fixture-session', project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: claude ? 'claude' : 'antigravity', profile_name: claude ? 'Work' : 'Fixture', name: body.name || (claude ? 'Work' : 'Fixture'), state: 'running', created_at: new Date().toISOString() }
+      if (!agentSessions.some(item => item.id === session.id)) agentSessions.push(session)
       socket.publishUpdate(projectSnapshot('bonsai', true), 'agents')
       await route.fulfill({ status: 202, json: session }); return
     }

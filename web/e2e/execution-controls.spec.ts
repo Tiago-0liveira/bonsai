@@ -9,7 +9,7 @@ test('palette and context menus disable unsupported execution while Git remains 
   await openConnectedApp(page)
   await page.keyboard.press('Control+k')
   const palette = page.locator('[cmdk-root]')
-  await expect(palette).toContainText('Antigravity profiles support interactive terminals')
+  await expect(palette).toContainText('Agent profiles support interactive terminals')
   for (const label of ['Run pnpm dev', 'Run pnpm test', 'Run cargo test', 'Run make test']) {
     const command = palette.getByRole('option', { name: label + ' unavailable', exact: true })
     await expect(command).toHaveAttribute('aria-disabled', 'true')

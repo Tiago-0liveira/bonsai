@@ -1,4 +1,5 @@
 import { localCommand } from '../../api/git'
+import { isLiveAgent } from '../../api/agents'
 import { useEffect } from 'react'
 import { Command } from 'cmdk'
 import { useNavigate } from '@tanstack/react-router'
@@ -70,7 +71,7 @@ export function CommandPalette() {
           />
           <span className="bonsai-kbd">Esc</span>
         </div>
-        <p className="px-3 py-2 font-mono text-[10px] text-muted-2">Antigravity profiles support interactive terminals. Generic shells are unavailable.</p>
+        <p className="px-3 py-2 font-mono text-[10px] text-muted-2">Agent profiles support interactive terminals. Generic shells are unavailable.</p>
         <Command.List className="max-h-[420px] overflow-y-auto p-2">
           <Command.Empty className="p-8 text-center text-[12px] text-muted">
             No command found.
@@ -82,8 +83,8 @@ export function CommandPalette() {
             <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
             <CommandItem icon={Bot} label="Start agent" onSelect={() => run(() => openAgent(selection.type === 'worktree' ? selection.id : agent?.worktreeId))} />
             <CommandItem icon={Play} label="Start process" onSelect={() => run(() => openProcess(selection.type === 'worktree' ? selection.id : agent?.worktreeId ?? process?.worktreeId))} />
-            <CommandItem icon={Square} label="Stop agent" disabled={agent?.providerId !== 'antigravity' || agent.state === 'finished'} onSelect={() => run(() => setAgentState(agent!.id, 'finished'))} />
-            <CommandItem icon={TerminalSquare} label="Open terminal" disabled={agent?.providerId !== 'antigravity'} onSelect={() => run(() => openTerminal(agent!.id))} />
+            <CommandItem icon={Square} label="Stop agent" disabled={!isLiveAgent(agent) || agent?.state === 'finished'} onSelect={() => run(() => setAgentState(agent!.id, 'finished'))} />
+            <CommandItem icon={TerminalSquare} label="Open terminal" disabled={!isLiveAgent(agent)} onSelect={() => run(() => openTerminal(agent!.id))} />
           </Command.Group>
 
           <Command.Group heading="Commands" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-muted-2">
