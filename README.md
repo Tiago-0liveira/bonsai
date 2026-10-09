@@ -50,18 +50,19 @@ Juggling git worktrees by hand is tedious: creating them, copying over untracked
 ### Script (recommended)
 
 ```sh
-./install.sh
+./install/install.sh
 ```
 
 Downloads the latest GitHub Release, verifies its SHA256 checksum, and installs it to `/usr/local/bin` (or `~/.local/bin` if that isn't writable). Override the location with `PREFIX`:
 
 ```sh
-PREFIX="$HOME/.local" ./install.sh
+PREFIX="$HOME/.local" ./install/install.sh
 ```
 
-On Windows, run `install.bat` (which calls `install.ps1`), or run `./install.ps1`
-from PowerShell. It installs to `%USERPROFILE%\go\bin` by default, honoring
-`PREFIX`, `GOBIN`, or `GOPATH` when set, and installs the `bcd.bat` helper.
+On Windows, run `install\install.bat` (which calls `install.ps1`), or run
+`./install/install.ps1` from PowerShell. It installs to `%USERPROFILE%\go\bin`
+by default, honoring `PREFIX`, `GOBIN`, or `GOPATH` when set, and installs the
+`bcd.bat` helper.
 Neither installer requires Go. Linux/macOS need `curl`, `tar`, and either
 `sha256sum` or `shasum`; Windows uses PowerShell 5.1 or later.
 

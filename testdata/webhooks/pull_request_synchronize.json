@@ -1,7 +1,0 @@
-{
-  "action": "synchronize",
-  "number": 42,
-  "pull_request": {"number": 42, "merged": false},
-  "repository": {"id": 123},
-  "installation": {"id": 456}
-}

@@ -18,7 +18,8 @@ archives:
     files:
       - LICENSE
       - README.md
-      - bcd.bat
+      - src: install/bcd.bat
+        strip_parent: true
 checksum:
   name_template: checksums.txt
   algorithm: sha256
