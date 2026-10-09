@@ -87,7 +87,7 @@ test('connection PR catalog reaches the GitHub page and matching worktree', asyn
   await expect(page.getByTestId('rf__node-wt-daemon')).toContainText('#23')
 
   await page.getByRole('link', { name: 'GitHub', exact: true }).click()
-  await expect(page.getByText('#23 fix(daemon): stabilize lifecycle cleanup').first()).toBeVisible()
+  await expect(page.getByRole('option', { name: /#23 fix\(daemon\): stabilize lifecycle cleanup/ })).toBeVisible()
   await page.getByRole('button', { name: 'Project', exact: true }).click()
   await page.getByRole('option', { name: 'sprout-lab', exact: true }).click()
   await expect(page.getByRole('main').getByText('No open pull requests.').first()).toBeVisible()

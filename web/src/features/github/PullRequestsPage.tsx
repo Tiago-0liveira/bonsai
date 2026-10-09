@@ -1,5 +1,6 @@
 import { usePullRequestCatalog } from './usePullRequestCatalog'
-import { PullRequestTabs } from './PullRequestTabs'
+import { PullRequestListPane } from './PullRequestListPane'
+import { buildPrList } from '../../lib/github/prList'
 import { loadPullRequest } from '../../api/git'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -13,7 +14,6 @@ import {
   GitMerge,
   GitPullRequest,
   MessageSquare,
-  Search,
   Send,
   X,
   XCircle,
@@ -69,31 +69,30 @@ function PrOperations({ pr }: { pr: PullRequest }) {
   )
 }
 
-export function PullRequestsPage() {
+export interface PullRequestsPageProps {
+  /** Selected PR id from the URL; falls back to local state, the inspector, then the first PR. */
+  selectedId?: string
+  onSelect?: (id: string) => void
+}
+
+export function PullRequestsPage({ selectedId: routeSelectedId, onSelect }: PullRequestsPageProps = {}) {
   const projects = useBonsaiStore((state) => state.projects)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const addReview = useBonsaiStore((state) => state.addPullRequestReview)
-  const { rows: pullRequests, tab, setTab, message, retry } = usePullRequestCatalog(activeProjectId)
+  const { rows: pullRequests, tab, setTab, openCount, closedCount, state, message, retry } = usePullRequestCatalog(activeProjectId)
   const project = projects.find((item) => item.id === activeProjectId)
-  const [query, setQuery] = useState('')
   const inspectedId = useBonsaiStore((state) => state.inspectedPullRequestId)
-  const [selectedId, setSelectedId] = useState(inspectedId ?? pullRequests[0]?.id ?? '')
+  const [localId, setLocalId] = useState<string>()
   const [descriptionOpen, setDescriptionOpen] = useState(true)
   const [commitsOpen, setCommitsOpen] = useState(false)
   const [review, setReview] = useState('')
-  const selected = pullRequests.find((pr) => pr.id === selectedId) ?? pullRequests[0]
+  const repository = project?.repository
+  const preferredId = routeSelectedId ?? localId ?? inspectedId ?? undefined
+  const firstId = useMemo(() => buildPrList(pullRequests, { repository }).ordered[0]?.id, [pullRequests, repository])
+  const selected = pullRequests.find((pr) => pr.id === preferredId) ?? pullRequests.find((pr) => pr.id === firstId)
+  const select = (id: string) => { setLocalId(id); onSelect?.(id) }
 
   useEffect(() => { if (selected?.id) void loadPullRequest(selected.id) }, [selected?.id, selected?.updatedAt])
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (!needle) return pullRequests
-    return pullRequests.filter((pr) =>
-      (pr.title + ' ' + pr.branch + ' ' + pr.base + ' ' + pr.number).toLowerCase().includes(needle),
-    )
-  }, [pullRequests, query])
-
-
 
   const checksPassed = selected?.checks.filter((check) => check.status === 'success').length ?? 0
 
@@ -104,55 +103,22 @@ export function PullRequestsPage() {
   }
 
   return (
-    <div className="island flex h-full min-h-0 overflow-hidden">
-      <aside className="flex w-[330px] shrink-0 flex-col border-r border-border-subtle">
-        <div className="island-title h-11 !px-3 !text-[13px] !normal-case !tracking-normal !font-semibold !text-text">
-          <GitPullRequest size={14} className="mr-2 text-muted" />
-          <span>Pull Requests</span>
-          <span className="island-count ml-auto">{pullRequests.length}</span>
-        </div>
-        <PullRequestTabs value={tab} onChange={value => { setTab(value); if (value === 'closed') retry() }} />
-        <div className="border-b border-border-subtle p-2">
-          <label className="flex h-8 items-center gap-2 rounded-[7px] border border-border bg-well px-2.5 focus-within:border-accent/55">
-            <Search size={11} className="text-muted-2" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-muted-2" />
-          </label>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto">
-          {!filtered.length && <p className="p-3 text-[10px] text-muted">{message}</p>}
-          {filtered.map((pr) => {
-            const success = pr.checks.filter((check) => check.status === 'success').length
-            return (
-              <button
-                key={pr.id}
-                type="button"
-                onClick={() => setSelectedId(pr.id)}
-                className={
-                  'w-full border-b border-border-subtle px-3 py-3 text-left transition-colors ' +
-                  (pr.id === selected?.id ? 'bg-accent/9' : 'hover:bg-panel-2')
-                }
-              >
-                <div className="flex items-start gap-2">
-                  <GitPullRequest size={12} className={pr.status === 'Open' ? 'mt-0.5 text-accent' : pr.status === 'Merged' ? 'mt-0.5 text-ok' : pr.status === 'Draft' ? 'mt-0.5 text-muted' : 'mt-0.5 text-muted-2'} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[12px] font-medium leading-4">#{pr.number} {pr.title}</span>
-                    <span className="mt-1 block truncate font-mono text-[10px] text-muted-2">{pr.branch} → {pr.base}</span>
-                    <span className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-muted-2">
-                      <span>{pr.status}</span>
-                      <span>·</span>
-                      <span>{success}/{pr.checks.length} checks</span>
-                      <span>·</span>
-                      <span>{pr.updatedAt}</span>
-                    </span>
-                  </span>
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      </aside>
+    <div className="flex h-full min-h-0 gap-3">
+      <PullRequestListPane
+        tab={tab}
+        onTabChange={setTab}
+        openCount={openCount}
+        closedCount={closedCount}
+        rows={pullRequests}
+        state={state}
+        message={message}
+        onRetry={retry}
+        repository={repository}
+        selectedId={selected?.id}
+        onSelect={select}
+      />
 
-      {selected ? <main className="min-w-0 flex-1 overflow-auto">
+      {selected ? <main className="island min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-[920px] px-6 py-5">
           <header className="border-b border-border-subtle pb-4">
             <div className="flex items-start gap-3">
@@ -250,7 +216,7 @@ export function PullRequestsPage() {
             </div>
           </section>
         </div>
-      </main> : <div className="grid flex-1 place-items-center text-[11px] text-muted">{message}</div>}
+      </main> : <div className="island grid flex-1 place-items-center text-[11px] text-muted">{message}</div>}
     </div>
   )
 }

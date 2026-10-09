@@ -81,7 +81,7 @@ test('main route search and review drafts survive dock toggles', async ({ page }
   await openConnectedApp(page)
   await page.getByRole('link', { name: 'GitHub', exact: true }).click()
   const main = page.getByRole('main')
-  const search = main.getByPlaceholder('Search pull requests')
+  const search = main.getByPlaceholder('Title, branch or author')
   const review = main.getByPlaceholder('Leave a comment or review…')
   await review.fill('Unsaved review draft')
   await search.fill('daemon')
