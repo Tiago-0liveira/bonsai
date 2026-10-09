@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Bot, Gauge, Shield, Sparkles, X } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { PROVIDER_LABELS, agentAccounts, agentProviders, type AgentAccount, type AgentCapability } from '../../api/agents'
+import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
+import { ModelCombobox } from '../../components/ui/ModelCombobox'
+import { ClaudeLogo } from '../../components/ui/ClaudeLogo'
 import type { AgentProviderId } from '../../types'
 
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
@@ -50,6 +52,8 @@ function StartAgentForm() {
   const [accountId, setAccountId] = useState('')
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
+  const [models, setModels] = useState<AgentModel[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
   const [fullAccess, setFullAccess] = useState(false)
   const [permissionMode, setPermissionMode] = useState('')
   const [effort, setEffort] = useState('')
@@ -78,6 +82,16 @@ function StartAgentForm() {
       .finally(() => { if (!disposed) setLoading(false) })
     return () => { disposed = true }
   }, [])
+  // Suggestions follow the provider and profile; failures just leave a plain input.
+  const modelProvider = isLaunchable(providerId) ? providerId : ''
+  useEffect(() => {
+    setModels([])
+    if (!modelProvider || !accountId) return
+    let disposed = false
+    setModelsLoading(true)
+    agentModels(modelProvider, accountId).then(list => { if (!disposed) setModels(list) }).catch(() => {}).finally(() => { if (!disposed) setModelsLoading(false) })
+    return () => { disposed = true }
+  }, [modelProvider, accountId])
   const selected = providers.find(item => item.id === providerId)
   const launchable = isLaunchable(providerId) ? providerId : undefined
   const providerLabel = selected?.label ?? ''
@@ -180,7 +194,7 @@ function StartAgentForm() {
                     onClick={() => selectProvider(item.id)}
                     className={'bonsai-focus flex h-[30px] items-center justify-center gap-2 rounded-[7px] text-[12px] transition-colors disabled:opacity-40 ' + (active ? 'bg-panel-3 text-text' : 'text-muted hover:text-text')}
                   >
-                    <Sparkles size={13} className={active ? 'text-accent' : 'text-muted'} />
+                    {item.id === 'claude' ? <ClaudeLogo size={13} /> : <Sparkles size={13} className={active ? 'text-accent' : 'text-muted'} />}
                     <span>{item.label}</span>
                     {connected ? (
                       <span className="flex items-center gap-1 font-mono text-[10px] text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent-solid" />connected</span>
@@ -201,7 +215,7 @@ function StartAgentForm() {
             </label>
             <label className="block">
               <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Model</span>
-              <input aria-label="Agent model" disabled={pending} value={model} onChange={event => setModel(event.target.value)} placeholder={isClaude ? 'sonnet, opus, haiku, fable or a full model ID' : 'Use profile default'} className="bonsai-focus h-8 w-full rounded-[7px] border border-border bg-well px-2.5 text-[12px] outline-none placeholder:text-muted-2 focus:border-accent/55" />
+              <ModelCombobox ariaLabel="Agent model" disabled={pending} loading={modelsLoading} value={model} onChange={setModel} suggestions={models} placeholder={isClaude ? 'sonnet, opus, haiku, fable or a full model ID' : 'Use profile default'} />
             </label>
           </div>
           {account && (account.auth_mode || account.identity || account.model || account.permission_mode || account.effort || account.warnings?.length) && (

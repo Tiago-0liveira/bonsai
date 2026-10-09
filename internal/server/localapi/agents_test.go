@@ -239,6 +239,9 @@ func TestAgentBrowserFixture(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("FAKE_CLAUDE_FIXTURES", testdata)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The fixture must never reach the network: model and usage lookups go to a
+	// closed local port and fall back to the static aliases.
+	claude.ModelsEndpoint, claude.UsageEndpoint = "http://127.0.0.1:1/v1/models", "http://127.0.0.1:1/usage"
 	launcher := agents.NewForegroundLauncher(strings.NewReader(""), io.Discard, io.Discard)
 	runtime := s.agents.runtime
 	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)); err != nil {
@@ -522,5 +525,58 @@ func TestAgentStartLaunchOptions(t *testing.T) {
 	// The idempotency fingerprint covers the new fields, and an accepted key stays reserved.
 	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "ok", body(`,"effort":"high"`)); w.Code != 409 {
 		t.Fatalf("reused key with a different effort: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// modelTestProvider lists models and records which account it was asked about.
+type modelTestProvider struct {
+	describedTestProvider
+	asked atomic.Value
+}
+
+func (p *modelTestProvider) Models(_ context.Context, account agents.Account) ([]agents.ModelOption, error) {
+	p.asked.Store(account.ID)
+	return []agents.ModelOption{{ID: "alpha", Label: "Alpha", Source: "alias"}, {ID: "claude-x-1", Label: "X 1", Description: "claude-x-1", Source: "api"}}, nil
+}
+
+func TestAgentModels(t *testing.T) {
+	s, agyAccount, _ := terminalTestServer(t)
+	lister := &modelTestProvider{describedTestProvider: describedTestProvider{id: "lister"}}
+	if err := s.agents.runtime.Registry.Register(lister); err != nil {
+		t.Fatal(err)
+	}
+	listerID, _ := agents.NewAccountID()
+	if err := s.agents.runtime.Accounts.Create(agents.Account{ID: listerID, Provider: "lister", Name: "L"}); err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) *httptest.ResponseRecorder {
+		return agentAPIRequest(t, s, "GET", path, "", "")
+	}
+
+	w := get("/api/agents/providers/lister/models?account_id=" + string(listerID))
+	var models []agents.ModelOption
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &models) != nil || len(models) != 2 || models[0].ID != "alpha" || models[1].Source != "api" {
+		t.Fatalf("models: %d %s", w.Code, w.Body.String())
+	}
+	if lister.asked.Load() != listerID {
+		t.Fatalf("asked about %v", lister.asked.Load())
+	}
+	// Without a profile the provider is still asked, for its static suggestions.
+	if w := get("/api/agents/providers/lister/models"); w.Code != 200 || !strings.Contains(w.Body.String(), "alpha") {
+		t.Fatalf("no account: %d %s", w.Code, w.Body.String())
+	}
+	// A provider that cannot list gets an empty list, not an error.
+	if w := get("/api/agents/providers/antigravity/models"); w.Code != 200 || strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatalf("antigravity: %d %s", w.Code, w.Body.String())
+	}
+	for name, path := range map[string]string{
+		"unknown provider":     "/api/agents/providers/nope/models",
+		"unknown account":      "/api/agents/providers/lister/models?account_id=acct_missing",
+		"other provider's":     "/api/agents/providers/lister/models?account_id=" + agyAccount,
+		"malformed account id": "/api/agents/providers/lister/models?account_id=../x",
+	} {
+		if w := get(path); w.Code != 404 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
 	}
 }

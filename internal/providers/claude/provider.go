@@ -71,6 +71,10 @@ type Provider struct {
 	usageClient   *http.Client
 	usageOS       string
 
+	modelsEndpoint string
+	modelsMu       sync.Mutex
+	modelsCache    map[agents.AccountID]modelsEntry
+
 	usageMu       sync.Mutex
 	usageFailures map[agents.AccountID]usageFailure
 
@@ -100,6 +104,7 @@ func New(accounts agents.AccountStore, sessions agents.SessionStore, launcher ag
 		hostHome:       os.UserHomeDir,
 		statuses:       make(map[agents.AccountID]statusEntry),
 		usageEndpoint:  UsageEndpoint,
+		modelsEndpoint: ModelsEndpoint,
 	}
 }
 

@@ -3,9 +3,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AgentAccount, AgentCapability } from '../../api/agents'
 import { StartAgentDialog } from './StartAgentDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { agentAccounts, agentProviders } from '../../api/agents'
+import { agentAccounts, agentModels, agentProviders } from '../../api/agents'
 import { worktrees } from '../../test/fixtures/worktrees'
-vi.mock('../../api/agents', async importOriginal => ({ ...await importOriginal<object>(), agentAccounts: vi.fn(), agentProviders: vi.fn() }))
+vi.mock('../../api/agents', async importOriginal => ({ ...await importOriginal<object>(), agentAccounts: vi.fn(), agentProviders: vi.fn(), agentModels: vi.fn() }))
 const create = useBonsaiStore.getState().createAgent
 const NOT_YET = { message: 'Not available yet' }
 const providers = (claude: Partial<AgentCapability> = { available: true }): AgentCapability[] => [
@@ -16,6 +16,7 @@ const providers = (claude: Partial<AgentCapability> = { available: true }): Agen
 const claudeProfile: AgentAccount = { id: 'claude-one', name: 'Work', provider: 'claude', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] }
 beforeEach(() => {
   localStorage.clear()
+  vi.mocked(agentModels).mockResolvedValue([])
   useBonsaiStore.setState({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktrees[0].id, activeProjectId: worktrees[0].projectId, worktrees, createAgent: vi.fn().mockResolvedValue(undefined) })
   vi.mocked(agentProviders).mockResolvedValue(providers({ available: false, unavailable_reason: NOT_YET }))
   vi.mocked(agentAccounts).mockResolvedValue([{ id: 'profile-one', name: 'One', provider: 'antigravity' }])
@@ -207,4 +208,38 @@ it('clears a stale error and shows profile defaults when switching provider', as
   fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
   expect(screen.queryByRole('alert')).toBeNull()
   expect(screen.getByTestId('profile-details')).toHaveTextContent('profile defaults: opus · plan · high effort')
+})
+
+it('suggests the profile\'s models, still accepts typed text, and ignores a failed lookup', async () => {
+  vi.mocked(agentProviders).mockResolvedValue(providers())
+  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
+  vi.mocked(agentModels).mockResolvedValue([
+    { id: 'opus', label: 'Opus', description: 'Latest Opus', source: 'alias' },
+    { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', description: 'claude-sonnet-5-5', source: 'api' },
+  ])
+  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
+  useBonsaiStore.setState({ createAgent: submit })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(agentModels).toHaveBeenCalledWith('claude', 'claude-one'))
+  const input = screen.getByLabelText('Agent model')
+  fireEvent.focus(input)
+  expect(await screen.findAllByRole('option')).toHaveLength(2)
+  fireEvent.click(screen.getByRole('option', { name: /Claude Sonnet 5.5/ }))
+  expect(input).toHaveValue('claude-sonnet-5-5')
+  fireEvent.change(input, { target: { value: 'claude-future-9' } })
+  expect(screen.queryAllByRole('option')).toHaveLength(0)
+  fireEvent.submit(screen.getByRole('dialog'))
+  await screen.findByRole('alert')
+  expect(submit.mock.calls[0][0].model).toBe('claude-future-9')
+})
+
+it('falls back to a plain input when models cannot be loaded', async () => {
+  vi.mocked(agentModels).mockRejectedValue(new Error('offline'))
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+  await waitFor(() => expect(agentModels).toHaveBeenCalledWith('antigravity', 'profile-one'))
+  fireEvent.focus(screen.getByLabelText('Agent model'))
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'test-model' } })
+  expect(screen.queryAllByRole('option')).toHaveLength(0)
+  expect(screen.getByLabelText('Agent model')).toHaveValue('test-model')
 })

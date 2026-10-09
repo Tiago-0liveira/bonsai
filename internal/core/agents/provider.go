@@ -127,6 +127,22 @@ type AccountRemover interface {
 	RemoveAccount(context.Context, Account) error
 }
 
+// ModelOption is one model a provider can launch with. Source is "alias" for a
+// provider-defined shortcut and "api" for a model the provider's service listed.
+type ModelOption struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Source      string `json:"source"`
+}
+
+// ModelLister suggests models for the launch dialog. Suggestions are advice only:
+// any model the provider accepts can still be typed. Implementations are best
+// effort and should fall back to a static list instead of failing.
+type ModelLister interface {
+	Models(context.Context, Account) ([]ModelOption, error)
+}
+
 type UsagePolicy interface {
 	UsageTTL() time.Duration
 }

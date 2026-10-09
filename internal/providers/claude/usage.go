@@ -147,18 +147,38 @@ func (p *Provider) goos() string {
 }
 
 func (p *Provider) fetchUsage(ctx context.Context, token string) ([]byte, error) {
+	body, status, err := p.getJSON(ctx, p.usageEndpoint, token)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case status == http.StatusOK:
+		return body, nil
+	case status == http.StatusForbidden:
+		return nil, unsupported("this login cannot read usage")
+	case status == http.StatusUnauthorized:
+		return nil, errors.New("login rejected; start a session to refresh it")
+	default:
+		return nil, fmt.Errorf("usage request failed (HTTP %d)", status)
+	}
+}
+
+// getJSON is the one place Bonsai sends a Claude bearer token over HTTP: GET
+// only, https or loopback only, no redirects, bounded body, and errors that
+// carry neither the token nor the response. The body is returned only for 200.
+func (p *Provider) getJSON(ctx context.Context, endpoint, token string) (body []byte, status int, err error) {
 	ctx, cancel := context.WithTimeout(ctx, usageTimeout)
 	defer cancel()
-	endpoint := p.usageEndpoint
 	if !safeUsageEndpoint(endpoint) {
-		return nil, errors.New("usage endpoint must use https")
+		return nil, 0, errors.New("endpoint must use https")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, errors.New("usage request failed")
+		return nil, 0, errors.New("request failed")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("anthropic-beta", usageBeta)
+	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Accept", "application/json")
 	client := p.usageClient
 	if client == nil {
@@ -167,25 +187,19 @@ func (p *Provider) fetchUsage(ctx context.Context, token string) ([]byte, error)
 	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("usage request failed: %w", ctx.Err())
+			return nil, 0, fmt.Errorf("usage request failed: %w", ctx.Err())
 		}
-		return nil, errors.New("usage request failed")
+		return nil, 0, errors.New("usage request failed")
 	}
 	defer resp.Body.Close()
-	switch {
-	case resp.StatusCode == http.StatusOK:
-	case resp.StatusCode == http.StatusForbidden:
-		return nil, unsupported("this login cannot read usage")
-	case resp.StatusCode == http.StatusUnauthorized:
-		return nil, errors.New("login rejected; start a session to refresh it")
-	default:
-		return nil, fmt.Errorf("usage request failed (HTTP %d)", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUsageBody))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, maxUsageBody))
 	if err != nil {
-		return nil, errors.New("usage request failed")
+		return nil, 0, errors.New("usage request failed")
 	}
-	return body, nil
+	return body, resp.StatusCode, nil
 }
 
 // noRedirectClient never follows redirects: the bearer token must only ever go

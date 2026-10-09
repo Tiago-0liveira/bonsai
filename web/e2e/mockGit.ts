@@ -422,6 +422,14 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
         { id: 'codex', label: 'Codex', available: false, unavailable_reason: { message: 'Not available yet' } },
       ] }); return
     }
+    if (path === '/api/agents/providers/claude/models') {
+      await route.fulfill({ json: [
+        { id: 'opus', label: 'Opus', description: 'Latest Opus', source: 'alias' },
+        { id: 'sonnet', label: 'Sonnet', description: 'Latest Sonnet', source: 'alias' },
+        { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', description: 'claude-sonnet-5-5', source: 'api' },
+      ] }); return
+    }
+    if (path.startsWith('/api/agents/providers/') && path.endsWith('/models')) { await route.fulfill({ json: [] }); return }
     if (path === '/api/agents/accounts') {
       await route.fulfill({ json: [
         { id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' },

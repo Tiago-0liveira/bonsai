@@ -132,3 +132,5 @@ func dirEntries(t *testing.T, dir string) []string {
 	}
 	return names
 }
+
+func removeFile(path string) error { return os.Remove(path) }

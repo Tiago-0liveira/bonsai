@@ -1,0 +1,14 @@
+{
+  "data": [
+    {"type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5", "created_at": "2026-09-01T00:00:00Z"},
+    {"type": "model", "id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5", "created_at": "2026-09-01T00:00:00Z"},
+    {"type": "model", "id": "claude-haiku-4-5-20251001", "display_name": "", "created_at": "2025-10-01T00:00:00Z"},
+    {"type": "model", "id": "claude-sonnet-5-5", "display_name": "Duplicate", "created_at": "2026-09-01T00:00:00Z"},
+    {"type": "model", "id": "not-a-claude-model", "display_name": "Other"},
+    {"type": "model", "id": "claude-bad id", "display_name": "Spaces"},
+    {"type": "model", "id": "", "display_name": "Empty"}
+  ],
+  "has_more": false,
+  "first_id": "claude-opus-5-5",
+  "last_id": "claude-haiku-4-5-20251001"
+}

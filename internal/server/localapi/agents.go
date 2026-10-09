@@ -45,6 +45,7 @@ type agentMutation struct {
 func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/providers", s.agentProviders)
 	mux.HandleFunc("GET /api/agents/accounts", s.agentAccounts)
+	mux.HandleFunc("GET /api/agents/providers/{provider}/models", s.agentModels)
 	mux.HandleFunc("GET /api/projects/{projectId}/agents", s.listAgents)
 	mux.HandleFunc("POST /api/projects/{projectId}/agents", s.startAgent)
 	mux.HandleFunc("DELETE /api/projects/{projectId}/agents/{sessionId}", s.stopAgent)
@@ -171,6 +172,36 @@ func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 			item["warnings"] = info.Warnings
 		}
 		out = append(out, item)
+	}
+	writeJSON(w, 200, out)
+}
+
+// agentModels suggests models for the launch dialog. Providers that cannot list
+// models return an empty list, and the dialog falls back to a plain input.
+func (s *Server) agentModels(w http.ResponseWriter, r *http.Request) {
+	registry := s.agentRegistry()
+	if registry == nil {
+		writeAPIError(w, 503, "agents_unavailable", "Agent runtime unavailable")
+		return
+	}
+	provider, err := registry.Get(agents.ProviderID(r.PathValue("provider")))
+	if err != nil {
+		writeAPIError(w, 404, "not_found", "Unknown provider")
+		return
+	}
+	out := []agents.ModelOption{}
+	if lister, ok := provider.(agents.ModelLister); ok {
+		var account agents.Account
+		if id := r.URL.Query().Get("account_id"); id != "" {
+			account, err = s.agents.runtime.Accounts.Get(agents.AccountID(id))
+			if err != nil || account.Provider != provider.ID() {
+				writeAPIError(w, 404, "not_found", "Profile not found")
+				return
+			}
+		}
+		if models, err := lister.Models(r.Context(), account); err == nil && models != nil {
+			out = models
+		}
 	}
 	writeJSON(w, 200, out)
 }

@@ -28,6 +28,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 export const agentProviders = () => request<AgentCapability[]>('/api/agents/providers')
+export interface AgentModel { id: string; label: string; description?: string; source: 'alias' | 'api' }
+/** Model suggestions for the launch dialog; empty when the provider cannot list models. */
+export const agentModels = (provider: string, accountId?: string) =>
+  request<AgentModel[]>(`/api/agents/providers/${encodeURIComponent(provider)}/models${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`)
 export const agentAccounts = () => request<AgentAccount[]>('/api/agents/accounts')
 export const startAgent = (project: string, body: { worktree_id: string; account_id: string; name?: string; model?: string; prompt?: string; full_access?: boolean; permission_mode?: string; effort?: string; cols: number; rows: number }, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(body) })
 export const stopAgent = (project: string, id: string, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'Idempotency-Key': key } })
