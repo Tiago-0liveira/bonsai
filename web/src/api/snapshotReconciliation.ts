@@ -1,6 +1,6 @@
 import { processDeleted } from '../stores/processProjection'
 import { mapAgent } from './agents'
-import type { CiStatus, Process, ProcessLifecycleStatus, Project, PullRequest, SyncFreshness, Worktree } from '../types'
+import type { CiStatus, Process, ProcessLifecycleStatus, Project, PullRequest, PullRequestCheck, SyncFreshness, Worktree } from '../types'
 import type { Snapshot, Repository, RemotePR, RemoteCheck, WireFreshness, ProcessSummary, WorktreeProjection } from './git'
 import type { BonsaiState } from '../stores/bonsai'
 import { changedPatch, replaceScope, shareEqual } from '../stores/reconciliation'
@@ -49,6 +49,13 @@ export function pullRequest(repo: string, p: RemotePR): PullRequest {
     // GitHub reports mergeability lazily: anything but an explicit answer stays unknown.
     mergeable: p.mergeable === 'mergeable' ? true : p.mergeable === 'conflicting' ? false : undefined,
     checks: [],
+    // Only the detail response carries these; leaving the keys out keeps a
+    // list refresh from erasing what the detail already loaded.
+    ...(p.changed_files !== undefined && { totals: { additions: p.additions ?? 0, deletions: p.deletions ?? 0, changedFiles: p.changed_files } }),
+    ...(p.review_summary !== undefined && {
+      reviews: { requested: p.requested_reviewers ?? [], approvals: p.review_summary.approvals, changesRequested: p.review_summary.changes_requested },
+    }),
+    ...(typeof p.behind_by === 'number' && { behindBy: p.behind_by }),
     commits: (p.commits ?? []).map(c => ({ sha: c.sha, message: c.message, author: c.author, time: c.created_at })),
     conversation: [
       ...(p.comments ?? []).map(c => ({ author: c.author, body: c.body, time: c.created_at, kind: 'comment' as const })),
@@ -117,6 +124,16 @@ export function mapProcess(value: ProcessSummary): Process {
   }
 }
 
+export function mapCheck(check: RemoteCheck): PullRequestCheck {
+  return {
+    id: check.id,
+    name: check.name,
+    status: checkStatus(check),
+    ...(check.started_at && { startedAt: check.started_at }),
+    ...(check.completed_at && { completedAt: check.completed_at }),
+  }
+}
+
 export function checkStatus(check: RemoteCheck): 'success' | 'running' | 'failed' {
   if (check.status !== 'completed') return 'running'
   return ['success', 'neutral', 'skipped'].includes(check.conclusion) ? 'success' : 'failed'
@@ -147,7 +164,7 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
     const previous = state.pullRequests.find(v => v.id === mapped.id)
     const projection = Object.values(snapshot.worktree_state ?? {}).find(v => v.pull_request?.number === p.number)
     if (projection?.ci?.checks) {
-      mapped.checks = projection.ci.checks.map(c => ({ id: c.id, name: c.name, status: checkStatus(c) }))
+      mapped.checks = projection.ci.checks.map(mapCheck)
     } else if (previous?.updatedAt === mapped.updatedAt) {
       mapped.checks = previous.checks
     }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { create } from 'zustand'
-import { fetchClosedPullRequests } from '../../api/git'
+import { fetchClosedPullRequests, requestProjectRefresh } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { PullRequest } from '../../types'
 import { useProjectPullRequests } from '../../stores/projectSelectors'
@@ -36,5 +36,16 @@ export function usePullRequestCatalog(projectId: string) {
     : (closed?.rows ?? EMPTY_PULL_REQUESTS).map(pr => all.find(detail => detail.id === pr.id && (detail.status === 'Closed' || detail.status === 'Merged')) ?? pr), [tab, all, closed?.rows])
   const loading = tab === 'closed' ? !closed || closed.loading : !freshness || freshness.state === 'loading'
   const error = tab === 'closed' ? closed?.error : freshness?.error?.message
-  return { tab, setTab, rows, message: error ?? (loading ? 'Loading pull requests…' : `No ${tab} pull requests.`), retry: () => void loadClosed(key, projectId) }
+  const openCount = useMemo(() => all.filter(pr => pr.status === 'Open' || pr.status === 'Draft').length, [all])
+  const retry = () => {
+    if (tab === 'closed') void loadClosed(key, projectId)
+    else void requestProjectRefresh(projectId, 'provider').catch(() => undefined)
+  }
+  return {
+    tab, setTab, rows, openCount,
+    closedCount: closed?.loadedAt ? closed.rows.length : undefined,
+    state: error ? 'error' as const : loading ? 'loading' as const : 'ready' as const,
+    message: error ?? (loading ? 'Loading pull requests…' : `No ${tab} pull requests.`),
+    retry,
+  }
 }

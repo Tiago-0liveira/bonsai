@@ -4,10 +4,11 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
 } from '@tanstack/react-router'
 import { AppShell } from '../components/layout/AppShell'
 import { FilesPage } from '../features/files/FilesPage'
-import { PullRequestsPage } from '../features/github/PullRequestsPage'
+import { validatePullRequestsSearch } from '../features/github/pullRequestsSearch'
 import { LogsPage } from '../features/logs/LogsPage'
 import { WorkspacePage } from '../features/workspace/WorkspacePage'
 
@@ -22,8 +23,10 @@ const rootRoute = createRootRoute({
 const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <WorkspacePage /> })
 const worktreesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/worktrees', component: () => <WorkspacePage focus="worktrees" /> })
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/agents', component: () => <WorkspacePage focus="agents" /> })
-const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: '/github', component: PullRequestsPage })
-const prsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pull-requests', component: PullRequestsPage })
+// Loaded on demand so the markdown libraries stay out of the main bundle.
+const PullRequestsRoute = lazyRouteComponent(() => import('../features/github/PullRequestsRoute'), 'PullRequestsRoute')
+const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: '/github', component: PullRequestsRoute, validateSearch: validatePullRequestsSearch })
+const prsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pull-requests', component: PullRequestsRoute, validateSearch: validatePullRequestsSearch })
 const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/files', component: FilesPage })
 const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsPage })
 

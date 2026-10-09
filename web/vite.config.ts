@@ -65,5 +65,15 @@ export default defineConfig(({ mode }) => ({
     globals: true,
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.test.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**'],
+      reporter: ['text-summary', 'html'],
+      // Pure logic is held to full coverage; enforced by `pnpm test:coverage`.
+      thresholds: {
+        'src/lib/github/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
+      },
+    },
   },
 }))
