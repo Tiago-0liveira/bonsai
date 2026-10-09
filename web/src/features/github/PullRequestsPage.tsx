@@ -27,6 +27,7 @@ export function PullRequestsPage({ selectedId: routeSelectedId, onSelect, onShow
   const preferredId = routeSelectedId ?? localId ?? inspectedId ?? undefined
   const orderedIds = useMemo(() => buildPrList(pullRequests, { repository }).ordered.map((pr) => pr.id), [pullRequests, repository])
   const selected = pullRequests.find((pr) => pr.id === preferredId) ?? pullRequests.find((pr) => pr.id === orderedIds[0])
+  const [visibleIds, setVisibleIds] = useState<readonly string[]>()
   const select = (id: string) => { setLocalId(id); onSelect?.(id) }
   const showOnCanvas = (worktreeId: string) => {
     setSelection({ type: 'worktree', id: worktreeId })
@@ -49,6 +50,7 @@ export function PullRequestsPage({ selectedId: routeSelectedId, onSelect, onShow
         repository={repository}
         selectedId={selected?.id}
         onSelect={select}
+        onVisibleChange={setVisibleIds}
       />
 
       {selected ? (
@@ -56,7 +58,7 @@ export function PullRequestsPage({ selectedId: routeSelectedId, onSelect, onShow
           key={selected.id}
           pr={selected}
           pullRequests={pullRequests}
-          orderedIds={orderedIds}
+          orderedIds={visibleIds ?? orderedIds}
           repository={repository}
           projectId={activeProjectId}
           worktrees={worktrees}

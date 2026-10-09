@@ -26,7 +26,7 @@ export function MergeCard({ pr, parent }: { pr: PullRequest; parent?: PullReques
   const action = 'bonsai-focus inline-flex h-[30px] items-center justify-center gap-[7px] px-3 text-[12.5px]'
 
   return (
-    <section aria-label="Merge" className={`overflow-hidden rounded-xl border bg-panel-2 ${BORDER[merge.tone]}`}>
+    <section aria-label="Merge" className={`flex-none overflow-hidden rounded-xl border bg-panel-2 ${BORDER[merge.tone]}`}>
       <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[13px] font-semibold text-text">
         <TitleIcon size={15} className={TONE_TEXT[merge.tone]} aria-hidden="true" />
         {merge.title}

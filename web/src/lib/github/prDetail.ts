@@ -15,14 +15,34 @@ export function authorInitials(author: string | null | undefined): string {
   return letters.toUpperCase()
 }
 
+/**
+ * The list response carries no commits, files or totals. A real PR always has
+ * a commit, so none of the three means the detail has not arrived yet.
+ */
+export function isDetailLoaded(pr: Pick<PullRequest, 'totals' | 'files' | 'commits'>): boolean {
+  return pr.totals !== undefined || pr.files.length > 0 || pr.commits.length > 0
+}
+
 export interface ReviewSummary {
   /** Entries of kind `review`. */
   reviews: number
-  /** Distinct reviewers; the backend does not say which reviews approve. */
+  /** Standing approvals when the provider summary is loaded, else distinct reviewers. */
   approvals: number
+  changesRequested: number
+  /** Reviewers whose review is still awaited. */
+  requested: string[]
+  /** False when `approvals` is a guess from the conversation. */
+  exact: boolean
 }
 
-export function summarizeReviews(conversation: PullRequest['conversation'] | null | undefined): ReviewSummary {
+/**
+ * Prefers the provider's verdict summary; without it the conversation only
+ * says who reviewed, not what they decided, so approvals are an upper bound.
+ */
+export function summarizeReviews(
+  conversation: PullRequest['conversation'] | null | undefined,
+  verdicts?: PullRequest['reviews'],
+): ReviewSummary {
   const reviewers = new Set<string>()
   let reviews = 0
   for (const entry of conversation ?? []) {
@@ -30,7 +50,8 @@ export function summarizeReviews(conversation: PullRequest['conversation'] | nul
     reviews++
     reviewers.add(entry.author)
   }
-  return { reviews, approvals: reviewers.size }
+  if (!verdicts) return { reviews, approvals: reviewers.size, changesRequested: 0, requested: [], exact: false }
+  return { reviews, approvals: verdicts.approvals, changesRequested: verdicts.changesRequested, requested: verdicts.requested, exact: true }
 }
 
 export interface ChangeTotals {
@@ -41,7 +62,8 @@ export interface ChangeTotals {
   additionShare: number
 }
 
-export function summarizeChanges(files: PullRequest['files'] | null | undefined): ChangeTotals {
+/** Provider totals win: they stay right when the file list is partial or not loaded yet. */
+export function summarizeChanges(files: PullRequest['files'] | null | undefined, totals?: PullRequest['totals']): ChangeTotals {
   let additions = 0
   let deletions = 0
   const list = files ?? []
@@ -49,8 +71,10 @@ export function summarizeChanges(files: PullRequest['files'] | null | undefined)
     additions += file.additions || 0
     deletions += file.deletions || 0
   }
+  let count = list.length
+  if (totals) ({ additions, deletions, changedFiles: count } = totals)
   const lines = additions + deletions
-  return { additions, deletions, files: list.length, additionShare: lines ? additions / lines : 0 }
+  return { additions, deletions, files: count, additionShare: lines ? additions / lines : 0 }
 }
 
 export interface MergeRequirement {
@@ -70,7 +94,7 @@ export interface MergeState {
 }
 
 export interface MergeInput {
-  pr: Pick<PullRequest, 'status' | 'base' | 'mergeable' | 'checks'>
+  pr: Pick<PullRequest, 'status' | 'base' | 'mergeable' | 'checks'> & Partial<Pick<PullRequest, 'behindBy' | 'reviews'>>
   /** The PR this one is stacked on, when it is. */
   parent?: Pick<PullRequest, 'number'>
 }
@@ -93,6 +117,14 @@ export function describeMerge({ pr, parent }: MergeInput): MergeState {
   else if (checks.running) requirements.push({ key: 'checks', tone: 'ok', pending: true, text: `${checks.running} of ${checks.total} ${checks.running === 1 ? 'check' : 'checks'} still running` })
   else requirements.push({ key: 'checks', tone: 'ok', text: `All ${checks.total} ${checks.total === 1 ? 'check' : 'checks'} passed` })
 
+  if (pr.reviews?.changesRequested) {
+    requirements.push({ key: 'reviews', tone: 'danger', text: `${pr.reviews.changesRequested} ${pr.reviews.changesRequested === 1 ? 'reviewer requests' : 'reviewers request'} changes` })
+  }
+
+  if (pr.behindBy && pr.behindBy > 0) {
+    requirements.push({ key: 'behind', tone: 'warn', text: `Behind ${pr.base} by ${pr.behindBy} ${pr.behindBy === 1 ? 'commit' : 'commits'}` })
+  }
+
   if (parent) requirements.push({ key: 'stack', tone: 'warn', text: `Base is #${parent.number}, not ${pr.base} · merges into the stack` })
 
   const blocker = pr.mergeable === true ? undefined : pr.mergeable === false ? `Conflicts with ${pr.base}` : 'Mergeability unknown'
@@ -103,6 +135,7 @@ export function describeMerge({ pr, parent }: MergeInput): MergeState {
   else if (pr.status === 'Closed') [title, tone] = ['Closed', 'muted']
   else if (pr.status === 'Draft') [title, tone] = ['Draft · not ready', 'warn']
   else if (pr.mergeable === false) [title, tone] = ['Cannot merge', 'danger']
+  else if (pr.reviews?.changesRequested) [title, tone] = ['Changes requested', 'danger']
   else if (checks.failed) [title, tone] = ['Checks failing', 'danger']
   else if (checks.running) [title, tone] = ['Waiting on checks', 'warn']
   else [title, tone] = ['Ready to merge', 'ok']

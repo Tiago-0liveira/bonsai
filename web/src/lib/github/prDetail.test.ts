@@ -4,6 +4,7 @@ import {
   authorInitials,
   describeMerge,
   findPullRequestWorktree,
+  isDetailLoaded,
   pullRequestUrl,
   summarizeChanges,
   summarizeReviews,
@@ -39,6 +40,16 @@ describe('authorInitials', () => {
   })
 })
 
+describe('isDetailLoaded', () => {
+  it('needs totals, files or commits', () => {
+    const base = { files: [], commits: [] }
+    expect(isDetailLoaded(base)).toBe(false)
+    expect(isDetailLoaded({ ...base, totals: { additions: 0, deletions: 0, changedFiles: 0 } })).toBe(true)
+    expect(isDetailLoaded({ ...base, commits: [{ sha: 'a', message: 'm', author: 'x' }] })).toBe(true)
+    expect(isDetailLoaded({ ...base, files: [{ path: 'a', additions: 0, deletions: 0, diff: [] }] })).toBe(true)
+  })
+})
+
 describe('summarizeReviews', () => {
   it('counts review entries and distinct reviewers', () => {
     expect(summarizeReviews([
@@ -47,13 +58,24 @@ describe('summarizeReviews', () => {
       { author: 'b', body: '', time: '', kind: 'review' },
       { author: 'c', body: '', time: '', kind: 'comment' },
       { author: 'd', body: '', time: '' },
-    ])).toEqual({ reviews: 3, approvals: 2 })
+    ])).toEqual({ reviews: 3, approvals: 2, changesRequested: 0, requested: [], exact: false })
   })
 
   it('tolerates missing input', () => {
-    expect(summarizeReviews(undefined)).toEqual({ reviews: 0, approvals: 0 })
-    expect(summarizeReviews(null)).toEqual({ reviews: 0, approvals: 0 })
-    expect(summarizeReviews([undefined as never])).toEqual({ reviews: 0, approvals: 0 })
+    const none = { reviews: 0, approvals: 0, changesRequested: 0, requested: [], exact: false }
+    expect(summarizeReviews(undefined)).toEqual(none)
+    expect(summarizeReviews(null)).toEqual(none)
+    expect(summarizeReviews([undefined as never])).toEqual(none)
+  })
+
+  it('prefers the provider verdicts over the conversation', () => {
+    const conversation = [
+      { author: 'a', body: '', time: '', kind: 'review' as const },
+      { author: 'b', body: '', time: '', kind: 'review' as const },
+    ]
+    expect(summarizeReviews(conversation, { approvals: 1, changesRequested: 1, requested: ['c'] })).toEqual({
+      reviews: 2, approvals: 1, changesRequested: 1, requested: ['c'], exact: true,
+    })
   })
 })
 
@@ -63,6 +85,13 @@ describe('summarizeChanges', () => {
       { path: 'a', additions: 30, deletions: 10, diff: [] },
       { path: 'b', additions: 30, deletions: 10, diff: [] },
     ])).toEqual({ additions: 60, deletions: 20, files: 2, additionShare: 0.75 })
+  })
+
+  it('prefers provider totals, including when no files are loaded', () => {
+    const totals = { additions: 900, deletions: 100, changedFiles: 14 }
+    expect(summarizeChanges([{ path: 'a', additions: 1, deletions: 1, diff: [] }], totals)).toEqual({ additions: 900, deletions: 100, files: 14, additionShare: 0.9 })
+    expect(summarizeChanges(undefined, totals)).toMatchObject({ additions: 900, files: 14 })
+    expect(summarizeChanges([], { additions: 0, deletions: 0, changedFiles: 0 })).toEqual({ additions: 0, deletions: 0, files: 0, additionShare: 0 })
   })
 
   it('reports no share when nothing changed or input is missing', () => {
@@ -114,6 +143,28 @@ describe('describeMerge', () => {
     const state = merge({ mergeable: undefined })
     expect(state).toMatchObject({ title: 'Ready to merge', blocker: 'Mergeability unknown' })
     expect(state.requirements[0]).toMatchObject({ tone: 'warn', text: 'Mergeability unknown' })
+  })
+
+  it('reports being behind the base without blocking the merge', () => {
+    const state = merge({ behindBy: 5 })
+    expect(state.requirements.find((row) => row.key === 'behind')).toMatchObject({ tone: 'warn', text: 'Behind main by 5 commits' })
+    expect(state.blocker).toBeUndefined()
+    expect(merge({ behindBy: 1 }).requirements.find((row) => row.key === 'behind')?.text).toBe('Behind main by 1 commit')
+    expect(merge({ behindBy: 0 }).requirements.some((row) => row.key === 'behind')).toBe(false)
+    expect(merge().requirements.some((row) => row.key === 'behind')).toBe(false)
+  })
+
+  it('reports requested changes', () => {
+    const row = (changesRequested: number) => merge({ reviews: { requested: [], approvals: 0, changesRequested } }).requirements.find((item) => item.key === 'reviews')
+    expect(row(1)).toMatchObject({ tone: 'danger', text: '1 reviewer requests changes' })
+    expect(row(2)?.text).toBe('2 reviewers request changes')
+    expect(row(0)).toBeUndefined()
+  })
+
+  it('titles the card after requested changes unless conflicts matter more', () => {
+    const reviews = { requested: [], approvals: 0, changesRequested: 1 }
+    expect(merge({ reviews, checks: checks('success') })).toMatchObject({ title: 'Changes requested', tone: 'danger' })
+    expect(merge({ reviews, mergeable: false }).title).toBe('Cannot merge')
   })
 
   it('explains a stacked base', () => {

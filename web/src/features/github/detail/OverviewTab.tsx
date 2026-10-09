@@ -13,10 +13,13 @@ import { WorktreeCard } from './WorktreeCard'
 const CLAMP_CHARS = 700
 const CLAMP_LINES = 14
 
-/** Markdown that folds behind "Show more" when it is long. */
-function ClampedMarkdown({ children }: { children: string }) {
+/**
+ * Markdown that folds behind "Show more" when it is long. Summary and Test
+ * plan pass `fold={false}`: they show in full and the column scrolls instead.
+ */
+function ClampedMarkdown({ children, fold = true }: { children: string; fold?: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const long = children.length > CLAMP_CHARS || children.split('\n').length > CLAMP_LINES
+  const long = fold && (children.length > CLAMP_CHARS || children.split('\n').length > CLAMP_LINES)
   const clamped = long && !expanded
   return (
     <div className="px-3 py-[9px]">
@@ -41,10 +44,10 @@ function BodyCards({ body }: { body: string }) {
   }
   return (
     <>
-      {parsed.summary?.markdown && <Card title="Summary"><ClampedMarkdown>{parsed.summary.markdown}</ClampedMarkdown></Card>}
+      {parsed.summary?.markdown && <Card title="Summary"><ClampedMarkdown fold={false}>{parsed.summary.markdown}</ClampedMarkdown></Card>}
       {parsed.testPlan?.markdown && (
         <Card title="Test plan" aside={parsed.testPlan.tasks && <span className="font-mono">{parsed.testPlan.tasks.done} of {parsed.testPlan.tasks.total}</span>}>
-          <ClampedMarkdown>{parsed.testPlan.markdown}</ClampedMarkdown>
+          <ClampedMarkdown fold={false}>{parsed.testPlan.markdown}</ClampedMarkdown>
         </Card>
       )}
       {rest.map((section, index) => (
@@ -93,18 +96,18 @@ export interface OverviewTabProps {
   onShowOnCanvas: (worktreeId: string) => void
 }
 
-/** Each column scrolls on its own when the island is tall enough to split them. */
+/** Side by side when the island is wide enough; each column scrolls on its own when it is also tall enough. */
 export function OverviewTab({ pr, parent, stack, worktree, onSelect, onShowCommits, onShowOnCanvas }: OverviewTabProps) {
   return (
-    <div className="flex flex-col gap-3 md:min-h-0 md:flex-1 md:flex-row">
-      <div className="flex min-w-0 flex-1 flex-col gap-2.5 md:min-h-0 md:overflow-y-auto md:pr-1">
+    <div className="flex flex-col gap-3 pr-wide:flex-row pr-split:min-h-0 pr-split:flex-1">
+      <div className="flex min-w-0 flex-1 flex-col gap-2.5 pr-split:min-h-0 pr-split:overflow-y-auto pr-split:pr-1">
         <BodyCards body={pr.description} />
         <CommitsCard pr={pr} onShowAll={onShowCommits} />
       </div>
-      <div className="flex w-full flex-none flex-col gap-2.5 md:min-h-0 md:w-[292px] md:overflow-y-auto md:pr-1">
+      <div className="flex w-full flex-none flex-col gap-2.5 pr-wide:w-[292px] pr-split:min-h-0 pr-split:overflow-y-auto pr-split:pr-1">
         <MergeCard pr={pr} parent={parent} />
         <ChecksCard checks={pr.checks} />
-        {stack && parent && <StackCard stack={stack} currentId={pr.id} onSelect={onSelect} />}
+        {stack && <StackCard stack={stack} currentId={pr.id} onSelect={onSelect} />}
         {worktree && <WorktreeCard worktree={worktree} onShowOnCanvas={onShowOnCanvas} />}
       </div>
     </div>

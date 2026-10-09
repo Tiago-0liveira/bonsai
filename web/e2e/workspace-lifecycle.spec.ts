@@ -83,6 +83,8 @@ test('main route search and review drafts survive dock toggles', async ({ page }
   const main = page.getByRole('main')
   const search = main.getByPlaceholder('Title, branch or author')
   const review = main.getByPlaceholder('Leave a comment or review…')
+  // The review box lives in the detail's Conversation tab.
+  await main.getByRole('tab', { name: /^Conversation/ }).click()
   await review.fill('Unsaved review draft')
   await search.fill('daemon')
   const searchElement = await search.elementHandle()

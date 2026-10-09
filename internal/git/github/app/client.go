@@ -44,13 +44,19 @@ func repoPath(repo string) (string, error) {
 	return "/repos/" + repo, nil
 }
 func (c *Client) request(ctx context.Context, repo, method, path string, body, out any) (http.Header, error) {
+	return c.do(ctx, repo, method, path, body, out, method != "GET")
+}
+
+// do is request with the token scope chosen by the caller. GraphQL queries are
+// POSTs that only read, so they ask for the read token.
+func (c *Client) do(ctx context.Context, repo, method, path string, body, out any, write bool) (http.Header, error) {
 	if _, e := repoPath(repo); e != nil {
 		return nil, e
 	}
 	if c.Tokens == nil {
 		return nil, domain.ErrAuth
 	}
-	token, e := c.Tokens.Token(ctx, repo, method != "GET")
+	token, e := c.Tokens.Token(ctx, repo, write)
 	if e != nil {
 		return nil, e
 	}

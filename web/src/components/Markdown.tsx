@@ -28,7 +28,8 @@ const components: Components = {
   ol: ({ children }) => <ol className="my-0 flex list-decimal flex-col gap-[5px] pl-5 marker:font-mono marker:text-muted-2 [&:not(:last-child)]:mb-2">{children}</ol>,
   li: ({ className, children }) =>
     className?.includes('task-list-item') ? (
-      <li className="flex items-start gap-[9px]">{children}</li>
+      // The box hangs in the gutter so the item text wraps as one run, not as flex columns.
+      <li className="relative pl-[23px]">{children}</li>
     ) : (
       <li className="relative before:absolute before:left-0 before:top-[6px] before:h-[6px] before:w-[6px] before:rounded-[2px] before:bg-accent before:content-[''] [ol>&]:pl-0 [ol>&]:before:hidden">
         {children}
@@ -40,7 +41,7 @@ const components: Components = {
         role="checkbox"
         aria-checked={!!checked}
         aria-readonly="true"
-        className={`mt-[3px] inline-flex h-[14px] w-[14px] flex-none items-center justify-center rounded-[4px] border ${checked ? 'border-ok bg-ok/15 text-ok' : 'border-border-strong text-transparent'}`}
+        className={`absolute left-0 top-[2px] inline-flex h-[14px] w-[14px] items-center justify-center rounded-[4px] border ${checked ? 'border-ok bg-ok/15 text-ok' : 'border-border-strong text-transparent'}`}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M5 12.5l4.5 4.5L19 7" />

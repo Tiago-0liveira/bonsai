@@ -171,6 +171,15 @@ export interface SyncFreshness {
   error?: { code: string; message: string }
 }
 
+export interface PullRequestCheck {
+  id?: number
+  name: string
+  status: 'success' | 'running' | 'failed'
+  /** ISO times; absent for commit statuses and runs that have not started or finished. */
+  startedAt?: string
+  completedAt?: string
+}
+
 export interface PullRequest {
 	headRepository?: string
   id: string
@@ -184,7 +193,13 @@ export interface PullRequest {
   createdAt: string
   updatedAt: string
   mergeable?: boolean
-  checks: { id?: number; name: string; status: 'success' | 'running' | 'failed' }[]
+  checks: PullRequestCheck[]
+  /** Provider totals; absent until the pull request detail has loaded. */
+  totals?: { additions: number; deletions: number; changedFiles: number }
+  /** Reviewer standing; absent until the pull request detail has loaded. */
+  reviews?: { requested: string[]; approvals: number; changesRequested: number }
+  /** Base commits missing from the branch; absent when unknown. */
+  behindBy?: number
   commits: { sha: string; message: string; author: string; time?: string }[]
   conversation: { author: string; body: string; time: string; kind?: 'comment' | 'review' | 'system' | 'checks' }[]
   files: { path: string; additions: number; deletions: number; diff: string[] }[]

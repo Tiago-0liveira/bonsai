@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { PullRequest } from '../../../types'
 import { summarizeChecks } from '../../../lib/github/prChecks'
-import { summarizeChanges, summarizeReviews } from '../../../lib/github/prDetail'
+import { isDetailLoaded, summarizeChanges, summarizeReviews, type ReviewSummary } from '../../../lib/github/prDetail'
 import { formatPrTime } from '../../../lib/github/prTime'
 import { ChecksBar } from '../ChecksBar'
 
@@ -19,17 +19,25 @@ const Figure = ({ children }: { children: ReactNode }) => <span className="font-
 const Sub = ({ tone = 'text-muted-2', children }: { tone?: string; children: ReactNode }) => <span className={`truncate font-mono text-[10.5px] ${tone}`}>{children}</span>
 const Row = ({ children }: { children: ReactNode }) => <div className="mt-[3px] flex items-baseline gap-2 whitespace-nowrap">{children}</div>
 
+function reviewsNote(reviews: ReviewSummary): string {
+  if (reviews.changesRequested) return `${reviews.changesRequested} requesting changes`
+  if (!reviews.approvals) return reviews.requested.length ? `awaiting ${reviews.requested.length}` : 'no approvals'
+  const noun = reviews.approvals === 1 ? 'approval' : 'approvals'
+  return reviews.exact ? noun : reviews.approvals === 1 ? 'reviewer' : 'reviewers'
+}
+
 export function Tiles({ pr }: { pr: PullRequest }) {
   const checks = summarizeChecks(pr.checks)
-  const reviews = summarizeReviews(pr.conversation)
-  const changes = summarizeChanges(pr.files)
+  const reviews = summarizeReviews(pr.conversation, pr.reviews)
+  const changes = summarizeChanges(pr.files, pr.totals)
+  const loaded = isDetailLoaded(pr)
   const latest = pr.commits.at(-1)?.time ?? pr.updatedAt
 
   const checksTone = checks.failed ? 'text-danger' : checks.running ? 'text-accent' : 'text-ok'
   const checksAccent = checks.failed ? 'bg-danger' : checks.running ? 'bg-accent' : checks.total ? 'bg-ok' : 'bg-border-strong'
 
   return (
-    <div className="grid grid-cols-2 gap-2 px-4 pb-2.5 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 px-4 pb-2.5 pr-wide:grid-cols-4">
       <Tile label="Checks" accent={checksAccent}>
         <Row>
           <Figure>{checks.total ? `${checks.passed}/${checks.total}` : '—'}</Figure>
@@ -37,16 +45,30 @@ export function Tiles({ pr }: { pr: PullRequest }) {
         </Row>
         <div className="mt-1.5 flex h-1">{checks.total > 0 && <ChecksBar checks={pr.checks} />}</div>
       </Tile>
-      <Tile label="Reviews" accent={reviews.approvals ? 'bg-ok' : 'bg-warn'}>
+      <Tile label="Reviews" accent={reviews.changesRequested ? 'bg-danger' : reviews.approvals ? 'bg-ok' : 'bg-warn'}>
         <Row>
-          <Figure>{reviews.approvals}</Figure>
-          <Sub tone={reviews.approvals ? 'text-ok' : 'text-warn'}>{reviews.approvals ? `${reviews.approvals === 1 ? 'reviewer' : 'reviewers'}` : 'no approvals'}</Sub>
+          <Figure>{reviews.changesRequested || reviews.approvals}</Figure>
+          <Sub tone={reviews.changesRequested ? 'text-danger' : reviews.approvals ? 'text-ok' : 'text-warn'}>{reviewsNote(reviews)}</Sub>
         </Row>
+        {reviews.requested.length > 0 && (
+          <div className="mt-1 truncate font-mono text-[10px] text-muted-2" title={reviews.requested.join(', ')}>
+            requested: {reviews.requested.join(', ')}
+          </div>
+        )}
       </Tile>
       <Tile label="Changes" accent="bg-ok">
         <Row>
-          <Figure><span className="text-ok">+{changes.additions.toLocaleString()}</span> <span className="text-danger">−{changes.deletions.toLocaleString()}</span></Figure>
-          <Sub>{changes.files} {changes.files === 1 ? 'file' : 'files'}</Sub>
+          {loaded ? (
+            <>
+              <Figure><span className="text-ok">+{changes.additions.toLocaleString()}</span> <span className="text-danger">−{changes.deletions.toLocaleString()}</span></Figure>
+              <Sub>{changes.files} {changes.files === 1 ? 'file' : 'files'}</Sub>
+            </>
+          ) : (
+            <>
+              <Figure>—</Figure>
+              <Sub>loading</Sub>
+            </>
+          )}
         </Row>
         <div className="mt-1.5 flex h-1 gap-0.5" aria-hidden="true">
           {changes.additions + changes.deletions > 0 && (
@@ -59,8 +81,8 @@ export function Tiles({ pr }: { pr: PullRequest }) {
       </Tile>
       <Tile label="Commits" accent="bg-border-strong">
         <Row>
-          <Figure>{pr.commits.length}</Figure>
-          <Sub>{latest ? `latest ${formatPrTime(latest)}` : 'none yet'}</Sub>
+          <Figure>{loaded ? pr.commits.length : '—'}</Figure>
+          <Sub>{!loaded ? 'loading' : latest ? `latest ${formatPrTime(latest)}` : 'none yet'}</Sub>
         </Row>
       </Tile>
     </div>

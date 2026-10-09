@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { PullRequest, Worktree } from '../../types'
 import { buildPrStacks } from '../../lib/github/prStack'
-import { findPullRequestWorktree, pullRequestUrl } from '../../lib/github/prDetail'
+import { findPullRequestWorktree, isDetailLoaded, pullRequestUrl } from '../../lib/github/prDetail'
 import { DetailHeader } from './detail/DetailHeader'
 import { OverviewTab } from './detail/OverviewTab'
 import { CommitsPanel, ConversationPanel, FilesPanel } from './detail/Panels'
@@ -17,7 +17,7 @@ export interface PullRequestDetailProps {
   pr: PullRequest
   /** Every PR in the list, used to place this one in its stack. */
   pullRequests: readonly PullRequest[]
-  /** Display order of the list, for previous/next. */
+  /** Rows currently shown in the list, for previous/next. */
   orderedIds: readonly string[]
   repository?: string
   projectId: string
@@ -33,11 +33,12 @@ export function PullRequestDetail({ pr, pullRequests, orderedIds, repository, pr
   const stack = stacks.stackOf(pr)
   const worktree = useMemo(() => findPullRequestWorktree(worktrees, pr, projectId), [worktrees, pr, projectId])
   const position = orderedIds.indexOf(pr.id)
+  const loaded = isDetailLoaded(pr)
   const counts: Record<TabKey, number | undefined> = {
     overview: undefined,
-    commits: pr.commits.length,
-    files: pr.files.length,
-    conversation: pr.conversation.length,
+    commits: loaded ? pr.commits.length : undefined,
+    files: loaded ? pr.totals?.changedFiles ?? pr.files.length : undefined,
+    conversation: loaded ? pr.conversation.length : undefined,
   }
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -55,7 +56,8 @@ export function PullRequestDetail({ pr, pullRequests, orderedIds, repository, pr
   }
 
   return (
-    <main aria-label="Pull request detail" className="island flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <main aria-label="Pull request detail" className="island flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [container-name:pr-detail] [container-type:size]">
+      {/* One scroll for everything, unless the island is big enough for the overview columns to scroll on their own. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <DetailHeader
           pr={pr}
@@ -93,13 +95,13 @@ export function PullRequestDetail({ pr, pullRequests, orderedIds, repository, pr
           })}
         </div>
 
-        <div role="tabpanel" id={`pr-panel-${tab}`} aria-labelledby={`pr-tab-${tab}`} className="flex flex-col px-4 pb-3 pt-2.5 md:min-h-[320px] md:flex-1 md:overflow-hidden">
+        <div role="tabpanel" id={`pr-panel-${tab}`} aria-labelledby={`pr-tab-${tab}`} className="flex flex-col px-4 pb-3 pt-2.5 pr-split:min-h-[240px] pr-split:flex-1 pr-split:overflow-hidden">
           {tab === 'overview' && (
             <OverviewTab pr={pr} parent={parent} stack={stack} worktree={worktree} onSelect={onSelect} onShowCommits={() => setTab('commits')} onShowOnCanvas={onShowOnCanvas} />
           )}
-          {tab === 'commits' && <div className="md:min-h-0 md:flex-1 md:overflow-y-auto"><CommitsPanel commits={pr.commits} /></div>}
-          {tab === 'files' && <div className="md:min-h-0 md:flex-1 md:overflow-y-auto"><FilesPanel files={pr.files} /></div>}
-          {tab === 'conversation' && <div className="md:min-h-0 md:flex-1 md:overflow-y-auto"><ConversationPanel pr={pr} /></div>}
+          {tab === 'commits' && <div className="pr-split:min-h-0 pr-split:flex-1 pr-split:overflow-y-auto"><CommitsPanel commits={pr.commits} /></div>}
+          {tab === 'files' && <div className="pr-split:min-h-0 pr-split:flex-1 pr-split:overflow-y-auto"><FilesPanel files={pr.files} /></div>}
+          {tab === 'conversation' && <div className="pr-split:min-h-0 pr-split:flex-1 pr-split:overflow-y-auto"><ConversationPanel pr={pr} /></div>}
         </div>
       </div>
     </main>

@@ -129,8 +129,16 @@ describe('tiles', () => {
     setup(stackPr(5, 'feat/e', 'main', { id: 'p:5' }))
     expect(screen.getByText('no checks')).toBeInTheDocument()
     expect(screen.getByText('no approvals')).toBeInTheDocument()
+    expect(screen.getAllByText('loading')).toHaveLength(2)
+    expect(screen.queryByText('0 files')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('tab', { name: /Files/ })).queryByText('0')).not.toBeInTheDocument()
+  })
+
+  it('show real zeros once the detail has loaded', () => {
+    setup(stackPr(5, 'feat/e', 'main', { id: 'p:5', totals: { additions: 0, deletions: 0, changedFiles: 0 } }))
     expect(screen.getByText('0 files')).toBeInTheDocument()
     expect(screen.getByText('none yet')).toBeInTheDocument()
+    expect(screen.queryByText('loading')).not.toBeInTheDocument()
   })
 })
 
@@ -155,6 +163,14 @@ describe('overview', () => {
     const toggle = within(card).getByRole('button', { name: 'Show more' })
     fireEvent.click(toggle)
     expect(within(card).getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('shows a long Summary and Test plan in full', () => {
+    const words = 'More words. '.repeat(80)
+    setup(stackPr(5, 'feat/e', 'main', { id: 'p:5', description: `## Summary\n${words}\n\n## Test plan\n- [x] ${words}` }))
+    expect(screen.getByRole('region', { name: 'Summary' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Test plan' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
   })
 
   it('does not clamp a short body', () => {
@@ -231,6 +247,55 @@ describe('merge card', () => {
   })
 })
 
+describe('provider enrichments', () => {
+  it('show requested reviewers, verdicts and provider totals when loaded', () => {
+    const { base, top } = stacked()
+    setup({
+      ...top,
+      reviews: { requested: ['ana', 'bo'], approvals: 2, changesRequested: 0 },
+      totals: { additions: 900, deletions: 100, changedFiles: 14 },
+      behindBy: 3,
+    }, { others: [base] })
+    expect(screen.getByText('approvals')).toBeInTheDocument()
+    expect(screen.getByText('requested: ana, bo')).toBeInTheDocument()
+    expect(screen.getByText('+900')).toBeInTheDocument()
+    expect(screen.getByText('14 files')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Merge' })).getByText('Behind feat/theme-canvas by 3 commits')).toBeInTheDocument()
+  })
+
+  it('counts files from provider totals in the tab and the tile', () => {
+    const { base, top } = stacked()
+    setup({ ...top, totals: { additions: 5, deletions: 1, changedFiles: 14 } }, { others: [base] })
+    expect(within(screen.getByRole('tab', { name: /Files/ })).getByText('14')).toBeInTheDocument()
+  })
+
+  it('shows the requested-changes count as the figure', () => {
+    const { base, top } = stacked()
+    setup({ ...top, reviews: { requested: [], approvals: 2, changesRequested: 1 } }, { others: [base] })
+    expect(within(screen.getByText('Reviews').parentElement as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect(screen.getByText('Changes requested')).toBeInTheDocument()
+  })
+
+  it('call out requested changes', () => {
+    const { base, top } = stacked()
+    setup({ ...top, reviews: { requested: [], approvals: 0, changesRequested: 1 } }, { others: [base] })
+    expect(screen.getAllByText(/requesting changes|requests changes/)).toHaveLength(2)
+  })
+
+  it('show durations only when checks carry timing', () => {
+    const timed = (name: string, status: 'success' | 'running' | 'failed', seconds?: number) => ({
+      ...check(name, status),
+      ...(seconds !== undefined && { startedAt: '2026-01-01T10:00:00Z', completedAt: new Date(Date.UTC(2026, 0, 1, 10, 0, seconds)).toISOString() }),
+    })
+    setup(stackPr(5, 'feat/e', 'main', { id: 'p:5', checks: [timed('build', 'success', 128), timed('queued', 'running')] }))
+    const items = within(screen.getByRole('region', { name: 'Checks' })).getAllByRole('listitem').map((item) => item.textContent)
+    expect(items).toEqual(['queued', 'build2m 08s'])
+    cleanup()
+    setup(stackPr(6, 'feat/f', 'main', { id: 'p:6', checks: [check('plain', 'success')] }))
+    expect(within(screen.getByRole('region', { name: 'Checks' })).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['plain'])
+  })
+})
+
 describe('checks card', () => {
   it('lists running, then failed, then passed', () => {
     const { base, top } = stacked()
@@ -258,6 +323,14 @@ describe('stack card', () => {
     expect(within(card).getByRole('button', { name: /#47/ })).toHaveAttribute('aria-current', 'true')
     fireEvent.click(within(card).getByRole('button', { name: /#46/ }))
     expect(onSelect).toHaveBeenCalledWith('p:46')
+  })
+
+  it('shows the stack from its root too', () => {
+    const { base, top } = stacked()
+    setup(base, { others: [top] })
+    const card = within(screen.getByRole('region', { name: 'Stack' }))
+    expect(card.getByRole('button', { name: /#46/ })).toHaveAttribute('aria-current', 'true')
+    expect(card.getByRole('button', { name: /#47/ })).not.toHaveAttribute('aria-current')
   })
 
   it('reflects each PR check state', () => {
