@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"sync"
@@ -62,6 +63,11 @@ type Provider struct {
 	hostEnv        func(string) string
 	hostHome       func() (string, error)
 
+	// Usage endpoint plumbing; tests replace these.
+	usageEndpoint string
+	usageClient   *http.Client
+	usageOS       string
+
 	versionMu sync.Mutex
 	version   string
 
@@ -87,6 +93,7 @@ func New(accounts agents.AccountStore, sessions agents.SessionStore, launcher ag
 		hostEnv:        os.Getenv,
 		hostHome:       os.UserHomeDir,
 		statuses:       make(map[agents.AccountID]statusEntry),
+		usageEndpoint:  UsageEndpoint,
 	}
 }
 
@@ -94,9 +101,8 @@ func (p *Provider) ID() agents.ProviderID { return ProviderID }
 
 func (p *Provider) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
-		Interactive: true,
-		// Usage is enabled once the usage client lands.
-		Usage:                  false,
+		Interactive:            true,
+		Usage:                  true,
 		MultiAccount:           true,
 		ConcurrentSameAccount:  true,
 		ConcurrentCrossAccount: true,

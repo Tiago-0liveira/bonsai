@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +29,11 @@ type usageDashboardRow struct {
 	geminiWeek *agents.UsageLimit
 	third5h    *agents.UsageLimit
 	thirdWeek  *agents.UsageLimit
-	err        error
+	claude5h   *agents.UsageLimit
+	claudeWeek *agents.UsageLimit
+	// claudeModels are the per-model weekly limits (opus, sonnet, ...).
+	claudeModels []*agents.UsageLimit
+	err          error
 }
 
 func printUsageDashboard(out io.Writer, results []agents.AccountUsageResult) {
@@ -42,6 +47,17 @@ func renderUsageDashboard(out io.Writer, results []agents.AccountUsageResult, no
 		if result.Usage != nil {
 			for i := range result.Usage.Limits {
 				limit := &result.Usage.Limits[i]
+				if result.Account.Provider == "claude" {
+					switch {
+					case limit.ID == "five_hour":
+						row.claude5h = limit
+					case limit.ID == "seven_day":
+						row.claudeWeek = limit
+					case strings.HasPrefix(limit.ID, "seven_day_"):
+						row.claudeModels = append(row.claudeModels, limit)
+					}
+					continue
+				}
 				switch classifyUsageLimit(*limit) {
 				case "gemini-5h":
 					if row.gemini5h == nil {
@@ -190,6 +206,8 @@ func usageRowScore(row usageDashboardRow) (float64, bool) {
 	switch row.account.Provider {
 	case "antigravity":
 		return usageMinRemaining(row.gemini5h, row.geminiWeek)
+	case "claude":
+		return usageMinRemaining(row.claude5h, row.claudeWeek)
 	default:
 		return 0, false
 	}
@@ -213,6 +231,13 @@ func usageMinRemaining(limits ...*agents.UsageLimit) (float64, bool) {
 
 func usagePrimaryReset(row usageDashboardRow) *time.Time {
 	switch row.account.Provider {
+	case "claude":
+		if row.claudeWeek != nil && row.claudeWeek.ResetsAt != nil {
+			return row.claudeWeek.ResetsAt
+		}
+		if row.claude5h != nil {
+			return row.claude5h.ResetsAt
+		}
 	case "antigravity":
 		if row.geminiWeek != nil && row.geminiWeek.ResetsAt != nil {
 			return row.geminiWeek.ResetsAt
@@ -271,6 +296,9 @@ func renderUsageProvider(out io.Writer, provider agents.ProviderID, rows []usage
 			fmt.Fprintln(out, "  "+usageStyle("Claude & GPT Models", "\x1b[1m", color))
 			renderAntigravityUsageTable(out, rows, now, color, true)
 		}
+	case "claude":
+		renderClaudeUsageTable(out, rows, now, color)
+		fmt.Fprintln(out, "  "+usageStyle("Read from an undocumented endpoint; it may change. Bonsai never refreshes logins.", "\x1b[2m", color))
 	default:
 		fmt.Fprintln(out, "  Usage dashboard adapter not implemented yet.")
 	}
@@ -308,7 +336,7 @@ func usageProviderTitle(provider agents.ProviderID) string {
 		return "Antigravity"
 	case "codex":
 		return "Codex"
-	case "claude-code":
+	case "claude", "claude-code":
 		return "Claude Code"
 	default:
 		if provider == "" {
@@ -365,6 +393,77 @@ func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now ti
 			renderUsageLimitCell(right, now, color, 0),
 		)
 	}
+}
+
+func renderClaudeUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
+	nameWidth := len("Account")
+	for _, row := range rows {
+		if n := utf8.RuneCountInString(row.account.Name); n > nameWidth {
+			nameWidth = n
+		}
+	}
+	if nameWidth > 18 {
+		nameWidth = 18
+	}
+	hasModels := false
+	for _, row := range rows {
+		hasModels = hasModels || len(row.claudeModels) > 0
+	}
+	header := fmt.Sprintf("  %s  %s  %s", padUsage("Account", nameWidth), padUsage("5h", usageCellWidth), "Weekly")
+	if hasModels {
+		header = fmt.Sprintf("  %s  %s  %s  %s", padUsage("Account", nameWidth), padUsage("5h", usageCellWidth), padUsage("Weekly", usageCellWidth), "Per model")
+	}
+	fmt.Fprintln(out, header)
+	for _, row := range rows {
+		name := truncateRunes(row.account.Name, nameWidth)
+		if row.err != nil {
+			if errors.Is(row.err, agents.ErrUsageUnsupported) {
+				fmt.Fprintf(out, "  %s  %s  %s\n", padUsage(name, nameWidth), padUsage("n/a", usageCellWidth), usageStyle(usageUnsupportedReason(row.err), "\x1b[2m", color))
+				continue
+			}
+			fmt.Fprintf(out, "  %s  %s  %s\n", padUsage(name, nameWidth), usageStyle(padUsage("ERR", usageCellWidth), "\x1b[91m", color), usageStyle("ERR", "\x1b[91m", color))
+			continue
+		}
+		renderedName := padUsage(name, nameWidth)
+		if score, ok := usageRowScore(row); ok {
+			renderedName = usageRankStyle(renderedName, score, color)
+		}
+		weekWidth := 0
+		if hasModels {
+			weekWidth = usageCellWidth
+		}
+		line := fmt.Sprintf("  %s  %s  %s", renderedName, renderUsageLimitCell(row.claude5h, now, color, usageCellWidth), renderUsageLimitCell(row.claudeWeek, now, color, weekWidth))
+		if hasModels {
+			line += "  " + usageModelCells(row.claudeModels)
+		}
+		fmt.Fprintln(out, line)
+	}
+	for _, row := range rows {
+		if row.usage != nil {
+			for _, warning := range row.usage.Warnings {
+				fmt.Fprintf(out, "  %s: %s\n", row.account.Name, warning)
+			}
+		}
+	}
+}
+
+// usageModelCells renders "opus 80% · sonnet 90%" from the per-model weekly limits.
+func usageModelCells(limits []*agents.UsageLimit) string {
+	parts := make([]string, 0, len(limits))
+	for _, limit := range limits {
+		if fraction, ok := usageFraction(limit); ok {
+			parts = append(parts, fmt.Sprintf("%s %d%%", strings.TrimPrefix(limit.ID, "seven_day_"), int(fraction*100+0.5)))
+		}
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " · ")
+}
+
+// usageUnsupportedReason drops the sentinel prefix from an unsupported error.
+func usageUnsupportedReason(err error) string {
+	return strings.TrimPrefix(err.Error(), agents.ErrUsageUnsupported.Error()+": ")
 }
 
 func renderUsageLimitCell(limit *agents.UsageLimit, now time.Time, color bool, width int) string {

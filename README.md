@@ -368,8 +368,17 @@ bonsai agent account remove work                # logs the profile out, deletes 
 - **Concurrency caveat.** Several sessions of one *login* profile refresh the
   same OAuth login, and Claude Code can occasionally lose that race and ask for
   `/login` again. Token mode has no refresh and is race-free.
-- Requires Claude Code 2.1.295 or newer. Usage reporting for Claude is not
-  available yet.
+- **Usage.** `bonsai agent usage` shows the 5-hour and weekly utilization (and
+  per-model weekly limits when present) of login profiles. Claude has no
+  documented endpoint for this, so Bonsai reads the one Claude Code's own
+  `/usage` view uses (`/api/oauth/usage`). It can change or disappear without
+  notice and is best effort. Bonsai only reads the profile's stored login and
+  **never refreshes it** (a refresh would log out running sessions), so a profile
+  whose login expired shows an error until a session refreshes it. Token
+  profiles are shown as `n/a` because long-lived tokens cannot read usage, and so
+  are macOS profiles (the login lives in the Keychain). Results are cached for
+  5 minutes; `--refresh` bypasses the cache.
+- Requires Claude Code 2.1.295 or newer.
 
 ### Antigravity in the web workspace
 

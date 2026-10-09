@@ -210,3 +210,56 @@ func TestUsageServiceAllSkipsProvidersWithoutUsage(t *testing.T) {
 		t.Fatalf("results = %+v", results)
 	}
 }
+
+// policyUsageProvider reports its own freshness window.
+type policyUsageProvider struct {
+	usageTestProvider
+	ttl time.Duration
+}
+
+func (p *policyUsageProvider) UsageTTL() time.Duration { return p.ttl }
+
+func TestUsageServiceHonoursProviderTTL(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ttl       time.Duration
+		age       time.Duration
+		wantCalls int
+	}{
+		"fresh under a long provider ttl":    {ttl: 5 * time.Minute, age: 2 * time.Minute, wantCalls: 1},
+		"stale past the provider ttl":        {ttl: 5 * time.Minute, age: 6 * time.Minute, wantCalls: 2},
+		"service ttl applies without policy": {ttl: 0, age: 2 * time.Minute, wantCalls: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, _ := NewFileAccountStore(t.TempDir())
+			cache, _ := NewFileUsageCache(t.TempDir())
+			account := testAccount("acct_policy", "usage-fake", "personal")
+			if err := store.Create(account); err != nil {
+				t.Fatal(err)
+			}
+			provider := &policyUsageProvider{usageTestProvider: usageTestProvider{fail: map[AccountID]error{}}, ttl: tc.ttl}
+			registry := NewRegistry()
+			_ = registry.Register(provider)
+			service := &UsageService{Accounts: store, Registry: registry, Cache: cache, TTL: time.Minute}
+			if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			// Age the cached snapshot.
+			cached, ok, err := cache.Get("usage-fake", account.ID)
+			if err != nil || !ok {
+				t.Fatalf("cache: ok=%v err=%v", ok, err)
+			}
+			cached.FetchedAt = time.Now().Add(-tc.age)
+			if err := cache.Put(cached); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			if provider.calls != tc.wantCalls {
+				t.Fatalf("calls = %d, want %d", provider.calls, tc.wantCalls)
+			}
+		})
+	}
+}

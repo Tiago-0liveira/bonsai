@@ -249,6 +249,11 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 			return err
 		}
 		snapshot, err := runtime.usageService.Account(ctx, account.ID, opts)
+		if errors.Is(err, agents.ErrUsageUnsupported) {
+			// Expected for some profiles (long-lived tokens, macOS): show it, do not fail.
+			printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Error: err}})
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -259,7 +264,7 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 	results := runtime.usageService.All(ctx, opts)
 	var errs []error
 	for _, result := range results {
-		if result.Error != nil {
+		if result.Error != nil && !errors.Is(result.Error, agents.ErrUsageUnsupported) {
 			fmt.Fprintf(errOut, "%s/%s: %v\n", result.Account.Provider, result.Account.Name, result.Error)
 			errs = append(errs, result.Error)
 		}
@@ -280,6 +285,10 @@ Usage:
   bonsai agent account remove <account>
   bonsai agent run <account> [-- <provider-args...>]
   bonsai agent usage [<account>] [--refresh]
+
+Usage (Claude): reads the 5-hour and weekly utilization of login profiles from an
+  undocumented Anthropic endpoint, so it may stop working. It uses the profile's
+  stored login and never refreshes it. Token profiles and macOS show "n/a".
 
 Providers:
   antigravity  bonsai agent account add antigravity <name>

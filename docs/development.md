@@ -268,6 +268,15 @@ is a POSIX stand-in that tests put first on `PATH`; it reads the Phase 0
 `auth-status-*.json` fixtures from `FAKE_CLAUDE_FIXTURES`. `UsageService.All`
 skips providers whose `Capabilities().Usage` is false.
 
+Claude usage (`usage.go`) reads the undocumented `GET /api/oauth/usage` with the
+profile's stored access token (token profiles use the stored long-lived token and
+are reported as `ErrUsageUnsupported`). It never refreshes a login, never puts the
+token or the response body in an error, and accepts both the flat-bucket and the
+`limits[]` response shapes (`testdata/usage-response*.json`). The provider
+implements `UsagePolicy` (5 minutes), which `UsageService` prefers over its own
+TTL. Tests point `claude.UsageEndpoint` or the provider's `usageEndpoint` at an
+`httptest` server; nothing reaches the network.
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured

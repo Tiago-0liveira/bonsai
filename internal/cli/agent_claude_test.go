@@ -2,11 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
 )
 
 const cliTestToken = "sk-ant-oat01-CLITESTCLITESTCLITESTCLITEST"
@@ -137,13 +141,79 @@ func TestClaudeAccountAddRejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestUsageIgnoresProvidersWithoutUsage(t *testing.T) {
+// usageEndpoint points the Claude provider at a local server for one test.
+func usageEndpoint(t *testing.T, status int, body []byte) *int {
+	t.Helper()
+	hits := new(int)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*hits++
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+	}))
+	old := claude.UsageEndpoint
+	claude.UsageEndpoint = server.URL
+	t.Cleanup(func() { claude.UsageEndpoint = old; server.Close() })
+	return hits
+}
+
+func TestUsageShowsUnsupportedTokenProfileWithoutFailing(t *testing.T) {
 	claudeCLIEnv(t)
+	hits := usageEndpoint(t, 403, []byte(`{"error":{"message":"OAuth token does not meet scope requirement user:profile"}}`))
 	if _, _, err := runAgent(t, cliTestToken, "account", "add", "claude", "work", "--token-stdin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, errOut, err := runAgent(t, "", "usage"); err != nil {
-		t.Fatalf("usage failed for a provider without usage: %v (%q)", err, errOut)
+	for _, args := range [][]string{{"usage"}, {"usage", "work"}} {
+		out, errOut, err := runAgent(t, "", args...)
+		if err != nil || errOut != "" {
+			t.Fatalf("%v: err=%v stderr=%q", args, err, errOut)
+		}
+		for _, want := range []string{"◆ Claude Code · 1 account", "n/a", "long-lived tokens cannot read usage", "undocumented"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v output lacks %q:\n%s", args, want, out)
+			}
+		}
+		if strings.Contains(out+errOut, cliTestToken) || strings.Contains(out, "user:profile") {
+			t.Fatalf("secret or response body printed:\n%s", out)
+		}
+	}
+	if *hits != 2 { // failures are not cached
+		t.Fatalf("hits = %d, want 2", *hits)
+	}
+}
+
+func TestUsageShowsLoginProfileLimits(t *testing.T) {
+	claudeCLIEnv(t)
+	body, err := os.ReadFile(filepath.Join("..", "providers", "claude", "testdata", "usage-response.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageEndpoint(t, 200, body)
+	if _, errOut, err := runAgent(t, "", "account", "add", "claude", "personal", "--no-seed"); err != nil {
+		t.Fatalf("add: %v (%q)", err, errOut)
+	}
+	// The fake `auth login` stores a credential without an expiry; give it one.
+	dir := filepath.Join(os.Getenv("XDG_DATA_HOME"))
+	var creds string
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, _ error) error {
+		if d != nil && d.Name() == ".credentials.json" {
+			creds = path
+		}
+		return nil
+	})
+	if creds == "" {
+		t.Fatal("login credentials not found")
+	}
+	if err := os.WriteFile(creds, []byte(`{"claudeAiOauth":{"accessToken":"a","expiresAt":32503680000000}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := runAgent(t, "", "usage")
+	if err != nil || errOut != "" {
+		t.Fatalf("usage: %v (%q)", err, errOut)
+	}
+	for _, want := range []string{"personal", " 90%", " 50%", "Weekly"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
 	}
 }
 

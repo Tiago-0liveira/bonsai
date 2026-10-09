@@ -33,6 +33,12 @@ func (s *UsageService) Account(ctx context.Context, accountID AccountID, opts Us
 	if ttl <= 0 {
 		ttl = time.Minute
 	}
+	// A provider that knows how fast its numbers move sets its own freshness.
+	if policy, ok := provider.(UsagePolicy); ok {
+		if providerTTL := policy.UsageTTL(); providerTTL > 0 {
+			ttl = providerTTL
+		}
+	}
 	if !opts.Refresh && s.Cache != nil {
 		if cached, ok, err := s.Cache.Get(account.Provider, account.ID); err != nil {
 			return UsageSnapshot{}, err
