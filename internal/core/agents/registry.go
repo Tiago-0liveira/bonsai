@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -36,6 +37,29 @@ func (r *Registry) Get(id ProviderID) (Provider, error) {
 		return nil, fmt.Errorf("%w: %s", ErrProviderNotFound, id)
 	}
 	return p, nil
+}
+
+// Label returns the provider's display label, falling back to its ID.
+func Label(p Provider) string {
+	if d, ok := p.(Describer); ok {
+		if label := d.Label(); label != "" {
+			return label
+		}
+	}
+	return string(p.ID())
+}
+
+// DescribeAccount returns display-safe account fields, or a zero value when the
+// account's provider is unregistered or has nothing to describe.
+func (r *Registry) DescribeAccount(ctx context.Context, account Account) AccountInfo {
+	p, err := r.Get(account.Provider)
+	if err != nil {
+		return AccountInfo{}
+	}
+	if d, ok := p.(AccountDescriber); ok {
+		return d.DescribeAccount(ctx, account)
+	}
+	return AccountInfo{}
 }
 
 func (r *Registry) List() []Provider {

@@ -2,10 +2,10 @@ package localapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +14,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
-	"github.com/Tiago-0liveira/bonsai/internal/providers/antigravity"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
@@ -26,14 +25,17 @@ type agentAPI struct {
 	registry  projectRegistry
 }
 type agentRequest struct {
-	Model      string           `json:"model,omitempty"`
-	Prompt     string           `json:"prompt,omitempty"`
-	FullAccess *bool            `json:"full_access,omitempty"`
-	WorktreeID string           `json:"worktree_id"`
-	AccountID  agents.AccountID `json:"account_id"`
-	Name       string           `json:"name,omitempty"`
-	Cols       int              `json:"cols"`
-	Rows       int              `json:"rows"`
+	Model      string `json:"model,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	FullAccess *bool  `json:"full_access,omitempty"`
+	// Claude launch options; providers reject the ones they do not support.
+	PermissionMode string           `json:"permission_mode,omitempty"`
+	Effort         string           `json:"effort,omitempty"`
+	WorktreeID     string           `json:"worktree_id"`
+	AccountID      agents.AccountID `json:"account_id"`
+	Name           string           `json:"name,omitempty"`
+	Cols           int              `json:"cols"`
+	Rows           int              `json:"rows"`
 }
 type agentMutation struct {
 	Fingerprint string                `json:"fingerprint"`
@@ -48,27 +50,83 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/projects/{projectId}/agents/{sessionId}", s.stopAgent)
 	mux.HandleFunc("GET /api/projects/{projectId}/agents/{sessionId}/terminal", s.agentTerminal)
 }
+
+// knownAgentProviders keeps the UI's provider tabs stable: these are listed even
+// when not registered in this build.
+var knownAgentProviders = []struct {
+	id    agents.ProviderID
+	label string
+}{{"antigravity", "Antigravity"}, {"claude", "Claude"}, {"codex", "Codex"}}
+
+func (s *Server) agentRegistry() *agents.Registry {
+	if s.agents == nil || s.agents.runtime == nil {
+		return nil
+	}
+	return s.agents.runtime.Registry
+}
+
 func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
-	reason := ""
-	if s.agents == nil {
-		reason = "Agent runtime unavailable"
-	} else if !agentterminal.Supported {
-		reason = "Interactive terminals are not supported on this platform"
-	} else if _, err := exec.LookPath("agy"); err != nil {
-		reason = "Install agy and restart Bonsai"
+	registry := s.agentRegistry()
+	describe := func(id agents.ProviderID, label string) map[string]any {
+		var provider agents.Provider
+		if registry != nil {
+			provider, _ = registry.Get(id)
+		}
+		if provider != nil {
+			if describer, ok := provider.(agents.Describer); ok && describer.Label() != "" {
+				label = describer.Label()
+			}
+		}
+		if label == "" {
+			label = string(id)
+		}
+		var availability agents.Availability
+		switch {
+		case s.agents == nil:
+			availability.Reason = "Agent runtime unavailable"
+		case provider == nil:
+			availability.Reason = "Not available yet"
+		case !agentterminal.Supported:
+			availability.Reason = "Interactive terminals are not supported on this platform"
+		case !provider.Capabilities().Interactive:
+			availability.Reason = "Interactive terminals are not supported by this provider"
+		default:
+			availability = agents.Availability{Available: true}
+			if describer, ok := provider.(agents.Describer); ok {
+				availability = describer.Availability(r.Context())
+			}
+		}
+		reason := ""
+		if !availability.Available {
+			reason = availability.Reason
+			if reason == "" {
+				reason = "Not available"
+			}
+		}
+		out := map[string]any{"id": id, "label": label, "available": availability.Available, "unavailable_reason": map[string]string{"message": reason}}
+		if availability.Version != "" {
+			out["version"] = availability.Version
+		}
+		return out
 	}
 	out := []map[string]any{}
-	for _, p := range []struct{ id, label string }{{"antigravity", "Antigravity"}, {"claude", "Claude"}, {"codex", "Codex"}} {
-		why := reason
-		if p.id != "antigravity" {
-			why = "Not available yet"
+	known := map[agents.ProviderID]bool{}
+	for _, p := range knownAgentProviders {
+		known[p.id] = true
+		out = append(out, describe(p.id, p.label))
+	}
+	if registry != nil {
+		for _, p := range registry.List() {
+			if !known[p.ID()] {
+				out = append(out, describe(p.ID(), ""))
+			}
 		}
-		out = append(out, map[string]any{"id": p.id, "label": p.label, "available": why == "", "unavailable_reason": map[string]string{"message": why}})
 	}
 	writeJSON(w, 200, out)
 }
 func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
-	if s.agents == nil {
+	registry := s.agentRegistry()
+	if registry == nil {
 		writeAPIError(w, 503, "agents_unavailable", "Agent runtime unavailable")
 		return
 	}
@@ -79,10 +137,26 @@ func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []map[string]any{}
 	for _, a := range accounts {
-		if a.Provider == "antigravity" {
-			settings, _ := antigravity.ParseSettings(a)
-			out = append(out, map[string]any{"id": a.ID, "name": a.Name, "provider": a.Provider, "full_access": settings.DangerouslySkipPermissions})
+		// Profiles of providers this build cannot launch stay hidden.
+		if _, err := registry.Get(a.Provider); err != nil {
+			continue
 		}
+		info := registry.DescribeAccount(r.Context(), a)
+		item := map[string]any{}
+		for k, v := range info.Options {
+			item[k] = v
+		}
+		item["id"], item["name"], item["provider"] = a.ID, a.Name, a.Provider
+		if info.AuthMode != "" {
+			item["auth_mode"] = info.AuthMode
+		}
+		if info.Identity != "" {
+			item["identity"] = info.Identity
+		}
+		if len(info.Warnings) > 0 {
+			item["warnings"] = info.Warnings
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, 200, out)
 }
@@ -173,9 +247,17 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 			writeAPIError(w, 409, "worktree_unavailable", pathErr.Error())
 			return
 		}
-		summary, err = s.agents.manager.Start(project, body.WorktreeID, body.AccountID, body.Name, dir, body.Cols, body.Rows, agentterminal.StartOptions{Model: body.Model, Prompt: body.Prompt, FullAccess: body.FullAccess})
+		summary, err = s.agents.manager.Start(project, body.WorktreeID, body.AccountID, body.Name, dir, body.Cols, body.Rows, agentterminal.StartOptions{Model: body.Model, Prompt: body.Prompt, FullAccess: body.FullAccess, PermissionMode: body.PermissionMode, Effort: body.Effort})
 	}
-	if err != nil {
+	switch {
+	case err == nil:
+	case errors.Is(err, agents.ErrInvalidLaunch):
+		writeAPIError(w, 400, "invalid_launch_options", err.Error())
+		return
+	case errors.Is(err, agents.ErrAccountBusy), errors.Is(err, agents.ErrProviderBusy):
+		writeAPIError(w, 409, "agent_busy", err.Error())
+		return
+	default:
 		writeAPIError(w, 400, "agent_start_failed", err.Error())
 		return
 	}
@@ -196,8 +278,8 @@ func (s *Server) startAgent(w http.ResponseWriter, r *http.Request) {
 	if !decodeStrictJSON(w, r, &body) {
 		return
 	}
-	if !agentterminal.Dimensions(body.Cols, body.Rows) || len(body.Name) > 128 || len(body.Model) > 128 || len(body.Prompt) > agentterminal.InputLimit {
-		writeAPIError(w, 400, "invalid", "Invalid name or terminal dimensions")
+	if !agentterminal.Dimensions(body.Cols, body.Rows) || len(body.Name) > 128 || len(body.Model) > 128 || len(body.Prompt) > agentterminal.InputLimit || len(body.PermissionMode) > 32 || len(body.Effort) > 32 {
+		writeAPIError(w, 400, "invalid", "Invalid name, launch options or terminal dimensions")
 		return
 	}
 	s.agentMutation(w, r, body, false)

@@ -16,7 +16,7 @@ type AccountService struct {
 	Cache    UsageCache
 }
 
-func (s *AccountService) Setup(ctx context.Context, providerID ProviderID, name string) (Account, error) {
+func (s *AccountService) Setup(ctx context.Context, providerID ProviderID, name string, options SetupOptions) (Account, error) {
 	if err := ValidateAccountName(name); err != nil {
 		return Account{}, err
 	}
@@ -49,7 +49,7 @@ func (s *AccountService) Setup(ctx context.Context, providerID ProviderID, name 
 		return Account{}, err
 	}
 	result, setupErr := provider.SetupAccount(ctx, SetupRequest{
-		Account: account, RuntimeDir: session.RuntimeDir, HomeDir: session.HomeDir,
+		Account: account, RuntimeDir: session.RuntimeDir, HomeDir: session.HomeDir, Options: options,
 	})
 	cleanupErr := s.Sessions.Cleanup(session)
 	if setupErr != nil {
@@ -77,15 +77,27 @@ func (s *AccountService) Rename(_ context.Context, accountID AccountID, newName 
 	return s.Store.Rename(accountID, newName)
 }
 
-func (s *AccountService) Remove(_ context.Context, accountID AccountID) error {
+// Remove deletes the account. Provider-side cleanup is best effort: its failure
+// is returned as a warning and removal continues.
+func (s *AccountService) Remove(ctx context.Context, accountID AccountID) ([]string, error) {
 	account, err := s.Store.Get(accountID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if s.Cache != nil {
 		if err := s.Cache.RemoveAccount(account.Provider, account.ID); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return s.Store.Remove(accountID)
+	var warnings []string
+	if s.Registry != nil {
+		if provider, err := s.Registry.Get(account.Provider); err == nil {
+			if remover, ok := provider.(AccountRemover); ok {
+				if err := remover.RemoveAccount(ctx, account); err != nil {
+					warnings = append(warnings, fmt.Sprintf("%s provider cleanup failed: %v", Label(provider), err))
+				}
+			}
+		}
+	}
+	return warnings, s.Store.Remove(accountID)
 }

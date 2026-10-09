@@ -9,6 +9,9 @@ import (
 )
 
 func (p *Provider) SetupAccount(ctx context.Context, req agents.SetupRequest) (agents.SetupResult, error) {
+	if err := checkSetupOptions(req.Options); err != nil {
+		return agents.SetupResult{}, err
+	}
 	executable, err := p.binaryResolver.Resolve()
 	if err != nil {
 		return agents.SetupResult{}, err

@@ -216,6 +216,41 @@ tracking refs change only after an explicit fetch/pull operation. Run race tests
 for `internal/server/localapi`, `internal/daemon/client`, and touched local Git
 packages in addition to the normal cross-platform CI matrix.
 
+## Agent provider contract
+
+Providers live under `internal/providers/<id>` and register in
+`internal/agentruntime`. The core (`internal/core/agents`) is provider-neutral:
+the terminal manager, local API and CLI never test a provider ID.
+
+- `Provider` is required: setup, `PrepareSession`, `FinalizeSession` and usage.
+  `Capabilities()` is enforced by the manager: `Interactive=false` cannot start a
+  web terminal, `ConcurrentSameAccount=false` rejects a second active session on
+  an account (`409 agent_busy`), and `ConcurrentCrossAccount=false` rejects a
+  session on another account of the same provider.
+- Per-launch choices arrive as `LaunchOptions` (model, prompt, display name,
+  full access, permission mode, effort) in `PrepareSessionRequest.Launch`. The
+  provider maps them to its own argv; the manager adds nothing. Prompts go last.
+- `PreparedSession.EnvUnsetPrefixes` scrubs inherited variables by prefix
+  (case-insensitive on Windows); `EnvSet` still wins. `ProviderSessionID` is
+  recorded in the session summary as `provider_session_id`.
+- `SetupRequest.Options` carries `bonsai agent account add` flags (`--auth`,
+  `--token-stdin`, `--no-seed`, `--seed-from`). Providers reject options they do
+  not support rather than ignoring them.
+
+Optional interfaces, found by type assertion:
+
+| Interface | Used for |
+| --- | --- |
+| `Describer` | Provider label and host availability in `/api/agents/providers` |
+| `LaunchValidator` | Synchronous launch-option check; errors return `400 invalid_launch_options` and leave no session |
+| `AccountDescriber` | Display-safe `auth_mode`, `identity`, `warnings` and options in `/api/agents/accounts` and `account list`; never tokens, paths or raw settings |
+| `AccountRemover` | Best-effort provider cleanup before an account is deleted; failure is a warning |
+| `UsagePolicy` | Provider-specific usage cache TTL |
+
+`/api/agents/providers` always lists Antigravity, Claude and Codex (unregistered
+ones as "Not available yet") plus any other registered provider.
+`/api/agents/accounts` lists accounts of registered providers only.
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured
