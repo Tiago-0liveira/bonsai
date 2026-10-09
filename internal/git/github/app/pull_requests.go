@@ -30,6 +30,8 @@ type rawPR struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 	Mergeable            *bool
 	Additions, Deletions int
+	ChangedFiles         int                      `json:"changed_files"`
+	RequestedReviewers   []struct{ Login string } `json:"requested_reviewers"`
 }
 
 func (p rawPR) domain() gh.PullRequest {
@@ -103,12 +105,15 @@ func (c *Client) PullRequest(ctx context.Context, repo string, n int) (gh.PullRe
 	if _, e = c.request(ctx, repo, "GET", p, nil, &raw); e != nil {
 		return gh.PullRequestDetail{}, e
 	}
-	d := gh.PullRequestDetail{PullRequest: raw.domain(), Mergeable: "unknown", Additions: raw.Additions, Deletions: raw.Deletions, Comments: []gh.Comment{}, Reviews: []gh.Review{}, Commits: []gh.Commit{}, Files: []gh.File{}}
+	d := gh.PullRequestDetail{PullRequest: raw.domain(), Mergeable: "unknown", Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles, RequestedReviewers: []string{}, Comments: []gh.Comment{}, Reviews: []gh.Review{}, Commits: []gh.Commit{}, Files: []gh.File{}}
 	if raw.Mergeable != nil {
 		d.Mergeable = "conflicting"
 		if *raw.Mergeable {
 			d.Mergeable = "mergeable"
 		}
+	}
+	for _, reviewer := range raw.RequestedReviewers {
+		d.RequestedReviewers = append(d.RequestedReviewers, reviewer.Login)
 	}
 	comments, e := pages[struct {
 		ID        int64
@@ -147,6 +152,7 @@ func (c *Client) PullRequest(ctx context.Context, repo string, n int) (gh.PullRe
 	for _, v := range reviews {
 		d.Reviews = append(d.Reviews, gh.Review{ID: v.ID, Author: v.User.Login, State: v.State, Body: v.Body, SubmittedAt: v.SubmittedAt})
 	}
+	d.ReviewSummary = gh.SummarizeReviews(d.Reviews)
 	commits, e := pages[struct {
 		SHA    string
 		Commit struct {
@@ -173,7 +179,26 @@ func (c *Client) PullRequest(ctx context.Context, repo string, n int) (gh.PullRe
 	for _, v := range files {
 		d.Files = append(d.Files, gh.File{Path: v.Filename, Status: v.Status, Patch: v.Patch, Additions: v.Additions, Deletions: v.Deletions})
 	}
+	if d.State == "open" {
+		d.BehindBy = c.behindBy(ctx, repo, d.Base, d.HeadSHA)
+	}
 	return d, nil
+}
+
+// behindBy is best effort: the Update row is hidden rather than failing the
+// whole pull request when the comparison is unavailable.
+func (c *Client) behindBy(ctx context.Context, repo, base, headSHA string) *int {
+	p, e := repoPath(repo)
+	if e != nil || base == "" || headSHA == "" {
+		return nil
+	}
+	var compare struct {
+		BehindBy *int `json:"behind_by"`
+	}
+	if _, e = c.request(ctx, repo, "GET", p+"/compare/"+escaped(base)+"..."+escaped(headSHA)+"?per_page=1", nil, &compare); e != nil {
+		return nil
+	}
+	return compare.BehindBy
 }
 func (c *Client) CreatePullRequest(ctx context.Context, r gh.CreatePullRequestRequest) (gh.PullRequest, error) {
 	p, e := repoPath(r.Repository)

@@ -231,6 +231,42 @@ describe('merge card', () => {
   })
 })
 
+describe('provider enrichments', () => {
+  it('show requested reviewers, verdicts and provider totals when loaded', () => {
+    const { base, top } = stacked()
+    setup({
+      ...top,
+      reviews: { requested: ['ana', 'bo'], approvals: 2, changesRequested: 0 },
+      totals: { additions: 900, deletions: 100, changedFiles: 14 },
+      behindBy: 3,
+    }, { others: [base] })
+    expect(screen.getByText('approvals')).toBeInTheDocument()
+    expect(screen.getByText('requested: ana, bo')).toBeInTheDocument()
+    expect(screen.getByText('+900')).toBeInTheDocument()
+    expect(screen.getByText('14 files')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Merge' })).getByText('Behind feat/theme-canvas by 3 commits')).toBeInTheDocument()
+  })
+
+  it('call out requested changes', () => {
+    const { base, top } = stacked()
+    setup({ ...top, reviews: { requested: [], approvals: 0, changesRequested: 1 } }, { others: [base] })
+    expect(screen.getAllByText(/requesting changes|requests changes/)).toHaveLength(2)
+  })
+
+  it('show durations only when checks carry timing', () => {
+    const timed = (name: string, status: 'success' | 'running' | 'failed', seconds?: number) => ({
+      ...check(name, status),
+      ...(seconds !== undefined && { startedAt: '2026-01-01T10:00:00Z', completedAt: new Date(Date.UTC(2026, 0, 1, 10, 0, seconds)).toISOString() }),
+    })
+    setup(stackPr(5, 'feat/e', 'main', { id: 'p:5', checks: [timed('build', 'success', 128), timed('queued', 'running')] }))
+    const items = within(screen.getByRole('region', { name: 'Checks' })).getAllByRole('listitem').map((item) => item.textContent)
+    expect(items).toEqual(['queued', 'build2m 08s'])
+    cleanup()
+    setup(stackPr(6, 'feat/f', 'main', { id: 'p:6', checks: [check('plain', 'success')] }))
+    expect(within(screen.getByRole('region', { name: 'Checks' })).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['plain'])
+  })
+})
+
 describe('checks card', () => {
   it('lists running, then failed, then passed', () => {
     const { base, top } = stacked()

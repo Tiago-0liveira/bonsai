@@ -53,3 +53,35 @@ it('reconnects the event stream and applies updates after bootstrap', async () =
     expect(openLocalEvents).toHaveBeenCalledTimes(2)
   } finally { stop(); vi.useRealTimers() }
 })
+
+it('maps provider enrichments from PR details, including check timing', async () => {
+  localFetch.mockResolvedValueOnce(response({
+    number: 9, state: 'open', head_sha: 'sha', head: 'feature', base: 'main',
+    additions: 120, deletions: 30, changed_files: 9,
+    requested_reviewers: ['ana'], review_summary: { approvals: 2, changes_requested: 1 }, behind_by: 4,
+  })).mockResolvedValueOnce(response([
+    { id: 1, name: 'build', status: 'completed', conclusion: 'success', started_at: '2026-01-01T10:00:00Z', completed_at: '2026-01-01T10:02:08Z' },
+    { id: 2, name: 'queued', status: 'queued', conclusion: '' },
+  ]))
+  await loadPullRequest('repo:9')
+  const loaded = useBonsaiStore.getState().pullRequests.find(pr => pr.id === 'repo:9')
+  expect(loaded).toMatchObject({
+    totals: { additions: 120, deletions: 30, changedFiles: 9 },
+    reviews: { requested: ['ana'], approvals: 2, changesRequested: 1 },
+    behindBy: 4,
+  })
+  expect(loaded?.checks).toEqual([
+    { id: 1, name: 'build', status: 'success', startedAt: '2026-01-01T10:00:00Z', completedAt: '2026-01-01T10:02:08Z' },
+    { id: 2, name: 'queued', status: 'running' },
+  ])
+})
+
+it('leaves enrichments out when the provider does not report them', async () => {
+  localFetch.mockResolvedValueOnce(response({ number: 10, state: 'open', head_sha: 'sha', head: 'feature', base: 'main' })).mockResolvedValueOnce(response([]))
+  await loadPullRequest('repo:10')
+  const loaded = useBonsaiStore.getState().pullRequests.find(pr => pr.id === 'repo:10')
+  expect(loaded).toBeDefined()
+  expect(loaded).not.toHaveProperty('totals')
+  expect(loaded).not.toHaveProperty('reviews')
+  expect(loaded).not.toHaveProperty('behindBy')
+})
