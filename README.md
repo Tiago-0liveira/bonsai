@@ -336,6 +336,41 @@ Existing users must confirm their project folders once. `bonsai serve` still
 starts from a Git repository, but the browser catalog may be empty until folders
 are configured. There is no global discovery daemon or cloud filesystem scan.
 
+### Claude Code profiles
+
+Install `claude` (Claude Code), then add one Bonsai profile per Claude account.
+Each profile owns a persistent config directory (`CLAUDE_CONFIG_DIR`) that all
+of its sessions share; your real `~/.claude` is never written.
+
+```sh
+bonsai agent account add claude work            # login mode (default)
+bonsai agent account add claude ci --auth token # long-lived token mode
+echo "$TOKEN" | bonsai agent account add claude ci --token-stdin
+bonsai agent account list                       # shows auth mode and identity
+bonsai agent run work -- --model opus           # extra args go to claude
+bonsai agent account remove work                # logs the profile out, deletes it
+```
+
+- **login** runs `claude auth login` inside the profile. All features work.
+- **token** runs `claude setup-token` (or reads `--token-stdin`) and stores the
+  one-year token 0600 in Bonsai's data directory; it is injected as
+  `CLAUDE_CODE_OAUTH_TOKEN` at launch. A token can only make model requests, so
+  it cannot use Remote Control or claude.ai connectors.
+- **Seeding.** A new profile starts from a one-time snapshot of your own setup:
+  `settings.json`, `CLAUDE.md`, `keybindings.json`, `agents/`, `commands/`,
+  `skills/`, `output-styles/` and your user-level MCP servers. Credentials,
+  history, sessions, plugins and API-key settings are never copied, and symlinks
+  are skipped. Bonsai prints what it copied. Use `--no-seed` to skip it or
+  `--seed-from <dir>` to seed from another config directory.
+- **Isolation.** Sessions run with every inherited `CLAUDE*` and `ANTHROPIC_*`
+  variable removed, so a profile never silently runs as another identity.
+  `HOME` is unchanged, so git, gh and ssh keep working.
+- **Concurrency caveat.** Several sessions of one *login* profile refresh the
+  same OAuth login, and Claude Code can occasionally lose that race and ask for
+  `/login` again. Token mode has no refresh and is race-free.
+- Requires Claude Code 2.1.295 or newer. Usage reporting for Claude is not
+  available yet.
+
 ### Antigravity in the web workspace
 
 Install `agy`, then add a Bonsai profile:
@@ -346,7 +381,7 @@ bonsai agent account add antigravity personal
 
 Connect the web app to `bonsai serve`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;
-enter instructions directly in it. Claude and Codex are not available yet.
+enter instructions directly in it. Codex is not available yet.
 
 Closing the dock or reloading the browser detaches without stopping the agent.
 Use **Stop agent** to terminate it and reconcile profile credentials. Sessions

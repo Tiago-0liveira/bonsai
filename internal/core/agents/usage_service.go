@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
@@ -61,6 +62,11 @@ func (s *UsageService) All(ctx context.Context, opts UsageOptions) []AccountUsag
 	if err != nil {
 		return []AccountUsageResult{{Error: err}}
 	}
+	// Providers without usage support are not failures, so they are left out.
+	accounts = slices.DeleteFunc(accounts, func(a Account) bool {
+		provider, err := s.Registry.Get(a.Provider)
+		return err == nil && !provider.Capabilities().Usage
+	})
 	results := make([]AccountUsageResult, len(accounts))
 	if len(accounts) == 0 {
 		return results

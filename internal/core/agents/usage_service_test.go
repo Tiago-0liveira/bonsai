@@ -187,3 +187,26 @@ func TestUsageServiceRefreshAndExpiredCacheBypass(t *testing.T) {
 		t.Fatalf("provider calls after expired cache = %d, want 3", calls)
 	}
 }
+
+type noUsageProvider struct{ usageTestProvider }
+
+func (p *noUsageProvider) ID() ProviderID             { return "no-usage" }
+func (p *noUsageProvider) Capabilities() Capabilities { return Capabilities{} }
+
+func TestUsageServiceAllSkipsProvidersWithoutUsage(t *testing.T) {
+	store, err := NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	with, without := &usageTestProvider{fail: map[AccountID]error{}}, &noUsageProvider{}
+	registry := NewRegistry()
+	_ = registry.Register(with)
+	_ = registry.Register(without)
+	_ = store.Create(testAccount("acct_a", with.ID(), "a"))
+	_ = store.Create(testAccount("acct_b", without.ID(), "b"))
+	service := &UsageService{Accounts: store, Registry: registry}
+	results := service.All(context.Background(), UsageOptions{Refresh: true})
+	if len(results) != 1 || results[0].Account.ID != "acct_a" || results[0].Error != nil {
+		t.Fatalf("results = %+v", results)
+	}
+}

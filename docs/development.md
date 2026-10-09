@@ -251,6 +251,23 @@ Optional interfaces, found by type assertion:
 ones as "Not available yet") plus any other registered provider.
 `/api/agents/accounts` lists accounts of registered providers only.
 
+## Claude provider
+
+`internal/providers/claude` runs Claude Code. Each profile owns
+`<account dir>/config` as its `CLAUDE_CONFIG_DIR`, shared by all its sessions;
+there is no credential vault, materialize or reconcile step. Launch environment:
+every inherited `CLAUDE*` and `ANTHROPIC_*` variable is removed
+(`EnvUnsetPrefixes`), then `CLAUDE_CONFIG_DIR` and `BONSAI_AGENT_*` are set
+(`HOME` is untouched). Token profiles also get `CLAUDE_CODE_OAUTH_TOKEN` and
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. Argv is built in `launch.go` only:
+`[explicit...] --model --permission-mode --effort --name --session-id <uuid> [-- prompt]`;
+the generated UUID is the session's `provider_session_id`.
+
+Tests never need a Claude login: `internal/providers/claude/testdata/fakeclaude.sh`
+is a POSIX stand-in that tests put first on `PATH`; it reads the Phase 0
+`auth-status-*.json` fixtures from `FAKE_CLAUDE_FIXTURES`. `UsageService.All`
+skips providers whose `Capabilities().Usage` is false.
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured

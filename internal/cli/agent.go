@@ -280,5 +280,16 @@ Usage:
   bonsai agent account remove <account>
   bonsai agent run <account> [-- <provider-args...>]
   bonsai agent usage [<account>] [--refresh]
+
+Providers:
+  antigravity  bonsai agent account add antigravity <name>
+  claude       bonsai agent account add claude <name>                login (default)
+               bonsai agent account add claude <name> --auth token   asks for a setup-token
+               echo "$TOKEN" | bonsai agent account add claude <name> --token-stdin
+               New Claude profiles are seeded from ~/.claude (settings, CLAUDE.md,
+               agents, commands, skills, output styles, MCP servers); never
+               credentials or history. Use --no-seed to skip, --seed-from <dir> to
+               choose another source. Several sessions of one login profile can
+               race on token refresh; token mode avoids that.
 `, "\n"))
 }
