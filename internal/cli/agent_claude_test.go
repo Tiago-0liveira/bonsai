@@ -192,9 +192,9 @@ func TestUsageShowsLoginProfileLimits(t *testing.T) {
 		t.Fatalf("add: %v (%q)", err, errOut)
 	}
 	// The fake `auth login` stores a credential without an expiry; give it one.
-	dir := filepath.Join(os.Getenv("XDG_DATA_HOME"))
+	// The data dir differs per OS (XDG on Linux, Library on macOS); HOME is the temp root on all.
 	var creds string
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, _ error) error {
+	_ = filepath.WalkDir(os.Getenv("HOME"), func(path string, d os.DirEntry, _ error) error {
 		if d != nil && d.Name() == ".credentials.json" {
 			creds = path
 		}
