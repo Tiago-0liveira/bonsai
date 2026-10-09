@@ -22,6 +22,8 @@ export interface PullRequestListPaneProps {
   repository?: string
   selectedId?: string
   onSelect: (id: string) => void
+  /** Reports the rows currently shown, in order, after search and filter. */
+  onVisibleChange?: (ids: readonly string[]) => void
 }
 
 const FILTER_LABELS: Record<PrListFilter, string> = { all: 'All', stacked: 'Stacked', draft: 'Draft', failing: 'Failing' }
@@ -36,9 +38,10 @@ function CheckStatusIcon({ summary }: { summary: ReturnType<typeof summarizeChec
   return <CheckCircle2 size={11} className="text-ok" aria-label="Checks passed" />
 }
 
-function Row({ row, selected, register, onSelect }: {
+function Row({ row, selected, tabbable, register, onSelect }: {
   row: PrListRow
   selected: boolean
+  tabbable: boolean
   register: (id: string, element: HTMLElement | null) => void
   onSelect: (id: string) => void
 }) {
@@ -50,7 +53,7 @@ function Row({ row, selected, register, onSelect }: {
       ref={(element) => register(pr.id, element)}
       role="option"
       aria-selected={selected}
-      tabIndex={selected ? 0 : -1}
+      tabIndex={tabbable ? 0 : -1}
       onClick={() => onSelect(pr.id)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
@@ -115,7 +118,7 @@ function Skeleton() {
 }
 
 export function PullRequestListPane(props: PullRequestListPaneProps) {
-  const { tab, onTabChange, openCount, closedCount, rows, state, message, onRetry, repository, selectedId, onSelect } = props
+  const { tab, onTabChange, openCount, closedCount, rows, state, message, onRetry, repository, selectedId, onSelect, onVisibleChange } = props
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<PrListFilter>('all')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -124,6 +127,11 @@ export function PullRequestListPane(props: PullRequestListPaneProps) {
   const list = useMemo(() => buildPrList(rows, { repository, query, filter: activeFilter }), [rows, repository, query, activeFilter])
   const filtered = query.trim() !== '' || activeFilter !== 'all'
   const total = list.ordered.length
+  const visibleIds = useMemo(() => list.visible.map((pr) => pr.id), [list.visible])
+  // Keep one row in the tab order even when search hides the selected one.
+  const tabbableId = selectedId && visibleIds.includes(selectedId) ? selectedId : visibleIds[0]
+
+  useEffect(() => { onVisibleChange?.(visibleIds) }, [visibleIds, onVisibleChange])
 
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -269,7 +277,7 @@ export function PullRequestListPane(props: PullRequestListPaneProps) {
                 </div>
                 <div className="flex flex-col gap-px">
                   {group.rows.map((row) => (
-                    <Row key={row.pr.id} row={row} selected={row.pr.id === selectedId} register={register} onSelect={onSelect} />
+                    <Row key={row.pr.id} row={row} selected={row.pr.id === selectedId} tabbable={row.pr.id === tabbableId} register={register} onSelect={onSelect} />
                   ))}
                 </div>
               </div>

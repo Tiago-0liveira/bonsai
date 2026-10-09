@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { stackPr } from '../../test/fixtures/prStacks'
+import { worktrees } from '../../test/fixtures/worktrees'
 import { PullRequestsRoute } from './PullRequestsRoute'
 import { validatePullRequestsSearch } from './pullRequestsSearch'
 
@@ -18,7 +19,8 @@ afterEach(cleanup)
 function renderAt(url: string) {
   const root = createRootRoute()
   const route = createRoute({ getParentRoute: () => root, path: '/github', component: PullRequestsRoute, validateSearch: validatePullRequestsSearch })
-  const router = createRouter({ routeTree: root.addChildren([route]), history: createMemoryHistory({ initialEntries: [url] }) })
+  const canvas = createRoute({ getParentRoute: () => root, path: '/', component: () => <div>canvas</div> })
+  const router = createRouter({ routeTree: root.addChildren([route, canvas]), history: createMemoryHistory({ initialEntries: [url] }) })
   render(<RouterProvider router={router} />)
   return router
 }
@@ -52,4 +54,17 @@ it('only accepts a non-empty string as the pr param', () => {
   expect(validatePullRequestsSearch({ pr: 'a' })).toEqual({ pr: 'a' })
   expect(validatePullRequestsSearch({ pr: '' })).toEqual({ pr: undefined })
   expect(validatePullRequestsSearch({ pr: 5 })).toEqual({ pr: undefined })
+})
+
+it('selects the PR worktree and navigates to the canvas', async () => {
+  seed()
+  const setSelection = vi.fn()
+  useBonsaiStore.setState({
+    setSelection,
+    worktrees: [{ ...worktrees[1], id: 'wt-1', projectId: 'p', branch: 'feat/one', prNumber: 1 }],
+  })
+  const router = renderAt('/github?pr=p:1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Show on canvas' }))
+  expect(setSelection).toHaveBeenCalledWith({ type: 'worktree', id: 'wt-1' })
+  await waitFor(() => expect(router.state.location.pathname).toBe('/'))
 })

@@ -6,5 +6,11 @@ import type { PullRequestsSearch } from './pullRequestsSearch'
 export function PullRequestsRoute() {
   const { pr } = useSearch({ strict: false }) as PullRequestsSearch
   const navigate = useNavigate()
-  return <PullRequestsPage selectedId={pr} onSelect={(id) => void navigate({ to: '.', search: { pr: id }, replace: true })} />
+  return (
+    <PullRequestsPage
+      selectedId={pr}
+      onSelect={(id) => void navigate({ to: '.', search: { pr: id }, replace: true })}
+      onShowOnCanvas={() => void navigate({ to: '/' })}
+    />
+  )
 }
