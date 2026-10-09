@@ -101,32 +101,88 @@ func TestUsageSendsHeadersAndReadsLoginToken(t *testing.T) {
 	}
 }
 
-func TestUsageTokenProfileUsesStoredToken(t *testing.T) {
+func TestUsageTokenProfileIsUnsupportedWithoutRequest(t *testing.T) {
 	e := newTestEnv(t)
 	account := e.addToken("ci")
 	server := newUsageServer(t, 200, readFixture(t, "usage-response.json"))
 	e.provider.usageEndpoint = server.URL
-	if _, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{}); err != nil {
-		t.Fatal(err)
+	_, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{})
+	if !errors.Is(err, agents.ErrUsageUnsupported) || !strings.Contains(err.Error(), "long-lived tokens") {
+		t.Fatalf("err = %v", err)
 	}
-	if got := server.last.Load().Header.Get("Authorization"); got != "Bearer "+testToken {
-		t.Fatalf("authorization = %q", got)
+	// Phase 0: setup tokens always get 403 (missing user:profile scope), so the
+	// token is not sent at all.
+	if server.hits.Load() != 0 {
+		t.Fatal("long-lived token was sent to the usage endpoint")
 	}
 }
 
-func TestUsageSetupTokenRejectionIsUnsupported(t *testing.T) {
+func TestUsageLoginRejectionIsSoft(t *testing.T) {
 	e := newTestEnv(t)
-	account := e.addToken("ci")
-	for _, status := range []int{401, 403} {
+	account := e.addLogin("work")
+	writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
+	for status, want := range map[int]string{401: "login rejected", 403: "cannot read usage"} {
 		server := newUsageServer(t, status, readFixture(t, "usage-response-setup-token.json"))
 		e.provider.usageEndpoint = server.URL
-		_, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{})
-		if !errors.Is(err, agents.ErrUsageUnsupported) || !strings.Contains(err.Error(), "long-lived tokens") {
+		_, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{Refresh: true})
+		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("status %d: err = %v", status, err)
 		}
 		if strings.Contains(err.Error(), "request_id") || strings.Contains(err.Error(), "scope") {
 			t.Fatalf("response body leaked: %v", err)
 		}
+	}
+}
+
+func TestUsageFailuresAreRememberedUntilRefresh(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
+	server := newUsageServer(t, 429, nil)
+	e.provider.usageEndpoint = server.URL
+	now := time.Now()
+	e.provider.now = func() time.Time { return now }
+	for i := 0; i < 3; i++ {
+		if _, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{}); err == nil || !strings.Contains(err.Error(), "429") {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if server.hits.Load() != 1 {
+		t.Fatalf("hits = %d, want 1 (failure remembered)", server.hits.Load())
+	}
+	_, _ = e.provider.Usage(t.Context(), account, agents.UsageOptions{Refresh: true})
+	now = now.Add(usageFailureTTL + time.Second)
+	_, _ = e.provider.Usage(t.Context(), account, agents.UsageOptions{})
+	if server.hits.Load() != 3 {
+		t.Fatalf("hits = %d, want 3 after refresh and expiry", server.hits.Load())
+	}
+}
+
+func TestUsageNeverFollowsRedirectsOrUsesClearText(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
+	target := newUsageServer(t, 200, readFixture(t, "usage-response.json"))
+	redirector := httptest.NewServer(http.RedirectHandler(target.URL, http.StatusFound))
+	t.Cleanup(redirector.Close)
+	e.provider.usageEndpoint = redirector.URL
+	if _, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{Refresh: true}); err == nil || !strings.Contains(err.Error(), "302") {
+		t.Fatalf("err = %v", err)
+	}
+	if target.hits.Load() != 0 {
+		t.Fatal("redirect was followed with the bearer token")
+	}
+	for endpoint, ok := range map[string]bool{
+		"https://api.anthropic.com/api/oauth/usage": true, "http://127.0.0.1:1/x": true, "http://localhost/x": true, "http://[::1]/x": true,
+		"http://api.anthropic.com/api/oauth/usage": false, "http://example.com/": false, "ftp://127.0.0.1/": false, "": false,
+	} {
+		if safeUsageEndpoint(endpoint) != ok {
+			t.Errorf("safeUsageEndpoint(%q) = %v", endpoint, !ok)
+		}
+	}
+	e.provider.usageEndpoint = "http://api.anthropic.com/api/oauth/usage"
+	if _, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{Refresh: true}); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("clear text endpoint accepted: %v", err)
 	}
 }
 
@@ -168,7 +224,8 @@ func TestUsageMissingCredentials(t *testing.T) {
 
 func TestUsageTimeoutRespectsContext(t *testing.T) {
 	e := newTestEnv(t)
-	account := e.addToken("ci")
+	account := e.addLogin("work")
+	writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
 	release := make(chan struct{})
 	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
 	t.Cleanup(func() { close(release); slow.Close() })
@@ -193,7 +250,7 @@ func TestUsageErrorsNeverContainTokenOrBody(t *testing.T) {
 		server := newUsageServer(t, status, body)
 		e.provider.usageEndpoint = server.URL
 		for _, account := range []agents.Account{login, token} {
-			_, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{})
+			_, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{Refresh: true})
 			if err == nil {
 				continue
 			}
@@ -270,7 +327,8 @@ func TestParseUsageShapes(t *testing.T) {
 
 func TestUsageUnknownResponseThroughProvider(t *testing.T) {
 	e := newTestEnv(t)
-	account := e.addToken("ci")
+	account := e.addLogin("work")
+	writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
 	e.provider.usageEndpoint = newUsageServer(t, 200, []byte(`{"surprise":true}`)).URL
 	snapshot, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{})
 	if err != nil || len(snapshot.Limits) != 0 || len(snapshot.Warnings) != 1 {

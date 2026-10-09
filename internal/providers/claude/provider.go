@@ -19,7 +19,9 @@ const ProviderID agents.ProviderID = "claude"
 const (
 	versionTimeout = 5 * time.Second
 	statusTTL      = 60 * time.Second
-	logoutTimeout  = 10 * time.Second
+	// unknownStatusTTL is how long a failed `auth status` is not retried.
+	unknownStatusTTL = 10 * time.Second
+	logoutTimeout    = 10 * time.Second
 )
 
 // CommandRunner runs a short, non-interactive claude command and returns its
@@ -47,6 +49,7 @@ var statusTimeout = 5 * time.Second
 
 type statusEntry struct {
 	status    authStatus
+	known     bool
 	fetchedAt time.Time
 }
 
@@ -67,6 +70,9 @@ type Provider struct {
 	usageEndpoint string
 	usageClient   *http.Client
 	usageOS       string
+
+	usageMu       sync.Mutex
+	usageFailures map[agents.AccountID]usageFailure
 
 	versionMu sync.Mutex
 	version   string
@@ -152,8 +158,16 @@ func (p *Provider) installedVersion(ctx context.Context) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
 	defer cancel()
+	// Whatever the binary writes at startup must not land in the user's real
+	// ~/.claude, so it gets a throwaway config dir.
+	scratch, err := os.MkdirTemp("", "bonsai-claude-version-")
+	if err != nil {
+		return "", fmt.Errorf("claude --version: %w", err)
+	}
+	defer os.RemoveAll(scratch)
 	out, err := p.runner.Output(ctx, agents.PreparedSession{
 		Executable: executable, Args: []string{"--version"}, EnvUnsetPrefixes: scrubPrefixes,
+		EnvSet: map[string]string{"CLAUDE_CONFIG_DIR": scratch},
 	})
 	if err != nil {
 		return "", fmt.Errorf("claude --version: %w", err)

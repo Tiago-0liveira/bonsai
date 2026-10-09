@@ -3,7 +3,7 @@ import type { Agent, AgentProvider, AgentProviderId } from '../types'
 
 export const PROVIDER_LABELS: Record<AgentProviderId, AgentProvider> = { antigravity: 'Antigravity', claude: 'Claude' }
 /** True for agents backed by a real local-API session (terminal, stop, reconcile). */
-export const isLiveAgent = (agent?: Pick<Agent, 'providerId'>): boolean => !!agent?.providerId && agent.providerId in PROVIDER_LABELS
+export const isLiveAgent = (agent?: Pick<Agent, 'providerId'>): boolean => !!agent?.providerId && Object.hasOwn(PROVIDER_LABELS, agent.providerId)
 export const providerIdFor = (label: AgentProvider): AgentProviderId | undefined => (Object.keys(PROVIDER_LABELS) as AgentProviderId[]).find(id => PROVIDER_LABELS[id] === label)
 export interface AgentSummary {
   id: string; project_id: string; worktree_id: string; account_id: string
@@ -32,5 +32,5 @@ export const agentAccounts = () => request<AgentAccount[]>('/api/agents/accounts
 export const startAgent = (project: string, body: { worktree_id: string; account_id: string; name?: string; model?: string; prompt?: string; full_access?: boolean; permission_mode?: string; effort?: string; cols: number; rows: number }, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(body) })
 export const stopAgent = (project: string, id: string, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'Idempotency-Key': key } })
 export function mapAgent(a: AgentSummary, previous?: Agent): Agent {
-  return { id: a.id, projectId: a.project_id, worktreeId: a.worktree_id, name: a.name || a.profile_name, provider: PROVIDER_LABELS[a.provider] ?? 'Antigravity', providerId: a.provider, profileName: a.profile_name, model: '', reasoningEffort: '', workType: '', prompt: '', archived: previous?.archived ?? false, presentation: previous?.presentation ?? 'canvas', state: a.state === 'exited' || a.state === 'failed' ? 'finished' : 'running', lifecycleState: a.state, task: a.error || a.state, runtime: '', terminalId: a.id, createdAt: a.created_at, finishedAt: a.ended_at }
+  return { id: a.id, projectId: a.project_id, worktreeId: a.worktree_id, name: a.name || a.profile_name, provider: (Object.hasOwn(PROVIDER_LABELS, a.provider) ? PROVIDER_LABELS[a.provider] : a.provider) as AgentProvider, providerId: a.provider, profileName: a.profile_name, model: '', reasoningEffort: '', workType: '', prompt: '', archived: previous?.archived ?? false, presentation: previous?.presentation ?? 'canvas', state: a.state === 'exited' || a.state === 'failed' ? 'finished' : 'running', lifecycleState: a.state, task: a.error || a.state, runtime: '', terminalId: a.id, createdAt: a.created_at, finishedAt: a.ended_at }
 }

@@ -169,3 +169,58 @@ func TestInvalidSettingsDescribeAsWarning(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownStatusIsNotRetriedImmediately(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	old := statusTimeout
+	statusTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { statusTimeout = old })
+	runner := &blockingRunner{}
+	e.provider.runner = runner
+	now := time.Now()
+	e.provider.now = func() time.Time { return now }
+	for i := 0; i < 3; i++ {
+		e.provider.DescribeAccount(t.Context(), account)
+	}
+	if runner.calls.Load() != 1 {
+		t.Fatalf("hung binary ran %d times within the unknown TTL", runner.calls.Load())
+	}
+	now = now.Add(unknownStatusTTL + time.Second)
+	e.provider.DescribeAccount(t.Context(), account)
+	if runner.calls.Load() != 2 {
+		t.Fatalf("auth status ran %d times after the unknown TTL", runner.calls.Load())
+	}
+}
+
+type recordingRunner struct {
+	inner CommandRunner
+	seen  []agents.PreparedSession
+}
+
+func (r *recordingRunner) Output(ctx context.Context, p agents.PreparedSession) ([]byte, error) {
+	r.seen = append(r.seen, p)
+	return r.inner.Output(ctx, p)
+}
+
+func TestVersionCheckUsesThrowawayConfigDir(t *testing.T) {
+	e := newTestEnv(t)
+	runner := &recordingRunner{inner: execRunner{}}
+	e.provider.runner = runner
+	if a := e.provider.Availability(t.Context()); !a.Available {
+		t.Fatalf("availability = %+v", a)
+	}
+	if len(runner.seen) != 1 {
+		t.Fatalf("runs = %d", len(runner.seen))
+	}
+	dir := runner.seen[0].EnvSet["CLAUDE_CONFIG_DIR"]
+	if dir == "" || strings.HasPrefix(dir, e.home) {
+		t.Fatalf("version ran with CLAUDE_CONFIG_DIR=%q", dir)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("scratch dir was not removed: %v", err)
+	}
+	if entries, _ := os.ReadDir(e.home); len(entries) != 0 {
+		t.Fatalf("version check wrote into HOME: %v", entries)
+	}
+}

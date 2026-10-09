@@ -176,8 +176,8 @@ func TestUsageShowsUnsupportedTokenProfileWithoutFailing(t *testing.T) {
 			t.Fatalf("secret or response body printed:\n%s", out)
 		}
 	}
-	if *hits != 2 { // failures are not cached
-		t.Fatalf("hits = %d, want 2", *hits)
+	if *hits != 0 {
+		t.Fatalf("hits = %d: a long-lived token must never be sent", *hits)
 	}
 }
 

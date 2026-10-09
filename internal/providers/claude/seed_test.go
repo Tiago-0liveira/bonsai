@@ -237,6 +237,7 @@ func TestSeedStripsCredentialSettings(t *testing.T) {
 	writeFile(t, filepath.Join(src, "settings.json"), `{
 		"model":"opus",
 		"apiKeyHelper":"/bin/get-key",
+		"forceLoginMethod":"claudeai", "forceLoginOrgUUID":"org", "otelHeadersHelper":"/bin/h",
 		"awsAuthRefresh":"x",
 		"env":{"ANTHROPIC_API_KEY":"sk","ANTHROPIC_BASE_URL":"u","CLAUDE_CODE_USE_BEDROCK":"1","AWS_PROFILE":"p","EDITOR":"vim"}
 	}`, 0o644)
@@ -248,12 +249,15 @@ func TestSeedStripsCredentialSettings(t *testing.T) {
 		Model  string            `json:"model"`
 		Helper string            `json:"apiKeyHelper"`
 		AWS    string            `json:"awsAuthRefresh"`
+		Force  string            `json:"forceLoginMethod"`
+		Org    string            `json:"forceLoginOrgUUID"`
+		Otel   string            `json:"otelHeadersHelper"`
 		Env    map[string]string `json:"env"`
 	}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Model != "opus" || got.Helper != "" || got.AWS != "" || len(got.Env) != 1 || got.Env["EDITOR"] != "vim" {
+	if got.Model != "opus" || got.Helper != "" || got.AWS != "" || got.Force != "" || got.Org != "" || got.Otel != "" || len(got.Env) != 1 || got.Env["EDITOR"] != "vim" {
 		t.Fatalf("settings = %s", data)
 	}
 }

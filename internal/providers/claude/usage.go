@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,18 +48,30 @@ func unsupported(reason string) error {
 }
 
 // Usage reads the 5-hour and weekly utilization of one profile.
-func (p *Provider) Usage(ctx context.Context, account agents.Account, _ agents.UsageOptions) (agents.UsageSnapshot, error) {
+func (p *Provider) Usage(ctx context.Context, account agents.Account, opts agents.UsageOptions) (agents.UsageSnapshot, error) {
 	settings, err := ParseSettings(account)
 	if err != nil {
 		return agents.UsageSnapshot{}, fmt.Errorf("invalid profile settings")
 	}
-	token, tokenMode, err := p.usageToken(account, settings)
+	if settings.AuthMode == AuthToken {
+		// Setup tokens lack the user:profile scope (observed: always HTTP 403), so
+		// the long-lived token is not sent for a request that cannot succeed.
+		return agents.UsageSnapshot{}, unsupported("long-lived tokens cannot read usage")
+	}
+	token, err := p.usageToken(account)
 	if err != nil {
 		return agents.UsageSnapshot{}, err
 	}
-	body, err := p.fetchUsage(ctx, token, tokenMode)
+	if !opts.Refresh {
+		if failure := p.recentUsageFailure(account.ID); failure != nil {
+			return agents.UsageSnapshot{}, failure
+		}
+	}
+	body, err := p.fetchUsage(ctx, token)
 	if err != nil {
-		return agents.UsageSnapshot{}, redact(err, token)
+		err = redact(err, token)
+		p.rememberUsageFailure(account.ID, err)
+		return agents.UsageSnapshot{}, err
 	}
 	limits, warnings, err := ParseUsage(body)
 	if err != nil {
@@ -66,25 +80,49 @@ func (p *Provider) Usage(ctx context.Context, account agents.Account, _ agents.U
 	return agents.UsageSnapshot{Provider: ProviderID, AccountID: account.ID, FetchedAt: p.now().UTC(), Limits: limits, Warnings: warnings}, nil
 }
 
-// usageToken returns the bearer token for a profile. In token mode that is the
-// stored long-lived token; in login mode it is the access token Claude Code keeps
-// in the profile's .credentials.json (absent on macOS, where it is in the Keychain).
-func (p *Provider) usageToken(account agents.Account, settings Settings) (token string, tokenMode bool, err error) {
-	if settings.AuthMode == AuthToken {
-		file, err := readToken(tokenPath(p.accounts, account))
-		if err != nil {
-			return "", true, errors.New("token missing; remove and add the profile again")
-		}
-		return file.Token, true, nil
+// usageFailureTTL is how long an HTTP failure (rate limit, outage) is remembered
+// so repeated dashboard runs do not hammer the endpoint.
+const usageFailureTTL = time.Minute
+
+type usageFailure struct {
+	err error
+	at  time.Time
+}
+
+func (p *Provider) recentUsageFailure(id agents.AccountID) error {
+	p.usageMu.Lock()
+	defer p.usageMu.Unlock()
+	if f, ok := p.usageFailures[id]; ok && p.now().Sub(f.at) < usageFailureTTL {
+		return f.err
 	}
+	return nil
+}
+
+func (p *Provider) rememberUsageFailure(id agents.AccountID, err error) {
+	// Only remote failures count: cancellation is the caller's, and unsupported
+	// is already a stable answer.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, agents.ErrUsageUnsupported) {
+		return
+	}
+	p.usageMu.Lock()
+	defer p.usageMu.Unlock()
+	if p.usageFailures == nil {
+		p.usageFailures = map[agents.AccountID]usageFailure{}
+	}
+	p.usageFailures[id] = usageFailure{err: err, at: p.now()}
+}
+
+// usageToken returns the access token Claude Code keeps in the profile's
+// .credentials.json (absent on macOS, where it is in the Keychain).
+func (p *Provider) usageToken(account agents.Account) (token string, err error) {
 	data, err := os.ReadFile(filepath.Join(configDir(p.accounts, account), ".credentials.json"))
 	switch {
 	case errors.Is(err, os.ErrNotExist) && p.goos() == "darwin":
-		return "", false, unsupported("login is stored in the macOS keychain")
+		return "", unsupported("login is stored in the macOS keychain")
 	case errors.Is(err, os.ErrNotExist):
-		return "", false, errors.New("not logged in; start a session and run /login")
+		return "", errors.New("not logged in; start a session and run /login")
 	case err != nil:
-		return "", false, errors.New("cannot read login credentials")
+		return "", errors.New("cannot read login credentials")
 	}
 	var creds struct {
 		OAuth struct {
@@ -93,12 +131,12 @@ func (p *Provider) usageToken(account agents.Account, settings Settings) (token 
 		} `json:"claudeAiOauth"`
 	}
 	if json.Unmarshal(data, &creds) != nil || creds.OAuth.AccessToken == "" {
-		return "", false, errors.New("login credentials are unreadable")
+		return "", errors.New("login credentials are unreadable")
 	}
 	if creds.OAuth.ExpiresAt > 0 && !p.now().Before(time.UnixMilli(creds.OAuth.ExpiresAt)) {
-		return "", false, errors.New("usage unavailable until a session refreshes the login")
+		return "", errors.New("usage unavailable until a session refreshes the login")
 	}
-	return creds.OAuth.AccessToken, false, nil
+	return creds.OAuth.AccessToken, nil
 }
 
 func (p *Provider) goos() string {
@@ -108,10 +146,13 @@ func (p *Provider) goos() string {
 	return runtime.GOOS
 }
 
-func (p *Provider) fetchUsage(ctx context.Context, token string, tokenMode bool) ([]byte, error) {
+func (p *Provider) fetchUsage(ctx context.Context, token string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, usageTimeout)
 	defer cancel()
 	endpoint := p.usageEndpoint
+	if !safeUsageEndpoint(endpoint) {
+		return nil, errors.New("usage endpoint must use https")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, errors.New("usage request failed")
@@ -121,7 +162,7 @@ func (p *Provider) fetchUsage(ctx context.Context, token string, tokenMode bool)
 	req.Header.Set("Accept", "application/json")
 	client := p.usageClient
 	if client == nil {
-		client = http.DefaultClient
+		client = noRedirectClient
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -133,8 +174,6 @@ func (p *Provider) fetchUsage(ctx context.Context, token string, tokenMode bool)
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusOK:
-	case tokenMode && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden):
-		return nil, unsupported("long-lived tokens cannot read usage")
 	case resp.StatusCode == http.StatusForbidden:
 		return nil, unsupported("this login cannot read usage")
 	case resp.StatusCode == http.StatusUnauthorized:
@@ -147,6 +186,24 @@ func (p *Provider) fetchUsage(ctx context.Context, token string, tokenMode bool)
 		return nil, errors.New("usage request failed")
 	}
 	return body, nil
+}
+
+// noRedirectClient never follows redirects: the bearer token must only ever go
+// to the configured endpoint.
+var noRedirectClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+// safeUsageEndpoint allows https, and plain http only to the loopback interface
+// (the local test servers), so the token never travels in clear text.
+func safeUsageEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	host := u.Hostname()
+	return u.Scheme == "http" && (host == "localhost" || net.ParseIP(host).IsLoopback())
 }
 
 // redact guarantees the secret never reaches an error message, whatever the

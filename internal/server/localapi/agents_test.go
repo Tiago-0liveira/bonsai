@@ -511,11 +511,16 @@ func TestAgentStartLaunchOptions(t *testing.T) {
 	if provider.starts.Load() != 0 {
 		t.Fatal("rejected launch reached the provider")
 	}
-	// The idempotency fingerprint covers the new fields.
-	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "mode", body(`,"permission_mode":"auto"`)); w.Code != 409 {
-		t.Fatalf("reused key with a different permission mode: %d %s", w.Code, w.Body.String())
+	// A definitive failure releases its key: the same request fails the same way
+	// instead of answering "previous request was interrupted".
+	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "mode", body(`,"permission_mode":"plan"`)); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_launch_options") {
+		t.Fatalf("retry of a rejected launch: %d %s", w.Code, w.Body.String())
 	}
 	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "ok", body("")); w.Code != 202 {
 		t.Fatalf("plain start: %d %s", w.Code, w.Body.String())
+	}
+	// The idempotency fingerprint covers the new fields, and an accepted key stays reserved.
+	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "ok", body(`,"effort":"high"`)); w.Code != 409 {
+		t.Fatalf("reused key with a different effort: %d %s", w.Code, w.Body.String())
 	}
 }

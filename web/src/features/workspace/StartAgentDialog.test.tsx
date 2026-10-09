@@ -191,3 +191,20 @@ it('shows the setup hint of the selected provider', async () => {
   // Claude has no profile, so it stays disabled and the usable provider is selected.
   expect(screen.getByRole('button', { name: /Claude/ })).toBeDisabled()
 })
+
+it('clears a stale error and shows profile defaults when switching provider', async () => {
+  vi.mocked(agentProviders).mockResolvedValue(providers())
+  vi.mocked(agentAccounts).mockResolvedValue([
+    { id: 'profile-one', name: 'One', provider: 'antigravity' },
+    { ...claudeProfile, model: 'opus', permission_mode: 'plan', effort: 'high' },
+  ])
+  useBonsaiStore.setState({ createAgent: vi.fn().mockRejectedValue(new Error('Connection lost')) })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).not.toBeDisabled())
+  await pick('Profile', 'One')
+  fireEvent.submit(screen.getByRole('dialog'))
+  await screen.findByRole('alert')
+  fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.getByTestId('profile-details')).toHaveTextContent('profile defaults: opus · plan · high effort')
+})

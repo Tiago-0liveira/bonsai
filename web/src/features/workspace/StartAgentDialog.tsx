@@ -6,7 +6,7 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import type { AgentProviderId } from '../../types'
 
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
-const isLaunchable = (id: string): id is AgentProviderId => id in PROVIDER_LABELS
+const isLaunchable = (id: string): id is AgentProviderId => Object.hasOwn(PROVIDER_LABELS, id)
 const PERMISSION_MODES = [
   { value: '', label: 'Profile default' },
   { value: 'default', label: 'Default' },
@@ -88,6 +88,7 @@ function StartAgentForm() {
     if (id === providerId) return
     const own = accounts.filter(item => item.provider === id)
     setProviderId(id)
+    setError('')
     rememberProvider(id)
     setAccountId(own.length === 1 ? own[0].id : '')
     setFullAccess(own.length === 1 ? own[0].full_access ?? false : false)
@@ -203,9 +204,10 @@ function StartAgentForm() {
               <input aria-label="Agent model" disabled={pending} value={model} onChange={event => setModel(event.target.value)} placeholder={isClaude ? 'sonnet, opus, haiku, fable or a full model ID' : 'Use profile default'} className="bonsai-focus h-8 w-full rounded-[7px] border border-border bg-well px-2.5 text-[12px] outline-none placeholder:text-muted-2 focus:border-accent/55" />
             </label>
           </div>
-          {account && (account.auth_mode || account.identity || account.warnings?.length) && (
+          {account && (account.auth_mode || account.identity || account.model || account.permission_mode || account.effort || account.warnings?.length) && (
             <div className="space-y-1 rounded-[10px] border border-border bg-well p-3 font-mono text-[10px] text-muted-2" data-testid="profile-details">
               <div>{[account.auth_mode && `auth: ${account.auth_mode}`, account.identity].filter(Boolean).join(' · ')}</div>
+              {(account.model || account.permission_mode || account.effort) && <div>{'profile defaults: ' + [account.model, account.permission_mode, account.effort && account.effort + ' effort'].filter(Boolean).join(' · ')}</div>}
               {account.warnings?.map(warning => <div key={warning} className="text-warn">{warning}</div>)}
             </div>
           )}

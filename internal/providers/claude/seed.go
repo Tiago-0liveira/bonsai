@@ -24,7 +24,10 @@ var (
 // settingsCredentialKeys are removed from a seeded settings.json: they run
 // credential helpers or carry credentials, which would override the profile's
 // own login.
-var settingsCredentialKeys = []string{"apiKeyHelper", "awsAuthRefresh", "awsCredentialExport"}
+//
+// forceLogin* pin the login to the host user's method or organization, which
+// would block signing a different account into the profile.
+var settingsCredentialKeys = []string{"apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper", "forceLoginMethod", "forceLoginOrgUUID"}
 
 type seedReport struct {
 	copied  []string

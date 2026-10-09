@@ -268,9 +268,15 @@ is a POSIX stand-in that tests put first on `PATH`; it reads the Phase 0
 `auth-status-*.json` fixtures from `FAKE_CLAUDE_FIXTURES`. `UsageService.All`
 skips providers whose `Capabilities().Usage` is false.
 
+Unverified assumptions (Phase 0 was inconclusive): that
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` hides the token from Bash subprocesses, and that
+`claude auth status` never rotates a refresh token. Re-check both when upgrading
+`MinVersion`.
+
 Claude usage (`usage.go`) reads the undocumented `GET /api/oauth/usage` with the
-profile's stored access token (token profiles use the stored long-lived token and
-are reported as `ErrUsageUnsupported`). It never refreshes a login, never puts the
+profile's stored access token. Token profiles are reported as `ErrUsageUnsupported`
+without any request (setup tokens always get 403). Redirects are not followed, the
+endpoint must be https or loopback, and HTTP failures are remembered for a minute. It never refreshes a login, never puts the
 token or the response body in an error, and accepts both the flat-bucket and the
 `limits[]` response shapes (`testdata/usage-response*.json`). The provider
 implements `UsagePolicy` (5 minutes), which `UsageService` prefers over its own

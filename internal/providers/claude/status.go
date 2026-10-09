@@ -50,9 +50,15 @@ func (p *Provider) queryStatus(ctx context.Context, account agents.Account) (sta
 	p.statusMu.Lock()
 	entry, ok := p.statuses[account.ID]
 	p.statusMu.Unlock()
-	if ok && p.now().Sub(entry.fetchedAt) < statusTTL {
+	if ok && entry.known && p.now().Sub(entry.fetchedAt) < statusTTL {
 		return entry.status, true
 	}
+	// A recent failed query is remembered briefly so a hung binary is not
+	// re-run (and waited on) for every poll of the profile list.
+	if ok && !entry.known && p.now().Sub(entry.fetchedAt) < unknownStatusTTL {
+		return authStatus{}, false
+	}
+	parent := ctx
 	prepared, err := p.profileCommand(account, "auth", "status")
 	if err != nil {
 		return authStatus{}, false
@@ -63,10 +69,15 @@ func (p *Provider) queryStatus(ctx context.Context, account agents.Account) (sta
 	// Exit code 1 means logged out but still prints the JSON.
 	status, ok = parseAuthStatus(out)
 	if !ok || ctx.Err() != nil {
+		if parent.Err() == nil { // not cancelled by the caller
+			p.statusMu.Lock()
+			p.statuses[account.ID] = statusEntry{fetchedAt: p.now()}
+			p.statusMu.Unlock()
+		}
 		return authStatus{}, false
 	}
 	p.statusMu.Lock()
-	p.statuses[account.ID] = statusEntry{status: status, fetchedAt: p.now()}
+	p.statuses[account.ID] = statusEntry{status: status, known: true, fetchedAt: p.now()}
 	p.statusMu.Unlock()
 	return status, true
 }

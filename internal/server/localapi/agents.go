@@ -135,13 +135,27 @@ func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 503, "profiles_unavailable", "Cannot read profiles")
 		return
 	}
-	out := []map[string]any{}
+	// A slow provider (Claude runs `auth status`) must not serialize the list.
+	visible := accounts[:0:0]
 	for _, a := range accounts {
 		// Profiles of providers this build cannot launch stay hidden.
-		if _, err := registry.Get(a.Provider); err != nil {
-			continue
+		if _, err := registry.Get(a.Provider); err == nil {
+			visible = append(visible, a)
 		}
-		info := registry.DescribeAccount(r.Context(), a)
+	}
+	infos := make([]agents.AccountInfo, len(visible))
+	var wg sync.WaitGroup
+	for i, a := range visible {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			infos[i] = registry.DescribeAccount(r.Context(), a)
+		}()
+	}
+	wg.Wait()
+	out := []map[string]any{}
+	for i, a := range visible {
+		info := infos[i]
 		item := map[string]any{}
 		for k, v := range info.Options {
 			item[k] = v
@@ -217,6 +231,7 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 	project := r.PathValue("projectId")
 	if s.agents.registry != nil {
 		if current, ok := s.agents.registry.Lookup(project); !ok || !current.info.Available {
+			s.releaseReservation(key)
 			writeAPIError(w, 409, "project_unavailable", "Project is no longer authorized")
 			return
 		}
@@ -236,6 +251,7 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 		var ok bool
 		summary, ok = s.agents.manager.Get(project, r.PathValue("sessionId"))
 		if !ok {
+			s.releaseReservation(key)
 			writeAPIError(w, 404, "not_found", "Session not found")
 			return
 		}
@@ -244,6 +260,7 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 	} else {
 		dir, pathErr := s.agentWorktree(r, body.WorktreeID)
 		if pathErr != nil {
+			s.releaseReservation(key)
 			writeAPIError(w, 409, "worktree_unavailable", pathErr.Error())
 			return
 		}
@@ -252,12 +269,15 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 	switch {
 	case err == nil:
 	case errors.Is(err, agents.ErrInvalidLaunch):
+		s.releaseReservation(key)
 		writeAPIError(w, 400, "invalid_launch_options", err.Error())
 		return
 	case errors.Is(err, agents.ErrAccountBusy), errors.Is(err, agents.ErrProviderBusy):
+		s.releaseReservation(key)
 		writeAPIError(w, 409, "agent_busy", err.Error())
 		return
 	default:
+		s.releaseReservation(key)
 		writeAPIError(w, 400, "agent_start_failed", err.Error())
 		return
 	}
@@ -272,6 +292,20 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 		return
 	}
 	writeJSON(w, http.StatusAccepted, summary)
+}
+
+// releaseReservation drops a request key whose request failed before any session
+// existed, so the same key can be retried. Reservations that produced a session
+// are never released. Callers hold s.agents.mu.
+func (s *Server) releaseReservation(key string) {
+	if err := s.state.Update(func(data gitstore.Data) error {
+		if record, ok := gitstore.Get[agentMutation](data, "api_agent_mutations", key); ok && record.Summary.ID == "" {
+			delete(data["api_agent_mutations"], key)
+		}
+		return nil
+	}); err != nil {
+		log.Printf("Agent request key release failed")
+	}
 }
 func (s *Server) startAgent(w http.ResponseWriter, r *http.Request) {
 	var body agentRequest

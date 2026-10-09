@@ -368,6 +368,15 @@ bonsai agent account remove work                # logs the profile out, deletes 
 - **Concurrency caveat.** Several sessions of one *login* profile refresh the
   same OAuth login, and Claude Code can occasionally lose that race and ask for
   `/login` again. Token mode has no refresh and is race-free.
+- **Token exposure.** In token mode the token is in the session's environment
+  (that is how Claude Code reads it). Bonsai also sets
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` to keep it out of the agent's shell
+  commands, but that flag was not confirmed against a real session, so treat
+  commands the agent runs as able to see the token.
+- **Seeding.** Seeding copies MCP server definitions as they are, including any
+  `env` or header secrets in them, into the profile (mode 0600). Symlinked files
+  and directories in the source are skipped and reported. Login-pinning settings
+  (`forceLoginMethod`, `forceLoginOrgUUID`) and credential helpers are dropped.
 - **Usage.** `bonsai agent usage` shows the 5-hour and weekly utilization (and
   per-model weekly limits when present) of login profiles. Claude has no
   documented endpoint for this, so Bonsai reads the one Claude Code's own
