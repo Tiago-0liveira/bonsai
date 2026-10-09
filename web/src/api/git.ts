@@ -1,4 +1,4 @@
-import { project, pullRequest, checkStatus, reconcileSnapshotEntities, snapshotRuntimeAuthority } from './snapshotReconciliation'
+import { project, pullRequest, mapCheck, reconcileSnapshotEntities, snapshotRuntimeAuthority } from './snapshotReconciliation'
 import { remapProcessReferences } from '../stores/processProjection'
 import { activeRuntimePatch, reconcileRuntimePreferences, switchRuntimeScope } from '../stores/runtimePreferences'
 import { changedPatch, replaceScope } from '../stores/reconciliation'
@@ -62,6 +62,8 @@ export interface RemoteCheck {
   status: string
   conclusion: string
   url?: string
+  started_at?: string
+  completed_at?: string
 }
 export interface RemotePR {
   number: number
@@ -77,6 +79,12 @@ export interface RemotePR {
   created_at: string
   updated_at: string
   mergeable?: string
+  additions?: number
+  deletions?: number
+  changed_files?: number
+  requested_reviewers?: string[]
+  review_summary?: { approvals: number; changes_requested: number }
+  behind_by?: number
   comments?: { author: string; body: string; created_at: string }[]
   reviews?: { author: string; body: string; submitted_at: string }[]
   commits?: { sha: string; message: string; author: string; created_at: string }[]
@@ -449,7 +457,7 @@ async function fetchPullRequest(id: string) {
     const checks = await request<RemoteCheck[]>(`/api/projects/${encodeURIComponent(repo)}/checks/${remote.head_sha}`)
     if (heads.get(id) && heads.get(id) !== remote.head_sha) return
     heads.set(id, remote.head_sha)
-    mapped.checks = checks.map(check => ({ id: check.id, name: check.name, status: checkStatus(check) }))
+    mapped.checks = checks.map(mapCheck)
     pullRequestLoadedAt.set(id, Date.now())
     useBonsaiStore.setState(state => ({
       ...changedPatch(state, { pullRequests: replaceScope(state.pullRequests, [mapped], value => value.id === id) }),

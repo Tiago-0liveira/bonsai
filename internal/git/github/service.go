@@ -48,14 +48,53 @@ type PullRequest struct {
 }
 type PullRequestDetail struct {
 	PullRequest
-	Mergeable string    `json:"mergeable"`
-	Additions int       `json:"additions"`
-	Deletions int       `json:"deletions"`
-	Comments  []Comment `json:"comments"`
-	Reviews   []Review  `json:"reviews"`
-	Commits   []Commit  `json:"commits"`
-	Files     []File    `json:"files"`
+	Mergeable string `json:"mergeable"`
+	// Additions, Deletions and ChangedFiles are GitHub's own totals, so they
+	// stay correct when Files is truncated.
+	Additions    int `json:"additions"`
+	Deletions    int `json:"deletions"`
+	ChangedFiles int `json:"changed_files"`
+	// RequestedReviewers lists users whose review is still awaited.
+	RequestedReviewers []string      `json:"requested_reviewers"`
+	ReviewSummary      ReviewSummary `json:"review_summary"`
+	// BehindBy is the number of base commits missing from head. Nil when it
+	// is unknown or irrelevant (closed PRs).
+	BehindBy *int      `json:"behind_by,omitempty"`
+	Comments []Comment `json:"comments"`
+	Reviews  []Review  `json:"reviews"`
+	Commits  []Commit  `json:"commits"`
+	Files    []File    `json:"files"`
 }
+
+// ReviewSummary counts each reviewer's standing verdict: their latest approving
+// or changes-requesting review that has not been dismissed.
+type ReviewSummary struct {
+	Approvals        int `json:"approvals"`
+	ChangesRequested int `json:"changes_requested"`
+}
+
+// SummarizeReviews expects reviews in chronological order, as GitHub lists them.
+func SummarizeReviews(reviews []Review) ReviewSummary {
+	standing := map[string]string{}
+	for _, review := range reviews {
+		switch review.State {
+		case "APPROVED", "CHANGES_REQUESTED":
+			standing[review.Author] = review.State
+		case "DISMISSED":
+			delete(standing, review.Author)
+		}
+	}
+	var summary ReviewSummary
+	for _, state := range standing {
+		if state == "APPROVED" {
+			summary.Approvals++
+		} else {
+			summary.ChangesRequested++
+		}
+	}
+	return summary
+}
+
 type Comment struct {
 	ID        int64     `json:"id"`
 	Author    string    `json:"author"`
@@ -90,6 +129,10 @@ type Check struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	URL        string `json:"url"`
+	// StartedAt and CompletedAt are absent for commit statuses and for runs
+	// that have not started or finished.
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 type WorkflowRun struct {
 	ID         int64  `json:"id"`

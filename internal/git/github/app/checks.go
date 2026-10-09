@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (c *Client) Checks(ctx context.Context, repo, sha string) ([]gh.Check, error) {
@@ -23,7 +24,9 @@ func (c *Client) Checks(ctx context.Context, repo, sha string) ([]gh.Check, erro
 			CheckRuns []struct {
 				ID                       int64
 				Name, Status, Conclusion string
-				HTMLURL                  string `json:"html_url"`
+				HTMLURL                  string     `json:"html_url"`
+				StartedAt                *time.Time `json:"started_at"`
+				CompletedAt              *time.Time `json:"completed_at"`
 			} `json:"check_runs"`
 		}
 		h, e := c.request(ctx, repo, "GET", p+"/commits/"+escaped(sha)+"/check-runs?per_page=100&page="+strconv.Itoa(page), nil, &raw)
@@ -31,7 +34,7 @@ func (c *Client) Checks(ctx context.Context, repo, sha string) ([]gh.Check, erro
 			return nil, e
 		}
 		for _, v := range raw.CheckRuns {
-			out = append(out, gh.Check{ID: v.ID, Name: v.Name, Status: v.Status, Conclusion: v.Conclusion, URL: v.HTMLURL})
+			out = append(out, gh.Check{ID: v.ID, Name: v.Name, Status: v.Status, Conclusion: v.Conclusion, URL: v.HTMLURL, StartedAt: v.StartedAt, CompletedAt: v.CompletedAt})
 		}
 		if !strings.Contains(h.Get("Link"), `rel="next"`) {
 			break
