@@ -1,0 +1,8 @@
+{
+  "loggedIn": false,
+  "authMethod": "none",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": false,
+  "projectsDirectory": "/tmp/bonsai-phase0.i8IrYM/cfg-login/projects",
+  "configDirectory": "/tmp/bonsai-phase0.i8IrYM/cfg-login"
+}

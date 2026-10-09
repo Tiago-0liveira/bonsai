@@ -1,0 +1,49 @@
+
+== 1. Version and flags
+claude --version: 2.1.295 (Claude Code)
+flags present: --dangerously-skip-permissions --effort --model --name --permission-mode --session-id --settings 
+platform: Linux 6.18.33.1-microsoft-standard-WSL2
+
+== 2. auth status in an empty config dir (expect logged out)
+exit code: 1
+files created in empty config dir: backups .claude.json .claude.json.lock 
+
+== 3. auth login into the temporary config dir
+auth login exit code: 0
+auth status exit code: 0
+
+== 4. Config dir layout after login (key names only)
+config dir entries: backups .claude.json .credentials.json 
+wrote claude-json.shape.json
+credentials stored in file: yes (mode 600)
+oauthAccount keys: ['accountCreatedAt', 'accountUuid', 'billingType', 'ccOnboardingFlags', 'claudeCodeTrialDurationDays', 'claudeCodeTrialEndsAt', 'displayName', 'emailAddress', 'fullName', 'hasExtraUsageEnabled', 'organizationName', 'organizationRateLimitTier', 'organizationRole', 'organizationType', 'organizationUuid', 'profileFetchedAt', 'seatTier', 'subscriptionCreatedAt', 'userRateLimitTier', 'workspaceRole']
+has emailAddress: True
+
+== 5. Two concurrent sessions on the same login config dir
+session 1: exit 0, output: SESSION-1 
+session 2: exit 0, output: SESSION-2 
+still logged in afterwards: exit 0
+
+== 6. Long-lived token (claude setup-token)
+token has expected oat01 prefix: yes  length: 108
+token -p exit 0, output: TOKEN-OK 
+auth status with token: exit 0
+files written to token config dir: backups .claude.json policy-limits.json policy-limits.json.stamp.json projects remote-settings.json sessions 
+usage endpoint with setup-token: HTTP 403
+
+== 7. Usage endpoint with the login access token
+usage endpoint with login token: HTTP 200
+
+== 8. Seeding: do enabledPlugins reinstall in a fresh config dir?
+enabledPlugins in your settings.json: 1
+seeded -p exit 0, output: SEED-OK 
+seeded config dir entries afterwards: backups .claude.json plugins policy-limits.json policy-limits.json.stamp.json projects remote-settings.json sessions settings.json 
+plugins dir entries: installed_plugins.json marketplaces 
+
+== 9. Does CLAUDE_CODE_SUBPROCESS_ENV_SCRUB hide the token from Bash subprocesses?
+token bytes visible to Bash without scrub: Error: Input must be provided either thr
+token bytes visible to Bash with scrub=1:  Error: Input must be provided either thr
+
+== Leak check on results
+no tokens, emails or UUIDs found in /home/tiagoliv/bonsai-feat-claude-integration/claude-phase0-results
+done. Share the folder: /home/tiagoliv/bonsai-feat-claude-integration/claude-phase0-results
