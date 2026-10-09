@@ -129,8 +129,16 @@ describe('tiles', () => {
     setup(stackPr(5, 'feat/e', 'main', { id: 'p:5' }))
     expect(screen.getByText('no checks')).toBeInTheDocument()
     expect(screen.getByText('no approvals')).toBeInTheDocument()
+    expect(screen.getAllByText('loading')).toHaveLength(2)
+    expect(screen.queryByText('0 files')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('tab', { name: /Files/ })).queryByText('0')).not.toBeInTheDocument()
+  })
+
+  it('show real zeros once the detail has loaded', () => {
+    setup(stackPr(5, 'feat/e', 'main', { id: 'p:5', totals: { additions: 0, deletions: 0, changedFiles: 0 } }))
     expect(screen.getByText('0 files')).toBeInTheDocument()
     expect(screen.getByText('none yet')).toBeInTheDocument()
+    expect(screen.queryByText('loading')).not.toBeInTheDocument()
   })
 })
 
@@ -247,6 +255,19 @@ describe('provider enrichments', () => {
     expect(within(screen.getByRole('region', { name: 'Merge' })).getByText('Behind feat/theme-canvas by 3 commits')).toBeInTheDocument()
   })
 
+  it('counts files from provider totals in the tab and the tile', () => {
+    const { base, top } = stacked()
+    setup({ ...top, totals: { additions: 5, deletions: 1, changedFiles: 14 } }, { others: [base] })
+    expect(within(screen.getByRole('tab', { name: /Files/ })).getByText('14')).toBeInTheDocument()
+  })
+
+  it('shows the requested-changes count as the figure', () => {
+    const { base, top } = stacked()
+    setup({ ...top, reviews: { requested: [], approvals: 2, changesRequested: 1 } }, { others: [base] })
+    expect(within(screen.getByText('Reviews').parentElement as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect(screen.getByText('Changes requested')).toBeInTheDocument()
+  })
+
   it('call out requested changes', () => {
     const { base, top } = stacked()
     setup({ ...top, reviews: { requested: [], approvals: 0, changesRequested: 1 } }, { others: [base] })
@@ -294,6 +315,14 @@ describe('stack card', () => {
     expect(within(card).getByRole('button', { name: /#47/ })).toHaveAttribute('aria-current', 'true')
     fireEvent.click(within(card).getByRole('button', { name: /#46/ }))
     expect(onSelect).toHaveBeenCalledWith('p:46')
+  })
+
+  it('shows the stack from its root too', () => {
+    const { base, top } = stacked()
+    setup(base, { others: [top] })
+    const card = within(screen.getByRole('region', { name: 'Stack' }))
+    expect(card.getByRole('button', { name: /#46/ })).toHaveAttribute('aria-current', 'true')
+    expect(card.getByRole('button', { name: /#47/ })).not.toHaveAttribute('aria-current')
   })
 
   it('reflects each PR check state', () => {

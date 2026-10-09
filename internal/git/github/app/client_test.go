@@ -120,7 +120,7 @@ func pullRequestServer(t *testing.T, state string, compareStatus int) *httptest.
 		case "/repos/owner/repo/pulls/7":
 			fmt.Fprintf(w, `{"number":7,"state":%q,"head":{"ref":"feat/x","sha":"abc"},"base":{"ref":"release/1"},
 				"mergeable":true,"additions":120,"deletions":30,"changed_files":9,
-				"requested_reviewers":[{"login":"ana"},{"login":"bo"}]}`, state)
+				"requested_reviewers":[{"login":"ana"},{"login":"bo"}],"requested_teams":[{"slug":"core"}]}`, state)
 		case "/repos/owner/repo/pulls/7/reviews":
 			fmt.Fprint(w, `[
 				{"id":1,"user":{"login":"cy"},"state":"APPROVED"},
@@ -129,16 +129,24 @@ func pullRequestServer(t *testing.T, state string, compareStatus int) *httptest.
 				{"id":4,"user":{"login":"ed"},"state":"APPROVED"},
 				{"id":5,"user":{"login":"ed"},"state":"CHANGES_REQUESTED"},
 				{"id":6,"user":{"login":"fy"},"state":"COMMENTED"}]`)
-		case "/repos/owner/repo/compare/release%2F1...abc":
-			if r.URL.Query().Get("per_page") != "1" {
-				t.Error("compare should ask for a single commit")
+		case "/graphql":
+			var body struct {
+				Query     string
+				Variables map[string]string
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if r.Header.Get("Authorization") != "Bearer installation" {
+				t.Errorf("behind-by is a read and must use the read token, got %q", r.Header.Get("Authorization"))
+			}
+			if v := body.Variables; v["owner"] != "owner" || v["name"] != "repo" || v["base"] != "refs/heads/release/1" || v["head"] != "abc" {
+				t.Errorf("variables = %v", v)
 			}
 			if compareStatus != http.StatusOK {
 				w.WriteHeader(compareStatus)
 				fmt.Fprint(w, `{"message":"nope"}`)
 				return
 			}
-			fmt.Fprint(w, `{"ahead_by":2,"behind_by":5}`)
+			fmt.Fprint(w, `{"data":{"repository":{"ref":{"compare":{"behindBy":5}}}}}`)
 		default:
 			fmt.Fprint(w, `[]`)
 		}
@@ -157,7 +165,7 @@ func TestPullRequestDetailCarriesEnrichments(t *testing.T) {
 	if d.Additions != 120 || d.Deletions != 30 || d.ChangedFiles != 9 {
 		t.Fatalf("totals = %d/%d/%d", d.Additions, d.Deletions, d.ChangedFiles)
 	}
-	if len(d.RequestedReviewers) != 2 || d.RequestedReviewers[0] != "ana" || d.RequestedReviewers[1] != "bo" {
+	if len(d.RequestedReviewers) != 3 || d.RequestedReviewers[0] != "ana" || d.RequestedReviewers[1] != "bo" || d.RequestedReviewers[2] != "core" {
 		t.Fatalf("requested reviewers = %v", d.RequestedReviewers)
 	}
 	if d.ReviewSummary != (gh.ReviewSummary{Approvals: 2, ChangesRequested: 1}) {
@@ -180,6 +188,21 @@ func TestPullRequestDetailOmitsWhatItCannotKnow(t *testing.T) {
 	out, _ := json.Marshal(d)
 	if strings.Contains(string(out), "behind_by") {
 		t.Fatalf("behind_by should be omitted: %s", out)
+	}
+
+	inner := pullRequestServer(t, "open", http.StatusOK)
+	defer inner.Close()
+	graphqlError := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/graphql" {
+			fmt.Fprint(w, `{"data":{"repository":{"ref":null}},"errors":[{"message":"Could not resolve"}]}`)
+			return
+		}
+		inner.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer graphqlError.Close()
+	c.BaseURL = graphqlError.URL
+	if d, err = c.PullRequest(context.Background(), "owner/repo", 7); err != nil || d.BehindBy != nil {
+		t.Fatalf("a GraphQL error must hide the row, not fail: %v %v", d.BehindBy, err)
 	}
 
 	closed := pullRequestServer(t, "closed", http.StatusOK)

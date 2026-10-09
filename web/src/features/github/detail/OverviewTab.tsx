@@ -104,7 +104,7 @@ export function OverviewTab({ pr, parent, stack, worktree, onSelect, onShowCommi
       <div className="flex w-full flex-none flex-col gap-2.5 md:min-h-0 md:w-[292px] md:overflow-y-auto md:pr-1">
         <MergeCard pr={pr} parent={parent} />
         <ChecksCard checks={pr.checks} />
-        {stack && parent && <StackCard stack={stack} currentId={pr.id} onSelect={onSelect} />}
+        {stack && <StackCard stack={stack} currentId={pr.id} onSelect={onSelect} />}
         {worktree && <WorktreeCard worktree={worktree} onShowOnCanvas={onShowOnCanvas} />}
       </div>
     </div>

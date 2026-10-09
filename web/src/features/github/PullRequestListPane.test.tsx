@@ -111,6 +111,17 @@ describe('PullRequestListPane', () => {
     expect(screen.getByRole('button', { name: /^All/ })).toHaveTextContent('1')
   })
 
+  it('reports the visible rows and keeps one row tabbable when search hides the selection', () => {
+    const { a, b, c, draft, lone, rows } = fixture()
+    const onVisibleChange = vi.fn()
+    render(<Harness rows={rows} selectedId={lone.id} onVisibleChange={onVisibleChange} />)
+    expect(onVisibleChange).toHaveBeenLastCalledWith([a.id, b.id, c.id, draft.id, lone.id])
+    expect(option(/Fix typo/)).toHaveAttribute('tabindex', '0')
+    fireEvent.change(screen.getByLabelText('Search pull requests'), { target: { value: 'auth api' } })
+    expect(onVisibleChange).toHaveBeenLastCalledWith([a.id])
+    expect(screen.getAllByRole('option').map((node) => node.tabIndex)).toEqual([0])
+  })
+
   it('focuses search with / unless typing elsewhere, and Escape clears then blurs', () => {
     const { rows } = fixture()
     render(<Harness rows={rows} />)

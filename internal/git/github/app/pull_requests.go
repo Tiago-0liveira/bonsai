@@ -32,6 +32,7 @@ type rawPR struct {
 	Additions, Deletions int
 	ChangedFiles         int                      `json:"changed_files"`
 	RequestedReviewers   []struct{ Login string } `json:"requested_reviewers"`
+	RequestedTeams       []struct{ Slug string }  `json:"requested_teams"`
 }
 
 func (p rawPR) domain() gh.PullRequest {
@@ -115,6 +116,9 @@ func (c *Client) PullRequest(ctx context.Context, repo string, n int) (gh.PullRe
 	for _, reviewer := range raw.RequestedReviewers {
 		d.RequestedReviewers = append(d.RequestedReviewers, reviewer.Login)
 	}
+	for _, team := range raw.RequestedTeams {
+		d.RequestedReviewers = append(d.RequestedReviewers, team.Slug)
+	}
 	comments, e := pages[struct {
 		ID        int64
 		User      struct{ Login string }
@@ -185,20 +189,33 @@ func (c *Client) PullRequest(ctx context.Context, repo string, n int) (gh.PullRe
 	return d, nil
 }
 
-// behindBy is best effort: the Update row is hidden rather than failing the
-// whole pull request when the comparison is unavailable.
+// behindBy is best effort: the row is hidden rather than failing the whole
+// pull request when the comparison is unavailable. It asks GraphQL for the
+// count alone; the REST compare endpoint would also return the file diffs.
 func (c *Client) behindBy(ctx context.Context, repo, base, headSHA string) *int {
-	p, e := repoPath(repo)
-	if e != nil || base == "" || headSHA == "" {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || base == "" || headSHA == "" {
 		return nil
 	}
-	var compare struct {
-		BehindBy *int `json:"behind_by"`
+	const query = `query($owner:String!,$name:String!,$base:String!,$head:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$base){compare(headRef:$head){behindBy}}}}`
+	var response struct {
+		Data struct {
+			Repository *struct {
+				Ref *struct {
+					Compare *struct{ BehindBy *int } `json:"compare"`
+				} `json:"ref"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct{ Message string } `json:"errors"`
 	}
-	if _, e = c.request(ctx, repo, "GET", p+"/compare/"+escaped(base)+"..."+escaped(headSHA)+"?per_page=1", nil, &compare); e != nil {
+	variables := map[string]string{"owner": owner, "name": name, "base": "refs/heads/" + base, "head": headSHA}
+	if _, e := c.do(ctx, repo, "POST", "/graphql", map[string]any{"query": query, "variables": variables}, &response, false); e != nil || len(response.Errors) > 0 {
 		return nil
 	}
-	return compare.BehindBy
+	if r := response.Data.Repository; r != nil && r.Ref != nil && r.Ref.Compare != nil {
+		return r.Ref.Compare.BehindBy
+	}
+	return nil
 }
 func (c *Client) CreatePullRequest(ctx context.Context, r gh.CreatePullRequestRequest) (gh.PullRequest, error) {
 	p, e := repoPath(r.Repository)

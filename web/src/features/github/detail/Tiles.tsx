@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { PullRequest } from '../../../types'
 import { summarizeChecks } from '../../../lib/github/prChecks'
-import { summarizeChanges, summarizeReviews, type ReviewSummary } from '../../../lib/github/prDetail'
+import { isDetailLoaded, summarizeChanges, summarizeReviews, type ReviewSummary } from '../../../lib/github/prDetail'
 import { formatPrTime } from '../../../lib/github/prTime'
 import { ChecksBar } from '../ChecksBar'
 
@@ -30,6 +30,7 @@ export function Tiles({ pr }: { pr: PullRequest }) {
   const checks = summarizeChecks(pr.checks)
   const reviews = summarizeReviews(pr.conversation, pr.reviews)
   const changes = summarizeChanges(pr.files, pr.totals)
+  const loaded = isDetailLoaded(pr)
   const latest = pr.commits.at(-1)?.time ?? pr.updatedAt
 
   const checksTone = checks.failed ? 'text-danger' : checks.running ? 'text-accent' : 'text-ok'
@@ -46,7 +47,7 @@ export function Tiles({ pr }: { pr: PullRequest }) {
       </Tile>
       <Tile label="Reviews" accent={reviews.changesRequested ? 'bg-danger' : reviews.approvals ? 'bg-ok' : 'bg-warn'}>
         <Row>
-          <Figure>{reviews.approvals}</Figure>
+          <Figure>{reviews.changesRequested || reviews.approvals}</Figure>
           <Sub tone={reviews.changesRequested ? 'text-danger' : reviews.approvals ? 'text-ok' : 'text-warn'}>{reviewsNote(reviews)}</Sub>
         </Row>
         {reviews.requested.length > 0 && (
@@ -57,8 +58,17 @@ export function Tiles({ pr }: { pr: PullRequest }) {
       </Tile>
       <Tile label="Changes" accent="bg-ok">
         <Row>
-          <Figure><span className="text-ok">+{changes.additions.toLocaleString()}</span> <span className="text-danger">−{changes.deletions.toLocaleString()}</span></Figure>
-          <Sub>{changes.files} {changes.files === 1 ? 'file' : 'files'}</Sub>
+          {loaded ? (
+            <>
+              <Figure><span className="text-ok">+{changes.additions.toLocaleString()}</span> <span className="text-danger">−{changes.deletions.toLocaleString()}</span></Figure>
+              <Sub>{changes.files} {changes.files === 1 ? 'file' : 'files'}</Sub>
+            </>
+          ) : (
+            <>
+              <Figure>—</Figure>
+              <Sub>loading</Sub>
+            </>
+          )}
         </Row>
         <div className="mt-1.5 flex h-1 gap-0.5" aria-hidden="true">
           {changes.additions + changes.deletions > 0 && (
@@ -71,8 +81,8 @@ export function Tiles({ pr }: { pr: PullRequest }) {
       </Tile>
       <Tile label="Commits" accent="bg-border-strong">
         <Row>
-          <Figure>{pr.commits.length}</Figure>
-          <Sub>{latest ? `latest ${formatPrTime(latest)}` : 'none yet'}</Sub>
+          <Figure>{loaded ? pr.commits.length : '—'}</Figure>
+          <Sub>{!loaded ? 'loading' : latest ? `latest ${formatPrTime(latest)}` : 'none yet'}</Sub>
         </Row>
       </Tile>
     </div>

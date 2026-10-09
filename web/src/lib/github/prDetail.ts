@@ -15,6 +15,14 @@ export function authorInitials(author: string | null | undefined): string {
   return letters.toUpperCase()
 }
 
+/**
+ * The list response carries no commits, files or totals. A real PR always has
+ * a commit, so none of the three means the detail has not arrived yet.
+ */
+export function isDetailLoaded(pr: Pick<PullRequest, 'totals' | 'files' | 'commits'>): boolean {
+  return pr.totals !== undefined || pr.files.length > 0 || pr.commits.length > 0
+}
+
 export interface ReviewSummary {
   /** Entries of kind `review`. */
   reviews: number
@@ -127,6 +135,7 @@ export function describeMerge({ pr, parent }: MergeInput): MergeState {
   else if (pr.status === 'Closed') [title, tone] = ['Closed', 'muted']
   else if (pr.status === 'Draft') [title, tone] = ['Draft · not ready', 'warn']
   else if (pr.mergeable === false) [title, tone] = ['Cannot merge', 'danger']
+  else if (pr.reviews?.changesRequested) [title, tone] = ['Changes requested', 'danger']
   else if (checks.failed) [title, tone] = ['Checks failing', 'danger']
   else if (checks.running) [title, tone] = ['Waiting on checks', 'warn']
   else [title, tone] = ['Ready to merge', 'ok']

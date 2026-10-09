@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { PullRequest, Worktree } from '../../types'
 import { buildPrStacks } from '../../lib/github/prStack'
-import { findPullRequestWorktree, pullRequestUrl } from '../../lib/github/prDetail'
+import { findPullRequestWorktree, isDetailLoaded, pullRequestUrl } from '../../lib/github/prDetail'
 import { DetailHeader } from './detail/DetailHeader'
 import { OverviewTab } from './detail/OverviewTab'
 import { CommitsPanel, ConversationPanel, FilesPanel } from './detail/Panels'
@@ -17,7 +17,7 @@ export interface PullRequestDetailProps {
   pr: PullRequest
   /** Every PR in the list, used to place this one in its stack. */
   pullRequests: readonly PullRequest[]
-  /** Display order of the list, for previous/next. */
+  /** Rows currently shown in the list, for previous/next. */
   orderedIds: readonly string[]
   repository?: string
   projectId: string
@@ -33,11 +33,12 @@ export function PullRequestDetail({ pr, pullRequests, orderedIds, repository, pr
   const stack = stacks.stackOf(pr)
   const worktree = useMemo(() => findPullRequestWorktree(worktrees, pr, projectId), [worktrees, pr, projectId])
   const position = orderedIds.indexOf(pr.id)
+  const loaded = isDetailLoaded(pr)
   const counts: Record<TabKey, number | undefined> = {
     overview: undefined,
-    commits: pr.commits.length,
-    files: pr.files.length,
-    conversation: pr.conversation.length,
+    commits: loaded ? pr.commits.length : undefined,
+    files: loaded ? pr.totals?.changedFiles ?? pr.files.length : undefined,
+    conversation: loaded ? pr.conversation.length : undefined,
   }
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {

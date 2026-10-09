@@ -4,6 +4,7 @@ import {
   authorInitials,
   describeMerge,
   findPullRequestWorktree,
+  isDetailLoaded,
   pullRequestUrl,
   summarizeChanges,
   summarizeReviews,
@@ -36,6 +37,16 @@ describe('authorInitials', () => {
     expect(authorInitials(undefined)).toBe('?')
     expect(authorInitials(null)).toBe('?')
     expect(authorInitials(' - ')).toBe('?')
+  })
+})
+
+describe('isDetailLoaded', () => {
+  it('needs totals, files or commits', () => {
+    const base = { files: [], commits: [] }
+    expect(isDetailLoaded(base)).toBe(false)
+    expect(isDetailLoaded({ ...base, totals: { additions: 0, deletions: 0, changedFiles: 0 } })).toBe(true)
+    expect(isDetailLoaded({ ...base, commits: [{ sha: 'a', message: 'm', author: 'x' }] })).toBe(true)
+    expect(isDetailLoaded({ ...base, files: [{ path: 'a', additions: 0, deletions: 0, diff: [] }] })).toBe(true)
   })
 })
 
@@ -148,6 +159,12 @@ describe('describeMerge', () => {
     expect(row(1)).toMatchObject({ tone: 'danger', text: '1 reviewer requests changes' })
     expect(row(2)?.text).toBe('2 reviewers request changes')
     expect(row(0)).toBeUndefined()
+  })
+
+  it('titles the card after requested changes unless conflicts matter more', () => {
+    const reviews = { requested: [], approvals: 0, changesRequested: 1 }
+    expect(merge({ reviews, checks: checks('success') })).toMatchObject({ title: 'Changes requested', tone: 'danger' })
+    expect(merge({ reviews, mergeable: false }).title).toBe('Cannot merge')
   })
 
   it('explains a stacked base', () => {
