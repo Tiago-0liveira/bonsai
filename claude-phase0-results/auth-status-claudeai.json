@@ -1,0 +1,12 @@
+{
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": false,
+  "projectsDirectory": "/tmp/bonsai-phase0.i8IrYM/cfg-login/projects",
+  "configDirectory": "/tmp/bonsai-phase0.i8IrYM/cfg-login",
+  "email": "<redacted>",
+  "orgId": "<redacted>",
+  "orgName": "<redacted>",
+  "subscriptionType": "pro"
+}

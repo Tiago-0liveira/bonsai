@@ -12,10 +12,12 @@ require (
 	github.com/sahilm/fuzzy v0.1.3
 	github.com/spf13/viper v1.21.0
 	go.yaml.in/yaml/v3 v3.0.4
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.49.0
 )
 
 require github.com/creack/pty v1.1.24
+
+require golang.org/x/term v0.47.0
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect

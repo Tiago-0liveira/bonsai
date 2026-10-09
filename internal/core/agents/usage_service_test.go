@@ -187,3 +187,79 @@ func TestUsageServiceRefreshAndExpiredCacheBypass(t *testing.T) {
 		t.Fatalf("provider calls after expired cache = %d, want 3", calls)
 	}
 }
+
+type noUsageProvider struct{ usageTestProvider }
+
+func (p *noUsageProvider) ID() ProviderID             { return "no-usage" }
+func (p *noUsageProvider) Capabilities() Capabilities { return Capabilities{} }
+
+func TestUsageServiceAllSkipsProvidersWithoutUsage(t *testing.T) {
+	store, err := NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	with, without := &usageTestProvider{fail: map[AccountID]error{}}, &noUsageProvider{}
+	registry := NewRegistry()
+	_ = registry.Register(with)
+	_ = registry.Register(without)
+	_ = store.Create(testAccount("acct_a", with.ID(), "a"))
+	_ = store.Create(testAccount("acct_b", without.ID(), "b"))
+	service := &UsageService{Accounts: store, Registry: registry}
+	results := service.All(context.Background(), UsageOptions{Refresh: true})
+	if len(results) != 1 || results[0].Account.ID != "acct_a" || results[0].Error != nil {
+		t.Fatalf("results = %+v", results)
+	}
+}
+
+// policyUsageProvider reports its own freshness window.
+type policyUsageProvider struct {
+	usageTestProvider
+	ttl time.Duration
+}
+
+func (p *policyUsageProvider) UsageTTL() time.Duration { return p.ttl }
+
+func TestUsageServiceHonoursProviderTTL(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ttl       time.Duration
+		age       time.Duration
+		wantCalls int
+	}{
+		"fresh under a long provider ttl":    {ttl: 5 * time.Minute, age: 2 * time.Minute, wantCalls: 1},
+		"stale past the provider ttl":        {ttl: 5 * time.Minute, age: 6 * time.Minute, wantCalls: 2},
+		"service ttl applies without policy": {ttl: 0, age: 2 * time.Minute, wantCalls: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, _ := NewFileAccountStore(t.TempDir())
+			cache, _ := NewFileUsageCache(t.TempDir())
+			account := testAccount("acct_policy", "usage-fake", "personal")
+			if err := store.Create(account); err != nil {
+				t.Fatal(err)
+			}
+			provider := &policyUsageProvider{usageTestProvider: usageTestProvider{fail: map[AccountID]error{}}, ttl: tc.ttl}
+			registry := NewRegistry()
+			_ = registry.Register(provider)
+			service := &UsageService{Accounts: store, Registry: registry, Cache: cache, TTL: time.Minute}
+			if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			// Age the cached snapshot.
+			cached, ok, err := cache.Get("usage-fake", account.ID)
+			if err != nil || !ok {
+				t.Fatalf("cache: ok=%v err=%v", ok, err)
+			}
+			cached.FetchedAt = time.Now().Add(-tc.age)
+			if err := cache.Put(cached); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			if provider.calls != tc.wantCalls {
+				t.Fatalf("calls = %d, want %d", provider.calls, tc.wantCalls)
+			}
+		})
+	}
+}

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -196,5 +198,82 @@ func TestClassifyUsageLimitAntigravityNames(t *testing.T) {
 		if got := classifyUsageLimit(tt.limit); got != tt.want {
 			t.Fatalf("classify %#v = %q, want %q", tt.limit, got, tt.want)
 		}
+	}
+}
+
+func claudeTestResult(name string, five, week float64, models map[string]float64, now time.Time) agents.AccountUsageResult {
+	limits := []agents.UsageLimit{
+		usageTestLimit("five_hour", "claude", "5h", five, now.Add(3*time.Hour)),
+		usageTestLimit("seven_day", "claude", "weekly", week, now.Add(48*time.Hour)),
+	}
+	for id, remaining := range models {
+		limits = append(limits, usageTestLimit(id, "claude", "weekly", remaining, now.Add(48*time.Hour)))
+	}
+	return agents.AccountUsageResult{
+		Account: agents.Account{ID: agents.AccountID("acct_" + name), Provider: "claude", Name: name},
+		Usage:   &agents.UsageSnapshot{Provider: "claude", AccountID: agents.AccountID("acct_" + name), Limits: limits},
+	}
+}
+
+func TestRenderUsageDashboardClaudeNextToAntigravity(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	results := []agents.AccountUsageResult{
+		usageTestResult("google", 0.70, 0.90, now.Add(48*time.Hour), now.Add(3*time.Hour)),
+		claudeTestResult("work", 0.90, 0.50, map[string]float64{"seven_day_opus": 0.25, "seven_day_sonnet": 1}, now),
+		claudeTestResult("spare", 0.10, 0.80, nil, now),
+		{Account: agents.Account{ID: "acct_tok", Provider: "claude", Name: "ci"}, Error: fmt.Errorf("%w: long-lived tokens cannot read usage", agents.ErrUsageUnsupported)},
+		{Account: agents.Account{ID: "acct_bad", Provider: "claude", Name: "broken"}, Error: errors.New("not logged in")},
+	}
+	var out bytes.Buffer
+	renderUsageDashboard(&out, results, now, false)
+	got := out.String()
+	for _, want := range []string{
+		"Fleet Capacity (5 Accounts · 2 Providers)",
+		"◆ Antigravity · 1 account",
+		"◆ Claude Code · 4 accounts",
+		"Per model",
+		"opus 25% · sonnet 100%",
+		"n/a",
+		"long-lived tokens cannot read usage",
+		"ERR",
+		"undocumented endpoint",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dashboard missing %q:\n%s", want, got)
+		}
+	}
+	section := got[strings.Index(got, "◆ Claude Code"):]
+	work, spare, ci, broken := strings.Index(section, "work"), strings.Index(section, "spare"), strings.Index(section, "ci "), strings.Index(section, "broken")
+	if !(work >= 0 && work < spare && spare < ci && spare < broken) {
+		t.Fatalf("Claude rows not ranked by min remaining, errors last:\n%s", section)
+	}
+	// Score is the lower of 5h and weekly: work 50%, spare 10%.
+	if score, ok := usageRowScore(usageDashboardRow{account: results[1].Account, claude5h: &results[1].Usage.Limits[0], claudeWeek: &results[1].Usage.Limits[1]}); !ok || score != 0.50 {
+		t.Fatalf("score = %v, %v", score, ok)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Fatal("non-color render contains ANSI escapes")
+	}
+}
+
+func TestRenderUsageDashboardClaudeWithoutModelsAndNextReset(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	renderUsageDashboard(&out, []agents.AccountUsageResult{claudeTestResult("work", 0.9, 0.5, nil, now)}, now, false)
+	got := out.String()
+	if strings.Contains(got, "Per model") || !strings.Contains(got, "Next Reset: work in 48h00m") {
+		t.Fatalf("unexpected render:\n%s", got)
+	}
+}
+
+func TestRenderUsageDashboardShowsClaudeWarnings(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	result := claudeTestResult("work", 0.9, 0.5, nil, now)
+	result.Usage.Limits = nil
+	result.Usage.Warnings = []string{"Claude usage response had no recognizable limits"}
+	var out bytes.Buffer
+	renderUsageDashboard(&out, []agents.AccountUsageResult{result}, now, false)
+	if !strings.Contains(out.String(), "work: Claude usage response had no recognizable limits") {
+		t.Fatalf("warning missing:\n%s", out.String())
 	}
 }

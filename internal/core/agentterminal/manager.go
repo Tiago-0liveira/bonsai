@@ -3,7 +3,6 @@ package agentterminal
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +30,8 @@ type Summary struct {
 	EndedAt     *time.Time        `json:"ended_at,omitempty"`
 	ExitCode    *int              `json:"exit_code,omitempty"`
 	Error       string            `json:"error,omitempty"`
+	// ProviderSessionID is the provider's own session ID, for a later resume.
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
 }
 
 func (s Summary) Active() bool {
@@ -76,11 +77,8 @@ func (m *Manager) notify(project string) {
 	}
 }
 
-type StartOptions struct {
-	Model      string
-	Prompt     string
-	FullAccess *bool
-}
+// StartOptions are the per-launch options forwarded to the provider unchanged.
+type StartOptions = agents.LaunchOptions
 
 func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, dir string, cols, rows int, options ...StartOptions) (Summary, error) {
 	if !Supported {
@@ -93,33 +91,23 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 	if err != nil {
 		return Summary{}, fmt.Errorf("profile unavailable")
 	}
-	if account.Provider != "antigravity" {
-		return Summary{}, fmt.Errorf("provider not available")
-	}
-	var args []string
-	if len(options) > 0 {
-		option := options[0]
-		if option.FullAccess != nil {
-			settings := map[string]json.RawMessage{}
-			if len(account.Settings) > 0 {
-				if err := json.Unmarshal(account.Settings, &settings); err != nil {
-					return Summary{}, fmt.Errorf("invalid profile settings")
-				}
-			}
-			if settings == nil {
-				settings = map[string]json.RawMessage{}
-			}
-			settings["dangerously_skip_permissions"], _ = json.Marshal(*option.FullAccess)
-			account.Settings, _ = json.Marshal(settings)
-		}
-		if option.Model != "" {
-			args = append(args, "--model", option.Model)
-		}
-
-	}
 	provider, err := m.registry.Get(account.Provider)
 	if err != nil {
-		return Summary{}, err
+		return Summary{}, fmt.Errorf("provider not available")
+	}
+	capabilities := provider.Capabilities()
+	if !capabilities.Interactive {
+		return Summary{}, fmt.Errorf("provider not available")
+	}
+	var launch agents.LaunchOptions
+	if len(options) > 0 {
+		launch = options[0]
+	}
+	launch.DisplayName = name
+	if validator, ok := provider.(agents.LaunchValidator); ok {
+		if err := validator.ValidateLaunch(account, launch); err != nil {
+			return Summary{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+		}
 	}
 	m.mu.Lock()
 	if m.closed {
@@ -128,8 +116,20 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 	}
 	active := 0
 	for _, e := range m.entries {
-		if e.summary.Active() {
-			active++
+		if !e.summary.Active() {
+			continue
+		}
+		active++
+		if e.summary.Provider != account.Provider {
+			continue
+		}
+		if e.summary.AccountID == accountID && !capabilities.ConcurrentSameAccount {
+			m.mu.Unlock()
+			return Summary{}, agents.ErrAccountBusy
+		}
+		if e.summary.AccountID != accountID && !capabilities.ConcurrentCrossAccount {
+			m.mu.Unlock()
+			return Summary{}, agents.ErrProviderBusy
 		}
 	}
 	if active >= 16 {
@@ -150,21 +150,18 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 	result := entry.summary
 	m.mu.Unlock()
 	m.notify(project)
-	go m.run(ctx, entry, account, runtime, provider, cols, rows, args, options)
+	go m.run(ctx, entry, account, runtime, provider, cols, rows, launch)
 	return result, nil
 }
-func (m *Manager) run(ctx context.Context, e *session, a agents.Account, r agents.Session, p agents.Provider, cols, rows int, args []string, options []StartOptions) {
+func (m *Manager) run(ctx context.Context, e *session, a agents.Account, r agents.Session, p agents.Provider, cols, rows int, options agents.LaunchOptions) {
 	defer close(e.done)
 	defer e.cancel()
-	prepared, err := p.PrepareSession(ctx, agents.PrepareSessionRequest{Account: a, Session: r, Args: args})
+	prepared, err := p.PrepareSession(ctx, agents.PrepareSessionRequest{Account: a, Session: r, Launch: options})
 	preparedOK := err == nil
-	if err == nil && len(options) > 0 && options[0].Prompt != "" {
-		// Bind the prompt to the flag, including prompts that begin with a dash.
-		prepared.Args = append(prepared.Args, "--prompt-interactive="+options[0].Prompt)
-	}
 	code := -1
 	if err == nil {
 		m.mu.Lock()
+		e.summary.ProviderSessionID = prepared.ProviderSessionID
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		} else {
@@ -245,7 +242,7 @@ func (m *Manager) run(ctx context.Context, e *session, a agents.Account, r agent
 	}
 	if err != nil && ctx.Err() == nil {
 		e.summary.State = "failed"
-		e.summary.Error = "Agent failed to start or exited unsuccessfully. Check agy installation and profile setup."
+		e.summary.Error = "Agent failed to start or exited unsuccessfully. Check the " + agents.Label(p) + " installation and profile setup."
 	}
 	if errors.Join(finalErr, cleanupErr) != nil {
 		e.summary.Error = "Profile finalization or session cleanup failed."

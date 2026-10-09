@@ -7,6 +7,7 @@ type UsageSnapshot struct {
 	AccountID AccountID    `json:"account_id"`
 	FetchedAt time.Time    `json:"fetched_at"`
 	Limits    []UsageLimit `json:"limits"`
+	Warnings  []string     `json:"warnings,omitempty"`
 }
 
 type UsageLimit struct {

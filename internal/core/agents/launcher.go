@@ -27,7 +27,7 @@ func NewForegroundLauncher(in io.Reader, out, errOut io.Writer) *ForegroundLaunc
 func (l *ForegroundLauncher) RunForeground(ctx context.Context, prepared PreparedSession) error {
 	cmd := exec.CommandContext(ctx, prepared.Executable, prepared.Args...)
 	cmd.Dir = prepared.Dir
-	cmd.Env = BuildEnvironment(os.Environ(), prepared.EnvSet, prepared.EnvUnset)
+	cmd.Env = prepared.Environment(os.Environ())
 	if l.In != nil {
 		cmd.Stdin = l.In
 	} else {
@@ -47,8 +47,15 @@ func (l *ForegroundLauncher) RunForeground(ctx context.Context, prepared Prepare
 }
 
 func BuildEnvironment(base []string, set map[string]string, unset []string) []string {
+	return buildEnvironment(base, set, unset, nil)
+}
+
+// envCaseInsensitive matches Windows, where variable names ignore case.
+var envCaseInsensitive = runtime.GOOS == "windows"
+
+func buildEnvironment(base []string, set map[string]string, unset, unsetPrefixes []string) []string {
 	key := func(s string) string {
-		if runtime.GOOS == "windows" {
+		if envCaseInsensitive {
 			return strings.ToUpper(s)
 		}
 		return s
@@ -66,6 +73,18 @@ func BuildEnvironment(base []string, set map[string]string, unset []string) []st
 		n := key(k)
 		delete(env, n)
 		delete(names, n)
+	}
+	for _, prefix := range unsetPrefixes {
+		if prefix == "" {
+			continue
+		}
+		p := key(prefix)
+		for n := range env {
+			if strings.HasPrefix(n, p) {
+				delete(env, n)
+				delete(names, n)
+			}
+		}
 	}
 	for k, v := range set {
 		n := key(k)

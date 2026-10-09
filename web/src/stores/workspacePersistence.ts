@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { PersistStorage, StorageValue } from 'zustand/middleware'
+import { isLiveAgent } from '../api/agents'
 import type { Agent, DockState, DockTab, EditorPreference, NodePlacement, RuntimeReference, Selection, TerminalViewPreferences, ViewportState } from '../types'
 import { activeRuntimePatch } from './runtimePreferences'
 import type { BonsaiState } from './bonsai'
@@ -98,7 +99,7 @@ export function sanitizeWorkspacePreferences(value: unknown): Partial<WorkspaceP
   if (viewport && finite(viewport.x) && finite(viewport.y) && finite(viewport.zoom) && viewport.zoom > 0) result.viewport = { x: viewport.x, y: viewport.y, zoom: viewport.zoom }
 
   const agents = Array.isArray(raw.agents) ? raw.agents.map(record).filter((agent): agent is RecordValue => Boolean(agent)) : []
-  const discardedIds = new Set(agents.flatMap(agent => typeof agent.id === 'string' && (!views || agent.providerId !== 'antigravity') ? [agent.id] : []))
+  const discardedIds = new Set(agents.flatMap(agent => typeof agent.id === 'string' && (!views || !isLiveAgent(agent as Pick<Agent, 'providerId'>)) ? [agent.id] : []))
   if (!views && typeof raw.dockRuntimeId === 'string' && raw.dockRuntimeId) discardedIds.add(raw.dockRuntimeId)
   if (!views && strings(raw.openRuntimeIds)) raw.openRuntimeIds.forEach(id => discardedIds.add(id))
   if (result.dockWorktreeId && discardedIds.has(result.dockWorktreeId)) result.dockWorktreeId = ''
@@ -132,7 +133,7 @@ export function mergeWorkspacePreferences<T extends WorkspacePreferences & {
 }>(persisted: unknown, current: T): T {
   const raw = record(persisted)
   const saved = sanitizeWorkspacePreferences({ ...raw, agents: [...current.agents, ...(Array.isArray(raw?.agents) ? raw.agents : [])] })
-  const next = { ...current, ...sanitizeWorkspacePreferences(current), ...saved, terminalViewPreferences: saved.terminalViewPreferences ?? {}, agents: current.agents.filter(agent => agent.providerId === 'antigravity'), envVariables: {}, terminalSessions: [], terminalOutput: {}, activeTerminalId: '', dockRuntimeId: '', openRuntimeIds: [] as string[], visitOpenedRuntimeIds: [] as string[] }
+  const next = { ...current, ...sanitizeWorkspacePreferences(current), ...saved, terminalViewPreferences: saved.terminalViewPreferences ?? {}, agents: current.agents.filter(isLiveAgent), envVariables: {}, terminalSessions: [], terminalOutput: {}, activeTerminalId: '', dockRuntimeId: '', openRuntimeIds: [] as string[], visitOpenedRuntimeIds: [] as string[] }
   next.dockWorktreeId = next.terminalViewPreferences[next.activeProjectId]?.lastWorktreeId ?? next.dockWorktreeId
   // On an explicit rehydrate, canonical entities may already be available.
   if (current.projects.length) {

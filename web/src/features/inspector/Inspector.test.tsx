@@ -6,6 +6,7 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import { projects } from '../../test/fixtures/projects'
 import { worktrees } from '../../test/fixtures/worktrees'
 import { pullRequests } from '../../test/fixtures/pullRequests'
+import { agents } from '../../mock/agents'
 
 afterEach(cleanup)
 
@@ -46,4 +47,19 @@ it.each([
   render(<Inspector />)
   expect(screen.getByRole('button', { name: /Pull request/ })).toHaveTextContent(new RegExp(`${text}$`))
   expect(screen.queryByText('Resolve merge conflicts') === null).toBe(mergeable !== false)
+})
+
+it.each(['claude', 'antigravity'] as const)('enables terminal and stop for a live %s agent and not for a simulated one', (providerId) => {
+  const agent = { ...agents[0], id: 'live', projectId: 'bonsai', worktreeId: 'wt-web', presentation: 'canvas' as const, state: 'running' as const, providerId, profileName: 'Work' }
+  const setup = (value: typeof agent | Omit<typeof agent, 'providerId'>) => {
+    useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, agents: [value as typeof agent], activeProjectId: 'bonsai', selection: { type: 'agent', id: 'live' } }, true)
+    return render(<Inspector />)
+  }
+  const { unmount } = setup(agent)
+  expect(screen.getByRole('button', { name: 'Open terminal' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Stop agent' })).toBeEnabled()
+  expect(screen.getByText('API session')).toBeInTheDocument()
+  unmount()
+  setup({ ...agent, providerId: undefined })
+  expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled()
 })

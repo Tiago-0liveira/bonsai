@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/gorilla/websocket"
 )
@@ -35,6 +37,17 @@ type terminalTestProvider struct {
 }
 
 func (p *terminalTestProvider) ID() agents.ProviderID { return "antigravity" }
+func (p *terminalTestProvider) Capabilities() agents.Capabilities {
+	return agents.Capabilities{Interactive: true, MultiAccount: true, ConcurrentSameAccount: true, ConcurrentCrossAccount: true}
+}
+
+// ValidateLaunch mirrors Antigravity, which has no permission mode or effort.
+func (p *terminalTestProvider) ValidateLaunch(_ agents.Account, o agents.LaunchOptions) error {
+	if o.PermissionMode != "" || o.Effort != "" {
+		return fmt.Errorf("unsupported option")
+	}
+	return nil
+}
 func (p *terminalTestProvider) PrepareSession(_ context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
 	p.starts.Add(1)
 	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", `printf '\033[32mBONSAI_PTY_READY\033[0m\n'; while IFS= read -r line; do printf 'REPLY:%s\n' "$line"; done`}, Dir: r.Session.WorkDir, EnvSet: map[string]string{"HOME": r.Session.HomeDir}}, nil
@@ -213,7 +226,32 @@ func TestAgentBrowserFixture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	// A real Claude provider over the fake binary, so the browser can run several
+	// sessions of one profile. Token mode needs no login and seeding is off, so
+	// nothing reads or writes the real ~/.claude.
+	testdata, err := filepath.Abs(filepath.Join("..", "..", "providers", "claude", "testdata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(testdata, "fakeclaude.sh"), filepath.Join(bin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("FAKE_CLAUDE_FIXTURES", testdata)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The fixture must never reach the network: model and usage lookups go to a
+	// closed local port and fall back to the static aliases.
+	claude.ModelsEndpoint, claude.UsageEndpoint = "http://127.0.0.1:1/v1/models", "http://127.0.0.1:1/usage"
+	launcher := agents.NewForegroundLauncher(strings.NewReader(""), io.Discard, io.Discard)
+	runtime := s.agents.runtime
+	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)); err != nil {
+		t.Fatal(err)
+	}
+	service := &agents.AccountService{Store: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Launcher: launcher}
+	noSeed := false
+	if _, err := service.Setup(context.Background(), claude.ProviderID, "Work", agents.SetupOptions{Secret: strings.NewReader("sk-ant-oat01-FIXTUREFIXTUREFIXTUREFIXTUREFIXTURE\n"), Seed: &noSeed}); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("tcp", s.expectedHost)
 	if err != nil {
 		t.Fatal(err)
@@ -338,5 +376,207 @@ func TestTerminalRejectsUnauthenticatedFirstFrame(t *testing.T) {
 			t.Fatal("unauthenticated subscriber received a frame")
 		}
 		conn.Close()
+	}
+}
+
+// describedTestProvider is a second registered provider exposing every optional
+// description interface.
+type describedTestProvider struct {
+	terminalTestProvider
+	id        agents.ProviderID
+	available agents.Availability
+}
+
+func (p *describedTestProvider) ID() agents.ProviderID { return p.id }
+func (p *describedTestProvider) Label() string         { return "Described " + string(p.id) }
+func (p *describedTestProvider) Availability(context.Context) agents.Availability {
+	return p.available
+}
+func (p *describedTestProvider) DescribeAccount(context.Context, agents.Account) agents.AccountInfo {
+	return agents.AccountInfo{AuthMode: "token", Identity: "someone", Warnings: []string{"expires soon"}}
+}
+
+func agentAPIRequest(t *testing.T, s *Server, method, path, key, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	capability, _ := s.sessions.create()
+	r := httptest.NewRequest(method, "http://"+s.expectedHost+path, strings.NewReader(body))
+	r.Host = s.expectedHost
+	r.Header.Set("Origin", s.browserOrigin)
+	r.Header.Set("X-Bonsai-Session", capability.Token)
+	if key != "" {
+		r.Header.Set("Idempotency-Key", key)
+	}
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	return w
+}
+
+func TestAgentProvidersFromRegistry(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	registry := s.agents.runtime.Registry
+	if err := registry.Register(&describedTestProvider{id: "claude", available: agents.Availability{Reason: "Update Claude Code (found 1, need 2)", Version: "1.0.0"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(&describedTestProvider{id: "fake", available: agents.Availability{Available: true, Version: "9.9.9"}}); err != nil {
+		t.Fatal(err)
+	}
+	w := agentAPIRequest(t, s, "GET", "/api/agents/providers", "", "")
+	var providers []struct {
+		ID                string            `json:"id"`
+		Label             string            `json:"label"`
+		Available         bool              `json:"available"`
+		UnavailableReason map[string]string `json:"unavailable_reason"`
+		Version           string            `json:"version"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &providers); err != nil {
+		t.Fatal(w.Body.String())
+	}
+	byID := map[string]int{}
+	for i, p := range providers {
+		byID[p.ID] = i
+	}
+	if len(providers) != 4 || providers[0].ID != "antigravity" || providers[1].ID != "claude" || providers[2].ID != "codex" || providers[3].ID != "fake" {
+		t.Fatalf("providers = %+v", providers)
+	}
+	// The stub Antigravity has no Describer: available, with its known label.
+	if p := providers[byID["antigravity"]]; !p.Available || p.Label != "Antigravity" || p.UnavailableReason["message"] != "" {
+		t.Fatalf("antigravity = %+v", p)
+	}
+	if p := providers[byID["claude"]]; p.Available || p.Label != "Described claude" || p.UnavailableReason["message"] != "Update Claude Code (found 1, need 2)" || p.Version != "1.0.0" {
+		t.Fatalf("claude = %+v", p)
+	}
+	if p := providers[byID["codex"]]; p.Available || p.UnavailableReason["message"] != "Not available yet" {
+		t.Fatalf("codex = %+v", p)
+	}
+	if p := providers[byID["fake"]]; !p.Available || p.Version != "9.9.9" {
+		t.Fatalf("fake = %+v", p)
+	}
+}
+
+func TestAgentAccountsAcrossProvidersHaveNoSecrets(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	if err := s.agents.runtime.Registry.Register(&describedTestProvider{id: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	accounts := s.agents.runtime.Accounts
+	claudeID, _ := agents.NewAccountID()
+	if err := accounts.Create(agents.Account{ID: claudeID, Provider: "claude", Name: "Work", Settings: json.RawMessage(`{"token":"sk-ant-oat01-secret","config_dir":"/secret/path"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	unregistered, _ := agents.NewAccountID()
+	if err := accounts.Create(agents.Account{ID: unregistered, Provider: "codex", Name: "Hidden"}); err != nil {
+		t.Fatal(err)
+	}
+	w := agentAPIRequest(t, s, "GET", "/api/agents/accounts", "", "")
+	if strings.Contains(w.Body.String(), "secret") {
+		t.Fatalf("secret leaked: %s", w.Body.String())
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("accounts = %v", out)
+	}
+	allowed := map[string]bool{"id": true, "name": true, "provider": true, "auth_mode": true, "identity": true, "warnings": true, "full_access": true}
+	for _, account := range out {
+		for key := range account {
+			if !allowed[key] {
+				t.Fatalf("unexpected key %q in %v", key, account)
+			}
+		}
+		if account["provider"] == "claude" && (account["auth_mode"] != "token" || account["identity"] != "someone") {
+			t.Fatalf("claude = %v", account)
+		}
+		if account["provider"] == "antigravity" && account["auth_mode"] != nil {
+			t.Fatalf("antigravity = %v", account)
+		}
+	}
+}
+
+func TestAgentStartLaunchOptions(t *testing.T) {
+	s, account, provider := terminalTestServer(t)
+	tree := gitlocal.ID(localRepositoryID, s.registry.Default().info.Path)
+	body := func(extra string) string {
+		return fmt.Sprintf(`{"worktree_id":%q,"account_id":%q,"cols":80,"rows":24%s}`, tree, account, extra)
+	}
+	w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "mode", body(`,"permission_mode":"plan"`))
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_launch_options") {
+		t.Fatalf("unsupported permission mode: %d %s", w.Code, w.Body.String())
+	}
+	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "long", body(`,"effort":"`+strings.Repeat("x", 33)+`"`)); w.Code != 400 {
+		t.Fatalf("overlong effort: %d", w.Code)
+	}
+	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "unknown", body(`,"sandbox":true`)); w.Code != 400 {
+		t.Fatalf("unknown field accepted: %d", w.Code)
+	}
+	if provider.starts.Load() != 0 {
+		t.Fatal("rejected launch reached the provider")
+	}
+	// A definitive failure releases its key: the same request fails the same way
+	// instead of answering "previous request was interrupted".
+	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "mode", body(`,"permission_mode":"plan"`)); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_launch_options") {
+		t.Fatalf("retry of a rejected launch: %d %s", w.Code, w.Body.String())
+	}
+	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "ok", body("")); w.Code != 202 {
+		t.Fatalf("plain start: %d %s", w.Code, w.Body.String())
+	}
+	// The idempotency fingerprint covers the new fields, and an accepted key stays reserved.
+	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "ok", body(`,"effort":"high"`)); w.Code != 409 {
+		t.Fatalf("reused key with a different effort: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// modelTestProvider lists models and records which account it was asked about.
+type modelTestProvider struct {
+	describedTestProvider
+	asked atomic.Value
+}
+
+func (p *modelTestProvider) Models(_ context.Context, account agents.Account) ([]agents.ModelOption, error) {
+	p.asked.Store(account.ID)
+	return []agents.ModelOption{{ID: "alpha", Label: "Alpha", Source: "alias"}, {ID: "claude-x-1", Label: "X 1", Description: "claude-x-1", Source: "api"}}, nil
+}
+
+func TestAgentModels(t *testing.T) {
+	s, agyAccount, _ := terminalTestServer(t)
+	lister := &modelTestProvider{describedTestProvider: describedTestProvider{id: "lister"}}
+	if err := s.agents.runtime.Registry.Register(lister); err != nil {
+		t.Fatal(err)
+	}
+	listerID, _ := agents.NewAccountID()
+	if err := s.agents.runtime.Accounts.Create(agents.Account{ID: listerID, Provider: "lister", Name: "L"}); err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) *httptest.ResponseRecorder {
+		return agentAPIRequest(t, s, "GET", path, "", "")
+	}
+
+	w := get("/api/agents/providers/lister/models?account_id=" + string(listerID))
+	var models []agents.ModelOption
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &models) != nil || len(models) != 2 || models[0].ID != "alpha" || models[1].Source != "api" {
+		t.Fatalf("models: %d %s", w.Code, w.Body.String())
+	}
+	if lister.asked.Load() != listerID {
+		t.Fatalf("asked about %v", lister.asked.Load())
+	}
+	// Without a profile the provider is still asked, for its static suggestions.
+	if w := get("/api/agents/providers/lister/models"); w.Code != 200 || !strings.Contains(w.Body.String(), "alpha") {
+		t.Fatalf("no account: %d %s", w.Code, w.Body.String())
+	}
+	// A provider that cannot list gets an empty list, not an error.
+	if w := get("/api/agents/providers/antigravity/models"); w.Code != 200 || strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatalf("antigravity: %d %s", w.Code, w.Body.String())
+	}
+	for name, path := range map[string]string{
+		"unknown provider":     "/api/agents/providers/nope/models",
+		"unknown account":      "/api/agents/providers/lister/models?account_id=acct_missing",
+		"other provider's":     "/api/agents/providers/lister/models?account_id=" + agyAccount,
+		"malformed account id": "/api/agents/providers/lister/models?account_id=../x",
+	} {
+		if w := get(path); w.Code != 404 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
 	}
 }

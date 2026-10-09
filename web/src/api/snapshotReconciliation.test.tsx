@@ -49,6 +49,21 @@ describe('stable snapshot reconciliation and consumers', () => {
     expect(useBonsaiStore.getState().agents).toHaveLength(0)
   })
 
+  it('reconciles a mixed list of Antigravity and Claude sessions', () => {
+    const a = snapshot('a', 2)
+    const base = { project_id: 'a', worktree_id: 'a-feature', account_id: 'account', profile_name: 'Profile', name: 'Agent', state: 'running' as const, created_at: 'today' }
+    a.agents = [{ ...base, id: 'agy', provider: 'antigravity' }, { ...base, id: 'cl1', provider: 'claude' }, { ...base, id: 'cl2', provider: 'claude' }]
+    applySnapshot(a)
+    const agents = useBonsaiStore.getState().agents
+    expect(agents.map(agent => [agent.id, agent.provider, agent.providerId])).toEqual([['agy', 'Antigravity', 'antigravity'], ['cl1', 'Claude', 'claude'], ['cl2', 'Claude', 'claude']])
+    expect(useBonsaiStore.getState().worktrees.find(w => w.id === 'a-feature')?.agentIds).toEqual(['agy', 'cl1', 'cl2'])
+    applySnapshot({ ...a, sequence: 3, agents: [a.agents[0], { ...a.agents[1], state: 'exited' }] })
+    const next = useBonsaiStore.getState().agents
+    expect(next.map(agent => agent.id)).toEqual(['agy', 'cl1'])
+    expect(next[0]).toBe(agents[0])
+    expect(next[1]).toMatchObject({ lifecycleState: 'exited', state: 'finished' })
+  })
+
   it('returns a narrow process patch and preserves unrelated collection and entity identity', () => {
     const before = useBonsaiStore.getState()
     const next = snapshot('a', 2)

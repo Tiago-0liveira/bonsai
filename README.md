@@ -336,6 +336,59 @@ Existing users must confirm their project folders once. `bonsai serve` still
 starts from a Git repository, but the browser catalog may be empty until folders
 are configured. There is no global discovery daemon or cloud filesystem scan.
 
+### Claude Code profiles
+
+Install `claude` (Claude Code), then add one Bonsai profile per Claude account.
+Each profile owns a persistent config directory (`CLAUDE_CONFIG_DIR`) that all
+of its sessions share; your real `~/.claude` is never written.
+
+```sh
+bonsai agent account add claude work            # login mode (default)
+bonsai agent account add claude ci --auth token # long-lived token mode
+echo "$TOKEN" | bonsai agent account add claude ci --token-stdin
+bonsai agent account list                       # shows auth mode and identity
+bonsai agent run work -- --model opus           # extra args go to claude
+bonsai agent account remove work                # logs the profile out, deletes it
+```
+
+- **login** runs `claude auth login` inside the profile. All features work.
+- **token** runs `claude setup-token` (or reads `--token-stdin`) and stores the
+  one-year token 0600 in Bonsai's data directory; it is injected as
+  `CLAUDE_CODE_OAUTH_TOKEN` at launch. A token can only make model requests, so
+  it cannot use Remote Control or claude.ai connectors.
+- **Seeding.** A new profile starts from a one-time snapshot of your own setup:
+  `settings.json`, `CLAUDE.md`, `keybindings.json`, `agents/`, `commands/`,
+  `skills/`, `output-styles/` and your user-level MCP servers. Credentials,
+  history, sessions, plugins and API-key settings are never copied, and symlinks
+  are skipped. Bonsai prints what it copied. Use `--no-seed` to skip it or
+  `--seed-from <dir>` to seed from another config directory.
+- **Isolation.** Sessions run with every inherited `CLAUDE*` and `ANTHROPIC_*`
+  variable removed, so a profile never silently runs as another identity.
+  `HOME` is unchanged, so git, gh and ssh keep working.
+- **Concurrency caveat.** Several sessions of one *login* profile refresh the
+  same OAuth login, and Claude Code can occasionally lose that race and ask for
+  `/login` again. Token mode has no refresh and is race-free.
+- **Token exposure.** In token mode the token is in the session's environment
+  (that is how Claude Code reads it). Bonsai also sets
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` to keep it out of the agent's shell
+  commands, but that flag was not confirmed against a real session, so treat
+  commands the agent runs as able to see the token.
+- **Seeding.** Seeding copies MCP server definitions as they are, including any
+  `env` or header secrets in them, into the profile (mode 0600). Symlinked files
+  and directories in the source are skipped and reported. Login-pinning settings
+  (`forceLoginMethod`, `forceLoginOrgUUID`) and credential helpers are dropped.
+- **Usage.** `bonsai agent usage` shows the 5-hour and weekly utilization (and
+  per-model weekly limits when present) of login profiles. Claude has no
+  documented endpoint for this, so Bonsai reads the one Claude Code's own
+  `/usage` view uses (`/api/oauth/usage`). It can change or disappear without
+  notice and is best effort. Bonsai only reads the profile's stored login and
+  **never refreshes it** (a refresh would log out running sessions), so a profile
+  whose login expired shows an error until a session refreshes it. Token
+  profiles are shown as `n/a` because long-lived tokens cannot read usage, and so
+  are macOS profiles (the login lives in the Keychain). Results are cached for
+  5 minutes; `--refresh` bypasses the cache.
+- Requires Claude Code 2.1.295 or newer.
+
 ### Antigravity in the web workspace
 
 Install `agy`, then add a Bonsai profile:
@@ -346,7 +399,7 @@ bonsai agent account add antigravity personal
 
 Connect the web app to `bonsai serve`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;
-enter instructions directly in it. Claude and Codex are not available yet.
+enter instructions directly in it. Codex is not available yet.
 
 Closing the dock or reloading the browser detaches without stopping the agent.
 Use **Stop agent** to terminate it and reconcile profile credentials. Sessions

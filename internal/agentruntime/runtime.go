@@ -6,6 +6,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/providers/antigravity"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
 )
 
 type Runtime struct {
@@ -33,6 +34,9 @@ func New(in io.Reader, out, errOut io.Writer) (*Runtime, error) {
 	launcher := agents.NewForegroundLauncher(in, out, errOut)
 	registry := agents.NewRegistry()
 	if err := registry.Register(antigravity.New(accounts, sessions, launcher)); err != nil {
+		return nil, err
+	}
+	if err := registry.Register(claude.New(accounts, sessions, launcher, out)); err != nil {
 		return nil, err
 	}
 	return &Runtime{

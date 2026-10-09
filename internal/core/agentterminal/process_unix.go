@@ -21,7 +21,7 @@ type process struct {
 func launch(p agents.PreparedSession, cols, rows int) (*process, error) {
 	cmd := exec.Command(p.Executable, p.Args...)
 	cmd.Dir = p.Dir
-	cmd.Env = agents.BuildEnvironment(os.Environ(), p.EnvSet, p.EnvUnset)
+	cmd.Env = p.Environment(os.Environ())
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return nil, err

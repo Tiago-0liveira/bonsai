@@ -80,7 +80,7 @@ describe('bonsai store', () => {
       fastMode: true,
       workType: 'Debugging',
       prompt: 'Trace the daemon lifecycle failure.',
-    })).rejects.toThrow('Antigravity')
+    })).rejects.toThrow('Select a profile and worktree.')
     const state = useBonsaiStore.getState()
     for (const key of ['agents', 'worktrees', 'selection', 'terminalSessions', 'terminalOutput', 'openRuntimeIds', 'dockRuntimeId'] as const) expect(state[key]).toBe(previous[key])
   })

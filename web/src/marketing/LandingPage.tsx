@@ -1,3 +1,4 @@
+import { ClaudeLogo } from '../components/ui/ClaudeLogo'
 import { useEffect, useRef } from 'react'
 import './landing.css'
 
@@ -24,7 +25,7 @@ function WorktreeCard({ branch, ahead = 0, behind = 0, changed = 0, pr, ci, clas
 function AgentCard({ provider, task, state = 'running', runtime = '04:18', className = '' }: { provider: string; task: string; state?: 'running' | 'finished' | 'reviewing' | 'failed'; runtime?: string; className?: string }) {
   return (
     <article className={`marketing-node marketing-agent ${className}`}>
-      <div className="agent-top"><strong>{provider}</strong><span>{runtime}</span></div>
+      <div className="agent-top"><strong>{provider === 'Claude' && <ClaudeLogo size={13} className="agent-logo" />}{provider}</strong><span>{runtime}</span></div>
       <p>{task}</p>
       <div className={`agent-state agent-${state}`}><span />{state}</div>
     </article>

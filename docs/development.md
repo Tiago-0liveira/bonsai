@@ -216,6 +216,73 @@ tracking refs change only after an explicit fetch/pull operation. Run race tests
 for `internal/server/localapi`, `internal/daemon/client`, and touched local Git
 packages in addition to the normal cross-platform CI matrix.
 
+## Agent provider contract
+
+Providers live under `internal/providers/<id>` and register in
+`internal/agentruntime`. The core (`internal/core/agents`) is provider-neutral:
+the terminal manager, local API and CLI never test a provider ID.
+
+- `Provider` is required: setup, `PrepareSession`, `FinalizeSession` and usage.
+  `Capabilities()` is enforced by the manager: `Interactive=false` cannot start a
+  web terminal, `ConcurrentSameAccount=false` rejects a second active session on
+  an account (`409 agent_busy`), and `ConcurrentCrossAccount=false` rejects a
+  session on another account of the same provider.
+- Per-launch choices arrive as `LaunchOptions` (model, prompt, display name,
+  full access, permission mode, effort) in `PrepareSessionRequest.Launch`. The
+  provider maps them to its own argv; the manager adds nothing. Prompts go last.
+- `PreparedSession.EnvUnsetPrefixes` scrubs inherited variables by prefix
+  (case-insensitive on Windows); `EnvSet` still wins. `ProviderSessionID` is
+  recorded in the session summary as `provider_session_id`.
+- `SetupRequest.Options` carries `bonsai agent account add` flags (`--auth`,
+  `--token-stdin`, `--no-seed`, `--seed-from`). Providers reject options they do
+  not support rather than ignoring them.
+
+Optional interfaces, found by type assertion:
+
+| Interface | Used for |
+| --- | --- |
+| `Describer` | Provider label and host availability in `/api/agents/providers` |
+| `LaunchValidator` | Synchronous launch-option check; errors return `400 invalid_launch_options` and leave no session |
+| `AccountDescriber` | Display-safe `auth_mode`, `identity`, `warnings` and options in `/api/agents/accounts` and `account list`; never tokens, paths or raw settings |
+| `AccountRemover` | Best-effort provider cleanup before an account is deleted; failure is a warning |
+| `UsagePolicy` | Provider-specific usage cache TTL |
+
+`/api/agents/providers` always lists Antigravity, Claude and Codex (unregistered
+ones as "Not available yet") plus any other registered provider.
+`/api/agents/accounts` lists accounts of registered providers only.
+
+## Claude provider
+
+`internal/providers/claude` runs Claude Code. Each profile owns
+`<account dir>/config` as its `CLAUDE_CONFIG_DIR`, shared by all its sessions;
+there is no credential vault, materialize or reconcile step. Launch environment:
+every inherited `CLAUDE*` and `ANTHROPIC_*` variable is removed
+(`EnvUnsetPrefixes`), then `CLAUDE_CONFIG_DIR` and `BONSAI_AGENT_*` are set
+(`HOME` is untouched). Token profiles also get `CLAUDE_CODE_OAUTH_TOKEN` and
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. Argv is built in `launch.go` only:
+`[explicit...] --model --permission-mode --effort --name --session-id <uuid> [-- prompt]`;
+the generated UUID is the session's `provider_session_id`.
+
+Tests never need a Claude login: `internal/providers/claude/testdata/fakeclaude.sh`
+is a POSIX stand-in that tests put first on `PATH`; it reads the Phase 0
+`auth-status-*.json` fixtures from `FAKE_CLAUDE_FIXTURES`. `UsageService.All`
+skips providers whose `Capabilities().Usage` is false.
+
+Unverified assumptions (Phase 0 was inconclusive): that
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` hides the token from Bash subprocesses, and that
+`claude auth status` never rotates a refresh token. Re-check both when upgrading
+`MinVersion`.
+
+Claude usage (`usage.go`) reads the undocumented `GET /api/oauth/usage` with the
+profile's stored access token. Token profiles are reported as `ErrUsageUnsupported`
+without any request (setup tokens always get 403). Redirects are not followed, the
+endpoint must be https or loopback, and HTTP failures are remembered for a minute. It never refreshes a login, never puts the
+token or the response body in an error, and accepts both the flat-bucket and the
+`limits[]` response shapes (`testdata/usage-response*.json`). The provider
+implements `UsagePolicy` (5 minutes), which `UsageService` prefers over its own
+TTL. Tests point `claude.UsageEndpoint` or the provider's `usageEndpoint` at an
+`httptest` server; nothing reaches the network.
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured

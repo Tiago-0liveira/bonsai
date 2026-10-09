@@ -1,6 +1,11 @@
 package antigravity
 
-import "github.com/Tiago-0liveira/bonsai/internal/core/agents"
+import (
+	"context"
+	"fmt"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+)
 
 const ProviderID agents.ProviderID = "antigravity"
 
@@ -32,4 +37,31 @@ func (p *Provider) Capabilities() agents.Capabilities {
 		ConcurrentSameAccount:  true,
 		ConcurrentCrossAccount: true,
 	}
+}
+
+func (p *Provider) Label() string { return "Antigravity" }
+
+func (p *Provider) Availability(context.Context) agents.Availability {
+	if _, err := p.binaryResolver.Resolve(); err != nil {
+		return agents.Availability{Reason: "Install agy and restart Bonsai"}
+	}
+	return agents.Availability{Available: true}
+}
+
+func (p *Provider) DescribeAccount(_ context.Context, account agents.Account) agents.AccountInfo {
+	settings, _ := ParseSettings(account)
+	return agents.AccountInfo{Options: map[string]any{"full_access": settings.DangerouslySkipPermissions}}
+}
+
+// checkSetupOptions rejects setup options agy has no equivalent for.
+func checkSetupOptions(options agents.SetupOptions) error {
+	switch {
+	case options.AuthMode != "":
+		return fmt.Errorf("antigravity does not support --auth")
+	case options.Secret != nil:
+		return fmt.Errorf("antigravity does not support --token-stdin")
+	case options.Seed != nil || options.SeedFrom != "":
+		return fmt.Errorf("antigravity does not support profile seeding")
+	}
+	return nil
 }
