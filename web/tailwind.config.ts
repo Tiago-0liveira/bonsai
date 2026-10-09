@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss'
+import plugin from 'tailwindcss/plugin'
 import { THEME_TOKENS } from './src/theme/tokens'
 
 const token = (name: string) => `rgb(var(--${name}) / <alpha-value>)`
@@ -28,5 +29,12 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // The pull request detail lays out by the size of its island (the list
+    // pane and the terminal dock take varying room), not by the viewport.
+    plugin(({ addVariant }) => {
+      addVariant('pr-wide', '@container pr-detail (min-width: 720px)')
+      addVariant('pr-split', '@container pr-detail (min-width: 720px) and (min-height: 540px)')
+    }),
+  ],
 } satisfies Config

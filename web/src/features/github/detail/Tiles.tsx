@@ -37,7 +37,7 @@ export function Tiles({ pr }: { pr: PullRequest }) {
   const checksAccent = checks.failed ? 'bg-danger' : checks.running ? 'bg-accent' : checks.total ? 'bg-ok' : 'bg-border-strong'
 
   return (
-    <div className="grid grid-cols-2 gap-2 px-4 pb-2.5 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 px-4 pb-2.5 pr-wide:grid-cols-4">
       <Tile label="Checks" accent={checksAccent}>
         <Row>
           <Figure>{checks.total ? `${checks.passed}/${checks.total}` : '—'}</Figure>

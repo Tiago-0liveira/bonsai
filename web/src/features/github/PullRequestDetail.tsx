@@ -56,7 +56,8 @@ export function PullRequestDetail({ pr, pullRequests, orderedIds, repository, pr
   }
 
   return (
-    <main aria-label="Pull request detail" className="island flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <main aria-label="Pull request detail" className="island flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [container-name:pr-detail] [container-type:size]">
+      {/* One scroll for everything, unless the island is big enough for the overview columns to scroll on their own. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <DetailHeader
           pr={pr}
@@ -94,13 +95,13 @@ export function PullRequestDetail({ pr, pullRequests, orderedIds, repository, pr
           })}
         </div>
 
-        <div role="tabpanel" id={`pr-panel-${tab}`} aria-labelledby={`pr-tab-${tab}`} className="flex flex-col px-4 pb-3 pt-2.5 md:min-h-[320px] md:flex-1 md:overflow-hidden">
+        <div role="tabpanel" id={`pr-panel-${tab}`} aria-labelledby={`pr-tab-${tab}`} className="flex flex-col px-4 pb-3 pt-2.5 pr-split:min-h-[240px] pr-split:flex-1 pr-split:overflow-hidden">
           {tab === 'overview' && (
             <OverviewTab pr={pr} parent={parent} stack={stack} worktree={worktree} onSelect={onSelect} onShowCommits={() => setTab('commits')} onShowOnCanvas={onShowOnCanvas} />
           )}
-          {tab === 'commits' && <div className="md:min-h-0 md:flex-1 md:overflow-y-auto"><CommitsPanel commits={pr.commits} /></div>}
-          {tab === 'files' && <div className="md:min-h-0 md:flex-1 md:overflow-y-auto"><FilesPanel files={pr.files} /></div>}
-          {tab === 'conversation' && <div className="md:min-h-0 md:flex-1 md:overflow-y-auto"><ConversationPanel pr={pr} /></div>}
+          {tab === 'commits' && <div className="pr-split:min-h-0 pr-split:flex-1 pr-split:overflow-y-auto"><CommitsPanel commits={pr.commits} /></div>}
+          {tab === 'files' && <div className="pr-split:min-h-0 pr-split:flex-1 pr-split:overflow-y-auto"><FilesPanel files={pr.files} /></div>}
+          {tab === 'conversation' && <div className="pr-split:min-h-0 pr-split:flex-1 pr-split:overflow-y-auto"><ConversationPanel pr={pr} /></div>}
         </div>
       </div>
     </main>

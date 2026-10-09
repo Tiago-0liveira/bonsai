@@ -165,6 +165,14 @@ describe('overview', () => {
     expect(within(card).getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true')
   })
 
+  it('shows a long Summary and Test plan in full', () => {
+    const words = 'More words. '.repeat(80)
+    setup(stackPr(5, 'feat/e', 'main', { id: 'p:5', description: `## Summary\n${words}\n\n## Test plan\n- [x] ${words}` }))
+    expect(screen.getByRole('region', { name: 'Summary' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Test plan' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
+  })
+
   it('does not clamp a short body', () => {
     setup(stackPr(5, 'feat/e', 'main', { id: 'p:5', description: bodyWithoutHeadings }))
     expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
