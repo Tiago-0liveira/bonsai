@@ -27,7 +27,7 @@ export function summarizeChecks(checks: readonly PrCheck[] | null | undefined): 
 /** Running first, then failed, then passed. Stable within each group. */
 export function sortChecks(checks: readonly PrCheck[] | null | undefined): PrCheck[] {
   return (checks ?? [])
-    .filter((check) => check && check.status in ORDER)
+    .filter((check) => check && Object.hasOwn(ORDER, check.status))
     .map((check, index) => ({ check, index }))
     .sort((a, b) => ORDER[a.check.status] - ORDER[b.check.status] || a.index - b.index)
     .map(({ check }) => check)

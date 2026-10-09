@@ -1,23 +1,20 @@
-import type { StackablePr } from './prStack'
+import type { PullRequest } from '../../types'
+import {
+  cyclicStack,
+  forkFromMain,
+  orphanBase,
+  stackPr as pr,
+  stackRepository,
+  threeDeepStack,
+} from '../../test/fixtures/prStacks'
 import { buildPrStacks } from './prStack'
 
-let n = 0
-const pr = (number: number, branch: string, base: string, status: StackablePr['status'] = 'Open'): StackablePr => ({
-  id: `pr-${number}-${n++}`,
-  number,
-  branch,
-  base,
-  status,
-})
-
-const numbers = (prs: StackablePr[]) => prs.map((p) => p.number)
+const numbers = (prs: PullRequest[]) => prs.map((p) => p.number)
 
 describe('buildPrStacks', () => {
   it('orders a 3-deep stack root first', () => {
-    const c = pr(3, 'c', 'b')
-    const a = pr(1, 'a', 'main')
-    const b = pr(2, 'b', 'a')
-    const result = buildPrStacks([c, a, b])
+    const { a, b, c, prs } = threeDeepStack()
+    const result = buildPrStacks(prs)
 
     expect(result.stacks).toHaveLength(1)
     expect(result.stacks[0].root).toBe(a)
@@ -34,7 +31,7 @@ describe('buildPrStacks', () => {
 
   it('puts PRs based on main in standalone, in input order', () => {
     const x = pr(5, 'x', 'main')
-    const y = pr(4, 'y', 'main', 'Draft')
+    const y = pr(4, 'y', 'main', { status: 'Draft' })
     const result = buildPrStacks([x, y])
     expect(result.stacks).toEqual([])
     expect(result.standalone).toEqual([x, y])
@@ -44,14 +41,25 @@ describe('buildPrStacks', () => {
   })
 
   it('treats a draft parent as open but not a merged or closed one', () => {
-    const draft = pr(1, 'a', 'main', 'Draft')
+    const draft = pr(1, 'a', 'main', { status: 'Draft' })
     const child = pr(2, 'b', 'a')
     expect(buildPrStacks([draft, child]).isStacked(child)).toBe(true)
 
     for (const status of ['Merged', 'Closed'] as const) {
-      const parent = pr(1, 'a', 'main', status)
+      const parent = pr(1, 'a', 'main', { status })
       const result = buildPrStacks([parent, child])
       expect(result.isStacked(child)).toBe(false)
+      expect(result.standalone).toEqual([parent, child])
+    }
+  })
+
+  it('keeps merged and closed children out of an open stack', () => {
+    const parent = pr(1, 'a', 'main')
+    for (const status of ['Merged', 'Closed'] as const) {
+      const child = pr(2, 'b', 'a', { status })
+      const result = buildPrStacks([parent, child])
+      expect(result.isStacked(child)).toBe(false)
+      expect(result.stacks).toEqual([])
       expect(result.standalone).toEqual([parent, child])
     }
   })
@@ -66,10 +74,8 @@ describe('buildPrStacks', () => {
   })
 
   it('does not crash on a cycle and roots it at the lowest number', () => {
-    const a = pr(7, 'a', 'b')
-    const b = pr(3, 'b', 'a')
-    const tail = pr(9, 'tail', 'a')
-    const result = buildPrStacks([a, b, tail])
+    const { b, tail, prs } = cyclicStack()
+    const result = buildPrStacks(prs)
 
     expect(result.stacks).toHaveLength(1)
     expect(result.stacks[0].root).toBe(b)
@@ -86,6 +92,15 @@ describe('buildPrStacks', () => {
     expect(numbers(result.stacks[0].prs)).toEqual([1, 8])
   })
 
+  it('cuts a longer cycle at its lowest number when walked from the lowest', () => {
+    const a = pr(1, 'a', 'c')
+    const b = pr(5, 'b', 'a')
+    const c = pr(9, 'c', 'b')
+    const result = buildPrStacks([a, b, c])
+    expect(result.stacks[0].root).toBe(a)
+    expect(numbers(result.stacks[0].prs)).toEqual([1, 5, 9])
+  })
+
   it('handles a PR whose base is its own branch', () => {
     const loop = pr(1, 'a', 'a')
     const result = buildPrStacks([loop])
@@ -94,10 +109,37 @@ describe('buildPrStacks', () => {
   })
 
   it('treats an orphan base as standalone', () => {
-    const orphan = pr(2, 'b', 'deleted-branch')
-    const result = buildPrStacks([orphan])
+    const { orphan, prs } = orphanBase()
+    const result = buildPrStacks(prs)
     expect(result.standalone).toEqual([orphan])
     expect(result.parentOf(orphan)).toBeUndefined()
+  })
+
+  it.each([
+    ['with', stackRepository],
+    ['without', undefined],
+  ])('never stacks main-based PRs on a fork PR from its main (%s repository)', (_, repository) => {
+    const { prs } = forkFromMain()
+    const result = buildPrStacks(prs, { repository })
+    expect(result.stacks).toEqual([])
+    expect(result.standalone).toEqual(prs)
+  })
+
+  it('ignores fork heads whose branch name matches a base branch', () => {
+    const fork = pr(1, 'feat/x', 'main', { headRepository: 'contributor/widgets' })
+    const upstream = pr(5, 'feat/x', 'main')
+    const child = pr(6, 'feat/y', 'feat/x')
+
+    expect(buildPrStacks([fork, upstream, child], { repository: 'ACME/Widgets' }).parentOf(child)).toBe(upstream)
+    expect(buildPrStacks([fork, child], { repository: stackRepository }).isStacked(child)).toBe(false)
+    // Without a repository to compare, the lowest number wins.
+    expect(buildPrStacks([fork, upstream, child]).parentOf(child)).toBe(fork)
+  })
+
+  it('treats a PR with an unknown head repository as local', () => {
+    const parent = pr(1, 'a', 'main', { headRepository: undefined })
+    const child = pr(2, 'b', 'a')
+    expect(buildPrStacks([parent, child], { repository: stackRepository }).parentOf(child)).toBe(parent)
   })
 
   it('prefers the lowest-numbered open PR when branches collide', () => {
@@ -108,9 +150,9 @@ describe('buildPrStacks', () => {
   })
 
   it('survives malformed input', () => {
-    const blank = { ...pr(1, '', ''), branch: undefined, base: undefined } as unknown as StackablePr
+    const blank = { ...pr(1, '', ''), branch: undefined, base: undefined } as unknown as PullRequest
     const dup = pr(2, 'a', 'main')
-    const result = buildPrStacks([blank, dup, { ...dup }, null as unknown as StackablePr])
+    const result = buildPrStacks([blank, dup, { ...dup }, null as unknown as PullRequest])
     expect(result.standalone).toEqual([blank, dup])
     expect(buildPrStacks(undefined).stacks).toEqual([])
     expect(result.chainOf(pr(99, 'zz', 'main'))).toEqual([])

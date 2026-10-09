@@ -74,7 +74,6 @@ function splitSections(source: string, tree: Root): PrSection[] {
   let current: Draft | undefined
   for (const node of tree.children) {
     const offsets = offsetsOf(node)
-    if (!offsets) continue
     if (node.type === 'heading' && node.depth === SECTION_DEPTH) {
       current = { heading: textOf(node).trim(), start: offsets.end, nodes: [] }
       drafts.push(current)
@@ -89,7 +88,7 @@ function splitSections(source: string, tree: Root): PrSection[] {
 
   return drafts.flatMap((draft) => {
     const last = draft.nodes[draft.nodes.length - 1]
-    const lastEnd = last ? offsetsOf(last)?.end : undefined
+    const lastEnd = last ? offsetsOf(last).end : undefined
     // Sections run until the last node they own, so trailing blank lines and
     // the next heading never leak in; an empty section keeps an empty body.
     const markdown = lastEnd === undefined ? '' : source.slice(draft.start, lastEnd).trim()
@@ -135,10 +134,10 @@ function textOf(node: Nodes): string {
   return ''
 }
 
-function offsetsOf(node: Nodes): { start: number; end: number } | undefined {
-  const start = node.position?.start.offset
-  const end = node.position?.end.offset
-  return start === undefined || end === undefined ? undefined : { start, end }
+/** remark-parse records a position, with offsets, on every node it creates. */
+function offsetsOf(node: Nodes): { start: number; end: number } {
+  const { start, end } = node.position as NonNullable<Nodes['position']>
+  return { start: start.offset as number, end: end.offset as number }
 }
 
 function normalizeHeading(heading: string): string {

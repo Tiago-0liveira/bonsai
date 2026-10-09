@@ -39,8 +39,9 @@ describe('sortChecks', () => {
     expect(sortChecks(undefined)).toEqual([])
   })
 
-  it('drops unknown statuses', () => {
-    const odd = [{ name: 'x', status: 'skipped' }, checks[0]] as unknown as PrCheck[]
+  it('drops unknown statuses, including inherited object keys', () => {
+    const odd = [{ name: 'x', status: 'skipped' }, { name: 'y', status: 'toString' }, null, checks[0]] as unknown as PrCheck[]
     expect(sortChecks(odd)).toEqual([checks[0]])
+    expect(summarizeChecks(odd).total).toBe(sortChecks(odd).length)
   })
 })

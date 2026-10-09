@@ -30,7 +30,7 @@ const components: Components = {
     className?.includes('task-list-item') ? (
       <li className="flex items-start gap-[9px]">{children}</li>
     ) : (
-      <li className="relative before:absolute before:left-0 before:top-[6px] before:h-[6px] before:w-[6px] before:rounded-[2px] before:bg-accent before:content-[''] [ol_&]:pl-0 [ol_&]:before:hidden">
+      <li className="relative before:absolute before:left-0 before:top-[6px] before:h-[6px] before:w-[6px] before:rounded-[2px] before:bg-accent before:content-[''] [ol>&]:pl-0 [ol>&]:before:hidden">
         {children}
       </li>
     ),

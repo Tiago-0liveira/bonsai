@@ -1,6 +1,11 @@
 import type { PullRequest } from '../../types'
 
-export type StackablePr = Pick<PullRequest, 'id' | 'number' | 'branch' | 'base' | 'status'>
+export type StackablePr = Pick<PullRequest, 'id' | 'number' | 'branch' | 'base' | 'status' | 'headRepository'>
+
+export interface PrStackOptions {
+  /** The base repository (`owner/name`). A PR whose head lives in another repository (a fork) is never a parent. */
+  repository?: string
+}
 
 export interface PrStack<T extends StackablePr> {
   /** Bottom of the stack: the PR whose base is not another open PR's branch. */
@@ -25,14 +30,28 @@ export interface PrStacks<T extends StackablePr> {
 const isOpen = (pr: StackablePr) => pr.status === 'Open' || pr.status === 'Draft'
 
 /**
- * PR B is stacked on A when `B.base === A.branch` and A is open. Group order
- * and sibling order follow the input order. Malformed input never throws: PRs
- * without a branch or base are standalone, duplicate ids are dropped, and a
- * cycle is cut at its lowest-numbered PR, which becomes the root.
- *
- * Callers choose which PRs participate (e.g. only the Open tab's list).
+ * Branch names only identify a branch inside one repository, so a fork's head
+ * (often its `main`) must not be mistaken for a base-repository branch. A head
+ * equal to its own base can only come from a fork, which also covers PRs whose
+ * head repository is unknown (deleted forks).
  */
-export function buildPrStacks<T extends StackablePr>(input: readonly T[] | null | undefined): PrStacks<T> {
+const canBeParent = (pr: StackablePr, repository: string | undefined) =>
+  isOpen(pr)
+  && !!pr.branch
+  && pr.branch !== pr.base
+  && !(repository && pr.headRepository && pr.headRepository.toLowerCase() !== repository.toLowerCase())
+
+/**
+ * PR B is stacked on A when both are open, `B.base === A.branch`, and A's head
+ * lives in the base repository. Group order and sibling order follow the input
+ * order. Malformed input never throws: PRs without a branch or base are
+ * standalone, duplicate ids are dropped, and a cycle is cut at its
+ * lowest-numbered PR, which becomes the root.
+ */
+export function buildPrStacks<T extends StackablePr>(
+  input: readonly T[] | null | undefined,
+  { repository }: PrStackOptions = {},
+): PrStacks<T> {
   const seen = new Set<string>()
   const prs = (input ?? []).filter((pr) => {
     if (!pr || seen.has(pr.id)) return false
@@ -40,18 +59,20 @@ export function buildPrStacks<T extends StackablePr>(input: readonly T[] | null 
     return true
   })
 
-  // Several open PRs may share a branch name (forks): the lowest number wins.
+  // Without a repository to compare against, several open PRs may still share
+  // a branch name: the lowest number wins.
   const byBranch = new Map<string, T>()
   for (const pr of prs) {
-    if (!pr.branch || !isOpen(pr)) continue
+    if (!canBeParent(pr, repository)) continue
     const current = byBranch.get(pr.branch)
     if (!current || pr.number < current.number) byBranch.set(pr.branch, pr)
   }
 
   const parents = new Map<string, T>()
   for (const pr of prs) {
-    const parent = pr.base ? byBranch.get(pr.base) : undefined
-    if (parent && parent.id !== pr.id) parents.set(pr.id, parent)
+    // canBeParent rules out `branch === base`, so a PR is never its own parent.
+    const parent = isOpen(pr) ? byBranch.get(pr.base) : undefined
+    if (parent) parents.set(pr.id, parent)
   }
 
   breakCycles(prs, parents)

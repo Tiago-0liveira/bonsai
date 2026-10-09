@@ -84,6 +84,10 @@ describe('parsePrBody', () => {
     expect(parsed.rest).toEqual([{ markdown: 'Fixes #12' }])
   })
 
+  it('drops a preamble that is only invisible whitespace', () => {
+    expect(parsePrBody(' \n\n## Summary\nDone.')).toEqual({ summary: { heading: 'Summary', markdown: 'Done.' }, rest: [] })
+  })
+
   it('does not split on ## inside code fences, deeper headings or blockquotes', () => {
     const body = '## Summary\nText\n\n```md\n## Test plan\n- [x] fake\n```\n\n### Details\nmore\n\n> ## quoted'
     const parsed = parsePrBody(body)
