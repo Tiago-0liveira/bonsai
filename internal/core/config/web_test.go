@@ -75,6 +75,9 @@ func TestUpdateWebConfigRevisionAndValidation(t *testing.T) {
 	if _, err := UpdateWebConfig(path, 2, func(c *WebConfig) error { c.StartupTimeoutSeconds = 601; return nil }); err == nil {
 		t.Fatal("out-of-range startup timeout accepted")
 	}
+	if _, err := UpdateWebConfig(path, 2, func(c *WebConfig) error { c.Interfaces = WebInterfaces{}; return nil }); err == nil {
+		t.Fatal("both browser interfaces disabled accepted")
+	}
 	got, exists, err := ReadWebConfig(path)
 	if err != nil || !exists || got.Revision != 2 || got.APIPort != 7011 {
 		t.Fatalf("rejected updates were persisted: %+v, %v", got, err)

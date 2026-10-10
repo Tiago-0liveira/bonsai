@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,13 +161,21 @@ func TestWebStartReuseStatusLogsRestartStop(t *testing.T) {
 	port := strconv.Itoa(freePort(t))
 
 	out := e.mustRun(t, "web", "--no-open", "--port", port)
-	for _, want := range []string{"Saved default settings", "✓ bonsai web is running", "UI        https://app.bonsai.dev/app", "API       http://127.0.0.1:" + port, "updates   standard", "bonsai web stop"} {
+	for _, want := range []string{"Saved default settings", "✓ bonsai web is running", "UI        http://127.0.0.1:" + port + "/app", "hosted    https://app.bonsai.dev/app", "updates   standard", "bonsai web stop"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("first start output lacks %q:\n%s", want, out)
 		}
 	}
 	if !portListening(t, port) {
 		t.Fatal("API is not listening after bonsai web returned")
+	}
+	// The API serves the UI on both loopback names. This test binary is built
+	// without -tags embedui, so /app is the placeholder page.
+	for _, host := range []string{"127.0.0.1", "localhost"} {
+		code, body := httpGet(t, "http://"+host+":"+port+"/app/settings")
+		if code != http.StatusOK || !strings.Contains(body, "UI not built") {
+			t.Fatalf("GET %s /app/settings = %d\n%s", host, code, body)
+		}
 	}
 
 	out = e.mustRun(t, "web", "--no-open", "--port", port)
@@ -213,6 +223,103 @@ func TestWebStartReuseStatusLogsRestartStop(t *testing.T) {
 	}
 	if logs := e.mustRun(t, "web", "logs"); !strings.Contains(logs, "listening") {
 		t.Fatalf("logs after stop do not show the last run:\n%s", logs)
+	}
+}
+
+func httpGet(t *testing.T, url string) (int, string) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+func sessionStatus(t *testing.T, port, origin string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+port+"/api/session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", origin)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestWebAppliesTheHostedInterfaceSetting(t *testing.T) {
+	e := newWebEnv(t)
+	port := strconv.Itoa(freePort(t))
+	e.mustRun(t, "web", "--no-open", "--port", port)
+	if got := sessionStatus(t, port, "https://app.bonsai.dev"); got != http.StatusCreated {
+		t.Fatalf("hosted origin with the interface enabled: %d", got)
+	}
+
+	path, err := config.WebConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := config.ReadWebConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.UpdateWebConfig(path, current.Revision, func(c *config.WebConfig) error {
+		c.Interfaces.Hosted = false
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := e.mustRun(t, "web", "--no-open", "--port", port)
+	if !strings.Contains(out, "Restarting bonsai web to apply changed settings") || strings.Contains(out, "hosted    https") {
+		t.Fatalf("hosted interface change not applied:\n%s", out)
+	}
+	if got := sessionStatus(t, port, "https://app.bonsai.dev"); got != http.StatusForbidden {
+		t.Fatalf("hosted origin with the interface disabled: %d", got)
+	}
+	for _, origin := range []string{"http://127.0.0.1:" + port, "http://localhost:" + port} {
+		if got := sessionStatus(t, port, origin); got != http.StatusCreated {
+			t.Fatalf("own origin %s: %d", origin, got)
+		}
+	}
+	if got := sessionStatus(t, port, "https://evil.example"); got != http.StatusForbidden {
+		t.Fatalf("foreign origin: %d", got)
+	}
+	if out := e.mustRun(t, "web", "--no-open", "--port", port); !strings.Contains(out, "already running") {
+		t.Fatalf("unchanged settings did not reuse:\n%s", out)
+	}
+}
+
+// An API left by another bonsai version would serve that version's UI; bonsai
+// web replaces it so the browser always gets this binary's UI.
+func TestWebReplacesAnAPIFromAnotherVersion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the bonsai binary")
+	}
+	// Build before newWebEnv moves HOME (and with it the module cache).
+	old := filepath.Join(t.TempDir(), filepath.Base(webTestBinary(t)))
+	build := exec.Command("go", "build", "-o", old, "-ldflags", "-X github.com/Tiago-0liveira/bonsai/internal/version.Version=v0.0.1-old", "github.com/Tiago-0liveira/bonsai")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the old binary: %v\n%s", err, out)
+	}
+	e := newWebEnv(t)
+	port := strconv.Itoa(freePort(t))
+	oldEnv := *e
+	oldEnv.bin = old
+	oldEnv.mustRun(t, "web", "--no-open", "--port", port)
+	if _, body := httpGet(t, "http://127.0.0.1:"+port+"/version"); !strings.Contains(body, "v0.0.1-old") {
+		t.Fatalf("old API version: %s", body)
+	}
+	out := e.mustRun(t, "web", "--no-open", "--port", port)
+	if !strings.Contains(out, "Restarting bonsai web v0.0.1-old to run") || !strings.Contains(out, "✓ bonsai web is running") {
+		t.Fatalf("old API was not replaced:\n%s", out)
+	}
+	if _, body := httpGet(t, "http://127.0.0.1:"+port+"/version"); strings.Contains(body, "v0.0.1-old") {
+		t.Fatalf("old API still serving: %s", body)
 	}
 }
 

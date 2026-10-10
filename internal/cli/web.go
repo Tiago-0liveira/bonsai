@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
@@ -22,6 +23,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
+	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
 // ExitError ends the process with Code after the command has already
@@ -226,6 +228,7 @@ func (w *webCLI) start(opts webStartOptions) error {
 	} else if opts.preferredPort != 0 && !opts.portFlag {
 		port = opts.preferredPort
 	}
+	browserOrigin := webBrowserOrigin(cfg)
 	if group != nil && group.State == "ready" {
 		if group.APIPort != port {
 			return w.fail(webFailure{
@@ -233,10 +236,20 @@ func (w *webCLI) start(opts webStartOptions) error {
 				fix:      fmt.Sprintf("bonsai web stop      then      bonsai web --port %d", port),
 			})
 		}
-		return w.started(cfg, opts, group, true)
-	} else if group != nil {
-		// Our own group, but not healthy: clear it so its API does not read
-		// as "another program" on the port.
+		// The API serves the UI, so reusing an API from another bonsai
+		// version would bring back the version skew the local UI removes.
+		switch running := runningAPIVersion(group.APIPort); {
+		case running != "" && running != version.String():
+			fmt.Fprintf(w.out, "Restarting bonsai web %s to run %s.\n", running, version.String())
+		case group.BrowserOrigin != browserOrigin:
+			fmt.Fprintln(w.out, "Restarting bonsai web to apply changed settings (hosted app access).")
+		default:
+			return w.started(cfg, opts, group, true)
+		}
+	}
+	if group != nil {
+		// Our own group, but not healthy or not current: clear it so its API
+		// does not read as "another program" on the port.
 		if err := w.client.ServeStop(procstore.WebServeGroupID); err != nil {
 			return w.fail(webFailure{
 				detail: "the previous bonsai web did not stop: " + err.Error(),
@@ -260,7 +273,7 @@ func (w *webCLI) start(opts webStartOptions) error {
 		WorkspacePath:          w.home,
 		Executable:             executable,
 		APIPort:                port,
-		BrowserOrigin:          hostedWebOrigin(),
+		BrowserOrigin:          browserOrigin,
 		StartupTimeoutSeconds:  firstPositive(opts.startupTimeout, cfg.StartupTimeoutSeconds),
 		ShutdownTimeoutSeconds: firstPositive(opts.shutdownTimeout, cfg.ShutdownTimeoutSeconds),
 	}
@@ -301,8 +314,9 @@ func (w *webCLI) started(cfg config.WebConfig, opts webStartOptions, group *proc
 	fmt.Fprintln(w.out, "  stop      bonsai web stop   ·   status: bonsai web status")
 
 	if cfg.OpenBrowser && !opts.noOpen {
-		if err := w.openURL(webUIURL()); err != nil {
-			fmt.Fprintf(w.errOut, "Could not open a browser (%v). Open %s yourself.\n", err, webUIURL())
+		target := webUIURL(cfg, group.APIPort)
+		if err := w.openURL(target); err != nil {
+			fmt.Fprintf(w.errOut, "Could not open a browser (%v). Open %s yourself.\n", err, target)
 		}
 	}
 	if opts.attach {
@@ -311,15 +325,55 @@ func (w *webCLI) started(cfg config.WebConfig, opts webStartOptions, group *proc
 	return nil
 }
 
+// printAccess describes the running group: its own UI (same origin as the
+// API), and the hosted app only while the API actually allows it.
 func (w *webCLI) printAccess(cfg config.WebConfig, group *procstore.ServeGroup) {
-	// Until the UI is embedded in the binary, the browser UI is the hosted app
-	// talking to this computer's local API.
-	fmt.Fprintf(w.out, "  UI        %s\n", webUIURL())
-	fmt.Fprintf(w.out, "  API       http://127.0.0.1:%d\n", group.APIPort)
+	fmt.Fprintf(w.out, "  UI        %s\n", webUIURL(cfg, group.APIPort))
+	if !cfg.Interfaces.Local {
+		fmt.Fprintf(w.out, "  API       %s\n", localWebOrigin(group.APIPort))
+	} else if group.BrowserOrigin != "" {
+		fmt.Fprintf(w.out, "  hosted    %s/app\n", group.BrowserOrigin)
+	}
 	fmt.Fprintf(w.out, "  updates   %s\n", webUpdatesText(cfg))
 }
 
-func webUIURL() string { return hostedWebURL() }
+func localWebOrigin(port int) string { return "http://127.0.0.1:" + strconv.Itoa(port) }
+
+// webUIURL is the page bonsai web prints and opens: the UI the local API
+// serves itself, or the hosted app when the local interface is turned off.
+func webUIURL(cfg config.WebConfig, port int) string {
+	if !cfg.Interfaces.Local {
+		return hostedWebURL()
+	}
+	return localWebOrigin(port) + "/app"
+}
+
+// webBrowserOrigin is the extra browser origin the API allows next to its
+// own: the hosted app, or none when that interface is disabled.
+func webBrowserOrigin(cfg config.WebConfig) string {
+	if !cfg.Interfaces.Hosted {
+		return ""
+	}
+	return hostedWebOrigin()
+}
+
+// runningAPIVersion asks a running API for its bonsai version ("" when it
+// cannot tell). /version is a public probe: no Origin, no session.
+func runningAPIVersion(port int) string {
+	httpClient := &http.Client{Timeout: 2 * time.Second}
+	resp, err := httpClient.Get(localWebOrigin(port) + "/version")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Version string `json:"version"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body) != nil {
+		return ""
+	}
+	return body.Version
+}
 
 func webUpdatesText(cfg config.WebConfig) string {
 	standard := "standard (every ~" + humanInterval(localapi.StandardUpdateInterval) + ")"
@@ -383,12 +437,20 @@ func (w *webCLI) open() error {
 	if err != nil {
 		return err
 	}
-	if group == nil {
-		fmt.Fprintln(w.errOut, "bonsai web is not running; the page will not connect until you run: bonsai web")
+	cfg, _, err := config.ReadWebConfig(w.configPath)
+	if err != nil {
+		cfg = config.DefaultWebConfig()
 	}
-	if err := w.openURL(webUIURL()); err != nil {
+	port := cfg.APIPort
+	if group == nil {
+		fmt.Fprintln(w.errOut, "bonsai web is not running; the page will not load until you run: bonsai web")
+	} else {
+		port = group.APIPort
+	}
+	target := webUIURL(cfg, port)
+	if err := w.openURL(target); err != nil {
 		fmt.Fprintf(w.errOut, "Could not open a browser (%v).\n", err)
-		fmt.Fprintln(w.out, webUIURL())
+		fmt.Fprintln(w.out, target)
 	}
 	return nil
 }

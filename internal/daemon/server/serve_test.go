@@ -45,6 +45,22 @@ func TestValidateProductionServeSpecAndPortCollision(t *testing.T) {
 		}
 	}
 
+	// The user-level web stack may disable the hosted app (empty origin); its
+	// API then allows only its own origin. A repository-scoped serve may not.
+	localOnly := spec
+	localOnly.Scope, localOnly.WorkspaceID, localOnly.BrowserOrigin = procstore.ServeScopeUser, procstore.WebServeGroupID, ""
+	if err := validateServeSpec(localOnly); err != nil {
+		t.Fatalf("user-scoped serve without a hosted origin rejected: %v", err)
+	}
+	localArgs := serveAPIArgs("/ignored", localOnly, "production")
+	if i := slices.Index(localArgs, "--browser-origin"); i < 0 || i+1 >= len(localArgs) || localArgs[i+1] != "" {
+		t.Fatalf("user-scoped API args must pass the empty browser origin explicitly: %v", localArgs)
+	}
+	localOnly.BrowserOrigin = "http://app.example.com"
+	if err := validateServeSpec(localOnly); err == nil {
+		t.Fatal("user-scoped serve accepted a non-HTTPS hosted origin")
+	}
+
 	const daemonRoot = "/canonical/main-root"
 	args := serveAPIArgs(daemonRoot, spec, "production")
 	for _, forbidden := range []string{"__serve-webhook", "--capability-file", "--web-port", "--webhook-port", "--development"} {
