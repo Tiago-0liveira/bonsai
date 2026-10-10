@@ -113,7 +113,7 @@ func (f *fakeBackend) Apply(_ context.Context, plan setup.Plan, progress func(St
 		return Result{}
 	}
 	progress(Step{ID: "start", Label: "Started Bonsai", State: StepDone, Detail: "http://127.0.0.1:7001"})
-	r := Result{OK: true, URL: "http://127.0.0.1:7001/app"}
+	r := Result{OK: true, URL: "http://127.0.0.1:7001/app", Port: 7001}
 	if plan.Config.OpenBrowser {
 		r.Opened = true
 		f.opened = append(f.opened, r.URL)
@@ -501,8 +501,42 @@ func TestEditModeTargetedApply(t *testing.T) {
 	if h.screen() != screenDashboard || h.model().dirty() {
 		t.Fatal("after apply the dashboard is clean")
 	}
-	if r := h.model().info.Running; r == nil || r.APIPort != 7011 || r.Hosted {
-		t.Fatalf("running = %+v", r)
+	if r := h.model().info.Running; r == nil || r.APIPort != 7001 || r.Hosted {
+		t.Fatalf("running should follow the port the fake reported: %+v", r)
+	}
+
+	// A second apply in the same session starts from what is on disk now:
+	// nothing applied before is applied again.
+	h.model().cursor[screenDashboard] = 1
+	h.keys("enter", "down", "enter", "a")
+	h.keys("enter")
+	if len(f.plans) != 2 {
+		t.Fatal("second apply did not run")
+	}
+	second := f.plans[1]
+	if len(second.AddRoots) != 0 || len(second.RemoveRoots) != 0 || len(second.SelectRepos) != 0 {
+		t.Fatalf("second apply repeated the folder changes: %+v", second)
+	}
+	// Unchecking the folder added by the first apply removes it now.
+	h.keys("enter")
+	h.model().cursor[screenDashboard] = 0
+	h.keys("enter")
+	h.model().cursor[screenProjects] = 2
+	h.keys("space", "enter", "a", "enter")
+	third := f.plans[2]
+	if len(third.RemoveRoots) != 1 || third.RemoveRoots[0].Path != p("work") || third.RemoveRoots[0].ID != config.PathID("root", p("work")) {
+		t.Fatalf("third plan = %+v", third)
+	}
+}
+
+func TestReviewWaitsForFolderScans(t *testing.T) {
+	f := newFake()
+	h := newHarness(t, f, Wizard, firstRunDraft(), testInfo())
+	h.model().draft.Folders[1].Scanned = false // ~/dev still scanning
+	h.model().draft.Folders[1].Checked = true
+	h.keys("d", "enter")
+	if len(f.plans) != 0 || h.screen() != screenReview || !strings.Contains(h.model().flash, "Still looking for repositories") {
+		t.Fatalf("applied before the scans finished: plans=%d screen=%d flash=%q", len(f.plans), h.screen(), h.model().flash)
 	}
 }
 

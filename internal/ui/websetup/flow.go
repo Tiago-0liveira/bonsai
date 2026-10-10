@@ -100,6 +100,10 @@ func (m Model) onReview(key string) (tea.Model, tea.Cmd) {
 			m.flash = "Nothing to apply yet."
 			return m, nil
 		}
+		if pending := m.draft.Pending(); len(pending) > 0 {
+			m.flash = "Still looking for repositories in " + setup.TildePath(m.info.Home, pending[0].Path) + "; press enter again in a moment."
+			return m, nil
+		}
 		if err := m.plan().Config.Validate(); err != nil {
 			m.flash = "These settings cannot be saved: " + err.Error()
 			return m, nil

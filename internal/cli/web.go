@@ -217,7 +217,13 @@ func (w *webCLI) start(opts webStartOptions) error {
 		})
 	}
 	if wantsSetup(w.tty, opts.noSetup, exists, saved.SetupVersion) {
-		return w.runSetup(websetupui.Wizard, saved, exists, opts)
+		if err := projectRootsReadable(); err != nil {
+			// The setup cannot show folders it cannot read; start as before
+			// and let the API report the broken file.
+			fmt.Fprintf(w.errOut, "Skipping the guided setup: %v\nFix that file, then run: bonsai web setup\n\n", err)
+		} else {
+			return w.runSetup(websetupui.Wizard, saved, exists, opts)
+		}
 	}
 	cfg, err := w.settings()
 	if err != nil {
@@ -234,6 +240,15 @@ func (w *webCLI) start(opts webStartOptions) error {
 		return w.fail(*failure)
 	}
 	return w.started(cfg, opts, group, reused)
+}
+
+func projectRootsReadable() error {
+	path, err := config.ProjectRootsPath()
+	if err != nil {
+		return err
+	}
+	_, err = config.ReadProjectRoots(path)
+	return err
 }
 
 // wantsSetup decides whether `bonsai web` opens the guided setup first: on

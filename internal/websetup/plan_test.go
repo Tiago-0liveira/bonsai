@@ -111,6 +111,16 @@ func TestBuildPlanTargetedRestart(t *testing.T) {
 	if p := BuildPlan(before, before.Clone(), override, false); p.RestartAPI {
 		t.Fatalf("untouched port restarted a --port stack: %+v", p)
 	}
+	hostedOnly := before.Clone()
+	hostedOnly.Config.Interfaces.Hosted = false
+	if p := BuildPlan(before, hostedOnly, override, false); !p.RestartAPI || p.RestartPort != 17931 {
+		t.Fatalf("a hosted-only change must restart on the running port: %+v", p)
+	}
+	newPort := before.Clone()
+	newPort.Config.APIPort = 7011
+	if p := BuildPlan(before, newPort, override, false); p.RestartPort != 7011 {
+		t.Fatalf("a port change restarts on the new port: %+v", p)
+	}
 
 	after := before.Clone()
 	after.Toggle(1) // remove /h/old

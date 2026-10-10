@@ -48,6 +48,7 @@ type Step struct {
 type Result struct {
 	OK     bool
 	URL    string   // the page bonsai web serves, when it is running
+	Port   int      // the API port, when bonsai web is running
 	Opened bool     // the browser was opened
 	Notes  []string // extra lines for the Done screen
 }

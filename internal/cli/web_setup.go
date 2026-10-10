@@ -66,10 +66,12 @@ func (w *webCLI) runSetup(mode websetupui.Mode, saved config.WebConfig, exists b
 		return fmt.Errorf("setup screen failed: %w", err)
 	}
 	result, _ := final.(websetupui.Model)
+	// The last Apply decides: an earlier success does not hide a later
+	// failure (its stack may already be stopped).
+	if failure := backend.lastFailure(); failure != nil {
+		return w.fail(*failure)
+	}
 	if !result.Applied() {
-		if failure := backend.lastFailure(); failure != nil {
-			return w.fail(*failure)
-		}
 		if backend.wasSaved() {
 			fmt.Fprintln(w.out, "Settings saved. Start bonsai web with: bonsai web")
 			return nil
@@ -224,7 +226,19 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 	quiet.out, quiet.errOut = notes, notes
 	home, _ := os.UserHomeDir()
 
-	fail := func(id, label, detail, fix string) websetupui.Result {
+	b.mu.Lock()
+	b.failure = nil
+	b.mu.Unlock()
+	// fail reports a failed step and keeps it for the summary printed once
+	// the setup screen closes. failure, when set, is the start path's own
+	// "could not start" block.
+	fail := func(id, label, detail, fix string, failure *webFailure) websetupui.Result {
+		if failure == nil {
+			failure = &webFailure{headline: "bonsai web setup could not apply your settings", process: "step", detail: label + ": " + detail, fix: fix}
+		}
+		b.mu.Lock()
+		b.failure = failure
+		b.mu.Unlock()
 		progress(websetupui.Step{ID: id, Label: label, State: websetupui.StepFailed, Detail: detail, Fix: fix})
 		return websetupui.Result{}
 	}
@@ -242,10 +256,10 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 		return nil
 	})
 	if errors.Is(err, config.ErrWebConfigRevision) {
-		return fail("save", "Save settings", "your settings changed in another window since this setup opened", "close this setup and run bonsai web setup again")
+		return fail("save", "Save settings", "your settings changed in another window since this setup opened", "close this setup and run bonsai web setup again", nil)
 	}
 	if err != nil {
-		return fail("save", "Save settings", err.Error(), "fix or delete "+b.w.configPath+", then run bonsai web setup again")
+		return fail("save", "Save settings", err.Error(), "fix or delete "+b.w.configPath+", then run bonsai web setup again", nil)
 	}
 	b.mu.Lock()
 	b.saved, b.revision, b.exists = true, cfg.Revision, true
@@ -257,7 +271,7 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 		progress(websetupui.Step{ID: "projects", Label: "Updating project folders", State: websetupui.StepRunning})
 		shown, err := b.applyProjects(ctx, plan)
 		if err != nil {
-			return fail("projects", "Update project folders", err.Error(), "run bonsai web setup again, or change folders in the browser: Settings → Projects")
+			return fail("projects", "Update project folders", err.Error(), "run bonsai web setup again, or change folders in the browser: Settings → Projects", nil)
 		}
 		detail := fmt.Sprintf("%d added, %d removed", len(plan.AddRoots), len(plan.RemoveRoots))
 		if shown > 0 {
@@ -269,6 +283,11 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 	// 3. Start, restart or leave alone.
 	opts := b.opts
 	opts.applySettings = true
+	if !plan.Start && plan.RestartPort != 0 {
+		// Restart where the user wants it: their new port, or the port it
+		// runs on now (a `bonsai web --port N` stack stays on N).
+		opts.port, opts.portFlag = plan.RestartPort, true
+	}
 	result := websetupui.Result{OK: true}
 	switch {
 	case plan.Start || plan.RestartAPI:
@@ -283,29 +302,32 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 		}
 		if failure != nil {
 			b.mu.Lock()
-			b.failure = failure
+			b.group = nil // the previous stack may already be stopped
 			b.mu.Unlock()
 			detail := failure.detail
 			if detail == "" {
 				detail = failure.headline
 			}
-			return fail(id, failed, detail, failure.fix)
+			return fail(id, failed, detail, failure.fix, failure)
 		}
 		b.mu.Lock()
-		b.group, b.failure = group, nil
+		b.group = group
 		b.mu.Unlock()
-		result.URL = webUIURL(cfg, group.APIPort)
+		result.URL, result.Port = webUIURL(cfg, group.APIPort), group.APIPort
 		progress(websetupui.Step{ID: id, Label: done, State: websetupui.StepDone, Detail: localWebOrigin(group.APIPort)})
 	default:
 		if group, err := b.w.group(false); err == nil && group != nil && group.State == "ready" {
 			b.mu.Lock()
 			b.group = group
 			b.mu.Unlock()
-			result.URL = webUIURL(cfg, group.APIPort)
+			result.URL, result.Port = webUIURL(cfg, group.APIPort), group.APIPort
 			if plan.ProjectsChanged() {
 				result.Notes = append(result.Notes, "Bonsai picks up project changes within 30 s.")
 			}
 		} else {
+			b.mu.Lock()
+			b.group = nil
+			b.mu.Unlock()
 			result.Notes = append(result.Notes, "bonsai web is not running. Start it with: bonsai web")
 		}
 	}
@@ -338,7 +360,14 @@ func (b *setupBackend) applyProjects(ctx context.Context, plan setup.Plan) (int,
 		revision = next.Revision
 		return nil
 	}
+	present := map[string]bool{}
+	for _, root := range roots.Roots {
+		present[root.ID] = true
+	}
 	for _, root := range plan.RemoveRoots {
+		if !present[root.ID] {
+			continue // already gone (a retry, or removed elsewhere)
+		}
 		if err := change("", root.ID); err != nil {
 			return 0, fmt.Errorf("remove %s: %w", root.Path, err)
 		}
@@ -441,14 +470,34 @@ func projectsSummary(ctx context.Context, rootsPath string) (checks.ProjectsSumm
 	defer cancel()
 	home, _ := os.UserHomeDir()
 	out := checks.ProjectsSummary{Folders: len(roots.Roots)}
+	// Same rules and parallelism as the API's discovery: a root that now
+	// resolves somewhere else is unavailable, not scanned at its new target.
+	scans := make([]localapi.FolderScan, len(roots.Roots))
+	usable := make([]bool, len(roots.Roots))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for n := 0; n < 4; n++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				scan, err := localapi.ScanProjectFolder(ctx, roots.Roots[i].Path)
+				scans[i], usable[i] = scan, err == nil && scan.Available && scan.Path == roots.Roots[i].Path
+			}
+		}()
+	}
+	for i := range roots.Roots {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
 	found := map[string]bool{}
-	for _, root := range roots.Roots {
-		scan, err := localapi.ScanProjectFolder(ctx, root.Path)
-		if err != nil || !scan.Available {
+	for i, root := range roots.Roots {
+		if !usable[i] {
 			out.Unavailable = append(out.Unavailable, setup.TildePath(home, filepath.Clean(root.Path)))
 			continue
 		}
-		for _, r := range scan.Repos {
+		for _, r := range scans[i].Repos {
 			found[r.ID] = true
 		}
 	}

@@ -829,6 +829,11 @@ without `web/dist` fails loudly, which is what a release wants. Phase 8 sets
 - A cancelled wizard writes nothing and exits 1 with "Start with the default
   settings instead: bonsai web --no-setup". A failed start keeps the saved
   settings, prints the usual `✗ could not start` block and exits 1.
+- The deprecated `bonsai serve` never opens the setup. `bonsai web` skips
+  it, with a note, when `project-roots.json` cannot be read. Review waits
+  until every checked folder has been scanned, so empty suggestions are not
+  added. Within one setup session, each Apply starts from what the previous
+  one wrote, and a retry after a partial failure is safe.
 - `web.json` is written under its revision guard. If another window changed
   it, Apply fails with "close this setup and run bonsai web setup again".
 - Inline fixes are only `gh auth login --hostname H` and

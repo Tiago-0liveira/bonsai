@@ -128,6 +128,35 @@ func (d *Draft) AddFolder(path string) int {
 	return len(d.Folders) - 1
 }
 
+// AfterApply is the draft as it is on disk once a plan built from it was
+// applied: checked folders are project roots now, unchecked ones are not.
+// The next plan is computed against it, so nothing is applied twice.
+func (d Draft) AfterApply() Draft {
+	out := d.Clone()
+	for i, f := range out.Folders {
+		if f.Checked {
+			if f.RootID == "" {
+				out.Folders[i].RootID = config.PathID("root", f.Path)
+			}
+		} else {
+			out.Folders[i].RootID = ""
+		}
+		out.Folders[i].Touched = false
+	}
+	return out
+}
+
+// Pending lists checked folders whose scan has not finished yet.
+func (d Draft) Pending() []Folder {
+	var out []Folder
+	for _, f := range d.Folders {
+		if f.Checked && !f.Scanned {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // CheckedFolders lists the folders that will be project roots.
 func (d Draft) CheckedFolders() []Folder {
 	var out []Folder

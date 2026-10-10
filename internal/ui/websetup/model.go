@@ -323,6 +323,7 @@ func (m Model) onApply(msg applyMsg) (tea.Model, tea.Cmd) {
 		m.result = msg.result
 		if msg.result.OK {
 			m.applied = true
+			m.draft = m.draft.AfterApply()
 			m.initial = m.draft.Clone()
 			m.info.Running = runningAfter(m.draft, m.info.Running, msg.result)
 			m.stack = append(m.stack[:len(m.stack)-1], screenDone)
@@ -334,10 +335,10 @@ func (m Model) onApply(msg applyMsg) (tea.Model, tea.Cmd) {
 
 // runningAfter is what is running once Apply succeeded.
 func runningAfter(d setup.Draft, before *setup.Running, r *Result) *setup.Running {
-	if r.URL == "" && before == nil {
-		return nil
+	if r.Port == 0 {
+		return before
 	}
-	return &setup.Running{APIPort: d.Config.APIPort, Hosted: d.Config.Interfaces.Hosted}
+	return &setup.Running{APIPort: r.Port, Hosted: d.Config.Interfaces.Hosted}
 }
 
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

@@ -34,6 +34,10 @@ type Plan struct {
 	RestartAPI bool
 	// RestartReason says why, for the Review screen.
 	RestartReason string
+	// RestartPort is the port the restarted API listens on: the new port
+	// when the user changed it, otherwise the one it runs on now (which
+	// may be a `bonsai web --port N` override).
+	RestartPort int
 }
 
 // BuildPlan compares the draft the setup started from with the one the user
@@ -66,6 +70,10 @@ func BuildPlan(before, after Draft, running *Running, firstRun bool) Plan {
 		if len(reasons) > 0 {
 			p.RestartAPI = true
 			p.RestartReason = strings.Join(reasons, " and ") + " changed"
+			p.RestartPort = running.APIPort
+			if after.Config.APIPort != before.Config.APIPort {
+				p.RestartPort = after.Config.APIPort
+			}
 		}
 	}
 	return p
