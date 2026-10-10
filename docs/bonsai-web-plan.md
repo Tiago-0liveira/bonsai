@@ -11,7 +11,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | Phase | Title | Model | Depends on | Status |
 | ---: | --- | --- | --- | --- |
 | 0 | Baseline and sync instrumentation | Sonnet 5.5 | — | done (#56) |
-| 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | in progress |
+| 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | done (#58) |
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | todo |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | todo |
