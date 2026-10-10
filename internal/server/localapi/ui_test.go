@@ -227,21 +227,7 @@ func TestEmbeddedUIBrowserFixture(t *testing.T) {
 	if os.Getenv("BONSAI_UI_BROWSER_FIXTURE") != "1" {
 		t.Skip("browser fixture disabled")
 	}
-	dist, err := filepath.Abs(filepath.Join("..", "..", "..", "web", "dist-e2e"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The e2e bundle is built by the first Playwright web server.
-	deadline := time.Now().Add(5 * time.Minute)
-	for {
-		if _, err := os.Stat(filepath.Join(dist, "index.html")); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s/index.html not built", dist)
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	dist := waitForE2EBundle(t)
 	t.Setenv("HOME", t.TempDir())
 	s, err := New(Config{
 		ProjectRootsPath: filepath.Join(t.TempDir(), "project-roots.json"),

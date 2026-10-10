@@ -136,6 +136,12 @@ func New(cfg Config) (*Server, error) {
 	if _, err := registry.Refresh(context.Background()); err != nil {
 		return nil, err
 	}
+	return newServer(cfg, registry, rootsPath)
+}
+
+// newServer wires a server around an already discovered registry. Browser
+// fixtures call it with a fake registry to exercise the production wiring.
+func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server, error) {
 	events := newEventHub()
 	s := &Server{
 		repoDir:       cfg.RepoDir,
@@ -155,10 +161,10 @@ func New(cfg Config) (*Server, error) {
 	s.ui = webui.New(ui, webui.Options{})
 	s.stateSync = newStateSync(registry, events)
 	s.stateSync.ReconcileCatalog()
-	if cfg.WebhookAddress != "" {
+	if discovered, ok := registry.(*discoveredProjectRegistry); ok && cfg.WebhookAddress != "" {
 		s.webhookAddress = cfg.WebhookAddress
 		// In-process GitHub only: no `gh api` fallback directory.
-		s.liveHooks = newLiveController(cfg.WebConfigPath, cfg.WebStatePath, cfg.WebhookSecret, registry.github.Service(""), daemonPublicURL(cfg.WebHome), s.stateSync)
+		s.liveHooks = newLiveController(cfg.WebConfigPath, cfg.WebStatePath, cfg.WebhookSecret, discovered.github.Service(""), daemonPublicURL(cfg.WebHome), s.stateSync)
 		s.stateSync.live = s.liveHooks
 		s.live = webhooks.NewLiveReceiver(cfg.WebhookSecret, s.onLiveEvent)
 	}

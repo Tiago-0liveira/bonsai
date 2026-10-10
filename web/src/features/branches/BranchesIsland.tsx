@@ -47,7 +47,7 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
 
   return (
     <div>
-      <div className="grid h-[22px] grid-cols-[minmax(0,1fr)_auto] items-center">
+      <div data-worktree-row={worktree.id} className="grid h-[22px] grid-cols-[minmax(0,1fr)_auto] items-center">
         <div className={'flex h-[22px] min-w-0 items-center rounded-md pr-1.5 font-mono text-[11.5px] ' + (selected ? 'bg-accent/[.09] text-text' : 'text-muted hover:bg-panel-2')}>
           <button
             type="button"
@@ -68,8 +68,8 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
           </button>
         </div>
         <span className="flex items-center gap-1.5 pl-1.5 pr-1.5">
-          <CiIcon status={worktree.ciStatus} />
-          {worktree.prNumber ? <span className="font-mono text-[10px] text-muted-2">#{worktree.prNumber}</span> : null}
+          <span data-ci-badge={worktree.ciStatus} className="flex"><CiIcon status={worktree.ciStatus} /></span>
+          {worktree.prNumber ? <span data-pr-badge={worktree.prNumber} className="font-mono text-[10px] text-muted-2">#{worktree.prNumber}</span> : null}
         </span>
       </div>
 
@@ -122,7 +122,7 @@ export function BranchesIsland() {
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-1.5">
         {defaultWorktree && (
-          <div className={'flex h-[22px] w-full min-w-0 items-center gap-2 rounded-md pr-2 font-mono text-[11.5px] ' + (defaultSelected ? 'bg-accent/[.09] text-text' : 'hover:bg-panel-2')}>
+          <div data-worktree-row={defaultWorktree.id} className={'flex h-[22px] w-full min-w-0 items-center gap-2 rounded-md pr-2 font-mono text-[11.5px] ' + (defaultSelected ? 'bg-accent/[.09] text-text' : 'hover:bg-panel-2')}>
             <button
               type="button"
               onClick={() => setSelection({ type: 'worktree', id: defaultWorktree.id })}

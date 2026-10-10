@@ -1229,6 +1229,36 @@ covered by fixture tests only.
   `ready`.
 - The main chunk shrinks by ≥ 30% versus the Phase 4 build.
 
+**Phase 7 measurements** (revised plan: `docs/phase-7-plan.md`). The Phase 4
+table above stays as recorded.
+
+Sizes are exact file bytes and `zlib` level-9 gzip bytes, from `pnpm build
+--manifest` with Node 22.12.0 and pnpm 12.9.1, frozen lockfile. Vite's printed
+kB figures round differently and are not used for gates. "Static closure" is
+the entry's static imports; "first-screen JS" is the entry plus the
+ApplicationRoot chunk and their static imports.
+
+| Metric | Phase 4 recorded | Rebuilt Phase 4 (`ee66e17`) | Pre-P7 (`04e9683`) | After 7a | Final P7 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ApplicationRoot raw / gzip | 729.73 / 230.35 kB | 730,211 / 230,214 B | 735,796 / 232,294 B | 7c | 7c |
+| Entry raw / gzip | 149.52 / 48.80 kB | 149,517 / 48,727 B | 149,517 / 48,724 B | 7c | 7c |
+| xterm raw / gzip | 290.37 / 72.55 kB | 290,556 / 72,029 B | 290,556 / 72,030 B | 7c | 7c |
+| PullRequestsRoute raw / gzip | 210.83 / 63.04 kB | 210,872 / 62,924 B | 210,207 / 62,599 B | 7c | 7c |
+| CSS raw / gzip (index + ApplicationRoot) | 54.61 / 11.19 kB | 54,611 / 11,118 + 20,503 / 4,269 B | 54,611 / 11,118 + 20,503 / 4,269 B | 7c | 7c |
+| Static closure / first-screen JS (raw) | not recorded | 149,517 / 881,800 B | 149,517 / 887,385 B | 7c | 7c |
+| WS `ready` → branch list + PR badges painted, p50 / p95 / max (25 wt, 50 PRs) | not recorded | — | 88.9 / 106.9 / 110.1 ms (cold, live providers) | fill | 7c |
+| Same, 100 worktrees / 500 PRs | not recorded | — | 213.8 / 236.3 / 238.3 ms (cold, live providers) | fill | 7c |
+| Snapshot cache bytes / load time / peak retained memory | not recorded | — | — (no cache) | fill | 7c |
+
+The 70% main-chunk gate is against the rebuilt exact bytes: 0.7 × 730,211 =
+**511,147 B**.
+
+Pre-P7 paint numbers come from `web/e2e/warm-start.spec.ts` (fixture
+`TestWarmStartBrowserFixture`, e2e build with React profiling, 3 discarded
+warm-ups, 30 runs, fresh browser context each). The fixture's providers answer
+instantly, so these are a cold *best case*: with a provider still pending, the
+pre-P7 browser paints no PR badges at all until it answers.
+
 ---
 
 ## Phase 8 — Docs, migration and release pipeline

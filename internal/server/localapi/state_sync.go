@@ -129,6 +129,9 @@ type stateSync struct {
 	// live reports which repositories live updates currently cover; nil
 	// in standard mode.
 	live *liveController
+	// watchProject replaces runProjectWatcher in browser fixtures, whose
+	// projects are not Git repositories.
+	watchProject func(context.Context, ProjectInfo)
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -943,8 +946,12 @@ func (s *stateSync) syncWatchers() {
 	}
 	s.mu.Unlock()
 
+	watch := s.runProjectWatcher
+	if s.watchProject != nil {
+		watch = s.watchProject
+	}
 	for _, start := range starts {
-		go s.runProjectWatcher(start.ctx, start.info)
+		go watch(start.ctx, start.info)
 	}
 }
 
