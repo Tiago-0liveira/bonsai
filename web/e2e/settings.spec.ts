@@ -65,10 +65,11 @@ test('updates badge and the read-only Live updates section', async ({ page }) =>
   await expect(section.getByText('bonsai web setup')).toBeVisible()
   await expect(section.getByRole('button')).toHaveCount(0)
 
-  // The tunnel goes down: the next refetch (focus) falls back to Standard.
+  // The tunnel goes down: the next refetch (focus) shows Live paused,
+  // with standard polling continuing in the meantime.
   tunnelUp = false
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect(badge).toHaveAccessibleName(/^Updates: Standard \(every 2 min\)/)
+  await expect(badge).toHaveAccessibleName(/^Updates: Live paused \(every 2 min\)/)
   await expect(badge).toHaveAttribute('title', /Live updates are paused: the tunnel is not running/)
   await expect(section.getByText('Tunnel: down (the tunnel is not running)')).toBeVisible()
 })

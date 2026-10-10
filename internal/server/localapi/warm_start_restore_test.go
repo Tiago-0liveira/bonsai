@@ -66,14 +66,21 @@ func warmSeed(t *testing.T, store *warmStore, projects ...warmTestProject) {
 	syncer.closeWarm(5 * time.Second)
 }
 
-// warmRestart starts the "after" process: restore, then Run.
-func warmRestart(t *testing.T, store *warmStore, projects ...warmTestProject) *stateSync {
+// warmRestore installs the "after" process's saved projections before any
+// revalidation can commit. Tests can inspect sequence zero at this boundary.
+func warmRestore(t *testing.T, store *warmStore, projects ...warmTestProject) *stateSync {
 	t.Helper()
 	syncer := newStateSync(warmTestRegistry(projects...), newEventHub())
 	syncer.watchProject = func(ctx context.Context, _ ProjectInfo) { <-ctx.Done() }
 	syncer.loadWarmStart(store)
 	syncer.enableWarmStart(store)
 	syncer.ReconcileCatalog()
+	t.Cleanup(func() { syncer.closeWarm(time.Second) })
+	return syncer
+}
+
+func warmRun(t *testing.T, syncer *stateSync) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -83,14 +90,54 @@ func warmRestart(t *testing.T, store *warmStore, projects ...warmTestProject) *s
 	t.Cleanup(func() {
 		cancel()
 		<-done
-		syncer.closeWarm(time.Second)
 	})
+}
+
+// warmRestart starts the "after" process: restore, then Run.
+func warmRestart(t *testing.T, store *warmStore, projects ...warmTestProject) *stateSync {
+	t.Helper()
+	syncer := warmRestore(t, store, projects...)
+	warmRun(t, syncer)
 	return syncer
 }
 
 func warmTestSeedProject(t *testing.T, id string) warmTestProject {
 	root := t.TempDir()
 	return warmTestProject{id: id, root: root, daemon: &syncTestDaemon{root: root, records: []*procstore.Record{{ID: 1, Label: "web", Status: "running"}}}, github: &syncTestGitHub{}}
+}
+
+func TestWarmStartBackgroundValidationDoesNotReplaceLastViewedProject(t *testing.T) {
+	store := newWarmStore(t.TempDir(), "ns")
+	alpha, beta, gamma := warmTestSeedProject(t, "alpha"), warmTestSeedProject(t, "beta"), warmTestSeedProject(t, "gamma")
+	warmSeed(t, store, alpha, beta, gamma)
+	syncer := warmRestore(t, store, alpha, beta, gamma)
+	visited := time.Now().UTC().Add(-time.Minute)
+	syncer.now = func() time.Time { return visited }
+	syncer.SetFocus(1, "alpha")
+	// Unvisited projects finish their background reads after alpha was viewed.
+	for _, id := range []string{"beta", "gamma"} {
+		syncer.commit(id, "local", func(snapshot *browserSnapshot) {
+			validated := visited.Add(30 * time.Second)
+			snapshot.Freshness["local"] = browserFreshness{State: "ready", UpdatedAt: &validated}
+		})
+	}
+	exports, priority := syncer.warmExports()
+	for _, export := range exports {
+		if export.id != "alpha" && !export.lastUsed.IsZero() {
+			t.Fatalf("background validation counted as a visit to %s: %v", export.id, export.lastUsed)
+		}
+	}
+	data, _, err := encodeWarmDocument(store.namespace, exports, priority, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.save(data); err != nil {
+		t.Fatal(err)
+	}
+	restarted := warmRestore(t, store, alpha, beta, gamma)
+	if got := restarted.priorityID(); got != "alpha" {
+		t.Fatalf("restored priority = %q, want the last viewed project alpha", got)
+	}
 }
 
 func TestWarmStartRestoresStaleAtSequenceZeroThenRevalidatesPerComponent(t *testing.T) {
@@ -110,7 +157,7 @@ func TestWarmStartRestoresStaleAtSequenceZeroThenRevalidatesPerComponent(t *test
 	localBlock, providerBlock, checksBlock := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	daemon := &syncTestDaemon{root: before.root, repositoryBlock: localBlock, records: []*procstore.Record{{ID: 1, Label: "web", Status: "running"}}}
 	github := &syncTestGitHub{block: providerBlock, checksBlock: checksBlock}
-	syncer := warmRestart(t, store, warmTestProject{id: "repo", root: before.root, daemon: daemon, github: github})
+	syncer := warmRestore(t, store, warmTestProject{id: "repo", root: before.root, daemon: daemon, github: github})
 
 	restored, _ := syncer.CachedSnapshot("repo")
 	if restored.Epoch != syncer.epoch || restored.Sequence != 0 {
@@ -139,6 +186,7 @@ func TestWarmStartRestoresStaleAtSequenceZeroThenRevalidatesPerComponent(t *test
 	}
 
 	// Processes revalidate at startup without any browser connected.
+	warmRun(t, syncer)
 	waitForProjection(t, syncer, "repo", func(snapshot browserSnapshot) bool {
 		return snapshot.Freshness["processes"].State == "ready" && len(snapshot.Processes) == 1
 	})
@@ -345,11 +393,12 @@ func TestWarmStartScansEveryCatalogPageAfterRestore(t *testing.T) {
 	warmSeed(t, store, project)
 	live := &changedPageGitHub{syncTestGitHub: &syncTestGitHub{}}
 	project.github = live
-	syncer := warmRestart(t, store, project)
+	syncer := warmRestore(t, store, project)
 	restored, _ := syncer.CachedSnapshot("repo")
 	if restored.Remote == nil || len(restored.Remote.PullRequests) != 3 {
 		t.Fatalf("restored catalog = %+v", restored.Remote)
 	}
+	warmRun(t, syncer)
 	after := waitForProjection(t, syncer, "repo", func(snapshot browserSnapshot) bool {
 		return snapshot.Freshness["provider"].State == "ready"
 	})
@@ -371,7 +420,7 @@ func TestWarmStartNeverRestoresRemovedMovedOrExpiredProjects(t *testing.T) {
 	warmSeed(t, store, kept, removed, moved)
 	moved.root = t.TempDir()
 	moved.daemon = &syncTestDaemon{root: moved.root}
-	syncer := warmRestart(t, store, kept, moved)
+	syncer := warmRestore(t, store, kept, moved)
 	if snapshot, _ := syncer.CachedSnapshot("kept"); snapshot.Freshness["local"].Source != freshnessSourceDisk {
 		t.Fatal("kept project was not restored")
 	}

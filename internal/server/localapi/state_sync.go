@@ -914,11 +914,9 @@ func (s *stateSync) warmExports() ([]warmExport, string) {
 	defer s.mu.Unlock()
 	out := make([]warmExport, 0, len(s.projects))
 	for id, p := range s.projects {
-		lastUsed := s.lastUsed[id]
-		if updated := p.snapshot.Freshness["local"].UpdatedAt; lastUsed.IsZero() && updated != nil {
-			lastUsed = *updated
-		}
-		out = append(out, warmExport{id: id, path: p.path, lastUsed: lastUsed, snapshot: cloneSnapshot(p.snapshot)})
+		// Background validation is not a visit. Its completion time must not
+		// outrank the project the user had open when restoreWarm picks priority.
+		out = append(out, warmExport{id: id, path: p.path, lastUsed: s.lastUsed[id], snapshot: cloneSnapshot(p.snapshot)})
 	}
 	return out, s.priorityProject
 }
