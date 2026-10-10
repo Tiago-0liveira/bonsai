@@ -71,7 +71,11 @@ Full Go and browser suites are blocked by socket/browser sandbox restrictions;
 package-manager path failures also reproduce on the unchanged baseline.
 Unit, typecheck, lint, production/e2e build, plain Go build/vet and embedded
 serving checks passed. Keep Phase 7 in progress pending 7a/7c and unrestricted
-validation. No persistence or hosted deployment files were changed.
+validation. The first CI run passed the complete Go matrix and Linux race
+checks and 66/67 browser tests (including all 11 new cases). The remaining
+settings test still expected “Standard” for a failed Live tunnel, despite
+`04e9683` changing the UI to “Live paused”; its expectation is corrected here.
+No persistence or hosted deployment files were changed.
 
 ---
 

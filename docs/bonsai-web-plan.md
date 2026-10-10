@@ -1294,8 +1294,13 @@ cannot pass in this sandbox: network listeners return `EPERM`; Playwright's
 preview server cannot bind port 4173 and Chromium also cannot launch.
 The Go package-manager tests additionally detect the sandbox's `/tmp/.git`
 marker as a repository; the same three failures reproduce on unchanged
-`04e9683` in the isolated baseline checkout. Full browser/lifecycle and Go
-suite validation must run in CI or an unrestricted local environment.
+`04e9683` in the isolated baseline checkout. The first CI browser run passed 66/67 tests, including all 11 new lazy/recovery
+cases and terminal/canvas/render-isolation coverage. Its one failure was a
+pre-existing stale settings assertion: `04e9683` changed the disconnected
+Live badge to “Live paused”, while the browser test still expected “Standard”.
+That expectation is corrected here without changing production behavior.
+CI also passed the full Linux/macOS/Windows Go matrix, Linux race detector
+and release dry-run. The corrected browser suite is being revalidated in CI.
 
 ---
 

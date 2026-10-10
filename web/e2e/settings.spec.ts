@@ -68,7 +68,7 @@ test('updates badge and the read-only Live updates section', async ({ page }) =>
   // The tunnel goes down: the next refetch (focus) falls back to Standard.
   tunnelUp = false
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect(badge).toHaveAccessibleName(/^Updates: Standard \(every 2 min\)/)
+  await expect(badge).toHaveAccessibleName(/^Updates: Live paused \(every 2 min\)/)
   await expect(badge).toHaveAttribute('title', /Live updates are paused: the tunnel is not running/)
   await expect(section.getByText('Tunnel: down (the tunnel is not running)')).toBeVisible()
 })
