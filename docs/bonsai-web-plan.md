@@ -13,7 +13,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 0 | Baseline and sync instrumentation | Sonnet 5.5 | — | todo |
 | 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | todo |
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
-| 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#PR) |
+| 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | todo |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | todo |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | todo |
@@ -462,7 +462,7 @@ by editing this section.
   blanket relaxation of `serve.go:222`.
 - The command stays non-interactive when stdin is not a TTY.
 
-**Outcome (recorded by the Phase 3 PR)**
+**Outcome (recorded by #57)**
 
 *D9 spike: the existing daemon runs unchanged with a user-level home.* No new
 supervisor was needed. `server.NewServer` already keeps a root that is not a
