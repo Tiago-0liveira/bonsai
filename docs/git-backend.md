@@ -42,8 +42,9 @@ bridge. There is no generic shell or exec HTTP endpoint. GitHub PR/check/workflo
 operations are performed locally through the installed `gh` CLI.
 
 The local event endpoint is `ws://127.0.0.1:7001/events`. The first WebSocket
-message authenticates with the local capability. Local events are canonical
-refresh signals for local state.
+message authenticates with the local capability and may carry an optional
+`active_project` (the project the browser has open), which is refreshed first.
+Local events are canonical refresh signals for local state.
 
 ### Worktree state synchronization
 
@@ -56,8 +57,11 @@ projection has a monotonically increasing per-project sequence, and invalidation
 events include `{project_id, epoch, sequence}`. Browsers discard older responses
 and repeat a trailing read when an event overtakes an in-flight request.
 
-A cold project publishes known worktree/branch inventory first, then full local
-status and processes independently. While browsers are subscribed, local Git is
+A cold project publishes known worktree/branch/remote inventory first (the
+`git.inventory` read, a subset of `git.repository.refresh`), which also lets the
+provider cache warm while worktree statuses run. Full local status (a bounded
+pool, one `git status` per worktree with untracked directories listed once) and
+processes follow independently. While browsers are subscribed, local Git is
 reconciled every 5 seconds and process state every 2 seconds; project-root
 discovery remains on its 30-second scan. One inaccessible worktree produces an
 explicit status error without erasing healthy siblings. Missing/deleted upstream

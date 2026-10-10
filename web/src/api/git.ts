@@ -716,7 +716,10 @@ export function startGitBackend() {
       bootstrapCatalog = []
       bootstrapSnapshots.clear()
       pendingSnapshots.clear()
-      const connection = await openLocalEvents(onEvent)
+      // The persisted active project is the one worth refreshing first. '' and
+      // 'local' are placeholders before the catalog has loaded.
+      const activeProjectId = useBonsaiStore.getState().activeProjectId
+      const connection = await openLocalEvents(onEvent, activeProjectId && activeProjectId !== 'local' ? activeProjectId : undefined)
       if (closed || generation !== activeGeneration) {
         connection.socket.close()
         return

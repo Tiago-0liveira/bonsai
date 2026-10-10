@@ -18,6 +18,8 @@ const (
 	providerErrorBackoff    = 15 * time.Second
 	providerMaxErrorBackoff = 60 * time.Second
 	providerReadTimeout     = 30 * time.Second
+	// providerChecksWorkers bounds concurrent CI check reads for one project.
+	providerChecksWorkers = 6
 )
 
 type providerRepoEntry struct {
@@ -95,13 +97,34 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		entry.wait = make(chan struct{})
 		c.mu.Unlock()
 
-		endRepo := trace.Start("provider.repo", repository)
-		repo, repoErr := service.Repository(ctx, repository)
-		endRepo()
-		endBranches := trace.Start("provider.branches", repository)
-		branches, branchErr := service.Branches(ctx, repository)
-		endBranches()
-		prs, complete, prErr := readPRCatalog(ctx, service, repository, entry, now)
+		// The three reads are independent. They run together and are joined
+		// without cancelling siblings, so the reported error is still the first
+		// of repository, branches, catalog. Only the catalog goroutine touches
+		// entry.
+		var (
+			repo                      githubdomain.RemoteRepository
+			branches                  []githubdomain.RemoteBranch
+			prs                       []githubdomain.PullRequest
+			complete                  bool
+			repoErr, branchErr, prErr error
+			reads                     sync.WaitGroup
+		)
+		reads.Add(3)
+		go func() {
+			defer reads.Done()
+			defer trace.Start("provider.repo", repository)()
+			repo, repoErr = service.Repository(ctx, repository)
+		}()
+		go func() {
+			defer reads.Done()
+			defer trace.Start("provider.branches", repository)()
+			branches, branchErr = service.Branches(ctx, repository)
+		}()
+		go func() {
+			defer reads.Done()
+			prs, complete, prErr = readPRCatalog(ctx, service, repository, entry, now)
+		}()
+		reads.Wait()
 		err := firstError(repoErr, branchErr, prErr)
 		var value *browserRemoteSnapshot
 		if err == nil {
@@ -410,23 +433,38 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 			snapshot.Repository.DefaultBranch = remote.Repository.DefaultBranch
 		}
 	})
+	// Checks are independent per worktree; a bounded pool replaces the serial
+	// loop. providerCache coalesces worktrees that share a repository and SHA.
+	// states was cloned for the publication above, so writing it is private.
+	var statesMu sync.Mutex
+	slots := make(chan struct{}, providerChecksWorkers)
+	var checksWG sync.WaitGroup
 	for _, worktree := range before.Local.Worktrees {
 		target, ok := checkTargets[worktree.ID]
 		if !ok {
 			continue
 		}
-		endChecks := trace.Start("provider.checks", projectID, trace.Attrs{Worktree: worktree.Path})
-		checks, freshness := s.providers.checksFor(ctx, project.github, target.repository, target.sha, s.now(), force)
-		endChecks()
-		state := states[worktree.ID]
-		state.CI.Checks = checks
-		state.CI.Status = checksRollup(checks)
-		state.CI.Freshness = freshness
-		if freshness.State == "error" && freshness.UpdatedAt == nil {
-			state.CI.Status = "unknown"
-		}
-		states[worktree.ID] = state
+		slots <- struct{}{}
+		checksWG.Add(1)
+		go func(id, path string, target checkTarget) {
+			defer checksWG.Done()
+			defer func() { <-slots }()
+			endChecks := trace.Start("provider.checks", projectID, trace.Attrs{Worktree: path})
+			checks, freshness := s.providers.checksFor(ctx, project.github, target.repository, target.sha, s.now(), force)
+			endChecks()
+			statesMu.Lock()
+			defer statesMu.Unlock()
+			state := states[id]
+			state.CI.Checks = checks
+			state.CI.Status = checksRollup(checks)
+			state.CI.Freshness = freshness
+			if freshness.State == "error" && freshness.UpdatedAt == nil {
+				state.CI.Status = "unknown"
+			}
+			states[id] = state
+		}(worktree.ID, worktree.Path, target)
 	}
+	checksWG.Wait()
 	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.WorktreeState = maps.Clone(states)
 	})
