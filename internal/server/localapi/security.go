@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/Tiago-0liveira/bonsai/internal/server/webui"
 )
 
 const ProductionBrowserOrigin = "https://app.bonsai.dev"
@@ -44,7 +46,12 @@ func validateBrowserOrigin(origin string, mode BrowserSecurityMode) error {
 	}
 }
 
+// validateProductionOrigin accepts the hosted HTTPS origin, or "" when the
+// hosted interface is disabled and only the API's own origin may connect.
 func validateProductionOrigin(origin string) error {
+	if origin == "" {
+		return nil
+	}
 	u, err := url.Parse(strings.TrimSpace(origin))
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
 		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
@@ -73,28 +80,78 @@ func validateDevelopmentOrigin(origin string) error {
 	return nil
 }
 
+// allowedHost reports whether host names this API: exactly its listen address,
+// or localhost on the same port. Anything else (including DNS-rebinding names
+// that resolve to loopback) is refused.
+func (s *Server) allowedHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if host == s.expectedHost {
+		return true
+	}
+	_, port, err := net.SplitHostPort(s.expectedHost)
+	return err == nil && host == net.JoinHostPort("localhost", port)
+}
+
+// allowedOrigin reports whether a browser origin may use the API. The set is
+// fixed by the configuration: the API's own origin (it serves the UI, at
+// http://<address> or http://localhost:<port>) plus the configured browser
+// origin, which is the hosted app (production, empty when that interface is
+// disabled) or the Vite dev server (development). No wildcard, no patterns.
+func (s *Server) allowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	if origin == s.browserOrigin {
+		return true
+	}
+	return strings.HasPrefix(origin, "http://") && s.allowedHost(strings.TrimPrefix(origin, "http://"))
+}
+
+// allowedOrigins lists the origins allowedOrigin accepts, for logs.
+func (s *Server) allowedOrigins() []string {
+	origins := []string{"http://" + s.expectedHost}
+	if _, port, err := net.SplitHostPort(s.expectedHost); err == nil {
+		origins = append(origins, "http://"+net.JoinHostPort("localhost", port))
+	}
+	if s.browserOrigin != "" {
+		origins = append(origins, s.browserOrigin)
+	}
+	return origins
+}
+
 func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 
-		if r.Host != s.expectedHost {
+		if !s.allowedHost(r.Host) {
 			writeAPIError(w, http.StatusForbidden, "invalid_host", "Host is not allowed")
 			return
 		}
 
-		origin := r.Header.Get("Origin")
+		// The embedded UI is public and static. Navigations and same-origin
+		// subresource loads carry no Origin, so these routes skip the Origin and
+		// session checks; the Host check above still applies.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && webui.IsStaticPath(r.URL.Path) {
+			w.Header().Del("Cache-Control")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		origin := requestOrigin(r)
 		publicProbe := r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/version")
 		if publicProbe && origin == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if origin != s.browserOrigin {
+		if !s.allowedOrigin(origin) {
 			writeAPIError(w, http.StatusForbidden, "invalid_origin", "Origin is not allowed")
 			return
 		}
-		setCORS(w, s.browserOrigin)
+		setCORS(w, origin)
 
 		if r.Method == http.MethodOptions {
 			if !validPreflightMethod(r.Header.Get("Access-Control-Request-Method")) {
@@ -133,6 +190,22 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestOrigin is the browser origin of r. Browsers omit Origin on
+// same-origin GET and HEAD requests (every other method sends it), which is how the embedded UI reads the
+// API. They do send Sec-Fetch-Site, which page scripts cannot set or forge, so
+// "same-origin" there means the page came from this Host, which the caller has
+// already validated. Other clients cannot use this to get further than an
+// Origin header would take them: privileged routes still need a session.
+func requestOrigin(r *http.Request) string {
+	if origin := r.Header.Get("Origin"); origin != "" {
+		return origin
+	}
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.Header.Get("Sec-Fetch-Site") == "same-origin" {
+		return "http://" + r.Host
+	}
+	return ""
 }
 
 func setCORS(w http.ResponseWriter, origin string) {

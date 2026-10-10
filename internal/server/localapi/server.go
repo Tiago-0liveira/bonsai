@@ -6,6 +6,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -17,8 +18,10 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/server/webui"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
+	"github.com/Tiago-0liveira/bonsai/web"
 )
 
 const (
@@ -41,6 +44,9 @@ type Config struct {
 	BrowserOrigin    string
 	SecurityMode     BrowserSecurityMode
 	ProjectRootsPath string
+	// UI is the web UI bundle served at /app. Nil uses the bundle embedded in
+	// the binary (`-tags embedui`); without one, /app is a placeholder page.
+	UI fs.FS
 }
 
 type Server struct {
@@ -55,6 +61,7 @@ type Server struct {
 	eventHub      *eventHub
 	stateSync     *stateSync
 	rootsPath     string
+	ui            http.Handler
 }
 
 // New builds the local API. RepoDir is optional: a repository-scoped API (the
@@ -106,6 +113,12 @@ func New(cfg Config) (*Server, error) {
 		sessions:      newSessionStore(),
 		eventHub:      events,
 	}
+	ui := cfg.UI
+	if ui == nil {
+		ui = web.Dist()
+	}
+	// The relay is frozen (decision D1): the embedded UI gets no relay origin.
+	s.ui = webui.New(ui, webui.Options{})
 	s.stateSync = newStateSync(registry, events)
 	s.stateSync.ReconcileCatalog()
 	runtime, err := agentruntime.New(nil, nil, nil)
@@ -132,6 +145,14 @@ func (s *Server) routes() *http.ServeMux {
 	s.registerProcessRoutes(mux)
 	s.registerGitHubRoutes(mux)
 	mux.HandleFunc("GET /events", s.events)
+	ui := s.ui
+	if ui == nil {
+		ui = webui.New(nil, webui.Options{})
+	}
+	mux.Handle("GET /{$}", ui)
+	mux.Handle("GET /app", ui)
+	mux.Handle("GET /app/", ui)
+	mux.Handle("GET /assets/", ui)
 	return mux
 }
 
@@ -280,7 +301,7 @@ func Run(cfg Config) error {
 		MaxHeaderBytes:    32 << 10,
 	}
 	go shutdownWithContext(ctx, server)
-	log.Printf("Bonsai local API listening at http://%s for %s", cfg.Address, cfg.BrowserOrigin)
+	log.Printf("Bonsai local API listening at http://%s (UI at /app) for %s", cfg.Address, strings.Join(s.allowedOrigins(), ", "))
 	err = server.ListenAndServe()
 	if err == http.ErrServerClosed {
 		return nil

@@ -15,18 +15,18 @@ type websocketAuth struct {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	if r.Host != s.expectedHost {
+	if !s.allowedHost(r.Host) {
 		writeAPIError(w, http.StatusForbidden, "invalid_host", "Host is not allowed")
 		return
 	}
-	if r.Header.Get("Origin") != s.browserOrigin {
+	if !s.allowedOrigin(r.Header.Get("Origin")) {
 		writeAPIError(w, http.StatusForbidden, "invalid_origin", "Origin is not allowed")
 		return
 	}
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout: 5 * time.Second,
 		CheckOrigin: func(req *http.Request) bool {
-			return req.Host == s.expectedHost && req.Header.Get("Origin") == s.browserOrigin
+			return s.allowedHost(req.Host) && s.allowedOrigin(req.Header.Get("Origin"))
 		},
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
