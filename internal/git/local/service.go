@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +28,47 @@ type Config struct {
 type repository struct {
 	Config
 	gate chan struct{}
+	inv  inventoryCache
 }
+
+// inventoryCacheTTL bounds how long a worktree inventory read by Repository or
+// ListWorktrees may answer ID lookups. Detail reads (status, files, diff) of
+// several worktrees right after a refresh then share one `git worktree list`.
+const inventoryCacheTTL = 2 * time.Second
+
+type inventoryCache struct {
+	mu    sync.Mutex
+	at    time.Time
+	trees []core.Worktree
+}
+
+func (c *inventoryCache) store(trees []core.Worktree) {
+	c.mu.Lock()
+	c.at, c.trees = time.Now(), append([]core.Worktree(nil), trees...)
+	c.mu.Unlock()
+}
+
+func (c *inventoryCache) load() ([]core.Worktree, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.trees == nil || time.Since(c.at) > inventoryCacheTTL {
+		return nil, false
+	}
+	return c.trees, true
+}
+
+func (c *inventoryCache) invalidate() {
+	c.mu.Lock()
+	c.at, c.trees = time.Time{}, nil
+	c.mu.Unlock()
+}
+
+// statusPoolSize bounds concurrent worktree status reads in Repository.
+var statusPoolSize = func() int { return min(runtime.GOMAXPROCS(0), 8) }
+
+// overviewStatus is a seam so tests can observe pool concurrency.
+var overviewStatus = statusOverview
+
 type Service struct {
 	repos      map[string]*repository
 	mu         sync.Mutex
@@ -97,7 +137,7 @@ func trimmed(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(v), e
 }
 func (s *Service) target(ctx context.Context, id string) (*repository, string, error) {
-	r, path, err := s.registeredTarget(ctx, id)
+	r, path, err := s.lookupTarget(ctx, id, true)
 	if err != nil {
 		return nil, "", err
 	}
@@ -109,17 +149,36 @@ func (s *Service) target(ctx context.Context, id string) (*repository, string, e
 }
 
 // registeredTarget looks up Git's inventory without requiring the working
-// directory to exist. Removal must also support stale worktree registrations.
+// directory to exist. Removal must also support stale worktree registrations,
+// so it never reads the cache.
 func (s *Service) registeredTarget(ctx context.Context, id string) (*repository, string, error) {
+	return s.lookupTarget(ctx, id, false)
+}
+
+func (s *Service) lookupTarget(ctx context.Context, id string, useCache bool) (*repository, string, error) {
+	find := func(r *repository, trees []core.Worktree) (string, bool) {
+		for _, t := range trees {
+			if !t.Bare && ID(r.ID, t.Path) == id {
+				return t.Path, true
+			}
+		}
+		return "", false
+	}
 	for _, r := range s.repos {
+		if useCache {
+			if trees, ok := r.inv.load(); ok {
+				if path, found := find(r, trees); found {
+					return r, path, nil
+				}
+			}
+		}
 		trees, err := core.ListWorktreesContext(ctx, r.Root)
 		if err != nil {
 			return nil, "", err
 		}
-		for _, t := range trees {
-			if !t.Bare && ID(r.ID, t.Path) == id {
-				return r, t.Path, nil
-			}
+		r.inv.store(trees)
+		if path, found := find(r, trees); found {
+			return r, path, nil
 		}
 	}
 	return nil, "", domain.ErrNotFound
@@ -156,7 +215,7 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 	defer unlock()
 
 	endInventory := trace.Start("local.inventory", r.Root)
-	b, e := s.ListBranches(ctx, id)
+	refs, e := listRefs(ctx, r.Root)
 	if e != nil {
 		endInventory()
 		return domain.RepositoryState{}, e
@@ -167,26 +226,51 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 		return domain.RepositoryState{}, e
 	}
 
+	// Independent of the statuses, so it overlaps them.
+	var remotes []domain.RemoteIdentity
+	var defaultRef string
+	var side sync.WaitGroup
+	side.Add(2)
+	go func() {
+		defer side.Done()
+		remotes = remoteIdentities(ctx, r.Root)
+	}()
+	go func() {
+		defer side.Done()
+		defaultRef, _ = trimmed(ctx, r.Root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+	}()
+
+	// Parallel inside the repository lock: nothing mutates while statuses run.
+	// Results are written by index, and one failing worktree stays isolated.
+	slots := make(chan struct{}, max(1, statusPoolSize()))
+	var pool sync.WaitGroup
 	for i := range w {
 		if w[i].Missing {
 			w[i].StatusError = &domain.StateError{Code: "worktree_missing", Message: "Worktree directory is missing; its Git registration remains"}
 			continue
 		}
-		endStatus := trace.Start("local.status", r.Root, trace.Attrs{Worktree: w[i].Path})
-		st, err := statusOverview(ctx, w[i].Path)
-		endStatus()
-		if err != nil {
-			w[i].StatusError = &domain.StateError{Code: domain.Code(err), Message: err.Error()}
-			if w[i].StatusError.Code == "" {
-				w[i].StatusError.Code = "status_unavailable"
+		pool.Add(1)
+		slots <- struct{}{}
+		go func(tree *domain.Worktree) {
+			defer pool.Done()
+			defer func() { <-slots }()
+			endStatus := trace.Start("local.status", r.Root, trace.Attrs{Worktree: tree.Path})
+			st, err := overviewStatus(ctx, tree.Path, refs)
+			endStatus()
+			if err != nil {
+				tree.StatusError = &domain.StateError{Code: domain.Code(err), Message: err.Error()}
+				if tree.StatusError.Code == "" {
+					tree.StatusError.Code = "status_unavailable"
+				}
+				return
 			}
-			continue
-		}
-		w[i].Status = &st
+			tree.Status = &st
+		}(&w[i])
 	}
+	pool.Wait()
+	side.Wait()
 
-	def, _ := trimmed(ctx, r.Root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
-	defaultBranch := strings.TrimPrefix(def, "refs/remotes/origin/")
+	defaultBranch := strings.TrimPrefix(defaultRef, "refs/remotes/origin/")
 	if defaultBranch == "" {
 		for _, tree := range w {
 			if tree.Main && tree.Branch != "" && tree.Branch != "(detached)" {
@@ -198,45 +282,55 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 	state := domain.RepositoryState{
 		ID:            id,
 		DefaultBranch: defaultBranch,
-		Branches:      b,
+		Branches:      refs.branches(),
 		Worktrees:     w,
-		Remotes:       remoteIdentities(ctx, r.Root),
+		Remotes:       remotes,
 	}
 	domain.ClassifyWorktrees(&state, nil)
 	return state, nil
 }
+
+// Inventory is the cheap first read of a repository: worktrees, branches and
+// remote identities, with no status. It takes no repository lock, like
+// ListBranches and ListWorktrees, and lets a caller start provider work before
+// the per-worktree statuses finish.
+func (s *Service) Inventory(ctx context.Context, id string) (domain.RepositoryState, error) {
+	r, e := s.repo(id)
+	if e != nil {
+		return domain.RepositoryState{}, e
+	}
+	var (
+		refs     *refIndex
+		trees    []domain.Worktree
+		remotes  []domain.RemoteIdentity
+		refsErr  error
+		treesErr error
+		wg       sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); refs, refsErr = listRefs(ctx, r.Root) }()
+	go func() { defer wg.Done(); trees, treesErr = s.ListWorktrees(ctx, id) }()
+	go func() { defer wg.Done(); remotes = remoteIdentities(ctx, r.Root) }()
+	wg.Wait()
+	if refsErr != nil {
+		return domain.RepositoryState{}, refsErr
+	}
+	if treesErr != nil {
+		return domain.RepositoryState{}, treesErr
+	}
+	return domain.RepositoryState{ID: id, Branches: refs.branches(), Worktrees: trees, Remotes: remotes}, nil
+}
+
 func (s *Service) ListBranches(ctx context.Context, id string) ([]domain.Branch, error) {
 	r, e := s.repo(id)
 	if e != nil {
 		return nil, e
 	}
-	out, e := run(ctx, r.Root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(symref)%00%(upstream)%00%(committerdate:unix)", "refs/heads/", "refs/remotes/")
+	refs, e := listRefs(ctx, r.Root)
 	if e != nil {
 		return nil, e
 	}
-	result := []domain.Branch{}
-	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
-		p := strings.Split(line, "\x00")
-		if len(p) != 6 || p[3] != "" {
-			continue
-		}
-		b := domain.Branch{Ref: p[0], Upstream: p[2], UpstreamRef: p[4]}
-		if sec, err := strconv.ParseInt(p[5], 10, 64); err == nil {
-			when := time.Unix(sec, 0).UTC()
-			b.LastCommitAt = &when
-		}
-		b.Remote = strings.HasPrefix(p[0], "refs/remotes/")
-		if b.Remote {
-			b.Name = strings.TrimPrefix(p[0], "refs/remotes/")
-			b.LocalRemoteRefSHA = p[1]
-			b.RemoteName, _, _ = strings.Cut(b.Name, "/")
-		} else {
-			b.Name = strings.TrimPrefix(p[0], "refs/heads/")
-			b.LocalHeadSHA = p[1]
-		}
-		result = append(result, b)
-	}
-	return result, nil
+	return refs.branches(), nil
 }
 func (s *Service) ListWorktrees(ctx context.Context, id string) ([]domain.Worktree, error) {
 	r, e := s.repo(id)
@@ -247,6 +341,7 @@ func (s *Service) ListWorktrees(ctx context.Context, id string) ([]domain.Worktr
 	if e != nil {
 		return nil, e
 	}
+	r.inv.store(trees)
 	result := []domain.Worktree{}
 	for _, t := range trees {
 		if t.Bare {
