@@ -23,6 +23,7 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/project-roots", s.changeRootSettings)
 	mux.HandleFunc("DELETE /api/settings/project-roots/{rootId}", s.changeRootSettings)
 	mux.HandleFunc("POST /api/settings/project-selection", s.changeProjectSelection)
+	mux.HandleFunc("GET /api/settings/updates", s.updateSettings)
 }
 func (s *Server) rootSettingsValue(cfg config.ProjectRoots) rootSettingsResponse {
 	out := rootSettingsResponse{Version: cfg.Version, Revision: cfg.Revision, Roots: cfg.Roots, Diagnostics: []RootDiagnostic{}, Suggestions: []string{}, Repositories: []ProjectCandidate{}}

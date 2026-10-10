@@ -44,6 +44,9 @@ const (
 	// providerRateLimitedFactor stretches every interval while less than 10% of
 	// the rate-limit window is left.
 	providerRateLimitedFactor = 4
+	// providerLivePollInterval is the safety-net poll of a project that live
+	// updates cover (tunnel up, hook live): deliveries drive its refreshes.
+	providerLivePollInterval = 10 * time.Minute
 )
 
 const (
@@ -121,6 +124,11 @@ type stateSync struct {
 	// focus maps each event subscriber to the project it has in view ("" when
 	// its page is hidden). Their union is polled at the visible cadence.
 	focus map[int]string
+	// liveQueue replaces Queue for live-update deliveries in tests.
+	liveQueue func(projectID string, scope refreshScope, forceProvider bool)
+	// live reports which repositories live updates currently cover; nil
+	// in standard mode.
+	live *liveController
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -301,6 +309,7 @@ func (s *stateSync) pollProviders() {
 		j := s.jobLocked(info.ID)
 		running, last := j.providerRunning, j.providerStartedAt
 		ciRunning := false
+		var repositories []string
 		if p := s.projects[info.ID]; p != nil {
 			for _, state := range p.snapshot.WorktreeState {
 				if state.CI.Status == "running" {
@@ -308,27 +317,36 @@ func (s *stateSync) pollProviders() {
 					break
 				}
 			}
+			repositories = liveRepositories(p.snapshot)
 		}
 		s.mu.Unlock()
 		if running {
 			continue
 		}
+		live := false
+		for _, repository := range repositories {
+			live = live || s.live.healthy(repository)
+		}
 		rate, known := githubRate(project.github)
-		if !now.Before(nextProviderPoll(last, visible[info.ID], ciRunning, rate, known, now)) {
+		if !now.Before(nextProviderPoll(last, visible[info.ID], ciRunning, live, rate, known, now)) {
 			s.queueProvider(info.ID, false)
 		}
 	}
 }
 
 // nextProviderPoll is when a project whose last provider job started at last
-// is due again.
-func nextProviderPoll(last time.Time, visible, ciRunning bool, rate ghcli.Rate, rateKnown bool, now time.Time) time.Time {
+// is due again. live means live updates cover the project: polling is only a
+// safety net then; when they stop (tunnel down, hook failing) the standard
+// cadence applies again.
+func nextProviderPoll(last time.Time, visible, ciRunning, live bool, rate ghcli.Rate, rateKnown bool, now time.Time) time.Time {
 	interval := providerBackgroundPollInterval
-	if visible {
+	switch {
+	case live:
+		interval = providerLivePollInterval
+	case visible && ciRunning:
+		interval = providerRunningPollInterval
+	case visible:
 		interval = providerVisiblePollInterval
-		if ciRunning {
-			interval = providerRunningPollInterval
-		}
 	}
 	if rateKnown && rate.Low() && rate.Reset.After(now) {
 		interval *= providerRateLimitedFactor

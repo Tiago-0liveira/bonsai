@@ -1,0 +1,24 @@
+ Review                                                        ● running · 7001
+ ──────────────────────────────────────────────────────────────────────────────
+
+  Projects     ~/code, ~/old · 15 repos
+  Open in      this computer + hosted app · http://127.0.0.1:7001 · auto-open on
+  GitHub       via gh (octo)
+  Updates      Standard · checks GitHub every ~2 min
+
+  Changes
+  Updates      live · Cloudflare quick tunnel → standard
+
+  Outside this computer
+  • Deletes Bonsai's webhook from octo/bonsai, octo/api.
+
+  Restarts the Bonsai API (live updates changed).
+  Open pages reconnect by themselves.
+
+
+
+
+
+
+
+ enter apply · esc go back

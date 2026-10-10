@@ -1,4 +1,5 @@
 import { ProjectRootsSettings } from './ProjectRootsSettings'
+import { LiveUpdatesSettings } from './LiveUpdatesSettings'
 import { useBonsaiStore } from '../../stores/bonsai'
 export function SettingsPage() {
   const projectId = useBonsaiStore(state => state.activeProjectId)
@@ -22,6 +23,7 @@ export function SettingsPage() {
       </label>
     </section>}
     <ProjectRootsSettings />
+    <LiveUpdatesSettings />
     </div>
   </div>
 }

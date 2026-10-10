@@ -1,0 +1,40 @@
+ Review                                                                                                ● running · 7001
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Projects     ~/code, ~/old · 15 repos
+  Open in      this computer + hosted app · http://127.0.0.1:7001 · auto-open on
+  GitHub       via gh (octo)
+  Updates      Live · Cloudflare quick tunnel · 2 repos
+
+  Changes
+  Secret       new webhook secret
+
+  Outside this computer
+  • Sends the new secret to the webhook of octo/bonsai, octo/api.
+
+  Restarts the Bonsai API (webhook secret changed).
+  Open pages reconnect by themselves.
+  Then Bonsai waits for GitHub to confirm each webhook (about a minute at most).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter apply · esc go back

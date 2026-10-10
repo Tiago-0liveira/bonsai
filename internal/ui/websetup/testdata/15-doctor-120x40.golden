@@ -10,9 +10,9 @@
    ✗ port 7001           port 7001 is used by another program (pid 4242, node)
     fix  bonsai web --port 7011   or pick another port in: bonsai web setup → Advanced
    – cloudflared         installed (2026.9.3) · not logged in (only a custom domain needs it) · only needed for live
-                         updates (coming in a later version)
-   – ngrok               not installed · only needed for live updates (coming in a later version)
-   – tailscale           not installed · only needed for live updates (coming in a later version)
+                         updates
+   – ngrok               not installed · only needed for live updates
+   – tailscale           not installed · only needed for live updates
 
   ✗ 1 problem, 1 warning
 

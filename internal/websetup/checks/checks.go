@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/app"
 )
 
 type State string
@@ -60,7 +62,9 @@ const (
 	IDTunnelCloudflared = "tunnel.cloudflared"
 	IDTunnelNgrok       = "tunnel.ngrok"
 	IDTunnelTailscale   = "tunnel.tailscale"
+	IDTunnelCustom      = "tunnel.custom"
 	IDUpdatesLive       = "updates.live"
+	IDLiveHooks         = "updates.hooks"
 )
 
 const (
@@ -108,6 +112,35 @@ type Env struct {
 	ReadFile func(path string) ([]byte, error)
 	Port     func(port int) PortStatus
 	Projects func(ctx context.Context) (ProjectsSummary, error)
+	// Live reads what live updates achieved (only asked in live mode).
+	Live func(ctx context.Context) (LiveSummary, error)
+	// LeftoverHooks looks for Bonsai webhooks nothing uses any more; nil
+	// when there is nowhere to look.
+	LeftoverHooks func(ctx context.Context) ([]LeftoverHook, error)
+}
+
+// LiveSummary is the state of live updates as the running API recorded it.
+type LiveSummary struct {
+	// Running is set while bonsai web runs with its change receiver.
+	Running     bool
+	PublicURL   string
+	TunnelError string
+	Repos       []LiveRepo
+}
+
+// LiveRepo is one live repository's hook state (config.WebLiveState*, or ""
+// before the API set it up).
+type LiveRepo struct {
+	Name  string
+	State string
+	Error string
+}
+
+// LeftoverHook is a Bonsai webhook of this computer on a repository that no
+// longer uses live updates.
+type LeftoverHook struct {
+	Repo   string
+	HookID int64
 }
 
 // SystemEnv runs real tools with a per-command timeout.
@@ -152,7 +185,16 @@ func runCommand(ctx context.Context, name string, args ...string) (string, strin
 type Options struct {
 	APIPort     int
 	UpdatesMode string // "standard" or "live"
+	// Tunnel is the live-updates tunnel preset and TunnelProgram the program
+	// it runs ("" for none); both only count while UpdatesMode is live.
+	Tunnel        string
+	TunnelProgram string
 }
+
+func (o Options) live() bool { return o.UpdatesMode == "live" }
+
+// needs reports whether the chosen tunnel runs tool.
+func (o Options) needs(tool string) bool { return o.live() && o.TunnelProgram == tool }
 
 // Run performs every check concurrently and returns them in a stable order.
 func Run(ctx context.Context, env Env, opts Options) []Check {
@@ -162,9 +204,18 @@ func Run(ctx context.Context, env Env, opts Options) []Check {
 		func() Check { return checkGHAuth(ctx, env) },
 		func() Check { return checkProjects(ctx, env) },
 		func() Check { return checkPort(env, opts.APIPort) },
-		func() Check { return checkCloudflared(ctx, env) },
-		func() Check { return checkNgrok(ctx, env) },
-		func() Check { return checkTailscale(ctx, env) },
+		func() Check { return checkCloudflared(ctx, env, opts) },
+		func() Check { return checkNgrok(ctx, env, opts) },
+		func() Check { return checkTailscale(ctx, env, opts) },
+	}
+	if program := opts.TunnelProgram; opts.live() && program != "" && !knownTunnelTool(program) {
+		probes = append(probes, func() Check { return checkCustomTunnel(env, program) })
+	}
+	if opts.live() {
+		probes = append(probes, func() Check { return checkLive(ctx, env) })
+	}
+	if env.LeftoverHooks != nil {
+		probes = append(probes, func() Check { return checkLeftoverHooks(ctx, env) })
 	}
 	out := make([]Check, len(probes))
 	var wg sync.WaitGroup
@@ -176,15 +227,6 @@ func Run(ctx context.Context, env Env, opts Options) []Check {
 		}()
 	}
 	wg.Wait()
-	if opts.UpdatesMode == "live" {
-		out = append(out, Check{
-			ID:     IDUpdatesLive,
-			Title:  "live updates",
-			State:  Warn,
-			Detail: "live updates arrive in a later version; Bonsai uses standard updates for now",
-			Fix:    &Fix{Command: "bonsai web setup"},
-		})
-	}
 	return out
 }
 
@@ -437,7 +479,30 @@ func checkPort(env Env, port int) Check {
 	return c
 }
 
-const forLive = "only needed for live updates (coming in a later version)"
+func knownTunnelTool(name string) bool {
+	switch name {
+	case "cloudflared", "ngrok", "tailscale":
+		return true
+	}
+	return false
+}
+
+// unused says why a tunnel tool does not matter right now.
+func unused(opts Options) string {
+	if opts.live() {
+		return "not used by your tunnel"
+	}
+	return "only needed for live updates"
+}
+
+// TunnelInstallFix is the install command for a tunnel tool on goos, nil for
+// a tool it does not know.
+func TunnelInstallFix(goos, tool string) *Fix {
+	if !knownTunnelTool(tool) {
+		return nil
+	}
+	return tunnelInstallFix(goos, tool)
+}
 
 func tunnelInstallFix(goos, tool string) *Fix {
 	type commands struct{ darwin, windows, other string }
@@ -455,13 +520,28 @@ func tunnelInstallFix(goos, tool string) *Fix {
 	return &Fix{Command: known.other}
 }
 
-// tunnelCheck is shared by the tunnel tools: detection and version now, the
-// login state as detail. Live updates are not available yet, so these never
-// warn or fail.
-func tunnelCheck(ctx context.Context, env Env, id, tool string, versionArgs []string, login func() (string, *Fix)) Check {
+// account is a tunnel tool's login state. ready is false when the chosen
+// tunnel cannot run until fix is done; then the check has severity.
+type account struct {
+	text     string
+	fix      *Fix
+	ready    bool
+	severity State
+}
+
+// tunnelCheck is shared by the tunnel tools: detection, version and login
+// state. A tool the chosen tunnel runs is ok, warn or fail; any other tool
+// is only described (skip).
+func tunnelCheck(ctx context.Context, env Env, opts Options, id, tool string, versionArgs []string, login func() account) Check {
 	c := Check{ID: id, Title: tool, State: Skip}
+	needed := opts.needs(tool)
 	if !installed(env, tool) {
-		c.Detail, c.Fix = "not installed · "+forLive, tunnelInstallFix(env.GOOS, tool)
+		c.Fix = tunnelInstallFix(env.GOOS, tool)
+		if needed {
+			c.State, c.Detail = Fail, "not installed · your live updates tunnel needs it"
+			return c
+		}
+		c.Detail = "not installed · " + unused(opts)
 		return c
 	}
 	version, err := toolVersion(ctx, env, tool, versionArgs...)
@@ -469,19 +549,28 @@ func tunnelCheck(ctx context.Context, env Env, id, tool string, versionArgs []st
 		version = "version unknown"
 	}
 	c.Detail = "installed (" + version + ")"
+	ready := true
+	severity := Warn
 	if login != nil {
-		state, fix := login()
-		if state != "" {
-			c.Detail += " · " + state
+		a := login()
+		if a.text != "" {
+			c.Detail += " · " + a.text
 		}
-		c.Fix = fix
+		c.Fix, ready, severity = a.fix, a.ready, a.severity
 	}
-	c.Detail += " · " + forLive
+	switch {
+	case !needed:
+		c.Detail += " · " + unused(opts)
+	case ready:
+		c.State = OK
+	default:
+		c.State = severity
+	}
 	return c
 }
 
-func checkCloudflared(ctx context.Context, env Env) Check {
-	return tunnelCheck(ctx, env, IDTunnelCloudflared, "cloudflared", []string{"--version"}, func() (string, *Fix) {
+func checkCloudflared(ctx context.Context, env Env, opts Options) Check {
+	return tunnelCheck(ctx, env, opts, IDTunnelCloudflared, "cloudflared", []string{"--version"}, func() account {
 		// A quick tunnel needs no account; only named tunnels need the
 		// origin certificate written by `cloudflared tunnel login`.
 		cert := env.Getenv("TUNNEL_ORIGIN_CERT")
@@ -489,9 +578,15 @@ func checkCloudflared(ctx context.Context, env Env) Check {
 			cert = filepath.Join(env.HomeDir, ".cloudflared", "cert.pem")
 		}
 		if cert != "" && env.Exists(cert) {
-			return "logged in to Cloudflare", nil
+			return account{text: "logged in to Cloudflare", ready: true}
 		}
-		return "not logged in (only a custom domain needs it)", &Fix{Command: "cloudflared tunnel login", Inline: true}
+		login := &Fix{Command: "cloudflared tunnel login", Inline: true}
+		if opts.Tunnel == "cloudflared-named" {
+			// The tunnel's credentials file may exist without the cert, so
+			// this only warns.
+			return account{text: "not logged in; your named tunnel needs a Cloudflare login", fix: login, severity: Warn}
+		}
+		return account{text: "not logged in (only a custom domain needs it)", fix: login, ready: true}
 	})
 }
 
@@ -500,43 +595,164 @@ var (
 	ngrokAuthtokenPattern = regexp.MustCompile(`(?m)^\s*authtoken:\s*\S`)
 )
 
-func checkNgrok(ctx context.Context, env Env) Check {
-	return tunnelCheck(ctx, env, IDTunnelNgrok, "ngrok", []string{"version"}, func() (string, *Fix) {
-		addToken := &Fix{Command: "ngrok config add-authtoken <your-token>   (from https://dashboard.ngrok.com/get-started/your-authtoken)"}
+func checkNgrok(ctx context.Context, env Env, opts Options) Check {
+	return tunnelCheck(ctx, env, opts, IDTunnelNgrok, "ngrok", []string{"version"}, func() account {
+		missing := account{
+			text:     "no authtoken",
+			fix:      &Fix{Command: "ngrok config add-authtoken <your-token>   (from https://dashboard.ngrok.com/get-started/your-authtoken)"},
+			severity: Fail,
+		}
 		if env.Getenv("NGROK_AUTHTOKEN") != "" {
-			return "authtoken set", nil
+			return account{text: "authtoken set", ready: true}
 		}
 		stdout, stderr, code, err := env.Run(ctx, "ngrok", "config", "check")
 		if err != nil || code != 0 {
-			return "no authtoken", addToken
+			return missing
 		}
 		m := ngrokConfigPattern.FindStringSubmatch(stdout + "\n" + stderr)
 		if m == nil {
-			return "no authtoken", addToken
+			return missing
 		}
 		// Only the presence of the key is checked; the value never leaves
 		// this function.
 		raw, err := env.ReadFile(strings.TrimSpace(m[1]))
 		if err != nil || !ngrokAuthtokenPattern.Match(raw) {
-			return "no authtoken", addToken
+			return missing
 		}
-		return "authtoken set", nil
+		return account{text: "authtoken set", ready: true}
 	})
 }
 
-func checkTailscale(ctx context.Context, env Env) Check {
-	return tunnelCheck(ctx, env, IDTunnelTailscale, "tailscale", []string{"version"}, func() (string, *Fix) {
-		connect := &Fix{Command: "tailscale up"}
+func checkTailscale(ctx context.Context, env Env, opts Options) Check {
+	return tunnelCheck(ctx, env, opts, IDTunnelTailscale, "tailscale", []string{"version"}, func() account {
+		notConnected := account{text: "not connected", fix: &Fix{Command: "tailscale up"}, severity: Fail}
 		stdout, _, _, err := env.Run(ctx, "tailscale", "status", "--json")
 		if err != nil {
-			return "not connected", connect
+			return notConnected
 		}
 		var status struct {
 			BackendState string `json:"BackendState"`
 		}
 		if json.Unmarshal([]byte(stdout), &status) != nil || status.BackendState != "Running" {
-			return "not connected", connect
+			return notConnected
 		}
-		return "connected", nil
+		return account{text: "connected", ready: true}
 	})
+}
+
+// checkCustomTunnel looks for the program of a custom tunnel command.
+func checkCustomTunnel(env Env, program string) Check {
+	c := Check{ID: IDTunnelCustom, Title: "tunnel command"}
+	if !installed(env, program) {
+		c.State, c.Detail = Fail, program+" is not found on your PATH; your custom tunnel runs it"
+		c.Fix = &Fix{Command: "install " + program + ", or change the command in: bonsai web setup → Updates"}
+		return c
+	}
+	c.State, c.Detail = OK, program+" found"
+	return c
+}
+
+// checkLive is what live updates achieved: the tunnel's public address and
+// each repository's hook.
+func checkLive(ctx context.Context, env Env) Check {
+	c := Check{ID: IDUpdatesLive, Title: "live updates"}
+	if env.Live == nil {
+		c.State, c.Detail = Skip, "not checked"
+		return c
+	}
+	s, err := env.Live(ctx)
+	switch {
+	case err != nil:
+		c.State, c.Detail, c.Fix = Warn, "cannot read the live updates state: "+err.Error(), &Fix{Command: "bonsai web status"}
+		return c
+	case len(s.Repos) == 0:
+		c.State, c.Detail, c.Fix = Warn, "no repositories picked, so every repository stays on standard updates", &Fix{Command: "bonsai web setup"}
+		return c
+	case !s.Running:
+		c.State, c.Detail = Skip, plural(len(s.Repos), "repo")+" picked · starts with bonsai web"
+		return c
+	case s.TunnelError != "":
+		c.State, c.Detail, c.Fix = Warn, "no public address: "+s.TunnelError, &Fix{Command: "bonsai web logs tunnel"}
+		return c
+	case s.PublicURL == "":
+		c.State, c.Detail, c.Fix = Warn, "waiting for the tunnel's public address", &Fix{Command: "bonsai web logs tunnel"}
+		return c
+	}
+	live := 0
+	var problem *LiveRepo
+	for i, r := range s.Repos {
+		if r.State == "live" {
+			live++
+		} else if problem == nil {
+			problem = &s.Repos[i]
+		}
+	}
+	if problem == nil {
+		c.State, c.Detail = OK, plural(live, "repo")+" live · "+s.PublicURL
+		return c
+	}
+	c.State = Warn
+	c.Detail = fmt.Sprintf("%d of %s live · %s %s", live, plural(len(s.Repos), "repo"), problem.Name, liveStateText(*problem))
+	c.Fix = liveFix(*problem)
+	return c
+}
+
+func liveStateText(r LiveRepo) string {
+	switch r.State {
+	case "needs_admin":
+		return "needs admin"
+	case "scope_missing":
+		return "cannot be managed with your gh login"
+	case "waiting_for_ping":
+		return "is waiting for GitHub's ping"
+	case "failing":
+		if r.Error != "" {
+			return "is failing (" + r.Error + ")"
+		}
+		return "is failing"
+	case "":
+		return "is not set up yet"
+	}
+	return r.State
+}
+
+func liveFix(r LiveRepo) *Fix {
+	switch r.State {
+	case "needs_admin":
+		return &Fix{Command: "ask an admin of " + r.Name + ", or drop it in: bonsai web setup → Updates"}
+	case "scope_missing":
+		return &Fix{Command: app.ScopeFix("github.com"), Inline: true}
+	case "failing":
+		return &Fix{Command: "bonsai web logs tunnel"}
+	}
+	return &Fix{Command: "bonsai web status"}
+}
+
+// checkLeftoverHooks lists Bonsai webhooks of this computer on repositories
+// live updates no longer cover. Doctor never deletes them; the fix does.
+func checkLeftoverHooks(ctx context.Context, env Env) Check {
+	c := Check{ID: IDLiveHooks, Title: "Bonsai webhooks"}
+	hooks, err := env.LeftoverHooks(ctx)
+	if err != nil {
+		c.State, c.Detail = Skip, "could not look for leftover webhooks: "+err.Error()
+		return c
+	}
+	if len(hooks) == 0 {
+		c.State, c.Detail = OK, "none left behind"
+		return c
+	}
+	repos := make([]string, 0, len(hooks))
+	commands := make([]string, 0, len(hooks))
+	for _, h := range hooks {
+		repos = append(repos, h.Repo)
+		commands = append(commands, fmt.Sprintf("gh api -X DELETE repos/%s/hooks/%d", h.Repo, h.HookID))
+	}
+	c.State = Warn
+	verb := "have"
+	if len(hooks) == 1 {
+		verb = "has"
+	}
+	c.Detail = strings.Join(repos, ", ") + " still " + verb + " a Bonsai webhook that live updates no longer use"
+	c.Fix = &Fix{Command: strings.Join(commands, " && ")}
+	return c
 }

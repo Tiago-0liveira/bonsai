@@ -40,6 +40,8 @@ func (f Folder) Existing() bool { return f.RootID != "" }
 type Draft struct {
 	Config  config.WebConfig
 	Folders []Folder
+	// RotateSecret asks Apply for a new live-updates webhook secret.
+	RotateSecret bool
 }
 
 // Clone returns a deep copy, so the initial draft survives edits.
@@ -143,6 +145,7 @@ func (d Draft) AfterApply() Draft {
 		}
 		out.Folders[i].Touched = false
 	}
+	out.RotateSecret = false
 	return out
 }
 

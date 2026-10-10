@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -55,6 +56,11 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdWeb(args[1:], in, out, errOut)
 	case "serve":
 		return cmdServe(args[1:], in, out, errOut)
+	case "__dev-webhook":
+		// The bonsai web receiver is user-level, not tied to a repository.
+		if slices.Contains(args[1:], "--web") || slices.Contains(args[1:], "-web") {
+			return cmdDevWebhook("", args[1:], out, errOut)
+		}
 	}
 
 	// Anchor to the main worktree regardless of the current directory, so copy

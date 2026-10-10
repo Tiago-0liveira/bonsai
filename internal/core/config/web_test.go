@@ -158,3 +158,121 @@ func TestWebHomeIsUserLevel(t *testing.T) {
 		}
 	}
 }
+
+func TestWebConfigValidatesLiveOnlyWhenOn(t *testing.T) {
+	cfg := DefaultWebConfig()
+	cfg.Updates.Live.Tunnel = "frp" // ignored while updates are standard
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("standard mode checked the live section: %v", err)
+	}
+	cfg.Updates.Mode = WebUpdatesLive
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "updates.live") {
+		t.Fatalf("unknown tunnel accepted in live mode: %v", err)
+	}
+	cfg.Updates.Live.Tunnel = "cloudflared-quick"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default live config rejected: %v", err)
+	}
+	cfg.Updates.Live.WebhookPort = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("live mode without a webhook port accepted")
+	}
+	cfg.Updates.Live.WebhookPort = DefaultWebWebhookPort
+	cfg.Updates.Live.Tunnel = "cloudflared-named"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("named tunnel without a name accepted")
+	}
+	cfg.Updates.Live.TunnelName, cfg.Updates.Live.PublicURL = "bonsai", "https://hooks.example.com"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("named tunnel rejected: %v", err)
+	}
+}
+
+func TestWebWebhookSecretLifecycle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bonsai", "web-webhook-secret")
+	if _, err := ReadWebWebhookSecret(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing secret: %v", err)
+	}
+	first, err := EnsureWebWebhookSecret(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 64 {
+		t.Fatalf("secret is %d characters, want 64 hex", len(first))
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("secret mode = %v, want 0600", info.Mode().Perm())
+		}
+	}
+	again, err := EnsureWebWebhookSecret(path)
+	if err != nil || string(again) != string(first) {
+		t.Fatalf("second ensure changed the secret: %v", err)
+	}
+	read, err := ReadWebWebhookSecret(path)
+	if err != nil || string(read) != string(first) {
+		t.Fatalf("read = %v", err)
+	}
+	rotated, err := RotateWebWebhookSecret(path)
+	if err != nil || string(rotated) == string(first) {
+		t.Fatalf("rotate did not change the secret: %v", err)
+	}
+	if read, _ := ReadWebWebhookSecret(path); string(read) != string(rotated) {
+		t.Fatal("rotated secret not persisted")
+	}
+	if err := os.WriteFile(path, []byte("not-hex\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadWebWebhookSecret(path); err == nil || !strings.Contains(err.Error(), "delete it") {
+		t.Fatalf("corrupt secret: %v", err)
+	}
+	if _, err := EnsureWebWebhookSecret(path); err == nil {
+		t.Fatal("ensure silently replaced a corrupt secret")
+	}
+}
+
+func TestWebInstallIDAndLiveState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web-state.json")
+	id, err := EnsureWebInstallID(path)
+	if err != nil || len(id) != 16 {
+		t.Fatalf("install id %q: %v", id, err)
+	}
+	again, err := EnsureWebInstallID(path)
+	if err != nil || again != id {
+		t.Fatalf("install id changed: %q -> %q (%v)", id, again, err)
+	}
+	if _, err := UpdateWebState(path, func(s *WebState) error {
+		s.Live.PublicURL = "https://a.trycloudflare.com"
+		s.Live.Repositories = map[string]WebLiveRepository{"Acme/Repo": {HookID: 41, State: WebLiveStateLive}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadWebState(path)
+	if err != nil || state.Live.InstallID != id || state.Live.PublicURL != "https://a.trycloudflare.com" {
+		t.Fatalf("%+v %v", state, err)
+	}
+	if name, r, ok := state.Live.Repository("acme/repo"); !ok || name != "Acme/Repo" || r.HookID != 41 {
+		t.Fatalf("lookup %q %+v %v", name, r, ok)
+	}
+	if _, _, ok := state.Live.Repository("acme/other"); ok {
+		t.Fatal("found an unknown repository")
+	}
+	// Zero times and an empty live section stay out of the file.
+	empty := filepath.Join(t.TempDir(), "web-state.json")
+	if _, err := UpdateWebState(empty, func(*WebState) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(empty)
+	if strings.Contains(string(raw), "live") {
+		t.Fatalf("empty live section written:\n%s", raw)
+	}
+	raw, _ = os.ReadFile(path)
+	if strings.Contains(string(raw), "0001-01-01") {
+		t.Fatalf("zero time written:\n%s", raw)
+	}
+}

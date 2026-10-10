@@ -218,7 +218,7 @@ func TestWebStartReuseStatusLogsRestartStop(t *testing.T) {
 	if !strings.Contains(logs, "Bonsai local API listening at http://127.0.0.1:"+port) {
 		t.Fatalf("logs:\n%s", logs)
 	}
-	if _, errOut, code := e.run(t, "web", "logs", "tunnel"); code == 0 || !strings.Contains(errOut, "not available") {
+	if _, errOut, code := e.run(t, "web", "logs", "tunnel"); code == 0 || !strings.Contains(errOut, "live updates are off") {
 		t.Fatalf("tunnel logs: code %d %s", code, errOut)
 	}
 

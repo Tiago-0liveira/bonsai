@@ -1,13 +1,18 @@
  Advanced                                                      ● running · 7001
  ──────────────────────────────────────────────────────────────────────────────
 
-  API port › 7001
+ › API port      › 7001
+   Webhook port  › 7002
+   [ ] Rotate the webhook secret
 
   Your browser connects to http://127.0.0.1:<port>. Applying a new port
   restarts the Bonsai API; open pages need the new address.
 
-  Webhook port 7002 · available in a later version
-  Secret       rotate webhook secret · available in a later version
+  The webhook port is where Bonsai's change receiver listens; only live
+  updates use it, and only through the tunnel.
+
+  A new secret restarts the Bonsai API and is sent to every webhook;
+  deliveries signed with the old one are rejected.
 
 
 
@@ -16,9 +21,4 @@
 
 
 
-
-
-
-
-
- enter done · esc back
+ ↑↓ move · space toggle · enter done · esc back

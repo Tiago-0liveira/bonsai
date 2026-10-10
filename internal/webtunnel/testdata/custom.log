@@ -1,0 +1,2 @@
+starting relay for http://127.0.0.1:7002
+relay ready: public endpoint https://hooks.example.dev (forwarding to the webhook port)

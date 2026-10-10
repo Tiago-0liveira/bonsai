@@ -12,13 +12,13 @@
          Advanced
    – cloudflared         installed (2026.9.3) · not logged in (only a custom
                          domain needs it) · only needed for live updates
-                         (coming in a later version)
-   – ngrok               not installed · only needed for live updates (coming
-                         in a later version)
-   – tailscale           not installed · only needed for live updates (coming
-                         in a later version)
+   – ngrok               not installed · only needed for live updates
+   – tailscale           not installed · only needed for live updates
 
   ✗ 1 problem, 1 warning
+
+
+
 
 
  ↑↓ move · enter run fix · c copy fix · r re-check · esc back

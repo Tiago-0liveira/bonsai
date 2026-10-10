@@ -197,19 +197,45 @@ func runServeInternal(args []string) error {
 	port := fs.Int("port", 0, "loopback listen port")
 	browserOrigin := fs.String("browser-origin", localapi.ProductionBrowserOrigin, "authorized browser origin")
 	securityMode := fs.String("security-mode", string(localapi.BrowserSecurityProduction), "browser security mode")
+	webhookPort := fs.Int("webhook-port", 0, "loopback port of the live-updates webhook receiver (user-level API only)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *port <= 0 {
 		return fmt.Errorf("__serve-api requires --port")
 	}
-	address := fmt.Sprintf("127.0.0.1:%d", *port)
-	return localapi.Run(localapi.Config{
+	cfg := localapi.Config{
 		RepoDir:       *repoDir,
-		Address:       address,
+		Address:       fmt.Sprintf("127.0.0.1:%d", *port),
 		BrowserOrigin: *browserOrigin,
 		SecurityMode:  localapi.BrowserSecurityMode(*securityMode),
-	})
+	}
+	if *webhookPort > 0 {
+		// The secret comes from its 0600 file, never from argv.
+		path, err := config.WebWebhookSecretPath()
+		if err != nil {
+			return err
+		}
+		secret, err := config.ReadWebWebhookSecret(path)
+		if err != nil {
+			return fmt.Errorf("live updates webhook secret: %w", err)
+		}
+		cfg.WebhookAddress = fmt.Sprintf("127.0.0.1:%d", *webhookPort)
+		cfg.WebhookSecret = secret
+		// The live controller keeps the hooks of web.json's live
+		// repositories pointed at the tunnel, and records them in
+		// web-state.json.
+		if cfg.WebConfigPath, err = config.WebConfigPath(); err != nil {
+			return err
+		}
+		if cfg.WebStatePath, err = config.WebStatePath(); err != nil {
+			return err
+		}
+		if cfg.WebHome, err = config.WebHome(); err != nil {
+			return err
+		}
+	}
+	return localapi.Run(cfg)
 }
 
 func runDevWebhookInternal(args []string) error {

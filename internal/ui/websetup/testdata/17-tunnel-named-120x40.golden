@@ -1,0 +1,40 @@
+ Set up the Cloudflare tunnel                                                                                     5 / 7
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   Tunnel name  › bonsai
+     The tunnel from: cloudflared tunnel create <name>. Bonsai points it at the receiver (127.0.0.1:7002); ingress
+     rules in your own cloudflared config take precedence.
+
+ › Public URL   › http://hooks.example.com
+     The hostname routed to the tunnel: cloudflared tunnel route dns <name> <hostname>.
+
+  ✗ Public URL must be an https:// address with no path, for example https://hooks.example.com.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab next field · enter next · esc back

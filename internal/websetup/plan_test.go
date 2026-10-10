@@ -3,9 +3,11 @@ package websetup
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/webtunnel"
 )
 
 func root(path string) config.ProjectRoot {
@@ -181,5 +183,168 @@ func TestSummaries(t *testing.T) {
 	}
 	if got := TildePath(home, filepath.FromSlash("/elsewhere")); got != filepath.FromSlash("/elsewhere") {
 		t.Fatal(got)
+	}
+}
+
+func liveConfig(tunnel string, repos ...string) config.WebConfig {
+	cfg := config.DefaultWebConfig()
+	cfg.SetupVersion = config.WebSetupVersion
+	cfg.Updates.Mode = config.WebUpdatesLive
+	cfg.Updates.Live.Tunnel = tunnel
+	cfg.Updates.Live.Repositories = repos
+	return cfg
+}
+
+func hooks(p Plan) string {
+	var out []string
+	for _, h := range p.Hooks {
+		out = append(out, h.Kind+" "+h.Repo)
+	}
+	return strings.Join(out, ", ")
+}
+
+func TestBuildPlanLive(t *testing.T) {
+	standard := config.DefaultWebConfig()
+	standard.SetupVersion = config.WebSetupVersion
+	draft := func(cfg config.WebConfig) Draft { return Draft{Config: cfg} }
+	idle := &Running{APIPort: 7001, Hosted: true}
+	live := &Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+
+	// Turning live on adds hooks and starts the tunnel with a restart.
+	p := BuildPlan(draft(standard), draft(liveConfig("cloudflared-quick", "o/a", "o/b")), idle, false)
+	if hooks(p) != "add o/a, add o/b" || !p.TunnelStarts || !p.RestartAPI || p.RestartReason != "live updates changed" || !p.WaitLive {
+		t.Fatalf("on: %+v", p)
+	}
+	if got := ExternalChanges(p, "abc123"); len(got) != 2 || !strings.Contains(got[0], "Starts a Cloudflare quick tunnel that forwards only Bonsai's change receiver (127.0.0.1:7002)") ||
+		!strings.Contains(got[1], "Adds a GitHub webhook to o/a, o/b. Their admins see a webhook to a trycloudflare.com address marked ?bonsai=abc123.") {
+		t.Fatalf("external = %q", got)
+	}
+
+	// Adding and dropping a repository: no restart, only hook changes.
+	p = BuildPlan(draft(liveConfig("cloudflared-quick", "o/a", "o/b")), draft(liveConfig("cloudflared-quick", "O/A", "o/c")), live, false)
+	if hooks(p) != "add o/c, remove o/b" || p.RestartAPI || p.TunnelStarts || !p.WaitLive {
+		t.Fatalf("repos: %+v", p)
+	}
+
+	// A new tunnel re-points the hooks that stay.
+	named := liveConfig("cloudflared-named", "o/a")
+	named.Updates.Live.TunnelName, named.Updates.Live.PublicURL = "bonsai", "https://hooks.example.com"
+	p = BuildPlan(draft(liveConfig("cloudflared-quick", "o/a")), draft(named), live, false)
+	if hooks(p) != "repoint o/a" || !p.TunnelStarts || p.RestartReason != "tunnel changed" {
+		t.Fatalf("tunnel: %+v", p)
+	}
+	if got := ExternalChanges(p, ""); !strings.Contains(got[len(got)-1], "Points the webhook of o/a at the new address.") {
+		t.Fatalf("external = %q", got)
+	}
+
+	// A quick tunnel restarted for another reason gets a new address too.
+	hosted := draft(liveConfig("cloudflared-quick", "o/a"))
+	hosted.Config.Interfaces.Hosted = false
+	if p = BuildPlan(draft(liveConfig("cloudflared-quick", "o/a")), hosted, live, false); hooks(p) != "repoint o/a" || p.TunnelStarts {
+		t.Fatalf("restart: %+v", p)
+	}
+
+	// Rotating the secret restarts the API and re-sends it.
+	rotate := draft(named)
+	rotate.RotateSecret = true
+	p = BuildPlan(draft(named), rotate, live, false)
+	if hooks(p) != "repoint o/a" || !p.RotateSecret || p.RestartReason != "webhook secret changed" || p.TunnelStarts {
+		t.Fatalf("rotate: %+v", p)
+	}
+	if got := ExternalChanges(p, ""); len(got) != 1 || got[0] != "Sends the new secret to the webhook of o/a." || p.NewAddress {
+		t.Fatalf("external = %q", got)
+	}
+	// With a quick tunnel, a new secret alone keeps the tunnel (and its
+	// address); a new port restarts it too.
+	quickRotate := draft(liveConfig("cloudflared-quick", "o/a"))
+	quickRotate.RotateSecret = true
+	if p = BuildPlan(draft(liveConfig("cloudflared-quick", "o/a")), quickRotate, live, false); p.NewAddress {
+		t.Fatalf("quick rotate: %+v", p)
+	}
+	quickRotate.Config.APIPort = 7011
+	if p = BuildPlan(draft(liveConfig("cloudflared-quick", "o/a")), quickRotate, live, false); !p.NewAddress {
+		t.Fatalf("quick rotate and port: %+v", p)
+	}
+	if got := ExternalChanges(p, ""); got[len(got)-1] != "Points the webhook of o/a at the new address and secret." {
+		t.Fatalf("external = %q", got)
+	}
+
+	// Turning live off deletes every hook and stops the receiver.
+	p = BuildPlan(draft(liveConfig("cloudflared-quick", "o/a", "o/b")), draft(standard), live, false)
+	if hooks(p) != "remove o/a, remove o/b" || !p.RestartAPI || p.TunnelStarts || p.WaitLive {
+		t.Fatalf("off: %+v", p)
+	}
+	if got := ExternalChanges(p, ""); len(got) != 1 || got[0] != "Deletes Bonsai's webhook from o/a, o/b." {
+		t.Fatalf("external = %q", got)
+	}
+
+	// Your own URL starts no tunnel.
+	external := liveConfig("external-url", "o/a")
+	external.Updates.Live.PublicURL = "https://hooks.example.com"
+	p = BuildPlan(draft(standard), draft(external), nil, true)
+	if p.TunnelStarts || hooks(p) != "add o/a" || !p.WaitLive {
+		t.Fatalf("external: %+v", p)
+	}
+	if got := ExternalChanges(p, ""); !strings.Contains(got[0], "GitHub posts to hooks.example.com; your proxy must forward it to 127.0.0.1:7002.") {
+		t.Fatalf("external = %q", got)
+	}
+
+	if got := ExternalChanges(BuildPlan(draft(standard), draft(standard), idle, false), ""); len(got) != 0 {
+		t.Fatalf("standard = %q", got)
+	}
+}
+
+func TestDiffAndSummaryLive(t *testing.T) {
+	before := Draft{Config: liveConfig("cloudflared-quick", "o/a", "o/b")}
+	after := Draft{Config: liveConfig("ngrok", "o/a", "o/c"), RotateSecret: true}
+	after.Config.Updates.Live.WebhookPort = 7012
+	var got []string
+	for _, c := range Diff(before, after, "") {
+		got = append(got, c.Label+": "+c.From+" → "+c.To)
+	}
+	want := []string{
+		"Updates: live · Cloudflare quick tunnel → live · ngrok",
+		"Live repos:  → + o/c  − o/b",
+		"Webhook port: 7002 → 7012",
+		"Secret:  → new webhook secret",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("diff = %q", got)
+	}
+	if s := UpdatesSummary(after.Config, "2 min"); s != "Live · ngrok · 2 repos" {
+		t.Fatalf("summary = %q", s)
+	}
+	if s := UpdatesSummary(liveConfig("tailscale"), "2 min"); s != "Live · Tailscale Funnel · no repos picked" {
+		t.Fatalf("summary = %q", s)
+	}
+}
+
+func TestLiveFields(t *testing.T) {
+	if len(LiveFields("cloudflared-quick", 7002)) != 0 || len(LiveFields("tailscale", 7002)) != 0 {
+		t.Fatal("quick tunnel and Tailscale ask nothing")
+	}
+	live := config.DefaultWebConfig().Updates.Live
+	live.Tunnel = "custom"
+	for _, f := range LiveFields("custom", 7002) {
+		switch f.ID {
+		case FieldCommand:
+			SetLiveField(&live, f.ID, "  mytunnel http  127.0.0.1:{port} ")
+		case FieldURLPattern:
+			SetLiveField(&live, f.ID, `https://\S+`)
+		}
+	}
+	if !reflect.DeepEqual(live.Command, []string{"mytunnel", "http", "127.0.0.1:{port}"}) || LiveFieldValue(live, FieldCommand) != "mytunnel http 127.0.0.1:{port}" {
+		t.Fatalf("command = %q", live.Command)
+	}
+	if err := webtunnel.ValidateOptions(live.TunnelOptions()); err != nil {
+		t.Fatal(err)
+	}
+	SetLiveField(&live, FieldPublicURL, "Hooks.Example.com")
+	if live.PublicURL != "https://hooks.example.com" {
+		t.Fatalf("public URL = %q", live.PublicURL)
+	}
+	SetLiveField(&live, FieldPublicURL, "http://plain")
+	if live.PublicURL != "http://plain" {
+		t.Fatal("an invalid URL is kept as typed, for the error to name it")
 	}
 }

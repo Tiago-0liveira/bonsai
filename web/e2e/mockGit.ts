@@ -482,6 +482,10 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       socket.publishCatalog(projects, projects.map(repository => projectSnapshot(repository.id)))
       return
     }
+    if (path === '/api/settings/updates') {
+      await route.fulfill({ json: { mode: 'standard', standard_interval_seconds: 120, live: null } })
+      return
+    }
     if (path === '/api/settings/project-selection' && request.method() === 'POST') {
       const body = request.postDataJSON() as { selection_revision: number; project_ids: string[] }
       rootSettings.selection_revision++
@@ -577,6 +581,12 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     await route.fulfill({ status: 401, body: 'authentication required' })
   })
   return { publish: () => socket.publishUpdate(projectSnapshot('bonsai', true)) }
+}
+
+// mockUpdateSettings answers GET /api/settings/updates with whatever
+// settings() returns at the time (routes added later take precedence).
+export async function mockUpdateSettings(page: Page, settings: () => unknown, apiOrigin = DEFAULT_API_ORIGIN) {
+  await page.route(url => url.origin === apiOrigin && url.pathname === '/api/settings/updates', route => route.fulfill({ json: settings() }))
 }
 
 export async function openConnectedApp(page: Page) {

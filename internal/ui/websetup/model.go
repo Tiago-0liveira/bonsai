@@ -37,14 +37,20 @@ const (
 	screenDashboard
 	screenAdvanced
 	screenDoctor
+	// The live-updates steps between Updates and Review.
+	screenLiveTunnel
+	screenLiveRepos
 )
 
 // wizardSteps is the step counter: Welcome to Apply. Done is not counted.
 const wizardSteps = 7
 
 func (s screen) step() int {
-	if s <= screenApply {
+	switch {
+	case s <= screenApply:
 		return int(s) + 1
+	case s == screenLiveTunnel || s == screenLiveRepos:
+		return screenUpdates.step()
 	}
 	return 0
 }
@@ -70,10 +76,21 @@ type Model struct {
 	adding     bool // Projects: typing a folder
 	folderIn   textinput.Model
 	portIn     textinput.Model
+	webhookIn  textinput.Model
+	advFocus   int // Advanced: 0 API port, 1 webhook port, 2 rotate secret
 	inputErr   string
 	compare    bool // Updates: comparison matrix open
 	confirming bool // Ctrl+C: discard changes?
 	flash      string
+
+	// Live updates: the tunnel settings inputs and the repository picker.
+	liveFields  []setup.LiveField
+	liveIn      []textinput.Model
+	liveFocus   int
+	liveRepos   []setup.LiveRepo
+	livePicked  map[string]bool // lower-case owner/name
+	liveLoading bool
+	liveGen     int
 
 	applying bool
 	steps    []Step
@@ -95,23 +112,28 @@ func New(backend Backend, info Info, mode Mode, initial setup.Draft, r *lipgloss
 	folder.CharLimit = 4096
 	port := textinput.New()
 	port.Cursor.SetMode(cursor.CursorStatic)
-	port.Prompt = "API port › "
+	port.Prompt = "API port      › "
 	port.CharLimit = 5
+	webhook := textinput.New()
+	webhook.Cursor.SetMode(cursor.CursorStatic)
+	webhook.Prompt = "Webhook port  › "
+	webhook.CharLimit = 5
 	start := screenWelcome
 	if mode == Edit {
 		start = screenDashboard
 	}
 	m := Model{
-		backend:  backend,
-		info:     info,
-		mode:     mode,
-		st:       newStyles(r, theme.Current),
-		initial:  initial.Clone(),
-		draft:    initial.Clone(),
-		stack:    []screen{start},
-		cursor:   map[screen]int{},
-		folderIn: folder,
-		portIn:   port,
+		backend:   backend,
+		info:      info,
+		mode:      mode,
+		st:        newStyles(r, theme.Current),
+		initial:   initial.Clone(),
+		draft:     initial.Clone(),
+		stack:     []screen{start},
+		cursor:    map[screen]int{},
+		folderIn:  folder,
+		portIn:    port,
+		webhookIn: webhook,
 	}
 	return m
 }
@@ -141,7 +163,7 @@ func (m Model) pop() Model {
 
 // dirty reports unapplied edits.
 func (m Model) dirty() bool {
-	if !reflect.DeepEqual(m.initial.Config, m.draft.Config) {
+	if !reflect.DeepEqual(m.initial.Config, m.draft.Config) || m.draft.RotateSecret {
 		return true
 	}
 	checked := map[string]bool{}
@@ -290,6 +312,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flash = "The fix did not finish: " + msg.err.Error()
 		}
 		return m, m.startChecks()
+	case liveReposMsg:
+		return m.onLiveReposLoaded(msg), nil
 	case applyMsg:
 		return m.onApply(msg)
 	case tea.KeyMsg:
@@ -338,7 +362,7 @@ func runningAfter(d setup.Draft, before *setup.Running, r *Result) *setup.Runnin
 	if r.Port == 0 {
 		return before
 	}
-	return &setup.Running{APIPort: r.Port, Hosted: d.Config.Interfaces.Hosted}
+	return &setup.Running{APIPort: r.Port, Hosted: d.Config.Interfaces.Hosted, WebhookPort: r.WebhookPort}
 }
 
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -365,6 +389,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.current() == screenAdvanced {
 		return m.onAdvanced(msg)
+	}
+	if m.current() == screenLiveTunnel {
+		return m.onTunnelSettings(msg)
 	}
 	if m.compare {
 		if key == "esc" || key == "?" || key == "q" {
@@ -394,6 +421,8 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onDashboard(key)
 	case screenDoctor:
 		return m.onChecks(key, nil)
+	case screenLiveRepos:
+		return m.onLiveRepos(key)
 	}
 	return m, nil
 }
@@ -450,6 +479,10 @@ func (m Model) View() string {
 		return m.advancedView()
 	case screenDoctor:
 		return m.doctorView()
+	case screenLiveTunnel:
+		return m.tunnelSettingsView()
+	case screenLiveRepos:
+		return m.liveReposView()
 	}
 	return ""
 }
