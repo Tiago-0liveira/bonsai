@@ -290,9 +290,12 @@ function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) =>
         reject(new Error('Local Bonsai event socket failed to connect'))
       }
     }
-    const closed = () => {
+    const closed = (event: Event) => {
       if (!settled) {
         settled = true
+        // A policy close before ready rejects this capability, as after an API
+        // restart. Drop it so the next attempt asks for a fresh session.
+        if ((event as CloseEvent).code === 1008) invalidateLocalSession()
         reject(new Error('Local Bonsai event socket closed before authentication completed'))
       }
     }

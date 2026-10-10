@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -1346,14 +1347,35 @@ func TestCrashRecoveryAllowsProcessChangedCWD(t *testing.T) {
 	}
 }
 
+// TestLogRotationHelper emits each line only after the follower acknowledged
+// the previous one. Shell delays cannot guarantee that a reader attaches or
+// drains a rotation before more output arrives, especially on Windows.
+func TestLogRotationHelper(t *testing.T) {
+	if len(os.Args) < 2 || os.Args[len(os.Args)-2] != "--" {
+		return
+	}
+	root := os.Args[len(os.Args)-1]
+	for i := 1; i <= 4; i++ {
+		fmt.Fprintln(os.Stdout, "line "+strings.Repeat(strconv.Itoa(i), 18))
+		ack := filepath.Join(root, "read-"+strconv.Itoa(i))
+		if !waitFor(t, 10*time.Second, func() bool {
+			_, err := os.Stat(ack)
+			return err == nil
+		}) {
+			os.Exit(2)
+		}
+	}
+	os.Exit(0)
+}
+
 func TestLogRotationFollower(t *testing.T) {
 	c, root := newDaemonWithLogCap(t, 80)
-
-	cmd := "printf 'line 111111111111111111\\n'; sleep 0.1; printf 'line 222222222222222222\\n'; sleep 0.1; printf 'line 333333333333333333\\n'; sleep 0.1; printf 'line 444444444444444444\\n'"
-	if runtime.GOOS == "windows" && os.Getenv("SHELL") == "" {
-		cmd = "echo line 111111111111111111& ping -n 1 127.0.0.1 >nul& echo line 222222222222222222& ping -n 1 127.0.0.1 >nul& echo line 333333333333333333& ping -n 1 127.0.0.1 >nul& echo line 444444444444444444"
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
 	}
-	rec, err := c.Spawn(root, "", "rotator", cmd, &procstore.Policy{Mode: procstore.PolicyNo})
+	args := []string{"-test.run=^TestLogRotationHelper$", "--", root}
+	rec, err := c.SpawnExec(root, "", root, "rotator", exe, args, &procstore.Policy{Mode: procstore.PolicyNo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1361,13 +1383,21 @@ func TestLogRotationFollower(t *testing.T) {
 	var collected strings.Builder
 	var mu sync.Mutex
 	done := make(chan struct{})
+	var followErr error
 
 	go func() {
 		defer close(done)
-		_ = c.Logs(rec.ID, true, 0, "", false, func(chunk string) error {
+		followErr = c.Logs(rec.ID, true, 0, "", false, func(chunk string) error {
 			mu.Lock()
+			defer mu.Unlock()
 			collected.WriteString(chunk)
-			mu.Unlock()
+			for i := 1; i <= 4; i++ {
+				if strings.Contains(chunk, "line "+strings.Repeat(strconv.Itoa(i), 18)) {
+					if err := os.WriteFile(filepath.Join(root, "read-"+strconv.Itoa(i)), nil, 0o600); err != nil {
+						return err
+					}
+				}
+			}
 			return nil
 		})
 	}()
@@ -1383,6 +1413,12 @@ func TestLogRotationFollower(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("follower did not complete after process exited")
+	}
+	if followErr != nil {
+		t.Fatal(followErr)
+	}
+	if _, err := os.Stat(procstore.New(root).LogPath(rec.ID) + ".1"); err != nil {
+		t.Fatalf("log did not rotate: %v", err)
 	}
 
 	mu.Lock()

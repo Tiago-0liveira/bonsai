@@ -4,6 +4,7 @@ import { fetchClosedPullRequests, requestProjectRefresh } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { PullRequest } from '../../types'
 import { useProjectPullRequests } from '../../stores/projectSelectors'
+import { isStale, staleDescription } from '../../lib/freshness'
 
 const EMPTY_PULL_REQUESTS: PullRequest[] = []
 
@@ -46,6 +47,8 @@ export function usePullRequestCatalog(projectId: string) {
     closedCount: closed?.loadedAt ? closed.rows.length : undefined,
     state: error ? 'error' as const : loading ? 'loading' as const : 'ready' as const,
     message: error ?? (loading ? 'Loading pull requests…' : `No ${tab} pull requests.`),
+    // The open list may be shown from an unconfirmed catalog; say so.
+    stale: tab === 'open' && !error && isStale(freshness) ? staleDescription(freshness) : undefined,
     retry,
   }
 }

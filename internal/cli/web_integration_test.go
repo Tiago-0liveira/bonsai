@@ -100,6 +100,12 @@ func newWebEnv(t *testing.T) *webEnv {
 
 func shutdownWebTestDaemon(t *testing.T, c *client.Client) {
 	t.Helper()
+	// Capture the PID while the socket still answers; shutdown removes the
+	// socket and pidfile before the process itself exits.
+	pid := 0
+	if response, err := c.Ping(); err == nil {
+		pid = response.PID
+	}
 	if err := c.Shutdown(true); err != nil {
 		t.Errorf("shutting down test daemon: %v", err)
 	}
@@ -118,6 +124,13 @@ func shutdownWebTestDaemon(t *testing.T, c *client.Client) {
 		return true
 	}) {
 		t.Errorf("test daemon cleanup did not finish: %s", c.Store().Root())
+	}
+	// Windows can retain directory handles until process exit, even after
+	// the daemon has released its lock. TempDir must not race those handles.
+	if runtime.GOOS == "windows" && pid > 0 {
+		if !waitUntil(5*time.Second, func() bool { return !procstore.PidAlive(pid) }) {
+			t.Errorf("test daemon process %d did not exit", pid)
+		}
 	}
 }
 

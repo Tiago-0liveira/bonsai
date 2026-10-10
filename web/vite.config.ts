@@ -41,6 +41,8 @@ export default defineConfig(({ mode }) => ({
       const count = (field: string) => `window.__bonsaiMetrics && window.__bonsaiMetrics.${field}++;`
       if (id.endsWith('/canvas/buildCanvasGraph.ts')) return code.replace('const { project,', count('graph') + '\n  const { project,')
       if (id.endsWith('/layout/prLabels.ts')) return code.replace('const rects = new Map', count('labels') + '\n  const rects = new Map')
+      // Warm-start measurements start when the authenticated socket is ready.
+      if (id.endsWith('/api/localClient.ts')) return code.replace('resolve({ socket, epoch: data.epoch })', "performance.mark('bonsai:ws-ready'); resolve({ socket, epoch: data.epoch })")
       if (id.endsWith('/layout/AppShell.tsx')) return "import { Profiler } from 'react';\n" + code.replace('{children}</main>', '<Profiler id="main-workspace" onRender={(_id, phase, duration) => window.__bonsaiMetrics?.commits.push({phase, duration})}>{children}</Profiler></main>')
     },
   }],

@@ -96,6 +96,9 @@ export interface WireFreshness {
   updated_at?: string
   // reset_at accompanies code rate_limited: when GitHub's rate-limit window resets.
   error?: { code: string; message: string; reset_at?: string }
+  // 'disk' while the data was restored from the API's warm-start cache and has
+  // not been revalidated; absent when it was read live.
+  source?: 'disk'
 }
 interface LocalStatus {
   branch?: string
@@ -237,8 +240,15 @@ export function projectForGitHubRepository(repositoryId: number) {
 
 function setEpoch(epoch: string) {
   if (!epoch || activeEpoch === epoch) return
+  const restarted = activeEpoch !== ''
   activeEpoch = epoch
   sequenceGuards.clear()
+  // A new API process: what is on screen came from the old one. It stays,
+  // labeled stale, and runtime authority waits for the new snapshots.
+  if (restarted) {
+    markConnectionStateStale()
+    useBonsaiStore.setState({ processAuthorityReady: {} })
+  }
 }
 
 function guardFor(projectId: string, epoch: string) {
@@ -701,6 +711,18 @@ export function startGitBackend() {
     if ((data.type === 'project_snapshot' || data.type === 'project_update') && data.snapshot) {
       const snapshot = data.snapshot as Snapshot
       if (data.epoch && snapshot.epoch && data.epoch !== snapshot.epoch) return
+      // A delayed event from the previous API process never reaches the buffers.
+      if (activeEpoch && snapshot.epoch && snapshot.epoch !== activeEpoch) return
+      if (bootstrapping && bootstrapCatalog.length) {
+        // The project in view paints as soon as its snapshot arrives (the API
+        // sends it first); the others still wait for bootstrap_complete.
+        reconcileCatalog(bootstrapCatalog)
+        if (snapshot.repository.id === useBonsaiStore.getState().activeProjectId) {
+          bootstrapSnapshots.delete(snapshot.repository.id)
+          applySnapshot(snapshot, generation)
+          return
+        }
+      }
       if (bootstrapping) {
         const previous = bootstrapSnapshots.get(snapshot.repository.id)
         if (!previous || snapshot.sequence >= previous.sequence) bootstrapSnapshots.set(snapshot.repository.id, snapshot)
