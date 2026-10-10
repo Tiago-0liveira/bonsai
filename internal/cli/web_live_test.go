@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -105,17 +106,24 @@ func TestLiveServeSpecParts(t *testing.T) {
 
 func TestLiveUpdatesTextAndOldDaemon(t *testing.T) {
 	group := &procstore.ServeGroup{WebhookPort: 7002, Processes: []procstore.ServeProcess{{Name: "api", State: "ready"}, {Name: "tunnel", State: "running"}}}
-	if got := webUpdatesText(liveConfig("cloudflared-quick"), group); got != "live · cloudflared-quick · tunnel running · receiver 127.0.0.1:7002" {
+	none := config.WebLiveState{}
+	if got := webUpdatesText(liveConfig("cloudflared-quick"), group, none); got != "live · cloudflared-quick · no repos yet · tunnel running · receiver 127.0.0.1:7002" {
 		t.Fatalf("live text = %q", got)
 	}
+	withRepos := liveConfig("cloudflared-quick")
+	withRepos.Updates.Live.Repositories = []string{"acme/one", "acme/two"}
+	state := config.WebLiveState{Repositories: map[string]config.WebLiveRepository{"ACME/one": {State: config.WebLiveStateLive}, "acme/two": {State: config.WebLiveStateNeedsAdmin}}}
+	if got := webUpdatesText(withRepos, group, state); got != "live · cloudflared-quick · 2 repos (1 live) · tunnel running · receiver 127.0.0.1:7002" {
+		t.Fatalf("live text with repos = %q", got)
+	}
 	group.Processes = group.Processes[:1]
-	if got := webUpdatesText(liveConfig("cloudflared-quick"), group); !strings.Contains(got, "tunnel not running") {
+	if got := webUpdatesText(liveConfig("cloudflared-quick"), group, none); !strings.Contains(got, "tunnel not running") {
 		t.Fatalf("live text without tunnel = %q", got)
 	}
-	if got := webUpdatesText(liveConfig("external-url"), group); got != "live · external-url · receiver 127.0.0.1:7002" {
+	if got := webUpdatesText(liveConfig("external-url"), group, none); got != "live · external-url · no repos yet · receiver 127.0.0.1:7002" {
 		t.Fatalf("external text = %q", got)
 	}
-	if got := webUpdatesText(config.DefaultWebConfig(), group); !strings.HasPrefix(got, "standard (every ~") {
+	if got := webUpdatesText(config.DefaultWebConfig(), group, none); !strings.HasPrefix(got, "standard (every ~") {
 		t.Fatalf("standard text = %q", got)
 	}
 	if !oldDaemonRefusesLive(errors.New("production serve cannot supervise development services")) || oldDaemonRefusesLive(errors.New("port 7002 is already in use")) {
@@ -146,6 +154,40 @@ func TestDevWebhookFixturesNameTheRepository(t *testing.T) {
 			if parsed.Repository.FullName != wantName || parsed.Repository.ID != wantID {
 				t.Fatalf("%s repo %q: %+v", name, repo, parsed.Repository)
 			}
+		}
+	}
+}
+
+func TestLiveStatusLines(t *testing.T) {
+	if got := livePublicText(config.WebLiveState{PublicURL: "https://a.trycloudflare.com"}); got != "https://a.trycloudflare.com" {
+		t.Fatal(got)
+	}
+	if got := livePublicText(config.WebLiveState{PublicURL: "https://old.trycloudflare.com", TunnelError: "the tunnel is failed"}); got != "unknown: the tunnel is failed" {
+		t.Fatal(got)
+	}
+	if got := livePublicText(config.WebLiveState{}); got != "waiting for the tunnel" {
+		t.Fatal(got)
+	}
+
+	var out bytes.Buffer
+	w := &webCLI{out: &out}
+	cfg := liveConfig("cloudflared-quick")
+	if err := w.printLiveRepositories(cfg, config.WebLiveState{}); err != nil || !strings.Contains(out.String(), "bonsai web setup") {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	out.Reset()
+	cfg.Updates.Live.Repositories = []string{"acme/one", "acme/two", "acme/new"}
+	now := time.Now()
+	state := config.WebLiveState{Repositories: map[string]config.WebLiveRepository{
+		"acme/one": {State: config.WebLiveStateLive, LastPingAt: now.Add(-time.Hour), LastDeliveryAt: now.Add(-3 * time.Minute)},
+		"acme/two": {State: config.WebLiveStateScopeMissing, LastError: "your gh login cannot manage webhooks; run: gh auth refresh -h github.com -s admin:repo_hook"},
+	}}
+	if err := w.printLiveRepositories(cfg, state); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"REPOSITORY", "acme/one    live", "delivery 3 min ago", "scope_missing  none yet", "run: gh auth refresh -h github.com -s admin:repo_hook", "acme/new    pending"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("status lacks %q:\n%s", want, out.String())
 		}
 	}
 }

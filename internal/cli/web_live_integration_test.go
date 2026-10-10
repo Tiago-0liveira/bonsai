@@ -69,7 +69,7 @@ func TestWebLiveStartsReceiverAndTunnel(t *testing.T) {
 	setLiveMode(t, true, tunnel, hookPort)
 
 	out := e.mustRun(t, "web", "--no-open", "--port", api)
-	if !strings.Contains(out, "updates   live · custom · tunnel") || !strings.Contains(out, "receiver 127.0.0.1:"+hook) {
+	if !strings.Contains(out, "updates   live · custom · no repos yet · tunnel") || !strings.Contains(out, "receiver 127.0.0.1:"+hook) || !strings.Contains(out, "  public    ") {
 		t.Fatalf("live start output:\n%s", out)
 	}
 	if !portListening(t, hook) {
@@ -85,6 +85,23 @@ func TestWebLiveStartsReceiverAndTunnel(t *testing.T) {
 	}) {
 		logs, errOut, _ := e.run(t, "web", "logs", "tunnel", "-n", "20")
 		t.Fatalf("tunnel logs lack the public URL:\n%s\n%s", logs, errOut)
+	}
+
+	// The API's live controller learns the public URL from the daemon's
+	// tunnel log and records it for bonsai web status.
+	statePath, err := config.WebStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waitUntil(15*time.Second, func() bool {
+		state, err := config.ReadWebState(statePath)
+		return err == nil && state.Live.PublicURL == fakeTunnelURL && state.Live.InstallID != "" && state.Live.TunnelError == ""
+	}) {
+		state, err := config.ReadWebState(statePath)
+		t.Fatalf("live state %+v %v\n%s", state.Live, err, e.mustRun(t, "web", "logs", "api", "-n", "50"))
+	}
+	if status := e.mustRun(t, "web", "status"); !strings.Contains(status, "public    "+fakeTunnelURL) || !strings.Contains(status, "No repositories use live updates yet") {
+		t.Fatalf("status:\n%s", status)
 	}
 
 	// Only the webhook route exists on the receiver port.

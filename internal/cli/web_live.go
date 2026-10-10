@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -100,9 +102,20 @@ func (w *webCLI) webhookPortFailure(f webFailure, port int) webFailure {
 }
 
 // liveUpdatesText is the "updates" line for live mode.
-func liveUpdatesText(cfg config.WebConfig, group *procstore.ServeGroup) string {
+func liveUpdatesText(cfg config.WebConfig, group *procstore.ServeGroup, state config.WebLiveState) string {
 	live := cfg.Updates.Live
 	parts := []string{"live", live.Tunnel}
+	if n := len(live.Repositories); n > 0 {
+		healthy := 0
+		for _, repo := range live.Repositories {
+			if _, r, ok := state.Repository(repo); ok && r.State == config.WebLiveStateLive {
+				healthy++
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%d %s (%d live)", n, plural(n, "repo", "repos"), healthy))
+	} else {
+		parts = append(parts, "no repos yet")
+	}
 	if group != nil && group.WebhookPort != 0 {
 		if live.Tunnel != webtunnel.ExternalURL {
 			parts = append(parts, "tunnel "+tunnelState(group))
@@ -140,4 +153,75 @@ func (w *webCLI) errNoTunnel() error {
 		return errors.New("there is no tunnel: live updates use your own proxy (external-url)")
 	}
 	return errors.New("there is no tunnel: it did not start with bonsai web. Run bonsai web again to see why")
+}
+
+// liveState reads what the API's live controller recorded (empty when there
+// is nothing yet or the file cannot be read).
+func (w *webCLI) liveState(cfg config.WebConfig) config.WebLiveState {
+	if cfg.Updates.Mode != config.WebUpdatesLive || w.statePath == "" {
+		return config.WebLiveState{}
+	}
+	state, err := config.ReadWebState(w.statePath)
+	if err != nil {
+		return config.WebLiveState{}
+	}
+	return state.Live
+}
+
+// livePublicText is the "public" line: the URL GitHub posts to, or why there
+// is none yet.
+func livePublicText(state config.WebLiveState) string {
+	switch {
+	case state.TunnelError != "":
+		return "unknown: " + state.TunnelError
+	case state.PublicURL != "":
+		return state.PublicURL
+	}
+	return "waiting for the tunnel"
+}
+
+// printLiveRepositories is the live part of bonsai web status: each live
+// repository's hook state and its last ping or delivery.
+func (w *webCLI) printLiveRepositories(cfg config.WebConfig, state config.WebLiveState) error {
+	repos := cfg.Updates.Live.Repositories
+	fmt.Fprintln(w.out)
+	if len(repos) == 0 {
+		fmt.Fprintln(w.out, "No repositories use live updates yet. Choose them with: bonsai web setup")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w.out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "REPOSITORY\tLIVE\tLAST EVENT\tDETAIL")
+	now := time.Now()
+	for _, repo := range repos {
+		_, r, _ := state.Repository(repo)
+		status := r.State
+		if status == "" {
+			status = "pending"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", repo, status, lastLiveEvent(r, now), r.LastError)
+	}
+	return tw.Flush()
+}
+
+func lastLiveEvent(r config.WebLiveRepository, now time.Time) string {
+	kind, at := "delivery", r.LastDeliveryAt
+	if r.LastPingAt.After(at) {
+		kind, at = "ping", r.LastPingAt
+	}
+	if at.IsZero() {
+		return "none yet"
+	}
+	return kind + " " + humanAgo(now.Sub(at))
+}
+
+func humanAgo(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return strconv.Itoa(int(d/time.Minute)) + " min ago"
+	case d < 48*time.Hour:
+		return strconv.Itoa(int(d/time.Hour)) + " h ago"
+	}
+	return strconv.Itoa(int(d/(24*time.Hour))) + " days ago"
 }

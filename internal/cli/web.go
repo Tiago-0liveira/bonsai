@@ -49,6 +49,7 @@ type webCLI struct {
 	out, errOut io.Writer
 	home        string
 	configPath  string
+	statePath   string
 	client      *client.Client
 	openURL     func(string) error
 	tty         bool
@@ -73,10 +74,15 @@ func newWebCLI(in io.Reader, out, errOut io.Writer) (*webCLI, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot locate the bonsai web settings: %w", err)
 	}
+	statePath, err := config.WebStatePath()
+	if err != nil {
+		return nil, fmt.Errorf("cannot locate the bonsai web state: %w", err)
+	}
 	return &webCLI{
 		in: in, out: out, errOut: errOut,
 		home:       home,
 		configPath: configPath,
+		statePath:  statePath,
 		client:     client.ForUserHome(home),
 		openURL:    browser.Open,
 		tty:        isTTY(in) && isTTY(out),
@@ -423,7 +429,11 @@ func (w *webCLI) printAccess(cfg config.WebConfig, group *procstore.ServeGroup) 
 	} else if group.BrowserOrigin != "" {
 		fmt.Fprintf(w.out, "  hosted    %s/app\n", group.BrowserOrigin)
 	}
-	fmt.Fprintf(w.out, "  updates   %s\n", webUpdatesText(cfg, group))
+	live := w.liveState(cfg)
+	fmt.Fprintf(w.out, "  updates   %s\n", webUpdatesText(cfg, group, live))
+	if cfg.Updates.Mode == config.WebUpdatesLive && group.WebhookPort != 0 {
+		fmt.Fprintf(w.out, "  public    %s\n", livePublicText(live))
+	}
 }
 
 func localWebOrigin(port int) string { return "http://127.0.0.1:" + strconv.Itoa(port) }
@@ -464,9 +474,9 @@ func runningAPIVersion(port int) string {
 	return body.Version
 }
 
-func webUpdatesText(cfg config.WebConfig, group *procstore.ServeGroup) string {
+func webUpdatesText(cfg config.WebConfig, group *procstore.ServeGroup, live config.WebLiveState) string {
 	if cfg.Updates.Mode == config.WebUpdatesLive {
-		return liveUpdatesText(cfg, group)
+		return liveUpdatesText(cfg, group, live)
 	}
 	return "standard (every ~" + humanInterval(localapi.StandardUpdateInterval) + ")"
 }
@@ -517,7 +527,13 @@ func (w *webCLI) status() error {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", process.Name, process.State, process.PID, address)
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if cfg.Updates.Mode == config.WebUpdatesLive {
+		return w.printLiveRepositories(cfg, w.liveState(cfg))
+	}
+	return nil
 }
 
 func (w *webCLI) open() error {
