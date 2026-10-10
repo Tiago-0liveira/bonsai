@@ -18,6 +18,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
+	gh "github.com/Tiago-0liveira/bonsai/internal/git/github"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	"github.com/gorilla/websocket"
 )
@@ -378,9 +379,9 @@ func TestPollProvidersFavoursTheVisibleProject(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	syncer.now = func() time.Time { return now }
 	syncer.ReconcileCatalog()
+	syncer.SetFocus(2, "not-discovered-yet")
 	syncer.SetFocus(1, "visible")
-	syncer.SetFocus(2, "unknown-project")
-	if visible := syncer.visibleProjects(); len(visible) != 1 || !visible["visible"] {
+	if visible := syncer.visibleProjects(); len(visible) != 2 || !visible["visible"] || !visible["not-discovered-yet"] {
 		t.Fatalf("visible = %v", visible)
 	}
 	if syncer.priorityID() != "visible" {
@@ -485,11 +486,15 @@ func TestEventSocketFocusFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, focused("focus-project"))
-	// Unknown projects count as nothing in view.
-	if err := conn.WriteJSON(websocketFocus{Type: "focus", ActiveProject: "not-a-project"}); err != nil {
+	// A project the server has not discovered yet is kept: the browser will not
+	// send it again once it appears.
+	if err := conn.WriteJSON(websocketFocus{Type: "focus", ActiveProject: "not-discovered-yet"}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, focused(""))
+	waitFor(t, focused("not-discovered-yet"))
+	if s.stateSync.priorityID() != "focus-project" {
+		t.Fatalf("an unknown project became the priority project: %q", s.stateSync.priorityID())
+	}
 
 	// Oversized frames close the socket, and the subscriber's focus goes away.
 	if err := conn.WriteJSON(websocketFocus{Type: "focus", ActiveProject: "focus-project"}); err != nil {
@@ -505,4 +510,88 @@ func TestEventSocketFocusFrames(t *testing.T) {
 		}
 	}
 	waitFor(t, focused(""))
+}
+
+// A focused project that the registry discovers only later is polled at the
+// visible cadence from then on.
+func TestFocusOnAProjectDiscoveredLater(t *testing.T) {
+	registry := &syncTestRegistry{entries: map[string]projectServices{}}
+	syncer := newStateSync(registry, newEventHub())
+	now := time.Unix(1_000_000, 0)
+	syncer.now = func() time.Time { return now }
+	syncer.SetFocus(1, "late")
+	registry.mu.Lock()
+	registry.entries["late"] = projectServices{info: ProjectInfo{ID: "late", Available: true}, github: &syncTestGitHub{}}
+	registry.mu.Unlock()
+	syncer.ReconcileCatalog()
+	syncer.mu.Lock()
+	syncer.jobLocked("late").providerStartedAt = now.Add(-31 * time.Second)
+	syncer.mu.Unlock()
+	syncer.pollProviders()
+	waitFor(t, func() bool {
+		syncer.mu.Lock()
+		defer syncer.mu.Unlock()
+		return syncer.jobLocked("late").providerStartedAt.Equal(now)
+	})
+}
+
+// A low rate limit annotates freshness but must not stop a catalog that is
+// still paging.
+func TestLowRateLimitKeepsPagingThePRCatalog(t *testing.T) {
+	h := newProviderHarness(t, staticToken("tok-pages"))
+	h.api.remaining = 100
+	syncer := h.syncer
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	syncer.mu.Lock()
+	syncer.runCtx = ctx
+	syncer.mu.Unlock()
+	// Leave the catalog mid-scan, as a repository with more than
+	// prPagesPerJob pages would after one job.
+	paging := &pagingGitHub{Service: h.shared.Service(t.TempDir())}
+	registry := syncer.registry.(*syncTestRegistry)
+	registry.mu.Lock()
+	project := registry.entries[h.projectID]
+	project.github = paging
+	registry.entries[h.projectID] = project
+	registry.mu.Unlock()
+
+	syncer.refreshProvider(h.projectID, false)
+	snapshot := h.snapshot(t)
+	if provider := snapshot.Freshness["provider"]; provider.Error == nil || provider.Error.Code != "rate_limited" || snapshot.Remote == nil || !snapshot.Remote.PRCatalogLoading {
+		t.Fatalf("expected a loading catalog with a rate-limit note: %+v %+v", provider, snapshot.Remote)
+	}
+	waitFor(t, func() bool {
+		syncer.mu.Lock()
+		defer syncer.mu.Unlock()
+		return syncer.jobLocked(h.projectID).providerStartedAt.Equal(*h.now)
+	})
+}
+
+// pagingGitHub reports one more PR page than it ever serves, so every catalog
+// job ends mid-scan.
+type pagingGitHub struct {
+	*ghcli.Service
+}
+
+func (p *pagingGitHub) PullRequestPage(ctx context.Context, repo string, f gh.PRFilter, page int) (gh.PullRequestPage, error) {
+	batch, err := p.Service.PullRequestPage(ctx, repo, f, 1)
+	batch.NextPage = page + 1
+	return batch, err
+}
+
+func TestRateLimitResetOnlyExplainsTheCoreWindow(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	limited := browserFreshness{State: "stale", Error: &browserStateError{Code: "rate_limited", Message: "secondary rate limit"}}
+	healthy := ghcli.Rate{Limit: 5000, Remaining: 4000, Reset: now.Add(55 * time.Minute)}
+	if got := withRateLimit(limited, healthy, true, now); got.Error.ResetAt != nil {
+		t.Fatalf("a secondary limit got the core reset time: %v", got.Error.ResetAt)
+	}
+	low := ghcli.Rate{Limit: 5000, Remaining: 0, Reset: now.Add(5 * time.Minute)}
+	if got := withRateLimit(limited, low, true, now); got.Error.ResetAt == nil || !got.Error.ResetAt.Equal(low.Reset) {
+		t.Fatalf("core exhaustion lost its reset time: %+v", got.Error)
+	}
+	if limited.Error.ResetAt != nil {
+		t.Fatal("withRateLimit mutated its input")
+	}
 }

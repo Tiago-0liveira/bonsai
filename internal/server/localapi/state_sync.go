@@ -247,18 +247,19 @@ func (s *stateSync) RefreshAll(scope refreshScope, forceProvider bool) {
 	}
 }
 
-// SetFocus records the project subscriber has in view. An unknown project
-// counts as none. A named project also becomes the priority project.
+// SetFocus records the project subscriber has in view. The ID is kept even
+// when no such project is known yet (a root may still be scanning); it counts
+// once the project appears, since the browser does not send it again. A known
+// project also becomes the priority project.
 func (s *stateSync) SetFocus(subscriber int, projectID string) {
-	if projectID != "" {
-		if _, ok := s.registry.Lookup(projectID); !ok {
-			projectID = ""
-		}
+	if len(projectID) > 256 {
+		projectID = ""
 	}
+	_, known := s.registry.Lookup(projectID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.focus[subscriber] = projectID
-	if projectID != "" {
+	if projectID != "" && known {
 		s.priorityProject = projectID
 	}
 }

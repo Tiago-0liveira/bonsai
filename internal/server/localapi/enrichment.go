@@ -298,7 +298,8 @@ func githubRate(service githubdomain.GitHubService) (ghcli.Rate, bool) {
 }
 
 // withRateLimit reports a nearly exhausted GitHub rate limit on otherwise
-// healthy provider freshness, and adds the reset time to a rate_limited error.
+// healthy provider freshness, and adds the core window's reset time to a
+// rate_limited error caused by that window.
 // The freshness state is left alone: the data itself is as fresh as it says.
 func withRateLimit(freshness browserFreshness, rate ghcli.Rate, known bool, now time.Time) browserFreshness {
 	if !known || rate.Reset.IsZero() {
@@ -306,7 +307,10 @@ func withRateLimit(freshness browserFreshness, rate ghcli.Rate, known bool, now 
 	}
 	reset := rate.Reset
 	if freshness.Error != nil {
-		if freshness.Error.Code == "rate_limited" && reset.After(now) {
+		// The core window's reset only explains a rate_limited error when that
+		// window is what ran out; a secondary (Retry-After) or GraphQL limit
+		// resets on its own schedule, which the core headers do not carry.
+		if freshness.Error.Code == "rate_limited" && rate.Low() && reset.After(now) {
 			e := *freshness.Error
 			e.ResetAt = &reset
 			freshness.Error = &e
@@ -403,6 +407,9 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	ctx, cancel := s.readContext(providerReadTimeout)
 	defer cancel()
 	remote, providerFreshness := s.providers.repository(ctx, project.github, identity.FullName, s.now(), force)
+	// The catalog continues only after a successful read; a rate-limit note on
+	// a successful read must not stop it.
+	readOK := providerFreshness.Error == nil
 	rate, rateKnown := githubRate(project.github)
 	providerFreshness = withRateLimit(providerFreshness, rate, rateKnown, s.now())
 	if remote == nil {
@@ -517,7 +524,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.WorktreeState = maps.Clone(states)
 	})
-	if remote.PRCatalogLoading && providerFreshness.Error == nil {
+	if remote.PRCatalogLoading && readOK {
 		go func() {
 			ctx, cancel := s.readContext(2 * time.Second)
 			defer cancel()

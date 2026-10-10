@@ -478,10 +478,15 @@ a keep-alive HTTP/2 transport, the ETag cache and the rate-limit view;
 bench.
 - Token: `gh auth token --hostname <host>` (stdout, never argv), in memory
   only. It is reused for 10 min and then re-read **in the background**, so no
-  request ever waits on the gh process after the first. A `401` forces one
-  synchronous re-read and one retry. Failures are cached for 30 s.
+  request ever waits on the gh process after the first. A background read
+  replaces the token only with a new token or a definitive login failure (a
+  timeout or keyring hiccup keeps the working one), and a read that started
+  before a newer one never overwrites it. A `401` forces one synchronous
+  re-read and one retry. Failures are cached for 30 s.
 - `Authorization` is attached only to the exact scheme and authority of a
-  known API base; anything else is refused before it is sent.
+  known API base; anything else is refused before it is sent. Reads follow
+  redirects within that API host, as `gh api` did (a renamed or transferred
+  repository answers `301`); mutations and cross-host redirects never do.
 - ETag cache: raw body per host + URL + Accept, keyed to a token fingerprint,
   LRU-bounded at 32 MiB. A `304` is answered from it with an internal marker
   that `PullRequestPage.NotModified` exposes.
@@ -512,8 +517,8 @@ bench.
 | Plan said | Reality | Resolution |
 | --- | --- | --- |
 | "GHES and `GH_HOST` keep working" | The web sync path never supported them: `sanitizeRemoteIdentity` sets `FullName` only for `github.com`, so a GHES remote already showed "No supported provider remote", and `gh api` picked its host from `GH_HOST` or the default login, not the remote. | No behaviour change. The transport is host-aware (`api.github.com` ↔ `github.com`, `<host>/api/v3` and `<host>/api/graphql` for GHES, with the token per host), so enabling GHES is an identity change only. Follow-up. `GH_TOKEN`/`GH_ENTERPRISE_TOKEN` still work because `gh auth token` returns them. The TUI (`internal/core/gh`) is unchanged. |
-| "Visible project" | The server only learned the active project in `authenticate`. | An optional client frame `{"type":"focus","active_project":"<id>"\|""}`, sent on project change and on `visibilitychange` (hidden = `""`). Old servers already read and dropped post-auth frames; old clients never send it. No `LOCAL_API_PROTOCOL_VERSION` bump. Client frames are now capped at 4 KiB, authenticate included. A focus frame also updates the priority project. |
-| `rate_limited` / `github_auth` "states" | Freshness states are a fixed enum (`loading`, `ready`, `stale`, `error`, `unavailable`). | They are `error.code` values on `freshness.provider`. `error` gains an optional `reset_at`. Auth failures make the provider `error` (or `stale` with data), and local freshness is untouched. A low rate limit keeps `ready` and adds the code. The PR panel already shows `error.message`, which names the fix. |
+| "Visible project" | The server only learned the active project in `authenticate`. | An optional client frame `{"type":"focus","active_project":"<id>"\|""}`, sent on project change and on `visibilitychange` (hidden = `""`). Old servers already read and dropped post-auth frames; old clients never send it. No `LOCAL_API_PROTOCOL_VERSION` bump. Client frames are now capped at 4 KiB, authenticate included. A focus frame for a known project also updates the priority project. An ID the server has not discovered yet is kept and counts once the project appears, because the page does not send it again. |
+| `rate_limited` / `github_auth` "states" | Freshness states are a fixed enum (`loading`, `ready`, `stale`, `error`, `unavailable`). | They are `error.code` values on `freshness.provider`. `error` gains an optional `reset_at`. Auth failures make the provider `error` (or `stale` with data), and local freshness is untouched. A low rate limit keeps `ready` and adds the code, and does not stop a PR catalog that is still paging. `reset_at` is the core window's reset, so it is set only when that window is what ran out; a secondary (`Retry-After`) limit gets none. The PR panel already shows `error.message`, which names the fix. |
 | ETag cache stores "the decoded body" | Decoding lives in `app.Client`. | The transport stores the raw body and it is decoded again on `304` (well under 1 ms). |
 | Optional cold-load GraphQL query (D7) | `statusCheckRollup` does not match `checksRollup` semantics (a rail), and the three REST reads already overlap on one connection. | Deferred (Phase 7 candidate, when there is a persisted snapshot to compare against). No exit criterion depends on it. |
 | `gh` spawns ≤ 2 per cold load | | 1: the startup token read. The bench prewarms the same way before its timer; `--no-prewarm` measures a cold process instead. |
@@ -557,7 +562,9 @@ alternately on the same repository state)
 - `TestGitHubTokenNeverLeaks`
 - `TestNextProviderPoll`
 - `TestPollProvidersFavoursTheVisibleProject`
-- `TestEventSocketFocusFrames`
+- `TestEventSocketFocusFrames`, `TestFocusOnAProjectDiscoveredLater`
+- `TestLowRateLimitKeepsPagingThePRCatalog`,
+  `TestRateLimitResetOnlyExplainsTheCoreWindow`
 
 ---
 

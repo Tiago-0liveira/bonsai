@@ -298,3 +298,65 @@ func mustURL(raw string) *url.URL {
 	}
 	return u
 }
+
+// Renamed repositories answer 301; reads follow it within the API host, as
+// `gh api` did. Mutations and other hosts never follow one.
+func TestRedirectsAreFollowedOnlyForReadsOnTheSameHost(t *testing.T) {
+	var foreignAuth string
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		foreignAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"id":9,"full_name":"evil/repo"}`))
+	}))
+	defer foreign.Close()
+	var mu sync.Mutex
+	var methods []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("X-RateLimit-Remaining", "4000")
+		switch r.URL.Path {
+		case "/repos/acme/old":
+			http.Redirect(w, r, "/repositories/1", http.StatusMovedPermanently)
+		case "/repos/acme/elsewhere":
+			http.Redirect(w, r, foreign.URL+"/repositories/1", http.StatusMovedPermanently)
+		case "/repositories/1":
+			if r.Header.Get("Authorization") != "Bearer tok-1" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/new","default_branch":"main"}`))
+		case "/repos/acme/old/pulls/1":
+			http.Redirect(w, r, "/repositories/1/pulls/1", http.StatusMovedPermanently)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+	shared := NewShared()
+	shared.SetAPIBase(DefaultHost, api.URL)
+	shared.SetTokenRunner((&fakeTokens{tokens: []string{"tok-1"}}).run)
+	service := shared.Service(t.TempDir())
+
+	repo, err := service.Repository(context.Background(), "acme/old")
+	if err != nil || repo.FullName != "acme/new" {
+		t.Fatalf("renamed repository: %+v %v", repo, err)
+	}
+	if _, err := service.Repository(context.Background(), "acme/elsewhere"); err == nil {
+		t.Fatal("followed a redirect to another host")
+	}
+	if foreignAuth != "" {
+		t.Fatal("token sent to the redirect target on another host")
+	}
+	mu.Lock()
+	methods = nil
+	mu.Unlock()
+	if err := service.ClosePullRequest(context.Background(), "acme/old", 1); err == nil {
+		t.Fatal("mutation followed a redirect")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(methods) != 1 || methods[0] != "PATCH /repos/acme/old/pulls/1" {
+		t.Fatalf("mutation requests = %v", methods)
+	}
+}

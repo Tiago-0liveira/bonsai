@@ -29,6 +29,9 @@ type Shared struct {
 
 	mu    sync.Mutex
 	bases map[string]string
+	// authorities maps "scheme://host" of each configured API base to its gh
+	// host, so tokenHost is a lookup.
+	authorities map[string]string
 }
 
 func NewShared() *Shared {
@@ -41,6 +44,9 @@ func NewShared() *Shared {
 		cache:  newETagCache(etagCacheBytes),
 		rates:  newRateTracker(),
 		bases:  map[string]string{},
+		authorities: map[string]string{
+			"https://api.github.com": DefaultHost,
+		},
 	}
 }
 
@@ -54,9 +60,22 @@ func (s *Shared) SetTokenRunner(run TokenRunner) {
 
 // SetAPIBase points host's REST API at baseURL (tests and GHES overrides).
 func (s *Shared) SetAPIBase(host, baseURL string) {
+	baseURL = strings.TrimRight(baseURL, "/")
 	s.mu.Lock()
-	s.bases[host] = strings.TrimRight(baseURL, "/")
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	for authority, owner := range s.authorities {
+		if owner == host {
+			delete(s.authorities, authority)
+		}
+	}
+	s.bases[host] = baseURL
+	if u, err := url.Parse(baseURL); err == nil {
+		s.authorities[authority(u)] = host
+	}
+}
+
+func authority(u *url.URL) string {
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 }
 
 func (s *Shared) apiBase(host string) string {
@@ -76,19 +95,10 @@ func (s *Shared) apiBase(host string) string {
 // token never goes anywhere else.
 func (s *Shared) tokenHost(u *url.URL) (string, bool) {
 	s.mu.Lock()
-	bases := make(map[string]string, len(s.bases)+1)
-	for host, base := range s.bases {
-		bases[host] = base
-	}
+	host, ok := s.authorities[authority(u)]
 	s.mu.Unlock()
-	if _, ok := bases[DefaultHost]; !ok {
-		bases[DefaultHost] = "https://api.github.com"
-	}
-	for host, base := range bases {
-		b, err := url.Parse(base)
-		if err == nil && strings.EqualFold(u.Scheme, b.Scheme) && strings.EqualFold(u.Host, b.Host) {
-			return host, true
-		}
+	if ok {
+		return host, true
 	}
 	if strings.EqualFold(u.Scheme, "https") && (strings.HasPrefix(u.Path, "/api/v3/") || u.Path == "/api/graphql") {
 		return strings.ToLower(u.Hostname()), true
@@ -118,12 +128,7 @@ func (s *Shared) Prewarm(ctx context.Context, host string) {
 		return
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	client := &http.Client{
-		Transport:     &httpTransport{shared: s},
-		Timeout:       30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	resp, err := client.Do(req)
+	resp, err := s.client(transport{}).Do(req)
 	if err != nil {
 		return
 	}
@@ -136,12 +141,37 @@ func (s *Shared) Prewarm(ctx context.Context, host string) {
 func (s *Shared) Service(dir string) *Service {
 	c := app.New(tokens{})
 	c.BaseURL = s.apiBase(DefaultHost)
-	c.HTTP = &http.Client{
-		Transport:     &httpTransport{shared: s, cli: transport{Dir: dir}},
-		Timeout:       30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	c.HTTP = s.client(transport{Dir: dir})
 	return &Service{Client: c, shared: s, host: DefaultHost}
+}
+
+// maxRedirects bounds the redirects followed for one read.
+const maxRedirects = 5
+
+// client is the HTTP client every in-process GitHub request uses. cli is the
+// `gh api` fallback; a zero value disables it.
+//
+// Reads follow redirects within the same API host, as `gh api` did: GitHub
+// answers a renamed or transferred repository with a 301 to its new
+// location. Mutations never follow one (Go would replay a POST as a GET),
+// and nothing follows a redirect to another host.
+func (s *Shared) client(cli transport) *http.Client {
+	return &http.Client{
+		Transport: &httpTransport{shared: s, cli: cli},
+		Timeout:   30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			first := via[0]
+			if len(via) > maxRedirects || (first.Method != http.MethodGet && first.Method != http.MethodHead) {
+				return http.ErrUseLastResponse
+			}
+			from, ok := s.tokenHost(first.URL)
+			to, sameHost := s.tokenHost(req.URL)
+			if !ok || !sameHost || from != to {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
 }
 
 // DefaultHost is the only host repository identities resolve to today; see

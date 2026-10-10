@@ -179,3 +179,100 @@ func TestTokenErrorsNeverContainTheToken(t *testing.T) {
 		t.Fatal("gh stderr leaked into the error")
 	}
 }
+
+// A background refresh that times out or fails transiently keeps the working
+// token; only a definitive login failure replaces it.
+func TestBackgroundRefreshFailuresKeepTheWorkingToken(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		stderr string
+		keep   bool
+	}{
+		{name: "timeout", err: context.DeadlineExceeded, keep: true},
+		{name: "unknown failure", err: errors.New("exit status 1"), stderr: "keyring locked", keep: true},
+		{name: "logged out", err: errors.New("exit status 1"), stderr: "no oauth token found for github.com", keep: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			f := &fakeTokens{tokens: []string{"tok-1"}}
+			s := newTestTokenSource(f, &now)
+			if token, _ := s.Token(context.Background(), "github.com"); token != "tok-1" {
+				t.Fatal(token)
+			}
+			f.mu.Lock()
+			f.err, f.stderr = test.err, test.stderr
+			f.mu.Unlock()
+			now = now.Add(tokenTTL + time.Second)
+			if token, _ := s.Token(context.Background(), "github.com"); token != "tok-1" {
+				t.Fatal("expired token not served while refreshing")
+			}
+			waitRefreshed(t, s, "github.com")
+			token, err := s.Token(context.Background(), "github.com")
+			if test.keep && (token != "tok-1" || err != nil) {
+				t.Fatalf("Token = %q, %v; want the working token", token, err)
+			}
+			if !test.keep && (token != "" || domain.Code(err) != "github_auth") {
+				t.Fatalf("Token = %q, %v; want github_auth", token, err)
+			}
+		})
+	}
+}
+
+// A background read that started before a 401-forced re-read must not
+// overwrite the newer token when it finishes later.
+func TestStaleBackgroundRefreshDoesNotOverwriteANewerToken(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f := &fakeTokens{tokens: []string{"tok-1"}}
+	s := newTestTokenSource(f, &now)
+	if token, _ := s.Token(context.Background(), "github.com"); token != "tok-1" {
+		t.Fatal(token)
+	}
+	// The background read will return the pre-rotation token, late.
+	gate, started := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	s.mu.Lock()
+	s.run = func(ctx context.Context, host string) ([]byte, []byte, error) {
+		first := false
+		once.Do(func() { first = true })
+		if first {
+			close(started)
+			<-gate
+			return []byte("tok-old"), nil, nil
+		}
+		return []byte("tok-new"), nil, nil
+	}
+	s.mu.Unlock()
+	now = now.Add(tokenTTL + time.Second)
+	_, _ = s.Token(context.Background(), "github.com") // starts the background read
+	<-started
+	s.Invalidate("github.com", "tok-1") // a 401
+	if token, _ := s.Token(context.Background(), "github.com"); token != "tok-new" {
+		t.Fatalf("forced read = %q", token)
+	}
+	close(gate)
+	time.Sleep(20 * time.Millisecond)
+	if token, _ := s.Token(context.Background(), "github.com"); token != "tok-new" {
+		t.Fatalf("stale background read replaced the token with %q", token)
+	}
+	now = now.Add(tokenTTL + time.Second)
+	_, _ = s.Token(context.Background(), "github.com")
+	waitRefreshed(t, s, "github.com")
+}
+
+func waitRefreshed(t *testing.T, s *TokenSource, host string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		s.mu.Lock()
+		refreshing := s.entries[host].refreshing
+		s.mu.Unlock()
+		if !refreshing {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background refresh never finished")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

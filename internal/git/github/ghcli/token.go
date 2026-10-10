@@ -60,6 +60,8 @@ type tokenEntry struct {
 	refreshing bool
 	// forced makes the next Token call wait for gh (after a 401).
 	forced bool
+	// gen numbers reads of gh; only the latest read may store its result.
+	gen uint64
 }
 
 // TokenSource reads the gh login's token on demand and keeps it in memory
@@ -106,19 +108,22 @@ func (s *TokenSource) Token(ctx context.Context, host string) (string, error) {
 			token := entry.token
 			if !entry.refreshing {
 				entry.refreshing = true
-				go s.refresh(host, entry)
+				entry.gen++
+				go s.refresh(host, entry, entry.gen)
 			}
 			s.mu.Unlock()
 			return token, nil
 		}
 		entry.wait = make(chan struct{})
+		entry.gen++
 		run := s.run
 		s.mu.Unlock()
 
 		token, status, err := readToken(ctx, run, host)
 
 		s.mu.Lock()
-		entry.token, entry.err, entry.status, entry.forced = token, err, status, false
+		// Any background read still running is older than this one.
+		entry.token, entry.err, entry.status, entry.forced, entry.refreshing = token, err, status, false, false
 		switch {
 		case err == nil:
 			entry.expires = s.now().Add(tokenTTL)
@@ -146,7 +151,10 @@ func (s *TokenSource) Invalidate(host, token string) {
 	}
 }
 
-func (s *TokenSource) refresh(host string, entry *tokenEntry) {
+// refresh replaces an expired working token in the background. Only a new
+// token or a definitive login failure replaces it: a timeout, a hung keyring
+// or an old gh keeps the working token until the next attempt.
+func (s *TokenSource) refresh(host string, entry *tokenEntry, gen uint64) {
 	s.mu.Lock()
 	run := s.run
 	s.mu.Unlock()
@@ -155,20 +163,25 @@ func (s *TokenSource) refresh(host string, entry *tokenEntry) {
 	token, status, err := readToken(ctx, run, host)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entry.refreshing = false
-	if s.entries[host] != entry || entry.wait != nil || entry.forced {
-		// A synchronous read owns the entry now.
+	if s.entries[host] != entry {
 		return
 	}
-	if err != nil && errors.Is(err, errUseCLI) {
-		// Keep the working token rather than dropping to gh api.
-		entry.expires = s.now().Add(tokenFailureTTL)
+	if entry.gen == gen {
+		entry.refreshing = false
+	}
+	if entry.gen != gen || entry.wait != nil || entry.forced {
+		// A later read (or a 401 that asked for one) owns the entry; this
+		// result may predate a token rotation.
 		return
 	}
-	entry.token, entry.err, entry.status = token, err, status
-	if err == nil {
+	switch {
+	case err == nil:
+		entry.token, entry.err, entry.status = token, nil, status
 		entry.expires = s.now().Add(tokenTTL)
-	} else {
+	case domain.Code(err) == "github_auth":
+		entry.token, entry.err, entry.status = "", err, status
+		entry.expires = s.now().Add(tokenFailureTTL)
+	default:
 		entry.expires = s.now().Add(tokenFailureTTL)
 	}
 }
