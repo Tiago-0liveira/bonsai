@@ -198,7 +198,12 @@ func compareGolden(t *testing.T, name, got string) {
 		t.Fatalf("missing golden %s (run with -update): %v", path, err)
 	}
 	// A checkout with core.autocrlf rewrites the goldens with CRLF.
-	if string(bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))) != got {
+	want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))
+	// Normalize the golden like got, so a literal backslash (a regex) still matches.
+	if runtime.GOOS == "windows" {
+		want = bytes.ReplaceAll(want, []byte(`\`), []byte("/"))
+	}
+	if string(want) != got {
 		t.Errorf("%s differs from the golden file (run with -update to accept):\n--- got\n%s--- want\n%s", name, got, want)
 	}
 }
