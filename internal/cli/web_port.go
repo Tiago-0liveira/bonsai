@@ -33,6 +33,7 @@ type legacyServeGroup struct {
 	workspaceID string
 	workspace   string
 	mode        procstore.ServeMode
+	apiPort     int
 }
 
 func portFree(port int) bool {
@@ -44,11 +45,19 @@ func portFree(port int) bool {
 	return true
 }
 
+// inspectPort reports whether port is free and, if not, whether a per-repo
+// serve group owns it. The slower probes that only matter for the error
+// message (who else holds it) run later, in describePortOwner.
 func inspectPort(port int, webHome string) portUse {
 	if portFree(port) {
 		return portUse{free: true}
 	}
-	use := portUse{legacy: findLegacyServeGroup(port, webHome), bonsai: probeBonsaiAPI(port)}
+	return portUse{legacy: findLegacyServeGroup(port, webHome)}
+}
+
+// describePortOwner fills in who holds the port, for the failure message.
+func describePortOwner(port int, use portUse) portUse {
+	use.bonsai = probeBonsaiAPI(port)
 	use.owner, use.known = portowner.Find(port)
 	return use
 }
@@ -68,7 +77,7 @@ func (w *webCLI) preflightPort(port int) (webFailure, bool) {
 			return webFailure{}, true
 		}
 	}
-	return portFailure(port, use), false
+	return portFailure(port, describePortOwner(port, use)), false
 }
 
 func portFailure(port int, use portUse) webFailure {
@@ -140,42 +149,79 @@ func probeBonsaiAPI(port int) bool {
 	return resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&body) == nil && body.APIVersion > 0
 }
 
-// findLegacyServeGroup looks through every live per-repo daemon's persisted
-// serve groups for one whose API owns port.
+// findLegacyServeGroup looks through every live per-repo daemon for a serve
+// group whose API is running and really owns port. Persisted specs alone are
+// not trusted: a stale record must never get an unrelated group stopped.
 func findLegacyServeGroup(port int, webHome string) *legacyServeGroup {
 	daemons, err := procstore.ListDaemons()
 	if err != nil {
 		return nil
 	}
+	owner, ownerKnown := portowner.Owner{}, false
 	for _, d := range daemons {
 		if filepath.Clean(d.Root) == filepath.Clean(webHome) {
 			continue
 		}
-		dir := filepath.Join(procstore.New(d.Root).Dir(), "serve")
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		for _, g := range persistedServeGroups(d.Root) {
+			if g.apiPort != port {
 				continue
 			}
-			raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-			if err != nil {
+			group, err := client.For(d.Root).ServeStatus(g.workspaceID)
+			if err != nil || group == nil {
 				continue
 			}
-			var rt struct {
-				Spec procstore.ServeSpec `json:"spec"`
+			var api *procstore.ServeProcess
+			for i := range group.Processes {
+				if group.Processes[i].Name == "api" {
+					api = &group.Processes[i]
+				}
 			}
-			if json.Unmarshal(raw, &rt) != nil || rt.Spec.WorkspaceID == "" || rt.Spec.APIPort != port {
+			if api == nil || api.State != "ready" || api.PID <= 0 {
 				continue
 			}
-			mode := rt.Spec.Mode
-			if mode == "" {
-				mode = procstore.ServeModeProduction
+			if !ownerKnown {
+				owner, ownerKnown = portowner.Find(port)
 			}
-			return &legacyServeGroup{root: d.Root, workspaceID: rt.Spec.WorkspaceID, workspace: rt.Spec.WorkspacePath, mode: mode}
+			if ownerKnown && owner.PID != api.PID {
+				continue
+			}
+			found := g
+			return &found
 		}
 	}
 	return nil
+}
+
+// persistedServeGroups lists the serve groups a repository daemon has on disk.
+func persistedServeGroups(root string) []legacyServeGroup {
+	dir := filepath.Join(procstore.New(root).Dir(), "serve")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []legacyServeGroup
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var rt struct {
+			Spec procstore.ServeSpec `json:"spec"`
+		}
+		if json.Unmarshal(raw, &rt) != nil || rt.Spec.WorkspaceID == "" || rt.Spec.Scope != procstore.ServeScopeRepository {
+			continue
+		}
+		mode := rt.Spec.Mode
+		if mode == "" {
+			mode = procstore.ServeModeProduction
+		}
+		out = append(out, legacyServeGroup{
+			root: root, workspaceID: rt.Spec.WorkspaceID, workspace: rt.Spec.WorkspacePath,
+			mode: mode, apiPort: rt.Spec.APIPort,
+		})
+	}
+	return out
 }

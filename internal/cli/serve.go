@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -43,7 +42,12 @@ func cmdServe(args []string, in io.Reader, out, errOut io.Writer) error {
 	fmt.Fprintln(errOut, "bonsai serve is deprecated: use bonsai web (one local API for all your projects).")
 	if len(args) > 0 {
 		switch args[0] {
-		case "status", "attach", "logs", "restart", "stop":
+		case "stop":
+			// Groups started by bonsai serve before bonsai web existed live in
+			// this repository's daemon; stop them too so they are never stuck.
+			stopLegacyServeGroups(out, errOut)
+			return cmdWeb(args, in, out, errOut)
+		case "status", "attach", "logs", "restart":
 			return cmdWeb(args, in, out, errOut)
 		}
 	}
@@ -60,38 +64,72 @@ func cmdServe(args []string, in io.Reader, out, errOut io.Writer) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--api-port PORT]")
 	}
-	if *apiPort == 0 {
-		*apiPort = legacyServePort(errOut)
+	if *apiPort < 0 || *apiPort > 65535 {
+		return fmt.Errorf("--api-port must be between 1 and 65535")
 	}
 
-	webArgs := []string{"--no-open"}
-	if !detached {
-		webArgs = append(webArgs, "--attach")
-	}
+	opts := webStartOptions{attach: !detached, noOpen: true}
 	if *apiPort != 0 {
-		webArgs = append(webArgs, "--port", strconv.Itoa(*apiPort))
+		opts.port, opts.portFlag = *apiPort, true
 	}
-	return cmdWeb(webArgs, in, out, errOut)
+	if cfg := legacyServeConfig(errOut); cfg != nil {
+		// Only values that differ from the old defaults were chosen by the
+		// user; the defaults defer to the bonsai web settings.
+		if cfg.Serve.APIPort != config.DefaultWebAPIPort {
+			opts.preferredPort = cfg.Serve.APIPort
+		}
+		if cfg.Serve.StartupTimeout != 30 {
+			opts.startupTimeout = cfg.Serve.StartupTimeout
+		}
+		if cfg.Serve.ShutdownTimeout != 5 {
+			opts.shutdownTimeout = cfg.Serve.ShutdownTimeout
+		}
+	}
+	w, err := newWebCLI(in, out, errOut)
+	if err != nil {
+		return err
+	}
+	return w.start(opts)
 }
 
-// legacyServePort honours a repository's explicit serve.api_port when the
-// alias runs inside one. Zero means "use the bonsai web settings".
-func legacyServePort(errOut io.Writer) int {
+// legacyServeConfig loads the repository's .bonsai.yaml when the alias runs
+// inside one, warning about keys bonsai serve no longer reads.
+func legacyServeConfig(errOut io.Writer) *config.Config {
 	repoDir, err := git.MainRoot(".")
 	if err != nil {
-		return 0
+		return nil
 	}
 	cfg, err := config.LoadFor(repoDir)
 	if err != nil {
-		return 0
+		return nil
 	}
 	for _, key := range cfg.DeprecatedServeKeys {
 		fmt.Fprintf(errOut, "warning: %s is deprecated and ignored by normal bonsai serve; use the internal development stack instead\n", key)
 	}
-	if cfg.Serve.APIPort != config.DefaultWebAPIPort {
-		return cfg.Serve.APIPort
+	return cfg
+}
+
+// stopLegacyServeGroups stops every per-repo production serve group the
+// current repository's daemon still runs. Development stacks are left alone.
+func stopLegacyServeGroups(out, errOut io.Writer) {
+	repoDir, err := git.MainRoot(".")
+	if err != nil {
+		return
 	}
-	return 0
+	c := client.For(repoDir)
+	if _, err := c.Ping(); err != nil {
+		return // no daemon, no groups
+	}
+	for _, g := range persistedServeGroups(repoDir) {
+		if g.mode != procstore.ServeModeProduction {
+			continue
+		}
+		if err := c.ServeStop(g.workspaceID); err != nil {
+			fmt.Fprintf(errOut, "could not stop the per-repo local API of %s: %v\n", g.workspace, err)
+			continue
+		}
+		fmt.Fprintf(out, "✓ stopped the per-repo local API of %s\n", g.workspace)
+	}
 }
 
 func normalizedGroupMode(group *procstore.ServeGroup) procstore.ServeMode {

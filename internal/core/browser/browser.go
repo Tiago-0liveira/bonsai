@@ -3,7 +3,6 @@
 package browser
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -14,7 +13,11 @@ import (
 	"time"
 )
 
-const openTimeout = 10 * time.Second
+// launchGrace is how long a launcher gets to fail. Most hand the URL to the
+// running browser and exit at once; some (xdg-open falling back to $BROWSER)
+// stay attached to the browser, so one still running after the grace period
+// has succeeded and is left alone rather than killed.
+const launchGrace = 3 * time.Second
 
 // Open launches the platform URL handler for rawURL. Only http and https URLs
 // are accepted, so nothing else can reach a shell-like handler.
@@ -22,20 +25,31 @@ func Open(rawURL string) error {
 	if err := validate(rawURL); err != nil {
 		return err
 	}
-	candidates := Commands(runtime.GOOS, IsWSL(), rawURL)
+	return run(Commands(runtime.GOOS, IsWSL(), rawURL), launchGrace)
+}
+
+func run(candidates [][]string, grace time.Duration) error {
 	var errs []error
 	for _, argv := range candidates {
 		if _, err := exec.LookPath(argv[0]); err != nil {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-		err := cmd.Run()
-		cancel()
-		if err == nil {
-			return nil
+		cmd := exec.Command(argv[0], argv[1:]...)
+		if err := cmd.Start(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", argv[0], err))
+			continue
 		}
-		errs = append(errs, fmt.Errorf("%s: %w", argv[0], err))
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			if err == nil {
+				return nil
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", argv[0], err))
+		case <-time.After(grace):
+			return nil // still showing the page; not a failure
+		}
 	}
 	if len(errs) == 0 {
 		return errors.New("no browser launcher found")

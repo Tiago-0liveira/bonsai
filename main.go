@@ -24,20 +24,28 @@ import (
 func main() {
 	args := os.Args[1:]
 
-	// Hidden: `bonsai __daemon --repo <root>` runs the per-repo background daemon.
+	// Hidden: `bonsai __daemon --repo <root>` runs the per-repo background daemon,
+	// `bonsai __daemon --home <dir>` the user-level one behind `bonsai web`.
 	// Clients auto-start it detached; users never invoke it directly.
 	if len(args) >= 1 && args[0] == "__daemon" {
-		root := ""
+		root, home := "", ""
 		for i := 1; i < len(args); i++ {
 			if args[i] == "--repo" && i+1 < len(args) {
 				root = args[i+1]
 			}
+			if args[i] == "--home" && i+1 < len(args) {
+				home = args[i+1]
+			}
 		}
-		if root == "" {
-			fmt.Fprintln(os.Stderr, "bonsai: __daemon requires --repo <root>")
+		if (root == "") == (home == "") {
+			fmt.Fprintln(os.Stderr, "bonsai: __daemon requires exactly one of --repo <root> or --home <dir>")
 			os.Exit(1)
 		}
-		if err := server.Serve(root); err != nil {
+		serve := server.Serve
+		if home != "" {
+			root, serve = home, server.ServeUserHome
+		}
+		if err := serve(root); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai daemon:", err)
 			os.Exit(1)
 		}

@@ -72,6 +72,9 @@ func TestUpdateWebConfigRevisionAndValidation(t *testing.T) {
 	if _, err := UpdateWebConfig(path, 2, func(c *WebConfig) error { c.Updates.Live.WebhookPort = 7011; return nil }); err == nil {
 		t.Fatal("webhook port equal to api port accepted")
 	}
+	if _, err := UpdateWebConfig(path, 2, func(c *WebConfig) error { c.StartupTimeoutSeconds = 601; return nil }); err == nil {
+		t.Fatal("out-of-range startup timeout accepted")
+	}
 	got, exists, err := ReadWebConfig(path)
 	if err != nil || !exists || got.Revision != 2 || got.APIPort != 7011 {
 		t.Fatalf("rejected updates were persisted: %+v, %v", got, err)

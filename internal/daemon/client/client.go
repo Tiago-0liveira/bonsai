@@ -25,11 +25,19 @@ var ErrIncompatibleDaemon = errors.New("daemon protocol version mismatch")
 
 // Client is a connection factory for one repo's daemon.
 type Client struct {
-	store *procstore.Store
+	store    *procstore.Store
+	userHome bool
 }
 
 // For returns a client for the repo whose main worktree is root.
 func For(root string) *Client { return &Client{store: procstore.New(root)} }
+
+// ForUserHome returns a client for the user-level daemon (`bonsai web`) whose
+// home is dir. That daemon is auto-started with --home, so its root is never
+// rewritten to an enclosing Git repository.
+func ForUserHome(dir string) *Client {
+	return &Client{store: procstore.New(dir), userHome: true}
+}
 
 // Store exposes the underlying on-disk store (paths, records).
 func (c *Client) Store() *procstore.Store { return c.store }
@@ -134,7 +142,11 @@ func (c *Client) autostart() error {
 			return errors.New("cannot autostart daemon from test binary")
 		}
 	}
-	cmd := exec.Command(bin, "__daemon", "--repo", c.store.Root())
+	flag := "--repo"
+	if c.userHome {
+		flag = "--home"
+	}
+	cmd := exec.Command(bin, "__daemon", flag, c.store.Root())
 	// Fully detach: new session, no controlling terminal, stdio to /dev/null.
 	devnull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if devnull != nil {

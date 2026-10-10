@@ -1,8 +1,11 @@
 package browser
 
 import (
+	"os/exec"
 	"reflect"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestCommandsPerPlatform(t *testing.T) {
@@ -38,5 +41,27 @@ func TestOpenRejectsNonHTTP(t *testing.T) {
 		if err := Open(u); err == nil {
 			t.Fatalf("Open(%q) accepted", u)
 		}
+	}
+}
+
+func TestRunTreatsALingeringLauncherAsSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sleep/false")
+	}
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep not available")
+	}
+	start := time.Now()
+	if err := run([][]string{{"false"}, {"sleep", "5"}}, 200*time.Millisecond); err != nil {
+		t.Fatalf("lingering launcher reported as failure: %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("run waited for the launcher to exit")
+	}
+	if err := run([][]string{{"false"}}, time.Second); err == nil {
+		t.Fatal("failing launcher reported as success")
+	}
+	if err := run([][]string{{"bonsai-no-such-launcher"}}, time.Second); err == nil {
+		t.Fatal("missing launcher reported as success")
 	}
 }

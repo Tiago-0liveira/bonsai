@@ -40,6 +40,9 @@ type WebConfig struct {
 	OpenBrowser  bool          `json:"open_browser"`
 	Interfaces   WebInterfaces `json:"interfaces"`
 	Updates      WebUpdates    `json:"updates"`
+	// Zero means the daemon defaults (30 s to become ready, 5 s to stop).
+	StartupTimeoutSeconds  int `json:"startup_timeout_seconds,omitempty"`
+	ShutdownTimeoutSeconds int `json:"shutdown_timeout_seconds,omitempty"`
 }
 
 type WebInterfaces struct {
@@ -171,6 +174,9 @@ func (c WebConfig) Validate() error {
 	case WebUpdatesStandard, WebUpdatesLive:
 	default:
 		return fmt.Errorf("updates.mode must be %q or %q", WebUpdatesStandard, WebUpdatesLive)
+	}
+	if c.StartupTimeoutSeconds < 0 || c.StartupTimeoutSeconds > 600 || c.ShutdownTimeoutSeconds < 0 || c.ShutdownTimeoutSeconds > 600 {
+		return fmt.Errorf("startup/shutdown timeouts must be between 0 and 600 seconds")
 	}
 	if p := c.Updates.Live.WebhookPort; p != 0 && (p < 1 || p > 65535 || p == c.APIPort) {
 		return fmt.Errorf("updates.live.webhook_port %d must be a valid port different from api_port", p)

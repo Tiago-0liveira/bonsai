@@ -69,7 +69,7 @@ func TestInspectPortClassifiesListeners(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("APPDATA", t.TempDir())
 
-	foreign := inspectPort(port, t.TempDir())
+	foreign := describePortOwner(port, inspectPort(port, t.TempDir()))
 	if foreign.free || foreign.bonsai || foreign.legacy != nil {
 		t.Fatalf("raw listener = %+v", foreign)
 	}
@@ -84,7 +84,7 @@ func TestInspectPortClassifiesListeners(t *testing.T) {
 	}), ReadHeaderTimeout: time.Second}
 	go func() { _ = server.Serve(ln) }()
 	defer server.Close()
-	if use := inspectPort(port, t.TempDir()); !use.bonsai {
+	if use := describePortOwner(port, inspectPort(port, t.TempDir())); !use.bonsai {
 		t.Fatalf("bonsai API not recognised: %+v", use)
 	}
 	server.Close()

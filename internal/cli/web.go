@@ -64,7 +64,7 @@ func newWebCLI(in io.Reader, out, errOut io.Writer) (*webCLI, error) {
 		in: in, out: out, errOut: errOut,
 		home:       home,
 		configPath: configPath,
-		client:     client.For(home),
+		client:     client.ForUserHome(home),
 		openURL:    browser.Open,
 		tty:        isTTY(in) && isTTY(out),
 	}, nil
@@ -84,6 +84,12 @@ type webStartOptions struct {
 	noSetup  bool
 	port     int
 	portFlag bool // --port was given explicitly
+	// Set by the deprecated `bonsai serve` alias from a repository's
+	// .bonsai.yaml. A preferred port only applies when bonsai web is not
+	// already running; it never makes the shared stack fail.
+	preferredPort   int
+	startupTimeout  int
+	shutdownTimeout int
 }
 
 func cmdWeb(args []string, in io.Reader, out, errOut io.Writer) error {
@@ -146,11 +152,43 @@ func (w *webCLI) noArgs(name string, args []string, run func() error) error {
 
 // group returns the running web serve group, or nil when none exists. It
 // never starts the web daemon just to answer "nothing is running".
-func (w *webCLI) group() (*procstore.ServeGroup, error) {
+//
+// A web daemon left by another bonsai version (different daemon protocol)
+// only ever runs this stack. With replace set (start, stop) it is shut down,
+// processes included, and reported as absent; otherwise the caller is told
+// how to clear it.
+func (w *webCLI) group(replace bool) (*procstore.ServeGroup, error) {
 	if _, err := w.client.Ping(); err != nil {
 		return nil, nil
 	}
-	return w.client.ServeStatus(procstore.WebServeGroupID)
+	group, err := w.client.ServeStatus(procstore.WebServeGroupID)
+	if !errors.Is(err, client.ErrIncompatibleDaemon) {
+		return group, err
+	}
+	if !replace {
+		return nil, errors.New("bonsai web was started by a different bonsai version. Stop it with: bonsai web stop")
+	}
+	if err := w.client.Shutdown(true); err != nil {
+		return nil, fmt.Errorf("could not stop bonsai web from a different bonsai version: %w", err)
+	}
+	fmt.Fprintln(w.out, "Stopped bonsai web from a different bonsai version.")
+	return nil, nil
+}
+
+// settle waits while the group is still starting (another `bonsai web`, or
+// the daemon restarting a crashed API) so it is neither torn down nor
+// mistaken for a foreign program on the port.
+func (w *webCLI) settle(group *procstore.ServeGroup, timeout time.Duration) *procstore.ServeGroup {
+	deadline := time.Now().Add(timeout)
+	for group != nil && group.State == "starting" && time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+		next, err := w.client.ServeStatus(procstore.WebServeGroupID)
+		if err != nil {
+			return group
+		}
+		group = next
+	}
+	return group
 }
 
 func (w *webCLI) settings() (config.WebConfig, error) {
@@ -177,9 +215,18 @@ func (w *webCLI) start(opts webStartOptions) error {
 		port = opts.port
 	}
 
-	if group, err := w.group(); err != nil {
+	group, err := w.group(true)
+	if err != nil {
 		return err
-	} else if group != nil && group.State == "ready" {
+	}
+	group = w.settle(group, 30*time.Second)
+	if group != nil && group.State == "ready" && !opts.portFlag && opts.preferredPort != 0 && group.APIPort != opts.preferredPort {
+		fmt.Fprintf(w.errOut, "bonsai web is already running on port %d; serve.api_port %d from .bonsai.yaml is ignored.\n", group.APIPort, opts.preferredPort)
+		port = group.APIPort
+	} else if opts.preferredPort != 0 && !opts.portFlag {
+		port = opts.preferredPort
+	}
+	if group != nil && group.State == "ready" {
 		if group.APIPort != port {
 			return w.fail(webFailure{
 				headline: fmt.Sprintf("bonsai web is already running on port %d", group.APIPort),
@@ -206,15 +253,26 @@ func (w *webCLI) start(opts webStartOptions) error {
 	if err != nil {
 		return err
 	}
-	group, err := w.client.ServeStart(procstore.ServeSpec{
-		Mode:          procstore.ServeModeProduction,
-		Scope:         procstore.ServeScopeUser,
-		WorkspaceID:   procstore.WebServeGroupID,
-		WorkspacePath: w.home,
-		Executable:    executable,
-		APIPort:       port,
-		BrowserOrigin: hostedWebOrigin(),
-	})
+	spec := procstore.ServeSpec{
+		Mode:                   procstore.ServeModeProduction,
+		Scope:                  procstore.ServeScopeUser,
+		WorkspaceID:            procstore.WebServeGroupID,
+		WorkspacePath:          w.home,
+		Executable:             executable,
+		APIPort:                port,
+		BrowserOrigin:          hostedWebOrigin(),
+		StartupTimeoutSeconds:  firstPositive(opts.startupTimeout, cfg.StartupTimeoutSeconds),
+		ShutdownTimeoutSeconds: firstPositive(opts.shutdownTimeout, cfg.ShutdownTimeoutSeconds),
+	}
+	group, err = w.client.ServeStart(spec)
+	if err != nil && strings.Contains(err.Error(), "is already in use") {
+		// Something took the port between the preflight and the daemon's own
+		// check. Diagnose again; if that cleared it, try once more.
+		if failure, ok := w.preflightPort(port); !ok {
+			return w.fail(failure)
+		}
+		group, err = w.client.ServeStart(spec)
+	}
 	if err != nil {
 		// The daemon already stopped whatever it had started; make sure no
 		// half-started group survives a client-side surprise either.
@@ -222,6 +280,15 @@ func (w *webCLI) start(opts webStartOptions) error {
 		return w.fail(w.startFailure(port, err))
 	}
 	return w.started(cfg, opts, group, group.Reused)
+}
+
+func firstPositive(values ...int) int {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 func (w *webCLI) started(cfg config.WebConfig, opts webStartOptions, group *procstore.ServeGroup, reused bool) error {
@@ -284,7 +351,7 @@ func (w *webCLI) follow(group *procstore.ServeGroup) error {
 }
 
 func (w *webCLI) status() error {
-	group, err := w.group()
+	group, err := w.group(false)
 	if err != nil {
 		return err
 	}
@@ -312,7 +379,7 @@ func (w *webCLI) status() error {
 }
 
 func (w *webCLI) open() error {
-	group, err := w.group()
+	group, err := w.group(false)
 	if err != nil {
 		return err
 	}
@@ -327,7 +394,7 @@ func (w *webCLI) open() error {
 }
 
 func (w *webCLI) attach() error {
-	group, err := w.group()
+	group, err := w.group(false)
 	if err != nil {
 		return err
 	}
@@ -338,7 +405,7 @@ func (w *webCLI) attach() error {
 }
 
 func (w *webCLI) stop() error {
-	group, err := w.group()
+	group, err := w.group(true)
 	if err != nil {
 		return err
 	}
@@ -375,7 +442,7 @@ func (w *webCLI) restart(args []string) error {
 	if err != nil {
 		return err
 	}
-	group, err := w.group()
+	group, err := w.group(false)
 	if err != nil {
 		return err
 	}
@@ -423,7 +490,7 @@ func (w *webCLI) logs(args []string) error {
 		_, err := io.WriteString(w.out, chunk)
 		return err
 	}
-	group, err := w.group()
+	group, err := w.group(false)
 	if err != nil {
 		return err
 	}
@@ -529,18 +596,11 @@ var exitCodePattern = regexp.MustCompile(`\(exit (-?\d+)\)`)
 // startFailure turns a daemon ServeStart error into the failure block.
 func (w *webCLI) startFailure(port int, err error) webFailure {
 	text := strings.TrimSpace(err.Error())
-	if strings.Contains(text, "is already in use") {
-		// Lost a race with another program between the preflight and the
-		// daemon's own check; diagnose the port again.
-		if failure, ok := w.preflightPort(port); !ok {
-			return failure
-		}
-	}
 	if strings.Contains(text, "daemon did not start") {
 		return webFailure{
 			process: "daemon",
 			detail:  "the bonsai background daemon did not start",
-			fix:     "run it in the foreground to see why:  bonsai __daemon --repo " + w.home,
+			fix:     "run it in the foreground to see why:  bonsai __daemon --home " + w.home,
 		}
 	}
 	name, rest, scoped := strings.Cut(text, ": ")

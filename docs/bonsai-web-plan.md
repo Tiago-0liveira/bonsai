@@ -479,6 +479,7 @@ The blockers were all argument plumbing:
 | `localapi.New` required a repository | `RepoDir` is optional; without it there is no default project. |
 | The CLI derived workspace ID/path from `git.RepoRoot(".")` | Fixed group ID `web`; workspace path is the daemon home. |
 | The web home registers in the global daemon index | Kept: it shows up as `web` in `bonsai ps --all` / `daemon status --all`. |
+| `NewServer` canonicalizes its root with `git.MainRoot`, so a dotfiles repo in `~` would capture the home | `__daemon --home <dir>` / `client.ForUserHome` use the home verbatim. |
 
 Daemon home: `<user state dir>/bonsai/web`, where the user state dir is
 `$XDG_STATE_HOME` or `~/.local/state` (Linux), `~/Library/Application Support`
@@ -505,6 +506,15 @@ Daemon home: `<user state dir>/bonsai/web`, where the user state dir is
   so, and takes over. A development stack (`__serve-dev-stack`) is never
   stopped; it is diagnosed with its own fix.
 - `--no-setup` is accepted and has no effect until Phase 5.
+- `web.json` gained optional `startup_timeout_seconds` / `shutdown_timeout_seconds`
+  (0 = daemon defaults, 30 s / 5 s), replacing the per-repo `serve.*` timeouts.
+  The `bonsai serve` alias still honours non-default `serve.*` values from
+  `.bonsai.yaml`; its `serve.api_port` is only a preference and never fails a
+  `bonsai web` that is already running on another port.
+- `bonsai serve stop` also stops any per-repo production serve group left in
+  the current repository's daemon.
+- A web daemon from another bonsai version (daemon protocol mismatch) is
+  replaced by `bonsai web` and `bonsai web stop`; other subcommands say so.
 
 **Exit criteria**
 - `cd /tmp && bonsai web` starts, prints the summary, exits 0 and leaves the
