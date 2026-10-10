@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -32,79 +31,21 @@ func hostedWebURL() string {
 	return hostedWebOrigin() + "/app"
 }
 
-func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer) error {
-	action := "start"
+// cmdServe is the deprecated `bonsai serve`. It used to start a local API per
+// repository; it now drives the single user-level `bonsai web` stack, which
+// serves every configured project and reaches the same healthy end state.
+//
+//	bonsai serve                 → bonsai web --attach --no-open
+//	bonsai serve -d              → bonsai web --no-open
+//	bonsai serve --api-port N    → … --port N
+//	bonsai serve status|attach|logs|restart|stop → bonsai web <same>
+func cmdServe(args []string, in io.Reader, out, errOut io.Writer) error {
+	fmt.Fprintln(errOut, "bonsai serve is deprecated: use bonsai web (one local API for all your projects).")
 	if len(args) > 0 {
 		switch args[0] {
 		case "status", "attach", "logs", "restart", "stop":
-			action, args = args[0], args[1:]
+			return cmdWeb(args, in, out, errOut)
 		}
-	}
-
-	workspace, err := git.RepoRoot(".")
-	if err != nil {
-		return err
-	}
-	workspace, err = filepath.Abs(workspace)
-	if err != nil {
-		return err
-	}
-	workspaceID := serveWorkspaceID(workspace)
-	c := client.For(repoDir)
-
-	switch action {
-	case "status":
-		if len(args) != 0 {
-			return fmt.Errorf("usage: bonsai serve status")
-		}
-		group, err := serveGroupForMode(c, workspaceID, procstore.ServeModeProduction)
-		if err != nil {
-			return err
-		}
-		return printServeStatus(out, group)
-
-	case "attach":
-		if len(args) != 0 {
-			return fmt.Errorf("usage: bonsai serve attach")
-		}
-		group, err := requireServeGroupMode(c, workspaceID, procstore.ServeModeProduction)
-		if err != nil {
-			return err
-		}
-		return runServeTUI(in, out, c, group)
-
-	case "logs":
-		return cmdServeLogsForMode(c, workspaceID, procstore.ServeModeProduction, "bonsai serve", args, out, errOut)
-
-	case "stop":
-		if len(args) != 0 {
-			return fmt.Errorf("usage: bonsai serve stop")
-		}
-		if _, err := requireServeGroupMode(c, workspaceID, procstore.ServeModeProduction); err != nil {
-			return err
-		}
-		if err := c.ServeStop(workspaceID); err != nil {
-			return err
-		}
-		fmt.Fprintln(out, "local API stopped")
-		return nil
-
-	case "restart":
-		if len(args) > 1 || (len(args) == 1 && args[0] != "api") {
-			return fmt.Errorf("usage: bonsai serve restart [api]")
-		}
-		if _, err := requireServeGroupMode(c, workspaceID, procstore.ServeModeProduction); err != nil {
-			return err
-		}
-		name := ""
-		if len(args) == 1 {
-			name = args[0]
-		}
-		group, err := c.ServeRestart(workspaceID, name)
-		if err != nil {
-			return err
-		}
-		return printServeStatus(out, group)
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -119,51 +60,38 @@ func cmdServe(repoDir string, args []string, in io.Reader, out, errOut io.Writer
 	if fs.NArg() != 0 {
 		return fmt.Errorf("usage: bonsai serve [-d|--auto-detach] [--api-port PORT]")
 	}
+	if *apiPort == 0 {
+		*apiPort = legacyServePort(errOut)
+	}
 
+	webArgs := []string{"--no-open"}
+	if !detached {
+		webArgs = append(webArgs, "--attach")
+	}
+	if *apiPort != 0 {
+		webArgs = append(webArgs, "--port", strconv.Itoa(*apiPort))
+	}
+	return cmdWeb(webArgs, in, out, errOut)
+}
+
+// legacyServePort honours a repository's explicit serve.api_port when the
+// alias runs inside one. Zero means "use the bonsai web settings".
+func legacyServePort(errOut io.Writer) int {
+	repoDir, err := git.MainRoot(".")
+	if err != nil {
+		return 0
+	}
 	cfg, err := config.LoadFor(repoDir)
 	if err != nil {
-		return err
+		return 0
 	}
 	for _, key := range cfg.DeprecatedServeKeys {
 		fmt.Fprintf(errOut, "warning: %s is deprecated and ignored by normal bonsai serve; use the internal development stack instead\n", key)
 	}
-	if *apiPort == 0 {
-		*apiPort = cfg.Serve.APIPort
+	if cfg.Serve.APIPort != config.DefaultWebAPIPort {
+		return cfg.Serve.APIPort
 	}
-	if group, err := c.ServeStatus(workspaceID); err == nil && group != nil && normalizedGroupMode(group) == procstore.ServeModeDevelopment {
-		return fmt.Errorf("development stack is active for this workspace; stop it with bonsai __serve-dev-stack stop")
-	}
-
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	spec := procstore.ServeSpec{
-		Mode:                   procstore.ServeModeProduction,
-		WorkspaceID:            workspaceID,
-		WorkspacePath:          workspace,
-		Executable:             executable,
-		APIPort:                *apiPort,
-		BrowserOrigin:          hostedWebOrigin(),
-		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
-		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
-	}
-	group, err := c.ServeStart(spec)
-	if err != nil {
-		return err
-	}
-	if detached {
-		if group.Reused {
-			fmt.Fprintln(out, "local API already healthy")
-		} else {
-			fmt.Fprintln(out, "local API ready; detached")
-		}
-		return printServeStatus(out, group)
-	}
-	if err := printServeAccess(out, group); err != nil {
-		return err
-	}
-	return runServeTUI(in, out, c, group)
+	return 0
 }
 
 func normalizedGroupMode(group *procstore.ServeGroup) procstore.ServeMode {
@@ -233,38 +161,4 @@ func cmdServeLogsForMode(c *client.Client, workspaceID string, mode procstore.Se
 func serveWorkspaceID(path string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(path)))
 	return hex.EncodeToString(sum[:8])
-}
-
-func printServeAccess(out io.Writer, group *procstore.ServeGroup) error {
-	if group == nil {
-		return nil
-	}
-	if normalizedGroupMode(group) == procstore.ServeModeDevelopment {
-		return printDevServeStatus(out, group)
-	}
-	fmt.Fprintf(out, "Bonsai local API\n  http://127.0.0.1:%d\n\n", group.APIPort)
-	fmt.Fprintf(out, "Web client\n  %s\n", hostedWebURL())
-	return nil
-}
-
-func printServeStatus(out io.Writer, group *procstore.ServeGroup) error {
-	if group == nil {
-		fmt.Fprintln(out, "no local API for this workspace")
-		return nil
-	}
-	if normalizedGroupMode(group) == procstore.ServeModeDevelopment {
-		return printDevServeStatus(out, group)
-	}
-	fmt.Fprintf(out, "Bonsai local API — %s — %s\n", group.WorkspacePath, group.State)
-	fmt.Fprintf(out, "Web client: %s\n", hostedWebURL())
-	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "PROCESS\tSTATUS\tPID\tADDRESS")
-	for _, process := range group.Processes {
-		address := ""
-		if process.ExpectedPort > 0 {
-			address = "127.0.0.1:" + strconv.Itoa(process.ExpectedPort)
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", process.Name, process.State, process.PID, address)
-	}
-	return tw.Flush()
 }

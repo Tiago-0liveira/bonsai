@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -107,8 +108,7 @@ func main() {
 			os.Exit(1)
 		}
 		if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
-			fmt.Fprintln(os.Stderr, "bonsai:", err)
-			os.Exit(1)
+			exitWith(err)
 		}
 		return
 	}
@@ -117,6 +117,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "bonsai:", err)
 		os.Exit(1)
 	}
+}
+
+// exitWith reports err and exits non-zero. A cli.ExitError has already told
+// the user what went wrong, so only its exit code is used.
+func exitWith(err error) {
+	var exit *cli.ExitError
+	if errors.As(err, &exit) {
+		os.Exit(exit.Code)
+	}
+	fmt.Fprintln(os.Stderr, "bonsai:", err)
+	os.Exit(1)
 }
 
 func run(cfgPath string) error {
@@ -160,15 +171,15 @@ func run(cfgPath string) error {
 func runServeInternal(args []string) error {
 	fs := flag.NewFlagSet("__serve-api", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	repoDir := fs.String("repo", "", "repository root")
+	repoDir := fs.String("repo", "", "launch repository root (omit for the user-level API that serves every configured project)")
 	port := fs.Int("port", 0, "loopback listen port")
 	browserOrigin := fs.String("browser-origin", localapi.ProductionBrowserOrigin, "authorized browser origin")
 	securityMode := fs.String("security-mode", string(localapi.BrowserSecurityProduction), "browser security mode")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *repoDir == "" || *port <= 0 {
-		return fmt.Errorf("__serve-api requires --repo and --port")
+	if *port <= 0 {
+		return fmt.Errorf("__serve-api requires --port")
 	}
 	address := fmt.Sprintf("127.0.0.1:%d", *port)
 	return localapi.Run(localapi.Config{
