@@ -1,6 +1,6 @@
 # Plan: `bonsai web` — local-first web client, fast sync, optional live updates
 
-Status: **in progress** (Phases 3 and 4 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
+Status: **in progress** (Phases 0, 1 and 3 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
 
 This is a working plan. Execute it one phase at a time (see
 [How to use this plan](#how-to-use-this-plan)). Delete it, or fold the
