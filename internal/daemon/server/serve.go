@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
+	"github.com/Tiago-0liveira/bonsai/internal/webtunnel"
 )
 
 const (
@@ -119,8 +121,10 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 		group := s.serveSnapshot(existing)
 		modern := normalizedServeMode(existing.Spec) == procstore.ServeModeProduction &&
 			(existing.Spec.BrowserOrigin != "" || existing.Spec.Scope == procstore.ServeScopeUser) &&
-			len(existing.ProcessIDs) == 1 &&
-			existing.ProcessIDs["api"] != 0
+			existing.ProcessIDs["api"] != 0 &&
+			onlyProductionProcesses(existing.ProcessIDs) &&
+			sameLiveServe(existing.Spec, *spec)
+		// A dead tunnel (degraded) is restarted by asking again, not reused.
 		if modern && group.State == "ready" {
 			group.Reused = true
 			return group, nil
@@ -130,7 +134,11 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 		}
 	}
 
-	if err := checkServePorts(spec.APIPort); err != nil {
+	ports := []int{spec.APIPort}
+	if spec.WebhookPort != 0 {
+		ports = append(ports, spec.WebhookPort)
+	}
+	if err := checkServePorts(ports...); err != nil {
 		return nil, err
 	}
 	if _, err := os.Stat(spec.Executable); err != nil {
@@ -188,13 +196,57 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 		s.cleanupFailedServe(rt)
 		return nil, err
 	}
+	if spec.WebhookPort != 0 {
+		// The API binds the receiver right after its own port; it exits if
+		// it cannot, which waitServeProcessPort reports.
+		if err := s.waitServeProcessPort(rt.ProcessIDs["api"], spec.WebhookPort, timeout); err != nil {
+			s.cleanupFailedServe(rt)
+			return nil, fmt.Errorf("api: webhook receiver: %w", err)
+		}
+	}
+	// The tunnel is optional: without it the receiver gets no traffic and the
+	// group reads degraded, but the UI keeps working. A missing program is
+	// recorded as a failed start in its log, like any other process.
+	for _, sidecar := range spec.Sidecars {
+		if _, err := s.spawnServeProcess(rt, sidecar.Name, sidecar.Command[0], append([]string(nil), sidecar.Command[1:]...),
+			spec.WorkspacePath, nil, 0, false, procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: 3}); err != nil {
+			s.cleanupFailedServe(rt)
+			return nil, fmt.Errorf("%s: %w", sidecar.Name, err)
+		}
+	}
 
 	group := s.serveSnapshot(rt)
-	if group.State != "ready" {
+	if group.State != "ready" && group.State != "degraded" {
 		s.cleanupFailedServe(rt)
 		return nil, fmt.Errorf("serve group did not become ready")
 	}
 	return group, nil
+}
+
+// onlyProductionProcesses reports whether a group runs nothing but the API and
+// at most the live-updates tunnel.
+func onlyProductionProcesses(ids map[string]int) bool {
+	for name := range ids {
+		if name != "api" && name != webtunnel.SidecarName {
+			return false
+		}
+	}
+	return true
+}
+
+// sameLiveServe reports whether two production specs agree on live updates:
+// the webhook port and the tunnel command.
+func sameLiveServe(a, b procstore.ServeSpec) bool {
+	return a.WebhookPort == b.WebhookPort && slices.Equal(tunnelCommand(a), tunnelCommand(b))
+}
+
+func tunnelCommand(spec procstore.ServeSpec) []string {
+	for _, sidecar := range spec.Sidecars {
+		if sidecar.Name == webtunnel.SidecarName {
+			return sidecar.Command
+		}
+	}
+	return nil
 }
 
 func normalizedServeMode(spec procstore.ServeSpec) procstore.ServeMode {
@@ -223,7 +275,10 @@ func validateServeSpec(spec procstore.ServeSpec) error {
 			return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
 		}
 	}
-	if spec.WebhookPort != 0 || spec.WebPort != 0 || len(spec.Sidecars) != 0 {
+	// Only `bonsai web` may add live updates, and only through the explicit
+	// allow-rule below. Everything else keeps the old refusal (whose text an
+	// older CLI recognises).
+	if spec.WebPort != 0 || ((spec.WebhookPort != 0 || len(spec.Sidecars) != 0) && spec.Scope != procstore.ServeScopeUser) {
 		return fmt.Errorf("production serve cannot supervise development services")
 	}
 	switch spec.Scope {
@@ -234,6 +289,35 @@ func validateServeSpec(spec procstore.ServeSpec) error {
 		}
 	default:
 		return fmt.Errorf("unknown serve scope %q", spec.Scope)
+	}
+	if spec.WebhookPort != 0 || len(spec.Sidecars) != 0 {
+		return validateLiveServe(spec)
+	}
+	return nil
+}
+
+// validateLiveServe is the live-updates allow-rule: a webhook port of its own,
+// and at most one sidecar named "tunnel" whose argv targets that port and
+// never the API port. The daemon owns the tunnel's environment, working
+// directory and restart policy, so the spec may not set them.
+func validateLiveServe(spec procstore.ServeSpec) error {
+	if spec.WebhookPort < 1 || spec.WebhookPort > 65535 || spec.WebhookPort == spec.APIPort {
+		return fmt.Errorf("webhook port %d must be a valid port different from the api port", spec.WebhookPort)
+	}
+	if len(spec.Sidecars) > 1 {
+		return fmt.Errorf("production serve allows at most one tunnel sidecar")
+	}
+	for _, sidecar := range spec.Sidecars {
+		if sidecar.Name != webtunnel.SidecarName {
+			return fmt.Errorf("production serve sidecar must be named %q, got %q", webtunnel.SidecarName, sidecar.Name)
+		}
+		if len(sidecar.Environment) != 0 || sidecar.Cwd != "" || sidecar.Required ||
+			sidecar.Restart != "" || sidecar.MaxRestarts != 0 {
+			return fmt.Errorf("the tunnel sidecar cannot set environment, working directory, required or restart policy")
+		}
+		if err := webtunnel.ValidateArgv(sidecar.Command, spec.WebhookPort, spec.APIPort); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -257,11 +341,17 @@ func serveAPIArgs(repoRoot string, spec procstore.ServeSpec, securityMode string
 	if spec.Scope != procstore.ServeScopeUser {
 		args = append(args, "--repo", repoRoot)
 	}
-	return append(args,
+	args = append(args,
 		"--port", strconv.Itoa(spec.APIPort),
 		"--browser-origin", spec.BrowserOrigin,
 		"--security-mode", securityMode,
 	)
+	if spec.WebhookPort != 0 {
+		// The API reads the webhook secret from its file; argv carries only
+		// the port.
+		args = append(args, "--webhook-port", strconv.Itoa(spec.WebhookPort))
+	}
+	return args
 }
 
 func serveEnvironment(spec procstore.ServeSpec) map[string]string {
@@ -355,6 +445,30 @@ func (s *Server) serveStartupError(id int, status string, exitCode *int, exitErr
 	return fmt.Errorf("%s", detail)
 }
 
+// waitServeProcessPort waits for a second port of a running process.
+func (s *Server) waitServeProcessPort(id, port int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		mp := s.procs[id]
+		s.mu.Unlock()
+		if mp == nil {
+			return fmt.Errorf("process disappeared")
+		}
+		mp.mu.Lock()
+		status, exitCode, exitErr := mp.rec.Status, mp.rec.ExitCode, mp.rec.ExitError
+		mp.mu.Unlock()
+		if procstore.IsTerminal(status) {
+			return s.serveStartupError(id, status, exitCode, exitErr)
+		}
+		if portListening(port) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("did not start listening on 127.0.0.1:%d in time", port)
+}
+
 func portListening(port int) bool {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 150*time.Millisecond)
 	if err != nil {
@@ -380,6 +494,9 @@ func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 		WorkspaceID: rt.Spec.WorkspaceID, WorkspacePath: rt.Spec.WorkspacePath,
 		State: "ready", StartedAt: rt.StartedAt, APIPort: rt.Spec.APIPort,
 		WebhookPort: rt.Spec.WebhookPort, WebPort: rt.Spec.WebPort, BrowserOrigin: rt.Spec.BrowserOrigin,
+	}
+	if normalizedServeMode(rt.Spec) == procstore.ServeModeProduction {
+		group.Tunnel = append([]string(nil), tunnelCommand(rt.Spec)...)
 	}
 	names := make([]string, 0, len(rt.ProcessIDs))
 	for name := range rt.ProcessIDs {
