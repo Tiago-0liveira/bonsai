@@ -33,6 +33,22 @@ pnpm test:e2e
 pnpm build
 ```
 
+## Embedded in the bonsai binary
+
+`bonsai web` serves this app from the local API at `http://127.0.0.1:7001/app`
+(same origin: no CORS, no Local Network Access prompt). Release builds embed
+the production bundle:
+
+```sh
+pnpm build                          # writes web/dist
+go build -tags embedui ..           # from web/: embeds web/dist
+```
+
+Without the tag, `/app` shows a placeholder. The e2e build (`--mode e2e`)
+writes `web/dist-e2e`, so its test hooks never reach `web/dist`. The page gets
+its runtime config from meta tags the API injects: `bonsai-local-api-origin`,
+`bonsai-relay-origin` (empty: no relay) and `bonsai-entry` (`local`).
+
 ## Networking
 
 Production defaults:

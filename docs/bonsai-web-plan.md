@@ -1,6 +1,6 @@
 # Plan: `bonsai web` — local-first web client, fast sync, optional live updates
 
-Status: **in progress** (Phase 3 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
+Status: **in progress** (Phases 3 and 4 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
 
 This is a working plan. Execute it one phase at a time (see
 [How to use this plan](#how-to-use-this-plan)). Delete it, or fold the
@@ -14,7 +14,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | todo |
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
-| 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | todo |
+| 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#PR4) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | todo |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | todo |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
@@ -571,6 +571,48 @@ Daemon home: `<user state dir>/bonsai/web`, where the user state dir is
 - The hosted build (Dockerfile and Caddy) is unchanged and still works.
 - `pnpm -C web build` output is deterministic. The embed must not pick up
   e2e builds.
+
+**Outcome (recorded by #PR4)**
+
+*Embed.* `web/embed.go` (package `web`, build tag `embedui`) embeds
+`web/dist`; `web/embed_stub.go` (no tag) returns nil and `/app` serves a
+placeholder that says how to build the UI. `go:embed` cannot embed a missing
+directory, so the tag is what keeps `go build ./...` Node-free; a tagged build
+without `web/dist` fails loudly, which is what a release wants. Phase 8 sets
+`-tags embedui` in GoReleaser. Dev/test injection: `localapi.Config.UI`.
+
+*Corrections to the scope above (reality at `63e57c5`):*
+
+| Plan said | Reality | Resolution |
+| --- | --- | --- |
+| `/app/assets/*` immutable | Vite `base` is `/`: `index.html` references `/assets/*`, and the hosted Caddy and landing page (`/`) depend on that. | The API serves `/assets/*` (immutable, gzip) and `/app`, `/app/*` (SPA, `no-store`). `base` unchanged. Static routes live in `internal/server/webui`. |
+| "Host checks are unchanged" and "`localhost` works" | A page at `http://localhost:7001` sends `Host: localhost:7001`, which the exact `127.0.0.1:7001` check refused. | Host allow-list = the listen address plus `localhost:<port>`, still exact (DNS rebinding stays blocked). Applied to HTTP and all three WebSocket upgrades. |
+| Origin allow-list only | Browsers send **no `Origin`** on same-origin `GET`/`HEAD`, so every UI read (`GET /api/...`) was refused. Found with a real Chromium against a real binary; mocked e2e hid it. | A `GET`/`HEAD` without `Origin` but with `Sec-Fetch-Site: same-origin` (a forbidden header page scripts cannot set) counts as the API's own origin. Sessions still required. Covered by `TestSameOriginReadsWithoutOriginHeader` and an unmocked e2e. |
+| Embed must not pick up e2e builds | `pnpm build --mode e2e` wrote to `web/dist`. | The e2e build writes `web/dist-e2e` (gitignored). The tagged `TestEmbeddedBundleIsTheProductionBuild` asserts no `__bonsaiTestStore` in the bundle. |
+| Hide relay UI "when no relay origin" | `relayClient` fell back to `https://api.bonsai.dev` whenever the meta was unset. | Tri-state meta: present and empty = no relay (no badge, no requests, CSP has no relay); absent or placeholder = previous behaviour (hosted unchanged). |
+| `interfaces.local` / `interfaces.hosted` | Not consumed yet; the daemon required an HTTPS origin. | The API always allows its own origin (it serves the UI). `interfaces.hosted` decides whether the hosted origin is allowed (empty `BrowserOrigin`, accepted only for the user-scoped serve). `interfaces.local` picks what `bonsai web` prints and opens. Both false is a `Validate` error. |
+
+*Also added:*
+- `bonsai web` restarts a running stack when the hosted setting changed, or
+  when the running API reports another bonsai version (it would serve that
+  version's UI). No daemon or `LOCAL_API_PROTOCOL_VERSION` bump.
+- Startup output: `UI` is now `http://127.0.0.1:<port>/app`; a `hosted` line
+  appears only while the API allows it; the `API` line is gone (same origin).
+- On the local entry the page connects on load (no permission, so no gesture
+  is needed) and never queries `loopback-network` / `local-network-access`.
+- A library injects an inline `<style>` that `style-src-elem 'self'` blocks on
+  every entry, hosted included. Pre-existing; not changed here.
+- `pnpm -C web build` is deterministic: two builds give identical SHA-256 for
+  all 23 files. Bundle at this phase (input for Phase 7):
+
+  | Chunk | Size | gzip |
+  | --- | ---: | ---: |
+  | `ApplicationRoot-*.js` | 729.73 kB | 230.35 kB |
+  | `xterm-*.js` | 290.37 kB | 72.55 kB |
+  | `PullRequestsRoute-*.js` | 210.83 kB | 63.04 kB |
+  | `index-*.js` (entry) | 149.52 kB | 48.80 kB |
+  | `index-*.css` | 54.61 kB | 11.19 kB |
+  | Binary size | 18.9 MB without UI | 20.6 MB with `-tags embedui` |
 
 **Exit criteria**
 - Playwright runs against both entry points (local-served and hosted-style
