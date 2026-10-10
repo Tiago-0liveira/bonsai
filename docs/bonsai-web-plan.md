@@ -1,6 +1,6 @@
 # Plan: `bonsai web` — local-first web client, fast sync, optional live updates
 
-Status: **in progress** (Phases 0 to 5 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
+Status: **in progress** (Phases 0 to 6 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
 
 This is a working plan. Execute it one phase at a time (see
 [How to use this plan](#how-to-use-this-plan)). Delete it, or fold the
@@ -16,7 +16,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
-| 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | in progress (#63, #64) |
+| 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | done (#63, #64, #65) |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
 | F | Multi-workspace (design only, later) | Opus 5.5 | 8 | not scheduled |
@@ -1119,6 +1119,68 @@ by fixture tests (`internal/webtunnel/testdata`).
 `updates   live · <preset> · N repos (M live) · tunnel <state> · receiver …`
 and `public    <url>` (or why it is unknown); `status` adds one row per live
 repository with its state, last ping or delivery and the error's fix.
+
+*Corrections to the scope above (p6c):*
+
+| Plan said | Reality | Resolution |
+| --- | --- | --- |
+| Setup radio bug | `updatesView` compared each choice ID with `updates.mode`, so no live option ever showed as chosen | The chosen row is `standard` in standard mode, else the tunnel preset; edit mode opens Updates with the cursor on it |
+| Tunnel checks `ok`/`warn`/`fail` "when the chosen preset needs them" | A named tunnel's credentials file can exist without `cert.pem` | Only the chosen preset's tool counts. Missing tool, ngrok without an authtoken and Tailscale not connected fail; a named tunnel without the Cloudflare login warns; a custom command's program is looked up on `PATH`. The other tools stay `skip` ("not used by your tunnel") |
+| Repo picker: "backend `LiveRepositories` → admin flag" | Local repositories have several remotes, and a configured repository may no longer be in any folder | Each local repository maps to `origin` when it is on GitHub, else its first GitHub remote. Configured repositories are always listed (with the error when GitHub cannot be asked), so they can still be unpicked. Only `permissions.admin` rows can be picked |
+| "Review lists every external change" | A hook is re-pointed for a new address and re-sent for a new secret; a new secret alone restarts only the API, so a quick tunnel keeps its address | Review lists, in order: the tunnel that starts, "Adds a GitHub webhook to …" with what admins see (host and `?bonsai=<install id>`), "Points the webhook of … at the new address (and secret)" or "Sends the new secret to …", "Deletes Bonsai's webhook from …". The plan tracks `NewAddress` separately from `RotateSecret` |
+| Apply progress "polls `web-state.json`" | The API wrote it only on a change, and the API being replaced may still write the old run's URL on its way out | The controller's first step always writes. Apply counts only state written after both Apply started and the (re)started `api` process started; hooks count once their `checked_at` is past that point. Timeouts (tunnel 60 s, hooks 60 s, ping 90 s) and hooks that cannot work (`needs_admin`, `scope_missing`) are failed steps with a fix and a Done note, never a failed setup |
+| Hooks for newly picked repositories | Once a URL is known the controller steps every 30 s | It also checks `web.json`'s modification time every 2 s and runs a step at once when setup changed it |
+| "Rotate webhook secret": new secret, restart, hooks re-PATCHed | `ensure` reuses a stack whose spec did not change | Apply writes the secret first, then restarts only the `api` process of a reused stack (`ServeRestart`). The controller sees the fingerprint change and re-sends the secret |
+| Deletes happen only in setup Apply; doctor lists orphans | Listing every repository's hooks on each check run costs GitHub calls; the controller wrote back every entry it had in memory | Apply deletes only this computer's hook (stored ID, else marker) after the restart and drops the repository's `web-state.json` entry. The controller now owns only the entries of configured repositories and keeps the others as they are on disk. Only `bonsai web doctor` looks for leftovers, only on repositories `web-state.json` remembers a hook on that live updates no longer cover; its fix is `gh api -X DELETE repos/<owner>/<name>/hooks/<id>`, and it never deletes |
+| Restart re-PATCHes the hook (exit criterion) | The tunnel's serve log spans restarts: the controller matched the previous quick tunnel's URL before the new one was printed (p6b), and fixed it only at the next 30 s check | `currentRun` searches only the log written since the tunnel's last start. Restart to re-PATCH went from 34 s to 12 s |
+| Header badge `Live` / `Standard (every 30 s)` | Live is per repository | The badge describes the active project: `Live` when its repository's hook is live and the tunnel is up, else `Standard (every N)` with the reason in its tooltip (tunnel down, the hook's state and error, or not covered). Hidden on an API without the endpoint |
+
+*Outcome (p6c).*
+- Setup: the Live options are selectable (tool state in the panel; a missing
+  tool is refused with its install command). Tunnels that need settings get a
+  screen of their own (named tunnel and hostname, ngrok domain, your own URL,
+  custom command and URL pattern) validated with `webtunnel.ValidateArgv`, so
+  a command aimed at the API port never reaches Review. Advanced edits the
+  webhook port and rotates the secret. Golden files cover every new screen
+  (`16-…` to `26-…`).
+- `bonsai web doctor` and the setup checks use the chosen preset and the
+  recorded live state (`1 repo live · <url>`, or the first problem and its
+  fix).
+- Web: `UpdatesBadge` in the header and a read-only "Live updates" section in
+  Settings (tunnel, public host, per-repository state, last ping or delivery,
+  "Change with `bonsai web setup`"), refetched on connect, focus and every
+  30 s. No `LOCAL_API_PROTOCOL_VERSION` bump.
+
+*Manual end-to-end test (p6c, 2026-10-10).* A `-tags embedui` build in an
+isolated config and state directory (ports 7101/7102, the real gh login),
+`cloudflared-quick`, the private scratch repository
+`Tiago-0liveira/bonsai-live-scratch` with a 15 s CI job. The setup TUI was
+driven through a pty; latencies were measured in headless Chromium on the
+real UI (the element visible), against GitHub's own timestamps.
+- Wizard: Updates → Cloudflare quick → picker (admin) → Review (tunnel and
+  webhook listed) → Apply: saved, folder added, started, receiver
+  `127.0.0.1:7102`, tunnel address, webhook, ping. `bonsai web status`:
+  `1 repo (1 live)`. On GitHub: one hook, the seven events,
+  `…/github/webhook?bonsai=<install id>`, last response 202.
+- PR opened: in the UI 2.2 s after `gh pr create` returned. Title edited:
+  2.7 s after `gh pr edit`. Push: the new CI run showed as running 0.4–1.4 s
+  after its `started_at` (3.8 s after `git push` returned, GitHub's queueing
+  included). Checks finished: shown ≤ 3.0 s and ≤ 4.2 s after `completed_at`
+  (GitHub reports whole seconds).
+- Restart (`bonsai web stop`, `bonsai web`): the hook pointed at the new
+  quick tunnel 12 s after the start, GitHub's ping 1 s later.
+- Rotate secret (Advanced): only the API restarted, the tunnel kept its
+  address, the hook got the new secret and the signed ping verified.
+- Leftover: with the repository removed from `web.json` by hand, doctor
+  printed `! Bonsai webhooks … fix gh api -X DELETE repos/…/hooks/<id>`;
+  restoring it re-adopted the same hook.
+- Live off (Updates → Standard): Review listed "Deletes Bonsai's webhook
+  from …"; Apply restarted the API without the receiver, GitHub showed no
+  hooks, port 7102 closed and doctor was clean.
+
+Versions tested (p6c): cloudflared 2026.9.3, gh 2.92.0, git 2.43.0. ngrok
+and tailscale were not installed; their checks, argv and URL parsing are
+covered by fixture tests only.
 
 **Exit criteria**
 - An end-to-end manual test on a scratch repo with `cloudflared-quick`:
