@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"sort"
 	"time"
 
@@ -16,14 +17,18 @@ const prPagesPerJob = 5
 func readPRCatalog(ctx context.Context, service gh.GitHubService, repo string, entry *providerRepoEntry, now time.Time) ([]gh.PullRequest, bool, error) {
 	paged, ok := service.(gh.PagedPullRequests)
 	if !ok {
+		endPage := trace.Start("provider.prs", repo, trace.Attrs{Page: 1})
 		prs, err := service.PullRequests(ctx, repo, gh.PRFilter{State: "open"})
+		endPage()
 		return prs, true, err
 	}
 	if entry.nextPage == 0 {
 		entry.nextPage, entry.startedAt, entry.pending = 1, now, nil
 	}
 	for count := 0; count < prPagesPerJob; count++ {
+		endPage := trace.Start("provider.prs", repo, trace.Attrs{Page: entry.nextPage})
 		batch, err := paged.PullRequestPage(ctx, repo, gh.PRFilter{State: "open"}, entry.nextPage)
+		endPage()
 		if err != nil {
 			return nil, false, err
 		}

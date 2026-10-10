@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/app"
 	"net/http"
 	"os/exec"
@@ -32,6 +33,7 @@ func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Body != nil {
 		args = append(args, "--input", "-")
 	}
+	trace.AddGH()
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = t.Dir
 	cmd.Stdin = r.Body
@@ -67,6 +69,7 @@ type RepositoryContext struct {
 func Discover(ctx context.Context, dir string) (RepositoryContext, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	trace.AddGH()
 	cmd := exec.CommandContext(ctx, "gh", "repo", "view", "--json", "nameWithOwner,defaultBranchRef")
 	cmd.Dir = dir
 	out, err := cmd.Output()

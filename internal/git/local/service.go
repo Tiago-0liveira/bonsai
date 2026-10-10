@@ -16,6 +16,7 @@ import (
 	"time"
 
 	core "github.com/Tiago-0liveira/bonsai/internal/core/git"
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 )
 
@@ -154,11 +155,14 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 	}
 	defer unlock()
 
+	endInventory := trace.Start("local.inventory", r.Root)
 	b, e := s.ListBranches(ctx, id)
 	if e != nil {
+		endInventory()
 		return domain.RepositoryState{}, e
 	}
 	w, e := s.ListWorktrees(ctx, id)
+	endInventory()
 	if e != nil {
 		return domain.RepositoryState{}, e
 	}
@@ -168,7 +172,9 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 			w[i].StatusError = &domain.StateError{Code: "worktree_missing", Message: "Worktree directory is missing; its Git registration remains"}
 			continue
 		}
+		endStatus := trace.Start("local.status", r.Root, trace.Attrs{Worktree: w[i].Path})
 		st, err := statusOverview(ctx, w[i].Path)
+		endStatus()
 		if err != nil {
 			w[i].StatusError = &domain.StateError{Code: domain.Code(err), Message: err.Error()}
 			if w[i].StatusError.Code == "" {

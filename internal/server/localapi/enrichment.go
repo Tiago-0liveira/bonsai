@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"maps"
 	"strings"
 	"sync"
@@ -94,8 +95,12 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		entry.wait = make(chan struct{})
 		c.mu.Unlock()
 
+		endRepo := trace.Start("provider.repo", repository)
 		repo, repoErr := service.Repository(ctx, repository)
+		endRepo()
+		endBranches := trace.Start("provider.branches", repository)
 		branches, branchErr := service.Branches(ctx, repository)
+		endBranches()
 		prs, complete, prErr := readPRCatalog(ctx, service, repository, entry, now)
 		err := firstError(repoErr, branchErr, prErr)
 		var value *browserRemoteSnapshot
@@ -310,6 +315,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	if !ok || before.Local == nil {
 		return
 	}
+	defer trace.Start("provider.ready", projectID)()
 	identity, ok := preferredRemote(before.Local.Remotes)
 	if !ok || identity.FullName == "" {
 		s.commitProviderIfCurrent(project, localIdentityToken(before), func(snapshot *browserSnapshot) {
@@ -409,7 +415,9 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 		if !ok {
 			continue
 		}
+		endChecks := trace.Start("provider.checks", projectID, trace.Attrs{Worktree: worktree.Path})
 		checks, freshness := s.providers.checksFor(ctx, project.github, target.repository, target.sha, s.now(), force)
+		endChecks()
 		state := states[worktree.ID]
 		state.CI.Checks = checks
 		state.CI.Status = checksRollup(checks)
