@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
@@ -413,4 +415,183 @@ func (w *warmWriter) Close(timeout time.Duration) {
 	case <-w.done:
 	case <-time.After(timeout):
 	}
+}
+
+// loadWarmStart restores the saved projects, if the document is usable. A
+// missing document is a normal cold start; any other problem is logged and
+// the document is left alone until live data replaces it.
+func (s *stateSync) loadWarmStart(store *warmStore) {
+	doc, reason := store.load()
+	switch reason {
+	case "":
+		s.restoreWarm(doc)
+	case warmReasonMissing:
+	default:
+		log.Printf("Warm start: ignored %s (%s). Bonsai starts cold and replaces it once live data arrives; delete the file to reset it.", store.path(), reason)
+	}
+}
+
+// restoreWarm installs the saved projects the current catalog still has at
+// the same path. They enter this process's epoch at sequence 0, and every
+// component with data is stale and marked as restored until revalidated.
+// Removed projects never come back.
+func (s *stateSync) restoreWarm(doc *warmDocument) int {
+	now := s.now()
+	restored := 0
+	var newest time.Time
+	priority := ""
+	for _, raw := range doc.Projects {
+		if len(raw) > warmStartMaxProject {
+			continue
+		}
+		var record warmProject
+		if err := json.Unmarshal(raw, &record); err != nil || record.Local == nil {
+			continue
+		}
+		project, ok := s.registry.Lookup(record.ID)
+		if !ok || !sameWorktreePath(project.info.Path, record.Path) || now.Sub(record.Local.ValidatedAt) > warmStartMaxAge {
+			continue
+		}
+		snapshot := s.restoredSnapshot(project.info, record, now)
+		s.mu.Lock()
+		if s.projects[record.ID] != nil {
+			s.mu.Unlock()
+			continue
+		}
+		s.projects[record.ID] = &projectProjection{path: project.info.Path, snapshot: snapshot}
+		s.lastUsed[record.ID] = record.LastUsed
+		s.restored = append(s.restored, record.ID)
+		s.mu.Unlock()
+		if record.LastUsed.After(newest) {
+			newest, priority = record.LastUsed, record.ID
+		}
+		s.seedProvider(snapshot)
+		restored++
+	}
+	if priority != "" {
+		s.mu.Lock()
+		if s.priorityProject == "" {
+			s.priorityProject = priority
+		}
+		s.mu.Unlock()
+	}
+	return restored
+}
+
+func (s *stateSync) restoredSnapshot(info ProjectInfo, record warmProject, now time.Time) browserSnapshot {
+	disk := func(at time.Time) browserFreshness {
+		return browserFreshness{State: "stale", UpdatedAt: &at, Source: freshnessSourceDisk}
+	}
+	local := record.Local.State
+	local.ID = info.ID
+	for i := range local.Worktrees {
+		local.Worktrees[i].RepositoryID = info.ID
+	}
+	metadata := record.Local.Metadata
+	if metadata == nil {
+		metadata = map[string]worktreeMetadata{}
+	}
+	snapshot := browserSnapshot{
+		Epoch:      s.epoch,
+		Repository: descriptorFromLocal(info, &local),
+		Online:     info.Available,
+		Local:      &local,
+		Metadata:   metadata,
+		Processes:  []browserProcessSummary{},
+		Agents:     []agentterminal.Summary{},
+		Freshness: map[string]browserFreshness{
+			"agents":    {State: "ready"},
+			"local":     disk(record.Local.ValidatedAt),
+			"processes": {State: "loading"},
+			"provider":  {State: "loading"},
+		},
+		WorktreeState: map[string]browserWorktreeState{},
+	}
+	if provider := record.Provider; provider != nil && now.Sub(provider.ValidatedAt) <= warmStartMaxAge {
+		snapshot.Remote = &browserRemoteSnapshot{
+			Repository:        provider.Repository,
+			Branches:          append([]githubdomain.RemoteBranch{}, provider.Branches...),
+			PullRequests:      append([]githubdomain.PullRequest{}, provider.PullRequests...),
+			UpdatedAt:         provider.ValidatedAt,
+			PRCatalogComplete: provider.CatalogComplete,
+		}
+		snapshot.Freshness["provider"] = disk(provider.ValidatedAt)
+		if provider.Repository.FullName != "" {
+			snapshot.Repository.FullName = provider.Repository.FullName
+		}
+		present := map[string]bool{}
+		for _, worktree := range local.Worktrees {
+			present[worktree.ID] = true
+		}
+		for id, saved := range provider.Worktrees {
+			if !present[id] {
+				continue
+			}
+			state := browserWorktreeState{
+				PullRequest:  saved.PullRequest,
+				PRDiagnostic: saved.PRDiagnostic,
+				CI:           browserCIState{Status: "unknown", Checks: []githubdomain.Check{}, Freshness: browserFreshness{State: "loading"}},
+			}
+			if validated := saved.CI.ValidatedAt; validated != nil && now.Sub(*validated) <= warmStartMaxAge {
+				state.CI = browserCIState{Status: saved.CI.Status, CheckedSHA: saved.CI.CheckedSHA, Checks: append([]githubdomain.Check{}, saved.CI.Checks...), Freshness: disk(*validated)}
+			}
+			snapshot.WorktreeState[id] = state
+		}
+	}
+	deriveBranchCandidates(&snapshot)
+	return snapshot
+}
+
+// seedProvider puts a restored snapshot's provider data in the provider
+// cache, expired, so revalidation keeps it on screen until live reads
+// replace it instead of starting from empty.
+func (s *stateSync) seedProvider(snapshot browserSnapshot) {
+	if snapshot.Remote == nil || snapshot.Local == nil {
+		return
+	}
+	identity, ok := preferredRemote(snapshot.Local.Remotes)
+	if !ok || identity.FullName == "" {
+		return
+	}
+	s.providers.seedRepository(identity.FullName, snapshot.Remote)
+	for _, worktree := range snapshot.Local.Worktrees {
+		state, ok := snapshot.WorktreeState[worktree.ID]
+		if !ok || state.CI.Freshness.UpdatedAt == nil {
+			continue
+		}
+		repository, sha := checkTargetFor(snapshot.Local, worktree, state.PullRequest, identity)
+		if repository != "" && sha != "" && sha == state.CI.CheckedSHA {
+			s.providers.seedChecks(repository, sha, state.CI.Checks, *state.CI.Freshness.UpdatedAt)
+		}
+	}
+}
+
+// revalidateRestored queues every refresh of the restored projects, the most
+// recently used first. Nothing here fetches or pulls: these are the same
+// reads a browser's first connection triggers.
+func (s *stateSync) revalidateRestored() {
+	s.mu.Lock()
+	ids := s.restored
+	s.restored = nil
+	priority := s.priorityProject
+	s.mu.Unlock()
+	sort.SliceStable(ids, func(i, j int) bool { return ids[i] == priority && ids[j] != priority })
+	for _, id := range ids {
+		s.Queue(id, refreshAll, false)
+	}
+}
+
+// dropRestoredProviderForOtherRemote forgets restored provider data once the
+// live inventory shows the project now points at another repository.
+func dropRestoredProviderForOtherRemote(snapshot *browserSnapshot) {
+	if snapshot.Remote == nil || snapshot.Local == nil || snapshot.Freshness["provider"].Source != freshnessSourceDisk {
+		return
+	}
+	identity, _ := preferredRemote(snapshot.Local.Remotes)
+	if strings.EqualFold(identity.FullName, snapshot.Remote.Repository.FullName) {
+		return
+	}
+	snapshot.Remote = nil
+	snapshot.WorktreeState = map[string]browserWorktreeState{}
+	snapshot.Freshness["provider"] = browserFreshness{State: "loading"}
 }

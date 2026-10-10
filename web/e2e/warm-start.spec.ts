@@ -102,3 +102,20 @@ test('cold start: ready to branch list and PR badges painted', async ({ browser 
   const summary = await report(testInfo, `cold-${SIZE.worktrees}wt-${SIZE.prs}pr`, samples)
   expect(summary.failures).toBe(0)
 })
+
+test('warm start: restored branch list and PR badges paint while providers are pending', async ({ browser }, testInfo) => {
+  // Populate the cache through real live commits, then restart from it.
+  await fixture('settle')
+  const samples: Sample[] = []
+  for (let run = 0; run < WARMUPS + RUNS; run++) {
+    // Every revalidation stays blocked until the measurement ends.
+    await fixture('restart', { components: 'local,catalog,checks' })
+    const sample = await measureLoad(browser, expected)
+    if (run >= WARMUPS) samples.push(sample)
+  }
+  await fixture('release', { components: 'local,catalog,checks' })
+  const summary = await report(testInfo, `warm-${SIZE.worktrees}wt-${SIZE.prs}pr`, samples)
+  expect(summary.failures).toBe(0)
+  // The ≤ 300 ms gate is local (BONSAI_P7_GATE=1); CI only reports.
+  if (process.env.BONSAI_P7_GATE === '1') expect(summary.p95).toBeLessThanOrEqual(300)
+})

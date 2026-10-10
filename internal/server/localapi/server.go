@@ -170,6 +170,7 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 			rootsPath = absolute
 		}
 		store := newWarmStore(cfg.SnapshotCacheDir, warmStartNamespace(rootsPath, cfg.RepoDir, cfg.SecurityMode))
+		s.stateSync.loadWarmStart(store)
 		s.stateSync.enableWarmStart(store)
 	}
 	s.stateSync.ReconcileCatalog()

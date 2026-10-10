@@ -136,6 +136,9 @@ type stateSync struct {
 	// start is off. lastUsed orders projects for its eviction.
 	warm     *warmWriter
 	lastUsed map[string]time.Time
+	// restored lists projects installed from the warm-start cache; Run
+	// revalidates them at once, whether or not a browser is connected.
+	restored []string
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -165,6 +168,7 @@ func (s *stateSync) Run(ctx context.Context) {
 	s.mu.Unlock()
 	s.ReconcileCatalog()
 	s.syncWatchers()
+	s.revalidateRestored()
 
 	processTicker := time.NewTicker(processRefreshInterval)
 	pollTicker := time.NewTicker(providerPollTick)
@@ -645,6 +649,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 		}
 		snapshot.Repository = descriptorFromLocal(project.info, &local)
 		snapshot.Online = true
+		dropRestoredProviderForOtherRemote(snapshot)
 		resetWorktreeAssociationsForHeads(snapshot)
 	})
 	if committed {
@@ -1075,6 +1080,7 @@ func (s *stateSync) commitWatchedLocal(projectID string, local domain.Repository
 		}
 		snapshot.Repository = descriptorFromLocal(project.info, &local)
 		snapshot.Online = true
+		dropRestoredProviderForOtherRemote(snapshot)
 		resetWorktreeAssociationsForHeads(snapshot)
 	})
 	if !committed {
@@ -1134,7 +1140,7 @@ func failedFreshness(current browserFreshness, hadValue bool, err error) browser
 	if code == "" {
 		code = "unavailable"
 	}
-	return browserFreshness{State: state, UpdatedAt: current.UpdatedAt, Error: &browserStateError{Code: code, Message: err.Error()}}
+	return browserFreshness{State: state, UpdatedAt: current.UpdatedAt, Error: &browserStateError{Code: code, Message: err.Error()}, Source: current.Source}
 }
 
 func unavailableOrStale(current browserFreshness, code, message string) browserFreshness {

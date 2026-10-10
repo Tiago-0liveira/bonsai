@@ -3,7 +3,9 @@ package localapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -313,12 +315,23 @@ func (f *warmFixture) registry() *syncTestRegistry {
 // start replaces the running server with a new one: a new epoch, new
 // sessions and empty in-memory caches, like a restarted API process.
 func (f *warmFixture) start() {
+	if err := f.restart(""); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *warmFixture) restart(cache string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.stopLocked()
-	s, err := newServer(f.config(), f.registry(), filepath.Join(f.base, "project-roots.json"))
+	if cache != "" {
+		if err := damageWarmCache(f.cachePath(), cache); err != nil {
+			return err
+		}
+	}
+	s, err := newServer(f.config(), f.registry(), f.rootsPath())
 	if err != nil {
-		f.t.Fatal(err)
+		return err
 	}
 	s.stateSync.watchProject = func(ctx context.Context, _ ProjectInfo) { <-ctx.Done() }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -328,10 +341,18 @@ func (f *warmFixture) start() {
 		s.stateSync.Run(ctx)
 	}()
 	f.server, f.handler, f.cancel, f.runDone = s, s.Handler(), cancel, done
+	return nil
+}
+
+func (f *warmFixture) rootsPath() string { return filepath.Join(f.base, "project-roots.json") }
+
+func (f *warmFixture) cachePath() string {
+	cfg := f.config()
+	return newWarmStore(cfg.SnapshotCacheDir, warmStartNamespace(f.rootsPath(), cfg.RepoDir, cfg.SecurityMode)).path()
 }
 
 func (f *warmFixture) config() Config {
-	return Config{Address: warmFixtureAddress, UI: os.DirFS(f.dist)}
+	return Config{Address: warmFixtureAddress, UI: os.DirFS(f.dist), SnapshotCacheDir: filepath.Join(f.base, "warm-start")}
 }
 
 func (f *warmFixture) stopLocked() {
@@ -340,6 +361,8 @@ func (f *warmFixture) stopLocked() {
 	}
 	f.cancel()
 	<-f.runDone
+	// A graceful shutdown: the last commits reach the warm-start cache.
+	f.server.stateSync.closeWarm(warmStartShutdownFlush)
 	f.server.agents.manager.Close()
 	// Open event sockets belong to the old process.
 	for conn := range f.hijacked {
@@ -411,11 +434,22 @@ func (f *warmFixture) control(w http.ResponseWriter, r *http.Request) {
 			f.gates.release(name)
 		}
 	case "restart":
-		// Holds named here apply from the new process's first read.
+		// Holds named here apply from the new process's first read; cache
+		// damages the saved document between the two processes.
 		for _, name := range f.components(r) {
 			f.gates.hold(name)
 		}
-		f.start()
+		if err := f.restart(query.Get("cache")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "settle":
+		// Validate every project live, as a browser's first connection would,
+		// so the next restart finds a complete cache.
+		if err := f.settle(); err != nil {
+			http.Error(w, err.Error(), http.StatusGatewayTimeout)
+			return
+		}
 	case "remove":
 		f.mu.Lock()
 		f.removed[query.Get("project")] = true
@@ -431,6 +465,68 @@ func (f *warmFixture) control(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"epoch": epoch, "active": warmFixtureActive})
+}
+
+func (f *warmFixture) settle() error {
+	f.mu.Lock()
+	s := f.server
+	f.mu.Unlock()
+	s.stateSync.RefreshAll(refreshAll, false)
+	deadline := time.Now().Add(30 * time.Second)
+	for _, info := range s.registry.List() {
+		for {
+			snapshot, _ := s.stateSync.CachedSnapshot(info.ID)
+			if warmFixtureSettled(snapshot) {
+				break
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("%s did not validate: %+v", info.ID, snapshot.Freshness)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	return nil
+}
+
+func warmFixtureSettled(snapshot browserSnapshot) bool {
+	for _, component := range []string{"local", "provider", "processes"} {
+		if freshness := snapshot.Freshness[component]; freshness.State != "ready" || freshness.Source != "" {
+			return false
+		}
+	}
+	if snapshot.Local == nil || len(snapshot.WorktreeState) != len(snapshot.Local.Worktrees) {
+		return false
+	}
+	for _, state := range snapshot.WorktreeState {
+		if state.CI.Freshness.State != "ready" {
+			return false
+		}
+	}
+	return true
+}
+
+// damageWarmCache replaces the saved document for the cold-path tests.
+func damageWarmCache(path, mode string) error {
+	switch mode {
+	case "missing":
+		err := os.Remove(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	case "corrupt":
+		return os.WriteFile(path, []byte(`{"schema":1,"projects":[{"id":`), 0o600)
+	case "unsupported":
+		return os.WriteFile(path, []byte(`{"schema":999,"namespace":"x","projects":[]}`), 0o600)
+	case "oversized":
+		file, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		return file.Truncate(warmStartMaxDocument + 1)
+	}
+	return fmt.Errorf("unknown cache mode %q", mode)
 }
 
 func waitForE2EBundle(t *testing.T) string {
