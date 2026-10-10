@@ -56,6 +56,12 @@ type Config struct {
 	// WebhookSecret. Only the user-level API (no RepoDir) runs it.
 	WebhookAddress string
 	WebhookSecret  []byte
+	// WebConfigPath, WebStatePath and WebHome (web.json, web-state.json and
+	// the bonsai web daemon home) let the receiver's live controller manage
+	// the repository hooks. Empty paths leave the hooks alone.
+	WebConfigPath string
+	WebStatePath  string
+	WebHome       string
 }
 
 type Server struct {
@@ -71,8 +77,10 @@ type Server struct {
 	stateSync     *stateSync
 	rootsPath     string
 	ui            http.Handler
-	// live is the webhook receiver; nil when live updates are off.
+	// live is the webhook receiver and liveHooks its hook controller; both
+	// nil when live updates are off.
 	live           *webhooks.LiveReceiver
+	liveHooks      *liveController
 	webhookAddress string
 }
 
@@ -149,7 +157,10 @@ func New(cfg Config) (*Server, error) {
 	s.stateSync.ReconcileCatalog()
 	if cfg.WebhookAddress != "" {
 		s.webhookAddress = cfg.WebhookAddress
-		s.live = webhooks.NewLiveReceiver(cfg.WebhookSecret, s.stateSync.handleLiveEvent)
+		// In-process GitHub only: no `gh api` fallback directory.
+		s.liveHooks = newLiveController(cfg.WebConfigPath, cfg.WebStatePath, cfg.WebhookSecret, registry.github.Service(""), daemonPublicURL(cfg.WebHome), s.stateSync)
+		s.stateSync.live = s.liveHooks
+		s.live = webhooks.NewLiveReceiver(cfg.WebhookSecret, s.onLiveEvent)
 	}
 	runtime, err := agentruntime.New(nil, nil, nil)
 	if err != nil {
@@ -322,6 +333,9 @@ func Run(cfg Config) error {
 	defer stop()
 	go s.reconcilePeriodically(ctx)
 	go s.stateSync.Run(ctx)
+	if s.liveHooks != nil {
+		go s.liveHooks.Run(ctx)
+	}
 	if registry, ok := s.registry.(*discoveredProjectRegistry); ok {
 		// The browser connects after the API is up; have the GitHub token and
 		// connection ready by then.
@@ -374,6 +388,15 @@ func Run(cfg Config) error {
 		}
 	}
 	return err
+}
+
+// onLiveEvent handles one verified delivery: refresh the matching projects,
+// and record that the repository's hook works.
+func (s *Server) onLiveEvent(event webhooks.LiveEvent) {
+	s.stateSync.handleLiveEvent(event)
+	if s.liveHooks != nil {
+		s.liveHooks.observe(event)
+	}
 }
 
 func shutdownWithContext(ctx context.Context, server *http.Server) {

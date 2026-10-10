@@ -75,3 +75,25 @@ func matchesLiveRepository(snapshot browserSnapshot, event webhooks.LiveEvent) b
 	}
 	return false
 }
+
+// liveRepositories are the GitHub repositories (owner/name) a project's
+// deliveries come from: its local GitHub remotes and the last provider read.
+func liveRepositories(snapshot browserSnapshot) []string {
+	var out []string
+	if snapshot.Local != nil {
+		for _, remote := range snapshot.Local.Remotes {
+			if strings.EqualFold(remote.Host, liveGitHubHost) && remote.FullName != "" {
+				out = append(out, remote.FullName)
+			}
+		}
+	}
+	if snapshot.Remote != nil && snapshot.Remote.Repository.FullName != "" {
+		out = append(out, snapshot.Remote.Repository.FullName)
+	}
+	return out
+}
+
+// liveProjectsByName lists the projects whose remote is repository.
+func (s *stateSync) liveProjectsByName(repository string) []string {
+	return s.liveProjects(webhooks.LiveEvent{RepositoryFullName: repository})
+}

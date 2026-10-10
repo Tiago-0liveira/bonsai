@@ -222,6 +222,18 @@ func runServeInternal(args []string) error {
 		}
 		cfg.WebhookAddress = fmt.Sprintf("127.0.0.1:%d", *webhookPort)
 		cfg.WebhookSecret = secret
+		// The live controller keeps the hooks of web.json's live
+		// repositories pointed at the tunnel, and records them in
+		// web-state.json.
+		if cfg.WebConfigPath, err = config.WebConfigPath(); err != nil {
+			return err
+		}
+		if cfg.WebStatePath, err = config.WebStatePath(); err != nil {
+			return err
+		}
+		if cfg.WebHome, err = config.WebHome(); err != nil {
+			return err
+		}
 	}
 	return localapi.Run(cfg)
 }

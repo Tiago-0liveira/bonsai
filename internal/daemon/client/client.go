@@ -62,6 +62,11 @@ func (c *Client) alive() bool {
 	return true
 }
 
+// Running reports whether a daemon answers on this home's socket. Unlike
+// every other call it never starts one, so a process the daemon supervises can
+// ask about its own group without spawning a second daemon when run by hand.
+func (c *Client) Running() bool { return c.alive() }
+
 // CheckCompatibility checks if the running daemon matches the expected protocol version.
 // If incompatible:
 // - If the daemon owns running processes, returns an error refusing to disrupt them.

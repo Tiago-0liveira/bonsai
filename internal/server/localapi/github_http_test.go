@@ -348,6 +348,7 @@ func TestNextProviderPoll(t *testing.T) {
 		name      string
 		visible   bool
 		running   bool
+		live      bool
 		rate      ghcli.Rate
 		rateKnown bool
 		want      time.Time
@@ -360,8 +361,14 @@ func TestNextProviderPoll(t *testing.T) {
 		{name: "low rate limit in the background", rate: low, rateKnown: true, want: last.Add(20 * time.Minute)},
 		{name: "exhausted until reset", visible: true, rate: exhausted, rateKnown: true, want: now.Add(time.Hour)},
 		{name: "past reset", visible: true, rate: ghcli.Rate{Limit: 5000, Remaining: 0, Reset: now.Add(-time.Second)}, rateKnown: true, want: last.Add(30 * time.Second)},
+		// Live updates healthy: a 10 min safety net, in view or not.
+		{name: "live", live: true, want: last.Add(10 * time.Minute)},
+		{name: "live and visible", visible: true, live: true, rate: healthy, rateKnown: true, want: last.Add(10 * time.Minute)},
+		{name: "live with CI running", visible: true, running: true, live: true, want: last.Add(10 * time.Minute)},
+		{name: "live with a low rate limit", visible: true, live: true, rate: low, rateKnown: true, want: last.Add(40 * time.Minute)},
+		{name: "live but exhausted", live: true, rate: ghcli.Rate{Limit: 5000, Remaining: 0, Reset: now.Add(2 * time.Hour)}, rateKnown: true, want: now.Add(2 * time.Hour)},
 	} {
-		if got := nextProviderPoll(last, test.visible, test.running, test.rate, test.rateKnown, now); !got.Equal(test.want) {
+		if got := nextProviderPoll(last, test.visible, test.running, test.live, test.rate, test.rateKnown, now); !got.Equal(test.want) {
 			t.Errorf("%s: next = %v, want %v", test.name, got.Sub(last), test.want.Sub(last))
 		}
 	}
