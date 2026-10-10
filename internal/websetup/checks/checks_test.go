@@ -3,6 +3,7 @@ package checks
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -314,7 +315,7 @@ func TestTunnelTools(t *testing.T) {
 		t.Fatalf("tailscale = %+v %+v", ts, ts.Fix)
 	}
 
-	f.files["/home/u/.cloudflared/cert.pem"] = "cert"
+	f.files[filepath.Join("/home/u", ".cloudflared", "cert.pem")] = "cert"
 	f.tools["tailscale"] = true
 	f.results["tailscale version"] = result{stdout: "1.76.1\n  tailscale commit: abc\n"}
 	f.results["tailscale status --json"] = result{stdout: `{"BackendState":"Running"}`}

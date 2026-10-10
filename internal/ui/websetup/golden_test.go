@@ -1,6 +1,7 @@
 package websetup
 
 import (
+	"bytes"
 	"flag"
 	"os"
 	"path/filepath"
@@ -136,7 +137,8 @@ func compareGolden(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatalf("missing golden %s (run with -update): %v", path, err)
 	}
-	if string(want) != got {
+	// A checkout with core.autocrlf rewrites the goldens with CRLF.
+	if string(bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))) != got {
 		t.Errorf("%s differs from the golden file (run with -update to accept):\n--- got\n%s--- want\n%s", name, got, want)
 	}
 }
