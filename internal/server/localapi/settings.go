@@ -47,7 +47,10 @@ func (s *Server) rootSettingsValue(cfg config.ProjectRoots) rootSettingsResponse
 		out.Diagnostics = append(out.Diagnostics, d)
 	}
 	home, _ := os.UserHomeDir()
-	paths := []string{s.repoDir, filepath.Dir(s.repoDir)}
+	var paths []string
+	if s.repoDir != "" {
+		paths = append(paths, s.repoDir, filepath.Dir(s.repoDir))
+	}
 	if home != "" {
 		for _, name := range []string{"projects", "dev", "code"} {
 			paths = append(paths, filepath.Join(home, name))

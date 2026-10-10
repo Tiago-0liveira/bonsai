@@ -1,6 +1,6 @@
 # Plan: `bonsai web` — local-first web client, fast sync, optional live updates
 
-Status: **proposed** · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
+Status: **in progress** (Phases 0, 1, 3 and 4 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
 
 This is a working plan. Execute it one phase at a time (see
 [How to use this plan](#how-to-use-this-plan)). Delete it, or fold the
@@ -13,8 +13,8 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 0 | Baseline and sync instrumentation | Sonnet 5.5 | — | done (#56) |
 | 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | done (#58) |
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
-| 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | todo |
-| 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | todo |
+| 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
+| 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | todo |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | todo |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
@@ -569,6 +569,60 @@ alternately on the same repository state)
   blanket relaxation of `serve.go:222`.
 - The command stays non-interactive when stdin is not a TTY.
 
+**Outcome (recorded by #57)**
+
+*D9 spike: the existing daemon runs unchanged with a user-level home.* No new
+supervisor was needed. `server.NewServer` already keeps a root that is not a
+Git repository (`git.MainRoot` fails, the raw root is used); `procstore`
+paths, the socket hash, lock, pidfile, idle exit and serve-group persistence
+are path-only; `config.Load(root)` is only consulted for restart policy and
+notifications (serve passes an explicit policy); the git bridge is lazy and
+never used by the web daemon (each project keeps its own per-repo daemon).
+The blockers were all argument plumbing:
+
+| Blocker | Resolution |
+| --- | --- |
+| `serveAPIArgs` always passed `--repo <daemon root>` | `ServeSpec.Scope` (`""` = repository, `"user"`); user scope omits `--repo`. No daemon protocol bump: only the new web daemon ever receives it. |
+| `localapi.New` required a repository | `RepoDir` is optional; without it there is no default project. |
+| The CLI derived workspace ID/path from `git.RepoRoot(".")` | Fixed group ID `web`; workspace path is the daemon home. |
+| The web home registers in the global daemon index | Kept: it shows up as `web` in `bonsai ps --all` / `daemon status --all`. |
+| `NewServer` canonicalizes its root with `git.MainRoot`, so a dotfiles repo in `~` would capture the home | `__daemon --home <dir>` / `client.ForUserHome` use the home verbatim. |
+
+Daemon home: `<user state dir>/bonsai/web`, where the user state dir is
+`$XDG_STATE_HOME` or `~/.local/state` (Linux), `~/Library/Application Support`
+(macOS) and `%LocalAppData%` (Windows) — `config.WebHome()`.
+
+*Corrections to the scope above (reality at `7efada9`):*
+- Legacy unscoped routes did not panic: `Handler` already mapped a missing
+  default project to `404 project_unavailable`. They now answer
+  `404 no_default_project` when the API has no launch repository.
+- "Projects come only from project roots" was already true; the launch repo
+  only drove `Default()` and the `launch` flag, which the frontend uses only to
+  migrate legacy `'local'` state.
+- The UI line prints and opens the **hosted** URL (`https://app.bonsai.dev/app`
+  or `BONSAI_FRONTEND_ORIGIN`) and a separate `API` line, because there is no
+  local UI or local origin until Phase 4. Phase 4 switches `webUIURL()`.
+- The updates line reads `standard (every ~2 min)`: it is rendered from
+  `localapi.StandardUpdateInterval`, which is 2 min until Phase 2 lands.
+- `web.json` is written with `setup_version: 0` ("defaults written, setup not
+  run"), so Phase 5 can still offer its wizard to Phase 3 users.
+- `web-webhook-secret` is not created yet (no consumer); Phase 6 generates it.
+  Phase 3 ships the `web.json` and `web-state.json` stores only.
+- Upgrades: a per-repo production `bonsai serve` group holding the port is
+  bonsai's previous generation of this stack, so `bonsai web` stops it, says
+  so, and takes over. A development stack (`__serve-dev-stack`) is never
+  stopped; it is diagnosed with its own fix.
+- `--no-setup` is accepted and has no effect until Phase 5.
+- `web.json` gained optional `startup_timeout_seconds` / `shutdown_timeout_seconds`
+  (0 = daemon defaults, 30 s / 5 s), replacing the per-repo `serve.*` timeouts.
+  The `bonsai serve` alias still honours non-default `serve.*` values from
+  `.bonsai.yaml`; its `serve.api_port` is only a preference and never fails a
+  `bonsai web` that is already running on another port.
+- `bonsai serve stop` also stops any per-repo production serve group left in
+  the current repository's daemon.
+- A web daemon from another bonsai version (daemon protocol mismatch) is
+  replaced by `bonsai web` and `bonsai web stop`; other subcommands say so.
+
 **Exit criteria**
 - `cd /tmp && bonsai web` starts, prints the summary, exits 0 and leaves the
   stack healthy. A second `bonsai web` reuses it.
@@ -624,6 +678,48 @@ alternately on the same repository state)
 - The hosted build (Dockerfile and Caddy) is unchanged and still works.
 - `pnpm -C web build` output is deterministic. The embed must not pick up
   e2e builds.
+
+**Outcome (recorded by #59)**
+
+*Embed.* `web/embed.go` (package `web`, build tag `embedui`) embeds
+`web/dist`; `web/embed_stub.go` (no tag) returns nil and `/app` serves a
+placeholder that says how to build the UI. `go:embed` cannot embed a missing
+directory, so the tag is what keeps `go build ./...` Node-free; a tagged build
+without `web/dist` fails loudly, which is what a release wants. Phase 8 sets
+`-tags embedui` in GoReleaser. Dev/test injection: `localapi.Config.UI`.
+
+*Corrections to the scope above (reality at `63e57c5`):*
+
+| Plan said | Reality | Resolution |
+| --- | --- | --- |
+| `/app/assets/*` immutable | Vite `base` is `/`: `index.html` references `/assets/*`, and the hosted Caddy and landing page (`/`) depend on that. | The API serves `/assets/*` (immutable, gzip) and `/app`, `/app/*` (SPA, `no-store`). `base` unchanged. Static routes live in `internal/server/webui`. |
+| "Host checks are unchanged" and "`localhost` works" | A page at `http://localhost:7001` sends `Host: localhost:7001`, which the exact `127.0.0.1:7001` check refused. | Host allow-list = the listen address plus `localhost:<port>`, still exact (DNS rebinding stays blocked). Applied to HTTP and all three WebSocket upgrades. |
+| Origin allow-list only | Browsers send **no `Origin`** on same-origin `GET`/`HEAD`, so every UI read (`GET /api/...`) was refused. Found with a real Chromium against a real binary; mocked e2e hid it. | A `GET`/`HEAD` without `Origin` but with `Sec-Fetch-Site: same-origin` (a forbidden header page scripts cannot set) counts as the API's own origin. Sessions still required. Covered by `TestSameOriginReadsWithoutOriginHeader` and an unmocked e2e. |
+| Embed must not pick up e2e builds | `pnpm build --mode e2e` wrote to `web/dist`. | The e2e build writes `web/dist-e2e` (gitignored). The tagged `TestEmbeddedBundleIsTheProductionBuild` asserts no `__bonsaiTestStore` in the bundle. |
+| Hide relay UI "when no relay origin" | `relayClient` fell back to `https://api.bonsai.dev` whenever the meta was unset. | Tri-state meta: present and empty = no relay (no badge, no requests, CSP has no relay); absent or placeholder = previous behaviour (hosted unchanged). |
+| `interfaces.local` / `interfaces.hosted` | Not consumed yet; the daemon required an HTTPS origin. | The API always allows its own origin (it serves the UI). `interfaces.hosted` decides whether the hosted origin is allowed (empty `BrowserOrigin`, accepted only for the user-scoped serve). `interfaces.local` picks what `bonsai web` prints and opens. Both false is a `Validate` error. |
+
+*Also added:*
+- `bonsai web` restarts a running stack when the hosted setting changed, or
+  when the running API reports another bonsai version (it would serve that
+  version's UI). No daemon or `LOCAL_API_PROTOCOL_VERSION` bump.
+- Startup output: `UI` is now `http://127.0.0.1:<port>/app`; a `hosted` line
+  appears only while the API allows it; the `API` line is gone (same origin).
+- On the local entry the page connects on load (no permission, so no gesture
+  is needed) and never queries `loopback-network` / `local-network-access`.
+- A library injects an inline `<style>` that `style-src-elem 'self'` blocks on
+  every entry, hosted included. Pre-existing; not changed here.
+- `pnpm -C web build` is deterministic: two builds give identical SHA-256 for
+  all 23 files. Bundle at this phase (input for Phase 7):
+
+  | Chunk | Size | gzip |
+  | --- | ---: | ---: |
+  | `ApplicationRoot-*.js` | 729.73 kB | 230.35 kB |
+  | `xterm-*.js` | 290.37 kB | 72.55 kB |
+  | `PullRequestsRoute-*.js` | 210.83 kB | 63.04 kB |
+  | `index-*.js` (entry) | 149.52 kB | 48.80 kB |
+  | `index-*.css` | 54.61 kB | 11.19 kB |
+  | Binary size | 18.9 MB without UI | 20.6 MB with `-tags embedui` |
 
 **Exit criteria**
 - Playwright runs against both entry points (local-served and hosted-style

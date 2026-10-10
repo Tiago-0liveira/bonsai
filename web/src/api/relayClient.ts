@@ -1,14 +1,14 @@
 import { useBonsaiStore } from '../stores/bonsai'
 import { projectForGitHubRepository, requestProjectRefresh, report } from './git'
+import { runtimeMeta } from './runtimeConfig'
 
-const runtimeRelayOrigin = typeof document !== 'undefined'
-  ? document.querySelector<HTMLMetaElement>('meta[name="bonsai-relay-origin"]')?.content
-  : undefined
-const runtimeRelayConfigured = runtimeRelayOrigin && runtimeRelayOrigin !== '__BONSAI_RELAY_ORIGIN__'
-  ? runtimeRelayOrigin
-  : undefined
+// An empty runtime relay origin means the server that delivered this page has
+// no relay (the local API while the hosted relay is frozen): no relay UI, no
+// relay requests. An absent or placeholder value keeps the build default.
+const runtimeRelayOrigin = runtimeMeta('bonsai-relay-origin')
+export const RELAY_ENABLED = runtimeRelayOrigin !== ''
 const buildRelayOrigin = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_RELAY_ORIGIN
-const configuredRelayOrigin = (runtimeRelayConfigured || buildRelayOrigin)?.replace(/\/$/, '')
+const configuredRelayOrigin = (runtimeRelayOrigin || buildRelayOrigin)?.replace(/\/$/, '')
 export const RELAY_HTTP_ORIGIN = configuredRelayOrigin || 'https://api.bonsai.dev'
 const relayUsesCloudSession = RELAY_HTTP_ORIGIN.startsWith('https://')
 
@@ -55,6 +55,7 @@ export async function disconnectGitHubRelay() {
 }
 
 export function startRelayInvalidation() {
+  if (!RELAY_ENABLED) return () => {}
   let closed = false
   let source: EventSource | undefined
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined

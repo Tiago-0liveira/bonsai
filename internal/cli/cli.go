@@ -51,6 +51,10 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdShellInit(out)
 	case "agent":
 		return cmdAgent(args[1:], in, out, errOut)
+	case "web":
+		return cmdWeb(args[1:], in, out, errOut)
+	case "serve":
+		return cmdServe(args[1:], in, out, errOut)
 	}
 
 	// Anchor to the main worktree regardless of the current directory, so copy
@@ -104,8 +108,6 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdAttach(repoDir, args[1:], out)
 	case "daemon":
 		return cmdDaemon(repoDir, args[1:], out)
-	case "serve":
-		return cmdServe(repoDir, args[1:], in, out, errOut)
 	default:
 		printUsage(errOut)
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -452,12 +454,13 @@ Usage:
   bonsai restart <id>             restart a process
   bonsai attach <id>              stream a process log (Ctrl-C detaches)
   bonsai daemon status|stop       control the background daemon
-  bonsai serve [-d]               run the secured loopback API via the daemon
-  bonsai serve status|attach      inspect/attach the workspace serve group
-  bonsai serve logs [-f]           combined daemon-owned serve logs
-  bonsai serve logs --process X   logs for one serve process
-  bonsai serve restart [process]  restart one/all serve processes
-  bonsai serve stop               stop the workspace serve group
+  bonsai web [--attach] [--no-open] [--port N]  start the web client stack (any directory)
+  bonsai web status|open|stop     inspect, open in the browser, stop
+  bonsai web logs [api] [-f]      local API logs
+  bonsai web attach               live log viewer
+  bonsai web restart [api]        restart the local API
+  bonsai web setup                show the web settings
+  bonsai serve                    deprecated alias of bonsai web --attach
   bonsai alias list               list aliases
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias

@@ -47,7 +47,14 @@ func TestValidateBrowserOrigin(t *testing.T) {
 	if err := validateBrowserOrigin("https://app.bonsai.tiagoliv.com", BrowserSecurityProduction); err != nil {
 		t.Fatalf("custom production origin rejected: %v", err)
 	}
-	for _, origin := range []string{"", "null", "http://app.example.com", "https://app.example.com/path", "https://user@app.example.com"} {
+	// Empty means the hosted interface is disabled: only the API's own origin.
+	if err := validateBrowserOrigin("", BrowserSecurityProduction); err != nil {
+		t.Fatalf("production rejected the disabled hosted origin: %v", err)
+	}
+	if err := validateBrowserOrigin("", BrowserSecurityDevelopment); err == nil {
+		t.Fatal("development accepted an empty origin")
+	}
+	for _, origin := range []string{"null", "http://app.example.com", "https://app.example.com/path", "https://user@app.example.com"} {
 		if err := validateBrowserOrigin(origin, BrowserSecurityProduction); err == nil {
 			t.Fatalf("production accepted invalid origin %q", origin)
 		}
@@ -231,9 +238,12 @@ func TestWebSocketAuthentication(t *testing.T) {
 	s.expectedHost = host
 	wsURL := "ws://" + host + "/events"
 
-	dial := func(url, origin string) (*websocket.Conn, *http.Response, error) {
+	dial := func(url, origin string, host ...string) (*websocket.Conn, *http.Response, error) {
 		header := http.Header{}
 		header.Set("Origin", origin)
+		if len(host) > 0 {
+			header.Set("Host", host[0])
+		}
 		return websocket.DefaultDialer.Dial(url, header)
 	}
 
@@ -244,10 +254,23 @@ func TestWebSocketAuthentication(t *testing.T) {
 		t.Fatalf("wrong Origin response = %#v err=%v", resp, err)
 	}
 
-	badHostURL := strings.Replace(wsURL, "127.0.0.1", "localhost", 1)
-	if conn, _, err := dial(badHostURL, ProductionBrowserOrigin); err == nil {
+	_, port, _ := strings.Cut(host, ":")
+	if conn, _, err := dial(wsURL, ProductionBrowserOrigin, "evil.example:"+port); err == nil {
 		conn.Close()
 		t.Fatal("wrong Host websocket unexpectedly connected")
+	}
+	// The embedded UI's own origins, on either loopback name, may connect.
+	for _, self := range []string{"http://" + host, "http://localhost:" + port} {
+		selfHost := strings.TrimPrefix(self, "http://")
+		conn, _, err := dial(wsURL, self, selfHost)
+		if err != nil {
+			t.Fatalf("own origin %s websocket rejected: %v", self, err)
+		}
+		conn.Close()
+	}
+	if conn, _, err := dial(wsURL, "http://localhost:1", "localhost:"+port); err == nil {
+		conn.Close()
+		t.Fatal("localhost origin on another port unexpectedly connected")
 	}
 
 	conn, _, err := dial(wsURL, ProductionBrowserOrigin)

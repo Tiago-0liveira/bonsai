@@ -45,6 +45,22 @@ func TestValidateProductionServeSpecAndPortCollision(t *testing.T) {
 		}
 	}
 
+	// The user-level web stack may disable the hosted app (empty origin); its
+	// API then allows only its own origin. A repository-scoped serve may not.
+	localOnly := spec
+	localOnly.Scope, localOnly.WorkspaceID, localOnly.BrowserOrigin = procstore.ServeScopeUser, procstore.WebServeGroupID, ""
+	if err := validateServeSpec(localOnly); err != nil {
+		t.Fatalf("user-scoped serve without a hosted origin rejected: %v", err)
+	}
+	localArgs := serveAPIArgs("/ignored", localOnly, "production")
+	if i := slices.Index(localArgs, "--browser-origin"); i < 0 || i+1 >= len(localArgs) || localArgs[i+1] != "" {
+		t.Fatalf("user-scoped API args must pass the empty browser origin explicitly: %v", localArgs)
+	}
+	localOnly.BrowserOrigin = "http://app.example.com"
+	if err := validateServeSpec(localOnly); err == nil {
+		t.Fatal("user-scoped serve accepted a non-HTTPS hosted origin")
+	}
+
 	const daemonRoot = "/canonical/main-root"
 	args := serveAPIArgs(daemonRoot, spec, "production")
 	for _, forbidden := range []string{"__serve-webhook", "--capability-file", "--web-port", "--webhook-port", "--development"} {
@@ -62,6 +78,29 @@ func TestValidateProductionServeSpecAndPortCollision(t *testing.T) {
 	modeIndex := slices.Index(args, "--security-mode")
 	if modeIndex < 0 || modeIndex+1 >= len(args) || args[modeIndex+1] != "production" {
 		t.Fatalf("production serve API args do not force production security: %v", args)
+	}
+
+	user := spec
+	user.Scope = procstore.ServeScopeUser
+	user.WorkspaceID = procstore.WebServeGroupID
+	if err := validateServeSpec(user); err != nil {
+		t.Fatalf("user-scoped serve spec rejected: %v", err)
+	}
+	userArgs := serveAPIArgs(daemonRoot, user, "production")
+	if slices.Contains(userArgs, "--repo") || slices.Contains(userArgs, daemonRoot) {
+		t.Fatalf("user-scoped API args name a launch repository: %v", userArgs)
+	}
+	if i := slices.Index(userArgs, "--security-mode"); i < 0 || userArgs[i+1] != "production" {
+		t.Fatalf("user-scoped API args do not force production security: %v", userArgs)
+	}
+	for i, candidate := range []procstore.ServeSpec{
+		func() procstore.ServeSpec { v := user; v.WorkspaceID = "other"; return v }(),
+		func() procstore.ServeSpec { v := user; v.Scope = "machine"; return v }(),
+		func() procstore.ServeSpec { v := user; v.WebhookPort = 7002; return v }(),
+	} {
+		if err := validateServeSpec(candidate); err == nil {
+			t.Fatalf("invalid user-scoped spec %d accepted: %+v", i, candidate)
+		}
 	}
 
 	env := serveEnvironment(spec)
@@ -101,6 +140,7 @@ func TestValidateDevelopmentServeSpec(t *testing.T) {
 		func(v *procstore.ServeSpec) { v.WebhookPort = v.APIPort },
 		func(v *procstore.ServeSpec) { v.BrowserOrigin = "http://0.0.0.0:7003" },
 		func(v *procstore.ServeSpec) { v.BrowserOrigin = "http://127.0.0.1:7999" },
+		func(v *procstore.ServeSpec) { v.Scope = procstore.ServeScopeUser },
 	} {
 		candidate := spec
 		mutate(&candidate)

@@ -118,7 +118,7 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	if existing != nil {
 		group := s.serveSnapshot(existing)
 		modern := normalizedServeMode(existing.Spec) == procstore.ServeModeProduction &&
-			existing.Spec.BrowserOrigin != "" &&
+			(existing.Spec.BrowserOrigin != "" || existing.Spec.Scope == procstore.ServeScopeUser) &&
 			len(existing.ProcessIDs) == 1 &&
 			existing.ProcessIDs["api"] != 0
 		if modern && group.State == "ready" {
@@ -214,13 +214,26 @@ func validateServeSpec(spec procstore.ServeSpec) error {
 	if spec.APIPort < 1 || spec.APIPort > 65535 {
 		return fmt.Errorf("api port %d is invalid", spec.APIPort)
 	}
-	u, err := url.Parse(strings.TrimSpace(spec.BrowserOrigin))
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
-		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
+	// The user-level API serves its own UI and always allows its own origin;
+	// an empty browser origin means the hosted app is disabled there.
+	if spec.BrowserOrigin != "" || spec.Scope != procstore.ServeScopeUser {
+		u, err := url.Parse(strings.TrimSpace(spec.BrowserOrigin))
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
+		}
 	}
 	if spec.WebhookPort != 0 || spec.WebPort != 0 || len(spec.Sidecars) != 0 {
 		return fmt.Errorf("production serve cannot supervise development services")
+	}
+	switch spec.Scope {
+	case procstore.ServeScopeRepository:
+	case procstore.ServeScopeUser:
+		if spec.WorkspaceID != procstore.WebServeGroupID {
+			return fmt.Errorf("user-scoped serve group must use workspace id %q", procstore.WebServeGroupID)
+		}
+	default:
+		return fmt.Errorf("unknown serve scope %q", spec.Scope)
 	}
 	return nil
 }
@@ -236,14 +249,19 @@ func checkServePorts(ports ...int) error {
 	return nil
 }
 
+// serveAPIArgs builds the local API argv. A repository-scoped API is launched
+// for the daemon's repository; a user-scoped one (`bonsai web`) gets no
+// --repo, so it serves only the projects under the configured project roots.
 func serveAPIArgs(repoRoot string, spec procstore.ServeSpec, securityMode string) []string {
-	return []string{
-		"__serve-api",
-		"--repo", repoRoot,
+	args := []string{"__serve-api"}
+	if spec.Scope != procstore.ServeScopeUser {
+		args = append(args, "--repo", repoRoot)
+	}
+	return append(args,
 		"--port", strconv.Itoa(spec.APIPort),
 		"--browser-origin", spec.BrowserOrigin,
 		"--security-mode", securityMode,
-	}
+	)
 }
 
 func serveEnvironment(spec procstore.ServeSpec) map[string]string {
@@ -358,7 +376,7 @@ func (s *Server) serveStatus(id string) (*procstore.ServeGroup, error) {
 
 func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 	group := &procstore.ServeGroup{
-		ID: rt.Spec.WorkspaceID, Mode: normalizedServeMode(rt.Spec),
+		ID: rt.Spec.WorkspaceID, Mode: normalizedServeMode(rt.Spec), Scope: rt.Spec.Scope,
 		WorkspaceID: rt.Spec.WorkspaceID, WorkspacePath: rt.Spec.WorkspacePath,
 		State: "ready", StartedAt: rt.StartedAt, APIPort: rt.Spec.APIPort,
 		WebhookPort: rt.Spec.WebhookPort, WebPort: rt.Spec.WebPort, BrowserOrigin: rt.Spec.BrowserOrigin,

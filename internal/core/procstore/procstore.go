@@ -138,11 +138,28 @@ const (
 	ServeModeDevelopment ServeMode = "development"
 )
 
+// ServeScope says whose projects a serve group's local API owns. The empty
+// (repository) scope launches the API for the daemon's own repository, which
+// also backs the legacy unscoped routes. The user scope is `bonsai web`: one
+// API per user, run by a daemon whose home is not a Git repository, serving
+// only the projects found under the configured project roots.
+type ServeScope string
+
+const (
+	ServeScopeRepository ServeScope = ""
+	ServeScopeUser       ServeScope = "user"
+)
+
+// WebServeGroupID is the fixed workspace ID of the user-level `bonsai web`
+// serve group inside its daemon home.
+const WebServeGroupID = "web"
+
 // ServeSpec is the daemon request for one workspace serve group. Production
 // specs contain only the local API. Development specs may add the local webhook
 // relay, Vite frontend, and explicitly configured development sidecars.
 type ServeSpec struct {
 	Mode                   ServeMode      `json:"mode,omitempty"`
+	Scope                  ServeScope     `json:"scope,omitempty"`
 	WorkspaceID            string         `json:"workspace_id"`
 	WorkspacePath          string         `json:"workspace_path"`
 	Executable             string         `json:"executable"`
@@ -175,6 +192,7 @@ type ServeProcess struct {
 type ServeGroup struct {
 	ID            string         `json:"id"`
 	Mode          ServeMode      `json:"mode,omitempty"`
+	Scope         ServeScope     `json:"scope,omitempty"`
 	WorkspaceID   string         `json:"workspace_id"`
 	WorkspacePath string         `json:"workspace_path"`
 	State         string         `json:"state"`
