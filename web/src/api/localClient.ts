@@ -334,6 +334,15 @@ function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) =>
   })
 }
 
+// sendEventFocus tells the backend which project this page has in view ('' when
+// none, such as a hidden tab), so that project's GitHub data is polled often and
+// the rest rarely. Servers that predate it ignore the frame.
+export function sendEventFocus(socket: WebSocket, projectId: string): boolean {
+  if (socket.readyState !== 1) return false
+  socket.send(JSON.stringify({ type: 'focus', active_project: projectId }))
+  return true
+}
+
 export function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}, activeProjectId?: string): Promise<LocalEventConnection> {
   if (snapshot.status !== 'connected') return Promise.reject(new Error('Connect to local Bonsai before opening local events.'))
   if (sessionUsable(session)) return connectEventSocket(session, onEvent, activeProjectId)
