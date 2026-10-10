@@ -1,6 +1,6 @@
 # Plan: `bonsai web` — local-first web client, fast sync, optional live updates
 
-Status: **in progress** (Phases 0, 1, 3 and 4 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
+Status: **in progress** (Phases 0, 1, 3, 4 and 5 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
 
 This is a working plan. Execute it one phase at a time (see
 [How to use this plan](#how-to-use-this-plan)). Delete it, or fold the
@@ -15,7 +15,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
-| 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | todo |
+| 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (this PR) |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | todo |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
@@ -792,6 +792,78 @@ without `web/dist` fails loudly, which is what a release wants. Phase 8 sets
   - Explain "webhook" once as "GitHub's change notifications".
   - Every ✗ has a one-line fix.
 
+**Outcome (recorded by this PR)**
+
+*Packages.*
+- `internal/websetup/checks` is the checks engine. Every probe goes through an
+  injected `Env`, so tests never run real tools.
+- `internal/websetup` holds the draft, the plan, the diff and all screen copy.
+  It has no terminal code.
+- `internal/ui/websetup` is the Bubble Tea UI. It edits a draft only; all
+  effects go through a `Backend`, and the only writer is `Backend.Apply`,
+  reached from Review.
+- `internal/cli/web_setup.go` implements the backend, and
+  `internal/cli/web_doctor.go` prints the doctor.
+- No new modules: `huh` and `teatest` are not used. `muesli/termenv` moves
+  from indirect to direct, for `NO_COLOR` and the ASCII golden renderer.
+
+*Corrections to the scope above (reality at `b862fe7`):*
+
+| Plan said | Reality | Resolution |
+| --- | --- | --- |
+| "Bonsai looks up to 4 folders deep" | `config.ProjectDiscoveryDepth = 3` | The copy is rendered from the constant (3) |
+| Checking a folder shows its repos | Discovery finds candidates; only IDs in `project-roots.json.repositories.json` load, and that file was written without a lock | Checking a *new* folder selects every repo found under it; existing roots keep the selection made in the browser. Selection read/write moved to `config.{Read,Update}ProjectSelection` behind a cross-process lock that the API now uses too |
+| "Apply restarts only the affected processes" | The only process is `api`. `ServeRestart` re-runs the stored spec, so a new port or origin needs a group stop + start. The API re-reads project roots every 30 s | A port or hosted change restarts the API with the new spec (`ensure` with `applySettings`). Roots, selection, auto-open and `interfaces.local` restart nothing ("picked up within 30 s"). A stack started with `--port N` is not moved unless the user changes the port |
+| `gh` auth state from Phase 2 | Phase 2 is not done | The checks use `gh --version` and `gh auth status --active --hostname H --json hosts` (it has no token field). Older gh falls back to the exit code plus "account X" in the text. `--show-token` is never used |
+| Spec screen 4 shows ✗ for "gh not logged in" | GitHub is optional | gh missing or logged out is a warning (`!`), so doctor exits 0. `fail` is reserved for git missing or older than **2.35** (`status --show-stash`), an invalid `web.json`, and a foreign program on the API port |
+| Defaults "local UI, standard updates" | `DefaultWebConfig` has `hosted: true` (Phase 4), and the `bonsai serve` alias exists for hosted users | A brand-new user in the wizard gets "This computer" preselected (hosted off). Non-TTY, `--no-setup` and `bonsai serve` keep the hosted-on defaults, written with `setup_version: 0` so the wizard is offered once later. `WebSetupVersion` is now 1 |
+| Advanced: ports 7001/7002 and "rotate webhook secret" | No webhook secret until Phase 6 | Advanced edits the API port. The webhook port and secret rotation show as "available in a later version" |
+| Updates panel "every ~30 s" | `localapi.StandardUpdateInterval` is still 2 min (Phase 2) | All interval copy is rendered from the constant |
+| Spec counter "1 / 7" with 8 screens | — | The counter covers Welcome to Apply; Done is not counted. `d` on Welcome jumps to Review with the defaults |
+
+*Behaviour notes.*
+- The wizard ends with bonsai web running. The browser opens when
+  `open_browser` is on and `--no-open` is not given. After the full-screen UI
+  closes, the usual `✓ bonsai web is running` summary is printed, and
+  `--attach` is honoured.
+- A cancelled wizard writes nothing and exits 1 with "Start with the default
+  settings instead: bonsai web --no-setup". A failed start keeps the saved
+  settings, prints the usual `✗ could not start` block and exits 1.
+- `web.json` is written under its revision guard. If another window changed
+  it, Apply fails with "close this setup and run bonsai web setup again".
+- Inline fixes are only `gh auth login --hostname H` and
+  `cloudflared tunnel login`. Everything else, including installs, is shown
+  and copied, never run. No fix contains `sudo`.
+- Tunnel tools are detected and versioned, and their login state is shown,
+  but they are always `skip` until Phase 6. Their states:
+  - cloudflared: `cert.pem`
+  - ngrok: authtoken present (only presence is checked; the value is never
+    read into output)
+  - tailscale: `BackendState`
+- Doctor sample:
+
+  ```text
+  bonsai web doctor
+    ✓ git              2.43.0
+    ✓ gh installed     2.92.0
+    ✓ gh logged in     github.com · Tiago-0liveira
+    ✓ project folders  1 folder · 1 repo found · 1 shown
+    ✗ port 7001        port 7001 is used by another program (pid 4242, node)
+                       fix  bonsai web --port 7011   or pick another port in: bonsai web setup → Advanced
+    – cloudflared      installed (2026.9.3) · not logged in (only a custom domain needs it) · only needed for live updates (coming in a later version)
+    – ngrok            not installed · only needed for live updates (coming in a later version)
+    – tailscale        not installed · only needed for live updates (coming in a later version)
+
+  ✗ 1 problem
+  ```
+
+- Tool versions tested: git 2.43.0, gh 2.92.0 (`auth status --json hosts`),
+  cloudflared 2026.9.3. ngrok and tailscale were not installed; their parsing
+  is covered by fixture tests.
+- Terminal harnesses must answer the OSC 11 / DSR queries that Bubble Tea's
+  `init` triggers through termenv. A pty that never answers loses the keys
+  typed during termenv's 5 s timeout. Real terminals answer at once.
+
 **Exit criteria**
 - A brand-new user goes from `bonsai web` to the UI open in ≤ 6 key presses
   when accepting defaults (with `gh` already logged in).
@@ -1027,7 +1099,7 @@ the list.
   [x] ~/bonsai             this repo
   [ ] Add another folder…
 
-  Bonsai looks up to 4 folders deep. Nothing is moved or changed.
+  Bonsai looks up to 3 folders deep. Nothing is moved or changed.
  space toggle · a add folder · enter next · esc back
 ```
 
