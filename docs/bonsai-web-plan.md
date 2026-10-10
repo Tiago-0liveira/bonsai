@@ -1,6 +1,6 @@
 # Plan: `bonsai web` — local-first web client, fast sync, optional live updates
 
-Status: **in progress** (Phases 0, 1, 3 and 4 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
+Status: **in progress** (Phases 0 to 4 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
 
 This is a working plan. Execute it one phase at a time (see
 [How to use this plan](#how-to-use-this-plan)). Delete it, or fold the
@@ -12,7 +12,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | ---: | --- | --- | --- | --- |
 | 0 | Baseline and sync instrumentation | Sonnet 5.5 | — | done (#56) |
 | 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | done (#58) |
-| 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
+| 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | done (#61) |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | todo |
@@ -470,6 +470,95 @@ alternately on the same repository state)
 - Time to PR catalog has an additional ≥ 40% improvement over Phase 1 numbers.
 - Auth-missing and rate-limited states show up in the snapshot freshness.
 
+**Outcome (recorded by #61)**
+
+*What shipped.* `ghcli.Shared` (one per API process) holds the token source,
+a keep-alive HTTP/2 transport, the ETag cache and the rate-limit view;
+`Shared.Service(dir)` replaces `ghcli.New(dir)` in project discovery and the
+bench.
+- Token: `gh auth token --hostname <host>` (stdout, never argv), in memory
+  only. It is reused for 10 min and then re-read **in the background**, so no
+  request ever waits on the gh process after the first. A `401` forces one
+  synchronous re-read and one retry. Failures are cached for 30 s.
+- `Authorization` is attached only to the exact scheme and authority of a
+  known API base; anything else is refused before it is sent.
+- ETag cache: raw body per host + URL + Accept, keyed to a token fingerprint,
+  LRU-bounded at 32 MiB. A `304` is answered from it with an internal marker
+  that `PullRequestPage.NotModified` exposes.
+- `localapi.Run` calls `Shared.Prewarm` at startup: the token read plus
+  `GET /rate_limit` (free; it opens the connection and seeds the rate-limit
+  view). The browser connects after the API is healthy, so the first sync
+  waits on neither gh nor a TLS handshake.
+- Polling: a 5 s tick queues a provider refresh when it is due:
+  - visible project: 30 s, or 15 s while any of its worktrees has CI running;
+  - other projects: 5 min;
+  - ×4 while less than 10% of the core window is left, and nothing until
+    reset when it is exhausted.
+
+  "Visible" is the union of each event subscriber's focused project.
+  Repository data is reused for 20 s (below the visible interval); checks
+  keep 60 s, and pending checks now 10 s (was 15 s, so a 15 s poll finds
+  them expired).
+- PR catalog: when page 1 is `304` and the cached catalog is complete, pages
+  2+ are skipped. A full scan still runs at least every 5 min
+  (`fullReconcileAt`, previously unused), because a PR deep in the list can
+  close without page 1 changing.
+- Mutations moved over too (same client, same token and scopes as `gh api`).
+  The `gh api` subprocess transport remains as the fallback when gh exists
+  but cannot print a token (old gh, keyring error).
+
+*Corrections to the scope above (reality at `b862fe7`):*
+
+| Plan said | Reality | Resolution |
+| --- | --- | --- |
+| "GHES and `GH_HOST` keep working" | The web sync path never supported them: `sanitizeRemoteIdentity` sets `FullName` only for `github.com`, so a GHES remote already showed "No supported provider remote", and `gh api` picked its host from `GH_HOST` or the default login, not the remote. | No behaviour change. The transport is host-aware (`api.github.com` ↔ `github.com`, `<host>/api/v3` and `<host>/api/graphql` for GHES, with the token per host), so enabling GHES is an identity change only. Follow-up. `GH_TOKEN`/`GH_ENTERPRISE_TOKEN` still work because `gh auth token` returns them. The TUI (`internal/core/gh`) is unchanged. |
+| "Visible project" | The server only learned the active project in `authenticate`. | An optional client frame `{"type":"focus","active_project":"<id>"\|""}`, sent on project change and on `visibilitychange` (hidden = `""`). Old servers already read and dropped post-auth frames; old clients never send it. No `LOCAL_API_PROTOCOL_VERSION` bump. Client frames are now capped at 4 KiB, authenticate included. A focus frame also updates the priority project. |
+| `rate_limited` / `github_auth` "states" | Freshness states are a fixed enum (`loading`, `ready`, `stale`, `error`, `unavailable`). | They are `error.code` values on `freshness.provider`. `error` gains an optional `reset_at`. Auth failures make the provider `error` (or `stale` with data), and local freshness is untouched. A low rate limit keeps `ready` and adds the code. The PR panel already shows `error.message`, which names the fix. |
+| ETag cache stores "the decoded body" | Decoding lives in `app.Client`. | The transport stores the raw body and it is decoded again on `304` (well under 1 ms). |
+| Optional cold-load GraphQL query (D7) | `statusCheckRollup` does not match `checksRollup` semantics (a rail), and the three REST reads already overlap on one connection. | Deferred (Phase 7 candidate, when there is a persisted snapshot to compare against). No exit criterion depends on it. |
+| `gh` spawns ≤ 2 per cold load | | 1: the startup token read. The bench prewarms the same way before its timer; `--no-prewarm` measures a cold process instead. |
+
+*Results* (`__sync-bench --cold --repo ~/bonsai`, WSL2, median of 3 runs, live
+GitHub through the user's `gh` login; Phase 1 = `b862fe7`, both binaries run
+alternately on the same repository state)
+
+| Metric | Phase 1 (`b862fe7`) | Phase 2 | Phase 2 / Phase 1 | Exit criterion |
+| --- | ---: | ---: | ---: | --- |
+| Worktrees | 22 | 22 | | |
+| Inventory | 21 ms | 21 ms | | |
+| Local ready | 43 ms | 45 ms | | |
+| PR catalog | 644 ms | 366 ms | 57% (−43%) | ≥ 40% better ✓ (also 53% of the 693 ms Phase 1 table) |
+| All checks | 4553 ms | 2472 ms | 54% | |
+| gh spawns per cold load | 29 | 1 (startup token) | | ≤ 2 ✓ |
+| GitHub HTTP requests (cold) | — | 29 | | |
+| Warm forced refresh (`--warm`) | — | 47 requests, 47 × `304`, 0 gh | | only `304`s ✓ |
+| PR catalog, cold process (`--no-prewarm`) | 644 ms | 732 ms | 114% | (not the criterion; see below) |
+
+- GitHub itself answers in about 300–330 ms on a warm connection from this
+  machine (measured with `curl`). The PR catalog is now that floor plus
+  inventory. `gh auth token` costs about 250 ms and a TLS handshake about
+  100 ms, which is why `Prewarm` takes both off the first open.
+- A cold *process* (`--no-prewarm`) pays the token read and the handshake in
+  series, so it is a little slower than Phase 1's three parallel `gh api`
+  spawns. In production the API is up (and prewarmed) before the browser
+  connects, and later opens never wait on gh because the token refreshes in
+  the background.
+- The warm refresh takes about 6.7 s of wall time for 47 conditional
+  requests, mostly 22 worktrees × 2 checks reads through the pool of 6. It
+  costs no primary rate limit.
+- With `gh` removed from `PATH`, local ready is unchanged (49 ms), the
+  provider reports `github_auth` and no GitHub request is made.
+
+*Tests:* `internal/git/github/ghcli` (`token_test.go`, `http_test.go`), and
+`internal/server/localapi/github_http_test.go`:
+- `TestWarmProviderRefreshMakesOnlyNotModifiedRequests`
+- `TestProviderFreshnessReportsMissingGitHubLogin`
+- `TestProviderFreshnessReportsLowRateLimit`
+- `TestGitHubTokenNeverLeaks`
+- `TestNextProviderPoll`
+- `TestPollProvidersFavoursTheVisibleProject`
+- `TestEventSocketFocusFrames`
+
 ---
 
 ## Phase 3 — `bonsai web` command and user-level supervisor
@@ -604,6 +693,7 @@ Daemon home: `<user state dir>/bonsai/web`, where the user state dir is
   local UI or local origin until Phase 4. Phase 4 switches `webUIURL()`.
 - The updates line reads `standard (every ~2 min)`: it is rendered from
   `localapi.StandardUpdateInterval`, which is 2 min until Phase 2 lands.
+  (Phase 2 made it 30 s: `standard (every ~30 s)`.)
 - `web.json` is written with `setup_version: 0` ("defaults written, setup not
   run"), so Phase 5 can still offer its wizard to Phase 3 users.
 - `web-webhook-secret` is not created yet (no consumer); Phase 6 generates it.
