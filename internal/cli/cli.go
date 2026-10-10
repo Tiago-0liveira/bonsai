@@ -454,12 +454,13 @@ Usage:
   bonsai restart <id>             restart a process
   bonsai attach <id>              stream a process log (Ctrl-C detaches)
   bonsai daemon status|stop       control the background daemon
-  bonsai web [--attach] [--no-open] [--port N]  start the web client stack (any directory)
+  bonsai web [--attach] [--no-open] [--no-setup] [--port N]  start the web client stack (any directory)
   bonsai web status|open|stop     inspect, open in the browser, stop
   bonsai web logs [api] [-f]      local API logs
   bonsai web attach               live log viewer
   bonsai web restart [api]        restart the local API
-  bonsai web setup                show the web settings
+  bonsai web setup                guided setup; change projects, ports, hosted app
+  bonsai web doctor               check what bonsai web needs (exit 1 on problems)
   bonsai serve                    deprecated alias of bonsai web --attach
   bonsai alias list               list aliases
   bonsai alias add <name> <cmd…>  add a user alias

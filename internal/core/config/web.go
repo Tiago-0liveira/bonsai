@@ -22,8 +22,9 @@ const (
 	WebStateVersion  = 1
 	// WebSetupVersion is the setup flow this build ships. A web.json with an
 	// older setup_version (including 0, "defaults written without setup") is
-	// offered the setup flow once that exists (Phase 5).
-	WebSetupVersion = 0
+	// offered the guided setup the next time `bonsai web` runs in a terminal.
+	// Bump it only when the setup asks something new.
+	WebSetupVersion = 1
 
 	DefaultWebAPIPort     = 7001
 	DefaultWebWebhookPort = 7002
@@ -76,7 +77,7 @@ type WebState struct {
 func DefaultWebConfig() WebConfig {
 	return WebConfig{
 		Version:      WebConfigVersion,
-		SetupVersion: WebSetupVersion,
+		SetupVersion: 0, // defaults written; the guided setup has not run
 		APIPort:      DefaultWebAPIPort,
 		OpenBrowser:  true,
 		Interfaces:   WebInterfaces{Local: true, Hosted: true},

@@ -19,7 +19,7 @@ func TestEnsureWebConfigWritesDefaultsOnce(t *testing.T) {
 	}
 	if cfg.Revision != 1 || cfg.APIPort != DefaultWebAPIPort || !cfg.OpenBrowser ||
 		!cfg.Interfaces.Local || !cfg.Interfaces.Hosted || cfg.Updates.Mode != WebUpdatesStandard ||
-		cfg.SetupVersion != WebSetupVersion || cfg.Updates.Live.WebhookPort != DefaultWebWebhookPort {
+		cfg.SetupVersion != 0 || cfg.Updates.Live.WebhookPort != DefaultWebWebhookPort {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if runtime.GOOS != "windows" {

@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/portowner"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	"github.com/Tiago-0liveira/bonsai/internal/websetup/checks"
 )
 
 func TestWebFailureBlockFormat(t *testing.T) {
@@ -158,4 +161,82 @@ func freePort(t *testing.T) int {
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestWantsSetup(t *testing.T) {
+	current := config.WebSetupVersion
+	cases := []struct {
+		tty, noSetup, exists bool
+		version              int
+		want                 bool
+	}{
+		{true, false, false, 0, true},           // first run in a terminal
+		{true, false, true, 0, true},            // defaults written by an older bonsai web
+		{true, false, true, current, false},     // already set up
+		{true, true, false, 0, false},           // --no-setup
+		{false, false, false, 0, false},         // script or pipe
+		{false, false, true, 0, false},          // script, older settings
+		{true, false, true, current + 1, false}, // settings from a newer bonsai
+	}
+	for _, tc := range cases {
+		if got := wantsSetup(tc.tty, tc.noSetup, tc.exists, tc.version); got != tc.want {
+			t.Errorf("wantsSetup(tty=%v, noSetup=%v, exists=%v, version=%d) = %v", tc.tty, tc.noSetup, tc.exists, tc.version, got)
+		}
+	}
+}
+
+func TestSetupWithoutATerminalPrintsTheSettings(t *testing.T) {
+	var out bytes.Buffer
+	path := filepath.Join(t.TempDir(), "web.json")
+	w := &webCLI{out: &out, errOut: &out, configPath: path}
+	if err := w.setup(nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Saved default settings to " + path, `"setup_version": 0`, "Run bonsai web setup in a terminal for the guided setup"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if _, exists, err := config.ReadWebConfig(path); err != nil || !exists {
+		t.Fatalf("defaults not written: %v", err)
+	}
+}
+
+func TestPrintDoctor(t *testing.T) {
+	healthy := []checks.Check{
+		{ID: checks.IDGit, Title: "git", State: checks.OK, Detail: "2.43.0"},
+		{ID: checks.IDTunnelNgrok, Title: "ngrok", State: checks.Skip, Detail: "not installed", Fix: &checks.Fix{Command: "brew install ngrok"}},
+	}
+	var out bytes.Buffer
+	w := &webCLI{out: &out}
+	if err := w.printDoctor(healthy); err != nil {
+		t.Fatalf("healthy doctor: %v", err)
+	}
+	want := "bonsai web doctor\n" +
+		"  ✓ git    2.43.0\n" +
+		"  – ngrok  not installed\n" +
+		"\n✓ Everything bonsai web needs is in place.\n"
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+
+	out.Reset()
+	warned := append(healthy, checks.Check{ID: checks.IDGHAuth, Title: "gh logged in", State: checks.Warn, Detail: "not logged in to github.com", Fix: &checks.Fix{Command: "gh auth login --hostname github.com", Inline: true}})
+	if err := w.printDoctor(warned); err != nil {
+		t.Fatalf("warnings must not fail doctor: %v", err)
+	}
+	if !strings.Contains(out.String(), "               fix  gh auth login --hostname github.com\n") || !strings.HasSuffix(out.String(), "! 1 warning\n") {
+		t.Fatalf("warning output:\n%s", out.String())
+	}
+
+	out.Reset()
+	failed := append(warned, checks.Check{ID: checks.IDPort, Title: "port 7001", State: checks.Fail, Detail: "port 7001 is used by another program (pid 4242, node)", Fix: &checks.Fix{Command: "bonsai web --port 7011"}})
+	err := w.printDoctor(failed)
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 1 {
+		t.Fatalf("failure must exit 1, got %v", err)
+	}
+	if !strings.Contains(out.String(), "  ✗ port 7001     port 7001 is used by another program (pid 4242, node)\n") || !strings.HasSuffix(out.String(), "✗ 1 problem, 1 warning\n") {
+		t.Fatalf("failure output:\n%s", out.String())
+	}
 }
