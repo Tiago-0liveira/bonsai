@@ -16,7 +16,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
-| 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | todo |
+| 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | in progress (p6a) |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
 | F | Multi-workspace (design only, later) | Opus 5.5 | 8 | not scheduled |
@@ -1063,6 +1063,43 @@ without `web/dist` fails loudly, which is what a release wants. Phase 8 sets
 - No raw payload persistence. Normalized metadata only (same as the relay).
 - Creating, changing or deleting GitHub hooks requires a Review-screen
   confirmation.
+
+**Delivery.** Three stacked PRs, each green on its own:
+
+| PR | Branch | Contents |
+| --- | --- | --- |
+| p6a | `feat/web-p6a-live-receiver` | Receiver, webhook secret, daemon allow-rule, tunnel presets and sidecar, `bonsai web logs/restart tunnel`, `__dev-webhook send --web`, event → project mapping, checks invalidation by SHA. Live mode starts the receiver and tunnel; hooks are still added by hand |
+| p6b | `feat/web-p6b-live-hooks` | Hook manager, API live controller (public URL, create/patch hooks, health, `web-state.json`), polling interplay, startup reconcile, status lines, `GET /api/settings/updates` |
+| p6c | `feat/web-p6c-live-setup` | Setup TUI live flow, doctor live checks and orphan hooks, web badge and Settings section, manual E2E |
+
+*Corrections to the scope above (reality at `68d4c51`, p6a):*
+
+| Plan said | Reality | Resolution |
+| --- | --- | --- |
+| Reuse the `internal/server/webhooks` allowlist and normalization | `AllowedEventAction` has no `status` or `ping`; `Event` keeps neither the repository name nor the SHA of `status`/`workflow_run`; the hosted relay is frozen (D1) | New `webhooks.NormalizeLive`/`LiveEvent`/`AllowedLiveEventAction` in `live.go`. The shared `Normalize`, `AllowedEventAction` and `Event` are untouched. `Verify`, the 2 MiB cap, header bounds and the digest-checked dedupe (bounded to 4096 ids, in memory) are reused |
+| `cloudflared tunnel run {name}` | The origin then comes from the user's cloudflared config, so the daemon cannot check that it is the webhook port | `cloudflared tunnel --no-autoupdate run --url http://127.0.0.1:{port} {name}`, so the argv names the webhook port and passes the daemon check. cloudflared's help says `--url` applies only when the config file has no ingress rules: ingress rules in the user's own config are theirs (setup will say so). Defence in depth: the API's exact Host check refuses any tunnelled Host |
+| `ngrok http 127.0.0.1:{port} --url {domain}` (older: `--domain`) | ngrok documents `--domain` as deprecated for `--url` | `ngrok http 127.0.0.1:{port} --log stdout [--url https://domain]`. The URL comes from the `started tunnel … url=` log line or the agent API (`ParseNgrokTunnels`) |
+| `tailscale funnel {port}` | Foreground by default (`--bg` would outlive Bonsai). Public URL is `https://<Self.DNSName without the dot>` | Foreground form, so stopping the sidecar turns Funnel off. `ParseTailscaleStatus` reads `tailscale status --json` |
+| `web.json` has `public_url` and `command` | A named tunnel needs its name; a custom tunnel needs a way to find its URL | Additive `updates.live.tunnel_name` and `updates.live.url_pattern` (`version` stays 1). The live section is validated only while `updates.mode` is `live` |
+| Daemon reuse | The reuse check required exactly one process (`api`); a web daemon from an older bonsai (same protocol) refuses any webhook port or sidecar | Reuse accepts `api` + optional `tunnel` and requires the same webhook port and tunnel argv. `ServeGroup` gains `tunnel` (argv) so the CLI sees a changed spec and restarts. The CLI replaces an older web daemon once when it refuses the live spec. No daemon protocol bump |
+| Map events to projects by repository | Deliveries carry a numeric repository ID; `ProjectInfo.FullName` is a folder name | Match the cached `Remote.Repository.ID`, or any local GitHub remote whose `full_name` matches case-insensitively |
+| Targeted checks invalidation by SHA | The checks cache is keyed `repo\x00sha` (fork heads use the head repository) | `providerCache.invalidateChecks(sha)` expires every key for that SHA, then a non-forced provider refresh re-reads only that commit. Other events queue a forced provider refresh (conditional requests) |
+| Secret format | GitHub signs with the secret string exactly as set on the hook | `web-webhook-secret` holds 64 hex characters (32 random bytes); the HMAC key is that text, unlike the development relay, which hex-decodes its file |
+| Tunnel program missing | Starting would fail for a missing optional tool | `bonsai web` still starts the receiver, prints the install command, and leaves the tunnel out of the spec; the next start adds it once installed. A tunnel that dies leaves the group `degraded` and the UI working |
+
+*Rail enforcement (p6a).* The receiver is a second `http.Server` in the API
+process on `127.0.0.1:<webhook_port>` whose handler answers only
+`POST /github/webhook` (any other path or method is 404) and never wraps the
+API handler. The daemon accepts a webhook port and sidecar only for the
+user-scoped `web` group: one sidecar, named `tunnel`, with no environment,
+working directory, required flag or restart policy of its own, whose argv
+references the webhook port, never the API port (digit-bounded, also inside
+`host:port` and URLs), and no other `:port`. The API reads the secret from its
+0600 file; argv carries only `--webhook-port`.
+
+Versions tested (p6a): cloudflared 2026.9.3 (flags checked with `--help`).
+ngrok and tailscale were not installed; their argv and URL parsing are covered
+by fixture tests (`internal/webtunnel/testdata`).
 
 **Exit criteria**
 - An end-to-end manual test on a scratch repo with `cloudflared-quick`:
