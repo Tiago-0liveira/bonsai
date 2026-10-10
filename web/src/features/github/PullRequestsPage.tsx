@@ -19,7 +19,7 @@ export function PullRequestsPage({ selectedId: routeSelectedId, onSelect, onShow
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const worktrees = useBonsaiStore((state) => state.worktrees)
   const setSelection = useBonsaiStore((state) => state.setSelection)
-  const { rows: pullRequests, tab, setTab, openCount, closedCount, state, message, retry } = usePullRequestCatalog(activeProjectId)
+  const { rows: pullRequests, tab, setTab, openCount, closedCount, state, message, stale, retry } = usePullRequestCatalog(activeProjectId)
   const project = projects.find((item) => item.id === activeProjectId)
   const inspectedId = useBonsaiStore((state) => state.inspectedPullRequestId)
   const [localId, setLocalId] = useState<string>()
@@ -46,6 +46,7 @@ export function PullRequestsPage({ selectedId: routeSelectedId, onSelect, onShow
         rows={pullRequests}
         state={state}
         message={message}
+        stale={stale}
         onRetry={retry}
         repository={repository}
         selectedId={selected?.id}

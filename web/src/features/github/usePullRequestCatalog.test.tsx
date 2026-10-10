@@ -38,3 +38,17 @@ it('keeps Closed accessible when the GitHub page has no open PRs', async () => {
   await waitFor(() => expect(fetchClosedPullRequests).toHaveBeenCalledWith('empty'))
   expect(screen.getByRole('button', { name: /^Closed/ })).toHaveAttribute('aria-pressed', 'true')
 })
+
+it('labels an open list that comes from an unconfirmed catalog', () => {
+  const open = { ...pullRequests[0], id: 'saved:1', status: 'Open' as const }
+  useBonsaiStore.setState({ activeProjectId: 'saved', pullRequests: [open], projects: [], syncFreshness: { saved: { provider: { state: 'stale', source: 'disk' } } } })
+  const view = render(<PullRequestsPage />)
+  // The restored rows stay visible with a status, never as a ready list.
+  expect(screen.getByRole('status')).toHaveTextContent('Saved from the last session; refreshing…')
+  expect(screen.getByRole('option', { name: new RegExp(`#${open.number}`) })).toBeInTheDocument()
+  act(() => useBonsaiStore.setState({ syncFreshness: { saved: { provider: { state: 'ready' } } } }))
+  expect(view.queryByText(/Saved from the last session/)).toBeNull()
+  // Stale without an error used to read as ready; it is labeled now.
+  act(() => useBonsaiStore.setState({ syncFreshness: { saved: { provider: { state: 'stale' } } } }))
+  expect(screen.getByRole('status')).toHaveTextContent('Not confirmed recently; refreshing…')
+})

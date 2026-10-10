@@ -187,6 +187,26 @@ describe('workspace migration and hydration', () => {
     expect(useBonsaiStore.getState().dockWorktreeId).toBe('')
   })
 
+  it('never serializes restored snapshot entities or their freshness into preferences', () => {
+    __resetGitSyncForTests()
+    useBonsaiStore.setState({ projects: [{ ...projects[0], id: 'repo' }] })
+    const disk = { state: 'stale' as const, updated_at: '2026-10-01T00:00:00Z', source: 'disk' as const }
+    applySnapshot({
+      repository: { id: 'repo', workspace_id: 'personal', full_name: 'owner/repo', default_branch: 'main' }, epoch: 'e', sequence: 0, online: true, metadata: {},
+      freshness: { local: disk, provider: disk },
+      local: { branches: [], worktrees: [{ id: 'restored-tree', repository_id: 'repo', branch: 'RESTORED_BRANCH_MARKER', main: true, local_head_sha: 'sha' }] },
+      worktree_state: { 'restored-tree': { ci: { status: 'passed', checks: [], freshness: disk } } },
+    })
+    expect(useBonsaiStore.getState().worktrees[0]).toMatchObject({ ciStale: true })
+    useBonsaiStore.getState().setDockHeight(41)
+    workspacePreferences.flush()
+    const saved = localStorage.getItem(WORKSPACE_STORAGE_KEY)!
+    expect(saved).not.toContain('RESTORED_BRANCH_MARKER')
+    expect(saved).not.toContain('disk')
+    expect(read().state).not.toHaveProperty('worktrees')
+    expect(read().state).not.toHaveProperty('syncFreshness')
+  })
+
   it('keeps live managed processes while reconciling stale runtime and project IDs', () => {
     const current = { ...useBonsaiStore.getInitialState(), activeProjectId: 'real', projects: [{ id: 'real', workspaceId: 'workspace' }], worktrees: [{ id: 'real-tree', projectId: 'real' }], processes: [{ id: 'live-process' }], dockRuntimeId: 'live-process', openRuntimeIds: ['live-process', 'worker'] }
     const state = mergeWorkspacePreferences(legacy().state, current)

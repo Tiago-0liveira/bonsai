@@ -1,4 +1,5 @@
-import { expect, test, type Browser, type TestInfo } from '@playwright/test'
+import { expect, test, type Browser, type Page, type TestInfo } from '@playwright/test'
+import './presentationFixtures'
 
 // Runs against TestWarmStartBrowserFixture (127.0.0.1:7013): the real API
 // wiring with three generated projects. "alpha" is the active project.
@@ -9,7 +10,7 @@ const LARGE = process.env.BONSAI_P7_SIZE === 'large'
 const SIZE = LARGE ? { worktrees: 100, prs: 500 } : { worktrees: 25, prs: 50 }
 
 test.describe.configure({ mode: 'serial' })
-test.setTimeout(10 * 60_000)
+test.setTimeout(120_000)
 
 async function fixture(path: string, params: Record<string, string | number> = {}) {
   const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))
@@ -92,6 +93,7 @@ test.beforeEach(async () => {
 })
 
 test('cold start: ready to branch list and PR badges painted', async ({ browser }, testInfo) => {
+  test.setTimeout(15 * 60_000)
   const samples: Sample[] = []
   for (let run = 0; run < WARMUPS + RUNS; run++) {
     // A restarted API with empty memory and live providers.
@@ -104,6 +106,7 @@ test('cold start: ready to branch list and PR badges painted', async ({ browser 
 })
 
 test('warm start: restored branch list and PR badges paint while providers are pending', async ({ browser }, testInfo) => {
+  test.setTimeout(15 * 60_000)
   // Populate the cache through real live commits, then restart from it.
   await fixture('settle')
   const samples: Sample[] = []
@@ -118,4 +121,121 @@ test('warm start: restored branch list and PR badges paint while providers are p
   expect(summary.failures).toBe(0)
   // The ≤ 300 ms gate is local (BONSAI_P7_GATE=1); CI only reports.
   if (process.env.BONSAI_P7_GATE === '1') expect(summary.p95).toBeLessThanOrEqual(300)
+})
+
+const branches = (page: Page) => page.getByRole('complementary', { name: 'Branches' })
+const prBadges = (page: Page) => branches(page).locator('[data-pr-badge]')
+const staleBadges = (page: Page, kind: 'pr' | 'ci') => branches(page).locator(`[data-${kind}-badge][data-stale]`)
+
+async function openWarm(page: Page) {
+  await page.goto(`${FIXTURE}/app`)
+  await expect(branches(page).locator('[data-worktree-row]')).toHaveCount(expected.rows)
+}
+
+test('restored data is labeled until each component revalidates on its own', async ({ page }) => {
+  await fixture('settle')
+  await fixture('restart', { components: 'local,catalog,checks' })
+  await openWarm(page)
+  await expect(prBadges(page)).toHaveCount(expected.prs)
+  await expect(branches(page).locator('[data-stale-label]')).toHaveText('saved')
+  await expect(staleBadges(page, 'pr')).toHaveCount(expected.prs)
+  await expect(staleBadges(page, 'ci')).toHaveCount(expected.rows - 1)
+  await expect(page.getByRole('complementary', { name: 'Inspector' }).getByText('saved', { exact: true })).toBeVisible()
+  await expect(page.locator('.react-flow__node-worktree').getByRole('img', { name: /\(stale\)$/ }).first()).toBeVisible()
+
+  // Local Git first: the Inspector goes live, provider labels stay.
+  await fixture('release', { components: 'local' })
+  await expect(page.getByRole('complementary', { name: 'Inspector' }).getByText('live', { exact: true })).toBeVisible()
+  await expect(staleBadges(page, 'pr')).toHaveCount(expected.prs)
+
+  // The catalog: PR links are confirmed while checks are still pending.
+  await fixture('release', { components: 'catalog' })
+  await expect(staleBadges(page, 'pr')).toHaveCount(0)
+  await expect(prBadges(page)).toHaveCount(expected.prs)
+  await expect(staleBadges(page, 'ci')).toHaveCount(expected.rows - 1)
+  await expect(branches(page).locator('[data-stale-label]')).toHaveCount(0)
+
+  await fixture('release', { components: 'checks' })
+  await expect(staleBadges(page, 'ci')).toHaveCount(0)
+  await expect(page.locator('.react-flow__node-worktree').getByRole('img', { name: /\(stale\)$/ })).toHaveCount(0)
+})
+
+for (const damage of ['missing', 'corrupt', 'oversized', 'unsupported']) {
+  test(`a ${damage} cache starts cold, then recovers`, async ({ page }) => {
+    await fixture('settle')
+    await fixture('restart', { components: 'catalog,checks', cache: damage })
+    await openWarm(page)
+    // Cold: local Git loads, nothing is restored, nothing is labeled saved.
+    await expect(branches(page).locator('[data-stale-label]')).toHaveCount(0)
+    await expect(prBadges(page)).toHaveCount(0)
+    await fixture('release', { components: 'catalog,checks' })
+    await expect(prBadges(page)).toHaveCount(expected.prs)
+    // Live data replaced the bad document: the next start is warm again.
+    await fixture('settle')
+    await fixture('restart', { components: 'local,catalog,checks' })
+    await openWarm(page)
+    await expect(branches(page).locator('[data-stale-label]')).toHaveText('saved')
+    await expect(prBadges(page)).toHaveCount(expected.prs)
+  })
+}
+
+test('a removed project stays absent after a restart', async ({ page }) => {
+  await fixture('settle')
+  await fixture('remove', { project: 'gamma' })
+  await fixture('restart', { components: 'local,catalog,checks' })
+  await openWarm(page)
+  const projects = await page.evaluate(() => window.__bonsaiTestStore.getState().projects.map(project => project.id))
+  expect(projects).toEqual(['alpha', 'beta'])
+})
+
+test('an API restart keeps the page intact and ignores delayed events of the old process', async ({ page }) => {
+  // Proxy the event socket so a message of the old process can be replayed
+  // after the restart, as a late delivery would.
+  let oldUpdate: string | undefined
+  const sockets: { send: (message: string) => void }[] = []
+  await page.routeWebSocket(`${FIXTURE.replace('http', 'ws')}/events`, socket => {
+    const server = socket.connectToServer()
+    sockets.push(socket)
+    server.onMessage(message => {
+      const text = String(message)
+      if (!oldUpdate && text.includes('"project_snapshot"') && text.includes('"alpha"')) oldUpdate = text.replace('"project_snapshot"', '"project_update"').replace(/"sequence":\d+/g, '"sequence":999999')
+      socket.send(message)
+    })
+  })
+  await fixture('settle')
+  await fixture('restart')
+  await openWarm(page)
+  await expect(prBadges(page)).toHaveCount(expected.prs)
+  const epochBefore = (await fixture('release')).epoch
+  await fixture('restart', { components: 'local,catalog,checks' })
+  await expect(branches(page).locator('[data-stale-label]')).toBeVisible({ timeout: 15_000 })
+  // The old capability died with the old process; the page gets a new one
+  // on its own and bootstraps from the restored state.
+  await expect(branches(page).locator('[data-stale-label]')).toHaveText('saved', { timeout: 15_000 })
+  expect(oldUpdate).toContain(epochBefore)
+  sockets.at(-1)!.send(oldUpdate!)
+  await page.waitForTimeout(300)
+  await expect(branches(page).locator('[data-worktree-row]')).toHaveCount(expected.rows)
+  await expect(staleBadges(page, 'pr')).toHaveCount(expected.prs)
+  await fixture('release', { components: 'local,catalog,checks' })
+  await expect(staleBadges(page, 'ci')).toHaveCount(0)
+})
+
+test('connects, paints warm and navigates with all browser storage blocked', async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const name of ['localStorage', 'sessionStorage', 'indexedDB']) {
+      Object.defineProperty(window, name, { configurable: true, get() { throw new DOMException('blocked', 'SecurityError') } })
+    }
+  })
+  await fixture('settle')
+  await fixture('restart', { components: 'local,catalog,checks' })
+  await openWarm(page)
+  await expect(branches(page).locator('[data-stale-label]')).toHaveText('saved')
+  // The fixture configures no project roots, so the API asks for them.
+  await page.getByRole('dialog', { name: 'Choose project folders' }).getByRole('button', { name: 'Later' }).click()
+  await page.getByRole('link', { name: 'GitHub', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Saved from the last session' })).toBeVisible()
+  await expect(page.getByRole('listbox', { name: 'Pull requests' }).getByRole('option')).toHaveCount(SIZE.prs)
+  await fixture('release', { components: 'local,catalog,checks' })
+  await expect(page.getByRole('status').filter({ hasText: 'Saved from the last session' })).toHaveCount(0)
 })
