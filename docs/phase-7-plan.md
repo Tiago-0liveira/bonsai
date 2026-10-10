@@ -24,6 +24,27 @@ the ones they depend on and note any that moved.
 | 6 | Existing splits are not claimed as new work (xterm, GitHub route, app vs landing). | They already exist. |
 | 7 | Playwright list trimmed, and the Phase 7 gates reduced (see [Test plan](#5-test-plan)). | Keep the suite proportional to the risk. |
 
+## 7a corrections (re-verified at `04e9683` while implementing 7a)
+
+The 7a PR changed these points of this plan; the code is the reference.
+
+| # | Plan said | Code / decision |
+| --- | --- | --- |
+| 1 | Measure with pnpm 12.9.1 | `pnpm` outside `web/` may be older (12.6.0 here); inside `web/` the `packageManager` field selects 12.9.1. All builds above used 12.9.1. |
+| 2 | Main chunk = facade `src/app/ApplicationRoot.tsx` | The manifest has no such facade: ApplicationRoot is the shared chunk `_ApplicationRoot-*.js`. Resolve it by chunk name. |
+| 3 | Branch-list badges have no freshness input | Also: the browser never read nested CI freshness at all (`wireFreshness` kept only state, time and error). 7a maps it and adds `ciStale` / `prStale` to worktrees. |
+| 4 | Seed the provider cache (optional detail) | Required: `refreshProvider` rebuilds every worktree's CI as `loading` unless the checks cache hits, which would clear restored badges as soon as the catalog read finished. Restored checks are seeded per head repository and SHA. |
+| 5 | Reset `fullReconcileAt` after restart | A fresh cache entry already has it zero and the in-memory ETag cache is empty, so page one cannot short-circuit. Kept that way when seeding, and tested. |
+| 6 | Revalidate independent of browser subscription | `stateSync.Run` refreshed only on `SubscriberReady`; 7a queues restored projects at start. |
+| 7 | Namespace = roots path + security mode | Also the canonical `RepoDir`, so the legacy per-repo `bonsai serve` never shares a document with `bonsai web`. |
+| 8 | `source: live` after revalidation | `source` is `"disk"` while restored and omitted otherwise (absent means live). |
+| 9 | `--repeat-each=30` | One test loops 3 warm-ups + N runs in fresh contexts and aggregates p50/p95/max (`BONSAI_P7_RUNS`, `BONSAI_P7_SIZE=large`, `BONSAI_P7_GATE=1` for the local ≤ 300 ms gate). Separate repeats cannot aggregate. |
+| 10 | Background projects "in batches" | Active project first, the rest in catalog order, one `project_snapshot` each. |
+| 11 | "Live updates" must not imply fresh data | `UpdatesBadge` reads update settings, never freshness; no change needed. |
+| 12 | (not in plan) | After an API restart the browser retried the event socket forever with the dead capability (policy close before `ready` never invalidated it). Fixed in 7a: the epoch-change path depends on it. |
+| 13 | (not in plan) | `Config.SnapshotCacheDir` enables warm start; `Run` defaults it under the user state dir; `BONSAI_WARM_START=off` disables it. Tests that call `New` never write to the user's state dir. |
+| 14 | Persisted local subset | Changed-file lists and status error messages are not persisted; restored rows show change counts until local Git revalidates. |
+
 ## Objectives
 
 1. Opening the app paints last-known worktree list and PR/CI badges immediately,

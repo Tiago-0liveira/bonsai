@@ -17,7 +17,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | done (#63, #64, #65) |
-| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
+| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | in progress (7a) |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
 | F | Multi-workspace (design only, later) | Opus 5.5 | 8 | not scheduled |
 
@@ -1246,9 +1246,9 @@ ApplicationRoot chunk and their static imports.
 | PullRequestsRoute raw / gzip | 210.83 / 63.04 kB | 210,872 / 62,924 B | 210,207 / 62,599 B | 7c | 7c |
 | CSS raw / gzip (index + ApplicationRoot) | 54.61 / 11.19 kB | 54,611 / 11,118 + 20,503 / 4,269 B | 54,611 / 11,118 + 20,503 / 4,269 B | 7c | 7c |
 | Static closure / first-screen JS (raw) | not recorded | 149,517 / 881,800 B | 149,517 / 887,385 B | 7c | 7c |
-| WS `ready` → branch list + PR badges painted, p50 / p95 / max (25 wt, 50 PRs) | not recorded | — | 88.9 / 106.9 / 110.1 ms (cold, live providers) | fill | 7c |
-| Same, 100 worktrees / 500 PRs | not recorded | — | 213.8 / 236.3 / 238.3 ms (cold, live providers) | fill | 7c |
-| Snapshot cache bytes / load time / peak retained memory | not recorded | — | — (no cache) | fill | 7c |
+| WS `ready` → branch list + PR badges painted, p50 / p95 / max (25 wt, 50 PRs) | not recorded | — | 88.9 / 106.9 / 110.1 ms (cold, live providers) | 71.7 / 78.0 / 85.0 ms (warm, all revalidation held); production build: 69.4 / 74.8 / 80.8 ms | 7c |
+| Same, 100 worktrees / 500 PRs | not recorded | — | 213.8 / 236.3 / 238.3 ms (cold, live providers) | 117.0 / 150.8 / 174.0 ms (warm, all held); production build: 107.4 / 142.9 / 143.6 ms | 7c |
+| Snapshot cache bytes / load time / peak retained memory | not recorded | — | — (no cache) | 25 wt/50 PRs: 69,629 B / 0.98 ms / 171 KB; 100 wt/500 PRs: 332,455 B / 4.7 ms / 721 KB (3 projects) | 7c |
 
 The 70% main-chunk gate is against the rebuilt exact bytes: 0.7 × 730,211 =
 **511,147 B**.
@@ -1258,6 +1258,18 @@ Pre-P7 paint numbers come from `web/e2e/warm-start.spec.ts` (fixture
 warm-ups, 30 runs, fresh browser context each). The fixture's providers answer
 instantly, so these are a cold *best case*: with a provider still pending, the
 pre-P7 browser paints no PR badges at all until it answers.
+
+After 7a, the same spec restarts the fixture from a settled cache with local,
+catalog and checks reads all held until the measurement ends, so every
+number is a restored, labeled paint; the ≤ 300 ms p95 gate passes
+(`BONSAI_P7_RUNS=30 BONSAI_P7_GATE=1`, quiet machine, Chromium from
+Playwright 1.63, 1440×900). Navigation → `ready` stays ≈ 115 ms p50 before
+and after. The production row serves `web/dist` through the embedded UI
+(`BONSAI_WARM_START_UI=dist`); it times from the socket's `ready` frame
+because that build has no performance mark. Cache rows come from
+`TestWarmStartCacheMeasurements` (`BONSAI_P7_MEASURE=1`): document bytes,
+restore time (load, decode, install, seed; best of 5) and heap retained by a
+restore. One save of the 100/500 fixture allocates about 2 MB transiently.
 
 ---
 
