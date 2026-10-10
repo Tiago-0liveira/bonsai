@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockGitBackend } from './mockGit'
+import { mockGitBackend, mockUpdateSettings, openConnectedApp } from './mockGit'
 
 test('empty onboarding, multiple folders, Settings and last-root removal', async ({ page }) => {
   await mockGitBackend(page, true)
@@ -32,4 +32,43 @@ test('empty onboarding, multiple folders, Settings and last-root removal', async
   await page.getByRole('link', { name: 'Settings', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Project folders' })).toBeVisible()
   await expect(page.getByText('No project folders configured yet.')).toBeVisible()
+})
+
+test('updates badge and the read-only Live updates section', async ({ page }) => {
+  await mockGitBackend(page)
+  let tunnelUp = true
+  await mockUpdateSettings(page, () => ({
+    mode: 'live',
+    standard_interval_seconds: 120,
+    live: {
+      tunnel: 'cloudflared-quick',
+      public_host: 'quiet-river.trycloudflare.com',
+      tunnel_up: tunnelUp,
+      ...(tunnelUp ? {} : { tunnel_error: 'the tunnel is not running' }),
+      safety_poll_seconds: 600,
+      repositories: [
+        { full_name: 'octo/bonsai', state: 'live', healthy: tunnelUp, last_delivery_at: '2026-10-10T09:30:00Z', project_ids: ['bonsai'] },
+        { full_name: 'acme/web', state: 'needs_admin', healthy: false, last_error: 'you are not an admin of acme/web, so it stays on standard updates', project_ids: [] },
+      ],
+    },
+  }))
+  await openConnectedApp(page)
+  const badge = page.getByLabel(/^Updates: /)
+  await expect(badge).toHaveAccessibleName(/^Updates: Live\./)
+  await expect(badge).toHaveAttribute('title', /quiet-river\.trycloudflare\.com/)
+
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  const section = page.getByRole('region', { name: 'Live updates' })
+  await expect(section.getByText(/GitHub notifies Bonsai through quiet-river\.trycloudflare\.com/)).toBeVisible()
+  await expect(section.getByRole('row', { name: /octo\/bonsai Live delivery/ })).toBeVisible()
+  await expect(section.getByRole('row', { name: /acme\/web Needs admin/ })).toBeVisible()
+  await expect(section.getByText('bonsai web setup')).toBeVisible()
+  await expect(section.getByRole('button')).toHaveCount(0)
+
+  // The tunnel goes down: the next refetch (focus) falls back to Standard.
+  tunnelUp = false
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect(badge).toHaveAccessibleName(/^Updates: Standard \(every 2 min\)/)
+  await expect(badge).toHaveAttribute('title', /Live updates are paused: the tunnel is not running/)
+  await expect(section.getByText('Tunnel: down (the tunnel is not running)')).toBeVisible()
 })
