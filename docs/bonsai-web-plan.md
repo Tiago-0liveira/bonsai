@@ -16,7 +16,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
-| 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | in progress (p6a) |
+| 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | in progress (#63, #64) |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
 | F | Multi-workspace (design only, later) | Opus 5.5 | 8 | not scheduled |
@@ -1100,6 +1100,25 @@ references the webhook port, never the API port (digit-bounded, also inside
 Versions tested (p6a): cloudflared 2026.9.3 (flags checked with `--help`).
 ngrok and tailscale were not installed; their argv and URL parsing are covered
 by fixture tests (`internal/webtunnel/testdata`).
+
+*Corrections to the scope above (p6b):*
+
+| Plan said | Reality | Resolution |
+| --- | --- | --- |
+| Hook manager "uses the Phase 2 client" | `app.Client` had no hook calls, `Repository` drops `permissions`, and errors lose their status (403 becomes `protected`) | `app/hooks.go` adds `RepoAdmin`, `ListHooks`, `GetHook`, `CreateHook`, `UpdateHook`, `DeleteHook`, `PingHook` on the in-process client (`ghcli.Shared.Service("")`: no `gh api` fallback). The find/create/re-point/health logic is a separate package, `internal/livehooks`, so setup and doctor (p6c) reuse it. `Reconcile` and `Check` never delete; only `Remove` does |
+| `403`/`404` "points to scope" → `scope_missing` | A classic token reports `X-OAuth-Scopes`; a fine-grained token sends no such header, and GitHub answers a token that cannot see hooks with 404 | `scope_missing` only when the header is present and lists none of `repo`, `admin:repo_hook`, `write:repo_hook` (`read:repo_hook` is enough for reads). Otherwise a 404 stays "not found, or your gh login cannot see it" |
+| Health: "recent ping or delivery" | GitHub never returns the secret and keeps no timestamp on `last_response` | A hook is `live` after a verified ping or delivery reaches the receiver, or when its `last_response` is 2xx; `failing (HTTP <code>: <message>)` otherwise. The controller reads each hook every 5 min (a free 304 while unchanged) and pings a failing hook then, since GitHub does not redeliver. A transient GitHub error keeps the last known state. `web-state.json` stores a hash of the secret the hook was given, so a rotated secret is re-sent |
+| Ping on creation | A quick tunnel's first ping can arrive before its hostname resolves | A hook waiting for its ping is pinged again every 20 s, at most 3 times. A ping that arrives while the create call is still in flight is kept |
+| Learning the public URL | The API runs under the daemon; a daemon client autostarts a daemon when none answers | The API asks its own daemon (new `client.Running`, which never autostarts) for the tunnel's state and the last 400 lines of its log; ngrok falls back to its agent API, tailscale to `tailscale status --json`. Every 5 s while unknown, every 30 s once known |
+| "Always do one full provider reconcile at startup" | A provider refresh needs the local snapshot, and deliveries are matched to projects through it | The live controller starts with `RefreshAll(refreshAll, true)`: local first (which queues the provider read), so deliveries map to projects before any browser connects. A repository that turns healthy again (ping after a failure, tunnel back) gets one forced provider refresh for the events it may have missed |
+| Polling: 10 min "while live is healthy" | Healthy needs both halves: tunnel and hook | `nextProviderPoll` gains `live`: 10 min (in view or not, CI running or not) while the tunnel URL is known and the project's repository hook is `live`; the rate-limit stretch still applies. Anything else falls back to the Phase 2 cadence |
+| `GET /api/settings/updates` | — | Session-authenticated, read-only: `mode`, `standard_interval_seconds`, and in live mode the tunnel preset, public **host**, `tunnel_up`, `safety_poll_seconds` and per-repository `state` (`pending` before the first reconcile), `healthy`, `last_error`, `last_ping_at`, `last_delivery_at`, `project_ids`. No hook URL, install ID or secret hash. Additive: no `LOCAL_API_PROTOCOL_VERSION` bump |
+| `web-state.json` live section | — | `live.install_id`, `public_url`, `tunnel_error`, `updated_at`, and per repository `hook_id`, `hook_url`, `secret_fingerprint`, `state`, `last_error`, `configured_at`, `checked_at`, `last_ping_at`, `last_delivery_at`. Written by the API's live controller; `bonsai web status` reads it |
+
+`bonsai web` and `bonsai web status` now print
+`updates   live · <preset> · N repos (M live) · tunnel <state> · receiver …`
+and `public    <url>` (or why it is unknown); `status` adds one row per live
+repository with its state, last ping or delivery and the error's fix.
 
 **Exit criteria**
 - An end-to-end manual test on a scratch repo with `cloudflared-quick`:
