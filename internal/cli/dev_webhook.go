@@ -18,11 +18,39 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
 )
 
-var devWebhookFixtures = map[string]string{
-	"push":                     "push",
-	"pull_request_opened":      "pull_request",
-	"pull_request_synchronize": "pull_request",
-	"check_run_completed":      "check_run",
+// devWebhookFixture is a built-in GitHub delivery the development stack can
+// receive without a real GitHub App.
+type devWebhookFixture struct {
+	event string
+	body  string
+}
+
+var devWebhookFixtures = map[string]devWebhookFixture{
+	"push": {"push", `{
+  "ref": "refs/heads/main",
+  "repository": {"id": 123},
+  "installation": {"id": 456}
+}`},
+	"pull_request_opened": {"pull_request", `{
+  "action": "opened",
+  "number": 42,
+  "pull_request": {"number": 42, "merged": false},
+  "repository": {"id": 123},
+  "installation": {"id": 456}
+}`},
+	"pull_request_synchronize": {"pull_request", `{
+  "action": "synchronize",
+  "number": 42,
+  "pull_request": {"number": 42, "merged": false},
+  "repository": {"id": 123},
+  "installation": {"id": 456}
+}`},
+	"check_run_completed": {"check_run", `{
+  "action": "completed",
+  "check_run": {"head_sha": "0123456789abcdef0123456789abcdef01234567"},
+  "repository": {"id": 123},
+  "installation": {"id": 456}
+}`},
 }
 
 func cmdDevWebhook(repoDir string, args []string, out, errOut io.Writer) error {
@@ -39,7 +67,7 @@ func cmdDevWebhook(repoDir string, args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("usage: bonsai __dev-webhook send [--webhook-port PORT] <fixture>")
 	}
 	name := fs.Arg(0)
-	eventName, ok := devWebhookFixtures[name]
+	fixture, ok := devWebhookFixtures[name]
 	if !ok {
 		return fmt.Errorf("unknown webhook fixture %q", name)
 	}
@@ -55,10 +83,7 @@ func cmdDevWebhook(repoDir string, args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	body, err := os.ReadFile(filepath.Join(workspace, "testdata", "webhooks", name+".json"))
-	if err != nil {
-		return fmt.Errorf("read webhook fixture: %w", err)
-	}
+	body := []byte(fixture.body)
 
 	secretPath := filepath.Join(procstore.New(repoDir).Dir(), "serve", serveWorkspaceID(workspace)+".dev-webhook-secret")
 	encoded, err := os.ReadFile(secretPath)
@@ -77,7 +102,7 @@ func cmdDevWebhook(repoDir string, args []string, out, errOut io.Writer) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-GitHub-Delivery", delivery)
-	req.Header.Set("X-GitHub-Event", eventName)
+	req.Header.Set("X-GitHub-Event", fixture.event)
 	req.Header.Set("X-Hub-Signature-256", webhooks.Sign(secret, body))
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)

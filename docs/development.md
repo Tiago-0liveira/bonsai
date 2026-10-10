@@ -68,8 +68,9 @@ migration warning.
 
 ## Fixture webhooks
 
-Routine development does not require GitHub. The repository includes signed
-fixtures under `testdata/webhooks/`. With the hidden stack running:
+Routine development does not require GitHub. The CLI carries built-in
+fixtures (see `internal/cli/dev_webhook.go`) and signs them on send. With the
+hidden stack running:
 
 ```sh
 bonsai __dev-webhook send push

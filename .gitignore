@@ -1,6 +1,7 @@
-# Compiled binary
+# Compiled binaries
 /bonsai
 bonsai
+/bonsai-dev
 
 # Go build/test artifacts
 *.exe
@@ -24,9 +25,17 @@ web/*.tsbuildinfo
 
 # Editor / OS cruft
 .DS_Store
+*:Zone.Identifier
 .idea/
 .vscode/
 *.swp
+
+# Claude Code local state and agent worktrees
+.claude/worktrees/
+.claude/settings.local.json
+
+# Local relay config (contains real repository and member IDs)
+/server.json
 
 # Local, non-shared config overrides (keep the committed .bonsai.yaml example)
 .bonsai.local.yaml
