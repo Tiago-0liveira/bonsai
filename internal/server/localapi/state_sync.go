@@ -21,6 +21,10 @@ import (
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 )
 
+// StandardUpdateInterval is how often GitHub data is re-read in standard
+// (polling) update mode; `bonsai web` reports it to the user.
+const StandardUpdateInterval = providerRefreshInterval
+
 const (
 	processRefreshInterval  = 30 * time.Second
 	providerRefreshInterval = 2 * time.Minute

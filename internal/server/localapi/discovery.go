@@ -191,7 +191,13 @@ type discoveredProjectRegistry struct {
 func newProjectRegistry(path, launch string) *discoveredProjectRegistry {
 	return &discoveredProjectRegistry{scan: scanRoot, path: path, launch: launch, entries: map[string]projectServices{}, owners: map[string]string{}}
 }
+
+// Default is the launch repository's project. A registry without a launch
+// repository (`bonsai web`) has no default and returns the zero value.
 func (r *discoveredProjectRegistry) Default() projectServices {
+	if r.launch == "" {
+		return projectServices{}
+	}
 	p, _ := r.Lookup(config.ProjectID(r.launch))
 	return p
 }

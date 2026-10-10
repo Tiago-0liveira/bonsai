@@ -3,7 +3,6 @@ package localapi
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -58,19 +57,22 @@ type Server struct {
 	rootsPath     string
 }
 
+// New builds the local API. RepoDir is optional: a repository-scoped API (the
+// legacy per-repo serve) names its launch repository, which also backs the
+// unscoped legacy routes. Without it (`bonsai web`), projects come only from
+// the configured project roots and unscoped routes answer no_default_project.
 func New(cfg Config) (*Server, error) {
-	if cfg.RepoDir == "" {
-		return nil, fmt.Errorf("repository root required")
-	}
-	// Daemon runtime paths are keyed by the main worktree root. A local API may
-	// be launched from a linked worktree, so canonicalize before constructing
-	// procstore/client state; otherwise it waits on a socket the real daemon
-	// never owns.
-	if root, err := git.MainRoot(cfg.RepoDir); err == nil {
-		cfg.RepoDir = root
-	}
-	if canonical, err := config.CanonicalDirectory(cfg.RepoDir); err == nil {
-		cfg.RepoDir = canonical
+	if cfg.RepoDir != "" {
+		// Daemon runtime paths are keyed by the main worktree root. A local API may
+		// be launched from a linked worktree, so canonicalize before constructing
+		// procstore/client state; otherwise it waits on a socket the real daemon
+		// never owns.
+		if root, err := git.MainRoot(cfg.RepoDir); err == nil {
+			cfg.RepoDir = root
+		}
+		if canonical, err := config.CanonicalDirectory(cfg.RepoDir); err == nil {
+			cfg.RepoDir = canonical
+		}
 	}
 	if err := requireLoopback(cfg.Address); err != nil {
 		return nil, err
@@ -176,6 +178,10 @@ func (s *Server) Handler() http.Handler {
 				}
 			}
 		default:
+			if !s.hasDefaultProject() {
+				writeAPIError(w, http.StatusNotFound, "no_default_project", "This local API serves several projects and has no default one. Use the /api/projects/{projectId}/... routes.")
+				return
+			}
 			project = s.registry.Default()
 			ok = project.daemon != nil
 		}
@@ -195,6 +201,10 @@ func (s *Server) Handler() http.Handler {
 		scoped.routes().ServeHTTP(w, r)
 	}))
 }
+
+// hasDefaultProject reports whether this API was launched for a repository.
+func (s *Server) hasDefaultProject() bool { return s.repoDir != "" }
+
 func (s *Server) Reconcile(ctx context.Context) error {
 	if s.agents != nil {
 		s.agents.manager.CheckDirectories()
