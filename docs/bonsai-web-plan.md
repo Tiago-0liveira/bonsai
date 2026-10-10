@@ -14,7 +14,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | todo |
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
-| 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#PR4) |
+| 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | todo |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | todo |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
@@ -572,7 +572,7 @@ Daemon home: `<user state dir>/bonsai/web`, where the user state dir is
 - `pnpm -C web build` output is deterministic. The embed must not pick up
   e2e builds.
 
-**Outcome (recorded by #PR4)**
+**Outcome (recorded by #59)**
 
 *Embed.* `web/embed.go` (package `web`, build tag `embedui`) embeds
 `web/dist`; `web/embed_stub.go` (no tag) returns nil and `/app` serves a
