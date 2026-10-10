@@ -312,9 +312,9 @@ func (b *setupBackend) followLive(ctx context.Context, cfg config.WebConfig, gro
 	}
 	progress(websetupui.Step{ID: "tunnel", Label: "Waiting for the tunnel's address", State: websetupui.StepRunning})
 	state, ok := poll(wait.tunnel, func(s config.WebLiveState) bool {
-		return s.UpdatedAt.After(since) && s.PublicURL != "" && s.TunnelError == ""
+		return s.UpdatedAt.After(since) && ((s.PublicURL != "" && s.TunnelError == "") || webtunnel.CloudflaredPermanentError(s.TunnelError))
 	})
-	if !ok {
+	if !ok || state.TunnelError != "" {
 		detail := "no address yet"
 		if state.TunnelError != "" && state.UpdatedAt.After(since) {
 			detail = state.TunnelError
@@ -332,6 +332,9 @@ func (b *setupBackend) followLive(ctx context.Context, cfg config.WebConfig, gro
 	}
 	progress(websetupui.Step{ID: "hooks", Label: "Setting up GitHub webhooks", State: websetupui.StepRunning})
 	state, _ = poll(wait.hooks, func(s config.WebLiveState) bool {
+		if webtunnel.CloudflaredPermanentError(s.TunnelError) {
+			return true
+		}
 		for _, repo := range repos {
 			if _, ok := checked(s, repo); !ok {
 				return false
@@ -339,6 +342,10 @@ func (b *setupBackend) followLive(ctx context.Context, cfg config.WebConfig, gro
 		}
 		return true
 	})
+	if webtunnel.CloudflaredPermanentError(state.TunnelError) {
+		progress(websetupui.Step{ID: "tunnel", Label: "Tunnel connection", State: websetupui.StepFailed, Detail: state.TunnelError, Fix: "bonsai web restart tunnel"})
+		return []string{"Live updates wait for the tunnel to reconnect; standard updates continue meanwhile."}
+	}
 	var problems []string
 	var problemFix string
 	var ready []string
@@ -369,6 +376,9 @@ func (b *setupBackend) followLive(ctx context.Context, cfg config.WebConfig, gro
 	// GitHub's ping proves the whole path: GitHub → tunnel → receiver.
 	progress(websetupui.Step{ID: "ping", Label: "Waiting for GitHub's ping", State: websetupui.StepRunning, Detail: strings.Join(ready, ", ")})
 	state, _ = poll(wait.ping, func(s config.WebLiveState) bool {
+		if webtunnel.CloudflaredPermanentError(s.TunnelError) {
+			return true
+		}
 		for _, repo := range ready {
 			if _, r, _ := s.Repository(repo); r.State != config.WebLiveStateLive {
 				return false
@@ -376,6 +386,10 @@ func (b *setupBackend) followLive(ctx context.Context, cfg config.WebConfig, gro
 		}
 		return true
 	})
+	if webtunnel.CloudflaredPermanentError(state.TunnelError) {
+		progress(websetupui.Step{ID: "ping", Label: "GitHub's ping", State: websetupui.StepFailed, Detail: state.TunnelError, Fix: "bonsai web restart tunnel"})
+		return []string{"Live updates wait for the tunnel to reconnect; standard updates continue meanwhile."}
+	}
 	var waiting []string
 	for _, repo := range ready {
 		if _, r, _ := state.Repository(repo); r.State != config.WebLiveStateLive {

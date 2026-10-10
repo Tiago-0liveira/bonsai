@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -140,6 +141,20 @@ func TestGolden(t *testing.T) {
 		{"24-advanced-live", liveEdit(newFake(), "down", "down", "down", "down", "enter", "down", "down", "space")},
 		{"25-review-rotate", liveEdit(newFake(), "down", "down", "down", "down", "enter", "down", "down", "space", "enter", "a")},
 		{"26-doctor-live", liveEdit(liveProblems(), "d")},
+		{"27-review-cloudflare-login", func(t *testing.T, w, h int) *harness {
+			draft := firstRunDraft()
+			draft.Config.Updates.Mode = config.WebUpdatesLive
+			draft.Config.Updates.Live.Tunnel = setup.UpdatesCloudflaredNamed
+			draft.Config.Updates.Live.TunnelName = "bonsai-wsl"
+			draft.Config.Updates.Live.PublicURL = "https://hooks.example.com"
+			draft.Config.Updates.Live.Repositories = []string{"octo/bonsai"}
+			hs := newHarness(t, newFake(), Wizard, draft, testInfo())
+			hs.resize(w, h)
+			m := hs.model()
+			m.stack = []screen{screenReview}
+			hs.m = m
+			return hs
+		}},
 	}
 	for _, sc := range scenes {
 		for _, size := range [][2]int{{80, 24}, {120, 40}} {

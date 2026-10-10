@@ -272,6 +272,20 @@ MIT
 The hardened loopback API and the separate GitHub webhook relay are documented in [docs/git-backend.md](docs/git-backend.md). The internet relay has no route to the local daemon or repositories.
 
 
+### Bonsai web setup
+
+Run `bonsai web setup` to configure the browser UI and live GitHub updates.
+With **Cloudflare + domain**, Review shows the tunnel creation and DNS routing
+commands before Apply runs them. Setup prompts for `cloudflared tunnel login`
+when needed, reuses an existing tunnel, and reports failed commands with their
+output. Conflicting DNS records are never overwritten.
+
+You can reapply the named-tunnel setup without changing settings to repair its
+DNS route and restart Bonsai. The browser shows **Live pending** until delivery
+is confirmed, or **Live paused** when delivery fails; it continues polling
+GitHub meanwhile. Hover over the badge for the reason, or run
+`bonsai web doctor` and `bonsai web logs tunnel`.
+
 ### Local serve API
 
 `bonsai serve` is a thin client for one daemon-supervised browser API bound to

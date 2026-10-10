@@ -199,9 +199,9 @@ func LiveFields(preset string, port int) []LiveField {
 	case UpdatesCloudflaredNamed:
 		return []LiveField{
 			{ID: FieldTunnelName, Label: "Tunnel name", Placeholder: "bonsai",
-				Help: "The tunnel from: cloudflared tunnel create <name>. Bonsai points it at the receiver (127.0.0.1:" + strconv.Itoa(port) + "); ingress rules in your own cloudflared config take precedence."},
+				Help: "Bonsai creates this tunnel if missing after you confirm in Review. It forwards the receiver (127.0.0.1:" + strconv.Itoa(port) + "); ingress rules in your own cloudflared config take precedence."},
 			{ID: FieldPublicURL, Label: "Public URL", Placeholder: "https://hooks.example.com",
-				Help: "The hostname routed to the tunnel: cloudflared tunnel route dns <name> <hostname>."},
+				Help: "Bonsai routes this hostname to your tunnel after you confirm in Review. Your domain must be on Cloudflare; sign in when prompted."},
 		}
 	case UpdatesNgrok:
 		return []LiveField{

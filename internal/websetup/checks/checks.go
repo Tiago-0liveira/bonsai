@@ -204,7 +204,7 @@ func Run(ctx context.Context, env Env, opts Options) []Check {
 		func() Check { return checkGHAuth(ctx, env) },
 		func() Check { return checkProjects(ctx, env) },
 		func() Check { return checkPort(env, opts.APIPort) },
-		func() Check { return checkCloudflared(ctx, env, opts) },
+		func() Check { return CheckCloudflared(ctx, env, opts) },
 		func() Check { return checkNgrok(ctx, env, opts) },
 		func() Check { return checkTailscale(ctx, env, opts) },
 	}
@@ -569,7 +569,9 @@ func tunnelCheck(ctx context.Context, env Env, opts Options, id, tool string, ve
 	return c
 }
 
-func checkCloudflared(ctx context.Context, env Env, opts Options) Check {
+// CheckCloudflared can also guard provisioning without repeating unrelated
+// GitHub, project discovery or port checks.
+func CheckCloudflared(ctx context.Context, env Env, opts Options) Check {
 	return tunnelCheck(ctx, env, opts, IDTunnelCloudflared, "cloudflared", []string{"--version"}, func() account {
 		// A quick tunnel needs no account; only named tunnels need the
 		// origin certificate written by `cloudflared tunnel login`.

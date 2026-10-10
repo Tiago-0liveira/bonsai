@@ -69,6 +69,9 @@ type Plan struct {
 	// WaitLive makes Apply follow live updates until every hook answered
 	// its ping (or a timeout).
 	WaitLive bool
+	// PrepareCloudflare checks/creates the named tunnel and routes its DNS
+	// hostname after the user confirms the commands in Review.
+	PrepareCloudflare bool
 }
 
 // BuildPlan compares the draft the setup started from with the one the user
@@ -117,10 +120,14 @@ func BuildPlan(before, after Draft, running *Running, firstRun bool) Plan {
 		}
 	}
 	p.RotateSecret = after.RotateSecret
+	p.PrepareCloudflare = isLive(after.Config) && after.Config.Updates.Live.Tunnel == webtunnel.CloudflaredNamed
 	// A new secret alone restarts only the API; anything else restarts the
 	// whole stack, tunnel included.
 	stackRestarts := firstRun || (p.RestartAPI && p.RestartReason != "webhook secret changed")
 	planLive(&p, before.Config, after.Config, stackRestarts)
+	if p.PrepareCloudflare && running != nil {
+		p.WaitLive = len(LiveRepositories(after.Config)) > 0
+	}
 	return p
 }
 
@@ -353,6 +360,13 @@ func UpdatesSummary(cfg config.WebConfig, interval string) string {
 func ExternalChanges(p Plan, installID string) []string {
 	var out []string
 	live := p.Config.Updates.Live
+	if p.PrepareCloudflare {
+		u, _ := webtunnel.NormalizePublicURL(live.PublicURL)
+		host := strings.TrimPrefix(u, "https://")
+		out = append(out,
+			"Creates the tunnel if missing: cloudflared tunnel create "+live.TunnelName,
+			"Routes your hostname: cloudflared tunnel route dns "+live.TunnelName+" "+host+". Existing DNS records are never overwritten.")
+	}
 	if p.TunnelStarts {
 		out = append(out, "Starts a "+TunnelText(live.Tunnel)+" that forwards only Bonsai's change receiver (127.0.0.1:"+strconv.Itoa(live.WebhookPort)+") to the internet.")
 	}

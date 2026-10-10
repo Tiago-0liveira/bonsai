@@ -201,7 +201,8 @@ func (c *liveController) step(ctx context.Context) time.Duration {
 	// A tunnel back up (same URL) leaves its live hooks live: their projects
 	// still need the refresh that covers the time it was down.
 	var cameUp []string
-	if !c.tunnelUp && urlErr == nil && c.stepped {
+	recovered := !c.tunnelUp && urlErr == nil && c.stepped
+	if recovered {
 		for _, repo := range c.repos {
 			if name, r, ok := c.state.Repository(repo); ok && r.State == config.WebLiveStateLive {
 				cameUp = append(cameUp, name)
@@ -229,7 +230,7 @@ func (c *liveController) step(ctx context.Context) time.Duration {
 	repos := slices.Clone(c.repos)
 	reposKey := strings.ToLower(strings.Join(repos, ","))
 	full := urlErr == nil && (c.reconciledURL != publicURL || c.reconciledFor != reposKey)
-	health := urlErr == nil && !full && now.Sub(c.lastHealth) >= liveHealthInterval
+	health := urlErr == nil && !full && (recovered || now.Sub(c.lastHealth) >= liveHealthInterval)
 	want := livehooks.Desired{PublicURL: publicURL, InstallID: c.state.InstallID, Secret: c.secret}
 	c.mu.Unlock()
 	for _, repo := range cameUp {
@@ -240,12 +241,10 @@ func (c *liveController) step(ctx context.Context) time.Duration {
 		for _, repo := range repos {
 			c.reconcile(ctx, repo, want, full)
 		}
-		if health {
-			// GitHub does not redeliver: a hook failing since a tunnel
-			// outage is pinged so it can show live again without waiting for
-			// the next real event.
-			c.pingFailing(ctx, repos)
-		}
+		// Existing hooks can still report the failed delivery from before
+		// setup or restart. Ask for a new ping immediately, then retry it
+		// on the short cadence while DNS/tunnel connectivity settles.
+		c.pingFailing(ctx, repos)
 		c.mu.Lock()
 		c.reconciledURL, c.reconciledFor, c.lastHealth = publicURL, reposKey, now
 		c.mu.Unlock()
@@ -260,7 +259,8 @@ func (c *liveController) step(ctx context.Context) time.Duration {
 		return liveURLWait
 	}
 	for _, repo := range repos {
-		if _, r, ok := c.state.Repository(repo); ok && r.State == config.WebLiveStateWaiting {
+		if _, r, ok := c.state.Repository(repo); ok && (r.State == config.WebLiveStateWaiting ||
+			(r.State == config.WebLiveStateFailing && r.HookID != 0 && c.pings[strings.ToLower(repo)].count < livePingRetries)) {
 			return liveURLWait
 		}
 	}
@@ -302,8 +302,8 @@ func (c *liveController) reconcile(ctx context.Context, repo string, want liveho
 	})
 }
 
-// retryPings pings hooks still waiting after livePingRetry (their first ping
-// can reach a quick tunnel before its hostname resolves).
+// retryPings retries waiting or failing hooks on a bounded short cadence;
+// the first ping can reach a new tunnel before its hostname resolves.
 func (c *liveController) retryPings(ctx context.Context, repos []string) {
 	now := c.now()
 	for _, repo := range repos {
@@ -311,7 +311,7 @@ func (c *liveController) retryPings(ctx context.Context, repos []string) {
 		c.mu.Lock()
 		_, current, ok := c.state.Repository(repo)
 		ping := c.pings[key]
-		due := ok && current.State == config.WebLiveStateWaiting && ping.count < livePingRetries &&
+		due := ok && current.HookID != 0 && (current.State == config.WebLiveStateWaiting || current.State == config.WebLiveStateFailing) && ping.count < livePingRetries &&
 			now.Sub(later(ping.at, current.ConfiguredAt)) >= livePingRetry
 		if due {
 			c.pings[key] = livePing{at: now, count: ping.count + 1}
@@ -333,6 +333,9 @@ func (c *liveController) pingFailing(ctx context.Context, repos []string) {
 	for _, repo := range repos {
 		c.mu.Lock()
 		_, current, ok := c.state.Repository(repo)
+		if ok && current.State == config.WebLiveStateFailing && current.HookID != 0 {
+			c.pings[strings.ToLower(repo)] = livePing{at: c.now()}
+		}
 		c.mu.Unlock()
 		if !ok || current.State != config.WebLiveStateFailing || current.HookID == 0 {
 			continue

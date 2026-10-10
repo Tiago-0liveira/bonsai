@@ -206,6 +206,67 @@ func (h *liveHarness) saved(t *testing.T) config.WebLiveState {
 	return state.Live
 }
 
+func TestLiveControllerRetriesFailedDeliveryAfterRestart(t *testing.T) {
+	configPath, statePath := writeLiveConfig(t, "Acme/Repo")
+	now := time.Unix(1_900_000_000, 0).UTC()
+	h := &liveHarness{hooks: newMemoryHooks(), tunnel: &fakeTunnel{}, state: statePath, nowLive: &now}
+	h.ctl = newLiveController(configPath, statePath, []byte(liveSecret), h.hooks, h.tunnel.source, nil)
+	h.ctl.now = func() time.Time { return now }
+	if !h.ctl.load() {
+		t.Fatal("could not load setup")
+	}
+	ctx := context.Background()
+	h.tunnel.set("https://first.trycloudflare.com", nil)
+	h.ctl.step(ctx)
+	h.ctl.observe(webhooks.LiveEvent{Event: "ping", RepositoryFullName: "acme/repo"})
+	h.hooks.setLastResponse(41, 502, "failed to connect to host")
+	h.advance(liveHealthInterval)
+	h.ctl.step(ctx)
+	h.hooks.take()
+
+	// A new API loads the recorded failure; the unchanged hostname and
+	// webhook must still get a fresh ping immediately on startup.
+	restarted := newLiveController(h.ctl.configPath, h.state, []byte(liveSecret), h.hooks, h.tunnel.source, nil)
+	restarted.now, restarted.queue = h.ctl.now, h.ctl.queue
+	if !restarted.load() {
+		t.Fatal("could not load saved setup")
+	}
+	h.ctl = restarted
+	if next := h.ctl.step(ctx); next != liveURLWait {
+		t.Fatalf("retry cadence = %v", next)
+	}
+	if calls := strings.Join(h.hooks.take(), ","); calls != "admin,get,ping" {
+		t.Fatalf("restart must reuse and ping the hook: %s", calls)
+	}
+	for range livePingRetries {
+		h.advance(livePingRetry)
+		h.ctl.step(ctx)
+		if calls := strings.Join(h.hooks.take(), ","); calls != "ping" {
+			t.Fatalf("bounded retry: %s", calls)
+		}
+	}
+	h.advance(livePingRetry)
+	h.ctl.step(ctx)
+	if calls := h.hooks.take(); len(calls) != 0 || h.ctl.healthy("acme/repo") {
+		t.Fatalf("retry cap: calls %v, healthy %v", calls, h.ctl.healthy("acme/repo"))
+	}
+
+	// Tunnel recovery bypasses the five-minute health interval and gives
+	// a failed hook a fresh set of retries.
+	h.tunnel.set("", errors.New("tunnel stopped"))
+	h.ctl.step(ctx)
+	h.tunnel.set("https://first.trycloudflare.com", nil)
+	h.advance(liveURLWait)
+	h.ctl.step(ctx)
+	if calls := strings.Join(h.hooks.take(), ","); calls != "get,ping" {
+		t.Fatalf("tunnel recovery: %s", calls)
+	}
+	h.ctl.observe(webhooks.LiveEvent{Event: "ping", RepositoryFullName: "acme/repo"})
+	if !h.ctl.healthy("acme/repo") || h.saved(t).Repositories["Acme/Repo"].LastError != "" {
+		t.Fatal("verified delivery must restore live mode and clear the 502")
+	}
+}
+
 func TestLiveControllerKeepsHooksPointedAtTheTunnel(t *testing.T) {
 	h := newLiveHarness(t)
 	ctx := context.Background()

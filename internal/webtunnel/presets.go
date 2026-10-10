@@ -79,6 +79,11 @@ func ValidateOptions(o Options) error {
 		if _, err := NormalizePublicURL(o.PublicURL); err != nil {
 			return fmt.Errorf("tunnel %s needs public_url: %w", o.Preset, err)
 		}
+		public, _ := NormalizePublicURL(o.PublicURL)
+		u, _ := url.Parse(public)
+		if u.Port() != "" || !strings.Contains(u.Hostname(), ".") || strings.ContainsAny(u.Hostname(), ": ") {
+			return fmt.Errorf("named Cloudflare tunnel needs a domain hostname without a port")
+		}
 	case ExternalURL:
 		if _, err := NormalizePublicURL(o.PublicURL); err != nil {
 			return fmt.Errorf("tunnel %s needs public_url: %w", o.Preset, err)

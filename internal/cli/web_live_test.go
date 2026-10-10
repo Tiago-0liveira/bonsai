@@ -116,6 +116,13 @@ func TestLiveUpdatesTextAndOldDaemon(t *testing.T) {
 	if got := webUpdatesText(withRepos, group, state); got != "live · cloudflared-quick · 2 repos (1 live) · tunnel running · receiver 127.0.0.1:7002" {
 		t.Fatalf("live text with repos = %q", got)
 	}
+	state.TunnelError = "Cloudflare tunnel is not connected: Unauthorized: Tunnel not found"
+	if got := webUpdatesText(withRepos, group, state); !strings.Contains(got, "(0 live)") || !strings.Contains(got, "tunnel disconnected") {
+		t.Fatalf("process presence must not imply connected: %s", got)
+	}
+	if got := livePublicText(state); !strings.Contains(got, "Unauthorized: Tunnel not found") {
+		t.Fatalf("status lost the tunnel failure: %s", got)
+	}
 	group.Processes = group.Processes[:1]
 	if got := webUpdatesText(liveConfig("cloudflared-quick"), group, none); !strings.Contains(got, "tunnel not running") {
 		t.Fatalf("live text without tunnel = %q", got)

@@ -488,6 +488,39 @@ func TestLiveTunnelSettings(t *testing.T) {
 	}
 }
 
+func TestNamedCloudflarePromptsForLoginBeforeApplyAndCanRepair(t *testing.T) {
+	f := newFake()
+	draft := liveEditDraft("octo/bonsai")
+	draft.Config.Updates.Live.Tunnel = setup.UpdatesCloudflaredNamed
+	draft.Config.Updates.Live.TunnelName = "bonsai-wsl"
+	draft.Config.Updates.Live.PublicURL = "https://hooks.example.com"
+	h := newHarness(t, f, Edit, draft, testInfo())
+	h.keys("a")
+	if h.screen() != screenReview {
+		t.Fatal("unchanged named setup must be repairable")
+	}
+	h.resize(160, 40)
+	for _, want := range []string{"cloudflared tunnel create bonsai-wsl", "cloudflared tunnel route dns bonsai-wsl hooks.example.com", "Cloudflare login required"} {
+		if !strings.Contains(h.model().View(), want) {
+			t.Fatalf("review missing %q:\n%s", want, h.model().View())
+		}
+	}
+	h.keys("enter")
+	if h.execs != 1 || len(f.plans) != 0 || h.screen() != screenReview {
+		t.Fatalf("must log in before applying: execs %d plans %d", h.execs, len(f.plans))
+	}
+	h.update(fixDoneMsg{err: errors.New("login cancelled")})
+	if !strings.Contains(h.model().flash, "login cancelled") || len(f.plans) != 0 {
+		t.Fatal("login failure must stay visible without applying")
+	}
+	f.checks[5] = checks.Check{ID: checks.IDTunnelCloudflared, State: checks.OK, Detail: "logged in to Cloudflare"}
+	h.update(fixDoneMsg{})
+	h.keys("enter")
+	if len(f.plans) != 1 || !f.plans[0].PrepareCloudflare {
+		t.Fatal("logged-in Apply must prepare the named tunnel")
+	}
+}
+
 func TestCustomTunnelCannotTargetTheAPI(t *testing.T) {
 	h := newHarness(t, newFake(), Wizard, firstRunDraft(), testInfo())
 	h.keys("enter", "enter", "enter", "enter", "down", "down", "down", "down", "down", "down", "enter")

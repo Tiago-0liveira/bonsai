@@ -28,6 +28,7 @@ const tunnelLogLines = 400
 // ngrok agent API or `tailscale status`.
 func daemonPublicURL(home string) publicURLSource {
 	daemon := client.ForUserHome(home)
+	cloudflare := &cloudflareReady{}
 	return func(ctx context.Context, options webtunnel.Options) (string, error) {
 		if options.Preset == webtunnel.ExternalURL {
 			// The user's own proxy: nothing for Bonsai to watch.
@@ -36,8 +37,19 @@ func daemonPublicURL(home string) publicURLSource {
 			}
 			return "", errors.New("updates.live.public_url is not set")
 		}
-		if err := tunnelRunning(daemon); err != nil {
+		process, err := runningTunnel(daemon)
+		if err != nil {
 			return "", err
+		}
+		var log string
+		if options.Preset == webtunnel.CloudflaredNamed || options.Preset == webtunnel.CloudflaredQuick {
+			log, err = tunnelLog(ctx, daemon)
+			if err == nil {
+				err = cloudflare.check(ctx, process, log)
+			}
+			if err != nil {
+				return "", err
+			}
 		}
 		if u, ok := webtunnel.ConfiguredURL(options); ok {
 			return u, nil
@@ -46,11 +58,13 @@ func daemonPublicURL(home string) publicURLSource {
 		case options.Preset == webtunnel.Tailscale:
 			return tailscaleURL(ctx)
 		case webtunnel.LearnedFromLog(options.Preset):
-			text, err := tunnelLog(ctx, daemon)
-			if err != nil {
-				return "", err
+			if log == "" {
+				log, err = tunnelLog(ctx, daemon)
+				if err != nil {
+					return "", err
+				}
 			}
-			if u, ok := webtunnel.URLFromLog(options.Preset, options.URLPattern, text); ok {
+			if u, ok := webtunnel.URLFromLog(options.Preset, options.URLPattern, log); ok {
 				return u, nil
 			}
 			if options.Preset == webtunnel.Ngrok {
@@ -62,27 +76,28 @@ func daemonPublicURL(home string) publicURLSource {
 	}
 }
 
-func tunnelRunning(daemon *client.Client) error {
+func runningTunnel(daemon *client.Client) (procstore.ServeProcess, error) {
+	var empty procstore.ServeProcess
 	if !daemon.Running() {
-		return errors.New("the bonsai web daemon is not running")
+		return empty, errors.New("the bonsai web daemon is not running")
 	}
 	group, err := daemon.ServeStatus(procstore.WebServeGroupID)
 	if err != nil {
-		return fmt.Errorf("read the tunnel's state: %w", err)
+		return empty, fmt.Errorf("read the tunnel's state: %w", err)
 	}
 	for _, p := range group.Processes {
 		if p.Name != webtunnel.SidecarName {
 			continue
 		}
 		if p.State == "running" || p.State == "ready" {
-			return nil
+			return p, nil
 		}
 		if p.ExitError != "" {
-			return fmt.Errorf("the tunnel is %s (%s); see bonsai web logs tunnel", p.State, p.ExitError)
+			return empty, fmt.Errorf("the tunnel is %s (%s); see bonsai web logs tunnel", p.State, p.ExitError)
 		}
-		return fmt.Errorf("the tunnel is %s; see bonsai web logs tunnel", p.State)
+		return empty, fmt.Errorf("the tunnel is %s; see bonsai web logs tunnel", p.State)
 	}
-	return errors.New("the tunnel is not running (is its program installed? run bonsai web again)")
+	return empty, errors.New("the tunnel is not running (is its program installed? run bonsai web again)")
 }
 
 func tunnelLog(ctx context.Context, daemon *client.Client) (string, error) {

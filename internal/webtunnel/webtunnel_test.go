@@ -52,6 +52,7 @@ func TestValidateOptionsRejects(t *testing.T) {
 		"named without name":  {Preset: CloudflaredNamed, WebhookPort: 7002, PublicURL: "https://a.example.com"},
 		"named with flag":     {Preset: CloudflaredNamed, WebhookPort: 7002, TunnelName: "--config", PublicURL: "https://a.example.com"},
 		"named without url":   {Preset: CloudflaredNamed, WebhookPort: 7002, TunnelName: "bonsai"},
+		"named with port":     {Preset: CloudflaredNamed, WebhookPort: 7002, TunnelName: "bonsai", PublicURL: "https://hooks.example.com:443"},
 		"external http":       {Preset: ExternalURL, WebhookPort: 7002, PublicURL: "http://a.example.com"},
 		"external with path":  {Preset: ExternalURL, WebhookPort: 7002, PublicURL: "https://a.example.com/hooks"},
 		"external with creds": {Preset: ExternalURL, WebhookPort: 7002, PublicURL: "https://u:p@a.example.com"},

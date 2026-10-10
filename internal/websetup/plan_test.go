@@ -251,7 +251,7 @@ func TestBuildPlanLive(t *testing.T) {
 	if hooks(p) != "repoint o/a" || !p.RotateSecret || p.RestartReason != "webhook secret changed" || p.TunnelStarts {
 		t.Fatalf("rotate: %+v", p)
 	}
-	if got := ExternalChanges(p, ""); len(got) != 1 || got[0] != "Sends the new secret to the webhook of o/a." || p.NewAddress {
+	if got := ExternalChanges(p, ""); len(got) != 3 || got[2] != "Sends the new secret to the webhook of o/a." || p.NewAddress {
 		t.Fatalf("external = %q", got)
 	}
 	// With a quick tunnel, a new secret alone keeps the tunnel (and its

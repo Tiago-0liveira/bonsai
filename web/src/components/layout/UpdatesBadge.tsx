@@ -22,6 +22,9 @@ export function UpdatesBadge() {
     title = `GitHub notifies Bonsai through ${live.public_host ?? 'the tunnel'} (${TUNNEL_NAMES[live.tunnel] ?? live.tunnel}); Bonsai also checks every ${intervalText(live.safety_poll_seconds)} as a safety net.`
   } else if (live) {
     dot = repository ? 'bg-warn-solid' : 'bg-muted-2'
+    if (repository) {
+      label = live.tunnel_up && ['pending', 'waiting_for_ping'].includes(repository.state) ? 'Live pending' : 'Live paused'
+    }
     title = `${whyNotLive(settings, repository)} Bonsai checks GitHub ${standard} meanwhile.`
   }
   return <span title={title} aria-label={`Updates: ${label}${detail ? ` (${detail})` : ''}. ${title}`} className="flex h-[26px] items-center gap-2 px-2 font-mono text-[11px] text-muted">

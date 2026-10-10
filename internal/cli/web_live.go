@@ -108,7 +108,7 @@ func liveUpdatesText(cfg config.WebConfig, group *procstore.ServeGroup, state co
 	if n := len(live.Repositories); n > 0 {
 		healthy := 0
 		for _, repo := range live.Repositories {
-			if _, r, ok := state.Repository(repo); ok && r.State == config.WebLiveStateLive {
+			if _, r, ok := state.Repository(repo); ok && r.State == config.WebLiveStateLive && state.TunnelError == "" {
 				healthy++
 			}
 		}
@@ -118,7 +118,11 @@ func liveUpdatesText(cfg config.WebConfig, group *procstore.ServeGroup, state co
 	}
 	if group != nil && group.WebhookPort != 0 {
 		if live.Tunnel != webtunnel.ExternalURL {
-			parts = append(parts, "tunnel "+tunnelState(group))
+			if state.TunnelError != "" {
+				parts = append(parts, "tunnel disconnected")
+			} else {
+				parts = append(parts, "tunnel "+tunnelState(group))
+			}
 		}
 		parts = append(parts, "receiver 127.0.0.1:"+strconv.Itoa(group.WebhookPort))
 	}

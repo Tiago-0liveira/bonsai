@@ -338,3 +338,35 @@ func TestSetupRotatesTheSecretBeforeStarting(t *testing.T) {
 		t.Fatalf("secret file mode: %v %v", info, err)
 	}
 }
+
+func TestSetupReportsRejectedCloudflareConnectionWithoutWaitingForPings(t *testing.T) {
+	b, _ := liveSetup(t, &fakeHooks{})
+	b.wait = liveWait{poll: time.Millisecond, tunnel: time.Second, hooks: time.Second, ping: time.Second}
+	cfg := liveConfig("cloudflared-named")
+	cfg.Updates.Live.TunnelName = "bonsai-wsl"
+	cfg.Updates.Live.PublicURL = "https://hooks.example.com"
+	cfg.Updates.Live.Repositories = []string{"octo/a", "octo/b", "octo/c"}
+	since := time.Now().Add(-time.Minute)
+	_, err := config.UpdateWebState(b.w.statePath, func(s *config.WebState) error {
+		s.Live.UpdatedAt = time.Now()
+		s.Live.PublicURL = cfg.Updates.Live.PublicURL
+		s.Live.TunnelError = "Cloudflare tunnel is not connected: Unauthorized: Tunnel not found; run bonsai web restart tunnel"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := &procstore.ServeGroup{WebhookPort: 7002, Processes: []procstore.ServeProcess{{Name: "api"}, {Name: "tunnel", State: "running"}}}
+	steps := map[string]websetupui.Step{}
+	started := time.Now()
+	b.followLive(context.Background(), cfg, group, since, func(s websetupui.Step) { steps[s.ID] = s })
+	if time.Since(started) >= 500*time.Millisecond {
+		t.Fatal("permanent rejection waited for the tunnel or ping timeout")
+	}
+	if step := steps["tunnel"]; step.State != websetupui.StepFailed || !strings.Contains(step.Detail, "Unauthorized: Tunnel not found") {
+		t.Fatalf("failure = %+v", step)
+	}
+	if _, waitingForPing := steps["ping"]; waitingForPing {
+		t.Fatal("setup must not wait for pings over a rejected connector")
+	}
+}

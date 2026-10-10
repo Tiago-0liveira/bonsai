@@ -46,6 +46,13 @@ func (m Model) reviewView() string {
 	plan := m.plan()
 	var b strings.Builder
 	b.WriteString("\n")
+	enterHint := "apply"
+	if plan.PrepareCloudflare {
+		if c, ok := checks.Find(m.checks, checks.IDTunnelCloudflared); ok && c.Fix != nil && c.Fix.Command == "cloudflared tunnel login" {
+			enterHint = "log in"
+			b.WriteString(indent(m.st.warn.Render(m.wrap("Cloudflare login required. Press enter to run cloudflared tunnel login, then return here to apply.", w-4)), 2) + "\n\n")
+		}
+	}
 	b.WriteString(m.row("Projects", setup.ProjectsSummary(m.draft, m.info.Home)) + "\n")
 	b.WriteString(m.row("Open in", setup.OpenInSummary(m.draft.Config)) + "\n")
 	b.WriteString(m.row("GitHub", m.githubSummary()) + "\n")
@@ -88,6 +95,9 @@ func (m Model) reviewView() string {
 			effect = append(effect, "Webhooks are added or re-pointed then; deletions happen now.")
 		}
 	default:
+		if plan.PrepareCloudflare && !plan.RestartAPI {
+			effect = append(effect, "Restarts Bonsai to verify the tunnel and GitHub delivery. Open pages reconnect by themselves.")
+		}
 		if plan.RestartAPI {
 			effect = append(effect, "Restarts the Bonsai API ("+plan.RestartReason+").")
 			if m.draft.Config.APIPort != m.info.Running.APIPort {
@@ -106,13 +116,17 @@ func (m Model) reviewView() string {
 	for _, e := range effect {
 		b.WriteString(indent(m.st.dim.Render(m.wrap(e, w-4)), 2) + "\n")
 	}
-	return m.frame("Review", m.counter(), b.String(), []hint{{"enter", "apply"}, {"esc", "go back"}})
+	hs := []hint{{"enter", enterHint}, {"esc", "go back"}}
+	if plan.PrepareCloudflare {
+		hs = []hint{{"enter", enterHint}, {"r", "re-check"}, {"esc", "go back"}}
+	}
+	return m.frame("Review", m.counter(), b.String(), hs)
 }
 
 func (m Model) onReview(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
-		if m.mode == Edit && !m.dirty() {
+		if m.mode == Edit && !m.dirty() && !m.plan().PrepareCloudflare {
 			m.flash = "Nothing to apply yet."
 			return m, nil
 		}
@@ -124,11 +138,35 @@ func (m Model) onReview(key string) (tea.Model, tea.Cmd) {
 			m.flash = "These settings cannot be saved: " + err.Error()
 			return m, nil
 		}
+		if m.plan().PrepareCloudflare {
+			if m.checksLoading {
+				m.flash = "Checking Cloudflare login; press enter again in a moment."
+				return m, nil
+			}
+			c, ok := checks.Find(m.checks, checks.IDTunnelCloudflared)
+			if !ok {
+				return m, m.startChecks()
+			}
+			if c.Fix != nil && c.Fix.Command == "cloudflared tunnel login" {
+				cmd := m.backend.FixCommand(*c.Fix)
+				if cmd == nil {
+					m.flash = "Run cloudflared tunnel login in another terminal, then press r to check again."
+					return m, nil
+				}
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return fixDoneMsg{err: err} })
+			}
+			if c.State != checks.OK {
+				m.flash = c.Detail + "; fix it, then press r to check again."
+				return m, nil
+			}
+		}
 		m.applying, m.steps, m.result = true, nil, nil
 		m = m.push(screenApply)
 		return m, m.startApply()
 	case "esc":
 		return m.pop(), nil
+	case "r":
+		return m, m.startChecks()
 	case "q":
 		return m.requestQuit()
 	}
@@ -378,7 +416,7 @@ func (m Model) onDashboard(key string) (tea.Model, tea.Cmd) {
 		}
 		return m.push(target), nil
 	case "a":
-		if !m.dirty() {
+		if !m.dirty() && !m.plan().PrepareCloudflare {
 			m.flash = "Nothing to apply yet. Press enter on a section to change it."
 			return m, nil
 		}

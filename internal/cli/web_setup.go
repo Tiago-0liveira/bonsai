@@ -115,13 +115,14 @@ func (w *webCLI) running() *setup.Running {
 // setupBackend is what the setup TUI may do to this computer. Every write
 // happens in Apply, which the TUI only calls from the Review screen.
 type setupBackend struct {
-	w         *webCLI
-	opts      webStartOptions
-	rootsPath string
-	revision  uint64 // web.json revision the setup started from
-	exists    bool
-	env       checks.Env
-	wait      liveWait // zero means defaultLiveWait
+	w              *webCLI
+	opts           webStartOptions
+	rootsPath      string
+	revision       uint64 // web.json revision the setup started from
+	exists         bool
+	env            checks.Env
+	wait           liveWait // zero means defaultLiveWait
+	cloudflaredRun func(context.Context, ...string) (string, error)
 
 	mu      sync.Mutex
 	group   *procstore.ServeGroup
@@ -247,6 +248,13 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 		progress(websetupui.Step{ID: id, Label: label, State: websetupui.StepFailed, Detail: detail, Fix: fix})
 		return websetupui.Result{}
 	}
+	// Provision before saving or restarting: a failed Cloudflare command
+	// leaves the previously working settings and stack intact.
+	if plan.PrepareCloudflare {
+		if err := b.prepareCloudflare(ctx, plan.Config, progress); err != nil {
+			return fail("cloudflare", "Set up Cloudflare", err.Error(), "fix the error above, then retry Apply; if authentication failed, run cloudflared tunnel login", nil)
+		}
+	}
 
 	// 1. Settings.
 	progress(websetupui.Step{ID: "save", Label: "Saving settings", State: websetupui.StepRunning})
@@ -302,14 +310,27 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 	}
 	result := websetupui.Result{OK: true}
 	switch {
-	case plan.Start || plan.RestartAPI:
+	case plan.Start || plan.RestartAPI || (plan.PrepareCloudflare && b.w.running() != nil):
 		id, label, failed, done := "start", "Starting Bonsai", "Start Bonsai", "Started Bonsai"
 		if !plan.Start {
 			id, label, failed, done = "restart", "Restarting the Bonsai API", "Restart the Bonsai API", "Restarted the Bonsai API"
+			if plan.PrepareCloudflare {
+				label, failed, done = "Restarting Bonsai", "Restart Bonsai", "Restarted Bonsai"
+			}
 		}
 		progress(websetupui.Step{ID: id, Label: label, State: websetupui.StepRunning})
 		group, reused, failure, err := quiet.ensure(cfg, opts)
-		if err == nil && failure == nil && reused && plan.RotateSecret {
+		if err == nil && failure == nil && reused && plan.PrepareCloudflare {
+			// Reapplying the named setup also recovers a tunnel whose login
+			// or DNS route was repaired while the API stayed running.
+			// Older daemons interpret an unnamed restart as API-only.
+			// Name both processes so the connector resolves a recreated tunnel.
+			group, err = b.w.client.ServeRestart(procstore.WebServeGroupID, "tunnel")
+			if err == nil {
+				group, err = b.w.client.ServeRestart(procstore.WebServeGroupID, "api")
+			}
+		}
+		if err == nil && failure == nil && reused && plan.RotateSecret && !plan.PrepareCloudflare {
 			// Same spec, new secret: only the API needs to read it again.
 			if group, err = b.w.client.ServeRestart(procstore.WebServeGroupID, "api"); err == nil {
 				group = b.w.settle(group, 30*time.Second)

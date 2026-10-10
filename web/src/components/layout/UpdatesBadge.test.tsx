@@ -39,20 +39,29 @@ describe('updates badge', () => {
     expect(badge).toHaveAttribute('title', expect.stringContaining('every 10 min as a safety net'))
   })
 
-  it('falls back to Standard with the reason', async () => {
+  it('shows Live paused with the reason when configured delivery fails', async () => {
     load.mockResolvedValue(live([{ ...bonsaiRepo, healthy: false }], { tunnel_up: false, tunnel_error: 'the tunnel is not running' }))
     const { unmount } = render(<UpdatesBadge />)
-    expect(await screen.findByLabelText(/^Updates: Standard/)).toHaveAttribute('title', 'Live updates are paused: the tunnel is not running. Bonsai checks GitHub every 2 min meanwhile.')
+    expect(await screen.findByLabelText(/^Updates: Live paused/)).toHaveAttribute('title', 'Live updates are paused: the tunnel is not running. Bonsai checks GitHub every 2 min meanwhile.')
     unmount()
 
     load.mockResolvedValue(live([{ ...bonsaiRepo, state: 'needs_admin', healthy: false, last_error: 'you are not an admin of octo/bonsai' }]))
     const second = render(<UpdatesBadge />)
-    expect(await screen.findByLabelText(/^Updates: Standard/)).toHaveAttribute('title', expect.stringContaining('octo/bonsai: needs admin (you are not an admin of octo/bonsai)'))
+    expect(await screen.findByLabelText(/^Updates: Live paused/)).toHaveAttribute('title', expect.stringContaining('octo/bonsai: needs admin (you are not an admin of octo/bonsai)'))
     second.unmount()
 
     load.mockResolvedValue(live([{ ...bonsaiRepo, project_ids: ['other'] }]))
     render(<UpdatesBadge />)
     expect(await screen.findByLabelText(/^Updates: Standard/)).toHaveAttribute('title', expect.stringContaining('do not cover this project'))
+  })
+
+  it('shows Live pending until a webhook is verified, then detects recovery', async () => {
+    load.mockResolvedValueOnce(live([{ ...bonsaiRepo, state: 'waiting_for_ping', healthy: false }]))
+      .mockResolvedValue(live([bonsaiRepo]))
+    render(<UpdatesBadge />)
+    expect(await screen.findByLabelText(/^Updates: Live pending/)).toHaveAttribute('title', expect.stringContaining("waiting for github's ping"))
+    act(() => { window.dispatchEvent(new Event('focus')) })
+    expect(await screen.findByLabelText(/^Updates: Live\./)).toBeInTheDocument()
   })
 
   it('stays hidden on an API without the endpoint', async () => {
