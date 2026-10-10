@@ -8,7 +8,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: [{
-    command: 'pnpm build --mode e2e && node e2e/https-preview.mjs',
+    command: 'pnpm build --mode e2e --manifest && node e2e/https-preview.mjs',
     url: 'https://127.0.0.1:4173',
     ignoreHTTPSErrors: true,
     reuseExistingServer: !process.env.CI,

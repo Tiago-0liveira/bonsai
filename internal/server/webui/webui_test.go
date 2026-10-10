@@ -174,7 +174,7 @@ func TestAssetsAreImmutableAndGzipped(t *testing.T) {
 
 func TestMissingAssetsAreNotFound(t *testing.T) {
 	h := New(testBundle(), Options{})
-	for _, target := range []string{"/assets/missing.js", "/assets/", "/assets/../index.html", "/_headers"} {
+	for _, target := range []string{"/assets/missing.js", "/assets/WorkspacePage-old-hash.js", "/assets/WorkspacePage-old-hash.css", "/assets/", "/assets/../index.html", "/_headers"} {
 		if rec := serve(t, h, http.MethodGet, target, nil); rec.Code != http.StatusNotFound {
 			t.Fatalf("GET %s = %d, want 404", target, rec.Code)
 		}

@@ -1,6 +1,5 @@
 import { localCommand } from '../../api/git'
 import { isLiveAgent } from '../../api/agents'
-import { useEffect } from 'react'
 import { Command } from 'cmdk'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -35,17 +34,6 @@ export function CommandPalette() {
   const openProcess = useBonsaiStore(s => s.openStartProcessDialog)
   const openTerminal = useBonsaiStore(s => s.openTerminal)
   const setAgentState = useBonsaiStore(s => s.setAgentState)
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setOpen(!open)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, setOpen])
 
   if (!open) return null
 

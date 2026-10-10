@@ -30,7 +30,7 @@ describe.each([
   ['GitHub page', PullRequestsPage],
   ['inspector', Inspector],
 ] as const)('%s check keys', (_, Component) => {
-  it.each([true, false])('renders same-name checks without warnings (provider IDs: %s)', withIds => {
+  it.each([true, false])('renders same-name checks without warnings (provider IDs: %s)', async withIds => {
     const pr = {
       ...pullRequests[0], id: 'bonsai:24',
       checks: [
@@ -45,10 +45,10 @@ describe.each([
       agents: [], processes: [], rightPanels: { files: false, prs: true },
     })
     const view = render(<Component />)
-    expect(screen.getAllByText('verify', { exact: true })).toHaveLength(2)
+    expect(await screen.findAllByText('verify', { exact: true })).toHaveLength(2)
     act(() => useBonsaiStore.setState({ pullRequests: [{ ...pr, checks: [...pr.checks].reverse() }] }))
     view.rerender(<Component />)
-    expect(screen.getAllByText('verify', { exact: true })).toHaveLength(2)
+    expect(await screen.findAllByText('verify', { exact: true })).toHaveLength(2)
     expect(vi.mocked(console.error).mock.calls.filter(args => args.some(arg => String(arg).includes('same key')))).toEqual([])
   })
 })

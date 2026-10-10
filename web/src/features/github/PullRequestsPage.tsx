@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, useEffect, useMemo, useState } from 'react'
 import { loadPullRequest } from '../../api/git'
 import { buildPrList } from '../../lib/github/prList'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { PullRequestDetail } from './PullRequestDetail'
+import { FeatureBoundary } from '../../app/chunkRecovery'
 import { PullRequestListPane } from './PullRequestListPane'
 import { usePullRequestCatalog } from './usePullRequestCatalog'
+
+const PullRequestDetail = lazy(() => import('./PullRequestDetail').then(module => ({ default: module.PullRequestDetail })))
 
 export interface PullRequestsPageProps {
   /** Selected PR id from the URL; falls back to local state, the inspector, then the first PR. */
@@ -54,17 +56,20 @@ export function PullRequestsPage({ selectedId: routeSelectedId, onSelect, onShow
       />
 
       {selected ? (
-        <PullRequestDetail
-          key={selected.id}
-          pr={selected}
-          pullRequests={pullRequests}
-          orderedIds={visibleIds ?? orderedIds}
-          repository={repository}
-          projectId={activeProjectId}
-          worktrees={worktrees}
-          onSelect={select}
-          onShowOnCanvas={showOnCanvas}
-        />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <FeatureBoundary key={selected.id} loading="Loading pull request…">
+            <PullRequestDetail
+              pr={selected}
+              pullRequests={pullRequests}
+              orderedIds={visibleIds ?? orderedIds}
+              repository={repository}
+              projectId={activeProjectId}
+              worktrees={worktrees}
+              onSelect={select}
+              onShowOnCanvas={showOnCanvas}
+            />
+          </FeatureBoundary>
+        </div>
       ) : (
         <div className="island grid flex-1 place-items-center text-[11px] text-muted">{message}</div>
       )}

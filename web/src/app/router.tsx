@@ -1,16 +1,19 @@
-import { SettingsPage } from '../features/settings/SettingsPage'
+import { lazy } from 'react'
+import { FeatureBoundary } from './chunkRecovery'
 import {
   Outlet,
   createRootRoute,
   createRoute,
   createRouter,
-  lazyRouteComponent,
 } from '@tanstack/react-router'
 import { AppShell } from '../components/layout/AppShell'
-import { FilesPage } from '../features/files/FilesPage'
 import { validatePullRequestsSearch } from '../features/github/pullRequestsSearch'
-import { LogsPage } from '../features/logs/LogsPage'
-import { WorkspacePage } from '../features/workspace/WorkspacePage'
+
+const WorkspacePage = lazy(() => import('../features/workspace/WorkspacePage').then(module => ({ default: module.WorkspacePage })))
+const FilesPage = lazy(() => import('../features/files/FilesPage').then(module => ({ default: module.FilesPage })))
+const LogsPage = lazy(() => import('../features/logs/LogsPage').then(module => ({ default: module.LogsPage })))
+const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then(module => ({ default: module.SettingsPage })))
+const PullRequestsRoute = lazy(() => import('../features/github/PullRequestsRoute').then(module => ({ default: module.PullRequestsRoute })))
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -20,17 +23,15 @@ const rootRoute = createRootRoute({
   ),
 })
 
-const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <WorkspacePage /> })
-const worktreesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/worktrees', component: () => <WorkspacePage focus="worktrees" /> })
-const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/agents', component: () => <WorkspacePage focus="agents" /> })
-// Loaded on demand so the markdown libraries stay out of the main bundle.
-const PullRequestsRoute = lazyRouteComponent(() => import('../features/github/PullRequestsRoute'), 'PullRequestsRoute')
-const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: '/github', component: PullRequestsRoute, validateSearch: validatePullRequestsSearch })
-const prsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pull-requests', component: PullRequestsRoute, validateSearch: validatePullRequestsSearch })
-const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/files', component: FilesPage })
-const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsPage })
+const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <FeatureBoundary loading="Loading workspace…"><WorkspacePage /></FeatureBoundary> })
+const worktreesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/worktrees', component: () => <FeatureBoundary loading="Loading workspace…"><WorkspacePage focus="worktrees" /></FeatureBoundary> })
+const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/agents', component: () => <FeatureBoundary loading="Loading workspace…"><WorkspacePage focus="agents" /></FeatureBoundary> })
+const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: '/github', component: () => <FeatureBoundary loading="Loading pull requests…"><PullRequestsRoute /></FeatureBoundary>, validateSearch: validatePullRequestsSearch })
+const prsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pull-requests', component: () => <FeatureBoundary loading="Loading pull requests…"><PullRequestsRoute /></FeatureBoundary>, validateSearch: validatePullRequestsSearch })
+const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/files', component: () => <FeatureBoundary loading="Loading files…"><FilesPage /></FeatureBoundary> })
+const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: () => <FeatureBoundary loading="Loading logs…"><LogsPage /></FeatureBoundary> })
 
-const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage })
+const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: () => <FeatureBoundary loading="Loading settings…"><SettingsPage /></FeatureBoundary> })
 
 const routeTree = rootRoute.addChildren([
   settingsRoute, workspaceRoute, worktreesRoute, agentsRoute, githubRoute, prsRoute, filesRoute, logsRoute,

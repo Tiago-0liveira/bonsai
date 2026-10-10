@@ -1,3 +1,5 @@
+import '@xterm/xterm/css/xterm.css'
+import { acknowledgePreloadFailure, ChunkRecovery } from '../../app/chunkRecovery'
 import { useEffect, useRef, useState } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
@@ -12,6 +14,7 @@ export function ProcessTerminal({ process }: { process: Process }) {
   const [connection, setConnection] = useState<ProcessConnection>('connecting')
   const [pending, setPending] = useState('')
   const [error, setError] = useState('')
+  const [loadFailed, setLoadFailed] = useState(false)
   const [attachment, setAttachment] = useState(0)
   useEffect(() => {
     const element = host.current
@@ -45,7 +48,7 @@ export function ProcessTerminal({ process }: { process: Process }) {
             terminal?.write(output, () => { queued -= bytes.length })
           },
         })
-      }).catch(() => { if (!disposed) setError('Unable to load the process terminal.') })
+      }).catch(() => { if (!disposed) { setLoadFailed(true); acknowledgePreloadFailure() } })
     })
     return () => {
       disposed = true; cancelAnimationFrame(frame); observer.disconnect(); unbind?.()
@@ -66,6 +69,7 @@ export function ProcessTerminal({ process }: { process: Process }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
   const terminalStatus = ['done', 'failed', 'stopped', 'lost'].includes(process.lifecycleStatus)
+  if (loadFailed) return <ChunkRecovery />
   return <div data-process-id={process.id} className="flex h-full min-h-0 flex-col">
     {(error || process.exitError) && <p role="alert" className="shrink-0 break-all px-2 pt-1 text-[10px] text-danger">{error || process.exitError}</p>}
     <div ref={host} className="min-h-0 flex-1 overflow-hidden" />

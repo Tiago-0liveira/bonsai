@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { WorkspaceVisibility } from '../../components/ui/WorkspaceVisibility'
 import { RuntimeWorkspace } from './BottomWorkspace'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { projects } from '../../test/fixtures/projects'
@@ -38,11 +39,11 @@ describe('explicit runtime views', () => {
     expect(screen.getByRole('button', { name: 'Open runtime' })).toBeVisible()
   })
 
-  it('closing the only open view releases its attachment and leaves two closed views closed', () => {
+  it('closing the only open view releases its attachment and leaves two closed views closed', async () => {
     useBonsaiStore.setState({ processes: ['first', 'second', 'third'].map(id => process(id)) })
     useBonsaiStore.getState().openRuntime('second')
     render(<StrictMode><RuntimeWorkspace /></StrictMode>)
-    expect([...attachments.open]).toEqual(['second'])
+    await waitFor(() => expect([...attachments.open]).toEqual(['second']))
     fireEvent.click(screen.getByRole('button', { name: 'Close runtime card' }))
     expect(useBonsaiStore.getState()).toMatchObject({ openRuntimeIds: [], dockRuntimeId: '' })
     expect(attachments.open.size).toBe(0)
@@ -51,10 +52,10 @@ describe('explicit runtime views', () => {
     expect(attachments.open.size).toBe(0)
     expect(useBonsaiStore.getState().processes.every(process => process.lifecycleStatus === 'running')).toBe(true)
     act(() => useBonsaiStore.getState().openRuntime('second'))
-    expect([...attachments.open]).toEqual(['second'])
+    await waitFor(() => expect([...attachments.open]).toEqual(['second']))
   })
 
-  it('focuses only a surviving already-open view in the same worktree', () => {
+  it('focuses only a surviving already-open view in the same worktree', async () => {
     useBonsaiStore.setState({ processes: [process('other', 'wt-daemon'), process('first'), process('second'), process('closed')] })
     useBonsaiStore.getState().openRuntime('other')
     useBonsaiStore.getState().openRuntime('first')
@@ -66,7 +67,7 @@ describe('explicit runtime views', () => {
     expect(useBonsaiStore.getState().dockRuntimeId).toBe('')
     expect(attachments.open.size).toBe(0)
     act(() => useBonsaiStore.getState().setDockWorktreeId('wt-daemon'))
-    expect([...attachments.open]).toEqual(['other'])
+    await waitFor(() => expect([...attachments.open]).toEqual(['other']))
   })
 
   it('does not open arrivals in a new project or worktree', () => {
@@ -79,13 +80,26 @@ describe('explicit runtime views', () => {
     expect(attachments.open.size).toBe(0)
   })
 
-  it('restores saved views when delayed canonical entities arrive without opening discovered siblings', () => {
+  it('restores saved views when delayed canonical entities arrive without opening discovered siblings', async () => {
     useBonsaiStore.setState({ terminalViewPreferences: { bonsai: { lastWorktreeId: 'wt-web', reopening: 'restore', worktrees: { 'wt-web': { open: [{ kind: 'process', id: 'saved' }], active: { kind: 'process', id: 'saved' } } } } } })
     useBonsaiStore.getState().setDockWorktreeId('wt-web')
     render(<StrictMode><RuntimeWorkspace /></StrictMode>)
     expect(attachments.open.size).toBe(0)
     act(() => { useBonsaiStore.setState({ processes: [process('discovered'), process('saved')], processAuthorityReady: { bonsai: true }, syncFreshness: { bonsai: { processes: { state: 'ready' } } } }); useBonsaiStore.getState().setDockWorktreeId('wt-web') })
-    expect([...attachments.open]).toEqual(['saved'])
+    await waitFor(() => expect([...attachments.open]).toEqual(['saved']))
+  })
+
+  it('defers hidden terminals and keeps their attachment when collapsed after activation', async () => {
+    useBonsaiStore.setState({ processes: [process('first')] })
+    useBonsaiStore.getState().openRuntime('first')
+    const view = render(<WorkspaceVisibility.Provider value={false}><RuntimeWorkspace /></WorkspaceVisibility.Provider>)
+    expect(attachments.open.size).toBe(0)
+    view.rerender(<WorkspaceVisibility.Provider value={true}><RuntimeWorkspace /></WorkspaceVisibility.Provider>)
+    await waitFor(() => expect([...attachments.open]).toEqual(['first']))
+    attachments.detach.mockClear()
+    view.rerender(<WorkspaceVisibility.Provider value={false}><RuntimeWorkspace /></WorkspaceVisibility.Provider>)
+    expect([...attachments.open]).toEqual(['first'])
+    expect(attachments.detach).not.toHaveBeenCalled()
   })
 
   it('opening and focusing an already selected process are idempotent', () => {

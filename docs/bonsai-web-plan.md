@@ -17,7 +17,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | done (#63, #64, #65) |
-| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
+| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | in progress (7b implemented; 7a/7c pending) |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
 | F | Multi-workspace (design only, later) | Opus 5.5 | 8 | not scheduled |
 
@@ -1196,38 +1196,106 @@ covered by fixture tests only.
 
 ## Phase 7 — Warm start and frontend load
 
-**Model:** Sonnet 5.5 · **Effort:** medium · **Branch:** `feat/web-p7-warm-start`
+The revised [Phase 7 plan](phase-7-plan.md) supersedes the original scope.
+Delivery is split into 7a / 7b / 7c, each branching from and targeting
+`feat/bonsai-web`; this is a process exception to the one-PR-per-phase rail.
+Phase 7 remains in progress until persistence and final measurement/budgets land.
 
-**Objectives**
-- Opening the app paints last-known state immediately.
-- The initial JS cost is proportional to the first screen.
+*7b outcome (tasks 5–6, 2026-10-10).*
 
-**Scope**
-1. **Persist on the server.**
-   - Store the last committed project snapshot and the ETag cache in the user
-     state dir (atomic writes, size cap, versioned, discarded on schema
-     mismatch).
-   - On startup, load them with `freshness = stale` and revalidate
-     immediately.
-2. **Persist in the browser** (optional): cache the last snapshot per project
-   in IndexedDB and render it while the WS connects. Wrap all storage access
-   in try/catch.
-3. **Code-split.**
-   - Lazy-load the terminal (xterm), files, the GitHub detail markdown stack
-     and the canvas layout (elkjs).
-   - Run ELK layout in a Web Worker if profiling shows main-thread cost.
-4. **Bundle budget.** Record chunk sizes in this plan. Add a CI check that
-   fails when the main chunk grows more than 10% without updating the budget.
+- The shell, connection handling, branch list and reconciliation stay eager.
+  Workspace (including React Flow and its CSS), files route/Inspector tab,
+  settings, logs, PR detail, terminals and shell overlays have module-scope
+  lazy imports with individual Suspense/error boundaries. The GitHub route,
+  app/landing split and xterm dependency imports existed before 7b.
+- Terminal CSS loads with terminal components. A hidden terminal does not
+  import until first shown; after activation it stays mounted on dock collapse
+  and route navigation. Terminal selection/detach/replay logic is retained.
+- Closed overlays do not import. The command shortcut stays in the eager
+  owner. Loading overlays can be dismissed and restore focus when closed.
+- The eager entry registers `vite:preloadError` before loading a surface.
+  Rejections still reach feature boundaries. Initial-surface and effect import
+  failures show “This screen could not load” with an explicit “Reload app”
+  action. There is no automatic reload. A failed feature leaves the shell and
+  retained branches visible.
+- `elkjs` had no source imports and was removed from package and lockfile.
+  Canvas still uses its existing synchronous layout. Worker profiling/task 7,
+  persistence/tasks 0–4 and budgets/CI/task 8 are outside this PR.
 
-**Rails**
-- Persisted data contains no secrets and no file contents (it is metadata
-  only, like today's snapshot).
-- A stale snapshot is always labeled stale in the UI until revalidated.
+*Verified plan corrections.* `AppShell.tsx` is in `components/layout`;
+`BottomWorkspace.tsx` is in `features/terminal`. The command shortcut was in
+its lazy target, and terminal dependency import failures were caught in
+component effects; both needed eager/recovery handling. Vite can emit the
+main application/GitHub route as shared dynamic chunks without facade keys;
+measurement resolves the manifest facade where present, otherwise the stable
+chunk `name` plus import graph, never a hashed filename. The setup-required
+`ProjectRootsSettings` and header live-update helpers remain eager shared code.
 
-**Exit criteria**
-- With a warm cache, the worktree list and PR badges render ≤ 300 ms after WS
-  `ready`.
-- The main chunk shrinks by ≥ 30% versus the Phase 4 build.
+*7b chunk measurements.* Before: integration `04e9683518ed4c677fd66dd2294cef43655ddd71`.
+After: 7b source on `feat/web-p7b-lazy-boundaries`. Node **22.12.0**, Vite
+**5.4.21**, TypeScript **5.9.3**, production build, default environment.
+The cached dependency lock exactly matched the baseline lock's dependency
+section. Installed pnpm was **12.6.0**; the declared **12.9.1** could not be
+fetched because registry access failed. Commands therefore invoked the cached
+`tsc` and `vite` binaries directly (equivalent build steps); these are
+same-toolchain 7b comparisons, not the pinned Phase 4/final-P7 gate in 7c.
+
+Raw bytes come from emitted file lengths; gzip uses Node `gzipSync` with
+level 9 (deterministic header). Closure totals deduplicate files and sum
+per-file raw/gzip lengths. First-screen JS is the union of the entry,
+application and default workspace static closures, including shared chunks;
+CSS is all emitted CSS, counted once. “Eager in parent” means no separate
+chunk existed; its before bytes are included in the parent. Two final
+production builds matched byte-for-byte.
+
+| Chunk / metric | Before raw / gzip bytes | After raw / gzip bytes |
+| --- | ---: | ---: |
+| ApplicationRoot | 735796 / 232294 | 380211 / 121783 |
+| entry | 149517 / 48724 | 151858 / 49560 |
+| WorkspacePage | eager in parent | 251978 / 80512 |
+| FilesPage | eager in parent | 2911 / 1293 |
+| FilesPanel | eager in parent | 5016 / 1728 |
+| PullRequestsRoute | 210207 / 62599 | 17227 / 6543 |
+| PullRequestDetail | eager in parent | 194056 / 57745 |
+| SettingsPage | eager in parent | 3585 / 1442 |
+| LogsPage | eager in parent | 746 / 416 |
+| AgentTerminal | eager in parent | 5661 / 2698 |
+| ProcessTerminal | eager in parent | 4191 / 1920 |
+| CreateWorktreeDialog | eager in parent | 8003 / 2905 |
+| DeleteWorktreeDialog | eager in parent | 3722 / 1647 |
+| StartAgentDialog | eager in parent | 16443 / 5561 |
+| StartProcessDialog | eager in parent | 10549 / 3802 |
+| EnvEditor | eager in parent | 1592 / 887 |
+| CommandPalette | eager in parent | 22037 / 7826 |
+| xterm | 290556 / 72030 | 290556 / 72030 |
+| addon-fit | 1771 / 811 | 1771 / 811 |
+| Entry static closure | 149517 / 48724 | 151858 / 49560 |
+| Application static closure | 887385 / 282140 | 534141 / 172466 |
+| First-screen JS | 887385 / 282140 | 810248 / 261858 |
+| All CSS | 91176 / 19706 | 91309 / 19849 |
+
+
+ApplicationRoot decreased **48.33%** against this integration
+baseline; its static closure decreased **39.81%**.
+First-screen JS decreased **8.69%**: the workspace chunk is still
+loaded on `/`. The historical Phase 4 table is unchanged. The Phase 4 30%
+gate and authenticated-ready-to-paint measurements belong to 7c/7a.
+
+*Validation.* Typecheck, lint, all **509 tests / 57 unit files**, production
+and e2e builds, `gofmt`, `go vet ./...`, plain `go build ./...`,
+`go test -race ./internal/server/webui` and `go test -tags embedui ./web/`
+passed. The Playwright suite discovers **67 tests**, including 11 new tests
+covering deferred feature requests, branches before canvas, local JS/CSS 404
+and offline recovery, initial-surface reload, PR list before detail, shortcut
+focus/dismissal and terminal persistence across collapse/navigation.
+
+`go test ./...`, `go test -race ./...` and Playwright were attempted but
+cannot pass in this sandbox: network listeners return `EPERM`; Playwright's
+preview server cannot bind port 4173 and Chromium also cannot launch.
+The Go package-manager tests additionally detect the sandbox's `/tmp/.git`
+marker as a repository; the same three failures reproduce on unchanged
+`04e9683` in the isolated baseline checkout. Full browser/lifecycle and Go
+suite validation must run in CI or an unrestricted local environment.
 
 ---
 
