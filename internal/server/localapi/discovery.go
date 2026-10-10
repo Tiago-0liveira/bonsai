@@ -186,10 +186,13 @@ type discoveredProjectRegistry struct {
 	candidates        []ProjectCandidate
 	revision          uint64
 	selectionRevision uint64
+	// github is shared by every project: one token, connection pool,
+	// conditional-request cache and rate-limit view per process.
+	github *ghcli.Shared
 }
 
 func newProjectRegistry(path, launch string) *discoveredProjectRegistry {
-	return &discoveredProjectRegistry{scan: scanRoot, path: path, launch: launch, entries: map[string]projectServices{}, owners: map[string]string{}}
+	return &discoveredProjectRegistry{scan: scanRoot, path: path, launch: launch, entries: map[string]projectServices{}, owners: map[string]string{}, github: ghcli.NewShared()}
 }
 
 // Default is the launch repository's project. A registry without a launch
@@ -425,7 +428,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 						}
 					}
 				}
-				p = projectServices{daemon: client.For(main), github: ghcli.New(main), state: state}
+				p = projectServices{daemon: client.For(main), github: r.github.Service(main), state: state}
 			}
 			p.info = ProjectInfo{ID: id, RootID: root.ID, Name: filepath.Base(main), Path: main, Available: p.state != nil, Launch: main == r.launch, WorkspaceID: "local", FullName: filepath.Base(main)}
 			next[id] = p

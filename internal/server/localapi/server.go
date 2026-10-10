@@ -17,6 +17,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webui"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
@@ -292,6 +293,11 @@ func Run(cfg Config) error {
 	defer stop()
 	go s.reconcilePeriodically(ctx)
 	go s.stateSync.Run(ctx)
+	if registry, ok := s.registry.(*discoveredProjectRegistry); ok {
+		// The browser connects after the API is up; have the GitHub token and
+		// connection ready by then.
+		go registry.github.Prewarm(ctx, ghcli.DefaultHost)
+	}
 
 	server := &http.Server{
 		Addr:              cfg.Address,
