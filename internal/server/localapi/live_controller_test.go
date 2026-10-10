@@ -458,3 +458,73 @@ func TestPollProvidersSlowsForLiveProjects(t *testing.T) {
 		t.Fatal("an unhealthy live project was not polled")
 	}
 }
+
+func TestLiveControllerLeavesRemovedRepositoriesToSetup(t *testing.T) {
+	h := newLiveHarness(t)
+	ctx := context.Background()
+	h.tunnel.set("https://first.trycloudflare.com", nil)
+	h.ctl.step(ctx)
+	first := h.saved(t)
+	if first.UpdatedAt.IsZero() || first.Repositories["Acme/Repo"].HookID == 0 {
+		t.Fatalf("the first step must write: %+v", first)
+	}
+
+	// Setup takes Acme/Repo off live updates and deletes its entry with its
+	// hook; a repository someone removed from web.json by hand keeps its
+	// entry, so doctor can still find the hook.
+	if _, err := config.UpdateWebConfig(h.ctl.configPath, ^uint64(0), func(cfg *config.WebConfig) error {
+		cfg.Updates.Live.Repositories = []string{"acme/next"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.UpdateWebState(h.state, func(s *config.WebState) error {
+		delete(s.Live.Repositories, "Acme/Repo")
+		s.Live.Repositories["by/hand"] = config.WebLiveRepository{HookID: 7, State: config.WebLiveStateLive}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.advance(time.Second)
+	h.ctl.step(ctx)
+	saved := h.saved(t)
+	if _, _, ok := saved.Repository("acme/repo"); ok {
+		t.Fatalf("the controller wrote back a repository setup removed: %+v", saved.Repositories)
+	}
+	if r := saved.Repositories["by/hand"]; r.HookID != 7 {
+		t.Fatalf("an entry the controller does not own was dropped: %+v", saved.Repositories)
+	}
+	if r, ok := saved.Repositories["acme/next"]; !ok || r.HookID == 0 {
+		t.Fatalf("the new repository has no hook: %+v", saved.Repositories)
+	}
+}
+
+func TestLiveControllerNoticesSettingsQuickly(t *testing.T) {
+	h := newLiveHarness(t)
+	h.tunnel.set("https://first.trycloudflare.com", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.ctl.Run(ctx)
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(2 * liveConfigWatch)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	waitFor("the first hook", func() bool { _, r, _ := h.saved(t).Repository("acme/repo"); return r.HookID != 0 })
+	// Live with a known URL: the next step is liveURLPoll away. A web.json
+	// edit must not wait for it.
+	h.ctl.observe(webhooks.LiveEvent{Event: "ping", RepositoryFullName: "acme/repo"})
+	time.Sleep(10 * time.Millisecond) // a distinct modification time
+	if _, err := config.UpdateWebConfig(h.ctl.configPath, ^uint64(0), func(cfg *config.WebConfig) error {
+		cfg.Updates.Live.Repositories = append(cfg.Updates.Live.Repositories, "acme/next")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("the new repository's hook", func() bool { _, r, _ := h.saved(t).Repository("acme/next"); return r.HookID != 0 })
+}

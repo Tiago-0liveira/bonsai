@@ -3,6 +3,7 @@ package localapi
 import (
 	"context"
 	"log"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -32,6 +33,10 @@ const (
 	// written to web-state.json.
 	liveDeliveryWrite = time.Minute
 	liveGitHubTimeout = 30 * time.Second
+	// liveConfigWatch is how often web.json is checked for an edit (setup
+	// writes it while bonsai web runs), so new repositories get their hook
+	// within seconds instead of at the next step.
+	liveConfigWatch = 2 * time.Second
 )
 
 // liveController keeps the repository hooks of web.json's live repositories
@@ -94,15 +99,37 @@ func (c *liveController) Run(ctx context.Context) {
 	c.refreshAll()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	watch := time.NewTicker(liveConfigWatch)
+	defer watch.Stop()
+	modified := configModified(c.configPath)
 	for {
 		select {
 		case <-ctx.Done():
 			c.persist()
 			return
+		case <-watch.C:
+			if now := configModified(c.configPath); !now.Equal(modified) {
+				modified = now
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(0)
+			}
 		case <-timer.C:
 			timer.Reset(c.step(ctx))
 		}
 	}
+}
+
+func configModified(path string) time.Time {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 func (c *liveController) refreshAll() {
@@ -133,6 +160,9 @@ func (c *liveController) load() bool {
 	if c.state.Repositories == nil {
 		c.state.Repositories = map[string]config.WebLiveRepository{}
 	}
+	// The first step always writes, so setup can tell this run's state
+	// (updated_at) from the previous one's.
+	c.dirty = true
 	c.mu.Unlock()
 	return c.reloadConfig()
 }
@@ -399,9 +429,15 @@ func (c *liveController) persist() {
 		return
 	}
 	live := c.state
-	live.Repositories = make(map[string]config.WebLiveRepository, len(c.state.Repositories))
+	live.Repositories = map[string]config.WebLiveRepository{}
 	for name, r := range c.state.Repositories {
-		live.Repositories[name] = r
+		if c.configured(name) {
+			live.Repositories[name] = r
+		} else {
+			// Setup owns the entries of repositories taken off live updates
+			// (it deletes them with their hook); keep whatever it left.
+			delete(c.state.Repositories, name)
+		}
 	}
 	live.UpdatedAt = c.now()
 	c.dirty = false
@@ -413,6 +449,11 @@ func (c *liveController) persist() {
 		if live.InstallID == "" {
 			live.InstallID = c.installID()
 		}
+		for name, r := range state.Live.Repositories {
+			if _, ok := live.Repositories[name]; !ok && !c.isConfigured(name) {
+				live.Repositories[name] = r
+			}
+		}
 		state.Live = live
 		return nil
 	}); err != nil {
@@ -421,6 +462,23 @@ func (c *liveController) persist() {
 		c.dirty = true
 		c.mu.Unlock()
 	}
+}
+
+// configured reports whether repo is one of web.json's live repositories;
+// c.mu must be held.
+func (c *liveController) configured(repo string) bool {
+	for _, r := range c.repos {
+		if strings.EqualFold(r, repo) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *liveController) isConfigured(repo string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.configured(repo)
 }
 
 func (c *liveController) installID() string {
