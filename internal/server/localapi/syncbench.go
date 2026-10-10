@@ -12,6 +12,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	"github.com/Tiago-0liveira/bonsai/internal/git/local"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
@@ -29,6 +30,13 @@ type SyncBenchOptions struct {
 	Projects int
 	// Timeout bounds each pass (default 2 minutes).
 	Timeout time.Duration
+	// Warm runs one forced provider refresh per project after the cold pass,
+	// to show what a poll of an unchanged repository costs.
+	Warm bool
+	// NoPrewarm skips the GitHub token read and connection that the API server
+	// prepares at startup, measuring a cold process instead of a cold open of a
+	// running API.
+	NoPrewarm bool
 }
 
 // SyncBenchRow is one project's timings and process spawns for one pass.
@@ -52,6 +60,21 @@ type SyncBenchResult struct {
 	Total     SyncBenchRow // milestones are the max over projects; spawns are the pass totals
 	GitSpawns int64
 	GHSpawns  int64
+	// HTTPRequests and NotModified count in-process GitHub requests and the
+	// 304 responses among them.
+	HTTPRequests int64
+	NotModified  int64
+	// Warm is set when SyncBenchOptions.Warm asked for a warm pass.
+	Warm *SyncBenchWarm
+}
+
+// SyncBenchWarm is a forced provider refresh of every project after the cold
+// pass, run back to back.
+type SyncBenchWarm struct {
+	Duration     time.Duration
+	GHSpawns     int64
+	HTTPRequests int64
+	NotModified  int64
 }
 
 // inProcessDaemon serves git commands from this process, so the spawn
@@ -122,7 +145,37 @@ func SyncBench(ctx context.Context, opts SyncBenchOptions) (SyncBenchResult, err
 	s.mu.Lock()
 	s.runCtx = runCtx
 	s.mu.Unlock()
-	return benchPass(runCtx, s, ids, opts)
+	result, err := benchPass(runCtx, s, ids, opts)
+	if err != nil || !opts.Warm {
+		return result, err
+	}
+	// Let re-queued catalog pages and checks of the cold pass finish, so the
+	// warm pass measures only itself.
+	for _, id := range ids {
+		for {
+			s.mu.Lock()
+			busy := s.jobLocked(id).providerRunning
+			s.mu.Unlock()
+			if !busy {
+				break
+			}
+			select {
+			case <-runCtx.Done():
+				return result, runCtx.Err()
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+	}
+	_, h0 := trace.Counts()
+	r0, n0 := trace.HTTPCounts()
+	start := time.Now()
+	for _, id := range ids {
+		s.refreshProvider(id, true)
+	}
+	_, h1 := trace.Counts()
+	r1, n1 := trace.HTTPCounts()
+	result.Warm = &SyncBenchWarm{Duration: time.Since(start), GHSpawns: h1 - h0, HTTPRequests: r1 - r0, NotModified: n1 - n0}
+	return result, nil
 }
 
 func newBenchSync(ctx context.Context, opts SyncBenchOptions) (*stateSync, []string, error) {
@@ -206,6 +259,11 @@ func newBenchSync(ctx context.Context, opts SyncBenchOptions) (*stateSync, []str
 		}
 		return nil, nil, fmt.Errorf("no available projects found in %s", rootsPath)
 	}
+	if !opts.NoPrewarm {
+		// Same as localapi.Run at startup; the bench timer starts once the API
+		// would be up.
+		registry.github.Prewarm(ctx, ghcli.DefaultHost)
+	}
 	s := newStateSync(registry, newEventHub())
 	s.ReconcileCatalog()
 	return s, ids, nil
@@ -218,6 +276,7 @@ func benchPass(ctx context.Context, s *stateSync, ids []string, opts SyncBenchOp
 	}
 	deadline := time.Now().Add(timeout)
 	g0, h0 := trace.Counts()
+	r0, n0 := trace.HTTPCounts()
 	start := time.Now()
 	for _, id := range ids {
 		s.Queue(id, refreshAll, false)
@@ -273,7 +332,8 @@ func benchPass(ctx context.Context, s *stateSync, ids []string, opts SyncBenchOp
 		}
 	}
 	g1, h1 := trace.Counts()
-	result := SyncBenchResult{Rows: rows, GitSpawns: g1 - g0, GHSpawns: h1 - h0}
+	r1, n1 := trace.HTTPCounts()
+	result := SyncBenchResult{Rows: rows, GitSpawns: g1 - g0, GHSpawns: h1 - h0, HTTPRequests: r1 - r0, NotModified: n1 - n0}
 	result.Total = SyncBenchRow{Project: "total", Name: "all projects", GitSpawns: result.GitSpawns, GHSpawns: result.GHSpawns}
 	for _, row := range rows {
 		result.Total.Worktrees += row.Worktrees

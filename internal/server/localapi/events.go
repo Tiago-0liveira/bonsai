@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -15,6 +16,17 @@ type websocketAuth struct {
 	// ActiveProject optionally names the project the browser has open, so its
 	// refresh is prioritized. Older clients omit it.
 	ActiveProject string `json:"active_project,omitempty"`
+}
+
+// websocketClientFrameLimit bounds client frames: authenticate, then small
+// focus messages.
+const websocketClientFrameLimit = 4 << 10
+
+// websocketFocus names the project the browser has in view; "" when its page
+// is hidden. Older clients never send it, and older servers ignore it.
+type websocketFocus struct {
+	Type          string `json:"type"`
+	ActiveProject string `json:"active_project"`
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +50,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	conn.SetReadLimit(websocketClientFrameLimit)
 	_ = conn.SetReadDeadline(time.Now().Add(websocketAuthTimeout))
 	var auth websocketAuth
 	if err := conn.ReadJSON(&auth); err != nil || auth.Type != "authenticate" || !s.sessions.valid(auth.Token) {
@@ -52,6 +65,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	subscriptionID, events := s.eventHub.subscribe()
 	defer s.eventHub.unsubscribe(subscriptionID)
+	s.stateSync.SetFocus(subscriptionID, auth.ActiveProject)
+	defer s.stateSync.ClearFocus(subscriptionID)
 	s.stateSync.SubscriberReady(auth.ActiveProject)
 
 	if err := conn.WriteJSON(localEvent{Type: "ready", Epoch: s.stateSync.epoch}); err != nil {
@@ -81,11 +96,23 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 
 	done := make(chan struct{})
+	// The reader may still apply a focus frame until it exits, so the focus is
+	// cleared only after it has.
+	defer func() {
+		_ = conn.Close()
+		<-done
+		s.stateSync.ClearFocus(subscriptionID)
+	}()
 	go func() {
 		defer close(done)
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
 				return
+			}
+			var message websocketFocus
+			if json.Unmarshal(data, &message) == nil && message.Type == "focus" {
+				s.stateSync.SetFocus(subscriptionID, message.ActiveProject)
 			}
 		}
 	}()

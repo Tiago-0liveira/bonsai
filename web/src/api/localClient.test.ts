@@ -5,6 +5,7 @@ import {
   getLocalConnectionSnapshot,
   localFetch,
   openLocalEvents,
+  sendEventFocus,
 } from './localClient'
 
 function jsonResponse(value: unknown, status = 200) {
@@ -159,5 +160,17 @@ describe('local event authentication', () => {
       Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: original })
       FakeWebSocket.latest = undefined
     }
+  })
+  it('reports the project in view only on an open socket', () => {
+    const sent: string[] = []
+    const socket = { readyState: 1, send: (value: string) => { sent.push(value) } } as unknown as WebSocket
+    expect(sendEventFocus(socket, 'project-v1-abc')).toBe(true)
+    expect(sendEventFocus(socket, '')).toBe(true)
+    expect(sent).toEqual([
+      JSON.stringify({ type: 'focus', active_project: 'project-v1-abc' }),
+      JSON.stringify({ type: 'focus', active_project: '' }),
+    ])
+    const closing = { readyState: 2, send: () => { throw new Error('closed socket') } } as unknown as WebSocket
+    expect(sendEventFocus(closing, 'project-v1-abc')).toBe(false)
   })
 })

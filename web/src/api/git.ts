@@ -16,6 +16,7 @@ import {
   localFetch,
   markLocalConnectionLost,
   openLocalEvents,
+  sendEventFocus,
   type LocalEvent,
 } from './local'
 
@@ -93,7 +94,8 @@ export interface RemotePR {
 export interface WireFreshness {
   state: SyncFreshness['state']
   updated_at?: string
-  error?: { code: string; message: string }
+  // reset_at accompanies code rate_limited: when GitHub's rate-limit window resets.
+  error?: { code: string; message: string; reset_at?: string }
 }
 interface LocalStatus {
   branch?: string
@@ -658,6 +660,21 @@ export function startGitBackend() {
   const bootstrapSnapshots = new Map<string, Snapshot>()
   const pendingSnapshots = new Map<string, Snapshot>()
   const generation = ++activeGeneration
+  // The project last reported to the backend as in view.
+  let reportedFocus: string | undefined
+
+  const focusedProject = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return ''
+    const id = useBonsaiStore.getState().activeProjectId
+    return id && id !== 'local' ? id : ''
+  }
+  const reportFocus = () => {
+    if (closed || !socket) return
+    const next = focusedProject()
+    if (next !== reportedFocus && sendEventFocus(socket, next)) reportedFocus = next
+  }
+  const unsubscribeFocus = useBonsaiStore.subscribe(reportFocus)
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', reportFocus)
 
   const onEvent = (data: LocalEvent) => {
     if (closed || generation !== activeGeneration) return
@@ -725,6 +742,9 @@ export function startGitBackend() {
         return
       }
       socket = connection.socket
+      // authenticate already named the active project; a hidden tab corrects it.
+      reportedFocus = activeProjectId && activeProjectId !== 'local' ? activeProjectId : ''
+      reportFocus()
       retryDelay = 1000
       useBonsaiStore.setState({ gitError: '' })
       clearTimeout(heartbeatTimer)
@@ -755,6 +775,8 @@ export function startGitBackend() {
   void connect()
   return () => {
     closed = true
+    unsubscribeFocus()
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', reportFocus)
     clearTimeout(reconnectTimer)
     clearTimeout(heartbeatTimer)
     if (generation === activeGeneration) activeGeneration++

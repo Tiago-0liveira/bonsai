@@ -19,16 +19,35 @@ import (
 	daemonwatcher "github.com/Tiago-0liveira/bonsai/internal/daemon/watcher"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 )
 
-// StandardUpdateInterval is how often GitHub data is re-read in standard
-// (polling) update mode; `bonsai web` reports it to the user.
-const StandardUpdateInterval = providerRefreshInterval
+// StandardUpdateInterval is how often GitHub data is re-read for the project
+// in view in standard (polling) update mode; `bonsai web` reports it to the
+// user.
+const StandardUpdateInterval = providerVisiblePollInterval
+
+// Provider polling cadence. Reads are conditional (ETag), so a poll of an
+// unchanged repository is answered with 304s that do not count against
+// GitHub's primary rate limit.
+const (
+	// providerPollTick is how often due polls are looked for; it only compares
+	// timestamps.
+	providerPollTick = 5 * time.Second
+	// providerVisiblePollInterval applies to a project open in some browser.
+	providerVisiblePollInterval = 30 * time.Second
+	// providerRunningPollInterval applies to a visible project with CI running.
+	providerRunningPollInterval = 15 * time.Second
+	// providerBackgroundPollInterval applies to every other project.
+	providerBackgroundPollInterval = 5 * time.Minute
+	// providerRateLimitedFactor stretches every interval while less than 10% of
+	// the rate-limit window is left.
+	providerRateLimitedFactor = 4
+)
 
 const (
 	processRefreshInterval  = 30 * time.Second
-	providerRefreshInterval = 2 * time.Minute
 	watcherRecoveryInterval = 30 * time.Second
 	localReadTimeout        = 20 * time.Second
 	processReadTimeout      = 5 * time.Second
@@ -63,6 +82,9 @@ type syncJobState struct {
 	providerRunning bool
 	providerPending bool
 	providerForce   bool
+	// providerStartedAt is when the last provider job began; polls are timed
+	// from it so any refresh, not only a poll, resets the clock.
+	providerStartedAt time.Time
 }
 
 type projectProjection struct {
@@ -96,6 +118,9 @@ type stateSync struct {
 	// priorityProject is the project the user last had open. Its refreshes are
 	// admitted before other projects' when workers are scarce.
 	priorityProject string
+	// focus maps each event subscriber to the project it has in view ("" when
+	// its page is hidden). Their union is polled at the visible cadence.
+	focus map[int]string
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -108,6 +133,7 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		projects:     map[string]*projectProjection{},
 		jobs:         map[string]*syncJobState{},
 		watchCancels: map[string]context.CancelFunc{},
+		focus:        map[int]string{},
 		localSem:     newPriorityGate(localRefreshWorkers),
 		providerSem:  newPriorityGate(providerRefreshWorkers),
 		prefetchSem:  newPriorityGate(providerRefreshWorkers),
@@ -125,10 +151,10 @@ func (s *stateSync) Run(ctx context.Context) {
 	s.syncWatchers()
 
 	processTicker := time.NewTicker(processRefreshInterval)
-	providerTicker := time.NewTicker(providerRefreshInterval)
+	pollTicker := time.NewTicker(providerPollTick)
 	syncTicker := time.NewTicker(time.Minute)
 	defer processTicker.Stop()
-	defer providerTicker.Stop()
+	defer pollTicker.Stop()
 	defer syncTicker.Stop()
 	defer func() {
 		s.mu.Lock()
@@ -148,9 +174,9 @@ func (s *stateSync) Run(ctx context.Context) {
 			if s.events.count() > 0 {
 				s.RefreshAll(refreshProcesses, false)
 			}
-		case <-providerTicker.C:
+		case <-pollTicker.C:
 			if s.events.count() > 0 {
-				s.RefreshAll(refreshProvider, false)
+				s.pollProviders()
 			}
 		case <-syncTicker.C:
 			s.syncActiveProjects()
@@ -219,6 +245,100 @@ func (s *stateSync) RefreshAll(scope refreshScope, forceProvider bool) {
 			s.Queue(info.ID, scope, forceProvider)
 		}
 	}
+}
+
+// SetFocus records the project subscriber has in view. The ID is kept even
+// when no such project is known yet (a root may still be scanning); it counts
+// once the project appears, since the browser does not send it again. A known
+// project also becomes the priority project.
+func (s *stateSync) SetFocus(subscriber int, projectID string) {
+	if len(projectID) > 256 {
+		projectID = ""
+	}
+	_, known := s.registry.Lookup(projectID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.focus[subscriber] = projectID
+	if projectID != "" && known {
+		s.priorityProject = projectID
+	}
+}
+
+// ClearFocus forgets a subscriber that disconnected.
+func (s *stateSync) ClearFocus(subscriber int) {
+	s.mu.Lock()
+	delete(s.focus, subscriber)
+	s.mu.Unlock()
+}
+
+func (s *stateSync) visibleProjects() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	visible := map[string]bool{}
+	for _, projectID := range s.focus {
+		if projectID != "" {
+			visible[projectID] = true
+		}
+	}
+	return visible
+}
+
+// pollProviders queues a provider refresh for every project whose poll is
+// due. Projects in view are polled often, the rest rarely, and everything
+// slows down while GitHub's rate limit runs low.
+func (s *stateSync) pollProviders() {
+	now := s.now()
+	visible := s.visibleProjects()
+	for _, info := range s.registry.List() {
+		if !info.Available {
+			continue
+		}
+		project, ok := s.registry.Lookup(info.ID)
+		if !ok || project.github == nil {
+			continue
+		}
+		s.mu.Lock()
+		j := s.jobLocked(info.ID)
+		running, last := j.providerRunning, j.providerStartedAt
+		ciRunning := false
+		if p := s.projects[info.ID]; p != nil {
+			for _, state := range p.snapshot.WorktreeState {
+				if state.CI.Status == "running" {
+					ciRunning = true
+					break
+				}
+			}
+		}
+		s.mu.Unlock()
+		if running {
+			continue
+		}
+		rate, known := githubRate(project.github)
+		if !now.Before(nextProviderPoll(last, visible[info.ID], ciRunning, rate, known, now)) {
+			s.queueProvider(info.ID, false)
+		}
+	}
+}
+
+// nextProviderPoll is when a project whose last provider job started at last
+// is due again.
+func nextProviderPoll(last time.Time, visible, ciRunning bool, rate ghcli.Rate, rateKnown bool, now time.Time) time.Time {
+	interval := providerBackgroundPollInterval
+	if visible {
+		interval = providerVisiblePollInterval
+		if ciRunning {
+			interval = providerRunningPollInterval
+		}
+	}
+	if rateKnown && rate.Low() && rate.Reset.After(now) {
+		interval *= providerRateLimitedFactor
+	}
+	next := last.Add(interval)
+	if rateKnown && rate.Exhausted(now) && next.Before(rate.Reset) {
+		// Nothing would succeed before the window resets.
+		next = rate.Reset
+	}
+	return next
 }
 
 func (s *stateSync) priorityID() string {
@@ -329,6 +449,9 @@ func (s *stateSync) queueProvider(projectID string, force bool) {
 	ticket := s.providerSem.enter(s.isPriority(projectID))
 	go func() {
 		<-ticket
+		s.mu.Lock()
+		s.jobLocked(projectID).providerStartedAt = s.now()
+		s.mu.Unlock()
 		s.refreshProvider(projectID, force)
 		s.providerSem.release()
 		s.mu.Lock()

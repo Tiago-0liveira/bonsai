@@ -3,8 +3,8 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { __resetGitSyncForTests, loadPullRequest, startGitBackend } from './git'
 import { useBonsaiStore } from '../stores/bonsai'
 
-const { localFetch, openLocalEvents } = vi.hoisted(() => ({ localFetch: vi.fn(), openLocalEvents: vi.fn() }))
-vi.mock('./local', () => ({ localFetch, openLocalEvents, invalidateLocalSession: vi.fn(), markLocalConnectionLost: vi.fn() }))
+const { localFetch, openLocalEvents, sendEventFocus } = vi.hoisted(() => ({ localFetch: vi.fn(), openLocalEvents: vi.fn(), sendEventFocus: vi.fn(() => true) }))
+vi.mock('./local', () => ({ localFetch, openLocalEvents, sendEventFocus, invalidateLocalSession: vi.fn(), markLocalConnectionLost: vi.fn() }))
 const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } })
 beforeEach(() => { __resetGitSyncForTests(); vi.clearAllMocks() })
 
@@ -52,6 +52,32 @@ it('reconnects the event stream and applies updates after bootstrap', async () =
     await vi.advanceTimersByTimeAsync(80_000)
     expect(openLocalEvents).toHaveBeenCalledTimes(2)
   } finally { stop(); vi.useRealTimers() }
+})
+
+it('reports the project in view, and none while the page is hidden', async () => {
+  const socket = { close: vi.fn(), onclose: null, onerror: null }
+  useBonsaiStore.setState({ activeProjectId: 'project-a' })
+  openLocalEvents.mockImplementation(async () => ({ socket, epoch: 'epoch' }))
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  const stop = startGitBackend()
+  try {
+    await act(async () => {})
+    expect(openLocalEvents).toHaveBeenCalledWith(expect.any(Function), 'project-a')
+    // authenticate already named project-a: nothing more to send.
+    expect(sendEventFocus).not.toHaveBeenCalled()
+    act(() => { useBonsaiStore.setState({ activeProjectId: 'project-b' }) })
+    expect(sendEventFocus).toHaveBeenLastCalledWith(socket, 'project-b')
+    visibility.mockReturnValue('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(sendEventFocus).toHaveBeenLastCalledWith(socket, '')
+    visibility.mockReturnValue('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(sendEventFocus).toHaveBeenLastCalledWith(socket, 'project-b')
+    expect(sendEventFocus).toHaveBeenCalledTimes(3)
+    stop()
+    act(() => { useBonsaiStore.setState({ activeProjectId: 'project-a' }) })
+    expect(sendEventFocus).toHaveBeenCalledTimes(3)
+  } finally { stop(); visibility.mockRestore() }
 })
 
 it('maps provider enrichments from PR details, including check timing', async () => {

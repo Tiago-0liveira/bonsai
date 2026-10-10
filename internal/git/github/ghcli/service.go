@@ -1,5 +1,7 @@
-// Package ghcli retains local gh authentication while sharing the production
-// domain normalization. It is never constructed by the web server.
+// Package ghcli uses the local gh login for GitHub while sharing the
+// production domain normalization. Requests run in-process with the token from
+// `gh auth token` (see Shared); the `gh api` subprocess transport remains as a
+// fallback for when gh cannot hand out a token.
 package ghcli
 
 import (
@@ -15,7 +17,21 @@ import (
 	"time"
 )
 
-type Service struct{ *app.Client }
+type Service struct {
+	*app.Client
+	shared *Shared
+	host   string
+}
+
+// RateLimit returns the last core rate-limit window seen for this service's
+// host. It reports false for the subprocess-only service.
+func (s *Service) RateLimit() (Rate, bool) {
+	if s.shared == nil {
+		return Rate{}, false
+	}
+	return s.shared.RateLimit(s.host)
+}
+
 type tokens struct{}
 
 func (tokens) Token(context.Context, string, bool) (string, error) { return "gh-cli", nil }
@@ -39,15 +55,7 @@ func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	cmd.Stdin = r.Body
 	// --include output is parsed as HTTP, so terminal styling must be disabled
 	// even when Bonsai inherits an environment that forces CLI color.
-	for _, variable := range cmd.Environ() {
-		key, _, _ := strings.Cut(variable, "=")
-		switch key {
-		case "CLICOLOR_FORCE", "FORCE_COLOR", "GH_FORCE_TTY", "NO_COLOR":
-			continue
-		}
-		cmd.Env = append(cmd.Env, variable)
-	}
-	cmd.Env = append(cmd.Env, "NO_COLOR=1")
+	cmd.Env = ghEnv(cmd.Environ())
 	// gh --include emits an HTTP status and headers even on API failures.
 	out, e := cmd.Output()
 	if len(out) == 0 && e != nil {
@@ -55,10 +63,13 @@ func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	return http.ReadResponse(bufioReader(string(out)), r)
 }
+
+// New returns a service that always spawns `gh api`. Production code uses
+// Shared.Service, which only falls back to it.
 func New(dir string) *Service {
 	c := app.New(tokens{})
 	c.HTTP = &http.Client{Transport: transport{Dir: dir}, Timeout: 30 * time.Second}
-	return &Service{c}
+	return &Service{Client: c}
 }
 
 type RepositoryContext struct {

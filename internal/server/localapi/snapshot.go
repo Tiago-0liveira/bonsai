@@ -18,6 +18,8 @@ type browserRepository = ProjectInfo
 type browserStateError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// ResetAt is when GitHub's rate-limit window resets (rate_limited only).
+	ResetAt *time.Time `json:"reset_at,omitempty"`
 }
 
 type browserFreshness struct {
