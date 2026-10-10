@@ -26,10 +26,16 @@ func (w *webCLI) doctor() error {
 		})
 		cfg = config.DefaultWebConfig()
 	}
-	results = append(results, checks.Run(context.Background(), w.checksEnv(rootsPath), checks.Options{
-		APIPort:     cfg.APIPort,
-		UpdatesMode: cfg.Updates.Mode,
-	})...)
+	env := w.checksEnv(rootsPath)
+	// Leftover Bonsai webhooks are looked for only where web-state.json
+	// remembers one, and only here: the setup screens re-run their checks
+	// often, and Apply deletes the hooks it takes off itself.
+	if state, err := config.ReadWebState(w.statePath); err == nil && len(leftoverCandidates(cfg, state.Live)) > 0 {
+		env.LeftoverHooks = func(ctx context.Context) ([]checks.LeftoverHook, error) {
+			return w.leftoverHooks(ctx, cfg, state.Live)
+		}
+	}
+	results = append(results, checks.Run(context.Background(), env, checksOptions(cfg))...)
 	return w.printDoctor(results)
 }
 
