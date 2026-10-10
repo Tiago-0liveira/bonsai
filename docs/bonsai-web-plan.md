@@ -11,7 +11,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | Phase | Title | Model | Depends on | Status |
 | ---: | --- | --- | --- | --- |
 | 0 | Baseline and sync instrumentation | Sonnet 5.5 | — | done (#56) |
-| 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | todo |
+| 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | in progress |
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | todo |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | todo |
@@ -306,12 +306,17 @@ Reading the numbers:
    - Add `%(subject)`, `%(authorname)` and `%(committerdate:unix)` to that
      `for-each-ref`, so a branch's last commit needs no `git log -1`.
      Detached HEAD may still use `log -1`.
-   - Resolve the absolute git dir once per worktree and cache it by path.
+   - Resolve the absolute git dir without a process: read `<path>/.git` (a
+     directory, or a `gitdir:` file) and fall back to `rev-parse` only when
+     that fails. Caching the `rev-parse` result by path would still cost one
+     process per worktree and could not meet the spawn exit criterion.
    - Use `--untracked-files=normal` for the overview. Keep `all` for detail
      `Status`. Document the count semantics change in the UI tooltip if
      visible.
 4. **Parallel provider reads.**
-   - Run `Repository`, `Branches` and the PR catalog concurrently (errgroup).
+   - Run `Repository`, `Branches` and the PR catalog concurrently
+     (`sync.WaitGroup`; `golang.org/x/sync` is not a dependency, and siblings
+     must not be cancelled so the first-error order stays the same).
    - Fetch checks through a bounded pool (6) instead of the serial loop at
      `enrichment.go:407`.
    - Keep the "publish PR catalog before checks" behavior.
@@ -319,10 +324,13 @@ Reading the numbers:
    - `SubscriberReady` queues the active or most recently selected project
      first. The others follow at lower priority (a second semaphore lane, or
      a short delay).
-   - The frontend already knows the active project. Pass it on the WebSocket
-     `ready` ack, or with an existing refresh call.
+   - The frontend already knows the active project. The client's only
+     WebSocket message is `authenticate`, so the hint is an optional
+     `active_project` field on it (`ready` is server to client).
 6. **Fix the `registeredTarget` re-list.** Cache the worktree inventory per
-   refresh cycle instead of running `git worktree list` per call.
+   refresh cycle instead of running `git worktree list` per call. This serves
+   per-worktree detail reads (status, files, diff, operations), not the cold
+   load.
 
 **Rails**
 - Epoch and sequence ordering, per-worktree error isolation and stale-value
@@ -339,6 +347,58 @@ Reading the numbers:
 - Race tests pass.
 - New tests cover the parallel status pool, early provider start and
   priority ordering.
+
+**Implementation notes**
+- `internal/git/local`: `refs.go` parses one `for-each-ref` (now with
+  `%(subject)` and `%(authorname)`) into an index used by `ListBranches` and by
+  `Repository`; a worktree's upstream SHA and last commit come from it, and
+  `git log -1` / `rev-parse @{upstream}` remain as fallbacks (detached HEAD,
+  ref moved between reads, upstream not in the index). `gitdir.go` reads the git
+  dir from disk. Overview status uses `--untracked-files=normal`; detail
+  `Status` keeps `all`.
+- Visible semantic change: `dirtyFiles` ("Changed files" in the inspector, the
+  delete dialog and canvas nodes) now counts an untracked directory once.
+  Dirty detection is unchanged. The inspector counts carry a tooltip.
+- `Repository` runs the status pool (`min(GOMAXPROCS, 8)`) under the repository
+  lock, and overlaps `git remote` / `symbolic-ref` with it.
+- New read command `git.inventory` (worktrees, branches, remotes; no status).
+  It is a strict subset of `git.repository.refresh`, so it has the same read
+  authority. The API falls back to `git.worktrees` + `git.branches` when a
+  running daemon predates it (the API and the per-repo daemon can be different
+  binary versions).
+- "Start the provider early" means warming the provider cache from the early
+  inventory (`queueProviderPrefetch`). The full provider job still waits for
+  the local statuses, because its commit is bound to the local identity token,
+  which includes each worktree's upstream; it then finds the cache warm.
+- Priority is a two-lane gate (`priority_gate.go`) replacing the two channel
+  semaphores. Entry order is fixed when a job is queued, so the active project
+  is queued first and admitted first. The last named project stays the priority
+  project across reconnects.
+- Not done, recorded for later: gitbridge runs `git worktree list` before every
+  command, including reads without a worktree ID (about 3 processes per cold
+  load). It sits on the security boundary and was left unchanged.
+
+**Results** (`__sync-bench --cold --repo ~/bonsai`, WSL2, median of 3 runs,
+live GitHub through the user's `gh` login, baseline and Phase 1 binaries run
+alternately on the same repository state)
+
+| Metric | Baseline (`1a40462`) | Phase 1 | Phase 1 / baseline | Exit criterion |
+| --- | ---: | ---: | ---: | --- |
+| Worktrees | 21 | 21 | | |
+| Inventory | 33 ms | 16 ms | 48% | |
+| Local ready | 125 ms | 39 ms | 31% | ≤ 60% ✓ |
+| PR catalog | 2313 ms | 675 ms | 29% | ≤ 50% ✓ |
+| All checks | 18072 ms | 4293 ms | 24% | |
+| git spawns | 67 | 31 | 46% (−54%) | ≥ 50% down ✓ |
+| gh spawns | 25 | 25 | 100% | unchanged (Phase 2) |
+
+- The Phase 0 table above was measured with 15 worktrees; the repository has
+  21 now, so the baseline was re-measured on the current state instead of
+  comparing against it. The `/mnt/c` copy no longer exists and was not
+  re-measured, and there is still no large repo.
+- PR catalog is now the slowest of the three concurrent `gh` calls (about
+  620 to 670 ms each), which is the process-spawn floor that Phase 2 removes.
+  All checks is bounded by 21 worktrees through a pool of 6 `gh` spawns.
 
 ---
 
