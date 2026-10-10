@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -62,6 +63,10 @@ type Config struct {
 	WebConfigPath string
 	WebStatePath  string
 	WebHome       string
+	// SnapshotCacheDir holds the warm-start snapshot documents, one
+	// namespace per roots file, launch repository and security mode. Empty
+	// turns warm start off; Run fills in the user state directory.
+	SnapshotCacheDir string
 }
 
 type Server struct {
@@ -160,6 +165,13 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 	// The relay is frozen (decision D1): the embedded UI gets no relay origin.
 	s.ui = webui.New(ui, webui.Options{})
 	s.stateSync = newStateSync(registry, events)
+	if cfg.SnapshotCacheDir != "" {
+		if absolute, err := filepath.Abs(rootsPath); err == nil {
+			rootsPath = absolute
+		}
+		store := newWarmStore(cfg.SnapshotCacheDir, warmStartNamespace(rootsPath, cfg.RepoDir, cfg.SecurityMode))
+		s.stateSync.enableWarmStart(store)
+	}
 	s.stateSync.ReconcileCatalog()
 	if discovered, ok := registry.(*discoveredProjectRegistry); ok && cfg.WebhookAddress != "" {
 		s.webhookAddress = cfg.WebhookAddress
@@ -330,11 +342,20 @@ func (s *Server) createSession(w http.ResponseWriter, _ *http.Request) {
 }
 
 func Run(cfg Config) error {
+	if cfg.SnapshotCacheDir == "" && os.Getenv("BONSAI_WARM_START") != "off" {
+		if home, err := config.WebHome(); err == nil {
+			cfg.SnapshotCacheDir = filepath.Join(home, "warm-start")
+		} else {
+			log.Printf("Warm start is off: %v", err)
+		}
+	}
 	s, err := New(cfg)
 	if err != nil {
 		return err
 	}
 	defer s.agents.manager.Close()
+	// Runs before the agents close: the last commits reach disk first.
+	defer s.stateSync.closeWarm(warmStartShutdownFlush)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go s.reconcilePeriodically(ctx)
