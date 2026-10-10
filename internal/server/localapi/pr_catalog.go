@@ -11,6 +11,11 @@ import (
 
 const prPagesPerJob = 5
 
+// prFullReconcileInterval bounds how long the page-1 shortcut may stand in for
+// a full scan. Page 1 lists the most recently updated open PRs, so it misses a
+// PR further down that leaves the open set without anything on page 1 moving.
+const prFullReconcileInterval = 5 * time.Minute
+
 // A bounded job keeps its continuation on failure and publishes only a complete
 // replacement. Open PRs are fully reconciled so closed or merged PRs disappear.
 // Closed history is fetched separately only when requested by the browser.
@@ -27,10 +32,18 @@ func readPRCatalog(ctx context.Context, service gh.GitHubService, repo string, e
 	}
 	for count := 0; count < prPagesPerJob; count++ {
 		endPage := trace.Start("provider.prs", repo, trace.Attrs{Page: entry.nextPage})
-		batch, err := paged.PullRequestPage(ctx, repo, gh.PRFilter{State: "open"}, entry.nextPage)
+		page := entry.nextPage
+		batch, err := paged.PullRequestPage(ctx, repo, gh.PRFilter{State: "open"}, page)
 		endPage()
 		if err != nil {
 			return nil, false, err
+		}
+		// An unchanged first page means no open PR was opened, updated or
+		// reordered at the top, so the cached catalog stands without reading
+		// the remaining pages.
+		if page == 1 && batch.NotModified && batch.NextPage != 0 && entry.value != nil && entry.value.PRCatalogComplete && now.Before(entry.fullReconcileAt) {
+			entry.pending, entry.nextPage = nil, 0
+			return append([]gh.PullRequest(nil), entry.value.PullRequests...), true, nil
 		}
 		finished := batch.NextPage == 0
 		for _, pr := range batch.Items {
@@ -55,6 +68,7 @@ func readPRCatalog(ctx context.Context, service gh.GitHubService, repo string, e
 				return prs[i].UpdatedAt.After(prs[j].UpdatedAt)
 			})
 			entry.pending, entry.nextPage = nil, 0
+			entry.fullReconcileAt = now.Add(prFullReconcileInterval)
 			return prs, true, nil
 		}
 	}

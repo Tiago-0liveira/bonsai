@@ -241,12 +241,14 @@ func runSyncBench(args []string, out io.Writer) error {
 	// scripts written now keep working once warm-start persistence lands.
 	_ = fs.Bool("cold", false, "start from empty caches (always true today)")
 	timeout := fs.Duration("timeout", 2*time.Minute, "give up after this long")
+	warm := fs.Bool("warm", false, "after the cold pass, force one provider refresh per project and report its GitHub requests")
+	noPrewarm := fs.Bool("no-prewarm", false, "skip the GitHub token read and connection the API server prepares at startup (measures a cold process)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	result, err := localapi.SyncBench(ctx, localapi.SyncBenchOptions{Root: *root, Repo: *repo, Projects: *projects, Timeout: *timeout})
+	result, err := localapi.SyncBench(ctx, localapi.SyncBenchOptions{Root: *root, Repo: *repo, Projects: *projects, Timeout: *timeout, Warm: *warm, NoPrewarm: *noPrewarm})
 	if err != nil {
 		return err
 	}
@@ -268,6 +270,13 @@ func runSyncBench(args []string, out io.Writer) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(out, "\nspawns: git=%d gh=%d (whole pass)\n", result.GitSpawns, result.GHSpawns)
-	return err
+	if _, err := fmt.Fprintf(out, "\nspawns: git=%d gh=%d (whole pass)\ngithub http: requests=%d not_modified=%d\n", result.GitSpawns, result.GHSpawns, result.HTTPRequests, result.NotModified); err != nil {
+		return err
+	}
+	if warm := result.Warm; warm != nil {
+		if _, err := fmt.Fprintf(out, "warm refresh: %s gh=%d requests=%d not_modified=%d\n", ms(warm.Duration), warm.GHSpawns, warm.HTTPRequests, warm.NotModified); err != nil {
+			return err
+		}
+	}
+	return nil
 }

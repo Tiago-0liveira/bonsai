@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"fmt"
 	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"maps"
 	"strings"
@@ -10,11 +11,17 @@ import (
 
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 )
 
 const (
+	// providerRepoTTL is how long repository, branches and PR catalog are reused
+	// before a provider job revalidates them. Revalidation is conditional
+	// (ETag), so an unchanged repository costs only 304s. It sits below the
+	// visible-project poll interval so every poll revalidates.
+	providerRepoTTL         = 20 * time.Second
 	providerReadyTTL        = 60 * time.Second
-	providerPendingTTL      = 15 * time.Second
+	providerPendingTTL      = 10 * time.Second
 	providerErrorBackoff    = 15 * time.Second
 	providerMaxErrorBackoff = 60 * time.Second
 	providerReadTimeout     = 30 * time.Second
@@ -140,7 +147,7 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		entry.running = false
 		if err == nil {
 			entry.value = value
-			entry.expiresAt = now.Add(providerReadyTTL)
+			entry.expiresAt = now.Add(providerRepoTTL)
 			if !complete {
 				entry.expiresAt = now
 			}
@@ -277,6 +284,50 @@ func (c *providerCache) checksFor(ctx context.Context, service githubdomain.GitH
 	}
 }
 
+// rateLimited is implemented by GitHub services that observe rate-limit
+// headers (the in-process client).
+type rateLimited interface {
+	RateLimit() (ghcli.Rate, bool)
+}
+
+func githubRate(service githubdomain.GitHubService) (ghcli.Rate, bool) {
+	if limited, ok := service.(rateLimited); ok {
+		return limited.RateLimit()
+	}
+	return ghcli.Rate{}, false
+}
+
+// withRateLimit reports a nearly exhausted GitHub rate limit on otherwise
+// healthy provider freshness, and adds the core window's reset time to a
+// rate_limited error caused by that window.
+// The freshness state is left alone: the data itself is as fresh as it says.
+func withRateLimit(freshness browserFreshness, rate ghcli.Rate, known bool, now time.Time) browserFreshness {
+	if !known || rate.Reset.IsZero() {
+		return freshness
+	}
+	reset := rate.Reset
+	if freshness.Error != nil {
+		// The core window's reset only explains a rate_limited error when that
+		// window is what ran out; a secondary (Retry-After) or GraphQL limit
+		// resets on its own schedule, which the core headers do not carry.
+		if freshness.Error.Code == "rate_limited" && rate.Low() && reset.After(now) {
+			e := *freshness.Error
+			e.ResetAt = &reset
+			freshness.Error = &e
+		}
+		return freshness
+	}
+	if !rate.Low() || !reset.After(now) {
+		return freshness
+	}
+	freshness.Error = &browserStateError{
+		Code:    "rate_limited",
+		Message: fmt.Sprintf("GitHub API limit is low (%d of %d requests left). Bonsai checks GitHub less often until %s.", rate.Remaining, rate.Limit, reset.Local().Format("15:04")),
+		ResetAt: &reset,
+	}
+	return freshness
+}
+
 func providerFailureFreshness(hadValue bool, updatedAt any, err error) browserFreshness {
 	state := "error"
 	if hadValue {
@@ -356,6 +407,11 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	ctx, cancel := s.readContext(providerReadTimeout)
 	defer cancel()
 	remote, providerFreshness := s.providers.repository(ctx, project.github, identity.FullName, s.now(), force)
+	// The catalog continues only after a successful read; a rate-limit note on
+	// a successful read must not stop it.
+	readOK := providerFreshness.Error == nil
+	rate, rateKnown := githubRate(project.github)
+	providerFreshness = withRateLimit(providerFreshness, rate, rateKnown, s.now())
 	if remote == nil {
 		s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 			snapshot.Freshness["provider"] = providerFreshness
@@ -468,7 +524,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.WorktreeState = maps.Clone(states)
 	})
-	if remote.PRCatalogLoading && providerFreshness.Error == nil {
+	if remote.PRCatalogLoading && readOK {
 		go func() {
 			ctx, cancel := s.readContext(2 * time.Second)
 			defer cancel()

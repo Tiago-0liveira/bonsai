@@ -14,8 +14,10 @@ import (
 )
 
 var (
-	gitSpawns atomic.Int64
-	ghSpawns  atomic.Int64
+	gitSpawns    atomic.Int64
+	ghSpawns     atomic.Int64
+	httpRequests atomic.Int64
+	notModified  atomic.Int64
 
 	enabled atomic.Bool
 	mu      sync.Mutex
@@ -48,6 +50,18 @@ func AddGit() { gitSpawns.Add(1) }
 
 // AddGH records one spawned gh process.
 func AddGH() { ghSpawns.Add(1) }
+
+// AddHTTP records one in-process GitHub HTTP request.
+func AddHTTP() { httpRequests.Add(1) }
+
+// AddNotModified records one GitHub response answered with 304 Not Modified.
+func AddNotModified() { notModified.Add(1) }
+
+// HTTPCounts returns the in-process GitHub request total and how many of them
+// were answered with 304 Not Modified.
+func HTTPCounts() (requests, notModifiedResponses int64) {
+	return httpRequests.Load(), notModified.Load()
+}
 
 // Counts returns the totals for instrumented spawn sites only: core.RunContext
 // (git), and the ghcli transport and Discover (gh). Other exec call sites, such

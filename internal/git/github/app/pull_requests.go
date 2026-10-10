@@ -91,7 +91,7 @@ func (c *Client) PullRequestPage(ctx context.Context, repo string, f gh.PRFilter
 	for _, p := range rows {
 		out = append(out, p.domain())
 	}
-	batch := gh.PullRequestPage{Items: out}
+	batch := gh.PullRequestPage{Items: out, NotModified: h.Get(NotModifiedHeader) != ""}
 	if strings.Contains(h.Get("Link"), `rel="next"`) {
 		batch.NextPage = page + 1
 	}
