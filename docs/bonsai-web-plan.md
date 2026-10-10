@@ -15,7 +15,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
-| 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (this PR) |
+| 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | todo |
 | 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | todo |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
@@ -792,7 +792,7 @@ without `web/dist` fails loudly, which is what a release wants. Phase 8 sets
   - Explain "webhook" once as "GitHub's change notifications".
   - Every ✗ has a one-line fix.
 
-**Outcome (recorded by this PR)**
+**Outcome (recorded by #62)**
 
 *Packages.*
 - `internal/websetup/checks` is the checks engine. Every probe goes through an
