@@ -328,10 +328,122 @@ func TestTunnelTools(t *testing.T) {
 	}
 }
 
-func TestLiveModeWarnsUntilAvailable(t *testing.T) {
-	c, ok := Find(Run(context.Background(), healthy().Env(), Options{APIPort: 7001, UpdatesMode: "live"}), IDUpdatesLive)
-	if !ok || c.State != Warn || c.Fix == nil {
-		t.Fatalf("got %+v", c)
+func TestTunnelToolOfTheChosenTunnelCounts(t *testing.T) {
+	live := func(tunnel, program string) Options {
+		return Options{APIPort: 7001, UpdatesMode: "live", Tunnel: tunnel, TunnelProgram: program}
+	}
+	// Missing: the chosen tunnel fails, the others stay informational.
+	got := run(healthy(), live("cloudflared-quick", "cloudflared"))
+	if c := got[IDTunnelCloudflared]; c.State != Fail || !strings.Contains(c.Detail, "your live updates tunnel needs it") || c.Fix == nil {
+		t.Fatalf("cloudflared = %+v", c)
+	}
+	if c := got[IDTunnelTailscale]; c.State != Skip || !strings.Contains(c.Detail, "not used by your tunnel") {
+		t.Fatalf("tailscale = %+v", c)
+	}
+	if c := run(healthy(), Options{})[IDTunnelTailscale]; !strings.Contains(c.Detail, "only needed for live updates") {
+		t.Fatalf("standard tailscale = %+v", c)
+	}
+
+	f := healthy()
+	f.tools["cloudflared"] = true
+	f.results["cloudflared --version"] = result{stdout: "cloudflared version 2026.9.3\n"}
+	// A quick tunnel needs no login...
+	if c := run(f, live("cloudflared-quick", "cloudflared"))[IDTunnelCloudflared]; c.State != OK {
+		t.Fatalf("quick = %+v", c)
+	}
+	// ...a named one warns without it, and is fine with it.
+	if c := run(f, live("cloudflared-named", "cloudflared"))[IDTunnelCloudflared]; c.State != Warn || c.Fix == nil || !c.Fix.Inline {
+		t.Fatalf("named = %+v", c)
+	}
+	f.files[filepath.Join("/home/u", ".cloudflared", "cert.pem")] = "cert"
+	if c := run(f, live("cloudflared-named", "cloudflared"))[IDTunnelCloudflared]; c.State != OK {
+		t.Fatalf("named with cert = %+v", c)
+	}
+
+	// ngrok cannot run without its authtoken; tailscale without a connection.
+	f.tools["ngrok"] = true
+	if c := run(f, live("ngrok", "ngrok"))[IDTunnelNgrok]; c.State != Fail || c.Fix == nil {
+		t.Fatalf("ngrok = %+v", c)
+	}
+	f.tools["tailscale"] = true
+	f.results["tailscale version"] = result{stdout: "1.76.1\n"}
+	f.results["tailscale status --json"] = result{stdout: `{"BackendState":"Stopped"}`}
+	if c := run(f, live("tailscale", "tailscale"))[IDTunnelTailscale]; c.State != Fail || c.Fix == nil || c.Fix.Command != "tailscale up" {
+		t.Fatalf("tailscale = %+v", c)
+	}
+
+	// A custom command's program is looked up on PATH.
+	if c := run(f, live("custom", "mytunnel"))[IDTunnelCustom]; c.State != Fail || c.Fix == nil {
+		t.Fatalf("custom = %+v", c)
+	}
+	f.tools["mytunnel"] = true
+	if c := run(f, live("custom", "mytunnel"))[IDTunnelCustom]; c.State != OK {
+		t.Fatalf("custom found = %+v", c)
+	}
+	if _, ok := run(f, live("external-url", ""))[IDTunnelCustom]; ok {
+		t.Fatal("no tunnel program, no tunnel command check")
+	}
+}
+
+func TestLiveUpdates(t *testing.T) {
+	cases := []struct {
+		name    string
+		summary LiveSummary
+		err     error
+		state   State
+		detail  string
+		fix     string
+	}{
+		{"unreadable", LiveSummary{}, errors.New("corrupt"), Warn, "corrupt", "bonsai web status"},
+		{"no repos", LiveSummary{Running: true}, nil, Warn, "no repositories picked", "bonsai web setup"},
+		{"not running", LiveSummary{Repos: []LiveRepo{{Name: "o/a"}}}, nil, Skip, "1 repo picked · starts with bonsai web", ""},
+		{"no tunnel", LiveSummary{Running: true, TunnelError: "the tunnel is not running", Repos: []LiveRepo{{Name: "o/a"}}}, nil, Warn, "no public address: the tunnel is not running", "bonsai web logs tunnel"},
+		{"all live", LiveSummary{Running: true, PublicURL: "https://x.trycloudflare.com", Repos: []LiveRepo{{Name: "o/a", State: "live"}, {Name: "o/b", State: "live"}}}, nil, OK, "2 repos live · https://x.trycloudflare.com", ""},
+		{"needs admin", LiveSummary{Running: true, PublicURL: "https://x", Repos: []LiveRepo{{Name: "o/a", State: "live"}, {Name: "o/b", State: "needs_admin"}}}, nil, Warn, "1 of 2 repos live · o/b needs admin", "ask an admin of o/b"},
+		{"scope", LiveSummary{Running: true, PublicURL: "https://x", Repos: []LiveRepo{{Name: "o/a", State: "scope_missing"}}}, nil, Warn, "cannot be managed with your gh login", "gh auth refresh -h github.com -s admin:repo_hook"},
+		{"failing", LiveSummary{Running: true, PublicURL: "https://x", Repos: []LiveRepo{{Name: "o/a", State: "failing", Error: "last delivery got HTTP 502"}}}, nil, Warn, "o/a is failing (last delivery got HTTP 502)", "bonsai web logs tunnel"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := healthy().Env()
+			env.Live = func(context.Context) (LiveSummary, error) { return tc.summary, tc.err }
+			c, ok := Find(Run(context.Background(), env, Options{APIPort: 7001, UpdatesMode: "live"}), IDUpdatesLive)
+			if !ok || c.State != tc.state || !strings.Contains(c.Detail, tc.detail) {
+				t.Fatalf("got %+v", c)
+			}
+			if tc.fix == "" && c.State != OK && c.State != Skip {
+				t.Fatal("a problem needs a fix")
+			}
+			if tc.fix != "" && (c.Fix == nil || !strings.Contains(c.Fix.Command, tc.fix)) {
+				t.Fatalf("fix = %+v", c.Fix)
+			}
+		})
+	}
+	if _, ok := Find(Run(context.Background(), healthy().Env(), Options{APIPort: 7001}), IDUpdatesLive); ok {
+		t.Fatal("standard updates have no live check")
+	}
+}
+
+func TestLeftoverHooks(t *testing.T) {
+	env := healthy().Env()
+	if _, ok := Find(Run(context.Background(), env, Options{APIPort: 7001}), IDLiveHooks); ok {
+		t.Fatal("nowhere to look, no row")
+	}
+	env.LeftoverHooks = func(context.Context) ([]LeftoverHook, error) { return nil, nil }
+	if c, _ := Find(Run(context.Background(), env, Options{APIPort: 7001}), IDLiveHooks); c.State != OK {
+		t.Fatalf("none = %+v", c)
+	}
+	env.LeftoverHooks = func(context.Context) ([]LeftoverHook, error) {
+		return []LeftoverHook{{Repo: "o/a", HookID: 7}, {Repo: "o/b", HookID: 9}}, nil
+	}
+	c, _ := Find(Run(context.Background(), env, Options{APIPort: 7001}), IDLiveHooks)
+	if c.State != Warn || !strings.Contains(c.Detail, "o/a, o/b still have a Bonsai webhook") || c.Fix == nil ||
+		c.Fix.Command != "gh api -X DELETE repos/o/a/hooks/7 && gh api -X DELETE repos/o/b/hooks/9" || c.Fix.Inline {
+		t.Fatalf("got %+v %+v", c, c.Fix)
+	}
+	env.LeftoverHooks = func(context.Context) ([]LeftoverHook, error) { return nil, errors.New("offline") }
+	if c, _ := Find(Run(context.Background(), env, Options{APIPort: 7001}), IDLiveHooks); c.State != Skip || !strings.Contains(c.Detail, "offline") {
+		t.Fatalf("error = %+v", c)
 	}
 }
 
