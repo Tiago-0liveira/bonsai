@@ -92,13 +92,33 @@ func newWebEnv(t *testing.T) *webEnv {
 	}
 	env := &webEnv{bin: bin, cwd: t.TempDir(), home: webHome}
 	t.Cleanup(func() {
-		c := client.ForUserHome(webHome)
-		if _, err := c.Ping(); err == nil {
-			_ = c.Shutdown(true)
-		}
+		shutdownWebTestDaemon(t, client.ForUserHome(webHome))
 		_ = os.RemoveAll(run)
 	})
 	return env
+}
+
+func shutdownWebTestDaemon(t *testing.T, c *client.Client) {
+	t.Helper()
+	if err := c.Shutdown(true); err != nil {
+		t.Errorf("shutting down test daemon: %v", err)
+	}
+	// Shutdown returns when the socket closes, before the daemon finishes
+	// updating the global index. Its lock is released only after that cleanup,
+	// so wait for it before TempDir removes the isolated config directory.
+	if !waitUntil(5*time.Second, func() bool {
+		lock, err := procstore.TryLock(c.Store().LockPath())
+		if os.IsNotExist(err) {
+			return true // this test never started the daemon
+		}
+		if err != nil {
+			return false
+		}
+		_ = lock.Unlock()
+		return true
+	}) {
+		t.Errorf("test daemon cleanup did not finish: %s", c.Store().Root())
+	}
 }
 
 func (e *webEnv) run(t *testing.T, args ...string) (stdout, stderr string, code int) {
@@ -433,7 +453,7 @@ func gitInit(t *testing.T, dir string) {
 func startLegacyServe(t *testing.T, e *webEnv, repo string, port int) *client.Client {
 	t.Helper()
 	legacy := client.For(repo)
-	t.Cleanup(func() { _ = legacy.Shutdown(true) })
+	t.Cleanup(func() { shutdownWebTestDaemon(t, legacy) })
 	if _, err := legacy.ServeStart(procstore.ServeSpec{
 		Mode:          procstore.ServeModeProduction,
 		WorkspaceID:   serveWorkspaceID(repo),
