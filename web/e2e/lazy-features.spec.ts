@@ -95,7 +95,10 @@ test('PR list stays usable while markdown detail is pending', async ({ page }) =
   try {
     await openLocal(page, '/github')
     await expect(page.getByText('Loading pull request…')).toBeVisible()
-    await expect(page.getByRole('option', { name: /#23 fix\(daemon\): stabilize lifecycle cleanup/ })).toBeVisible()
+    const row = page.getByRole('option', { name: /#23 fix\(daemon\): stabilize lifecycle cleanup/ })
+    await expect(row).toBeVisible()
+    await row.click()
+    await expect(page.getByText('Loading pull request…')).toBeVisible()
   } finally { release() }
   await expect(page.getByText('Make daemon shutdown cleanup deterministic.').first()).toBeVisible()
 })
