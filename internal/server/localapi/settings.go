@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 )
@@ -47,23 +46,7 @@ func (s *Server) rootSettingsValue(cfg config.ProjectRoots) rootSettingsResponse
 		out.Diagnostics = append(out.Diagnostics, d)
 	}
 	home, _ := os.UserHomeDir()
-	var paths []string
-	if s.repoDir != "" {
-		paths = append(paths, s.repoDir, filepath.Dir(s.repoDir))
-	}
-	if home != "" {
-		for _, name := range []string{"projects", "dev", "code"} {
-			paths = append(paths, filepath.Join(home, name))
-		}
-	}
-	seen := map[string]bool{}
-	for _, path := range paths {
-		canonical, err := config.CanonicalDirectory(path)
-		if err == nil && !seen[canonical] {
-			seen[canonical] = true
-			out.Suggestions = append(out.Suggestions, canonical)
-		}
-	}
+	out.Suggestions = config.SuggestedProjectRoots(home, s.repoDir)
 	return out
 }
 func (s *Server) rootSettings(w http.ResponseWriter, r *http.Request) {
