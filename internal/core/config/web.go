@@ -11,12 +11,13 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
+	"github.com/Tiago-0liveira/bonsai/internal/webtunnel"
 )
 
 // Web configuration lives next to project-roots.json and follows the same
 // rules: versioned, revisioned, cross-process locked and written atomically.
 // web.json is what the user chooses; web-state.json is what bonsai learns at
-// runtime. Neither ever holds a secret.
+// runtime. Neither ever holds a secret (see web_secret.go).
 const (
 	WebConfigVersion = 1
 	WebStateVersion  = 1
@@ -62,6 +63,22 @@ type WebLiveUpdates struct {
 	PublicURL    string   `json:"public_url"`
 	Command      []string `json:"command"`
 	Repositories []string `json:"repositories"`
+	// TunnelName is the named Cloudflare tunnel (tunnel cloudflared-named).
+	TunnelName string `json:"tunnel_name,omitempty"`
+	// URLPattern finds the public URL in a custom tunnel's output.
+	URLPattern string `json:"url_pattern,omitempty"`
+}
+
+// TunnelOptions is the live configuration in the form the tunnel presets use.
+func (l WebLiveUpdates) TunnelOptions() webtunnel.Options {
+	return webtunnel.Options{
+		Preset:      l.Tunnel,
+		WebhookPort: l.WebhookPort,
+		TunnelName:  l.TunnelName,
+		PublicURL:   l.PublicURL,
+		Command:     l.Command,
+		URLPattern:  l.URLPattern,
+	}
 }
 
 // WebState is machine-managed runtime state (hook IDs, last public URL, ...).
@@ -184,6 +201,16 @@ func (c WebConfig) Validate() error {
 	}
 	if p := c.Updates.Live.WebhookPort; p != 0 && (p < 1 || p > 65535 || p == c.APIPort) {
 		return fmt.Errorf("updates.live.webhook_port %d must be a valid port different from api_port", p)
+	}
+	// The tunnel settings only matter (and are only checked) while live
+	// updates are on, so a half-filled live section never blocks standard.
+	if c.Updates.Mode == WebUpdatesLive {
+		if c.Updates.Live.WebhookPort == 0 {
+			return fmt.Errorf("updates.live.webhook_port is required when updates.mode is %q", WebUpdatesLive)
+		}
+		if err := webtunnel.ValidateOptions(c.Updates.Live.TunnelOptions()); err != nil {
+			return fmt.Errorf("updates.live: %w", err)
+		}
 	}
 	return nil
 }
