@@ -3,11 +3,13 @@ package localapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +21,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webui"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
@@ -48,6 +51,11 @@ type Config struct {
 	// UI is the web UI bundle served at /app. Nil uses the bundle embedded in
 	// the binary (`-tags embedui`); without one, /app is a placeholder page.
 	UI fs.FS
+	// WebhookAddress turns on the live-updates receiver: a second loopback
+	// listener serving only POST /github/webhook, verified with
+	// WebhookSecret. Only the user-level API (no RepoDir) runs it.
+	WebhookAddress string
+	WebhookSecret  []byte
 }
 
 type Server struct {
@@ -63,6 +71,9 @@ type Server struct {
 	stateSync     *stateSync
 	rootsPath     string
 	ui            http.Handler
+	// live is the webhook receiver; nil when live updates are off.
+	live           *webhooks.LiveReceiver
+	webhookAddress string
 }
 
 // New builds the local API. RepoDir is optional: a repository-scoped API (the
@@ -84,6 +95,20 @@ func New(cfg Config) (*Server, error) {
 	}
 	if err := requireLoopback(cfg.Address); err != nil {
 		return nil, err
+	}
+	if cfg.WebhookAddress != "" {
+		if cfg.RepoDir != "" {
+			return nil, fmt.Errorf("the webhook receiver runs only in the user-level API (bonsai web)")
+		}
+		if err := requireLoopback(cfg.WebhookAddress); err != nil {
+			return nil, err
+		}
+		if cfg.WebhookAddress == cfg.Address {
+			return nil, fmt.Errorf("the webhook receiver needs its own port")
+		}
+		if len(cfg.WebhookSecret) == 0 {
+			return nil, fmt.Errorf("the webhook receiver needs a secret")
+		}
 	}
 	if cfg.SecurityMode == "" {
 		cfg.SecurityMode = BrowserSecurityProduction
@@ -122,6 +147,10 @@ func New(cfg Config) (*Server, error) {
 	s.ui = webui.New(ui, webui.Options{})
 	s.stateSync = newStateSync(registry, events)
 	s.stateSync.ReconcileCatalog()
+	if cfg.WebhookAddress != "" {
+		s.webhookAddress = cfg.WebhookAddress
+		s.live = webhooks.NewLiveReceiver(cfg.WebhookSecret, s.stateSync.handleLiveEvent)
+	}
 	runtime, err := agentruntime.New(nil, nil, nil)
 	if err != nil {
 		return nil, err
@@ -299,6 +328,33 @@ func Run(cfg Config) error {
 		go registry.github.Prewarm(ctx, ghcli.DefaultHost)
 	}
 
+	// Both listeners bind before either serves, so a taken webhook port fails
+	// the start instead of leaving an API without its receiver.
+	apiListener, err := net.Listen("tcp", cfg.Address)
+	if err != nil {
+		return err
+	}
+	receiverFailed := make(chan error, 1)
+	if s.live != nil {
+		webhookListener, err := net.Listen("tcp", s.webhookAddress)
+		if err != nil {
+			_ = apiListener.Close()
+			return fmt.Errorf("webhook receiver: %w", err)
+		}
+		// The receiver is the one internet-facing surface (through the
+		// tunnel): its own server and mux, never the API handler or its
+		// Host/Origin checks.
+		receiver := webhooks.NewLiveServer(s.webhookAddress, s.live.Handler())
+		go shutdownWithContext(ctx, receiver)
+		go func() {
+			if err := receiver.Serve(webhookListener); err != http.ErrServerClosed {
+				receiverFailed <- err
+				stop()
+			}
+		}()
+		log.Printf("Bonsai webhook receiver listening at http://%s%s (signed GitHub deliveries only)", s.webhookAddress, webhooks.LivePath)
+	}
+
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           s.Handler(),
@@ -308,9 +364,14 @@ func Run(cfg Config) error {
 	}
 	go shutdownWithContext(ctx, server)
 	log.Printf("Bonsai local API listening at http://%s (UI at /app) for %s", cfg.Address, strings.Join(s.allowedOrigins(), ", "))
-	err = server.ListenAndServe()
+	err = server.Serve(apiListener)
 	if err == http.ErrServerClosed {
-		return nil
+		select {
+		case err := <-receiverFailed:
+			return fmt.Errorf("webhook receiver: %w", err)
+		default:
+			return nil
+		}
 	}
 	return err
 }

@@ -182,6 +182,25 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 	}
 }
 
+// invalidateChecks expires every cached checks result for sha (across head
+// repositories), including one waiting out an error backoff, so the next
+// provider refresh re-reads exactly that commit. It returns how many entries
+// it expired.
+func (c *providerCache) invalidateChecks(sha string) int {
+	suffix := "\x00" + strings.ToLower(sha)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for key, entry := range c.checks {
+		if strings.HasSuffix(strings.ToLower(key), suffix) {
+			entry.expiresAt = time.Time{}
+			entry.retryAt = time.Time{}
+			n++
+		}
+	}
+	return n
+}
+
 // cachedChecks keeps the last result visible while the same provider commit is
 // refreshed. Both repository and SHA must match; another commit starts loading.
 func (c *providerCache) cachedChecks(repository, sha string, now time.Time) ([]githubdomain.Check, browserFreshness, bool) {

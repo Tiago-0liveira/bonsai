@@ -121,6 +121,8 @@ type stateSync struct {
 	// focus maps each event subscriber to the project it has in view ("" when
 	// its page is hidden). Their union is polled at the visible cadence.
 	focus map[int]string
+	// liveQueue replaces Queue for live-update deliveries in tests.
+	liveQueue func(projectID string, scope refreshScope, forceProvider bool)
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
