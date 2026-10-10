@@ -246,7 +246,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             >
               <span className="block truncate">{item.branch}</span>
               {!!item.processCount && <span className="text-[8px] text-[rgb(var(--muted))]">{item.processCount} processes</span>}
-              {item.connectionLabel && <span className="block text-[8px] text-[rgb(var(--warn))]">{item.connectionLabel} · {item.dirtyFiles ?? 0} changed</span>}
+              {item.connectionLabel && <span className="block text-[8px] text-[rgb(var(--warn))]" title="An untracked folder counts as one entry.">{item.connectionLabel} · {item.dirtyFiles ?? 0} changed</span>}
             </button>
             <ContextMenu.Root>
               <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>

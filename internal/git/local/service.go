@@ -38,14 +38,27 @@ const inventoryCacheTTL = 2 * time.Second
 
 type inventoryCache struct {
 	mu    sync.Mutex
+	gen   uint64
 	at    time.Time
 	trees []core.Worktree
 }
 
-func (c *inventoryCache) store(trees []core.Worktree) {
+// begin returns the generation a list is about to be read under. A list that
+// finishes after invalidate was called must not be stored: it may predate the
+// mutation that invalidated the cache.
+func (c *inventoryCache) begin() uint64 {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen
+}
+
+func (c *inventoryCache) store(gen uint64, trees []core.Worktree) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if gen != c.gen {
+		return
+	}
 	c.at, c.trees = time.Now(), append([]core.Worktree(nil), trees...)
-	c.mu.Unlock()
 }
 
 func (c *inventoryCache) load() ([]core.Worktree, bool) {
@@ -59,12 +72,18 @@ func (c *inventoryCache) load() ([]core.Worktree, bool) {
 
 func (c *inventoryCache) invalidate() {
 	c.mu.Lock()
+	c.gen++
 	c.at, c.trees = time.Time{}, nil
 	c.mu.Unlock()
 }
 
 // statusPoolSize bounds concurrent worktree status reads in Repository.
 var statusPoolSize = func() int { return min(runtime.GOMAXPROCS(0), 8) }
+
+// statusGlobalSlots caps `git status` processes across every repository served
+// by this process, so several projects refreshing at once do not multiply the
+// per-repository pool.
+var statusGlobalSlots = make(chan struct{}, 8)
 
 // overviewStatus is a seam so tests can observe pool concurrency.
 var overviewStatus = statusOverview
@@ -137,25 +156,34 @@ func trimmed(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(v), e
 }
 func (s *Service) target(ctx context.Context, id string) (*repository, string, error) {
-	r, path, err := s.lookupTarget(ctx, id, true)
-	if err != nil {
-		return nil, "", err
+	for attempt := 0; ; attempt++ {
+		r, path, fromCache, err := s.lookupTarget(ctx, id, attempt == 0)
+		if err != nil {
+			return nil, "", err
+		}
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			if fromCache && attempt == 0 {
+				// The cached inventory may predate a removal; ask Git so the
+				// caller sees "not found" rather than a filesystem error.
+				r.inv.invalidate()
+				continue
+			}
+			return nil, "", err
+		}
+		return r, resolved, nil
 	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return nil, "", err
-	}
-	return r, path, nil
 }
 
 // registeredTarget looks up Git's inventory without requiring the working
 // directory to exist. Removal must also support stale worktree registrations,
 // so it never reads the cache.
 func (s *Service) registeredTarget(ctx context.Context, id string) (*repository, string, error) {
-	return s.lookupTarget(ctx, id, false)
+	r, path, _, err := s.lookupTarget(ctx, id, false)
+	return r, path, err
 }
 
-func (s *Service) lookupTarget(ctx context.Context, id string, useCache bool) (*repository, string, error) {
+func (s *Service) lookupTarget(ctx context.Context, id string, useCache bool) (*repository, string, bool, error) {
 	find := func(r *repository, trees []core.Worktree) (string, bool) {
 		for _, t := range trees {
 			if !t.Bare && ID(r.ID, t.Path) == id {
@@ -164,24 +192,27 @@ func (s *Service) lookupTarget(ctx context.Context, id string, useCache bool) (*
 		}
 		return "", false
 	}
-	for _, r := range s.repos {
-		if useCache {
+	if useCache {
+		for _, r := range s.repos {
 			if trees, ok := r.inv.load(); ok {
 				if path, found := find(r, trees); found {
-					return r, path, nil
+					return r, path, true, nil
 				}
 			}
 		}
+	}
+	for _, r := range s.repos {
+		gen := r.inv.begin()
 		trees, err := core.ListWorktreesContext(ctx, r.Root)
 		if err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
-		r.inv.store(trees)
+		r.inv.store(gen, trees)
 		if path, found := find(r, trees); found {
-			return r, path, nil
+			return r, path, false, nil
 		}
 	}
-	return nil, "", domain.ErrNotFound
+	return nil, "", false, domain.ErrNotFound
 }
 func ref(ctx context.Context, dir, name string) (string, error) {
 	if name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "\x00\r\n") {
@@ -228,16 +259,11 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 
 	// Independent of the statuses, so it overlaps them.
 	var remotes []domain.RemoteIdentity
-	var defaultRef string
 	var side sync.WaitGroup
-	side.Add(2)
+	side.Add(1)
 	go func() {
 		defer side.Done()
 		remotes = remoteIdentities(ctx, r.Root)
-	}()
-	go func() {
-		defer side.Done()
-		defaultRef, _ = trimmed(ctx, r.Root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
 	}()
 
 	// Parallel inside the repository lock: nothing mutates while statuses run.
@@ -254,6 +280,8 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 		go func(tree *domain.Worktree) {
 			defer pool.Done()
 			defer func() { <-slots }()
+			statusGlobalSlots <- struct{}{}
+			defer func() { <-statusGlobalSlots }()
 			endStatus := trace.Start("local.status", r.Root, trace.Attrs{Worktree: tree.Path})
 			st, err := overviewStatus(ctx, tree.Path, refs)
 			endStatus()
@@ -270,7 +298,9 @@ func (s *Service) Repository(ctx context.Context, id string) (domain.RepositoryS
 	pool.Wait()
 	side.Wait()
 
-	defaultBranch := strings.TrimPrefix(defaultRef, "refs/remotes/origin/")
+	// refs/remotes/origin/HEAD is a symbolic ref; for-each-ref already reported
+	// its target, so no `symbolic-ref` process is needed.
+	defaultBranch := strings.TrimPrefix(refs.originHead, "refs/remotes/origin/")
 	if defaultBranch == "" {
 		for _, tree := range w {
 			if tree.Main && tree.Branch != "" && tree.Branch != "(detached)" {
@@ -337,11 +367,12 @@ func (s *Service) ListWorktrees(ctx context.Context, id string) ([]domain.Worktr
 	if e != nil {
 		return nil, e
 	}
+	gen := r.inv.begin()
 	trees, e := core.ListWorktreesContext(ctx, r.Root)
 	if e != nil {
 		return nil, e
 	}
-	r.inv.store(trees)
+	r.inv.store(gen, trees)
 	result := []domain.Worktree{}
 	for _, t := range trees {
 		if t.Bare {

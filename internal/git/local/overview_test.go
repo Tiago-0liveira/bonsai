@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	core "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 )
@@ -101,9 +103,10 @@ func TestRepositoryOverviewSpawnsOneGitProcessPerWorktree(t *testing.T) {
 	if int64(len(state.Worktrees)) != worktrees {
 		t.Fatalf("worktrees = %d", len(state.Worktrees))
 	}
-	// for-each-ref, worktree list, symbolic-ref, remote and one get-url, plus
-	// exactly one `git status` per worktree: no rev-parse, no log, no git-dir.
-	if want := worktrees + 5; spawned != want {
+	// for-each-ref, worktree list, remote and one get-url, plus exactly one
+	// `git status` per worktree: no rev-parse, no log, no git-dir, no
+	// symbolic-ref.
+	if want := worktrees + 4; spawned != want {
 		t.Fatalf("git spawns = %d, want %d", spawned, want)
 	}
 }
@@ -393,5 +396,51 @@ func TestRepositoryStatusPoolRunsUnderRepositoryLock(t *testing.T) {
 	}
 	if !lockedDuringStatus {
 		t.Fatal("statuses ran without holding the repository lock")
+	}
+}
+
+func TestInventoryCacheIgnoresListsStartedBeforeInvalidation(t *testing.T) {
+	var c inventoryCache
+	gen := c.begin()
+	c.invalidate() // a mutation lands while the list is still running
+	c.store(gen, []core.Worktree{{Path: "/stale"}})
+	if _, ok := c.load(); ok {
+		t.Fatal("a list read before the invalidation was cached")
+	}
+	c.store(c.begin(), []core.Worktree{{Path: "/fresh"}})
+	if trees, ok := c.load(); !ok || len(trees) != 1 || trees[0].Path != "/fresh" {
+		t.Fatalf("fresh list not cached: %v %v", trees, ok)
+	}
+}
+
+func TestStaleCachedWorktreeReportsNotFoundNotFilesystemError(t *testing.T) {
+	s, dir, _ := setup(t)
+	ctx := context.Background()
+	tree, err := s.CreateWorktree(ctx, domain.CreateWorktreeRequest{RepositoryID: "repo", Mode: "new", Branch: "feature/gone", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ListWorktrees(ctx, "repo"); err != nil {
+		t.Fatal(err)
+	}
+	// Removed behind the service's back, inside the cache TTL.
+	git(t, dir, "worktree", "remove", "--force", tree.Path)
+	if _, _, err := s.target(ctx, tree.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("target after external removal = %v, want not found", err)
+	}
+}
+
+func TestDefaultBranchComesFromOriginHeadWithoutSymbolicRef(t *testing.T) {
+	s, dir := setupWithOrigin(t, 0)
+	ctx := context.Background()
+	git(t, dir, "branch", "trunk")
+	git(t, dir, "push", "origin", "trunk")
+	git(t, dir, "remote", "set-head", "origin", "trunk")
+	state, err := s.Repository(ctx, "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DefaultBranch != "trunk" {
+		t.Fatalf("default branch = %q, want trunk", state.DefaultBranch)
 	}
 }

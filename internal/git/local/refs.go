@@ -27,6 +27,8 @@ type refInfo struct {
 type refIndex struct {
 	list  []refInfo
 	byRef map[string]*refInfo
+	// originHead is the target of refs/remotes/origin/HEAD, when it is set.
+	originHead string
 }
 
 func listRefs(ctx context.Context, root string) (*refIndex, error) {
@@ -41,7 +43,13 @@ func parseRefs(out string) *refIndex {
 	idx := &refIndex{list: []refInfo{}, byRef: map[string]*refInfo{}}
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		p := strings.Split(line, "\x00")
-		if len(p) != refFields || p[3] != "" {
+		if len(p) != refFields {
+			continue
+		}
+		if p[3] != "" {
+			if p[0] == "refs/remotes/origin/HEAD" {
+				idx.originHead = p[3]
+			}
 			continue
 		}
 		b := domain.Branch{Ref: p[0], Upstream: p[2], UpstreamRef: p[4]}

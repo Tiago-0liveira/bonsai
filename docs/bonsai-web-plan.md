@@ -360,20 +360,33 @@ Reading the numbers:
   delete dialog and canvas nodes) now counts an untracked directory once.
   Dirty detection is unchanged. The inspector counts carry a tooltip.
 - `Repository` runs the status pool (`min(GOMAXPROCS, 8)`) under the repository
-  lock, and overlaps `git remote` / `symbolic-ref` with it.
+  lock, and overlaps `git remote` with it. A process-wide cap of 8 concurrent
+  `git status` processes applies across repositories. `origin/HEAD` comes from
+  the same `for-each-ref`, so there is no `symbolic-ref` process.
+- The worktree inventory cache (2 s) ignores lists that started before an
+  invalidation, and a stale hit that no longer exists on disk is re-listed, so
+  it reports "not found" rather than a filesystem error.
 - New read command `git.inventory` (worktrees, branches, remotes; no status).
   It is a strict subset of `git.repository.refresh`, so it has the same read
   authority. The API falls back to `git.worktrees` + `git.branches` when a
   running daemon predates it (the API and the per-repo daemon can be different
-  binary versions).
+  binary versions). This path runs once per project, when its first snapshot
+  is built.
 - "Start the provider early" means warming the provider cache from the early
-  inventory (`queueProviderPrefetch`). The full provider job still waits for
+  inventory (`queueProviderPrefetch`, on its own two-slot gate so a warm-up
+  never holds a provider refresh slot). The full provider job still waits for
   the local statuses, because its commit is bound to the local identity token,
   which includes each worktree's upstream; it then finds the cache warm.
 - Priority is a two-lane gate (`priority_gate.go`) replacing the two channel
   semaphores. Entry order is fixed when a job is queued, so the active project
   is queued first and admitted first. The last named project stays the priority
-  project across reconnects.
+  project across reconnects. It only orders the burst at connect; switching
+  projects inside an open session does not re-rank (every project was already
+  refreshed at connect).
+- Known small window: the upstream SHA comes from the ref listing taken before
+  the statuses run, so a `git fetch` landing in between can pair a new
+  ahead/behind with the previous upstream SHA until the watcher's next
+  refresh. The old per-worktree `rev-parse` had the same window, only shorter.
 - Not done, recorded for later: gitbridge runs `git worktree list` before every
   command, including reads without a worktree ID (about 3 processes per cold
   load). It sits on the security boundary and was left unchanged.
@@ -385,12 +398,12 @@ alternately on the same repository state)
 | Metric | Baseline (`1a40462`) | Phase 1 | Phase 1 / baseline | Exit criterion |
 | --- | ---: | ---: | ---: | --- |
 | Worktrees | 21 | 21 | | |
-| Inventory | 33 ms | 16 ms | 48% | |
-| Local ready | 125 ms | 39 ms | 31% | ≤ 60% ✓ |
-| PR catalog | 2313 ms | 675 ms | 29% | ≤ 50% ✓ |
-| All checks | 18072 ms | 4293 ms | 24% | |
-| git spawns | 67 | 31 | 46% (−54%) | ≥ 50% down ✓ |
-| gh spawns | 25 | 25 | 100% | unchanged (Phase 2) |
+| Inventory | 33 ms | 17 ms | 52% | |
+| Local ready | 119 ms | 43 ms | 36% | ≤ 60% ✓ |
+| PR catalog | 2191 ms | 693 ms | 32% | ≤ 50% ✓ |
+| All checks | 19224 ms | 4044 ms | 21% | |
+| git spawns | 67 | 30 | 45% (−55%) | ≥ 50% down ✓ |
+| gh spawns | 26 | 26 | 100% | unchanged (Phase 2) |
 
 - The Phase 0 table above was measured with 15 worktrees; the repository has
   21 now, so the baseline was re-measured on the current state instead of

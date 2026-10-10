@@ -83,14 +83,15 @@ type stateSync struct {
 
 	localSem    *priorityGate
 	providerSem *priorityGate
+	// prefetchSem bounds provider cache warm-ups separately, so a warm-up never
+	// holds a provider refresh slot while the real job waits behind it.
+	prefetchSem *priorityGate
 	gitSyncSem  chan struct{}
 	providers   *providerCache
 
 	// priorityProject is the project the user last had open. Its refreshes are
 	// admitted before other projects' when workers are scarce.
 	priorityProject string
-	// legacyInventory records projects whose daemon predates git.inventory.
-	legacyInventory map[string]bool
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -105,10 +106,9 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		watchCancels: map[string]context.CancelFunc{},
 		localSem:     newPriorityGate(localRefreshWorkers),
 		providerSem:  newPriorityGate(providerRefreshWorkers),
+		prefetchSem:  newPriorityGate(providerRefreshWorkers),
 		gitSyncSem:   make(chan struct{}, 2),
 		providers:    newProviderCache(),
-
-		legacyInventory: map[string]bool{},
 	}
 }
 
@@ -500,28 +500,19 @@ func (s *stateSync) refreshLocal(projectID string) {
 // asks for git.inventory and falls back to the two older reads when the daemon
 // is a version that does not know the command.
 func (s *stateSync) readInventory(ctx context.Context, project projectServices) (domain.RepositoryState, error) {
-	id := project.info.ID
-	s.mu.Lock()
-	legacy := s.legacyInventory[id]
-	s.mu.Unlock()
-	if !legacy {
-		value, err := s.gitPayload(ctx, project, "git.inventory", func(raw json.RawMessage) (any, error) {
-			var state domain.RepositoryState
-			err := json.Unmarshal(raw, &state)
-			return state, err
-		})
-		if err == nil {
-			return value.(domain.RepositoryState), nil
-		}
-		if ctx.Err() != nil {
-			return domain.RepositoryState{}, err
-		}
-		if domain.Code(err) == "invalid" {
-			s.mu.Lock()
-			s.legacyInventory[id] = true
-			s.mu.Unlock()
-		}
+	value, err := s.gitPayload(ctx, project, "git.inventory", func(raw json.RawMessage) (any, error) {
+		var state domain.RepositoryState
+		err := json.Unmarshal(raw, &state)
+		return state, err
+	})
+	if err == nil {
+		return value.(domain.RepositoryState), nil
 	}
+	if ctx.Err() != nil {
+		return domain.RepositoryState{}, err
+	}
+	// This runs once per project, when its first snapshot is built, so a
+	// daemon that predates git.inventory costs one failed call.
 	trees, err := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
 		var trees []domain.Worktree
 		err := json.Unmarshal(raw, &trees)
@@ -551,10 +542,10 @@ func (s *stateSync) queueProviderPrefetch(project projectServices, repository st
 	if closed || project.github == nil {
 		return
 	}
-	ticket := s.providerSem.enter(s.isPriority(project.info.ID))
+	ticket := s.prefetchSem.enter(s.isPriority(project.info.ID))
 	go func() {
 		<-ticket
-		defer s.providerSem.release()
+		defer s.prefetchSem.release()
 		ctx, cancel := s.readContext(providerReadTimeout)
 		defer cancel()
 		s.providers.repository(ctx, project.github, repository, s.now(), false)

@@ -180,12 +180,6 @@ func TestInventoryFallsBackForDaemonWithoutGitInventory(t *testing.T) {
 	if inventoryCalls.Load() != 1 || legacyCalls.Load() != 2 {
 		t.Fatalf("inventory=%d legacy=%d", inventoryCalls.Load(), legacyCalls.Load())
 	}
-	syncer.mu.Lock()
-	legacy := syncer.legacyInventory[projectID]
-	syncer.mu.Unlock()
-	if !legacy {
-		t.Fatal("legacy daemon was not remembered")
-	}
 }
 
 // overlapGitHub blocks each of the three repository reads until all three are
