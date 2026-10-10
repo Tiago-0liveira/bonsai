@@ -24,6 +24,9 @@ type PRFilter struct {
 type PullRequestPage struct {
 	Items    []PullRequest
 	NextPage int
+	// NotModified reports that GitHub answered the page with 304 Not Modified
+	// and Items came from the client's conditional-request cache.
+	NotModified bool
 }
 
 // PagedPullRequests is optional so provider adapters can migrate separately.
