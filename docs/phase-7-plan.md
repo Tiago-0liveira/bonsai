@@ -1,6 +1,6 @@
 # Phase 7 — Warm start and frontend load (revised plan)
 
-Status: **in progress** (7b implemented; validation limits recorded below) · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
+Status: **in progress** (7b done in #68; 7a/7c pending) · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
 Phase 7 section of `docs/bonsai-web-plan.md`
 
 Plan only. Implementation branches start from and merge into `feat/bonsai-web`.
@@ -75,6 +75,10 @@ validation. The first CI run passed the complete Go matrix and Linux race
 checks and 66/67 browser tests (including all 11 new cases). The remaining
 settings test still expected “Standard” for a failed Live tunnel, despite
 `04e9683` changing the UI to “Live paused”; its expectation is corrected here.
+The corrected frontend CI run `38082871917` passed all 67 browser tests;
+Go CI run `38082871918` passed the Linux/macOS/Windows matrix, Linux race
+checks and release dry-run. CI also verified the declared pnpm 12.9.1 frozen
+install. 7b is complete; Phase 7 still awaits 7a/7c.
 No persistence or hosted deployment files were changed.
 
 ---

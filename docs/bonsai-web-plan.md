@@ -17,7 +17,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | done (#63, #64, #65) |
-| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | in progress (7b implemented; 7a/7c pending) |
+| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | in progress (7b done in #68; 7a/7c pending) |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
 | F | Multi-workspace (design only, later) | Opus 5.5 | 8 | not scheduled |
 
@@ -1300,7 +1300,11 @@ pre-existing stale settings assertion: `04e9683` changed the disconnected
 Live badge to “Live paused”, while the browser test still expected “Standard”.
 That expectation is corrected here without changing production behavior.
 CI also passed the full Linux/macOS/Windows Go matrix, Linux race detector
-and release dry-run. The corrected browser suite is being revalidated in CI.
+and release dry-run. The corrected [frontend CI run](https://github.com/Tiago-0liveira/bonsai/actions/runs/38082871917)
+passed all **67 browser tests**. The final code's
+[Go CI run](https://github.com/Tiago-0liveira/bonsai/actions/runs/38082871918)
+passed on Linux/macOS/Windows, including Linux race detection and release dry-run.
+The CI toolchain used the declared pnpm 12.9.1 with a frozen lockfile.
 
 ---
 
