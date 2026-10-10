@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
@@ -82,11 +85,65 @@ func (l WebLiveUpdates) TunnelOptions() webtunnel.Options {
 }
 
 // WebState is machine-managed runtime state (hook IDs, last public URL, ...).
-// Later phases add fields here; secrets never go in it (they live in their
-// own 0600 files).
+// Secrets never go in it (they live in their own 0600 files).
 type WebState struct {
-	Version  int    `json:"version"`
-	Revision uint64 `json:"revision"`
+	Version  int          `json:"version"`
+	Revision uint64       `json:"revision"`
+	Live     WebLiveState `json:"live,omitzero"`
+}
+
+// WebLiveState is what the API learns about live updates: written by its
+// live controller, read by `bonsai web status`, setup and doctor.
+type WebLiveState struct {
+	// InstallID marks this machine's hooks (?bonsai=<id> on the hook URL),
+	// so they are found again without a stored hook ID and told apart from
+	// another machine's.
+	InstallID string `json:"install_id,omitempty"`
+	// PublicURL is the tunnel's current public origin ("" while unknown);
+	// TunnelError says why it is unknown.
+	PublicURL   string    `json:"public_url,omitempty"`
+	TunnelError string    `json:"tunnel_error,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at,omitzero"`
+	// Repositories is keyed by owner/name as written in web.json.
+	Repositories map[string]WebLiveRepository `json:"repositories,omitempty"`
+}
+
+// Live hook states of one repository.
+const (
+	WebLiveStateLive         = "live"
+	WebLiveStateWaiting      = "waiting_for_ping"
+	WebLiveStateFailing      = "failing"
+	WebLiveStateNeedsAdmin   = "needs_admin"
+	WebLiveStateScopeMissing = "scope_missing"
+)
+
+// WebLiveRepository is one repository's hook as last seen.
+type WebLiveRepository struct {
+	HookID int64 `json:"hook_id,omitempty"`
+	// HookURL is the URL the hook was last pointed at (no secret in it).
+	HookURL string `json:"hook_url,omitempty"`
+	// SecretFingerprint identifies the secret the hook was last given, so a
+	// rotated secret is re-sent; it is a hash, never the secret.
+	SecretFingerprint string    `json:"secret_fingerprint,omitempty"`
+	State             string    `json:"state"`
+	LastError         string    `json:"last_error,omitempty"`
+	ConfiguredAt      time.Time `json:"configured_at,omitzero"`
+	CheckedAt         time.Time `json:"checked_at,omitzero"`
+	LastPingAt        time.Time `json:"last_ping_at,omitzero"`
+	LastDeliveryAt    time.Time `json:"last_delivery_at,omitzero"`
+}
+
+// Repository returns the state of repo (owner/name, case-insensitive).
+func (l WebLiveState) Repository(repo string) (string, WebLiveRepository, bool) {
+	if r, ok := l.Repositories[repo]; ok {
+		return repo, r, true
+	}
+	for name, r := range l.Repositories {
+		if strings.EqualFold(name, repo) {
+			return name, r, true
+		}
+	}
+	return "", WebLiveRepository{}, false
 }
 
 // DefaultWebConfig is the configuration written when none exists: the local
@@ -345,6 +402,30 @@ func UpdateWebState(path string, fn func(*WebState) error) (WebState, error) {
 		return nil
 	})
 	return out, err
+}
+
+// EnsureWebInstallID returns the live-updates install ID from web-state.json,
+// generating it on first use.
+func EnsureWebInstallID(path string) (string, error) {
+	state, err := ReadWebState(path)
+	if err != nil {
+		return "", err
+	}
+	if state.Live.InstallID != "" {
+		return state.Live.InstallID, nil
+	}
+	state, err = UpdateWebState(path, func(state *WebState) error {
+		if state.Live.InstallID != "" {
+			return nil
+		}
+		raw := make([]byte, 8)
+		if _, err := rand.Read(raw); err != nil {
+			return err
+		}
+		state.Live.InstallID = hex.EncodeToString(raw)
+		return nil
+	})
+	return state.Live.InstallID, err
 }
 
 func withWebLock(path string, fn func() error) error {

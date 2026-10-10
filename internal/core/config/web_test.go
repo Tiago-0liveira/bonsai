@@ -234,3 +234,45 @@ func TestWebWebhookSecretLifecycle(t *testing.T) {
 		t.Fatal("ensure silently replaced a corrupt secret")
 	}
 }
+
+func TestWebInstallIDAndLiveState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web-state.json")
+	id, err := EnsureWebInstallID(path)
+	if err != nil || len(id) != 16 {
+		t.Fatalf("install id %q: %v", id, err)
+	}
+	again, err := EnsureWebInstallID(path)
+	if err != nil || again != id {
+		t.Fatalf("install id changed: %q -> %q (%v)", id, again, err)
+	}
+	if _, err := UpdateWebState(path, func(s *WebState) error {
+		s.Live.PublicURL = "https://a.trycloudflare.com"
+		s.Live.Repositories = map[string]WebLiveRepository{"Acme/Repo": {HookID: 41, State: WebLiveStateLive}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadWebState(path)
+	if err != nil || state.Live.InstallID != id || state.Live.PublicURL != "https://a.trycloudflare.com" {
+		t.Fatalf("%+v %v", state, err)
+	}
+	if name, r, ok := state.Live.Repository("acme/repo"); !ok || name != "Acme/Repo" || r.HookID != 41 {
+		t.Fatalf("lookup %q %+v %v", name, r, ok)
+	}
+	if _, _, ok := state.Live.Repository("acme/other"); ok {
+		t.Fatal("found an unknown repository")
+	}
+	// Zero times and an empty live section stay out of the file.
+	empty := filepath.Join(t.TempDir(), "web-state.json")
+	if _, err := UpdateWebState(empty, func(*WebState) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(empty)
+	if strings.Contains(string(raw), "live") {
+		t.Fatalf("empty live section written:\n%s", raw)
+	}
+	raw, _ = os.ReadFile(path)
+	if strings.Contains(string(raw), "0001-01-01") {
+		t.Fatalf("zero time written:\n%s", raw)
+	}
+}
