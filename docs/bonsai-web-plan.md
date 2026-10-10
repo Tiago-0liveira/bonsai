@@ -1,6 +1,6 @@
 # Plan: `bonsai web` — local-first web client, fast sync, optional live updates
 
-Status: **in progress** (Phase 3 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
+Status: **in progress** (Phases 0, 1 and 3 done) · Baseline commit: `7efada9` · Owner: @Tiago-0liveira
 
 This is a working plan. Execute it one phase at a time (see
 [How to use this plan](#how-to-use-this-plan)). Delete it, or fold the
@@ -10,8 +10,8 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 
 | Phase | Title | Model | Depends on | Status |
 | ---: | --- | --- | --- | --- |
-| 0 | Baseline and sync instrumentation | Sonnet 5.5 | — | todo |
-| 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | todo |
+| 0 | Baseline and sync instrumentation | Sonnet 5.5 | — | done (#56) |
+| 1 | Local and provider sync quick wins | Sonnet 5.5 | 0 | done (#58) |
 | 2 | In-process GitHub client and cheap polling | Opus 5.5 | 1 | todo |
 | 3 | `bonsai web` command and user-level supervisor | Opus 5.5 | — | done (#57) |
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | todo |
@@ -81,9 +81,10 @@ Update the Status column in the PR that finishes each phase:
 | The web app already supports runtime-injected config through `<meta name="bonsai-relay-origin">`. | `web/src/api/relayClient.ts:4`, `web/docker-entrypoint.sh` |
 | The web router basepath is `/app`. | `web/src/app/router.tsx:39` |
 | Every GitHub read spawns a `gh api` subprocess (no keep-alive, no ETag). | `internal/git/github/ghcli/service.go:24` |
-| Repo, branches and PR catalog reads run serially. | `internal/server/localapi/enrichment.go:97-99` |
-| CI checks are fetched serially per worktree (check-runs plus statuses each). | `internal/server/localapi/enrichment.go:407` |
-| Worktree status runs serially under the repo lock, with 4 git processes per worktree including `--untracked-files=all`. | `internal/git/local/service.go:166-180`, `internal/git/local/status.go:37` |
+| **All local git work runs in the per-repo daemon**, not the API process. `stateSync.gitPayload` sends `git.worktrees`, `git.branches` and `git.repository.refresh` over IPC to `client.For(main)`; `local.Service` and `core.RunContext` execute in `bonsai __daemon`. | `internal/server/localapi/state_sync.go:493`, `internal/daemon/server/git.go:20` |
+| Repo, branches and PR catalog reads run serially. | `internal/server/localapi/enrichment.go:97-100` |
+| CI checks are fetched serially per worktree (check-runs plus statuses each). | `internal/server/localapi/enrichment.go:412` |
+| Worktree status runs serially under the repo lock, with 4 git processes per worktree including `--untracked-files=all`. | `internal/git/local/service.go:166-190`, `internal/git/local/status.go:37` |
 | The provider refresh can only start after the full local refresh, because it needs `Remotes`. | `internal/server/localapi/state_sync.go:455-462` |
 | WebSocket `ready` refreshes **all** projects at once. | `internal/server/localapi/state_sync.go:183` |
 | The projection and provider cache are in memory only, so every restart is cold. | `internal/server/localapi/state_sync.go`, `enrichment.go` |
@@ -223,8 +224,17 @@ by editing this section.
      counter (`git` and `gh` separately).
 2. A spawn counter hook in `core.RunContext` (git) and the `ghcli` transport.
    Use a package-level atomic counter.
-3. Hidden command `bonsai __sync-bench [--projects N] [--cold]`:
+3. Hidden command `bonsai __sync-bench [--projects N] [--cold] [--root DIR] [--repo PATH] [--timeout D]`:
    - Runs the local API sync in-process against the configured project roots.
+     Git commands are served by an **in-process** daemon adapter (the same
+     `gitbridge.Executor` + `local.Service` wiring as the daemon), because in
+     production they run in the per-repo daemon and a counter in the API process
+     would read zero git spawns.
+   - `--root DIR` benchmarks every repo under DIR using a throwaway roots file;
+     `--repo PATH` keeps one project. Neither touches the user's configuration.
+   - `--cold` is accepted and currently a no-op: projection and provider state
+     are memory-only, so every run is cold. It stays so scripts written now keep
+     working once Phase 7 persists state.
    - Prints a table: time to inventory, local ready, PR catalog, all checks,
      and spawn counts.
 4. Record the baseline in this file (table below) for:
@@ -242,12 +252,36 @@ by editing this section.
 - The baseline table is filled in.
 - Unit tests cover span emission and the spawn counter.
 
-**Baseline (fill in)**
+**Implementation notes**
+- Spans: `internal/core/trace`. `BONSAI_SYNC_TRACE=1` writes JSON lines to
+  stderr: `{ts, span, project, worktree?, page?, dur_ms, git_spawns, gh_spawns}`.
+  The spawn numbers in a span are process-wide deltas, so overlapping spans
+  double-count; use the table total from `__sync-bench` for absolute counts.
+- `local.inventory` and `local.status` are emitted by `internal/git/local`
+  (they carry the repository root as `project`); `local.ready` and every
+  `provider.*` span come from `localapi` and carry the project ID (provider
+  repo/branches/prs spans carry the `owner/name`).
+- Spawn counters: `core.RunContext` (git), the `ghcli` transport and
+  `ghcli.Discover` (gh). TUI helpers in `internal/core/gh` are not on the sync
+  path and are not counted.
+- Measured timings are per project; the "total" row is the max over projects.
+  `ALL CHECKS` is when every worktree's CI freshness left `loading`.
+
+**Baseline** (commit `7efada9` + instrumentation, `bonsai __sync-bench --cold`,
+WSL2, median of 3 runs, live GitHub through the user's `gh` login)
 
 | Repo | Worktrees | Inventory | Local ready | PR catalog | All checks | git spawns | gh spawns |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| bonsai | | | | | | | |
-| bonsai (/mnt/c) | | | | | | | |
+| bonsai | 15 | 11 ms | 80 ms | 2173 ms | 15009 ms | 62 | 21 |
+| bonsai (/mnt/c, 6 worktrees) | 6 | 472 ms | 8227 ms | 10362 ms | 11794 ms | 29 | 5 |
+| large repo (many branches/PRs) | n/a | | | | | | |
+
+Reading the numbers:
+- On the Windows drive the local pass is about 100× slower (`/mnt/c` crosses the
+  9P boundary), so Phase 1's git-process cuts matter most there.
+- Everything after the PR catalog is the serial per-worktree checks loop:
+  about 1 s per worktree natively, which is the Phase 1/2 target.
+- No large repo was available, so that row stays empty.
 
 ---
 
@@ -272,12 +306,17 @@ by editing this section.
    - Add `%(subject)`, `%(authorname)` and `%(committerdate:unix)` to that
      `for-each-ref`, so a branch's last commit needs no `git log -1`.
      Detached HEAD may still use `log -1`.
-   - Resolve the absolute git dir once per worktree and cache it by path.
+   - Resolve the absolute git dir without a process: read `<path>/.git` (a
+     directory, or a `gitdir:` file) and fall back to `rev-parse` only when
+     that fails. Caching the `rev-parse` result by path would still cost one
+     process per worktree and could not meet the spawn exit criterion.
    - Use `--untracked-files=normal` for the overview. Keep `all` for detail
      `Status`. Document the count semantics change in the UI tooltip if
      visible.
 4. **Parallel provider reads.**
-   - Run `Repository`, `Branches` and the PR catalog concurrently (errgroup).
+   - Run `Repository`, `Branches` and the PR catalog concurrently
+     (`sync.WaitGroup`; `golang.org/x/sync` is not a dependency, and siblings
+     must not be cancelled so the first-error order stays the same).
    - Fetch checks through a bounded pool (6) instead of the serial loop at
      `enrichment.go:407`.
    - Keep the "publish PR catalog before checks" behavior.
@@ -285,10 +324,13 @@ by editing this section.
    - `SubscriberReady` queues the active or most recently selected project
      first. The others follow at lower priority (a second semaphore lane, or
      a short delay).
-   - The frontend already knows the active project. Pass it on the WebSocket
-     `ready` ack, or with an existing refresh call.
+   - The frontend already knows the active project. The client's only
+     WebSocket message is `authenticate`, so the hint is an optional
+     `active_project` field on it (`ready` is server to client).
 6. **Fix the `registeredTarget` re-list.** Cache the worktree inventory per
-   refresh cycle instead of running `git worktree list` per call.
+   refresh cycle instead of running `git worktree list` per call. This serves
+   per-worktree detail reads (status, files, diff, operations), not the cold
+   load.
 
 **Rails**
 - Epoch and sequence ordering, per-worktree error isolation and stale-value
@@ -305,6 +347,71 @@ by editing this section.
 - Race tests pass.
 - New tests cover the parallel status pool, early provider start and
   priority ordering.
+
+**Implementation notes**
+- `internal/git/local`: `refs.go` parses one `for-each-ref` (now with
+  `%(subject)` and `%(authorname)`) into an index used by `ListBranches` and by
+  `Repository`; a worktree's upstream SHA and last commit come from it, and
+  `git log -1` / `rev-parse @{upstream}` remain as fallbacks (detached HEAD,
+  ref moved between reads, upstream not in the index). `gitdir.go` reads the git
+  dir from disk. Overview status uses `--untracked-files=normal`; detail
+  `Status` keeps `all`.
+- Visible semantic change: `dirtyFiles` ("Changed files" in the inspector, the
+  delete dialog and canvas nodes) now counts an untracked directory once.
+  Dirty detection is unchanged. The inspector counts carry a tooltip.
+- `Repository` runs the status pool (`min(GOMAXPROCS, 8)`) under the repository
+  lock, and overlaps `git remote` with it. A process-wide cap of 8 concurrent
+  `git status` processes applies across repositories. `origin/HEAD` comes from
+  the same `for-each-ref`, so there is no `symbolic-ref` process.
+- The worktree inventory cache (2 s) ignores lists that started before an
+  invalidation, and a stale hit that no longer exists on disk is re-listed, so
+  it reports "not found" rather than a filesystem error.
+- New read command `git.inventory` (worktrees, branches, remotes; no status).
+  It is a strict subset of `git.repository.refresh`, so it has the same read
+  authority. The API falls back to `git.worktrees` + `git.branches` when a
+  running daemon predates it (the API and the per-repo daemon can be different
+  binary versions). This path runs once per project, when its first snapshot
+  is built.
+- "Start the provider early" means warming the provider cache from the early
+  inventory (`queueProviderPrefetch`, on its own two-slot gate so a warm-up
+  never holds a provider refresh slot). The full provider job still waits for
+  the local statuses, because its commit is bound to the local identity token,
+  which includes each worktree's upstream; it then finds the cache warm.
+- Priority is a two-lane gate (`priority_gate.go`) replacing the two channel
+  semaphores. Entry order is fixed when a job is queued, so the active project
+  is queued first and admitted first. The last named project stays the priority
+  project across reconnects. It only orders the burst at connect; switching
+  projects inside an open session does not re-rank (every project was already
+  refreshed at connect).
+- Known small window: the upstream SHA comes from the ref listing taken before
+  the statuses run, so a `git fetch` landing in between can pair a new
+  ahead/behind with the previous upstream SHA until the watcher's next
+  refresh. The old per-worktree `rev-parse` had the same window, only shorter.
+- Not done, recorded for later: gitbridge runs `git worktree list` before every
+  command, including reads without a worktree ID (about 3 processes per cold
+  load). It sits on the security boundary and was left unchanged.
+
+**Results** (`__sync-bench --cold --repo ~/bonsai`, WSL2, median of 3 runs,
+live GitHub through the user's `gh` login, baseline and Phase 1 binaries run
+alternately on the same repository state)
+
+| Metric | Baseline (`1a40462`) | Phase 1 | Phase 1 / baseline | Exit criterion |
+| --- | ---: | ---: | ---: | --- |
+| Worktrees | 21 | 21 | | |
+| Inventory | 33 ms | 17 ms | 52% | |
+| Local ready | 119 ms | 43 ms | 36% | ≤ 60% ✓ |
+| PR catalog | 2191 ms | 693 ms | 32% | ≤ 50% ✓ |
+| All checks | 19224 ms | 4044 ms | 21% | |
+| git spawns | 67 | 30 | 45% (−55%) | ≥ 50% down ✓ |
+| gh spawns | 26 | 26 | 100% | unchanged (Phase 2) |
+
+- The Phase 0 table above was measured with 15 worktrees; the repository has
+  21 now, so the baseline was re-measured on the current state instead of
+  comparing against it. The `/mnt/c` copy no longer exists and was not
+  re-measured, and there is still no large repo.
+- PR catalog is now the slowest of the three concurrent `gh` calls (about
+  620 to 670 ms each), which is the process-spawn floor that Phase 2 removes.
+  All checks is bounded by 21 worktrees through a pool of 6 `gh` spawns.
 
 ---
 

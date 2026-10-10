@@ -12,6 +12,9 @@ var websocketAuthTimeout = 3 * time.Second
 type websocketAuth struct {
 	Type  string `json:"type"`
 	Token string `json:"token"`
+	// ActiveProject optionally names the project the browser has open, so its
+	// refresh is prioritized. Older clients omit it.
+	ActiveProject string `json:"active_project,omitempty"`
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +52,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	subscriptionID, events := s.eventHub.subscribe()
 	defer s.eventHub.unsubscribe(subscriptionID)
-	s.stateSync.SubscriberReady()
+	s.stateSync.SubscriberReady(auth.ActiveProject)
 
 	if err := conn.WriteJSON(localEvent{Type: "ready", Epoch: s.stateSync.epoch}); err != nil {
 		return

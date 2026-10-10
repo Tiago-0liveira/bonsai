@@ -124,6 +124,15 @@ func (x *Executor) Execute(ctx context.Context, c Command) Result {
 		}
 	case "git.repository.refresh":
 		value, e = x.Local.Repository(ctx, c.RepositoryID)
+	case "git.inventory":
+		inventory, ok := x.Local.(interface {
+			Inventory(context.Context, string) (domain.RepositoryState, error)
+		})
+		if !ok {
+			e = domain.ErrInvalid
+		} else {
+			value, e = inventory.Inventory(ctx, c.RepositoryID)
+		}
 	case "git.branches":
 		value, e = x.Local.ListBranches(ctx, c.RepositoryID)
 	case "git.worktrees":
