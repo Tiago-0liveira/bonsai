@@ -41,12 +41,6 @@ type ProjectCandidate struct {
 	Available bool   `json:"available"`
 }
 
-type projectSelectionConfig struct {
-	Version  int      `json:"version"`
-	Revision uint64   `json:"revision"`
-	Selected []string `json:"selected"`
-}
-
 var errProjectSelectionRevision = errors.New("project selection revision changed")
 
 type discoveredRepository struct {
@@ -267,41 +261,7 @@ func (r *discoveredProjectRegistry) SelectionRevision() uint64 {
 	return r.selectionRevision
 }
 func (r *discoveredProjectRegistry) selectionPath() string {
-	return r.path + ".repositories.json"
-}
-func readProjectSelection(path string) (projectSelectionConfig, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return projectSelectionConfig{Version: 1, Selected: []string{}}, nil
-	}
-	if err != nil {
-		return projectSelectionConfig{}, err
-	}
-	var cfg projectSelectionConfig
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return projectSelectionConfig{}, err
-	}
-	if cfg.Version == 0 {
-		cfg.Version = 1
-	}
-	if cfg.Version != 1 {
-		return projectSelectionConfig{}, fmt.Errorf("unsupported project selection version %d", cfg.Version)
-	}
-	if cfg.Selected == nil {
-		cfg.Selected = []string{}
-	}
-	return cfg, nil
-}
-func writeProjectSelection(path string, cfg projectSelectionConfig) error {
-	raw, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	raw = append(raw, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0600)
+	return config.ProjectSelectionPath(r.path)
 }
 func (r *discoveredProjectRegistry) UpdateSelection(expected uint64, ids []string) error {
 	r.refreshMu.Lock()
@@ -329,12 +289,15 @@ func (r *discoveredProjectRegistry) UpdateSelection(expected uint64, ids []strin
 			selected = append(selected, id)
 		}
 	}
-	sort.Strings(selected)
-	return writeProjectSelection(r.selectionPath(), projectSelectionConfig{
-		Version:  1,
-		Revision: expected + 1,
-		Selected: selected,
+	_, err := config.UpdateProjectSelection(r.selectionPath(), func(current config.ProjectSelection) ([]string, error) {
+		// `bonsai web setup` may have written the file since this registry
+		// last read it; the caller's revision must match the file too.
+		if current.Revision != expected {
+			return nil, errProjectSelectionRevision
+		}
+		return selected, nil
 	})
+	return err
 }
 func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 	r.refreshMu.Lock()
@@ -343,7 +306,7 @@ func (r *discoveredProjectRegistry) Refresh(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	selection, err := readProjectSelection(r.selectionPath())
+	selection, err := config.ReadProjectSelection(r.selectionPath())
 	if err != nil {
 		return false, err
 	}
@@ -476,4 +439,44 @@ func (r *discoveredProjectRegistry) listUnlocked() []ProjectInfo {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// FolderScan is what discovery finds under one folder, for callers outside
+// the API (`bonsai web setup` and `bonsai web doctor`) that show a folder
+// before or without adding it as a root.
+type FolderScan struct {
+	Path      string
+	Repos     []ProjectCandidate // ID, Name and Path set
+	Available bool
+	Truncated bool
+	Messages  []string
+}
+
+// ScanProjectFolder runs the same bounded discovery the API uses on one
+// folder. The path is canonicalized first; an unusable folder is an error.
+func ScanProjectFolder(ctx context.Context, path string) (FolderScan, error) {
+	canonical, err := config.CanonicalDirectory(path)
+	if err != nil {
+		return FolderScan{}, err
+	}
+	root := config.ProjectRoot{ID: config.PathID("root", canonical), Path: canonical}
+	scan := scanRoot(ctx, root)
+	out := FolderScan{
+		Path:      canonical,
+		Repos:     []ProjectCandidate{},
+		Available: scan.diagnostic.Available,
+		Truncated: scan.diagnostic.Truncated,
+		Messages:  scan.diagnostic.Messages,
+	}
+	seen := map[string]bool{}
+	for _, repo := range scan.repos {
+		id := config.ProjectID(repo.main)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out.Repos = append(out.Repos, ProjectCandidate{ID: id, RootID: root.ID, Name: filepath.Base(repo.main), Path: repo.main, Available: true})
+	}
+	sort.Slice(out.Repos, func(i, j int) bool { return out.Repos[i].Path < out.Repos[j].Path })
+	return out, nil
 }

@@ -68,7 +68,8 @@ func cmdServe(args []string, in io.Reader, out, errOut io.Writer) error {
 		return fmt.Errorf("--api-port must be between 1 and 65535")
 	}
 
-	opts := webStartOptions{attach: !detached, noOpen: true}
+	// The alias keeps its old behaviour: never an interactive setup.
+	opts := webStartOptions{attach: !detached, noOpen: true, noSetup: true}
 	if *apiPort != 0 {
 		opts.port, opts.portFlag = *apiPort, true
 	}

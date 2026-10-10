@@ -1,0 +1,24 @@
+ Applying your settings                                                   7 / 7
+ ──────────────────────────────────────────────────────────────────────────────
+
+  ✓ Saved settings
+  ✗ Start Bonsai                 port 7001 is used by another program (pid
+                                 4242, node)
+    fix  bonsai web --port 7011
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ esc back to review · q quit

@@ -1,0 +1,24 @@
+ Connect GitHub                                                           4 / 7
+ ──────────────────────────────────────────────────────────────────────────────
+
+   ✓ gh installed        2.92.0
+ › ! gh logged in        not logged in to github.com; without it you still get
+                         worktrees, branches, commits and processes
+    fix  gh auth login --hostname github.com   enter run it now · c copy
+
+  Bonsai uses your existing gh login. It never stores your token. Without it
+  you still get worktrees, branches, commits and processes.
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter fix · r re-check · s skip GitHub · esc back

@@ -23,6 +23,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
+	websetupui "github.com/Tiago-0liveira/bonsai/internal/ui/websetup"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
@@ -33,7 +34,7 @@ type ExitError struct{ Code int }
 func (e *ExitError) Error() string { return fmt.Sprintf("exit status %d", e.Code) }
 
 const webUsage = `usage: bonsai web [--attach] [--no-open] [--no-setup] [--port N]
-       bonsai web setup|status|open|attach|stop|doctor
+       bonsai web setup|doctor|status|open|attach|stop
        bonsai web logs [api|tunnel] [-f|--follow] [-n N] [--grep TEXT] [-i]
        bonsai web restart [api|tunnel]`
 
@@ -48,6 +49,9 @@ type webCLI struct {
 	client      *client.Client
 	openURL     func(string) error
 	tty         bool
+	// executable is the bonsai binary the daemon runs for the API; empty
+	// means this process's own executable.
+	executable string
 }
 
 func newWebCLI(in io.Reader, out, errOut io.Writer) (*webCLI, error) {
@@ -92,6 +96,9 @@ type webStartOptions struct {
 	preferredPort   int
 	startupTimeout  int
 	shutdownTimeout int
+	// Set by `bonsai web setup` when applying new settings: a running stack
+	// on another port is restarted on the configured one.
+	applySettings bool
 }
 
 func cmdWeb(args []string, in io.Reader, out, errOut io.Writer) error {
@@ -117,10 +124,7 @@ func cmdWeb(args []string, in io.Reader, out, errOut io.Writer) error {
 		case "stop":
 			return w.noArgs("stop", rest, w.stop)
 		case "doctor":
-			return w.noArgs("doctor", rest, func() error {
-				fmt.Fprintln(out, "bonsai web doctor is not available in this version yet. For now, run: bonsai web status")
-				return nil
-			})
+			return w.noArgs("doctor", rest, w.doctor)
 		default:
 			return fmt.Errorf("unknown bonsai web command %q\n%s", sub, webUsage)
 		}
@@ -205,6 +209,22 @@ func (w *webCLI) settings() (config.WebConfig, error) {
 }
 
 func (w *webCLI) start(opts webStartOptions) error {
+	saved, exists, err := config.ReadWebConfig(w.configPath)
+	if err != nil {
+		return w.fail(webFailure{
+			detail: err.Error(),
+			fix:    "fix or delete " + w.configPath + ", then run bonsai web again",
+		})
+	}
+	if wantsSetup(w.tty, opts.noSetup, exists, saved.SetupVersion) {
+		if err := projectRootsReadable(); err != nil {
+			// The setup cannot show folders it cannot read; start as before
+			// and let the API report the broken file.
+			fmt.Fprintf(w.errOut, "Skipping the guided setup: %v\nFix that file, then run: bonsai web setup\n\n", err)
+		} else {
+			return w.runSetup(websetupui.Wizard, saved, exists, opts)
+		}
+	}
 	cfg, err := w.settings()
 	if err != nil {
 		return w.fail(webFailure{
@@ -212,6 +232,39 @@ func (w *webCLI) start(opts webStartOptions) error {
 			fix:    "fix or delete " + w.configPath + ", then run bonsai web again",
 		})
 	}
+	group, reused, failure, err := w.ensure(cfg, opts)
+	if err != nil {
+		return err
+	}
+	if failure != nil {
+		return w.fail(*failure)
+	}
+	return w.started(cfg, opts, group, reused)
+}
+
+func projectRootsReadable() error {
+	path, err := config.ProjectRootsPath()
+	if err != nil {
+		return err
+	}
+	_, err = config.ReadProjectRoots(path)
+	return err
+}
+
+// wantsSetup decides whether `bonsai web` opens the guided setup first: on
+// the first run, or when this build's setup asks something the saved settings
+// predate, and only when someone is at the terminal to answer. --no-setup and
+// scripts get the saved (or default) settings.
+func wantsSetup(tty, noSetup, exists bool, setupVersion int) bool {
+	return tty && !noSetup && (!exists || setupVersion < config.WebSetupVersion)
+}
+
+// ensure starts bonsai web with cfg, or reuses the running stack when it
+// already matches. It reports a failure (the "could not start" block) rather
+// than printing it, so the setup TUI can show it too. With
+// opts.applySettings a running stack on another port is restarted on the
+// configured one instead of being reported.
+func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.ServeGroup, bool, *webFailure, error) {
 	port := cfg.APIPort
 	if opts.portFlag {
 		port = opts.port
@@ -219,7 +272,7 @@ func (w *webCLI) start(opts webStartOptions) error {
 
 	group, err := w.group(true)
 	if err != nil {
-		return err
+		return nil, false, nil, err
 	}
 	group = w.settle(group, 30*time.Second)
 	if group != nil && group.State == "ready" && !opts.portFlag && opts.preferredPort != 0 && group.APIPort != opts.preferredPort {
@@ -230,41 +283,44 @@ func (w *webCLI) start(opts webStartOptions) error {
 	}
 	browserOrigin := webBrowserOrigin(cfg)
 	if group != nil && group.State == "ready" {
-		if group.APIPort != port {
-			return w.fail(webFailure{
-				headline: fmt.Sprintf("bonsai web is already running on port %d", group.APIPort),
-				fix:      fmt.Sprintf("bonsai web stop      then      bonsai web --port %d", port),
-			})
-		}
 		// The API serves the UI, so reusing an API from another bonsai
 		// version would bring back the version skew the local UI removes.
 		switch running := runningAPIVersion(group.APIPort); {
+		case group.APIPort != port && opts.applySettings:
+			fmt.Fprintf(w.out, "Restarting bonsai web on port %d.\n", port)
+		case group.APIPort != port:
+			return nil, false, &webFailure{
+				headline: fmt.Sprintf("bonsai web is already running on port %d", group.APIPort),
+				fix:      fmt.Sprintf("bonsai web stop      then      bonsai web --port %d", port),
+			}, nil
 		case running != "" && running != version.String():
 			fmt.Fprintf(w.out, "Restarting bonsai web %s to run %s.\n", running, version.String())
 		case group.BrowserOrigin != browserOrigin:
 			fmt.Fprintln(w.out, "Restarting bonsai web to apply changed settings (hosted app access).")
 		default:
-			return w.started(cfg, opts, group, true)
+			return group, true, nil, nil
 		}
 	}
 	if group != nil {
 		// Our own group, but not healthy or not current: clear it so its API
 		// does not read as "another program" on the port.
 		if err := w.client.ServeStop(procstore.WebServeGroupID); err != nil {
-			return w.fail(webFailure{
+			return nil, false, &webFailure{
 				detail: "the previous bonsai web did not stop: " + err.Error(),
 				fix:    "bonsai web stop      then      bonsai web",
-			})
+			}, nil
 		}
 	}
 
 	if failure, ok := w.preflightPort(port); !ok {
-		return w.fail(failure)
+		return nil, false, &failure, nil
 	}
 
-	executable, err := os.Executable()
-	if err != nil {
-		return err
+	executable := w.executable
+	if executable == "" {
+		if executable, err = os.Executable(); err != nil {
+			return nil, false, nil, err
+		}
 	}
 	spec := procstore.ServeSpec{
 		Mode:                   procstore.ServeModeProduction,
@@ -282,7 +338,7 @@ func (w *webCLI) start(opts webStartOptions) error {
 		// Something took the port between the preflight and the daemon's own
 		// check. Diagnose again; if that cleared it, try once more.
 		if failure, ok := w.preflightPort(port); !ok {
-			return w.fail(failure)
+			return nil, false, &failure, nil
 		}
 		group, err = w.client.ServeStart(spec)
 	}
@@ -290,9 +346,10 @@ func (w *webCLI) start(opts webStartOptions) error {
 		// The daemon already stopped whatever it had started; make sure no
 		// half-started group survives a client-side surprise either.
 		_ = w.client.ServeStop(procstore.WebServeGroupID)
-		return w.fail(w.startFailure(port, err))
+		failure := w.startFailure(port, err)
+		return nil, false, &failure, nil
 	}
-	return w.started(cfg, opts, group, group.Reused)
+	return group, group.Reused, nil, nil
 }
 
 func firstPositive(values ...int) int {
@@ -605,18 +662,33 @@ func (w *webCLI) setup(args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: bonsai web setup")
 	}
-	cfg, err := w.settings()
-	if err != nil {
-		return err
+	if !w.tty {
+		cfg, err := w.settings()
+		if err != nil {
+			return err
+		}
+		raw, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w.out, "bonsai web settings · %s\n\n%s\n\n", w.configPath, raw)
+		fmt.Fprintln(w.out, "Run bonsai web setup in a terminal for the guided setup, or edit the file above")
+		fmt.Fprintln(w.out, "and run bonsai web stop and bonsai web.")
+		return nil
 	}
-	raw, err := json.MarshalIndent(cfg, "", "  ")
+	saved, exists, err := config.ReadWebConfig(w.configPath)
 	if err != nil {
-		return err
+		return w.fail(webFailure{
+			headline: "bonsai web setup could not read your settings",
+			detail:   err.Error(),
+			fix:      "fix or delete " + w.configPath + ", then run bonsai web setup again",
+		})
 	}
-	fmt.Fprintf(w.out, "bonsai web settings · %s\n\n%s\n\n", w.configPath, raw)
-	fmt.Fprintln(w.out, "The guided setup is not available in this version yet. To change a setting,")
-	fmt.Fprintln(w.out, "edit the file above, then run bonsai web stop and bonsai web.")
-	return nil
+	mode := websetupui.Edit
+	if !exists || saved.SetupVersion < config.WebSetupVersion {
+		mode = websetupui.Wizard
+	}
+	return w.runSetup(mode, saved, exists, webStartOptions{})
 }
 
 // webFailure is the "✗ could not start" block: what failed, why, and one fix.
