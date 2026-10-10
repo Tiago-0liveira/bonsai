@@ -9,8 +9,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -25,6 +27,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	websetupui "github.com/Tiago-0liveira/bonsai/internal/ui/websetup"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
+	"github.com/Tiago-0liveira/bonsai/internal/webtunnel"
 )
 
 // ExitError ends the process with Code after the command has already
@@ -52,7 +55,11 @@ type webCLI struct {
 	// executable is the bonsai binary the daemon runs for the API; empty
 	// means this process's own executable.
 	executable string
+	// lookPath finds the tunnel program; nil means exec.LookPath.
+	lookPath func(string) (string, error)
 }
+
+var execLookPath = exec.LookPath
 
 func newWebCLI(in io.Reader, out, errOut io.Writer) (*webCLI, error) {
 	home, err := config.WebHome()
@@ -282,6 +289,10 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 		port = opts.preferredPort
 	}
 	browserOrigin := webBrowserOrigin(cfg)
+	live, failure := w.liveServe(cfg, port)
+	if failure != nil {
+		return nil, false, failure, nil
+	}
 	if group != nil && group.State == "ready" {
 		// The API serves the UI, so reusing an API from another bonsai
 		// version would bring back the version skew the local UI removes.
@@ -297,7 +308,10 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 			fmt.Fprintf(w.out, "Restarting bonsai web %s to run %s.\n", running, version.String())
 		case group.BrowserOrigin != browserOrigin:
 			fmt.Fprintln(w.out, "Restarting bonsai web to apply changed settings (hosted app access).")
+		case group.WebhookPort != live.webhookPort || !slices.Equal(group.Tunnel, live.tunnel()):
+			fmt.Fprintln(w.out, "Restarting bonsai web to apply changed settings (live updates).")
 		default:
+			live.warn(w.errOut)
 			return group, true, nil, nil
 		}
 	}
@@ -315,6 +329,12 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 	if failure, ok := w.preflightPort(port); !ok {
 		return nil, false, &failure, nil
 	}
+	if live.webhookPort != 0 {
+		if failure, ok := w.preflightPort(live.webhookPort); !ok {
+			failure = w.webhookPortFailure(failure, live.webhookPort)
+			return nil, false, &failure, nil
+		}
+	}
 
 	executable := w.executable
 	if executable == "" {
@@ -330,6 +350,8 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 		Executable:             executable,
 		APIPort:                port,
 		BrowserOrigin:          browserOrigin,
+		WebhookPort:            live.webhookPort,
+		Sidecars:               live.sidecars,
 		StartupTimeoutSeconds:  firstPositive(opts.startupTimeout, cfg.StartupTimeoutSeconds),
 		ShutdownTimeoutSeconds: firstPositive(opts.shutdownTimeout, cfg.ShutdownTimeoutSeconds),
 	}
@@ -342,6 +364,15 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 		}
 		group, err = w.client.ServeStart(spec)
 	}
+	if live.webhookPort != 0 && oldDaemonRefusesLive(err) {
+		// The web daemon is from a bonsai version without live updates (same
+		// protocol, older allow-rule). It only runs this stack, which is
+		// already stopped: replace it once.
+		if shutdownErr := w.client.Shutdown(true); shutdownErr == nil {
+			fmt.Fprintln(w.out, "Replaced the bonsai web daemon from an older bonsai version to turn on live updates.")
+			group, err = w.client.ServeStart(spec)
+		}
+	}
 	if err != nil {
 		// The daemon already stopped whatever it had started; make sure no
 		// half-started group survives a client-side surprise either.
@@ -349,6 +380,7 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 		failure := w.startFailure(port, err)
 		return nil, false, &failure, nil
 	}
+	live.warn(w.errOut)
 	return group, group.Reused, nil, nil
 }
 
@@ -391,7 +423,7 @@ func (w *webCLI) printAccess(cfg config.WebConfig, group *procstore.ServeGroup) 
 	} else if group.BrowserOrigin != "" {
 		fmt.Fprintf(w.out, "  hosted    %s/app\n", group.BrowserOrigin)
 	}
-	fmt.Fprintf(w.out, "  updates   %s\n", webUpdatesText(cfg))
+	fmt.Fprintf(w.out, "  updates   %s\n", webUpdatesText(cfg, group))
 }
 
 func localWebOrigin(port int) string { return "http://127.0.0.1:" + strconv.Itoa(port) }
@@ -432,12 +464,11 @@ func runningAPIVersion(port int) string {
 	return body.Version
 }
 
-func webUpdatesText(cfg config.WebConfig) string {
-	standard := "standard (every ~" + humanInterval(localapi.StandardUpdateInterval) + ")"
+func webUpdatesText(cfg config.WebConfig, group *procstore.ServeGroup) string {
 	if cfg.Updates.Mode == config.WebUpdatesLive {
-		return standard + "; live updates are not available in this version yet"
+		return liveUpdatesText(cfg, group)
 	}
-	return standard
+	return "standard (every ~" + humanInterval(localapi.StandardUpdateInterval) + ")"
 }
 
 func humanInterval(d time.Duration) string {
@@ -541,10 +572,8 @@ func (w *webCLI) stop() error {
 
 func webProcessName(name string) (string, error) {
 	switch name {
-	case "", "api":
+	case "", "api", webtunnel.SidecarName:
 		return name, nil
-	case "tunnel":
-		return "", errors.New("there is no tunnel: live updates are not available in this version yet")
 	}
 	return "", fmt.Errorf("unknown process %q (expected api or tunnel)", name)
 }
@@ -567,6 +596,9 @@ func (w *webCLI) restart(args []string) error {
 	}
 	if group == nil {
 		return errors.New("bonsai web is not running. Start it with: bonsai web")
+	}
+	if name == webtunnel.SidecarName && !hasProcess(group, name) {
+		return w.errNoTunnel()
 	}
 	if _, err := w.client.ServeRestart(procstore.WebServeGroupID, name); err != nil {
 		return err
@@ -618,6 +650,9 @@ func (w *webCLI) logs(args []string) error {
 		// process keeps its log; show the latest one so the hint printed on
 		// failure always works.
 		return w.lastProcessLog(process, *n, *grep, *insensitive, write)
+	}
+	if process == webtunnel.SidecarName && !hasProcess(group, process) {
+		return w.errNoTunnel()
 	}
 	ctx := context.Background()
 	stop := func() {}

@@ -120,13 +120,10 @@ func TestStartFailureFromDaemonError(t *testing.T) {
 }
 
 func TestWebProcessNamesAndInterval(t *testing.T) {
-	for _, name := range []string{"", "api"} {
+	for _, name := range []string{"", "api", "tunnel"} {
 		if got, err := webProcessName(name); err != nil || got != name {
 			t.Fatalf("webProcessName(%q) = %q, %v", name, got, err)
 		}
-	}
-	if _, err := webProcessName("tunnel"); err == nil || !strings.Contains(err.Error(), "not available") {
-		t.Fatalf("tunnel err = %v", err)
 	}
 	if _, err := webProcessName("web"); err == nil {
 		t.Fatal("unknown process accepted")

@@ -439,6 +439,15 @@ func checkPort(env Env, port int) Check {
 
 const forLive = "only needed for live updates (coming in a later version)"
 
+// TunnelInstallFix is the install command for a tunnel tool on goos, nil for
+// a tool it does not know.
+func TunnelInstallFix(goos, tool string) *Fix {
+	if fix := tunnelInstallFix(goos, tool); fix.Command != "" {
+		return fix
+	}
+	return nil
+}
+
 func tunnelInstallFix(goos, tool string) *Fix {
 	type commands struct{ darwin, windows, other string }
 	known := map[string]commands{
