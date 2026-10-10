@@ -1,6 +1,6 @@
 # Phase 7 — Warm start and frontend load (revised plan)
 
-Status: **in progress** (7b done in #68; 7a/7c pending) · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
+Status: **in progress** (7a merged in #69; 7b implemented in #68; 7c pending) · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
 Phase 7 section of `docs/bonsai-web-plan.md`
 
 Plan only. Implementation branches start from and merge into `feat/bonsai-web`.
@@ -23,6 +23,27 @@ the ones they depend on and note any that moved.
 | 5 | ELK worker removed from scope; `elkjs` dependency removed. | `elkjs` is unused. Canvas uses a custom synchronous layout. |
 | 6 | Existing splits are not claimed as new work (xterm, GitHub route, app vs landing). | They already exist. |
 | 7 | Playwright list trimmed, and the Phase 7 gates reduced (see [Test plan](#5-test-plan)). | Keep the suite proportional to the risk. |
+
+## 7a corrections (re-verified at `04e9683` while implementing 7a)
+
+The 7a PR changed these points of this plan; the code is the reference.
+
+| # | Plan said | Code / decision |
+| --- | --- | --- |
+| 1 | Measure with pnpm 12.9.1 | `pnpm` outside `web/` may be older (12.6.0 here); inside `web/` the `packageManager` field selects 12.9.1. All builds above used 12.9.1. |
+| 2 | Main chunk = facade `src/app/ApplicationRoot.tsx` | The manifest has no such facade: ApplicationRoot is the shared chunk `_ApplicationRoot-*.js`. Resolve it by chunk name. |
+| 3 | Branch-list badges have no freshness input | Also: the browser never read nested CI freshness at all (`wireFreshness` kept only state, time and error). 7a maps it and adds `ciStale` / `prStale` to worktrees. |
+| 4 | Seed the provider cache (optional detail) | Required: `refreshProvider` rebuilds every worktree's CI as `loading` unless the checks cache hits, which would clear restored badges as soon as the catalog read finished. Restored checks are seeded per head repository and SHA. |
+| 5 | Reset `fullReconcileAt` after restart | A fresh cache entry already has it zero and the in-memory ETag cache is empty, so page one cannot short-circuit. Kept that way when seeding, and tested. |
+| 6 | Revalidate independent of browser subscription | `stateSync.Run` refreshed only on `SubscriberReady`; 7a queues restored projects at start. |
+| 7 | Namespace = roots path + security mode | Also the canonical `RepoDir`, so the legacy per-repo `bonsai serve` never shares a document with `bonsai web`. |
+| 8 | `source: live` after revalidation | `source` is `"disk"` while restored and omitted otherwise (absent means live). |
+| 9 | `--repeat-each=30` | One test loops 3 warm-ups + N runs in fresh contexts and aggregates p50/p95/max (`BONSAI_P7_RUNS`, `BONSAI_P7_SIZE=large`, `BONSAI_P7_GATE=1` for the local ≤ 300 ms gate). Separate repeats cannot aggregate. |
+| 10 | Background projects "in batches" | Active project first, the rest in catalog order, one `project_snapshot` each. |
+| 11 | "Live updates" must not imply fresh data | `UpdatesBadge` reads update settings, never freshness; no change needed. |
+| 12 | (not in plan) | After an API restart the browser retried the event socket forever with the dead capability (policy close before `ready` never invalidated it). Fixed in 7a: the epoch-change path depends on it. |
+| 13 | (not in plan) | `Config.SnapshotCacheDir` enables warm start; `Run` defaults it under the user state dir; `BONSAI_WARM_START=off` disables it. Tests that call `New` never write to the user's state dir. |
+| 14 | Persisted local subset | Changed-file lists and status error messages are not persisted; restored rows show change counts until local Git revalidates. |
 
 ## Objectives
 
@@ -53,7 +74,8 @@ the ones they depend on and note any that moved.
 ## 7b implementation notes (2026-10-10)
 
 Tasks 5–6 are implemented on `feat/web-p7b-lazy-boundaries`, based on
-`04e9683`, targeting `feat/bonsai-web`. Tasks 0–4, 7 and 8 are untouched.
+`04e9683`, targeting `feat/bonsai-web`. Tasks 0–4 landed separately in 7a
+(#69); tasks 7 and 8 remain outside 7b.
 See the [7b outcome and exact byte table](bonsai-web-plan.md#phase-7--warm-start-and-frontend-load).
 
 Re-verified corrections: `AppShell` lives under `components/layout` and
@@ -64,13 +86,14 @@ The main app/GitHub route may lack facade keys in Vite's manifest; resolve
 stable chunk names and static import graphs in that case. The required setup
 settings and header helpers remain shared eager code.
 
-The environment supplies pnpm 12.6.0, not the declared 12.9.1; registry
-access is unavailable. The cached dependency lock matches the pre-7b lock,
+During the original 7b validation, the environment supplied pnpm 12.6.0,
+not the declared 12.9.1; registry access was unavailable.
+The cached dependency lock matched the pre-7b lock,
 and direct cached build binaries were used for the same-toolchain comparison.
-Full Go and browser suites are blocked by socket/browser sandbox restrictions;
-package-manager path failures also reproduce on the unchanged baseline.
+Full Go and browser suites were blocked by socket/browser sandbox restrictions;
+package-manager path failures also reproduced on the unchanged baseline.
 Unit, typecheck, lint, production/e2e build, plain Go build/vet and embedded
-serving checks passed. Keep Phase 7 in progress pending 7a/7c and unrestricted
+serving checks passed. At that point, Phase 7 awaited 7a/7c and unrestricted
 validation. The first CI run passed the complete Go matrix and Linux race
 checks and 66/67 browser tests (including all 11 new cases). The remaining
 settings test still expected “Standard” for a failed Live tunnel, despite
@@ -78,8 +101,9 @@ settings test still expected “Standard” for a failed Live tunnel, despite
 The corrected frontend CI run `38082871917` passed all 67 browser tests;
 Go CI run `38082871918` passed the Linux/macOS/Windows matrix, Linux race
 checks and release dry-run. CI also verified the declared pnpm 12.9.1 frozen
-install. 7b is complete; Phase 7 still awaits 7a/7c.
-No persistence or hosted deployment files were changed.
+install. 7b implementation is complete in #68; 7a has since merged in #69.
+Phase 7 still awaits 7c. The original 7b changes did not touch persistence or
+hosted deployment files.
 
 ---
 

@@ -85,7 +85,7 @@ class FakeWebSocket {
     if (typeof listener === 'function') this.listeners.get(type)?.delete(listener as (event: Event | MessageEvent) => void)
   }
   send(value: string) { this.sent.push(value) }
-  close() { this.emit('close', new CloseEvent('close')) }
+  close(code?: number) { this.emit('close', new CloseEvent('close', { code })) }
   open() { this.emit('open', new Event('open')) }
   message(value: unknown) { this.emit('message', new MessageEvent('message', { data: JSON.stringify(value) })) }
   private emit(type: string, event: Event | MessageEvent) {
@@ -94,6 +94,34 @@ class FakeWebSocket {
 }
 
 describe('local event authentication', () => {
+  it('asks for a fresh capability after the API rejects the old one', async () => {
+    vi.restoreAllMocks()
+    __resetLocalClientForTests()
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'old-process', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
+    await connectLocalBonsai()
+    const original = globalThis.WebSocket
+    Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: FakeWebSocket })
+    try {
+      const rejected = openLocalEvents()
+      FakeWebSocket.latest?.open()
+      // The restarted API does not know the token: policy close before ready.
+      FakeWebSocket.latest?.close(1008)
+      await expect(rejected).rejects.toThrow('closed before authentication')
+      fetchMock.mockResolvedValueOnce(jsonResponse({ token: 'new-process', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
+      const retried = openLocalEvents()
+      await vi.waitFor(() => expect(FakeWebSocket.latest?.sent).toEqual([]))
+      FakeWebSocket.latest?.open()
+      expect(FakeWebSocket.latest?.sent).toEqual([JSON.stringify({ type: 'authenticate', token: 'new-process' })])
+      FakeWebSocket.latest?.message({ type: 'ready', epoch: 'new-epoch' })
+      await expect(retried).resolves.toMatchObject({ epoch: 'new-epoch' })
+    } finally {
+      Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: original })
+      FakeWebSocket.latest = undefined
+    }
+  })
   it('does not resolve the event connection until authenticated ready supplies an epoch', async () => {
     vi.restoreAllMocks()
     __resetLocalClientForTests()

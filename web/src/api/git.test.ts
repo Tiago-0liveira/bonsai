@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useBonsaiStore } from '../stores/bonsai'
-import { __resetGitSyncForTests, applySnapshot, reconcileCatalog, projectForGitHubRepository, type Snapshot } from './git'
+import { __resetGitSyncForTests, applySnapshot, reconcileCatalog, projectForGitHubRepository, type Snapshot, type WireFreshness } from './git'
 import { fileTree, flattenFiles } from './files'
 
 describe('canonical Git snapshots', () => {
@@ -46,6 +46,40 @@ describe('canonical Git snapshots', () => {
       { id: 101, name: 'verify', status: 'success' },
       { id: 102, name: 'verify', status: 'failed' },
     ])
+  })
+})
+
+describe('restored snapshots', () => {
+  beforeEach(() => {
+    __resetGitSyncForTests()
+    useBonsaiStore.setState({ projects: [{ id: 'repo', workspaceId: 'workspace', name: 'repo', repository: 'owner/repo', description: '', health: 'idle', defaultBranch: 'main', worktreeIds: [], openPrCount: 0 }], worktrees: [], pullRequests: [], gitBranches: {}, gitOnline: {}, syncFreshness: {}, processes: [], agents: [] })
+  })
+  const repository = { id: 'repo', workspace_id: 'workspace', full_name: 'owner/repo', default_branch: 'main' }
+  const pull = { number: 5, title: 'Feature', body: '', state: 'open', draft: false, head: 'feature', base: 'main', head_sha: 'sha', author: 'dev', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }
+  const disk = { state: 'stale' as const, updated_at: '2026-10-01T00:00:00Z', source: 'disk' as const }
+  const restored = (sequence: number, provider: WireFreshness = disk, ci: WireFreshness = disk): Snapshot => ({
+    epoch: 'epoch', repository, sequence, online: true, metadata: {},
+    freshness: { local: disk, provider },
+    local: { branches: [], worktrees: [{ id: 'wt', repository_id: 'repo', branch: 'feature', main: false, local_head_sha: 'sha', status: { ahead: 0, behind: 0, staged: 1, modified: 2, untracked: 0, files: [], git_state: '', dirty: true } }] },
+    remote: { repository: { id: 1, full_name: 'owner/repo', default_branch: 'main' }, branches: [], pull_requests: [pull] },
+    worktree_state: { wt: { pull_request: pull, ci: { status: 'passed', checks: [], freshness: ci } } },
+  })
+
+  it('keeps restored provenance and labels restored badges stale', () => {
+    expect(applySnapshot(restored(0))).toBe(true)
+    const state = useBonsaiStore.getState()
+    expect(state.syncFreshness.repo.local).toEqual({ state: 'stale', updatedAt: '2026-10-01T00:00:00Z', error: undefined, source: 'disk' })
+    expect(state.worktrees[0]).toMatchObject({ prNumber: 5, ciStatus: 'passed', ciStale: true, prStale: true, dirtyFiles: 3 })
+  })
+
+  it('clears each label only when its own component revalidates', () => {
+    applySnapshot(restored(0))
+    // The catalog is live; the checks are still the restored ones.
+    applySnapshot(restored(1, { state: 'ready' }))
+    expect(useBonsaiStore.getState().worktrees[0]).toMatchObject({ prNumber: 5, ciStale: true })
+    expect(useBonsaiStore.getState().worktrees[0].prStale).toBeUndefined()
+    applySnapshot(restored(2, { state: 'ready' }, { state: 'ready' }))
+    expect(useBonsaiStore.getState().worktrees[0].ciStale).toBeUndefined()
   })
 })
 

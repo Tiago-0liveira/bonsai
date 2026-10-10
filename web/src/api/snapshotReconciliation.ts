@@ -1,5 +1,6 @@
 import { processDeleted } from '../stores/processProjection'
 import { mapAgent } from './agents'
+import { isStale } from '../lib/freshness'
 import type { CiStatus, Process, ProcessLifecycleStatus, Project, PullRequest, PullRequestCheck, SyncFreshness, Worktree } from '../types'
 import type { Snapshot, Repository, RemotePR, RemoteCheck, WireFreshness, ProcessSummary, WorktreeProjection } from './git'
 import type { BonsaiState } from '../stores/bonsai'
@@ -75,6 +76,7 @@ function wireFreshness(value: WireFreshness | undefined): SyncFreshness {
     state: value?.state ?? 'loading',
     updatedAt: value?.updated_at,
     error: value?.error,
+    ...(value?.source && { source: value.source }),
   }
 }
 
@@ -177,6 +179,7 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
     Object.entries(snapshot.freshness ?? {}).map(([component, value]) => [component, wireFreshness(value)]),
   )
   const localFreshness = freshness.local
+  const providerStale = isStale(freshness.provider)
   const trees: Worktree[] = (snapshot.local?.worktrees ?? []).map(w => {
     const meta = snapshot.metadata[w.id]
     const st = w.status
@@ -184,6 +187,7 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
     const associated = projection?.pull_request
     const pr = associated ? prs.find(item => item.number === associated.number) : undefined
     const ci = projection?.ci
+    const ciStale = !!ci && isStale(ci.freshness)
     const failedChecks = (ci?.checks ?? []).filter(check => checkStatus(check) === 'failed').length
     const status = !snapshot.online
       ? 'idle'
@@ -213,13 +217,16 @@ export function reconcileSnapshotEntities(snapshot: Snapshot, state: BonsaiState
       prStatus: pr?.status,
       ciStatus: ciStatus(ci),
       ciFailed: failedChecks,
+      ...(ciStale && { ciStale: true }),
+      ...(pr && providerStale && { prStale: true }),
       checkedSha: ci?.checked_sha,
       upstream: st?.upstream,
       divergenceAvailable: st?.divergence_available,
       gitStatusError: w.status_error?.message,
       ahead: st?.divergence_available ? st.ahead : 0,
       behind: st?.divergence_available ? st.behind : 0,
-      dirtyFiles: st?.files?.length ?? 0,
+      // Restored statuses keep counts but not file lists.
+      dirtyFiles: st?.files?.length || (localFreshness?.source === 'disk' && st ? st.staged + st.modified + st.untracked : 0),
       lastActivity: st?.last_commit?.when ?? '',
       gitState: st?.git_state,
     }

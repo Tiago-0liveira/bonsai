@@ -12,6 +12,7 @@ import {
   AlertCircle, XCircle, type LucideIcon,
 } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
+import { staleDescription } from '../../lib/freshness'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectPullRequests } from '../../stores/projectSelectors'
 import { FeatureBoundary } from '../../app/chunkRecovery'
@@ -41,10 +42,12 @@ const FRESHNESS: Record<SyncFreshnessState, { dot: string; text: string; label: 
   unavailable: { dot: 'bg-danger', text: 'text-muted-2', label: 'offline' },
 }
 
-function FreshnessLabel({ state }: { state?: SyncFreshnessState }) {
+function FreshnessLabel({ state, source }: { state?: SyncFreshnessState; source?: 'disk' }) {
   if (!state) return null
   const view = FRESHNESS[state]
-  return <span className={'ml-auto flex items-center gap-1.5 font-mono text-[10px] normal-case tracking-normal ' + view.text}><span className={'h-1.5 w-1.5 rounded-full ' + view.dot} />{view.label}</span>
+  // Restored data reads as saved, never live, until it is revalidated.
+  const label = source === 'disk' ? 'saved' : view.label
+  return <span title={source === 'disk' ? staleDescription({ state, source }) : undefined} className={'ml-auto flex items-center gap-1.5 font-mono text-[10px] normal-case tracking-normal ' + view.text}><span className={'h-1.5 w-1.5 rounded-full ' + (source === 'disk' ? FRESHNESS.stale.dot : view.dot)} />{label}</span>
 }
 
 const tabTrigger = 'bonsai-focus h-full uppercase text-muted transition-colors hover:text-text data-[state=active]:text-text data-[state=active]:shadow-[inset_0_-2px_0_0_rgb(var(--accent-solid))]'
@@ -223,6 +226,7 @@ export function Inspector() {
   const branchAgents = projectAgents.filter((item) => item.worktreeId === worktree?.id)
   const branchProcesses = processes.filter((item) => item.worktreeId === worktree?.id)
   const freshness = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local?.state)
+  const freshnessSource = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local?.source)
   const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
   const attention = useMemo(() => projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length), [projectWorktrees, pullRequests])
   const issues = worktree ? branchIssues(worktree, pr) : []
@@ -243,7 +247,7 @@ export function Inspector() {
             <Tabs.Trigger value="inspector" className={tabTrigger}>Inspector</Tabs.Trigger>
             <Tabs.Trigger value="files" className={tabTrigger}>Files</Tabs.Trigger>
           </Tabs.List>
-          <FreshnessLabel state={freshness} />
+          <FreshnessLabel state={freshness} source={freshnessSource} />
         </div>
         <Tabs.Content value="inspector" className="flex min-h-0 flex-1 flex-col outline-none data-[state=inactive]:hidden">
       <ScrollArea.Root className="min-h-0 flex-1 overflow-hidden">

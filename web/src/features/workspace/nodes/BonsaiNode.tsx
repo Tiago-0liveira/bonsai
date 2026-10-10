@@ -39,6 +39,8 @@ export interface StackItemData {
   prNumber?: number
   prStatus?: PrStatus
   ciStatus: CiStatus
+  ciStale?: boolean
+  prStale?: boolean
   connectionLabel?: string
   dirtyFiles?: number
   hasRunningAgent: boolean
@@ -85,6 +87,8 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   prStatus?: PrStatus
   ciStatus?: CiStatus
   ciFailed?: number
+  ciStale?: boolean
+  prStale?: boolean
   gitState?: string
   worktreeId?: string
 }
@@ -107,7 +111,7 @@ function MenuItem({ children, onSelect, unavailable = false }: { children: React
   )
 }
 
-function CiBadge({ status, failed = 0, compact = false, label = 'CI', iconOnly = false }: { status?: CiStatus; failed?: number; compact?: boolean; label?: string; iconOnly?: boolean }) {
+function CiBadge({ status, failed = 0, compact = false, label = 'CI', iconOnly = false, stale = false }: { status?: CiStatus; failed?: number; compact?: boolean; label?: string; iconOnly?: boolean; stale?: boolean }) {
   if (!status) return null
   const meta =
     status === 'passed'
@@ -125,15 +129,17 @@ function CiBadge({ status, failed = 0, compact = false, label = 'CI', iconOnly =
   const text = compact ? label + ' ' + meta.text : meta.text
   const failedSuffix = status === 'failed' && failed && !compact ? ' · ' + failed : ''
   const coreText = failedSuffix && text.endsWith(failedSuffix) ? text.slice(0, -failedSuffix.length) : text
+  // A result that is not confirmed yet keeps its value, dimmed and labeled.
+  const staleText = stale ? ' (stale)' : ''
   if (iconOnly) {
     return (
-      <span role="img" title={text} aria-label={text} className={'inline-grid h-5 w-[22px] shrink-0 place-items-center rounded-[5px] ' + meta.tint}>
+      <span role="img" title={text + staleText} aria-label={text + staleText} data-stale={stale || undefined} className={'inline-grid h-5 w-[22px] shrink-0 place-items-center rounded-[5px] ' + meta.tint + (stale ? ' opacity-50' : '')}>
         <Icon size={11} className={status === 'running' ? 'animate-spin motion-reduce:animate-none' : ''} />
       </span>
     )
   }
   return (
-    <span className={'inline-flex items-center gap-1 rounded border bg-bg px-1.5 py-0.5 text-[8px] ' + meta.tone}>
+    <span title={stale ? text + staleText : undefined} data-stale={stale || undefined} className={'inline-flex items-center gap-1 rounded border bg-bg px-1.5 py-0.5 text-[8px] ' + meta.tone + (stale ? ' opacity-50' : '')}>
       <Icon size={9} className={status === 'running' ? 'animate-spin' : ''} />
       <span>{coreText}</span>
       {failedSuffix && <span>{failedSuffix}</span>}
@@ -141,7 +147,7 @@ function CiBadge({ status, failed = 0, compact = false, label = 'CI', iconOnly =
   )
 }
 
-function PrBadge({ status, number }: { status?: PrStatus; number?: number }) {
+function PrBadge({ status, number, stale = false }: { status?: PrStatus; number?: number; stale?: boolean }) {
   if (!status && !number) return null
   const tone =
     status === 'Open'
@@ -152,7 +158,7 @@ function PrBadge({ status, number }: { status?: PrStatus; number?: number }) {
           ? 'bg-panel-3 text-muted-2'
           : 'bg-panel-3 text-muted'
   return (
-    <span className={'inline-flex h-5 shrink-0 items-center gap-1 rounded-[5px] px-1.5 font-mono text-[10.5px] ' + tone}>
+    <span title={stale ? 'Pull request link not confirmed yet' : undefined} data-stale={stale || undefined} className={'inline-flex h-5 shrink-0 items-center gap-1 rounded-[5px] px-1.5 font-mono text-[10.5px] ' + tone + (stale ? ' opacity-60' : '')}>
       <GitPullRequest size={10} />
       {number ? '#' + number : status}
     </span>
@@ -252,8 +258,8 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
               <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
               <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
             </ContextMenu.Root>
-            <PrBadge status={item.prStatus} number={item.prNumber} />
-            <CiBadge status={item.ciStatus} compact />
+            <PrBadge status={item.prStatus} number={item.prNumber} stale={item.prStale} />
+            <CiBadge status={item.ciStatus} compact stale={item.ciStale} />
             <button
               type="button"
               onClick={(event) => { event.stopPropagation(); ejectWorktreeFromStack(item.id) }}
@@ -370,8 +376,8 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                   {data.connectionLabel && <span className="shrink-0 font-mono text-[10px] text-warn">{data.connectionLabel}</span>}
                 </div>
                 <div className="mt-1.5 flex h-5 items-center gap-1.5">
-                  <CiBadge status={data.ciStatus} failed={data.ciFailed} iconOnly />
-                  <PrBadge status={data.prStatus} number={data.prNumber} />
+                  <CiBadge status={data.ciStatus} failed={data.ciFailed} iconOnly stale={data.ciStale} />
+                  <PrBadge status={data.prStatus} number={data.prNumber} stale={data.prStale} />
                   <span className="shrink-0 font-mono text-[10px] text-muted-2">
                     ↑{data.ahead ?? 0} <span className={(data.behind ?? 0) > 0 ? 'text-warn' : ''}>↓{data.behind ?? 0}</span>
                   </span>

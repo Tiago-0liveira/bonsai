@@ -129,6 +129,16 @@ type stateSync struct {
 	// live reports which repositories live updates currently cover; nil
 	// in standard mode.
 	live *liveController
+	// watchProject replaces runProjectWatcher in browser fixtures, whose
+	// projects are not Git repositories.
+	watchProject func(context.Context, ProjectInfo)
+	// warm saves committed projections for the next start; nil when warm
+	// start is off. lastUsed orders projects for its eviction.
+	warm     *warmWriter
+	lastUsed map[string]time.Time
+	// restored lists projects installed from the warm-start cache; Run
+	// revalidates them at once, whether or not a browser is connected.
+	restored []string
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -142,6 +152,7 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		jobs:         map[string]*syncJobState{},
 		watchCancels: map[string]context.CancelFunc{},
 		focus:        map[int]string{},
+		lastUsed:     map[string]time.Time{},
 		localSem:     newPriorityGate(localRefreshWorkers),
 		providerSem:  newPriorityGate(providerRefreshWorkers),
 		prefetchSem:  newPriorityGate(providerRefreshWorkers),
@@ -157,6 +168,7 @@ func (s *stateSync) Run(ctx context.Context) {
 	s.mu.Unlock()
 	s.ReconcileCatalog()
 	s.syncWatchers()
+	s.revalidateRestored()
 
 	processTicker := time.NewTicker(processRefreshInterval)
 	pollTicker := time.NewTicker(providerPollTick)
@@ -198,10 +210,13 @@ func (s *stateSync) ReconcileCatalog() {
 		present[info.ID] = info
 	}
 	s.mu.Lock()
+	removed := false
 	for id := range s.projects {
 		if _, ok := present[id]; !ok {
 			delete(s.projects, id)
 			delete(s.jobs, id)
+			delete(s.lastUsed, id)
+			removed = true
 		}
 	}
 	for _, info := range infos {
@@ -224,6 +239,10 @@ func (s *stateSync) ReconcileCatalog() {
 		p.snapshot = next
 	}
 	s.mu.Unlock()
+	if removed {
+		// Removed projects leave the saved copy too.
+		s.warm.notify()
+	}
 	s.syncWatchers()
 }
 
@@ -236,6 +255,7 @@ func (s *stateSync) SubscriberReady(active string) {
 		if _, ok := s.registry.Lookup(active); ok {
 			s.mu.Lock()
 			s.priorityProject = active
+			s.lastUsed[active] = s.now()
 			s.mu.Unlock()
 		}
 	}
@@ -269,6 +289,7 @@ func (s *stateSync) SetFocus(subscriber int, projectID string) {
 	s.focus[subscriber] = projectID
 	if projectID != "" && known {
 		s.priorityProject = projectID
+		s.lastUsed[projectID] = s.now()
 	}
 }
 
@@ -628,6 +649,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 		}
 		snapshot.Repository = descriptorFromLocal(project.info, &local)
 		snapshot.Online = true
+		dropRestoredProviderForOtherRemote(snapshot)
 		resetWorktreeAssociationsForHeads(snapshot)
 	})
 	if committed {
@@ -876,7 +898,32 @@ func (s *stateSync) commitProject(expected projectServices, component string, mu
 		Sequence:  published.Sequence,
 		Snapshot:  &published,
 	})
+	s.warm.notify()
 	return true
+}
+
+// enableWarmStart saves committed projections to store from now on.
+func (s *stateSync) enableWarmStart(store *warmStore) {
+	s.warm = newWarmWriter(store, s.warmExports, s.now)
+}
+
+// warmExports copies every projection for the warm-start writer. Only
+// cloning happens under the lock.
+func (s *stateSync) warmExports() ([]warmExport, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]warmExport, 0, len(s.projects))
+	for id, p := range s.projects {
+		// Background validation is not a visit. Its completion time must not
+		// outrank the project the user had open when restoreWarm picks priority.
+		out = append(out, warmExport{id: id, path: p.path, lastUsed: s.lastUsed[id], snapshot: cloneSnapshot(p.snapshot)})
+	}
+	return out, s.priorityProject
+}
+
+// closeWarm saves pending changes before the process exits.
+func (s *stateSync) closeWarm(timeout time.Duration) {
+	s.warm.Close(timeout)
 }
 
 func snapshotsSemanticallyEqual(a, b browserSnapshot) bool {
@@ -943,8 +990,12 @@ func (s *stateSync) syncWatchers() {
 	}
 	s.mu.Unlock()
 
+	watch := s.runProjectWatcher
+	if s.watchProject != nil {
+		watch = s.watchProject
+	}
 	for _, start := range starts {
-		go s.runProjectWatcher(start.ctx, start.info)
+		go watch(start.ctx, start.info)
 	}
 }
 
@@ -1027,6 +1078,7 @@ func (s *stateSync) commitWatchedLocal(projectID string, local domain.Repository
 		}
 		snapshot.Repository = descriptorFromLocal(project.info, &local)
 		snapshot.Online = true
+		dropRestoredProviderForOtherRemote(snapshot)
 		resetWorktreeAssociationsForHeads(snapshot)
 	})
 	if !committed {
@@ -1086,7 +1138,7 @@ func failedFreshness(current browserFreshness, hadValue bool, err error) browser
 	if code == "" {
 		code = "unavailable"
 	}
-	return browserFreshness{State: state, UpdatedAt: current.UpdatedAt, Error: &browserStateError{Code: code, Message: err.Error()}}
+	return browserFreshness{State: state, UpdatedAt: current.UpdatedAt, Error: &browserStateError{Code: code, Message: err.Error()}, Source: current.Source}
 }
 
 func unavailableOrStale(current browserFreshness, code, message string) browserFreshness {

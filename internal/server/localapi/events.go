@@ -75,7 +75,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if err := conn.WriteJSON(localEvent{Type: "catalog", Epoch: s.stateSync.epoch, Projects: s.registry.List()}); err != nil {
 		return
 	}
-	for _, project := range s.registry.List() {
+	for _, project := range bootstrapOrder(s.registry.List(), auth.ActiveProject) {
 		snapshot, ok := s.stateSync.CachedSnapshot(project.ID)
 		if !ok {
 			continue
@@ -143,4 +143,19 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// bootstrapOrder sends the project the browser has open first, so its first
+// paint does not wait for every other project's snapshot. Without one, the
+// catalog order already puts the browser's default project (the first) first.
+func bootstrapOrder(projects []ProjectInfo, active string) []ProjectInfo {
+	for i, project := range projects {
+		if project.ID == active && i > 0 {
+			ordered := make([]ProjectInfo, 0, len(projects))
+			ordered = append(ordered, project)
+			ordered = append(ordered, projects[:i]...)
+			return append(ordered, projects[i+1:]...)
+		}
+	}
+	return projects
 }
