@@ -425,6 +425,11 @@ func (f *warmFixture) control(w http.ResponseWriter, r *http.Request) {
 		for _, name := range []string{"local", "catalog", "checks"} {
 			f.gates.release(name)
 		}
+		// A new process with the new sizes and no saved state.
+		if err := f.restart("missing"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	case "hold":
 		for _, name := range f.components(r) {
 			f.gates.hold(name)
@@ -555,6 +560,11 @@ func TestWarmStartBrowserFixture(t *testing.T) {
 		t.Skip("browser fixture disabled")
 	}
 	dist := waitForE2EBundle(t)
+	// BONSAI_WARM_START_UI=dist serves the production build instead, for the
+	// final paint numbers (build it first with `pnpm -C web build`).
+	if os.Getenv("BONSAI_WARM_START_UI") == "dist" {
+		dist = filepath.Join(filepath.Dir(dist), "dist")
+	}
 	t.Setenv("HOME", t.TempDir())
 	f := newWarmFixture(t, dist)
 	f.start()

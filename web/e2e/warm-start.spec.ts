@@ -31,6 +31,17 @@ async function measureLoad(browser: Browser, expected: { rows: number; prs: numb
     const page = await context.newPage()
     await page.addInitScript(({ rows, prs }) => {
       const metrics = window as unknown as { __p7DomAt?: number; __p7PaintAt?: number }
+      // The production build has no `bonsai:ws-ready` mark; the socket's
+      // ready frame stands in for it there.
+      const NativeSocket = window.WebSocket
+      window.WebSocket = class extends NativeSocket {
+        constructor(...args: ConstructorParameters<typeof WebSocket>) {
+          super(...args)
+          this.addEventListener('message', event => {
+            if (typeof event.data === 'string' && event.data.startsWith('{"type":"ready"') && !performance.getEntriesByName('bonsai:ws-ready-frame').length) performance.mark('bonsai:ws-ready-frame')
+          })
+        }
+      }
       const complete = () => {
         const list = document.querySelector('aside[aria-label="Branches"]')
         return !!list && list.querySelectorAll('[data-worktree-row]').length >= rows && list.querySelectorAll('[data-pr-badge]').length >= prs
@@ -50,7 +61,7 @@ async function measureLoad(browser: Browser, expected: { rows: number; prs: numb
       return { readyToPaint: null, navigationToReady: null }
     }
     return await page.evaluate(() => {
-      const ready = performance.getEntriesByName('bonsai:ws-ready')[0]?.startTime
+      const ready = (performance.getEntriesByName('bonsai:ws-ready')[0] ?? performance.getEntriesByName('bonsai:ws-ready-frame')[0])?.startTime
       const paint = (window as unknown as { __p7PaintAt: number }).__p7PaintAt
       return { readyToPaint: ready === undefined ? null : paint - ready, navigationToReady: ready ?? null }
     })
@@ -80,7 +91,8 @@ function summarize(samples: Sample[]) {
 }
 
 async function report(testInfo: TestInfo, name: string, samples: Sample[]) {
-  const summary = { ...summarize(samples), size: SIZE, build: 'e2e (React profiling)', samples }
+  const build = process.env.BONSAI_WARM_START_UI === 'dist' ? 'production (embedded UI)' : 'e2e (React profiling)'
+  const summary = { ...summarize(samples), size: SIZE, build, samples }
   await testInfo.attach(name, { body: JSON.stringify(summary, null, 2), contentType: 'application/json' })
   console.log(`[warm-start] ${name} ${JSON.stringify({ ...summary, samples: undefined })}`)
   return summary
