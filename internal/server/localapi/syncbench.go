@@ -96,7 +96,7 @@ func newInProcessDaemon(rootsPath, main string) (inProcessDaemon, error) {
 		return inProcessDaemon{}, err
 	}
 	// Reads never touch the journal, but the executor expects one.
-	journal, err := gitstore.Open(procstore.New(main).Dir() + "/git-commands.json")
+	journal, err := gitstore.Open(filepath.Join(procstore.New(main).Dir(), "git-commands.json"))
 	if err != nil {
 		return inProcessDaemon{}, err
 	}
@@ -111,7 +111,18 @@ func SyncBench(ctx context.Context, opts SyncBenchOptions) (SyncBenchResult, err
 	if err != nil {
 		return SyncBenchResult{}, err
 	}
-	return benchPass(ctx, s, ids, opts)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer func() {
+		// Stop queued retries and re-queues from outliving the bench.
+		cancel()
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+	}()
+	s.mu.Lock()
+	s.runCtx = runCtx
+	s.mu.Unlock()
+	return benchPass(runCtx, s, ids, opts)
 }
 
 func newBenchSync(ctx context.Context, opts SyncBenchOptions) (*stateSync, []string, error) {
@@ -149,12 +160,37 @@ func newBenchSync(ctx context.Context, opts SyncBenchOptions) (*stateSync, []str
 	if _, err := registry.Refresh(ctx); err != nil {
 		return nil, nil, err
 	}
+	wantRepo := opts.Repo
+	if wantRepo != "" {
+		if canonical, err := config.CanonicalDirectory(wantRepo); err == nil {
+			wantRepo = canonical
+		}
+	}
 	var ids []string
 	registry.mu.Lock()
 	for id, p := range registry.entries {
-		if !p.info.Available || (opts.Repo != "" && p.info.Path != opts.Repo) {
-			continue
+		if p.info.Available && (wantRepo == "" || filepath.Clean(p.info.Path) == wantRepo) {
+			ids = append(ids, id)
 		}
+	}
+	// Ordered by project ID (a hash), not by name.
+	sort.Strings(ids)
+	if opts.Projects > 0 && len(ids) > opts.Projects {
+		ids = ids[:opts.Projects]
+	}
+	keep := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		keep[id] = true
+	}
+	// Drop everything not benchmarked so no production daemon client is left
+	// reachable from the registry.
+	for id := range registry.entries {
+		if !keep[id] {
+			delete(registry.entries, id)
+		}
+	}
+	for _, id := range ids {
+		p := registry.entries[id]
 		d, err := newInProcessDaemon(rootsPath, p.info.Path)
 		if err != nil {
 			registry.mu.Unlock()
@@ -162,14 +198,12 @@ func newBenchSync(ctx context.Context, opts SyncBenchOptions) (*stateSync, []str
 		}
 		p.daemon = d
 		registry.entries[id] = p
-		ids = append(ids, id)
 	}
 	registry.mu.Unlock()
-	sort.Strings(ids)
-	if opts.Projects > 0 && len(ids) > opts.Projects {
-		ids = ids[:opts.Projects]
-	}
 	if len(ids) == 0 {
+		if opts.Repo != "" {
+			return nil, nil, fmt.Errorf("no available project matches --repo %s (it must be a repository's main worktree selected under the roots)", opts.Repo)
+		}
 		return nil, nil, fmt.Errorf("no available projects found in %s", rootsPath)
 	}
 	s := newStateSync(registry, newEventHub())
@@ -196,30 +230,27 @@ func benchPass(ctx context.Context, s *stateSync, ids []string, opts SyncBenchOp
 		allDone := true
 		for i, id := range ids {
 			row := &rows[i]
-			snap, ok := s.CachedSnapshot(id)
+			view, ok := s.benchView(id)
 			if !ok {
 				allDone = false
 				continue
 			}
 			elapsed := time.Since(start)
-			row.Name = snap.Repository.Name
-			if snap.Local != nil {
-				row.Worktrees = len(snap.Local.Worktrees)
+			row.Name = view.name
+			if view.hasLocal {
+				row.Worktrees = view.worktrees
 				if row.Inventory == 0 {
 					row.Inventory = elapsed
 				}
 			}
-			if row.LocalReady == 0 && snap.Freshness["local"].State == "ready" {
+			if row.LocalReady == 0 && view.localState == "ready" {
 				row.LocalReady = elapsed
 			}
-			provider := snap.Freshness["provider"]
-			if row.PRCatalog == 0 && providerSettled(provider.State) && (snap.Remote == nil || snap.Remote.PRCatalogComplete) {
+			if row.PRCatalog == 0 && providerSettled(view.providerState) && view.catalogDone {
 				row.PRCatalog = elapsed
-				if provider.Error != nil {
-					row.ProviderErr = provider.Error.Code
-				}
+				row.ProviderErr = view.providerErr
 			}
-			if row.PRCatalog != 0 && row.AllChecks == 0 && checksSettled(snap) {
+			if row.PRCatalog != 0 && row.AllChecks == 0 && !view.checksLoading {
 				row.AllChecks = elapsed
 			}
 			if row.Inventory == 0 || row.LocalReady == 0 || row.PRCatalog == 0 || row.AllChecks == 0 {
@@ -257,11 +288,46 @@ func benchPass(ctx context.Context, s *stateSync, ids []string, opts SyncBenchOp
 
 func providerSettled(state string) bool { return state != "" && state != "loading" }
 
-func checksSettled(snap browserSnapshot) bool {
+// benchView is the few fields the bench polls. Reading them under the sync
+// lock without cloning the snapshot keeps the 5 ms poll from competing with the
+// commits it is timing.
+type benchView struct {
+	name          string
+	hasLocal      bool
+	worktrees     int
+	localState    string
+	providerState string
+	providerErr   string
+	catalogDone   bool
+	checksLoading bool
+}
+
+func (s *stateSync) benchView(id string) (benchView, bool) {
+	project, ok := s.registry.Lookup(id)
+	if !ok {
+		return benchView{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap := s.ensureLocked(project.info).snapshot
+	v := benchView{
+		name:          snap.Repository.Name,
+		hasLocal:      snap.Local != nil,
+		localState:    snap.Freshness["local"].State,
+		providerState: snap.Freshness["provider"].State,
+		catalogDone:   snap.Remote == nil || snap.Remote.PRCatalogComplete,
+	}
+	if snap.Local != nil {
+		v.worktrees = len(snap.Local.Worktrees)
+	}
+	if err := snap.Freshness["provider"].Error; err != nil {
+		v.providerErr = err.Code
+	}
 	for _, state := range snap.WorktreeState {
 		if state.CI.Freshness.State == "loading" {
-			return false
+			v.checksLoading = true
+			break
 		}
 	}
-	return true
+	return v, true
 }

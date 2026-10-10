@@ -79,8 +79,10 @@ func TestSyncBenchReportsMilestonesSpawnsAndSpans(t *testing.T) {
 			t.Errorf("missing span %s; saw %v", name, seen)
 		}
 	}
-	if seen["local.status"] != 2 {
-		t.Errorf("local.status spans = %d, want one per worktree (2)", seen["local.status"])
+	// A refresh may legitimately run again (re-queue), so require at least one
+	// status span per worktree rather than an exact count.
+	if seen["local.status"] < 2 {
+		t.Errorf("local.status spans = %d, want at least one per worktree (2)", seen["local.status"])
 	}
 }
 

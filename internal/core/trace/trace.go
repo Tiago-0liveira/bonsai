@@ -49,7 +49,9 @@ func AddGit() { gitSpawns.Add(1) }
 // AddGH records one spawned gh process.
 func AddGH() { ghSpawns.Add(1) }
 
-// Counts returns the process-wide spawn totals.
+// Counts returns the totals for instrumented spawn sites only: core.RunContext
+// (git), and the ghcli transport and Discover (gh). Other exec call sites, such
+// as TUI helpers, are not counted.
 func Counts() (git, gh int64) { return gitSpawns.Load(), ghSpawns.Load() }
 
 // Attrs are optional span dimensions.
