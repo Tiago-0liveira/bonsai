@@ -96,7 +96,19 @@ func tunnelLog(ctx context.Context, daemon *client.Client) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read the tunnel log: %w", err)
 	}
-	return b.String(), nil
+	return currentRun(b.String(), webtunnel.SidecarName), nil
+}
+
+// currentRun is the part of a serve log written since process last
+// started. The log spans restarts, and a quick tunnel prints a new URL each
+// run: the previous run's URL must not be taken while the new one is not
+// printed yet.
+func currentRun(text, process string) string {
+	marker := "] " + process + " SYS started\n"
+	if i := strings.LastIndex(text, marker); i >= 0 {
+		return text[i+len(marker):]
+	}
+	return text
 }
 
 func ngrokURL(ctx context.Context, port int) (string, error) {

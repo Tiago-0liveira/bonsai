@@ -3,6 +3,7 @@ package localapi
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/Tiago-0liveira/bonsai/internal/webtunnel"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -163,5 +164,24 @@ func TestLiveEventsQueueMatchingProjects(t *testing.T) {
 	snapshot, _ := json.Marshal(h.snapshot(t))
 	if strings.Contains(string(snapshot), liveSecret) {
 		t.Fatal("secret in browser projection")
+	}
+}
+
+func TestTunnelURLComesFromTheCurrentRun(t *testing.T) {
+	log := "[16:49:44] tunnel SYS started\n" +
+		"[16:49:49] tunnel ERR INF |  https://old-run.trycloudflare.com  |\n" +
+		"[16:52:20] tunnel SYS stopped\n" +
+		"[16:52:26] tunnel SYS started\n" +
+		"[16:52:26] tunnel ERR INF Requesting new quick Tunnel on trycloudflare.com...\n"
+	if u, ok := webtunnel.URLFromLog(webtunnel.CloudflaredQuick, "", currentRun(log, webtunnel.SidecarName)); ok {
+		t.Fatalf("took the previous run's URL %s", u)
+	}
+	log += "[16:52:33] tunnel ERR INF |  https://new-run.trycloudflare.com  |\n"
+	if u, _ := webtunnel.URLFromLog(webtunnel.CloudflaredQuick, "", currentRun(log, webtunnel.SidecarName)); u != "https://new-run.trycloudflare.com" {
+		t.Fatalf("url = %q", u)
+	}
+	// A log that starts mid-run (the tail cut the start line) is used whole.
+	if got := currentRun("[1] tunnel ERR x\n", webtunnel.SidecarName); got != "[1] tunnel ERR x\n" {
+		t.Fatalf("got %q", got)
 	}
 }
