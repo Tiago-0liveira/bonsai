@@ -60,8 +60,10 @@ function QuickButton({ icon: Icon, label, onClick, danger = false, primary = fal
   </button>
 }
 
-function Metric({ value, label, icon: Icon, tone = '' }: { value: number | string; label: string; icon: LucideIcon; tone?: string }) {
-  return <div className="min-w-0 rounded-[10px] border border-border bg-panel-2 px-2.5 py-2">
+const UNTRACKED_COUNT_HINT = 'An untracked folder counts as one entry. Open the worktree for the full file list.'
+
+function Metric({ value, label, icon: Icon, tone = '', title }: { value: number | string; label: string; icon: LucideIcon; tone?: string; title?: string }) {
+  return <div className="min-w-0 rounded-[10px] border border-border bg-panel-2 px-2.5 py-2" title={title}>
     <div className={'flex items-center gap-1.5 font-mono text-[13px] font-semibold tabular-nums ' + (tone || 'text-text')}><Icon size={12} className="opacity-70" />{value}</div>
     <div className="mt-1 font-mono text-[9.5px] uppercase tracking-[.06em] text-muted-2">{label}</div>
   </div>
@@ -255,7 +257,7 @@ export function Inspector() {
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={projectWorktrees.length} label="Branches" icon={GitBranch} />
                 <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-accent" />
-                <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-warn" />
+                <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-warn" title={UNTRACKED_COUNT_HINT} />
               </div>
               <Section title="Needs attention" meta={<span className="inspector-count">{attention.length}</span>}>
                 {attention.length ? <div className="space-y-2">{attention.map(({ worktree: item, issues: reasons }) => <button key={item.id} onClick={() => setSelection({ type: 'worktree', id: item.id })} className="bonsai-focus inspector-attention">
@@ -293,7 +295,7 @@ export function Inspector() {
                     : <span className="text-muted-2">—</span>}
                 </StatTile>
                 <StatTile label="Uncommitted">
-                  <span className={worktree.dirtyFiles ? 'text-warn' : 'text-muted-2'}>{worktree.dirtyFiles} {worktree.dirtyFiles === 1 ? 'file' : 'files'}</span>
+                  <span className={worktree.dirtyFiles ? 'text-warn' : 'text-muted-2'} title={UNTRACKED_COUNT_HINT}>{worktree.dirtyFiles} {worktree.dirtyFiles === 1 ? 'file' : 'files'}</span>
                 </StatTile>
               </div>
               {issues.length > 0 && <div className="inspector-alert"><div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-warn"><AlertCircle size={13} />Before merging</div>{issues.map((issue) => <p key={issue} className="mt-1 text-[11px] leading-5 text-muted">{issue}</p>)}</div>}

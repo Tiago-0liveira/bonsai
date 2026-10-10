@@ -127,4 +127,37 @@ describe('local event authentication', () => {
       FakeWebSocket.latest = undefined
     }
   })
+  it('names the active project in the authenticate message only when it is known', async () => {
+    vi.restoreAllMocks()
+    __resetLocalClientForTests()
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'event-session', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
+    await connectLocalBonsai()
+
+    const original = globalThis.WebSocket
+    Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: FakeWebSocket })
+    try {
+      const withProject = openLocalEvents(() => {}, 'project-v1-abc')
+      void withProject.catch(() => {})
+      const first = FakeWebSocket.latest
+      first?.open()
+      expect(first?.sent).toEqual([JSON.stringify({ type: 'authenticate', token: 'event-session', active_project: 'project-v1-abc' })])
+      first?.message({ type: 'ready', epoch: 'backend-epoch' })
+      await withProject
+
+      const without = openLocalEvents(() => {})
+      void without.catch(() => {})
+      const second = FakeWebSocket.latest
+      expect(second).not.toBe(first)
+      second?.open()
+      expect(second?.sent).toEqual([JSON.stringify({ type: 'authenticate', token: 'event-session' })])
+      second?.message({ type: 'ready', epoch: 'backend-epoch' })
+      await without
+    } finally {
+      Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: original })
+      FakeWebSocket.latest = undefined
+    }
+  })
 })
