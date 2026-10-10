@@ -56,6 +56,9 @@ func (w *webCLI) runSetup(mode websetupui.Mode, saved config.WebConfig, exists b
 		DiscoveryDepth:   config.ProjectDiscoveryDepth,
 		Running:          w.running(),
 	}
+	if state, err := config.ReadWebState(w.statePath); err == nil {
+		info.InstallID = state.Live.InstallID
+	}
 	draft := setup.NewDraft(saved, exists, roots.Roots, config.SuggestedProjectRoots(home, ""), thisRepo)
 
 	backend := w.newSetupBackend(rootsPath, saved, exists, opts)
@@ -106,7 +109,7 @@ func (w *webCLI) running() *setup.Running {
 	if err != nil || group == nil || group.State != "ready" {
 		return nil
 	}
-	return &setup.Running{APIPort: group.APIPort, Hosted: group.BrowserOrigin != ""}
+	return &setup.Running{APIPort: group.APIPort, Hosted: group.BrowserOrigin != "", WebhookPort: group.WebhookPort}
 }
 
 // setupBackend is what the setup TUI may do to this computer. Every write
@@ -118,6 +121,7 @@ type setupBackend struct {
 	revision  uint64 // web.json revision the setup started from
 	exists    bool
 	env       checks.Env
+	wait      liveWait // zero means defaultLiveWait
 
 	mu      sync.Mutex
 	group   *procstore.ServeGroup
@@ -155,7 +159,7 @@ func (b *setupBackend) wasSaved() bool {
 }
 
 func (b *setupBackend) Checks(ctx context.Context, cfg config.WebConfig) []checks.Check {
-	return checks.Run(ctx, b.env, checks.Options{APIPort: cfg.APIPort, UpdatesMode: cfg.Updates.Mode})
+	return checks.Run(ctx, b.env, checksOptions(cfg))
 }
 
 func (b *setupBackend) ScanFolder(ctx context.Context, path string) (string, []setup.Repo, error) {
@@ -225,6 +229,7 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 	notes := &lineWriter{emit: progress}
 	quiet.out, quiet.errOut = notes, notes
 	home, _ := os.UserHomeDir()
+	since := time.Now()
 
 	b.mu.Lock()
 	b.failure = nil
@@ -280,7 +285,14 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 		progress(websetupui.Step{ID: "projects", Label: "Updated project folders", State: websetupui.StepDone, Detail: detail})
 	}
 
-	// 3. Start, restart or leave alone.
+	// 3. A new webhook secret, read by the API when it (re)starts.
+	if plan.RotateSecret {
+		if err := b.rotateSecret(progress); err != nil {
+			return fail("secret", "Make a new webhook secret", err.Error(), "run bonsai web setup again", nil)
+		}
+	}
+
+	// 4. Start, restart or leave alone.
 	opts := b.opts
 	opts.applySettings = true
 	if !plan.Start && plan.RestartPort != 0 {
@@ -296,7 +308,13 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 			id, label, failed, done = "restart", "Restarting the Bonsai API", "Restart the Bonsai API", "Restarted the Bonsai API"
 		}
 		progress(websetupui.Step{ID: id, Label: label, State: websetupui.StepRunning})
-		group, _, failure, err := quiet.ensure(cfg, opts)
+		group, reused, failure, err := quiet.ensure(cfg, opts)
+		if err == nil && failure == nil && reused && plan.RotateSecret {
+			// Same spec, new secret: only the API needs to read it again.
+			if group, err = b.w.client.ServeRestart(procstore.WebServeGroupID, "api"); err == nil {
+				group = b.w.settle(group, 30*time.Second)
+			}
+		}
 		if err != nil {
 			failure = &webFailure{detail: err.Error(), fix: "bonsai web --attach   to watch it start"}
 		}
@@ -332,7 +350,23 @@ func (b *setupBackend) Apply(ctx context.Context, plan setup.Plan, progress func
 		}
 	}
 
-	// 4. The browser, on the first run only.
+	// 5. Webhooks the user took off live updates, after the API stopped
+	// covering them.
+	if removed := plan.HookRepos(setup.HookRemove); len(removed) > 0 {
+		result.Notes = append(result.Notes, b.removeHooks(ctx, removed, progress)...)
+	}
+
+	// 6. Live updates: the API adds and re-points the hooks; follow it until
+	// GitHub's ping arrives.
+	if plan.WaitLive && result.Port != 0 {
+		group := b.lastGroup()
+		if group != nil {
+			result.WebhookPort = group.WebhookPort
+		}
+		result.Notes = append(result.Notes, b.followLive(ctx, cfg, group, since, progress)...)
+	}
+
+	// 7. The browser, on the first run only.
 	if plan.Start && cfg.OpenBrowser && !b.opts.noOpen && result.URL != "" {
 		if err := b.w.openURL(result.URL); err != nil {
 			progress(websetupui.Step{ID: "open", Label: "Open your browser", State: websetupui.StepSkipped, Detail: "could not open one; open " + result.URL + " yourself"})
@@ -423,6 +457,7 @@ func (w *webCLI) checksEnv(rootsPath string) checks.Env {
 	env.Projects = func(ctx context.Context) (checks.ProjectsSummary, error) {
 		return projectsSummary(ctx, rootsPath)
 	}
+	env.Live = w.liveSummary
 	return env
 }
 

@@ -8,9 +8,9 @@
   ngrok              ●●○    ngrok (free)       yes         ~1 s
   Tailscale Funnel   ●●○    Tailscale          yes         ~1 s
   My own URL         ●●●    your proxy         yes         ~1 s
+  Custom command     ●●●    yours              yours       ~1 s
 
-  Live options: available in a later version.
-
+  Live options need admin rights on the repos you pick.
 
 
 

@@ -1,0 +1,24 @@
+ Set up the custom command                                                5 / 7
+ ──────────────────────────────────────────────────────────────────────────────
+
+ › Command      › mytunnel http 127.0.0.1:{port}
+     {port} becomes the receiver's port. Arguments are split on spaces; no
+     shell runs it.
+
+   URL pattern  › https://[a-z0-9-]+\.example\.dev
+     A regular expression that finds the public URL in the command's output.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab next field · enter next · esc back

@@ -1,23 +1,23 @@
  How should GitHub changes reach you?                                     5 / 7
  ──────────────────────────────────────────────────────────────────────────────
- › ● Standard (recommended)
+   ● Standard (recommended)
    ○ Live · Cloudflare quick
-   ○ Live · Cloudflare + domain
+ › ○ Live · Cloudflare + domain
    ○ Live · ngrok
    ○ Live · Tailscale Funnel
    ○ Live · my own URL
    ○ Live · custom command
  ──────────────────────────────────────────────────────────────────────────────
-  Standard
-  Bonsai checks GitHub every ~2 min while the app is open.
+  Live · Cloudflare tunnel with your domain
+  GitHub notifies Bonsai the moment a PR, push or check changes (GitHub's
+  change notifications, also called webhooks).
 
-  You need   nothing
-  Setup      ○○○ none
-  Delay      up to ~2 min
-  Exposes    nothing
-
-
-
+  You need   cloudflared, a Cloudflare account and a domain   ✓ installed
+             (2026.9.3)
+             admin rights on the repos you pick
+  Setup      ●●○ a named tunnel
+  Delay      ~1 s
+  Exposes    only Bonsai's change receiver; unsigned requests are rejected
 
 
 

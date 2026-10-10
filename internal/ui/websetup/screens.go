@@ -312,33 +312,47 @@ func (m Model) toolState(choiceID string) string {
 	return need + "   " + glyph + " " + state
 }
 
+// selectedUpdate is the ID of the chosen update option.
+func (m Model) selectedUpdate() string {
+	if m.draft.Config.Updates.Mode != config.WebUpdatesLive {
+		return setup.UpdatesStandard
+	}
+	return m.draft.Config.Updates.Live.Tunnel
+}
+
+// updatesIndex is the row of the chosen option, for the cursor.
+func (m Model) updatesIndex() int {
+	for i, c := range m.updateChoices() {
+		if c.ID == m.selectedUpdate() {
+			return i
+		}
+	}
+	return 0
+}
+
 func (m Model) updatesView() string {
 	if m.compare {
 		return m.compareView()
 	}
 	choices := m.updateChoices()
 	cursor := m.cursor[screenUpdates]
+	selected := m.selectedUpdate()
 	var left strings.Builder
 	for i, c := range choices {
 		radio := "○"
-		if c.ID == m.draft.Config.Updates.Mode || (c.ID == setup.UpdatesStandard && m.draft.Config.Updates.Mode != config.WebUpdatesLive) {
+		if c.ID == selected {
 			radio = "●"
 		}
-		label := m.st.text.Render(radio + " " + c.Label)
-		if !c.Available {
-			label = m.st.dim.Render(radio + " " + c.Label)
-		}
-		left.WriteString(m.marker(cursor == i) + label + "\n")
+		left.WriteString(m.marker(cursor == i) + m.st.text.Render(radio+" "+c.Label) + "\n")
 	}
-	left.WriteString("   " + m.st.dim.Render("Live: "+setup.LaterVersion))
 	c := choices[cursor]
 	body := ""
 	if w, _ := m.size(); w >= twoPaneMinWidth {
 		body = "\n" // the stacked layout needs every line at 24 rows
 	}
-	body += m.panes(left.String(), func(w int) string { return m.choicePanel(c, m.toolState(c.ID), w) })
+	body += m.panes(strings.TrimRight(left.String(), "\n"), func(w int) string { return m.choicePanel(c, m.toolState(c.ID), w) })
 	hs := []hint{{"↑↓", "choose"}, {"?", "compare all"}, {"enter", "next"}, {"esc", "back"}}
-	if m.mode == Edit {
+	if m.mode == Edit && c.ID == setup.UpdatesStandard {
 		hs[2] = hint{"enter", "done"}
 	}
 	return m.frame("How should GitHub changes reach you?", m.counter(), body, hs)
@@ -367,7 +381,7 @@ func (m Model) compareView() string {
 		}
 		b.WriteString("  " + strings.TrimRight(line.String(), " ") + "\n")
 	}
-	b.WriteString("\n  " + m.st.dim.Render("Live options: "+setup.LaterVersion+"."))
+	b.WriteString("\n  " + m.st.dim.Render("Live options need admin rights on the repos you pick."))
 	return m.frame("Compare update options", m.counter(), b.String(), []hint{{"esc", "close"}})
 }
 
@@ -380,11 +394,12 @@ func (m Model) onUpdates(key string) (tea.Model, tea.Cmd) {
 		m.cursor[screenUpdates] = m.move(screenUpdates, 1, len(choices))
 	case "?":
 		m.compare = true
+	case "r":
+		return m, m.startChecks()
 	case "enter", " ":
 		c := choices[m.cursor[screenUpdates]]
-		if !c.Available {
-			m.flash = c.Label + " is " + setup.LaterVersion + ". Standard stays on for now."
-			return m, nil
+		if c.ID != setup.UpdatesStandard {
+			return m.chooseLive(c, key == "enter")
 		}
 		m.draft.Config.Updates.Mode = config.WebUpdatesStandard
 		if key == "enter" {

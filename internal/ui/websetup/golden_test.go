@@ -52,6 +52,31 @@ func TestGolden(t *testing.T) {
 	}
 	failing := newFake()
 	failing.failApply = true
+	liveRunning := testInfo()
+	liveRunning.Running = &setup.Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+	liveRunning.InstallID = "3f9c2a71d04b8e65"
+	liveEdit := func(f *fakeBackend, keys ...string) func(*testing.T, int, int) *harness {
+		return func(t *testing.T, w, h int) *harness {
+			hs := newHarness(t, f, Edit, liveEditDraft("octo/bonsai", "octo/api"), liveRunning)
+			hs.resize(w, h)
+			hs.keys(keys...)
+			return hs
+		}
+	}
+	liveProblems := func() *fakeBackend {
+		f := newFake()
+		f.checks[5] = checks.Check{ID: checks.IDTunnelCloudflared, Title: "cloudflared", State: checks.OK, Detail: "installed (2026.9.3) · not logged in (only a custom domain needs it)", Fix: &checks.Fix{Command: "cloudflared tunnel login", Inline: true}}
+		f.checks[6].Detail = "not installed · not used by your tunnel"
+		f.checks[7].Detail = "not installed · not used by your tunnel"
+		f.checks = append(f.checks,
+			checks.Check{ID: checks.IDUpdatesLive, Title: "live updates", State: checks.Warn, Detail: "1 of 2 repos live · octo/api cannot be managed with your gh login", Fix: &checks.Fix{Command: "gh auth refresh -h github.com -s admin:repo_hook", Inline: true}},
+			checks.Check{ID: checks.IDLiveHooks, Title: "Bonsai webhooks", State: checks.Warn, Detail: "acme/old still has a Bonsai webhook that live updates no longer use", Fix: &checks.Fix{Command: "gh api -X DELETE repos/acme/old/hooks/41"}},
+		)
+		return f
+	}
+	wizardTo := func(keys ...string) []string {
+		return append([]string{"enter", "enter", "enter", "enter"}, keys...)
+	}
 
 	scenes := []scene{
 		{"01-welcome", wizard(newFake())},
@@ -80,6 +105,41 @@ func TestGolden(t *testing.T) {
 		{"13-done-edit", edit(newFake(), running, "enter", "down", "space", "enter", "a", "enter")},
 		{"14-advanced", edit(newFake(), running, "down", "down", "down", "down", "enter")},
 		{"15-doctor", edit(problems(), running, "d")},
+		{"16-updates-named", wizard(newFake(), wizardTo("down", "down")...)},
+		{"17-tunnel-named", func(t *testing.T, w, h int) *harness {
+			hs := wizard(newFake(), wizardTo("down", "down", "enter")...)(t, w, h)
+			hs.typeText("bonsai")
+			hs.keys("enter")
+			hs.typeText("http://hooks.example.com")
+			hs.keys("enter")
+			return hs
+		}},
+		{"18-tunnel-custom", wizard(newFake(), wizardTo("down", "down", "down", "down", "down", "down", "enter")...)},
+		{"19-live-repos", wizard(newFake(), wizardTo("down", "enter", "space", "down", "down")...)},
+		{"20-review-live", wizard(newFake(), wizardTo("down", "enter", "space", "enter")...)},
+		{"21-apply-live", func(t *testing.T, w, h int) *harness {
+			hs := wizard(newFake(), wizardTo("down", "enter", "space", "enter")...)(t, w, h)
+			// Mid-apply: the fake backend finishes at once, so set the steps
+			// the real one reports while it waits for GitHub.
+			m := hs.model().push(screenApply)
+			m.applying = true
+			m.steps = []Step{
+				{ID: "save", Label: "Saved settings", State: StepDone, Detail: "~/.config/bonsai/web.json"},
+				{ID: "start", Label: "Started Bonsai", State: StepDone, Detail: "http://127.0.0.1:7001"},
+				{ID: "receiver", Label: "Change receiver ready", State: StepDone, Detail: "127.0.0.1:7002"},
+				{ID: "tunnel", Label: "Tunnel address", State: StepDone, Detail: "https://quiet-river.trycloudflare.com"},
+				{ID: "hooks", Label: "GitHub webhooks", State: StepDone, Detail: "octo/bonsai added"},
+				{ID: "ping", Label: "Waiting for GitHub's ping", State: StepRunning, Detail: "octo/bonsai"},
+			}
+			hs.m = m
+			return hs
+		}},
+		{"21-done-live", wizard(newFake(), wizardTo("down", "enter", "space", "enter", "enter")...)},
+		{"22-dashboard-live", liveEdit(liveProblems())},
+		{"23-review-live-off", liveEdit(newFake(), "down", "down", "down", "enter", "up", "enter", "a")},
+		{"24-advanced-live", liveEdit(newFake(), "down", "down", "down", "down", "enter", "down", "down", "space")},
+		{"25-review-rotate", liveEdit(newFake(), "down", "down", "down", "down", "enter", "down", "down", "space", "enter", "a")},
+		{"26-doctor-live", liveEdit(liveProblems(), "d")},
 	}
 	for _, sc := range scenes {
 		for _, size := range [][2]int{{80, 24}, {120, 40}} {

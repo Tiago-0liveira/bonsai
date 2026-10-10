@@ -23,6 +23,9 @@ type Info struct {
 	DiscoveryDepth   int
 	// Running is the current stack, or nil when bonsai web is not running.
 	Running *setup.Running
+	// InstallID marks this computer's webhooks; "" until live updates first
+	// ran.
+	InstallID string
 }
 
 type StepState int
@@ -46,11 +49,13 @@ type Step struct {
 
 // Result is how Apply ended.
 type Result struct {
-	OK     bool
-	URL    string   // the page bonsai web serves, when it is running
-	Port   int      // the API port, when bonsai web is running
-	Opened bool     // the browser was opened
-	Notes  []string // extra lines for the Done screen
+	OK   bool
+	URL  string // the page bonsai web serves, when it is running
+	Port int    // the API port, when bonsai web is running
+	// WebhookPort is the live-updates receiver's port, 0 without one.
+	WebhookPort int
+	Opened      bool     // the browser was opened
+	Notes       []string // extra lines for the Done screen
 }
 
 type Backend interface {
@@ -59,6 +64,10 @@ type Backend interface {
 	// ScanFolder canonicalizes path and lists the repositories discovery
 	// finds under it. An unusable folder is an error that names the cause.
 	ScanFolder(ctx context.Context, path string) (canonical string, repos []setup.Repo, err error)
+	// LiveRepositories lists the GitHub repositories of repos (and the
+	// configured ones) with whether the gh login administers each. It only
+	// reads from GitHub.
+	LiveRepositories(ctx context.Context, repos []setup.Repo, configured []string) []setup.LiveRepo
 	// FixCommand builds the process an inline fix runs.
 	FixCommand(fix checks.Fix) *exec.Cmd
 	// Apply writes the plan and starts or restarts what it needs,

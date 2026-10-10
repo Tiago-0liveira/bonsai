@@ -7,7 +7,6 @@
    ○ Live · Tailscale Funnel
    ○ Live · my own URL
    ○ Live · custom command
-   Live: available in a later version
  ──────────────────────────────────────────────────────────────────────────────
   Live · Cloudflare quick tunnel
   GitHub notifies Bonsai the moment a PR, push or check changes (GitHub's
@@ -20,5 +19,6 @@
   Exposes    only Bonsai's change receiver; unsigned requests are rejected
   Note       The public address changes each time bonsai web starts. Bonsai
              re-points your GitHub notifications automatically.
-  Status     available in a later version
+
+
  ↑↓ choose · ? compare all · enter next · esc back

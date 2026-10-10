@@ -1,16 +1,16 @@
  How should GitHub changes reach you?                                                                             5 / 7
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
- ╭───────────────────────────────────────╮ ╭───────────────────────────────────────────────────────────────────────────╮
- │  › ● Standard (recommended)           │ │ Standard                                                                  │
- │    ○ Live · Cloudflare quick          │ │ Bonsai checks GitHub every ~2 min while the app is open.                  │
- │    ○ Live · Cloudflare + domain       │ │                                                                           │
- │    ○ Live · ngrok                     │ │ You need   nothing                                                        │
- │    ○ Live · Tailscale Funnel          │ │ Setup      ○○○ none                                                       │
- │    ○ Live · my own URL                │ │ Delay      up to ~2 min                                                   │
- │    ○ Live · custom command            │ │ Exposes    nothing                                                        │
- │    Live: available in a later version │ ╰───────────────────────────────────────────────────────────────────────────╯
- ╰───────────────────────────────────────╯
+ ╭─────────────────────────────────╮ ╭─────────────────────────────────────────────────────────────────────────────────╮
+ │  › ● Standard (recommended)     │ │ Standard                                                                        │
+ │    ○ Live · Cloudflare quick    │ │ Bonsai checks GitHub every ~2 min while the app is open.                        │
+ │    ○ Live · Cloudflare + domain │ │                                                                                 │
+ │    ○ Live · ngrok               │ │ You need   nothing                                                              │
+ │    ○ Live · Tailscale Funnel    │ │ Setup      ○○○ none                                                             │
+ │    ○ Live · my own URL          │ │ Delay      up to ~2 min                                                         │
+ │    ○ Live · custom command      │ │ Exposes    nothing                                                              │
+ ╰─────────────────────────────────╯ ╰─────────────────────────────────────────────────────────────────────────────────╯
+
 
 
 

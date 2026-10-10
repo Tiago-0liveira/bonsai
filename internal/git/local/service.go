@@ -384,6 +384,12 @@ func (s *Service) ListWorktrees(ctx context.Context, id string) ([]domain.Worktr
 	return result, nil
 }
 
+// RemoteIdentities lists the remotes of the repository at dir with the
+// GitHub repository each one names (FullName, empty for other hosts).
+func RemoteIdentities(ctx context.Context, dir string) []domain.RemoteIdentity {
+	return remoteIdentities(ctx, dir)
+}
+
 func remoteIdentities(ctx context.Context, dir string) []domain.RemoteIdentity {
 	out, err := run(ctx, dir, "remote")
 	if err != nil {

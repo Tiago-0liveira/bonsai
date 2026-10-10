@@ -2,18 +2,18 @@
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  ╭─────────────────────────────────╮ ╭─────────────────────────────────────────────────────────────────────────────────╮
- │    ● Standard (recommended)     │ │ Live · Cloudflare quick tunnel                                                  │
- │  › ○ Live · Cloudflare quick    │ │ GitHub notifies Bonsai the moment a PR, push or check changes (GitHub's change  │
- │    ○ Live · Cloudflare + domain │ │ notifications, also called webhooks).                                           │
+ │    ● Standard (recommended)     │ │ Live · Cloudflare tunnel with your domain                                       │
+ │    ○ Live · Cloudflare quick    │ │ GitHub notifies Bonsai the moment a PR, push or check changes (GitHub's change  │
+ │  › ○ Live · Cloudflare + domain │ │ notifications, also called webhooks).                                           │
  │    ○ Live · ngrok               │ │                                                                                 │
- │    ○ Live · Tailscale Funnel    │ │ You need   cloudflared   ✓ installed (2026.9.3)                                 │
- │    ○ Live · my own URL          │ │            admin rights on the repos you pick                                   │
- │    ○ Live · custom command      │ │ Setup      ●○○ one step, no account                                             │
- ╰─────────────────────────────────╯ │ Delay      ~1 s                                                                 │
+ │    ○ Live · Tailscale Funnel    │ │ You need   cloudflared, a Cloudflare account and a domain   ✓ installed         │
+ │    ○ Live · my own URL          │ │            (2026.9.3)                                                           │
+ │    ○ Live · custom command      │ │            admin rights on the repos you pick                                   │
+ ╰─────────────────────────────────╯ │ Setup      ●●○ a named tunnel                                                   │
+                                     │ Delay      ~1 s                                                                 │
                                      │ Exposes    only Bonsai's change receiver; unsigned requests are rejected        │
-                                     │ Note       The public address changes each time bonsai web starts. Bonsai re-   │
-                                     │            points your GitHub notifications automatically.                      │
                                      ╰─────────────────────────────────────────────────────────────────────────────────╯
+
 
 
 

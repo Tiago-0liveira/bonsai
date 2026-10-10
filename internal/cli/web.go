@@ -58,6 +58,9 @@ type webCLI struct {
 	executable string
 	// lookPath finds the tunnel program; nil means exec.LookPath.
 	lookPath func(string) (string, error)
+	// hooks holds the GitHub client for repository webhooks (hookAPI);
+	// tests set a fake.
+	hooks *hookClient
 }
 
 var execLookPath = exec.LookPath
@@ -84,6 +87,7 @@ func newWebCLI(in io.Reader, out, errOut io.Writer) (*webCLI, error) {
 		configPath: configPath,
 		statePath:  statePath,
 		client:     client.ForUserHome(home),
+		hooks:      &hookClient{},
 		openURL:    browser.Open,
 		tty:        isTTY(in) && isTTY(out),
 	}, nil

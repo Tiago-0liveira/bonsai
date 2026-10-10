@@ -1,9 +1,11 @@
 package websetup
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
@@ -64,7 +66,15 @@ func (m Model) reviewView() string {
 		}
 	}
 
-	b.WriteString("\n  " + m.st.text.Render(setup.NothingExternal) + "\n")
+	if external := setup.ExternalChanges(plan, m.info.InstallID); len(external) > 0 {
+		b.WriteString("\n  " + m.st.title.Render("Outside this computer") + "\n")
+		for _, line := range external {
+			b.WriteString(m.hang("  "+m.st.warn.Render("•"), 4, line, w-1) + "\n")
+		}
+		b.WriteString("\n")
+	} else {
+		b.WriteString("\n  " + m.st.text.Render(setup.NothingExternal) + "\n")
+	}
 	var effect []string
 	switch {
 	case m.mode == Wizard:
@@ -74,6 +84,9 @@ func (m Model) reviewView() string {
 		}
 	case m.info.Running == nil:
 		effect = append(effect, "bonsai web is not running; your changes apply the next time it starts.")
+		if len(plan.HookRepos(setup.HookAdd))+len(plan.HookRepos(setup.HookRepoint)) > 0 {
+			effect = append(effect, "Webhooks are added or re-pointed then; deletions happen now.")
+		}
 	default:
 		if plan.RestartAPI {
 			effect = append(effect, "Restarts the Bonsai API ("+plan.RestartReason+").")
@@ -86,6 +99,9 @@ func (m Model) reviewView() string {
 		if plan.ProjectsChanged() {
 			effect = append(effect, "Bonsai picks up project changes within 30 s; nothing restarts for them.")
 		}
+	}
+	if plan.WaitLive && (m.mode == Wizard || m.info.Running != nil) {
+		effect = append(effect, "Then Bonsai waits for GitHub to confirm each webhook (about a minute at most).")
 	}
 	for _, e := range effect {
 		b.WriteString(indent(m.st.dim.Render(m.wrap(e, w-4)), 2) + "\n")
@@ -246,10 +262,21 @@ func (m Model) worst(ids ...string) checks.State {
 }
 
 func (m Model) updatesHealth() checks.State {
-	if m.draft.Config.Updates.Mode == config.WebUpdatesLive {
-		return checks.Warn
+	if m.draft.Config.Updates.Mode != config.WebUpdatesLive {
+		return checks.OK
 	}
-	return checks.OK
+	return m.worst(checks.IDUpdatesLive, tunnelTool(m.draft.Config.Updates.Live.Tunnel), checks.IDTunnelCustom)
+}
+
+func (m Model) advancedSummary(cfg config.WebConfig) string {
+	text := "port " + itoa(cfg.APIPort)
+	if cfg.Updates.Mode == config.WebUpdatesLive {
+		text += " · webhook port " + itoa(cfg.Updates.Live.WebhookPort)
+	}
+	if m.draft.RotateSecret {
+		text += " · new webhook secret"
+	}
+	return text
 }
 
 func (m Model) sections() []section {
@@ -266,9 +293,17 @@ func (m Model) sections() []section {
 		{"Projects", setup.ProjectsSummary(m.draft, m.info.Home), m.worst(checks.IDProjects), screenProjects, foldersEdited},
 		{"Open in", setup.InterfacesText(a.Interfaces) + " · auto-open " + onOff(a.OpenBrowser), checks.OK, screenOpenIn, a.Interfaces != b.Interfaces || a.OpenBrowser != b.OpenBrowser},
 		{"GitHub", m.githubSummary(), m.worst(checks.IDGHInstalled, checks.IDGHAuth), screenGitHub, false},
-		{"Updates", setup.UpdatesSummary(a, m.info.StandardInterval), m.updatesHealth(), screenUpdates, a.Updates.Mode != b.Updates.Mode},
-		{"Advanced", "port " + itoa(a.APIPort), m.worst(checks.IDPort), screenAdvanced, a.APIPort != b.APIPort},
+		{"Updates", setup.UpdatesSummary(a, m.info.StandardInterval), m.updatesHealth(), screenUpdates, updatesEdited(b, a)},
+		{"Advanced", m.advancedSummary(a), m.worst(checks.IDPort), screenAdvanced, a.APIPort != b.APIPort || a.Updates.Live.WebhookPort != b.Updates.Live.WebhookPort || m.draft.RotateSecret},
 	}
+}
+
+// updatesEdited reports a change on the Updates screens (the webhook port
+// belongs to Advanced).
+func updatesEdited(before, after config.WebConfig) bool {
+	b, a := before.Updates, after.Updates
+	b.Live.WebhookPort, a.Live.WebhookPort = 0, 0
+	return !reflect.DeepEqual(b, a)
 }
 
 func onOff(v bool) string {
@@ -328,12 +363,18 @@ func (m Model) onDashboard(key string) (tea.Model, tea.Cmd) {
 		if target == screenAdvanced {
 			m.portIn.SetValue(itoa(m.draft.Config.APIPort))
 			m.portIn.CursorEnd()
-			m.inputErr = ""
+			m.webhookIn.SetValue(itoa(m.draft.Config.Updates.Live.WebhookPort))
+			m.webhookIn.CursorEnd()
+			m.webhookIn.Blur()
+			m.advFocus, m.inputErr = 0, ""
 			m = m.push(target)
 			return m, m.portIn.Focus()
 		}
 		if target == screenOpenIn {
 			m.cursor[screenOpenIn] = m.openIndex()
+		}
+		if target == screenUpdates {
+			m.cursor[screenUpdates] = m.updatesIndex()
 		}
 		return m.push(target), nil
 	case "a":
@@ -355,41 +396,94 @@ func (m Model) onDashboard(key string) (tea.Model, tea.Cmd) {
 func (m Model) advancedView() string {
 	w, _ := m.size()
 	var b strings.Builder
-	b.WriteString("\n  " + m.portIn.View() + "\n")
+	b.WriteString("\n" + m.marker(m.advFocus == 0) + m.portIn.View() + "\n")
+	b.WriteString(m.marker(m.advFocus == 1) + m.webhookIn.View() + "\n")
+	box := "[ ]"
+	if m.draft.RotateSecret {
+		box = "[x]"
+	}
+	b.WriteString(m.marker(m.advFocus == 2) + m.st.text.Render(box+" Rotate the webhook secret") + "\n")
 	if m.inputErr != "" {
-		b.WriteString("  " + m.st.fail.Render("✗") + " " + m.st.text.Render(m.inputErr) + "\n")
+		b.WriteString("\n  " + m.st.fail.Render("✗") + " " + m.st.text.Render(m.inputErr) + "\n")
 		b.WriteString("    " + m.st.dim.Render("fix  type a number from 1024 to 65535 that no other program uses") + "\n")
 	}
-	b.WriteString("\n" + indent(m.st.dim.Render(m.wrap("Your browser connects to http://127.0.0.1:<port>. Applying a new port restarts the Bonsai API; open pages need the new address.", w-4)), 2) + "\n")
-	b.WriteString("\n" + m.row("Webhook port", itoa(m.draft.Config.Updates.Live.WebhookPort)+" · "+setup.LaterVersion) + "\n")
-	b.WriteString(m.row("Secret", "rotate webhook secret · "+setup.LaterVersion) + "\n")
-	return m.frame("Advanced", m.counter(), b.String(), []hint{{"enter", "done"}, {"esc", "back"}})
+	for _, text := range []string{
+		"Your browser connects to http://127.0.0.1:<port>. Applying a new port restarts the Bonsai API; open pages need the new address.",
+		"The webhook port is where Bonsai's change receiver listens; only live updates use it, and only through the tunnel.",
+		"A new secret restarts the Bonsai API and is sent to every webhook; deliveries signed with the old one are rejected.",
+	} {
+		b.WriteString("\n" + indent(m.st.dim.Render(m.wrap(text, w-4)), 2) + "\n")
+	}
+	return m.frame("Advanced", m.counter(), b.String(), []hint{{"↑↓", "move"}, {"space", "toggle"}, {"enter", "done"}, {"esc", "back"}})
+}
+
+func (m Model) focusAdvanced(i int) (Model, tea.Cmd) {
+	if i < 0 || i > 2 {
+		return m, nil
+	}
+	m.portIn.Blur()
+	m.webhookIn.Blur()
+	m.advFocus = i
+	switch i {
+	case 0:
+		return m, m.portIn.Focus()
+	case 1:
+		return m, m.webhookIn.Focus()
+	}
+	return m, nil
 }
 
 func (m Model) onAdvanced(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.portIn.Blur()
+		m.webhookIn.Blur()
 		m.inputErr = ""
 		return m.pop(), nil
-	case "enter":
-		port, err := strconv.Atoi(strings.TrimSpace(m.portIn.Value()))
-		if err != nil || port < 1 || port > 65535 {
-			m.inputErr = "“" + m.portIn.Value() + "” is not a port number"
+	case "down", "tab":
+		return m.focusAdvanced(m.advFocus + 1)
+	case "up", "shift+tab":
+		return m.focusAdvanced(m.advFocus - 1)
+	case " ":
+		if m.advFocus == 2 {
+			if m.draft.Config.Updates.Mode != config.WebUpdatesLive && !m.draft.RotateSecret {
+				m.flash = "The webhook secret is only used by live updates; turn them on in Updates first."
+				return m, nil
+			}
+			m.draft.RotateSecret = !m.draft.RotateSecret
 			return m, nil
 		}
+	case "enter":
 		next := m.draft.Config
-		next.APIPort = port
+		for _, in := range []struct {
+			field  textinput.Model
+			target *int
+		}{{m.portIn, &next.APIPort}, {m.webhookIn, &next.Updates.Live.WebhookPort}} {
+			port, err := strconv.Atoi(strings.TrimSpace(in.field.Value()))
+			if err != nil || port < 1 || port > 65535 {
+				m.inputErr = "“" + in.field.Value() + "” is not a port number"
+				return m, nil
+			}
+			*in.target = port
+		}
 		if err := next.Validate(); err != nil {
 			m.inputErr = err.Error()
 			return m, nil
 		}
 		m.draft.Config = next
 		m.portIn.Blur()
+		m.webhookIn.Blur()
 		m.inputErr = ""
 		return m.pop(), nil
 	}
+	if m.advFocus == 2 {
+		return m, nil
+	}
 	var cmd tea.Cmd
-	m.portIn, cmd = m.portIn.Update(msg)
+	if m.advFocus == 0 {
+		m.portIn, cmd = m.portIn.Update(msg)
+	} else {
+		m.webhookIn, cmd = m.webhookIn.Update(msg)
+	}
 	return m, cmd
 }

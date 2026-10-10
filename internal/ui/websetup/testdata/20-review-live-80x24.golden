@@ -1,0 +1,24 @@
+ Review                                                                   6 / 7
+ ──────────────────────────────────────────────────────────────────────────────
+
+  Projects     ~/bonsai, ~/code · 15 repos
+  Open in      this computer · http://127.0.0.1:7001 · auto-open on
+  GitHub       via gh (octo)
+  Updates      Live · Cloudflare quick tunnel · 1 repo
+
+  Outside this computer
+  • Starts a Cloudflare quick tunnel that forwards only Bonsai's change
+    receiver (127.0.0.1:7002) to the internet.
+  • Adds a GitHub webhook to octo/bonsai. Their admins see a webhook to a
+    trycloudflare.com address marked ?bonsai=<this computer's id>.
+
+  Bonsai saves your settings to ~/.config/bonsai/web.json and starts in the
+  background.
+  Your browser opens when it is ready.
+  Then Bonsai waits for GitHub to confirm each webhook (about a minute at
+  most).
+
+
+
+
+ enter apply · esc go back

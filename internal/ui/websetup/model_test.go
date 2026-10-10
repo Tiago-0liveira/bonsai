@@ -36,6 +36,8 @@ type fakeBackend struct {
 	fixes       []checks.Fix
 	failApply   bool
 	runningPort int
+	liveRepos   []setup.LiveRepo
+	liveCalls   int
 }
 
 func healthyChecks() []checks.Check {
@@ -45,9 +47,9 @@ func healthyChecks() []checks.Check {
 		{ID: checks.IDGHAuth, Title: "gh logged in", State: checks.OK, Detail: "github.com · octo"},
 		{ID: checks.IDProjects, Title: "project folders", State: checks.OK, Detail: "2 folders · 15 repos found · 15 shown"},
 		{ID: checks.IDPort, Title: "port 7001", State: checks.OK, Detail: "free"},
-		{ID: checks.IDTunnelCloudflared, Title: "cloudflared", State: checks.Skip, Detail: "installed (2026.9.3) · not logged in (only a custom domain needs it) · only needed for live updates (coming in a later version)", Fix: &checks.Fix{Command: "cloudflared tunnel login", Inline: true}},
-		{ID: checks.IDTunnelNgrok, Title: "ngrok", State: checks.Skip, Detail: "not installed · only needed for live updates (coming in a later version)", Fix: &checks.Fix{Command: "install ngrok: https://ngrok.com/download"}},
-		{ID: checks.IDTunnelTailscale, Title: "tailscale", State: checks.Skip, Detail: "not installed · only needed for live updates (coming in a later version)", Fix: &checks.Fix{Command: "install Tailscale: https://tailscale.com/download"}},
+		{ID: checks.IDTunnelCloudflared, Title: "cloudflared", State: checks.Skip, Detail: "installed (2026.9.3) · not logged in (only a custom domain needs it) · only needed for live updates", Fix: &checks.Fix{Command: "cloudflared tunnel login", Inline: true}},
+		{ID: checks.IDTunnelNgrok, Title: "ngrok", State: checks.Skip, Detail: "not installed · only needed for live updates", Fix: &checks.Fix{Command: "install ngrok: https://ngrok.com/download"}},
+		{ID: checks.IDTunnelTailscale, Title: "tailscale", State: checks.Skip, Detail: "not installed · only needed for live updates", Fix: &checks.Fix{Command: "install Tailscale: https://tailscale.com/download"}},
 	}
 }
 
@@ -76,7 +78,29 @@ func newFake() *fakeBackend {
 			p("work"):   repos("alpha", "beta", "gamma"),
 			p("old"):    repos("legacy"),
 		},
+		liveRepos: []setup.LiveRepo{
+			{FullName: "octo/bonsai", Local: "bonsai", Admin: true},
+			{FullName: "octo/api", Local: "api", Admin: true},
+			{FullName: "acme/web", Local: "web"},
+		},
 	}
+}
+
+func (f *fakeBackend) LiveRepositories(_ context.Context, _ []setup.Repo, configured []string) []setup.LiveRepo {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.liveCalls++
+	out := append([]setup.LiveRepo{}, f.liveRepos...)
+	for _, repo := range configured {
+		found := false
+		for _, r := range out {
+			found = found || strings.EqualFold(r.FullName, repo)
+		}
+		if !found {
+			out = append(out, setup.LiveRepo{FullName: repo, Err: "not in your project folders"})
+		}
+	}
+	return out
 }
 
 func (f *fakeBackend) Checks(context.Context, config.WebConfig) []checks.Check {
@@ -114,6 +138,14 @@ func (f *fakeBackend) Apply(_ context.Context, plan setup.Plan, progress func(St
 	}
 	progress(Step{ID: "start", Label: "Started Bonsai", State: StepDone, Detail: "http://127.0.0.1:7001"})
 	r := Result{OK: true, URL: "http://127.0.0.1:7001/app", Port: 7001}
+	if plan.WaitLive {
+		r.WebhookPort = plan.Config.Updates.Live.WebhookPort
+		progress(Step{ID: "receiver", Label: "Change receiver ready", State: StepDone, Detail: "127.0.0.1:7002"})
+		progress(Step{ID: "tunnel", Label: "Tunnel address", State: StepDone, Detail: "https://quiet-river.trycloudflare.com"})
+		progress(Step{ID: "hooks", Label: "GitHub webhooks", State: StepDone, Detail: "1 added"})
+		progress(Step{ID: "ping", Label: "Waiting for GitHub's ping", State: StepFailed, Detail: "octo/api needs admin", Fix: "ask an admin of octo/api, or drop it in: bonsai web setup → Updates"})
+		r.Notes = append(r.Notes, "1 repository is not live yet; see bonsai web status.")
+	}
 	if plan.Config.OpenBrowser {
 		r.Opened = true
 		f.opened = append(f.opened, r.URL)
@@ -355,18 +387,226 @@ func TestEscGoesBackOnEveryScreen(t *testing.T) {
 	}
 }
 
-func TestLiveOptionsAreNotSelectable(t *testing.T) {
+func liveEditDraft(repos ...string) setup.Draft {
+	d := editDraft()
+	d.Config.Updates.Mode = config.WebUpdatesLive
+	d.Config.Updates.Live.Repositories = repos
+	return setup.NewDraft(d.Config, true, []config.ProjectRoot{
+		{ID: config.PathID("root", p("code")), Path: p("code")},
+		{ID: config.PathID("root", p("old")), Path: p("old")},
+	}, []string{p("work")}, "")
+}
+
+func TestLiveUpdatesWizard(t *testing.T) {
+	f := newFake()
+	h := newHarness(t, f, Wizard, firstRunDraft(), testInfo())
+	h.keys("enter", "enter", "enter", "enter", "down")
+	if !strings.Contains(h.model().View(), "installed (2026.9.3)") {
+		t.Fatal("the Cloudflare panel shows the detected cloudflared")
+	}
+	h.keys("enter")
+	if h.screen() != screenLiveRepos || f.liveCalls != 1 {
+		t.Fatalf("a quick tunnel needs no settings: screen %d, calls %d", h.screen(), f.liveCalls)
+	}
+	if step := h.model().current().step(); step != 5 {
+		t.Fatalf("the picker counts as step 5, got %d", step)
+	}
+	h.keys("enter")
+	if h.screen() != screenLiveRepos || !strings.Contains(h.model().flash, "Pick at least one") {
+		t.Fatal("live updates need a repository")
+	}
+	h.keys("down", "down", "space")
+	if !strings.Contains(h.model().flash, "admin rights on acme/web") {
+		t.Fatalf("flash = %q", h.model().flash)
+	}
+	h.keys("up", "up", "space", "enter")
+	if h.screen() != screenReview {
+		t.Fatalf("screen = %d", h.screen())
+	}
+	review := h.model().View()
+	for _, want := range []string{"Live · Cloudflare quick tunnel · 1 repo", "Outside this computer", "Starts a Cloudflare quick tunnel", "Adds a GitHub webhook to octo/bonsai"} {
+		if !strings.Contains(review, want) {
+			t.Fatalf("review lacks %q:\n%s", want, review)
+		}
+	}
+	h.keys("enter")
+	if len(f.plans) != 1 {
+		t.Fatal("apply did not run")
+	}
+	plan := f.plans[0]
+	live := plan.Config.Updates.Live
+	if plan.Config.Updates.Mode != config.WebUpdatesLive || live.Tunnel != setup.UpdatesCloudflaredQuick || strings.Join(live.Repositories, ",") != "octo/bonsai" || !plan.WaitLive || !plan.TunnelStarts {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if h.screen() != screenDone || !strings.Contains(h.model().View(), "1 repository is not live yet") {
+		t.Fatalf("done:\n%s", h.model().View())
+	}
+}
+
+func TestLiveToolMissing(t *testing.T) {
 	h := newHarness(t, newFake(), Wizard, firstRunDraft(), testInfo())
-	h.keys("enter", "enter", "enter", "enter", "down", "enter")
+	h.keys("enter", "enter", "enter", "enter", "down", "down", "down", "enter")
 	m := h.model()
 	if m.current() != screenUpdates || m.draft.Config.Updates.Mode != config.WebUpdatesStandard {
 		t.Fatalf("screen %d mode %s", m.current(), m.draft.Config.Updates.Mode)
 	}
-	if !strings.Contains(m.flash, setup.LaterVersion) {
+	if !strings.Contains(m.flash, "ngrok is not installed") || !strings.Contains(m.flash, "https://ngrok.com/download") {
 		t.Fatalf("flash = %q", m.flash)
 	}
-	if !strings.Contains(m.View(), "installed (2026.9.3)") {
-		t.Fatal("Cloudflare panel should show the detected cloudflared")
+}
+
+func TestLiveTunnelSettings(t *testing.T) {
+	f := newFake()
+	h := newHarness(t, f, Wizard, firstRunDraft(), testInfo())
+	h.keys("enter", "enter", "enter", "enter", "down", "down", "enter")
+	if h.screen() != screenLiveTunnel || len(h.model().liveIn) != 2 {
+		t.Fatalf("screen %d", h.screen())
+	}
+	h.typeText("bonsai")
+	h.keys("enter")
+	h.typeText("http://hooks.example.com")
+	h.keys("enter")
+	if m := h.model(); m.current() != screenLiveTunnel || !strings.Contains(m.inputErr, "https://") {
+		t.Fatalf("plain http must be refused: %q", m.inputErr)
+	}
+	for range "http://hooks.example.com" {
+		h.keys("backspace")
+	}
+	h.typeText("hooks.example.com")
+	h.keys("enter")
+	if h.screen() != screenLiveRepos {
+		t.Fatalf("screen %d err %q", h.screen(), h.model().inputErr)
+	}
+	live := h.model().draft.Config.Updates.Live
+	if live.TunnelName != "bonsai" || live.PublicURL != "https://hooks.example.com" {
+		t.Fatalf("live = %+v", live)
+	}
+	h.keys("space", "enter")
+	h.resize(160, 40)
+	if !strings.Contains(h.model().View(), "Their admins see a webhook to hooks.example.com") {
+		t.Fatalf("review:\n%s", h.model().View())
+	}
+}
+
+func TestCustomTunnelCannotTargetTheAPI(t *testing.T) {
+	h := newHarness(t, newFake(), Wizard, firstRunDraft(), testInfo())
+	h.keys("enter", "enter", "enter", "enter", "down", "down", "down", "down", "down", "down", "enter")
+	if h.screen() != screenLiveTunnel {
+		t.Fatalf("screen %d", h.screen())
+	}
+	h.typeText("mytunnel {port} --metrics 127.0.0.1:7001")
+	h.keys("enter")
+	h.typeText(`https://\S+`)
+	h.keys("enter")
+	if m := h.model(); m.current() != screenLiveTunnel || !strings.Contains(m.inputErr, "7001") {
+		t.Fatalf("screen %d err %q", m.current(), m.inputErr)
+	}
+}
+
+func TestLiveOffDeletesHooksAfterReview(t *testing.T) {
+	f := newFake()
+	info := testInfo()
+	info.Running = &setup.Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+	h := newHarness(t, f, Edit, liveEditDraft("octo/bonsai", "octo/api"), info)
+	h.model().cursor[screenDashboard] = 3
+	h.keys("enter")
+	if h.model().cursor[screenUpdates] != 1 {
+		t.Fatal("the cursor starts on the chosen tunnel")
+	}
+	h.keys("up", "enter")
+	if h.screen() != screenDashboard {
+		t.Fatalf("screen %d", h.screen())
+	}
+	h.keys("a")
+	review := h.model().View()
+	for _, want := range []string{"live · Cloudflare quick tunnel → standard", "Deletes Bonsai's webhook from octo/bonsai, octo/api.", "Restarts the Bonsai API (live updates changed)."} {
+		if !strings.Contains(review, want) {
+			t.Fatalf("review lacks %q:\n%s", want, review)
+		}
+	}
+	h.keys("enter")
+	if len(f.plans) != 1 || len(f.plans[0].HookRepos(setup.HookRemove)) != 2 || !f.plans[0].RestartAPI {
+		t.Fatalf("plan = %+v", f.plans)
+	}
+}
+
+func TestLiveReposKeepConfigured(t *testing.T) {
+	f := newFake()
+	info := testInfo()
+	info.Running = &setup.Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+	h := newHarness(t, f, Edit, liveEditDraft("octo/bonsai", "gone/repo"), info)
+	h.model().cursor[screenDashboard] = 3
+	h.keys("enter", "enter")
+	m := h.model()
+	if m.current() != screenLiveRepos || len(m.liveRepos) != 4 || !m.livePicked["gone/repo"] || !m.livePicked["octo/bonsai"] {
+		t.Fatalf("screen %d repos %+v picked %v", m.current(), m.liveRepos, m.livePicked)
+	}
+	// Unpick the repository no folder has any more, add octo/api.
+	h.keys("down", "space", "down", "down", "space")
+	if m := h.model(); m.livePicked["gone/repo"] || !m.livePicked["octo/api"] {
+		t.Fatalf("picked %v: a configured repository can always be unpicked", m.livePicked)
+	}
+	h.keys("enter")
+	if h.screen() != screenDashboard {
+		t.Fatalf("edit mode returns to the dashboard: %d", h.screen())
+	}
+	h.keys("a")
+	review := h.model().View()
+	for _, want := range []string{"Live repos", "+ octo/api", "− gone/repo", "Adds a GitHub webhook to octo/api.", "Deletes Bonsai's webhook from gone/repo."} {
+		if !strings.Contains(review, want) {
+			t.Fatalf("review lacks %q:\n%s", want, review)
+		}
+	}
+	if strings.Contains(review, "Restarts") {
+		t.Fatalf("picking repositories restarts nothing:\n%s", review)
+	}
+}
+
+func TestAdvancedWebhookPortAndSecret(t *testing.T) {
+	f := newFake()
+	info := testInfo()
+	info.Running = &setup.Running{APIPort: 7001, Hosted: true}
+	h := newHarness(t, f, Edit, editDraft(), info)
+	h.model().cursor[screenDashboard] = 4
+	h.keys("enter", "down", "down", "space")
+	if !strings.Contains(h.model().flash, "turn them on in Updates first") || h.model().draft.RotateSecret {
+		t.Fatal("standard updates have no secret to rotate")
+	}
+
+	info.Running.WebhookPort = 7002
+	h = newHarness(t, f, Edit, liveEditDraft("octo/bonsai"), info)
+	h.model().cursor[screenDashboard] = 4
+	h.keys("enter", "down")
+	for range "7002" {
+		h.keys("backspace")
+	}
+	h.typeText("7001")
+	h.keys("enter")
+	if m := h.model(); m.current() != screenAdvanced || !strings.Contains(m.inputErr, "webhook_port") {
+		t.Fatalf("same port as the API: %q", m.inputErr)
+	}
+	for range "7001" {
+		h.keys("backspace")
+	}
+	h.typeText("7012")
+	h.keys("down", "space", "enter")
+	m := h.model()
+	if m.current() != screenDashboard || m.draft.Config.Updates.Live.WebhookPort != 7012 || !m.draft.RotateSecret || !m.dirty() {
+		t.Fatalf("screen %d draft %+v", m.current(), m.draft.Config.Updates.Live)
+	}
+	h.keys("a")
+	review := h.model().View()
+	for _, want := range []string{"Webhook port", "7002 → 7012", "new webhook secret", "Restarts the Bonsai API (live updates and webhook secret changed).", "at the new address and secret"} {
+		if !strings.Contains(review, want) {
+			t.Fatalf("review lacks %q:\n%s", want, review)
+		}
+	}
+	h.keys("enter")
+	if plan := f.plans[len(f.plans)-1]; !plan.RotateSecret || !plan.RestartAPI {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if h.model().draft.RotateSecret {
+		t.Fatal("a rotation is applied once")
 	}
 }
 

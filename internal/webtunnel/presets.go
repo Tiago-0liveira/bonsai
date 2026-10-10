@@ -58,6 +58,9 @@ func Known(preset string) bool {
 
 var tunnelNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
+// ValidTunnelName reports whether name can be a named Cloudflare tunnel.
+func ValidTunnelName(name string) bool { return tunnelNamePattern.MatchString(name) }
+
 // ValidateOptions rejects options a preset cannot run with. It does not check
 // that the tunnel program is installed.
 func ValidateOptions(o Options) error {

@@ -99,7 +99,7 @@ func Reconcile(ctx context.Context, api API, repo string, want Desired, current 
 		next.LastError = "you are not an admin of " + repo + ", so it stays on standard updates"
 		return next
 	}
-	hook, found, err := find(ctx, api, repo, current.HookID, want.InstallID)
+	hook, found, err := Find(ctx, api, repo, current.HookID, want.InstallID)
 	if err != nil {
 		return failed(next, repo, err)
 	}
@@ -144,7 +144,7 @@ func apply(ctx context.Context, api API, repo string, want Desired, next config.
 			return failed(next, repo, err)
 		}
 		if err := api.PingHook(ctx, repo, hook.ID); err != nil {
-			pingError = "ping: " + message(repo, err)
+			pingError = "ping: " + Message(repo, err)
 		}
 	default:
 		next.State, next.LastError = health(hook, next, now)
@@ -171,7 +171,7 @@ func Ping(ctx context.Context, api API, repo string, current config.WebLiveRepos
 // Remove deletes this machine's Bonsai hook from repo: the stored ID, else
 // the hook marked with installID. It reports whether a hook was deleted.
 func Remove(ctx context.Context, api API, repo string, current config.WebLiveRepository, installID string) (bool, error) {
-	hook, found, err := find(ctx, api, repo, current.HookID, installID)
+	hook, found, err := Find(ctx, api, repo, current.HookID, installID)
 	if err != nil || !found {
 		return false, err
 	}
@@ -181,9 +181,9 @@ func Remove(ctx context.Context, api API, repo string, current config.WebLiveRep
 	return true, nil
 }
 
-// find returns the stored hook when it is still ours, else the hook marked
-// with installID.
-func find(ctx context.Context, api API, repo string, id int64, installID string) (app.Hook, bool, error) {
+// Find returns this machine's Bonsai hook on repo: the stored hook when it is
+// still ours, else the hook marked with installID.
+func Find(ctx context.Context, api API, repo string, id int64, installID string) (app.Hook, bool, error) {
 	if id != 0 {
 		hook, err := api.GetHook(ctx, repo, id)
 		switch {
@@ -242,7 +242,7 @@ func health(hook app.Hook, current config.WebLiveRepository, now time.Time) (str
 // state; a transient failure (network, rate limit) keeps the last known one,
 // since deliveries may well still arrive.
 func failed(next config.WebLiveRepository, repo string, err error) config.WebLiveRepository {
-	next.LastError = message(repo, err)
+	next.LastError = Message(repo, err)
 	switch {
 	case app.IsHookScope(err):
 		next.State = config.WebLiveStateScopeMissing
@@ -252,8 +252,8 @@ func failed(next config.WebLiveRepository, repo string, err error) config.WebLiv
 	return next
 }
 
-// message is a one-line cause with its fix.
-func message(repo string, err error) string {
+// Message is a GitHub error on repo as one line with its fix.
+func Message(repo string, err error) string {
 	switch {
 	case app.IsHookScope(err):
 		return "your gh login cannot manage webhooks; run: " + app.ScopeFix(GitHubHost)
