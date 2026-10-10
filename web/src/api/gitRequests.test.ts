@@ -154,3 +154,26 @@ it('keeps state stale across an API restart and accepts the new epoch from seque
     expect(useBonsaiStore.getState().syncFreshness.stream.local.source).toBeUndefined()
   } finally { stop(); vi.useRealTimers() }
 })
+
+it('paints the project in view during bootstrap and holds the others until it completes', async () => {
+  const socket = { close: vi.fn(), onclose: null, onerror: null }
+  let receive!: (event: any) => void
+  useBonsaiStore.setState({ activeProjectId: 'open', projects: [], worktrees: [] })
+  openLocalEvents.mockImplementation(async callback => { receive = callback; return { socket, epoch: 'epoch' } })
+  const stop = startGitBackend()
+  try {
+    await act(async () => {})
+    const open = { id: 'open', workspace_id: 'local', full_name: 'owner/open' }
+    const background = { id: 'background', workspace_id: 'local', full_name: 'owner/background' }
+    const snapshot = (repository: typeof open, branch: string) => ({ repository, epoch: 'epoch', sequence: 0, online: true, metadata: {}, local: { branches: [], worktrees: [{ id: `${repository.id}-wt`, repository_id: repository.id, branch, main: true, local_head_sha: 'sha' }] } })
+    receive({ type: 'ready', epoch: 'epoch' })
+    receive({ type: 'catalog', projects: [background, open] })
+    receive({ type: 'project_snapshot', snapshot: snapshot(open, 'in-view') })
+    expect(useBonsaiStore.getState().activeProjectId).toBe('open')
+    expect(useBonsaiStore.getState().worktrees.map(tree => tree.branch)).toEqual(['in-view'])
+    receive({ type: 'project_snapshot', snapshot: snapshot(background, 'behind') })
+    expect(useBonsaiStore.getState().worktrees.map(tree => tree.branch)).toEqual(['in-view'])
+    receive({ type: 'bootstrap_complete' })
+    expect(useBonsaiStore.getState().worktrees.map(tree => tree.branch).sort()).toEqual(['behind', 'in-view'])
+  } finally { stop() }
+})

@@ -713,6 +713,16 @@ export function startGitBackend() {
       if (data.epoch && snapshot.epoch && data.epoch !== snapshot.epoch) return
       // A delayed event from the previous API process never reaches the buffers.
       if (activeEpoch && snapshot.epoch && snapshot.epoch !== activeEpoch) return
+      if (bootstrapping && bootstrapCatalog.length) {
+        // The project in view paints as soon as its snapshot arrives (the API
+        // sends it first); the others still wait for bootstrap_complete.
+        reconcileCatalog(bootstrapCatalog)
+        if (snapshot.repository.id === useBonsaiStore.getState().activeProjectId) {
+          bootstrapSnapshots.delete(snapshot.repository.id)
+          applySnapshot(snapshot, generation)
+          return
+        }
+      }
       if (bootstrapping) {
         const previous = bootstrapSnapshots.get(snapshot.repository.id)
         if (!previous || snapshot.sequence >= previous.sequence) bootstrapSnapshots.set(snapshot.repository.id, snapshot)
