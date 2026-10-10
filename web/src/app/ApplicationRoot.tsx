@@ -10,6 +10,7 @@ import { startGitBackend } from '../api/git'
 import {
   connectLocalBonsai,
   getLocalConnectionSnapshot,
+  LOCAL_ENTRY,
   resetLocalConnection,
   subscribeLocalConnection,
   type LocalConnectionStatus,
@@ -46,6 +47,13 @@ function LocalConnectionGate() {
     }
   }
 
+  // A page served by Bonsai itself needs no permission and no user gesture:
+  // the API is its own origin, so connect straight away.
+  const autoConnect = LOCAL_ENTRY && connection.status === 'not-attempted'
+  useEffect(() => {
+    if (autoConnect) void connect()
+  }, [autoConnect])
+
   const retryable = !['requesting-permission', 'version-incompatible', 'unsupported-browser'].includes(connection.status)
 
   return (
@@ -58,7 +66,7 @@ function LocalConnectionGate() {
           {connection.message ?? 'Start Bonsai locally, then connect this browser to the loopback API. The session capability stays in memory and is recreated after a reload.'}
         </p>
         <div className="local-connect-command" aria-label="Command to start Bonsai">
-          <span>$</span><code>bonsai serve</code>
+          <span>$</span><code>bonsai web</code>
         </div>
         <div className="local-connect-actions">
           {retryable && (
@@ -71,7 +79,9 @@ function LocalConnectionGate() {
           )}
         </div>
         <p className="local-connect-note">
-          The browser may ask for Local Network Access when you connect. Bonsai does not request localhost access from the public landing page.
+          {LOCAL_ENTRY
+            ? 'This page is served by Bonsai on this computer, so the browser does not ask for any permission.'
+            : 'The browser may ask for Local Network Access when you connect. Bonsai does not request localhost access from the public landing page.'}
         </p>
       </section>
     </main>

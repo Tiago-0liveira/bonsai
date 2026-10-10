@@ -18,7 +18,7 @@ import { EnvEditor } from '../../features/workspace/EnvEditor'
 import { StartAgentDialog } from '../../features/workspace/StartAgentDialog'
 import { StartProcessDialog } from '../../features/workspace/StartProcessDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { relayLoginURL } from '../../api/relayClient'
+import { RELAY_ENABLED, relayLoginURL } from '../../api/relayClient'
 import { TopBar } from './TopBar'
 import { WorkspaceNotice } from './WorkspaceNotice'
 import { WorkspaceVisibility } from '../ui/WorkspaceVisibility'
@@ -115,7 +115,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <BranchesIsland />
           </aside>
           <div className="shell-main pointer-events-auto absolute bottom-4 left-[428px] right-4 top-[68px] flex flex-col">
-            {gitError && <div role="status" className="island mb-3 shrink-0 px-3 py-2 text-sm text-warn">{gitError}{gitError.includes('Sign in with GitHub') && <> <a href={relayLoginURL()} className="underline">Sign in with GitHub</a></>}</div>}
+            {gitError && <div role="status" className="island mb-3 shrink-0 px-3 py-2 text-sm text-warn">{gitError}{RELAY_ENABLED && gitError.includes('Sign in with GitHub') && <> <a href={relayLoginURL()} className="underline">Sign in with GitHub</a></>}</div>}
             <div className="min-h-0 flex-1">
               <PanelGroup id="workspace-layout" direction="vertical">
                 <Panel id="main-workspace" order={1} minSize={24} defaultSize={100 - initialDockSize}>
