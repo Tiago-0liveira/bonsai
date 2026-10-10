@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 )
 
 // gitTimeout bounds every non-interactive git subprocess so a hung fetch or
@@ -54,6 +56,7 @@ func runRaw(dir string, args ...string) (string, error) {
 func RunContext(parent context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, gitTimeout)
 	defer cancel()
+	trace.AddGit()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "LC_ALL=C")

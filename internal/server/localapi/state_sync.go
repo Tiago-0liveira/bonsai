@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -382,6 +383,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 	if !ok || !project.info.Available {
 		return
 	}
+	defer trace.Start("local.ready", projectID)()
 	before, _ := s.CachedSnapshot(projectID)
 	previousIdentity := localIdentityToken(before)
 	ctx, cancel := s.readContext(localReadTimeout)

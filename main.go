@@ -3,11 +3,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -46,6 +51,15 @@ func main() {
 	// Hidden: the daemon supervises the loopback-only local HTTP API.
 	if len(args) >= 1 && args[0] == "__serve-api" {
 		if err := runServeInternal(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Hidden: in-process cold sync benchmark (see docs/bonsai-web-plan.md).
+	if len(args) >= 1 && args[0] == "__sync-bench" {
+		if err := runSyncBench(args[1:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)
 			os.Exit(1)
 		}
@@ -196,4 +210,45 @@ func runDevWebhookInternal(args []string) error {
 		BrowserOrigin: *browserOrigin,
 		SecretFile:    *secretFile,
 	})
+}
+
+func runSyncBench(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("__sync-bench", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	projects := fs.Int("projects", 0, "limit to the first N projects (0 = all)")
+	root := fs.String("root", "", "benchmark every repository under this directory instead of the configured project roots")
+	repo := fs.String("repo", "", "only benchmark the project at this main worktree path")
+	// Sync state is memory-only, so every run is cold. The flag is accepted so
+	// scripts written now keep working once warm-start persistence lands.
+	_ = fs.Bool("cold", false, "start from empty caches (always true today)")
+	timeout := fs.Duration("timeout", 2*time.Minute, "give up after this long")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	result, err := localapi.SyncBench(ctx, localapi.SyncBenchOptions{Root: *root, Repo: *repo, Projects: *projects, Timeout: *timeout})
+	if err != nil {
+		return err
+	}
+	ms := func(d time.Duration) string {
+		if d == 0 {
+			return "-"
+		}
+		return fmt.Sprintf("%.0fms", float64(d.Microseconds())/1000)
+	}
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "PROJECT\tWORKTREES\tINVENTORY\tLOCAL READY\tPR CATALOG\tALL CHECKS\tNOTE")
+	for _, row := range append(result.Rows, result.Total) {
+		note := row.ProviderErr
+		if row.Incomplete {
+			note = "timed out"
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%s\n", row.Name, row.Worktrees, ms(row.Inventory), ms(row.LocalReady), ms(row.PRCatalog), ms(row.AllChecks), note)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "\nspawns: git=%d gh=%d (whole pass)\n", result.GitSpawns, result.GHSpawns)
+	return err
 }
