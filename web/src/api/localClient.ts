@@ -263,7 +263,7 @@ export interface LocalEventConnection {
   epoch: string
 }
 
-function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) => void): Promise<LocalEventConnection> {
+function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) => void, activeProjectId?: string): Promise<LocalEventConnection> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(LOCAL_API_WS)
     let settled = false
@@ -308,15 +308,20 @@ function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) =>
       onEvent(data)
     })
     socket.addEventListener('open', () => {
-      socket.send(JSON.stringify({ type: 'authenticate', token: value.token }))
+      // active_project lets the backend refresh the project in view first.
+      socket.send(JSON.stringify({
+        type: 'authenticate',
+        token: value.token,
+        ...(activeProjectId ? { active_project: activeProjectId } : {}),
+      }))
     }, { once: true })
   })
 }
 
-export function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}): Promise<LocalEventConnection> {
+export function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}, activeProjectId?: string): Promise<LocalEventConnection> {
   if (snapshot.status !== 'connected') return Promise.reject(new Error('Connect to local Bonsai before opening local events.'))
-  if (sessionUsable(session)) return connectEventSocket(session, onEvent)
-  return currentSession().then(value => connectEventSocket(value, onEvent))
+  if (sessionUsable(session)) return connectEventSocket(session, onEvent, activeProjectId)
+  return currentSession().then(value => connectEventSocket(value, onEvent, activeProjectId))
 }
 
 export function __resetLocalClientForTests() {

@@ -20,6 +20,7 @@ func (s *Service) CreateWorktree(ctx context.Context, req domain.CreateWorktreeR
 		return domain.Worktree{}, e
 	}
 	defer unlock()
+	defer r.inv.invalidate()
 	if r.WithWorktreeRoot != nil {
 		var result domain.Worktree
 		err := r.WithWorktreeRoot(ctx, func(root string) error { var err error; result, err = s.createWorktree(ctx, r, req, root); return err })
@@ -117,6 +118,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, req domain.RemoveWorktreeR
 		return e
 	}
 	defer unlock()
+	defer r.inv.invalidate()
 	if path == r.Root {
 		return domain.E("forbidden", "cannot remove main worktree")
 	}

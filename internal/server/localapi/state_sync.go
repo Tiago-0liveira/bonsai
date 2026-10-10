@@ -81,10 +81,17 @@ type stateSync struct {
 	jobs               map[string]*syncJobState
 	watchCancels       map[string]context.CancelFunc
 
-	localSem    chan struct{}
-	providerSem chan struct{}
+	localSem    *priorityGate
+	providerSem *priorityGate
+	// prefetchSem bounds provider cache warm-ups separately, so a warm-up never
+	// holds a provider refresh slot while the real job waits behind it.
+	prefetchSem *priorityGate
 	gitSyncSem  chan struct{}
 	providers   *providerCache
+
+	// priorityProject is the project the user last had open. Its refreshes are
+	// admitted before other projects' when workers are scarce.
+	priorityProject string
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -97,8 +104,9 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		projects:     map[string]*projectProjection{},
 		jobs:         map[string]*syncJobState{},
 		watchCancels: map[string]context.CancelFunc{},
-		localSem:     make(chan struct{}, localRefreshWorkers),
-		providerSem:  make(chan struct{}, providerRefreshWorkers),
+		localSem:     newPriorityGate(localRefreshWorkers),
+		providerSem:  newPriorityGate(providerRefreshWorkers),
+		prefetchSem:  newPriorityGate(providerRefreshWorkers),
 		gitSyncSem:   make(chan struct{}, 2),
 		providers:    newProviderCache(),
 	}
@@ -181,17 +189,42 @@ func (s *stateSync) ReconcileCatalog() {
 	s.syncWatchers()
 }
 
-func (s *stateSync) SubscriberReady() {
+// SubscriberReady refreshes every project for a new subscriber. active is the
+// project the subscriber has open, if it said so; it is refreshed first, and
+// stays the priority project until another one is named.
+func (s *stateSync) SubscriberReady(active string) {
 	s.ReconcileCatalog()
+	if active != "" {
+		if _, ok := s.registry.Lookup(active); ok {
+			s.mu.Lock()
+			s.priorityProject = active
+			s.mu.Unlock()
+		}
+	}
 	s.RefreshAll(refreshAll, false)
 }
 
 func (s *stateSync) RefreshAll(scope refreshScope, forceProvider bool) {
-	for _, info := range s.registry.List() {
+	infos := s.registry.List()
+	first := s.priorityID()
+	if first != "" {
+		sort.SliceStable(infos, func(i, j int) bool { return infos[i].ID == first && infos[j].ID != first })
+	}
+	for _, info := range infos {
 		if info.Available {
 			s.Queue(info.ID, scope, forceProvider)
 		}
 	}
+}
+
+func (s *stateSync) priorityID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.priorityProject
+}
+
+func (s *stateSync) isPriority(projectID string) bool {
+	return projectID != "" && s.priorityID() == projectID
 }
 
 func (s *stateSync) Queue(projectID string, scope refreshScope, forceProvider bool) {
@@ -224,10 +257,11 @@ func (s *stateSync) queueLocal(projectID string) {
 	}
 	j.localRunning = true
 	s.mu.Unlock()
+	ticket := s.localSem.enter(s.isPriority(projectID))
 	go func() {
-		s.localSem <- struct{}{}
+		<-ticket
 		s.refreshLocal(projectID)
-		<-s.localSem
+		s.localSem.release()
 		s.mu.Lock()
 		j := s.jobLocked(projectID)
 		again := j.localPending
@@ -254,10 +288,11 @@ func (s *stateSync) queueProcesses(projectID string) {
 	}
 	j.processRunning = true
 	s.mu.Unlock()
+	ticket := s.localSem.enter(s.isPriority(projectID))
 	go func() {
-		s.localSem <- struct{}{}
+		<-ticket
 		s.refreshProcesses(projectID)
-		<-s.localSem
+		s.localSem.release()
 		s.mu.Lock()
 		j := s.jobLocked(projectID)
 		again := j.processPending
@@ -287,10 +322,11 @@ func (s *stateSync) queueProvider(projectID string, force bool) {
 	// This flag belongs to the pending job, not the job starting now.
 	j.providerForce = false
 	s.mu.Unlock()
+	ticket := s.providerSem.enter(s.isPriority(projectID))
 	go func() {
-		s.providerSem <- struct{}{}
+		<-ticket
 		s.refreshProvider(projectID, force)
-		<-s.providerSem
+		s.providerSem.release()
 		s.mu.Lock()
 		j := s.jobLocked(projectID)
 		again, nextForce := j.providerPending, j.providerForce
@@ -389,26 +425,16 @@ func (s *stateSync) refreshLocal(projectID string) {
 	ctx, cancel := s.readContext(localReadTimeout)
 	defer cancel()
 	if before.Local == nil {
-		inventory, inventoryErr := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
-			var trees []domain.Worktree
-			err := json.Unmarshal(raw, &trees)
-			return trees, err
-		})
-		if inventoryErr == nil {
-			local := domain.RepositoryState{ID: projectID, DefaultBranch: project.info.DefaultBranch, Worktrees: inventory.([]domain.Worktree)}
+		if local, err := s.readInventory(ctx, project); err == nil {
+			local.ID = projectID
+			if local.DefaultBranch == "" {
+				local.DefaultBranch = project.info.DefaultBranch
+			}
 			for i := range local.Worktrees {
 				local.Worktrees[i].RepositoryID = projectID
 				if local.DefaultBranch == "" && local.Worktrees[i].Main {
 					local.DefaultBranch = local.Worktrees[i].Branch
 				}
-			}
-			branches, err := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
-				var branches []domain.Branch
-				err := json.Unmarshal(raw, &branches)
-				return branches, err
-			})
-			if err == nil {
-				local.Branches = branches.([]domain.Branch)
 			}
 			s.commitProject(project, "local", func(snapshot *browserSnapshot) {
 				if snapshot.Local != nil {
@@ -419,6 +445,11 @@ func (s *stateSync) refreshLocal(projectID string) {
 				snapshot.Freshness["local"] = browserFreshness{State: "loading"}
 			})
 			s.queueProcesses(projectID)
+			// Remotes are known now; the provider's slow reads need not wait for
+			// the per-worktree statuses below.
+			if identity, ok := preferredRemote(local.Remotes); ok && identity.FullName != "" {
+				s.queueProviderPrefetch(project, identity.FullName)
+			}
 		}
 	}
 
@@ -464,6 +495,63 @@ func (s *stateSync) refreshLocal(projectID string) {
 		}
 	}
 }
+
+// readInventory returns worktrees, branches and remotes without statuses. It
+// asks for git.inventory and falls back to the two older reads when the daemon
+// is a version that does not know the command.
+func (s *stateSync) readInventory(ctx context.Context, project projectServices) (domain.RepositoryState, error) {
+	value, err := s.gitPayload(ctx, project, "git.inventory", func(raw json.RawMessage) (any, error) {
+		var state domain.RepositoryState
+		err := json.Unmarshal(raw, &state)
+		return state, err
+	})
+	if err == nil {
+		return value.(domain.RepositoryState), nil
+	}
+	if ctx.Err() != nil {
+		return domain.RepositoryState{}, err
+	}
+	// This runs once per project, when its first snapshot is built, so a
+	// daemon that predates git.inventory costs one failed call.
+	trees, err := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
+		var trees []domain.Worktree
+		err := json.Unmarshal(raw, &trees)
+		return trees, err
+	})
+	if err != nil {
+		return domain.RepositoryState{}, err
+	}
+	local := domain.RepositoryState{Worktrees: trees.([]domain.Worktree)}
+	if branches, err := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
+		var branches []domain.Branch
+		err := json.Unmarshal(raw, &branches)
+		return branches, err
+	}); err == nil {
+		local.Branches = branches.([]domain.Branch)
+	}
+	return local, nil
+}
+
+// queueProviderPrefetch warms the provider cache for repository so the real
+// provider refresh, which has to wait for the local statuses, finds the
+// repository, branches and PR catalog already read. It publishes nothing.
+func (s *stateSync) queueProviderPrefetch(project projectServices, repository string) {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed || project.github == nil {
+		return
+	}
+	ticket := s.prefetchSem.enter(s.isPriority(project.info.ID))
+	go func() {
+		<-ticket
+		defer s.prefetchSem.release()
+		ctx, cancel := s.readContext(providerReadTimeout)
+		defer cancel()
+		s.providers.repository(ctx, project.github, repository, s.now(), false)
+	}()
+}
+
 func descriptorFromLocal(info ProjectInfo, local *domain.RepositoryState) ProjectInfo {
 	out := info
 	if local == nil {

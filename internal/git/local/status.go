@@ -26,15 +26,20 @@ func (s *Service) Status(ctx context.Context, id string) (domain.WorkingTreeStat
 	return status(ctx, dir)
 }
 func status(ctx context.Context, dir string) (domain.WorkingTreeStatus, error) {
-	return statusWithContent(ctx, dir, true)
+	return statusWithContent(ctx, dir, true, "all", nil)
 }
 
-func statusOverview(ctx context.Context, dir string) (domain.WorkingTreeStatus, error) {
-	return statusWithContent(ctx, dir, false)
+// statusOverview is the cheap per-worktree summary used by repository
+// snapshots. Untracked directories are listed once (`normal`), which keeps the
+// scan bounded in trees with large untracked folders; detail Status keeps
+// `all`. refs, when set, supplies the upstream SHA and last commit so they need
+// no extra processes.
+func statusOverview(ctx context.Context, dir string, refs *refIndex) (domain.WorkingTreeStatus, error) {
+	return statusWithContent(ctx, dir, false, "normal", refs)
 }
 
-func statusWithContent(ctx context.Context, dir string, hashContents bool) (domain.WorkingTreeStatus, error) {
-	out, e := run(ctx, dir, "status", "--porcelain=v2", "--branch", "--show-stash", "-z", "--untracked-files=all")
+func statusWithContent(ctx context.Context, dir string, hashContents bool, untracked string, refs *refIndex) (domain.WorkingTreeStatus, error) {
+	out, e := run(ctx, dir, "status", "--porcelain=v2", "--branch", "--show-stash", "-z", "--untracked-files="+untracked)
 	if e != nil {
 		return domain.WorkingTreeStatus{}, e
 	}
@@ -43,7 +48,11 @@ func statusWithContent(ctx context.Context, dir string, hashContents bool) (doma
 		return st, e
 	}
 	if st.Upstream != "" {
-		if sha, err := trimmed(ctx, dir, "rev-parse", "--verify", "--end-of-options", "@{upstream}^{commit}"); err == nil {
+		sha, ok := refs.upstreamSHA(st.Branch)
+		if ok {
+			st.LocalRemoteRefSHA = sha
+			st.DivergenceAvailable = true
+		} else if sha, err := trimmed(ctx, dir, "rev-parse", "--verify", "--end-of-options", "@{upstream}^{commit}"); err == nil {
 			st.LocalRemoteRefSHA = sha
 			st.DivergenceAvailable = true
 		} else {
@@ -53,13 +62,17 @@ func statusWithContent(ctx context.Context, dir string, hashContents bool) (doma
 		}
 	}
 	if st.HeadSHA != "" {
-		c, e := lastCommit(ctx, dir)
-		if e != nil {
-			return st, e
+		if c, ok := refs.tipCommit(st.Branch, st.HeadSHA); ok {
+			st.LastCommit = &c
+		} else {
+			c, e := lastCommit(ctx, dir)
+			if e != nil {
+				return st, e
+			}
+			st.LastCommit = &c
 		}
-		st.LastCommit = &c
 	}
-	gd, e := trimmed(ctx, dir, "rev-parse", "--absolute-git-dir")
+	gd, e := absoluteGitDir(ctx, dir)
 	if e != nil {
 		return st, e
 	}
