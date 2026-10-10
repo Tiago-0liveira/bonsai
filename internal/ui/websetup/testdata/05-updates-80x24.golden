@@ -1,0 +1,24 @@
+ How should GitHub changes reach you?                                     5 / 7
+ ──────────────────────────────────────────────────────────────────────────────
+ › ● Standard (recommended)
+   ○ Live · Cloudflare quick
+   ○ Live · Cloudflare + domain
+   ○ Live · ngrok
+   ○ Live · Tailscale Funnel
+   ○ Live · my own URL
+   ○ Live · custom command
+   Live: available in a later version
+ ──────────────────────────────────────────────────────────────────────────────
+  Standard
+  Bonsai checks GitHub every ~2 min while the app is open.
+
+  You need   nothing
+  Setup      ○○○ none
+  Delay      up to ~2 min
+  Exposes    nothing
+
+
+
+
+
+ ↑↓ choose · ? compare all · enter next · esc back

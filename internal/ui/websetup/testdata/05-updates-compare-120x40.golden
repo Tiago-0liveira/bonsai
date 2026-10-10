@@ -1,0 +1,40 @@
+ Compare update options                                                                                           5 / 7
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+                     Setup  Account            Stable URL  Delay
+  Standard           none   —                  —           ~2 min
+  Cloudflare quick   ●○○    none               no (auto)   ~1 s
+  Cloudflare+domain  ●●○    Cloudflare+domain  yes         ~1 s
+  ngrok              ●●○    ngrok (free)       yes         ~1 s
+  Tailscale Funnel   ●●○    Tailscale          yes         ~1 s
+  My own URL         ●●●    your proxy         yes         ~1 s
+
+  Live options: available in a later version.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ esc close

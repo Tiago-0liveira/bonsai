@@ -1,0 +1,40 @@
+ Doctor                                                                                                ● running · 7001
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ › ✓ git                 2.43.0
+   ✓ gh installed        2.92.0
+   ! gh logged in        not logged in to github.com; without it you still get worktrees, branches, commits and
+                         processes
+    fix  gh auth login --hostname github.com
+   ✓ project folders     2 folders · 15 repos found · 15 shown
+   ✗ port 7001           port 7001 is used by another program (pid 4242, node)
+    fix  bonsai web --port 7011   or pick another port in: bonsai web setup → Advanced
+   – cloudflared         installed (2026.9.3) · not logged in (only a custom domain needs it) · only needed for live
+                         updates (coming in a later version)
+   – ngrok               not installed · only needed for live updates (coming in a later version)
+   – tailscale           not installed · only needed for live updates (coming in a later version)
+
+  ✗ 1 problem, 1 warning
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move · enter run fix · c copy fix · r re-check · esc back

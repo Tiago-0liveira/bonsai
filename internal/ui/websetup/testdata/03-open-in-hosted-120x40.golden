@@ -1,0 +1,40 @@
+ Where do you want to open Bonsai?                                                                                3 / 7
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ ╭──────────────────────────────────╮ ╭────────────────────────────────────────────────────────────────────────────────╮
+ │    ○ This computer (recommended) │ │ Hosted app + this computer                                                     │
+ │  › ● Hosted app + this computer  │ │ Opens http://127.0.0.1:7001. https://app.bonsai.dev also works while bonsai    │
+ │                                  │ │ web runs.                                                                      │
+ │    [x] Open the browser when     │ │                                                                                │
+ │       bonsai web starts          │ │ Note       Your browser asks to allow access to this computer the first time.  │
+ ╰──────────────────────────────────╯ │            After a web release it may ask you to update bonsai.                │
+                                      │ Exposes    nothing to the internet; pages from the hosted app may call this    │
+                                      │            computer through your browser                                       │
+                                      ╰────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ choose · space toggle · enter next · esc back

@@ -1,0 +1,40 @@
+ Advanced                                                                                              ● running · 7001
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  API port › 7001
+
+  Your browser connects to http://127.0.0.1:<port>. Applying a new port restarts the Bonsai API; open pages need the
+  new address.
+
+  Webhook port 7002 · available in a later version
+  Secret       rotate webhook secret · available in a later version
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter done · esc back
