@@ -170,6 +170,9 @@ func (c WebConfig) Validate() error {
 	if c.APIPort < 1 || c.APIPort > 65535 {
 		return fmt.Errorf("api_port %d is not a valid port", c.APIPort)
 	}
+	if !c.Interfaces.Local && !c.Interfaces.Hosted {
+		return fmt.Errorf("interfaces.local and interfaces.hosted are both false; enable at least one")
+	}
 	switch c.Updates.Mode {
 	case WebUpdatesStandard, WebUpdatesLive:
 	default:

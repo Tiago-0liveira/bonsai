@@ -62,4 +62,27 @@ describe('relay invalidation client', () => {
     expect(requestProjectRefresh).toHaveBeenCalledWith('bonsai', 'provider')
     stop()
   })
+
+  it('stays off when the page says there is no relay', async () => {
+    const meta = document.createElement('meta')
+    meta.name = 'bonsai-relay-origin'
+    meta.content = ''
+    document.head.append(meta)
+    vi.resetModules()
+    try {
+      const relay = await import('./relayClient')
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+      expect(relay.RELAY_ENABLED).toBe(false)
+      const stop = relay.startRelayInvalidation()
+      await Promise.resolve()
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(FakeEventSource.latest).toBeUndefined()
+      expect(relay.getRelayConnectionSnapshot().status).toBe('disconnected')
+      stop()
+    } finally {
+      meta.remove()
+    }
+  })
 })

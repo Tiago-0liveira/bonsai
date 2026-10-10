@@ -228,10 +228,21 @@ function emptySnapshot(projectId: string) {
 
 type MockWireSnapshot = Record<string, unknown>
 
+// The hosted-style entry talks to the API cross-origin on 7001. The
+// local-served entry (entry-points.spec.ts) loads the page from the Go API
+// fixture and mocks the API on that same origin.
+export const DEFAULT_API_ORIGIN = 'http://127.0.0.1:7001'
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const webSocketOrigin = (origin: string) => origin.replace(/^http/, 'ws')
+// Paths the Go API answers with the embedded UI rather than JSON.
+const isUIPath = (path: string) => path === '/' || path === '/app' || path.startsWith('/app/') || path.startsWith('/assets/')
+
 export async function mockLocalEventSocket(
   page: Page,
   bootstrap: () => { projects: typeof repositories; snapshots: MockWireSnapshot[] } = () => ({ projects: [], snapshots: [] }),
   delayedUpdate?: () => MockWireSnapshot | undefined,
+  apiOrigin = DEFAULT_API_ORIGIN,
 ) {
   let sendEvent: ((event: Record<string, unknown>) => void) | undefined
 
@@ -262,7 +273,7 @@ export async function mockLocalEventSocket(
     })
   }
 
-  await page.routeWebSocket('ws://127.0.0.1:7001/events', socket => {
+  await page.routeWebSocket(`${webSocketOrigin(apiOrigin)}/events`, socket => {
     sendEvent = event => socket.send(JSON.stringify(event))
     socket.onMessage(message => {
       try {
@@ -298,7 +309,7 @@ export async function mockLocalEventSocket(
   return { publishCatalog, publishUpdate }
 }
 
-export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false) {
+export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false, apiOrigin = DEFAULT_API_ORIGIN) {
   const rootSettings: {
     version: number
     revision: number
@@ -394,9 +405,10 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
           return projectSnapshot('bonsai', true)
         }
       : undefined,
+    apiOrigin,
   )
 
-  await page.routeWebSocket(/ws:\/\/127\.0\.0\.1:7001\/api\/projects\/[^/]+\/agents\/[^/]+\/terminal$/, terminal => {
+  await page.routeWebSocket(new RegExp(`^${escapeRegExp(webSocketOrigin(apiOrigin))}/api/projects/[^/]+/agents/[^/]+/terminal$`), terminal => {
     terminal.onMessage(message => {
       const frame = JSON.parse(String(message))
       if (frame.type === 'attach') {
@@ -405,7 +417,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       }
     })
   })
-  await page.route('http://127.0.0.1:7001/**', async (route) => {
+  await page.route(url => url.origin === apiOrigin && !isUIPath(url.pathname), async (route) => {
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname

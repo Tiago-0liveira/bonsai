@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Bell, Check, ChevronDown, Command, Folder, GitBranch, LayoutGrid, ScrollText, Search, SlidersHorizontal, Sprout } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { getRelayConnectionSnapshot, relayLoginURL, subscribeRelayConnection } from '../../api/relayClient'
+import { getRelayConnectionSnapshot, RELAY_ENABLED, relayLoginURL, subscribeRelayConnection } from '../../api/relayClient'
 
 const nav = [
   { label: 'Canvas', to: '/', icon: LayoutGrid },
@@ -189,7 +189,7 @@ export function TopBar() {
       </nav>
 
       <div className="island island-topbar pointer-events-auto flex h-10 items-center gap-2.5 justify-self-end px-1.5">
-        <RelayStatus />
+        {RELAY_ENABLED && <RelayStatus />}
         <button className="bonsai-focus btn-ghost" onClick={() => setPaletteOpen(true)}>
           <Search size={13} />
           <span className="hidden min-[980px]:inline">Search</span>

@@ -7,12 +7,18 @@ on:
   pull_request:
     paths:
       - "web/**"
+      # The e2e fixtures serve the UI through the Go local API.
+      - "internal/server/localapi/**"
+      - "internal/server/webui/**"
       - ".github/workflows/frontend.yml"
   push:
     branches:
       - main
     paths:
       - "web/**"
+      # The e2e fixtures serve the UI through the Go local API.
+      - "internal/server/localapi/**"
+      - "internal/server/webui/**"
       - ".github/workflows/frontend.yml"
 
 jobs:
@@ -40,5 +46,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
+      # The bundle bonsai embeds (-tags embedui) must be the production build.
+      - run: go test -tags embedui ./web/
+        working-directory: .
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e

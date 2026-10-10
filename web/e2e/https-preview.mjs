@@ -14,7 +14,7 @@ execFileSync('openssl', [
   '-addext', 'subjectAltName=IP:127.0.0.1',
 ], { stdio: 'ignore' })
 
-const dist = resolve('dist')
+const dist = resolve('dist-e2e')
 const securityHeaders = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.bonsai.dev http://127.0.0.1:7001 ws://127.0.0.1:7001; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://api.bonsai.dev",
   'Referrer-Policy': 'no-referrer',
