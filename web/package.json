@@ -8,6 +8,8 @@
     "dev": "vite",
     "start": "vite",
     "build": "tsc -b && vite build",
+    "bundle:check": "node scripts/check-bundle-budget.mjs",
+    "test:bundle": "node --test scripts/check-bundle-budget.test.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",

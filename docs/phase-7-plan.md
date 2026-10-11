@@ -1,6 +1,6 @@
 # Phase 7 — Warm start and frontend load (revised plan)
 
-Status: **in progress** (7a merged in #69; 7b implemented in #68; 7c pending) · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
+Status: **in progress** (7a merged in #69; 7b in #68; 7c prepared for CI) · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
 Phase 7 section of `docs/bonsai-web-plan.md`
 
 Plan only. Implementation branches start from and merge into `feat/bonsai-web`.
@@ -104,6 +104,33 @@ checks and release dry-run. CI also verified the declared pnpm 12.9.1 frozen
 install. 7b implementation is complete in #68; 7a has since merged in #69.
 Phase 7 still awaits 7c. The original 7b changes did not touch persistence or
 hosted deployment files.
+
+---
+
+## 7c verification notes (2026-10-11)
+
+Task 8 adds manifest accounting, raw-byte enforcement, historical references,
+a separate candidate final baseline, focused script tests, CI artifact upload,
+and corrected measurement definitions. Exact artifact evidence is in
+`docs/evidence/p7c`; the main plan records the final results.
+
+The user requested opening the original 7c PR to run CI while #68 was still
+open. This draft therefore stacks on #68's integrated head `17f69bb` and targets
+`feat/bonsai-web`. Before completion, merge #68 and rebase onto the updated
+integration branch. The existing sandbox restriction no longer applies:
+loopback and pinned Chromium work in the current unrestricted environment.
+Phase 7 remains in progress pending the integration and final CI evidence;
+retain this file until those conditions pass, then fold surviving decisions
+into the main plan and delete it.
+
+The cache measurement now distinguishes the maximum retained heap after GC
+across 30 repetitions from sampled live heap during serialization/restore and
+from cumulative allocation bytes. The historical 7a retained figure was the
+last positive sample, not a peak; its best-of-five timing is kept labeled.
+First-screen JS includes the default workspace closure as well as entry and
+application. A closure includes its root and counts each emitted JS file once.
+No persistence, lazy-boundary, worker, ETag-cache or hosted behavior changes
+are made in 7c.
 
 ---
 
