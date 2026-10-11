@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 1,
+  "rationale": "Freeze the byte-identical integrated 7a/7b production artifacts. Application remains below 70% of rebuilt Phase 4; application and its static closure each allow at most 10% growth. First-screen JS retains the exact pre-P7 ceiling with no override. Budget changes require an explicit rationale in this file and the plan.",
+  "references": {
+    "phase4": {
+      "sourceRevision": "ee66e170914575b003084ab01bc5dc32c0f42c34",
+      "toolchain": {
+        "node": "v22.12.0",
+        "pnpm": "12.9.1",
+        "zlib": "1.3.0.1-motley-71660e1",
+        "platform": "linux",
+        "arch": "x64"
+      },
+      "buildEnvironment": {
+        "TZ": "UTC",
+        "LC_ALL": "C",
+        "LANG": "C",
+        "mode": "production",
+        "node": "22.12.0",
+        "pnpm": "12.9.1",
+        "vite": "5.4.21",
+        "os": "Ubuntu 24.04"
+      },
+      "metrics": {
+        "application": {
+          "files": [
+            "assets/ApplicationRoot-BrMaNNL6.js"
+          ],
+          "rawBytes": 730211,
+          "gzipBytes": 230214
+        },
+        "applicationStaticClosure": {
+          "files": [
+            "assets/ApplicationRoot-BrMaNNL6.js",
+            "assets/ClaudeLogo-CNqYQoJA.js",
+            "assets/index-BO47ldTx.js"
+          ],
+          "rawBytes": 881800,
+          "gzipBytes": 280062
+        },
+        "entry": {
+          "files": [
+            "assets/index-BO47ldTx.js"
+          ],
+          "rawBytes": 149517,
+          "gzipBytes": 48727
+        },
+        "entryStaticClosure": {
+          "files": [
+            "assets/index-BO47ldTx.js"
+          ],
+          "rawBytes": 149517,
+          "gzipBytes": 48727
+        },
+        "firstScreenJs": {
+          "files": [
+            "assets/ApplicationRoot-BrMaNNL6.js",
+            "assets/ClaudeLogo-CNqYQoJA.js",
+            "assets/index-BO47ldTx.js"
+          ],
+          "rawBytes": 881800,
+          "gzipBytes": 280062
+        },
+        "css": {
+          "files": [
+            "assets/ApplicationRoot-oKyPyKUd.css",
+            "assets/LandingPage-C1dVQ96Y.css",
+            "assets/index-BY76tCWa.css"
+          ],
+          "rawBytes": 91176,
+          "gzipBytes": 19706
+        }
+      }
+    },
+    "preP7": {
+      "sourceRevision": "04e9683518ed4c677fd66dd2294cef43655ddd71",
+      "toolchain": {
+        "node": "v22.12.0",
+        "pnpm": "12.9.1",
+        "zlib": "1.3.0.1-motley-71660e1",
+        "platform": "linux",
+        "arch": "x64"
+      },
+      "buildEnvironment": {
+        "TZ": "UTC",
+        "LC_ALL": "C",
+        "LANG": "C",
+        "mode": "production",
+        "node": "22.12.0",
+        "pnpm": "12.9.1",
+        "vite": "5.4.21",
+        "os": "Ubuntu 24.04"
+      },
+      "metrics": {
+        "application": {
+          "files": [
+            "assets/ApplicationRoot-DSfmid_o.js"
+          ],
+          "rawBytes": 735796,
+          "gzipBytes": 232294
+        },
+        "applicationStaticClosure": {
+          "files": [
+            "assets/ApplicationRoot-DSfmid_o.js",
+            "assets/ClaudeLogo-Kc-XDXeE.js",
+            "assets/index-CLv1JkWv.js"
+          ],
+          "rawBytes": 887385,
+          "gzipBytes": 282140
+        },
+        "entry": {
+          "files": [
+            "assets/index-CLv1JkWv.js"
+          ],
+          "rawBytes": 149517,
+          "gzipBytes": 48724
+        },
+        "entryStaticClosure": {
+          "files": [
+            "assets/index-CLv1JkWv.js"
+          ],
+          "rawBytes": 149517,
+          "gzipBytes": 48724
+        },
+        "firstScreenJs": {
+          "files": [
+            "assets/ApplicationRoot-DSfmid_o.js",
+            "assets/ClaudeLogo-Kc-XDXeE.js",
+            "assets/index-CLv1JkWv.js"
+          ],
+          "rawBytes": 887385,
+          "gzipBytes": 282140
+        },
+        "css": {
+          "files": [
+            "assets/ApplicationRoot-oKyPyKUd.css",
+            "assets/LandingPage-C1dVQ96Y.css",
+            "assets/index-BY76tCWa.css"
+          ],
+          "rawBytes": 91176,
+          "gzipBytes": 19706
+        }
+      }
+    }
+  },
+  "baseline": {
+    "sourceRevision": "17f69bb5377c383f316219f1ab388f692187ca3a",
+    "toolchain": {
+      "node": "v22.12.0",
+      "pnpm": "12.9.1",
+      "zlib": "1.3.0.1-motley-71660e1",
+      "platform": "linux",
+      "arch": "x64"
+    },
+    "buildEnvironment": {
+      "TZ": "UTC",
+      "LC_ALL": "C",
+      "LANG": "C",
+      "mode": "production",
+      "node": "22.12.0",
+      "pnpm": "12.9.1",
+      "vite": "5.4.21",
+      "os": "Ubuntu 24.04"
+    },
+    "metrics": {
+      "application": {
+        "files": [
+          "assets/ApplicationRoot-BsgsAD7B.js"
+        ],
+        "rawBytes": 381967,
+        "gzipBytes": 122372
+      },
+      "applicationStaticClosure": {
+        "files": [
+          "assets/ApplicationRoot-BsgsAD7B.js",
+          "assets/ClaudeLogo-D3sQqfHM.js",
+          "assets/index-DhArrtXd.js"
+        ],
+        "rawBytes": 535897,
+        "gzipBytes": 173053
+      },
+      "entry": {
+        "files": [
+          "assets/index-DhArrtXd.js"
+        ],
+        "rawBytes": 151858,
+        "gzipBytes": 49560
+      },
+      "entryStaticClosure": {
+        "files": [
+          "assets/index-DhArrtXd.js"
+        ],
+        "rawBytes": 151858,
+        "gzipBytes": 49560
+      },
+      "firstScreenJs": {
+        "files": [
+          "assets/ApplicationRoot-BsgsAD7B.js",
+          "assets/ClaudeLogo-D3sQqfHM.js",
+          "assets/WorkspacePage-DIuLjtmR.js",
+          "assets/git-commit-horizontal-BybjMpqV.js",
+          "assets/index-Brozwh_w.js",
+          "assets/index-DhArrtXd.js"
+        ],
+        "rawBytes": 812388,
+        "gzipBytes": 262570
+      },
+      "css": {
+        "files": [
+          "assets/LandingPage-C1dVQ96Y.css",
+          "assets/WorkspacePage-BnuhLJ6X.css",
+          "assets/index-vVOuQuom.css",
+          "assets/terminal-CFbL2ovg.css"
+        ],
+        "rawBytes": 91496,
+        "gzipBytes": 19878
+      }
+    },
+    "buildConfiguration": "Source revision 17f69bb with production manifest enabled; this manifest setting changes no emitted UI bytes. Verified in two isolated directories with separate frozen installs."
+  }
+}
