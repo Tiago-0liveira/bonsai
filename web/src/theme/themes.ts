@@ -1,3 +1,4 @@
+import { BONSAI_ANSI } from './ansi'
 import type { Theme } from './tokens'
 
 export const DEFAULT_THEME_ID = 'bonsai'
@@ -29,6 +30,7 @@ export const bonsaiTheme: Theme = {
     danger: '#ffb4ab',
     'danger-solid': '#93000a',
   },
+  terminal: BONSAI_ANSI,
 }
 
 export const builtInThemes: readonly Theme[] = [bonsaiTheme]

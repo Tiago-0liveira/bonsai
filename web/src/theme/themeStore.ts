@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
+import { resolveAnsiPalette } from './ansi'
 import { hexToTriplet } from './color'
 import { localThemeStorage, type ThemeStorage } from './storage'
 import { DEFAULT_THEME_ID, bonsaiTheme, builtInThemes } from './themes'
-import { THEME_TOKENS, type Theme, type ThemePreferences } from './tokens'
+import { ANSI_COLORS, THEME_TOKENS, type Theme, type ThemePreferences } from './tokens'
 import { validateTheme, type ThemeValidation } from './validate'
 
 type Listener = () => void
@@ -20,6 +21,8 @@ const listeners = new Set<Listener>()
  */
 export function applyTheme(theme: Theme, root: HTMLElement = document.documentElement) {
   for (const token of THEME_TOKENS) root.style.setProperty(`--${token}`, hexToTriplet(theme.colors[token]))
+  const ansi = resolveAnsiPalette(theme)
+  ANSI_COLORS.forEach((name, index) => root.style.setProperty(`--ansi-${index}`, hexToTriplet(ansi[name])))
   root.style.colorScheme = theme.mode
   root.dataset.theme = theme.id
   root.ownerDocument.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.colors.bg)
