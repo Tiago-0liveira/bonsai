@@ -1,4 +1,4 @@
-import React, { Suspense } from 'react'
+import React from 'react'
 import ReactDOM from 'react-dom/client'
 import '@fontsource-variable/hanken-grotesk'
 import '@fontsource-variable/jetbrains-mono'
@@ -6,6 +6,9 @@ import './styles/globals.css'
 import './styles/surfaces.css'
 import { ThemeProvider } from './theme/ThemeProvider'
 import { initTheme } from './theme/themeStore'
+import { FeatureBoundary, PreloadRecoveryNotice, registerChunkRecovery } from './app/chunkRecovery'
+
+registerChunkRecovery()
 
 const applicationPath = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/')
 const Surface = React.lazy(() => applicationPath
@@ -18,9 +21,10 @@ initTheme()
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
-      <Suspense fallback={<div className="surface-loading" aria-live="polite">Loading Bonsai…</div>}>
+      <PreloadRecoveryNotice />
+      <FeatureBoundary loading="Loading Bonsai…">
         <Surface />
-      </Suspense>
+      </FeatureBoundary>
     </ThemeProvider>
   </React.StrictMode>,
 )

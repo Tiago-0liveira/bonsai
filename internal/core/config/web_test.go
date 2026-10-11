@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestEnsureWebConfigWritesDefaultsOnce(t *testing.T) {
@@ -137,6 +138,78 @@ func TestWebStateRoundTrip(t *testing.T) {
 	}
 	if got, err := ReadWebState(path); err != nil || got.Revision != 1 {
 		t.Fatalf("read back = %+v, %v", got, err)
+	}
+}
+
+func TestReadWebStateWaitsForWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web-state.json")
+	if _, err := UpdateWebState(path, func(s *WebState) error {
+		s.Live.InstallID = "before"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	writing := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWriter := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseWriter()
+	written := make(chan error, 1)
+	go func() {
+		_, err := UpdateWebState(path, func(s *WebState) error {
+			close(writing)
+			<-release
+			s.Live.InstallID = "after"
+			return nil
+		})
+		written <- err
+	}()
+	select {
+	case <-writing:
+	case err := <-written:
+		t.Fatalf("writer stopped before updating: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer did not acquire the state lock")
+	}
+
+	type result struct {
+		state WebState
+		err   error
+	}
+	reading := make(chan struct{})
+	read := make(chan result, 1)
+	go func() {
+		close(reading)
+		state, err := ReadWebState(path)
+		read <- result{state, err}
+	}()
+	<-reading
+	select {
+	case got := <-read:
+		t.Errorf("read completed while the writer held the lock: %+v, %v", got.state, got.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseWriter()
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer did not finish after being released")
+	}
+	if t.Failed() {
+		return
+	}
+	select {
+	case got := <-read:
+		if got.err != nil || got.state.Revision != 2 || got.state.Live.InstallID != "after" {
+			t.Fatalf("read after writer finished: %+v, %v", got.state, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader did not resume after the writer released the lock")
 	}
 }
 

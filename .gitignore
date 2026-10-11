@@ -19,6 +19,7 @@ web/node_modules/
 web/dist/
 web/dist-e2e/
 web/playwright-report/
+web/bundle-reports/
 web/test-results/
 web/coverage/
 web/.vite/

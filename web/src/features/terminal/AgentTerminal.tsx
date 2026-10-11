@@ -1,3 +1,5 @@
+import '@xterm/xterm/css/xterm.css'
+import { acknowledgePreloadFailure, ChunkRecovery } from '../../app/chunkRecovery'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Square, Wifi, WifiOff } from 'lucide-react'
@@ -14,6 +16,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
   const [connection, setConnection] = useState<TerminalConnection>('connecting')
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
+  const [loadFailed, setLoadFailed] = useState(false)
   const [lifecycle, setLifecycle] = useState(agent.lifecycleState ?? 'starting')
   useEffect(() => {
     const element = host.current
@@ -49,7 +52,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
           error: setError,
         })
         input = terminal.onData(data => controller?.input(data))
-      }).catch(() => { if (!disposed) setError('Unable to load the terminal. Reload and try again.') })
+      }).catch(() => { if (!disposed) { setLoadFailed(true); acknowledgePreloadFailure() } })
     })
     return () => {
       disposed = true
@@ -61,6 +64,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
       requestAnimationFrame(() => requestAnimationFrame(() => terminal?.dispose()))
     }
   }, [agent.id, agent.projectId])
+  if (loadFailed) return <ChunkRecovery />
   return <div className="flex h-full min-h-0 flex-col">
     {actionsHost && createPortal(<>
       <span title={`Session ${lifecycle}; terminal ${connection}`} className={'chip inline-flex items-center gap-1 border ' + (connection === 'connected' ? 'border-accent/35 bg-accent/[.12] text-accent' : 'border-transparent bg-panel-4 text-muted')}>

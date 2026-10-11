@@ -17,7 +17,7 @@ surviving parts into `development.md` / `git-backend.md`, once Phase 8 ships.
 | 4 | Embedded UI and dual browser origin | Opus 5.5 | 3 | done (#59) |
 | 5 | Setup TUI and `bonsai web doctor` | Opus 5.5 | 3, 4 | done (#62) |
 | 6 | Live updates: local webhook receiver and tunnel | Opus 5.5 | 2, 5 | done (#63, #64, #65) |
-| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | in progress (7a) |
+| 7 | Warm start and frontend load | Sonnet 5.5 | 2, 4 | in progress (7a merged; 7b in #68; 7c prepared for CI) |
 | 8 | Docs, migration and release pipeline | Sonnet 5.5 | all | todo |
 | F | Multi-workspace (design only, later) | Opus 5.5 | 8 | not scheduled |
 
@@ -1196,80 +1196,227 @@ covered by fixture tests only.
 
 ## Phase 7 — Warm start and frontend load
 
-**Model:** Sonnet 5.5 · **Effort:** medium · **Branch:** `feat/web-p7-warm-start`
+The revised [Phase 7 plan](phase-7-plan.md) supersedes the original scope.
+Delivery is split into 7a / 7b / 7c, each branching from and targeting
+`feat/bonsai-web`; this is a process exception to the one-PR-per-phase rail.
+7a is merged in #69; 7b is implemented in #68. Phase 7 remains in progress
+until 7c delivers the bundle budget, CI check and final evidence.
 
-**Objectives**
-- Opening the app paints last-known state immediately.
-- The initial JS cost is proportional to the first screen.
+*7b outcome (tasks 5–6, 2026-10-10).*
 
-**Scope**
-1. **Persist on the server.**
-   - Store the last committed project snapshot and the ETag cache in the user
-     state dir (atomic writes, size cap, versioned, discarded on schema
-     mismatch).
-   - On startup, load them with `freshness = stale` and revalidate
-     immediately.
-2. **Persist in the browser** (optional): cache the last snapshot per project
-   in IndexedDB and render it while the WS connects. Wrap all storage access
-   in try/catch.
-3. **Code-split.**
-   - Lazy-load the terminal (xterm), files, the GitHub detail markdown stack
-     and the canvas layout (elkjs).
-   - Run ELK layout in a Web Worker if profiling shows main-thread cost.
-4. **Bundle budget.** Record chunk sizes in this plan. Add a CI check that
-   fails when the main chunk grows more than 10% without updating the budget.
+- The shell, connection handling, branch list and reconciliation stay eager.
+  Workspace (including React Flow and its CSS), files route/Inspector tab,
+  settings, logs, PR detail, terminals and shell overlays have module-scope
+  lazy imports with individual Suspense/error boundaries. The GitHub route,
+  app/landing split and xterm dependency imports existed before 7b.
+- Terminal CSS loads with terminal components. A hidden terminal does not
+  import until first shown; after activation it stays mounted on dock collapse
+  and route navigation. Terminal selection/detach/replay logic is retained.
+- Closed overlays do not import. The command shortcut stays in the eager
+  owner. Loading overlays can be dismissed and restore focus when closed.
+- The eager entry registers `vite:preloadError` before loading a surface.
+  Rejections still reach feature boundaries. Initial-surface and effect import
+  failures show “This screen could not load” with an explicit “Reload app”
+  action. There is no automatic reload. A failed feature leaves the shell and
+  retained branches visible.
+- `elkjs` had no source imports and was removed from package and lockfile.
+  Canvas still uses its existing synchronous layout. Worker profiling/task 7
+  and budgets/CI/task 8 remain outside 7b.
+  Persistence/tasks 0–4 landed separately in 7a (#69).
 
-**Rails**
-- Persisted data contains no secrets and no file contents (it is metadata
-  only, like today's snapshot).
-- A stale snapshot is always labeled stale in the UI until revalidated.
+*Verified plan corrections.* `AppShell.tsx` is in `components/layout`;
+`BottomWorkspace.tsx` is in `features/terminal`. The command shortcut was in
+its lazy target, and terminal dependency import failures were caught in
+component effects; both needed eager/recovery handling. Vite can emit the
+main application/GitHub route as shared dynamic chunks without facade keys;
+measurement resolves the manifest facade where present, otherwise the stable
+chunk `name` plus import graph, never a hashed filename. The setup-required
+`ProjectRootsSettings` and header live-update helpers remain eager shared code.
 
-**Exit criteria**
-- With a warm cache, the worktree list and PR badges render ≤ 300 ms after WS
-  `ready`.
-- The main chunk shrinks by ≥ 30% versus the Phase 4 build.
+*7b chunk measurements.* Before: integration `04e9683518ed4c677fd66dd2294cef43655ddd71`.
+After: historical 7b source `065f594f0a68fdf906c825c362de536dd4bb79b9`, before integration with 7a. Node **22.12.0**, Vite
+**5.4.21**, TypeScript **5.9.3**, production build, default environment.
+The cached dependency lock exactly matched the baseline lock's dependency
+section. Installed pnpm was **12.6.0**; the declared **12.9.1** could not be
+fetched because registry access failed. Commands therefore invoked the cached
+`tsc` and `vite` binaries directly (equivalent build steps); these are
+same-toolchain 7b comparisons, not the pinned Phase 4/final-P7 gate in 7c.
 
-**Phase 7 measurements** (revised plan: `docs/phase-7-plan.md`). The Phase 4
-table above stays as recorded.
+Raw bytes come from emitted file lengths; gzip uses Node `gzipSync` with
+level 9 (deterministic header). Closure totals deduplicate files and sum
+per-file raw/gzip lengths. First-screen JS is the union of the entry,
+application and default workspace static closures, including shared chunks;
+CSS is all emitted CSS, counted once. “Eager in parent” means no separate
+chunk existed; its before bytes are included in the parent. Two final
+production builds matched byte-for-byte.
 
-Sizes are exact file bytes and `zlib` level-9 gzip bytes, from `pnpm build
---manifest` with Node 22.12.0 and pnpm 12.9.1, frozen lockfile. Vite's printed
-kB figures round differently and are not used for gates. "Static closure" is
-the entry's static imports; "first-screen JS" is the entry plus the
-ApplicationRoot chunk and their static imports.
+| Chunk / metric | Before raw / gzip bytes | After raw / gzip bytes |
+| --- | ---: | ---: |
+| ApplicationRoot | 735796 / 232294 | 380211 / 121783 |
+| entry | 149517 / 48724 | 151858 / 49560 |
+| WorkspacePage | eager in parent | 251978 / 80512 |
+| FilesPage | eager in parent | 2911 / 1293 |
+| FilesPanel | eager in parent | 5016 / 1728 |
+| PullRequestsRoute | 210207 / 62599 | 17227 / 6543 |
+| PullRequestDetail | eager in parent | 194056 / 57745 |
+| SettingsPage | eager in parent | 3585 / 1442 |
+| LogsPage | eager in parent | 746 / 416 |
+| AgentTerminal | eager in parent | 5661 / 2698 |
+| ProcessTerminal | eager in parent | 4191 / 1920 |
+| CreateWorktreeDialog | eager in parent | 8003 / 2905 |
+| DeleteWorktreeDialog | eager in parent | 3722 / 1647 |
+| StartAgentDialog | eager in parent | 16443 / 5561 |
+| StartProcessDialog | eager in parent | 10549 / 3802 |
+| EnvEditor | eager in parent | 1592 / 887 |
+| CommandPalette | eager in parent | 22037 / 7826 |
+| xterm | 290556 / 72030 | 290556 / 72030 |
+| addon-fit | 1771 / 811 | 1771 / 811 |
+| Entry static closure | 149517 / 48724 | 151858 / 49560 |
+| Application static closure | 887385 / 282140 | 534141 / 172466 |
+| First-screen JS | 887385 / 282140 | 810248 / 261858 |
+| All CSS | 91176 / 19706 | 91309 / 19849 |
 
-| Metric | Phase 4 recorded | Rebuilt Phase 4 (`ee66e17`) | Pre-P7 (`04e9683`) | After 7a | Final P7 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| ApplicationRoot raw / gzip | 729.73 / 230.35 kB | 730,211 / 230,214 B | 735,796 / 232,294 B | 7c | 7c |
-| Entry raw / gzip | 149.52 / 48.80 kB | 149,517 / 48,727 B | 149,517 / 48,724 B | 7c | 7c |
-| xterm raw / gzip | 290.37 / 72.55 kB | 290,556 / 72,029 B | 290,556 / 72,030 B | 7c | 7c |
-| PullRequestsRoute raw / gzip | 210.83 / 63.04 kB | 210,872 / 62,924 B | 210,207 / 62,599 B | 7c | 7c |
-| CSS raw / gzip (index + ApplicationRoot) | 54.61 / 11.19 kB | 54,611 / 11,118 + 20,503 / 4,269 B | 54,611 / 11,118 + 20,503 / 4,269 B | 7c | 7c |
-| Static closure / first-screen JS (raw) | not recorded | 149,517 / 881,800 B | 149,517 / 887,385 B | 7c | 7c |
-| WS `ready` → branch list + PR badges painted, p50 / p95 / max (25 wt, 50 PRs) | not recorded | — | 88.9 / 106.9 / 110.1 ms (cold, live providers) | 71.7 / 78.0 / 85.0 ms (warm, all revalidation held); production build: 69.4 / 74.8 / 80.8 ms | 7c |
-| Same, 100 worktrees / 500 PRs | not recorded | — | 213.8 / 236.3 / 238.3 ms (cold, live providers) | 117.0 / 150.8 / 174.0 ms (warm, all held); production build: 107.4 / 142.9 / 143.6 ms | 7c |
-| Snapshot cache bytes / load time / peak retained memory | not recorded | — | — (no cache) | 25 wt/50 PRs: 69,629 B / 0.98 ms / 171 KB; 100 wt/500 PRs: 332,455 B / 4.7 ms / 721 KB (3 projects) | 7c |
 
-The 70% main-chunk gate is against the rebuilt exact bytes: 0.7 × 730,211 =
-**511,147 B**.
+ApplicationRoot decreased **48.33%** against this integration
+baseline; its static closure decreased **39.81%**.
+First-screen JS decreased **8.69%**: the workspace chunk is still
+loaded on `/`. The historical Phase 4 table is unchanged. The Phase 4 30%
+gate belongs to 7c; authenticated-ready-to-paint measurements from 7a are
+recorded below. Final measurements after combining 7a/7b remain pending.
 
-Pre-P7 paint numbers come from `web/e2e/warm-start.spec.ts` (fixture
-`TestWarmStartBrowserFixture`, e2e build with React profiling, 3 discarded
-warm-ups, 30 runs, fresh browser context each). The fixture's providers answer
-instantly, so these are a cold *best case*: with a provider still pending, the
-pre-P7 browser paints no PR badges at all until it answers.
+*Validation.* Typecheck, lint, all **509 tests / 57 unit files**, production
+and e2e builds, `gofmt`, `go vet ./...`, plain `go build ./...`,
+`go test -race ./internal/server/webui` and `go test -tags embedui ./web/`
+passed. The Playwright suite discovers **67 tests**, including 11 new tests
+covering deferred feature requests, branches before canvas, local JS/CSS 404
+and offline recovery, initial-surface reload, PR list before detail, shortcut
+focus/dismissal and terminal persistence across collapse/navigation.
 
-After 7a, the same spec restarts the fixture from a settled cache with local,
-catalog and checks reads all held until the measurement ends, so every
-number is a restored, labeled paint; the ≤ 300 ms p95 gate passes
-(`BONSAI_P7_RUNS=30 BONSAI_P7_GATE=1`, quiet machine, Chromium from
-Playwright 1.63, 1440×900). Navigation → `ready` stays ≈ 115 ms p50 before
-and after. The production row serves `web/dist` through the embedded UI
-(`BONSAI_WARM_START_UI=dist`); it times from the socket's `ready` frame
-because that build has no performance mark. Cache rows come from
-`TestWarmStartCacheMeasurements` (`BONSAI_P7_MEASURE=1`): document bytes,
-restore time (load, decode, install, seed; best of 5) and heap retained by a
-restore. One save of the 100/500 fixture allocates about 2 MB transiently.
+`go test ./...`, `go test -race ./...` and Playwright were attempted but
+cannot pass in this sandbox: network listeners return `EPERM`; Playwright's
+preview server cannot bind port 4173 and Chromium also cannot launch.
+The Go package-manager tests additionally detect the sandbox's `/tmp/.git`
+marker as a repository; the same three failures reproduce on unchanged
+`04e9683` in the isolated baseline checkout. The first CI browser run passed 66/67 tests, including all 11 new lazy/recovery
+cases and terminal/canvas/render-isolation coverage. Its one failure was a
+pre-existing stale settings assertion: `04e9683` changed the disconnected
+Live badge to “Live paused”, while the browser test still expected “Standard”.
+That expectation is corrected here without changing production behavior.
+CI also passed the full Linux/macOS/Windows Go matrix, Linux race detector
+and release dry-run. The corrected [frontend CI run](https://github.com/Tiago-0liveira/bonsai/actions/runs/38082871917)
+passed all **67 browser tests**. The final code's
+[Go CI run](https://github.com/Tiago-0liveira/bonsai/actions/runs/38082871918)
+passed on Linux/macOS/Windows, including Linux race detection and release dry-run.
+The CI toolchain used the declared pnpm 12.9.1 with a frozen lockfile.
+
+**7c bundle budgets and final evidence (2026-10-11).**
+
+The original kickoff required #68 to merge first. The user subsequently requested
+opening the original 7c PR to run CI. This draft is therefore stacked on #68's
+integrated head `17f69bb`, targeting `feat/bonsai-web`. Phase 7 stays in progress
+until #68 merges, the PR is rebased onto the updated integration branch, and CI
+and final evidence pass. Keep `phase-7-plan.md` until those conditions hold.
+
+The historical Phase 4 table is preserved. The reports below rebuild Phase 4
+`ee66e17`, pre-P7 `04e9683`, standalone 7a `3c4b1d6`, and integrated 7a/7b
+`17f69bb` with Node **22.12.0**, pnpm **12.9.1**, Vite **5.4.21**, frozen
+installs, production mode, Ubuntu **24.04**, and `TZ=UTC LC_ALL=C LANG=C`.
+The integrated build adds only Vite's manifest setting, which changes no UI
+artifact bytes. Exact source hashes and toolchain metadata are in
+[`docs/evidence/p7c`](evidence/p7c/README.md) and `web/bundle-budget.json`.
+
+A static closure **includes its root** and every transitive static JS import.
+First-screen JS is the deduplicated union of the entry, application and default
+workspace closures. This corrects the earlier definition that omitted the
+workspace route. Gzip totals sum separately compressed files at level 9 with a
+zero timestamp; all gates compare integer raw bytes. CSS means **all emitted
+CSS**, not just entry/application styles. Unavailable historical lazy features
+are explicitly included in their parent. Full reports include every lazy
+feature and its static closure, including additional manifest dynamic entries.
+
+| Metric (raw / gzip bytes) | Rebuilt Phase 4 | Pre-P7 | Standalone 7a | Integrated P7 |
+| --- | ---: | ---: | ---: | ---: |
+| ApplicationRoot | 730,211 / 230,214 | 735,796 / 232,294 | 737,936 / 232,980 | 381,967 / 122,372 |
+| Entry | 149,517 / 48,727 | 149,517 / 48,724 | 149,517 / 48,728 | 151,858 / 49,560 |
+| Application static closure (includes root) | 881,800 / 280,062 | 887,385 / 282,140 | 889,525 / 282,832 | 535,897 / 173,053 |
+| Entry static closure (includes root) | 149,517 / 48,727 | 149,517 / 48,724 | 149,517 / 48,728 | 151,858 / 49,560 |
+| First-screen JS | 881,800 / 280,062 | 887,385 / 282,140 | 889,525 / 282,832 | 812,388 / 262,570 |
+| All emitted CSS | 91,176 / 19,706 | 91,176 / 19,706 | 91,363 / 19,731 | 91,496 / 19,878 |
+
+ApplicationRoot is **47.69% smaller** than rebuilt Phase 4.
+First-screen JS is **8.45% smaller** than pre-P7.
+The unchanged first-screen ceiling is **887,385 B**. The application cap
+is floor(70% × 730,211) = **511,147 B**. Application and its
+static closure each have a 110% regression cap against the separate candidate
+final baseline; CI does not update that baseline. A budget update must explain
+its rationale. An optional first-screen decision must identify its source
+revision, byte ceiling and reason.
+
+| Lazy chunk (raw / gzip bytes) | Rebuilt Phase 4 | Pre-P7 | Standalone 7a | Integrated P7 |
+| --- | ---: | ---: | ---: | ---: |
+| workspace | included in application | included in application | included in application | 252,362 / 80,639 |
+| pullRequests | 210,872 / 62,924 | 210,207 / 62,599 | 210,597 / 62,720 | 17,618 / 6,660 |
+| xterm | 290,556 / 72,029 | 290,556 / 72,030 | 290,556 / 72,030 | 290,556 / 72,029 |
+| addonFit | 1,771 / 812 | 1,771 / 811 | 1,771 / 812 | 1,771 / 808 |
+| landing | 18,930 / 5,244 | 18,930 / 5,244 | 18,930 / 5,244 | 18,930 / 5,242 |
+| filesPage | included in application | included in application | included in application | 2,911 / 1,290 |
+| filesPanel | included in application | included in application | included in application | 5,016 / 1,726 |
+| pullRequestDetail | included in pullRequests | included in pullRequests | included in pullRequests | 194,056 / 57,744 |
+| settings | included in application | included in application | included in application | 3,585 / 1,442 |
+| logs | included in application | included in application | included in application | 746 / 413 |
+| agentTerminal | included in application | included in application | included in application | 5,661 / 2,700 |
+| processTerminal | included in application | included in application | included in application | 4,191 / 1,920 |
+| commandPalette | included in application | included in application | included in application | 22,037 / 7,823 |
+| createWorktree | included in application | included in application | included in application | 8,003 / 2,903 |
+| deleteWorktree | included in application | included in application | included in application | 3,722 / 1,644 |
+| startAgent | included in application | included in application | included in application | 16,443 / 5,557 |
+| startProcess | included in application | included in application | included in application | 10,549 / 3,800 |
+| envEditor | included in application | included in application | included in application | 1,592 / 885 |
+
+Two independent clean builds, each with its own frozen install, agree
+byte-for-byte across **44 files**, including the manifest, HTML, JS, CSS and
+fonts. [`determinism.json`](evidence/p7c/determinism.json) records each SHA-256.
+The deliberate failure appends a valid JS comment to the manifest-resolved
+application artifact: **381,967 → 423,984 B** (> 111% of baseline). The checker
+exits **1** with `FAIL application vs approved baseline (110%): 423984 B <=
+420163 B`. Restoring the original artifact reproduces its SHA-256 and the
+checker exits **0**. [`padding-proof.json`](evidence/p7c/padding-proof.json)
+contains the diagnostic and hashes.
+
+Historical browser and cache numbers below retain their original source and
+method rather than being presented as measurements of the integrated build.
+
+| Historical paint metric (p50 / p95 / max ms) | Pre-P7 (`04e9683`, profiling, cold) | Standalone 7a (`3c4b1d6`, profiling, warm) | Standalone 7a (`3c4b1d6`, production, warm) |
+| --- | ---: | ---: | ---: |
+| 25 worktrees / 50 PRs | 88.9 / 106.9 / 110.1 | 71.7 / 78.0 / 85.0 | 69.4 / 74.8 / 80.8 |
+| 100 worktrees / 500 PRs | 213.8 / 236.3 / 238.3 | 117.0 / 150.8 / 174.0 | 107.4 / 142.9 / 143.6 |
+
+Historical pre-P7 providers answered instantly: these cold results are a best
+case, and pending providers produce no PR badges until they answer. Pre-P7 had
+no snapshot cache. Historical 7a cache results were **69,629 B / 0.98 ms / 171
+KB** for 25/50 and **332,455 B / 4.7 ms / 721 KB** for 100/500. Their timing was
+best of five and their retained heap was the last positive delta, **not a peak**.
+The new measurement reports maximum retained heap across 30 repetitions and
+observed live heap during serialization and restore separately from transient
+allocation totals; sampled live heap is not claimed as the true peak.
+
+<!-- P7C_FINAL_MEASUREMENTS -->
+
+Frontend CI uses Ubuntu **24.04**, Node **22.12.0**, pnpm **12.9.1** and frozen
+installs. It runs `test:bundle` and `bundle:check` after production build,
+retains the existing frontend/embedded/Playwright validations, includes pushes
+to `feat/bonsai-web`, and uploads bundle reports, measurement JSON and traces
+with `if: always()`. Both fixture sizes use three discarded warm-ups and 30
+samples, fresh contexts, pinned Playwright Chromium and a 1440×900 viewport.
+Local runs enforce warm p95 ≤ 300 ms; CI reports timings without that gate.
+Representative final-sample traces are captured; their sample is identified in
+JSON. Revalidation stays held until the measured paint completes. Browser asset
+requests must equal the default-workspace static graph, checked after the canvas
+loads without extending the recorded paint time.
+
+Validation and CI links will be recorded in the draft PR. No persistence,
+lazy-boundary, worker, ETag-cache or hosted-deployment behavior changes are made
+by 7c. The prior Windows reader/writer lock correction belongs to #68's base.
 
 ---
 

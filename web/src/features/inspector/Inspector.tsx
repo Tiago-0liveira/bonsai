@@ -1,7 +1,7 @@
 import { processActive } from '../../stores/processProjection'
 import { openGitHub } from '../../api/git'
 import { isLiveAgent } from '../../api/agents'
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { lazy, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useRouter } from '@tanstack/react-router'
@@ -15,10 +15,12 @@ import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { staleDescription } from '../../lib/freshness'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectPullRequests } from '../../stores/projectSelectors'
-import { FilesPanel } from '../files/FilesPanel'
+import { FeatureBoundary } from '../../app/chunkRecovery'
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
 import { ProcessActions } from '../terminal/ProcessActions'
 import type { Agent, AgentProvider, Process, PullRequest, SyncFreshnessState, Worktree } from '../../types'
+
+const FilesPanel = lazy(() => import('../files/FilesPanel').then(module => ({ default: module.FilesPanel })))
 
 const presentation = (agent: Agent) => agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
 
@@ -416,7 +418,7 @@ export function Inspector() {
           )}
         </Tabs.Content>
         <Tabs.Content value="files" className="flex min-h-0 flex-1 flex-col outline-none data-[state=inactive]:hidden">
-          <FilesPanel />
+          <FeatureBoundary loading="Loading files…"><FilesPanel /></FeatureBoundary>
         </Tabs.Content>
       </Tabs.Root>
     </aside>

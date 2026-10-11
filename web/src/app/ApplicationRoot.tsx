@@ -4,8 +4,6 @@ import { loadProjectRoots } from '../api/settings'
 import { workspacePreferences, useBonsaiStore } from '../stores/bonsai'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { RouterProvider } from '@tanstack/react-router'
-import '@xyflow/react/dist/style.css'
-import '@xterm/xterm/css/xterm.css'
 import { startGitBackend } from '../api/git'
 import {
   connectLocalBonsai,

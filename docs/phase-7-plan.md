@@ -1,6 +1,6 @@
 # Phase 7 — Warm start and frontend load (revised plan)
 
-Status: **proposed** · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
+Status: **in progress** (7a merged in #69; 7b in #68; 7c prepared for CI) · Branch base: `feat/bonsai-web` (NOT `main`) · Supersedes the
 Phase 7 section of `docs/bonsai-web-plan.md`
 
 Plan only. Implementation branches start from and merge into `feat/bonsai-web`.
@@ -68,6 +68,69 @@ The 7a PR changed these points of this plan; the code is the reference.
 - Local-served UI keeps working. The hosted entry is not extended.
 - Linux, macOS and Windows stay green.
 - If the code contradicts this plan, stop and update the plan in the same PR.
+
+---
+
+## 7b implementation notes (2026-10-10)
+
+Tasks 5–6 are implemented on `feat/web-p7b-lazy-boundaries`, based on
+`04e9683`, targeting `feat/bonsai-web`. Tasks 0–4 landed separately in 7a
+(#69); tasks 7 and 8 remain outside 7b.
+See the [7b outcome and exact byte table](bonsai-web-plan.md#phase-7--warm-start-and-frontend-load).
+
+Re-verified corrections: `AppShell` lives under `components/layout` and
+`BottomWorkspace` under `features/terminal`. The command shortcut listener
+must move to the eager owner. Terminal effect imports catch their errors,
+so they need explicit recovery in addition to React error boundaries.
+The main app/GitHub route may lack facade keys in Vite's manifest; resolve
+stable chunk names and static import graphs in that case. The required setup
+settings and header helpers remain shared eager code.
+
+During the original 7b validation, the environment supplied pnpm 12.6.0,
+not the declared 12.9.1; registry access was unavailable.
+The cached dependency lock matched the pre-7b lock,
+and direct cached build binaries were used for the same-toolchain comparison.
+Full Go and browser suites were blocked by socket/browser sandbox restrictions;
+package-manager path failures also reproduced on the unchanged baseline.
+Unit, typecheck, lint, production/e2e build, plain Go build/vet and embedded
+serving checks passed. At that point, Phase 7 awaited 7a/7c and unrestricted
+validation. The first CI run passed the complete Go matrix and Linux race
+checks and 66/67 browser tests (including all 11 new cases). The remaining
+settings test still expected “Standard” for a failed Live tunnel, despite
+`04e9683` changing the UI to “Live paused”; its expectation is corrected here.
+The corrected frontend CI run `38082871917` passed all 67 browser tests;
+Go CI run `38082871918` passed the Linux/macOS/Windows matrix, Linux race
+checks and release dry-run. CI also verified the declared pnpm 12.9.1 frozen
+install. 7b implementation is complete in #68; 7a has since merged in #69.
+Phase 7 still awaits 7c. The original 7b changes did not touch persistence or
+hosted deployment files.
+
+---
+
+## 7c verification notes (2026-10-11)
+
+Task 8 adds manifest accounting, raw-byte enforcement, historical references,
+a separate candidate final baseline, focused script tests, CI artifact upload,
+and corrected measurement definitions. Exact artifact evidence is in
+`docs/evidence/p7c`; the main plan records the final results.
+
+The user requested opening the original 7c PR to run CI while #68 was still
+open. This draft therefore stacks on #68's integrated head `17f69bb` and targets
+`feat/bonsai-web`. Before completion, merge #68 and rebase onto the updated
+integration branch. The existing sandbox restriction no longer applies:
+loopback and pinned Chromium work in the current unrestricted environment.
+Phase 7 remains in progress pending the integration and final CI evidence;
+retain this file until those conditions pass, then fold surviving decisions
+into the main plan and delete it.
+
+The cache measurement now distinguishes the maximum retained heap after GC
+across 30 repetitions from sampled live heap during serialization/restore and
+from cumulative allocation bytes. The historical 7a retained figure was the
+last positive sample, not a peak; its best-of-five timing is kept labeled.
+First-screen JS includes the default workspace closure as well as entry and
+application. A closure includes its root and counts each emitted JS file once.
+No persistence, lazy-boundary, worker, ETag-cache or hosted behavior changes
+are made in 7c.
 
 ---
 
@@ -285,13 +348,13 @@ feature its own Suspense and Error Boundary.
 
 | Modules | Boundary and loading behavior |
 | --- | --- |
-| `features/terminal/AgentTerminal.tsx`, `ProcessTerminal.tsx` | Component boundary at `BottomWorkspace.tsx`. Load when the selected runtime needs a terminal. Move xterm CSS out of `ApplicationRoot.tsx` into terminal loading. Fixed-size "Loading terminal…" fallback. Preserve selection and detach/replay semantics. |
+| `features/terminal/AgentTerminal.tsx`, `ProcessTerminal.tsx` | Component boundary at `features/terminal/BottomWorkspace.tsx`. Load when the selected runtime needs a terminal. Move xterm CSS out of `ApplicationRoot.tsx` into terminal loading. Fixed-size "Loading terminal…" fallback. Preserve selection and detach/replay semantics. |
 | `features/files/FilesPage.tsx` | Route boundary for `/files`. |
 | `features/files/FilesPanel.tsx` | Component boundary inside Inspector's Files tab. |
 | `features/github/PullRequestDetail.tsx` | Component boundary in `PullRequestsPage.tsx`. The list stays visible. Owns the markdown stack (`react-markdown`, remark, unified). |
 | `features/workspace/WorkspacePage.tsx` | Route boundary shared by `/`, `/worktrees`, `/agents`, keeping the focus wrappers. Moves `BonsaiCanvas`, React Flow and the layout behind the route. Move the React Flow CSS into this feature. The eager branch list paints while the canvas loads. |
 | `features/settings/SettingsPage.tsx`, `features/logs/LogsPage.tsx` | Route boundaries with panel-local fallbacks. |
-| `CreateWorktreeDialog`, `DeleteWorktreeDialog`, `StartAgentDialog`, `StartProcessDialog`, `EnvEditor`, `CommandPalette` | Component boundaries at their open-state owners in `AppShell.tsx`. Preserve focus, dismissal and form behavior. |
+| `CreateWorktreeDialog`, `DeleteWorktreeDialog`, `StartAgentDialog`, `StartProcessDialog`, `EnvEditor`, `CommandPalette` | Component boundaries at their open-state owners in `components/layout/AppShell.tsx`. Preserve focus, dismissal and form behavior. |
 
 Rules:
 

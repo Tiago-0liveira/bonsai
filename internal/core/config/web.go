@@ -360,7 +360,20 @@ func EnsureWebConfig(path string) (cfg WebConfig, created bool, err error) {
 }
 
 // ReadWebState loads web-state.json, returning an empty state when missing.
+// Readers share the writer lock: on Windows, an open reader prevents atomic
+// replacement of the state file.
 func ReadWebState(path string) (WebState, error) {
+	var out WebState
+	err := withWebLock(path, func() error {
+		var err error
+		out, err = readWebState(path)
+		return err
+	})
+	return out, err
+}
+
+// readWebState requires the caller to hold the state file's lock.
+func readWebState(path string) (WebState, error) {
 	out := WebState{Version: WebStateVersion}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -382,7 +395,7 @@ func ReadWebState(path string) (WebState, error) {
 func UpdateWebState(path string, fn func(*WebState) error) (WebState, error) {
 	var out WebState
 	err := withWebLock(path, func() error {
-		state, err := ReadWebState(path)
+		state, err := readWebState(path)
 		if err != nil {
 			return err
 		}

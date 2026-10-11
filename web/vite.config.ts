@@ -47,6 +47,7 @@ export default defineConfig(({ mode }) => ({
     },
   }],
   build: {
+    manifest: true,
     // font-src 'self' blocks data: URIs, so small font subsets must stay files.
     assetsInlineLimit: (file: string) => file.endsWith('.woff2') ? false : undefined,
     // The e2e build carries test hooks. It gets its own directory so web/dist,
