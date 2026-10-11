@@ -372,6 +372,8 @@ func TestRenderUsageDashboardThreeProvidersGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A checkout with core.autocrlf rewrites the golden with CRLF.
+	want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))
 	if got := out.String(); got != string(want) {
 		t.Fatalf("dashboard differs from testdata/usage-three-providers.golden:\n%s", got)
 	}
