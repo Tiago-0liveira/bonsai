@@ -1,0 +1,36 @@
+{
+  "id": 3,
+  "result": {
+    "rateLimits": {
+      "limitId": "codex",
+      "limitName": null,
+      "primary": { "usedPercent": 90.5, "windowDurationMins": 300, "resetsAt": 1791735519 },
+      "secondary": { "usedPercent": 150, "windowDurationMins": 10080, "resetsAt": 1792322319 },
+      "credits": { "hasCredits": true, "unlimited": false, "balance": "12.50" },
+      "planType": "pro"
+    },
+    "rateLimitsByLimitId": {
+      "codex": {
+        "limitId": "codex",
+        "limitName": null,
+        "primary": { "usedPercent": 90.5, "windowDurationMins": 300, "resetsAt": 1791735519 },
+        "secondary": { "usedPercent": 150, "windowDurationMins": 10080, "resetsAt": 1792322319 },
+        "planType": "pro"
+      },
+      "codex_spark": {
+        "limitId": "codex_spark",
+        "limitName": "Spark",
+        "primary": { "usedPercent": 10, "windowDurationMins": 300, "resetsAt": 1791735000 },
+        "secondary": { "usedPercent": 25, "windowDurationMins": 90, "resetsAt": null },
+        "planType": "pro"
+      },
+      "review": {
+        "limitId": "review",
+        "limitName": null,
+        "primary": { "usedPercent": 40, "windowDurationMins": 1440 },
+        "secondary": null
+      }
+    },
+    "someFutureField": { "token": "sk-should-never-show" }
+  }
+}

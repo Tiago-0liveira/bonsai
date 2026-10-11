@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -140,11 +143,12 @@ func TestRenderUsageDashboardSeparatesProviders(t *testing.T) {
 	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
 	antigravity := usageTestResult("google", 0.70, 0.90, now.Add(48*time.Hour), now.Add(3*time.Hour))
 	codexRemaining := 0.60
+	// A provider the dashboard has no adapter for still gets its own section.
 	codex := agents.AccountUsageResult{
-		Account: agents.Account{ID: "acct_codex", Provider: "codex", Name: "openai"},
+		Account: agents.Account{ID: "acct_other", Provider: "other", Name: "openai"},
 		Usage: &agents.UsageSnapshot{
-			Provider:  "codex",
-			AccountID: "acct_codex",
+			Provider:  "other",
+			AccountID: "acct_other",
 			Limits: []agents.UsageLimit{
 				{ID: "session", Window: "5h", RemainingFraction: &codexRemaining},
 			},
@@ -157,7 +161,7 @@ func TestRenderUsageDashboardSeparatesProviders(t *testing.T) {
 	for _, want := range []string{
 		"Fleet Capacity (2 Accounts · 2 Providers)",
 		"◆ Antigravity · 1 account",
-		"◆ Codex · 1 account",
+		"◆ other · 1 account",
 		"Usage dashboard adapter not implemented yet.",
 	} {
 		if !strings.Contains(got, want) {
@@ -275,5 +279,100 @@ func TestRenderUsageDashboardShowsClaudeWarnings(t *testing.T) {
 	renderUsageDashboard(&out, []agents.AccountUsageResult{result}, now, false)
 	if !strings.Contains(out.String(), "work: Claude usage response had no recognizable limits") {
 		t.Fatalf("warning missing:\n%s", out.String())
+	}
+}
+
+func codexTestResult(name, plan string, five, week float64, other map[string]float64, now time.Time) agents.AccountUsageResult {
+	limits := []agents.UsageLimit{
+		usageTestLimit("five_hour", "codex", "5h", five, now.Add(3*time.Hour)),
+		usageTestLimit("weekly", "codex", "weekly", week, now.Add(48*time.Hour)),
+	}
+	ids := make([]string, 0, len(other))
+	for id := range other {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		limit := usageTestLimit(id, "Spark", "5h", other[id], now.Add(time.Hour))
+		limit.Label = "Spark 5h"
+		limits = append(limits, limit)
+	}
+	return agents.AccountUsageResult{
+		Account: agents.Account{ID: agents.AccountID("acct_" + name), Provider: "codex", Name: name},
+		Usage:   &agents.UsageSnapshot{Provider: "codex", AccountID: agents.AccountID("acct_" + name), Plan: plan, Limits: limits},
+	}
+}
+
+func TestRenderUsageDashboardCodex(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	spare := codexTestResult("spare", "free", 0.10, 0.80, nil, now)
+	spare.Usage.Warnings = []string{"Credit balance: 12.50"}
+	results := []agents.AccountUsageResult{
+		spare,
+		codexTestResult("work", "plus", 0.90, 0.50, map[string]float64{"codex_spark_five_hour": 0.35}, now),
+		{Account: agents.Account{ID: "acct_ci", Provider: "codex", Name: "ci"}, Error: fmt.Errorf("%w: API key profiles have no plan limits", agents.ErrUsageUnsupported)},
+		{Account: agents.Account{ID: "acct_out", Provider: "codex", Name: "out"}, Error: fmt.Errorf("%w: run `bonsai agent run out -- login`", agents.ErrNotAuthenticated)},
+		{Account: agents.Account{ID: "acct_bad", Provider: "codex", Name: "broken"}, Error: errors.New("codex usage unavailable: timed out")},
+	}
+	var out bytes.Buffer
+	renderUsageDashboard(&out, results, now, false)
+	got := out.String()
+	for _, want := range []string{
+		"Fleet Capacity (5 Accounts · 1 Provider)",
+		"◆ Codex · 5 accounts",
+		"Plan",
+		"Other",
+		"plus",
+		"Spark 5h 35%",
+		"API key profiles have no plan limits",
+		"not logged in",
+		"ERR",
+		"spare: Credit balance: 12.50",
+		"Next Reset: work in 48h00m",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dashboard missing %q:\n%s", want, got)
+		}
+	}
+	section := got[strings.Index(got, "◆ Codex"):]
+	work, spareAt, ci, broken := strings.Index(section, "work"), strings.Index(section, "spare "), strings.Index(section, "ci "), strings.Index(section, "broken")
+	if !(work >= 0 && work < spareAt && spareAt < ci && spareAt < broken) {
+		t.Fatalf("Codex rows not ranked by min remaining, errors last:\n%s", section)
+	}
+	// Score is the lower of 5h and weekly; other limits do not count.
+	if score, ok := usageRowScore(usageDashboardRow{account: results[1].Account, codex5h: &results[1].Usage.Limits[0], codexWeek: &results[1].Usage.Limits[1]}); !ok || score != 0.50 {
+		t.Fatalf("score = %v, %v", score, ok)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Fatal("non-color render contains ANSI escapes")
+	}
+}
+
+func TestRenderUsageDashboardCodexWithoutOtherLimits(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	renderUsageDashboard(&out, []agents.AccountUsageResult{codexTestResult("work", "plus", 0.9, 0.5, nil, now)}, now, false)
+	if got := out.String(); strings.Contains(got, "Other") || !strings.Contains(got, "Plan") {
+		t.Fatalf("unexpected render:\n%s", got)
+	}
+}
+
+// The three-provider dashboard is pinned in full so a change to any adapter
+// shows up as one readable diff.
+func TestRenderUsageDashboardThreeProvidersGolden(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	results := []agents.AccountUsageResult{
+		usageTestResult("google", 0.70, 0.90, now.Add(48*time.Hour), now.Add(3*time.Hour)),
+		claudeTestResult("work", 0.90, 0.50, map[string]float64{"seven_day_opus": 0.25}, now),
+		codexTestResult("main", "plus", 0.72, 0.96, map[string]float64{"codex_spark_five_hour": 0.35}, now),
+	}
+	var out bytes.Buffer
+	renderUsageDashboard(&out, results, now, false)
+	want, err := os.ReadFile(filepath.Join("testdata", "usage-three-providers.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != string(want) {
+		t.Fatalf("dashboard differs from testdata/usage-three-providers.golden:\n%s", got)
 	}
 }

@@ -50,13 +50,31 @@ func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOp
 	if launch.PermissionMode != "" {
 		return fmt.Errorf("codex does not support permission modes; use sandbox and approval")
 	}
-	if err := validatePermissions(launch.Model, launch.Effort, launch.Sandbox, launch.Approval); err != nil {
+	if err := validatePermissions(launch.Model, "", launch.Sandbox, launch.Approval); err != nil {
 		return err
 	}
-	if _, err := ParseSettings(account); err != nil {
+	settings, err := ParseSettings(account)
+	if err != nil {
 		return fmt.Errorf("invalid profile settings")
 	}
-	return nil
+	return p.validateEffort(account, settings, launch)
+}
+
+// validateEffort checks the launch effort against the model's own list when the
+// profile's model list is cached (see Models), and against every level Codex
+// has shipped otherwise. It never starts Codex: an unknown model list only
+// makes the check more permissive.
+func (p *Provider) validateEffort(account agents.Account, settings Settings, launch agents.LaunchOptions) error {
+	if launch.Effort == "" {
+		return nil
+	}
+	if known := p.effortsFor(account, first(launch.Model, settings.Model)); len(known) > 0 {
+		if !slices.Contains(known, launch.Effort) {
+			return fmt.Errorf("effort %q is not supported by this model (use %s)", launch.Effort, strings.Join(known, ", "))
+		}
+		return nil
+	}
+	return validateChoice("effort", launch.Effort, reasoningLevel)
 }
 
 // LaunchFields declares a permissions preset select, which sends sandbox and
