@@ -1,19 +1,13 @@
- Review                                                                                                ● running · 7001
+ Set up the Cloudflare tunnel                                                                          ● running · 7001
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  Projects     ~/code, ~/old · 15 repos
-  Open in      this computer + hosted app · http://127.0.0.1:7001 · auto-open on
-  GitHub       via gh (octo)
-  Updates      Standard · checks GitHub every ~2 min
+ › Tunnel name  › a
+     Bonsai creates this tunnel if missing after you confirm in Review. It forwards the receiver (127.0.0.1:7002);
+     ingress rules in your own cloudflared config take precedence.
 
-  Changes
-  Updates      live · Cloudflare quick tunnel → standard
-
-  Outside this computer
-  • Deletes Bonsai's webhook from octo/bonsai, octo/api.
-
-  Restarts the Bonsai API (live updates changed).
-  Open pages reconnect by themselves.
+   Public URL   › https://hooks.example.com
+     Bonsai routes this hostname to your tunnel after you confirm in Review. Your domain must be on Cloudflare; sign
+     in when prompted.
 
 
 
@@ -37,4 +31,10 @@
 
 
 
- enter apply · esc go back
+
+
+
+
+
+
+ tab next field · enter next · esc back

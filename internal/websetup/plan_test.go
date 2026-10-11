@@ -16,9 +16,6 @@ func root(path string) config.ProjectRoot {
 
 func TestNewDraftFirstRun(t *testing.T) {
 	d := NewDraft(config.DefaultWebConfig(), false, nil, []string{"/h/code", "/h/dev"}, "/h/bonsai")
-	if d.Config.Interfaces != (config.WebInterfaces{Local: true}) {
-		t.Fatalf("a brand-new user gets this computer only, got %+v", d.Config.Interfaces)
-	}
 	if len(d.Folders) != 3 || !d.Folders[0].ThisRepo || d.Folders[0].Path != "/h/bonsai" {
 		t.Fatalf("folders = %+v", d.Folders)
 	}
@@ -46,11 +43,8 @@ func TestNewDraftFirstRun(t *testing.T) {
 }
 
 func TestNewDraftExistingUser(t *testing.T) {
-	cfg := config.DefaultWebConfig() // hosted on
+	cfg := config.DefaultWebConfig()
 	d := NewDraft(cfg, true, []config.ProjectRoot{root("/h/code")}, []string{"/h/code", "/h/code/inner", "/h/dev"}, "/h/code/repo")
-	if !d.Config.Interfaces.Hosted {
-		t.Fatal("existing users keep their saved interfaces")
-	}
 	if len(d.Folders) != 2 || !d.Folders[0].Existing() || d.Folders[1].Path != "/h/dev" {
 		t.Fatalf("roots first, covered suggestions and repo skipped: %+v", d.Folders)
 	}
@@ -79,7 +73,7 @@ func TestBuildPlanFirstRun(t *testing.T) {
 func TestBuildPlanTargetedRestart(t *testing.T) {
 	cfg := config.DefaultWebConfig()
 	before := NewDraft(cfg, true, []config.ProjectRoot{root("/h/code"), root("/h/old")}, []string{"/h/work"}, "")
-	running := &Running{APIPort: cfg.APIPort, Hosted: true}
+	running := &Running{APIPort: cfg.APIPort}
 
 	cases := []struct {
 		name    string
@@ -91,8 +85,6 @@ func TestBuildPlanTargetedRestart(t *testing.T) {
 		{"roots only", func(d *Draft) { d.Toggle(1); d.Toggle(2) }, false, ""},
 		{"auto-open only", func(d *Draft) { d.Config.OpenBrowser = false }, false, ""},
 		{"port", func(d *Draft) { d.Config.APIPort = 7011 }, true, "port changed"},
-		{"hosted", func(d *Draft) { d.Config.Interfaces.Hosted = false }, true, "hosted app access changed"},
-		{"both", func(d *Draft) { d.Config.APIPort = 7011; d.Config.Interfaces.Hosted = false }, true, "port and hosted app access changed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,14 +101,14 @@ func TestBuildPlanTargetedRestart(t *testing.T) {
 	}
 
 	// Running on a --port override: leaving the port alone restarts nothing.
-	override := &Running{APIPort: 17931, Hosted: true}
+	override := &Running{APIPort: 17931}
 	if p := BuildPlan(before, before.Clone(), override, false); p.RestartAPI {
 		t.Fatalf("untouched port restarted a --port stack: %+v", p)
 	}
 	hostedOnly := before.Clone()
-	hostedOnly.Config.Interfaces.Hosted = false
+	override.AdditionalOrigin = "https://app.bonsai.dev"
 	if p := BuildPlan(before, hostedOnly, override, false); !p.RestartAPI || p.RestartPort != 17931 {
-		t.Fatalf("a hosted-only change must restart on the running port: %+v", p)
+		t.Fatalf("a legacy browser origin must restart on the running port: %+v", p)
 	}
 	newPort := before.Clone()
 	newPort.Config.APIPort = 7011
@@ -141,13 +133,11 @@ func TestDiff(t *testing.T) {
 	after.Toggle(1)
 	after.Toggle(2)
 	after.Config.APIPort = 7011
-	after.Config.Interfaces.Hosted = false
 	after.Config.OpenBrowser = false
 	got := Diff(before, after, home)
 	sep := string(filepath.Separator)
 	want := []Change{
 		{Label: "Folders", To: "+ ~" + sep + "work  − ~" + sep + "old"},
-		{Label: "Open in", From: "this computer + hosted app", To: "this computer"},
 		{Label: "Auto-open", From: "on", To: "off"},
 		{Label: "Port", From: "7001", To: "7011"},
 	}
@@ -161,11 +151,7 @@ func TestDiff(t *testing.T) {
 
 func TestSummaries(t *testing.T) {
 	cfg := config.DefaultWebConfig()
-	if got := OpenInSummary(cfg); got != "this computer + hosted app · http://127.0.0.1:7001 · auto-open on" {
-		t.Fatal(got)
-	}
-	cfg.Interfaces = config.WebInterfaces{Hosted: true}
-	if got := OpenInSummary(cfg); got != "hosted app only · auto-open on" {
+	if got := OpenInSummary(cfg); got != "this computer · http://127.0.0.1:7001/app · auto-open on" {
 		t.Fatal(got)
 	}
 	if got := UpdatesSummary(cfg, "2 min"); got != "Standard · checks GitHub every ~2 min" {
@@ -207,8 +193,8 @@ func TestBuildPlanLive(t *testing.T) {
 	standard := config.DefaultWebConfig()
 	standard.SetupVersion = config.WebSetupVersion
 	draft := func(cfg config.WebConfig) Draft { return Draft{Config: cfg} }
-	idle := &Running{APIPort: 7001, Hosted: true}
-	live := &Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+	idle := &Running{APIPort: 7001}
+	live := &Running{APIPort: 7001, WebhookPort: 7002}
 
 	// Turning live on adds hooks and starts the tunnel with a restart.
 	p := BuildPlan(draft(standard), draft(liveConfig("cloudflared-quick", "o/a", "o/b")), idle, false)
@@ -239,10 +225,12 @@ func TestBuildPlanLive(t *testing.T) {
 
 	// A quick tunnel restarted for another reason gets a new address too.
 	hosted := draft(liveConfig("cloudflared-quick", "o/a"))
-	hosted.Config.Interfaces.Hosted = false
+	live.AdditionalOrigin = "https://app.bonsai.dev"
 	if p = BuildPlan(draft(liveConfig("cloudflared-quick", "o/a")), hosted, live, false); hooks(p) != "repoint o/a" || p.TunnelStarts {
 		t.Fatalf("restart: %+v", p)
 	}
+
+	live.AdditionalOrigin = ""
 
 	// Rotating the secret restarts the API and re-sends it.
 	rotate := draft(named)

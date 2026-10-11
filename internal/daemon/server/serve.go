@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -120,7 +119,7 @@ func (s *Server) serveStart(spec *procstore.ServeSpec) (*procstore.ServeGroup, e
 	if existing != nil {
 		group := s.serveSnapshot(existing)
 		modern := normalizedServeMode(existing.Spec) == procstore.ServeModeProduction &&
-			(existing.Spec.BrowserOrigin != "" || existing.Spec.Scope == procstore.ServeScopeUser) &&
+			existing.Spec.BrowserOrigin == "" &&
 			existing.ProcessIDs["api"] != 0 &&
 			onlyProductionProcesses(existing.ProcessIDs) &&
 			sameLiveServe(existing.Spec, *spec)
@@ -266,14 +265,8 @@ func validateServeSpec(spec procstore.ServeSpec) error {
 	if spec.APIPort < 1 || spec.APIPort > 65535 {
 		return fmt.Errorf("api port %d is invalid", spec.APIPort)
 	}
-	// The user-level API serves its own UI and always allows its own origin;
-	// an empty browser origin means the hosted app is disabled there.
-	if spec.BrowserOrigin != "" || spec.Scope != procstore.ServeScopeUser {
-		u, err := url.Parse(strings.TrimSpace(spec.BrowserOrigin))
-		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
-			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-			return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
-		}
+	if spec.BrowserOrigin != "" {
+		return fmt.Errorf("production browser origin must be empty; open the local /app")
 	}
 	// Only `bonsai web` may add live updates, and only through the explicit
 	// allow-rule below. Everything else keeps the old refusal (whose text an

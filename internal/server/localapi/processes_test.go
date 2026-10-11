@@ -156,7 +156,7 @@ func TestProcessAPIValidationPreviewAndFailedSummary(t *testing.T) {
 	request := func(path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "http://"+s.expectedHost+path, strings.NewReader(body))
 		r.Host = s.expectedHost
-		r.Header.Set("Origin", s.browserOrigin)
+		r.Header.Set("Origin", "http://"+s.expectedHost)
 		r.Header.Set("X-Bonsai-Session", token.Token)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -220,7 +220,7 @@ func TestProcessRemovalPreservesStopContractAndPublishesVisibility(t *testing.T)
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://"+s.expectedHost+path, strings.NewReader(body))
 		r.Host = s.expectedHost
-		r.Header.Set("Origin", s.browserOrigin)
+		r.Header.Set("Origin", "http://"+s.expectedHost)
 		r.Header.Set("X-Bonsai-Session", token.Token)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -306,7 +306,7 @@ func TestLateProcessReadCannotOverwriteRemovalCache(t *testing.T) {
 	token, _ := s.sessions.create()
 	request := httptest.NewRequest("POST", "http://"+s.expectedHost+"/api/projects/repo/processes/"+strconv.Itoa(r.ID)+"/remove", strings.NewReader(`{"stop_first":true}`))
 	request.Host = s.expectedHost
-	request.Header.Set("Origin", s.browserOrigin)
+	request.Header.Set("Origin", "http://"+s.expectedHost)
 	request.Header.Set("X-Bonsai-Session", token.Token)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()

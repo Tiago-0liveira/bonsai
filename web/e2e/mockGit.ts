@@ -228,10 +228,8 @@ function emptySnapshot(projectId: string) {
 
 type MockWireSnapshot = Record<string, unknown>
 
-// The hosted-style entry talks to the API cross-origin on 7001. The
-// local-served entry (entry-points.spec.ts) loads the page from the Go API
-// fixture and mocks the API on that same origin.
-export const DEFAULT_API_ORIGIN = 'http://127.0.0.1:7001'
+// The default fixture serves the UI and API from one loopback origin.
+export const DEFAULT_API_ORIGIN = 'http://127.0.0.1:7011'
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const webSocketOrigin = (origin: string) => origin.replace(/^http/, 'ws')
@@ -577,9 +575,6 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Not Found' } } })
   })
 
-  await page.route('https://api.bonsai.dev/**', async (route) => {
-    await route.fulfill({ status: 401, body: 'authentication required' })
-  })
   return { publish: () => socket.publishUpdate(projectSnapshot('bonsai', true)) }
 }
 
@@ -591,6 +586,11 @@ export async function mockUpdateSettings(page: Page, settings: () => unknown, ap
 
 export async function openConnectedApp(page: Page) {
   await page.goto('/app')
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+  await page.locator('.react-flow').waitFor({ state: 'visible' })
+}
+
+export async function openFullStackApp(page: Page) {
+  // Explicit origin of the native API/PTY fixture, also serving its UI.
+  await page.goto('http://127.0.0.1:7014/app')
   await page.locator('.react-flow').waitFor({ state: 'visible' })
 }

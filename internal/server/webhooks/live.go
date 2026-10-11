@@ -47,7 +47,7 @@ func (e LiveEvent) ChecksEvent() bool {
 
 // AllowedLiveEventAction is the live receiver's allowlist: the events a
 // Bonsai repository hook subscribes to, plus GitHub's ping. It is separate
-// from AllowedEventAction so the frozen hosted relay never changes.
+// from AllowedEventAction to preserve the contributor relay event contract.
 func AllowedLiveEventAction(eventName, action string) bool {
 	switch eventName {
 	case "push", "status", "ping":

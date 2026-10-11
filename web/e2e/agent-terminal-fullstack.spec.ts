@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { openConnectedApp } from './mockGit'
+import { openFullStackApp as openConnectedApp } from './mockGit'
 
 test.skip(!['linux', 'darwin'].includes(process.platform), 'Native Unix PTY fixture')
 
@@ -30,7 +30,7 @@ test('real API and PTY: profile launch, input, reload, stop and retained output'
   await expect(page.locator('.xterm-screen')).toContainText('REPLY:browser-input')
   await page.setViewportSize({ width: 1250, height: 850 })
   await page.reload()
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   await expect(page.getByTestId(`rf__node-${session.id}`)).toBeVisible()
   await page.getByTestId(`rf__node-${session.id}`).click()
   await expect(page.locator('.runtime-tile')).toContainText('running · connected')
@@ -84,7 +84,7 @@ test('real API and PTY: two concurrent sessions of one Claude profile, reload an
 
   await page.setViewportSize({ width: 1250, height: 850 })
   await page.reload()
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   await expect(page.getByTestId(`rf__node-${first}`)).toBeVisible()
   await expect(page.getByTestId(`rf__node-${second}`)).toBeVisible()
   await page.getByTestId(`rf__node-${first}`).click()

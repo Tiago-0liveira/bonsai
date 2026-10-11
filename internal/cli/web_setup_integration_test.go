@@ -86,8 +86,7 @@ func TestWebSetupEditAppliesWithTargetedRestart(t *testing.T) {
 		t.Fatalf("defaults must leave setup_version 0 so setup is offered later, got %d", saved.SetupVersion)
 	}
 
-	// Port and hosted app: the API restarts on the new port with the hosted
-	// origin no longer allowed; a repository folder is added on the way.
+	// The API restarts on the new port; a repository folder is added on the way.
 	work := filepath.Join(os.Getenv("HOME"), "work")
 	gitInit(t, filepath.Join(work, "alpha"))
 	workCanonical, err := config.CanonicalDirectory(work)
@@ -97,7 +96,6 @@ func TestWebSetupEditAppliesWithTargetedRestart(t *testing.T) {
 	second := freePort(t)
 	plan, result, steps := apply(t, w, func(d *setup.Draft) {
 		d.Config.APIPort = second
-		d.Config.Interfaces.Hosted = false
 		d.AddFolder(workCanonical)
 	})
 	if !plan.RestartAPI || !result.OK {
@@ -114,7 +112,7 @@ func TestWebSetupEditAppliesWithTargetedRestart(t *testing.T) {
 		t.Fatalf("own origin: %d", got)
 	}
 	saved, _, _ := config.ReadWebConfig(w.configPath)
-	if saved.APIPort != second || saved.Interfaces.Hosted || saved.SetupVersion != config.WebSetupVersion {
+	if saved.APIPort != second || saved.SetupVersion != config.WebSetupVersion {
 		t.Fatalf("saved = %+v", saved)
 	}
 	rootsPath, _ := config.ProjectRootsPath()

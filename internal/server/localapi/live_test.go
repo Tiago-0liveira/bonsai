@@ -21,7 +21,7 @@ func newLiveTestServer(t *testing.T) *Server {
 	s, err := New(Config{
 		ProjectRootsPath: t.TempDir() + "/project-roots.json",
 		Address:          "127.0.0.1:7001",
-		BrowserOrigin:    ProductionBrowserOrigin,
+		BrowserOrigin:    "",
 		WebhookAddress:   "127.0.0.1:7002",
 		WebhookSecret:    []byte(liveSecret),
 	})
@@ -103,7 +103,7 @@ func TestNewRejectsUnsafeWebhookReceiver(t *testing.T) {
 	} {
 		cfg.ProjectRootsPath = roots
 		cfg.Address = "127.0.0.1:7001"
-		cfg.BrowserOrigin = ProductionBrowserOrigin
+		cfg.BrowserOrigin = ""
 		if _, err := New(cfg); err == nil {
 			t.Errorf("%s: accepted", name)
 		}

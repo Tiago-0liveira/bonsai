@@ -36,7 +36,7 @@ test('branch settings remain editable and project overview stays scoped', async 
   await inspector.getByRole('button', { name: /fix\/daemon-lifecycle/ }).click()
   await inspector.getByText('Branch settings', { exact: true }).click()
   await page.reload()
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   await inspector.getByText('Branch settings', { exact: true }).click()
   await expect(inspector.getByRole('button', { name: 'Merge target', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Project', exact: true }).click()

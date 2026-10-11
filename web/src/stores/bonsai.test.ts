@@ -127,7 +127,7 @@ describe('bonsai store', () => {
     const output = useBonsaiStore.getState().terminalOutput
     useBonsaiStore.getState().appendTerminalCommand('git ' + action)
     await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:7001/api/worktrees/wt-web/' + action, expect.objectContaining({ method: 'POST' }))
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/worktrees/wt-web/' + action, expect.objectContaining({ method: 'POST' }))
     expect(useBonsaiStore.getState().terminalOutput).toBe(output)
   })
 
@@ -153,7 +153,7 @@ describe('bonsai store', () => {
     const previous = useBonsaiStore.getState().worktrees
     await expect(useBonsaiStore.getState().createWorktree({ sourceType: 'existing', sourceRef: 'feat/local-experiment', mergeTargetBranch: 'main' })).rejects.toThrow('daemon offline')
     expect(useBonsaiStore.getState().worktrees).toBe(previous)
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:7001/api/projects/bonsai/worktrees', expect.objectContaining({ method: 'POST', credentials: 'omit', body: JSON.stringify({ mode: 'existing', branch: 'feat/local-experiment', base: 'feat/local-experiment' }) }))
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/projects/bonsai/worktrees', expect.objectContaining({ method: 'POST', credentials: 'omit', body: JSON.stringify({ mode: 'existing', branch: 'feat/local-experiment', base: 'feat/local-experiment' }) }))
   })
 
   it('prevents merge-target cycles', () => {
@@ -174,7 +174,7 @@ describe('bonsai store', () => {
     useBonsaiStore.getState().setWorktreeStackPreference('wt-web', 'never')
     await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
     expect(useBonsaiStore.getState().worktrees.find(item => item.id === 'wt-web')?.stackPreference).not.toBe('never')
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:7001/api/worktrees/wt-web/metadata', expect.objectContaining({ method: 'PATCH', credentials: 'omit' }))
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/worktrees/wt-web/metadata', expect.objectContaining({ method: 'PATCH', credentials: 'omit' }))
   })
 
   it('does not claim a PR merged when GitHub fails', async () => {
@@ -183,7 +183,7 @@ describe('bonsai store', () => {
     useBonsaiStore.getState().setPullRequestStatus(pr.id, 'Merged')
     await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
     expect(useBonsaiStore.getState().pullRequests[0].status).toBe(pr.status)
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:7001/api/projects/bonsai/pull-requests/' + pr.number + '/merge', expect.objectContaining({ method: 'POST', credentials: 'omit' }))
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/projects/bonsai/pull-requests/' + pr.number + '/merge', expect.objectContaining({ method: 'POST', credentials: 'omit' }))
   })
 
   it('toggles independent right-side dock panels', () => {

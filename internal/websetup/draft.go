@@ -65,13 +65,9 @@ func (d Draft) Clone() Draft {
 // the defaults gives a working project list. thisRepo is the main worktree of
 // the repository bonsai web was started from, or "".
 //
-// A brand-new user (no web.json yet) gets the recommended "this computer
-// only"; anyone else keeps their saved interfaces.
-func NewDraft(cfg config.WebConfig, exists bool, roots []config.ProjectRoot, suggestions []string, thisRepo string) Draft {
+// Existing browser, port and update preferences are preserved.
+func NewDraft(cfg config.WebConfig, _ bool, roots []config.ProjectRoot, suggestions []string, thisRepo string) Draft {
 	d := Draft{Config: cfg}
-	if !exists {
-		d.Config.Interfaces = config.WebInterfaces{Local: true, Hosted: false}
-	}
 	covered := func(path string) bool {
 		for _, f := range d.Folders {
 			if f.Path == path || (f.Existing() && config.ContainsPath(f.Path, path)) {

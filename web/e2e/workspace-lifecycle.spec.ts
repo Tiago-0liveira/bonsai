@@ -73,7 +73,7 @@ test('a completed resize saves once and pending preferences survive immediate na
   await page.getByRole('link', { name: 'GitHub', exact: true }).click()
   await expect.poll(writes).toBe(baseline + 1)
   await page.reload()
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   await expect(page.locator('[data-panel-id="bottom-workspace"]')).toHaveAttribute('data-panel-size', finalHeight.toFixed(1))
 })
 
@@ -112,7 +112,7 @@ test('collapsed startup restores normal height and removes portaled dock menus f
   await page.keyboard.press('Tab')
   expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[inert]')))).toBe(false)
   await page.reload()
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   await expect(page.locator('[data-panel-id="bottom-workspace"]')).toHaveAttribute('data-panel-size', '0.0')
   await page.getByRole('button', { name: 'Open workspace' }).click()
   await expect(page.locator('[data-panel-id="bottom-workspace"]')).toHaveAttribute('data-panel-size', '41.0')

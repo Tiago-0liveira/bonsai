@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"text/tabwriter"
 
-	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/client"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
@@ -127,16 +126,12 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 	if err != nil {
 		return err
 	}
-	cfg, err := config.LoadFor(repoDir)
-	if err != nil {
-		return err
-	}
 	active, err := c.ServeStatus(workspaceID)
 	if err != nil {
 		return err
 	}
 	if active != nil && normalizedGroupMode(active) == procstore.ServeModeProduction {
-		return fmt.Errorf("production local API is active for this workspace; stop it with bonsai serve stop")
+		return fmt.Errorf("production local API is active for this workspace; stop its repository daemon with bonsai daemon stop")
 	}
 	if active != nil && normalizedGroupMode(active) == procstore.ServeModeDevelopment &&
 		active.State != "ready" && active.State != "degraded" {
@@ -165,8 +160,8 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 		WebhookPort:            webhookPort,
 		WebPort:                webPort,
 		BrowserOrigin:          fmt.Sprintf("http://127.0.0.1:%d", webPort),
-		StartupTimeoutSeconds:  cfg.Serve.StartupTimeout,
-		ShutdownTimeoutSeconds: cfg.Serve.ShutdownTimeout,
+		StartupTimeoutSeconds:  30,
+		ShutdownTimeoutSeconds: 5,
 	}
 	if *tunnel != "" {
 		sidecar, err := devTunnelSidecar(*tunnel, webhookPort)

@@ -1,20 +1,18 @@
-import { runtimeEntry, runtimeMeta } from './runtimeConfig'
+import { loopbackOrigin, runtimeMeta } from './runtimeConfig'
 
-const buildLocalOrigin = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_LOCAL_API_ORIGIN
-const configuredLocalOrigin = (runtimeMeta('bonsai-local-api-origin') || buildLocalOrigin)?.replace(/\/$/, '')
-export const LOCAL_API_HTTP = configuredLocalOrigin || 'http://127.0.0.1:7001'
-// True when the local API served this page itself (`bonsai web`). Requests are
-// then same-origin: no CORS, no Local Network Access permission, no prompt.
+const contributorBuild = import.meta.env?.DEV || import.meta.env?.MODE === 'test' || import.meta.env?.MODE === 'e2e'
+const configuredLocalOrigin = contributorBuild
+  ? loopbackOrigin(runtimeMeta('bonsai-local-api-origin') || import.meta.env?.VITE_BONSAI_LOCAL_API_ORIGIN)
+  : undefined
+export const LOCAL_API_HTTP = configuredLocalOrigin || (typeof window !== 'undefined' ? loopbackOrigin(window.location.origin) : undefined) || ''
 export const LOCAL_API_SAME_ORIGIN = typeof window !== 'undefined' && LOCAL_API_HTTP === window.location.origin
-export const LOCAL_ENTRY = LOCAL_API_SAME_ORIGIN && runtimeEntry() === 'local'
+export const LOCAL_ENTRY = Boolean(LOCAL_API_HTTP)
 export const LOCAL_API_WS = LOCAL_API_HTTP.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/events'
 export const LOCAL_API_PROTOCOL_VERSION = 3
 
 export type LocalConnectionStatus =
   | 'not-attempted'
-  | 'requesting-permission'
   | 'bonsai-not-running'
-  | 'permission-denied'
   | 'version-incompatible'
   | 'unsupported-browser'
   | 'connected'
@@ -80,27 +78,7 @@ function sessionUsable(value: LocalSession | undefined): value is LocalSession {
 }
 
 function browserCanAttemptLoopback() {
-  if (typeof window === 'undefined') return false
-  if (LOCAL_API_SAME_ORIGIN) return true
-  if (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') return true
-  return window.isSecureContext
-}
-
-async function localNetworkPermission(): Promise<PermissionState | 'unknown'> {
-  // Same-origin requests are not Local Network Access requests; never probe.
-  if (LOCAL_API_SAME_ORIGIN) return 'unknown'
-  if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown'
-  const query = navigator.permissions.query.bind(navigator.permissions) as unknown as (
-    descriptor: { name: string },
-  ) => Promise<PermissionStatus>
-  for (const name of ['loopback-network', 'local-network-access']) {
-    try {
-      return (await query({ name })).state
-    } catch {
-      // Newer browsers use loopback-network; older implementations expose the alias.
-    }
-  }
-  return 'unknown'
+  return typeof window !== 'undefined' && Boolean(LOCAL_API_HTTP) && Boolean(loopbackOrigin(window.location.origin))
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}, timeout = 3_500) {
@@ -113,41 +91,18 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, timeout = 3
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
-      ...loopbackTarget(),
     })
   } finally {
     window.clearTimeout(timer)
   }
 }
 
-// Cross-origin pages declare the loopback target for Local Network Access.
-// A page served by the local API is already on loopback and declares nothing.
-function loopbackTarget(): { targetAddressSpace?: 'loopback' } {
-  return LOCAL_API_SAME_ORIGIN ? {} : { targetAddressSpace: 'loopback' }
-}
-
-function classifyProbeFailure(permission: PermissionState | 'unknown', error?: unknown) {
-  if (permission === 'denied') {
-    publish({
-      status: 'permission-denied',
-      message: 'This browser denied access to devices on your local network. Allow local network access for this Bonsai site, then try again.',
-    })
-    return
-  }
-  if (!browserCanAttemptLoopback()) {
-    publish({
-      status: 'unsupported-browser',
-      message: 'This browser context cannot reach Bonsai on localhost. Open Bonsai from a supported secure browser context.',
-    })
-    return
-  }
+function classifyProbeFailure(error?: unknown) {
   publish({
     status: 'bonsai-not-running',
     message: error instanceof DOMException && error.name === 'AbortError'
       ? `Bonsai did not respond at ${LOCAL_API_HTTP}.`
-      : LOCAL_API_SAME_ORIGIN
-        ? 'Bonsai stopped responding on this computer. Start it again with `bonsai web`, then try again.'
-        : 'Bonsai is not reachable on this computer. Start it with `bonsai web`, then try again. If Bonsai is already running, check whether this browser has restricted Local Network Access for this frontend origin.',
+      : 'Bonsai stopped responding on this computer. Start it again with `bonsai web`, then try again.',
   })
 }
 
@@ -178,22 +133,15 @@ export async function connectLocalBonsai(): Promise<LocalConnectionSnapshot> {
   }
 
   invalidateLocalSession()
-  if (!LOCAL_API_SAME_ORIGIN) publish({ status: 'requesting-permission', message: 'Requesting access to Bonsai on this computer…' })
-  const permission = await localNetworkPermission()
-  if (permission === 'denied') {
-    classifyProbeFailure(permission)
-    return snapshot
-  }
-
   let health: Response
   try {
     health = await fetchWithTimeout(`${LOCAL_API_HTTP}/health`)
   } catch (error) {
-    classifyProbeFailure(await localNetworkPermission(), error)
+    classifyProbeFailure(error)
     return snapshot
   }
   if (!health.ok) {
-    classifyProbeFailure(permission)
+    classifyProbeFailure()
     return snapshot
   }
 
@@ -201,11 +149,11 @@ export async function connectLocalBonsai(): Promise<LocalConnectionSnapshot> {
   try {
     versionResponse = await fetchWithTimeout(`${LOCAL_API_HTTP}/version`)
   } catch (error) {
-    classifyProbeFailure(await localNetworkPermission(), error)
+    classifyProbeFailure(error)
     return snapshot
   }
   if (!versionResponse.ok) {
-    classifyProbeFailure(permission)
+    classifyProbeFailure()
     return snapshot
   }
 
@@ -224,7 +172,7 @@ export async function connectLocalBonsai(): Promise<LocalConnectionSnapshot> {
   try {
     await currentSession()
   } catch (error) {
-    classifyProbeFailure(await localNetworkPermission(), error)
+    classifyProbeFailure(error)
     return snapshot
   }
 
@@ -251,7 +199,6 @@ export async function localFetch(path: string, init: RequestInit = {}, retry = t
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
-      ...loopbackTarget(),
     })
   } catch (error) {
     markLocalConnectionLost(error instanceof Error ? error.message : undefined)

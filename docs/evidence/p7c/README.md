@@ -51,6 +51,10 @@ growth sampled every 100 microseconds plus endpoints, and cumulative allocations
 Live-heap observation is not a guarantee of the true peak, and allocation totals
 include the measurement sampler's small overhead. Historical 7a's last retained
 sample and best-of-five timings use different definitions and are labeled in the
-main plan.
+[performance documentation](../../performance.md).
 
-Phase 7 remains in progress while #68 and final CI evidence are pending.
+Phase 7 is merged in #69, #68 and #70. Integration `2824bcb` passed
+[Go CI](https://github.com/Tiago-0liveira/bonsai/actions/runs/38099776238) and
+[frontend CI](https://github.com/Tiago-0liveira/bonsai/actions/runs/38099776242).
+The reports preserve their original source revisions; see
+[performance.md](../../performance.md).

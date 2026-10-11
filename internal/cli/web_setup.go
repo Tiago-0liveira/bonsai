@@ -52,7 +52,6 @@ func (w *webCLI) runSetup(mode websetupui.Mode, saved config.WebConfig, exists b
 		Home:             home,
 		ConfigPath:       w.configPath,
 		StandardInterval: humanInterval(localapi.StandardUpdateInterval),
-		HostedURL:        hostedWebURL(),
 		DiscoveryDepth:   config.ProjectDiscoveryDepth,
 		Running:          w.running(),
 	}
@@ -109,7 +108,7 @@ func (w *webCLI) running() *setup.Running {
 	if err != nil || group == nil || group.State != "ready" {
 		return nil
 	}
-	return &setup.Running{APIPort: group.APIPort, Hosted: group.BrowserOrigin != "", WebhookPort: group.WebhookPort}
+	return &setup.Running{APIPort: group.APIPort, AdditionalOrigin: group.BrowserOrigin, WebhookPort: group.WebhookPort}
 }
 
 // setupBackend is what the setup TUI may do to this computer. Every write

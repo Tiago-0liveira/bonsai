@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { runtimeEntry, runtimeMeta } from './runtimeConfig'
+import { loopbackOrigin, runtimeMeta } from './runtimeConfig'
 
 function setMeta(name: string, content: string) {
   const meta = document.createElement('meta')
@@ -15,19 +15,15 @@ afterEach(() => {
 })
 
 describe('runtime config meta tags', () => {
-  it('treats absent tags and deploy placeholders as unset, but keeps empty values', () => {
+  it('keeps explicit empty runtime values', () => {
     expect(runtimeMeta('bonsai-relay-origin')).toBeUndefined()
-    setMeta('bonsai-relay-origin', '__BONSAI_RELAY_ORIGIN__')
-    expect(runtimeMeta('bonsai-relay-origin')).toBeUndefined()
-    document.head.querySelector('meta')?.remove()
     setMeta('bonsai-relay-origin', '')
     expect(runtimeMeta('bonsai-relay-origin')).toBe('')
   })
 
-  it('reports the local entry only when the local API marks the page', () => {
-    expect(runtimeEntry()).toBe('hosted')
-    setMeta('bonsai-entry', 'local')
-    expect(runtimeEntry()).toBe('local')
+  it('only accepts exact loopback HTTP origins', () => {
+    for (const origin of ['http://localhost:7003', 'http://127.0.0.1:7003', 'http://[::1]:7003']) expect(loopbackOrigin(origin)).toBe(origin)
+    for (const origin of ['https://app.bonsai.dev', 'http://evil.example', 'http://localhost.evil.example', 'http://user@localhost:7003', 'http://localhost:7003/path', 'http://localhost:7003?x=1', 'null']) expect(loopbackOrigin(origin)).toBeUndefined()
   })
 })
 
@@ -80,10 +76,17 @@ describe('page served by the local API', () => {
     expect(client.getLocalConnectionSnapshot().message).not.toContain('Local Network Access')
   })
 
-  it('keeps the cross-origin loopback path for the hosted entry', async () => {
+  it('defaults to this page origin without a build fallback', async () => {
+    const client = await import('./localClient')
+    expect(client.LOCAL_API_HTTP).toBe(window.location.origin)
+    expect(client.LOCAL_API_SAME_ORIGIN).toBe(true)
+    expect(client.LOCAL_ENTRY).toBe(true)
+  })
+
+  it('allows an explicit loopback API for the contributor fixture', async () => {
+    setMeta('bonsai-local-api-origin', 'http://127.0.0.1:7001')
     const client = await import('./localClient')
     expect(client.LOCAL_API_HTTP).toBe('http://127.0.0.1:7001')
     expect(client.LOCAL_API_SAME_ORIGIN).toBe(false)
-    expect(client.LOCAL_ENTRY).toBe(false)
   })
 })

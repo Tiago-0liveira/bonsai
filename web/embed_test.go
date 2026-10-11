@@ -29,8 +29,10 @@ func TestEmbeddedBundleIsTheProductionBuild(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(body), "__bonsaiTestStore") {
-			t.Errorf("%s contains the e2e test hook", path)
+		for _, forbidden := range []string{"__bonsaiTestStore", "api.bonsai.dev", "app.bonsai.dev", "/auth/github", "/auth/session", "/auth/logout"} {
+			if strings.Contains(string(body), forbidden) {
+				t.Errorf("%s contains forbidden production content %q", path, forbidden)
+			}
 		}
 		return nil
 	})

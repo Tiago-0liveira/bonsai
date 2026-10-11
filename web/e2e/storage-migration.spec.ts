@@ -25,7 +25,7 @@ test('legacy values are scrubbed before connection and stay removed across reloa
 
   for (let reload = 0; reload < 2; reload++) {
     await page.goto('/app')
-    await expect(page.getByRole('button', { name: 'Connect to local Bonsai' })).toBeVisible()
+    await expect(page.locator('.react-flow')).toBeVisible()
     const before = await page.evaluate(key => ({
       stored: localStorage.getItem(key),
       unrelated: localStorage.getItem('unrelated-app'),
@@ -46,7 +46,7 @@ test('legacy values are scrubbed before connection and stay removed across reloa
     expect(before.state.nodePlacements.worker).toBeUndefined()
     expect(before.unrelated).toBe('leave-me-alone')
     expect(JSON.parse(before.stored!).version).toBe(WORKSPACE_STORAGE_VERSION)
-    await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
     await expect(page.locator('.react-flow')).toBeVisible()
     await expect(page.locator('.react-flow__node-agent')).toHaveCount(0)
     await page.evaluate(() => window.__bonsaiTestStore.getState().setEnvEditorOpen(true))
@@ -64,7 +64,7 @@ test('malformed storage shows an actionable error and safe defaults', async ({ p
   await page.goto('/app')
   const alert = page.getByRole('alert')
   await expect(alert).toContainText('Saved workspace data was invalid')
-  await expect(page.getByRole('button', { name: 'Connect to local Bonsai' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Choose project folders' })).toBeVisible()
   expect(await page.evaluate(key => localStorage.getItem(key), key)).not.toContain(marker)
   await alert.getByRole('button', { name: 'Retry saving preferences' }).click()
   await expect(alert).toHaveCount(0)
@@ -80,9 +80,10 @@ test('unavailable storage keeps the app usable and recovery saves only allowed d
       return original.call(this, key)
     }
     const write = Storage.prototype.setItem
-    let writes = 0
+    let blocked = true
+    Object.defineProperty(window, '__allowStorageWrites', { value: () => { blocked = false } })
     Storage.prototype.setItem = function (key, value) {
-      if (key === 'bonsai-web-workspace-v6' && writes++ === 0) throw new Error('storage denied')
+      if (key === 'bonsai-web-workspace-v6' && blocked) throw new Error('storage denied')
       return write.call(this, key, value)
     }
   })
@@ -91,11 +92,12 @@ test('unavailable storage keeps the app usable and recovery saves only allowed d
   await expect(alert).toContainText('Browser storage is unavailable')
   await alert.getByRole('button', { name: 'Retry saving preferences' }).click()
   await expect(alert).toContainText('Browser storage could not be saved')
+  await page.evaluate(() => (window as unknown as { __allowStorageWrites(): void }).__allowStorageWrites())
   await alert.getByRole('button', { name: 'Retry saving preferences' }).click()
   await expect(alert).toHaveCount(0)
   const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), key)
   expect(saved.state).not.toHaveProperty('envVariables')
   expect(saved.state).not.toHaveProperty('agents')
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   await expect(page.locator('.react-flow')).toBeVisible()
 })

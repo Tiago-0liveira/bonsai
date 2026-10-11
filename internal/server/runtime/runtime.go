@@ -5,8 +5,6 @@ package runtime
 
 import "github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 
-const ProductionBrowserOrigin = localapi.ProductionBrowserOrigin
-
 // RunAPI starts the local API. The optional value is accepted only for source
 // compatibility with the pre-refactor capability-file argument; string values
 // are intentionally ignored. A bool selects the explicit development browser

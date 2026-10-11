@@ -1,21 +1,24 @@
 # Local full-stack development
 
-Bonsai has two explicit serve modes. Keep them separate in code and tests.
+The product and contributor harness use separate supervisors and origins.
 
 ## Product mode
 
 ```sh
-bonsai serve
+bonsai web
 ```
 
-This starts or reuses only the local Bonsai API, bound to
-`127.0.0.1:7001` by default. Its authorized browser origin is exactly
-`https://app.bonsai.dev`. The user-facing web client is
-`https://app.bonsai.dev/app`.
+One user-level supervisor starts the local API on `127.0.0.1:7001`, serves the
+embedded production UI at `/app` and works outside a Git repository. Production
+requires an empty additional browser origin and accepts only the API's exact
+loopback origins. Browser sessions connect automatically, without permission
+queries. Release archives contain the UI; plain Go builds use a placeholder
+unless built with `embedui` after `pnpm --dir web build`.
 
-Product mode does not start Vite, a webhook listener, a tunnel, or arbitrary
-sidecars. It never interprets development configuration as permission to bind
-the API publicly.
+Standard updates poll GitHub. Live updates explicitly add a separate loopback
+webhook receiver and, if configured, one tunnel. Only the receiver is exposed.
+See [web.md](web.md) for setup, settings, doctor, logs and recovery, and
+[git-backend.md](git-backend.md) for the security boundary.
 
 ## Internal development stack
 
@@ -61,10 +64,9 @@ defaults:
 | webhook | `--webhook-port` | `BONSAI_DEV_WEBHOOK_PORT` | 7002 |
 | Vite | `--web-port` | `BONSAI_DEV_WEB_PORT` | 7003 |
 
-These values are development concerns and do not belong in normal user
-`.bonsai.yaml`. Legacy `serve.webhook_port`, `serve.web_port`, and
-`serve.server_config` keys are ignored by normal `bonsai serve` and produce a
-migration warning.
+Flags override the explicit development environment; no `serve.*` YAML key
+is read. The harness always uses the existing startup/shutdown defaults
+(30 seconds / 5 seconds). The removed public `bonsai serve` starts nothing.
 
 ## Fixture webhooks
 
@@ -118,8 +120,9 @@ VITE_BONSAI_LOCAL_API_ORIGIN=http://127.0.0.1:7001
 VITE_BONSAI_RELAY_ORIGIN=http://127.0.0.1:7002
 ```
 
-Production builds default to `https://api.bonsai.dev` for relay events and
-`http://127.0.0.1:7001` for the local Bonsai API.
+Production builds always use the page's loopback origin. The SSE client is
+compiled off in production; development/test builds require an explicit
+loopback HTTP relay origin. There are no cloud credentials or fallback URLs.
 
 ## Validation
 
@@ -128,13 +131,14 @@ suite (including race tests for touched Go packages) and the frontend
 typecheck/tests/build/Playwright suite. Security regressions should cover
 loopback binding, exact Host/Origin, no wildcard CORS, capability and WebSocket
 authentication, webhook HMAC/dedupe/allowlists, repository-scoped relay events,
-and the rule that normal `bonsai serve` cannot supervise development services.
+and the rule that product startup never interprets legacy YAML as development
+configuration.
 
 ## Project roots and multi-repository routing
 
 Local API protocol **3** requires the browser and backend to be upgraded together.
-The per-repository launch daemon still supervises the API; project discovery does
-not change either serve lifecycle. A launch repository is not implicitly added to
+The user-level supervisor owns the API; each discovered repository retains its
+own daemon for Git and process authority. A launch repository is not implicitly added to
 the browser catalog, and legacy unscoped routes only resolve it if configured.
 
 User configuration lives at `os.UserConfigDir()/bonsai/project-roots.json` with
@@ -199,11 +203,12 @@ exercise events before/during/after bootstrap, out-of-order responses, root
 removal during an in-flight read, and slow-client disconnect followed by full
 reconciliation.
 
-The server polls local Git every 5 seconds and processes every 2 seconds while
-there are browser subscribers. Project discovery remains every 30 seconds.
-Provider metadata has a 60-second normal TTL and pending checks a 15-second TTL.
-These intervals are initial bounded defaults; do not add component-owned polling
-or a second filesystem watcher to reduce them.
+Local Git uses daemon invalidation/watchers with a 30-second recovery poll;
+process reconciliation and project discovery also use 30-second recovery scans.
+GitHub polling is 30 seconds for visible projects, 15 seconds for running CI
+and 5 minutes in the background. Healthy Live updates retain a 10-minute safety
+poll. Repository metadata has a 20-second TTL, checks 60 seconds and pending
+checks 10 seconds. Do not add component-owned polling or redundant watchers.
 
 Provider loss must leave local worktrees and process controls usable. Failed
 reads preserve the last successful value as stale and expose a structured error;
@@ -289,7 +294,7 @@ TTL. Tests point `claude.UsageEndpoint` or the provider's `usageEndpoint` at an
 The web client can start an existing Bonsai Antigravity profile in a configured
 project worktree. Set up a profile with
 `bonsai agent account add antigravity <name>` and ensure `agy` is on the API's
-PATH. Claude and Codex remain unavailable. Profile selection uses opaque account
+PATH. Claude is also supported; Codex remains unavailable. Profile selection uses opaque account
 IDs; discovery responses contain only ID, provider and display name.
 
 The local API owns these sessions, independently of request contexts and browser
@@ -350,7 +355,7 @@ snapshots with their existing epoch/sequence ordering and `agents` freshness.
 Worktree removal and root/project deselection conflict while an affected agent
 is live. Ownership is resolved from the registry and current Git inventory.
 
-`pnpm test:e2e` starts a dedicated Go fixture API on port 7001 on Linux/macOS.
+`pnpm test:e2e` starts a dedicated Go fixture API on port 7014 on Linux/macOS.
 Keep that port free; it deliberately refuses to reuse an existing personal API.
 The fixture uses temporary fake profiles and a real shell PTY, never personal
 credentials. `agent-terminal-fullstack.spec.ts` exercises actual HTTP, WebSocket,
@@ -364,3 +369,11 @@ browser reload, then stopped it with no cleanup error. Its temporary session
 home was confirmed removed. The CLI reported that the profile was not signed
 in, so an authenticated model conversation remains unverified. No login or
 profile settings were changed for this check.
+
+## Release and deferred architecture
+
+See [releasing.md](releasing.md) for embedded release builds and archive smoke
+checks, [performance.md](performance.md) for warm-start storage, measurement
+limits and historical evidence, and [architecture.md](architecture.md) for
+future multi-workspace constraints. These documents replace the temporary web
+project and Phase 7 plans.

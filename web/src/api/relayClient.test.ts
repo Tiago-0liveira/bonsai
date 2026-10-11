@@ -11,7 +11,6 @@ vi.mock('./git', () => ({
 }))
 
 import { requestProjectRefresh } from './git'
-import { startRelayInvalidation } from './relayClient'
 
 class FakeEventSource {
   static latest: FakeEventSource | undefined
@@ -39,6 +38,8 @@ describe('relay invalidation client', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    document.head.querySelectorAll('meta[name="bonsai-relay-origin"]').forEach(meta => meta.remove())
+    vi.resetModules()
     vi.clearAllMocks()
     FakeEventSource.latest = undefined
   })
@@ -48,11 +49,17 @@ describe('relay invalidation client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })))
     vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
 
-    const stop = startRelayInvalidation()
+    const meta = document.createElement('meta')
+    meta.name = 'bonsai-relay-origin'
+    meta.content = 'http://127.0.0.1:7002'
+    document.head.append(meta)
+    const relay = await import('./relayClient')
+    const stop = relay.startRelayInvalidation()
     await Promise.resolve()
     await Promise.resolve()
 
     expect(FakeEventSource.latest).toBeDefined()
+    expect(fetch).not.toHaveBeenCalled()
     FakeEventSource.latest?.message({ repository_id: 123, event: 'pull_request', action: 'synchronize' })
     FakeEventSource.latest?.message({ repository_id: 123, event: 'pull_request', action: 'synchronize' })
 
@@ -86,3 +93,20 @@ describe('relay invalidation client', () => {
     }
   })
 })
+
+for (const origin of [undefined, 'https://api.bonsai.dev', 'http://relay.example:7002']) {
+  it(`never connects without an explicit loopback relay: ${origin}`, async () => {
+    vi.resetModules()
+    if (origin) {
+      const meta = document.createElement('meta')
+      meta.name = 'bonsai-relay-origin'; meta.content = origin; document.head.append(meta)
+    }
+    const relay = await import('./relayClient')
+    expect(relay.RELAY_ENABLED).toBe(false)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    relay.startRelayInvalidation()()
+    expect(FakeEventSource.latest).toBeUndefined()
+    document.head.querySelectorAll('meta').forEach(meta => meta.remove())
+    vi.unstubAllGlobals()
+  })
+}

@@ -38,21 +38,15 @@ const (
 )
 
 type WebConfig struct {
-	Version      int           `json:"version"`
-	Revision     uint64        `json:"revision"`
-	SetupVersion int           `json:"setup_version"`
-	APIPort      int           `json:"api_port"`
-	OpenBrowser  bool          `json:"open_browser"`
-	Interfaces   WebInterfaces `json:"interfaces"`
-	Updates      WebUpdates    `json:"updates"`
+	Version      int        `json:"version"`
+	Revision     uint64     `json:"revision"`
+	SetupVersion int        `json:"setup_version"`
+	APIPort      int        `json:"api_port"`
+	OpenBrowser  bool       `json:"open_browser"`
+	Updates      WebUpdates `json:"updates"`
 	// Zero means the daemon defaults (30 s to become ready, 5 s to stop).
 	StartupTimeoutSeconds  int `json:"startup_timeout_seconds,omitempty"`
 	ShutdownTimeoutSeconds int `json:"shutdown_timeout_seconds,omitempty"`
-}
-
-type WebInterfaces struct {
-	Local  bool `json:"local"`
-	Hosted bool `json:"hosted"`
 }
 
 type WebUpdates struct {
@@ -147,14 +141,13 @@ func (l WebLiveState) Repository(repo string) (string, WebLiveRepository, bool) 
 }
 
 // DefaultWebConfig is the configuration written when none exists: the local
-// UI plus the hosted app, standard (polling) updates, browser auto-open.
+// UI, standard (polling) updates, browser auto-open.
 func DefaultWebConfig() WebConfig {
 	return WebConfig{
 		Version:      WebConfigVersion,
 		SetupVersion: 0, // defaults written; the guided setup has not run
 		APIPort:      DefaultWebAPIPort,
 		OpenBrowser:  true,
-		Interfaces:   WebInterfaces{Local: true, Hosted: true},
 		Updates: WebUpdates{
 			Mode: WebUpdatesStandard,
 			Live: WebLiveUpdates{
@@ -244,9 +237,6 @@ func (c WebConfig) Validate() error {
 	}
 	if c.APIPort < 1 || c.APIPort > 65535 {
 		return fmt.Errorf("api_port %d is not a valid port", c.APIPort)
-	}
-	if !c.Interfaces.Local && !c.Interfaces.Hosted {
-		return fmt.Errorf("interfaces.local and interfaces.hosted are both false; enable at least one")
 	}
 	switch c.Updates.Mode {
 	case WebUpdatesStandard, WebUpdatesLive:

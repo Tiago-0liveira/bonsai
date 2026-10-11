@@ -1,16 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
-import { DEFAULT_API_ORIGIN, mockGitBackend } from './mockGit'
+import { mockGitBackend } from './mockGit'
 
-// The same journey through both ways of opening Bonsai:
-// - hosted-style: the page comes from another HTTPS origin and reaches the
-//   local API cross-origin on 127.0.0.1:7001 (app.bonsai.dev today);
-// - local-served: the page comes from the Go API itself (`bonsai web`), here
-//   the TestEmbeddedUIBrowserFixture server on 127.0.0.1:7011, and every API
-//   call is same-origin.
-const entries = [
-  { name: 'hosted-style origin', url: 'https://127.0.0.1:4173/app', api: DEFAULT_API_ORIGIN, local: false },
-  { name: 'local-served origin', url: 'http://127.0.0.1:7011/app', api: 'http://127.0.0.1:7011', local: true },
-]
+const entries = [{ name: 'local-served origin', url: 'http://127.0.0.1:7011/app', api: 'http://127.0.0.1:7011', local: true }]
 
 async function spyOnPermissionQueries(page: Page) {
   await page.addInitScript(() => {
@@ -30,7 +21,7 @@ for (const entry of entries) {
   test(`${entry.name}: connect, load project, open PR detail, live WS event`, async ({ page }) => {
     // Any blocked API or WebSocket connection would show up as a connect-src
     // violation. (A library's inline <style> trips style-src-elem on every
-    // entry, hosted included; that is not what this test is about.)
+    // entry; that is not what this test is about.)
     const connectViolations: string[] = []
     page.on('console', message => {
       if (/Refused to connect|connect-src/i.test(message.text())) connectViolations.push(message.text())
@@ -47,8 +38,6 @@ for (const entry of entries) {
       expect(response?.headers()['content-security-policy']).toContain("connect-src 'self';")
       await expect(page.locator('meta[name="bonsai-entry"]')).toHaveAttribute('content', 'local')
       await expect(page.locator('meta[name="bonsai-local-api-origin"]')).toHaveAttribute('content', entry.api)
-    } else {
-      await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
     }
     await page.locator('.react-flow').waitFor({ state: 'visible' })
 
@@ -69,8 +58,6 @@ for (const entry of entries) {
       // Same origin: no Local Network Access probe, so no browser prompt.
       expect(queries.filter(name => /network/.test(name))).toEqual([])
       await expect(relayStatus).toHaveCount(0)
-    } else {
-      expect(queries).toContain('loopback-network')
     }
     expect(connectViolations).toEqual([])
   })

@@ -27,37 +27,10 @@ type Choice struct {
 	Pros []string
 }
 
-const (
-	OpenLocal  = "local"
-	OpenHosted = "hosted"
-)
-
-// OpenChoices are the "Where do you want to open Bonsai?" options.
-func OpenChoices(localURL, hostedURL string) []Choice {
-	return []Choice{
-		{
-			ID:    OpenLocal,
-			Label: "This computer (recommended)",
-			Title: "This computer",
-			Lead:  "Opens " + localURL,
-			Pros: []string{
-				"No browser permission prompt",
-				"Always matches your bonsai version",
-				"Works offline",
-			},
-		},
-		{
-			ID:    OpenHosted,
-			Label: "Hosted app + this computer",
-			Title: "Hosted app + this computer",
-			Lead:  "Opens " + localURL + ". " + hostedURL + " also works while bonsai web runs.",
-			Facts: [][2]string{
-				{"Note", "Your browser asks to allow access to this computer the first time."},
-				{"", "After a web release it may ask you to update bonsai."},
-				{"Exposes", "nothing to the internet; pages from the hosted app may call this computer through your browser"},
-			},
-		},
-	}
+// OpenChoices explains the only app destination: this computer.
+func OpenChoices(localURL string) []Choice {
+	return []Choice{{ID: "local", Label: "This computer", Title: "This computer", Lead: "Opens " + localURL,
+		Pros: []string{"No browser permission prompt", "Always matches your bonsai version", "Works offline"}}}
 }
 
 // Update choices. The IDs of the Live options are the tunnel presets of

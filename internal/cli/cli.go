@@ -55,7 +55,7 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "web":
 		return cmdWeb(args[1:], in, out, errOut)
 	case "serve":
-		return cmdServe(args[1:], in, out, errOut)
+		return fmt.Errorf("unknown command %q; use bonsai web", args[0])
 	case "__dev-webhook":
 		// The bonsai web receiver is user-level, not tied to a repository.
 		if slices.Contains(args[1:], "--web") || slices.Contains(args[1:], "-web") {
@@ -465,9 +465,8 @@ Usage:
   bonsai web logs [api] [-f]      local API logs
   bonsai web attach               live log viewer
   bonsai web restart [api]        restart the local API
-  bonsai web setup                guided setup; change projects, ports, hosted app
+  bonsai web setup                guided setup; change projects, ports, browser and updates
   bonsai web doctor               check what bonsai web needs (exit 1 on problems)
-  bonsai serve                    deprecated alias of bonsai web --attach
   bonsai alias list               list aliases
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias

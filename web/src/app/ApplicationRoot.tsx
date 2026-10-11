@@ -18,9 +18,7 @@ import { router } from './router'
 
 function statusTitle(status: LocalConnectionStatus) {
   switch (status) {
-    case 'requesting-permission': return 'Requesting browser permission…'
     case 'bonsai-not-running': return 'Bonsai is not running on this computer.'
-    case 'permission-denied': return 'Local network access was denied.'
     case 'version-incompatible': return 'This Bonsai version is not compatible.'
     case 'unsupported-browser': return 'This browser cannot connect to local Bonsai.'
     case 'connection-lost': return 'The local Bonsai connection was lost.'
@@ -52,7 +50,7 @@ function LocalConnectionGate() {
     if (autoConnect) void connect()
   }, [autoConnect])
 
-  const retryable = !['requesting-permission', 'version-incompatible', 'unsupported-browser'].includes(connection.status)
+  const retryable = !['version-incompatible', 'unsupported-browser'].includes(connection.status)
 
   return (
     <main className="local-connect" aria-labelledby="local-connect-title">
@@ -68,18 +66,16 @@ function LocalConnectionGate() {
         </div>
         <div className="local-connect-actions">
           {retryable && (
-            <button type="button" className="local-connect-primary" onClick={connect} disabled={connecting || connection.status === 'requesting-permission'}>
+            <button type="button" className="local-connect-primary" onClick={connect} disabled={connecting}>
               {connection.status === 'connection-lost' ? 'Reconnect to local Bonsai' : 'Connect to local Bonsai'}
             </button>
           )}
-          {connection.status !== 'not-attempted' && connection.status !== 'requesting-permission' && (
+          {connection.status !== 'not-attempted' && (
             <button type="button" className="local-connect-secondary" onClick={resetLocalConnection}>Reset</button>
           )}
         </div>
         <p className="local-connect-note">
-          {LOCAL_ENTRY
-            ? 'This page is served by Bonsai on this computer, so the browser does not ask for any permission.'
-            : 'The browser may ask for Local Network Access when you connect. Bonsai does not request localhost access from the public landing page.'}
+          This page is served by Bonsai on this computer. No browser network permission is needed.
         </p>
       </section>
     </main>

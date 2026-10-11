@@ -47,7 +47,7 @@ func uiRequest(h http.Handler, method, path, host, origin string) *httptest.Resp
 }
 
 func TestOwnOriginsAreAllowedOnBothLoopbackNames(t *testing.T) {
-	h := newUIServer(t, ProductionBrowserOrigin).Handler()
+	h := newUIServer(t, "").Handler()
 	for _, host := range []string{"127.0.0.1:7001", "localhost:7001"} {
 		for _, origin := range []string{"http://127.0.0.1:7001", "http://localhost:7001"} {
 			w := uiRequest(h, http.MethodPost, "/api/session", host, origin)
@@ -62,7 +62,7 @@ func TestOwnOriginsAreAllowedOnBothLoopbackNames(t *testing.T) {
 }
 
 func TestForeignOriginsAreRejected(t *testing.T) {
-	h := newUIServer(t, ProductionBrowserOrigin).Handler()
+	h := newUIServer(t, "").Handler()
 	for _, origin := range []string{
 		"https://evil.example", "http://evil.example", "null",
 		"http://127.0.0.1:7002", "http://localhost:7002", "https://127.0.0.1:7001", "https://localhost:7001",
@@ -90,21 +90,15 @@ func TestForeignOriginsAreRejected(t *testing.T) {
 	}
 }
 
-func TestHostedOriginFollowsTheInterfaceSetting(t *testing.T) {
-	enabled := newUIServer(t, ProductionBrowserOrigin).Handler()
-	if w := uiRequest(enabled, http.MethodPost, "/api/session", "127.0.0.1:7001", ProductionBrowserOrigin); w.Code != http.StatusCreated {
-		t.Fatalf("hosted origin with the interface enabled: status %d", w.Code)
+func TestPublicAppOriginIsRetired(t *testing.T) {
+	if _, err := New(Config{Address: "127.0.0.1:7001", BrowserOrigin: "https://app.bonsai.dev"}); err == nil {
+		t.Fatal("public origin accepted")
 	}
-	disabled := newUIServer(t, "").Handler()
-	if w := uiRequest(disabled, http.MethodPost, "/api/session", "127.0.0.1:7001", ProductionBrowserOrigin); w.Code != http.StatusForbidden {
-		t.Fatalf("hosted origin with the interface disabled: status %d", w.Code)
-	}
-	if w := uiRequest(disabled, http.MethodPost, "/api/session", "127.0.0.1:7001", "http://127.0.0.1:7001"); w.Code != http.StatusCreated {
-		t.Fatalf("own origin with the hosted interface disabled: status %d", w.Code)
-	}
-	// An empty Origin never matches the disabled (empty) hosted origin.
-	if w := uiRequest(disabled, http.MethodPost, "/api/session", "127.0.0.1:7001", ""); w.Code != http.StatusForbidden {
-		t.Fatalf("empty origin with the hosted interface disabled: status %d", w.Code)
+	h := newUIServer(t, "").Handler()
+	for _, origin := range []string{"https://app.bonsai.dev", "https://example.com", ""} {
+		if w := uiRequest(h, http.MethodPost, "/api/session", "127.0.0.1:7001", origin); w.Code != http.StatusForbidden {
+			t.Fatalf("origin %q: %d", origin, w.Code)
+		}
 	}
 }
 

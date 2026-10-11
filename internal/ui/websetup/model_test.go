@@ -164,7 +164,6 @@ func testInfo() Info {
 		Home:             home,
 		ConfigPath:       p(".config/bonsai/web.json"),
 		StandardInterval: "2 min",
-		HostedURL:        "https://app.bonsai.dev/app",
 		DiscoveryDepth:   config.ProjectDiscoveryDepth,
 	}
 }
@@ -286,7 +285,7 @@ func TestFirstRunDefaultsKeyBudget(t *testing.T) {
 		t.Fatalf("apply calls = %d, screen = %d", len(f.plans), h.screen())
 	}
 	plan := f.plans[0]
-	if !plan.Start || plan.Config.SetupVersion != config.WebSetupVersion || plan.Config.Interfaces != (config.WebInterfaces{Local: true}) || !plan.Config.OpenBrowser || plan.Config.Updates.Mode != config.WebUpdatesStandard {
+	if !plan.Start || plan.Config.SetupVersion != config.WebSetupVersion || !plan.Config.OpenBrowser || plan.Config.Updates.Mode != config.WebUpdatesStandard {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if strings.Join(plan.AddRoots, ",") != p("bonsai")+","+p("code") {
@@ -539,7 +538,7 @@ func TestCustomTunnelCannotTargetTheAPI(t *testing.T) {
 func TestLiveOffDeletesHooksAfterReview(t *testing.T) {
 	f := newFake()
 	info := testInfo()
-	info.Running = &setup.Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+	info.Running = &setup.Running{APIPort: 7001, WebhookPort: 7002}
 	h := newHarness(t, f, Edit, liveEditDraft("octo/bonsai", "octo/api"), info)
 	h.model().cursor[screenDashboard] = 3
 	h.keys("enter")
@@ -566,7 +565,7 @@ func TestLiveOffDeletesHooksAfterReview(t *testing.T) {
 func TestLiveReposKeepConfigured(t *testing.T) {
 	f := newFake()
 	info := testInfo()
-	info.Running = &setup.Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+	info.Running = &setup.Running{APIPort: 7001, WebhookPort: 7002}
 	h := newHarness(t, f, Edit, liveEditDraft("octo/bonsai", "gone/repo"), info)
 	h.model().cursor[screenDashboard] = 3
 	h.keys("enter", "enter")
@@ -598,7 +597,7 @@ func TestLiveReposKeepConfigured(t *testing.T) {
 func TestAdvancedWebhookPortAndSecret(t *testing.T) {
 	f := newFake()
 	info := testInfo()
-	info.Running = &setup.Running{APIPort: 7001, Hosted: true}
+	info.Running = &setup.Running{APIPort: 7001}
 	h := newHarness(t, f, Edit, editDraft(), info)
 	h.model().cursor[screenDashboard] = 4
 	h.keys("enter", "down", "down", "space")
@@ -723,7 +722,7 @@ func TestAddFolder(t *testing.T) {
 func TestEditModeTargetedApply(t *testing.T) {
 	f := newFake()
 	info := testInfo()
-	info.Running = &setup.Running{APIPort: 7001, Hosted: true}
+	info.Running = &setup.Running{APIPort: 7001}
 	h := newHarness(t, f, Edit, editDraft(), info)
 
 	h.keys("a")
@@ -733,8 +732,8 @@ func TestEditModeTargetedApply(t *testing.T) {
 
 	// Projects: drop ~/old, add ~/work.
 	h.keys("enter", "down", "space", "down", "space", "enter")
-	// Open in: this computer only.
-	h.keys("down", "enter", "up", "enter")
+	// Open in: disable automatic browser opening.
+	h.keys("down", "enter", "down", "space", "enter")
 	// Advanced: port 7011.
 	h.keys("down", "down", "down", "enter")
 	for range "7001" {
@@ -751,7 +750,7 @@ func TestEditModeTargetedApply(t *testing.T) {
 	}
 	h.keys("a")
 	review := h.model().View()
-	for _, want := range []string{"Port", "7001 → 7011", "this computer + hosted app → this computer", "Restarts the Bonsai API (port and hosted app access changed).", "use the new address: http://127.0.0.1:7011/app"} {
+	for _, want := range []string{"Port", "7001 → 7011", "Restarts the Bonsai API (port changed).", "use the new address: http://127.0.0.1:7011/app"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review is missing %q:\n%s", want, review)
 		}
@@ -761,7 +760,7 @@ func TestEditModeTargetedApply(t *testing.T) {
 		t.Fatal("apply did not run")
 	}
 	plan := f.plans[0]
-	if !plan.RestartAPI || plan.Start || plan.Config.APIPort != 7011 || plan.Config.Interfaces.Hosted {
+	if !plan.RestartAPI || plan.Start || plan.Config.APIPort != 7011 {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if len(plan.AddRoots) != 1 || plan.AddRoots[0] != p("work") || len(plan.RemoveRoots) != 1 || plan.RemoveRoots[0].Path != p("old") {
@@ -774,14 +773,14 @@ func TestEditModeTargetedApply(t *testing.T) {
 	if h.screen() != screenDashboard || h.model().dirty() {
 		t.Fatal("after apply the dashboard is clean")
 	}
-	if r := h.model().info.Running; r == nil || r.APIPort != 7001 || r.Hosted {
+	if r := h.model().info.Running; r == nil || r.APIPort != 7001 || r.AdditionalOrigin != "" {
 		t.Fatalf("running should follow the port the fake reported: %+v", r)
 	}
 
 	// A second apply in the same session starts from what is on disk now:
 	// nothing applied before is applied again.
 	h.model().cursor[screenDashboard] = 1
-	h.keys("enter", "down", "enter", "a")
+	h.keys("enter", "down", "space", "enter", "a")
 	h.keys("enter")
 	if len(f.plans) != 2 {
 		t.Fatal("second apply did not run")
@@ -816,7 +815,7 @@ func TestReviewWaitsForFolderScans(t *testing.T) {
 func TestEditModeRootsOnlyDoesNotRestart(t *testing.T) {
 	f := newFake()
 	info := testInfo()
-	info.Running = &setup.Running{APIPort: 7001, Hosted: true}
+	info.Running = &setup.Running{APIPort: 7001}
 	h := newHarness(t, f, Edit, editDraft(), info)
 	h.keys("enter", "down", "down", "space", "enter", "a")
 	if !strings.Contains(h.model().View(), "Bonsai picks up project changes within 30 s") {

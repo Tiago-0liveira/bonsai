@@ -12,8 +12,8 @@ import (
 
 // Running describes the bonsai web stack that is up right now.
 type Running struct {
-	APIPort int
-	Hosted  bool // the API allows the hosted app's origin
+	APIPort          int
+	AdditionalOrigin string // nonempty on a legacy stack that must be replaced
 	// WebhookPort is the live-updates receiver's port, 0 without one.
 	WebhookPort int
 }
@@ -47,7 +47,7 @@ type Plan struct {
 	// settings). Set on the first run.
 	Start bool
 	// RestartAPI makes Apply restart the running API with the new settings.
-	// Only a changed port or hosted-app access needs it; the API picks up
+	// Port, browser origin and live-update changes need it; the API picks up
 	// project roots and selections by itself.
 	RestartAPI bool
 	// RestartReason says why, for the Review screen.
@@ -98,8 +98,8 @@ func BuildPlan(before, after Draft, running *Running, firstRun bool) Plan {
 		if after.Config.APIPort != before.Config.APIPort && after.Config.APIPort != running.APIPort {
 			reasons = append(reasons, "port")
 		}
-		if after.Config.Interfaces.Hosted != running.Hosted {
-			reasons = append(reasons, "hosted app access")
+		if running.AdditionalOrigin != "" {
+			reasons = append(reasons, "browser origin")
 		}
 		switch {
 		case running.WebhookPort != webhookPort(after.Config):
@@ -264,9 +264,6 @@ func Diff(before, after Draft, home string) []Change {
 		out = append(out, Change{Label: "Folders", To: strings.Join(append(added, removed...), "  ")})
 	}
 	b, a := before.Config, after.Config
-	if b.Interfaces != a.Interfaces {
-		out = append(out, Change{Label: "Open in", From: InterfacesText(b.Interfaces), To: InterfacesText(a.Interfaces)})
-	}
 	if b.OpenBrowser != a.OpenBrowser {
 		out = append(out, Change{Label: "Auto-open", From: onOff(b.OpenBrowser), To: onOff(a.OpenBrowser)})
 	}
@@ -316,25 +313,9 @@ func onOff(v bool) string {
 	return "off"
 }
 
-// InterfacesText names where Bonsai opens.
-func InterfacesText(i config.WebInterfaces) string {
-	switch {
-	case i.Local && i.Hosted:
-		return "this computer + hosted app"
-	case i.Hosted:
-		return "hosted app only"
-	default:
-		return "this computer"
-	}
-}
-
-// OpenInSummary is the Review and dashboard line for "Open in".
+// OpenInSummary is the local address and browser preference in setup.
 func OpenInSummary(cfg config.WebConfig) string {
-	text := InterfacesText(cfg.Interfaces)
-	if cfg.Interfaces.Local {
-		text += " · http://127.0.0.1:" + strconv.Itoa(cfg.APIPort)
-	}
-	return text + " · auto-open " + onOff(cfg.OpenBrowser)
+	return "this computer · http://127.0.0.1:" + strconv.Itoa(cfg.APIPort) + "/app · auto-open " + onOff(cfg.OpenBrowser)
 }
 
 // UpdatesSummary is the Review and dashboard line for "Updates". interval is

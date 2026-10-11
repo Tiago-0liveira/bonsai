@@ -33,21 +33,23 @@ describe('local Bonsai client', () => {
     await localFetch('/api/projects')
     const privileged = fetchMock.mock.calls.at(-1)
     expect(new Headers(privileged?.[1]?.headers).get('X-Bonsai-Session')).toBe('secret-session')
-    expect((privileged?.[1] as RequestInit & { targetAddressSpace?: string })?.targetAddressSpace).toBe('loopback')
+    expect((privileged?.[1] as RequestInit & { targetAddressSpace?: string })?.targetAddressSpace).toBeUndefined()
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes('secret-session'))).toBe(true)
     expect(setItem.mock.calls.some(([, value]) => String(value).includes('secret-session'))).toBe(false)
   })
 
-  it('surfaces local network permission denial without probing loopback', async () => {
+  it('never queries browser network permissions', async () => {
     const originalPermissions = navigator.permissions
     const query = vi.fn().mockResolvedValue({ state: 'denied' })
     Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query } })
-    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ api_version: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'session', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
     try {
       await connectLocalBonsai()
-      expect(getLocalConnectionSnapshot().status).toBe('permission-denied')
-      expect(query).toHaveBeenCalledWith({ name: 'loopback-network' })
-      expect(fetchMock).not.toHaveBeenCalled()
+      expect(getLocalConnectionSnapshot().status).toBe('connected')
+      expect(query).not.toHaveBeenCalled()
     } finally {
       Object.defineProperty(navigator, 'permissions', { configurable: true, value: originalPermissions })
     }
