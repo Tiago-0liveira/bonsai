@@ -22,6 +22,18 @@ beforeEach(() => {
   vi.mocked(agentAccounts).mockResolvedValue([{ id: 'profile-one', name: 'One', provider: 'antigravity' }])
 })
 afterEach(() => { cleanup(); useBonsaiStore.setState({ createAgent: create }); vi.clearAllMocks() })
+it('shows the provider marks on every tab and profile option', async () => {
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+  for (const provider of ['Antigravity', 'Claude', 'Codex']) {
+    const tab = screen.getByRole('button', { name: new RegExp(provider) })
+    expect(tab.querySelector('svg')).toHaveAttribute('data-provider-logo', provider.toLowerCase())
+    expect(tab.querySelector('.lucide-sparkles')).toBeNull()
+  }
+  expect(screen.getByLabelText('Profile').querySelector('svg')).toHaveAttribute('data-provider-logo', 'antigravity')
+  fireEvent.click(screen.getByLabelText('Profile'))
+  expect((await screen.findByRole('option', { name: 'One' })).querySelector('svg')).toHaveAttribute('data-provider-logo', 'antigravity')
+})
 it('disables unavailable providers, selects the only real account and prevents duplicate submit', async () => {
   let finish!: () => void
   const pending = new Promise<void>(resolve => { finish = resolve })

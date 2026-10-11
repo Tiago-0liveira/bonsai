@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Bot, Gauge, Shield, Sparkles, X } from 'lucide-react'
+import { Bot, Gauge, Shield, X } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { ModelCombobox } from '../../components/ui/ModelCombobox'
-import { ClaudeLogo } from '../../components/ui/ClaudeLogo'
+import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import type { AgentProviderId } from '../../types'
 
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
@@ -194,7 +194,7 @@ function StartAgentForm() {
                     onClick={() => selectProvider(item.id)}
                     className={'bonsai-focus flex h-[30px] items-center justify-center gap-2 rounded-[7px] text-[12px] transition-colors disabled:opacity-40 ' + (active ? 'bg-panel-3 text-text' : 'text-muted hover:text-text')}
                   >
-                    {item.id === 'claude' ? <ClaudeLogo size={13} /> : <Sparkles size={13} className={active ? 'text-accent' : 'text-muted'} />}
+                    <ProviderLogo provider={item.id} size={13} className="shrink-0 text-text" />
                     <span>{item.label}</span>
                     {connected ? (
                       <span className="flex items-center gap-1 font-mono text-[10px] text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent-solid" />connected</span>
@@ -211,7 +211,7 @@ function StartAgentForm() {
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Profile</span>
-              <BonsaiSelect ariaLabel="Profile" disabled={pending || loading} value={accountId} placeholder={loading ? 'Loading profiles…' : 'Choose a profile'} onChange={id => { setAccountId(id); setFullAccess(accounts.find(item => item.id === id)?.full_access ?? false) }} options={providerAccounts.map(item => ({ value: item.id, label: item.name, description: [item.auth_mode, item.identity].filter(Boolean).join(' · ') || undefined }))} />
+              <BonsaiSelect ariaLabel="Profile" disabled={pending || loading} value={accountId} placeholder={loading ? 'Loading profiles…' : 'Choose a profile'} onChange={id => { setAccountId(id); setFullAccess(accounts.find(item => item.id === id)?.full_access ?? false) }} options={providerAccounts.map(item => ({ value: item.id, label: item.name, icon: <ProviderLogo provider={item.provider} size={14} className="text-text" />, description: [item.auth_mode, item.identity].filter(Boolean).join(' · ') || undefined }))} />
             </label>
             <label className="block">
               <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Model</span>

@@ -7,6 +7,7 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import { projects } from '../../test/fixtures/projects'
 import { worktrees } from '../../test/fixtures/worktrees'
 import type { Process } from '../../types'
+import { agents } from '../../mock/agents'
 
 const attachments = vi.hoisted(() => ({ open: new Set<string>(), detach: vi.fn() }))
 vi.mock('./ProcessTerminal', async () => {
@@ -29,6 +30,19 @@ describe('explicit runtime views', () => {
     useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, activeProjectId: 'bonsai', dockWorktreeId: 'wt-web' }, true)
   })
   afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+
+  it('shows provider marks in the terminal picker without changing option names', async () => {
+    useBonsaiStore.setState({ agents: ['Claude', 'Codex', 'Antigravity', 'Gemini'].map((provider, index) => ({
+      ...agents[index], id: `logo-${index}`, provider: provider as typeof agents[number]['provider'],
+      projectId: 'bonsai', worktreeId: 'wt-web', name: `${provider} session`, profileName: 'Work', presentation: 'canvas',
+    })) })
+    render(<RuntimeWorkspace />)
+    fireEvent.click(screen.getByRole('button', { name: 'Open runtime' }))
+    for (const provider of ['Claude', 'Codex', 'Antigravity', 'Gemini']) {
+      const option = await screen.findByRole('option', { name: `${provider} session ${provider} · Work` })
+      expect(option.querySelector('svg')).toHaveAttribute('data-provider-logo', provider.toLowerCase())
+    }
+  })
 
   it('stays empty with three discovered runtimes under StrictMode and repeated status updates', () => {
     render(<StrictMode><RuntimeWorkspace /></StrictMode>)
