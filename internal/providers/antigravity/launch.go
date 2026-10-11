@@ -40,10 +40,26 @@ func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOp
 	if launch.Effort != "" {
 		return fmt.Errorf("antigravity does not support an effort level")
 	}
+	if launch.Sandbox != "" || launch.Approval != "" {
+		return fmt.Errorf("antigravity does not support sandbox or approval settings; use full access")
+	}
 	if _, err := ParseSettings(account); err != nil {
 		return fmt.Errorf("invalid profile settings")
 	}
 	return nil
+}
+
+// LaunchFields declares the full-access switch; the profile's own setting is
+// its initial state.
+func (p *Provider) LaunchFields() []agents.LaunchField {
+	return []agents.LaunchField{{
+		ID: "full_access", Label: "Full access", Kind: agents.LaunchFieldToggle,
+		Help: "Allow Antigravity to run tools without permission prompts.",
+		Options: []agents.FieldOption{
+			{Value: "false", Label: "Ask permissions"},
+			{Value: "true", Label: "Full access", Tone: agents.ToneDanger},
+		},
+	}}
 }
 
 // launchArgs applies per-launch options on top of the profile settings without

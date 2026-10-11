@@ -310,11 +310,8 @@ export const useBonsaiStore = create<BonsaiState>()(
         const tree = get().worktrees.find(w => w.id === input.worktreeId)
         const providerId = providerIdFor(input.provider)
         if (!tree || !providerId || !input.accountId) throw new Error('Select a profile and worktree.')
-        // Launch options are provider specific; the API rejects the ones a provider does not support.
-        const options = providerId === 'claude'
-          ? { ...(input.permissionMode ? { permission_mode: input.permissionMode } : {}), ...(input.effort ? { effort: input.effort } : {}) }
-          : { full_access: input.fullAccess }
-        const result = await startAgent(tree.projectId, { worktree_id: tree.id, account_id: input.accountId, name: input.name, model: input.model, prompt: input.prompt, ...options, cols: 80, rows: 24 }, input.requestKey ?? crypto.randomUUID())
+        // Launch options come from the provider's launch fields; the API rejects the ones it does not support.
+        const result = await startAgent(tree.projectId, { worktree_id: tree.id, account_id: input.accountId, name: input.name, model: input.model, prompt: input.prompt, options: input.options, cols: 80, rows: 24 }, input.requestKey ?? crypto.randomUUID())
         if (!result.id) throw new Error(result.error || 'Start was interrupted. Close this dialog and start again.')
         set(state => {
           const agents = state.agents.some(a => a.id === result.id) ? state.agents : [...state.agents, mapAgent(result)]

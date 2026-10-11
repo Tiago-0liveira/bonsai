@@ -25,12 +25,15 @@ type agentAPI struct {
 	registry  projectRegistry
 }
 type agentRequest struct {
-	Model      string `json:"model,omitempty"`
-	Prompt     string `json:"prompt,omitempty"`
-	FullAccess *bool  `json:"full_access,omitempty"`
-	// Claude launch options; providers reject the ones they do not support.
+	Model  string `json:"model,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Launch options declared by the providers' launch fields; each provider
+	// rejects the ones it does not support.
+	FullAccess     *bool            `json:"full_access,omitempty"`
 	PermissionMode string           `json:"permission_mode,omitempty"`
 	Effort         string           `json:"effort,omitempty"`
+	Sandbox        string           `json:"sandbox,omitempty"`
+	Approval       string           `json:"approval,omitempty"`
 	WorktreeID     string           `json:"worktree_id"`
 	AccountID      agents.AccountID `json:"account_id"`
 	Name           string           `json:"name,omitempty"`
@@ -51,13 +54,6 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/projects/{projectId}/agents/{sessionId}", s.stopAgent)
 	mux.HandleFunc("GET /api/projects/{projectId}/agents/{sessionId}/terminal", s.agentTerminal)
 }
-
-// knownAgentProviders keeps the UI's provider tabs stable: these are listed even
-// when not registered in this build.
-var knownAgentProviders = []struct {
-	id    agents.ProviderID
-	label string
-}{{"antigravity", "Antigravity"}, {"claude", "Claude"}, {"codex", "Codex"}}
 
 func (s *Server) agentRegistry() *agents.Registry {
 	if s.agents == nil || s.agents.runtime == nil {
@@ -108,13 +104,18 @@ func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
 		if availability.Version != "" {
 			out["version"] = availability.Version
 		}
+		if schema, ok := provider.(agents.LaunchSchema); ok {
+			if fields := schema.LaunchFields(); len(fields) > 0 {
+				out["launch_fields"] = fields
+			}
+		}
 		return out
 	}
 	out := []map[string]any{}
 	known := map[agents.ProviderID]bool{}
-	for _, p := range knownAgentProviders {
-		known[p.id] = true
-		out = append(out, describe(p.id, p.label))
+	for _, p := range agents.KnownProviders {
+		known[p.ID] = true
+		out = append(out, describe(p.ID, p.Label))
 	}
 	if registry != nil {
 		for _, p := range registry.List() {
@@ -295,7 +296,7 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 			writeAPIError(w, 409, "worktree_unavailable", pathErr.Error())
 			return
 		}
-		summary, err = s.agents.manager.Start(project, body.WorktreeID, body.AccountID, body.Name, dir, body.Cols, body.Rows, agentterminal.StartOptions{Model: body.Model, Prompt: body.Prompt, FullAccess: body.FullAccess, PermissionMode: body.PermissionMode, Effort: body.Effort})
+		summary, err = s.agents.manager.Start(project, body.WorktreeID, body.AccountID, body.Name, dir, body.Cols, body.Rows, body.launchOptions())
 	}
 	switch {
 	case err == nil:
@@ -343,11 +344,14 @@ func (s *Server) startAgent(w http.ResponseWriter, r *http.Request) {
 	if !decodeStrictJSON(w, r, &body) {
 		return
 	}
-	if !agentterminal.Dimensions(body.Cols, body.Rows) || len(body.Name) > 128 || len(body.Model) > 128 || len(body.Prompt) > agentterminal.InputLimit || len(body.PermissionMode) > 32 || len(body.Effort) > 32 {
+	if !agentterminal.Dimensions(body.Cols, body.Rows) || len(body.Name) > 128 || len(body.Model) > 128 || len(body.Prompt) > agentterminal.InputLimit || len(body.PermissionMode) > 32 || len(body.Effort) > 32 || len(body.Sandbox) > 32 || len(body.Approval) > 32 {
 		writeAPIError(w, 400, "invalid", "Invalid name, launch options or terminal dimensions")
 		return
 	}
 	s.agentMutation(w, r, body, false)
+}
+func (b agentRequest) launchOptions() agentterminal.StartOptions {
+	return agentterminal.StartOptions{Model: b.Model, Prompt: b.Prompt, FullAccess: b.FullAccess, PermissionMode: b.PermissionMode, Effort: b.Effort, Sandbox: b.Sandbox, Approval: b.Approval}
 }
 func (s *Server) stopAgent(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 {

@@ -85,7 +85,7 @@ func TestValidateLaunch(t *testing.T) {
 	if err := provider.ValidateLaunch(account, agents.LaunchOptions{Model: "m", Prompt: "p", FullAccess: &yes, DisplayName: "n"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, launch := range []agents.LaunchOptions{{PermissionMode: "plan"}, {Effort: "high"}} {
+	for _, launch := range []agents.LaunchOptions{{PermissionMode: "plan"}, {Effort: "high"}, {Sandbox: "read-only"}, {Approval: "never"}} {
 		if err := provider.ValidateLaunch(account, launch); err == nil {
 			t.Fatalf("accepted %+v", launch)
 		}
@@ -137,3 +137,22 @@ func TestDescribe(t *testing.T) {
 type failingResolver struct{}
 
 func (failingResolver) Resolve() (string, error) { return "", errors.New("missing") }
+
+func TestLaunchFieldsDeclareFullAccess(t *testing.T) {
+	provider := New(nil, nil, nil)
+	fields := provider.LaunchFields()
+	if len(fields) != 1 || fields[0].ID != "full_access" || fields[0].Kind != agents.LaunchFieldToggle || fields[0].Help == "" {
+		t.Fatalf("fields = %+v", fields)
+	}
+	options := fields[0].Options
+	if len(options) != 2 || options[0].Value != "false" || options[1].Value != "true" || options[1].Tone != agents.ToneDanger || options[0].Tone != "" {
+		t.Fatalf("options = %+v", options)
+	}
+	account := agents.Account{ID: "acct_f", Provider: ProviderID}
+	for _, option := range options {
+		on := option.Value == "true"
+		if err := provider.ValidateLaunch(account, agents.LaunchOptions{FullAccess: &on}); err != nil {
+			t.Fatalf("declared %q rejected: %v", option.Value, err)
+		}
+	}
+}

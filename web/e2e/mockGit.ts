@@ -427,8 +427,13 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
 
     if (path === '/api/agents/providers') {
       await route.fulfill({ json: [
-        { id: 'antigravity', label: 'Antigravity', available: true },
-        { id: 'claude', label: 'Claude', available: true, version: '2.1.295' },
+        { id: 'antigravity', label: 'Antigravity', available: true, launch_fields: [
+          { id: 'full_access', label: 'Full access', kind: 'toggle', help: 'Allow Antigravity to run tools without permission prompts.', options: [{ value: 'false', label: 'Ask permissions' }, { value: 'true', label: 'Full access', tone: 'danger' }] },
+        ] },
+        { id: 'claude', label: 'Claude', available: true, version: '2.1.295', launch_fields: [
+          { id: 'permission_mode', label: 'Permission mode', kind: 'select', options: [{ value: '', label: 'Profile default' }, { value: 'default', label: 'Default' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan' }, { value: 'auto', label: 'Auto' }, { value: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger', help: 'Claude will run tools without asking.' }] },
+          { id: 'effort', label: 'Effort', kind: 'select', options: ['', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value || 'Profile default' })) },
+        ] },
         { id: 'codex', label: 'Codex', available: false, unavailable_reason: { message: 'Not available yet' } },
       ] }); return
     }

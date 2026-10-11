@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { isLiveAgent, mapAgent, providerIdFor, type AgentSummary } from './agents'
+import { describe, expect, it, vi } from 'vitest'
+import { isLiveAgent, mapAgent, providerIdFor, startAgent, type AgentSummary } from './agents'
+import { localFetch } from './localClient'
+
+vi.mock('./localClient', () => ({ localFetch: vi.fn() }))
 
 const summary = (provider: AgentSummary['provider']): AgentSummary => ({ id: 's1', project_id: 'p', worktree_id: 'w', account_id: 'a', provider, profile_name: 'Work', name: '', state: 'running', created_at: 'now' })
 
@@ -21,5 +24,16 @@ describe('agent provider mapping', () => {
     expect(providerIdFor('Codex')).toBeUndefined()
     expect(isLiveAgent({ providerId: 'constructor' as never })).toBe(false)
     expect(isLiveAgent({ providerId: 'toString' as never })).toBe(false)
+  })
+})
+
+describe('startAgent', () => {
+  it('flattens launch options into the body without overriding the fixed fields', async () => {
+    vi.mocked(localFetch).mockResolvedValue({ ok: true, json: async () => summary('claude') } as Response)
+    await startAgent('p', { worktree_id: 'w', account_id: 'a', model: 'opus', options: { sandbox: 'read-only', approval: 'never', full_access: false, account_id: 'evil' }, cols: 80, rows: 24 }, 'key')
+    const [path, init] = vi.mocked(localFetch).mock.calls[0]
+    expect(path).toBe('/api/projects/p/agents')
+    expect(JSON.parse(String(init?.body))).toEqual({ worktree_id: 'w', account_id: 'a', model: 'opus', sandbox: 'read-only', approval: 'never', full_access: false, cols: 80, rows: 24 })
+    expect(init?.headers).toMatchObject({ 'Idempotency-Key': 'key' })
   })
 })
