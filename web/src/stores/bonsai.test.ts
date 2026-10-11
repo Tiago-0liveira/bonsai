@@ -75,7 +75,7 @@ describe('bonsai store', () => {
       worktreeId: 'wt-daemon',
       name: 'Focused debugger',
       provider: 'Codex',
-      model: 'gpt-5.6-codex',
+      model: 'gpt-6.1-sol',
       reasoningEffort: 'High',
       fastMode: true,
       workType: 'Debugging',

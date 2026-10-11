@@ -27,6 +27,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/codex"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/gorilla/websocket"
 )
@@ -42,12 +43,15 @@ func (p *terminalTestProvider) Capabilities() agents.Capabilities {
 	return agents.Capabilities{Interactive: true, MultiAccount: true, ConcurrentSameAccount: true, ConcurrentCrossAccount: true}
 }
 
-// ValidateLaunch mirrors Antigravity, which has no permission mode or effort.
+// ValidateLaunch and LaunchFields mirror Antigravity, which only has full access.
 func (p *terminalTestProvider) ValidateLaunch(_ agents.Account, o agents.LaunchOptions) error {
-	if o.PermissionMode != "" || o.Effort != "" {
+	if o.PermissionMode != "" || o.Effort != "" || o.Sandbox != "" || o.Approval != "" {
 		return fmt.Errorf("unsupported option")
 	}
 	return nil
+}
+func (p *terminalTestProvider) LaunchFields() []agents.LaunchField {
+	return []agents.LaunchField{{ID: "full_access", Label: "Full access", Kind: agents.LaunchFieldToggle, Options: []agents.FieldOption{{Value: "false", Label: "Ask permissions"}, {Value: "true", Label: "Full access", Tone: agents.ToneDanger}}}}
 }
 func (p *terminalTestProvider) PrepareSession(_ context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
 	p.starts.Add(1)
@@ -240,8 +244,19 @@ func TestAgentBrowserFixture(t *testing.T) {
 	if err := os.Symlink(filepath.Join(testdata, "fakeclaude.sh"), filepath.Join(bin, "claude")); err != nil {
 		t.Fatal(err)
 	}
+	// A real Codex provider over its fake binary, with two profiles signed in as
+	// different accounts. Seeding is off and HOME is a temp dir, so nothing reads
+	// or writes the real ~/.codex; the fake never reaches the network.
+	codexTestdata, err := filepath.Abs(filepath.Join("..", "..", "providers", "codex", "testdata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(codexTestdata, "fakecodex.sh"), filepath.Join(bin, "codex")); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("FAKE_CLAUDE_FIXTURES", testdata)
+	t.Setenv("FAKE_CODEX_FIXTURES", filepath.Join(codexTestdata, "phase0"))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// The fixture must never reach the network: model and usage lookups go to a
 	// closed local port and fall back to the static aliases.
@@ -255,6 +270,16 @@ func TestAgentBrowserFixture(t *testing.T) {
 	noSeed := false
 	if _, err := service.Setup(context.Background(), claude.ProviderID, "Work", agents.SetupOptions{Secret: strings.NewReader("sk-ant-oat01-FIXTUREFIXTUREFIXTUREFIXTUREFIXTURE\n"), Seed: &noSeed}); err != nil {
 		t.Fatal(err)
+	}
+	if err := runtime.Registry.Register(codex.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)); err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range []struct{ name, email, auth string }{{"Personal", "me@example.com", codex.AuthChatGPT}, {"Team", "team@example.com", codex.AuthDevice}} {
+		t.Setenv("FAKE_CODEX_EMAIL", profile.email)
+		t.Setenv("FAKE_CODEX_ACCOUNT", "acct-"+strings.ToLower(profile.name))
+		if _, err := service.Setup(context.Background(), codex.ProviderID, profile.name, agents.SetupOptions{AuthMode: profile.auth, Seed: &noSeed}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	listener, err := net.Listen("tcp", s.expectedHost)
 	if err != nil {
@@ -529,6 +554,115 @@ func TestAgentStartLaunchOptions(t *testing.T) {
 	// The idempotency fingerprint covers the new fields, and an accepted key stays reserved.
 	if w := agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", "ok", body(`,"effort":"high"`)); w.Code != 409 {
 		t.Fatalf("reused key with a different effort: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// presetTestProvider accepts sandbox and approval through a preset select.
+type presetTestProvider struct {
+	describedTestProvider
+	launches chan agents.LaunchOptions
+}
+
+func (p *presetTestProvider) ValidateLaunch(_ agents.Account, o agents.LaunchOptions) error {
+	if o.FullAccess != nil || o.PermissionMode != "" {
+		return fmt.Errorf("unsupported option")
+	}
+	p.launches <- o
+	return nil
+}
+func (p *presetTestProvider) LaunchFields() []agents.LaunchField {
+	return []agents.LaunchField{
+		{ID: "permissions", Label: "Permissions", Kind: agents.LaunchFieldSelect, Default: "auto", Options: []agents.FieldOption{
+			{Value: "read-only", Label: "Read only", Set: map[string]string{"sandbox": "read-only", "approval": "on-request"}},
+			{Value: "auto", Label: "Auto", Set: map[string]string{"sandbox": "workspace-write", "approval": "on-request"}},
+			{Value: "bypass", Label: "Bypass", Tone: agents.ToneDanger, Help: "No sandbox, no approvals.", Set: map[string]string{"sandbox": "bypass"}},
+		}},
+		{ID: "effort", Label: "Effort", Kind: agents.LaunchFieldSelect, PerModel: true, Options: []agents.FieldOption{{Value: "", Label: "Default"}, {Value: "high", Label: "high"}}},
+	}
+}
+
+func TestAgentProvidersDeclareLaunchFields(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	if err := s.agents.runtime.Registry.Register(&presetTestProvider{describedTestProvider: describedTestProvider{id: "preset", available: agents.Availability{Available: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	w := agentAPIRequest(t, s, "GET", "/api/agents/providers", "", "")
+	var providers []struct {
+		ID           string               `json:"id"`
+		LaunchFields []agents.LaunchField `json:"launch_fields"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &providers); err != nil {
+		t.Fatal(w.Body.String())
+	}
+	fields := map[string][]agents.LaunchField{}
+	for _, p := range providers {
+		fields[p.ID] = p.LaunchFields
+	}
+	if f := fields["antigravity"]; len(f) != 1 || f[0].ID != "full_access" || f[0].Kind != "toggle" || f[0].Options[1].Tone != "danger" {
+		t.Fatalf("antigravity fields = %+v", f)
+	}
+	if f := fields["codex"]; f != nil {
+		t.Fatalf("unregistered provider declared fields: %+v", f)
+	}
+	f := fields["preset"]
+	if len(f) != 2 || f[0].Default != "auto" || f[0].Options[2].Set["sandbox"] != "bypass" || f[0].Options[2].Help == "" || !f[1].PerModel {
+		t.Fatalf("preset fields = %+v", f)
+	}
+	for _, key := range []string{`"launch_fields"`, `"per_model":true`, `"set":{"approval":"on-request","sandbox":"workspace-write"}`} {
+		if !strings.Contains(w.Body.String(), key) {
+			t.Fatalf("providers JSON lacks %s: %s", key, w.Body.String())
+		}
+	}
+}
+
+func TestAgentStartSandboxAndApproval(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	runtime := s.agents.runtime
+	preset := &presetTestProvider{describedTestProvider: describedTestProvider{id: "preset"}, launches: make(chan agents.LaunchOptions, 4)}
+	if err := runtime.Registry.Register(preset); err != nil {
+		t.Fatal(err)
+	}
+	// Claude only validates its settings before a session exists, so no binary is needed.
+	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions, nil, io.Discard)); err != nil {
+		t.Fatal(err)
+	}
+	account := func(provider agents.ProviderID) string {
+		id, _ := agents.NewAccountID()
+		if err := runtime.Accounts.Create(agents.Account{ID: id, Provider: provider, Name: string(provider)}); err != nil {
+			t.Fatal(err)
+		}
+		return string(id)
+	}
+	presetAccount, claudeAccount := account("preset"), account(claude.ProviderID)
+	tree := gitlocal.ID(localRepositoryID, s.registry.Default().info.Path)
+	body := func(account, extra string) string {
+		return fmt.Sprintf(`{"worktree_id":%q,"account_id":%q,"cols":80,"rows":24%s}`, tree, account, extra)
+	}
+	start := func(key, body string) *httptest.ResponseRecorder {
+		return agentAPIRequest(t, s, "POST", "/api/projects/repo/agents", key, body)
+	}
+
+	for name, extra := range map[string]string{"sandbox": `,"sandbox":"read-only"`, "approval": `,"approval":"never"`} {
+		if w := start("claude-"+name, body(claudeAccount, extra)); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_launch_options") {
+			t.Fatalf("%s sent to Claude: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	if w := start("long", body(presetAccount, `,"approval":"`+strings.Repeat("x", 33)+`"`)); w.Code != 400 || len(preset.launches) != 0 {
+		t.Fatalf("overlong approval: %d", w.Code)
+	}
+
+	if w := start("k", body(presetAccount, `,"sandbox":"workspace-write","approval":"on-request"`)); w.Code != 202 {
+		t.Fatalf("preset start: %d %s", w.Code, w.Body.String())
+	}
+	if got := <-preset.launches; got.Sandbox != "workspace-write" || got.Approval != "on-request" {
+		t.Fatalf("launch = %+v", got)
+	}
+	// The fingerprint covers approval alone: the same key with another approval conflicts.
+	if w := start("k", body(presetAccount, `,"sandbox":"workspace-write","approval":"never"`)); w.Code != 409 {
+		t.Fatalf("reused key with a different approval: %d %s", w.Code, w.Body.String())
+	}
+	if w := start("k", body(presetAccount, `,"sandbox":"workspace-write","approval":"on-request"`)); w.Code != 200 {
+		t.Fatalf("same request replay: %d %s", w.Code, w.Body.String())
 	}
 }
 

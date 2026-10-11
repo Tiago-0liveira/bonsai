@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "result": {
+    "userAgent": "bonsai/0.162.1 (Ubuntu 24.4.0; x86_64) unknown (bonsai; 0)",
+    "codexHome": "<redacted>",
+    "platformFamily": "unix",
+    "platformOs": "linux"
+  }
+}

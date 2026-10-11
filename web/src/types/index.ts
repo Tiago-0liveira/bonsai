@@ -97,7 +97,7 @@ export interface EnvVariable {
 
 export type AgentProvider = 'Claude' | 'Codex' | 'Gemini' | 'Antigravity'
 /** Provider IDs the local API can launch; other providers are display-only. */
-export type AgentProviderId = 'antigravity' | 'claude'
+export type AgentProviderId = 'antigravity' | 'claude' | 'codex'
 
 export interface Agent {
   projectId?: string
@@ -124,11 +124,8 @@ export interface Agent {
 }
 
 export interface StartAgentInput {
-  fullAccess?: boolean
-  /** Claude only: default|acceptEdits|plan|auto|dontAsk|bypassPermissions; empty = profile default. */
-  permissionMode?: string
-  /** Claude only: low|medium|high|xhigh|max; empty = profile default. */
-  effort?: string
+  /** Start request fields from the provider's launch fields, sent as given. */
+  options?: Record<string, string | boolean>
   accountId?: string
   requestKey?: string
   worktreeId: string

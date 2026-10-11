@@ -7,6 +7,16 @@ import (
 	"sync"
 )
 
+// KnownProvider is a provider the launch UI always lists, registered or not, so
+// its tabs stay stable across builds and hosts.
+type KnownProvider struct {
+	ID    ProviderID
+	Label string
+}
+
+// KnownProviders are listed in this order before any other registered provider.
+var KnownProviders = []KnownProvider{{"antigravity", "Antigravity"}, {"claude", "Claude"}, {"codex", "Codex"}}
+
 type Registry struct {
 	mu        sync.RWMutex
 	providers map[ProviderID]Provider

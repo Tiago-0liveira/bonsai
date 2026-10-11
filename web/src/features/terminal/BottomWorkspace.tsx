@@ -134,6 +134,7 @@ export function RuntimeWorkspace() {
     value: runtime.id,
     label: runtime.type === 'agent' ? runtime.agent.name : runtime.process.name,
     description: runtime.type === 'agent' ? runtime.agent.provider + ' · ' + (runtime.agent.profileName ?? runtime.agent.model) : runtime.process.command,
+    icon: runtime.type === 'agent' ? <ProviderBadge provider={runtime.agent.provider} size={16} /> : undefined,
     meta: openRuntimeIds.includes(runtime.id) ? 'open' : undefined,
   }))
 

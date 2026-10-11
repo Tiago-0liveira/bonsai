@@ -60,6 +60,9 @@ func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOp
 	if launch.FullAccess != nil {
 		return fmt.Errorf("claude does not support full access; use the bypassPermissions permission mode")
 	}
+	if launch.Sandbox != "" || launch.Approval != "" {
+		return fmt.Errorf("claude does not support sandbox or approval settings; use a permission mode")
+	}
 	if err := validateModel(launch.Model); err != nil {
 		return err
 	}
@@ -73,6 +76,26 @@ func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOp
 		return fmt.Errorf("invalid profile settings")
 	}
 	return nil
+}
+
+// LaunchFields declares the permission mode and effort selects. An empty value
+// keeps the profile default.
+func (p *Provider) LaunchFields() []agents.LaunchField {
+	efforts := []agents.FieldOption{{Value: "", Label: "Profile default"}}
+	for _, effort := range effortLevels {
+		efforts = append(efforts, agents.FieldOption{Value: effort, Label: effort})
+	}
+	return []agents.LaunchField{
+		{ID: "permission_mode", Label: "Permission mode", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{
+			{Value: "", Label: "Profile default"},
+			{Value: "default", Label: "Default"},
+			{Value: "acceptEdits", Label: "Accept edits"},
+			{Value: "plan", Label: "Plan"},
+			{Value: "auto", Label: "Auto"},
+			{Value: "bypassPermissions", Label: "Bypass permissions", Tone: agents.ToneDanger, Help: "Claude will run tools without asking."},
+		}},
+		{ID: "effort", Label: "Effort", Kind: agents.LaunchFieldSelect, Options: efforts},
+	}
 }
 
 // launchArgs builds argv as

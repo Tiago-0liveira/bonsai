@@ -18,24 +18,14 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks())
 
 describe('Claude agents in the store', () => {
-  it('sends permission mode and effort for Claude and never full access', async () => {
-    vi.mocked(startAgent).mockResolvedValue(session('claude', 'c1'))
-    await useBonsaiStore.getState().createAgent({ ...input, provider: 'Claude', permissionMode: 'plan', effort: 'high', fullAccess: true })
-    const body = vi.mocked(startAgent).mock.calls[0][1]
-    expect(body).toMatchObject({ account_id: 'account', model: 'opus', permission_mode: 'plan', effort: 'high' })
-    expect(body).not.toHaveProperty('full_access')
-    expect(useBonsaiStore.getState().agents[0]).toMatchObject({ id: 'c1', provider: 'Claude', providerId: 'claude' })
-  })
-
-  it('omits unset Claude options and sends full access only for Antigravity', async () => {
+  it('sends the launch options as given for any provider', async () => {
     vi.mocked(startAgent).mockResolvedValueOnce(session('claude', 'c1')).mockResolvedValueOnce(session('antigravity', 'a1'))
-    await useBonsaiStore.getState().createAgent({ ...input, provider: 'Claude', permissionMode: '', effort: '' })
-    await useBonsaiStore.getState().createAgent({ ...input, provider: 'Antigravity', fullAccess: true, permissionMode: 'plan' })
+    await useBonsaiStore.getState().createAgent({ ...input, provider: 'Claude', options: { permission_mode: 'plan', effort: 'high' } })
+    await useBonsaiStore.getState().createAgent({ ...input, provider: 'Antigravity', options: { full_access: false } })
     const [claude, antigravity] = vi.mocked(startAgent).mock.calls.map(call => call[1])
-    expect(claude).not.toHaveProperty('permission_mode')
-    expect(claude).not.toHaveProperty('effort')
-    expect(antigravity).toMatchObject({ full_access: true })
-    expect(antigravity).not.toHaveProperty('permission_mode')
+    expect(claude).toMatchObject({ account_id: 'account', model: 'opus', options: { permission_mode: 'plan', effort: 'high' } })
+    expect(antigravity.options).toEqual({ full_access: false })
+    expect(useBonsaiStore.getState().agents[0]).toMatchObject({ id: 'c1', provider: 'Claude', providerId: 'claude' })
   })
 
   it('starts two sessions of one profile and keeps both', async () => {
@@ -47,7 +37,7 @@ describe('Claude agents in the store', () => {
   })
 
   it('rejects providers the API cannot launch with a provider neutral message', async () => {
-    await expect(useBonsaiStore.getState().createAgent({ ...input, provider: 'Codex' })).rejects.toThrow('Select a profile and worktree.')
+    await expect(useBonsaiStore.getState().createAgent({ ...input, provider: 'Gemini' })).rejects.toThrow('Select a profile and worktree.')
     expect(startAgent).not.toHaveBeenCalled()
   })
 

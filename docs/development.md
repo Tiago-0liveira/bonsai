@@ -234,8 +234,10 @@ the terminal manager, local API and CLI never test a provider ID.
   an account (`409 agent_busy`), and `ConcurrentCrossAccount=false` rejects a
   session on another account of the same provider.
 - Per-launch choices arrive as `LaunchOptions` (model, prompt, display name,
-  full access, permission mode, effort) in `PrepareSessionRequest.Launch`. The
-  provider maps them to its own argv; the manager adds nothing. Prompts go last.
+  full access, permission mode, effort, sandbox, approval) in
+  `PrepareSessionRequest.Launch`. The provider maps them to its own argv; the
+  manager adds nothing. Prompts go last. A provider rejects every option it does
+  not declare, in `ValidateLaunch`.
 - `PreparedSession.EnvUnsetPrefixes` scrubs inherited variables by prefix
   (case-insensitive on Windows); `EnvSet` still wins. `ProviderSessionID` is
   recorded in the session summary as `provider_session_id`.
@@ -249,12 +251,27 @@ Optional interfaces, found by type assertion:
 | --- | --- |
 | `Describer` | Provider label and host availability in `/api/agents/providers` |
 | `LaunchValidator` | Synchronous launch-option check; errors return `400 invalid_launch_options` and leave no session |
+| `LaunchSchema` | `launch_fields` in `/api/agents/providers`: the launch options the start dialog renders, see below |
+| `ModelLister` | Model suggestions in `/api/agents/providers/{id}/models`; per-model `efforts`, `default_effort` and the `default` model |
 | `AccountDescriber` | Display-safe `auth_mode`, `identity`, `warnings` and options in `/api/agents/accounts` and `account list`; never tokens, paths or raw settings |
 | `AccountRemover` | Best-effort provider cleanup before an account is deleted; failure is a warning |
 | `UsagePolicy` | Provider-specific usage cache TTL |
 
-`/api/agents/providers` always lists Antigravity, Claude and Codex (unregistered
-ones as "Not available yet") plus any other registered provider.
+`/api/agents/providers` always lists `agents.KnownProviders` (Antigravity, Claude
+and Codex; unregistered ones as "Not available yet") plus any other registered
+provider.
+
+Launch fields keep the start dialog provider-neutral. Each `LaunchField` is a
+`select` or a `toggle` whose `id` is the start request's JSON field
+(`permission_mode`, `effort`, `full_access`, `sandbox`, `approval`). A toggle has
+two options, `"false"` and `"true"`, and starts from the profile's option of the
+same ID; a select starts at `default` or its first option, and an empty value
+sends nothing. An option with `set` is a preset: choosing it sends those fields
+instead of the field's own ID. `tone: "danger"` tints the control and shows the
+option's `help`. A `per_model` field takes its values from the chosen model's
+`efforts` and falls back to its own options for typed or unlisted models. Every
+value a provider declares must pass its `ValidateLaunch` (each provider has a
+test for this).
 `/api/agents/accounts` lists accounts of registered providers only.
 
 ## Claude provider
@@ -289,13 +306,100 @@ implements `UsagePolicy` (5 minutes), which `UsageService` prefers over its own
 TTL. Tests point `claude.UsageEndpoint` or the provider's `usageEndpoint` at an
 `httptest` server; nothing reaches the network.
 
+## Codex provider
+
+`internal/providers/codex` runs the Codex CLI. Each profile owns
+`<account dir>/home` as its `CODEX_HOME`, shared by all its sessions; there is no
+credential vault, materialize or reconcile step, and Bonsai never writes
+`auth.json` (Codex rotates refresh tokens, so copies would log each other out).
+Every invocation passes `-c cli_auth_credentials_store="file"`, and setup also
+writes it into the profile's `config.toml`, so the login always lives in the
+profile's `auth.json`. Launch environment: every inherited `CODEX_*` and
+`OPENAI_*` variable is removed, then `CODEX_HOME`, `BONSAI_AGENT_*` and the host's
+`CODEX_CA_CERTIFICATE` are set. Argv is built in `launch.go` only:
+`[explicit...] -c store --no-daemon [-m] [-c model_reasoning_effort=] [-s -a | --dangerously-bypass-approvals-and-sandbox] [-- prompt]`.
+Explicit args that start with a subcommand or a positional prompt
+(`resume --last`, `login`) get only the global `-c store --no-daemon` in front, so
+a resumed or forked TUI never attaches to a shared daemon that would outlive
+**Stop agent** or the profile. The start dialog's `permissions` select is a preset that sends `sandbox` and
+`approval` together (`bypass` is Bonsai's name for the bypass flag). Codex has no
+`--session-id`, so `provider_session_id` stays empty.
+
+Identity (`email · plan`) is decoded from the `id_token` claims in `auth.json`
+without a network call; auth status is the exit code of `codex login status`
+(cached 60 s, 10 s when unknown). Short commands run in their own process group,
+killed on timeout.
+
+Models and usage come from `codex app-server` (`appserver.go`), Codex's published
+JSON-RPC protocol over stdio. The client starts it with the profile's environment
+and the file-store override, sends `initialize` and `initialized`, makes its
+calls one at a time and closes stdin; the process group is killed on return or
+after 15 s, stderr is discarded and at most 1 MiB is read. Concurrent reads of
+one profile share one process. Errors carry the method and JSON-RPC code only,
+never a server message or body, and Bonsai never writes `auth.json`.
+
+- `models.go` (`ModelLister`): `model/list` for logged-in profiles, hidden models
+  dropped, the default first, each model's own `efforts` and `default_effort`.
+  Logged-out profiles, or a failed call, fall back to `codex debug models --bundled`
+  (default = lowest priority among visible models); a failure of both is an empty
+  list, never an error. Cached 10 minutes, 1 minute after a fallback. The effort
+  of a launch is checked against the cached list of its model (or the default
+  model) and against every shipped level when the list is not cached; validation
+  never starts Codex.
+- `usage.go` (`Usage`, `UsagePolicy` 5 minutes): `account/rateLimits/read`. A
+  window is named by its length: 300 minutes `five_hour`, 10080 `weekly`, any
+  other `window_<n>m`; remaining is `1 - usedPercent/100`. Limits of other metered
+  features (`rateLimitsByLimitId`) get their own group and ids prefixed by the
+  limit id. The plan is `UsageSnapshot.Plan`; credits become a warning. API-key
+  profiles are `ErrUsageUnsupported` and logged-out ones `ErrNotAuthenticated`,
+  both decided from `auth.json` without starting Codex. Failures are remembered
+  for a minute.
+- `bonsai agent usage` renders each provider through the adapter table in
+  `internal/cli/agent_usage.go` (`usageSpec`): slot assignment, fleet score,
+  next reset and table per provider.
+
+Tests never need a Codex login: `testdata/fakecodex.sh` is a POSIX stand-in put
+first on `PATH`; `login` writes an `auth.json` with an unsigned JWT, `app-server`
+replays the `testdata/phase0/` responses (re-numbering their ids; env switches
+make it exit early, hang, flood or fail), `debug models --bundled` prints
+`phase0/bundled-models.json`, and other runs print their argv and environment
+and echo input as `REPLY:`. `testdata/phase0/` holds redacted responses from a
+real Codex 0.162.1 (`auth.json` shape, app-server `initialize`, `account/read`,
+`account/rateLimits/read`, `model/list`, and a trimmed `debug models --bundled`);
+`testdata/rate-limits-multi.json` is hand-written to cover extra limit groups.
+
+### Codex in the web client
+
+Codex needs no web code of its own: `AgentProviderId` and `PROVIDER_LABELS`
+(`web/src/api/agents.ts`) list it, and everything else is driven by the provider
+list. The Codex tab is enabled when the provider is available **and** has a
+profile; otherwise its tooltip says why or shows the setup command
+(`SETUP_HINTS` adds `[--auth device]`). The dialog renders the `permissions`
+preset and the per-model `effort` select from the declared launch fields; the
+effort list follows the chosen model (`gpt-6.1-sol` offers `ultra`, `gpt-6-luna`
+does not) and a value the new model lacks falls back to "Profile default". The
+model placeholder is the provider's default model. The profile row shows
+`auth: <mode> · <email · plan> · <auth status>` and the profile's warnings, such
+as a shared login. Submitting sends `sandbox`/`approval` (or `sandbox: bypass`)
+and `effort` as flat request fields.
+
+Browser coverage: `web/e2e/codex-agents.spec.ts` runs two sessions on one profile
+and one on another against the mocked API (request bodies, node and terminal
+marks, effort handling). `agent-terminal-fullstack.spec.ts` runs the real API and
+PTYs with `fakecodex.sh` and `fakeclaude.sh` on `PATH` (HOME is a temp dir, no
+seeding, no network): two Codex profiles with two sessions each plus one Claude
+session, input routed to the right PTY, reload and reattach, stop one while the
+others keep running. These fixture-server specs need ports 7011-7014 free.
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured
 project worktree. Set up a profile with
 `bonsai agent account add antigravity <name>` and ensure `agy` is on the API's
-PATH. Claude is also supported; Codex remains unavailable. Profile selection uses opaque account
-IDs; discovery responses contain only ID, provider and display name.
+PATH. Claude (`claude`) and Codex (`codex`) are supported the same way: set up a
+profile with `bonsai agent account add codex <name> [--auth device]`. Profile selection uses
+opaque account IDs; discovery responses contain only ID, provider, display name and the
+display-safe profile details.
 
 The local API owns these sessions, independently of request contexts and browser
 connections. Closing a terminal or refreshing detaches; reconnecting resumes the

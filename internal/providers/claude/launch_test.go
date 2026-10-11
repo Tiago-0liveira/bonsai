@@ -233,6 +233,8 @@ func TestValidateLaunch(t *testing.T) {
 		{name: "bad effort", launch: agents.LaunchOptions{Effort: "extreme"}},
 		{name: "dash model", launch: agents.LaunchOptions{Model: "--evil"}},
 		{name: "full access", launch: agents.LaunchOptions{FullAccess: &yes}},
+		{name: "sandbox", launch: agents.LaunchOptions{Sandbox: "read-only"}},
+		{name: "approval", launch: agents.LaunchOptions{Approval: "never"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := e.provider.ValidateLaunch(account, tc.launch)
@@ -240,6 +242,42 @@ func TestValidateLaunch(t *testing.T) {
 				t.Fatalf("err = %v, want ok=%v", err, tc.ok)
 			}
 		})
+	}
+}
+
+// Every value the launch dialog can send is one ValidateLaunch accepts.
+func TestLaunchFieldsMatchValidation(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	fields := e.provider.LaunchFields()
+	if len(fields) != 2 || fields[0].ID != "permission_mode" || fields[1].ID != "effort" {
+		t.Fatalf("fields = %+v", fields)
+	}
+	danger := 0
+	for _, field := range fields {
+		if field.Kind != agents.LaunchFieldSelect || field.Options[0].Value != "" {
+			t.Fatalf("%s must be a select that starts with the profile default", field.ID)
+		}
+		for _, option := range field.Options {
+			launch := agents.LaunchOptions{}
+			if field.ID == "permission_mode" {
+				launch.PermissionMode = option.Value
+			} else {
+				launch.Effort = option.Value
+			}
+			if err := e.provider.ValidateLaunch(account, launch); err != nil {
+				t.Fatalf("%s %q rejected: %v", field.ID, option.Value, err)
+			}
+			if option.Tone == agents.ToneDanger {
+				danger++
+				if option.Value != "bypassPermissions" || option.Help == "" {
+					t.Fatalf("danger option %+v", option)
+				}
+			}
+		}
+	}
+	if danger != 1 || len(fields[1].Options) != len(effortLevels)+1 {
+		t.Fatalf("danger = %d, efforts = %+v", danger, fields[1].Options)
 	}
 }
 

@@ -1,0 +1,20 @@
+Agent Fleet Usage
+
+╭─ Fleet Capacity (3 Accounts · 3 Providers) ────────────────────────────────────────────╮
+│ Usage Pool: [██████████░░░░░░]  64% avg   ● 1 Ready  ▲ 2 Active  ✖ 0 Low               │
+│ Next Reset: Codex/main in 48h00m                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+◆ Antigravity · 1 account
+  Gemini Models
+  Account  5h                              Weekly
+  google   [█████████░]  90%  3h           [███████░░░]  70%  2d
+
+◆ Claude Code · 1 account
+  Account  5h                              Weekly                          Per model
+  work     [█████████░]  90%  3h           [█████░░░░░]  50%  2d           opus 25%
+  Read from an undocumented endpoint; it may change. Bonsai never refreshes logins.
+
+◆ Codex · 1 account
+  Account  Plan  5h                              Weekly                          Other
+  main     plus  [███████░░░]  72%  3h           [██████████]  96%  2d           Spark 5h 35%

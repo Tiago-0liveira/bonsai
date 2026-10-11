@@ -427,9 +427,22 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
 
     if (path === '/api/agents/providers') {
       await route.fulfill({ json: [
-        { id: 'antigravity', label: 'Antigravity', available: true },
-        { id: 'claude', label: 'Claude', available: true, version: '2.1.295' },
-        { id: 'codex', label: 'Codex', available: false, unavailable_reason: { message: 'Not available yet' } },
+        { id: 'antigravity', label: 'Antigravity', available: true, launch_fields: [
+          { id: 'full_access', label: 'Full access', kind: 'toggle', help: 'Allow Antigravity to run tools without permission prompts.', options: [{ value: 'false', label: 'Ask permissions' }, { value: 'true', label: 'Full access', tone: 'danger' }] },
+        ] },
+        { id: 'claude', label: 'Claude', available: true, version: '2.1.295', launch_fields: [
+          { id: 'permission_mode', label: 'Permission mode', kind: 'select', options: [{ value: '', label: 'Profile default' }, { value: 'default', label: 'Default' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan' }, { value: 'auto', label: 'Auto' }, { value: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger', help: 'Claude will run tools without asking.' }] },
+          { id: 'effort', label: 'Effort', kind: 'select', options: ['', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value || 'Profile default' })) },
+        ] },
+        { id: 'codex', label: 'Codex', available: true, version: '0.162.1', launch_fields: [
+          { id: 'permissions', label: 'Permissions', kind: 'select', default: 'auto', options: [
+            { value: 'read-only', label: 'Read only', set: { sandbox: 'read-only', approval: 'on-request' } },
+            { value: 'auto', label: 'Auto', set: { sandbox: 'workspace-write', approval: 'on-request' } },
+            { value: 'full-access', label: 'Full access', tone: 'danger', help: 'Codex can change any file and use the network without asking.', set: { sandbox: 'danger-full-access', approval: 'never' } },
+            { value: 'bypass', label: 'Bypass', tone: 'danger', help: 'Codex runs every command without a sandbox and without asking.', set: { sandbox: 'bypass' } },
+          ] },
+          { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map(value => ({ value, label: value || 'Profile default' })) },
+        ] },
       ] }); return
     }
     if (path === '/api/agents/providers/claude/models') {
@@ -439,17 +452,26 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
         { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', description: 'claude-sonnet-5-5', source: 'api' },
       ] }); return
     }
+    if (path === '/api/agents/providers/codex/models') {
+      await route.fulfill({ json: [
+        { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', source: 'api', default: true, efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], default_effort: 'low' },
+        { id: 'gpt-6-luna', label: 'GPT-6-Luna', source: 'api', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], default_effort: 'medium' },
+      ] }); return
+    }
     if (path.startsWith('/api/agents/providers/') && path.endsWith('/models')) { await route.fulfill({ json: [] }); return }
     if (path === '/api/agents/accounts') {
       await route.fulfill({ json: [
         { id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' },
         { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] },
+        { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in' },
+        { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_in', warnings: ['Same login as profile "Personal"; both share its usage limits'] },
       ] }); return
     }
     if (path === '/api/projects/bonsai/agents' && request.method() === 'POST') {
       const body = request.postDataJSON()
-      const claude = body.account_id === 'claude-profile'
-      const session: AgentSummary = { id: claude ? `claude-session-${agentSessions.length + 1}` : 'fixture-session', project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: claude ? 'claude' : 'antigravity', profile_name: claude ? 'Work' : 'Fixture', name: body.name || (claude ? 'Work' : 'Fixture'), state: 'running', created_at: new Date().toISOString() }
+      const profile = ({ 'claude-profile': { provider: 'claude', name: 'Work' }, 'codex-personal': { provider: 'codex', name: 'Personal' }, 'codex-team': { provider: 'codex', name: 'Team' } } as const)[body.account_id as string] ?? { provider: 'antigravity', name: 'Fixture' }
+      const id = profile.provider === 'antigravity' ? 'fixture-session' : `${profile.provider}-session-${agentSessions.filter(item => item.provider === profile.provider).length + 1}`
+      const session: AgentSummary = { id, project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: profile.provider, profile_name: profile.name, name: body.name || profile.name, state: 'running', created_at: new Date().toISOString() }
       if (!agentSessions.some(item => item.id === session.id)) agentSessions.push(session)
       socket.publishUpdate(projectSnapshot('bonsai', true), 'agents')
       await route.fulfill({ status: 202, json: session }); return
