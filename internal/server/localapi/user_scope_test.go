@@ -15,7 +15,7 @@ func newUserScopedTestServer(t *testing.T) *Server {
 	s, err := New(Config{
 		ProjectRootsPath: t.TempDir() + "/project-roots.json",
 		Address:          "127.0.0.1:7001",
-		BrowserOrigin:    ProductionBrowserOrigin,
+		BrowserOrigin:    "",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func userScopedRequest(t *testing.T, h http.Handler, method, path, token string)
 	}
 	r := httptest.NewRequest(method, "http://127.0.0.1:7001"+path, strings.NewReader(body))
 	r.Host = "127.0.0.1:7001"
-	r.Header.Set("Origin", ProductionBrowserOrigin)
+	r.Header.Set("Origin", testBrowserOrigin)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Idempotency-Key", "user-scope-test")
 	if token != "" {

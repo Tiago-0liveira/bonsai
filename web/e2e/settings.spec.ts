@@ -3,9 +3,8 @@ import { mockGitBackend, mockUpdateSettings, openConnectedApp } from './mockGit'
 
 test('empty onboarding, multiple folders, Settings and last-root removal', async ({ page }) => {
   await mockGitBackend(page, true)
-  await page.route('https://api.bonsai.dev/**', route => route.fulfill({ status: 401, body: '' }))
   await page.goto('/app')
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   const onboarding = page.getByRole('dialog', { name: 'Choose project folders' })
   await expect(onboarding).toBeVisible()
   await onboarding.getByRole('button', { name: '/projects', exact: true }).click()

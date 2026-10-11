@@ -329,7 +329,7 @@ func (m Model) sections() []section {
 	}
 	return []section{
 		{"Projects", setup.ProjectsSummary(m.draft, m.info.Home), m.worst(checks.IDProjects), screenProjects, foldersEdited},
-		{"Open in", setup.InterfacesText(a.Interfaces) + " · auto-open " + onOff(a.OpenBrowser), checks.OK, screenOpenIn, a.Interfaces != b.Interfaces || a.OpenBrowser != b.OpenBrowser},
+		{"Open in", "this computer" + " · auto-open " + onOff(a.OpenBrowser), checks.OK, screenOpenIn, a.OpenBrowser != b.OpenBrowser},
 		{"GitHub", m.githubSummary(), m.worst(checks.IDGHInstalled, checks.IDGHAuth), screenGitHub, false},
 		{"Updates", setup.UpdatesSummary(a, m.info.StandardInterval), m.updatesHealth(), screenUpdates, updatesEdited(b, a)},
 		{"Advanced", m.advancedSummary(a), m.worst(checks.IDPort), screenAdvanced, a.APIPort != b.APIPort || a.Updates.Live.WebhookPort != b.Updates.Live.WebhookPort || m.draft.RotateSecret},

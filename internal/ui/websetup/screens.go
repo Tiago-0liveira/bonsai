@@ -180,15 +180,10 @@ func (m Model) onFolderInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ── 3. Where to open ────────────────────────────────────────────────────────
 
 func (m Model) openChoices() []setup.Choice {
-	return setup.OpenChoices("http://127.0.0.1:"+itoa(m.draft.Config.APIPort), strings.TrimSuffix(m.info.HostedURL, "/app"))
+	return setup.OpenChoices("http://127.0.0.1:" + itoa(m.draft.Config.APIPort) + "/app")
 }
 
-func (m Model) openIndex() int {
-	if m.draft.Config.Interfaces.Hosted {
-		return 1
-	}
-	return 0
-}
+func (m Model) openIndex() int { return 0 }
 
 func (m Model) openInView() string {
 	choices := m.openChoices()
@@ -206,7 +201,7 @@ func (m Model) openInView() string {
 	if m.draft.Config.OpenBrowser {
 		box = "[x]"
 	}
-	left.WriteString("\n" + m.marker(cursor == 2) + m.st.text.Render(box+" Open the browser when") + "\n")
+	left.WriteString("\n" + m.marker(cursor == 1) + m.st.text.Render(box+" Open the browser when") + "\n")
 	left.WriteString("      " + m.st.text.Render("bonsai web starts"))
 	body := "\n" + m.panes(left.String(), func(w int) string { return m.choicePanel(choices[selected], "", w) })
 	hs := []hint{{"↑↓", "choose"}, {"space", "toggle"}, {"enter", "next"}, {"esc", "back"}}
@@ -244,26 +239,14 @@ func (m Model) choicePanel(c setup.Choice, need string, width int) string {
 
 func (m Model) onOpenIn(key string) (tea.Model, tea.Cmd) {
 	cursor := m.cursor[screenOpenIn]
-	pick := func(i int) {
-		switch i {
-		case 0:
-			m.draft.Config.Interfaces = config.WebInterfaces{Local: true}
-		case 1:
-			m.draft.Config.Interfaces = config.WebInterfaces{Local: true, Hosted: true}
-		}
-	}
 	switch key {
 	case "up", "k":
-		m.cursor[screenOpenIn] = m.move(screenOpenIn, -1, 3)
-		pick(m.cursor[screenOpenIn])
+		m.cursor[screenOpenIn] = m.move(screenOpenIn, -1, 2)
 	case "down", "j":
-		m.cursor[screenOpenIn] = m.move(screenOpenIn, 1, 3)
-		pick(m.cursor[screenOpenIn])
+		m.cursor[screenOpenIn] = m.move(screenOpenIn, 1, 2)
 	case " ", "x":
-		if cursor == 2 {
+		if cursor == 1 {
 			m.draft.Config.OpenBrowser = !m.draft.Config.OpenBrowser
-		} else {
-			pick(cursor)
 		}
 	case "enter":
 		return m.next()

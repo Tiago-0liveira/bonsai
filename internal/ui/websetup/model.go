@@ -362,7 +362,7 @@ func runningAfter(d setup.Draft, before *setup.Running, r *Result) *setup.Runnin
 	if r.Port == 0 {
 		return before
 	}
-	return &setup.Running{APIPort: r.Port, Hosted: d.Config.Interfaces.Hosted, WebhookPort: r.WebhookPort}
+	return &setup.Running{APIPort: r.Port, WebhookPort: r.WebhookPort}
 }
 
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

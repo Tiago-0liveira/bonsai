@@ -11,8 +11,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/server/webui"
 )
 
-const ProductionBrowserOrigin = "https://app.bonsai.dev"
-
 type BrowserSecurityMode string
 
 const (
@@ -46,16 +44,10 @@ func validateBrowserOrigin(origin string, mode BrowserSecurityMode) error {
 	}
 }
 
-// validateProductionOrigin accepts the hosted HTTPS origin, or "" when the
-// hosted interface is disabled and only the API's own origin may connect.
+// Production pages and privileged requests use the API's own loopback origin.
 func validateProductionOrigin(origin string) error {
-	if origin == "" {
-		return nil
-	}
-	u, err := url.Parse(strings.TrimSpace(origin))
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
-		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("production browser origin must be an explicit HTTPS origin")
+	if origin != "" {
+		return fmt.Errorf("production browser origin must be empty; open the local /app")
 	}
 	return nil
 }
@@ -97,8 +89,8 @@ func (s *Server) allowedHost(host string) bool {
 // allowedOrigin reports whether a browser origin may use the API. The set is
 // fixed by the configuration: the API's own origin (it serves the UI, at
 // http://<address> or http://localhost:<port>) plus the configured browser
-// origin, which is the hosted app (production, empty when that interface is
-// disabled) or the Vite dev server (development). No wildcard, no patterns.
+// origin of the Vite dev server in development. Production adds no origin.
+// No wildcard, no patterns.
 func (s *Server) allowedOrigin(origin string) bool {
 	if origin == "" {
 		return false

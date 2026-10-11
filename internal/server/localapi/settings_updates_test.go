@@ -57,7 +57,7 @@ func TestUpdatesSettingsEndpoint(t *testing.T) {
 
 	// Session required, like every other settings route.
 	req := httptest.NewRequest("GET", "http://127.0.0.1:7001/api/settings/updates", nil)
-	req.Header.Set("Origin", ProductionBrowserOrigin)
+	req.Header.Set("Origin", testBrowserOrigin)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != 401 && rec.Code != 403 {

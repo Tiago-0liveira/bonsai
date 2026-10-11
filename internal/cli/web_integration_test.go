@@ -75,7 +75,6 @@ func newWebEnv(t *testing.T) *webEnv {
 	t.Setenv("AppData", filepath.Join(home, "appdata"))
 	t.Setenv("LocalAppData", filepath.Join(home, "localappdata"))
 	t.Setenv("LOCALAPPDATA", filepath.Join(home, "localappdata"))
-	t.Setenv("BONSAI_FRONTEND_ORIGIN", "")
 	t.Setenv("BONSAI_DAEMON_BIN", bin)
 	base := ""
 	if runtime.GOOS != "windows" {
@@ -216,7 +215,7 @@ func TestWebStartReuseStatusLogsRestartStop(t *testing.T) {
 	port := strconv.Itoa(freePort(t))
 
 	out := e.mustRun(t, "web", "--no-open", "--port", port)
-	for _, want := range []string{"Saved default settings", "✓ bonsai web is running", "UI        http://127.0.0.1:" + port + "/app", "hosted    https://app.bonsai.dev/app", "updates   standard", "bonsai web stop"} {
+	for _, want := range []string{"Saved default settings", "✓ bonsai web is running", "UI        http://127.0.0.1:" + port + "/app", "updates   standard", "bonsai web stop"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("first start output lacks %q:\n%s", want, out)
 		}
@@ -307,50 +306,30 @@ func sessionStatus(t *testing.T, port, origin string) int {
 	return resp.StatusCode
 }
 
-func TestWebAppliesTheHostedInterfaceSetting(t *testing.T) {
+func TestWebAlwaysRejectsPublicOrigins(t *testing.T) {
 	e := newWebEnv(t)
+	// A retired env override must never change the destination or API security.
+	t.Setenv("BONSAI_FRONTEND_ORIGIN", "https://app.bonsai.dev")
 	port := strconv.Itoa(freePort(t))
-	e.mustRun(t, "web", "--no-open", "--port", port)
-	if got := sessionStatus(t, port, "https://app.bonsai.dev"); got != http.StatusCreated {
-		t.Fatalf("hosted origin with the interface enabled: %d", got)
-	}
-
-	path, err := config.WebConfigPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	current, _, err := config.ReadWebConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := config.UpdateWebConfig(path, current.Revision, func(c *config.WebConfig) error {
-		c.Interfaces.Hosted = false
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
 	out := e.mustRun(t, "web", "--no-open", "--port", port)
-	if !strings.Contains(out, "Restarting bonsai web to apply changed settings") || strings.Contains(out, "hosted    https") {
-		t.Fatalf("hosted interface change not applied:\n%s", out)
+	if strings.Contains(out, "https://app.bonsai.dev") {
+		t.Fatal(out)
 	}
-	if got := sessionStatus(t, port, "https://app.bonsai.dev"); got != http.StatusForbidden {
-		t.Fatalf("hosted origin with the interface disabled: %d", got)
+	for _, origin := range []string{"https://app.bonsai.dev", "https://evil.example"} {
+		if got := sessionStatus(t, port, origin); got != http.StatusForbidden {
+			t.Fatalf("origin %s: %d", origin, got)
+		}
 	}
 	for _, origin := range []string{"http://127.0.0.1:" + port, "http://localhost:" + port} {
 		if got := sessionStatus(t, port, origin); got != http.StatusCreated {
-			t.Fatalf("own origin %s: %d", origin, got)
+			t.Fatalf("origin %s: %d", origin, got)
 		}
 	}
-	if got := sessionStatus(t, port, "https://evil.example"); got != http.StatusForbidden {
-		t.Fatalf("foreign origin: %d", got)
-	}
 	if out := e.mustRun(t, "web", "--no-open", "--port", port); !strings.Contains(out, "already running") {
-		t.Fatalf("unchanged settings did not reuse:\n%s", out)
+		t.Fatal(out)
 	}
 }
 
-// An API left by another bonsai version would serve that version's UI; bonsai
-// web replaces it so the browser always gets this binary's UI.
 func TestWebReplacesAnAPIFromAnotherVersion(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the bonsai binary")
@@ -435,34 +414,18 @@ func TestWebAPICrashIsReportedAndCleanedUp(t *testing.T) {
 	}
 }
 
-func TestServeAliasReplacesPerRepoAPI(t *testing.T) {
+func TestWebReplacesPerRepoAPI(t *testing.T) {
 	e := newWebEnv(t)
-	repo := canonicalRepo(t) // daemons key by the canonical root
+	repo := canonicalRepo(t)
 	port := freePort(t)
-
-	// A per-repo production group, as started by bonsai serve before
-	// bonsai web existed, holds the port.
 	legacy := startLegacyServe(t, e, repo, port)
-
 	e.cwd = repo
-	out, errOut, code := e.run(t, "serve", "-d", "--api-port", strconv.Itoa(port))
-	if code != 0 {
-		t.Fatalf("serve -d exited %d\n%s\n%s", code, out, errOut)
-	}
-	if !strings.Contains(errOut, "bonsai serve is deprecated: use bonsai web") {
-		t.Fatalf("no deprecation notice:\n%s", errOut)
-	}
-	if !strings.Contains(out, "Stopped the per-repo local API of "+repo) || !strings.Contains(out, "✓ bonsai web is running") {
-		t.Fatalf("legacy group not replaced:\n%s", out)
+	out := e.mustRun(t, "web", "--no-open", "--no-setup", "--port", strconv.Itoa(port))
+	if !strings.Contains(out, "Stopped the per-repo local API of "+repo) {
+		t.Fatal(out)
 	}
 	if group, err := legacy.ServeStatus(serveWorkspaceID(repo)); err != nil || group != nil {
-		t.Fatalf("legacy group still present: %+v, %v", group, err)
-	}
-	if status := e.mustRun(t, "serve", "status"); !strings.Contains(status, "bonsai web · ready") {
-		t.Fatalf("serve status:\n%s", status)
-	}
-	if out := e.mustRun(t, "serve", "stop"); !strings.Contains(out, "✓ bonsai web stopped") {
-		t.Fatalf("serve stop:\n%s", out)
+		t.Fatalf("legacy group remains: %+v, %v", group, err)
 	}
 }
 
@@ -495,7 +458,7 @@ func startLegacyServe(t *testing.T, e *webEnv, repo string, port int) *client.Cl
 		WorkspacePath: repo,
 		Executable:    e.bin,
 		APIPort:       port,
-		BrowserOrigin: hostedWebOrigin(),
+		BrowserOrigin: "",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -530,33 +493,30 @@ func TestWebStartsWhenHomeIsAGitRepo(t *testing.T) {
 	e.mustRun(t, "web", "stop")
 }
 
-func TestServeStopAlsoStopsPerRepoAPIOnAnotherPort(t *testing.T) {
+func TestRemovedServeStartsNothing(t *testing.T) {
 	e := newWebEnv(t)
-	repo := canonicalRepo(t)
-	legacy := startLegacyServe(t, e, repo, freePort(t))
-	e.cwd = repo
-	out, errOut, code := e.run(t, "serve", "stop")
-	if code != 0 || !strings.Contains(out, "✓ stopped the per-repo local API of "+repo) {
-		t.Fatalf("serve stop: code %d\n%s\n%s", code, out, errOut)
+	for _, args := range [][]string{{"serve"}, {"serve", "-d"}, {"serve", "status"}, {"serve", "stop"}} {
+		_, _, code := e.run(t, args...)
+		if code == 0 {
+			t.Fatalf("removed command succeeded: %v", args)
+		}
 	}
-	if group, err := legacy.ServeStatus(serveWorkspaceID(repo)); err != nil || group != nil {
-		t.Fatalf("legacy group survived bonsai serve stop: %+v, %v", group, err)
+	if _, err := os.Stat(e.home); !os.IsNotExist(err) {
+		t.Fatalf("removed command created web state: %v", err)
 	}
 }
 
-func TestServeAliasYAMLPortNeverBreaksTheSharedStack(t *testing.T) {
+func TestObsoleteServeYAMLDoesNotChangeWebStartup(t *testing.T) {
 	e := newWebEnv(t)
-	port := strconv.Itoa(freePort(t))
-	e.mustRun(t, "web", "--no-open", "--port", port)
-
 	repo := canonicalRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, ".bonsai.yaml"), []byte("serve:\n  api_port: "+strconv.Itoa(freePort(t))+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".bonsai.yaml"), []byte("serve:\n  api_port: 99999\n  startup_timeout_seconds: -1\n  shutdown_timeout_seconds: -1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	e.cwd = repo
-	out, errOut, code := e.run(t, "serve", "-d")
-	if code != 0 || !strings.Contains(out, "already running") || !strings.Contains(errOut, "from .bonsai.yaml is ignored") {
-		t.Fatalf("code %d\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+	port := strconv.Itoa(freePort(t))
+	out := e.mustRun(t, "web", "--no-open", "--no-setup", "--port", port)
+	if !strings.Contains(out, "http://127.0.0.1:"+port+"/app") {
+		t.Fatal(out)
 	}
 }
 

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { openConnectedApp } from './mockGit'
+import { openFullStackApp as openConnectedApp } from './mockGit'
 import './presentationFixtures'
 
 test.skip(!['linux', 'darwin'].includes(process.platform), 'Native daemon fixture')
@@ -109,7 +109,7 @@ test('real daemon: launch opens logs, retries and restart retain history, duplic
   await expect(backoff.terminal).toContainText('stopped')
   await expect(backoff.terminal).toContainText('attempt 1')
   await page.reload()
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
   await expect(page.locator(`[data-process-node-id="${second.summary.id}"]`)).toHaveCount(1)
   await page.getByRole('button', { name: 'Open runtime', exact: true }).click()
   await page.getByRole('option', { name: /stay.*ONLY_B/ }).click()
@@ -143,7 +143,7 @@ test('real daemon: empty panels and saved subsets restore across projects, workt
   }
   const reconnect = async () => {
     await page.reload()
-    await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+
     await expect(page.locator('.react-flow')).toBeVisible()
     for (const id of ids) await expect(page.locator(`[data-process-node-id="${id}"]`)).toHaveCount(1)
   }
@@ -207,7 +207,7 @@ test('real daemon: latest command replaces its node and terminal slot; deletion 
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('menuitem', { name: 'Stop and delete process', exact: true }).click()
   await expect(node).toHaveCount(0); await expect(second.terminal).toHaveCount(0)
-  await page.reload(); await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+  await page.reload()
   await expect(page.locator('.react-flow')).toBeVisible()
   await expect(page.locator(`[data-process-node-id="${first.summary.id}"]`)).toHaveCount(0)
   await expect(page.locator(`[data-process-node-id="${second.summary.id}"]`)).toHaveCount(0)
@@ -235,7 +235,7 @@ test('real daemon: Keep terminals closed applies on return and reload while expl
   await page.getByRole('button', { name: 'Open runtime', exact: true }).click()
   await page.getByRole('option', { name: /stay.*KEEP_CLOSED/ }).click()
   await expect(run.terminal).toContainText('running · connected')
-  await page.reload(); await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+  await page.reload()
   await expect(page.locator('.react-flow')).toBeVisible()
   await expect(run.terminal).toHaveCount(0)
   await page.getByRole('button', { name: 'Open runtime', exact: true }).click()

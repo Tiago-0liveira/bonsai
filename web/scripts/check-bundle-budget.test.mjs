@@ -131,7 +131,7 @@ test('CLI accepts a build directory, writes failure JSON, and reports historical
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   mkdirSync(join(dir, '.vite'))
   const graph = fixture()
-  for (const id of ['pullRequests', 'xterm', 'addonFit', 'landing']) graph[id] = { file: `assets/${id}.js`, name: { pullRequests: 'PullRequestsRoute', xterm: 'xterm', addonFit: 'addon-fit', landing: 'LandingPage' }[id] }
+  for (const id of ['pullRequests', 'xterm', 'addonFit']) graph[id] = { file: `assets/${id}.js`, name: { pullRequests: 'PullRequestsRoute', xterm: 'xterm', addonFit: 'addon-fit' }[id] }
   mkdirSync(join(dir, 'assets'))
   for (const chunk of Object.values(graph)) writeFileSync(join(dir, chunk.file), asset(chunk.file))
   writeFileSync(join(dir, '.vite/manifest.json'), JSON.stringify(graph))

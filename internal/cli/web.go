@@ -107,12 +107,6 @@ type webStartOptions struct {
 	noSetup  bool
 	port     int
 	portFlag bool // --port was given explicitly
-	// Set by the deprecated `bonsai serve` alias from a repository's
-	// .bonsai.yaml. A preferred port only applies when bonsai web is not
-	// already running; it never makes the shared stack fail.
-	preferredPort   int
-	startupTimeout  int
-	shutdownTimeout int
 	// Set by `bonsai web setup` when applying new settings: a running stack
 	// on another port is restarted on the configured one.
 	applySettings bool
@@ -292,13 +286,6 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 		return nil, false, nil, err
 	}
 	group = w.settle(group, 30*time.Second)
-	if group != nil && group.State == "ready" && !opts.portFlag && opts.preferredPort != 0 && group.APIPort != opts.preferredPort {
-		fmt.Fprintf(w.errOut, "bonsai web is already running on port %d; serve.api_port %d from .bonsai.yaml is ignored.\n", group.APIPort, opts.preferredPort)
-		port = group.APIPort
-	} else if opts.preferredPort != 0 && !opts.portFlag {
-		port = opts.preferredPort
-	}
-	browserOrigin := webBrowserOrigin(cfg)
 	live, failure := w.liveServe(cfg, port)
 	if failure != nil {
 		return nil, false, failure, nil
@@ -316,8 +303,8 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 			}, nil
 		case running != "" && running != version.String():
 			fmt.Fprintf(w.out, "Restarting bonsai web %s to run %s.\n", running, version.String())
-		case group.BrowserOrigin != browserOrigin:
-			fmt.Fprintln(w.out, "Restarting bonsai web to apply changed settings (hosted app access).")
+		case group.BrowserOrigin != "":
+			fmt.Fprintln(w.out, "Restarting bonsai web to retire hosted browser access.")
 		case group.WebhookPort != live.webhookPort || !slices.Equal(group.Tunnel, live.tunnel()):
 			fmt.Fprintln(w.out, "Restarting bonsai web to apply changed settings (live updates).")
 		default:
@@ -359,11 +346,11 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 		WorkspacePath:          w.home,
 		Executable:             executable,
 		APIPort:                port,
-		BrowserOrigin:          browserOrigin,
+		BrowserOrigin:          "",
 		WebhookPort:            live.webhookPort,
 		Sidecars:               live.sidecars,
-		StartupTimeoutSeconds:  firstPositive(opts.startupTimeout, cfg.StartupTimeoutSeconds),
-		ShutdownTimeoutSeconds: firstPositive(opts.shutdownTimeout, cfg.ShutdownTimeoutSeconds),
+		StartupTimeoutSeconds:  cfg.StartupTimeoutSeconds,
+		ShutdownTimeoutSeconds: cfg.ShutdownTimeoutSeconds,
 	}
 	group, err = w.client.ServeStart(spec)
 	if err != nil && strings.Contains(err.Error(), "is already in use") {
@@ -394,15 +381,6 @@ func (w *webCLI) ensure(cfg config.WebConfig, opts webStartOptions) (*procstore.
 	return group, group.Reused, nil, nil
 }
 
-func firstPositive(values ...int) int {
-	for _, v := range values {
-		if v > 0 {
-			return v
-		}
-	}
-	return 0
-}
-
 func (w *webCLI) started(cfg config.WebConfig, opts webStartOptions, group *procstore.ServeGroup, reused bool) error {
 	headline := "bonsai web is running"
 	if reused {
@@ -424,15 +402,9 @@ func (w *webCLI) started(cfg config.WebConfig, opts webStartOptions, group *proc
 	return nil
 }
 
-// printAccess describes the running group: its own UI (same origin as the
-// API), and the hosted app only while the API actually allows it.
+// printAccess describes the local UI and optional webhook receiver.
 func (w *webCLI) printAccess(cfg config.WebConfig, group *procstore.ServeGroup) {
 	fmt.Fprintf(w.out, "  UI        %s\n", webUIURL(cfg, group.APIPort))
-	if !cfg.Interfaces.Local {
-		fmt.Fprintf(w.out, "  API       %s\n", localWebOrigin(group.APIPort))
-	} else if group.BrowserOrigin != "" {
-		fmt.Fprintf(w.out, "  hosted    %s/app\n", group.BrowserOrigin)
-	}
 	live := w.liveState(cfg)
 	fmt.Fprintf(w.out, "  updates   %s\n", webUpdatesText(cfg, group, live))
 	if cfg.Updates.Mode == config.WebUpdatesLive && group.WebhookPort != 0 {
@@ -442,22 +414,9 @@ func (w *webCLI) printAccess(cfg config.WebConfig, group *procstore.ServeGroup) 
 
 func localWebOrigin(port int) string { return "http://127.0.0.1:" + strconv.Itoa(port) }
 
-// webUIURL is the page bonsai web prints and opens: the UI the local API
-// serves itself, or the hosted app when the local interface is turned off.
-func webUIURL(cfg config.WebConfig, port int) string {
-	if !cfg.Interfaces.Local {
-		return hostedWebURL()
-	}
+// webUIURL is the UI served by the running local API.
+func webUIURL(_ config.WebConfig, port int) string {
 	return localWebOrigin(port) + "/app"
-}
-
-// webBrowserOrigin is the extra browser origin the API allows next to its
-// own: the hosted app, or none when that interface is disabled.
-func webBrowserOrigin(cfg config.WebConfig) string {
-	if !cfg.Interfaces.Hosted {
-		return ""
-	}
-	return hostedWebOrigin()
 }
 
 // runningAPIVersion asks a running API for its bonsai version ("" when it

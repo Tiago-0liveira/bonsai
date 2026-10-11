@@ -66,7 +66,7 @@ func main() {
 		return
 	}
 
-	// Hidden: in-process cold sync benchmark (see docs/bonsai-web-plan.md).
+	// Hidden: in-process cold sync benchmark (see docs/performance.md).
 	if len(args) >= 1 && args[0] == "__sync-bench" {
 		if err := runSyncBench(args[1:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)
@@ -195,7 +195,7 @@ func runServeInternal(args []string) error {
 	fs.SetOutput(os.Stderr)
 	repoDir := fs.String("repo", "", "launch repository root (omit for the user-level API that serves every configured project)")
 	port := fs.Int("port", 0, "loopback listen port")
-	browserOrigin := fs.String("browser-origin", localapi.ProductionBrowserOrigin, "authorized browser origin")
+	browserOrigin := fs.String("browser-origin", "", "additional loopback browser origin (development only)")
 	securityMode := fs.String("security-mode", string(localapi.BrowserSecurityProduction), "browser security mode")
 	webhookPort := fs.Int("webhook-port", 0, "loopback port of the live-updates webhook receiver (user-level API only)")
 	if err := fs.Parse(args); err != nil {

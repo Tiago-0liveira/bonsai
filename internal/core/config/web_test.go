@@ -19,7 +19,7 @@ func TestEnsureWebConfigWritesDefaultsOnce(t *testing.T) {
 		t.Fatalf("EnsureWebConfig = %+v, %v, %v", cfg, created, err)
 	}
 	if cfg.Revision != 1 || cfg.APIPort != DefaultWebAPIPort || !cfg.OpenBrowser ||
-		!cfg.Interfaces.Local || !cfg.Interfaces.Hosted || cfg.Updates.Mode != WebUpdatesStandard ||
+		cfg.Updates.Mode != WebUpdatesStandard ||
 		cfg.SetupVersion != 0 || cfg.Updates.Live.WebhookPort != DefaultWebWebhookPort {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
@@ -40,7 +40,7 @@ func TestEnsureWebConfigWritesDefaultsOnce(t *testing.T) {
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"version", "revision", "setup_version", "api_port", "open_browser", "interfaces", "updates"} {
+	for _, key := range []string{"version", "revision", "setup_version", "api_port", "open_browser", "updates"} {
 		if _, ok := generic[key]; !ok {
 			t.Fatalf("web.json lacks %q: %s", key, raw)
 		}
@@ -75,9 +75,6 @@ func TestUpdateWebConfigRevisionAndValidation(t *testing.T) {
 	}
 	if _, err := UpdateWebConfig(path, 2, func(c *WebConfig) error { c.StartupTimeoutSeconds = 601; return nil }); err == nil {
 		t.Fatal("out-of-range startup timeout accepted")
-	}
-	if _, err := UpdateWebConfig(path, 2, func(c *WebConfig) error { c.Interfaces = WebInterfaces{}; return nil }); err == nil {
-		t.Fatal("both browser interfaces disabled accepted")
 	}
 	got, exists, err := ReadWebConfig(path)
 	if err != nil || !exists || got.Revision != 2 || got.APIPort != 7011 {
@@ -347,5 +344,34 @@ func TestWebInstallIDAndLiveState(t *testing.T) {
 	raw, _ = os.ReadFile(path)
 	if strings.Contains(string(raw), "0001-01-01") {
 		t.Fatalf("zero time written:\n%s", raw)
+	}
+}
+
+func TestLegacyInterfacesIgnoredAndRemovedOnSave(t *testing.T) {
+	for _, interfaces := range []string{`{"local":false,"hosted":true}`, `{"local":true,"hosted":true}`, `{"local":false,"hosted":false}`} {
+		t.Run(interfaces, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "web.json")
+			cfg := DefaultWebConfig()
+			cfg.APIPort, cfg.OpenBrowser, cfg.SetupVersion = 7011, false, WebSetupVersion
+			cfg.Updates.Live.WebhookPort = 7012
+			cfg.Updates.Mode = WebUpdatesLive
+			cfg.Updates.Live.Tunnel = "cloudflared-quick"
+			raw, _ := json.Marshal(cfg)
+			raw = append(raw[:len(raw)-1], []byte(`,"interfaces":`+interfaces+`}`)...)
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, exists, err := ReadWebConfig(path)
+			if err != nil || !exists || loaded.APIPort != 7011 || loaded.OpenBrowser || loaded.Updates.Mode != WebUpdatesLive || loaded.Updates.Live.WebhookPort != 7012 {
+				t.Fatalf("migration: %+v, %v", loaded, err)
+			}
+			if _, err := UpdateWebConfig(path, loaded.Revision, func(*WebConfig) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			saved, _ := os.ReadFile(path)
+			if strings.Contains(string(saved), `"interfaces"`) {
+				t.Fatalf("obsolete interfaces saved: %s", saved)
+			}
+		})
 	}
 }

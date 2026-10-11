@@ -25,9 +25,8 @@ import (
 
 // Options configures the runtime values injected into index.html.
 type Options struct {
-	// RelayOrigin is the hosted GitHub relay origin. Empty while the relay is
-	// frozen (decision D1): the page then hides relay UI and its CSP allows no
-	// origin other than its own.
+	// RelayOrigin is empty in production. Contributor fixtures may supply
+	// an explicit loopback origin for SSE invalidation.
 	RelayOrigin string
 }
 
@@ -246,7 +245,6 @@ const placeholderPage = `<!doctype html>
 <pre>pnpm -C web install
 pnpm -C web build
 go build -tags embedui .</pre>
-<p>Or use the hosted app at <a href="https://app.bonsai.dev/app">https://app.bonsai.dev/app</a> while this API allows it.</p>
 </body>
 </html>
 `

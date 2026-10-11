@@ -36,7 +36,7 @@ func TestGolden(t *testing.T) {
 		}
 	}
 	running := testInfo()
-	running.Running = &setup.Running{APIPort: 7001, Hosted: true}
+	running.Running = &setup.Running{APIPort: 7001}
 	edit := func(f *fakeBackend, info Info, keys ...string) func(*testing.T, int, int) *harness {
 		return func(t *testing.T, w, h int) *harness {
 			hs := newHarness(t, f, Edit, editDraft(), info)
@@ -54,7 +54,7 @@ func TestGolden(t *testing.T) {
 	failing := newFake()
 	failing.failApply = true
 	liveRunning := testInfo()
-	liveRunning.Running = &setup.Running{APIPort: 7001, Hosted: true, WebhookPort: 7002}
+	liveRunning.Running = &setup.Running{APIPort: 7001, WebhookPort: 7002}
 	liveRunning.InstallID = "3f9c2a71d04b8e65"
 	liveEdit := func(f *fakeBackend, keys ...string) func(*testing.T, int, int) *harness {
 		return func(t *testing.T, w, h int) *harness {
@@ -89,7 +89,7 @@ func TestGolden(t *testing.T) {
 			return hs
 		}},
 		{"03-open-in", wizard(newFake(), "enter", "enter")},
-		{"03-open-in-hosted", wizard(newFake(), "enter", "enter", "down")},
+		{"03-open-in-browser", wizard(newFake(), "enter", "enter", "down")},
 		{"04-github", wizard(newFake(), "enter", "enter", "enter")},
 		{"04-github-logged-out", wizard(problems(), "enter", "enter", "enter")},
 		{"05-updates", wizard(newFake(), "enter", "enter", "enter", "enter")},
@@ -102,7 +102,7 @@ func TestGolden(t *testing.T) {
 		{"10-dashboard", edit(newFake(), running)},
 		{"10-dashboard-not-running", edit(problems(), testInfo())},
 		{"11-dashboard-edited", edit(newFake(), running, "enter", "down", "space", "enter")},
-		{"12-review-edit", edit(newFake(), running, "enter", "down", "space", "enter", "down", "enter", "up", "enter", "a")},
+		{"12-review-edit", edit(newFake(), running, "enter", "down", "space", "enter", "down", "enter", "down", "space", "enter", "a")},
 		{"13-done-edit", edit(newFake(), running, "enter", "down", "space", "enter", "a", "enter")},
 		{"14-advanced", edit(newFake(), running, "down", "down", "down", "down", "enter")},
 		{"15-doctor", edit(problems(), running, "d")},
@@ -137,7 +137,7 @@ func TestGolden(t *testing.T) {
 		}},
 		{"21-done-live", wizard(newFake(), wizardTo("down", "enter", "space", "enter", "enter")...)},
 		{"22-dashboard-live", liveEdit(liveProblems())},
-		{"23-review-live-off", liveEdit(newFake(), "down", "down", "down", "enter", "up", "enter", "a")},
+		{"23-review-live-off", liveEdit(newFake(), "down", "down", "down", "enter", "down", "space", "enter", "a")},
 		{"24-advanced-live", liveEdit(newFake(), "down", "down", "down", "down", "enter", "down", "down", "space")},
 		{"25-review-rotate", liveEdit(newFake(), "down", "down", "down", "down", "enter", "down", "down", "space", "enter", "a")},
 		{"26-doctor-live", liveEdit(liveProblems(), "d")},

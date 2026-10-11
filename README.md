@@ -16,9 +16,9 @@
 
 # bonsai
 
-**A terminal UI for growing and pruning git worktrees.**
+**A local web workspace, TUI and CLI for growing and pruning git worktrees.**
 
-Manage worktrees, sync files, run scripts, and drive git — without leaving your keyboard.
+Manage worktrees, pull requests, agents and processes on your computer.
 
 </div>
 
@@ -26,7 +26,7 @@ Manage worktrees, sync files, run scripts, and drive git — without leaving you
 
 ## Why
 
-Juggling git worktrees by hand is tedious: creating them, copying over untracked files like `.env`, running dev servers per branch, tracking which one has an open PR, and cleaning them up. **bonsai** puts all of that in one fast TUI — and every feature is also a plain CLI command you can script.
+Juggling git worktrees by hand is tedious: creating them, copying over untracked files like `.env`, running dev servers per branch, tracking which one has an open PR, and cleaning them up. **bonsai** puts all of that in a local browser workspace and a fast TUI — and every feature is also a plain CLI command you can script.
 
 ## Features
 
@@ -66,6 +66,9 @@ by default, honoring `PREFIX`, `GOBIN`, or `GOPATH` when set, and installs the
 Neither installer requires Go. Linux/macOS need `curl`, `tar`, and either
 `sha256sum` or `shasum`; Windows uses PowerShell 5.1 or later.
 
+Release archives include the complete production web UI. They need no Node or
+Go installation at runtime.
+
 ### With Go
 
 ```sh
@@ -76,6 +79,18 @@ go install github.com/Tiago-0liveira/bonsai@latest
 
 ```sh
 go build -o bonsai .
+```
+
+Plain `go install` and untagged `go build` keep the TUI/CLI and serve an
+explanatory placeholder at `/app`. To include the full web app from source,
+use Node **22.12.0**, pnpm **12.9.1** and the repository Go version:
+
+```sh
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web build
+pnpm --dir web bundle:check
+go test -tags embedui ./web/
+go build -tags embedui -o bonsai .
 ```
 
 ## Versions and updates
@@ -105,7 +120,9 @@ Network failures never prevent startup; explicit `bonsai --update` bypasses the 
 ## CI and releases
 
 Pull requests targeting `main` run formatting, module checks, vet, builds and
-tests on Linux/macOS/Windows, Linux race tests, and a GoReleaser snapshot build.
+tests on Linux/macOS/Windows, Linux race tests, and a GoReleaser snapshot build
+with the production UI. Native archive smoke tests on all three platforms
+verify checksums, `/app`, its assets, deep links, capability access and shutdown.
 The `CI passes` aggregate must pass before merging into protected `main`.
 
 A merged PR triggers a queued release, defaulting to the next patch version.
@@ -124,14 +141,31 @@ goreleaser release --snapshot --clean  # local release dry-run
 ## Requirements
 
 - **Go 1.26+** (to build)
-- **git** on your `PATH`
+- **git 2.35+** on your `PATH`
 - **[`gh`](https://cli.github.com/)** (optional) — only needed for PR badges, creating worktrees from PRs, and merge-on-prune. Everything else works without it.
 
 ## Quick start
 
 ```sh
+bonsai web
+```
+
+Run it from any directory. The first-run wizard selects project folders,
+browser preferences and GitHub updates, then opens
+`http://127.0.0.1:7001/app`. Standard updates use polling and need no tunnel.
+GitHub uses your existing `gh` login. The API serves the UI and connects the
+browser automatically; there is no hosted app or browser network-permission
+prompt. See [local web operation](docs/web.md) for settings, logs and recovery.
+
+For scripts: `bonsai web --no-open --no-setup`. To change settings later:
+`bonsai web setup`.
+
+### TUI and CLI
+
+```sh
 cd your-repo
-bonsai
+bonsai             # interactive terminal UI
+bonsai list        # scriptable CLI
 ```
 
 Press `n` to create a worktree, `enter` to drop into a shell in the selected one, `?` for the full keymap, `q` to quit.
@@ -185,12 +219,12 @@ bonsai alias add <name> <cmd…>  # add a user alias
 bonsai alias list               # list aliases
 bonsai alias rm <name>          # remove a user alias
 bonsai shell-init               # print a shell 'bcd' cd helper
-bonsai serve                    # start/reuse the secured loopback API and attach
-bonsai serve -d                 # start/reuse, verify readiness, then detach
-bonsai serve status             # inspect the current worktree's API process
-bonsai serve logs --process api
-bonsai serve restart [api]
-bonsai serve stop
+bonsai web                      # start the user-level web app from any directory
+bonsai web setup                # guided projects, browser and update settings
+bonsai web status
+bonsai web logs api
+bonsai web restart api
+bonsai web stop
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage
@@ -269,7 +303,9 @@ MIT
 
 ## Web Git backend
 
-The hardened loopback API and the separate GitHub webhook relay are documented in [docs/git-backend.md](docs/git-backend.md). The internet relay has no route to the local daemon or repositories.
+The local API and optional webhook receiver are documented in
+[docs/git-backend.md](docs/git-backend.md). Only the receiver may be exposed
+through an explicitly configured tunnel.
 
 
 ### Bonsai web setup
@@ -286,46 +322,21 @@ is confirmed, or **Live paused** when delivery fails; it continues polling
 GitHub meanwhile. Hover over the badge for the reason, or run
 `bonsai web doctor` and `bonsai web logs tunnel`.
 
-### Local serve API
+### Local web API
 
-`bonsai serve` is a thin client for one daemon-supervised browser API bound to
-`127.0.0.1:7001` by default. It does not start a webhook listener, Vite server,
-public tunnel, or cloud daemon bridge. Detaching with `q` or Ctrl+C leaves the
-API running; `X` in the serve view or `bonsai serve stop` explicitly stops it.
+`bonsai web` uses one user-level supervisor for the local API and, when you
+choose Live updates, its webhook receiver and tunnel. The API remains bound
+to loopback. Production accepts its exact local origins only; capability
+sessions protect privileged HTTP and WebSocket requests.
 
-Production browser access is restricted to one exact HTTPS frontend origin and
-exact Host `127.0.0.1:7001`. The frontend defaults to
-`https://app.bonsai.dev` and can be selected with `BONSAI_FRONTEND_ORIGIN`. Normal
-`bonsai serve` never enables development origins and never supervises a local
-webhook relay, Vite server, or tunnel. Start it, then open the configured hosted frontend's `/app` route. The API never uses browser cookies for local authorization.
-
-Contributors can reproduce the production topology entirely on loopback with
-the hidden `bonsai __serve-dev-stack` harness. It is intentionally absent from
-normal help and quick-start documentation; see [docs/development.md](docs/development.md).
-
-The browser creates a short-lived local capability with `POST /api/session` and
-sends it in `X-Bonsai-Session` for privileged requests. The token is held only
-in server/browser memory and is invalidated when the local API restarts. Git
-mutations continue through the daemon's structured Git bridge, while local
-GitHub operations use the installed `gh` CLI.
-
-
-### Internet GitHub relay
-
-`cmd/bonsai-relay` serves the small cloud-only surface at `api.bonsai.dev`:
-GitHub OAuth/session routes, `POST /webhooks/github`, `GET /events`, and
-`GET /healthz`. Webhook signatures are verified before JSON normalization,
-delivery IDs are durably deduplicated, and SSE is scoped to repositories the
-GitHub-authenticated relay session may access.
-
-The relay sends normalized notification metadata only. It cannot access local
-files, worktrees, processes, the daemon, or local Bonsai session capabilities.
-Browser relay events invalidate local state; the browser then refreshes canonical
-state from the loopback API.
+`bonsai web --attach` shows the log viewer. Detaching leaves the app running;
+`bonsai web stop` stops its API and tunnel. Retained logs remain readable.
+The hidden contributor stack has its own development services and explicit
+loopback frontend origin; see [docs/development.md](docs/development.md).
 
 ### Browser project folders
 
-After connecting the browser to `bonsai serve`, choose the local folders Bonsai
+After starting `bonsai web`, choose the local folders Bonsai
 should scan. You can select a suggested directory or enter an absolute path
 (or `~/projects`), then confirm **Add folder**. Nothing is registered automatically.
 The same editor is available from **Settings**. Folder settings belong to your
@@ -347,9 +358,8 @@ using its existing `worktree.root` and `worktree.path_template` behavior.
 Removing a folder never deletes files or worktrees, stops processes, or shuts
 down the hosting daemon. Existing metadata and worktree IDs are preserved.
 
-Existing users must confirm their project folders once. `bonsai serve` still
-starts from a Git repository, but the browser catalog may be empty until folders
-are configured. There is no global discovery daemon or cloud filesystem scan.
+The browser catalog is empty until project folders are configured. Starting
+from a Git repository does not add it automatically.
 
 ### Claude Code profiles
 
@@ -412,7 +422,7 @@ Install `agy`, then add a Bonsai profile:
 bonsai agent account add antigravity personal
 ```
 
-Connect the web app to `bonsai serve`, select a worktree, choose **Start agent**,
+Start the web app with `bonsai web`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;
 enter instructions directly in it. Codex is not available yet.
 

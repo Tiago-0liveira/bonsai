@@ -14,7 +14,6 @@ export const selectors = {
   pullRequests: { facade: 'src/features/github/PullRequestsRoute.tsx', name: 'PullRequestsRoute' },
   xterm: { name: 'xterm' },
   addonFit: { name: 'addon-fit' },
-  landing: { facade: 'src/marketing/LandingPage.tsx', name: 'LandingPage' },
   ...Object.fromEntries([
     ['filesPage', 'files/FilesPage'], ['filesPanel', 'files/FilesPanel'],
     ['pullRequestDetail', 'github/PullRequestDetail'], ['settings', 'settings/SettingsPage'],

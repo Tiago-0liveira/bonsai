@@ -10,10 +10,7 @@ import { FeatureBoundary, PreloadRecoveryNotice, registerChunkRecovery } from '.
 
 registerChunkRecovery()
 
-const applicationPath = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/')
-const Surface = React.lazy(() => applicationPath
-  ? import('./app/ApplicationRoot').then(module => ({ default: module.ApplicationRoot }))
-  : import('./marketing/LandingPage').then(module => ({ default: module.LandingPage })))
+const Surface = React.lazy(() => import('./app/ApplicationRoot').then(module => ({ default: module.ApplicationRoot })))
 
 // Apply a stored theme before React's first commit.
 initTheme()

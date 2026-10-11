@@ -19,7 +19,6 @@ type Info struct {
 	Home             string // for ~ in paths
 	ConfigPath       string
 	StandardInterval string // "2 min"
-	HostedURL        string // https://app.bonsai.dev/app
 	DiscoveryDepth   int
 	// Running is the current stack, or nil when bonsai web is not running.
 	Running *setup.Running

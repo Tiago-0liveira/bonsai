@@ -457,7 +457,7 @@ func TestEventSocketFocusFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, _, err := websocket.DefaultDialer.Dial("ws://"+host+"/events", http.Header{"Origin": []string{ProductionBrowserOrigin}})
+	conn, _, err := websocket.DefaultDialer.Dial("ws://"+host+"/events", http.Header{"Origin": []string{ts.URL}})
 	if err != nil {
 		t.Fatal(err)
 	}

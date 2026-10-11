@@ -97,7 +97,8 @@ test('command-palette', async ({ page }, testInfo) => {
 
 test('connect-gate', async ({ page }, testInfo) => {
   const errors = trackPageErrors(page)
-  // Deliberately no openConnectedApp: this is the first screen before connecting.
+  // Hold automatic connection while capturing the recoverable startup gate.
+  await page.route('http://127.0.0.1:7011/health', route => route.abort())
   await page.goto('/app')
   await expect(page.getByRole('button', { name: 'Connect to local Bonsai' })).toBeVisible()
   await capture(page, testInfo, 'connect-gate')

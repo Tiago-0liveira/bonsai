@@ -1,9 +1,16 @@
 version: 2
 project_name: bonsai
+before:
+  hooks:
+    - pnpm --dir web install --frozen-lockfile
+    - pnpm --dir web build
+    - pnpm --dir web bundle:check
+    - go test -tags embedui ./web/
 builds:
   - id: bonsai
     main: .
     binary: bonsai
+    tags: [embedui]
     env: [CGO_ENABLED=0]
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
