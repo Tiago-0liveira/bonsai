@@ -80,7 +80,7 @@ func managementRequest(t *testing.T, s *Server, method, path, key, body string) 
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest(method, "http://127.0.0.1:7001"+path, strings.NewReader(body))
-	r.Header.Set("Origin", ProductionBrowserOrigin)
+	r.Header.Set("Origin", testBrowserOrigin)
 	r.Header.Set("X-Bonsai-Session", session.Token)
 	r.Header.Set("Idempotency-Key", key)
 	r.Header.Set("Content-Type", "application/json")

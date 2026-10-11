@@ -1,0 +1,24 @@
+ Doctor                                                        ● running · 7001
+ ──────────────────────────────────────────────────────────────────────────────
+
+ › ✓ git                 2.43.0
+   ✓ gh installed        2.92.0
+   ✓ gh logged in        github.com · octo
+   ✓ project folders     2 folders · 15 repos found · 15 shown
+   ✓ port 7001           free
+   ✓ cloudflared         installed (2026.9.3) · not logged in (only a custom
+                         domain needs it)
+   – ngrok               not installed · not used by your tunnel
+   – tailscale           not installed · not used by your tunnel
+   ! live updates        1 of 2 repos live · octo/api cannot be managed with
+                         your gh login
+    fix  gh auth refresh -h github.com -s admin:repo_hook
+   ! Bonsai webhooks     acme/old still has a Bonsai webhook that live updates
+                         no longer use
+    fix  gh api -X DELETE repos/acme/old/hooks/41
+
+  ! 2 warnings
+
+
+
+ ↑↓ move · enter run fix · c copy fix · r re-check · esc back

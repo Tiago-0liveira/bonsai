@@ -65,6 +65,10 @@ export interface Worktree {
   prStatus?: PrStatus
   ciStatus: CiStatus
   ciFailed: number
+  /** The CI result has not been confirmed since it was restored or last read. */
+  ciStale?: boolean
+  /** The PR link comes from a provider catalog that is not confirmed yet. */
+  prStale?: boolean
   checkedSha?: string
   upstream?: string
   divergenceAvailable?: boolean
@@ -175,6 +179,8 @@ export interface SyncFreshness {
   state: SyncFreshnessState
   updatedAt?: string
   error?: { code: string; message: string }
+  /** 'disk' while restored from the API's warm-start cache and not yet revalidated. */
+  source?: 'disk'
 }
 
 export interface PullRequestCheck {

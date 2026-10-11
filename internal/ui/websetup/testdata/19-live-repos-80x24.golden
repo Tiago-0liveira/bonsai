@@ -1,0 +1,24 @@
+ Which repos get live updates?                                            5 / 7
+ ──────────────────────────────────────────────────────────────────────────────
+
+  Pick the repositories that get live updates. Bonsai adds one webhook
+  (GitHub's change notifications) to each; GitHub only lets admins do that.
+
+   [x] octo/bonsai   bonsai
+   [ ] octo/api      api
+ › –   acme/web      needs admin, stays on Standard
+
+  1 repo picked
+
+
+
+
+
+
+
+
+
+
+
+
+ space toggle · enter next · r re-check · esc back

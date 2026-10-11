@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github"
@@ -30,6 +31,11 @@ type Client struct {
 }
 
 var _ gh.GitHubService = (*Client)(nil)
+
+// NotModifiedHeader is set by a caching transport on a response it rebuilt
+// from its cache after GitHub answered 304 Not Modified. It never reaches
+// GitHub or the browser.
+const NotModifiedHeader = "X-Bonsai-Not-Modified"
 
 func New(tokens Tokens) *Client {
 	return &Client{HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, BaseURL: "https://api.github.com", Tokens: tokens}
@@ -69,7 +75,7 @@ func (c *Client) do(ctx context.Context, repo, method, path string, body, out an
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	req, e := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, bytes.NewReader(b))
+	req, e := http.NewRequestWithContext(ctx, method, c.url(path), bytes.NewReader(b))
 	if e != nil {
 		return nil, e
 	}
@@ -83,6 +89,12 @@ func (c *Client) do(ctx context.Context, repo, method, path string, body, out an
 	}
 	resp, e := client.Do(req)
 	if e != nil {
+		// A transport that reports a domain error (such as a missing gh login)
+		// keeps its code and message instead of the URL-wrapped form.
+		var domainErr *domain.Error
+		if errors.As(e, &domainErr) {
+			return nil, domainErr
+		}
 		return nil, e
 	}
 	defer resp.Body.Close()
@@ -123,6 +135,18 @@ func (c *Client) do(ctx context.Context, repo, method, path string, body, out an
 	}
 	return resp.Header, e
 }
+
+// url joins path to the API base. GraphQL lives at /api/graphql on GitHub
+// Enterprise Server, beside the /api/v3 REST root, and at /graphql on
+// github.com.
+func (c *Client) url(path string) string {
+	base := strings.TrimRight(c.BaseURL, "/")
+	if path == "/graphql" && strings.HasSuffix(base, "/api/v3") {
+		return strings.TrimSuffix(base, "/v3") + "/graphql"
+	}
+	return base + path
+}
+
 func pages[T any](ctx context.Context, c *Client, repo, path string) ([]T, error) {
 	items := []T{}
 	join := "?"

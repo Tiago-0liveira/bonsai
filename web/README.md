@@ -1,64 +1,62 @@
 # Bonsai Web
 
-The hosted frontend is a static Vite + React application. The public landing
-route does not contact localhost; the privileged `/app` surface connects
-explicitly to the loopback Bonsai API and separately consumes GitHub
-invalidation events from the relay.
+This Vite/React app ships inside release binaries and is served at the local
+API's `/app`. The browser connects automatically on the same origin with an
+in-memory capability and authenticated WebSocket. There is no landing page,
+public hosted app, cloud fallback or OAuth control.
 
-## Integrated development
+## Development
 
-From the repository root, prefer the hidden contributor harness:
+Use Node **22.12.0**, pnpm **12.9.1** and the Go version in `go.mod`.
 
 ```sh
+pnpm --dir web install --frozen-lockfile
 bonsai __serve-dev-stack
 ```
 
-It supervises the local API, development webhook relay, and this Vite app on
-loopback. See [../docs/development.md](../docs/development.md).
+The hidden contributor harness supervises loopback API/webhook/Vite services on
+7001/7002/7003. For visual work, `pnpm --dir web dev` runs Vite; backend work
+needs an API in development mode authorizing that exact frontend origin.
+The harness supplies explicit loopback `VITE_BONSAI_LOCAL_API_ORIGIN` and
+`VITE_BONSAI_RELAY_ORIGIN`. Only development/test builds may use these overrides
+and the SSE invalidation client. Public origins are rejected; production uses
+only the page origin and backend WebSocket. See
+[development.md](../docs/development.md).
 
-For visual-only iteration:
-
-```sh
-cd web
-pnpm install
-pnpm dev
-```
-
-## Checks
+## Checks and embedding
 
 ```sh
-pnpm typecheck
-pnpm test
-pnpm test:e2e
-pnpm build
+pnpm --dir web typecheck
+pnpm --dir web lint
+pnpm --dir web test
+pnpm --dir web test:bundle
+pnpm --dir web build
+pnpm --dir web bundle:check
+go test -tags embedui ./web/
+go build -tags embedui -o bonsai .
+pnpm --dir web exec playwright install chromium
+pnpm --dir web test:e2e
 ```
 
-## Networking
+Run these from the repository root. Production writes `web/dist`; the test
+build writes `web/dist-e2e` and may expose test-store/profiling hooks. Embed
+checks reject those hooks and retired cloud networking. Untagged builds and
+ordinary Go tests require no Node and use a placeholder at `/app`.
 
-Production defaults:
+Playwright defaults to the real Go UI fixture at `http://127.0.0.1:7011`.
+Mocks use the same origin. Execution fixtures explicitly select their API on
+7014; warm-start measurements keep the real fixture on 7013. No server reuses
+an existing personal API. Keep those ports free.
 
-- local API: `http://127.0.0.1:7001` (intentionally fixed to loopback)
-- GitHub relay: `https://api.bonsai.dev`
+## Loading and state
 
-Docker deployments can override the hosted relay at runtime with:
+The entry keeps chunk-failure recovery eager; application, workspace, routes,
+terminals and overlays load lazily. Failed imports offer an explicit reload,
+without reload loops or losing the retained shell. Closed overlays and unused
+terminals do not import. Activated terminals remain mounted across dock collapse
+and route navigation.
 
-```sh
-BONSAI_RELAY_ORIGIN=https://relay.example.com
-```
-
-The container injects that origin into the deployment metadata in `index.html` at startup and uses the same value in its CSP. Non-container Vite builds can use `VITE_BONSAI_RELAY_ORIGIN` at build time.
-
-The development supervisor overrides the relay to
-`http://127.0.0.1:7002` and runs Vite at `http://127.0.0.1:7003`. Relay
-events are invalidation signals only; canonical project state is refreshed from
-the local API.
-
-## Structure
-
-- `src/api/localClient.ts` — loopback capability/session and WebSocket client
-- `src/api/relayClient.ts` — hosted or development SSE invalidation client
-- `src/features/workspace` — React Flow workspace surface
-- `src/features/inspector` — selection-aware inspector
-- `src/features/terminal` — terminal dock
-- `src/features/github` — GitHub-facing UI
-- `src/stores` — Zustand application state
+Canonical state comes from epoch/sequence-ordered backend snapshots. Browser
+storage contains approved preferences only. Warm-start data remains server-side;
+see [performance.md](../docs/performance.md) for budgets, historical source
+revisions and measurement commands.

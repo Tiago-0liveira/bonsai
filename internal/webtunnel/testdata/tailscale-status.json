@@ -1,0 +1,11 @@
+{
+  "Version": "1.90.0",
+  "BackendState": "Running",
+  "Self": {
+    "ID": "n0000000000CNTRL",
+    "HostName": "this-laptop",
+    "DNSName": "this-laptop.tail0000.ts.net.",
+    "Online": true
+  },
+  "MagicDNSSuffix": "tail0000.ts.net"
+}

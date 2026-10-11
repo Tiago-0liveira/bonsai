@@ -27,7 +27,7 @@ func (s *Server) processTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upgrader := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool {
-		return r.Host == s.expectedHost && r.Header.Get("Origin") == s.browserOrigin
+		return s.allowedHost(r.Host) && s.allowedOrigin(r.Header.Get("Origin"))
 	}}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

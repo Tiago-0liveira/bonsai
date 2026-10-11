@@ -14,6 +14,9 @@ jobs:
   release:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,6 +25,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
       - name: Select and create version tag
         id: version
         uses: actions/github-script@v7
@@ -52,11 +63,44 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.tag }}
-      - name: Publish complete release
-        if: steps.version.outputs.skip != 'true'
+  archive-smoke:
+    name: Draft archive (${{ matrix.os }})
+    needs: release
+    if: needs.release.outputs.skip != 'true'
+    # Draft release visibility requires push access.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+      - name: Download actual draft release archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        shell: bash
+        run: gh release download "$RELEASE_TAG" --dir dist --pattern "bonsai_*" --pattern checksums.txt
+      - run: node .github/scripts/archive-smoke.cjs dist
+  publish:
+    needs: [release, archive-smoke]
+    if: needs.release.outputs.skip != 'true' && needs.archive-smoke.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - name: Publish verified release
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
         with:
           script: |
             const {owner, repo} = context.repo;

@@ -3,8 +3,8 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { __resetGitSyncForTests, loadPullRequest, startGitBackend } from './git'
 import { useBonsaiStore } from '../stores/bonsai'
 
-const { localFetch, openLocalEvents } = vi.hoisted(() => ({ localFetch: vi.fn(), openLocalEvents: vi.fn() }))
-vi.mock('./local', () => ({ localFetch, openLocalEvents, invalidateLocalSession: vi.fn(), markLocalConnectionLost: vi.fn() }))
+const { localFetch, openLocalEvents, sendEventFocus } = vi.hoisted(() => ({ localFetch: vi.fn(), openLocalEvents: vi.fn(), sendEventFocus: vi.fn(() => true) }))
+vi.mock('./local', () => ({ localFetch, openLocalEvents, sendEventFocus, invalidateLocalSession: vi.fn(), markLocalConnectionLost: vi.fn() }))
 const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } })
 beforeEach(() => { __resetGitSyncForTests(); vi.clearAllMocks() })
 
@@ -54,6 +54,32 @@ it('reconnects the event stream and applies updates after bootstrap', async () =
   } finally { stop(); vi.useRealTimers() }
 })
 
+it('reports the project in view, and none while the page is hidden', async () => {
+  const socket = { close: vi.fn(), onclose: null, onerror: null }
+  useBonsaiStore.setState({ activeProjectId: 'project-a' })
+  openLocalEvents.mockImplementation(async () => ({ socket, epoch: 'epoch' }))
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  const stop = startGitBackend()
+  try {
+    await act(async () => {})
+    expect(openLocalEvents).toHaveBeenCalledWith(expect.any(Function), 'project-a')
+    // authenticate already named project-a: nothing more to send.
+    expect(sendEventFocus).not.toHaveBeenCalled()
+    act(() => { useBonsaiStore.setState({ activeProjectId: 'project-b' }) })
+    expect(sendEventFocus).toHaveBeenLastCalledWith(socket, 'project-b')
+    visibility.mockReturnValue('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(sendEventFocus).toHaveBeenLastCalledWith(socket, '')
+    visibility.mockReturnValue('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(sendEventFocus).toHaveBeenLastCalledWith(socket, 'project-b')
+    expect(sendEventFocus).toHaveBeenCalledTimes(3)
+    stop()
+    act(() => { useBonsaiStore.setState({ activeProjectId: 'project-a' }) })
+    expect(sendEventFocus).toHaveBeenCalledTimes(3)
+  } finally { stop(); visibility.mockRestore() }
+})
+
 it('maps provider enrichments from PR details, including check timing', async () => {
   localFetch.mockResolvedValueOnce(response({
     number: 9, state: 'open', head_sha: 'sha', head: 'feature', base: 'main',
@@ -84,4 +110,70 @@ it('leaves enrichments out when the provider does not report them', async () => 
   expect(loaded).not.toHaveProperty('totals')
   expect(loaded).not.toHaveProperty('reviews')
   expect(loaded).not.toHaveProperty('behindBy')
+})
+
+it('keeps state stale across an API restart and accepts the new epoch from sequence 0', async () => {
+  vi.useFakeTimers()
+  const sockets = [0, 1].map(() => ({ close: vi.fn(), onclose: null as null | ((event: { code: number }) => void), onerror: null }))
+  const epochs = ['epoch-a', 'epoch-b']
+  let receive!: (event: any) => void
+  openLocalEvents.mockImplementation(async callback => {
+    receive = callback
+    const index = openLocalEvents.mock.calls.length - 1
+    return { socket: sockets[index], epoch: epochs[index] }
+  })
+  const repository = { id: 'stream', workspace_id: 'local', full_name: 'owner/repo' }
+  const tree = (branch: string) => ({ id: 'wt', repository_id: 'stream', branch, main: true, local_head_sha: 'sha' })
+  const stop = startGitBackend()
+  try {
+    await act(async () => {})
+    receive({ type: 'ready', epoch: 'epoch-a' })
+    receive({ type: 'catalog', projects: [repository] })
+    receive({ type: 'project_snapshot', snapshot: { repository, epoch: 'epoch-a', sequence: 7, online: true, metadata: {}, processes: [], process_visibility: { cutoffs: {}, deleted: {} }, freshness: { local: { state: 'ready' }, processes: { state: 'ready' } }, local: { branches: [], worktrees: [tree('before')] } } })
+    receive({ type: 'bootstrap_complete' })
+    expect(useBonsaiStore.getState().processAuthorityReady.stream).toBe(true)
+
+    sockets[0].onclose?.({ code: 1006 })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    receive({ type: 'ready', epoch: 'epoch-b' })
+    // Retained presentation is stale and runtime authority waits.
+    expect(useBonsaiStore.getState().syncFreshness.stream.local.state).toBe('stale')
+    expect(useBonsaiStore.getState().processAuthorityReady.stream).toBeUndefined()
+    expect(useBonsaiStore.getState().worktrees.map(w => w.branch)).toEqual(['before'])
+
+    // A delayed event of the old process cannot overwrite the new one.
+    receive({ type: 'catalog', projects: [repository] })
+    receive({ type: 'project_update', epoch: 'epoch-a', snapshot: { repository, epoch: 'epoch-a', sequence: 8, online: true, metadata: {}, local: { branches: [], worktrees: [tree('old-process')] } } })
+    receive({ type: 'project_snapshot', epoch: 'epoch-b', snapshot: { repository, epoch: 'epoch-b', sequence: 0, online: true, metadata: {}, freshness: { local: { state: 'stale', updated_at: '2026-10-01T00:00:00Z', source: 'disk' } }, local: { branches: [], worktrees: [tree('restored')] } } })
+    receive({ type: 'bootstrap_complete' })
+    expect(useBonsaiStore.getState().worktrees.map(w => w.branch)).toEqual(['restored'])
+    expect(useBonsaiStore.getState().syncFreshness.stream.local).toMatchObject({ state: 'stale', source: 'disk' })
+    receive({ type: 'project_update', epoch: 'epoch-a', snapshot: { repository, epoch: 'epoch-a', sequence: 99, online: true, metadata: {}, local: { branches: [], worktrees: [tree('late')] } } })
+    receive({ type: 'project_update', epoch: 'epoch-b', snapshot: { repository, epoch: 'epoch-b', sequence: 1, online: true, metadata: {}, freshness: { local: { state: 'ready' } }, local: { branches: [], worktrees: [tree('live')] } } })
+    expect(useBonsaiStore.getState().worktrees.map(w => w.branch)).toEqual(['live'])
+    expect(useBonsaiStore.getState().syncFreshness.stream.local.source).toBeUndefined()
+  } finally { stop(); vi.useRealTimers() }
+})
+
+it('paints the project in view during bootstrap and holds the others until it completes', async () => {
+  const socket = { close: vi.fn(), onclose: null, onerror: null }
+  let receive!: (event: any) => void
+  useBonsaiStore.setState({ activeProjectId: 'open', projects: [], worktrees: [] })
+  openLocalEvents.mockImplementation(async callback => { receive = callback; return { socket, epoch: 'epoch' } })
+  const stop = startGitBackend()
+  try {
+    await act(async () => {})
+    const open = { id: 'open', workspace_id: 'local', full_name: 'owner/open' }
+    const background = { id: 'background', workspace_id: 'local', full_name: 'owner/background' }
+    const snapshot = (repository: typeof open, branch: string) => ({ repository, epoch: 'epoch', sequence: 0, online: true, metadata: {}, local: { branches: [], worktrees: [{ id: `${repository.id}-wt`, repository_id: repository.id, branch, main: true, local_head_sha: 'sha' }] } })
+    receive({ type: 'ready', epoch: 'epoch' })
+    receive({ type: 'catalog', projects: [background, open] })
+    receive({ type: 'project_snapshot', snapshot: snapshot(open, 'in-view') })
+    expect(useBonsaiStore.getState().activeProjectId).toBe('open')
+    expect(useBonsaiStore.getState().worktrees.map(tree => tree.branch)).toEqual(['in-view'])
+    receive({ type: 'project_snapshot', snapshot: snapshot(background, 'behind') })
+    expect(useBonsaiStore.getState().worktrees.map(tree => tree.branch)).toEqual(['in-view'])
+    receive({ type: 'bootstrap_complete' })
+    expect(useBonsaiStore.getState().worktrees.map(tree => tree.branch).sort()).toEqual(['behind', 'in-view'])
+  } finally { stop() }
 })

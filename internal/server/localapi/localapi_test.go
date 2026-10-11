@@ -13,13 +13,15 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const testBrowserOrigin = "http://127.0.0.1:7001"
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	s, err := New(Config{
 		RepoDir:          t.TempDir(),
 		ProjectRootsPath: t.TempDir() + "/project-roots.json",
 		Address:          "127.0.0.1:7001",
-		BrowserOrigin:    ProductionBrowserOrigin,
+		BrowserOrigin:    "",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,32 +43,23 @@ func TestRequireLoopback(t *testing.T) {
 }
 
 func TestValidateBrowserOrigin(t *testing.T) {
-	if err := validateBrowserOrigin(ProductionBrowserOrigin, BrowserSecurityProduction); err != nil {
+	if err := validateBrowserOrigin("", BrowserSecurityProduction); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateBrowserOrigin("https://app.bonsai.tiagoliv.com", BrowserSecurityProduction); err != nil {
-		t.Fatalf("custom production origin rejected: %v", err)
-	}
-	for _, origin := range []string{"", "null", "http://app.example.com", "https://app.example.com/path", "https://user@app.example.com"} {
+	for _, origin := range []string{"https://app.bonsai.dev", "https://app.example.com", "http://localhost:7003", "http://127.0.0.1:7001", "null", " "} {
 		if err := validateBrowserOrigin(origin, BrowserSecurityProduction); err == nil {
-			t.Fatalf("production accepted invalid origin %q", origin)
+			t.Fatalf("production accepted additional origin %q", origin)
 		}
 	}
-	for _, origin := range []string{"http://localhost:7003", "http://127.0.0.1:7003"} {
+	for _, origin := range []string{"http://localhost:7003", "http://127.0.0.1:7003", "http://[::1]:7003"} {
 		if err := validateBrowserOrigin(origin, BrowserSecurityDevelopment); err != nil {
-			t.Fatalf("development origin %q rejected: %v", origin, err)
-		}
-		if err := validateBrowserOrigin(origin, BrowserSecurityProduction); err == nil {
-			t.Fatalf("production accepted development origin %q", origin)
+			t.Fatalf("development origin %q: %v", origin, err)
 		}
 	}
-	for _, origin := range []string{"https://evil.example", "https://fake.app.bonsai.dev", "null", "http://0.0.0.0:7003", "http://localhost"} {
+	for _, origin := range []string{"", "https://app.bonsai.dev", "http://0.0.0.0:7003", "http://localhost", "http://localhost:7003/path", "null"} {
 		if err := validateBrowserOrigin(origin, BrowserSecurityDevelopment); err == nil {
 			t.Fatalf("development accepted %q", origin)
 		}
-	}
-	if err := validateBrowserOrigin(ProductionBrowserOrigin, BrowserSecurityDevelopment); err == nil {
-		t.Fatal("development mode accepted hosted production origin")
 	}
 }
 
@@ -88,7 +81,7 @@ func TestSecurityHostOriginCORSAndSession(t *testing.T) {
 		return w
 	}
 
-	if got := request(http.MethodGet, "/api/projects", "evil.example:7001", ProductionBrowserOrigin, "").Code; got != http.StatusForbidden {
+	if got := request(http.MethodGet, "/api/projects", "evil.example:7001", testBrowserOrigin, "").Code; got != http.StatusForbidden {
 		t.Fatalf("wrong Host status = %d", got)
 	}
 	for _, origin := range []string{"https://evil.example", "https://fake.app.bonsai.dev", "null"} {
@@ -96,10 +89,10 @@ func TestSecurityHostOriginCORSAndSession(t *testing.T) {
 			t.Fatalf("origin %q status = %d", origin, got)
 		}
 	}
-	if got := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", ProductionBrowserOrigin, "").Code; got != http.StatusUnauthorized {
+	if got := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", testBrowserOrigin, "").Code; got != http.StatusUnauthorized {
 		t.Fatalf("missing session status = %d", got)
 	}
-	if got := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", ProductionBrowserOrigin, "invalid").Code; got != http.StatusUnauthorized {
+	if got := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", testBrowserOrigin, "invalid").Code; got != http.StatusUnauthorized {
 		t.Fatalf("invalid session status = %d", got)
 	}
 
@@ -107,11 +100,11 @@ func TestSecurityHostOriginCORSAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorized := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", ProductionBrowserOrigin, session.Token)
+	authorized := request(http.MethodGet, "/api/protected-missing", "127.0.0.1:7001", testBrowserOrigin, session.Token)
 	if authorized.Code != http.StatusNotFound {
 		t.Fatalf("valid session status = %d", authorized.Code)
 	}
-	if got := authorized.Header().Get("Access-Control-Allow-Origin"); got != ProductionBrowserOrigin {
+	if got := authorized.Header().Get("Access-Control-Allow-Origin"); got != testBrowserOrigin {
 		t.Fatalf("allow origin = %q", got)
 	}
 	if got := authorized.Header().Get("Access-Control-Allow-Origin"); got == "*" {
@@ -128,7 +121,7 @@ func TestSessionCreationAndRestartInvalidation(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7001/api/session", nil)
 	r.Host = "127.0.0.1:7001"
-	r.Header.Set("Origin", ProductionBrowserOrigin)
+	r.Header.Set("Origin", testBrowserOrigin)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusCreated {
@@ -179,7 +172,7 @@ func TestPreflightIsStrict(t *testing.T) {
 	s := newTestServer(t)
 	r := httptest.NewRequest(http.MethodOptions, "http://127.0.0.1:7001/api/projects", nil)
 	r.Host = "127.0.0.1:7001"
-	r.Header.Set("Origin", ProductionBrowserOrigin)
+	r.Header.Set("Origin", testBrowserOrigin)
 	r.Header.Set("Access-Control-Request-Method", "GET")
 	r.Header.Set("Access-Control-Request-Headers", "X-Bonsai-Session")
 	r.Header.Set("Access-Control-Request-Private-Network", "true")
@@ -188,7 +181,7 @@ func TestPreflightIsStrict(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("preflight status = %d body=%s", w.Code, w.Body.String())
 	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != ProductionBrowserOrigin {
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != testBrowserOrigin {
 		t.Fatalf("allow origin = %q", got)
 	}
 	if got := w.Header().Get("Access-Control-Allow-Private-Network"); got != "true" {
@@ -231,9 +224,12 @@ func TestWebSocketAuthentication(t *testing.T) {
 	s.expectedHost = host
 	wsURL := "ws://" + host + "/events"
 
-	dial := func(url, origin string) (*websocket.Conn, *http.Response, error) {
+	dial := func(url, origin string, host ...string) (*websocket.Conn, *http.Response, error) {
 		header := http.Header{}
 		header.Set("Origin", origin)
+		if len(host) > 0 {
+			header.Set("Host", host[0])
+		}
 		return websocket.DefaultDialer.Dial(url, header)
 	}
 
@@ -244,13 +240,26 @@ func TestWebSocketAuthentication(t *testing.T) {
 		t.Fatalf("wrong Origin response = %#v err=%v", resp, err)
 	}
 
-	badHostURL := strings.Replace(wsURL, "127.0.0.1", "localhost", 1)
-	if conn, _, err := dial(badHostURL, ProductionBrowserOrigin); err == nil {
+	_, port, _ := strings.Cut(host, ":")
+	if conn, _, err := dial(wsURL, testBrowserOrigin, "evil.example:"+port); err == nil {
 		conn.Close()
 		t.Fatal("wrong Host websocket unexpectedly connected")
 	}
+	// The embedded UI's own origins, on either loopback name, may connect.
+	for _, self := range []string{"http://" + host, "http://localhost:" + port} {
+		selfHost := strings.TrimPrefix(self, "http://")
+		conn, _, err := dial(wsURL, self, selfHost)
+		if err != nil {
+			t.Fatalf("own origin %s websocket rejected: %v", self, err)
+		}
+		conn.Close()
+	}
+	if conn, _, err := dial(wsURL, "http://localhost:1", "localhost:"+port); err == nil {
+		conn.Close()
+		t.Fatal("localhost origin on another port unexpectedly connected")
+	}
 
-	conn, _, err := dial(wsURL, ProductionBrowserOrigin)
+	conn, _, err := dial(wsURL, ts.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +269,7 @@ func TestWebSocketAuthentication(t *testing.T) {
 	}
 	conn.Close()
 
-	conn, _, err = dial(wsURL, ProductionBrowserOrigin)
+	conn, _, err = dial(wsURL, ts.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +286,7 @@ func TestWebSocketAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, _, err = dial(wsURL, ProductionBrowserOrigin)
+	conn, _, err = dial(wsURL, ts.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +349,7 @@ func TestDevelopmentModeStillRequiresCapabilityAndExactOrigin(t *testing.T) {
 		s.Handler().ServeHTTP(w, r)
 		return w
 	}
-	if got := request(ProductionBrowserOrigin, "").Code; got != http.StatusForbidden {
+	if got := request("https://app.bonsai.dev", "").Code; got != http.StatusForbidden {
 		t.Fatalf("production origin in development mode status = %d", got)
 	}
 	if got := request(devOrigin, "").Code; got != http.StatusUnauthorized {

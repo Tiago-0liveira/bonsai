@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tiago-0liveira/bonsai/internal/server/webui"
 	"io"
 	"net"
 	"net/http"
@@ -87,7 +88,7 @@ func terminalTestServer(t *testing.T) (*Server, string, *terminalTestProvider) {
 	}
 	projects := &syncTestRegistry{entries: map[string]projectServices{"repo": {info: ProjectInfo{ID: "repo", Name: "PTY fixture", Path: root, Available: true, DefaultBranch: "main", FullName: "fixture/repo"}, state: metadata, daemon: &syncTestDaemon{root: root}, github: &syncTestGitHub{}}}}
 	events := newEventHub()
-	s := &Server{expectedHost: "127.0.0.1:7001", browserOrigin: ProductionBrowserOrigin, registry: projects, sessions: newSessionStore(), eventHub: events, rootsPath: filepath.Join(t.TempDir(), "roots.json")}
+	s := &Server{expectedHost: "127.0.0.1:7001", browserOrigin: "", registry: projects, sessions: newSessionStore(), eventHub: events, rootsPath: filepath.Join(t.TempDir(), "roots.json")}
 	s.stateSync = newStateSync(projects, events)
 	s.stateSync.ReconcileCatalog()
 	s.agents = &agentAPI{runtime: &agentruntime.Runtime{Accounts: accounts, Sessions: sessions, Registry: registry}}
@@ -106,7 +107,7 @@ func TestAgentAPIAndTerminal(t *testing.T) {
 	request := func(method, path, key, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, httpServer.URL+path, strings.NewReader(body))
 		r.Host = s.expectedHost
-		r.Header.Set("Origin", s.browserOrigin)
+		r.Header.Set("Origin", "http://"+s.expectedHost)
 		r.Header.Set("X-Bonsai-Session", capability.Token)
 		r.Header.Set("Idempotency-Key", key)
 		r.Header.Set("Content-Type", "application/json")
@@ -155,7 +156,7 @@ func TestAgentAPIAndTerminal(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/api/projects/repo/agents/" + id + "/terminal"
-	conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": []string{s.browserOrigin}})
+	conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": []string{"http://" + s.expectedHost}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,10 @@ func TestAgentBrowserFixture(t *testing.T) {
 	s, _, _ := terminalTestServer(t)
 	attachProcessFixture(t, s)
 	attachRestorationFixture(t, s)
-	s.browserOrigin = "https://127.0.0.1:4173"
+	s.expectedHost = "127.0.0.1:7014"
+	s.browserOrigin = ""
+	s.securityMode = BrowserSecurityProduction
+	s.ui = webui.New(os.DirFS(filepath.Join("..", "..", "..", "web", "dist-e2e")), webui.Options{})
 	if err := os.WriteFile(s.rootsPath, []byte(`{"version":1,"revision":1,"roots":[{"id":"fixture","path":"/tmp"}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +315,7 @@ func TestAgentOwnershipAndRemovalConflicts(t *testing.T) {
 	capability, _ := s.sessions.create()
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://"+s.expectedHost+path, strings.NewReader(body))
-		r.Header.Set("Origin", s.browserOrigin)
+		r.Header.Set("Origin", "http://"+s.expectedHost)
 		r.Header.Set("X-Bonsai-Session", capability.Token)
 		r.Header.Set("Idempotency-Key", path)
 		r.Header.Set("Content-Type", "application/json")
@@ -366,7 +370,7 @@ func TestTerminalRejectsUnauthenticatedFirstFrame(t *testing.T) {
 	s.expectedHost = strings.TrimPrefix(server.URL, "http://")
 	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/projects/repo/agents/" + session.ID + "/terminal"
 	for _, first := range []map[string]any{{"type": "authenticate", "token": "invalid"}, {"type": "input", "data": []byte("bad\n")}} {
-		conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": []string{s.browserOrigin}})
+		conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": []string{"http://" + s.expectedHost}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -401,7 +405,7 @@ func agentAPIRequest(t *testing.T, s *Server, method, path, key, body string) *h
 	capability, _ := s.sessions.create()
 	r := httptest.NewRequest(method, "http://"+s.expectedHost+path, strings.NewReader(body))
 	r.Host = s.expectedHost
-	r.Header.Set("Origin", s.browserOrigin)
+	r.Header.Set("Origin", "http://"+s.expectedHost)
 	r.Header.Set("X-Bonsai-Session", capability.Token)
 	if key != "" {
 		r.Header.Set("Idempotency-Key", key)

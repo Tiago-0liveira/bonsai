@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -129,11 +130,35 @@ func Serve(root string) error {
 	return s.Run()
 }
 
+// ServeUserHome runs the user-level daemon (`bonsai web`) rooted at home.
+func ServeUserHome(home string) error {
+	s, err := NewUserHomeServer(home)
+	if err != nil {
+		if errors.Is(err, procstore.ErrLocked) {
+			return nil
+		}
+		return err
+	}
+	return s.Run()
+}
+
 // NewServer initializes and locks a new Server instance for root.
 func NewServer(root string) (*Server, error) {
 	if canon, err := git.MainRoot(root); err == nil {
 		root = canon
 	}
+	return newServer(root)
+}
+
+// NewUserHomeServer initializes the user-level daemon. Its home is used
+// verbatim: it must never be canonicalized to an enclosing Git repository
+// (a dotfiles repo in ~), or the daemon would listen where clients of the
+// home never dial.
+func NewUserHomeServer(home string) (*Server, error) {
+	return newServer(filepath.Clean(home))
+}
+
+func newServer(root string) (*Server, error) {
 	store := procstore.New(root)
 	if err := store.EnsureDirs(); err != nil {
 		return nil, err

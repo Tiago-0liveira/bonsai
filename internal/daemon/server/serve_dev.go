@@ -51,6 +51,9 @@ func validateDevServeSpec(spec procstore.ServeSpec) error {
 	if spec.WorkspaceID == "" || spec.WorkspacePath == "" || spec.Executable == "" {
 		return fmt.Errorf("development stack requires workspace id/path and executable")
 	}
+	if spec.Scope != procstore.ServeScopeRepository {
+		return fmt.Errorf("development stack is repository-scoped")
+	}
 	for name, port := range map[string]int{"api": spec.APIPort, "webhook": spec.WebhookPort, "web": spec.WebPort} {
 		if port < 1 || port > 65535 {
 			return fmt.Errorf("%s port %d is invalid", name, port)

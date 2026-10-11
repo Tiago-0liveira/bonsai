@@ -1,7 +1,7 @@
 import { processActive } from '../../stores/processProjection'
 import { openGitHub } from '../../api/git'
 import { isLiveAgent } from '../../api/agents'
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { lazy, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useRouter } from '@tanstack/react-router'
@@ -12,12 +12,15 @@ import {
   AlertCircle, XCircle, type LucideIcon,
 } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
+import { staleDescription } from '../../lib/freshness'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectPullRequests } from '../../stores/projectSelectors'
-import { FilesPanel } from '../files/FilesPanel'
+import { FeatureBoundary } from '../../app/chunkRecovery'
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
 import { ProcessActions } from '../terminal/ProcessActions'
 import type { Agent, AgentProvider, Process, PullRequest, SyncFreshnessState, Worktree } from '../../types'
+
+const FilesPanel = lazy(() => import('../files/FilesPanel').then(module => ({ default: module.FilesPanel })))
 
 const presentation = (agent: Agent) => agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
 
@@ -39,10 +42,12 @@ const FRESHNESS: Record<SyncFreshnessState, { dot: string; text: string; label: 
   unavailable: { dot: 'bg-danger', text: 'text-muted-2', label: 'offline' },
 }
 
-function FreshnessLabel({ state }: { state?: SyncFreshnessState }) {
+function FreshnessLabel({ state, source }: { state?: SyncFreshnessState; source?: 'disk' }) {
   if (!state) return null
   const view = FRESHNESS[state]
-  return <span className={'ml-auto flex items-center gap-1.5 font-mono text-[10px] normal-case tracking-normal ' + view.text}><span className={'h-1.5 w-1.5 rounded-full ' + view.dot} />{view.label}</span>
+  // Restored data reads as saved, never live, until it is revalidated.
+  const label = source === 'disk' ? 'saved' : view.label
+  return <span title={source === 'disk' ? staleDescription({ state, source }) : undefined} className={'ml-auto flex items-center gap-1.5 font-mono text-[10px] normal-case tracking-normal ' + view.text}><span className={'h-1.5 w-1.5 rounded-full ' + (source === 'disk' ? FRESHNESS.stale.dot : view.dot)} />{label}</span>
 }
 
 const tabTrigger = 'bonsai-focus h-full uppercase text-muted transition-colors hover:text-text data-[state=active]:text-text data-[state=active]:shadow-[inset_0_-2px_0_0_rgb(var(--accent-solid))]'
@@ -60,8 +65,10 @@ function QuickButton({ icon: Icon, label, onClick, danger = false, primary = fal
   </button>
 }
 
-function Metric({ value, label, icon: Icon, tone = '' }: { value: number | string; label: string; icon: LucideIcon; tone?: string }) {
-  return <div className="min-w-0 rounded-[10px] border border-border bg-panel-2 px-2.5 py-2">
+const UNTRACKED_COUNT_HINT = 'An untracked folder counts as one entry. Open the worktree for the full file list.'
+
+function Metric({ value, label, icon: Icon, tone = '', title }: { value: number | string; label: string; icon: LucideIcon; tone?: string; title?: string }) {
+  return <div className="min-w-0 rounded-[10px] border border-border bg-panel-2 px-2.5 py-2" title={title}>
     <div className={'flex items-center gap-1.5 font-mono text-[13px] font-semibold tabular-nums ' + (tone || 'text-text')}><Icon size={12} className="opacity-70" />{value}</div>
     <div className="mt-1 font-mono text-[9.5px] uppercase tracking-[.06em] text-muted-2">{label}</div>
   </div>
@@ -219,6 +226,7 @@ export function Inspector() {
   const branchAgents = projectAgents.filter((item) => item.worktreeId === worktree?.id)
   const branchProcesses = processes.filter((item) => item.worktreeId === worktree?.id)
   const freshness = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local?.state)
+  const freshnessSource = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local?.source)
   const pr = pullRequests.find((item) => item.id === `${worktree?.projectId}:${worktree?.prNumber}`)
   const attention = useMemo(() => projectWorktrees.map((item) => ({ worktree: item, issues: branchIssues(item, pullRequests.find((request) => request.id === `${item.projectId}:${item.prNumber}`)) })).filter((item) => item.issues.length).sort((a, b) => b.issues.length - a.issues.length), [projectWorktrees, pullRequests])
   const issues = worktree ? branchIssues(worktree, pr) : []
@@ -239,7 +247,7 @@ export function Inspector() {
             <Tabs.Trigger value="inspector" className={tabTrigger}>Inspector</Tabs.Trigger>
             <Tabs.Trigger value="files" className={tabTrigger}>Files</Tabs.Trigger>
           </Tabs.List>
-          <FreshnessLabel state={freshness} />
+          <FreshnessLabel state={freshness} source={freshnessSource} />
         </div>
         <Tabs.Content value="inspector" className="flex min-h-0 flex-1 flex-col outline-none data-[state=inactive]:hidden">
       <ScrollArea.Root className="min-h-0 flex-1 overflow-hidden">
@@ -255,7 +263,7 @@ export function Inspector() {
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={projectWorktrees.length} label="Branches" icon={GitBranch} />
                 <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-accent" />
-                <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-warn" />
+                <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-warn" title={UNTRACKED_COUNT_HINT} />
               </div>
               <Section title="Needs attention" meta={<span className="inspector-count">{attention.length}</span>}>
                 {attention.length ? <div className="space-y-2">{attention.map(({ worktree: item, issues: reasons }) => <button key={item.id} onClick={() => setSelection({ type: 'worktree', id: item.id })} className="bonsai-focus inspector-attention">
@@ -293,7 +301,7 @@ export function Inspector() {
                     : <span className="text-muted-2">—</span>}
                 </StatTile>
                 <StatTile label="Uncommitted">
-                  <span className={worktree.dirtyFiles ? 'text-warn' : 'text-muted-2'}>{worktree.dirtyFiles} {worktree.dirtyFiles === 1 ? 'file' : 'files'}</span>
+                  <span className={worktree.dirtyFiles ? 'text-warn' : 'text-muted-2'} title={UNTRACKED_COUNT_HINT}>{worktree.dirtyFiles} {worktree.dirtyFiles === 1 ? 'file' : 'files'}</span>
                 </StatTile>
               </div>
               {issues.length > 0 && <div className="inspector-alert"><div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-warn"><AlertCircle size={13} />Before merging</div>{issues.map((issue) => <p key={issue} className="mt-1 text-[11px] leading-5 text-muted">{issue}</p>)}</div>}
@@ -410,7 +418,7 @@ export function Inspector() {
           )}
         </Tabs.Content>
         <Tabs.Content value="files" className="flex min-h-0 flex-1 flex-col outline-none data-[state=inactive]:hidden">
-          <FilesPanel />
+          <FeatureBoundary loading="Loading files…"><FilesPanel /></FeatureBoundary>
         </Tabs.Content>
       </Tabs.Root>
     </aside>

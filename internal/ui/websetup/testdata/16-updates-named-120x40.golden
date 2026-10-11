@@ -1,0 +1,40 @@
+ How should GitHub changes reach you?                                                                             5 / 7
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ ╭─────────────────────────────────╮ ╭─────────────────────────────────────────────────────────────────────────────────╮
+ │    ● Standard (recommended)     │ │ Live · Cloudflare tunnel with your domain                                       │
+ │    ○ Live · Cloudflare quick    │ │ GitHub notifies Bonsai the moment a PR, push or check changes (GitHub's change  │
+ │  › ○ Live · Cloudflare + domain │ │ notifications, also called webhooks).                                           │
+ │    ○ Live · ngrok               │ │                                                                                 │
+ │    ○ Live · Tailscale Funnel    │ │ You need   cloudflared, a Cloudflare account and a domain   ✓ installed         │
+ │    ○ Live · my own URL          │ │            (2026.9.3)                                                           │
+ │    ○ Live · custom command      │ │            admin rights on the repos you pick                                   │
+ ╰─────────────────────────────────╯ │ Setup      ●●○ a named tunnel                                                   │
+                                     │ Delay      ~1 s                                                                 │
+                                     │ Exposes    only Bonsai's change receiver; unsigned requests are rejected        │
+                                     ╰─────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ choose · ? compare all · enter next · esc back

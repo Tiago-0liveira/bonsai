@@ -1,0 +1,447 @@
+package config
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
+	"github.com/Tiago-0liveira/bonsai/internal/webtunnel"
+)
+
+// Web configuration lives next to project-roots.json and follows the same
+// rules: versioned, revisioned, cross-process locked and written atomically.
+// web.json is what the user chooses; web-state.json is what bonsai learns at
+// runtime. Neither ever holds a secret (see web_secret.go).
+const (
+	WebConfigVersion = 1
+	WebStateVersion  = 1
+	// WebSetupVersion is the setup flow this build ships. A web.json with an
+	// older setup_version (including 0, "defaults written without setup") is
+	// offered the guided setup the next time `bonsai web` runs in a terminal.
+	// Bump it only when the setup asks something new.
+	WebSetupVersion = 1
+
+	DefaultWebAPIPort     = 7001
+	DefaultWebWebhookPort = 7002
+
+	WebUpdatesStandard = "standard"
+	WebUpdatesLive     = "live"
+)
+
+type WebConfig struct {
+	Version      int        `json:"version"`
+	Revision     uint64     `json:"revision"`
+	SetupVersion int        `json:"setup_version"`
+	APIPort      int        `json:"api_port"`
+	OpenBrowser  bool       `json:"open_browser"`
+	Updates      WebUpdates `json:"updates"`
+	// Zero means the daemon defaults (30 s to become ready, 5 s to stop).
+	StartupTimeoutSeconds  int `json:"startup_timeout_seconds,omitempty"`
+	ShutdownTimeoutSeconds int `json:"shutdown_timeout_seconds,omitempty"`
+}
+
+type WebUpdates struct {
+	Mode string         `json:"mode"`
+	Live WebLiveUpdates `json:"live"`
+}
+
+type WebLiveUpdates struct {
+	Tunnel       string   `json:"tunnel"`
+	WebhookPort  int      `json:"webhook_port"`
+	PublicURL    string   `json:"public_url"`
+	Command      []string `json:"command"`
+	Repositories []string `json:"repositories"`
+	// TunnelName is the named Cloudflare tunnel (tunnel cloudflared-named).
+	TunnelName string `json:"tunnel_name,omitempty"`
+	// URLPattern finds the public URL in a custom tunnel's output.
+	URLPattern string `json:"url_pattern,omitempty"`
+}
+
+// TunnelOptions is the live configuration in the form the tunnel presets use.
+func (l WebLiveUpdates) TunnelOptions() webtunnel.Options {
+	return webtunnel.Options{
+		Preset:      l.Tunnel,
+		WebhookPort: l.WebhookPort,
+		TunnelName:  l.TunnelName,
+		PublicURL:   l.PublicURL,
+		Command:     l.Command,
+		URLPattern:  l.URLPattern,
+	}
+}
+
+// WebState is machine-managed runtime state (hook IDs, last public URL, ...).
+// Secrets never go in it (they live in their own 0600 files).
+type WebState struct {
+	Version  int          `json:"version"`
+	Revision uint64       `json:"revision"`
+	Live     WebLiveState `json:"live,omitzero"`
+}
+
+// WebLiveState is what the API learns about live updates: written by its
+// live controller, read by `bonsai web status`, setup and doctor.
+type WebLiveState struct {
+	// InstallID marks this machine's hooks (?bonsai=<id> on the hook URL),
+	// so they are found again without a stored hook ID and told apart from
+	// another machine's.
+	InstallID string `json:"install_id,omitempty"`
+	// PublicURL is the tunnel's current public origin ("" while unknown);
+	// TunnelError says why it is unknown.
+	PublicURL   string    `json:"public_url,omitempty"`
+	TunnelError string    `json:"tunnel_error,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at,omitzero"`
+	// Repositories is keyed by owner/name as written in web.json.
+	Repositories map[string]WebLiveRepository `json:"repositories,omitempty"`
+}
+
+// Live hook states of one repository.
+const (
+	WebLiveStateLive         = "live"
+	WebLiveStateWaiting      = "waiting_for_ping"
+	WebLiveStateFailing      = "failing"
+	WebLiveStateNeedsAdmin   = "needs_admin"
+	WebLiveStateScopeMissing = "scope_missing"
+)
+
+// WebLiveRepository is one repository's hook as last seen.
+type WebLiveRepository struct {
+	HookID int64 `json:"hook_id,omitempty"`
+	// HookURL is the URL the hook was last pointed at (no secret in it).
+	HookURL string `json:"hook_url,omitempty"`
+	// SecretFingerprint identifies the secret the hook was last given, so a
+	// rotated secret is re-sent; it is a hash, never the secret.
+	SecretFingerprint string    `json:"secret_fingerprint,omitempty"`
+	State             string    `json:"state"`
+	LastError         string    `json:"last_error,omitempty"`
+	ConfiguredAt      time.Time `json:"configured_at,omitzero"`
+	CheckedAt         time.Time `json:"checked_at,omitzero"`
+	LastPingAt        time.Time `json:"last_ping_at,omitzero"`
+	LastDeliveryAt    time.Time `json:"last_delivery_at,omitzero"`
+}
+
+// Repository returns the state of repo (owner/name, case-insensitive).
+func (l WebLiveState) Repository(repo string) (string, WebLiveRepository, bool) {
+	if r, ok := l.Repositories[repo]; ok {
+		return repo, r, true
+	}
+	for name, r := range l.Repositories {
+		if strings.EqualFold(name, repo) {
+			return name, r, true
+		}
+	}
+	return "", WebLiveRepository{}, false
+}
+
+// DefaultWebConfig is the configuration written when none exists: the local
+// UI, standard (polling) updates, browser auto-open.
+func DefaultWebConfig() WebConfig {
+	return WebConfig{
+		Version:      WebConfigVersion,
+		SetupVersion: 0, // defaults written; the guided setup has not run
+		APIPort:      DefaultWebAPIPort,
+		OpenBrowser:  true,
+		Updates: WebUpdates{
+			Mode: WebUpdatesStandard,
+			Live: WebLiveUpdates{
+				Tunnel:       "cloudflared-quick",
+				WebhookPort:  DefaultWebWebhookPort,
+				Command:      []string{},
+				Repositories: []string{},
+			},
+		},
+	}
+}
+
+var ErrWebConfigRevision = errors.New("web settings changed; reload and retry")
+
+func webConfigDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai"), nil
+}
+
+// WebConfigPath is <user config dir>/bonsai/web.json.
+func WebConfigPath() (string, error) {
+	dir, err := webConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "web.json"), nil
+}
+
+// WebStatePath is <user config dir>/bonsai/web-state.json.
+func WebStatePath() (string, error) {
+	dir, err := webConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "web-state.json"), nil
+}
+
+// UserStateDir is the per-user directory for runtime state that is neither
+// configuration nor disposable cache: $XDG_STATE_HOME or ~/.local/state on
+// Unix, ~/Library/Application Support on macOS and %LocalAppData% on Windows.
+func UserStateDir() (string, error) {
+	switch runtime.GOOS {
+	case "windows":
+		if dir := os.Getenv("LocalAppData"); dir != "" {
+			return dir, nil
+		}
+		return "", errors.New("%LocalAppData% is not defined")
+	case "darwin", "ios":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "Library", "Application Support"), nil
+	default:
+		if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
+			if !filepath.IsAbs(dir) {
+				return "", errors.New("path in $XDG_STATE_HOME is relative")
+			}
+			return dir, nil
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".local", "state"), nil
+	}
+}
+
+// WebHome is the user-level daemon home that supervises `bonsai web`. It is
+// deliberately not a Git repository: the daemon keeps its .bonsai runtime
+// directory, socket hash and lock under it exactly as a per-repo daemon would.
+func WebHome() (string, error) {
+	dir, err := UserStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "web"), nil
+}
+
+// Validate rejects configurations bonsai cannot run. It never rewrites values.
+func (c WebConfig) Validate() error {
+	if c.Version != WebConfigVersion {
+		return fmt.Errorf("unsupported web settings version %d", c.Version)
+	}
+	if c.APIPort < 1 || c.APIPort > 65535 {
+		return fmt.Errorf("api_port %d is not a valid port", c.APIPort)
+	}
+	switch c.Updates.Mode {
+	case WebUpdatesStandard, WebUpdatesLive:
+	default:
+		return fmt.Errorf("updates.mode must be %q or %q", WebUpdatesStandard, WebUpdatesLive)
+	}
+	if c.StartupTimeoutSeconds < 0 || c.StartupTimeoutSeconds > 600 || c.ShutdownTimeoutSeconds < 0 || c.ShutdownTimeoutSeconds > 600 {
+		return fmt.Errorf("startup/shutdown timeouts must be between 0 and 600 seconds")
+	}
+	if p := c.Updates.Live.WebhookPort; p != 0 && (p < 1 || p > 65535 || p == c.APIPort) {
+		return fmt.Errorf("updates.live.webhook_port %d must be a valid port different from api_port", p)
+	}
+	// The tunnel settings only matter (and are only checked) while live
+	// updates are on, so a half-filled live section never blocks standard.
+	if c.Updates.Mode == WebUpdatesLive {
+		if c.Updates.Live.WebhookPort == 0 {
+			return fmt.Errorf("updates.live.webhook_port is required when updates.mode is %q", WebUpdatesLive)
+		}
+		if err := webtunnel.ValidateOptions(c.Updates.Live.TunnelOptions()); err != nil {
+			return fmt.Errorf("updates.live: %w", err)
+		}
+	}
+	return nil
+}
+
+// ReadWebConfig loads web.json. A missing file reports exists=false together
+// with the defaults; a corrupt or invalid file is an error naming the path.
+func ReadWebConfig(path string) (cfg WebConfig, exists bool, err error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return DefaultWebConfig(), false, nil
+	}
+	if err != nil {
+		return WebConfig{}, false, err
+	}
+	cfg = DefaultWebConfig()
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return WebConfig{}, true, fmt.Errorf("read web settings %s: %w", path, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return WebConfig{}, true, fmt.Errorf("invalid web settings %s: %w", path, err)
+	}
+	if cfg.Updates.Live.Command == nil {
+		cfg.Updates.Live.Command = []string{}
+	}
+	if cfg.Updates.Live.Repositories == nil {
+		cfg.Updates.Live.Repositories = []string{}
+	}
+	return cfg, true, nil
+}
+
+// UpdateWebConfig runs fn on the current configuration under the cross-process
+// lock and persists the result with the revision bumped. expected guards
+// against lost updates; pass the revision the caller read, or ^uint64(0) to
+// skip the check (used when writing first-run defaults).
+func UpdateWebConfig(path string, expected uint64, fn func(*WebConfig) error) (WebConfig, error) {
+	var out WebConfig
+	err := withWebLock(path, func() error {
+		cfg, _, err := ReadWebConfig(path)
+		if err != nil {
+			return err
+		}
+		if expected != ^uint64(0) && cfg.Revision != expected {
+			return ErrWebConfigRevision
+		}
+		if err := fn(&cfg); err != nil {
+			return err
+		}
+		cfg.Version = WebConfigVersion
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+		cfg.Revision++
+		raw, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := gitstore.WriteJSON(path, append(raw, '\n')); err != nil {
+			return err
+		}
+		out = cfg
+		return nil
+	})
+	return out, err
+}
+
+// EnsureWebConfig returns web.json, writing the defaults first when it does not
+// exist. created reports whether this call wrote the file.
+func EnsureWebConfig(path string) (cfg WebConfig, created bool, err error) {
+	err = withWebLock(path, func() error {
+		current, exists, err := ReadWebConfig(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			cfg = current
+			return nil
+		}
+		current.Revision = 1
+		raw, err := json.MarshalIndent(current, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := gitstore.WriteJSON(path, append(raw, '\n')); err != nil {
+			return err
+		}
+		cfg, created = current, true
+		return nil
+	})
+	return cfg, created, err
+}
+
+// ReadWebState loads web-state.json, returning an empty state when missing.
+// Readers share the writer lock: on Windows, an open reader prevents atomic
+// replacement of the state file.
+func ReadWebState(path string) (WebState, error) {
+	var out WebState
+	err := withWebLock(path, func() error {
+		var err error
+		out, err = readWebState(path)
+		return err
+	})
+	return out, err
+}
+
+// readWebState requires the caller to hold the state file's lock.
+func readWebState(path string) (WebState, error) {
+	out := WebState{Version: WebStateVersion}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return WebState{}, fmt.Errorf("read web state %s: %w", path, err)
+	}
+	if out.Version != WebStateVersion {
+		return WebState{}, fmt.Errorf("unsupported web state version %d in %s", out.Version, path)
+	}
+	return out, nil
+}
+
+// UpdateWebState mutates web-state.json under its own lock.
+func UpdateWebState(path string, fn func(*WebState) error) (WebState, error) {
+	var out WebState
+	err := withWebLock(path, func() error {
+		state, err := readWebState(path)
+		if err != nil {
+			return err
+		}
+		if err := fn(&state); err != nil {
+			return err
+		}
+		state.Version = WebStateVersion
+		state.Revision++
+		raw, err := json.MarshalIndent(state, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := gitstore.WriteJSON(path, append(raw, '\n')); err != nil {
+			return err
+		}
+		out = state
+		return nil
+	})
+	return out, err
+}
+
+// EnsureWebInstallID returns the live-updates install ID from web-state.json,
+// generating it on first use.
+func EnsureWebInstallID(path string) (string, error) {
+	state, err := ReadWebState(path)
+	if err != nil {
+		return "", err
+	}
+	if state.Live.InstallID != "" {
+		return state.Live.InstallID, nil
+	}
+	state, err = UpdateWebState(path, func(state *WebState) error {
+		if state.Live.InstallID != "" {
+			return nil
+		}
+		raw := make([]byte, 8)
+		if _, err := rand.Read(raw); err != nil {
+			return err
+		}
+		state.Live.InstallID = hex.EncodeToString(raw)
+		return nil
+	})
+	return state.Live.InstallID, err
+}
+
+func withWebLock(path string, fn func() error) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("web settings path is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	lock, err := procstore.Lock(path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	return fn()
+}

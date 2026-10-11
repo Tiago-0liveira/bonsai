@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
@@ -61,10 +63,31 @@ type syncTestDaemon struct {
 	repositoryStarted   chan struct{}
 	repositoryStartOnce sync.Once
 	records             []*procstore.Record
+	// extraWorktrees adds linked worktrees, each with its own upstream SHA.
+	extraWorktrees int
+	// noInventory makes git.inventory fail like a daemon that predates it.
+	noInventory bool
+	// onCommand, when set, sees every command before it is served.
+	onCommand func(gitbridge.Command)
+}
+
+func (d *syncTestDaemon) worktrees(mainStatus *domain.WorkingTreeStatus) []domain.Worktree {
+	main := domain.Worktree{ID: gitlocal.ID(localRepositoryID, d.root), RepositoryID: localRepositoryID, Path: d.root, Branch: "main", HeadSHA: "local-head", Main: true, Status: mainStatus}
+	out := []domain.Worktree{main}
+	for i := 0; i < d.extraWorktrees; i++ {
+		path := filepath.Join(d.root, fmt.Sprintf("wt-%02d", i))
+		tree := domain.Worktree{ID: gitlocal.ID(localRepositoryID, path), RepositoryID: localRepositoryID, Path: path, Branch: fmt.Sprintf("feature-%02d", i), HeadSHA: fmt.Sprintf("head-%02d", i)}
+		if mainStatus != nil {
+			st := *mainStatus
+			st.Branch, st.HeadSHA, st.LocalRemoteRefSHA, st.Upstream = tree.Branch, tree.HeadSHA, fmt.Sprintf("remote-%02d", i), "origin/"+tree.Branch
+			tree.Status = &st
+		}
+		out = append(out, tree)
+	}
+	return out
 }
 
 func (d *syncTestDaemon) result(command gitbridge.Command) (*gitbridge.Result, error) {
-	worktreeID := gitlocal.ID(localRepositoryID, d.root)
 	status := &domain.WorkingTreeStatus{
 		Branch:              "main",
 		HeadState:           "branch",
@@ -76,14 +99,30 @@ func (d *syncTestDaemon) result(command gitbridge.Command) (*gitbridge.Result, e
 		Conflicted:          []string{},
 	}
 	var payload any
+	if d.onCommand != nil {
+		d.onCommand(command)
+	}
 	switch command.Type {
+	case "git.inventory":
+		if d.noInventory {
+			return &gitbridge.Result{ID: command.ID, Error: &domain.Error{Code: "invalid", Message: "invalid"}}, nil
+		}
+		payload = domain.RepositoryState{
+			ID: localRepositoryID,
+			Branches: []domain.Branch{
+				{Name: "main", LocalHeadSHA: "local-head", Upstream: "origin/main"},
+				{Name: "origin/main", Remote: true, LocalRemoteRefSHA: "remote-head"},
+			},
+			Worktrees: d.worktrees(nil),
+			Remotes:   []domain.RemoteIdentity{{Name: "origin", Host: "github.com", Owner: "acme", Repository: "repo", FullName: "acme/repo"}},
+		}
 	case "git.branches":
 		payload = []domain.Branch{
 			{Name: "main", LocalHeadSHA: "local-head", Upstream: "origin/main"},
 			{Name: "origin/main", Remote: true, LocalRemoteRefSHA: "remote-head"},
 		}
 	case "git.worktrees":
-		payload = []domain.Worktree{{ID: worktreeID, RepositoryID: localRepositoryID, Path: d.root, Branch: "main", HeadSHA: "local-head", Main: true}}
+		payload = d.worktrees(nil)
 	case "git.repository.refresh":
 		if d.repositoryBlock != nil {
 			<-d.repositoryBlock
@@ -95,7 +134,7 @@ func (d *syncTestDaemon) result(command gitbridge.Command) (*gitbridge.Result, e
 				{Name: "main", LocalHeadSHA: "local-head", Upstream: "origin/main"},
 				{Name: "origin/main", Remote: true, LocalRemoteRefSHA: "remote-head"},
 			},
-			Worktrees: []domain.Worktree{{ID: worktreeID, RepositoryID: localRepositoryID, Path: d.root, Branch: "main", HeadSHA: "local-head", Main: true, Status: status}},
+			Worktrees: d.worktrees(status),
 			Remotes:   []domain.RemoteIdentity{{Name: "origin", Host: "github.com", Owner: "acme", Repository: "repo", FullName: "acme/repo"}},
 		}
 	default:
@@ -120,7 +159,7 @@ func (d *syncTestDaemon) GitContext(ctx context.Context, command gitbridge.Comma
 			return nil, ctx.Err()
 		case <-d.repositoryBlock:
 		}
-		copy := syncTestDaemon{root: d.root, records: d.records}
+		copy := syncTestDaemon{root: d.root, records: d.records, extraWorktrees: d.extraWorktrees, noInventory: d.noInventory, onCommand: d.onCommand}
 		return copy.result(command)
 	}
 	return d.result(command)
@@ -277,7 +316,7 @@ func TestStateSyncPublishesPRsBeforeChecksFinish(t *testing.T) {
 	}}}
 	syncer := newStateSync(registry, newEventHub())
 	syncer.ReconcileCatalog()
-	syncer.SubscriberReady()
+	syncer.SubscriberReady("")
 	first := waitForProjection(t, syncer, projectID, func(snapshot browserSnapshot) bool {
 		return snapshot.Remote != nil && len(snapshot.Remote.PullRequests) == 1
 	})

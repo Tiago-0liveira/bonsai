@@ -1,0 +1,17 @@
+{
+  "tunnels": [
+    {
+      "name": "other",
+      "public_url": "https://other-example.ngrok-free.app",
+      "proto": "https",
+      "config": {"addr": "http://localhost:3000", "inspect": true}
+    },
+    {
+      "name": "command_line",
+      "public_url": "https://calm-example-domain.ngrok-free.app",
+      "proto": "https",
+      "config": {"addr": "http://127.0.0.1:7002", "inspect": true}
+    }
+  ],
+  "uri": "/api/tunnels"
+}

@@ -245,3 +245,30 @@ func TestChecksCarryTimingWhenGitHubReportsIt(t *testing.T) {
 		t.Fatalf("timing keys should be omitted: %s", out)
 	}
 }
+
+func TestGraphQLURLFollowsTheAPIBase(t *testing.T) {
+	c := New(nil)
+	if got := c.url("/graphql"); got != "https://api.github.com/graphql" {
+		t.Fatalf("github.com GraphQL = %s", got)
+	}
+	c.BaseURL = "https://ghe.example.com/api/v3/"
+	if got := c.url("/graphql"); got != "https://ghe.example.com/api/graphql" {
+		t.Fatalf("GHES GraphQL = %s", got)
+	}
+	if got := c.url("/repos/a/b"); got != "https://ghe.example.com/api/v3/repos/a/b" {
+		t.Fatalf("GHES REST = %s", got)
+	}
+}
+
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+func TestTransportDomainErrorsKeepTheirCode(t *testing.T) {
+	c := New(testTokens{})
+	c.HTTP = &http.Client{Transport: failingTransport{domain.E("github_auth", "gh is not logged in to github.com")}}
+	_, err := c.Repository(context.Background(), "a/b")
+	if domain.Code(err) != "github_auth" || err.Error() != "gh is not logged in to github.com" {
+		t.Fatalf("err = %v", err)
+	}
+}

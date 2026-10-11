@@ -1,0 +1,527 @@
+package websetup
+
+import (
+	"reflect"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	setup "github.com/Tiago-0liveira/bonsai/internal/websetup"
+	"github.com/Tiago-0liveira/bonsai/internal/websetup/checks"
+)
+
+func (m Model) row(label, value string) string {
+	return "  " + padRight(m.st.dim.Render(label), 13) + m.st.text.Render(value)
+}
+
+func (m Model) githubSummary() string {
+	if m.checksLoading && len(m.checks) == 0 {
+		return "checking…"
+	}
+	installed, ok := checks.Find(m.checks, checks.IDGHInstalled)
+	if !ok {
+		return "checking…"
+	}
+	if installed.State != checks.OK {
+		return "gh not installed · local features only"
+	}
+	auth, _ := checks.Find(m.checks, checks.IDGHAuth)
+	if auth.State != checks.OK {
+		return "gh not logged in · local features only"
+	}
+	host, login, found := strings.Cut(auth.Detail, " · ")
+	if !found {
+		return "via gh (" + host + ")"
+	}
+	return "via gh (" + login + ")"
+}
+
+// ── 6. Review ───────────────────────────────────────────────────────────────
+
+func (m Model) reviewView() string {
+	w, _ := m.size()
+	plan := m.plan()
+	var b strings.Builder
+	b.WriteString("\n")
+	enterHint := "apply"
+	if plan.PrepareCloudflare {
+		if c, ok := checks.Find(m.checks, checks.IDTunnelCloudflared); ok && c.Fix != nil && c.Fix.Command == "cloudflared tunnel login" {
+			enterHint = "log in"
+			b.WriteString(indent(m.st.warn.Render(m.wrap("Cloudflare login required. Press enter to run cloudflared tunnel login, then return here to apply.", w-4)), 2) + "\n\n")
+		}
+	}
+	b.WriteString(m.row("Projects", setup.ProjectsSummary(m.draft, m.info.Home)) + "\n")
+	b.WriteString(m.row("Open in", setup.OpenInSummary(m.draft.Config)) + "\n")
+	b.WriteString(m.row("GitHub", m.githubSummary()) + "\n")
+	b.WriteString(m.row("Updates", setup.UpdatesSummary(m.draft.Config, m.info.StandardInterval)) + "\n")
+
+	if m.mode == Edit {
+		changes := setup.Diff(m.initial, m.draft, m.info.Home)
+		b.WriteString("\n  " + m.st.title.Render("Changes") + "\n")
+		if len(changes) == 0 {
+			b.WriteString("  " + m.st.dim.Render("No changes yet.") + "\n")
+		}
+		for _, c := range changes {
+			value := c.To
+			if c.From != "" {
+				value = c.From + " → " + c.To
+			}
+			b.WriteString(m.row(c.Label, value) + "\n")
+		}
+	}
+
+	if external := setup.ExternalChanges(plan, m.info.InstallID); len(external) > 0 {
+		b.WriteString("\n  " + m.st.title.Render("Outside this computer") + "\n")
+		for _, line := range external {
+			b.WriteString(m.hang("  "+m.st.warn.Render("•"), 4, line, w-1) + "\n")
+		}
+		b.WriteString("\n")
+	} else {
+		b.WriteString("\n  " + m.st.text.Render(setup.NothingExternal) + "\n")
+	}
+	var effect []string
+	switch {
+	case m.mode == Wizard:
+		effect = append(effect, "Bonsai saves your settings to "+setup.TildePath(m.info.Home, m.info.ConfigPath)+" and starts in the background.")
+		if m.draft.Config.OpenBrowser {
+			effect = append(effect, "Your browser opens when it is ready.")
+		}
+	case m.info.Running == nil:
+		effect = append(effect, "bonsai web is not running; your changes apply the next time it starts.")
+		if len(plan.HookRepos(setup.HookAdd))+len(plan.HookRepos(setup.HookRepoint)) > 0 {
+			effect = append(effect, "Webhooks are added or re-pointed then; deletions happen now.")
+		}
+	default:
+		if plan.PrepareCloudflare && !plan.RestartAPI {
+			effect = append(effect, "Restarts Bonsai to verify the tunnel and GitHub delivery. Open pages reconnect by themselves.")
+		}
+		if plan.RestartAPI {
+			effect = append(effect, "Restarts the Bonsai API ("+plan.RestartReason+").")
+			if m.draft.Config.APIPort != m.info.Running.APIPort {
+				effect = append(effect, "Open pages stop working; use the new address: http://127.0.0.1:"+itoa(m.draft.Config.APIPort)+"/app")
+			} else {
+				effect = append(effect, "Open pages reconnect by themselves.")
+			}
+		}
+		if plan.ProjectsChanged() {
+			effect = append(effect, "Bonsai picks up project changes within 30 s; nothing restarts for them.")
+		}
+	}
+	if plan.WaitLive && (m.mode == Wizard || m.info.Running != nil) {
+		effect = append(effect, "Then Bonsai waits for GitHub to confirm each webhook (about a minute at most).")
+	}
+	for _, e := range effect {
+		b.WriteString(indent(m.st.dim.Render(m.wrap(e, w-4)), 2) + "\n")
+	}
+	hs := []hint{{"enter", enterHint}, {"esc", "go back"}}
+	if plan.PrepareCloudflare {
+		hs = []hint{{"enter", enterHint}, {"r", "re-check"}, {"esc", "go back"}}
+	}
+	return m.frame("Review", m.counter(), b.String(), hs)
+}
+
+func (m Model) onReview(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "enter":
+		if m.mode == Edit && !m.dirty() && !m.plan().PrepareCloudflare {
+			m.flash = "Nothing to apply yet."
+			return m, nil
+		}
+		if pending := m.draft.Pending(); len(pending) > 0 {
+			m.flash = "Still looking for repositories in " + setup.TildePath(m.info.Home, pending[0].Path) + "; press enter again in a moment."
+			return m, nil
+		}
+		if err := m.plan().Config.Validate(); err != nil {
+			m.flash = "These settings cannot be saved: " + err.Error()
+			return m, nil
+		}
+		if m.plan().PrepareCloudflare {
+			if m.checksLoading {
+				m.flash = "Checking Cloudflare login; press enter again in a moment."
+				return m, nil
+			}
+			c, ok := checks.Find(m.checks, checks.IDTunnelCloudflared)
+			if !ok {
+				return m, m.startChecks()
+			}
+			if c.Fix != nil && c.Fix.Command == "cloudflared tunnel login" {
+				cmd := m.backend.FixCommand(*c.Fix)
+				if cmd == nil {
+					m.flash = "Run cloudflared tunnel login in another terminal, then press r to check again."
+					return m, nil
+				}
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return fixDoneMsg{err: err} })
+			}
+			if c.State != checks.OK {
+				m.flash = c.Detail + "; fix it, then press r to check again."
+				return m, nil
+			}
+		}
+		m.applying, m.steps, m.result = true, nil, nil
+		m = m.push(screenApply)
+		return m, m.startApply()
+	case "esc":
+		return m.pop(), nil
+	case "r":
+		return m, m.startChecks()
+	case "q":
+		return m.requestQuit()
+	}
+	return m, nil
+}
+
+// ── 7. Apply ────────────────────────────────────────────────────────────────
+
+func (m Model) applyView() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	if len(m.steps) == 0 {
+		b.WriteString("  " + m.st.stepGlyph(StepRunning) + " " + m.st.text.Render("Starting") + "\n")
+	}
+	w, _ := m.size()
+	for _, s := range m.steps {
+		label := "  " + m.st.stepGlyph(s.State) + " " + m.st.text.Render(s.Label)
+		b.WriteString(m.hang(label, 33, m.st.dim.Render(s.Detail), w-1) + "\n")
+		if s.State == StepFailed && s.Fix != "" {
+			b.WriteString(m.hang("    "+m.st.dim.Render("fix"), 9, s.Fix, w-1) + "\n")
+		}
+	}
+	hs := []hint{{"…", "applying"}}
+	if !m.applying {
+		hs = []hint{{"esc", "back to review"}, {"q", "quit"}}
+	}
+	return m.frame("Applying your settings", m.counter(), b.String(), hs)
+}
+
+func (m Model) onApplyKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		return m.pop(), nil
+	case "q":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// ── 8. Done ─────────────────────────────────────────────────────────────────
+
+func (m Model) doneView() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	title := "Bonsai is ready"
+	if m.mode == Edit {
+		title = "Settings saved"
+		b.WriteString("  " + m.st.ok.Render("✓") + " " + m.st.text.Render("Your settings are saved.") + "\n")
+	}
+	if r := m.result; r != nil && r.URL != "" {
+		b.WriteString("  " + m.st.ok.Render("✓") + " " + m.st.text.Render("bonsai web is running at ") + m.st.accent.Render(r.URL) + "\n")
+		if r.Opened {
+			b.WriteString("    " + m.st.dim.Render("Your browser opened it.") + "\n")
+		} else {
+			b.WriteString("    " + m.st.dim.Render("Press o to open it in your browser.") + "\n")
+		}
+	}
+	if m.result != nil {
+		for _, n := range m.result.Notes {
+			b.WriteString("    " + m.st.dim.Render(n) + "\n")
+		}
+	}
+	b.WriteString("\n")
+	for _, line := range [][2]string{
+		{"bonsai web status", "what is running"},
+		{"bonsai web logs", "recent output"},
+		{"bonsai web setup", "change these settings"},
+		{"bonsai web stop", "stop everything"},
+	} {
+		b.WriteString("  " + padRight(m.st.text.Render(line[0]), 21) + m.st.dim.Render(line[1]) + "\n")
+	}
+	hs := []hint{{"o", "open browser"}, {"enter", "close"}}
+	if m.mode == Edit {
+		hs = []hint{{"o", "open browser"}, {"enter", "back to settings"}, {"q", "quit"}}
+	}
+	return m.frame(title, "", b.String(), hs)
+}
+
+func (m Model) onDone(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "o":
+		if m.result == nil || m.result.URL == "" {
+			m.flash = "bonsai web is not running. Start it with: bonsai web"
+			return m, nil
+		}
+		if err := m.backend.Open(m.result.URL); err != nil {
+			m.flash = "Could not open a browser (" + err.Error() + "). Open " + m.result.URL + " yourself."
+		} else {
+			m.result.Opened = true
+		}
+	case "enter", "esc":
+		if m.mode == Edit {
+			m.stack = []screen{screenDashboard}
+			return m, nil
+		}
+		m.quitting = true
+		return m, tea.Quit
+	case "q":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// ── Edit mode: dashboard ────────────────────────────────────────────────────
+
+type section struct {
+	label, value string
+	state        checks.State
+	target       screen
+	edited       bool
+}
+
+func (m Model) worst(ids ...string) checks.State {
+	state := checks.OK
+	rank := map[checks.State]int{checks.Skip: 0, checks.OK: 0, checks.Warn: 1, checks.Fail: 2}
+	found := false
+	for _, id := range ids {
+		if c, ok := checks.Find(m.checks, id); ok {
+			found = true
+			if rank[c.State] > rank[state] {
+				state = c.State
+			}
+		}
+	}
+	if !found {
+		return checks.Skip
+	}
+	return state
+}
+
+func (m Model) updatesHealth() checks.State {
+	if m.draft.Config.Updates.Mode != config.WebUpdatesLive {
+		return checks.OK
+	}
+	return m.worst(checks.IDUpdatesLive, tunnelTool(m.draft.Config.Updates.Live.Tunnel), checks.IDTunnelCustom)
+}
+
+func (m Model) advancedSummary(cfg config.WebConfig) string {
+	text := "port " + itoa(cfg.APIPort)
+	if cfg.Updates.Mode == config.WebUpdatesLive {
+		text += " · webhook port " + itoa(cfg.Updates.Live.WebhookPort)
+	}
+	if m.draft.RotateSecret {
+		text += " · new webhook secret"
+	}
+	return text
+}
+
+func (m Model) sections() []section {
+	b, a := m.initial.Config, m.draft.Config
+	foldersEdited := false
+	checked := map[string]bool{}
+	for _, f := range m.initial.Folders {
+		checked[f.Path] = f.Checked
+	}
+	for _, f := range m.draft.Folders {
+		foldersEdited = foldersEdited || f.Checked != checked[f.Path]
+	}
+	return []section{
+		{"Projects", setup.ProjectsSummary(m.draft, m.info.Home), m.worst(checks.IDProjects), screenProjects, foldersEdited},
+		{"Open in", "this computer" + " · auto-open " + onOff(a.OpenBrowser), checks.OK, screenOpenIn, a.OpenBrowser != b.OpenBrowser},
+		{"GitHub", m.githubSummary(), m.worst(checks.IDGHInstalled, checks.IDGHAuth), screenGitHub, false},
+		{"Updates", setup.UpdatesSummary(a, m.info.StandardInterval), m.updatesHealth(), screenUpdates, updatesEdited(b, a)},
+		{"Advanced", m.advancedSummary(a), m.worst(checks.IDPort), screenAdvanced, a.APIPort != b.APIPort || a.Updates.Live.WebhookPort != b.Updates.Live.WebhookPort || m.draft.RotateSecret},
+	}
+}
+
+// updatesEdited reports a change on the Updates screens (the webhook port
+// belongs to Advanced).
+func updatesEdited(before, after config.WebConfig) bool {
+	b, a := before.Updates, after.Updates
+	b.Live.WebhookPort, a.Live.WebhookPort = 0, 0
+	return !reflect.DeepEqual(b, a)
+}
+
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
+}
+
+func (m Model) dashboardView() string {
+	w, _ := m.size()
+	cursor := m.cursor[screenDashboard]
+	var b strings.Builder
+	b.WriteString("\n")
+	valueWidth := w - 2 - 2 - 16 - 12
+	for i, s := range m.sections() {
+		value := s.value
+		if s.edited {
+			value = "edited · " + value
+		}
+		value = truncate(value, valueWidth)
+		health := m.st.glyph(s.state)
+		if s.state == checks.Skip {
+			health = " "
+		}
+		b.WriteString(m.marker(i == cursor) + padRight(m.st.text.Render(s.label), 16) + padRight(m.st.text.Render(value), valueWidth) + "  " + health + "\n")
+	}
+	if m.dirty() {
+		b.WriteString("\n  " + m.st.warn.Render("!") + " " + m.st.text.Render("Changes not applied yet") + m.st.dim.Render(" · a to review and apply") + "\n")
+	}
+	if failed, warned := checks.Counts(m.checks); failed+warned > 0 {
+		b.WriteString("\n  " + m.st.dim.Render(problems(failed, warned)+" · d to see them in the doctor") + "\n")
+	}
+	return m.frame("bonsai web · settings", m.counter(), b.String(), []hint{{"enter", "edit"}, {"a", "apply"}, {"d", "doctor"}, {"q", "quit"}})
+}
+
+func truncate(s string, width int) string {
+	if width < 4 {
+		width = 4
+	}
+	r := []rune(s)
+	if len(r) <= width {
+		return s
+	}
+	return string(r[:width-1]) + "…"
+}
+
+func (m Model) onDashboard(key string) (tea.Model, tea.Cmd) {
+	sections := m.sections()
+	switch key {
+	case "up", "k":
+		m.cursor[screenDashboard] = m.move(screenDashboard, -1, len(sections))
+	case "down", "j":
+		m.cursor[screenDashboard] = m.move(screenDashboard, 1, len(sections))
+	case "enter":
+		target := sections[m.cursor[screenDashboard]].target
+		if target == screenAdvanced {
+			m.portIn.SetValue(itoa(m.draft.Config.APIPort))
+			m.portIn.CursorEnd()
+			m.webhookIn.SetValue(itoa(m.draft.Config.Updates.Live.WebhookPort))
+			m.webhookIn.CursorEnd()
+			m.webhookIn.Blur()
+			m.advFocus, m.inputErr = 0, ""
+			m = m.push(target)
+			return m, m.portIn.Focus()
+		}
+		if target == screenOpenIn {
+			m.cursor[screenOpenIn] = m.openIndex()
+		}
+		if target == screenUpdates {
+			m.cursor[screenUpdates] = m.updatesIndex()
+		}
+		return m.push(target), nil
+	case "a":
+		if !m.dirty() && !m.plan().PrepareCloudflare {
+			m.flash = "Nothing to apply yet. Press enter on a section to change it."
+			return m, nil
+		}
+		return m.push(screenReview), nil
+	case "d":
+		return m.push(screenDoctor), m.startChecks()
+	case "q", "esc":
+		return m.requestQuit()
+	}
+	return m, nil
+}
+
+// ── Edit mode: advanced ─────────────────────────────────────────────────────
+
+func (m Model) advancedView() string {
+	w, _ := m.size()
+	var b strings.Builder
+	b.WriteString("\n" + m.marker(m.advFocus == 0) + m.portIn.View() + "\n")
+	b.WriteString(m.marker(m.advFocus == 1) + m.webhookIn.View() + "\n")
+	box := "[ ]"
+	if m.draft.RotateSecret {
+		box = "[x]"
+	}
+	b.WriteString(m.marker(m.advFocus == 2) + m.st.text.Render(box+" Rotate the webhook secret") + "\n")
+	if m.inputErr != "" {
+		b.WriteString("\n  " + m.st.fail.Render("✗") + " " + m.st.text.Render(m.inputErr) + "\n")
+		b.WriteString("    " + m.st.dim.Render("fix  type a number from 1024 to 65535 that no other program uses") + "\n")
+	}
+	for _, text := range []string{
+		"Your browser connects to http://127.0.0.1:<port>. Applying a new port restarts the Bonsai API; open pages need the new address.",
+		"The webhook port is where Bonsai's change receiver listens; only live updates use it, and only through the tunnel.",
+		"A new secret restarts the Bonsai API and is sent to every webhook; deliveries signed with the old one are rejected.",
+	} {
+		b.WriteString("\n" + indent(m.st.dim.Render(m.wrap(text, w-4)), 2) + "\n")
+	}
+	return m.frame("Advanced", m.counter(), b.String(), []hint{{"↑↓", "move"}, {"space", "toggle"}, {"enter", "done"}, {"esc", "back"}})
+}
+
+func (m Model) focusAdvanced(i int) (Model, tea.Cmd) {
+	if i < 0 || i > 2 {
+		return m, nil
+	}
+	m.portIn.Blur()
+	m.webhookIn.Blur()
+	m.advFocus = i
+	switch i {
+	case 0:
+		return m, m.portIn.Focus()
+	case 1:
+		return m, m.webhookIn.Focus()
+	}
+	return m, nil
+}
+
+func (m Model) onAdvanced(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.portIn.Blur()
+		m.webhookIn.Blur()
+		m.inputErr = ""
+		return m.pop(), nil
+	case "down", "tab":
+		return m.focusAdvanced(m.advFocus + 1)
+	case "up", "shift+tab":
+		return m.focusAdvanced(m.advFocus - 1)
+	case " ":
+		if m.advFocus == 2 {
+			if m.draft.Config.Updates.Mode != config.WebUpdatesLive && !m.draft.RotateSecret {
+				m.flash = "The webhook secret is only used by live updates; turn them on in Updates first."
+				return m, nil
+			}
+			m.draft.RotateSecret = !m.draft.RotateSecret
+			return m, nil
+		}
+	case "enter":
+		next := m.draft.Config
+		for _, in := range []struct {
+			field  textinput.Model
+			target *int
+		}{{m.portIn, &next.APIPort}, {m.webhookIn, &next.Updates.Live.WebhookPort}} {
+			port, err := strconv.Atoi(strings.TrimSpace(in.field.Value()))
+			if err != nil || port < 1 || port > 65535 {
+				m.inputErr = "“" + in.field.Value() + "” is not a port number"
+				return m, nil
+			}
+			*in.target = port
+		}
+		if err := next.Validate(); err != nil {
+			m.inputErr = err.Error()
+			return m, nil
+		}
+		m.draft.Config = next
+		m.portIn.Blur()
+		m.webhookIn.Blur()
+		m.inputErr = ""
+		return m.pop(), nil
+	}
+	if m.advFocus == 2 {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	if m.advFocus == 0 {
+		m.portIn, cmd = m.portIn.Update(msg)
+	} else {
+		m.webhookIn, cmd = m.webhookIn.Update(msg)
+	}
+	return m, cmd
+}

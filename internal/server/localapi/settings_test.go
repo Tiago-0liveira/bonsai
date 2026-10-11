@@ -28,7 +28,7 @@ func authorizedRequest(t *testing.T, s *Server, method, path, key string, body a
 		raw, _ = json.Marshal(body)
 	}
 	req := httptest.NewRequest(method, "http://127.0.0.1:7001"+path, bytes.NewReader(raw))
-	req.Header.Set("Origin", ProductionBrowserOrigin)
+	req.Header.Set("Origin", testBrowserOrigin)
 	req.Header.Set("X-Bonsai-Session", session.Token)
 	req.Header.Set("Idempotency-Key", key)
 	w := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestProjectRoutingAndLegacyMetadataPreservation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Config{RepoDir: a, Address: "127.0.0.1:7001", BrowserOrigin: ProductionBrowserOrigin, ProjectRootsPath: settings})
+	s, err := New(Config{RepoDir: a, Address: "127.0.0.1:7001", BrowserOrigin: "", ProjectRootsPath: settings})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,7 @@ import './presentationFixtures'
 async function openProcessFixture(page: Page) {
   await page.setViewportSize({ width: 1500, height: 1000 })
   await mockGitBackend(page)
-  await page.routeWebSocket(/ws:\/\/127\.0\.0\.1:7001\/api\/projects\/bonsai\/processes\/\d+\/terminal$/, socket => {
+  await page.routeWebSocket(/ws:\/\/127\.0\.0\.1:7011\/api\/projects\/bonsai\/processes\/\d+\/terminal$/, socket => {
     socket.onMessage(message => {
       if (JSON.parse(String(message)).type !== 'attach') return
       const output = Buffer.from('RETAINED_PROCESS_OUTPUT\r\n')
@@ -47,7 +47,7 @@ test('context menu and card controls share pending/errors and restart without op
   const placement = await page.evaluate(() => window.__bonsaiTestStore.getState().nodePlacements['bonsai:1'])
   let finishStop: () => void = () => {}
   const stopRequests: string[] = []
-  await page.route('http://127.0.0.1:7001/api/projects/bonsai/processes/1', async route => {
+  await page.route('http://127.0.0.1:7011/api/projects/bonsai/processes/1', async route => {
     if (route.request().method() !== 'DELETE') { await route.fallback(); return }
     stopRequests.push(route.request().url())
     await new Promise<void>(resolve => { finishStop = resolve })
@@ -65,7 +65,7 @@ test('context menu and card controls share pending/errors and restart without op
   finishStop()
   await page.keyboard.press('Escape')
   await expect(node.getByRole('alert')).toHaveText('Process control unavailable')
-  await page.route('http://127.0.0.1:7001/api/projects/bonsai/processes/1/restart', async route => {
+  await page.route('http://127.0.0.1:7011/api/projects/bonsai/processes/1/restart', async route => {
     await route.fulfill({ json: { id: 'bonsai:1', daemon_id: 1, project_id: 'bonsai', worktree_id: 'wt-web', label: 'Vite', command: 'pnpm dev', status: 'running', revision: 2 } })
   })
   await node.click({ button: 'right' })

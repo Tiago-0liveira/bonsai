@@ -18,13 +18,21 @@ type browserRepository = ProjectInfo
 type browserStateError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// ResetAt is when GitHub's rate-limit window resets (rate_limited only).
+	ResetAt *time.Time `json:"reset_at,omitempty"`
 }
 
 type browserFreshness struct {
 	State     string             `json:"state"`
 	UpdatedAt *time.Time         `json:"updated_at,omitempty"`
 	Error     *browserStateError `json:"error,omitempty"`
+	// Source is "disk" while the component's data was restored at startup
+	// and has not been revalidated; absent means it was read live.
+	Source string `json:"source,omitempty"`
 }
+
+// freshnessSourceDisk marks data restored from the warm-start cache.
+const freshnessSourceDisk = "disk"
 
 type browserRemoteSnapshot struct {
 	Repository        githubdomain.RemoteRepository `json:"repository"`

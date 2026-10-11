@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { lazy, useEffect, useRef } from 'react'
+import { OverlayBoundary } from '../../app/chunkRecovery'
 import {
   Panel,
   PanelGroup,
@@ -7,22 +8,22 @@ import {
 } from 'react-resizable-panels'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { ChevronUp, TerminalSquare } from 'lucide-react'
-import { CommandPalette } from '../../features/command-palette/CommandPalette'
 import { BranchesIsland } from '../../features/branches/BranchesIsland'
 import { Inspector } from '../../features/inspector/Inspector'
 import { BottomWorkspace } from '../../features/terminal/BottomWorkspace'
 import { useOpenRuntimeEntries } from '../../features/terminal/openRuntimeEntries'
-import { CreateWorktreeDialog } from '../../features/workspace/CreateWorktreeDialog'
-import { DeleteWorktreeDialog } from '../../features/workspace/DeleteWorktreeDialog'
-import { EnvEditor } from '../../features/workspace/EnvEditor'
-import { StartAgentDialog } from '../../features/workspace/StartAgentDialog'
-import { StartProcessDialog } from '../../features/workspace/StartProcessDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { relayLoginURL } from '../../api/relayClient'
 import { TopBar } from './TopBar'
 import { WorkspaceNotice } from './WorkspaceNotice'
 import { WorkspaceVisibility } from '../ui/WorkspaceVisibility'
 import { ProviderBadge } from '../ui/ProviderBadge'
+
+const CommandPalette = lazy(() => import('../../features/command-palette/CommandPalette').then(module => ({ default: module.CommandPalette })))
+const CreateWorktreeDialog = lazy(() => import('../../features/workspace/CreateWorktreeDialog').then(module => ({ default: module.CreateWorktreeDialog })))
+const DeleteWorktreeDialog = lazy(() => import('../../features/workspace/DeleteWorktreeDialog').then(module => ({ default: module.DeleteWorktreeDialog })))
+const EnvEditor = lazy(() => import('../../features/workspace/EnvEditor').then(module => ({ default: module.EnvEditor })))
+const StartAgentDialog = lazy(() => import('../../features/workspace/StartAgentDialog').then(module => ({ default: module.StartAgentDialog })))
+const StartProcessDialog = lazy(() => import('../../features/workspace/StartProcessDialog').then(module => ({ default: module.StartProcessDialog })))
 
 function MainWorkspace({ children }: { children: React.ReactNode }) {
   return (
@@ -115,7 +116,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <BranchesIsland />
           </aside>
           <div className="shell-main pointer-events-auto absolute bottom-4 left-[428px] right-4 top-[68px] flex flex-col">
-            {gitError && <div role="status" className="island mb-3 shrink-0 px-3 py-2 text-sm text-warn">{gitError}{gitError.includes('Sign in with GitHub') && <> <a href={relayLoginURL()} className="underline">Sign in with GitHub</a></>}</div>}
+            {gitError && <div role="status" className="island mb-3 shrink-0 px-3 py-2 text-sm text-warn">{gitError}</div>}
             <div className="min-h-0 flex-1">
               <PanelGroup id="workspace-layout" direction="vertical">
                 <Panel id="main-workspace" order={1} minSize={24} defaultSize={100 - initialDockSize}>
@@ -173,13 +174,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <WorkspaceNotice />
 
-        <CreateWorktreeDialog />
-        <DeleteWorktreeDialog />
-        <StartAgentDialog />
-        <StartProcessDialog />
-        <EnvEditor />
-        <CommandPalette />
+        <ShellOverlays />
       </div>
     </Tooltip.Provider>
   )
+}
+
+// Keep shortcuts and open-state subscriptions eager, without re-rendering the shell.
+function ShellOverlays() {
+  const worktree = useBonsaiStore(state => state.worktreeDialogOpen)
+  const deletion = useBonsaiStore(state => state.deleteWorktreeId)
+  const agent = useBonsaiStore(state => state.startAgentDialogOpen)
+  const process = useBonsaiStore(state => state.startProcessDialogOpen)
+  const environment = useBonsaiStore(state => state.envEditorOpen)
+  const palette = useBonsaiStore(state => state.paletteOpen)
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        const state = useBonsaiStore.getState()
+        state.setPaletteOpen(!state.paletteOpen)
+      } else if (event.key === 'Escape') {
+        useBonsaiStore.getState().setPaletteOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+  return <>
+    {worktree && <OverlayBoundary loading="Loading worktree dialog…" onDismiss={() => useBonsaiStore.getState().setWorktreeDialogOpen(false)}><CreateWorktreeDialog /></OverlayBoundary>}
+    {deletion && <OverlayBoundary loading="Loading delete dialog…" onDismiss={() => useBonsaiStore.getState().setDeleteWorktreeId('')}><DeleteWorktreeDialog /></OverlayBoundary>}
+    {agent && <OverlayBoundary loading="Loading agent dialog…" onDismiss={() => useBonsaiStore.getState().setStartAgentDialogOpen(false)}><StartAgentDialog /></OverlayBoundary>}
+    {process && <OverlayBoundary loading="Loading process dialog…" onDismiss={() => useBonsaiStore.getState().setStartProcessDialogOpen(false)}><StartProcessDialog /></OverlayBoundary>}
+    {environment && <OverlayBoundary loading="Loading environment editor…" onDismiss={() => useBonsaiStore.getState().setEnvEditorOpen(false)}><EnvEditor /></OverlayBoundary>}
+    {palette && <OverlayBoundary loading="Loading commands…" onDismiss={() => useBonsaiStore.getState().setPaletteOpen(false)}><CommandPalette /></OverlayBoundary>}
+  </>
 }

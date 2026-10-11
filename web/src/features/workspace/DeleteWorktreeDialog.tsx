@@ -56,7 +56,7 @@ function DeleteWorktreeDialogBody() {
         {busy && <p role="alert" className="text-xs text-warn">Finish the active Git operation before deleting this worktree.</p>}
         {!!runningAgents.length && <p role="alert" className="text-xs text-warn">Stop active agents before deleting this worktree.</p>}
         {!!running.length && <p className="text-xs text-warn">{running.length} running process(es) will be stopped before removal.</p>}
-        {!worktree.missing && <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={discard} disabled={pending} onChange={event => { setDiscard(event.target.checked); key.current = crypto.randomUUID() }} />Discard uncommitted changes, including untracked files{worktree.dirtyFiles ? ` (${worktree.dirtyFiles} changed files)` : ''}</label>}
+        {!worktree.missing && <label className="flex items-start gap-2 text-xs" title="An untracked folder counts as one entry."><input type="checkbox" checked={discard} disabled={pending} onChange={event => { setDiscard(event.target.checked); key.current = crypto.randomUUID() }} />Discard uncommitted changes, including untracked files{worktree.dirtyFiles ? ` (${worktree.dirtyFiles} changed files)` : ''}</label>}
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
         <div className="flex justify-end gap-3">
           <button type="button" disabled={pending} onClick={() => close('')} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px] text-muted hover:text-text">Cancel</button>

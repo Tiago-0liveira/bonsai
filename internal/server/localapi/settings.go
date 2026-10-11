@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 )
@@ -24,6 +23,7 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/project-roots", s.changeRootSettings)
 	mux.HandleFunc("DELETE /api/settings/project-roots/{rootId}", s.changeRootSettings)
 	mux.HandleFunc("POST /api/settings/project-selection", s.changeProjectSelection)
+	mux.HandleFunc("GET /api/settings/updates", s.updateSettings)
 }
 func (s *Server) rootSettingsValue(cfg config.ProjectRoots) rootSettingsResponse {
 	out := rootSettingsResponse{Version: cfg.Version, Revision: cfg.Revision, Roots: cfg.Roots, Diagnostics: []RootDiagnostic{}, Suggestions: []string{}, Repositories: []ProjectCandidate{}}
@@ -47,20 +47,7 @@ func (s *Server) rootSettingsValue(cfg config.ProjectRoots) rootSettingsResponse
 		out.Diagnostics = append(out.Diagnostics, d)
 	}
 	home, _ := os.UserHomeDir()
-	paths := []string{s.repoDir, filepath.Dir(s.repoDir)}
-	if home != "" {
-		for _, name := range []string{"projects", "dev", "code"} {
-			paths = append(paths, filepath.Join(home, name))
-		}
-	}
-	seen := map[string]bool{}
-	for _, path := range paths {
-		canonical, err := config.CanonicalDirectory(path)
-		if err == nil && !seen[canonical] {
-			seen[canonical] = true
-			out.Suggestions = append(out.Suggestions, canonical)
-		}
-	}
+	out.Suggestions = config.SuggestedProjectRoots(home, s.repoDir)
 	return out
 }
 func (s *Server) rootSettings(w http.ResponseWriter, r *http.Request) {

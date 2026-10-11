@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,12 +19,38 @@ import (
 	daemonwatcher "github.com/Tiago-0liveira/bonsai/internal/daemon/watcher"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
+)
+
+// StandardUpdateInterval is how often GitHub data is re-read for the project
+// in view in standard (polling) update mode; `bonsai web` reports it to the
+// user.
+const StandardUpdateInterval = providerVisiblePollInterval
+
+// Provider polling cadence. Reads are conditional (ETag), so a poll of an
+// unchanged repository is answered with 304s that do not count against
+// GitHub's primary rate limit.
+const (
+	// providerPollTick is how often due polls are looked for; it only compares
+	// timestamps.
+	providerPollTick = 5 * time.Second
+	// providerVisiblePollInterval applies to a project open in some browser.
+	providerVisiblePollInterval = 30 * time.Second
+	// providerRunningPollInterval applies to a visible project with CI running.
+	providerRunningPollInterval = 15 * time.Second
+	// providerBackgroundPollInterval applies to every other project.
+	providerBackgroundPollInterval = 5 * time.Minute
+	// providerRateLimitedFactor stretches every interval while less than 10% of
+	// the rate-limit window is left.
+	providerRateLimitedFactor = 4
+	// providerLivePollInterval is the safety-net poll of a project that live
+	// updates cover (tunnel up, hook live): deliveries drive its refreshes.
+	providerLivePollInterval = 10 * time.Minute
 )
 
 const (
 	processRefreshInterval  = 30 * time.Second
-	providerRefreshInterval = 2 * time.Minute
 	watcherRecoveryInterval = 30 * time.Second
 	localReadTimeout        = 20 * time.Second
 	processReadTimeout      = 5 * time.Second
@@ -58,6 +85,9 @@ type syncJobState struct {
 	providerRunning bool
 	providerPending bool
 	providerForce   bool
+	// providerStartedAt is when the last provider job began; polls are timed
+	// from it so any refresh, not only a poll, resets the clock.
+	providerStartedAt time.Time
 }
 
 type projectProjection struct {
@@ -80,10 +110,35 @@ type stateSync struct {
 	jobs               map[string]*syncJobState
 	watchCancels       map[string]context.CancelFunc
 
-	localSem    chan struct{}
-	providerSem chan struct{}
+	localSem    *priorityGate
+	providerSem *priorityGate
+	// prefetchSem bounds provider cache warm-ups separately, so a warm-up never
+	// holds a provider refresh slot while the real job waits behind it.
+	prefetchSem *priorityGate
 	gitSyncSem  chan struct{}
 	providers   *providerCache
+
+	// priorityProject is the project the user last had open. Its refreshes are
+	// admitted before other projects' when workers are scarce.
+	priorityProject string
+	// focus maps each event subscriber to the project it has in view ("" when
+	// its page is hidden). Their union is polled at the visible cadence.
+	focus map[int]string
+	// liveQueue replaces Queue for live-update deliveries in tests.
+	liveQueue func(projectID string, scope refreshScope, forceProvider bool)
+	// live reports which repositories live updates currently cover; nil
+	// in standard mode.
+	live *liveController
+	// watchProject replaces runProjectWatcher in browser fixtures, whose
+	// projects are not Git repositories.
+	watchProject func(context.Context, ProjectInfo)
+	// warm saves committed projections for the next start; nil when warm
+	// start is off. lastUsed orders projects for its eviction.
+	warm     *warmWriter
+	lastUsed map[string]time.Time
+	// restored lists projects installed from the warm-start cache; Run
+	// revalidates them at once, whether or not a browser is connected.
+	restored []string
 }
 
 func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
@@ -96,8 +151,11 @@ func newStateSync(registry projectRegistry, events *eventHub) *stateSync {
 		projects:     map[string]*projectProjection{},
 		jobs:         map[string]*syncJobState{},
 		watchCancels: map[string]context.CancelFunc{},
-		localSem:     make(chan struct{}, localRefreshWorkers),
-		providerSem:  make(chan struct{}, providerRefreshWorkers),
+		focus:        map[int]string{},
+		lastUsed:     map[string]time.Time{},
+		localSem:     newPriorityGate(localRefreshWorkers),
+		providerSem:  newPriorityGate(providerRefreshWorkers),
+		prefetchSem:  newPriorityGate(providerRefreshWorkers),
 		gitSyncSem:   make(chan struct{}, 2),
 		providers:    newProviderCache(),
 	}
@@ -110,12 +168,13 @@ func (s *stateSync) Run(ctx context.Context) {
 	s.mu.Unlock()
 	s.ReconcileCatalog()
 	s.syncWatchers()
+	s.revalidateRestored()
 
 	processTicker := time.NewTicker(processRefreshInterval)
-	providerTicker := time.NewTicker(providerRefreshInterval)
+	pollTicker := time.NewTicker(providerPollTick)
 	syncTicker := time.NewTicker(time.Minute)
 	defer processTicker.Stop()
-	defer providerTicker.Stop()
+	defer pollTicker.Stop()
 	defer syncTicker.Stop()
 	defer func() {
 		s.mu.Lock()
@@ -135,9 +194,9 @@ func (s *stateSync) Run(ctx context.Context) {
 			if s.events.count() > 0 {
 				s.RefreshAll(refreshProcesses, false)
 			}
-		case <-providerTicker.C:
+		case <-pollTicker.C:
 			if s.events.count() > 0 {
-				s.RefreshAll(refreshProvider, false)
+				s.pollProviders()
 			}
 		case <-syncTicker.C:
 			s.syncActiveProjects()
@@ -151,10 +210,13 @@ func (s *stateSync) ReconcileCatalog() {
 		present[info.ID] = info
 	}
 	s.mu.Lock()
+	removed := false
 	for id := range s.projects {
 		if _, ok := present[id]; !ok {
 			delete(s.projects, id)
 			delete(s.jobs, id)
+			delete(s.lastUsed, id)
+			removed = true
 		}
 	}
 	for _, info := range infos {
@@ -177,20 +239,155 @@ func (s *stateSync) ReconcileCatalog() {
 		p.snapshot = next
 	}
 	s.mu.Unlock()
+	if removed {
+		// Removed projects leave the saved copy too.
+		s.warm.notify()
+	}
 	s.syncWatchers()
 }
 
-func (s *stateSync) SubscriberReady() {
+// SubscriberReady refreshes every project for a new subscriber. active is the
+// project the subscriber has open, if it said so; it is refreshed first, and
+// stays the priority project until another one is named.
+func (s *stateSync) SubscriberReady(active string) {
 	s.ReconcileCatalog()
+	if active != "" {
+		if _, ok := s.registry.Lookup(active); ok {
+			s.mu.Lock()
+			s.priorityProject = active
+			s.lastUsed[active] = s.now()
+			s.mu.Unlock()
+		}
+	}
 	s.RefreshAll(refreshAll, false)
 }
 
 func (s *stateSync) RefreshAll(scope refreshScope, forceProvider bool) {
-	for _, info := range s.registry.List() {
+	infos := s.registry.List()
+	first := s.priorityID()
+	if first != "" {
+		sort.SliceStable(infos, func(i, j int) bool { return infos[i].ID == first && infos[j].ID != first })
+	}
+	for _, info := range infos {
 		if info.Available {
 			s.Queue(info.ID, scope, forceProvider)
 		}
 	}
+}
+
+// SetFocus records the project subscriber has in view. The ID is kept even
+// when no such project is known yet (a root may still be scanning); it counts
+// once the project appears, since the browser does not send it again. A known
+// project also becomes the priority project.
+func (s *stateSync) SetFocus(subscriber int, projectID string) {
+	if len(projectID) > 256 {
+		projectID = ""
+	}
+	_, known := s.registry.Lookup(projectID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.focus[subscriber] = projectID
+	if projectID != "" && known {
+		s.priorityProject = projectID
+		s.lastUsed[projectID] = s.now()
+	}
+}
+
+// ClearFocus forgets a subscriber that disconnected.
+func (s *stateSync) ClearFocus(subscriber int) {
+	s.mu.Lock()
+	delete(s.focus, subscriber)
+	s.mu.Unlock()
+}
+
+func (s *stateSync) visibleProjects() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	visible := map[string]bool{}
+	for _, projectID := range s.focus {
+		if projectID != "" {
+			visible[projectID] = true
+		}
+	}
+	return visible
+}
+
+// pollProviders queues a provider refresh for every project whose poll is
+// due. Projects in view are polled often, the rest rarely, and everything
+// slows down while GitHub's rate limit runs low.
+func (s *stateSync) pollProviders() {
+	now := s.now()
+	visible := s.visibleProjects()
+	for _, info := range s.registry.List() {
+		if !info.Available {
+			continue
+		}
+		project, ok := s.registry.Lookup(info.ID)
+		if !ok || project.github == nil {
+			continue
+		}
+		s.mu.Lock()
+		j := s.jobLocked(info.ID)
+		running, last := j.providerRunning, j.providerStartedAt
+		ciRunning := false
+		var repositories []string
+		if p := s.projects[info.ID]; p != nil {
+			for _, state := range p.snapshot.WorktreeState {
+				if state.CI.Status == "running" {
+					ciRunning = true
+					break
+				}
+			}
+			repositories = liveRepositories(p.snapshot)
+		}
+		s.mu.Unlock()
+		if running {
+			continue
+		}
+		live := false
+		for _, repository := range repositories {
+			live = live || s.live.healthy(repository)
+		}
+		rate, known := githubRate(project.github)
+		if !now.Before(nextProviderPoll(last, visible[info.ID], ciRunning, live, rate, known, now)) {
+			s.queueProvider(info.ID, false)
+		}
+	}
+}
+
+// nextProviderPoll is when a project whose last provider job started at last
+// is due again. live means live updates cover the project: polling is only a
+// safety net then; when they stop (tunnel down, hook failing) the standard
+// cadence applies again.
+func nextProviderPoll(last time.Time, visible, ciRunning, live bool, rate ghcli.Rate, rateKnown bool, now time.Time) time.Time {
+	interval := providerBackgroundPollInterval
+	switch {
+	case live:
+		interval = providerLivePollInterval
+	case visible && ciRunning:
+		interval = providerRunningPollInterval
+	case visible:
+		interval = providerVisiblePollInterval
+	}
+	if rateKnown && rate.Low() && rate.Reset.After(now) {
+		interval *= providerRateLimitedFactor
+	}
+	next := last.Add(interval)
+	if rateKnown && rate.Exhausted(now) && next.Before(rate.Reset) {
+		// Nothing would succeed before the window resets.
+		next = rate.Reset
+	}
+	return next
+}
+
+func (s *stateSync) priorityID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.priorityProject
+}
+
+func (s *stateSync) isPriority(projectID string) bool {
+	return projectID != "" && s.priorityID() == projectID
 }
 
 func (s *stateSync) Queue(projectID string, scope refreshScope, forceProvider bool) {
@@ -223,10 +420,11 @@ func (s *stateSync) queueLocal(projectID string) {
 	}
 	j.localRunning = true
 	s.mu.Unlock()
+	ticket := s.localSem.enter(s.isPriority(projectID))
 	go func() {
-		s.localSem <- struct{}{}
+		<-ticket
 		s.refreshLocal(projectID)
-		<-s.localSem
+		s.localSem.release()
 		s.mu.Lock()
 		j := s.jobLocked(projectID)
 		again := j.localPending
@@ -253,10 +451,11 @@ func (s *stateSync) queueProcesses(projectID string) {
 	}
 	j.processRunning = true
 	s.mu.Unlock()
+	ticket := s.localSem.enter(s.isPriority(projectID))
 	go func() {
-		s.localSem <- struct{}{}
+		<-ticket
 		s.refreshProcesses(projectID)
-		<-s.localSem
+		s.localSem.release()
 		s.mu.Lock()
 		j := s.jobLocked(projectID)
 		again := j.processPending
@@ -286,10 +485,14 @@ func (s *stateSync) queueProvider(projectID string, force bool) {
 	// This flag belongs to the pending job, not the job starting now.
 	j.providerForce = false
 	s.mu.Unlock()
+	ticket := s.providerSem.enter(s.isPriority(projectID))
 	go func() {
-		s.providerSem <- struct{}{}
+		<-ticket
+		s.mu.Lock()
+		s.jobLocked(projectID).providerStartedAt = s.now()
+		s.mu.Unlock()
 		s.refreshProvider(projectID, force)
-		<-s.providerSem
+		s.providerSem.release()
 		s.mu.Lock()
 		j := s.jobLocked(projectID)
 		again, nextForce := j.providerPending, j.providerForce
@@ -382,31 +585,22 @@ func (s *stateSync) refreshLocal(projectID string) {
 	if !ok || !project.info.Available {
 		return
 	}
+	defer trace.Start("local.ready", projectID)()
 	before, _ := s.CachedSnapshot(projectID)
 	previousIdentity := localIdentityToken(before)
 	ctx, cancel := s.readContext(localReadTimeout)
 	defer cancel()
 	if before.Local == nil {
-		inventory, inventoryErr := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
-			var trees []domain.Worktree
-			err := json.Unmarshal(raw, &trees)
-			return trees, err
-		})
-		if inventoryErr == nil {
-			local := domain.RepositoryState{ID: projectID, DefaultBranch: project.info.DefaultBranch, Worktrees: inventory.([]domain.Worktree)}
+		if local, err := s.readInventory(ctx, project); err == nil {
+			local.ID = projectID
+			if local.DefaultBranch == "" {
+				local.DefaultBranch = project.info.DefaultBranch
+			}
 			for i := range local.Worktrees {
 				local.Worktrees[i].RepositoryID = projectID
 				if local.DefaultBranch == "" && local.Worktrees[i].Main {
 					local.DefaultBranch = local.Worktrees[i].Branch
 				}
-			}
-			branches, err := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
-				var branches []domain.Branch
-				err := json.Unmarshal(raw, &branches)
-				return branches, err
-			})
-			if err == nil {
-				local.Branches = branches.([]domain.Branch)
 			}
 			s.commitProject(project, "local", func(snapshot *browserSnapshot) {
 				if snapshot.Local != nil {
@@ -417,6 +611,11 @@ func (s *stateSync) refreshLocal(projectID string) {
 				snapshot.Freshness["local"] = browserFreshness{State: "loading"}
 			})
 			s.queueProcesses(projectID)
+			// Remotes are known now; the provider's slow reads need not wait for
+			// the per-worktree statuses below.
+			if identity, ok := preferredRemote(local.Remotes); ok && identity.FullName != "" {
+				s.queueProviderPrefetch(project, identity.FullName)
+			}
 		}
 	}
 
@@ -450,6 +649,7 @@ func (s *stateSync) refreshLocal(projectID string) {
 		}
 		snapshot.Repository = descriptorFromLocal(project.info, &local)
 		snapshot.Online = true
+		dropRestoredProviderForOtherRemote(snapshot)
 		resetWorktreeAssociationsForHeads(snapshot)
 	})
 	if committed {
@@ -462,6 +662,63 @@ func (s *stateSync) refreshLocal(projectID string) {
 		}
 	}
 }
+
+// readInventory returns worktrees, branches and remotes without statuses. It
+// asks for git.inventory and falls back to the two older reads when the daemon
+// is a version that does not know the command.
+func (s *stateSync) readInventory(ctx context.Context, project projectServices) (domain.RepositoryState, error) {
+	value, err := s.gitPayload(ctx, project, "git.inventory", func(raw json.RawMessage) (any, error) {
+		var state domain.RepositoryState
+		err := json.Unmarshal(raw, &state)
+		return state, err
+	})
+	if err == nil {
+		return value.(domain.RepositoryState), nil
+	}
+	if ctx.Err() != nil {
+		return domain.RepositoryState{}, err
+	}
+	// This runs once per project, when its first snapshot is built, so a
+	// daemon that predates git.inventory costs one failed call.
+	trees, err := s.gitPayload(ctx, project, "git.worktrees", func(raw json.RawMessage) (any, error) {
+		var trees []domain.Worktree
+		err := json.Unmarshal(raw, &trees)
+		return trees, err
+	})
+	if err != nil {
+		return domain.RepositoryState{}, err
+	}
+	local := domain.RepositoryState{Worktrees: trees.([]domain.Worktree)}
+	if branches, err := s.gitPayload(ctx, project, "git.branches", func(raw json.RawMessage) (any, error) {
+		var branches []domain.Branch
+		err := json.Unmarshal(raw, &branches)
+		return branches, err
+	}); err == nil {
+		local.Branches = branches.([]domain.Branch)
+	}
+	return local, nil
+}
+
+// queueProviderPrefetch warms the provider cache for repository so the real
+// provider refresh, which has to wait for the local statuses, finds the
+// repository, branches and PR catalog already read. It publishes nothing.
+func (s *stateSync) queueProviderPrefetch(project projectServices, repository string) {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed || project.github == nil {
+		return
+	}
+	ticket := s.prefetchSem.enter(s.isPriority(project.info.ID))
+	go func() {
+		<-ticket
+		defer s.prefetchSem.release()
+		ctx, cancel := s.readContext(providerReadTimeout)
+		defer cancel()
+		s.providers.repository(ctx, project.github, repository, s.now(), false)
+	}()
+}
+
 func descriptorFromLocal(info ProjectInfo, local *domain.RepositoryState) ProjectInfo {
 	out := info
 	if local == nil {
@@ -641,7 +898,32 @@ func (s *stateSync) commitProject(expected projectServices, component string, mu
 		Sequence:  published.Sequence,
 		Snapshot:  &published,
 	})
+	s.warm.notify()
 	return true
+}
+
+// enableWarmStart saves committed projections to store from now on.
+func (s *stateSync) enableWarmStart(store *warmStore) {
+	s.warm = newWarmWriter(store, s.warmExports, s.now)
+}
+
+// warmExports copies every projection for the warm-start writer. Only
+// cloning happens under the lock.
+func (s *stateSync) warmExports() ([]warmExport, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]warmExport, 0, len(s.projects))
+	for id, p := range s.projects {
+		// Background validation is not a visit. Its completion time must not
+		// outrank the project the user had open when restoreWarm picks priority.
+		out = append(out, warmExport{id: id, path: p.path, lastUsed: s.lastUsed[id], snapshot: cloneSnapshot(p.snapshot)})
+	}
+	return out, s.priorityProject
+}
+
+// closeWarm saves pending changes before the process exits.
+func (s *stateSync) closeWarm(timeout time.Duration) {
+	s.warm.Close(timeout)
 }
 
 func snapshotsSemanticallyEqual(a, b browserSnapshot) bool {
@@ -708,8 +990,12 @@ func (s *stateSync) syncWatchers() {
 	}
 	s.mu.Unlock()
 
+	watch := s.runProjectWatcher
+	if s.watchProject != nil {
+		watch = s.watchProject
+	}
 	for _, start := range starts {
-		go s.runProjectWatcher(start.ctx, start.info)
+		go watch(start.ctx, start.info)
 	}
 }
 
@@ -792,6 +1078,7 @@ func (s *stateSync) commitWatchedLocal(projectID string, local domain.Repository
 		}
 		snapshot.Repository = descriptorFromLocal(project.info, &local)
 		snapshot.Online = true
+		dropRestoredProviderForOtherRemote(snapshot)
 		resetWorktreeAssociationsForHeads(snapshot)
 	})
 	if !committed {
@@ -851,7 +1138,7 @@ func failedFreshness(current browserFreshness, hadValue bool, err error) browser
 	if code == "" {
 		code = "unavailable"
 	}
-	return browserFreshness{State: state, UpdatedAt: current.UpdatedAt, Error: &browserStateError{Code: code, Message: err.Error()}}
+	return browserFreshness{State: state, UpdatedAt: current.UpdatedAt, Error: &browserStateError{Code: code, Message: err.Error()}, Source: current.Source}
 }
 
 func unavailableOrStale(current browserFreshness, code, message string) browserFreshness {

@@ -71,6 +71,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
       - name: Validate release labels
         run: node -e 'const event = require(process.env.GITHUB_EVENT_PATH); require("./.github/scripts/release-version.cjs").selectVersion([], event.pull_request.labels.map(x => x.name))'
       - run: node --test .github/scripts/*.test.cjs
@@ -78,14 +86,41 @@ jobs:
         with:
           version: v2.18.2
           args: release --snapshot --clean
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-archives
+          path: |
+            dist/bonsai_*.tar.gz
+            dist/bonsai_*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+  archive-smoke:
+    name: Snapshot archive (${{ matrix.os }})
+    needs: release-dry-run
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: snapshot-archives
+          path: dist
+      - run: node .github/scripts/archive-smoke.cjs dist
   required:
     name: CI passes
     if: always()
-    needs: [build, release-dry-run]
+    needs: [build, release-dry-run, archive-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Require every check
         env:
           BUILD: ${{ needs.build.result }}
           RELEASE: ${{ needs.release-dry-run.result }}
-        run: test "$BUILD" = success && test "$RELEASE" = success
+          SMOKE: ${{ needs.archive-smoke.result }}
+        run: test "$BUILD" = success && test "$RELEASE" = success && test "$SMOKE" = success

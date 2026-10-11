@@ -1,5 +1,7 @@
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, useContext, useEffect, useRef, useState } from 'react'
+import { FeatureBoundary } from '../../app/chunkRecovery'
+import { WorkspaceVisibility } from '../../components/ui/WorkspaceVisibility'
 import {
   DndContext,
   PointerSensor,
@@ -28,10 +30,14 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import { StatusDot } from '../branches/BranchesIsland'
 import { useOpenRuntimeEntries, type RuntimeEntry } from './openRuntimeEntries'
 import type { EditorPreference } from '../../types'
-import { AgentTerminal } from './AgentTerminal'
-import { ProcessTerminal } from './ProcessTerminal'
+
+const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })))
+const ProcessTerminal = lazy(() => import('./ProcessTerminal').then(module => ({ default: module.ProcessTerminal })))
 
 function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
+  const visible = useContext(WorkspaceVisibility)
+  const [activated, setActivated] = useState(visible)
+  useEffect(() => { if (visible) setActivated(true) }, [visible])
   const [terminalActions, setTerminalActions] = useState<HTMLDivElement | null>(null)
   const active = useBonsaiStore((state) => state.dockRuntimeId === runtime.id)
   const closeRuntime = useBonsaiStore((state) => state.closeRuntime)
@@ -83,10 +89,14 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        {runtime.type === 'agent' ? (
-          <AgentTerminal agent={runtime.agent} actionsHost={terminalActions} />
-        ) : (
-          <ProcessTerminal process={runtime.process} />
+        {(visible || activated) && (
+          <FeatureBoundary loading="Loading terminal…">
+            {runtime.type === 'agent' ? (
+              <AgentTerminal agent={runtime.agent} actionsHost={terminalActions} />
+            ) : (
+              <ProcessTerminal process={runtime.process} />
+            )}
+          </FeatureBoundary>
         )}
       </div>
     </section>

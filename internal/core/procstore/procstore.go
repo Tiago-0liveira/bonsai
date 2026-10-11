@@ -138,11 +138,30 @@ const (
 	ServeModeDevelopment ServeMode = "development"
 )
 
+// ServeScope says whose projects a serve group's local API owns. The empty
+// (repository) scope launches the API for the daemon's own repository, which
+// also backs the legacy unscoped routes. The user scope is `bonsai web`: one
+// API per user, run by a daemon whose home is not a Git repository, serving
+// only the projects found under the configured project roots.
+type ServeScope string
+
+const (
+	ServeScopeRepository ServeScope = ""
+	ServeScopeUser       ServeScope = "user"
+)
+
+// WebServeGroupID is the fixed workspace ID of the user-level `bonsai web`
+// serve group inside its daemon home.
+const WebServeGroupID = "web"
+
 // ServeSpec is the daemon request for one workspace serve group. Production
-// specs contain only the local API. Development specs may add the local webhook
-// relay, Vite frontend, and explicitly configured development sidecars.
+// specs contain the local API; the user-level one may add the live-updates
+// webhook port (served by the API) and one "tunnel" sidecar pointed at it.
+// Development specs may add the local webhook relay, Vite frontend, and
+// explicitly configured development sidecars.
 type ServeSpec struct {
 	Mode                   ServeMode      `json:"mode,omitempty"`
+	Scope                  ServeScope     `json:"scope,omitempty"`
 	WorkspaceID            string         `json:"workspace_id"`
 	WorkspacePath          string         `json:"workspace_path"`
 	Executable             string         `json:"executable"`
@@ -173,18 +192,21 @@ type ServeProcess struct {
 
 // ServeGroup is the daemon-owned status snapshot for one workspace stack.
 type ServeGroup struct {
-	ID            string         `json:"id"`
-	Mode          ServeMode      `json:"mode,omitempty"`
-	WorkspaceID   string         `json:"workspace_id"`
-	WorkspacePath string         `json:"workspace_path"`
-	State         string         `json:"state"`
-	StartedAt     time.Time      `json:"started_at"`
-	APIPort       int            `json:"api_port"`
-	WebhookPort   int            `json:"webhook_port,omitempty"`
-	WebPort       int            `json:"web_port,omitempty"`
-	BrowserOrigin string         `json:"browser_origin,omitempty"`
-	Reused        bool           `json:"reused,omitempty"`
-	Processes     []ServeProcess `json:"processes"`
+	ID            string     `json:"id"`
+	Mode          ServeMode  `json:"mode,omitempty"`
+	Scope         ServeScope `json:"scope,omitempty"`
+	WorkspaceID   string     `json:"workspace_id"`
+	WorkspacePath string     `json:"workspace_path"`
+	State         string     `json:"state"`
+	StartedAt     time.Time  `json:"started_at"`
+	APIPort       int        `json:"api_port"`
+	WebhookPort   int        `json:"webhook_port,omitempty"`
+	WebPort       int        `json:"web_port,omitempty"`
+	BrowserOrigin string     `json:"browser_origin,omitempty"`
+	// Tunnel is the argv of the live-updates tunnel sidecar, if any.
+	Tunnel    []string       `json:"tunnel,omitempty"`
+	Reused    bool           `json:"reused,omitempty"`
+	Processes []ServeProcess `json:"processes"`
 }
 
 // Store is the on-disk state for a single repo, rooted at its main worktree.

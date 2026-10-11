@@ -2,6 +2,8 @@ package localapi
 
 import (
 	"context"
+	"fmt"
+	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	"maps"
 	"strings"
 	"sync"
@@ -9,14 +11,22 @@ import (
 
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	githubdomain "github.com/Tiago-0liveira/bonsai/internal/git/github"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 )
 
 const (
+	// providerRepoTTL is how long repository, branches and PR catalog are reused
+	// before a provider job revalidates them. Revalidation is conditional
+	// (ETag), so an unchanged repository costs only 304s. It sits below the
+	// visible-project poll interval so every poll revalidates.
+	providerRepoTTL         = 20 * time.Second
 	providerReadyTTL        = 60 * time.Second
-	providerPendingTTL      = 15 * time.Second
+	providerPendingTTL      = 10 * time.Second
 	providerErrorBackoff    = 15 * time.Second
 	providerMaxErrorBackoff = 60 * time.Second
 	providerReadTimeout     = 30 * time.Second
+	// providerChecksWorkers bounds concurrent CI check reads for one project.
+	providerChecksWorkers = 6
 )
 
 type providerRepoEntry struct {
@@ -33,6 +43,9 @@ type providerRepoEntry struct {
 	running               bool
 	wait                  chan struct{}
 	lastErr               error
+	// restored is set while value came from the warm-start cache and no
+	// complete live catalog has replaced it.
+	restored bool
 }
 
 type providerChecksEntry struct {
@@ -44,6 +57,8 @@ type providerChecksEntry struct {
 	running   bool
 	wait      chan struct{}
 	lastErr   error
+	// restored is set while value came from the warm-start cache.
+	restored bool
 }
 
 type providerCache struct {
@@ -80,7 +95,7 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		}
 		if entry.lastErr != nil && now.Before(entry.retryAt) {
 			value := cloneRemote(entry.value)
-			freshness := providerFailureFreshness(value != nil, valueTime(value), entry.lastErr)
+			freshness := restoredSource(providerFailureFreshness(value != nil, valueTime(value), entry.lastErr), entry.restored)
 			c.mu.Unlock()
 			return value, freshness
 		}
@@ -94,9 +109,34 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		entry.wait = make(chan struct{})
 		c.mu.Unlock()
 
-		repo, repoErr := service.Repository(ctx, repository)
-		branches, branchErr := service.Branches(ctx, repository)
-		prs, complete, prErr := readPRCatalog(ctx, service, repository, entry, now)
+		// The three reads are independent. They run together and are joined
+		// without cancelling siblings, so the reported error is still the first
+		// of repository, branches, catalog. Only the catalog goroutine touches
+		// entry.
+		var (
+			repo                      githubdomain.RemoteRepository
+			branches                  []githubdomain.RemoteBranch
+			prs                       []githubdomain.PullRequest
+			complete                  bool
+			repoErr, branchErr, prErr error
+			reads                     sync.WaitGroup
+		)
+		reads.Add(3)
+		go func() {
+			defer reads.Done()
+			defer trace.Start("provider.repo", repository)()
+			repo, repoErr = service.Repository(ctx, repository)
+		}()
+		go func() {
+			defer reads.Done()
+			defer trace.Start("provider.branches", repository)()
+			branches, branchErr = service.Branches(ctx, repository)
+		}()
+		go func() {
+			defer reads.Done()
+			prs, complete, prErr = readPRCatalog(ctx, service, repository, entry, now)
+		}()
+		reads.Wait()
 		err := firstError(repoErr, branchErr, prErr)
 		var value *browserRemoteSnapshot
 		if err == nil {
@@ -112,9 +152,11 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		entry.running = false
 		if err == nil {
 			entry.value = value
-			entry.expiresAt = now.Add(providerReadyTTL)
+			entry.expiresAt = now.Add(providerRepoTTL)
 			if !complete {
 				entry.expiresAt = now
+			} else {
+				entry.restored = false
 			}
 			entry.retryAt = time.Time{}
 			entry.backoff = 0
@@ -133,18 +175,76 @@ func (c *providerCache) repository(ctx context.Context, service githubdomain.Git
 		}
 		close(entry.wait)
 		cached := cloneRemote(entry.value)
-		lastErr := entry.lastErr
+		lastErr, restored := entry.lastErr, entry.restored
 		c.mu.Unlock()
 		if lastErr != nil {
-			return cached, providerFailureFreshness(cached != nil, valueTime(cached), lastErr)
+			return cached, restoredSource(providerFailureFreshness(cached != nil, valueTime(cached), lastErr), restored)
 		}
 		updated := value.UpdatedAt
 		state := "ready"
 		if !complete {
 			state = "loading"
 		}
-		return cloneRemote(value), browserFreshness{State: state, UpdatedAt: &updated}
+		if restored {
+			// The restored catalog stays on screen, labeled, until a complete
+			// live scan replaces it.
+			state = "stale"
+		}
+		return cloneRemote(value), restoredSource(browserFreshness{State: state, UpdatedAt: &updated}, restored)
 	}
+}
+
+// invalidateChecks expires every cached checks result for sha (across head
+// repositories), including one waiting out an error backoff, so the next
+// provider refresh re-reads exactly that commit. It returns how many entries
+// it expired.
+func (c *providerCache) invalidateChecks(sha string) int {
+	suffix := "\x00" + strings.ToLower(sha)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for key, entry := range c.checks {
+		if strings.HasSuffix(strings.ToLower(key), suffix) {
+			entry.expiresAt = time.Time{}
+			entry.retryAt = time.Time{}
+			n++
+		}
+	}
+	return n
+}
+
+// seedRepository installs a restored provider value for repository. It starts
+// expired, with no error backoff, paging continuation or recent full
+// reconcile, so the next read scans every catalog page. A live entry is never
+// replaced.
+func (c *providerCache) seedRepository(repository string, value *browserRemoteSnapshot) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.repos[repository] != nil {
+		return
+	}
+	c.repos[repository] = &providerRepoEntry{value: cloneRemote(value), restored: true}
+}
+
+// seedChecks installs restored checks for a repository and commit. They read
+// as stale until a live read replaces them.
+func (c *providerCache) seedChecks(repository, sha string, checks []githubdomain.Check, updatedAt time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := repository + "\x00" + sha
+	if c.checks[key] != nil {
+		return
+	}
+	c.checks[key] = &providerChecksEntry{value: append([]githubdomain.Check{}, checks...), updatedAt: &updatedAt, restored: true}
+}
+
+// restoredSource labels freshness of data that came from the warm-start
+// cache.
+func restoredSource(freshness browserFreshness, restored bool) browserFreshness {
+	if restored {
+		freshness.Source = freshnessSourceDisk
+	}
+	return freshness
 }
 
 // cachedChecks keeps the last result visible while the same provider commit is
@@ -164,7 +264,7 @@ func (c *providerCache) cachedChecks(repository, sha string, now time.Time) ([]g
 	} else if !now.Before(entry.expiresAt) {
 		freshness.State = "stale"
 	}
-	return checks, freshness, true
+	return checks, restoredSource(freshness, entry.restored), true
 }
 
 func (c *providerCache) checksFor(ctx context.Context, service githubdomain.GitHubService, repository, sha string, now time.Time, force bool) ([]githubdomain.Check, browserFreshness) {
@@ -194,7 +294,7 @@ func (c *providerCache) checksFor(ctx context.Context, service githubdomain.GitH
 		}
 		if entry.lastErr != nil && now.Before(entry.retryAt) {
 			value := append([]githubdomain.Check(nil), entry.value...)
-			freshness := providerFailureFreshness(entry.updatedAt != nil, entry.updatedAt, entry.lastErr)
+			freshness := restoredSource(providerFailureFreshness(entry.updatedAt != nil, entry.updatedAt, entry.lastErr), entry.restored)
 			c.mu.Unlock()
 			return value, freshness
 		}
@@ -225,6 +325,7 @@ func (c *providerCache) checksFor(ctx context.Context, service githubdomain.GitH
 			entry.retryAt = time.Time{}
 			entry.backoff = 0
 			entry.lastErr = nil
+			entry.restored = false
 		} else {
 			if entry.backoff == 0 {
 				entry.backoff = providerErrorBackoff
@@ -239,14 +340,58 @@ func (c *providerCache) checksFor(ctx context.Context, service githubdomain.GitH
 		}
 		close(entry.wait)
 		value := append([]githubdomain.Check(nil), entry.value...)
-		updatedAt, lastErr := entry.updatedAt, entry.lastErr
+		updatedAt, lastErr, restored := entry.updatedAt, entry.lastErr, entry.restored
 		c.mu.Unlock()
 		if lastErr != nil {
-			return value, providerFailureFreshness(updatedAt != nil, updatedAt, lastErr)
+			return value, restoredSource(providerFailureFreshness(updatedAt != nil, updatedAt, lastErr), restored)
 		}
 		updated := now
 		return value, browserFreshness{State: "ready", UpdatedAt: &updated}
 	}
+}
+
+// rateLimited is implemented by GitHub services that observe rate-limit
+// headers (the in-process client).
+type rateLimited interface {
+	RateLimit() (ghcli.Rate, bool)
+}
+
+func githubRate(service githubdomain.GitHubService) (ghcli.Rate, bool) {
+	if limited, ok := service.(rateLimited); ok {
+		return limited.RateLimit()
+	}
+	return ghcli.Rate{}, false
+}
+
+// withRateLimit reports a nearly exhausted GitHub rate limit on otherwise
+// healthy provider freshness, and adds the core window's reset time to a
+// rate_limited error caused by that window.
+// The freshness state is left alone: the data itself is as fresh as it says.
+func withRateLimit(freshness browserFreshness, rate ghcli.Rate, known bool, now time.Time) browserFreshness {
+	if !known || rate.Reset.IsZero() {
+		return freshness
+	}
+	reset := rate.Reset
+	if freshness.Error != nil {
+		// The core window's reset only explains a rate_limited error when that
+		// window is what ran out; a secondary (Retry-After) or GraphQL limit
+		// resets on its own schedule, which the core headers do not carry.
+		if freshness.Error.Code == "rate_limited" && rate.Low() && reset.After(now) {
+			e := *freshness.Error
+			e.ResetAt = &reset
+			freshness.Error = &e
+		}
+		return freshness
+	}
+	if !rate.Low() || !reset.After(now) {
+		return freshness
+	}
+	freshness.Error = &browserStateError{
+		Code:    "rate_limited",
+		Message: fmt.Sprintf("GitHub API limit is low (%d of %d requests left). Bonsai checks GitHub less often until %s.", rate.Remaining, rate.Limit, reset.Local().Format("15:04")),
+		ResetAt: &reset,
+	}
+	return freshness
 }
 
 func providerFailureFreshness(hadValue bool, updatedAt any, err error) browserFreshness {
@@ -310,6 +455,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	if !ok || before.Local == nil {
 		return
 	}
+	defer trace.Start("provider.ready", projectID)()
 	identity, ok := preferredRemote(before.Local.Remotes)
 	if !ok || identity.FullName == "" {
 		s.commitProviderIfCurrent(project, localIdentityToken(before), func(snapshot *browserSnapshot) {
@@ -327,6 +473,11 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	ctx, cancel := s.readContext(providerReadTimeout)
 	defer cancel()
 	remote, providerFreshness := s.providers.repository(ctx, project.github, identity.FullName, s.now(), force)
+	// The catalog continues only after a successful read; a rate-limit note on
+	// a successful read must not stop it.
+	readOK := providerFreshness.Error == nil
+	rate, rateKnown := githubRate(project.github)
+	providerFreshness = withRateLimit(providerFreshness, rate, rateKnown, s.now())
 	if remote == nil {
 		s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 			snapshot.Freshness["provider"] = providerFreshness
@@ -366,14 +517,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 			state.PRDiagnostic = "ambiguous pull requests for provider head"
 		}
 
-		sha := ciSHA(before.Local, worktree, state.PullRequest, identity)
-		checkRepository := identity.FullName
-		if headRepo != "" {
-			checkRepository = headRepo
-		}
-		if state.PullRequest != nil && state.PullRequest.HeadRepository != "" {
-			checkRepository = state.PullRequest.HeadRepository
-		}
+		checkRepository, sha := checkTargetFor(before.Local, worktree, state.PullRequest, identity)
 		if sha == "" || checkRepository == "" {
 			state.CI.Freshness = browserFreshness{State: "unavailable", Error: &browserStateError{Code: "sha_unavailable", Message: "No provider repository and commit SHA are known for checks"}}
 			states[worktree.ID] = state
@@ -404,25 +548,42 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 			snapshot.Repository.DefaultBranch = remote.Repository.DefaultBranch
 		}
 	})
+	// Checks are independent per worktree; a bounded pool replaces the serial
+	// loop. providerCache coalesces worktrees that share a repository and SHA.
+	// states was cloned for the publication above, so writing it is private.
+	var statesMu sync.Mutex
+	slots := make(chan struct{}, providerChecksWorkers)
+	var checksWG sync.WaitGroup
 	for _, worktree := range before.Local.Worktrees {
 		target, ok := checkTargets[worktree.ID]
 		if !ok {
 			continue
 		}
-		checks, freshness := s.providers.checksFor(ctx, project.github, target.repository, target.sha, s.now(), force)
-		state := states[worktree.ID]
-		state.CI.Checks = checks
-		state.CI.Status = checksRollup(checks)
-		state.CI.Freshness = freshness
-		if freshness.State == "error" && freshness.UpdatedAt == nil {
-			state.CI.Status = "unknown"
-		}
-		states[worktree.ID] = state
+		slots <- struct{}{}
+		checksWG.Add(1)
+		go func(id, path string, target checkTarget) {
+			defer checksWG.Done()
+			defer func() { <-slots }()
+			endChecks := trace.Start("provider.checks", projectID, trace.Attrs{Worktree: path})
+			checks, freshness := s.providers.checksFor(ctx, project.github, target.repository, target.sha, s.now(), force)
+			endChecks()
+			statesMu.Lock()
+			defer statesMu.Unlock()
+			state := states[id]
+			state.CI.Checks = checks
+			state.CI.Status = checksRollup(checks)
+			state.CI.Freshness = freshness
+			if freshness.State == "error" && freshness.UpdatedAt == nil {
+				state.CI.Status = "unknown"
+			}
+			states[id] = state
+		}(worktree.ID, worktree.Path, target)
 	}
+	checksWG.Wait()
 	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.WorktreeState = maps.Clone(states)
 	})
-	if remote.PRCatalogLoading && providerFreshness.Error == nil {
+	if remote.PRCatalogLoading && readOK {
 		go func() {
 			ctx, cancel := s.readContext(2 * time.Second)
 			defer cancel()
@@ -447,6 +608,19 @@ func (s *stateSync) commitProviderIfCurrent(project projectServices, token strin
 		}
 		mutate(snapshot)
 	})
+}
+
+// checkTargetFor is the repository and commit whose checks describe worktree.
+func checkTargetFor(local *domain.RepositoryState, worktree domain.Worktree, pull *githubdomain.PullRequest, identity domain.RemoteIdentity) (string, string) {
+	headRepo, _ := worktreeProviderHead(local, worktree, identity)
+	repository := identity.FullName
+	if headRepo != "" {
+		repository = headRepo
+	}
+	if pull != nil && pull.HeadRepository != "" {
+		repository = pull.HeadRepository
+	}
+	return repository, ciSHA(local, worktree, pull, identity)
 }
 
 func worktreeProviderHead(local *domain.RepositoryState, worktree domain.Worktree, preferred domain.RemoteIdentity) (string, string) {

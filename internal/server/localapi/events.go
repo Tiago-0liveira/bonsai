@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -12,21 +13,35 @@ var websocketAuthTimeout = 3 * time.Second
 type websocketAuth struct {
 	Type  string `json:"type"`
 	Token string `json:"token"`
+	// ActiveProject optionally names the project the browser has open, so its
+	// refresh is prioritized. Older clients omit it.
+	ActiveProject string `json:"active_project,omitempty"`
+}
+
+// websocketClientFrameLimit bounds client frames: authenticate, then small
+// focus messages.
+const websocketClientFrameLimit = 4 << 10
+
+// websocketFocus names the project the browser has in view; "" when its page
+// is hidden. Older clients never send it, and older servers ignore it.
+type websocketFocus struct {
+	Type          string `json:"type"`
+	ActiveProject string `json:"active_project"`
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	if r.Host != s.expectedHost {
+	if !s.allowedHost(r.Host) {
 		writeAPIError(w, http.StatusForbidden, "invalid_host", "Host is not allowed")
 		return
 	}
-	if r.Header.Get("Origin") != s.browserOrigin {
+	if !s.allowedOrigin(r.Header.Get("Origin")) {
 		writeAPIError(w, http.StatusForbidden, "invalid_origin", "Origin is not allowed")
 		return
 	}
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout: 5 * time.Second,
 		CheckOrigin: func(req *http.Request) bool {
-			return req.Host == s.expectedHost && req.Header.Get("Origin") == s.browserOrigin
+			return s.allowedHost(req.Host) && s.allowedOrigin(req.Header.Get("Origin"))
 		},
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -35,6 +50,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	conn.SetReadLimit(websocketClientFrameLimit)
 	_ = conn.SetReadDeadline(time.Now().Add(websocketAuthTimeout))
 	var auth websocketAuth
 	if err := conn.ReadJSON(&auth); err != nil || auth.Type != "authenticate" || !s.sessions.valid(auth.Token) {
@@ -49,7 +65,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	subscriptionID, events := s.eventHub.subscribe()
 	defer s.eventHub.unsubscribe(subscriptionID)
-	s.stateSync.SubscriberReady()
+	s.stateSync.SetFocus(subscriptionID, auth.ActiveProject)
+	defer s.stateSync.ClearFocus(subscriptionID)
+	s.stateSync.SubscriberReady(auth.ActiveProject)
 
 	if err := conn.WriteJSON(localEvent{Type: "ready", Epoch: s.stateSync.epoch}); err != nil {
 		return
@@ -57,7 +75,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if err := conn.WriteJSON(localEvent{Type: "catalog", Epoch: s.stateSync.epoch, Projects: s.registry.List()}); err != nil {
 		return
 	}
-	for _, project := range s.registry.List() {
+	for _, project := range bootstrapOrder(s.registry.List(), auth.ActiveProject) {
 		snapshot, ok := s.stateSync.CachedSnapshot(project.ID)
 		if !ok {
 			continue
@@ -78,11 +96,23 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 
 	done := make(chan struct{})
+	// The reader may still apply a focus frame until it exits, so the focus is
+	// cleared only after it has.
+	defer func() {
+		_ = conn.Close()
+		<-done
+		s.stateSync.ClearFocus(subscriptionID)
+	}()
 	go func() {
 		defer close(done)
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
 				return
+			}
+			var message websocketFocus
+			if json.Unmarshal(data, &message) == nil && message.Type == "focus" {
+				s.stateSync.SetFocus(subscriptionID, message.ActiveProject)
 			}
 		}
 	}()
@@ -113,4 +143,19 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// bootstrapOrder sends the project the browser has open first, so its first
+// paint does not wait for every other project's snapshot. Without one, the
+// catalog order already puts the browser's default project (the first) first.
+func bootstrapOrder(projects []ProjectInfo, active string) []ProjectInfo {
+	for i, project := range projects {
+		if project.ID == active && i > 0 {
+			ordered := make([]ProjectInfo, 0, len(projects))
+			ordered = append(ordered, project)
+			ordered = append(ordered, projects[:i]...)
+			return append(ordered, projects[i+1:]...)
+		}
+	}
+	return projects
 }

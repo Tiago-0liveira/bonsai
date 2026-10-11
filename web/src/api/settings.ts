@@ -67,3 +67,32 @@ export async function changeProjectSelection(projectIds: string[]) {
     throw error
   } finally { useBonsaiStore.setState({ rootsSaving: false }) }
 }
+
+// GET /api/settings/updates: how GitHub changes reach this Bonsai. Read-only;
+// `bonsai web setup` changes it.
+export type LiveHookState = 'live' | 'waiting_for_ping' | 'failing' | 'needs_admin' | 'scope_missing' | 'pending'
+export interface LiveRepositoryUpdates {
+  full_name: string
+  state: LiveHookState
+  healthy: boolean
+  last_error?: string
+  last_ping_at?: string
+  last_delivery_at?: string
+  checked_at?: string
+  project_ids: string[]
+}
+export interface UpdateSettings {
+  mode: 'standard' | 'live'
+  standard_interval_seconds: number
+  live: null | {
+    tunnel: string
+    public_host?: string
+    tunnel_up: boolean
+    tunnel_error?: string
+    safety_poll_seconds: number
+    repositories: LiveRepositoryUpdates[]
+  }
+}
+export function loadUpdateSettings() {
+  return request<UpdateSettings>('/api/settings/updates')
+}

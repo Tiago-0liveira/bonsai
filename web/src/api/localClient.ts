@@ -1,13 +1,18 @@
-const configuredLocalOrigin = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_BONSAI_LOCAL_API_ORIGIN)?.replace(/\/$/, '')
-export const LOCAL_API_HTTP = configuredLocalOrigin || 'http://127.0.0.1:7001'
+import { loopbackOrigin, runtimeMeta } from './runtimeConfig'
+
+const contributorBuild = import.meta.env?.DEV || import.meta.env?.MODE === 'test' || import.meta.env?.MODE === 'e2e'
+const configuredLocalOrigin = contributorBuild
+  ? loopbackOrigin(runtimeMeta('bonsai-local-api-origin') || import.meta.env?.VITE_BONSAI_LOCAL_API_ORIGIN)
+  : undefined
+export const LOCAL_API_HTTP = configuredLocalOrigin || (typeof window !== 'undefined' ? loopbackOrigin(window.location.origin) : undefined) || ''
+export const LOCAL_API_SAME_ORIGIN = typeof window !== 'undefined' && LOCAL_API_HTTP === window.location.origin
+export const LOCAL_ENTRY = Boolean(LOCAL_API_HTTP)
 export const LOCAL_API_WS = LOCAL_API_HTTP.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/events'
 export const LOCAL_API_PROTOCOL_VERSION = 3
 
 export type LocalConnectionStatus =
   | 'not-attempted'
-  | 'requesting-permission'
   | 'bonsai-not-running'
-  | 'permission-denied'
   | 'version-incompatible'
   | 'unsupported-browser'
   | 'connected'
@@ -73,64 +78,31 @@ function sessionUsable(value: LocalSession | undefined): value is LocalSession {
 }
 
 function browserCanAttemptLoopback() {
-  if (typeof window === 'undefined') return false
-  if (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') return true
-  return window.isSecureContext
-}
-
-async function localNetworkPermission(): Promise<PermissionState | 'unknown'> {
-  if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown'
-  const query = navigator.permissions.query.bind(navigator.permissions) as unknown as (
-    descriptor: { name: string },
-  ) => Promise<PermissionStatus>
-  for (const name of ['loopback-network', 'local-network-access']) {
-    try {
-      return (await query({ name })).state
-    } catch {
-      // Newer browsers use loopback-network; older implementations expose the alias.
-    }
-  }
-  return 'unknown'
+  return typeof window !== 'undefined' && Boolean(LOCAL_API_HTTP) && Boolean(loopbackOrigin(window.location.origin))
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}, timeout = 3_500) {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeout)
   try {
-    const request: RequestInit & { targetAddressSpace: 'loopback' } = {
+    return await fetch(url, {
       ...init,
       signal: controller.signal,
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
-      targetAddressSpace: 'loopback',
-    }
-    return await fetch(url, request)
+    })
   } finally {
     window.clearTimeout(timer)
   }
 }
 
-function classifyProbeFailure(permission: PermissionState | 'unknown', error?: unknown) {
-  if (permission === 'denied') {
-    publish({
-      status: 'permission-denied',
-      message: 'This browser denied access to devices on your local network. Allow local network access for this Bonsai site, then try again.',
-    })
-    return
-  }
-  if (!browserCanAttemptLoopback()) {
-    publish({
-      status: 'unsupported-browser',
-      message: 'This browser context cannot reach Bonsai on localhost. Open Bonsai from a supported secure browser context.',
-    })
-    return
-  }
+function classifyProbeFailure(error?: unknown) {
   publish({
     status: 'bonsai-not-running',
     message: error instanceof DOMException && error.name === 'AbortError'
       ? `Bonsai did not respond at ${LOCAL_API_HTTP}.`
-      : 'Bonsai is not reachable on this computer. Start it with `bonsai serve`, then try again. If Bonsai is already running, check whether this browser has restricted Local Network Access for this frontend origin.',
+      : 'Bonsai stopped responding on this computer. Start it again with `bonsai web`, then try again.',
   })
 }
 
@@ -161,22 +133,15 @@ export async function connectLocalBonsai(): Promise<LocalConnectionSnapshot> {
   }
 
   invalidateLocalSession()
-  publish({ status: 'requesting-permission', message: 'Requesting access to Bonsai on this computer…' })
-  const permission = await localNetworkPermission()
-  if (permission === 'denied') {
-    classifyProbeFailure(permission)
-    return snapshot
-  }
-
   let health: Response
   try {
     health = await fetchWithTimeout(`${LOCAL_API_HTTP}/health`)
   } catch (error) {
-    classifyProbeFailure(await localNetworkPermission(), error)
+    classifyProbeFailure(error)
     return snapshot
   }
   if (!health.ok) {
-    classifyProbeFailure(permission)
+    classifyProbeFailure()
     return snapshot
   }
 
@@ -184,11 +149,11 @@ export async function connectLocalBonsai(): Promise<LocalConnectionSnapshot> {
   try {
     versionResponse = await fetchWithTimeout(`${LOCAL_API_HTTP}/version`)
   } catch (error) {
-    classifyProbeFailure(await localNetworkPermission(), error)
+    classifyProbeFailure(error)
     return snapshot
   }
   if (!versionResponse.ok) {
-    classifyProbeFailure(permission)
+    classifyProbeFailure()
     return snapshot
   }
 
@@ -207,7 +172,7 @@ export async function connectLocalBonsai(): Promise<LocalConnectionSnapshot> {
   try {
     await currentSession()
   } catch (error) {
-    classifyProbeFailure(await localNetworkPermission(), error)
+    classifyProbeFailure(error)
     return snapshot
   }
 
@@ -228,15 +193,13 @@ export async function localFetch(path: string, init: RequestInit = {}, retry = t
 
   let response: Response
   try {
-    const request: RequestInit & { targetAddressSpace: 'loopback' } = {
+    response = await fetch(`${LOCAL_API_HTTP}${path}`, {
       ...init,
       headers,
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
-      targetAddressSpace: 'loopback',
-    }
-    response = await fetch(`${LOCAL_API_HTTP}${path}`, request)
+    })
   } catch (error) {
     markLocalConnectionLost(error instanceof Error ? error.message : undefined)
     throw error
@@ -263,7 +226,7 @@ export interface LocalEventConnection {
   epoch: string
 }
 
-function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) => void): Promise<LocalEventConnection> {
+function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) => void, activeProjectId?: string): Promise<LocalEventConnection> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(LOCAL_API_WS)
     let settled = false
@@ -274,9 +237,12 @@ function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) =>
         reject(new Error('Local Bonsai event socket failed to connect'))
       }
     }
-    const closed = () => {
+    const closed = (event: Event) => {
       if (!settled) {
         settled = true
+        // A policy close before ready rejects this capability, as after an API
+        // restart. Drop it so the next attempt asks for a fresh session.
+        if ((event as CloseEvent).code === 1008) invalidateLocalSession()
         reject(new Error('Local Bonsai event socket closed before authentication completed'))
       }
     }
@@ -308,15 +274,29 @@ function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) =>
       onEvent(data)
     })
     socket.addEventListener('open', () => {
-      socket.send(JSON.stringify({ type: 'authenticate', token: value.token }))
+      // active_project lets the backend refresh the project in view first.
+      socket.send(JSON.stringify({
+        type: 'authenticate',
+        token: value.token,
+        ...(activeProjectId ? { active_project: activeProjectId } : {}),
+      }))
     }, { once: true })
   })
 }
 
-export function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}): Promise<LocalEventConnection> {
+// sendEventFocus tells the backend which project this page has in view ('' when
+// none, such as a hidden tab), so that project's GitHub data is polled often and
+// the rest rarely. Servers that predate it ignore the frame.
+export function sendEventFocus(socket: WebSocket, projectId: string): boolean {
+  if (socket.readyState !== 1) return false
+  socket.send(JSON.stringify({ type: 'focus', active_project: projectId }))
+  return true
+}
+
+export function openLocalEvents(onEvent: (event: LocalEvent) => void = () => {}, activeProjectId?: string): Promise<LocalEventConnection> {
   if (snapshot.status !== 'connected') return Promise.reject(new Error('Connect to local Bonsai before opening local events.'))
-  if (sessionUsable(session)) return connectEventSocket(session, onEvent)
-  return currentSession().then(value => connectEventSocket(value, onEvent))
+  if (sessionUsable(session)) return connectEventSocket(session, onEvent, activeProjectId)
+  return currentSession().then(value => connectEventSocket(value, onEvent, activeProjectId))
 }
 
 export function __resetLocalClientForTests() {

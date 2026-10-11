@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Bell, Check, ChevronDown, Command, Folder, GitBranch, LayoutGrid, ScrollText, Search, SlidersHorizontal, Sprout } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { getRelayConnectionSnapshot, relayLoginURL, subscribeRelayConnection } from '../../api/relayClient'
+import { getRelayConnectionSnapshot, RELAY_ENABLED, subscribeRelayConnection } from '../../api/relayClient'
+import { UpdatesBadge } from './UpdatesBadge'
 
 const nav = [
   { label: 'Canvas', to: '/', icon: LayoutGrid },
@@ -107,9 +108,7 @@ function RelayStatus() {
   )
   const label = relay.status === 'connected'
     ? 'GitHub realtime connected'
-    : relay.status === 'authorization-expired'
-      ? 'Connect GitHub'
-      : relay.status === 'connecting'
+    : relay.status === 'connecting'
         ? 'GitHub realtime connecting'
         : relay.status === 'offline'
           ? 'GitHub realtime offline'
@@ -120,9 +119,7 @@ function RelayStatus() {
       ? 'bg-warn-solid'
       : 'bg-muted-2'
   const content = <><span className={`h-1.5 w-1.5 rounded-full ${dot}`} /><span className="hidden min-[1180px]:inline">{label}</span></>
-  return relay.status === 'authorization-expired'
-    ? <a href={relayLoginURL()} title={relay.message ?? label} className="bonsai-focus btn-ghost font-mono text-[11px]">{content}</a>
-    : <span title={relay.message ?? label} className="flex h-[26px] items-center gap-2 px-2 font-mono text-[11px] text-muted">{content}</span>
+  return <span title={relay.message ?? label} className="flex h-[26px] items-center gap-2 px-2 font-mono text-[11px] text-muted">{content}</span>
 }
 
 export function TopBar() {
@@ -189,7 +186,8 @@ export function TopBar() {
       </nav>
 
       <div className="island island-topbar pointer-events-auto flex h-10 items-center gap-2.5 justify-self-end px-1.5">
-        <RelayStatus />
+        {RELAY_ENABLED && <RelayStatus />}
+        <UpdatesBadge />
         <button className="bonsai-focus btn-ghost" onClick={() => setPaletteOpen(true)}>
           <Search size={13} />
           <span className="hidden min-[980px]:inline">Search</span>

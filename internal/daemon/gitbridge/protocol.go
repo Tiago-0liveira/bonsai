@@ -33,7 +33,9 @@ type Frame struct {
 	Cursor       uint64                  `json:"cursor,omitempty"`
 }
 
-var reads = map[string]bool{"git.repository.refresh": true, "git.branches": true, "git.worktrees": true, "git.status": true, "git.files": true, "git.file.read": true, "git.diff.read": true}
+// git.inventory is a strict subset of git.repository.refresh (worktrees,
+// branches, remotes; no status), so it is a read with the same authority.
+var reads = map[string]bool{"git.repository.refresh": true, "git.inventory": true, "git.branches": true, "git.worktrees": true, "git.status": true, "git.files": true, "git.file.read": true, "git.diff.read": true}
 
 func IsRead(kind string) bool { return reads[kind] }
 func Allowed(kind string) bool {

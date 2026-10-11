@@ -77,14 +77,7 @@ func setupCLIRepo(t *testing.T) string {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Cleanup(func() {
-		shutdownAndWait(t, root)
-		select {
-		case <-daemonDone:
-		case <-time.After(3 * time.Second):
-			t.Error("daemon cleanup did not finish")
-		}
-	})
+	t.Cleanup(func() { shutdownAndWait(t, root, daemonDone) })
 	return root
 }
 
@@ -184,7 +177,11 @@ func startRepo(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = server.Serve(root) }()
+	daemonDone := make(chan struct{})
+	go func() {
+		defer close(daemonDone)
+		_ = server.Serve(root)
+	}()
 
 	c := client.For(root)
 	deadline := time.Now().Add(3 * time.Second)
@@ -194,36 +191,24 @@ func startRepo(t *testing.T) string {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Cleanup(func() { shutdownAndWait(t, root) })
+	t.Cleanup(func() { shutdownAndWait(t, root, daemonDone) })
 	return root
 }
 
-// shutdownAndWait stops root's daemon and blocks until it has deregistered
-// from the global index (Deregister runs asynchronously after the Shutdown
-// RPC responds), so callers can safely tear down shared HOME/XDG dirs right
-// after — otherwise a late Deregister write can race a concurrent
-// RemoveAll(HOME) and fail with "directory not empty".
-func shutdownAndWait(t *testing.T, root string) {
+// shutdownAndWait stops root's in-process daemon and blocks until its Serve
+// goroutine returns (done closes). The Shutdown RPC responds before the
+// daemon's cleanup runs, and that cleanup deregisters from the global index
+// under the shared HOME/XDG config dir. Polling the index is not enough: the
+// daemon removes its socket first, so any index read prunes the entry before
+// Deregister runs, and the late Deregister write then races TempDir's
+// RemoveAll(HOME) ("directory not empty", seen on macOS).
+func shutdownAndWait(t *testing.T, root string, done <-chan struct{}) {
 	t.Helper()
 	_ = client.For(root).Shutdown(true)
-	clean := filepath.Clean(root)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		daemons, err := procstore.ListDaemons()
-		if err != nil {
-			return
-		}
-		found := false
-		for _, d := range daemons {
-			if d.Root == clean {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Error("daemon cleanup did not finish")
 	}
 }
 

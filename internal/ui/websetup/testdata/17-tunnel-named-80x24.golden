@@ -1,0 +1,24 @@
+ Set up the Cloudflare tunnel                                             5 / 7
+ ──────────────────────────────────────────────────────────────────────────────
+
+   Tunnel name  › bonsai
+     Bonsai creates this tunnel if missing after you confirm in Review. It
+     forwards the receiver (127.0.0.1:7002); ingress rules in your own
+     cloudflared config take precedence.
+
+ › Public URL   › http://hooks.example.com
+     Bonsai routes this hostname to your tunnel after you confirm in Review.
+     Your domain must be on Cloudflare; sign in when prompted.
+
+  ✗ Public URL must be an https:// address with no path, for example
+    https://hooks.example.com.
+
+
+
+
+
+
+
+
+
+ tab next field · enter next · esc back

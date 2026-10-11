@@ -52,7 +52,7 @@ func (s *Service) SyncRepository(ctx context.Context, id string, policy domain.P
 	}
 	now := time.Now().UTC()
 	result.Fetch = domain.SyncOutcome{State: "ready", CompletedAt: &now}
-	st, err := statusOverview(ctx, r.Root)
+	st, err := statusOverview(ctx, r.Root, nil)
 	if err != nil {
 		result.Pull = domain.SyncOutcome{State: "skipped", Reason: "status_unavailable", Error: err.Error()}
 		return result, nil

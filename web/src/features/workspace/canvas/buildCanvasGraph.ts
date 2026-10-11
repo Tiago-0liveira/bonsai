@@ -153,6 +153,8 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
             prNumber: worktree.prNumber,
             prStatus: worktree.prStatus,
             ciStatus: worktree.ciStatus,
+            ciStale: worktree.ciStale,
+            prStale: worktree.prStale,
             hasRunningAgent: projectAgents.some((agent) => agent.worktreeId === worktree.id && agent.state === 'running'),
             processCount: stackProcesses.filter(process => process.worktreeId === worktree.id).length,
           })),
@@ -190,6 +192,8 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         prStatus: worktree.prStatus,
         ciStatus: worktree.ciStatus,
         ciFailed: worktree.ciFailed,
+        ciStale: worktree.ciStale,
+        prStale: worktree.prStale,
         gitState: worktree.gitState,
         stats: [{ label: 'agents', value: canvasAgents.length }, { label: 'processes', value: projectProcesses.filter(process => process.worktreeId === worktree.id).length }],
         historyItems: historyAgents.map((agent) => ({

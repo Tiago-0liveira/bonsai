@@ -228,10 +228,19 @@ function emptySnapshot(projectId: string) {
 
 type MockWireSnapshot = Record<string, unknown>
 
+// The default fixture serves the UI and API from one loopback origin.
+export const DEFAULT_API_ORIGIN = 'http://127.0.0.1:7011'
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const webSocketOrigin = (origin: string) => origin.replace(/^http/, 'ws')
+// Paths the Go API answers with the embedded UI rather than JSON.
+const isUIPath = (path: string) => path === '/' || path === '/app' || path.startsWith('/app/') || path.startsWith('/assets/')
+
 export async function mockLocalEventSocket(
   page: Page,
   bootstrap: () => { projects: typeof repositories; snapshots: MockWireSnapshot[] } = () => ({ projects: [], snapshots: [] }),
   delayedUpdate?: () => MockWireSnapshot | undefined,
+  apiOrigin = DEFAULT_API_ORIGIN,
 ) {
   let sendEvent: ((event: Record<string, unknown>) => void) | undefined
 
@@ -262,7 +271,7 @@ export async function mockLocalEventSocket(
     })
   }
 
-  await page.routeWebSocket('ws://127.0.0.1:7001/events', socket => {
+  await page.routeWebSocket(`${webSocketOrigin(apiOrigin)}/events`, socket => {
     sendEvent = event => socket.send(JSON.stringify(event))
     socket.onMessage(message => {
       try {
@@ -298,7 +307,7 @@ export async function mockLocalEventSocket(
   return { publishCatalog, publishUpdate }
 }
 
-export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false) {
+export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false, apiOrigin = DEFAULT_API_ORIGIN) {
   const rootSettings: {
     version: number
     revision: number
@@ -394,9 +403,10 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
           return projectSnapshot('bonsai', true)
         }
       : undefined,
+    apiOrigin,
   )
 
-  await page.routeWebSocket(/ws:\/\/127\.0\.0\.1:7001\/api\/projects\/[^/]+\/agents\/[^/]+\/terminal$/, terminal => {
+  await page.routeWebSocket(new RegExp(`^${escapeRegExp(webSocketOrigin(apiOrigin))}/api/projects/[^/]+/agents/[^/]+/terminal$`), terminal => {
     terminal.onMessage(message => {
       const frame = JSON.parse(String(message))
       if (frame.type === 'attach') {
@@ -405,7 +415,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       }
     })
   })
-  await page.route('http://127.0.0.1:7001/**', async (route) => {
+  await page.route(url => url.origin === apiOrigin && !isUIPath(url.pathname), async (route) => {
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname
@@ -468,6 +478,10 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       await route.fulfill({ json: rootSettings })
       const projects = activeRepositories()
       socket.publishCatalog(projects, projects.map(repository => projectSnapshot(repository.id)))
+      return
+    }
+    if (path === '/api/settings/updates') {
+      await route.fulfill({ json: { mode: 'standard', standard_interval_seconds: 120, live: null } })
       return
     }
     if (path === '/api/settings/project-selection' && request.method() === 'POST') {
@@ -561,14 +575,22 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Not Found' } } })
   })
 
-  await page.route('https://api.bonsai.dev/**', async (route) => {
-    await route.fulfill({ status: 401, body: 'authentication required' })
-  })
   return { publish: () => socket.publishUpdate(projectSnapshot('bonsai', true)) }
+}
+
+// mockUpdateSettings answers GET /api/settings/updates with whatever
+// settings() returns at the time (routes added later take precedence).
+export async function mockUpdateSettings(page: Page, settings: () => unknown, apiOrigin = DEFAULT_API_ORIGIN) {
+  await page.route(url => url.origin === apiOrigin && url.pathname === '/api/settings/updates', route => route.fulfill({ json: settings() }))
 }
 
 export async function openConnectedApp(page: Page) {
   await page.goto('/app')
-  await page.getByRole('button', { name: 'Connect to local Bonsai' }).click()
+  await page.locator('.react-flow').waitFor({ state: 'visible' })
+}
+
+export async function openFullStackApp(page: Page) {
+  // Explicit origin of the native API/PTY fixture, also serving its UI.
+  await page.goto('http://127.0.0.1:7014/app')
   await page.locator('.react-flow').waitFor({ state: 'visible' })
 }

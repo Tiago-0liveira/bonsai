@@ -7,17 +7,28 @@ on:
   pull_request:
     paths:
       - "web/**"
+      # The e2e fixtures serve the UI through the Go local API.
+      - "internal/server/localapi/**"
+      - "internal/server/webui/**"
       - ".github/workflows/frontend.yml"
   push:
     branches:
       - main
+      - feat/bonsai-web
     paths:
       - "web/**"
+      # The e2e fixtures serve the UI through the Go local API.
+      - "internal/server/localapi/**"
+      - "internal/server/webui/**"
       - ".github/workflows/frontend.yml"
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      TZ: UTC
+      LC_ALL: C
+      LANG: C
     defaults:
       run:
         working-directory: web
@@ -32,13 +43,59 @@ jobs:
           version: 12.9.1
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.12.0
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm test:bundle
       - run: pnpm build
+      - run: pnpm bundle:check --json bundle-reports/production.json
+      # The bundle bonsai embeds (-tags embedui) must be the production build.
+      - run: go test -tags embedui ./web/
+        working-directory: .
       - run: pnpm exec playwright install --with-deps chromium
+        id: browser
       - run: pnpm test:e2e
+        env:
+          BONSAI_P7_RUNS: 30
+      - name: Profiling measurements (100 worktrees, 500 PRs)
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: pnpm test:e2e --config playwright.measure.config.ts --grep 'cold start:|warm start:'
+        env:
+          BONSAI_P7_RUNS: 30
+          BONSAI_P7_SIZE: large
+      - name: Production measurements (25 worktrees, 50 PRs)
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: pnpm test:e2e --config playwright.measure.config.ts --grep 'cold start:|warm start:'
+        env:
+          BONSAI_P7_RUNS: 30
+          BONSAI_WARM_START_UI: dist
+      - name: Production measurements (100 worktrees, 500 PRs)
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: pnpm test:e2e --config playwright.measure.config.ts --grep 'cold start:|warm start:'
+        env:
+          BONSAI_P7_RUNS: 30
+          BONSAI_P7_SIZE: large
+          BONSAI_WARM_START_UI: dist
+      - name: Cache measurements
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        working-directory: .
+        run: go test ./internal/server/localapi -run '^TestWarmStartCacheMeasurements$' -count=1 -v
+        env:
+          BONSAI_P7_MEASURE: 1
+          BONSAI_P7_CACHE_REPORT: web/bundle-reports/cache.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-evidence-${{ github.sha }}
+          retention-days: 30
+          path: |
+            web/bundle-reports/
+            web/test-results/
+            web/playwright-report/

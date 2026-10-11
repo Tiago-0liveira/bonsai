@@ -69,3 +69,33 @@ func TestCommandsDedupeAcrossRestartAndBindTargets(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(a, "x"), []byte("x"), 0600)
 }
+
+func TestInventoryIsAReadWithoutStatusAndIsBoundToItsRepository(t *testing.T) {
+	ctx := context.Background()
+	a := repository(t)
+	svc, e := local.New([]local.Config{{ID: "a", Root: a, WorktreeRoot: t.TempDir()}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	// Reads never touch the journal, so none is configured.
+	x := &Executor{Local: svc}
+	if !IsRead("git.inventory") || !Allowed("git.inventory") {
+		t.Fatal("git.inventory must be an allowed read")
+	}
+	c := Command{ID: "inventory", UserID: "user", RepositoryID: "a", Type: "git.inventory", CreatedAt: time.Now().UTC()}
+	result := x.Execute(ctx, c)
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	var state domain.RepositoryState
+	if err := json.Unmarshal(result.Payload, &state); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Worktrees) != 1 || len(state.Branches) != 1 || state.Worktrees[0].Status != nil {
+		t.Fatalf("inventory = %+v", state)
+	}
+	c.RepositoryID = "missing"
+	if r := x.Execute(ctx, c); r.Error == nil {
+		t.Fatal("unknown repository accepted")
+	}
+}

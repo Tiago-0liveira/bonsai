@@ -18,6 +18,8 @@ export interface PullRequestListPaneProps {
   rows: readonly PullRequest[]
   state: 'loading' | 'error' | 'ready'
   message: string
+  /** Set while the rows come from a catalog that is not confirmed yet. */
+  stale?: string
   onRetry: () => void
   repository?: string
   selectedId?: string
@@ -118,7 +120,7 @@ function Skeleton() {
 }
 
 export function PullRequestListPane(props: PullRequestListPaneProps) {
-  const { tab, onTabChange, openCount, closedCount, rows, state, message, onRetry, repository, selectedId, onSelect, onVisibleChange } = props
+  const { tab, onTabChange, openCount, closedCount, rows, state, message, stale, onRetry, repository, selectedId, onSelect, onVisibleChange } = props
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<PrListFilter>('all')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -245,6 +247,11 @@ export function PullRequestListPane(props: PullRequestListPaneProps) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto border-t border-border-subtle px-1.5 pb-1.5">
+        {stale && state === 'ready' && (
+          <div role="status" data-stale-label className="m-1.5 flex items-center gap-2 rounded-lg border border-warn/30 bg-warn-solid/[.10] px-2.5 py-1.5 font-mono text-[10.5px] text-warn">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-solid" />{stale}…
+          </div>
+        )}
         {showError && (
           <div role="alert" className="m-1.5 flex items-start gap-2 rounded-lg border border-danger/35 bg-danger-solid/[.12] p-2.5 text-[11px] text-danger">
             <span className="min-w-0 flex-1 break-words">{message}</span>

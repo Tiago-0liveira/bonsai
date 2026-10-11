@@ -16,6 +16,7 @@ import {
   localFetch,
   markLocalConnectionLost,
   openLocalEvents,
+  sendEventFocus,
   type LocalEvent,
 } from './local'
 
@@ -93,7 +94,11 @@ export interface RemotePR {
 export interface WireFreshness {
   state: SyncFreshness['state']
   updated_at?: string
-  error?: { code: string; message: string }
+  // reset_at accompanies code rate_limited: when GitHub's rate-limit window resets.
+  error?: { code: string; message: string; reset_at?: string }
+  // 'disk' while the data was restored from the API's warm-start cache and has
+  // not been revalidated; absent when it was read live.
+  source?: 'disk'
 }
 interface LocalStatus {
   branch?: string
@@ -235,8 +240,15 @@ export function projectForGitHubRepository(repositoryId: number) {
 
 function setEpoch(epoch: string) {
   if (!epoch || activeEpoch === epoch) return
+  const restarted = activeEpoch !== ''
   activeEpoch = epoch
   sequenceGuards.clear()
+  // A new API process: what is on screen came from the old one. It stays,
+  // labeled stale, and runtime authority waits for the new snapshots.
+  if (restarted) {
+    markConnectionStateStale()
+    useBonsaiStore.setState({ processAuthorityReady: {} })
+  }
 }
 
 function guardFor(projectId: string, epoch: string) {
@@ -658,6 +670,21 @@ export function startGitBackend() {
   const bootstrapSnapshots = new Map<string, Snapshot>()
   const pendingSnapshots = new Map<string, Snapshot>()
   const generation = ++activeGeneration
+  // The project last reported to the backend as in view.
+  let reportedFocus: string | undefined
+
+  const focusedProject = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return ''
+    const id = useBonsaiStore.getState().activeProjectId
+    return id && id !== 'local' ? id : ''
+  }
+  const reportFocus = () => {
+    if (closed || !socket) return
+    const next = focusedProject()
+    if (next !== reportedFocus && sendEventFocus(socket, next)) reportedFocus = next
+  }
+  const unsubscribeFocus = useBonsaiStore.subscribe(reportFocus)
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', reportFocus)
 
   const onEvent = (data: LocalEvent) => {
     if (closed || generation !== activeGeneration) return
@@ -684,6 +711,18 @@ export function startGitBackend() {
     if ((data.type === 'project_snapshot' || data.type === 'project_update') && data.snapshot) {
       const snapshot = data.snapshot as Snapshot
       if (data.epoch && snapshot.epoch && data.epoch !== snapshot.epoch) return
+      // A delayed event from the previous API process never reaches the buffers.
+      if (activeEpoch && snapshot.epoch && snapshot.epoch !== activeEpoch) return
+      if (bootstrapping && bootstrapCatalog.length) {
+        // The project in view paints as soon as its snapshot arrives (the API
+        // sends it first); the others still wait for bootstrap_complete.
+        reconcileCatalog(bootstrapCatalog)
+        if (snapshot.repository.id === useBonsaiStore.getState().activeProjectId) {
+          bootstrapSnapshots.delete(snapshot.repository.id)
+          applySnapshot(snapshot, generation)
+          return
+        }
+      }
       if (bootstrapping) {
         const previous = bootstrapSnapshots.get(snapshot.repository.id)
         if (!previous || snapshot.sequence >= previous.sequence) bootstrapSnapshots.set(snapshot.repository.id, snapshot)
@@ -716,12 +755,18 @@ export function startGitBackend() {
       bootstrapCatalog = []
       bootstrapSnapshots.clear()
       pendingSnapshots.clear()
-      const connection = await openLocalEvents(onEvent)
+      // The persisted active project is the one worth refreshing first. '' and
+      // 'local' are placeholders before the catalog has loaded.
+      const activeProjectId = useBonsaiStore.getState().activeProjectId
+      const connection = await openLocalEvents(onEvent, activeProjectId && activeProjectId !== 'local' ? activeProjectId : undefined)
       if (closed || generation !== activeGeneration) {
         connection.socket.close()
         return
       }
       socket = connection.socket
+      // authenticate already named the active project; a hidden tab corrects it.
+      reportedFocus = activeProjectId && activeProjectId !== 'local' ? activeProjectId : ''
+      reportFocus()
       retryDelay = 1000
       useBonsaiStore.setState({ gitError: '' })
       clearTimeout(heartbeatTimer)
@@ -752,6 +797,8 @@ export function startGitBackend() {
   void connect()
   return () => {
     closed = true
+    unsubscribeFocus()
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', reportFocus)
     clearTimeout(reconnectTimer)
     clearTimeout(heartbeatTimer)
     if (generation === activeGeneration) activeGeneration++

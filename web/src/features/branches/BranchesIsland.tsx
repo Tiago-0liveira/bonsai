@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react'
 import { Archive, ChevronDown, ChevronRight, CircleCheck, CircleX, Clock3, GitBranch, LoaderCircle, Plus } from 'lucide-react'
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
 import { useBonsaiStore } from '../../stores/bonsai'
+import { isStale, staleDescription, staleLabel } from '../../lib/freshness'
 import { agentById, branchTreeSelector, worktreeById, type BranchTreeIndex } from '../terminal/branchTree'
 import type { CiStatus } from '../../types'
 
@@ -47,7 +48,7 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
 
   return (
     <div>
-      <div className="grid h-[22px] grid-cols-[minmax(0,1fr)_auto] items-center">
+      <div data-worktree-row={worktree.id} className="grid h-[22px] grid-cols-[minmax(0,1fr)_auto] items-center">
         <div className={'flex h-[22px] min-w-0 items-center rounded-md pr-1.5 font-mono text-[11.5px] ' + (selected ? 'bg-accent/[.09] text-text' : 'text-muted hover:bg-panel-2')}>
           <button
             type="button"
@@ -68,8 +69,8 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
           </button>
         </div>
         <span className="flex items-center gap-1.5 pl-1.5 pr-1.5">
-          <CiIcon status={worktree.ciStatus} />
-          {worktree.prNumber ? <span className="font-mono text-[10px] text-muted-2">#{worktree.prNumber}</span> : null}
+          <span data-ci-badge={worktree.ciStatus} data-stale={worktree.ciStale || undefined} title={worktree.ciStale ? `CI ${worktree.ciStatus}, not confirmed yet` : undefined} className={'flex' + (worktree.ciStale ? ' opacity-50' : '')}><CiIcon status={worktree.ciStatus} /></span>
+          {worktree.prNumber ? <span data-pr-badge={worktree.prNumber} data-stale={worktree.prStale || undefined} title={worktree.prStale ? 'Pull request link not confirmed yet' : undefined} className={'font-mono text-[10px] text-muted-2' + (worktree.prStale ? ' opacity-60' : '')}>#{worktree.prNumber}</span> : null}
         </span>
       </div>
 
@@ -109,6 +110,10 @@ export function BranchesIsland() {
   const setSelection = useBonsaiStore(state => state.setSelection)
   const setWorktreeDialogOpen = useBonsaiStore(state => state.setWorktreeDialogOpen)
   const agentCount = useMemo(() => Object.values(index.canvasAgents).reduce((total, ids) => total + ids.length, 0), [index])
+  const local = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local)
+  const provider = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.provider)
+  // Either component being unconfirmed labels the whole list.
+  const stale = isStale(local) ? local : isStale(provider) ? provider : undefined
 
   return (
     <aside aria-label="Branches" className="island flex h-[min(296px,40vh)] shrink-0 flex-col overflow-hidden">
@@ -116,13 +121,18 @@ export function BranchesIsland() {
         <GitBranch size={13} className="text-ok" />
         <span>Branches</span>
         <span className="island-count">{index.count}</span>
+        {stale && (
+          <span data-stale-label title={staleDescription(stale)} className="chip flex items-center gap-1 bg-warn-solid/[.16] font-mono normal-case tracking-normal text-warn">
+            <span className="h-1.5 w-1.5 rounded-full bg-warn-solid" />{staleLabel(stale)}
+          </span>
+        )}
         <button type="button" aria-label="Add worktree" title="Add worktree" onClick={() => setWorktreeDialogOpen(true)} className="bonsai-focus icon-btn-20 ml-auto hover:text-text">
           <Plus size={12} />
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-1.5">
         {defaultWorktree && (
-          <div className={'flex h-[22px] w-full min-w-0 items-center gap-2 rounded-md pr-2 font-mono text-[11.5px] ' + (defaultSelected ? 'bg-accent/[.09] text-text' : 'hover:bg-panel-2')}>
+          <div data-worktree-row={defaultWorktree.id} className={'flex h-[22px] w-full min-w-0 items-center gap-2 rounded-md pr-2 font-mono text-[11.5px] ' + (defaultSelected ? 'bg-accent/[.09] text-text' : 'hover:bg-panel-2')}>
             <button
               type="button"
               onClick={() => setSelection({ type: 'worktree', id: defaultWorktree.id })}
