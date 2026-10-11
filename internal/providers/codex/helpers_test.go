@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
@@ -53,6 +54,12 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	log := filepath.Join(t.TempDir(), "calls.log")
 	t.Setenv("FAKE_CODEX_LOG", log)
+	phase0, err := filepath.Abs(filepath.Join("testdata", "phase0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_CODEX_FIXTURES", phase0)
+	t.Setenv("FAKE_CODEX_APPSERVER", "")
 
 	accounts, err := agents.NewFileAccountStore(t.TempDir())
 	if err != nil {
@@ -80,6 +87,51 @@ func newTestEnv(t *testing.T) *testEnv {
 func (e *testEnv) calls() string {
 	data, _ := os.ReadFile(e.log)
 	return string(data)
+}
+
+// spawns counts the app-server processes the fake has started.
+func (e *testEnv) spawns() int {
+	return strings.Count(e.calls(), "app-server home=")
+}
+
+// rpcs lists the JSON-RPC methods the fake app-server received, in order.
+func (e *testEnv) rpcs() []string {
+	var out []string
+	for _, line := range strings.Split(e.calls(), "\n") {
+		if method, ok := strings.CutPrefix(line, "rpc "); ok {
+			out = append(out, method)
+		}
+	}
+	return out
+}
+
+// fixtures points the fake at a copy of testdata/phase0 where the named files
+// are replaced by the given content.
+func (e *testEnv) fixtures(overrides map[string]string) {
+	e.t.Helper()
+	dir := e.t.TempDir()
+	entries, err := os.ReadDir(filepath.Join("testdata", "phase0"))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join("testdata", "phase0", entry.Name()))
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		writeFile(e.t, filepath.Join(dir, entry.Name()), string(data), 0o644)
+	}
+	for name, content := range overrides {
+		writeFile(e.t, filepath.Join(dir, name), content, 0o644)
+	}
+	e.t.Setenv("FAKE_CODEX_FIXTURES", dir)
+}
+
+// clock makes the provider's clock return the value the pointer holds.
+func (e *testEnv) clock(start time.Time) *time.Time {
+	now := start
+	e.provider.now = func() time.Time { return now }
+	return &now
 }
 
 func (e *testEnv) add(name string, options agents.SetupOptions) agents.Account {

@@ -325,13 +325,45 @@ The start dialog's `permissions` select is a preset that sends `sandbox` and
 Identity (`email · plan`) is decoded from the `id_token` claims in `auth.json`
 without a network call; auth status is the exit code of `codex login status`
 (cached 60 s, 10 s when unknown). Short commands run in their own process group,
-killed on timeout. `Capabilities().Usage` is off until rate limits are read.
+killed on timeout.
+
+Models and usage come from `codex app-server` (`appserver.go`), Codex's published
+JSON-RPC protocol over stdio. The client starts it with the profile's environment
+and the file-store override, sends `initialize` and `initialized`, makes its
+calls one at a time and closes stdin; the process group is killed on return or
+after 15 s, stderr is discarded and at most 1 MiB is read. Concurrent reads of
+one profile share one process. Errors carry the method and JSON-RPC code only,
+never a server message or body, and Bonsai never writes `auth.json`.
+
+- `models.go` (`ModelLister`): `model/list` for logged-in profiles, hidden models
+  dropped, the default first, each model's own `efforts` and `default_effort`.
+  Logged-out profiles, or a failed call, fall back to `codex debug models --bundled`
+  (default = lowest priority among visible models); a failure of both is an empty
+  list, never an error. Cached 10 minutes, 1 minute after a fallback. The effort
+  of a launch is checked against the cached list of its model (or the default
+  model) and against every shipped level when the list is not cached; validation
+  never starts Codex.
+- `usage.go` (`Usage`, `UsagePolicy` 5 minutes): `account/rateLimits/read`. A
+  window is named by its length: 300 minutes `five_hour`, 10080 `weekly`, any
+  other `window_<n>m`; remaining is `1 - usedPercent/100`. Limits of other metered
+  features (`rateLimitsByLimitId`) get their own group and ids prefixed by the
+  limit id. The plan is `UsageSnapshot.Plan`; credits become a warning. API-key
+  profiles are `ErrUsageUnsupported` and logged-out ones `ErrNotAuthenticated`,
+  both decided from `auth.json` without starting Codex. Failures are remembered
+  for a minute.
+- `bonsai agent usage` renders each provider through the adapter table in
+  `internal/cli/agent_usage.go` (`usageSpec`): slot assignment, fleet score,
+  next reset and table per provider.
 
 Tests never need a Codex login: `testdata/fakecodex.sh` is a POSIX stand-in put
-first on `PATH`; `login` writes an `auth.json` with an unsigned JWT, other runs
-print their argv and environment and echo input as `REPLY:`. `testdata/phase0/`
-holds redacted responses from a real Codex 0.162.1 (`auth.json` shape, app-server
-`initialize`, `account/read`, `account/rateLimits/read`, `model/list`).
+first on `PATH`; `login` writes an `auth.json` with an unsigned JWT, `app-server`
+replays the `testdata/phase0/` responses (re-numbering their ids; env switches
+make it exit early, hang, flood or fail), `debug models --bundled` prints
+`phase0/bundled-models.json`, and other runs print their argv and environment
+and echo input as `REPLY:`. `testdata/phase0/` holds redacted responses from a
+real Codex 0.162.1 (`auth.json` shape, app-server `initialize`, `account/read`,
+`account/rateLimits/read`, `model/list`, and a trimmed `debug models --bundled`);
+`testdata/rate-limits-multi.json` is hand-written to cover extra limit groups.
 
 ## Antigravity web terminals
 

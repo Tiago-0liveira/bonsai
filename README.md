@@ -449,6 +449,13 @@ bonsai agent account remove work                     # logs the profile out, del
   process tree instead of attaching to a shared background app-server. Two
   profiles on the same ChatGPT login share its usage limits; Bonsai warns when
   you add one.
+- **Usage and models.** `bonsai agent usage` shows the 5-hour and weekly limits
+  of ChatGPT profiles (plus the limits of other metered features and a credit
+  balance when Codex reports them), read from `codex app-server`, Codex's
+  published protocol; Codex does any token refresh itself. API key profiles
+  have no plan limits and are shown as `n/a`. Results are cached for 5 minutes;
+  `--refresh` bypasses the cache. The start dialog's model suggestions come from
+  the same place, with the list bundled in Codex as the fallback.
 - Requires Codex CLI 0.162.1 or newer.
 
 ### Antigravity in the web workspace

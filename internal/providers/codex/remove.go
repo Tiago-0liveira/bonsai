@@ -13,7 +13,7 @@ import (
 // best effort: the caller turns a failure into a warning and removes the
 // profile anyway.
 func (p *Provider) RemoveAccount(ctx context.Context, account agents.Account) error {
-	defer p.forgetStatus(account.ID)
+	defer p.forgetAccount(account.ID)
 	home := homeDir(p.accounts, account)
 	if _, err := os.Stat(home); err != nil {
 		return nil

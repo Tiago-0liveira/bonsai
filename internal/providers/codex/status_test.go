@@ -181,8 +181,17 @@ func TestRealCodexHomeIsNeverWritten(t *testing.T) {
 	e.prepare(key, agents.LaunchOptions{})
 	e.provider.DescribeAccount(t.Context(), work)
 	e.provider.DescribeAccount(t.Context(), key)
-	if _, err := e.provider.Usage(t.Context(), work, agents.UsageOptions{}); !errors.Is(err, agents.ErrUsageUnsupported) {
+	if _, err := e.provider.Usage(t.Context(), work, agents.UsageOptions{}); err != nil {
 		t.Fatalf("usage err = %v", err)
+	}
+	if _, err := e.provider.Usage(t.Context(), key, agents.UsageOptions{}); !errors.Is(err, agents.ErrUsageUnsupported) {
+		t.Fatalf("api key usage err = %v", err)
+	}
+	if _, err := e.provider.Models(t.Context(), work); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.provider.Models(t.Context(), key); err != nil {
+		t.Fatal(err)
 	}
 	for _, a := range []agents.Account{work, key} {
 		if _, err := e.service.Remove(t.Context(), a.ID); err != nil {

@@ -53,7 +53,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 export const agentProviders = () => request<AgentCapability[]>('/api/agents/providers')
 export interface AgentModel {
-  id: string; label: string; description?: string; source: 'alias' | 'api'
+  id: string; label: string; description?: string; source: 'alias' | 'api' | 'bundled'
   /** Reasoning efforts this model accepts, when they vary by model. */
   efforts?: string[]; default_effort?: string
   /** The model the provider uses when none is chosen. */

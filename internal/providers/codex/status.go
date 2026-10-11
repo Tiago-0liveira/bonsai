@@ -97,3 +97,14 @@ func (p *Provider) forgetStatus(id agents.AccountID) {
 	delete(p.statuses, id)
 	p.statusMu.Unlock()
 }
+
+// forgetAccount drops everything cached for a profile that is being removed.
+func (p *Provider) forgetAccount(id agents.AccountID) {
+	p.forgetStatus(id)
+	p.modelsMu.Lock()
+	delete(p.modelCache, id)
+	p.modelsMu.Unlock()
+	p.usageMu.Lock()
+	delete(p.usageFailures, id)
+	p.usageMu.Unlock()
+}

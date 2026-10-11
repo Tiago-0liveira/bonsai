@@ -78,6 +78,15 @@ type Provider struct {
 
 	statusMu sync.Mutex
 	statuses map[agents.AccountID]statusEntry
+
+	// flights coalesces app-server reads: concurrent callers share one process.
+	flights flightGroup
+
+	modelsMu   sync.Mutex
+	modelCache map[agents.AccountID]modelsEntry
+
+	usageMu       sync.Mutex
+	usageFailures map[agents.AccountID]usageFailure
 }
 
 // New builds the Codex provider. out receives setup progress (what was seeded,
@@ -104,10 +113,10 @@ func New(accounts agents.AccountStore, sessions agents.SessionStore, launcher ag
 
 func (p *Provider) ID() agents.ProviderID { return ProviderID }
 
-// Capabilities leaves Usage off until rate limits are read through the app-server.
 func (p *Provider) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		Interactive:            true,
+		Usage:                  true,
 		MultiAccount:           true,
 		ConcurrentSameAccount:  true,
 		ConcurrentCrossAccount: true,
@@ -131,12 +140,6 @@ func (p *Provider) Availability(ctx context.Context) agents.Availability {
 		return agents.Availability{Reason: fmt.Sprintf("Update Codex (found %s, need %s)", text, MinVersion), Version: text}
 	}
 	return agents.Availability{Available: true, Version: text}
-}
-
-// Usage is not available yet; UsageService never calls it while the Usage
-// capability is off.
-func (p *Provider) Usage(context.Context, agents.Account, agents.UsageOptions) (agents.UsageSnapshot, error) {
-	return agents.UsageSnapshot{}, fmt.Errorf("%w: codex", agents.ErrUsageUnsupported)
 }
 
 type missingBinaryError struct{ err error }
@@ -207,4 +210,6 @@ var (
 	_ agents.LaunchSchema     = (*Provider)(nil)
 	_ agents.AccountDescriber = (*Provider)(nil)
 	_ agents.AccountRemover   = (*Provider)(nil)
+	_ agents.ModelLister      = (*Provider)(nil)
+	_ agents.UsagePolicy      = (*Provider)(nil)
 )

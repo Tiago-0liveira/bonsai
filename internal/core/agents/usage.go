@@ -3,11 +3,14 @@ package agents
 import "time"
 
 type UsageSnapshot struct {
-	Provider  ProviderID   `json:"provider"`
-	AccountID AccountID    `json:"account_id"`
-	FetchedAt time.Time    `json:"fetched_at"`
-	Limits    []UsageLimit `json:"limits"`
-	Warnings  []string     `json:"warnings,omitempty"`
+	Provider  ProviderID `json:"provider"`
+	AccountID AccountID  `json:"account_id"`
+	FetchedAt time.Time  `json:"fetched_at"`
+	// Plan is the subscription plan the provider reports (for example "plus"),
+	// when it reports one.
+	Plan     string       `json:"plan,omitempty"`
+	Limits   []UsageLimit `json:"limits"`
+	Warnings []string     `json:"warnings,omitempty"`
 }
 
 type UsageLimit struct {

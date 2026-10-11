@@ -170,7 +170,8 @@ type LaunchSchema interface {
 }
 
 // ModelOption is one model a provider can launch with. Source is "alias" for a
-// provider-defined shortcut and "api" for a model the provider's service listed.
+// provider-defined shortcut, "api" for a model the provider's service listed and
+// "bundled" for one read from the provider's own installed binary.
 type ModelOption struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`

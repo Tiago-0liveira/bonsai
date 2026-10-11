@@ -33,7 +33,107 @@ type usageDashboardRow struct {
 	claudeWeek *agents.UsageLimit
 	// claudeModels are the per-model weekly limits (opus, sonnet, ...).
 	claudeModels []*agents.UsageLimit
-	err          error
+	codex5h      *agents.UsageLimit
+	codexWeek    *agents.UsageLimit
+	// codexOther are Codex's other windows and the limits of other metered
+	// features, in the order the provider returned them.
+	codexOther []*agents.UsageLimit
+	err        error
+}
+
+// usageProviderSpec is what the dashboard knows about one provider: which limit
+// goes into which slot of a row, how a row is scored and when it resets next,
+// and how its table is drawn. Providers without an entry get no score and a
+// placeholder section.
+type usageProviderSpec struct {
+	assign func(row *usageDashboardRow, limit *agents.UsageLimit)
+	score  func(row usageDashboardRow) (float64, bool)
+	reset  func(row usageDashboardRow) *time.Time
+	render func(out io.Writer, rows []usageDashboardRow, now time.Time, color bool)
+}
+
+// usageSpec returns the dashboard adapter of a provider, if there is one.
+func usageSpec(provider agents.ProviderID) (usageProviderSpec, bool) {
+	switch provider {
+	case "antigravity":
+		return usageProviderSpec{
+			assign: assignAntigravityLimit,
+			score:  func(row usageDashboardRow) (float64, bool) { return usageMinRemaining(row.gemini5h, row.geminiWeek) },
+			reset:  func(row usageDashboardRow) *time.Time { return firstReset(row.geminiWeek, row.gemini5h) },
+			render: renderAntigravityUsage,
+		}, true
+	case "claude":
+		return usageProviderSpec{
+			assign: assignClaudeLimit,
+			score:  func(row usageDashboardRow) (float64, bool) { return usageMinRemaining(row.claude5h, row.claudeWeek) },
+			reset:  func(row usageDashboardRow) *time.Time { return firstReset(row.claudeWeek, row.claude5h) },
+			render: func(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
+				renderClaudeUsageTable(out, rows, now, color)
+				fmt.Fprintln(out, "  "+usageStyle("Read from an undocumented endpoint; it may change. Bonsai never refreshes logins.", "\x1b[2m", color))
+			},
+		}, true
+	case "codex":
+		return usageProviderSpec{
+			assign: assignCodexLimit,
+			score:  func(row usageDashboardRow) (float64, bool) { return usageMinRemaining(row.codex5h, row.codexWeek) },
+			reset:  func(row usageDashboardRow) *time.Time { return firstReset(row.codexWeek, row.codex5h) },
+			render: renderCodexUsageTable,
+		}, true
+	}
+	return usageProviderSpec{}, false
+}
+
+// firstReset returns the reset time of the first limit that has one.
+func firstReset(limits ...*agents.UsageLimit) *time.Time {
+	for _, limit := range limits {
+		if limit != nil && limit.ResetsAt != nil {
+			return limit.ResetsAt
+		}
+	}
+	return nil
+}
+
+func assignAntigravityLimit(row *usageDashboardRow, limit *agents.UsageLimit) {
+	switch classifyUsageLimit(*limit) {
+	case "gemini-5h":
+		if row.gemini5h == nil {
+			row.gemini5h = limit
+		}
+	case "gemini-weekly":
+		if row.geminiWeek == nil {
+			row.geminiWeek = limit
+		}
+	case "third-5h":
+		if row.third5h == nil {
+			row.third5h = limit
+		}
+	case "third-weekly":
+		if row.thirdWeek == nil {
+			row.thirdWeek = limit
+		}
+	}
+}
+
+func assignClaudeLimit(row *usageDashboardRow, limit *agents.UsageLimit) {
+	switch {
+	case limit.ID == "five_hour":
+		row.claude5h = limit
+	case limit.ID == "seven_day":
+		row.claudeWeek = limit
+	case strings.HasPrefix(limit.ID, "seven_day_"):
+		row.claudeModels = append(row.claudeModels, limit)
+	}
+}
+
+func assignCodexLimit(row *usageDashboardRow, limit *agents.UsageLimit) {
+	switch limit.ID {
+	case "five_hour":
+		row.codex5h = limit
+	case "weekly":
+		row.codexWeek = limit
+	default:
+		row.codexOther = append(row.codexOther, limit)
+	}
 }
 
 func printUsageDashboard(out io.Writer, results []agents.AccountUsageResult) {
@@ -44,38 +144,9 @@ func renderUsageDashboard(out io.Writer, results []agents.AccountUsageResult, no
 	rows := make([]usageDashboardRow, 0, len(results))
 	for _, result := range results {
 		row := usageDashboardRow{account: result.Account, usage: result.Usage, err: result.Error}
-		if result.Usage != nil {
+		if spec, ok := usageSpec(result.Account.Provider); ok && result.Usage != nil {
 			for i := range result.Usage.Limits {
-				limit := &result.Usage.Limits[i]
-				if result.Account.Provider == "claude" {
-					switch {
-					case limit.ID == "five_hour":
-						row.claude5h = limit
-					case limit.ID == "seven_day":
-						row.claudeWeek = limit
-					case strings.HasPrefix(limit.ID, "seven_day_"):
-						row.claudeModels = append(row.claudeModels, limit)
-					}
-					continue
-				}
-				switch classifyUsageLimit(*limit) {
-				case "gemini-5h":
-					if row.gemini5h == nil {
-						row.gemini5h = limit
-					}
-				case "gemini-weekly":
-					if row.geminiWeek == nil {
-						row.geminiWeek = limit
-					}
-				case "third-5h":
-					if row.third5h == nil {
-						row.third5h = limit
-					}
-				case "third-weekly":
-					if row.thirdWeek == nil {
-						row.thirdWeek = limit
-					}
-				}
+				spec.assign(&row, &result.Usage.Limits[i])
 			}
 		}
 		rows = append(rows, row)
@@ -203,14 +274,10 @@ func usageRowLow(row usageDashboardRow) bool {
 }
 
 func usageRowScore(row usageDashboardRow) (float64, bool) {
-	switch row.account.Provider {
-	case "antigravity":
-		return usageMinRemaining(row.gemini5h, row.geminiWeek)
-	case "claude":
-		return usageMinRemaining(row.claude5h, row.claudeWeek)
-	default:
-		return 0, false
+	if spec, ok := usageSpec(row.account.Provider); ok {
+		return spec.score(row)
 	}
+	return 0, false
 }
 
 func usageMinRemaining(limits ...*agents.UsageLimit) (float64, bool) {
@@ -230,24 +297,12 @@ func usageMinRemaining(limits ...*agents.UsageLimit) (float64, bool) {
 }
 
 func usagePrimaryReset(row usageDashboardRow) *time.Time {
-	switch row.account.Provider {
-	case "claude":
-		if row.claudeWeek != nil && row.claudeWeek.ResetsAt != nil {
-			return row.claudeWeek.ResetsAt
-		}
-		if row.claude5h != nil {
-			return row.claude5h.ResetsAt
-		}
-	case "antigravity":
-		if row.geminiWeek != nil && row.geminiWeek.ResetsAt != nil {
-			return row.geminiWeek.ResetsAt
-		}
-		if row.gemini5h != nil {
-			return row.gemini5h.ResetsAt
-		}
+	if spec, ok := usageSpec(row.account.Provider); ok {
+		return spec.reset(row)
 	}
 	return nil
 }
+
 func usageNextReset(rows []usageDashboardRow, now time.Time, color bool) (string, string) {
 	var account string
 	var provider agents.ProviderID
@@ -279,28 +334,28 @@ func renderUsageProvider(out io.Writer, provider agents.ProviderID, rows []usage
 	title := fmt.Sprintf("◆ %s · %d %s", usageProviderTitle(provider), len(rows), plural(len(rows), "account", "accounts"))
 	fmt.Fprintln(out, usageStyle(title, "\x1b[1;36m", color))
 
-	switch provider {
-	case "antigravity":
-		fmt.Fprintln(out, "  "+usageStyle("Gemini Models", "\x1b[1m", color))
-		renderAntigravityUsageTable(out, rows, now, color, false)
+	if spec, ok := usageSpec(provider); ok {
+		spec.render(out, rows, now, color)
+		return
+	}
+	fmt.Fprintln(out, "  Usage dashboard adapter not implemented yet.")
+}
 
-		hasThirdParty := false
-		for _, row := range rows {
-			if row.third5h != nil || row.thirdWeek != nil {
-				hasThirdParty = true
-				break
-			}
+func renderAntigravityUsage(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
+	fmt.Fprintln(out, "  "+usageStyle("Gemini Models", "\x1b[1m", color))
+	renderAntigravityUsageTable(out, rows, now, color, false)
+
+	hasThirdParty := false
+	for _, row := range rows {
+		if row.third5h != nil || row.thirdWeek != nil {
+			hasThirdParty = true
+			break
 		}
-		if hasThirdParty {
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, "  "+usageStyle("Claude & GPT Models", "\x1b[1m", color))
-			renderAntigravityUsageTable(out, rows, now, color, true)
-		}
-	case "claude":
-		renderClaudeUsageTable(out, rows, now, color)
-		fmt.Fprintln(out, "  "+usageStyle("Read from an undocumented endpoint; it may change. Bonsai never refreshes logins.", "\x1b[2m", color))
-	default:
-		fmt.Fprintln(out, "  Usage dashboard adapter not implemented yet.")
+	}
+	if hasThirdParty {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "  "+usageStyle("Claude & GPT Models", "\x1b[1m", color))
+		renderAntigravityUsageTable(out, rows, now, color, true)
 	}
 }
 
@@ -445,6 +500,97 @@ func renderClaudeUsageTable(out io.Writer, rows []usageDashboardRow, now time.Ti
 			}
 		}
 	}
+}
+
+// renderCodexUsageTable draws Account, Plan, 5h, Weekly and, when any profile
+// has them, the other limits ("Spark 5h 90% · 1d 40%").
+func renderCodexUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
+	nameWidth := len("Account")
+	planWidth := len("Plan")
+	hasOther := false
+	for _, row := range rows {
+		if n := utf8.RuneCountInString(row.account.Name); n > nameWidth {
+			nameWidth = n
+		}
+		if row.usage != nil {
+			if n := utf8.RuneCountInString(row.usage.Plan); n > planWidth {
+				planWidth = n
+			}
+		}
+		hasOther = hasOther || len(row.codexOther) > 0
+	}
+	if nameWidth > 18 {
+		nameWidth = 18
+	}
+	if planWidth > 12 {
+		planWidth = 12
+	}
+	weekWidth := 0
+	header := fmt.Sprintf("  %s  %s  %s  %s", padUsage("Account", nameWidth), padUsage("Plan", planWidth), padUsage("5h", usageCellWidth), "Weekly")
+	if hasOther {
+		weekWidth = usageCellWidth
+		header = fmt.Sprintf("  %s  %s  %s  %s  %s", padUsage("Account", nameWidth), padUsage("Plan", planWidth), padUsage("5h", usageCellWidth), padUsage("Weekly", usageCellWidth), "Other")
+	}
+	fmt.Fprintln(out, header)
+	for _, row := range rows {
+		name := truncateRunes(row.account.Name, nameWidth)
+		if row.err != nil {
+			reason := "ERR"
+			style := "\x1b[91m"
+			switch {
+			case errors.Is(row.err, agents.ErrUsageUnsupported):
+				reason, style = usageUnsupportedReason(row.err), "\x1b[2m"
+			case errors.Is(row.err, agents.ErrNotAuthenticated):
+				reason, style = "not logged in", "\x1b[2m"
+			}
+			cell := "n/a"
+			if style == "\x1b[91m" {
+				cell = "ERR"
+			}
+			fmt.Fprintf(out, "  %s  %s  %s  %s\n", padUsage(name, nameWidth), padUsage("-", planWidth), usageStyle(padUsage(cell, usageCellWidth), style, color && style == "\x1b[91m"), usageStyle(reason, style, color))
+			continue
+		}
+		renderedName := padUsage(name, nameWidth)
+		if score, ok := usageRowScore(row); ok {
+			renderedName = usageRankStyle(renderedName, score, color)
+		}
+		plan := "-"
+		if row.usage != nil && row.usage.Plan != "" {
+			plan = truncateRunes(row.usage.Plan, planWidth)
+		}
+		line := fmt.Sprintf("  %s  %s  %s  %s", renderedName, padUsage(plan, planWidth),
+			renderUsageLimitCell(row.codex5h, now, color, usageCellWidth), renderUsageLimitCell(row.codexWeek, now, color, weekWidth))
+		if hasOther {
+			line += "  " + usageOtherCells(row.codexOther)
+		}
+		fmt.Fprintln(out, line)
+	}
+	for _, row := range rows {
+		if row.usage != nil {
+			for _, warning := range row.usage.Warnings {
+				fmt.Fprintf(out, "  %s: %s\n", row.account.Name, warning)
+			}
+		}
+	}
+}
+
+// usageOtherCells renders "Spark 5h 90% · review 1d 60%" from a row's other
+// limits; "-" when none has a value.
+func usageOtherCells(limits []*agents.UsageLimit) string {
+	parts := make([]string, 0, len(limits))
+	for _, limit := range limits {
+		if fraction, ok := usageFraction(limit); ok {
+			label := limit.Label
+			if label == "" {
+				label = limit.ID
+			}
+			parts = append(parts, fmt.Sprintf("%s %d%%", truncateRunes(label, 24), int(fraction*100+0.5)))
+		}
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " · ")
 }
 
 // usageModelCells renders "opus 80% · sonnet 90%" from the per-model weekly limits.
