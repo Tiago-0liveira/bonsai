@@ -1,0 +1,77 @@
+
+== 1. Version and flags
+codex --version: codex-cli 0.162.1
+flags present: --add-dir --ask-for-approval --cd --config --dangerously-bypass-approvals-and-sandbox --model --no-alt-screen --no-daemon --profile --sandbox --search 
+platform: Linux 6.18.33.1-microsoft-standard-WSL2
+daemon already running for real home (left untouched): yes
+
+== 2. login status in an empty home (expect 'Not logged in', exit 1)
+exit code: 1, output: Not logged in 
+entries created in empty home: tmp 
+
+== 3. login (chatgpt) into cx-a with the file store
+login exit code: 0
+login status exit: 0, output: Logged in using ChatGPT 
+auth.json in cx-a: yes (mode 600)
+wrote auth.shape.json
+real ~/.codex/auth.json signature before/after: 1791598087:3937 / 1791598087:3937
+cx-a entries: auth.json log tmp 
+config.toml in cx-a (keys only):
+
+== 4. second account in cx-b (--device-auth)
+login exit code: 0
+login status exit: 0, output: Logged in using ChatGPT 
+cx-a vs cx-b: different accounts
+cx-a claims:
+id_token claim keys: ['amr', 'at_hash', 'aud', 'auth_provider', 'auth_time', 'email', 'email_verified', 'exp', 'https://api.openai.com/auth', 'iat', 'iss', 'jti', 'name', 'rat', 'sid', 'sub']
+has email claim: True
+auth claim keys: ['chatgpt_account_id', 'chatgpt_plan_type', 'chatgpt_subscription_active_start', 'chatgpt_subscription_active_until', 'chatgpt_subscription_last_checked', 'chatgpt_user_id', 'groups', 'organizations', 'user_id']
+chatgpt_plan_type present: True  value: plus
+chatgpt_account_id present: True
+cx-b claims:
+id_token claim keys: ['amr', 'at_hash', 'aud', 'auth_provider', 'auth_time', 'email', 'email_verified', 'exp', 'https://api.openai.com/auth', 'iat', 'iss', 'jti', 'name', 'rat', 'sid', 'sub']
+has email claim: True
+auth claim keys: ['chatgpt_account_id', 'chatgpt_plan_type', 'chatgpt_subscription_active_start', 'chatgpt_subscription_active_until', 'chatgpt_subscription_last_checked', 'chatgpt_user_id', 'groups', 'organizations', 'user_id']
+chatgpt_plan_type present: True  value: free
+chatgpt_account_id present: True
+
+== 5. concurrent non-interactive sessions (2 on cx-a, 1 on cx-b)
+session 1: exit 0, output tail: ad1-8d90-7481-a536-a33803f6a289 -------- user Reply with exactly: SESSION-1 codex SESSION-1 tokens used 1,846 SESSION-1 
+session 2: exit 0, output tail: ad1-8da2-7e51-a904-ce92153bea71 -------- user Reply with exactly: SESSION-2 codex SESSION-2 tokens used 1,846 SESSION-2 
+session 3: exit 0, output tail: ad1-8d96-7aa2-b567-ab5ff55c90ec -------- user Reply with exactly: SESSION-3 codex SESSION-3 tokens used 2,318 SESSION-3 
+cx-a still logged in: exit 0
+cx-b still logged in: exit 0
+
+== 6. refresh race: back-date last_refresh on cx-a, then 3 concurrent execs
+race session 1: exit 0, output tail: id: 01a12ad1-a168-73f0-ae44-dc26f4100f9a -------- user Reply with exactly: RACE-1 codex RACE-1 tokens used 1,848 RACE-1 
+race session 2: exit 0, output tail: id: 01a12ad1-a163-7cb0-8e06-97c7aec7c332 -------- user Reply with exactly: RACE-2 codex RACE-2 tokens used 1,821 RACE-2 
+race session 3: exit 0, output tail: id: 01a12ad1-a161-7683-aa72-78871b4ce810 -------- user Reply with exactly: RACE-3 codex RACE-3 tokens used 1,821 RACE-3 
+no refresh-token errors in output
+last_refresh moved off the back-dated value: no ('yes' = a refresh happened)
+cx-a logged in after race: exit 0
+
+== 7. app-server probe on cx-a (initialize / account / rate limits / models)
+replies seen for ids: [1, 2, 3, 4]
+auth.json changed during probe: no
+app-server control socket dir in cx-a: 
+
+== 8. API-key profile cx-c (needs OPENAI_API_KEY in your environment, optional)
+skipped (export OPENAI_API_KEY before running to include it)
+
+== Leak check on results
+WARNING: the files listed above may contain secrets/PII. Inspect before sharing.
+real ~/.codex/auth.json signature after run: 1791598087:3937 (before: 1791598087:3937)
+
+== MANUAL (needs a real TUI; record answers in OUT_DIR/manual.txt)
+ M1. Three concurrent `codex --no-daemon` sessions in three worktrees (two on one home, one on
+     another, `CODEX_HOME=<dir> codex -c 'cli_auth_credentials_store="file"' --no-daemon`):
+     does each answer as the right account? Does `/status` show the right email?
+ M2. Refresh race in the TUI: keep three `--no-daemon` sessions on ONE home busy past a token
+     refresh (or back-date last_refresh as in step 6). Any `refresh_token_reused` / forced
+     re-login? Repeat WITHOUT `--no-daemon`. (`exec` above does not take --no-daemon.)
+ M3. `codex --no-daemon -- "--version: reply PARSED-OK"`: is the prompt taken literally after `--`?
+ M4. In a brand-new worktree: does `codex -s workspace-write -a on-request` still show the
+     "trust this folder" screen, and does it write [projects."<path>"] into <home>/config.toml?
+ M5. Does a plain `codex` (no --no-daemon) start a daemon for the custom CODEX_HOME, and where
+     is its socket? `ls <home>/app-server-control/` and `pgrep -af app-server`.
+done. Review ~/bonsai-feat-codex/internal/providers/codex/testdata/phase0 before committing (fixtures are committed in Phase 3).

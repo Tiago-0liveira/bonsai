@@ -306,6 +306,33 @@ implements `UsagePolicy` (5 minutes), which `UsageService` prefers over its own
 TTL. Tests point `claude.UsageEndpoint` or the provider's `usageEndpoint` at an
 `httptest` server; nothing reaches the network.
 
+## Codex provider
+
+`internal/providers/codex` runs the Codex CLI. Each profile owns
+`<account dir>/home` as its `CODEX_HOME`, shared by all its sessions; there is no
+credential vault, materialize or reconcile step, and Bonsai never writes
+`auth.json` (Codex rotates refresh tokens, so copies would log each other out).
+Every invocation passes `-c cli_auth_credentials_store="file"`, and setup also
+writes it into the profile's `config.toml`, so the login always lives in the
+profile's `auth.json`. Launch environment: every inherited `CODEX_*` and
+`OPENAI_*` variable is removed, then `CODEX_HOME`, `BONSAI_AGENT_*` and the host's
+`CODEX_CA_CERTIFICATE` are set. Argv is built in `launch.go` only:
+`[explicit...] -c store --no-daemon [-m] [-c model_reasoning_effort=] [-s -a | --dangerously-bypass-approvals-and-sandbox] [-- prompt]`.
+The start dialog's `permissions` select is a preset that sends `sandbox` and
+`approval` together (`bypass` is Bonsai's name for the bypass flag). Codex has no
+`--session-id`, so `provider_session_id` stays empty.
+
+Identity (`email · plan`) is decoded from the `id_token` claims in `auth.json`
+without a network call; auth status is the exit code of `codex login status`
+(cached 60 s, 10 s when unknown). Short commands run in their own process group,
+killed on timeout. `Capabilities().Usage` is off until rate limits are read.
+
+Tests never need a Codex login: `testdata/fakecodex.sh` is a POSIX stand-in put
+first on `PATH`; `login` writes an `auth.json` with an unsigned JWT, other runs
+print their argv and environment and echo input as `REPLY:`. `testdata/phase0/`
+holds redacted responses from a real Codex 0.162.1 (`auth.json` shape, app-server
+`initialize`, `account/read`, `account/rateLimits/read`, `model/list`).
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured

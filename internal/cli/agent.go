@@ -300,5 +300,15 @@ Providers:
                credentials or history. Use --no-seed to skip, --seed-from <dir> to
                choose another source. Several sessions of one login profile can
                race on token refresh; token mode avoids that.
+  codex        bonsai agent account add codex <name>                   ChatGPT login (default)
+               bonsai agent account add codex <name> --auth device     device code (SSH, WSL)
+               bonsai agent account add codex <name> --auth api-key    asks for an API key
+               printenv OPENAI_API_KEY | bonsai agent account add codex <name> --token-stdin
+               Each profile owns its own CODEX_HOME; Codex keeps the login in its
+               auth.json. New profiles are seeded from ~/.codex (config.toml without
+               logins, projects or credential providers, AGENTS.md, prompts, skills,
+               rules); never auth.json, sessions or history. --no-seed and
+               --seed-from <dir> work as for Claude. Re-login a profile with
+               bonsai agent run <name> -- login
 `, "\n"))
 }
