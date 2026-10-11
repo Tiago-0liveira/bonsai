@@ -110,11 +110,16 @@ func (p *Provider) LaunchFields() []agents.LaunchField {
 // `--`, Bonsai's flags go before it.
 //
 // When the explicit args start with something other than a flag, the caller is
-// driving a subcommand (`login`, `mcp list`) or a positional prompt, so only the
-// credential store override is added, as a global option in front.
+// driving a subcommand (`login`, `resume --last`) or a positional prompt, so
+// only the global options go in front: the credential store override and
+// --no-daemon, which keeps a resumed or forked TUI out of the shared daemon too.
 func launchArgs(settings Settings, explicit []string, launch agents.LaunchOptions) []string {
 	if len(explicit) > 0 && !strings.HasPrefix(explicit[0], "-") {
-		return append([]string{"-c", storeOverride}, explicit...)
+		global := []string{"-c", storeOverride}
+		if !hasFlag(explicit, "--no-daemon") {
+			global = append(global, "--no-daemon")
+		}
+		return append(global, explicit...)
 	}
 	head, tail := explicit, []string(nil)
 	if i := slices.Index(explicit, "--"); i >= 0 {
