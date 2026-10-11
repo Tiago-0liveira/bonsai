@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Search } from 'lucide-react'
 import { WorkspaceVisibility } from './WorkspaceVisibility'
@@ -9,6 +10,7 @@ export interface BonsaiSelectOption {
   description?: string
   disabled?: boolean
   meta?: string
+  icon?: ReactNode
 }
 
 interface MenuPosition {
@@ -159,6 +161,7 @@ export function BonsaiSelect({
                       (active ? 'bg-accent/12' : 'hover:bg-panel-4')
                     }
                   >
+                    {option.icon && <span aria-hidden="true" className="mt-0.5 shrink-0">{option.icon}</span>}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[12px] text-text">{option.label}</span>
                       {option.description && <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-2">{option.description}</span>}
@@ -196,6 +199,7 @@ export function BonsaiSelect({
           (compact ? 'h-7 text-[11px]' : 'h-8 text-[12px]')
         }
       >
+        {selected?.icon && <span aria-hidden="true" className="shrink-0">{selected.icon}</span>}
         <span className={'min-w-0 flex-1 truncate ' + (!selected ? 'text-muted-2' : '')}>{selected?.label ?? placeholder}</span>
         {selected?.meta && <span className="shrink-0 font-mono text-[10px] text-muted-2">{selected.meta}</span>}
         <ChevronDown size={12} className={'shrink-0 text-muted-2 transition-transform ' + (open ? 'rotate-180' : '')} />

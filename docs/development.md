@@ -234,8 +234,10 @@ the terminal manager, local API and CLI never test a provider ID.
   an account (`409 agent_busy`), and `ConcurrentCrossAccount=false` rejects a
   session on another account of the same provider.
 - Per-launch choices arrive as `LaunchOptions` (model, prompt, display name,
-  full access, permission mode, effort) in `PrepareSessionRequest.Launch`. The
-  provider maps them to its own argv; the manager adds nothing. Prompts go last.
+  full access, permission mode, effort, sandbox, approval) in
+  `PrepareSessionRequest.Launch`. The provider maps them to its own argv; the
+  manager adds nothing. Prompts go last. A provider rejects every option it does
+  not declare, in `ValidateLaunch`.
 - `PreparedSession.EnvUnsetPrefixes` scrubs inherited variables by prefix
   (case-insensitive on Windows); `EnvSet` still wins. `ProviderSessionID` is
   recorded in the session summary as `provider_session_id`.
@@ -249,12 +251,27 @@ Optional interfaces, found by type assertion:
 | --- | --- |
 | `Describer` | Provider label and host availability in `/api/agents/providers` |
 | `LaunchValidator` | Synchronous launch-option check; errors return `400 invalid_launch_options` and leave no session |
+| `LaunchSchema` | `launch_fields` in `/api/agents/providers`: the launch options the start dialog renders, see below |
+| `ModelLister` | Model suggestions in `/api/agents/providers/{id}/models`; per-model `efforts`, `default_effort` and the `default` model |
 | `AccountDescriber` | Display-safe `auth_mode`, `identity`, `warnings` and options in `/api/agents/accounts` and `account list`; never tokens, paths or raw settings |
 | `AccountRemover` | Best-effort provider cleanup before an account is deleted; failure is a warning |
 | `UsagePolicy` | Provider-specific usage cache TTL |
 
-`/api/agents/providers` always lists Antigravity, Claude and Codex (unregistered
-ones as "Not available yet") plus any other registered provider.
+`/api/agents/providers` always lists `agents.KnownProviders` (Antigravity, Claude
+and Codex; unregistered ones as "Not available yet") plus any other registered
+provider.
+
+Launch fields keep the start dialog provider-neutral. Each `LaunchField` is a
+`select` or a `toggle` whose `id` is the start request's JSON field
+(`permission_mode`, `effort`, `full_access`, `sandbox`, `approval`). A toggle has
+two options, `"false"` and `"true"`, and starts from the profile's option of the
+same ID; a select starts at `default` or its first option, and an empty value
+sends nothing. An option with `set` is a preset: choosing it sends those fields
+instead of the field's own ID. `tone: "danger"` tints the control and shows the
+option's `help`. A `per_model` field takes its values from the chosen model's
+`efforts` and falls back to its own options for typed or unlisted models. Every
+value a provider declares must pass its `ValidateLaunch` (each provider has a
+test for this).
 `/api/agents/accounts` lists accounts of registered providers only.
 
 ## Claude provider

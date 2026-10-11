@@ -48,6 +48,8 @@ type LaunchOptions struct {
 	FullAccess     *bool  // Antigravity
 	PermissionMode string // Claude: default|acceptEdits|plan|auto|dontAsk|bypassPermissions
 	Effort         string // Claude: low|medium|high|xhigh|max
+	Sandbox        string // Codex: read-only|workspace-write|danger-full-access|bypass
+	Approval       string // Codex: untrusted|on-request|never
 }
 
 type PrepareSessionRequest struct {
@@ -127,6 +129,46 @@ type AccountRemover interface {
 	RemoveAccount(context.Context, Account) error
 }
 
+// LaunchField describes one launch option a provider accepts, so the launch
+// dialog can render it without knowing the provider. ID is the start request's
+// JSON field name, except for presets: a select whose options carry Set sends
+// those fields instead of its own.
+type LaunchField struct {
+	ID      string        `json:"id"`
+	Label   string        `json:"label"`
+	Kind    string        `json:"kind"` // LaunchFieldSelect or LaunchFieldToggle
+	Options []FieldOption `json:"options,omitempty"`
+	// Default is the initially selected value; empty selects the first option.
+	// A toggle starts from the profile's option of the same ID instead.
+	Default string `json:"default,omitempty"`
+	// PerModel means the values come from the chosen model's Efforts; Options
+	// remain the fallback for typed or unlisted models.
+	PerModel bool   `json:"per_model,omitempty"`
+	Help     string `json:"help,omitempty"`
+}
+
+const (
+	LaunchFieldSelect = "select"
+	LaunchFieldToggle = "toggle"
+	// ToneDanger marks options that let the agent act without asking.
+	ToneDanger = "danger"
+)
+
+// FieldOption is one value of a launch field. A toggle has two options, for
+// "false" and "true", which name both states.
+type FieldOption struct {
+	Value string            `json:"value"`
+	Label string            `json:"label"`
+	Tone  string            `json:"tone,omitempty"`
+	Help  string            `json:"help,omitempty"` // shown when a danger option is chosen
+	Set   map[string]string `json:"set,omitempty"`  // preset: request fields this option sends
+}
+
+// LaunchSchema declares the launch options a provider accepts, in display order.
+type LaunchSchema interface {
+	LaunchFields() []LaunchField
+}
+
 // ModelOption is one model a provider can launch with. Source is "alias" for a
 // provider-defined shortcut and "api" for a model the provider's service listed.
 type ModelOption struct {
@@ -134,6 +176,11 @@ type ModelOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 	Source      string `json:"source"`
+	// Efforts are the reasoning efforts this model accepts, when they vary by model.
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"default_effort,omitempty"`
+	// Default marks the model the provider uses when none is chosen.
+	Default bool `json:"default,omitempty"`
 }
 
 // ModelLister suggests models for the launch dialog. Suggestions are advice only:

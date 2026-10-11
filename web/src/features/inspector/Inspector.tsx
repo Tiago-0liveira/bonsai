@@ -17,6 +17,7 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectPullRequests } from '../../stores/projectSelectors'
 import { FeatureBoundary } from '../../app/chunkRecovery'
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
+import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import { ProcessActions } from '../terminal/ProcessActions'
 import type { Agent, AgentProvider, Process, PullRequest, SyncFreshnessState, Worktree } from '../../types'
 
@@ -180,7 +181,7 @@ function RuntimeCard({ processes, agents, onProcess, onAgent, onStartProcess, on
 
 function AgentRow({ agent, onClick }: { agent: Agent; onClick: () => void }) {
   return <button onClick={onClick} className="bonsai-focus inspector-link">
-    <span className={'inspector-avatar ' + (agent.state === 'running' ? 'text-[rgb(var(--accent))]' : 'text-[rgb(var(--muted))]')}><Bot size={14} /></span>
+    <span className="inspector-avatar text-text"><ProviderLogo provider={agent.provider} size={14} /></span>
     <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{agent.name}</span><span className="mt-0.5 block truncate text-[10px] text-[rgb(var(--muted))]">{agent.task}</span></span>
     <span className="shrink-0 text-right text-[9px] text-[rgb(var(--muted))]"><span className="block capitalize">{agent.lifecycleState ?? agent.state}</span><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
   </button>
@@ -379,7 +380,7 @@ export function Inspector() {
             </>}
             {agent && <>
               <div className="inspector-hero">
-                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><Bot size={13} />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--accent))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.lifecycleState ?? agent.state}</span></div>
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><ProviderLogo provider={agent.provider} size={13} className="shrink-0 text-text" />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--accent))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.lifecycleState ?? agent.state}</span></div>
                 <h2 className="text-[16px] font-semibold tracking-tight">{agent.name}</h2>
                 <p className="mt-2 text-[12px] leading-5 text-[rgb(var(--muted))]">{agent.task}</p>
                 <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{isLiveAgent(agent) ? 'API session' : `${agent.runtime} runtime`}<span className="ml-auto capitalize">{presentation(agent)}</span></div>

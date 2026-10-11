@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { AgentAccount, AgentCapability } from '../../api/agents'
+import type { AgentAccount, AgentCapability, LaunchField } from '../../api/agents'
 import { StartAgentDialog } from './StartAgentDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { agentAccounts, agentModels, agentProviders } from '../../api/agents'
@@ -8,9 +8,15 @@ import { worktrees } from '../../test/fixtures/worktrees'
 vi.mock('../../api/agents', async importOriginal => ({ ...await importOriginal<object>(), agentAccounts: vi.fn(), agentProviders: vi.fn(), agentModels: vi.fn() }))
 const create = useBonsaiStore.getState().createAgent
 const NOT_YET = { message: 'Not available yet' }
+// Mirrors what the Go providers declare.
+const ANTIGRAVITY_FIELDS: LaunchField[] = [{ id: 'full_access', label: 'Full access', kind: 'toggle', help: 'Allow Antigravity to run tools without permission prompts.', options: [{ value: 'false', label: 'Ask permissions' }, { value: 'true', label: 'Full access', tone: 'danger' }] }]
+const CLAUDE_FIELDS: LaunchField[] = [
+  { id: 'permission_mode', label: 'Permission mode', kind: 'select', options: [{ value: '', label: 'Profile default' }, { value: 'default', label: 'Default' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan' }, { value: 'auto', label: 'Auto' }, { value: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger', help: 'Claude will run tools without asking.' }] },
+  { id: 'effort', label: 'Effort', kind: 'select', options: ['', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value || 'Profile default' })) },
+]
 const providers = (claude: Partial<AgentCapability> = { available: true }): AgentCapability[] => [
-  { id: 'antigravity', label: 'Antigravity', available: true },
-  { id: 'claude', label: 'Claude', available: false, unavailable_reason: NOT_YET, ...claude },
+  { id: 'antigravity', label: 'Antigravity', available: true, launch_fields: ANTIGRAVITY_FIELDS },
+  { id: 'claude', label: 'Claude', available: false, unavailable_reason: NOT_YET, launch_fields: CLAUDE_FIELDS, ...claude },
   { id: 'codex', label: 'Codex', available: false, unavailable_reason: NOT_YET },
 ]
 const claudeProfile: AgentAccount = { id: 'claude-one', name: 'Work', provider: 'claude', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] }
@@ -22,6 +28,18 @@ beforeEach(() => {
   vi.mocked(agentAccounts).mockResolvedValue([{ id: 'profile-one', name: 'One', provider: 'antigravity' }])
 })
 afterEach(() => { cleanup(); useBonsaiStore.setState({ createAgent: create }); vi.clearAllMocks() })
+it('shows the provider marks on every tab and profile option', async () => {
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+  for (const provider of ['Antigravity', 'Claude', 'Codex']) {
+    const tab = screen.getByRole('button', { name: new RegExp(provider) })
+    expect(tab.querySelector('svg')).toHaveAttribute('data-provider-logo', provider.toLowerCase())
+    expect(tab.querySelector('.lucide-sparkles')).toBeNull()
+  }
+  expect(screen.getByLabelText('Profile').querySelector('svg')).toHaveAttribute('data-provider-logo', 'antigravity')
+  fireEvent.click(screen.getByLabelText('Profile'))
+  expect((await screen.findByRole('option', { name: 'One' })).querySelector('svg')).toHaveAttribute('data-provider-logo', 'antigravity')
+})
 it('disables unavailable providers, selects the only real account and prevents duplicate submit', async () => {
   let finish!: () => void
   const pending = new Promise<void>(resolve => { finish = resolve })
@@ -70,11 +88,12 @@ it('submits the prompt, model and full-access setting, and changes the request k
   fireEvent.click(screen.getByRole('switch', { name: 'Antigravity full access' }))
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'Fix the login flow', model: 'test-model', fullAccess: true }))
+  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'Fix the login flow', model: 'test-model', options: { full_access: true } }))
+  expect(screen.getByText('Antigravity · Full access')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('switch', { name: 'Antigravity full access' }))
   fireEvent.submit(screen.getByRole('dialog'))
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
-  expect(submit.mock.calls[1][0].fullAccess).toBe(false)
+  expect(submit.mock.calls[1][0].options).toEqual({ full_access: false })
   expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
 })
 
@@ -140,21 +159,20 @@ it('defaults to the only provider with profiles and then to the last used one', 
   expect(screen.getByRole('button', { name: /Claude/ })).toHaveAttribute('aria-pressed', 'true')
 })
 
-it('submits Claude launch options and never sends full access', async () => {
+it('submits Claude launch options from its declared fields', async () => {
   vi.mocked(agentProviders).mockResolvedValue(providers())
   vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
   const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Work'))
-  expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', expect.stringContaining('sonnet'))
+  expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'Use profile default')
   await pick('Permission mode', 'Plan')
   await pick('Effort', 'high')
   fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'opus' } })
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ provider: 'Claude', accountId: 'claude-one', permissionMode: 'plan', effort: 'high', model: 'opus' }))
-  expect(submit.mock.calls[0][0]).not.toHaveProperty('fullAccess')
+  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ provider: 'Claude', accountId: 'claude-one', model: 'opus', options: { permission_mode: 'plan', effort: 'high' } }))
   expect(screen.getByText(/Claude · Plan · high effort/)).toBeInTheDocument()
 })
 
@@ -175,7 +193,7 @@ it('warns on bypass permissions, changes the request key with the mode and keeps
   expect(screen.getByRole('note')).toHaveTextContent('without asking')
   fireEvent.submit(screen.getByRole('dialog'))
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(3))
-  expect(submit.mock.calls[2][0].permissionMode).toBe('bypassPermissions')
+  expect(submit.mock.calls[2][0].options).toEqual({ permission_mode: 'bypassPermissions' })
   expect(submit.mock.calls[2][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
 })
 
@@ -207,7 +225,7 @@ it('clears a stale error and shows profile defaults when switching provider', as
   await screen.findByRole('alert')
   fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
   expect(screen.queryByRole('alert')).toBeNull()
-  expect(screen.getByTestId('profile-details')).toHaveTextContent('profile defaults: opus · plan · high effort')
+  expect(screen.getByTestId('profile-details')).toHaveTextContent('profile defaults: opus · Plan · high effort')
 })
 
 it('suggests the profile\'s models, still accepts typed text, and ignores a failed lookup', async () => {
@@ -242,4 +260,89 @@ it('falls back to a plain input when models cannot be loaded', async () => {
   fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'test-model' } })
   expect(screen.queryAllByRole('option')).toHaveLength(0)
   expect(screen.getByLabelText('Agent model')).toHaveValue('test-model')
+})
+
+// A provider declaring a preset select and a per-model effort, as Codex will.
+const PRESET_FIELDS: LaunchField[] = [
+  { id: 'permissions', label: 'Permissions', kind: 'select', default: 'auto', options: [
+    { value: 'read-only', label: 'Read only', set: { sandbox: 'read-only', approval: 'on-request' } },
+    { value: 'auto', label: 'Auto', set: { sandbox: 'workspace-write', approval: 'on-request' } },
+    { value: 'bypass', label: 'Bypass', tone: 'danger', help: 'No sandbox and no approvals.', set: { sandbox: 'bypass' } },
+  ] },
+  { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: [{ value: '', label: 'Model default' }, { value: 'low', label: 'low' }, { value: 'high', label: 'high' }] },
+]
+const effortOptions = async () => within(await screen.findByRole('listbox', { name: 'Effort' })).getAllByRole('option').map(option => option.textContent)
+const schemaProviders = (): AgentCapability[] => [{ ...providers()[1], launch_fields: PRESET_FIELDS }]
+const schemaModels = [
+  { id: 'big', label: 'Big', source: 'api' as const, default: true, efforts: ['low', 'high', 'ultra'], default_effort: 'high' },
+  { id: 'small', label: 'Small', source: 'api' as const, efforts: ['low', 'medium'] },
+]
+
+it('renders a schema-declared preset and per-model effort without knowing the provider', async () => {
+  vi.mocked(agentProviders).mockResolvedValue(schemaProviders())
+  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
+  vi.mocked(agentModels).mockResolvedValue(schemaModels)
+  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
+  useBonsaiStore.setState({ createAgent: submit })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'Big'))
+  expect(screen.getByLabelText('Permissions')).toHaveTextContent('Auto')
+  // The default model's efforts are offered while no model is typed.
+  fireEvent.click(screen.getByLabelText('Effort'))
+  expect(await effortOptions()).toEqual(['Model default', 'low', 'high', 'ultra'])
+  fireEvent.click(screen.getByRole('option', { name: 'ultra' }))
+  fireEvent.submit(screen.getByRole('dialog'))
+  await screen.findByRole('alert')
+  expect(submit.mock.calls[0][0].options).toEqual({ sandbox: 'workspace-write', approval: 'on-request', effort: 'ultra' })
+  expect(screen.getByText('Claude · Auto · ultra effort')).toBeInTheDocument()
+
+  // A model without that effort drops it; the list follows the model.
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'small' } })
+  expect(screen.getByLabelText('Effort')).toHaveTextContent('Model default')
+  fireEvent.click(screen.getByLabelText('Effort'))
+  expect(await effortOptions()).toEqual(['Model default', 'low', 'medium'])
+  fireEvent.click(screen.getByRole('option', { name: 'medium' }))
+  // A typed, unlisted model falls back to the field's own options.
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'custom-model' } })
+  expect(screen.getByLabelText('Effort')).toHaveTextContent('Model default')
+
+  expect(screen.queryByRole('note')).toBeNull()
+  await pick('Permissions', 'Bypass')
+  expect(screen.getByRole('note')).toHaveTextContent('No sandbox and no approvals.')
+  fireEvent.submit(screen.getByRole('dialog'))
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
+  expect(submit.mock.calls[1][0].options).toEqual({ sandbox: 'bypass' })
+  expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
+})
+
+it('starts each toggle from the selected profile and resets options on provider change', async () => {
+  vi.mocked(agentProviders).mockResolvedValue(providers())
+  vi.mocked(agentAccounts).mockResolvedValue([
+    { id: 'safe', name: 'Safe', provider: 'antigravity', full_access: false },
+    { id: 'open', name: 'Open', provider: 'antigravity', full_access: true },
+    claudeProfile,
+  ])
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).not.toBeDisabled())
+  await pick('Profile', 'Open')
+  expect(screen.getByRole('switch', { name: 'Antigravity full access' })).toHaveAttribute('aria-checked', 'true')
+  await pick('Profile', 'Safe')
+  expect(screen.getByRole('switch', { name: 'Antigravity full access' })).toHaveAttribute('aria-checked', 'false')
+  fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
+  await pick('Permission mode', 'Plan')
+  fireEvent.click(screen.getByRole('button', { name: /Antigravity/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
+  expect(screen.getByLabelText('Permission mode')).toHaveTextContent('Profile default')
+})
+
+it('renders no options for a provider that declares none', async () => {
+  vi.mocked(agentProviders).mockResolvedValue([{ id: 'antigravity', label: 'Antigravity', available: true }])
+  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
+  useBonsaiStore.setState({ createAgent: submit })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+  expect(screen.queryByRole('switch')).toBeNull()
+  fireEvent.submit(screen.getByRole('dialog'))
+  await screen.findByRole('alert')
+  expect(submit.mock.calls[0][0].options).toEqual({})
 })
