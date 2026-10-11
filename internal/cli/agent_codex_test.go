@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
 
 const cliTestAPIKey = "sk-proj-CLITESTCLITESTCLITESTCLITEST"
@@ -61,11 +63,23 @@ func TestCodexAccountLifecycleThroughCLI(t *testing.T) {
 		t.Fatalf("list output = %q", out)
 	}
 
+	// Resolve the profile home through the store: macOS uses Library/Application
+	// Support rather than XDG_DATA_HOME.
+	store, err := agents.NewFileAccountStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := store.GetByName("codex", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileHome := filepath.Join(store.AccountDir(account.ID), "home")
+
 	out, errOut, err = runAgent(t, "", "run", "work", "--", "--help")
 	if err != nil {
 		t.Fatalf("run: %v (stderr=%q)", err, errOut)
 	}
-	for _, want := range []string{"ARG:--help", "ARG:-c", `ARG:cli_auth_credentials_store="file"`, "ARG:--no-daemon", "HAS_OPENAI_KEY=0", "HAS_CODEX_KEY=0", "CODEX_HOME=" + os.Getenv("XDG_DATA_HOME")} {
+	for _, want := range []string{"ARG:--help", "ARG:-c", `ARG:cli_auth_credentials_store="file"`, "ARG:--no-daemon", "HAS_OPENAI_KEY=0", "HAS_CODEX_KEY=0", "CODEX_HOME=" + profileHome + "\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("run output lacks %q:\n%s", want, out)
 		}
