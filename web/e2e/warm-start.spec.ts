@@ -138,7 +138,7 @@ test('cold start: ready to branch list and PR badges painted', async ({ browser 
   const samples: Sample[] = []
   for (let run = 0; run < WARMUPS + RUNS; run++) {
     // A restarted API with empty memory and live providers.
-    await fixture('restart')
+    await fixture('restart', { cache: 'missing' })
     const sample = await measureLoad(browser, expected, testInfo, run === WARMUPS + RUNS - 1 ? `cold-${SIZE.worktrees}-${SIZE.prs}` : undefined)
     if (run >= WARMUPS) samples.push(sample)
   }
