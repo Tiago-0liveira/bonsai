@@ -90,12 +90,34 @@ func newWebEnv(t *testing.T) *webEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := &webEnv{bin: bin, cwd: t.TempDir(), home: webHome}
+	cwd := t.TempDir()
+	env := &webEnv{bin: bin, cwd: cwd, home: webHome}
 	t.Cleanup(func() {
 		shutdownWebTestDaemon(t, client.ForUserHome(webHome))
-		_ = os.RemoveAll(run)
+		removeWebTestDir(t, run)
+		if runtime.GOOS == "windows" {
+			// Windows can defer directory deletion even after the daemon exits.
+			// TempDir retries sharing/access errors, but not "directory is not
+			// empty". Finish removing our directories before its cleanup runs.
+			removeWebTestDir(t, cwd)
+			removeWebTestDir(t, home)
+		}
 	})
 	return env
+}
+
+func removeWebTestDir(t *testing.T, path string) {
+	t.Helper()
+	err := os.RemoveAll(path)
+	if err != nil && runtime.GOOS == "windows" {
+		waitUntil(5*time.Second, func() bool {
+			err = os.RemoveAll(path)
+			return err == nil
+		})
+	}
+	if err != nil {
+		t.Errorf("removing web test directory %s after shutdown: %v", path, err)
+	}
 }
 
 func shutdownWebTestDaemon(t *testing.T, c *client.Client) {
