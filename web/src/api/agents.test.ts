@@ -11,17 +11,19 @@ describe('agent provider mapping', () => {
     expect(mapAgent(summary('future' as never))).toMatchObject({ provider: 'future', providerId: 'future' })
   })
 
-  it.each([['antigravity', 'Antigravity'], ['claude', 'Claude']] as const)('labels %s sessions as %s', (id, label) => {
+  it.each([['antigravity', 'Antigravity'], ['claude', 'Claude'], ['codex', 'Codex']] as const)('labels %s sessions as %s', (id, label) => {
     expect(mapAgent(summary(id))).toMatchObject({ provider: label, providerId: id, profileName: 'Work', name: 'Work', terminalId: 's1' })
   })
 
   it('treats every backend provider as live and mock agents as not', () => {
     expect(isLiveAgent({ providerId: 'claude' })).toBe(true)
     expect(isLiveAgent({ providerId: 'antigravity' })).toBe(true)
+    expect(isLiveAgent({ providerId: 'codex' })).toBe(true)
     expect(isLiveAgent({})).toBe(false)
     expect(isLiveAgent(undefined)).toBe(false)
     expect(providerIdFor('Claude')).toBe('claude')
-    expect(providerIdFor('Codex')).toBeUndefined()
+    expect(providerIdFor('Codex')).toBe('codex')
+    expect(providerIdFor('Gemini')).toBeUndefined()
     expect(isLiveAgent({ providerId: 'constructor' as never })).toBe(false)
     expect(isLiveAgent({ providerId: 'toString' as never })).toBe(false)
   })

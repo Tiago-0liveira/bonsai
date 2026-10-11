@@ -346,3 +346,81 @@ it('renders no options for a provider that declares none', async () => {
   await screen.findByRole('alert')
   expect(submit.mock.calls[0][0].options).toEqual({})
 })
+
+// The Codex schema as the Go provider declares it.
+const CODEX_FIELDS: LaunchField[] = [
+  { id: 'permissions', label: 'Permissions', kind: 'select', default: 'auto', options: [
+    { value: 'read-only', label: 'Read only', set: { sandbox: 'read-only', approval: 'on-request' } },
+    { value: 'auto', label: 'Auto', set: { sandbox: 'workspace-write', approval: 'on-request' } },
+    { value: 'full-access', label: 'Full access', tone: 'danger', help: 'Codex can change any file and use the network without asking.', set: { sandbox: 'danger-full-access', approval: 'never' } },
+    { value: 'bypass', label: 'Bypass', tone: 'danger', help: 'Codex runs every command without a sandbox and without asking.', set: { sandbox: 'bypass' } },
+  ] },
+  { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: ['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map(value => ({ value, label: value || 'Profile default' })) },
+]
+const codexProviders = (): AgentCapability[] => [...providers().slice(0, 2), { id: 'codex', label: 'Codex', available: true, version: '0.162.1', launch_fields: CODEX_FIELDS }]
+const codexModels = [
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', source: 'api' as const, default: true, efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], default_effort: 'low' },
+  { id: 'gpt-6-luna', label: 'GPT-6-Luna', source: 'api' as const, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], default_effort: 'medium' },
+]
+const codexProfile: AgentAccount = { id: 'codex-one', name: 'Personal', provider: 'codex', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in', warnings: ['Same login as profile "Team"; both share its usage limits'] }
+
+it('enables Codex with its profile and shows its sign-in details and warnings', async () => {
+  vi.mocked(agentProviders).mockResolvedValue(codexProviders())
+  vi.mocked(agentAccounts).mockResolvedValue([codexProfile])
+  vi.mocked(agentModels).mockResolvedValue(codexModels)
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Personal'))
+  expect(screen.getByRole('button', { name: /Codex/ })).toBeEnabled()
+  expect(screen.getByRole('button', { name: /Codex/ })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'GPT-6.1-Sol')
+  const details = screen.getByTestId('profile-details')
+  expect(details).toHaveTextContent('auth: chatgpt · me@example.com · plus · logged in')
+  expect(details).toHaveTextContent('Same login as profile "Team"')
+  expect(screen.getByLabelText('Permissions')).toHaveTextContent('Auto')
+  expect(screen.queryByRole('switch')).toBeNull()
+})
+
+it('submits the Codex preset, effort and model, and drops an effort the new model lacks', async () => {
+  vi.mocked(agentProviders).mockResolvedValue(codexProviders())
+  vi.mocked(agentAccounts).mockResolvedValue([codexProfile])
+  vi.mocked(agentModels).mockResolvedValue(codexModels)
+  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
+  useBonsaiStore.setState({ createAgent: submit })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'GPT-6.1-Sol'))
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'gpt-6.1-sol' } })
+  await pick('Effort', 'ultra')
+  fireEvent.submit(screen.getByRole('dialog'))
+  await screen.findByRole('alert')
+  expect(submit.mock.calls[0][0]).toMatchObject({ provider: 'Codex', accountId: 'codex-one', model: 'gpt-6.1-sol', options: { sandbox: 'workspace-write', approval: 'on-request', effort: 'ultra' } })
+  expect(screen.getByText('Codex · Auto · ultra effort')).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'gpt-6-luna' } })
+  expect(screen.getByLabelText('Effort')).toHaveTextContent('Profile default')
+  await pick('Permissions', 'Full access')
+  expect(screen.getByRole('note')).toHaveTextContent('without asking')
+  fireEvent.submit(screen.getByRole('dialog'))
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
+  expect(submit.mock.calls[1][0].options).toEqual({ sandbox: 'danger-full-access', approval: 'never' })
+  expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
+
+  await pick('Permissions', 'Bypass')
+  fireEvent.submit(screen.getByRole('dialog'))
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(3))
+  expect(submit.mock.calls[2][0].options).toEqual({ sandbox: 'bypass' })
+})
+
+it('explains why Codex is unavailable and how to add its first profile', async () => {
+  vi.mocked(agentProviders).mockResolvedValue([...providers().slice(0, 2), { id: 'codex', label: 'Codex', available: false, unavailable_reason: { message: 'Install Codex CLI and restart Bonsai' } }])
+  const { unmount } = render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+  expect(screen.getByRole('button', { name: /Codex/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Codex/ })).toHaveTextContent('Install Codex CLI and restart Bonsai')
+  unmount()
+  vi.mocked(agentProviders).mockResolvedValue(codexProviders())
+  vi.mocked(agentAccounts).mockResolvedValue([])
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByRole('button', { name: /Codex/ })).toHaveTextContent('no profile'))
+  expect(screen.getByRole('button', { name: /Codex/ })).toHaveTextContent('bonsai agent account add codex <name> [--auth device]')
+  expect(screen.getByRole('button', { name: /Codex/ })).toBeDisabled()
+})

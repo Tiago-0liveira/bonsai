@@ -22,6 +22,21 @@ it.each(['Claude', 'Codex', 'Antigravity', 'Gemini'] as const)('shows the %s mar
   expect(row.querySelector('svg')).toHaveAttribute('data-provider-logo', provider.toLowerCase())
 })
 
+it('enables stop and the terminal for a live Codex session and keeps them off for a simulated one', () => {
+  const live = { ...agents[0], id: 'codex-live', provider: 'Codex' as const, providerId: 'codex' as const, profileName: 'Personal', state: 'running' as const, projectId: 'bonsai', worktreeId: 'wt-web' }
+  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, agents: [live], activeProjectId: 'bonsai', selection: { type: 'agent', id: live.id } }, true)
+  render(<Inspector />)
+  expect(screen.getByRole('button', { name: 'Open terminal' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Stop agent' })).toBeEnabled()
+  expect(screen.getByText('Personal')).toBeInTheDocument()
+  cleanup()
+  const simulated = { ...live, id: 'codex-mock', providerId: undefined }
+  useBonsaiStore.setState({ agents: [simulated], selection: { type: 'agent', id: simulated.id } })
+  render(<Inspector />)
+  expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Stop agent' })).toBeDisabled()
+})
+
 it('ignores unrelated group preferences and terminal output while reacting to the selected group', () => {
   useBonsaiStore.setState({ projects, worktrees, agents: [], pullRequests: [], activeProjectId: 'bonsai',
     selection: { type: 'worktree', id: 'wt-web' }, expandedAutomaticGroups: [], worktreeGroups: { bonsai: [{ id: 'unlinked:bonsai', kind: 'unlinked', worktree_ids: ['wt-web', 'wt-docs'] }] }, terminalOutput: {} })

@@ -9,7 +9,7 @@ test('real API and PTY: profile launch, input, reload, stop and retained output'
   await page.getByRole('option', { name: 'Start agent', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Start agent' })
   await expect(dialog.getByRole('button', { name: /Claude/ })).toBeEnabled()
-  await expect(dialog.getByRole('button', { name: /Codex/ })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: /Codex/ })).toBeEnabled()
   await dialog.getByRole('button', { name: /Antigravity/ }).click()
   await expect(dialog.getByLabel('Profile')).toContainText('Fixture')
   await dialog.getByLabel('Worktree and branch').click()
@@ -96,4 +96,86 @@ test('real API and PTY: two concurrent sessions of one Claude profile, reload an
   await expect(tile('beta')).toContainText('running · connected')
   await type('beta', 'still-alive')
   await expect(tile('beta').locator('.xterm-screen')).toContainText('REPLY:still-alive')
+})
+
+test('real API and PTY: two Codex profiles with two sessions each beside a Claude session', async ({ page }) => {
+  // Five tiles share the dock; a tall window keeps each terminal readable.
+  await page.setViewportSize({ width: 1800, height: 1700 })
+  await openConnectedApp(page)
+  const start = async (provider: 'Codex' | 'Claude', profile: string, name: string, permissions?: string) => {
+    await page.keyboard.press('Control+k')
+    await page.getByRole('option', { name: 'Start agent', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Start agent' })
+    await dialog.getByRole('button', { name: new RegExp(provider) }).click()
+    if (provider === 'Codex') {
+      // Two profiles, so the choice is explicit; the details carry the fake login.
+      await dialog.getByLabel('Profile').click()
+      await page.getByRole('option', { name: new RegExp(`^${profile}`) }).click()
+      await expect(dialog.getByTestId('profile-details')).toContainText(profile === 'Personal' ? 'me@example.com' : 'team@example.com')
+      await expect(dialog.getByTestId('profile-details')).toContainText('logged in')
+      await dialog.getByLabel('Agent model').click()
+      await expect(page.getByRole('option', { name: /GPT-6.1-Sol/ })).toBeVisible()
+      await page.getByRole('option', { name: /GPT-6-Luna/ }).click()
+      await expect(dialog.getByLabel('Agent model')).toHaveValue('gpt-6-luna')
+      if (permissions) {
+        await dialog.getByLabel('Permissions').click()
+        await page.getByRole('option', { name: permissions, exact: true }).click()
+      }
+    } else {
+      await expect(dialog.getByLabel('Profile')).toContainText(profile)
+    }
+    await dialog.getByLabel('Worktree and branch').click()
+    await page.getByRole('option').first().click()
+    await dialog.getByLabel('Agent name').fill(name)
+    const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/agents'))
+    await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
+    const session = await (await response).json()
+    expect(session).toMatchObject({ provider: provider.toLowerCase(), profile_name: profile })
+    return session.id as string
+  }
+  const tile = (name: string) => page.locator('.runtime-tile').filter({ hasText: name })
+  const type = async (name: string, text: string) => {
+    const input = tile(name).locator('.xterm-helper-textarea')
+    await input.pressSequentially(text)
+    await input.press('Enter')
+  }
+
+  const sessions = {
+    'cx-personal-1': await start('Codex', 'Personal', 'cx-personal-1'),
+    'cx-personal-2': await start('Codex', 'Personal', 'cx-personal-2', 'Read only'),
+    'cx-team-1': await start('Codex', 'Team', 'cx-team-1'),
+    'cx-team-2': await start('Codex', 'Team', 'cx-team-2', 'Full access'),
+    'claude-1': await start('Claude', 'Work', 'claude-1'),
+  }
+  const names = Object.keys(sessions)
+  expect(new Set(Object.values(sessions)).size).toBe(names.length)
+  for (const name of names) {
+    await expect(tile(name).locator('.xterm-screen')).toContainText('READY')
+    await expect(tile(name)).toContainText('running · connected')
+  }
+  for (const name of names) await type(name, `to-${name}`)
+  for (const name of names) {
+    await expect(tile(name).locator('.xterm-screen')).toContainText(`REPLY:to-${name}`)
+    for (const other of names.filter(item => item !== name)) await expect(tile(name).locator('.xterm-screen')).not.toContainText(`REPLY:to-${other}`)
+  }
+  for (const name of names.filter(item => item.startsWith('cx-'))) {
+    await expect(tile(name).locator('[data-provider-logo="codex"]')).toBeVisible()
+  }
+
+  await page.reload()
+  for (const id of Object.values(sessions)) await expect(page.getByTestId(`rf__node-${id}`)).toBeVisible()
+  for (const [name, id] of Object.entries(sessions)) {
+    await page.getByTestId(`rf__node-${id}`).click()
+    await expect(tile(name)).toContainText('running · connected')
+    await expect(tile(name).locator('.xterm-screen')).toContainText(`REPLY:to-${name}`)
+  }
+
+  await tile('cx-personal-1').getByRole('button', { name: 'Stop agent', exact: true }).click()
+  await expect(tile('cx-personal-1')).toContainText('exited')
+  for (const name of names.filter(item => item !== 'cx-personal-1')) {
+    await page.getByTestId(`rf__node-${sessions[name as keyof typeof sessions]}`).click()
+    await expect(tile(name)).toContainText('running · connected')
+    await type(name, 'still-alive')
+    await expect(tile(name).locator('.xterm-screen')).toContainText('REPLY:still-alive')
+  }
 })

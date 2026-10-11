@@ -22,8 +22,8 @@ export const agentProviders: AgentProviderConfig[] = [
     connected: true,
     description: 'OpenAI coding agent',
     models: [
-      { id: 'gpt-5.6-codex', label: 'GPT-5.6 Codex', reasoning: ['Medium', 'High', 'Extra High'], supportsFast: true },
-      { id: 'gpt-5.6', label: 'GPT-5.6', reasoning: ['Low', 'Medium', 'High'], supportsFast: true },
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', reasoning: ['Low', 'Medium', 'High', 'Extra High', 'Max', 'Ultra'], supportsFast: true },
+      { id: 'gpt-6-luna', label: 'GPT-6-Luna', reasoning: ['Low', 'Medium', 'High', 'Extra High', 'Max'], supportsFast: true },
     ],
   },
   {
@@ -32,8 +32,8 @@ export const agentProviders: AgentProviderConfig[] = [
     connected: true,
     description: 'Anthropic coding agent',
     models: [
-      { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', reasoning: ['Standard', 'Extended'], supportsFast: false },
-      { id: 'claude-opus-4-1', label: 'Claude Opus 4.1', reasoning: ['Standard', 'Extended'], supportsFast: false },
+      { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', reasoning: ['Low', 'Medium', 'High'], supportsFast: false },
+      { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', reasoning: ['Low', 'Medium', 'High'], supportsFast: false },
     ],
   },
   {

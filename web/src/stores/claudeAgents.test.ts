@@ -37,7 +37,7 @@ describe('Claude agents in the store', () => {
   })
 
   it('rejects providers the API cannot launch with a provider neutral message', async () => {
-    await expect(useBonsaiStore.getState().createAgent({ ...input, provider: 'Codex' })).rejects.toThrow('Select a profile and worktree.')
+    await expect(useBonsaiStore.getState().createAgent({ ...input, provider: 'Gemini' })).rejects.toThrow('Select a profile and worktree.')
     expect(startAgent).not.toHaveBeenCalled()
   })
 

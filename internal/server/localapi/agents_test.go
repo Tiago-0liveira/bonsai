@@ -27,6 +27,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/codex"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"github.com/gorilla/websocket"
 )
@@ -243,8 +244,19 @@ func TestAgentBrowserFixture(t *testing.T) {
 	if err := os.Symlink(filepath.Join(testdata, "fakeclaude.sh"), filepath.Join(bin, "claude")); err != nil {
 		t.Fatal(err)
 	}
+	// A real Codex provider over its fake binary, with two profiles signed in as
+	// different accounts. Seeding is off and HOME is a temp dir, so nothing reads
+	// or writes the real ~/.codex; the fake never reaches the network.
+	codexTestdata, err := filepath.Abs(filepath.Join("..", "..", "providers", "codex", "testdata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(codexTestdata, "fakecodex.sh"), filepath.Join(bin, "codex")); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("FAKE_CLAUDE_FIXTURES", testdata)
+	t.Setenv("FAKE_CODEX_FIXTURES", filepath.Join(codexTestdata, "phase0"))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// The fixture must never reach the network: model and usage lookups go to a
 	// closed local port and fall back to the static aliases.
@@ -258,6 +270,16 @@ func TestAgentBrowserFixture(t *testing.T) {
 	noSeed := false
 	if _, err := service.Setup(context.Background(), claude.ProviderID, "Work", agents.SetupOptions{Secret: strings.NewReader("sk-ant-oat01-FIXTUREFIXTUREFIXTUREFIXTUREFIXTURE\n"), Seed: &noSeed}); err != nil {
 		t.Fatal(err)
+	}
+	if err := runtime.Registry.Register(codex.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)); err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range []struct{ name, email, auth string }{{"Personal", "me@example.com", codex.AuthChatGPT}, {"Team", "team@example.com", codex.AuthDevice}} {
+		t.Setenv("FAKE_CODEX_EMAIL", profile.email)
+		t.Setenv("FAKE_CODEX_ACCOUNT", "acct-"+strings.ToLower(profile.name))
+		if _, err := service.Setup(context.Background(), codex.ProviderID, profile.name, agents.SetupOptions{AuthMode: profile.auth, Seed: &noSeed}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	listener, err := net.Listen("tcp", s.expectedHost)
 	if err != nil {
