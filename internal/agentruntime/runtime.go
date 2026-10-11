@@ -7,6 +7,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/providers/antigravity"
 	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/codex"
 )
 
 type Runtime struct {
@@ -37,6 +38,9 @@ func New(in io.Reader, out, errOut io.Writer) (*Runtime, error) {
 		return nil, err
 	}
 	if err := registry.Register(claude.New(accounts, sessions, launcher, out)); err != nil {
+		return nil, err
+	}
+	if err := registry.Register(codex.New(accounts, sessions, launcher, out)); err != nil {
 		return nil, err
 	}
 	return &Runtime{
