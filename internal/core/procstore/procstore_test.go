@@ -3,6 +3,7 @@ package procstore
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -179,5 +180,27 @@ func TestIndexPrunesStale(t *testing.T) {
 	}
 	if list, _ := ListDaemons(); len(list) != 0 {
 		t.Fatalf("stale entry not pruned: %+v", list)
+	}
+}
+
+func TestSockDirFallsBackWhenRuntimeDirUnusable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket dir")
+	}
+	// A regular file in the way makes MkdirAll(<file>/bonsai) fail, like a
+	// missing, uncreatable /run/user/<uid>.
+	blocker := filepath.Join(t.TempDir(), "run")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", blocker)
+	if got, want := SockDir(), "/tmp/bonsai"; got != want {
+		t.Fatalf("SockDir() = %q, want %q", got, want)
+	}
+
+	usable := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", usable)
+	if got, want := SockDir(), filepath.Join(usable, "bonsai"); got != want {
+		t.Fatalf("SockDir() = %q, want %q", got, want)
 	}
 }

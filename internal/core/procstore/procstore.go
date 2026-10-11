@@ -228,18 +228,27 @@ func (s *Store) ProcsDir() string { return filepath.Join(s.Dir(), "procs") }
 
 // SockDir is a short-pathed directory for daemon sockets. Unix socket paths are
 // capped (~104 bytes on macOS), and a repo deep in the tree easily exceeds that,
-// so sockets live under $XDG_RUNTIME_DIR (or /tmp), keyed by a hash of the repo
-// root rather than inside <repo>/.bonsai.
+// so sockets live under $XDG_RUNTIME_DIR (or the temp dir), keyed by a hash of
+// the repo root rather than inside <repo>/.bonsai.
+//
+// $XDG_RUNTIME_DIR is only trusted when bonsai can actually create its
+// directory there. Sessions without a login manager (WSL without systemd, su,
+// containers) export it pointing at a dir that doesn't exist and can't be
+// created; falling back to the temp dir keeps the daemon startable.
 func SockDir() string {
+	fallback := filepath.Join(os.TempDir(), "bonsai")
+	if runtime.GOOS != "windows" {
+		fallback = filepath.Join("/tmp", "bonsai")
+	}
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
-		if runtime.GOOS == "windows" {
-			base = os.TempDir()
-		} else {
-			base = "/tmp"
-		}
+		return fallback
 	}
-	return filepath.Join(base, "bonsai")
+	dir := filepath.Join(base, "bonsai")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fallback
+	}
+	return dir
 }
 
 // SockPath is the daemon's Unix socket (short-pathed; see SockDir).
