@@ -134,8 +134,13 @@ func TestLaunchArgsMatrix(t *testing.T) {
 		{name: "explicit -- keeps its tail last", explicit: []string{"--search", "--", "-x prompt"}, launch: agents.LaunchOptions{Model: "o3"},
 			want: []string{"--search", "-c", storeOverride, "--no-daemon", "-m", "o3", "--", "-x prompt"}},
 		{name: "subcommand passthrough", explicit: []string{"mcp", "list"}, launch: agents.LaunchOptions{Model: "o3", Sandbox: SandboxBypass},
-			want: []string{"-c", storeOverride, "mcp", "list"}},
-		{name: "login passthrough", explicit: []string{"login", "--device-auth"}, want: []string{"-c", storeOverride, "login", "--device-auth"}},
+			want: []string{"-c", storeOverride, "--no-daemon", "mcp", "list"}},
+		{name: "login passthrough", explicit: []string{"login", "--device-auth"}, want: []string{"-c", storeOverride, "--no-daemon", "login", "--device-auth"}},
+		{name: "resume keeps the session out of the daemon", explicit: []string{"resume", "--last"},
+			want: []string{"-c", storeOverride, "--no-daemon", "resume", "--last"}},
+		{name: "subcommand no-daemon not repeated", explicit: []string{"resume", "--no-daemon"},
+			want: []string{"-c", storeOverride, "resume", "--no-daemon"}},
+		{name: "positional prompt", explicit: []string{"fix the bug"}, want: []string{"-c", storeOverride, "--no-daemon", "fix the bug"}},
 		{name: "help", explicit: []string{"--help"}, want: []string{"--help", "-c", storeOverride, "--no-daemon"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

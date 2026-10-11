@@ -318,7 +318,10 @@ profile's `auth.json`. Launch environment: every inherited `CODEX_*` and
 `OPENAI_*` variable is removed, then `CODEX_HOME`, `BONSAI_AGENT_*` and the host's
 `CODEX_CA_CERTIFICATE` are set. Argv is built in `launch.go` only:
 `[explicit...] -c store --no-daemon [-m] [-c model_reasoning_effort=] [-s -a | --dangerously-bypass-approvals-and-sandbox] [-- prompt]`.
-The start dialog's `permissions` select is a preset that sends `sandbox` and
+Explicit args that start with a subcommand or a positional prompt
+(`resume --last`, `login`) get only the global `-c store --no-daemon` in front, so
+a resumed or forked TUI never attaches to a shared daemon that would outlive
+**Stop agent** or the profile. The start dialog's `permissions` select is a preset that sends `sandbox` and
 `approval` together (`bypass` is Bonsai's name for the bypass flag). Codex has no
 `--session-id`, so `provider_session_id` stays empty.
 
