@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Bot, Gauge, X } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type LaunchField } from '../../api/agents'
+import { PROVIDER_LABELS, SETUP_HINTS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { ModelCombobox } from '../../components/ui/ModelCombobox'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
@@ -11,6 +11,7 @@ import { LaunchFields, chosenModel, initialLaunchValues, launchRequestOptions, l
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
 const isLaunchable = (id: string): id is AgentProviderId => Object.hasOwn(PROVIDER_LABELS, id)
 const NO_FIELDS: LaunchField[] = []
+const setupCommand = (id: AgentProviderId) => ['bonsai agent account add', id, '<name>', SETUP_HINTS[id]].filter(Boolean).join(' ')
 const fieldsOf = (providers: AgentCapability[], id: string) => providers.find(item => item.id === id)?.launch_fields ?? NO_FIELDS
 
 function lastProvider(): string {
@@ -92,6 +93,7 @@ function StartAgentForm() {
   const values = resolveLaunchValues(fields, launchValues, launchModel)
   const options = launchRequestOptions(fields, values)
   const profileDefaults = [account?.model, ...launchSummary(fields.filter(field => field.kind === 'select'), account ?? {})].filter(Boolean)
+  const signedIn = [account?.auth_mode && `auth: ${account.auth_mode}`, account?.identity, account?.auth_status?.replace(/_/g, ' ')].filter(Boolean)
   const selectProvider = (id: string) => {
     if (id === providerId) return
     const own = accounts.filter(item => item.provider === id)
@@ -180,7 +182,7 @@ function StartAgentForm() {
                 const profiles = accounts.filter(candidate => candidate.provider === item.id).length
                 const connected = isLaunchable(item.id) && item.available && profiles > 0
                 const active = item.id === providerId
-                const reason = !item.available ? item.unavailable_reason?.message || 'Not available' : profiles ? `Launch with your saved ${item.label} profile.` : `No ${item.label} profile yet`
+                const reason = !item.available ? item.unavailable_reason?.message || 'Not available' : profiles ? `Launch with your saved ${item.label} profile.` : `No ${item.label} profile yet. Run ${isLaunchable(item.id) ? setupCommand(item.id) : 'its setup command'}.`
                 return (
                   <button
                     type="button"
@@ -215,9 +217,9 @@ function StartAgentForm() {
               <ModelCombobox ariaLabel="Agent model" disabled={pending} loading={modelsLoading} value={model} onChange={setModel} suggestions={models} placeholder={chosenModel(models, '')?.label ?? 'Use profile default'} />
             </label>
           </div>
-          {account && (account.auth_mode || account.identity || profileDefaults.length > 0 || account.warnings?.length) && (
+          {account && (signedIn.length > 0 || profileDefaults.length > 0 || account.warnings?.length) && (
             <div className="space-y-1 rounded-[10px] border border-border bg-well p-3 font-mono text-[10px] text-muted-2" data-testid="profile-details">
-              <div>{[account.auth_mode && `auth: ${account.auth_mode}`, account.identity].filter(Boolean).join(' · ')}</div>
+              {signedIn.length > 0 && <div>{signedIn.join(' · ')}</div>}
               {profileDefaults.length > 0 && <div>{'profile defaults: ' + profileDefaults.join(' · ')}</div>}
               {account.warnings?.map(warning => <div key={warning} className="text-warn">{warning}</div>)}
             </div>
@@ -265,7 +267,7 @@ function StartAgentForm() {
               className="bonsai-focus w-full resize-y rounded-[7px] border border-border bg-well px-3 py-2.5 text-[12px] leading-5 outline-none placeholder:text-muted-2 focus:border-accent/55"
             />
           </label>
-          {!loading && !error && selected?.available && launchable && !providerAccounts.length && <p className="text-[10px] text-muted">Set up a profile with <code>bonsai agent account add {launchable} &lt;name&gt;</code></p>}
+          {!loading && !error && selected?.available && launchable && !providerAccounts.length && <p className="text-[10px] text-muted">Set up a profile with <code>{setupCommand(launchable)}</code></p>}
           {selected && !selected.available && <p className="text-[10px] text-muted">{selected.unavailable_reason?.message}</p>}
           {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
         </div>

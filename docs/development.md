@@ -365,13 +365,38 @@ real Codex 0.162.1 (`auth.json` shape, app-server `initialize`, `account/read`,
 `account/rateLimits/read`, `model/list`, and a trimmed `debug models --bundled`);
 `testdata/rate-limits-multi.json` is hand-written to cover extra limit groups.
 
+### Codex in the web client
+
+Codex needs no web code of its own: `AgentProviderId` and `PROVIDER_LABELS`
+(`web/src/api/agents.ts`) list it, and everything else is driven by the provider
+list. The Codex tab is enabled when the provider is available **and** has a
+profile; otherwise its tooltip says why or shows the setup command
+(`SETUP_HINTS` adds `[--auth device]`). The dialog renders the `permissions`
+preset and the per-model `effort` select from the declared launch fields; the
+effort list follows the chosen model (`gpt-6.1-sol` offers `ultra`, `gpt-6-luna`
+does not) and a value the new model lacks falls back to "Profile default". The
+model placeholder is the provider's default model. The profile row shows
+`auth: <mode> · <email · plan> · <auth status>` and the profile's warnings, such
+as a shared login. Submitting sends `sandbox`/`approval` (or `sandbox: bypass`)
+and `effort` as flat request fields.
+
+Browser coverage: `web/e2e/codex-agents.spec.ts` runs two sessions on one profile
+and one on another against the mocked API (request bodies, node and terminal
+marks, effort handling). `agent-terminal-fullstack.spec.ts` runs the real API and
+PTYs with `fakecodex.sh` and `fakeclaude.sh` on `PATH` (HOME is a temp dir, no
+seeding, no network): two Codex profiles with two sessions each plus one Claude
+session, input routed to the right PTY, reload and reattach, stop one while the
+others keep running. These fixture-server specs need ports 7011-7014 free.
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured
 project worktree. Set up a profile with
 `bonsai agent account add antigravity <name>` and ensure `agy` is on the API's
-PATH. Claude is also supported; Codex remains unavailable. Profile selection uses opaque account
-IDs; discovery responses contain only ID, provider and display name.
+PATH. Claude (`claude`) and Codex (`codex`) are supported the same way: set up a
+profile with `bonsai agent account add codex <name> [--auth device]`. Profile selection uses
+opaque account IDs; discovery responses contain only ID, provider, display name and the
+display-safe profile details.
 
 The local API owns these sessions, independently of request contexts and browser
 connections. Closing a terminal or refreshing detaches; reconnecting resumes the

@@ -97,7 +97,7 @@ export interface EnvVariable {
 
 export type AgentProvider = 'Claude' | 'Codex' | 'Gemini' | 'Antigravity'
 /** Provider IDs the local API can launch; other providers are display-only. */
-export type AgentProviderId = 'antigravity' | 'claude'
+export type AgentProviderId = 'antigravity' | 'claude' | 'codex'
 
 export interface Agent {
   projectId?: string

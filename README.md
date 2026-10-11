@@ -468,7 +468,9 @@ bonsai agent account add antigravity personal
 
 Start the web app with `bonsai web`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;
-enter instructions directly in it. Codex is not available yet.
+enter instructions directly in it. Claude Code and Codex profiles start the same
+way (`bonsai agent account add codex work`); the dialog shows the permissions
+preset and, for Codex, the reasoning effort the chosen model supports.
 
 Closing the dock or reloading the browser detaches without stopping the agent.
 Use **Stop agent** to terminate it and reconcile profile credentials. Sessions

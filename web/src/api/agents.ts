@@ -1,7 +1,9 @@
 import { localFetch } from './localClient'
 import type { Agent, AgentProvider, AgentProviderId } from '../types'
 
-export const PROVIDER_LABELS: Record<AgentProviderId, AgentProvider> = { antigravity: 'Antigravity', claude: 'Claude' }
+export const PROVIDER_LABELS: Record<AgentProviderId, AgentProvider> = { antigravity: 'Antigravity', claude: 'Claude', codex: 'Codex' }
+/** Extra `bonsai agent account add` flags worth pointing at when a provider has no profile yet. */
+export const SETUP_HINTS: Partial<Record<AgentProviderId, string>> = { codex: '[--auth device]' }
 /** True for agents backed by a real local-API session (terminal, stop, reconcile). */
 export const isLiveAgent = (agent?: Pick<Agent, 'providerId'>): boolean => !!agent?.providerId && Object.hasOwn(PROVIDER_LABELS, agent.providerId)
 export const providerIdFor = (label: AgentProvider): AgentProviderId | undefined => (Object.keys(PROVIDER_LABELS) as AgentProviderId[]).find(id => PROVIDER_LABELS[id] === label)
