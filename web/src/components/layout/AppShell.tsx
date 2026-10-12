@@ -22,6 +22,7 @@ const CommandPalette = lazy(() => import('../../features/command-palette/Command
 const CreateWorktreeDialog = lazy(() => import('../../features/workspace/CreateWorktreeDialog').then(module => ({ default: module.CreateWorktreeDialog })))
 const DeleteWorktreeDialog = lazy(() => import('../../features/workspace/DeleteWorktreeDialog').then(module => ({ default: module.DeleteWorktreeDialog })))
 const EnvEditor = lazy(() => import('../../features/workspace/EnvEditor').then(module => ({ default: module.EnvEditor })))
+const EditorPreferenceDialog = lazy(() => import('../../features/files/EditorPreferenceDialog').then(module => ({ default: module.EditorPreferenceDialog })))
 const StartAgentDialog = lazy(() => import('../../features/workspace/StartAgentDialog').then(module => ({ default: module.StartAgentDialog })))
 const StartProcessDialog = lazy(() => import('../../features/workspace/StartProcessDialog').then(module => ({ default: module.StartProcessDialog })))
 
@@ -187,6 +188,7 @@ function ShellOverlays() {
   const agent = useBonsaiStore(state => state.startAgentDialogOpen)
   const process = useBonsaiStore(state => state.startProcessDialogOpen)
   const environment = useBonsaiStore(state => state.envEditorOpen)
+  const editor = useBonsaiStore(state => state.editorPromptOpen)
   const palette = useBonsaiStore(state => state.paletteOpen)
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -207,6 +209,7 @@ function ShellOverlays() {
     {agent && <OverlayBoundary loading="Loading agent dialog…" onDismiss={() => useBonsaiStore.getState().setStartAgentDialogOpen(false)}><StartAgentDialog /></OverlayBoundary>}
     {process && <OverlayBoundary loading="Loading process dialog…" onDismiss={() => useBonsaiStore.getState().setStartProcessDialogOpen(false)}><StartProcessDialog /></OverlayBoundary>}
     {environment && <OverlayBoundary loading="Loading environment editor…" onDismiss={() => useBonsaiStore.getState().setEnvEditorOpen(false)}><EnvEditor /></OverlayBoundary>}
+    {editor && <OverlayBoundary loading="Loading editor chooser…" onDismiss={() => useBonsaiStore.getState().closeEditorPrompt()}><EditorPreferenceDialog /></OverlayBoundary>}
     {palette && <OverlayBoundary loading="Loading commands…" onDismiss={() => useBonsaiStore.getState().setPaletteOpen(false)}><CommandPalette /></OverlayBoundary>}
   </>
 }

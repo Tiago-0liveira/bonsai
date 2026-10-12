@@ -44,7 +44,8 @@ The idle web supervisor retains logs and exits according to its idle policy.
 
 `web.json` holds ports, browser preferences and update choices. Project folders
 and selected repositories live in `project-roots.json` and
-`project-roots.json.repositories.json`. Machine-managed hook state lives in `web-state.json`.
+`project-roots.json.repositories.json`. Environment editor preferences live in
+`project-roots.json.editors.json`. Machine-managed hook state lives in `web-state.json`.
 The webhook secret is in its own private `web-webhook-secret` file. Runtime
 supervisor records and logs are under `.bonsai` in the runtime directory;
 server-side warm snapshots are under `warm-start`.
@@ -54,6 +55,37 @@ Settings schema remains version 1. Existing `interfaces.local` and
 save; ports, folders, browser and update preferences survive. `bonsai serve`
 has been removed immediately, and all `serve.*` YAML keys are inert.
 `BONSAI_FRONTEND_ORIGIN` no longer affects access or browser opening.
+
+## Opening files in an editor
+
+Choose **Settings → Environment editor** to set a default editor for the
+environment running Bonsai. With no default, clicking a file in the Inspector's
+Files tab asks you to choose an installed editor, saves that choice, and opens
+the file. Files open relative to their selected worktree, including when you
+switch worktrees while the chooser is open.
+
+Discovery uses this environment's absolute PATH entries for supported GUI
+commands: `code`, `code-insiders`, `cursor`, `zed`/`zeditor`, `subl`, `kate`,
+`gedit`, and `gnome-text-editor`. Windows requires native `.exe` commands on
+PATH; terminal-only editors and generic system file handlers are not offered.
+No installation directories in another operating system are searched.
+
+On WSL, Windows drive mount entries, Windows executables, symlinks to those
+mounts, and Windows forwarding scripts are excluded. Install a **Linux** editor
+inside that WSL distribution; a Windows Zed installation alone will not appear.
+GUI editors also need a graphical session such as WSLg. Preferences are keyed
+by host and OS, and additionally by distribution on WSL, so Windows and separate
+WSL distributions keep independent choices. Old browser-wide editor preferences
+are discarded rather than assigned to an environment.
+
+Use **Refresh editors** after installing or removing an editor. Restart Bonsai
+if you changed its PATH. A missing saved editor prompts you to choose another;
+Bonsai never falls back to a Windows launcher. Launches use separate arguments,
+without shell interpolation, and reject paths or symlinks outside the worktree.
+Launcher helpers use the environment's PATH with Windows drive mounts excluded
+on WSL. The opening notice acknowledges the launch request; it does not assert
+that a GUI window was displayed. Immediate process failures report the editor's
+error, and later failures are retained in the local API log.
 
 ## Updates and exposure
 

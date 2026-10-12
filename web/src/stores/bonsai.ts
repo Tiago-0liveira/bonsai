@@ -1,5 +1,6 @@
 import { startAgent, stopAgent, mapAgent, isLiveAgent, providerIdFor } from '../api/agents'
 import type { ProjectRootsSettings } from '../api/settings'
+import { loadEditors, saveEditor, openFileInEditor, type EnvironmentEditorSettings } from '../api/editors'
 import { create } from 'zustand'
 import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
 import { createPreferenceBoundary } from './preferenceBoundary'
@@ -13,7 +14,6 @@ import type {
   DockPanelKey,
   DockState,
   DockTab,
-  EditorPreference,
   EnvVariable,
   NodePlacement,
   Project,
@@ -130,11 +130,16 @@ export interface BonsaiState {
 
   selectedFilePath: string
   setSelectedFilePath: (path: string) => void
-  editorPreference: EditorPreference | undefined
+  editorSettings: EnvironmentEditorSettings | null
+  editorSettingsLoading: boolean
+  editorSettingsSaving: boolean
+  editorSettingsError: string
+  loadEditorSettings: () => Promise<EnvironmentEditorSettings>
+  setEnvironmentEditor: (editor: string) => Promise<void>
   editorPromptOpen: boolean
-  pendingOpenFile: string
-  requestOpenFile: (path: string) => void
-  setEditorPreference: (editor: EditorPreference) => void
+  pendingOpenFile: { worktreeId: string; path: string } | null
+  requestOpenFile: (path: string) => Promise<void>
+  chooseFileEditor: (editor: string) => Promise<void>
   closeEditorPrompt: () => void
 
   pullRequests: PullRequest[]
@@ -416,27 +421,71 @@ export const useBonsaiStore = create<BonsaiState>()(
 
       selectedFilePath: 'package.json',
       setSelectedFilePath: (selectedFilePath) => set({ selectedFilePath }),
-      editorPreference: undefined,
+      editorSettings: null,
+      editorSettingsLoading: false,
+      editorSettingsSaving: false,
+      editorSettingsError: '',
+      loadEditorSettings: async () => {
+        set({ editorSettingsLoading: true, editorSettingsError: '' })
+        try {
+          const editorSettings = await loadEditors()
+          set({ editorSettings })
+          return editorSettings
+        } catch (error) {
+          set({ editorSettingsError: error instanceof Error ? error.message : String(error) })
+          throw error
+        } finally { set({ editorSettingsLoading: false }) }
+      },
+      setEnvironmentEditor: async (editor) => {
+        set({ editorSettingsSaving: true, editorSettingsError: '' })
+        try {
+          const settings = get().editorSettings ?? await get().loadEditorSettings()
+          const editorSettings = await saveEditor(settings, editor)
+          set({ editorSettings, notice: 'Editor preference saved for ' + editorSettings.environment.label })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          await get().loadEditorSettings().catch(() => undefined)
+          set({ editorSettingsError: message })
+          throw error
+        } finally { set({ editorSettingsSaving: false }) }
+      },
       editorPromptOpen: false,
-      pendingOpenFile: '',
-      requestOpenFile: (path) => {
+      pendingOpenFile: null,
+      requestOpenFile: async (path) => {
         const state = get()
-        if (!state.editorPreference) {
-          set({ editorPromptOpen: true, pendingOpenFile: path, selectedFilePath: path })
+        const worktreeId = state.dockWorktreeId
+        if (!worktreeId) {
+          set({ notice: 'Select a worktree before opening a file.' })
           return
         }
-        set({ selectedFilePath: path, notice: 'Opening files in an external editor is unavailable in the connected app.' })
+        set({ selectedFilePath: path })
+        try {
+          // Backend preferences belong to this environment; browser storage
+          // must never select an editor from another environment.
+          const settings = await get().loadEditorSettings()
+          if (!settings.preferred) {
+            set({ editorPromptOpen: true, pendingOpenFile: { worktreeId, path } })
+            return
+          }
+          const result = await openFileInEditor(worktreeId, path, settings.environment.id)
+          set({ notice: 'Requested ' + result.editor + ' to open ' + path })
+        } catch (error) { report(error) }
       },
-      setEditorPreference: (editorPreference) => {
-        const state = get()
-        set({
-          editorPreference,
-          editorPromptOpen: false,
-          notice: state.pendingOpenFile ? 'Editor preference saved. Opening files in an external editor is unavailable in the connected app.' : 'Editor preference saved',
-          pendingOpenFile: '',
-        })
+      chooseFileEditor: async (editor) => {
+        const pending = get().pendingOpenFile
+        try {
+          await get().setEnvironmentEditor(editor)
+          if (!pending || get().pendingOpenFile !== pending) return
+          const settings = get().editorSettings!
+          const result = await openFileInEditor(pending.worktreeId, pending.path, settings.environment.id)
+          set({ editorPromptOpen: false, pendingOpenFile: null, notice: 'Requested ' + result.editor + ' to open ' + pending.path })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          set({ editorSettingsError: message })
+          report(error)
+        }
       },
-      closeEditorPrompt: () => set({ editorPromptOpen: false, pendingOpenFile: '' }),
+      closeEditorPrompt: () => set({ editorPromptOpen: false, pendingOpenFile: null }),
 
       pullRequests: [],
       inspectedPullRequestId: null,

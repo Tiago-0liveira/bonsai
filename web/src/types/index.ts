@@ -8,7 +8,6 @@ export type CiStatus = 'unknown' | 'none' | 'running' | 'passed' | 'failed' | 'w
 export type DockPanelKey = 'files' | 'prs'
 export type StackPreference = 'auto' | 'never'
 export type FileGitStatus = 'modified' | 'untracked' | 'added' | 'deleted' | 'committed'
-export type EditorPreference = 'vscode' | 'cursor' | 'zed' | 'system'
 
 export interface Workspace {
   id: string

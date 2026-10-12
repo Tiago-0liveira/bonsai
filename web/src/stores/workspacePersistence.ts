@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { PersistStorage, StorageValue } from 'zustand/middleware'
 import { isLiveAgent } from '../api/agents'
-import type { Agent, DockState, DockTab, EditorPreference, NodePlacement, RuntimeReference, Selection, TerminalViewPreferences, ViewportState } from '../types'
+import type { Agent, DockState, DockTab, NodePlacement, RuntimeReference, Selection, TerminalViewPreferences, ViewportState } from '../types'
 import { activeRuntimePatch } from './runtimePreferences'
 import type { BonsaiState } from './bonsai'
 
@@ -20,7 +20,6 @@ export interface WorkspacePreferences {
   collapsedBranchIds: string[]
   rightPanels: { files: boolean; prs: boolean }
   selectedFilePath: string
-  editorPreference?: EditorPreference
   nodePlacements: Record<string, NodePlacement>
   viewport: ViewportState
   detachedStackWorktreeIds: string[]
@@ -89,7 +88,6 @@ export function sanitizeWorkspacePreferences(value: unknown): Partial<WorkspaceP
   if (member(raw.dockState, ['collapsed', 'normal', 'maximized'])) result.dockState = raw.dockState
   if (finite(raw.dockHeight)) result.dockHeight = Math.min(72, Math.max(14, raw.dockHeight))
   if (member(raw.activeDockTab, ['agent', 'terminal', 'tests', 'files', 'pr', 'checks', 'logs'])) result.activeDockTab = raw.activeDockTab
-  if (member(raw.editorPreference, ['vscode', 'cursor', 'zed', 'system'])) result.editorPreference = raw.editorPreference
   for (const key of ['collapsedBranchIds', 'detachedStackWorktreeIds', 'expandedAutomaticGroups'] as const) {
     if (strings(raw[key])) result[key] = [...raw[key]]
   }

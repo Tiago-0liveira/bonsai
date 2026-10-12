@@ -39,6 +39,12 @@ describe('bonsai store', () => {
       activeTerminalId: 'fixture-terminal',
       terminalOutput: { 'fixture-terminal': ['Recorded presentation fixture'] },
       notice: '',
+      editorSettings: null,
+      editorSettingsLoading: false,
+      editorSettingsSaving: false,
+      editorSettingsError: '',
+      editorPromptOpen: false,
+      pendingOpenFile: null,
     })
   })
 
@@ -131,15 +137,58 @@ describe('bonsai store', () => {
     expect(useBonsaiStore.getState().terminalOutput).toBe(output)
   })
 
-  it('reports external editor unavailability while saving its preference', () => {
-    useBonsaiStore.setState({ editorPreference: 'vscode', pendingOpenFile: '' })
-    useBonsaiStore.getState().requestOpenFile('src/main.ts')
-    expect(useBonsaiStore.getState().selectedFilePath).toBe('src/main.ts')
-    expect(useBonsaiStore.getState().notice).toContain('unavailable')
-    useBonsaiStore.setState({ pendingOpenFile: 'src/main.ts' })
-    useBonsaiStore.getState().setEditorPreference('cursor')
-    expect(useBonsaiStore.getState().editorPreference).toBe('cursor')
-    expect(useBonsaiStore.getState().notice).toContain('unavailable')
+  const editors = {
+    environment: { id: 'wsl:host:Ubuntu', label: 'WSL (Ubuntu)' }, revision: 0,
+    editors: [{ id: 'zed', name: 'Zed', command: '/usr/bin/zed' }], preferred: '', saved_preferred: '',
+  }
+  const jsonResponse = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
+
+  it('saves the environment editor and opens the pending file in its original worktree', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(editors))
+      .mockResolvedValueOnce(jsonResponse({ ...editors, revision: 1, preferred: 'zed', saved_preferred: 'zed' }))
+      .mockResolvedValueOnce(jsonResponse({ editor: 'Zed', environment: 'WSL (Ubuntu)' }, 202))
+    await useBonsaiStore.getState().requestOpenFile('file with spaces.ts')
+    expect(useBonsaiStore.getState().pendingOpenFile).toEqual({ worktreeId: 'wt-web', path: 'file with spaces.ts' })
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(true)
+    useBonsaiStore.setState({ dockWorktreeId: 'another-worktree' })
+    await useBonsaiStore.getState().chooseFileEditor('zed')
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/settings/editors', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ environment_id: editors.environment.id, revision: 0, editor: 'zed' }),
+    }))
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/worktrees/wt-web/open-editor', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ environment_id: editors.environment.id, path: 'file with spaces.ts' }),
+    }))
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(false)
+    expect(useBonsaiStore.getState().pendingOpenFile).toBeNull()
+    expect(useBonsaiStore.getState().notice).toContain('Requested Zed')
+  })
+
+  it('opens files with the backend preference, ignoring stale browser settings', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ ...editors, preferred: 'zed', saved_preferred: 'zed' }))
+      .mockResolvedValueOnce(jsonResponse({ editor: 'Zed', environment: 'WSL (Ubuntu)' }, 202))
+    await useBonsaiStore.getState().requestOpenFile('README.md')
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(false)
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/worktrees/wt-web/open-editor', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('shows launch errors and keeps the chooser open for retry', async () => {
+    useBonsaiStore.setState({ editorSettings: editors, editorPromptOpen: true, pendingOpenFile: { worktreeId: 'wt-web', path: 'README.md' } })
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ ...editors, revision: 1, preferred: 'zed' }))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'editor_launch_failed', message: 'Cannot connect to display' } }, 502))
+    await useBonsaiStore.getState().chooseFileEditor('zed')
+    expect(useBonsaiStore.getState().notice).toBe('Cannot connect to display')
+    expect(useBonsaiStore.getState().editorSettingsError).toBe('Cannot connect to display')
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(true)
+  })
+
+  it('offers environment selection again if a saved editor has been uninstalled', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ ...editors, saved_preferred: 'cursor' }))
+    const count = vi.mocked(fetch).mock.calls.length
+    await useBonsaiStore.getState().requestOpenFile('README.md')
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(true)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(count + 1)
   })
 
   it('legacy agent launch callers open profile selection without creating a session', () => {
