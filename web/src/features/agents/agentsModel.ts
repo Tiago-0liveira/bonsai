@@ -13,9 +13,15 @@ export interface ProviderGroupModel {
 
 const byName = (a: AgentAccount, b: AgentAccount) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)
 
-/** Providers in API order, then providers only known from profiles; profiles by name. */
+/** The providers the Agents tab lists first, in this order; any other provider follows in API order. */
+const PROVIDER_ORDER = ['claude', 'codex', 'antigravity']
+const providerRank = (id: string) => { const rank = PROVIDER_ORDER.indexOf(id); return rank < 0 ? PROVIDER_ORDER.length : rank }
+
+/** Claude, Codex, Antigravity, then other providers in API order, then providers only known from profiles; profiles by name. */
 export function groupProfiles(providers: AgentCapability[], accounts: AgentAccount[]): ProviderGroupModel[] {
-  const groups = providers.map<ProviderGroupModel>(capability => ({ id: capability.id, label: capability.label || capability.id, capability, accounts: [] }))
+  // Array.prototype.sort is stable, so providers of equal rank keep the API order.
+  const ordered = [...providers].sort((a, b) => providerRank(a.id) - providerRank(b.id))
+  const groups = ordered.map<ProviderGroupModel>(capability => ({ id: capability.id, label: capability.label || capability.id, capability, accounts: [] }))
   const byId = new Map(groups.map(group => [group.id, group]))
   for (const account of [...accounts].sort(byName)) {
     let group = byId.get(account.provider)

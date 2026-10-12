@@ -9,19 +9,24 @@ const account = (id: string, name: string, provider: AgentAccount['provider'] = 
 const capability = (id: string, label: string, available = true): AgentCapability => ({ id, label, available })
 
 describe('groupProfiles', () => {
-  it('keeps the provider order, sorts profiles by name and adds providers only profiles know', () => {
+  it('lists Claude, Codex and Antigravity first, sorts profiles by name and adds providers only profiles know', () => {
     const groups = groupProfiles(
-      [capability('antigravity', 'Antigravity', false), capability('claude', 'Claude'), capability('codex', 'Codex')],
+      [capability('antigravity', 'Antigravity', false), capability('codex', 'Codex'), capability('claude', 'Claude')],
       [account('c2', 'team'), account('c1', 'Personal'), account('x1', 'Solo', 'future' as never), account('k1', 'Work', 'claude')],
     )
     expect(groups.map(group => [group.id, group.label, group.accounts.map(item => item.name)])).toEqual([
-      ['antigravity', 'Antigravity', []],
       ['claude', 'Claude', ['Work']],
       ['codex', 'Codex', ['Personal', 'team']],
+      ['antigravity', 'Antigravity', []],
       ['future', 'future', ['Solo']],
     ])
-    expect(groups[0].capability?.available).toBe(false)
+    expect(groups[2].capability?.available).toBe(false)
     expect(groups[3].capability).toBeUndefined()
+  })
+
+  it('puts other listed providers after the three, in API order', () => {
+    const groups = groupProfiles([capability('zed', 'Zed'), capability('antigravity', 'Antigravity'), capability('aider', 'Aider'), capability('claude', 'Claude')], [])
+    expect(groups.map(group => group.id)).toEqual(['claude', 'antigravity', 'zed', 'aider'])
   })
 
   it('breaks name ties by id so the order is stable', () => {

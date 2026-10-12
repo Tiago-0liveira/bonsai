@@ -59,6 +59,7 @@ const renderPage = async (rest: Partial<AgentsPageProps> = {}) => {
 }
 
 beforeEach(() => {
+  localStorage.clear()
   useBonsaiStore.setState({
     ...useBonsaiStore.getInitialState(), projects, worktrees: [...worktrees, labWorktree], activeProjectId: 'bonsai', activeWorkspaceId: 'personal',
     agents: [agent('s-running'), agent('s-lab', { projectId: 'sprout-lab', worktreeId: 'wt-lab' }), agent('s-done', { lifecycleState: 'exited', state: 'finished', exitCode: 0, finishedAt: new Date(Date.now() - 60_000).toISOString() }), agent('s-other', { accountId: 'claude-work', providerId: 'claude', provider: 'Claude' })],
@@ -77,7 +78,7 @@ describe('status', () => {
     const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
     const codex = within(within(list).getByRole('region', { name: 'Codex' }))
     expect(codex.getByText('v0.162.1')).toBeInTheDocument()
-    const rows = codex.getAllByRole('button')
+    const rows = within(codex.getByRole('list', { name: 'Codex profiles' })).getAllByRole('button')
     expect(rows.map(row => within(row).getByText(/Personal|Team/).textContent)).toEqual(['Personal', 'Team'])
     expect(rows[0]).toHaveTextContent('Signed in')
     expect(rows[1]).toHaveTextContent('Signed out')
@@ -85,6 +86,42 @@ describe('status', () => {
     expect(antigravity.getByText('agy is not installed')).toBeInTheDocument()
     expect(antigravity.getByText('npm i -g agy')).toBeInTheDocument()
     expect(antigravity.getByText('No profiles')).toBeInTheDocument()
+  })
+
+  it('lists providers as Claude, Codex, Antigravity whatever order the API uses', async () => {
+    await renderPage()
+    const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
+    expect(within(list).getAllByRole('region').map(region => region.getAttribute('aria-label'))).toEqual(['Claude', 'Codex', 'Antigravity'])
+  })
+
+  it('collapses and expands a provider, remembers it, and keeps the profile list out of the page while collapsed', async () => {
+    await renderPage({ profileId: 'codex-personal' })
+    const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
+    const claude = within(within(list).getByRole('region', { name: 'Claude' }))
+    const toggle = claude.getByRole('button', { name: /^Claude/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(claude.getByRole('list', { name: 'Claude profiles' })).toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(claude.queryByRole('list', { name: 'Claude profiles' })).not.toBeInTheDocument()
+    expect(claude.getByLabelText('2 profiles')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('bonsai.agents.collapsedProviders') ?? '[]')).toEqual(['claude'])
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(claude.getByRole('list', { name: 'Claude profiles' })).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('bonsai.agents.collapsedProviders') ?? '[]')).toEqual([])
+  })
+
+  it('starts collapsed when it was left collapsed, and opens the group of the selected profile', async () => {
+    localStorage.setItem('bonsai.agents.collapsedProviders', JSON.stringify(['claude', 'codex']))
+    await renderPage({ profileId: 'codex-personal' })
+    const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
+    expect(within(list).getByRole('button', { name: /^Claude/ })).toHaveAttribute('aria-expanded', 'false')
+    // The selected profile's group opens so the selection is never hidden.
+    expect(within(list).getByRole('button', { name: /^Codex/ })).toHaveAttribute('aria-expanded', 'true')
+    expect(within(list).getByRole('list', { name: 'Codex profiles' })).toBeInTheDocument()
   })
 
   it('colours the sign-in dot by state', async () => {
