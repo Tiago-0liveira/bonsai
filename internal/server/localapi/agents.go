@@ -15,6 +15,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentsetup"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
@@ -29,6 +30,9 @@ type agentAPI struct {
 	// revision numbers agents_changed events.
 	revision      atomic.Uint64
 	usageThrottle usageThrottle
+	// setup runs web sign-ins; setupKeys are their request keys.
+	setup     *agentsetup.Jobs
+	setupKeys setupKeys
 }
 type agentRequest struct {
 	Model  string `json:"model,omitempty"`
@@ -64,6 +68,7 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{projectId}/agents", s.startAgent)
 	mux.HandleFunc("DELETE /api/projects/{projectId}/agents/{sessionId}", s.stopAgent)
 	mux.HandleFunc("GET /api/projects/{projectId}/agents/{sessionId}/terminal", s.agentTerminal)
+	s.registerAgentSetupRoutes(mux)
 }
 
 func (s *Server) agentRegistry() *agents.Registry {

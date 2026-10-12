@@ -42,24 +42,15 @@ func (s Summary) Active() bool {
 	return s.State == "starting" || s.State == "running" || s.State == "stopping"
 }
 
-type Frame struct {
-	Type   string   `json:"type"`
-	Offset uint64   `json:"offset"`
-	Data   []byte   `json:"data,omitempty"`
-	Status *Summary `json:"status,omitempty"`
-}
+// Frame is one agent terminal message; its status is the session summary.
+type Frame = StreamFrame[Summary]
+
 type session struct {
-	summary     Summary
-	workDir     string
-	proc        *process
-	cancel      context.CancelFunc
-	done        chan struct{}
-	output      []byte
-	head        int
-	offset      uint64
-	subscribers map[uint64]chan Frame
-	writer      uint64
-	next        uint64
+	summary Summary
+	workDir string
+	cancel  context.CancelFunc
+	done    chan struct{}
+	stream  *Stream[Summary]
 }
 type Manager struct {
 	mu       sync.Mutex
@@ -149,7 +140,7 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 		name = account.Name
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	entry := &session{summary: Summary{ID: string(runtime.ID), ProjectID: project, WorktreeID: tree, AccountID: accountID, Provider: account.Provider, ProfileName: account.Name, Name: name, State: "starting", CreatedAt: time.Now().UTC(), Model: launch.Model, Options: launch.Values()}, workDir: dir, cancel: cancel, done: make(chan struct{}), subscribers: map[uint64]chan Frame{}}
+	entry := &session{summary: Summary{ID: string(runtime.ID), ProjectID: project, WorktreeID: tree, AccountID: accountID, Provider: account.Provider, ProfileName: account.Name, Name: name, State: "starting", CreatedAt: time.Now().UTC(), Model: launch.Model, Options: launch.Values()}, workDir: dir, cancel: cancel, done: make(chan struct{}), stream: NewStream[Summary](cols, rows)}
 	m.entries[entry.summary.ID] = entry
 	result := entry.summary
 	m.mu.Unlock()
@@ -166,68 +157,21 @@ func (m *Manager) run(ctx context.Context, e *session, a agents.Account, r agent
 	if err == nil {
 		m.mu.Lock()
 		e.summary.ProviderSessionID = prepared.ProviderSessionID
-		if ctx.Err() != nil {
-			err = ctx.Err()
-		} else {
-			e.proc, err = launch(prepared, cols, rows)
-		}
-		if err == nil {
+		m.mu.Unlock()
+		code, err = runInStream(ctx, e.stream, prepared, cols, rows, func() error {
+			m.mu.Lock()
+			if ctx.Err() != nil {
+				m.mu.Unlock()
+				return ctx.Err()
+			}
 			e.summary.State = "running"
 			now := time.Now().UTC()
 			e.summary.StartedAt = &now
-			status := e.summary
-			m.broadcast(e, Frame{Type: "status", Offset: e.offset, Status: &status})
-		}
-		m.mu.Unlock()
-		m.notify(e.summary.ProjectID)
-		if err == nil {
-			drained := make(chan struct{})
-			go func() {
-				defer close(drained)
-				buf := make([]byte, 16384)
-				for {
-					n, readErr := e.proc.file.Read(buf)
-					if n > 0 {
-						m.output(e, buf[:n])
-					}
-					if readErr != nil {
-						return
-					}
-				}
-			}()
-			waited := make(chan struct{})
-			monitorDone := make(chan struct{})
-			go func() {
-				defer close(monitorDone)
-				select {
-				case <-ctx.Done():
-					select {
-					case <-waited:
-						return
-					default:
-					}
-					e.proc.signal(false)
-					select {
-					case <-waited:
-					case <-time.After(2 * time.Second):
-						e.proc.signal(true)
-					}
-				case <-waited:
-				}
-			}()
-			code, err = e.proc.wait()
-			close(waited)
-			<-monitorDone
-			// Descendants must not retain the slave terminal after the provider exits.
-			e.proc.signal(true)
-			select {
-			case <-drained:
-			case <-time.After(time.Second):
-				_ = e.proc.file.Close()
-				<-drained
-			}
-			_ = e.proc.file.Close()
-		}
+			e.stream.Status(e.summary)
+			m.mu.Unlock()
+			m.notify(e.summary.ProjectID)
+			return nil
+		})
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -251,8 +195,7 @@ func (m *Manager) run(ctx context.Context, e *session, a agents.Account, r agent
 	if errors.Join(finalErr, cleanupErr) != nil {
 		e.summary.Error = "Profile finalization or session cleanup failed."
 	}
-	status := e.summary
-	m.broadcast(e, Frame{Type: "status", Offset: e.offset, Status: &status})
+	e.stream.Status(e.summary)
 	m.evict()
 	m.mu.Unlock()
 	m.notify(e.summary.ProjectID)
@@ -267,49 +210,10 @@ func (m *Manager) evict() {
 	sort.Slice(ended, func(i, j int) bool { return ended[i].summary.CreatedAt.Before(ended[j].summary.CreatedAt) })
 	for len(ended) > 32 {
 		e := ended[0]
-		for _, ch := range e.subscribers {
-			close(ch)
-		}
+		e.stream.DetachAll()
 		delete(m.entries, e.summary.ID)
 		ended = ended[1:]
 	}
-}
-func (m *Manager) broadcast(e *session, f Frame) {
-	for id, ch := range e.subscribers {
-		select {
-		case ch <- f:
-		default:
-			close(ch)
-			delete(e.subscribers, id)
-			if e.writer == id {
-				e.writer = 0
-			}
-		}
-	}
-}
-func (m *Manager) output(e *session, b []byte) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data := append([]byte(nil), b...)
-	offset := e.offset
-	e.offset += uint64(len(b))
-	if len(b) >= OutputLimit {
-		e.output = append(e.output[:0], b[len(b)-OutputLimit:]...)
-		e.head = 0
-	} else {
-		if len(e.output) < OutputLimit {
-			n := min(OutputLimit-len(e.output), len(b))
-			e.output = append(e.output, b[:n]...)
-			b = b[n:]
-		}
-		if len(b) > 0 {
-			n := copy(e.output[e.head:], b)
-			copy(e.output, b[n:])
-			e.head = (e.head + len(b)) % OutputLimit
-		}
-	}
-
-	m.broadcast(e, Frame{Type: "output", Offset: offset, Data: data})
 }
 func (m *Manager) List(project string) []Summary {
 	m.mu.Lock()
@@ -360,8 +264,7 @@ func (m *Manager) Stop(project, id string) error {
 	}
 	if e.summary.Active() {
 		e.summary.State = "stopping"
-		status := e.summary
-		m.broadcast(e, Frame{Type: "status", Offset: e.offset, Status: &status})
+		e.stream.Status(e.summary)
 		e.cancel()
 	}
 	m.mu.Unlock()
@@ -382,11 +285,7 @@ func (m *Manager) Close() {
 	}
 	m.mu.Lock()
 	for _, e := range m.entries {
-		for id, ch := range e.subscribers {
-			close(ch)
-			delete(e.subscribers, id)
-		}
-		e.writer = 0
+		e.stream.DetachAll()
 	}
 	m.mu.Unlock()
 }
@@ -397,63 +296,35 @@ func (m *Manager) Attach(project, id string, cursor uint64) (uint64, bool, []Fra
 	if !ok || e.summary.ProjectID != project {
 		return 0, false, nil, nil, fmt.Errorf("session not found")
 	}
-	e.next++
-	subscriber := e.next
-	ch := make(chan Frame, 64)
-	e.subscribers[subscriber] = ch
-	if e.writer == 0 {
-		e.writer = subscriber
-	}
-	start := e.offset - uint64(len(e.output))
-	frames := []Frame{}
-	if cursor < start || cursor > e.offset {
-		frames = append(frames, Frame{Type: "gap", Offset: start})
-		cursor = start
-	}
-	if cursor < e.offset {
-		frames = append(frames, Frame{Type: "output", Offset: cursor, Data: e.replay(cursor - start)})
-	}
-	status := e.summary
-	frames = append(frames, Frame{Type: "status", Offset: e.offset, Status: &status})
-	return subscriber, e.writer == subscriber, frames, ch, nil
+	subscriber, writer, frames, ch := e.stream.Attach(cursor, e.summary)
+	return subscriber, writer, frames, ch, nil
 }
 func (m *Manager) Detach(id string, subscriber uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if e := m.entries[id]; e != nil {
-		if ch, ok := e.subscribers[subscriber]; ok {
-			close(ch)
-			delete(e.subscribers, subscriber)
-		}
-		if e.writer == subscriber {
-			e.writer = 0
-		}
+		e.stream.Detach(subscriber)
 	}
 }
 func (m *Manager) Input(id string, subscriber uint64, data []byte) error {
 	m.mu.Lock()
 	e := m.entries[id]
-	if e == nil || e.writer != subscriber || e.proc == nil || e.summary.State != "running" || len(data) > InputLimit {
+	if e == nil || e.summary.State != "running" {
 		m.mu.Unlock()
 		return fmt.Errorf("terminal input unavailable")
 	}
-	p := e.proc
+	stream := e.stream
 	m.mu.Unlock()
-	_ = p.file.SetWriteDeadline(time.Now().Add(time.Second))
-	_, err := p.file.Write(data)
-	return err
+	return stream.Input(subscriber, data)
 }
 func (m *Manager) Resize(id string, subscriber uint64, cols, rows int) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	e := m.entries[id]
-	if e != nil && e.writer == subscriber && Dimensions(cols, rows) && (e.proc == nil || !e.summary.Active()) {
-		return nil
-	}
-	if e == nil || e.writer != subscriber || e.proc == nil || !Dimensions(cols, rows) {
+	m.mu.Unlock()
+	if e == nil {
 		return fmt.Errorf("terminal resize unavailable")
 	}
-	return e.proc.resize(cols, rows)
+	return e.stream.Resize(subscriber, cols, rows)
 }
 func (m *Manager) CheckDirectories() {
 	m.mu.Lock()
@@ -486,13 +357,6 @@ func (m *Manager) Restore(summary Summary) {
 	}
 	done := make(chan struct{})
 	close(done)
-	m.entries[summary.ID] = &session{summary: summary, done: done, cancel: func() {}, subscribers: map[uint64]chan Frame{}}
+	m.entries[summary.ID] = &session{summary: summary, done: done, cancel: func() {}, stream: NewStream[Summary](80, 24)}
 	m.evict()
-}
-
-func (e *session) replay(skip uint64) []byte {
-	out := make([]byte, 0, len(e.output))
-	out = append(out, e.output[e.head:]...)
-	out = append(out, e.output[:e.head]...)
-	return out[skip:]
 }

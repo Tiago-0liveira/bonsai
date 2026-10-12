@@ -184,23 +184,23 @@ func TestStopConcurrentSameProfileAndLimits(t *testing.T) {
 }
 func TestBoundedReplaySlowReadersAndRetention(t *testing.T) {
 	m := New(nil, nil, nil, nil)
-	e := &session{summary: Summary{ID: "one", ProjectID: "project", State: "running"}, subscribers: map[uint64]chan Frame{}}
+	e := &session{summary: Summary{ID: "one", ProjectID: "project", State: "running"}, stream: NewStream[Summary](80, 24)}
 	m.entries["one"] = e
 	id, _, _, ch, _ := m.Attach("project", "one", 0)
 	for i := 0; i < 200; i++ {
-		m.output(e, make([]byte, 16384))
+		_, _ = e.stream.Write(make([]byte, 16384))
 	}
-	if len(e.output) != OutputLimit {
-		t.Fatal(len(e.output))
+	if len(e.stream.output) != OutputLimit {
+		t.Fatal(len(e.stream.output))
 	}
 	for range ch {
 	}
-	if e.writer != 0 {
+	if e.stream.writer != 0 {
 		t.Fatal("slow writer retained")
 	}
 	m.Detach("one", id)
 	_, _, replay, _, _ := m.Attach("project", "one", 0)
-	if replay[0].Type != "gap" || replay[1].Offset != e.offset-OutputLimit {
+	if replay[0].Type != "gap" || replay[1].Offset != e.stream.offset-OutputLimit {
 		t.Fatal("missing gap")
 	}
 	for i := 0; i < 40; i++ {
@@ -229,8 +229,11 @@ func TestCtrlCAndDetachWriterHandoff(t *testing.T) {
 	ready := false
 	for !ready {
 		m.mu.Lock()
-		ready = strings.Contains(string(m.entries[summary.ID].replay(0)), "ready")
+		stream := m.entries[summary.ID].stream
 		m.mu.Unlock()
+		stream.mu.Lock()
+		ready = strings.Contains(string(stream.replay(0)), "ready")
+		stream.mu.Unlock()
 		if !ready {
 			select {
 			case <-frames:

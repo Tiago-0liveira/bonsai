@@ -305,6 +305,30 @@ sessions, so it warns (and still removes) when the session store holds records
 of the profile: web and `agent run` sessions keep one until they end, and a
 crash can leave one behind.
 
+Web sign-in runs as a **setup job** (`internal/core/agentsetup`), in memory and
+not project-scoped. `POST /api/agents/setup` (`{provider, name, auth_mode?,
+seed?, secret?}`) creates a profile and `POST /api/agents/accounts/{id}/login`
+(`{auth_mode?, secret?}`) signs one in again; both need `Idempotency-Key` and
+answer `202` with the job (a retry with the same key and body gets the same job,
+another body `409 mutation_conflict`). `GET`/`DELETE /api/agents/setup/{job}`
+read or cancel it, `POST …/secret` answers a `waiting_secret` prompt (`204`, or
+`409 no_prompt`), and `GET …/terminal` is a websocket with the agent terminal
+protocol whose `status` is the job. States: `preparing → running →
+(waiting_secret ↔ running)* → verifying → succeeded | failed | canceled`; a
+succeeded job's HTTP answer carries the described `account`. The job's
+`SetupIO` runs each login command with `agentterminal.RunInStream` in one
+terminal (a `── <command> ──` line between commands), writes progress lines
+CRLF-normalised into it and asks for secrets through the job. Limits: 2 active
+jobs (`409 setup_limit`), one per provider and name or per account
+(`409 setup_busy`), 15 minutes (then `failed`), ended jobs and their output
+dropped after 2 minutes. Cancel, timeout and API shutdown (`Server.Close`) kill
+the login's process group; a failed or canceled create removes the profile
+directory. A pasted secret is turned into a reader at once and is never in a
+response, the job, its fingerprint (the body hashed without it), a journal or a
+log; Claude's `setup-token` prints its token into the terminal, which is why
+the output is dropped. Without PTYs (native Windows) every setup route answers
+`501 terminal_unsupported`.
+
 ## Claude provider
 
 `internal/providers/claude` runs Claude Code. Each profile owns
