@@ -615,6 +615,36 @@ func TestSetupLoginJobSignsAnExistingProfileInAgain(t *testing.T) {
 	}
 }
 
+// A profile with a sign-in running is not removed: the login would write its
+// credentials into the deleted profile directory and leave them orphaned.
+func TestRemoveRefusesAProfileWithARunningSignIn(t *testing.T) {
+	f := newSetupFixture(t)
+	created := f.await(f.start("create", `{"provider":"codex","name":"Busy","seed":false}`).ID, jobEnded)
+	if created.State != agentsetup.StateSucceeded {
+		t.Fatalf("create %+v", created)
+	}
+	t.Setenv("FAKE_CODEX_LOGIN_HANG", "1")
+	f.resetPids()
+	login := f.job(f.request("POST", "/api/agents/accounts/"+string(created.AccountID)+"/login", "login", `{}`), http.StatusAccepted)
+	f.awaitLoginWaiting()
+	w := f.request("DELETE", "/api/agents/accounts/"+string(created.AccountID), "", "")
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "setup_busy") {
+		t.Fatalf("remove during sign-in: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(f.accountDir(created.AccountID)); err != nil {
+		t.Fatal("refused remove deleted the profile directory")
+	}
+
+	f.job(f.request("DELETE", "/api/agents/setup/"+login.ID, "", ""), 200)
+	f.assertNoLoginProcess()
+	if w := f.request("DELETE", "/api/agents/accounts/"+string(created.AccountID), "", ""); w.Code != 200 {
+		t.Fatalf("remove after cancel: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(f.accountDir(created.AccountID)); !os.IsNotExist(err) {
+		t.Fatalf("profile directory left behind: %v", err)
+	}
+}
+
 func TestSetupRoutesNeedTerminalSupport(t *testing.T) {
 	f := newSetupFixture(t)
 	setupTerminalSupported = false

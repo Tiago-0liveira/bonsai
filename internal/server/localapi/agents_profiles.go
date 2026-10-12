@@ -97,7 +97,8 @@ func (s *Server) updateAgentAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeAgentAccount deletes a profile unless one of its sessions is active in
-// any project. Holding the agents lock keeps API starts out until it is done.
+// any project or a sign-in for it runs. Holding the agents lock keeps API
+// starts out until it is done, and the setup key lock keeps sign-ins out.
 func (s *Server) removeAgentAccount(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 {
 		writeAPIError(w, 400, "invalid", "Remove does not accept a request body")
@@ -113,7 +114,15 @@ func (s *Server) removeAgentAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agents.mu.Lock()
+	s.agents.setupKeys.mu.Lock()
+	if s.signingIn(account) {
+		s.agents.setupKeys.mu.Unlock()
+		s.agents.mu.Unlock()
+		writeAPIError(w, 409, "setup_busy", "A sign-in for this profile is running; finish or cancel it first")
+		return
+	}
 	warnings, err := service.Remove(r.Context(), account.ID, agents.RemoveOptions{InUse: s.agents.manager.ActiveSessions})
+	s.agents.setupKeys.mu.Unlock()
 	s.agents.mu.Unlock()
 	if err != nil {
 		writeProfileError(w, err)
@@ -124,6 +133,21 @@ func (s *Server) removeAgentAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishAgentsChanged()
 	writeJSON(w, 200, map[string]any{"warnings": warnings})
+}
+
+// signingIn reports whether a sign-in-again job for account runs. Its login
+// writes into the profile directory, so removing the profile would orphan
+// credentials there. (A profile being created is stored only once it is done.)
+func (s *Server) signingIn(account agents.Account) bool {
+	if s.agents.setup == nil {
+		return false
+	}
+	for _, job := range s.agents.setup.List() {
+		if job.Active() && job.AccountID == account.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // writeProfileError maps account errors to API errors. Only a provider's
