@@ -458,6 +458,24 @@ bonsai agent account remove work                     # logs the profile out, del
   the same place, with the list bundled in Codex as the fallback.
 - Requires Codex CLI 0.162.1 or newer.
 
+### Profile defaults
+
+Each profile can keep launch defaults: the model and the same choices the start
+dialog offers (Codex `permissions` and `effort`, Claude `permission_mode` and
+`effort`, Antigravity `full_access`). A launch option still wins over them, and
+they only apply to sessions started afterwards.
+
+```sh
+bonsai agent account show work                       # sign-in, identity, defaults and accepted values
+bonsai agent account set work model=gpt-5.5 effort=high permissions=auto
+bonsai agent account set work --unset effort         # back to the provider default
+bonsai agent account rename work personal
+```
+
+`account remove` warns when a session of the profile may still be running (its
+session record is still there); the local API refuses to remove a profile while
+one of its web sessions is active.
+
 ### Antigravity in the web workspace
 
 Install `agy`, then add a Bonsai profile:

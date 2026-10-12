@@ -170,7 +170,7 @@ func TestSetupFailsWhenClaudeIsMissingOrOld(t *testing.T) {
 func TestRemoveLogsOutWithProfileEnvironment(t *testing.T) {
 	e := newTestEnv(t)
 	account := e.addLogin("work")
-	warnings, err := e.service.Remove(t.Context(), account.ID)
+	warnings, err := e.service.Remove(t.Context(), account.ID, agents.RemoveOptions{})
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("remove: %v %v", err, warnings)
 	}
@@ -187,7 +187,7 @@ func TestRemoveStillDeletesWhenLogoutFails(t *testing.T) {
 	e := newTestEnv(t)
 	account := e.addLogin("work")
 	t.Setenv("FAKE_CLAUDE_LOGOUT_FAIL", "1")
-	warnings, err := e.service.Remove(t.Context(), account.ID)
+	warnings, err := e.service.Remove(t.Context(), account.ID, agents.RemoveOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestRemoveStillDeletesWhenLogoutFails(t *testing.T) {
 func TestRemoveTokenProfileSkipsLogout(t *testing.T) {
 	e := newTestEnv(t)
 	account := e.addToken("ci")
-	if _, err := e.service.Remove(t.Context(), account.ID); err != nil {
+	if _, err := e.service.Remove(t.Context(), account.ID, agents.RemoveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(e.calls(), "logout") {

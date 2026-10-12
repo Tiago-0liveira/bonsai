@@ -134,7 +134,7 @@ func TestRealHomeIsNeverWritten(t *testing.T) {
 	}
 	e.provider.DescribeAccount(t.Context(), account)
 	for _, a := range []agents.Account{account, token} {
-		if _, err := e.service.Remove(t.Context(), a.ID); err != nil {
+		if _, err := e.service.Remove(t.Context(), a.ID, agents.RemoveOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}

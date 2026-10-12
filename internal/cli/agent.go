@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
@@ -56,7 +57,7 @@ func cmdAgent(args []string, in io.Reader, out, errOut io.Writer) error {
 
 func cmdAgentAccount(ctx context.Context, runtime *agentRuntime, args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bonsai agent account <add|list|rename|remove>")
+		return fmt.Errorf("usage: bonsai agent account <add|list|show|set|rename|remove>")
 	}
 	switch args[0] {
 	case "add":
@@ -107,7 +108,12 @@ func cmdAgentAccount(ctx context.Context, runtime *agentRuntime, args []string, 
 		if err != nil {
 			return err
 		}
-		warnings, err := runtime.accountService.Remove(ctx, account.ID)
+		// Sessions started by `agent run` or the web keep a record until they
+		// end; removing the profile takes their provider home away.
+		if records, err := runtime.accountService.SessionRecords(account.ID); err == nil && len(records) > 0 {
+			fmt.Fprintf(errOut, "warning: %s still has %d session record(s); a running agent loses its profile\n", account.Name, len(records))
+		}
+		warnings, err := runtime.accountService.Remove(ctx, account.ID, agents.RemoveOptions{})
 		for _, warning := range warnings {
 			fmt.Fprintf(errOut, "warning: %s\n", warning)
 		}
@@ -116,9 +122,141 @@ func cmdAgentAccount(ctx context.Context, runtime *agentRuntime, args []string, 
 		}
 		fmt.Fprintf(out, "removed %s account %q\n", account.Provider, account.Name)
 		return nil
+	case "show":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: bonsai agent account show <account>")
+		}
+		account, err := agents.ResolveAccount(runtime.accounts, args[1])
+		if err != nil {
+			return err
+		}
+		return printAccount(ctx, out, runtime.accountService.Registry, account)
+	case "set":
+		account, defaults, err := parseAccountSetArgs(runtime.accounts, args[1:])
+		if err != nil {
+			return err
+		}
+		updated, err := runtime.accountService.UpdateDefaults(ctx, account.ID, defaults)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "updated %s account %q defaults\n", updated.Provider, updated.Name)
+		return nil
 	default:
 		return fmt.Errorf("unknown agent account command %q", args[0])
 	}
+}
+
+const accountSetUsage = "usage: bonsai agent account set <account> <field>=<value>... [--unset <field>]..."
+
+// parseAccountSetArgs parses `account set`. Field names and values are checked
+// by the provider, not here.
+func parseAccountSetArgs(store agents.AccountStore, args []string) (agents.Account, map[string]*string, error) {
+	var selector string
+	defaults := map[string]*string{}
+	add := func(field string, value *string) error {
+		if _, dup := defaults[field]; dup {
+			return fmt.Errorf("%s is given more than once", field)
+		}
+		defaults[field] = value
+		return nil
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--unset" || strings.HasPrefix(arg, "--unset="):
+			field, hasValue := strings.CutPrefix(arg, "--unset=")
+			if !hasValue {
+				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+					return agents.Account{}, nil, fmt.Errorf("--unset requires a field")
+				}
+				i++
+				field = args[i]
+			}
+			if field == "" || strings.Contains(field, "=") {
+				return agents.Account{}, nil, fmt.Errorf("--unset requires a field")
+			}
+			if err := add(field, nil); err != nil {
+				return agents.Account{}, nil, err
+			}
+		case strings.HasPrefix(arg, "-"):
+			return agents.Account{}, nil, fmt.Errorf("unknown flag %q\n%s", arg, accountSetUsage)
+		case selector == "":
+			selector = arg
+		default:
+			field, value, ok := strings.Cut(arg, "=")
+			if !ok || field == "" {
+				return agents.Account{}, nil, fmt.Errorf("expected <field>=<value>, got %q\n%s", arg, accountSetUsage)
+			}
+			if value == "" {
+				return agents.Account{}, nil, fmt.Errorf("%s has no value; use --unset %s for the provider default", field, field)
+			}
+			if err := add(field, &value); err != nil {
+				return agents.Account{}, nil, err
+			}
+		}
+	}
+	if selector == "" || len(defaults) == 0 {
+		return agents.Account{}, nil, fmt.Errorf("%s", accountSetUsage)
+	}
+	account, err := agents.ResolveAccount(store, selector)
+	if err != nil {
+		return agents.Account{}, nil, err
+	}
+	return account, defaults, nil
+}
+
+// printAccount shows one profile: describe output, then its launch defaults
+// and the values each field accepts.
+func printAccount(ctx context.Context, out io.Writer, registry *agents.Registry, account agents.Account) error {
+	info := registry.DescribeAccount(ctx, account)
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	row := func(label, value string) {
+		if value != "" {
+			fmt.Fprintf(tw, "%s\t%s\n", label, value)
+		}
+	}
+	row("name:", account.Name)
+	row("provider:", string(account.Provider))
+	row("id:", string(account.ID))
+	row("auth:", info.AuthMode)
+	row("identity:", info.Identity)
+	if status, ok := info.Options["auth_status"].(string); ok {
+		row("status:", status)
+	}
+	row("created:", account.CreatedAt.Format(time.RFC3339))
+	row("updated:", account.UpdatedAt.Format(time.RFC3339))
+	for _, warning := range info.Warnings {
+		row("warning:", warning)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	provider, err := registry.Get(account.Provider)
+	if err != nil {
+		return nil
+	}
+	editor, ok := provider.(agents.ProfileEditor)
+	if !ok {
+		return nil
+	}
+	values := editor.ProfileDefaults(account)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Defaults (bonsai agent account set):")
+	tw = tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "  FIELD\tVALUE\tVALUES")
+	for _, field := range editor.ProfileFields() {
+		value := values[field.ID]
+		if value == "" {
+			value = "-"
+		}
+		choices := strings.Join(agents.FieldValues(field), ", ")
+		if field.Kind == agents.LaunchFieldModel {
+			choices = "any model name"
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", field.ID, value, choices)
+	}
+	return tw.Flush()
 }
 
 const accountAddUsage = "usage: bonsai agent account add <provider> <name> [--auth <mode>] [--token-stdin] [--no-seed] [--seed-from <dir>]"
@@ -281,6 +419,8 @@ Usage:
   bonsai agent account add <provider> <name> [--auth <mode>] [--token-stdin]
                            [--no-seed] [--seed-from <dir>]
   bonsai agent account list
+  bonsai agent account show <account>
+  bonsai agent account set <account> <field>=<value>... [--unset <field>]...
   bonsai agent account rename <account> <new-name>
   bonsai agent account remove <account>
   bonsai agent run <account> [-- <provider-args...>]

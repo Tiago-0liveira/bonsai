@@ -323,6 +323,25 @@ func (m *Manager) List(project string) []Summary {
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out
 }
+
+// ActiveSessions returns the IDs of the account's active sessions in every
+// project, oldest first.
+func (m *Manager) ActiveSessions(account agents.AccountID) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var active []Summary
+	for _, e := range m.entries {
+		if e.summary.AccountID == account && e.summary.Active() {
+			active = append(active, e.summary)
+		}
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i].CreatedAt.Before(active[j].CreatedAt) })
+	ids := make([]string, len(active))
+	for i, summary := range active {
+		ids[i] = summary.ID
+	}
+	return ids
+}
 func (m *Manager) Get(project, id string) (Summary, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

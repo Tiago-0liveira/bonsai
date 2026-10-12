@@ -21,6 +21,10 @@ type AccountStore interface {
 	List() ([]Account, error)
 	Rename(AccountID, string) (Account, error)
 	Update(Account) error
+	// Modify reads the account, applies change and writes the result, all under
+	// the registry lock, so concurrent edits from the CLI and the API never lose
+	// each other's changes. ID, provider and creation time cannot change.
+	Modify(AccountID, func(Account) (Account, error)) (Account, error)
 	Remove(AccountID) error
 	AccountDir(AccountID) string
 	CredentialDir(AccountID) string
@@ -230,46 +234,61 @@ func (s *FileAccountStore) Rename(id AccountID, newName string) (Account, error)
 }
 
 func (s *FileAccountStore) Update(account Account) error {
-	if err := ValidateAccountName(account.Name); err != nil {
-		return err
-	}
+	_, err := s.Modify(account.ID, func(Account) (Account, error) { return account, nil })
+	return err
+}
+
+func (s *FileAccountStore) Modify(id AccountID, change func(Account) (Account, error)) (Account, error) {
 	lock, err := LockFile(s.registryLockPath())
 	if err != nil {
-		return err
+		return Account{}, err
 	}
 	defer lock.Unlock()
 
 	idx, err := s.loadIndex()
 	if err != nil {
-		return err
+		return Account{}, err
 	}
 	pos := -1
 	for i := range idx.Accounts {
-		if idx.Accounts[i].ID == account.ID {
+		if idx.Accounts[i].ID == id {
 			pos = i
 			break
 		}
 	}
 	if pos < 0 {
-		return fmt.Errorf("%w: %s", ErrAccountNotFound, account.ID)
+		return Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, id)
 	}
 	old := idx.Accounts[pos]
+	account, err := change(old)
+	if err != nil {
+		return Account{}, err
+	}
+	if account.ID != old.ID {
+		return Account{}, fmt.Errorf("account id is immutable")
+	}
 	if account.Provider != old.Provider {
-		return fmt.Errorf("account provider is immutable")
+		return Account{}, fmt.Errorf("account provider is immutable")
+	}
+	if err := ValidateAccountName(account.Name); err != nil {
+		return Account{}, err
 	}
 	for _, a := range idx.Accounts {
 		if a.ID != account.ID && a.Provider == account.Provider && a.Name == account.Name {
-			return fmt.Errorf("%w: %s/%s", ErrAccountExists, account.Provider, account.Name)
+			return Account{}, fmt.Errorf("%w: %s/%s", ErrAccountExists, account.Provider, account.Name)
 		}
 	}
 	account.CreatedAt = old.CreatedAt
 	account.UpdatedAt = time.Now().UTC()
 	if err := s.writeAccountRecord(account); err != nil {
-		return err
+		return Account{}, err
 	}
 	idx.Accounts[pos] = account
 	sortAccounts(idx.Accounts)
-	return atomicWriteJSON(s.indexPath(), idx)
+	if err := atomicWriteJSON(s.indexPath(), idx); err != nil {
+		return Account{}, err
+	}
+	return account, nil
 }
 
 func (s *FileAccountStore) Remove(id AccountID) error {

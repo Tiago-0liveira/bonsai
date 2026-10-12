@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strconv"
 	"time"
@@ -160,7 +161,7 @@ type AccountRemover interface {
 type LaunchField struct {
 	ID      string        `json:"id"`
 	Label   string        `json:"label"`
-	Kind    string        `json:"kind"` // LaunchFieldSelect or LaunchFieldToggle
+	Kind    string        `json:"kind"` // LaunchFieldSelect, LaunchFieldToggle or (profile fields only) LaunchFieldModel
 	Options []FieldOption `json:"options,omitempty"`
 	// Default is the initially selected value; empty selects the first option.
 	// A toggle starts from the profile's option of the same ID instead.
@@ -174,6 +175,9 @@ type LaunchField struct {
 const (
 	LaunchFieldSelect = "select"
 	LaunchFieldToggle = "toggle"
+	// LaunchFieldModel is a free model name with ModelLister suggestions. Only
+	// ProfileFields use it; the launch dialog has its own model input.
+	LaunchFieldModel = "model"
 	// ToneDanger marks options that let the agent act without asking.
 	ToneDanger = "danger"
 )
@@ -213,6 +217,22 @@ type ModelOption struct {
 // effort and should fall back to a static list instead of failing.
 type ModelLister interface {
 	Models(context.Context, Account) ([]ModelOption, error)
+}
+
+// ProfileEditor declares and changes a profile's launch defaults, the values a
+// launch uses when it does not choose its own. Fields reuse the LaunchField
+// schema (plus LaunchFieldModel); an empty value means the provider default.
+type ProfileEditor interface {
+	ProfileFields() []LaunchField
+	// ProfileDefaults returns the profile's current value of each field it sets,
+	// keyed by field ID. Unset fields and values no field option describes are
+	// left out.
+	ProfileDefaults(Account) map[string]string
+	// UpdateProfile merges the changes, keyed by field ID (a nil or empty value
+	// unsets the field), into the account's settings and returns the new
+	// settings. It validates the result with the provider's own settings parser
+	// and never touches sign-in settings.
+	UpdateProfile(Account, map[string]*string) (json.RawMessage, error)
 }
 
 type UsagePolicy interface {

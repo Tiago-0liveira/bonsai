@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -14,6 +15,11 @@ type SessionStore interface {
 	Create(Account, string) (Session, error)
 	Get(SessionID) (Session, error)
 	Cleanup(Session) error
+}
+
+// SessionLister is implemented by stores that can enumerate their records.
+type SessionLister interface {
+	List() ([]Session, error)
 }
 
 type FileSessionStore struct {
@@ -102,6 +108,36 @@ func (s *FileSessionStore) Get(id SessionID) (Session, error) {
 		WorkDir: rec.WorkDir, RuntimeDir: runtimeDir,
 		HomeDir: filepath.Join(runtimeDir, "home"), CreatedAt: rec.CreatedAt,
 	}, nil
+}
+
+// List returns every readable session record, oldest first. Unreadable entries
+// are skipped: a record is being written or was left half-removed.
+func (s *FileSessionStore) List() ([]Session, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Session
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		session, err := s.Get(SessionID(entry.Name()))
+		if err != nil {
+			continue
+		}
+		out = append(out, session)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
 }
 
 func (s *FileSessionStore) Cleanup(session Session) error {

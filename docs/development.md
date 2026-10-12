@@ -255,6 +255,7 @@ Optional interfaces, found by type assertion:
 | `ModelLister` | Model suggestions in `/api/agents/providers/{id}/models`; per-model `efforts`, `default_effort` and the `default` model |
 | `AccountDescriber` | Display-safe `auth_mode`, `identity`, `warnings` and options in `/api/agents/accounts` and `account list`; never tokens, paths or raw settings |
 | `AccountRemover` | Best-effort provider cleanup before an account is deleted; failure is a warning |
+| `ProfileEditor` | Profile launch defaults: `profile_fields` in `/api/agents/providers` (the `model` field, then the launch fields with an empty "Provider default" choice), `defaults` in account responses, `PATCH /api/agents/accounts/{id}` and `bonsai agent account set`/`show`. `UpdateProfile` merges into the stored settings, never touches sign-in keys and validates with the provider's own settings parser |
 | `UsagePolicy` | Provider-specific usage cache TTL |
 | `UsageLayout` | `UsageHeadline`: the primary/secondary limits (5h, weekly), extra limits, score (lower remaining of the pair), `low` (< 0.20) and next reset; shared by `bonsai agent usage` and `/api/agents/usage` |
 | `UsageNoter` | `usage_note` in `/api/agents/providers`: a short caveat on where usage is read from |
@@ -275,6 +276,17 @@ option's `help`. A `per_model` field takes its values from the chosen model's
 value a provider declares must pass its `ValidateLaunch` (each provider has a
 test for this).
 `/api/agents/accounts` lists accounts of registered providers only.
+`GET /api/agents/accounts/{id}` re-describes one profile.
+`PATCH /api/agents/accounts/{id}` takes `{name?, defaults?: {field: value | null}}`
+and writes both under the registry lock in one step (`400 invalid_name`,
+`409 name_taken`, `400 invalid_profile` with the provider's message; never raw
+settings). `DELETE` answers `{warnings}` (provider cleanup failures), or
+`409 profile_in_use` with `error.session_ids` while a session of the profile is
+active in any project; it holds the agents lock so no API start slips in. Both
+publish `agents_changed`. `bonsai agent account remove` has no view of the API's
+sessions, so it warns (and still removes) when the session store holds records
+of the profile: web and `agent run` sessions keep one until they end, and a
+crash can leave one behind.
 
 ## Claude provider
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -77,12 +78,84 @@ func (s *AccountService) Rename(_ context.Context, accountID AccountID, newName 
 	return s.Store.Rename(accountID, newName)
 }
 
+// ProfileUpdate changes a profile's name and launch defaults in one write.
+type ProfileUpdate struct {
+	Name string // "" keeps the current name
+	// Defaults maps profile field IDs (see ProfileEditor) to new values; a nil or
+	// empty value returns the field to the provider default.
+	Defaults map[string]*string
+}
+
+// UpdateProfile renames the account and/or changes its launch defaults under
+// the registry lock. Invalid defaults are a ProfileError and nothing is written.
+// Running sessions keep the options they were started with.
+func (s *AccountService) UpdateProfile(_ context.Context, accountID AccountID, update ProfileUpdate) (Account, error) {
+	if update.Name != "" {
+		if err := ValidateAccountName(update.Name); err != nil {
+			return Account{}, err
+		}
+	}
+	return s.Store.Modify(accountID, func(account Account) (Account, error) {
+		if update.Name != "" {
+			account.Name = update.Name
+		}
+		if len(update.Defaults) == 0 {
+			return account, nil
+		}
+		editor, err := s.profileEditor(account)
+		if err != nil {
+			return Account{}, err
+		}
+		if unknown := UnknownProfileFields(editor.ProfileFields(), update.Defaults); len(unknown) > 0 {
+			return Account{}, &ProfileError{Err: fmt.Errorf("unknown profile default %q (use %s)", unknown[0], strings.Join(FieldIDs(editor.ProfileFields()), ", "))}
+		}
+		settings, err := editor.UpdateProfile(account, update.Defaults)
+		if err != nil {
+			return Account{}, &ProfileError{Err: err}
+		}
+		account.Settings = settings
+		return account, nil
+	})
+}
+
+// UpdateDefaults changes only the account's launch defaults.
+func (s *AccountService) UpdateDefaults(ctx context.Context, accountID AccountID, defaults map[string]*string) (Account, error) {
+	return s.UpdateProfile(ctx, accountID, ProfileUpdate{Defaults: defaults})
+}
+
+func (s *AccountService) profileEditor(account Account) (ProfileEditor, error) {
+	if s.Registry == nil {
+		return nil, fmt.Errorf("%w: %s", ErrProviderNotFound, account.Provider)
+	}
+	provider, err := s.Registry.Get(account.Provider)
+	if err != nil {
+		return nil, err
+	}
+	editor, ok := provider.(ProfileEditor)
+	if !ok {
+		return nil, &ProfileError{Err: fmt.Errorf("%s profiles have no launch defaults", Label(provider))}
+	}
+	return editor, nil
+}
+
+// RemoveOptions guard an account removal.
+type RemoveOptions struct {
+	// InUse returns the active sessions of the account. A non-empty answer
+	// stops the removal with an AccountInUseError before anything is deleted.
+	InUse func(AccountID) []string
+}
+
 // Remove deletes the account. Provider-side cleanup is best effort: its failure
 // is returned as a warning and removal continues.
-func (s *AccountService) Remove(ctx context.Context, accountID AccountID) ([]string, error) {
+func (s *AccountService) Remove(ctx context.Context, accountID AccountID, options RemoveOptions) ([]string, error) {
 	account, err := s.Store.Get(accountID)
 	if err != nil {
 		return nil, err
+	}
+	if options.InUse != nil {
+		if ids := options.InUse(account.ID); len(ids) > 0 {
+			return nil, &AccountInUseError{SessionIDs: append([]string(nil), ids...)}
+		}
 	}
 	if s.Cache != nil {
 		if err := s.Cache.RemoveAccount(account.Provider, account.ID); err != nil {
@@ -100,4 +173,25 @@ func (s *AccountService) Remove(ctx context.Context, accountID AccountID) ([]str
 		}
 	}
 	return warnings, s.Store.Remove(accountID)
+}
+
+// SessionRecords lists the session records of the account still on disk: its
+// running sessions, from the CLI or the web, and any a crash left behind.
+// Stores that cannot list sessions report none.
+func (s *AccountService) SessionRecords(accountID AccountID) ([]Session, error) {
+	lister, ok := s.Sessions.(SessionLister)
+	if !ok {
+		return nil, nil
+	}
+	sessions, err := lister.List()
+	if err != nil {
+		return nil, err
+	}
+	var out []Session
+	for _, session := range sessions {
+		if session.AccountID == accountID {
+			out = append(out, session)
+		}
+	}
+	return out, nil
 }

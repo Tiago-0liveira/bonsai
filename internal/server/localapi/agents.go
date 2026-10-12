@@ -54,6 +54,9 @@ type agentMutation struct {
 func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/providers", s.agentProviders)
 	mux.HandleFunc("GET /api/agents/accounts", s.agentAccounts)
+	mux.HandleFunc("GET /api/agents/accounts/{id}", s.agentAccount)
+	mux.HandleFunc("PATCH /api/agents/accounts/{id}", s.updateAgentAccount)
+	mux.HandleFunc("DELETE /api/agents/accounts/{id}", s.removeAgentAccount)
 	mux.HandleFunc("GET /api/agents/providers/{provider}/models", s.agentModels)
 	mux.HandleFunc("GET /api/agents/usage", s.agentUsage)
 	mux.HandleFunc("POST /api/agents/usage/refresh", s.agentUsageRefresh)
@@ -125,6 +128,11 @@ func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
 				out["launch_fields"] = fields
 			}
 		}
+		if editor, ok := provider.(agents.ProfileEditor); ok {
+			if fields := editor.ProfileFields(); len(fields) > 0 {
+				out["profile_fields"] = fields
+			}
+		}
 		return out
 	}
 	out := []map[string]any{}
@@ -173,27 +181,41 @@ func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 	out := []map[string]any{}
 	for i, a := range visible {
-		info := infos[i]
-		item := map[string]any{}
-		for k, v := range info.Options {
-			item[k] = v
-		}
-		item["id"], item["name"], item["provider"] = a.ID, a.Name, a.Provider
-		item["created_at"], item["updated_at"] = a.CreatedAt, a.UpdatedAt
-		if info.AuthMode != "" {
-			item["auth_mode"] = info.AuthMode
-		}
-		if info.Identity != "" {
-			item["identity"] = info.Identity
-		}
-		if len(info.Warnings) > 0 {
-			item["warnings"] = info.Warnings
-		}
-		out = append(out, item)
+		out = append(out, accountItem(registry, a, infos[i]))
 	}
 	// The ETag covers the whole answer, so a profile added, renamed or signed in
 	// from the CLI changes it too.
 	writeJSONWithETag(w, r, out)
+}
+
+// accountItem is one profile as the API shows it: describe output plus the
+// profile's launch defaults by profile field ID. Never settings or paths.
+func accountItem(registry *agents.Registry, a agents.Account, info agents.AccountInfo) map[string]any {
+	item := map[string]any{}
+	for k, v := range info.Options {
+		item[k] = v
+	}
+	item["id"], item["name"], item["provider"] = a.ID, a.Name, a.Provider
+	item["created_at"], item["updated_at"] = a.CreatedAt, a.UpdatedAt
+	if info.AuthMode != "" {
+		item["auth_mode"] = info.AuthMode
+	}
+	if info.Identity != "" {
+		item["identity"] = info.Identity
+	}
+	if len(info.Warnings) > 0 {
+		item["warnings"] = info.Warnings
+	}
+	if provider, err := registry.Get(a.Provider); err == nil {
+		if editor, ok := provider.(agents.ProfileEditor); ok {
+			defaults := editor.ProfileDefaults(a)
+			if defaults == nil {
+				defaults = map[string]string{}
+			}
+			item["defaults"] = defaults
+		}
+	}
+	return item
 }
 
 // agentModels suggests models for the launch dialog. Providers that cannot list
