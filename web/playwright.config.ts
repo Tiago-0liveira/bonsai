@@ -29,6 +29,13 @@ export default defineConfig({
     url: 'http://127.0.0.1:7014/health',
     reuseExistingServer: false,
     gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 10000 },
+  }, {
+    // The Agents tab over the production agent runtime with no profiles yet:
+    // setup jobs run the fake codex/claude binaries under a temp HOME.
+    command: 'cd .. && BONSAI_AGENTS_TAB_BROWSER_FIXTURE=1 go test ./internal/server/localapi -run "^TestAgentsTabBrowserFixture$" -count=1 -timeout=10m',
+    url: 'http://127.0.0.1:7012/health',
+    reuseExistingServer: false,
+    gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 10000 },
   }] : [])],
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 })

@@ -225,6 +225,15 @@ bonsai web status
 bonsai web logs api
 bonsai web restart api
 bonsai web stop
+bonsai agent account add <provider> <name>          # new Claude Code, Codex or Antigravity profile
+bonsai agent account login <account>                # sign a profile in again
+bonsai agent account list                           # profiles, sign-in state and identity
+bonsai agent account show <account>                 # one profile with its launch defaults
+bonsai agent account set <account> <field>=<value>  # set profile launch defaults
+bonsai agent account rename <account> <new-name>
+bonsai agent account remove <account>
+bonsai agent run <account> [-- <args…>]             # run the provider CLI as that profile
+bonsai agent usage [<account>] [--refresh]          # plan limits of every profile
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage
@@ -496,7 +505,9 @@ Start the web app with `bonsai web`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;
 enter instructions directly in it. Claude Code and Codex profiles start the same
 way (`bonsai agent account add codex work`); the dialog shows the permissions
-preset and, for Codex, the reasoning effort the chosen model supports.
+preset and, for Codex, the reasoning effort the chosen model supports. The
+**Agents** tab does the same profile work in the browser; see
+[docs/web.md](docs/web.md#agents-tab).
 
 Closing the dock or reloading the browser detaches without stopping the agent.
 Use **Stop agent** to terminate it and reconcile profile credentials. Sessions
