@@ -1,17 +1,35 @@
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { ChevronRight, type LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 const itemClass = 'flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-[12px] outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent/12 '
 const toneClass = { normal: 'text-muted data-[highlighted]:text-text', danger: 'text-danger data-[highlighted]:bg-danger-solid/14' }
 const surfaceClass = 'z-[100] min-w-48 rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay'
 
-export function MenuContent({ className = '', ...props }: ContextMenu.ContextMenuContentProps) {
+export function MenuContent(props: ContextMenu.ContextMenuContentProps) {
   return (
     <ContextMenu.Portal>
-      <ContextMenu.Content {...props} className={surfaceClass + ' ' + className} />
+      <SettledContent {...props} />
     </ContextMenu.Portal>
   )
+}
+
+// Radix's context menu trigger keeps the click point in state and hands the
+// anchor to the popper in an effect, so the first positioned frame uses the
+// previous point: (0, 0) on the first open, which flashes the menu in the top
+// left corner. Keep the menu transparent (still focusable) until the popper
+// has repositioned on the real point.
+function SettledContent({ className = '', style, ...props }: ContextMenu.ContextMenuContentProps) {
+  const [settled, setSettled] = useState(false)
+  useEffect(() => {
+    let second = 0
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setSettled(true)) })
+    return () => {
+      cancelAnimationFrame(first)
+      cancelAnimationFrame(second)
+    }
+  }, [])
+  return <ContextMenu.Content {...props} style={settled ? style : { ...style, opacity: 0 }} className={surfaceClass + ' ' + className} />
 }
 
 /**

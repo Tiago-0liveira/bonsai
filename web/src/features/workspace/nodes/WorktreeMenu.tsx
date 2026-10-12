@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FolderOpen,
   GitBranch,
+  GitBranchPlus,
   GitPullRequest,
   GitPullRequestArrow,
   GitPullRequestCreate,
@@ -76,8 +77,9 @@ export function WorktreeMenuItems({ worktreeId, groupId, groupCount = 0 }: { wor
       <MenuItem icon={ArrowDownToLine} disabled={!!gitHint} hint={gitHint} onSelect={() => run('pull')}>Pull</MenuItem>
       <MenuItem icon={ArrowUpFromLine} disabled={!!gitHint} hint={gitHint} onSelect={() => run('push', worktree?.upstream ? {} : { set_upstream: true })}>Push</MenuItem>
       <MenuItem icon={RefreshCw} onSelect={() => run('fetch')}>Fetch</MenuItem>
-      {(rebaseTarget || operation) && <MenuSeparator />}
+      <MenuSeparator />
       {rebaseTarget && <MenuItem icon={GitPullRequestArrow} disabled={!!gitHint} hint={gitHint} onSelect={() => run('rebase', { target })}>Rebase onto {target}</MenuItem>}
+      <MenuItem icon={GitBranchPlus} disabled={!!gitHint} hint={gitHint} onSelect={() => store().setRebaseWorktreeId(worktreeId)}>Rebase onto branch…</MenuItem>
       {operation && <>
         <MenuItem icon={StepForward} onSelect={() => run('continue')}>Continue {operation}</MenuItem>
         <MenuItem icon={Ban} onSelect={() => run('abort')}>Abort {operation}</MenuItem>

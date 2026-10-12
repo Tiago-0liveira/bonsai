@@ -24,6 +24,7 @@ import type { CanvasRoute } from '../../features/workspace/WorkspacePage'
 const WorkspacePage = lazy(() => import('../../features/workspace/WorkspacePage').then(module => ({ default: module.WorkspacePage })))
 const CommandPalette = lazy(() => import('../../features/command-palette/CommandPalette').then(module => ({ default: module.CommandPalette })))
 const CreateWorktreeDialog = lazy(() => import('../../features/workspace/CreateWorktreeDialog').then(module => ({ default: module.CreateWorktreeDialog })))
+const RebaseDialog = lazy(() => import('../../features/workspace/RebaseDialog').then(module => ({ default: module.RebaseDialog })))
 const DeleteWorktreeDialog = lazy(() => import('../../features/workspace/DeleteWorktreeDialog').then(module => ({ default: module.DeleteWorktreeDialog })))
 const EnvEditor = lazy(() => import('../../features/workspace/EnvEditor').then(module => ({ default: module.EnvEditor })))
 const EditorPreferenceDialog = lazy(() => import('../../features/files/EditorPreferenceDialog').then(module => ({ default: module.EditorPreferenceDialog })))
@@ -218,6 +219,7 @@ export function AppShell({ children, canvasRoute = null }: { children: React.Rea
 function ShellOverlays() {
   const worktree = useBonsaiStore(state => state.worktreeDialogOpen)
   const deletion = useBonsaiStore(state => state.deleteWorktreeId)
+  const rebase = useBonsaiStore(state => state.rebaseWorktreeId)
   const agent = useBonsaiStore(state => state.startAgentDialogOpen)
   const process = useBonsaiStore(state => state.startProcessDialogOpen)
   const environment = useBonsaiStore(state => state.envEditorOpen)
@@ -238,6 +240,7 @@ function ShellOverlays() {
   }, [])
   return <>
     {worktree && <OverlayBoundary loading="Loading worktree dialog…" onDismiss={() => useBonsaiStore.getState().setWorktreeDialogOpen(false)}><CreateWorktreeDialog /></OverlayBoundary>}
+    {rebase && <OverlayBoundary loading="Loading rebase dialog…" onDismiss={() => useBonsaiStore.getState().setRebaseWorktreeId('')}><RebaseDialog /></OverlayBoundary>}
     {deletion && <OverlayBoundary loading="Loading delete dialog…" onDismiss={() => useBonsaiStore.getState().setDeleteWorktreeId('')}><DeleteWorktreeDialog /></OverlayBoundary>}
     {agent && <OverlayBoundary loading="Loading agent dialog…" onDismiss={() => useBonsaiStore.getState().setStartAgentDialogOpen(false)}><StartAgentDialog /></OverlayBoundary>}
     {process && <OverlayBoundary loading="Loading process dialog…" onDismiss={() => useBonsaiStore.getState().setStartProcessDialogOpen(false)}><StartProcessDialog /></OverlayBoundary>}

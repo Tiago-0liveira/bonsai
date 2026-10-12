@@ -55,6 +55,14 @@ describe('worktree context menu', () => {
     await waitFor(() => expect(calls()).toContainEqual(['/api/worktrees/wt-web/pull', {}]))
   })
 
+  it('opens the branch picker to rebase onto any branch', async () => {
+    useBonsaiStore.setState({ rebaseWorktreeId: '' })
+    openMenu('wt-web')
+    openSub('Git')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rebase onto branch…' }))
+    expect(useBonsaiStore.getState().rebaseWorktreeId).toBe('wt-web')
+  })
+
   it('fetches the project rather than a worktree route', async () => {
     openMenu('wt-web')
     openSub('Git')

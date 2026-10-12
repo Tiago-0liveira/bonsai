@@ -82,6 +82,9 @@ export interface BonsaiState {
   openCreateWorktree: (projectId: string, candidate?: BranchCandidate) => void
   deleteWorktreeId: string
   setDeleteWorktreeId: (id: string) => void
+  /** The worktree whose "Rebase onto…" branch picker is open. */
+  rebaseWorktreeId: string
+  setRebaseWorktreeId: (id: string) => void
   createWorktree: typeof createWorktree
 
   startAgentDialogOpen: boolean
@@ -309,6 +312,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       openCreateWorktree: (projectId, candidate) => set({ worktreeDialogOpen: true, worktreeDialogTarget: { projectId, sourceType: candidate ? (candidate.creation_mode === 'existing' ? 'existing' : 'origin') : undefined, sourceRef: candidate?.source_ref, branchName: candidate ? (candidate.local_branch || candidate.name) : undefined } }),
       deleteWorktreeId: '',
       setDeleteWorktreeId: (deleteWorktreeId) => set({ deleteWorktreeId }),
+      rebaseWorktreeId: '',
+      setRebaseWorktreeId: (rebaseWorktreeId) => set({ rebaseWorktreeId }),
       createWorktree,
 
       startAgentDialogOpen: false,
