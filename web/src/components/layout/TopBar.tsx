@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Bell, Check, ChevronDown, Command, Folder, GitBranch, LayoutGrid, ScrollText, Search, SlidersHorizontal, Sprout } from 'lucide-react'
+import { Bell, Check, ChevronDown, Folder, GitBranch, LayoutGrid, ScrollText, Search, SlidersHorizontal, Sprout } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { getRelayConnectionSnapshot, RELAY_ENABLED, subscribeRelayConnection } from '../../api/relayClient'
 import { UpdatesBadge } from './UpdatesBadge'
+
+const commandShortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K'
 
 const nav = [
   { label: 'Canvas', to: '/', icon: LayoutGrid },
@@ -188,10 +190,10 @@ export function TopBar() {
       <div className="island island-topbar pointer-events-auto flex h-10 items-center gap-2.5 justify-self-end px-1.5">
         {RELAY_ENABLED && <RelayStatus />}
         <UpdatesBadge />
-        <button className="bonsai-focus btn-ghost" onClick={() => setPaletteOpen(true)}>
+        <button aria-label="Open command menu" aria-keyshortcuts="Meta+K Control+K" className="bonsai-focus btn-ghost" onClick={() => setPaletteOpen(true)}>
           <Search size={13} />
           <span className="hidden min-[980px]:inline">Search</span>
-          <span className="bonsai-kbd hidden min-[980px]:inline-flex"><Command size={10} />K</span>
+          <span className="bonsai-kbd hidden min-[980px]:inline-flex">{commandShortcut}</span>
         </button>
         <button aria-label="Notifications" className="bonsai-focus btn-ghost w-[26px] justify-center px-0">
           <Bell size={14} />

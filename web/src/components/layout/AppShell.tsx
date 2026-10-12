@@ -191,17 +191,26 @@ function ShellOverlays() {
   const editor = useBonsaiStore(state => state.editorPromptOpen)
   const palette = useBonsaiStore(state => state.paletteOpen)
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
+    // Capture the global shortcut before xterm can consume Ctrl-K as input.
+    const onShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
+        event.stopPropagation()
         const state = useBonsaiStore.getState()
         state.setPaletteOpen(!state.paletteOpen)
-      } else if (event.key === 'Escape') {
-        useBonsaiStore.getState().setPaletteOpen(false)
       }
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    // Loaded dialogs own Escape. Keep a bubble-phase fallback for command
+    // chunk loading/failure, respecting nested navigation's preventDefault.
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) useBonsaiStore.getState().setPaletteOpen(false)
+    }
+    window.addEventListener('keydown', onShortcut, true)
+    window.addEventListener('keydown', onEscape)
+    return () => {
+      window.removeEventListener('keydown', onShortcut, true)
+      window.removeEventListener('keydown', onEscape)
+    }
   }, [])
   return <>
     {worktree && <OverlayBoundary loading="Loading worktree dialog…" onDismiss={() => useBonsaiStore.getState().setWorktreeDialogOpen(false)}><CreateWorktreeDialog /></OverlayBoundary>}

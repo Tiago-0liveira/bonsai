@@ -20,7 +20,7 @@ export const TERMINAL_COLORS = [
 export type TerminalColor = typeof TERMINAL_COLORS[number]
 
 export interface Theme {
-  /** Built-in: 'bonsai'. User themes: 'custom:<slug>'. */
+  /** Built-ins: 'bonsai', 'modern-light', 'modern-dark'. User themes: 'custom:<slug>'. */
   id: string
   name: string
   /** Drives color-scheme and React Flow's colorMode. */

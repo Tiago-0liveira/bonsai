@@ -1,3 +1,4 @@
+import { AppearanceSettings } from './AppearanceSettings'
 import { ProjectRootsSettings } from './ProjectRootsSettings'
 import { LiveUpdatesSettings } from './LiveUpdatesSettings'
 import { EnvironmentEditorSettings } from './EnvironmentEditorSettings'
@@ -9,6 +10,7 @@ export function SettingsPage() {
   return <div className="island flex h-full min-h-0 flex-col overflow-hidden">
     <div className="island-title shrink-0">Settings</div>
     <div className="min-h-0 flex-1 overflow-auto">
+    <AppearanceSettings />
     {project && <section className="space-y-3 border-b border-border-subtle p-6">
       <h2 className="text-[13px] font-semibold">{project.name} terminals</h2>
       <label className="flex items-center gap-3 text-[12px]">When opening this project:

@@ -60,3 +60,23 @@ Canonical state comes from epoch/sequence-ordered backend snapshots. Browser
 storage contains approved preferences only. Warm-start data remains server-side;
 see [performance.md](../docs/performance.md) for budgets, historical source
 revisions and measurement commands.
+
+## Appearance
+
+Settings → Appearance offers Bonsai (the default), Modern Light, and Modern
+Dark, plus any saved custom themes. Selection applies immediately across all
+projects in this browser and persists under `bonsai-theme-v1`. Tabs on the same
+origin synchronize through storage events; blocked storage keeps the choice in
+memory for the current session.
+
+Press Cmd-K on macOS or Ctrl-K elsewhere and choose **Change theme…** for the
+nested picker. Arrow keys highlight without applying; Enter selects and closes.
+Escape or Backspace with an empty theme search returns to commands; Escape at
+the command root closes the menu. The theme picker also has a Back button.
+
+Tailwind utilities consume the shared RGB tokens. Theme application remains
+synchronous before the first React commit and updates terminals without
+reconnecting. The CSP-compatible static xterm rules and xterm options share the
+same pure color resolver, including ANSI overrides. New modern palettes keep
+terminal green independent of their blue action accent. Automatic system mode
+and a custom-theme editor are not included.
