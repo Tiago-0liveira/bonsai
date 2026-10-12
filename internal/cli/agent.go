@@ -257,7 +257,7 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 		if err != nil {
 			return err
 		}
-		printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Usage: &snapshot}})
+		printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Usage: &snapshot, Headline: runtime.usageService.Headline(snapshot)}})
 		return nil
 	}
 

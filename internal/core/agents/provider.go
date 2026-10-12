@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"io"
+	"strconv"
 	"time"
 )
 
@@ -52,6 +53,26 @@ type LaunchOptions struct {
 	Approval       string // Codex: untrusted|on-request|never
 }
 
+// Values returns the accepted launch choices other than the model, keyed by
+// their start request field (effort, permission_mode, sandbox, approval,
+// full_access). Empty values are left out; the prompt and display name never
+// appear. Nil when there are none.
+func (o LaunchOptions) Values() map[string]string {
+	values := map[string]string{}
+	for key, value := range map[string]string{"permission_mode": o.PermissionMode, "effort": o.Effort, "sandbox": o.Sandbox, "approval": o.Approval} {
+		if value != "" {
+			values[key] = value
+		}
+	}
+	if o.FullAccess != nil {
+		values["full_access"] = strconv.FormatBool(*o.FullAccess)
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	return values
+}
+
 type PrepareSessionRequest struct {
 	Account Account
 	Session Session
@@ -97,6 +118,9 @@ type Availability struct {
 	Available bool
 	Reason    string
 	Version   string
+	// Hint is a short next step when the provider is not installed, such as
+	// its install command.
+	Hint string
 }
 
 // Describer names a provider and reports whether it can run on this host.
@@ -193,4 +217,14 @@ type ModelLister interface {
 
 type UsagePolicy interface {
 	UsageTTL() time.Duration
+}
+
+// UsageLayout picks the headline limits of a provider's usage snapshot.
+type UsageLayout interface {
+	UsageHeadline(UsageSnapshot) UsageHeadline
+}
+
+// UsageNoter adds a short caveat to a provider's usage, such as where it is read from.
+type UsageNoter interface {
+	UsageNote() string
 }

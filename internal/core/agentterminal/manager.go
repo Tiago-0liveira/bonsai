@@ -32,6 +32,10 @@ type Summary struct {
 	Error       string            `json:"error,omitempty"`
 	// ProviderSessionID is the provider's own session ID, for a later resume.
 	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	// Model and Options are the accepted launch choices (Options keyed by the
+	// start request field, such as effort). The prompt is never recorded.
+	Model   string            `json:"model,omitempty"`
+	Options map[string]string `json:"options,omitempty"`
 }
 
 func (s Summary) Active() bool {
@@ -145,7 +149,7 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 		name = account.Name
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	entry := &session{summary: Summary{ID: string(runtime.ID), ProjectID: project, WorktreeID: tree, AccountID: accountID, Provider: account.Provider, ProfileName: account.Name, Name: name, State: "starting", CreatedAt: time.Now().UTC()}, workDir: dir, cancel: cancel, done: make(chan struct{}), subscribers: map[uint64]chan Frame{}}
+	entry := &session{summary: Summary{ID: string(runtime.ID), ProjectID: project, WorktreeID: tree, AccountID: accountID, Provider: account.Provider, ProfileName: account.Name, Name: name, State: "starting", CreatedAt: time.Now().UTC(), Model: launch.Model, Options: launch.Values()}, workDir: dir, cancel: cancel, done: make(chan struct{}), subscribers: map[uint64]chan Frame{}}
 	m.entries[entry.summary.ID] = entry
 	result := entry.summary
 	m.mu.Unlock()

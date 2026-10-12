@@ -12,7 +12,38 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/antigravity"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/codex"
 )
+
+// usageTestRegistry holds the real providers, whose UsageLayout fills the
+// headlines the dashboard reads.
+var usageTestRegistry = func() *agents.Registry {
+	registry := agents.NewRegistry()
+	for _, provider := range []agents.Provider{antigravity.New(nil, nil, nil), claude.New(nil, nil, nil, nil), codex.New(nil, nil, nil, nil)} {
+		if err := registry.Register(provider); err != nil {
+			panic(err)
+		}
+	}
+	return registry
+}()
+
+// renderUsageTestDashboard fills each result's headline as UsageService does,
+// then renders the dashboard.
+func renderUsageTestDashboard(out *bytes.Buffer, results []agents.AccountUsageResult, now time.Time, color bool) {
+	for i := range results {
+		if results[i].Usage != nil {
+			results[i].Headline = usageTestRegistry.UsageHeadline(*results[i].Usage)
+		}
+	}
+	renderUsageDashboard(out, results, now, color)
+}
+
+// usageTestRow is the dashboard row of one result.
+func usageTestRow(result agents.AccountUsageResult) usageDashboardRow {
+	return usageDashboardRow{account: result.Account, usage: result.Usage, headline: usageTestRegistry.UsageHeadline(*result.Usage)}
+}
 
 func usageTestLimit(id, group, window string, remaining float64, reset time.Time) agents.UsageLimit {
 	value := remaining
@@ -56,7 +87,7 @@ func TestRenderUsageDashboardFleetRanking(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	renderUsageDashboard(&out, results, now, false)
+	renderUsageTestDashboard(&out, results, now, false)
 	got := out.String()
 
 	for _, want := range []string{
@@ -101,7 +132,7 @@ func TestRenderUsageDashboardIncludesThirdPartyPool(t *testing.T) {
 	)
 
 	var out bytes.Buffer
-	renderUsageDashboard(&out, []agents.AccountUsageResult{result}, now, false)
+	renderUsageTestDashboard(&out, []agents.AccountUsageResult{result}, now, false)
 	got := out.String()
 	if !strings.Contains(got, "Claude & GPT Models") ||
 		!strings.Contains(got, "5h") ||
@@ -118,20 +149,7 @@ func TestAntigravityFleetScoreUsesGeminiPrimaryPool(t *testing.T) {
 		usageTestLimit("3p-weekly", "Claude and GPT models", "weekly", 0.05, now.Add(24*time.Hour)),
 	)
 
-	row := usageDashboardRow{account: result.Account, usage: result.Usage}
-	for i := range result.Usage.Limits {
-		limit := &result.Usage.Limits[i]
-		switch classifyUsageLimit(*limit) {
-		case "gemini-5h":
-			row.gemini5h = limit
-		case "gemini-weekly":
-			row.geminiWeek = limit
-		case "third-5h":
-			row.third5h = limit
-		case "third-weekly":
-			row.thirdWeek = limit
-		}
-	}
+	row := usageTestRow(result)
 
 	score, ok := usageRowScore(row)
 	if !ok || score != 0.80 {
@@ -156,7 +174,7 @@ func TestRenderUsageDashboardSeparatesProviders(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	renderUsageDashboard(&out, []agents.AccountUsageResult{codex, antigravity}, now, false)
+	renderUsageTestDashboard(&out, []agents.AccountUsageResult{codex, antigravity}, now, false)
 	got := out.String()
 	for _, want := range []string{
 		"Fleet Capacity (2 Accounts · 2 Providers)",
@@ -188,23 +206,6 @@ func TestUsageRankStyleThresholds(t *testing.T) {
 	}
 }
 
-func TestClassifyUsageLimitAntigravityNames(t *testing.T) {
-	tests := []struct {
-		limit agents.UsageLimit
-		want  string
-	}{
-		{agents.UsageLimit{ID: "gemini-5h", Group: "Gemini Models", Window: "5h"}, "gemini-5h"},
-		{agents.UsageLimit{ID: "gemini-weekly", Group: "Gemini Models", Window: "weekly"}, "gemini-weekly"},
-		{agents.UsageLimit{ID: "3p-5h", Group: "Claude and GPT models", Window: "5h"}, "third-5h"},
-		{agents.UsageLimit{ID: "3p-weekly", Group: "Claude and GPT models", Window: "weekly"}, "third-weekly"},
-	}
-	for _, tt := range tests {
-		if got := classifyUsageLimit(tt.limit); got != tt.want {
-			t.Fatalf("classify %#v = %q, want %q", tt.limit, got, tt.want)
-		}
-	}
-}
-
 func claudeTestResult(name string, five, week float64, models map[string]float64, now time.Time) agents.AccountUsageResult {
 	limits := []agents.UsageLimit{
 		usageTestLimit("five_hour", "claude", "5h", five, now.Add(3*time.Hour)),
@@ -229,7 +230,7 @@ func TestRenderUsageDashboardClaudeNextToAntigravity(t *testing.T) {
 		{Account: agents.Account{ID: "acct_bad", Provider: "claude", Name: "broken"}, Error: errors.New("not logged in")},
 	}
 	var out bytes.Buffer
-	renderUsageDashboard(&out, results, now, false)
+	renderUsageTestDashboard(&out, results, now, false)
 	got := out.String()
 	for _, want := range []string{
 		"Fleet Capacity (5 Accounts · 2 Providers)",
@@ -252,7 +253,7 @@ func TestRenderUsageDashboardClaudeNextToAntigravity(t *testing.T) {
 		t.Fatalf("Claude rows not ranked by min remaining, errors last:\n%s", section)
 	}
 	// Score is the lower of 5h and weekly: work 50%, spare 10%.
-	if score, ok := usageRowScore(usageDashboardRow{account: results[1].Account, claude5h: &results[1].Usage.Limits[0], claudeWeek: &results[1].Usage.Limits[1]}); !ok || score != 0.50 {
+	if score, ok := usageRowScore(usageTestRow(results[1])); !ok || score != 0.50 {
 		t.Fatalf("score = %v, %v", score, ok)
 	}
 	if strings.Contains(got, "\x1b[") {
@@ -263,7 +264,7 @@ func TestRenderUsageDashboardClaudeNextToAntigravity(t *testing.T) {
 func TestRenderUsageDashboardClaudeWithoutModelsAndNextReset(t *testing.T) {
 	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
 	var out bytes.Buffer
-	renderUsageDashboard(&out, []agents.AccountUsageResult{claudeTestResult("work", 0.9, 0.5, nil, now)}, now, false)
+	renderUsageTestDashboard(&out, []agents.AccountUsageResult{claudeTestResult("work", 0.9, 0.5, nil, now)}, now, false)
 	got := out.String()
 	if strings.Contains(got, "Per model") || !strings.Contains(got, "Next Reset: work in 48h00m") {
 		t.Fatalf("unexpected render:\n%s", got)
@@ -276,7 +277,7 @@ func TestRenderUsageDashboardShowsClaudeWarnings(t *testing.T) {
 	result.Usage.Limits = nil
 	result.Usage.Warnings = []string{"Claude usage response had no recognizable limits"}
 	var out bytes.Buffer
-	renderUsageDashboard(&out, []agents.AccountUsageResult{result}, now, false)
+	renderUsageTestDashboard(&out, []agents.AccountUsageResult{result}, now, false)
 	if !strings.Contains(out.String(), "work: Claude usage response had no recognizable limits") {
 		t.Fatalf("warning missing:\n%s", out.String())
 	}
@@ -315,7 +316,7 @@ func TestRenderUsageDashboardCodex(t *testing.T) {
 		{Account: agents.Account{ID: "acct_bad", Provider: "codex", Name: "broken"}, Error: errors.New("codex usage unavailable: timed out")},
 	}
 	var out bytes.Buffer
-	renderUsageDashboard(&out, results, now, false)
+	renderUsageTestDashboard(&out, results, now, false)
 	got := out.String()
 	for _, want := range []string{
 		"Fleet Capacity (5 Accounts · 1 Provider)",
@@ -340,7 +341,7 @@ func TestRenderUsageDashboardCodex(t *testing.T) {
 		t.Fatalf("Codex rows not ranked by min remaining, errors last:\n%s", section)
 	}
 	// Score is the lower of 5h and weekly; other limits do not count.
-	if score, ok := usageRowScore(usageDashboardRow{account: results[1].Account, codex5h: &results[1].Usage.Limits[0], codexWeek: &results[1].Usage.Limits[1]}); !ok || score != 0.50 {
+	if score, ok := usageRowScore(usageTestRow(results[1])); !ok || score != 0.50 {
 		t.Fatalf("score = %v, %v", score, ok)
 	}
 	if strings.Contains(got, "\x1b[") {
@@ -351,7 +352,7 @@ func TestRenderUsageDashboardCodex(t *testing.T) {
 func TestRenderUsageDashboardCodexWithoutOtherLimits(t *testing.T) {
 	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
 	var out bytes.Buffer
-	renderUsageDashboard(&out, []agents.AccountUsageResult{codexTestResult("work", "plus", 0.9, 0.5, nil, now)}, now, false)
+	renderUsageTestDashboard(&out, []agents.AccountUsageResult{codexTestResult("work", "plus", 0.9, 0.5, nil, now)}, now, false)
 	if got := out.String(); strings.Contains(got, "Other") || !strings.Contains(got, "Plan") {
 		t.Fatalf("unexpected render:\n%s", got)
 	}
@@ -367,7 +368,7 @@ func TestRenderUsageDashboardThreeProvidersGolden(t *testing.T) {
 		codexTestResult("main", "plus", 0.72, 0.96, map[string]float64{"codex_spark_five_hour": 0.35}, now),
 	}
 	var out bytes.Buffer
-	renderUsageDashboard(&out, results, now, false)
+	renderUsageTestDashboard(&out, results, now, false)
 	want, err := os.ReadFile(filepath.Join("testdata", "usage-three-providers.golden"))
 	if err != nil {
 		t.Fatal(err)

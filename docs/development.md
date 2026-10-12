@@ -249,13 +249,15 @@ Optional interfaces, found by type assertion:
 
 | Interface | Used for |
 | --- | --- |
-| `Describer` | Provider label and host availability in `/api/agents/providers` |
+| `Describer` | Provider label and host availability in `/api/agents/providers`; `Availability.Hint` becomes `install_hint` while the provider is unavailable |
 | `LaunchValidator` | Synchronous launch-option check; errors return `400 invalid_launch_options` and leave no session |
 | `LaunchSchema` | `launch_fields` in `/api/agents/providers`: the launch options the start dialog renders, see below |
 | `ModelLister` | Model suggestions in `/api/agents/providers/{id}/models`; per-model `efforts`, `default_effort` and the `default` model |
 | `AccountDescriber` | Display-safe `auth_mode`, `identity`, `warnings` and options in `/api/agents/accounts` and `account list`; never tokens, paths or raw settings |
 | `AccountRemover` | Best-effort provider cleanup before an account is deleted; failure is a warning |
 | `UsagePolicy` | Provider-specific usage cache TTL |
+| `UsageLayout` | `UsageHeadline`: the primary/secondary limits (5h, weekly), extra limits, score (lower remaining of the pair), `low` (< 0.20) and next reset; shared by `bonsai agent usage` and `/api/agents/usage` |
+| `UsageNoter` | `usage_note` in `/api/agents/providers`: a short caveat on where usage is read from |
 
 `/api/agents/providers` always lists `agents.KnownProviders` (Antigravity, Claude
 and Codex; unregistered ones as "Not available yet") plus any other registered
@@ -354,9 +356,9 @@ never a server message or body, and Bonsai never writes `auth.json`.
   profiles are `ErrUsageUnsupported` and logged-out ones `ErrNotAuthenticated`,
   both decided from `auth.json` without starting Codex. Failures are remembered
   for a minute.
-- `bonsai agent usage` renders each provider through the adapter table in
-  `internal/cli/agent_usage.go` (`usageSpec`): slot assignment, fleet score,
-  next reset and table per provider.
+- `bonsai agent usage` reads slots, score and next reset from each provider's
+  `UsageLayout` headline; `internal/cli/agent_usage.go` (`usageSpec`) only holds
+  the table renderer per provider.
 
 Tests never need a Codex login: `testdata/fakecodex.sh` is a POSIX stand-in put
 first on `PATH`; `login` writes an `auth.json` with an unsigned JWT, `app-server`

@@ -105,21 +105,21 @@ func TestStatusIsCached(t *testing.T) {
 
 func TestAvailability(t *testing.T) {
 	e := newTestEnv(t)
-	if a := e.provider.Availability(t.Context()); !a.Available || a.Version != "2.1.295" {
+	if a := e.provider.Availability(t.Context()); !a.Available || a.Version != "2.1.295" || a.Hint != "" {
 		t.Fatalf("availability = %+v", a)
 	}
 
 	old := newTestEnv(t)
 	t.Setenv("FAKE_CLAUDE_VERSION", "2.0.9")
 	a := old.provider.Availability(t.Context())
-	if a.Available || a.Reason != "Update Claude Code (found 2.0.9, need "+MinVersion+")" {
+	if a.Available || a.Reason != "Update Claude Code (found 2.0.9, need "+MinVersion+")" || a.Hint != "claude update" {
 		t.Fatalf("availability = %+v", a)
 	}
 
 	missing := newTestEnv(t)
 	t.Setenv("PATH", t.TempDir())
 	a = missing.provider.Availability(t.Context())
-	if a.Available || a.Reason != "Install Claude Code and restart Bonsai" {
+	if a.Available || a.Reason != "Install Claude Code and restart Bonsai" || a.Hint != "npm install -g @anthropic-ai/claude-code" {
 		t.Fatalf("availability = %+v", a)
 	}
 }

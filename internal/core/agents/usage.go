@@ -29,5 +29,7 @@ type UsageOptions struct {
 type AccountUsageResult struct {
 	Account Account
 	Usage   *UsageSnapshot
-	Error   error
+	// Headline is the provider's UsageLayout reading of Usage, when it has one.
+	Headline *UsageHeadline
+	Error    error
 }

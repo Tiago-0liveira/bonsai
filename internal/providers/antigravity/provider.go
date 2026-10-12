@@ -39,11 +39,14 @@ func (p *Provider) Capabilities() agents.Capabilities {
 	}
 }
 
+// installHint is shown while agy is missing from PATH.
+const installHint = "Install Antigravity, then make sure agy is on PATH"
+
 func (p *Provider) Label() string { return "Antigravity" }
 
 func (p *Provider) Availability(context.Context) agents.Availability {
 	if _, err := p.binaryResolver.Resolve(); err != nil {
-		return agents.Availability{Reason: "Install agy and restart Bonsai"}
+		return agents.Availability{Reason: "Install agy and restart Bonsai", Hint: installHint}
 	}
 	return agents.Availability{Available: true}
 }

@@ -121,7 +121,7 @@ func TestDescribe(t *testing.T) {
 	if provider.Label() != "Antigravity" {
 		t.Fatal(provider.Label())
 	}
-	if a := provider.Availability(context.Background()); a.Available || a.Reason != "Install agy and restart Bonsai" {
+	if a := provider.Availability(context.Background()); a.Available || a.Reason != "Install agy and restart Bonsai" || a.Hint == "" {
 		t.Fatalf("availability = %+v", a)
 	}
 	provider.binaryResolver = &providerTestBinaryResolver{path: "agy"}
