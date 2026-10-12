@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { contrastRatio, hexToTriplet } from './color'
-import { bonsaiTheme } from './themes'
+import { bonsaiTheme, builtInThemes } from './themes'
+import { validateTheme } from './validate'
 import { THEME_TOKENS } from './tokens'
 
 // Vitest blanks `?raw` CSS imports, so read the file directly (tests run from web/).
@@ -14,8 +15,13 @@ describe('theme core', () => {
     expect(root).toContain(`--${token}: ${hexToTriplet(bonsaiTheme.colors[token])};`)
   })
 
-  it('defines every token exactly once in the built-in theme', () => {
-    expect(Object.keys(bonsaiTheme.colors).sort()).toEqual([...THEME_TOKENS].sort())
+  it.each(builtInThemes)('$name defines every token and passes contrast validation', theme => {
+    expect(Object.keys(theme.colors).sort()).toEqual([...THEME_TOKENS].sort())
+    expect(validateTheme(theme)).toMatchObject({ ok: true, warnings: [] })
+  })
+
+  it('keeps stable built-in ordering and IDs', () => {
+    expect(builtInThemes.map(theme => theme.id)).toEqual(['bonsai', 'modern-light', 'modern-dark'])
   })
 
   it('converts hex to an rgb triplet', () => {

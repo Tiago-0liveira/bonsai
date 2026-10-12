@@ -941,6 +941,13 @@ func TestAutomaticRestartFails(t *testing.T) {
 		t.Fatalf("expected status failed with exit error, got %+v", recByID(t, c, rec.ID))
 	}
 
+	// Terminal failure must mean all retries were consumed, not a transient
+	// launch failure before the next backoff was scheduled.
+	failed := recByID(t, c, rec.ID)
+	if failed.RetryCount != 3 || failed.Attempt != 4 || failed.RetryAt != nil {
+		t.Fatalf("expected exhausted retry budget, got %+v", failed)
+	}
+
 	// INVARIANT: daemon must treat process as terminal
 	ping, err := c.Ping()
 	if err != nil {

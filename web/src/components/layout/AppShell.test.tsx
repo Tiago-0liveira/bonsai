@@ -95,3 +95,18 @@ describe('workspace panel lifecycle', () => {
     expect(renders).toHaveBeenCalledTimes(baseline)
   })
 })
+
+it('captures Cmd-K and Ctrl-K before a terminal input can consume them', async () => {
+  useBonsaiStore.setState({ paletteOpen: false })
+  render(<AppShell><MainProbe /></AppShell>)
+  const terminalInput = screen.getByLabelText('Main draft')
+  const terminalKeys = vi.fn((event: Event) => event.stopPropagation())
+  terminalInput.addEventListener('keydown', terminalKeys)
+  terminalInput.focus()
+  await act(async () => { fireEvent.keyDown(terminalInput, { key: 'k', ctrlKey: true }) })
+  expect(useBonsaiStore.getState().paletteOpen).toBe(true)
+  await act(async () => { fireEvent.keyDown(terminalInput, { key: 'K', metaKey: true }) })
+  expect(useBonsaiStore.getState().paletteOpen).toBe(false)
+  expect(terminalKeys).not.toHaveBeenCalled()
+  cleanup()
+})

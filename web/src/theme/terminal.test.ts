@@ -3,7 +3,8 @@ import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { localThemeStorage } from './storage'
 import { bindTerminalAppearance, TERMINAL_FONT, terminalTheme } from './terminal'
-import { bonsaiTheme } from './themes'
+import { bonsaiTheme, builtInThemes, modernLightTheme, modernDarkTheme } from './themes'
+import { terminalVariable } from './terminalColors'
 import { initTheme, resetThemeStoreForTests, saveCustomTheme, setActiveTheme } from './themeStore'
 
 beforeEach(() => {
@@ -52,12 +53,32 @@ const css = readFileSync(resolve(process.cwd(), 'src/styles/globals.css'), 'utf8
 
 // The production CSP blocks xterm's injected <style>, so globals.css carries static copies of the ANSI colors.
 describe('static xterm CSS fallback', () => {
-  it.each(ANSI.map((name, index) => [name, index] as const))('ANSI %s (%i) matches terminalTheme', (name, index) => {
-    const expected = terminalTheme(bonsaiTheme)[name]
+  it.each(ANSI.map((name, index) => [name, index] as const))('ANSI %s (%i) resolves overrides with a Bonsai fallback', (name, index) => {
     for (const [prefix, property] of [['fg', 'color'], ['bg', 'background-color']] as const) {
-      const match = css.match(new RegExp(`\\.xterm \\.xterm-${prefix}-${index} \\{ ${property}: rgb\\(var\\(--([a-z0-9-]+)\\)\\); \\}`))
-      expect(match, `.xterm-${prefix}-${index}`).not.toBeNull()
-      expect(bonsaiTheme.colors[match![1] as keyof typeof bonsaiTheme.colors]).toBe(expected)
+      const selector = `.xterm .xterm-${prefix}-${index} { ${property}: var(${terminalVariable(name)}, rgb(var(--`
+      const rule = css.slice(css.indexOf(selector), css.indexOf('}', css.indexOf(selector)))
+      expect(rule).toContain(selector)
+      const fallback = rule.slice(selector.length).split(')')[0] as keyof typeof bonsaiTheme.colors
+      expect(bonsaiTheme.colors[fallback]).toBe(terminalTheme(bonsaiTheme)[name])
     }
+  })
+
+  it.each([modernLightTheme, modernDarkTheme])('$name uses conventional green and blue ANSI colors', theme => {
+    const resolved = terminalTheme(theme)
+    expect(resolved.green).toBe(theme.colors.ok)
+    expect(resolved.blue).toBe(theme.colors.accent)
+    expect(resolved.green).not.toBe(resolved.blue)
+  })
+
+  it('updates an existing terminal across all built-ins without measuring it', () => {
+    initTheme()
+    const onMetrics = () => { throw new Error('Theme selection must not resize a terminal') }
+    const terminal = { options: { theme: {} } }
+    const unbind = bindTerminalAppearance(terminal, onMetrics)
+    for (const theme of builtInThemes) {
+      setActiveTheme(theme.id)
+      expect(terminal.options.theme).toEqual(terminalTheme(theme))
+    }
+    unbind()
   })
 })

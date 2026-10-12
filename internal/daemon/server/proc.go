@@ -184,12 +184,9 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 			Text: "failed to start · " + err.Error(),
 		})
 		_ = logw.Close()
-		mp.rec.Status = procstore.StatusFailed
-		mp.rec.ExitError = err.Error()
-		code := -1
-		mp.rec.ExitCode = &code
-		mp.rec.RetryAt = nil
-		_ = s.store.WriteRecord(mp.rec)
+		// onExit applies the retry policy and publishes either backoff or the
+		// terminal failure. Keep starting until then so readers cannot observe
+		// a terminal status that is about to become active again.
 		return err
 	}
 

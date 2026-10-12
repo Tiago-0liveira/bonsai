@@ -2,7 +2,8 @@ import { useSyncExternalStore } from 'react'
 import { hexToTriplet } from './color'
 import { localThemeStorage, type ThemeStorage } from './storage'
 import { DEFAULT_THEME_ID, bonsaiTheme, builtInThemes } from './themes'
-import { THEME_TOKENS, type Theme, type ThemePreferences } from './tokens'
+import { TERMINAL_COLORS, THEME_TOKENS, type Theme, type ThemePreferences } from './tokens'
+import { terminalTheme, terminalVariable } from './terminalColors'
 import { validateTheme, type ThemeValidation } from './validate'
 
 type Listener = () => void
@@ -13,13 +14,33 @@ let storage: ThemeStorage = localThemeStorage
 let preferences: ThemePreferences = defaultPreferences()
 let initialized = false
 const listeners = new Set<Listener>()
+const transitionFrames = new WeakMap<HTMLElement, number>()
+
+/** Color transitions should animate hover, not blend two complete palettes. */
+function pauseThemeTransitions(root: HTMLElement) {
+  const view = root.ownerDocument.defaultView
+  if (!view) return
+  const pending = transitionFrames.get(root)
+  if (pending !== undefined) view.cancelAnimationFrame(pending)
+  root.dataset.themeSwitching = ''
+  transitionFrames.set(root, view.requestAnimationFrame(() => {
+    transitionFrames.set(root, view.requestAnimationFrame(() => {
+      delete root.dataset.themeSwitching
+      transitionFrames.delete(root)
+    }))
+  }))
+}
 
 /**
  * Applies a theme through CSSOM only. The production CSP forbids injected
  * <style> elements and inline scripts, but allows style attribute writes.
  */
 export function applyTheme(theme: Theme, root: HTMLElement = document.documentElement) {
+  pauseThemeTransitions(root)
   for (const token of THEME_TOKENS) root.style.setProperty(`--${token}`, hexToTriplet(theme.colors[token]))
+  const terminal = terminalTheme(theme)
+  for (const name of TERMINAL_COLORS) root.style.setProperty(terminalVariable(name), terminal[name])
+  root.style.setProperty('--terminal-foreground-rgb', hexToTriplet(terminal.foreground))
   root.style.colorScheme = theme.mode
   root.dataset.theme = theme.id
   root.ownerDocument.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.colors.bg)
