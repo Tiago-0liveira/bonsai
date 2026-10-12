@@ -330,13 +330,16 @@ export function BonsaiCanvas({ focus, active = true }: { focus?: 'worktrees' | '
 
   useEffect(() => {
     if (!nodesInitialized || !canvasReveal.nonce || lastReveal.current === canvasReveal.nonce || canvasReveal.projectId !== activeProjectId) return
-    const node = nodes.find(node => node.id === canvasReveal.nodeId)
-    if (!node || !nodePlacements[node.id] || !hostRef.current) return
+    // A worktree may be drawn as its collapsed stack or as the default branch node.
+    const nodeId = graph.worktreeNodeIds.get(canvasReveal.nodeId) ?? canvasReveal.nodeId
+    const node = nodes.find(node => node.id === nodeId)
+    // Wait for layout; the default branch node is positioned from the project placement.
+    if (!node || !nodePlacements[node.type === 'defaultBranch' ? activeProjectId : node.id] || !hostRef.current) return
     lastReveal.current = canvasReveal.nonce
     const viewport = getViewport(), size = getNodeSize(node), frame = currentFrame()
-    if (isRectInFrame({ ...node.position, ...size }, viewport, frame)) return
+    if (canvasReveal.mode !== 'center' && isRectInFrame({ ...node.position, ...size }, viewport, frame)) return
     void setFlowViewport(centerInFrame({ x: node.position.x + size.width / 2, y: node.position.y + size.height / 2 }, viewport.zoom, frame), { duration: 250 })
-  }, [activeProjectId, canvasReveal, nodesInitialized, nodes, nodePlacements, currentFrame, getViewport, setFlowViewport])
+  }, [activeProjectId, canvasReveal, graph.worktreeNodeIds, nodesInitialized, nodes, nodePlacements, currentFrame, getViewport, setFlowViewport])
 
   useEffect(() => {
     if (!focus) {

@@ -127,6 +127,13 @@ describe('workspace migration and hydration', () => {
     expect(read()).toEqual({ state: {}, version: WORKSPACE_STORAGE_VERSION })
   })
 
+  it('keeps valid canvas preferences and defaults invalid fields', () => {
+    expect(sanitizeWorkspacePreferences({ canvasPreferences: { focusOnBranchSelect: false, focusAgentsOnBranchSelect: 'yes', githubBranchSelect: 'open-canvas' } }).canvasPreferences)
+      .toEqual({ focusOnBranchSelect: false, focusAgentsOnBranchSelect: true, githubBranchSelect: 'open-canvas' })
+    expect(sanitizeWorkspacePreferences({ canvasPreferences: { githubBranchSelect: 'elsewhere' } }).canvasPreferences?.githubBranchSelect).toBe('show-pr')
+    expect(sanitizeWorkspacePreferences({ canvasPreferences: [] })).not.toHaveProperty('canvasPreferences')
+  })
+
   it('falls back to the active project when legacy runtime has no associated worktree', () => {
     const prefs = sanitizeWorkspacePreferences({ activeProjectId: 'repo', selection: { type: 'agent', id: 'gone' }, nodePlacements: { gone: { x: 0, y: 0, mode: 'manual' } } })
     expect(prefs.selection).toEqual({ type: 'project', id: 'repo' })

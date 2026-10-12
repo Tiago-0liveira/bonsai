@@ -35,6 +35,18 @@ describe('process graph and runtime layout', () => {
     expect(getDescendantIds(projects[0].id, graph.edges)).toEqual(expect.arrayContaining(['main', 'bonsai:1']))
   })
 
+  it('maps each worktree to the node that shows it on the canvas', () => {
+    const data = input()
+    const main = { ...worktrees[0], id: 'main', main: true, branch: projects[0].defaultBranch, projectId: projects[0].id }
+    data.worktrees = [main, ...worktrees.map(tree => ({ ...tree, stackPreference: 'auto' as const }))]
+    data.worktreeGroups = [{ id: 'unlinked:bonsai', kind: 'unlinked', worktree_ids: worktrees.map(tree => tree.id) }]
+    const graph = buildCanvasGraph(data)
+    expect(graph.worktreeNodeIds.get('wt-web')).toBe('stack:unlinked:bonsai')
+    expect(graph.worktreeNodeIds.get('main')).toBe('default:' + projects[0].id)
+    data.expandedAutomaticGroups = ['unlinked:bonsai']
+    expect(buildCanvasGraph(data).worktreeNodeIds.get('wt-web')).toBe('wt-web')
+  })
+
   it('keeps agent and process nodes attached to collapsed stacks with real ownership and counts', () => {
     const data = input()
     data.worktrees = worktrees.map(tree => ({ ...tree, stackPreference: 'auto' as const }))

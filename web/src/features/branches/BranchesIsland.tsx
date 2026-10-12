@@ -5,6 +5,7 @@ import { useBonsaiStore } from '../../stores/bonsai'
 import { isStale, staleDescription, staleLabel } from '../../lib/freshness'
 import { agentById, branchTreeSelector, worktreeById, type BranchTreeIndex } from '../terminal/branchTree'
 import type { CiStatus } from '../../types'
+import { useBranchSelect } from './useBranchSelect'
 
 export function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle' | 'running' | 'finished' }) {
   const className =
@@ -37,7 +38,7 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
   const selected = useBonsaiStore(state => state.dockWorktreeId === worktreeId)
   const collapsed = useBonsaiStore(state => state.collapsedBranchIds.includes(worktreeId))
   const toggleBranchCollapsed = useBonsaiStore(state => state.toggleBranchCollapsed)
-  const setSelection = useBonsaiStore(state => state.setSelection)
+  const select = useBranchSelect()
   const nextVisited = useMemo(() => new Set([...visited, worktreeId]), [visited, worktreeId])
   const children = index.children[worktreeId] ?? EMPTY_IDS
   const canvasAgents = index.canvasAgents[worktreeId] ?? EMPTY_IDS
@@ -60,7 +61,7 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
           </button>
           <button
             type="button"
-            onClick={() => setSelection({ type: 'worktree', id: worktree.id })}
+            onClick={() => select('worktree', worktree.id)}
             className="bonsai-focus flex h-[22px] min-w-0 flex-1 items-center text-left"
           >
             <span aria-hidden className="shrink-0 whitespace-pre text-muted-2/60">{trail + (isLast ? '└─ ' : '├─ ')}</span>
@@ -92,9 +93,9 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
 
 const BranchAgentRow = memo(function BranchAgentRow({ id, trail }: { id: string; trail: string }) {
   const agent = useBonsaiStore(state => agentById(state.agents, id))
-  const setSelection = useBonsaiStore(state => state.setSelection)
+  const select = useBranchSelect()
   if (!agent) return null
-  return <button type="button" onClick={() => setSelection({ type: 'agent', id })} style={{ paddingLeft: 18 }} className="bonsai-focus flex h-[22px] w-full items-center gap-1.5 rounded-md pr-2 text-left font-mono text-[10.5px] text-muted-2 hover:bg-panel-2 hover:text-text">
+  return <button type="button" onClick={() => select('agent', id)} style={{ paddingLeft: 18 }} className="bonsai-focus flex h-[22px] w-full items-center gap-1.5 rounded-md pr-2 text-left font-mono text-[10.5px] text-muted-2 hover:bg-panel-2 hover:text-text">
     <span aria-hidden className="whitespace-pre text-muted-2/60">{trail}</span>
     <ProviderBadge provider={agent.provider} size={16} />
     <span className="min-w-0 flex-1 truncate">{agent.name}<span className="ml-1.5 text-[9.5px] text-muted-2">{agent.profileName ?? `${agent.model} · ${agent.reasoningEffort}`}</span></span>
@@ -107,7 +108,7 @@ export function BranchesIsland() {
   const index = useBonsaiStore(useMemo(() => branchTreeSelector(activeProjectId), [activeProjectId]))
   const defaultWorktree = useBonsaiStore(state => worktreeById(state.worktrees, index.defaultId ?? ''))
   const defaultSelected = useBonsaiStore(state => state.dockWorktreeId === index.defaultId)
-  const setSelection = useBonsaiStore(state => state.setSelection)
+  const select = useBranchSelect()
   const setWorktreeDialogOpen = useBonsaiStore(state => state.setWorktreeDialogOpen)
   const agentCount = useMemo(() => Object.values(index.canvasAgents).reduce((total, ids) => total + ids.length, 0), [index])
   const local = useBonsaiStore(state => state.syncFreshness[activeProjectId]?.local)
@@ -135,7 +136,7 @@ export function BranchesIsland() {
           <div data-worktree-row={defaultWorktree.id} className={'flex h-[22px] w-full min-w-0 items-center gap-2 rounded-md pr-2 font-mono text-[11.5px] ' + (defaultSelected ? 'bg-accent/[.09] text-text' : 'hover:bg-panel-2')}>
             <button
               type="button"
-              onClick={() => setSelection({ type: 'worktree', id: defaultWorktree.id })}
+              onClick={() => select('worktree', defaultWorktree.id)}
               className="bonsai-focus flex h-[22px] min-w-0 flex-1 items-center gap-2 px-2 text-left"
             >
               <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-accent-solid" />

@@ -1,14 +1,16 @@
-import { lazy } from 'react'
+import { lazy, useMemo } from 'react'
 import { FeatureBoundary } from './chunkRecovery'
 import {
   Outlet,
   createRootRoute,
   createRoute,
   createRouter,
+  useNavigate,
   useRouterState,
 } from '@tanstack/react-router'
 import { AppShell } from '../components/layout/AppShell'
 import type { CanvasRoute } from '../features/workspace/WorkspacePage'
+import { ShellRouteProvider, type ShellPage, type ShellRoute } from './shellRoute'
 import { validatePullRequestsSearch } from '../features/github/pullRequestsSearch'
 
 const FilesPage = lazy(() => import('../features/files/FilesPage').then(module => ({ default: module.FilesPage })))
@@ -17,14 +19,25 @@ const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then
 const PullRequestsRoute = lazy(() => import('../features/github/PullRequestsRoute').then(module => ({ default: module.PullRequestsRoute })))
 
 const CANVAS_ROUTES: Record<string, CanvasRoute> = { '/': 'canvas', '/worktrees': 'worktrees', '/agents': 'agents' }
+const GITHUB_ROUTES = new Set<string>(['/github', '/pull-requests'])
 
 function RootLayout() {
   // The canvas is a shell layer, not a page: canvas routes only tell the shell which focus to apply.
   const canvasRoute = useRouterState({ select: state => state.matches.map(match => CANVAS_ROUTES[match.routeId]).find(Boolean) ?? null })
+  const github = useRouterState({ select: state => state.matches.some(match => GITHUB_ROUTES.has(match.routeId)) })
+  const navigate = useNavigate()
+  const page: ShellPage = canvasRoute ? 'canvas' : github ? 'github' : 'other'
+  const shellRoute = useMemo<ShellRoute>(() => ({
+    page,
+    showCanvas: () => void navigate({ to: '/' }),
+    showPullRequest: (id) => void navigate({ to: '/github', search: { pr: id }, replace: true }),
+  }), [page, navigate])
   return (
-    <AppShell canvasRoute={canvasRoute}>
-      <Outlet />
-    </AppShell>
+    <ShellRouteProvider value={shellRoute}>
+      <AppShell canvasRoute={canvasRoute}>
+        <Outlet />
+      </AppShell>
+    </ShellRouteProvider>
   )
 }
 

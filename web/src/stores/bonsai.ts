@@ -10,6 +10,7 @@ import { localCommand, createWorktree, changePullRequest, reviewPullRequest, upd
 import type {
   Agent,
   AgentState,
+  CanvasPreferences,
   CreateWorktreeInput,
   DockPanelKey,
   DockState,
@@ -26,6 +27,7 @@ import type {
   ViewportState,
   Worktree,
 } from '../types'
+import { DEFAULT_CANVAS_PREFERENCES } from '../types'
 
 interface TerminalSession {
   id: string
@@ -164,8 +166,12 @@ export interface BonsaiState {
   expandedHistoryWorktreeIds: string[]
   toggleWorktreeHistory: (id: string) => void
   canvasCommand: { type: 'fit' | 'layout'; nonce: number }
-  canvasReveal: { projectId: string; nodeId: string; nonce: number }
+  /** `reveal` scrolls a node into view only when hidden; `center` always centres it. `nodeId` may be an entity id. */
+  canvasReveal: { projectId: string; nodeId: string; nonce: number; mode?: 'reveal' | 'center' }
   requestCanvasAction: (type: 'fit' | 'layout') => void
+  requestCanvasFocus: (projectId: string, entityId: string) => void
+  canvasPreferences: CanvasPreferences
+  setCanvasPreferences: (patch: Partial<CanvasPreferences>) => void
 
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
@@ -576,6 +582,11 @@ export const useBonsaiStore = create<BonsaiState>()(
       requestCanvasAction: (type) => set((state) => ({
         canvasCommand: { type, nonce: state.canvasCommand.nonce + 1 },
       })),
+      requestCanvasFocus: (projectId, nodeId) => set((state) => ({
+        canvasReveal: { projectId, nodeId, nonce: state.canvasReveal.nonce + 1, mode: 'center' },
+      })),
+      canvasPreferences: DEFAULT_CANVAS_PREFERENCES,
+      setCanvasPreferences: (patch) => set((state) => ({ canvasPreferences: { ...state.canvasPreferences, ...patch } })),
 
       paletteOpen: false,
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
