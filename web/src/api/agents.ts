@@ -12,6 +12,8 @@ export interface AgentSummary {
   provider: AgentProviderId; profile_name: string; name: string
   state: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
   created_at: string; ended_at?: string; exit_code?: number; error?: string
+  /** The launch model and the accepted launch options keyed by start request field; never the prompt. */
+  model?: string; options?: Record<string, string>
 }
 /** Profile fields plus the provider's profile defaults, keyed by launch field ID. */
 export interface AgentAccount {
@@ -97,5 +99,5 @@ export interface AgentUsage {
 export const startAgent = (project: string, { options, ...body }: { worktree_id: string; account_id: string; name?: string; model?: string; prompt?: string; options?: LaunchOptions; cols: number; rows: number }, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ ...options, ...body }) })
 export const stopAgent = (project: string, id: string, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'Idempotency-Key': key } })
 export function mapAgent(a: AgentSummary, previous?: Agent): Agent {
-  return { id: a.id, projectId: a.project_id, worktreeId: a.worktree_id, accountId: a.account_id, name: a.name || a.profile_name, provider: (Object.hasOwn(PROVIDER_LABELS, a.provider) ? PROVIDER_LABELS[a.provider] : a.provider) as AgentProvider, providerId: a.provider, profileName: a.profile_name, model: '', reasoningEffort: '', workType: '', prompt: '', archived: previous?.archived ?? false, presentation: previous?.presentation ?? 'canvas', state: a.state === 'exited' || a.state === 'failed' ? 'finished' : 'running', lifecycleState: a.state, task: a.error || a.state, runtime: '', terminalId: a.id, createdAt: a.created_at, finishedAt: a.ended_at, exitCode: a.exit_code }
+  return { id: a.id, projectId: a.project_id, worktreeId: a.worktree_id, accountId: a.account_id, name: a.name || a.profile_name, provider: (Object.hasOwn(PROVIDER_LABELS, a.provider) ? PROVIDER_LABELS[a.provider] : a.provider) as AgentProvider, providerId: a.provider, profileName: a.profile_name, model: a.model ?? '', reasoningEffort: a.options?.effort ?? '', launchOptions: a.options, workType: '', prompt: '', archived: previous?.archived ?? false, presentation: previous?.presentation ?? 'canvas', state: a.state === 'exited' || a.state === 'failed' ? 'finished' : 'running', lifecycleState: a.state, task: a.error || a.state, runtime: '', terminalId: a.id, createdAt: a.created_at, finishedAt: a.ended_at, exitCode: a.exit_code }
 }

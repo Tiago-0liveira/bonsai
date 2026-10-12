@@ -25,6 +25,20 @@ const FilesPanel = lazy(() => import('../files/FilesPanel').then(module => ({ de
 
 const presentation = (agent: Agent) => agent.presentation ?? (agent.archived ? 'archived' : 'canvas')
 
+/** "model · effort · permissions" of a live session, labelled by its provider's launch fields (unlabelled if they cannot load). */
+function LaunchDetails({ agent }: { agent: Agent }) {
+  const [details, setDetails] = useState('')
+  useEffect(() => {
+    let live = true
+    import('../../api/launchDetails').then(async ({ cachedAgentProviders, launchDetails }) => {
+      const fields = await cachedAgentProviders().then(list => list.find(item => item.id === agent.providerId)?.launch_fields ?? [], () => [])
+      if (live) setDetails(launchDetails(fields, agent.model, agent.launchOptions).join(' · '))
+    }).catch(() => {})
+    return () => { live = false }
+  }, [agent.providerId, agent.model, agent.launchOptions])
+  return details ? <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Launch</dt><dd className="break-all text-right">{details}</dd></div> : null
+}
+
 function branchIssues(worktree: Worktree, pr?: PullRequest) {
   const issues: string[] = []
   if (worktree.gitState?.includes('conflict') || pr?.mergeable === false) issues.push('Resolve merge conflicts')
@@ -396,6 +410,7 @@ export function Inspector() {
               <Section title="Session">
                 <dl className="space-y-2.5 text-[10px]">
                   <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">{isLiveAgent(agent) ? 'Profile' : 'Model'}</dt><dd className="break-all text-right">{agent.profileName ?? agent.model}</dd></div>
+                  {isLiveAgent(agent) && (agent.model || agent.launchOptions) && <LaunchDetails key={agent.id} agent={agent} />}
                   {!isLiveAgent(agent) && <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Reasoning</dt><dd>{agent.reasoningEffort}{agent.fastMode ? ' · Fast' : ''}</dd></div>}
                   <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Started</dt><dd>{agent.createdAt}</dd></div>
                   {agent.state === 'finished' && agent.finishedAt && <div className="flex justify-between gap-3"><dt className="text-[rgb(var(--muted))]">Finished</dt><dd>{agent.finishedAt}</dd></div>}

@@ -1,11 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { AgentAccount, AgentCapability, LaunchField } from '../../api/agents'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AgentAccount, AgentCapability, AgentUsage, LaunchField } from '../../api/agents'
 import { StartAgentDialog } from './StartAgentDialog'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { agentAccounts, agentModels, agentProviders } from '../../api/agents'
+import { agentUsage, refreshAgentUsage } from '../../api/agentsOverview'
 import { worktrees } from '../../test/fixtures/worktrees'
 vi.mock('../../api/agents', async importOriginal => ({ ...await importOriginal<object>(), agentAccounts: vi.fn(), agentProviders: vi.fn(), agentModels: vi.fn() }))
+vi.mock('../../api/agentsOverview', async importOriginal => ({ ...await importOriginal<object>(), agentUsage: vi.fn(), refreshAgentUsage: vi.fn() }))
 const create = useBonsaiStore.getState().createAgent
 const NOT_YET = { message: 'Not available yet' }
 // Mirrors what the Go providers declare.
@@ -23,6 +25,7 @@ const claudeProfile: AgentAccount = { id: 'claude-one', name: 'Work', provider: 
 beforeEach(() => {
   localStorage.clear()
   vi.mocked(agentModels).mockResolvedValue([])
+  vi.mocked(agentUsage).mockResolvedValue([])
   useBonsaiStore.setState({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktrees[0].id, activeProjectId: worktrees[0].projectId, worktrees, createAgent: vi.fn().mockResolvedValue(undefined) })
   vi.mocked(agentProviders).mockResolvedValue(providers({ available: false, unavailable_reason: NOT_YET }))
   vi.mocked(agentAccounts).mockResolvedValue([{ id: 'profile-one', name: 'One', provider: 'antigravity' }])
@@ -97,7 +100,7 @@ it('submits the prompt, model and full-access setting, and changes the request k
   expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
 })
 
-const pick = async (label: string, option: string) => {
+const pick = async (label: string, option: string | RegExp) => {
   fireEvent.click(screen.getByLabelText(label))
   fireEvent.click(await screen.findByRole('option', { name: option }))
 }
@@ -440,4 +443,75 @@ it('ignores a target profile that no longer exists', async () => {
   useBonsaiStore.setState({ startAgentTargetAccountId: 'gone' })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+})
+
+describe('usage-aware profile choice', () => {
+  const profile = (id: string, name: string): AgentAccount => ({ ...codexProfile, id, name, warnings: undefined })
+  // API order: by name. Usage reorders them by headroom.
+  const profiles = [profile('codex-a', 'Alpha'), profile('codex-b', 'Bravo'), profile('codex-c', 'Charlie'), profile('codex-d', 'Delta')]
+  const reading = (id: string, primary: number, secondary: number, low = false): AgentUsage => ({
+    account_id: id, provider: 'codex',
+    headline: { primary: { id: 'five_hour', label: '5h', window: '5h', remaining_fraction: primary }, secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: secondary }, score: Math.min(primary, secondary), low },
+  })
+  const usage: AgentUsage[] = [
+    reading('codex-a', 0.15, 0.55, true),
+    { account_id: 'codex-b', provider: 'codex', error: { code: 'not_authenticated', message: 'Not signed in' } },
+    reading('codex-c', 0.72, 0.4),
+  ]
+  const openProfiles = async () => {
+    await waitFor(() => expect(screen.getByLabelText('Profile')).not.toBeDisabled())
+    fireEvent.click(screen.getByLabelText('Profile'))
+    await screen.findAllByRole('option')
+  }
+  const optionNames = () => screen.getAllByRole('option').map(option => option.textContent?.split('chatgpt')[0])
+  beforeEach(() => {
+    vi.mocked(agentProviders).mockResolvedValue(codexProviders())
+    vi.mocked(agentAccounts).mockResolvedValue(profiles)
+  })
+
+  it('orders profiles by cached headroom with unknown ones last, and labels each option', async () => {
+    vi.mocked(agentUsage).mockResolvedValue(usage)
+    render(<StartAgentDialog />)
+    await openProfiles()
+    await waitFor(() => expect(optionNames()).toEqual(['Charlie', 'Alpha', 'Bravo', 'Delta']))
+    const options = screen.getAllByRole('option')
+    expect(options[0]).toHaveTextContent('5h 72% · week 40%')
+    expect(options[1]).toHaveTextContent('5h 15% · week 55%')
+    expect(options[2]).not.toHaveTextContent('%')
+    fireEvent.click(options[0])
+    expect(screen.getByLabelText('Profile')).toHaveTextContent('Charlie')
+    expect(screen.getByLabelText('Profile')).toHaveTextContent('5h 72% · week 40%')
+  })
+
+  it('keeps the API order and shows no headroom when usage cannot be read', async () => {
+    vi.mocked(agentUsage).mockRejectedValue(new Error('offline'))
+    render(<StartAgentDialog />)
+    await waitFor(() => expect(agentUsage).toHaveBeenCalled())
+    await openProfiles()
+    expect(optionNames()).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta'])
+    expect(screen.getAllByRole('option').some(option => option.textContent?.includes('%'))).toBe(false)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('warns under the select when the chosen profile runs low and names a roomier one', async () => {
+    vi.mocked(agentUsage).mockResolvedValue(usage)
+    render(<StartAgentDialog />)
+    await openProfiles()
+    await waitFor(() => expect(optionNames()[0]).toBe('Charlie'))
+    fireEvent.click(screen.getByRole('option', { name: /Alpha/ }))
+    expect(screen.getByRole('note')).toHaveTextContent('Low headroom: 5h 15% · week 55% left. Charlie has more.')
+    await pick('Profile', /Charlie/)
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
+  it('reads cached usage once and never asks for a refresh', async () => {
+    vi.mocked(agentUsage).mockResolvedValue(usage)
+    render(<StartAgentDialog />)
+    await waitFor(() => expect(screen.getByLabelText('Profile')).not.toBeDisabled())
+    await pick('Profile', /Alpha/)
+    await pick('Profile', /Charlie/)
+    expect(agentUsage).toHaveBeenCalledTimes(1)
+    expect(agentUsage).toHaveBeenCalledWith()
+    expect(refreshAgentUsage).not.toHaveBeenCalled()
+  })
 })

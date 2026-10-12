@@ -105,6 +105,8 @@ export interface Agent {
   accountId?: string
   providerId?: AgentProviderId
   exitCode?: number
+  /** Accepted launch options of a live session, keyed by start request field (effort, sandbox…). */
+  launchOptions?: Record<string, string>
   lifecycleState?: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
   id: string
   worktreeId: string

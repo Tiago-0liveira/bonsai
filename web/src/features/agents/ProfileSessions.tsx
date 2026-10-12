@@ -1,13 +1,17 @@
 import { LocateFixed, Square, TerminalSquare } from 'lucide-react'
 import { useState } from 'react'
+import type { LaunchField } from '../../api/agents'
+import { launchDetails } from '../../api/launchDetails'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { formatAge, type ProfileSession } from './agentsModel'
 
 const PAGE = 25
 const STATE_LABEL: Record<string, string> = { starting: 'Starting', running: 'Running', stopping: 'Stopping', exited: 'Exited', failed: 'Failed' }
 
-export function ProfileSessions({ sessions, now, onShowOnCanvas }: {
+export function ProfileSessions({ sessions, fields, now, onShowOnCanvas }: {
   sessions: ProfileSession[]
+  /** The provider's launch fields, to label each session's launch details. */
+  fields: LaunchField[]
   now: number
   /** Called after the agent is selected in its project, to bring the canvas into view. */
   onShowOnCanvas: () => void
@@ -43,6 +47,7 @@ export function ProfileSessions({ sessions, now, onShowOnCanvas }: {
           const state = agent.lifecycleState ?? 'running'
           // The mapped task holds the session's error, or its state when there is none.
           const failure = agent.task && agent.task !== state ? agent.task : ''
+          const details = launchDetails(fields, agent.model, agent.launchOptions).join(' · ')
           return (
             <li key={agent.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2.5">
               <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (session.active ? 'bg-accent-solid' : state === 'failed' ? 'bg-danger-solid' : 'bg-muted-2')} aria-hidden="true" />
@@ -57,6 +62,7 @@ export function ProfileSessions({ sessions, now, onShowOnCanvas }: {
                   {agent.finishedAt && ` · ended ${formatAge(agent.finishedAt, now)}`}
                   {agent.exitCode !== undefined && !session.active && ` · exit ${agent.exitCode}`}
                 </div>
+                {details && <div className="truncate font-mono text-[10px] text-muted" title={details}>{details}</div>}
                 {failure && <div className="mt-0.5 truncate text-[11px] text-danger" title={failure}>{failure}</div>}
               </div>
               <div className="flex shrink-0 items-center gap-1">

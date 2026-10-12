@@ -322,8 +322,8 @@ const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
     account_id: 'codex-personal', provider: 'codex',
     usage: { provider: 'codex', account_id: 'codex-personal', fetched_at: '2026-10-12T11:58:00Z', plan: 'plus', limits: [] },
     headline: {
-      primary: { id: 'five_hour', label: '5 hour', window: '300m', remaining_fraction: 0.72, resets_at: '2026-10-12T14:15:00Z' },
-      secondary: { id: 'weekly', label: 'Weekly', window: '10080m', remaining_fraction: 0.38, resets_at: '2026-10-15T16:00:00Z' },
+      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.72, resets_at: '2026-10-12T14:15:00Z' },
+      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.38, resets_at: '2026-10-15T16:00:00Z' },
       extra: [
         { id: 'spark_five_hour', group: 'Codex Spark', label: '5 hour', remaining_fraction: 0.9, resets_at: '2026-10-12T14:30:00Z' },
         { id: 'spark_weekly', group: 'Codex Spark', label: 'Weekly', remaining_fraction: 0.64, resets_at: '2026-10-15T16:00:00Z' },
@@ -336,8 +336,8 @@ const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
     account_id: 'claude-profile', provider: 'claude',
     usage: { provider: 'claude', account_id: 'claude-profile', fetched_at: '2026-10-12T11:59:00Z', plan: 'max', limits: [] },
     headline: {
-      primary: { id: 'five_hour', label: '5 hour', remaining_fraction: 0.15, resets_at: '2026-10-12T13:00:00Z' },
-      secondary: { id: 'weekly', label: 'Weekly', remaining_fraction: 0.55, resets_at: '2026-10-16T09:00:00Z' },
+      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.15, resets_at: '2026-10-12T13:00:00Z' },
+      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.55, resets_at: '2026-10-16T09:00:00Z' },
       extra: [
         { id: 'seven_day_opus', label: 'Opus (weekly)', remaining_fraction: 0.4, resets_at: '2026-10-16T09:00:00Z' },
         { id: 'seven_day_sonnet', label: 'Sonnet (weekly)', remaining_fraction: 0.8, resets_at: '2026-10-16T09:00:00Z' },
@@ -379,10 +379,10 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
   if (!emptyRoots) rootSettings.repositories = discoveredRepositories(new Set(repositories.map(repository => repository.id)))
 
   const agentSessions: AgentSummary[] = agentsTab.enabled ? [
-    { id: 'codex-session-1', project_id: 'bonsai', worktree_id: 'wt-daemon', account_id: 'codex-personal', provider: 'codex', profile_name: 'Personal', name: 'Daemon cleanup', state: 'running', created_at: '2026-10-12T11:50:00Z' },
+    { id: 'codex-session-1', project_id: 'bonsai', worktree_id: 'wt-daemon', account_id: 'codex-personal', provider: 'codex', profile_name: 'Personal', name: 'Daemon cleanup', state: 'running', created_at: '2026-10-12T11:50:00Z', model: 'gpt-6.1-sol', options: { effort: 'high', sandbox: 'workspace-write', approval: 'on-request' } },
     { id: 'codex-session-lab', project_id: 'sprout-lab', worktree_id: 'wt-lab', account_id: 'codex-personal', provider: 'codex', profile_name: 'Personal', name: 'Lab experiment', state: 'running', created_at: '2026-10-12T11:40:00Z' },
     { id: 'codex-session-done', project_id: 'bonsai', worktree_id: 'wt-web', account_id: 'codex-personal', provider: 'codex', profile_name: 'Personal', name: 'Docs pass', state: 'exited', created_at: '2026-10-12T09:00:00Z', ended_at: '2026-10-12T09:30:00Z', exit_code: 0 },
-    { id: 'claude-session-1', project_id: 'bonsai', worktree_id: 'wt-main', account_id: 'claude-profile', provider: 'claude', profile_name: 'Work', name: 'Release notes', state: 'running', created_at: '2026-10-12T11:55:00Z' },
+    { id: 'claude-session-1', project_id: 'bonsai', worktree_id: 'wt-main', account_id: 'claude-profile', provider: 'claude', profile_name: 'Work', name: 'Release notes', state: 'running', created_at: '2026-10-12T11:55:00Z', options: { permission_mode: 'plan' } },
   ] : []
   // The ETag of the profile list changes when a test reports a profile change.
   let accountsETag = 1
@@ -562,7 +562,9 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       const body = request.postDataJSON()
       const profile = ({ 'claude-profile': { provider: 'claude', name: 'Work' }, 'codex-personal': { provider: 'codex', name: 'Personal' }, 'codex-team': { provider: 'codex', name: 'Team' } } as const)[body.account_id as string] ?? { provider: 'antigravity', name: 'Fixture' }
       const id = profile.provider === 'antigravity' ? 'fixture-session' : `${profile.provider}-session-${agentSessions.filter(item => item.provider === profile.provider).length + 1}`
-      const session: AgentSummary = { id, project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: profile.provider, profile_name: profile.name, name: body.name || profile.name, state: 'running', created_at: new Date().toISOString() }
+      // Like the API: the accepted launch choices, never the prompt.
+      const options = Object.fromEntries(['permission_mode', 'effort', 'sandbox', 'approval', 'full_access'].filter(key => body[key] !== undefined && body[key] !== '').map(key => [key, String(body[key])]))
+      const session: AgentSummary = { id, project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: profile.provider, profile_name: profile.name, name: body.name || profile.name, state: 'running', created_at: new Date().toISOString(), model: body.model || undefined, options: Object.keys(options).length ? options : undefined }
       if (!agentSessions.some(item => item.id === session.id)) agentSessions.push(session)
       socket.publishUpdate(projectSnapshot('bonsai', true), 'agents')
       socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision })

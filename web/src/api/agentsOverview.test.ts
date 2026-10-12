@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { accountAddCommand, agentAccountsIfChanged, agentUsage, isActiveSession, refreshAgentUsage } from './agentsOverview'
+import { accountAddCommand, agentAccountsIfChanged, agentUsage, byHeadroom, headroomLabel, isActiveSession, refreshAgentUsage } from './agentsOverview'
+import type { AgentUsage } from './agents'
 import { localFetch } from './localClient'
 
 vi.mock('./localClient', () => ({ localFetch: vi.fn(), LOCAL_API_SAME_ORIGIN: true }))
@@ -44,5 +45,22 @@ describe('agents overview reads', () => {
 
   it('counts starting, running and stopping sessions as active', () => {
     expect(['starting', 'running', 'stopping', 'exited', 'failed', undefined].map(state => isActiveSession(state as never))).toEqual([true, true, true, false, false, false])
+  })
+})
+
+describe('headroom', () => {
+  it('labels the headline pair by window, else by label', () => {
+    expect(headroomLabel({ primary: { id: 'five_hour', window: '5h', remaining_fraction: 0.724 }, secondary: { id: 'weekly', window: 'weekly', remaining_fraction: 0.4 } })).toBe('5h 72% · week 40%')
+    expect(headroomLabel({ primary: { id: 'five_hour', label: 'Session (5h)', remaining_fraction: 1.2 }, secondary: { id: 'weekly' } })).toBe('Session (5h) 100%')
+    expect(headroomLabel({ secondary: { id: 'window_1440m', remaining_fraction: 0 } })).toBe('window_1440m 0%')
+    expect(headroomLabel(undefined)).toBe('')
+  })
+
+  it('orders profiles by score, highest first, keeping unknown ones in order after them', () => {
+    const entry = (id: string, score?: number): AgentUsage => ({ account_id: id, provider: 'codex', headline: score === undefined ? undefined : { score } })
+    const usage = { b: entry('b', 0.3), d: entry('d', 0.8), e: entry('e'), f: entry('f', 0.3) }
+    const ordered = byHeadroom(['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({ id })), usage)
+    expect(ordered.map(item => item.id)).toEqual(['d', 'b', 'f', 'a', 'c', 'e'])
+    expect(byHeadroom([{ id: 'x' }, { id: 'y' }], {}).map(item => item.id)).toEqual(['x', 'y'])
   })
 })
