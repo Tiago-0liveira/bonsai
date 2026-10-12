@@ -25,6 +25,7 @@ export function CommandPalette() {
   const open = useBonsaiStore((state) => state.paletteOpen)
   const setOpen = useBonsaiStore((state) => state.setPaletteOpen)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
+  const requestFitAgents = useBonsaiStore((state) => state.requestFitAgents)
   const setWorktreeDialogOpen = useBonsaiStore(state => state.setWorktreeDialogOpen)
   const navigate = useNavigate()
   const selection = useBonsaiStore(s => s.selection)
@@ -67,6 +68,7 @@ export function CommandPalette() {
 
           <Command.Group heading="Workspace" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-muted-2">
             <CommandItem icon={LocateFixed} label="Fit canvas" onSelect={() => run(() => requestCanvasAction('fit'))} />
+            <CommandItem icon={Bot} label="Show agents on canvas" onSelect={() => run(() => { requestFitAgents(); return navigate({ to: '/' }) })} />
             <CommandItem icon={Network} label="Auto-layout canvas" onSelect={() => run(() => requestCanvasAction('layout'))} />
             <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
             <CommandItem icon={Bot} label="Start agent" onSelect={() => run(() => openAgent(selection.type === 'worktree' ? selection.id : agent?.worktreeId))} />
@@ -86,6 +88,7 @@ export function CommandPalette() {
           </Command.Group>
 
           <Command.Group heading="Navigate" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[.12em] [&_[cmdk-group-heading]]:text-muted-2">
+            <CommandItem icon={Bot} label="Open Agents" onSelect={() => run(() => navigate({ to: '/agents' }))} />
             <CommandItem icon={GitPullRequest} label="Open PRs" onSelect={() => run(() => navigate({ to: '/pull-requests' }))} />
             <CommandItem icon={FileCode2} label="Open Files" onSelect={() => run(() => navigate({ to: '/files' }))} />
             <CommandItem icon={Settings} label="Open Settings" onSelect={() => run(() => void navigate({ to: '/settings' }))} />

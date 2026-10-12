@@ -304,10 +304,51 @@ export async function mockLocalEventSocket(
     })
   })
 
-  return { publishCatalog, publishUpdate }
+  // Global events such as agents_changed carry no snapshot.
+  const publishEvent = (event: Record<string, unknown>) => sendEvent?.(event)
+
+  return { publishCatalog, publishUpdate, publishEvent }
 }
 
-export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false, apiOrigin = DEFAULT_API_ORIGIN) {
+/** Fixture data for the Agents tab: the default fixture keeps the profiles other specs rely on. */
+export interface AgentsTabFixture {
+  /** Replaces profiles, providers and sessions with the Agents tab fixture. */
+  enabled: boolean
+}
+
+/** Usage of the Agents tab fixture profiles, keyed by profile ID. */
+const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
+  'codex-personal': {
+    account_id: 'codex-personal', provider: 'codex',
+    usage: { provider: 'codex', account_id: 'codex-personal', fetched_at: '2026-10-12T11:58:00Z', plan: 'plus', limits: [] },
+    headline: {
+      primary: { id: 'five_hour', label: '5 hour', window: '300m', remaining_fraction: 0.72, resets_at: '2026-10-12T14:15:00Z' },
+      secondary: { id: 'weekly', label: 'Weekly', window: '10080m', remaining_fraction: 0.38, resets_at: '2026-10-15T16:00:00Z' },
+      extra: [
+        { id: 'spark_five_hour', group: 'Codex Spark', label: '5 hour', remaining_fraction: 0.9, resets_at: '2026-10-12T14:30:00Z' },
+        { id: 'spark_weekly', group: 'Codex Spark', label: 'Weekly', remaining_fraction: 0.64, resets_at: '2026-10-15T16:00:00Z' },
+      ],
+      score: 0.38, next_reset: '2026-10-12T14:15:00Z',
+    },
+  },
+  'codex-team': { account_id: 'codex-team', provider: 'codex', error: { code: 'not_authenticated', message: 'Not signed in' } },
+  'claude-profile': {
+    account_id: 'claude-profile', provider: 'claude',
+    usage: { provider: 'claude', account_id: 'claude-profile', fetched_at: '2026-10-12T11:59:00Z', plan: 'max', limits: [] },
+    headline: {
+      primary: { id: 'five_hour', label: '5 hour', remaining_fraction: 0.15, resets_at: '2026-10-12T13:00:00Z' },
+      secondary: { id: 'weekly', label: 'Weekly', remaining_fraction: 0.55, resets_at: '2026-10-16T09:00:00Z' },
+      extra: [
+        { id: 'seven_day_opus', label: 'Opus (weekly)', remaining_fraction: 0.4, resets_at: '2026-10-16T09:00:00Z' },
+        { id: 'seven_day_sonnet', label: 'Sonnet (weekly)', remaining_fraction: 0.8, resets_at: '2026-10-16T09:00:00Z' },
+      ],
+      score: 0.15, low: true, next_reset: '2026-10-12T13:00:00Z',
+    },
+  },
+  'claude-token': { account_id: 'claude-token', provider: 'claude', error: { code: 'unsupported', message: 'Setup tokens cannot read plan usage' } },
+}
+
+export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false, apiOrigin = DEFAULT_API_ORIGIN, agentsTab: AgentsTabFixture = { enabled: false }) {
   const rootSettings: {
     version: number
     revision: number
@@ -337,7 +378,17 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     : []
   if (!emptyRoots) rootSettings.repositories = discoveredRepositories(new Set(repositories.map(repository => repository.id)))
 
-  const agentSessions: AgentSummary[] = []
+  const agentSessions: AgentSummary[] = agentsTab.enabled ? [
+    { id: 'codex-session-1', project_id: 'bonsai', worktree_id: 'wt-daemon', account_id: 'codex-personal', provider: 'codex', profile_name: 'Personal', name: 'Daemon cleanup', state: 'running', created_at: '2026-10-12T11:50:00Z' },
+    { id: 'codex-session-lab', project_id: 'sprout-lab', worktree_id: 'wt-lab', account_id: 'codex-personal', provider: 'codex', profile_name: 'Personal', name: 'Lab experiment', state: 'running', created_at: '2026-10-12T11:40:00Z' },
+    { id: 'codex-session-done', project_id: 'bonsai', worktree_id: 'wt-web', account_id: 'codex-personal', provider: 'codex', profile_name: 'Personal', name: 'Docs pass', state: 'exited', created_at: '2026-10-12T09:00:00Z', ended_at: '2026-10-12T09:30:00Z', exit_code: 0 },
+    { id: 'claude-session-1', project_id: 'bonsai', worktree_id: 'wt-main', account_id: 'claude-profile', provider: 'claude', profile_name: 'Work', name: 'Release notes', state: 'running', created_at: '2026-10-12T11:55:00Z' },
+  ] : []
+  // The ETag of the profile list changes when a test reports a profile change.
+  let accountsETag = 1
+  let agentsRevision = 0
+  const usageRequests: { method: string; account_id?: string }[] = []
+  const addedAccounts: Record<string, unknown>[] = []
   const metadata: Record<string, Metadata> = {
     'wt-main': { merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-web': { merge_target_branch: 'main', stack_preference: 'auto' },
@@ -357,8 +408,18 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     const current = sequences.get(projectId) ?? 1
     const sequence = bump ? current + 1 : current
     sequences.set(projectId, sequence)
-    if (projectId !== 'bonsai') return { ...emptySnapshot(projectId), sequence }
-    const full = { ...bonsaiSnapshot(metadata), sequence, agents: [...agentSessions] }
+    if (projectId !== 'bonsai') {
+      const empty = emptySnapshot(projectId)
+      // The Agents tab fixture runs a session in a second project, which therefore needs a worktree.
+      const trees = agentsTab.enabled && projectId === 'sprout-lab'
+        ? [
+            { id: 'wt-lab-main', repository_id: projectId, path: '/trees/lab-main', branch: 'main', main: true, local_head_sha: 'sha-lab-main', status: status(0, 0, 0, 'normal') },
+            { id: 'wt-lab', repository_id: projectId, path: '/trees/lab', branch: 'lab/experiment', main: false, local_head_sha: 'sha-lab', status: status(0, 0, 0, 'normal') },
+          ]
+        : []
+      return { ...empty, local: { ...empty.local, worktrees: trees }, sequence, agents: agentSessions.filter(item => item.project_id === projectId) }
+    }
+    const full = { ...bonsaiSnapshot(metadata), sequence, agents: agentSessions.filter(item => item.project_id === 'bonsai') }
     if (management) {
       const extra = [...unlinkedTrees, ...createdTrees].filter(tree => !removedTrees.has(tree.id))
       const candidates = [{ id: 'refs/remotes/origin/discovered', ref: 'refs/remotes/origin/discovered', name: 'discovered', source: 'remote', remote: 'origin', head_sha: 'sha', last_commit_at: '2026-09-27T00:00:00Z', pull_requests: [], worktree_ids: createdTrees.filter(tree => !removedTrees.has(tree.id)).map(tree => tree.id), creation_mode: createdTrees.some(tree => !removedTrees.has(tree.id)) ? '' : 'remote', source_ref: 'origin/discovered' }]
@@ -426,8 +487,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     }
 
     if (path === '/api/agents/providers') {
-      await route.fulfill({ json: [
-        { id: 'antigravity', label: 'Antigravity', available: true, launch_fields: [
+      const providers = [{ id: 'antigravity', label: 'Antigravity', available: true, launch_fields: [
           { id: 'full_access', label: 'Full access', kind: 'toggle', help: 'Allow Antigravity to run tools without permission prompts.', options: [{ value: 'false', label: 'Ask permissions' }, { value: 'true', label: 'Full access', tone: 'danger' }] },
         ] },
         { id: 'claude', label: 'Claude', available: true, version: '2.1.295', launch_fields: [
@@ -443,7 +503,12 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
           ] },
           { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map(value => ({ value, label: value || 'Profile default' })) },
         ] },
-      ] }); return
+      ]
+      await route.fulfill({ json: agentsTab.enabled
+        ? providers.map(provider => provider.id === 'antigravity'
+          ? { id: provider.id, label: provider.label, available: false, unavailable_reason: { message: 'agy is not installed' }, install_hint: 'Install Antigravity and make sure agy is on PATH' }
+          : provider.id === 'claude' ? { ...provider, usage_note: 'Read from an undocumented Claude endpoint; it can change without notice.' } : provider)
+        : providers }); return
     }
     if (path === '/api/agents/providers/claude/models') {
       await route.fulfill({ json: [
@@ -460,12 +525,38 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     }
     if (path.startsWith('/api/agents/providers/') && path.endsWith('/models')) { await route.fulfill({ json: [] }); return }
     if (path === '/api/agents/accounts') {
-      await route.fulfill({ json: [
+      const accounts = agentsTab.enabled ? [
+        { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', auth_status: 'logged_in', effort: 'high', created_at: '2026-10-01T09:00:00Z', updated_at: '2026-10-10T09:00:00Z' },
+        { id: 'claude-token', provider: 'claude', name: 'CI token', auth_mode: 'token', auth_status: 'token', warnings: ['Token expires in 12 days; plan to replace it'], created_at: '2026-10-02T09:00:00Z', updated_at: '2026-10-02T09:00:00Z' },
+        { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in', sandbox: 'workspace-write', approval: 'on-request', model: 'gpt-6.1-sol', created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-11T10:00:00Z' },
+        { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_out', warnings: ['Not logged in; run `bonsai agent run Team -- login`'], created_at: '2026-10-03T10:00:00Z', updated_at: '2026-10-03T10:00:00Z' },
+      ] : [
         { id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' },
         { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] },
         { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in' },
         { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_in', warnings: ['Same login as profile "Personal"; both share its usage limits'] },
-      ] }); return
+      ]
+      accounts.push(...addedAccounts as typeof accounts)
+      // Like the API: an ETag over the answer, 304 when the page already has it.
+      const etag = `"accounts-${accountsETag}"`
+      if (request.headers()['if-none-match'] === etag) { await route.fulfill({ status: 304, headers: { ETag: etag } }); return }
+      await route.fulfill({ json: accounts, headers: { ETag: etag } }); return
+    }
+    if (path === '/api/agents/usage' || path === '/api/agents/usage/refresh') {
+      const refresh = path.endsWith('/refresh')
+      const wanted = refresh ? (request.postDataJSON() as { account_id?: string } | null)?.account_id : url.searchParams.get('account_id') ?? undefined
+      const items = Object.values(AGENTS_TAB_USAGE).filter(item => !wanted || item.account_id === wanted)
+      usageRequests.push({ method: request.method(), account_id: wanted })
+      await route.fulfill({ json: refresh ? items.map(item => ({ ...item, throttled: true })) : items }); return
+    }
+    const stopMatch = path.match(/^\/api\/projects\/([^/]+)\/agents\/([^/]+)$/)
+    if (stopMatch && request.method() === 'DELETE') {
+      const session = agentSessions.find(item => item.id === decodeURIComponent(stopMatch[2]))
+      if (!session) { await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Agent not found' } } }); return }
+      Object.assign(session, { state: 'exited', ended_at: new Date().toISOString(), exit_code: 0 })
+      socket.publishUpdate(projectSnapshot(session.project_id, true), 'agents')
+      socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision })
+      await route.fulfill({ json: session }); return
     }
     if (path === '/api/projects/bonsai/agents' && request.method() === 'POST') {
       const body = request.postDataJSON()
@@ -474,6 +565,7 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       const session: AgentSummary = { id, project_id: 'bonsai', worktree_id: body.worktree_id, account_id: body.account_id, provider: profile.provider, profile_name: profile.name, name: body.name || profile.name, state: 'running', created_at: new Date().toISOString() }
       if (!agentSessions.some(item => item.id === session.id)) agentSessions.push(session)
       socket.publishUpdate(projectSnapshot('bonsai', true), 'agents')
+      socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision })
       await route.fulfill({ status: 202, json: session }); return
     }
     if (path === '/version') {
@@ -597,7 +689,15 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Not Found' } } })
   })
 
-  return { publish: () => socket.publishUpdate(projectSnapshot('bonsai', true)) }
+  return {
+    publish: () => socket.publishUpdate(projectSnapshot('bonsai', true)),
+    /** Usage requests the page made, in order. */
+    usageRequests,
+    /** Adds a profile as if the CLI created it; the page learns of it from its next revalidation. */
+    addAccount: (account: Record<string, unknown>) => { addedAccounts.push(account); accountsETag++ },
+    /** The global event the API sends after an account, setup or session change. */
+    publishAgentsChanged: () => socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision }),
+  }
 }
 
 // mockUpdateSettings answers GET /api/settings/updates with whatever

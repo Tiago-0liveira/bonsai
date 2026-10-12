@@ -424,3 +424,20 @@ it('explains why Codex is unavailable and how to add its first profile', async (
   expect(screen.getByRole('button', { name: /Codex/ })).toHaveTextContent('bonsai agent account add codex <name> [--auth device]')
   expect(screen.getByRole('button', { name: /Codex/ })).toBeDisabled()
 })
+it('preselects the provider and profile the Agents tab opened it for, over the remembered provider', async () => {
+  localStorage.setItem('bonsai.startAgent.provider', 'antigravity')
+  vi.mocked(agentProviders).mockResolvedValue(providers({ available: true }))
+  const second: AgentAccount = { ...claudeProfile, id: 'claude-two', name: 'Second' }
+  vi.mocked(agentAccounts).mockResolvedValue([{ id: 'profile-one', name: 'One', provider: 'antigravity' }, claudeProfile, second])
+  useBonsaiStore.setState({ startAgentTargetAccountId: 'claude-two' })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Second'))
+  expect(screen.getByRole('button', { name: /Claude/ })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Start agent' })).toBeEnabled()
+  expect(screen.getByLabelText('Effort')).toBeInTheDocument()
+})
+it('ignores a target profile that no longer exists', async () => {
+  useBonsaiStore.setState({ startAgentTargetAccountId: 'gone' })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+})

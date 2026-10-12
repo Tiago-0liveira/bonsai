@@ -15,6 +15,10 @@ describe('agent provider mapping', () => {
     expect(mapAgent(summary(id))).toMatchObject({ provider: label, providerId: id, profileName: 'Work', name: 'Work', terminalId: 's1' })
   })
 
+  it('keeps the profile and exit code of a session', () => {
+    expect(mapAgent({ ...summary('codex'), account_id: 'acct-1', state: 'exited', exit_code: 3 })).toMatchObject({ accountId: 'acct-1', exitCode: 3, lifecycleState: 'exited' })
+  })
+
   it('treats every backend provider as live and mock agents as not', () => {
     expect(isLiveAgent({ providerId: 'claude' })).toBe(true)
     expect(isLiveAgent({ providerId: 'antigravity' })).toBe(true)

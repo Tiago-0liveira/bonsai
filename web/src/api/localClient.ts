@@ -219,6 +219,17 @@ export interface LocalEvent {
   sequence?: number
   projects?: unknown[]
   snapshot?: unknown
+  /** agents_changed only: counts account, setup and session changes made through the API. */
+  revision?: number
+}
+
+type AgentsChangedListener = (revision: number) => void
+const agentsChangedListeners = new Set<AgentsChangedListener>()
+
+/** Calls listener when the API reports a profile, setup or session change. */
+export function subscribeAgentsChanged(listener: AgentsChangedListener) {
+  agentsChangedListeners.add(listener)
+  return () => { agentsChangedListeners.delete(listener) }
 }
 
 export interface LocalEventConnection {
@@ -254,6 +265,9 @@ function connectEventSocket(value: LocalSession, onEvent: (event: LocalEvent) =>
         data = JSON.parse(String(event.data)) as LocalEvent
       } catch {
         return
+      }
+      if (data.type === 'agents_changed') {
+        for (const listener of agentsChangedListeners) listener(data.revision ?? 0)
       }
       if (data.type === 'ready') {
         if (!settled) {
@@ -304,6 +318,7 @@ export function __resetLocalClientForTests() {
   sessionRequest = undefined
   snapshot = { status: 'not-attempted' }
   listeners.clear()
+  agentsChangedListeners.clear()
 }
 
 // Capabilities travel only in the first frame, never in a terminal URL.
