@@ -6,7 +6,7 @@ import { panelPreferences } from './panelPreferences'
 export const PREFERENCE_KEYS = [
   'selection', 'activeWorkspaceId', 'activeProjectId', 'sidebarCollapsed', 'dockState', 'dockHeight', 'activeDockTab', 'dockWorktreeId',
   'collapsedBranchIds', 'rightPanels', 'selectedFilePath', 'nodePlacements', 'viewport', 'detachedStackWorktreeIds', 'expandedAutomaticGroups',
-  'terminalViewPreferences',
+  'terminalViewPreferences', 'canvasPreferences',
 ] as const satisfies readonly (keyof WorkspacePreferences)[]
 const TRANSIENT_KEYS = new Set<string>(['dockHeight', 'nodePlacements', 'viewport'])
 export const PREFERENCE_WRITE_DELAY = 180

@@ -265,6 +265,21 @@ export interface ViewportState {
   zoom: number
 }
 
+export interface CanvasPreferences {
+  /** Centre the canvas on a worktree selected in the Branches island. */
+  focusOnBranchSelect: boolean
+  /** Centre the canvas on an agent selected in the Branches island. */
+  focusAgentsOnBranchSelect: boolean
+  /** On the GitHub tab, a Branches selection shows its pull request or switches to the canvas. */
+  githubBranchSelect: 'show-pr' | 'open-canvas'
+}
+
+export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
+  focusOnBranchSelect: true,
+  focusAgentsOnBranchSelect: true,
+  githubBranchSelect: 'show-pr',
+}
+
 export type NodePlacementMode = 'manual' | 'generated'
 
 export interface NodePlacement {

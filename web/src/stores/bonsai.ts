@@ -1,6 +1,6 @@
 import { startAgent, stopAgent, mapAgent, isLiveAgent, providerIdFor } from '../api/agents'
 import type { ProjectRootsSettings } from '../api/settings'
-import { loadEditors, saveEditor, openFileInEditor, openFolderInEditor, type EnvironmentEditorSettings } from '../api/editors'
+import { loadEditors, saveEditor, openFileInEditor, openFolderInEditor, openFolderInFileManager, type EnvironmentEditorSettings } from '../api/editors'
 import { create } from 'zustand'
 import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
 import { createPreferenceBoundary } from './preferenceBoundary'
@@ -10,6 +10,7 @@ import { localCommand, createWorktree, changePullRequest, reviewPullRequest, upd
 import type {
   Agent,
   AgentState,
+  CanvasPreferences,
   CreateWorktreeInput,
   DockPanelKey,
   DockState,
@@ -26,6 +27,7 @@ import type {
   ViewportState,
   Worktree,
 } from '../types'
+import { DEFAULT_CANVAS_PREFERENCES } from '../types'
 
 interface TerminalSession {
   id: string
@@ -80,6 +82,9 @@ export interface BonsaiState {
   openCreateWorktree: (projectId: string, candidate?: BranchCandidate) => void
   deleteWorktreeId: string
   setDeleteWorktreeId: (id: string) => void
+  /** The worktree whose "Rebase onto…" branch picker is open. */
+  rebaseWorktreeId: string
+  setRebaseWorktreeId: (id: string) => void
   createWorktree: typeof createWorktree
 
   startAgentDialogOpen: boolean
@@ -140,6 +145,8 @@ export interface BonsaiState {
   pendingOpenFile: { worktreeId: string; path: string; folder?: boolean } | null
   requestOpenFile: (path: string) => Promise<void>
   requestOpenFolder: (worktreeId: string) => Promise<void>
+  /** Opens the worktree folder in Explorer, Finder or the desktop file manager. */
+  revealFolder: (worktreeId: string) => Promise<void>
   chooseFileEditor: (editor: string) => Promise<void>
   closeEditorPrompt: () => void
 
@@ -164,8 +171,12 @@ export interface BonsaiState {
   expandedHistoryWorktreeIds: string[]
   toggleWorktreeHistory: (id: string) => void
   canvasCommand: { type: 'fit' | 'layout'; nonce: number }
-  canvasReveal: { projectId: string; nodeId: string; nonce: number }
+  /** `reveal` scrolls a node into view only when hidden; `center` always centres it. `nodeId` may be an entity id. */
+  canvasReveal: { projectId: string; nodeId: string; nonce: number; mode?: 'reveal' | 'center' }
   requestCanvasAction: (type: 'fit' | 'layout') => void
+  requestCanvasFocus: (projectId: string, entityId: string) => void
+  canvasPreferences: CanvasPreferences
+  setCanvasPreferences: (patch: Partial<CanvasPreferences>) => void
 
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
@@ -301,6 +312,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       openCreateWorktree: (projectId, candidate) => set({ worktreeDialogOpen: true, worktreeDialogTarget: { projectId, sourceType: candidate ? (candidate.creation_mode === 'existing' ? 'existing' : 'origin') : undefined, sourceRef: candidate?.source_ref, branchName: candidate ? (candidate.local_branch || candidate.name) : undefined } }),
       deleteWorktreeId: '',
       setDeleteWorktreeId: (deleteWorktreeId) => set({ deleteWorktreeId }),
+      rebaseWorktreeId: '',
+      setRebaseWorktreeId: (rebaseWorktreeId) => set({ rebaseWorktreeId }),
       createWorktree,
 
       startAgentDialogOpen: false,
@@ -485,6 +498,17 @@ export const useBonsaiStore = create<BonsaiState>()(
           set({ notice: 'Requested ' + result.editor + ' to open the worktree folder' })
         } catch (error) { report(error) }
       },
+      revealFolder: async (worktreeId) => {
+        try {
+          const settings = get().editorSettings ?? await get().loadEditorSettings()
+          const result = await openFolderInFileManager(worktreeId, settings.environment.id)
+          set({ notice: 'Opened the worktree folder in ' + result.file_manager })
+        } catch (error) {
+          // A stale environment id is refreshed for the next attempt.
+          await get().loadEditorSettings().catch(() => undefined)
+          report(error)
+        }
+      },
       chooseFileEditor: async (editor) => {
         const pending = get().pendingOpenFile
         try {
@@ -576,6 +600,11 @@ export const useBonsaiStore = create<BonsaiState>()(
       requestCanvasAction: (type) => set((state) => ({
         canvasCommand: { type, nonce: state.canvasCommand.nonce + 1 },
       })),
+      requestCanvasFocus: (projectId, nodeId) => set((state) => ({
+        canvasReveal: { projectId, nodeId, nonce: state.canvasReveal.nonce + 1, mode: 'center' },
+      })),
+      canvasPreferences: DEFAULT_CANVAS_PREFERENCES,
+      setCanvasPreferences: (patch) => set((state) => ({ canvasPreferences: { ...state.canvasPreferences, ...patch } })),
 
       paletteOpen: false,
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),

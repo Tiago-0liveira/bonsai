@@ -162,10 +162,66 @@ func TestEnvironmentEditorAPI(t *testing.T) {
 	}
 }
 
+func TestOpenFileManagerAPI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix script fixture")
+	}
+	s := newUserScopedTestServer(t)
+	bin := t.TempDir()
+	output := filepath.Join(t.TempDir(), "reveal")
+	if err := os.WriteFile(filepath.Join(bin, "xdg-open"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+output+"\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.editors = editors.Discovery{Environment: editors.Environment{ID: "linux:test", Label: "Linux"}, OS: "linux", Path: bin}
+	root := t.TempDir()
+	linked := filepath.Join(root, "wt-00")
+	if err := os.Mkdir(linked, 0755); err != nil {
+		t.Fatal(err)
+	}
+	realLinked, err := filepath.EvalSymlinks(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := projectServices{info: ProjectInfo{ID: "project", Available: true, Path: root}, daemon: &syncTestDaemon{root: root, extraWorktrees: 1}}
+	s.registry = &editorTestRegistry{&syncTestRegistry{entries: map[string]projectServices{"project": project}}}
+	id := gitlocal.ID(localRepositoryID, linked)
+	reveal := func(id, environment string) *httptest.ResponseRecorder {
+		return authorizedRequest(t, s, "POST", "/api/worktrees/"+id+"/open-file-manager", "reveal", map[string]string{"environment_id": environment})
+	}
+
+	read := authorizedRequest(t, s, "GET", "/api/settings/editors", "", nil)
+	var settings editorSettingsResponse
+	if err := json.Unmarshal(read.Body.Bytes(), &settings); err != nil || settings.FileManager.Label != "file manager" {
+		t.Fatalf("file manager label: %s (%v)", read.Body, err)
+	}
+	if got := reveal(id, "windows:other"); got.Code != 409 {
+		t.Fatalf("foreign environment accepted: %d %s", got.Code, got.Body)
+	}
+	if got := reveal("unknown", s.editors.Environment.ID); got.Code != 404 {
+		t.Fatalf("unknown worktree: %d %s", got.Code, got.Body)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatal("rejected request opened a file manager")
+	}
+	if got := reveal(id, s.editors.Environment.ID); got.Code != 202 || !strings.Contains(got.Body.String(), `"file_manager":"file manager"`) {
+		t.Fatalf("reveal: %d %s", got.Code, got.Body)
+	}
+	if args, err := os.ReadFile(output); err != nil || string(args) != realLinked+"\n" {
+		t.Fatalf("revealed folder: %q (%v)", args, err)
+	}
+	if err := os.Remove(filepath.Join(bin, "xdg-open")); err != nil {
+		t.Fatal(err)
+	}
+	if got := reveal(id, s.editors.Environment.ID); got.Code != 502 || !strings.Contains(got.Body.String(), "file_manager_failed") {
+		t.Fatalf("missing file manager: %d %s", got.Code, got.Body)
+	}
+}
+
 func TestEditorRoutesRequireSession(t *testing.T) {
 	s := newTestServer(t)
 	for _, route := range []struct{ method, path string }{
 		{"GET", "/api/settings/editors"}, {"POST", "/api/settings/editors"}, {"POST", "/api/worktrees/unknown/open-editor"},
+		{"POST", "/api/worktrees/unknown/open-file-manager"},
 	} {
 		req := httptest.NewRequest(route.method, "http://127.0.0.1:7001"+route.path, strings.NewReader(`{}`))
 		req.Header.Set("Origin", testBrowserOrigin)

@@ -9,8 +9,6 @@ import {
   CircleCheck,
   CircleX,
   Clock3,
-  ExternalLink,
-  FolderOpen,
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
@@ -20,6 +18,7 @@ import {
   LoaderCircle,
   Move,
   Network,
+  PanelRight,
   Play,
   Plus,
   RotateCcw,
@@ -31,6 +30,8 @@ import {
   X,
 } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
+import { MenuContent, MenuItem, MenuSeparator } from '../../../components/ui/ContextMenu'
+import { WorktreeMenuItems } from './WorktreeMenu'
 import { ProviderBadge } from '../../../components/ui/ProviderBadge'
 import type { AgentProvider, AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
 
@@ -94,22 +95,12 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   worktreeId?: string
 }
 
+const UNAVAILABLE = 'unavailable'
+
 const agentDot: Record<AgentState, string> = {
   running: 'bg-accent-solid shadow-[0_0_0_3px_rgb(var(--accent-solid)/.20)]',
   idle: 'bg-warn-solid shadow-[0_0_0_3px_rgb(var(--warn-solid)/.25)]',
   finished: 'bg-muted-2 shadow-[0_0_0_3px_rgb(var(--muted-2)/.15)]',
-}
-
-function MenuItem({ children, onSelect, unavailable = false }: { children: React.ReactNode; onSelect?: () => void; unavailable?: boolean }) {
-  return (
-    <ContextMenu.Item
-      onSelect={onSelect}
-      disabled={unavailable}
-      className="flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-muted outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent/12 data-[highlighted]:text-text"
-    >
-      {children}{unavailable && <span className="ml-auto text-[9px]">unavailable</span>}
-    </ContextMenu.Item>
-  )
 }
 
 function CiBadge({ status, failed = 0, compact = false, label = 'CI', iconOnly = false, stale = false }: { status?: CiStatus; failed?: number; compact?: boolean; label?: string; iconOnly?: boolean; stale?: boolean }) {
@@ -223,7 +214,6 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
 function StackCard({ data }: { data: BonsaiGraphData }) {
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
-  const requestOpenFolder = useBonsaiStore(state => state.requestOpenFolder)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const ejectWorktreeFromStack = useBonsaiStore((state) => state.ejectWorktreeFromStack)
   const setSelection = useBonsaiStore((state) => state.setSelection)
@@ -258,7 +248,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             </button>
             <ContextMenu.Root>
               <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
-              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay"><MenuItem onSelect={() => { void requestOpenFolder(item.id) }}><FolderOpen size={13} /> Open in editor</MenuItem><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
+              <MenuContent><WorktreeMenuItems worktreeId={item.id} groupId={data.groupId} groupCount={data.stackCount} /></MenuContent>
             </ContextMenu.Root>
             <PrBadge status={item.prStatus} number={item.prNumber} stale={item.prStale} />
             <CiBadge status={item.ciStatus} compact stale={item.ciStale} />
@@ -293,9 +283,6 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
   const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
   const requestCanvasAction = useBonsaiStore((state) => state.requestCanvasAction)
   const setNotice = useBonsaiStore((state) => state.setNotice)
-  const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
-  const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
-  const requestOpenFolder = useBonsaiStore(state => state.requestOpenFolder)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
 
@@ -319,6 +306,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
       ? 'rounded-[10px] bg-panel-2 ' + (selected ? 'border-accent/55 shadow-[0_0_0_3px_rgb(var(--accent)/.10),var(--shadow-card)]' : (waiting ? 'border-warn-solid/55' : 'border-border-strong') + ' shadow-card hover:border-border-strong')
       : 'rounded-lg bg-[rgb(var(--panel-2))] shadow-card ' + (selected ? 'border-[rgb(var(--accent))] bg-[rgb(var(--panel-3))]' : 'border-[rgb(var(--border))] hover:border-[rgb(var(--border-strong))]')
 
+  const canStop = isLiveAgent(agent) && agent?.state !== 'finished'
   const selectNode = () => {
     if (data.kind === 'project' || data.kind === 'worktree' || data.kind === 'agent') {
       setSelection({ type: data.kind, id: data.entityId })
@@ -469,52 +457,43 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
         </div>
       </ContextMenu.Trigger>
 
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="z-[100] min-w-48 rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay">
-          <MenuItem onSelect={selectNode}><ExternalLink size={13} /> Open inspector</MenuItem>
+      <MenuContent>
+        {data.kind === 'worktree' ? (
+          <WorktreeMenuItems worktreeId={data.entityId} groupId={data.groupId} groupCount={data.groupCount} />
+        ) : (
+          <MenuItem icon={PanelRight} onSelect={selectNode}>Open inspector</MenuItem>
+        )}
 
-          {data.kind === 'project' && (
-            <>
-              <MenuItem onSelect={() => setWorktreeDialogOpen(true)}><Plus size={13} /> Add worktree</MenuItem>
-              <MenuItem onSelect={() => openStartAgentDialog()}><Bot size={13} /> Start agent</MenuItem>
-              <MenuItem onSelect={() => openStartProcessDialog('', data.entityId)}><Play size={13} /> Start process</MenuItem>
-              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
-              <MenuItem onSelect={() => requestCanvasAction('layout')}><Network size={13} /> Auto-layout children</MenuItem>
-              <MenuItem onSelect={() => setNotice('Project settings are mocked')}><Settings2 size={13} /> Project settings</MenuItem>
-            </>
-          )}
+        {data.kind === 'project' && (
+          <>
+            <MenuItem icon={Plus} onSelect={() => setWorktreeDialogOpen(true)}>Add worktree</MenuItem>
+            <MenuItem icon={Bot} onSelect={() => openStartAgentDialog()}>Start agent</MenuItem>
+            <MenuItem icon={Play} onSelect={() => openStartProcessDialog('', data.entityId)}>Start process</MenuItem>
+            <MenuSeparator />
+            <MenuItem icon={Network} onSelect={() => requestCanvasAction('layout')}>Auto-layout children</MenuItem>
+            <MenuItem icon={Settings2} onSelect={() => setNotice('Project settings are mocked')}>Project settings</MenuItem>
+          </>
+        )}
 
-          {data.kind === 'worktree' && (
-            <>
-              <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
-              <MenuItem onSelect={() => openStartProcessDialog(data.entityId)}><Play size={13} /> Start process</MenuItem>
-              <MenuItem onSelect={() => { void requestOpenFolder(data.entityId) }}><FolderOpen size={13} /> Open in editor</MenuItem>
-              <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
-              {data.groupId && (data.groupCount ?? 0) > 1 && <MenuItem onSelect={() => toggleAutomaticGroup(data.groupId as string)}><Layers3 size={13} /> Toggle Local / unlinked stack</MenuItem>}
-              <MenuItem onSelect={() => setDeleteWorktreeId(data.entityId)}><Trash2 size={13} /> Delete worktree</MenuItem>
-            </>
-          )}
-
-          {data.kind === 'agent' && (
-            <>
-              <MenuItem unavailable={!isLiveAgent(agent)} onSelect={() => openTerminal(data.entityId)}><TerminalSquare size={13} /> Open terminal</MenuItem>
-              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
-              <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><Play size={13} /> Start</MenuItem>
-              <MenuItem unavailable onSelect={() => setAgentState(data.entityId, 'running')}><RotateCcw size={13} /> Restart</MenuItem>
-              <MenuItem unavailable={!isLiveAgent(agent) || agent?.state === 'finished'} onSelect={() => setAgentState(data.entityId, 'finished')}><Square size={13} /> Stop</MenuItem>
-              {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
-                <MenuItem onSelect={() => moveAgentToHistory(data.entityId)}><History size={13} /> Move to history</MenuItem>
-              )}
-              <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
-              {(agent?.presentation ?? (agent?.archived ? 'archived' : 'canvas')) === 'archived' ? (
-                <MenuItem onSelect={() => restoreAgent(data.entityId)}><Undo2 size={13} /> Restore agent</MenuItem>
-              ) : (
-                <MenuItem onSelect={() => archiveAgent(data.entityId)}><Archive size={13} /> Archive agent</MenuItem>
-              )}
-            </>
-          )}
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
+        {data.kind === 'agent' && (
+          <>
+            <MenuItem icon={TerminalSquare} disabled={!isLiveAgent(agent)} hint={isLiveAgent(agent) ? undefined : UNAVAILABLE} onSelect={() => openTerminal(data.entityId)}>Open terminal</MenuItem>
+            <MenuSeparator />
+            <MenuItem icon={Play} disabled hint={UNAVAILABLE} onSelect={() => setAgentState(data.entityId, 'running')}>Start</MenuItem>
+            <MenuItem icon={RotateCcw} disabled hint={UNAVAILABLE} onSelect={() => setAgentState(data.entityId, 'running')}>Restart</MenuItem>
+            <MenuItem icon={Square} disabled={!canStop} hint={canStop ? undefined : UNAVAILABLE} onSelect={() => setAgentState(data.entityId, 'finished')}>Stop</MenuItem>
+            {agent?.state === 'finished' && (agent.presentation ?? 'canvas') === 'canvas' && (
+              <MenuItem icon={History} onSelect={() => moveAgentToHistory(data.entityId)}>Move to history</MenuItem>
+            )}
+            <MenuSeparator />
+            {(agent?.presentation ?? (agent?.archived ? 'archived' : 'canvas')) === 'archived' ? (
+              <MenuItem icon={Undo2} onSelect={() => restoreAgent(data.entityId)}>Restore agent</MenuItem>
+            ) : (
+              <MenuItem icon={Archive} onSelect={() => archiveAgent(data.entityId)}>Archive agent</MenuItem>
+            )}
+          </>
+        )}
+      </MenuContent>
     </ContextMenu.Root>
   )
 })

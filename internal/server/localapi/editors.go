@@ -19,16 +19,18 @@ type editorSettingsResponse struct {
 	Editors        []editors.Editor    `json:"editors"`
 	Preferred      string              `json:"preferred"`
 	SavedPreferred string              `json:"saved_preferred"`
+	FileManager    editors.FileManager `json:"file_manager"`
 }
 
 func (s *Server) registerEditorRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/settings/editors", s.editorSettings)
 	mux.HandleFunc("POST /api/settings/editors", s.changeEditorSettings)
 	mux.HandleFunc("POST /api/worktrees/{id}/open-editor", s.openFileEditor)
+	mux.HandleFunc("POST /api/worktrees/{id}/open-file-manager", s.openFileManager)
 }
 
 func (s *Server) editorSettingsValue(cfg config.EditorSettings) editorSettingsResponse {
-	out := editorSettingsResponse{Environment: s.editors.Environment, Revision: cfg.Revision, Editors: s.editors.Editors(), SavedPreferred: cfg.Environments[s.editors.Environment.ID]}
+	out := editorSettingsResponse{Environment: s.editors.Environment, Revision: cfg.Revision, Editors: s.editors.Editors(), SavedPreferred: cfg.Environments[s.editors.Environment.ID], FileManager: s.editors.FileManager()}
 	for _, editor := range out.Editors {
 		if editor.ID == out.SavedPreferred {
 			out.Preferred = editor.ID
@@ -134,39 +136,11 @@ func (s *Server) openFileEditor(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 409, "editor_folder_unsupported", selected.Name+" cannot open folders. Choose another editor.")
 		return
 	}
-	// Resolve the worktree through repository authority, not a browser-supplied
-	// absolute path. Handler has already checked ownership of this worktree ID.
-	result, ok := s.runGit(w, r, "git.worktrees", "", json.RawMessage(`{}`), false)
+	root, ok := s.worktreeRoot(w, r)
 	if !ok {
 		return
 	}
-	var worktrees []domain.Worktree
-	if err := json.Unmarshal(result.Payload, &worktrees); err != nil {
-		writeAPIError(w, 503, "worktree_unavailable", "Cannot read worktree paths")
-		return
-	}
-	root := ""
-	for _, worktree := range worktrees {
-		if worktree.ID == r.PathValue("id") && !worktree.Missing {
-			root = worktree.Path
-			break
-		}
-	}
-	if root == "" {
-		writeAPIError(w, 404, "worktree_unavailable", "The selected worktree is unavailable")
-		return
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		writeAPIError(w, 404, "worktree_unavailable", err.Error())
-		return
-	}
 	if body.Folder {
-		info, err := os.Stat(root)
-		if err != nil || !info.IsDir() {
-			writeAPIError(w, 404, "worktree_unavailable", "The selected worktree is not a directory")
-			return
-		}
 		if err := s.editors.LaunchFolder(*selected, root); err != nil {
 			writeAPIError(w, 502, "editor_launch_failed", err.Error())
 			return
@@ -193,4 +167,66 @@ func (s *Server) openFileEditor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 202, map[string]string{"editor": selected.Name, "environment": settings.Environment.Label})
+}
+
+// worktreeRoot resolves the worktree directory through repository authority,
+// not a browser-supplied absolute path. The route has already checked
+// ownership of this worktree ID.
+func (s *Server) worktreeRoot(w http.ResponseWriter, r *http.Request) (string, bool) {
+	result, ok := s.runGit(w, r, "git.worktrees", "", json.RawMessage(`{}`), false)
+	if !ok {
+		return "", false
+	}
+	var worktrees []domain.Worktree
+	if err := json.Unmarshal(result.Payload, &worktrees); err != nil {
+		writeAPIError(w, 503, "worktree_unavailable", "Cannot read worktree paths")
+		return "", false
+	}
+	root := ""
+	for _, worktree := range worktrees {
+		if worktree.ID == r.PathValue("id") && !worktree.Missing {
+			root = worktree.Path
+			break
+		}
+	}
+	if root == "" {
+		writeAPIError(w, 404, "worktree_unavailable", "The selected worktree is unavailable")
+		return "", false
+	}
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		writeAPIError(w, 404, "worktree_unavailable", err.Error())
+		return "", false
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		writeAPIError(w, 404, "worktree_unavailable", "The selected worktree is not a directory")
+		return "", false
+	}
+	return root, true
+}
+
+// openFileManager reveals the worktree folder in Explorer, Finder or the
+// desktop file manager of the environment running Bonsai.
+func (s *Server) openFileManager(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		EnvironmentID string `json:"environment_id"`
+	}
+	if !decodeStrictJSON(w, r, &body) {
+		return
+	}
+	if body.EnvironmentID != s.editors.Environment.ID {
+		writeAPIError(w, 409, "environment_changed", "The environment changed. Refresh editor settings.")
+		return
+	}
+	root, ok := s.worktreeRoot(w, r)
+	if !ok {
+		return
+	}
+	manager := s.editors.FileManager()
+	if err := s.editors.RevealFolder(root); err != nil {
+		writeAPIError(w, 502, "file_manager_failed", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]string{"file_manager": manager.Label, "environment": s.editors.Environment.Label})
 }
