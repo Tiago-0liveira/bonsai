@@ -61,3 +61,11 @@ it('shows a session on the canvas by navigating to the root', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Show Session on canvas' }))
   await waitFor(() => expect(router.state.location.pathname).toBe('/'))
 })
+
+it('opens Sign in again from a link once and drops the request from the URL', async () => {
+  const router = renderAt('/agents?profile=codex-team&signin=true')
+  expect(await screen.findByRole('dialog', { name: 'Sign in to Team again' })).toBeInTheDocument()
+  await waitFor(() => expect(router.state.location.search).toEqual({ profile: 'codex-team' }))
+  expect(validateAgentsSearch({ signin: 'true' })).toEqual({ signin: true })
+  expect(validateAgentsSearch({ signin: 'yes' })).toEqual({})
+})

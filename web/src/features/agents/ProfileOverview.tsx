@@ -1,13 +1,12 @@
-import { Bot, Trash2 } from 'lucide-react'
+import { Bot, LogIn, Trash2 } from 'lucide-react'
 import { PROVIDER_LABELS, type AgentAccount, type AgentCapability } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { authState, profileDefaults } from './agentsModel'
-import { CopyCommand } from './CopyCommand'
 
 const LABEL = 'font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2'
 const when = (iso?: string) => { const time = iso ? Date.parse(iso) : NaN; return Number.isFinite(time) ? new Date(time).toLocaleString() : '' }
 
-export function ProfileOverview({ account, capability, onRemove }: { account: AgentAccount; capability?: AgentCapability; onRemove: () => void }) {
+export function ProfileOverview({ account, capability, onRemove, onSignIn }: { account: AgentAccount; capability?: AgentCapability; onRemove: () => void; onSignIn: () => void }) {
   const openStartAgentDialog = useBonsaiStore(state => state.openStartAgentDialog)
   const auth = authState(account)
   const defaults = profileDefaults(capability?.launch_fields ?? [], account)
@@ -32,9 +31,16 @@ export function ProfileOverview({ account, capability, onRemove }: { account: Ag
       </dl>
 
       {account.warnings && account.warnings.length > 0 && (
-        <ul aria-label="Warnings" className="space-y-1.5 rounded-[10px] border border-warn-solid/30 bg-warn-solid/10 p-3">
-          {account.warnings.map(warning => <li key={warning} className="text-[11px] text-warn">{warning}</li>)}
-        </ul>
+        <div className="space-y-2 rounded-[10px] border border-warn-solid/30 bg-warn-solid/10 p-3">
+          <ul aria-label="Warnings" className="space-y-1.5">
+            {account.warnings.map(warning => <li key={warning} className="text-[11px] text-warn">{warning}</li>)}
+          </ul>
+          {auth.tone === 'bad' && !unavailable && (
+            <button type="button" onClick={onSignIn} className="bonsai-focus btn-bordered inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[11px]">
+              <LogIn size={12} /> Sign in now
+            </button>
+          )}
+        </div>
       )}
 
       <section aria-label="Profile defaults">
@@ -55,8 +61,16 @@ export function ProfileOverview({ account, capability, onRemove }: { account: Ag
 
       <section aria-label="Sign in again" className="space-y-2">
         <h3 className={LABEL}>Sign in again</h3>
-        <p className="text-[11px] text-muted-2">Open the provider in this profile from a terminal and sign in there.</p>
-        <CopyCommand command={`bonsai agent run ${account.provider}/${account.name}`} label="Copy sign-in command" />
+        <p className="text-[11px] text-muted-2">Runs the provider's own sign-in for this profile in a terminal here.</p>
+        <button
+          type="button"
+          disabled={unavailable}
+          title={unavailable ? capability.unavailable_reason?.message || 'Not available' : undefined}
+          onClick={onSignIn}
+          className="bonsai-focus btn-bordered inline-flex h-8 items-center gap-2 rounded-[7px] px-3 text-[12px] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <LogIn size={13} /> Sign in again…
+        </button>
       </section>
 
       <div>

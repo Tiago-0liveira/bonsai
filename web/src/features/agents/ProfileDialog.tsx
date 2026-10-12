@@ -1,10 +1,12 @@
 import { useEffect, type ReactNode } from 'react'
 
 /** Modal chrome shared by the Agents page confirmations. Escape asks to close unless `locked`. */
-export function ProfileDialog({ label, locked = false, onClose, children }: {
+export function ProfileDialog({ label, locked = false, wide = false, onClose, children }: {
   label: string
   /** True while a request runs: the dialog cannot be dismissed. */
   locked?: boolean
+  /** Room for a terminal. */
+  wide?: boolean
   onClose: () => void
   children: ReactNode
 }) {
@@ -15,7 +17,7 @@ export function ProfileDialog({ label, locked = false, onClose, children }: {
   }, [locked, onClose])
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
-      <div role="dialog" aria-modal="true" aria-label={label} className="w-full max-w-lg space-y-4 rounded-[14px] border border-border-strong bg-panel p-5 shadow-overlay">
+      <div role="dialog" aria-modal="true" aria-label={label} className={(wide ? 'max-h-full max-w-[760px] overflow-y-auto' : 'max-w-lg') + ' w-full space-y-4 rounded-[14px] border border-border-strong bg-panel p-5 shadow-overlay'}>
         {children}
       </div>
     </div>

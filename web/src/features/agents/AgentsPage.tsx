@@ -1,10 +1,10 @@
 import * as Tabs from '@radix-ui/react-tabs'
-import { useCallback, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { isLiveAgent, type AgentAccount } from '../../api/agents'
 import { isActiveSession } from '../../api/agentsOverview'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { AddProfileCommands } from './AddProfile'
+import type { SetupTarget } from './AddProfileDialog'
 import { AUTH_DOT, activeSessionCounts, authState, groupProfiles, profileSessions, summarizeFleet } from './agentsModel'
 import { AGENT_TABS, type AgentsTab } from './agentsSearch'
 import { ProfileDefaults } from './ProfileDefaults'
@@ -15,9 +15,13 @@ import { ProfileSessions } from './ProfileSessions'
 import { ProfileUsage } from './ProfileUsage'
 import { ProviderGroup } from './ProviderGroup'
 import { RemoveProfileDialog } from './RemoveProfileDialog'
-import { SummaryStrip } from './SummaryStrip'
+import { recallSetupJob } from './setupModel'
+import { AddProfileButton, SummaryStrip } from './SummaryStrip'
 import { useAgentsData } from './useAgentsData'
 import { useNow } from './useNow'
+
+// Sign-in needs a terminal; it loads when a profile is added or signed in again.
+const AddProfileDialog = lazy(() => import('./AddProfileDialog').then(module => ({ default: module.AddProfileDialog })))
 
 const TAB_LABEL: Record<AgentsTab, string> = { overview: 'Overview', usage: 'Usage', sessions: 'Sessions', defaults: 'Defaults' }
 const tabTrigger = 'bonsai-focus relative h-full text-[12px] text-muted transition-colors hover:text-text data-[state=active]:font-medium data-[state=active]:text-text data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:-bottom-px data-[state=active]:after:h-px data-[state=active]:after:bg-accent'
@@ -26,13 +30,18 @@ export interface AgentsPageProps {
   /** Selected profile ID from the URL; the first profile when missing or unknown. */
   profileId?: string
   tab?: AgentsTab
-  onSelect: (accountId: string) => void
+  /** Selects a profile, on `tab` when given. */
+  onSelect: (accountId: string, tab?: AgentsTab) => void
   onTabChange: (tab: AgentsTab) => void
+  /** Open "Sign in again" for the selected profile (a link from elsewhere asked for it). */
+  signIn?: boolean
+  /** The sign-in request was taken; the URL drops it. */
+  onSignInHandled?: () => void
   /** Called after a session's agent is selected, to bring the canvas into view. */
   onShowOnCanvas: () => void
 }
 
-export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange, onShowOnCanvas }: AgentsPageProps) {
+export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange, onShowOnCanvas, signIn = false, onSignInHandled }: AgentsPageProps) {
   const data = useAgentsData()
   const now = useNow()
   const agents = useBonsaiStore(state => state.agents)
@@ -45,11 +54,24 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
   const [removing, setRemoving] = useState<AgentAccount | null>(null)
   const guarded = useCallback((go: () => void) => { if (dirty) setBlockedSwitch(() => go); else go() }, [dirty])
   const closeRemove = useCallback(() => setRemoving(null), [])
+  // A sign-in still running from before a reload is reattached.
+  const [setup, setSetup] = useState<SetupTarget | null>(() => { const job = recallSetupJob(); return job ? { kind: 'resume', jobId: job.id } : null })
+  const closeSetup = useCallback(() => setSetup(null), [])
+  const { applyAccount } = data
+  const signedIn = useCallback((account: AgentAccount) => { applyAccount(account); onSelect(account.id) }, [applyAccount, onSelect])
+  const openStartAgentDialog = useBonsaiStore(state => state.openStartAgentDialog)
 
   const groups = useMemo(() => groupProfiles(providers ?? [], accounts ?? []), [providers, accounts])
   const sessionCounts = useMemo(() => activeSessionCounts(agents), [agents])
   const running = useMemo(() => agents.filter(agent => isLiveAgent(agent) && isActiveSession(agent.lifecycleState)).length, [agents])
   const summary = useMemo(() => summarizeFleet(accounts ?? [], data.usage, running, now), [accounts, data.usage, running, now])
+  const selected = accounts?.find(account => account.id === profileId) ?? groups.flatMap(group => group.accounts)[0]
+
+  useEffect(() => {
+    if (!signIn || !accounts) return
+    if (selected && !setup) setSetup({ kind: 'login', account: selected })
+    onSignInHandled?.()
+  }, [signIn, accounts, selected, setup, onSignInHandled])
 
   if (!providers || !accounts) {
     return (
@@ -66,7 +88,6 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
     )
   }
 
-  const selected = accounts.find(account => account.id === profileId) ?? groups.flatMap(group => group.accounts)[0]
   const capability = providers.find(item => item.id === selected?.provider)
   const sessions = selected ? profileSessions(agents, selected.id, projects, worktrees) : []
   const activeSessions = selected ? sessionCounts.get(selected.id) ?? 0 : 0
@@ -83,7 +104,7 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <SummaryStrip summary={summary} providers={providers} usageLoaded={data.usageLoaded} now={now} />
+      <SummaryStrip summary={summary} usageLoaded={data.usageLoaded} now={now} onAddProfile={() => setSetup({ kind: 'create' })} />
       {data.error && <div role="status" className="island shrink-0 px-3 py-2 text-[11px] text-warn">Could not refresh agents: {data.error}</div>}
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
         <aside aria-label="Providers and profiles" className="island flex max-h-[42%] min-h-0 shrink-0 flex-col overflow-y-auto lg:max-h-none lg:w-[320px]">
@@ -98,10 +119,22 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
               <h2 className="text-[14px] font-semibold text-text">{providers.some(item => item.available) ? 'No profiles yet' : 'No agent provider is installed'}</h2>
               <p className="max-w-[56ch] text-[12px] text-muted">
                 {providers.some(item => item.available)
-                  ? 'A profile holds one sign-in of a provider. Add one from a terminal; it appears here as soon as it exists.'
+                  ? 'A profile holds one sign-in of a provider. Add one and sign in right here.'
                   : 'Install a provider CLI, then add a profile for it.'}
               </p>
-              <div className="max-w-[460px]"><AddProfileCommands providers={providers} /></div>
+              {providers.some(item => item.available)
+                ? <AddProfileButton onClick={() => setSetup({ kind: 'create' })} />
+                : (
+                  <ul aria-label="Install hints" className="max-w-[460px] space-y-2">
+                    {providers.map(provider => (
+                      <li key={provider.id} className="space-y-1">
+                        <div className="flex items-center gap-2 text-[12px] font-medium text-text"><ProviderLogo provider={provider.id} size={14} className="shrink-0" />{provider.label}</div>
+                        <p className="text-[11px] text-muted-2">{provider.unavailable_reason?.message || 'Not available'}</p>
+                        {provider.install_hint && <p className="text-[11px] text-muted-2"><code className="select-all font-mono">{provider.install_hint}</code></p>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
             </div>
           ) : (
             <Tabs.Root value={tab} onValueChange={value => changeTab(value as AgentsTab)} className="flex min-h-0 flex-1 flex-col">
@@ -122,7 +155,7 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
               </header>
               <div className="min-h-0 flex-1 overflow-auto">
                 <Tabs.Content value="overview" className="outline-none">
-                  <ProfileOverview account={selected} capability={capability} onRemove={() => setRemoving(selected)} />
+                  <ProfileOverview account={selected} capability={capability} onRemove={() => setRemoving(selected)} onSignIn={() => setSetup({ kind: 'login', account: selected })} />
                 </Tabs.Content>
                 <Tabs.Content value="usage" className="outline-none">
                   <ProfileUsage
@@ -152,6 +185,19 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
           onKeep={() => setBlockedSwitch(null)}
           onDiscard={() => { const go = blockedSwitch; setBlockedSwitch(null); setDirty(false); go() }}
         />
+      )}
+      {setup && (
+        <Suspense fallback={null}>
+          <AddProfileDialog
+            target={setup}
+            providers={providers}
+            accounts={accounts}
+            onClose={closeSetup}
+            onSignedIn={signedIn}
+            onStartAgent={accountId => openStartAgentDialog('', accountId)}
+            onSetDefaults={accountId => onSelect(accountId, 'defaults')}
+          />
+        </Suspense>
       )}
       {removing && (
         <RemoveProfileDialog

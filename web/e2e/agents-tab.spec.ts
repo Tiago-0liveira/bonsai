@@ -179,14 +179,16 @@ test('a low profile warns in the dialog, and the launch details reach the sessio
   expect(errors).toEqual([])
 })
 
-test('add profile lists the exact CLI commands', async ({ page }) => {
+test('add profile opens the sign-in dialog on the providers', async ({ page }) => {
   await backend(page)
   await page.goto('/app/agents')
   await page.getByRole('button', { name: 'Add profile' }).click()
-  const popover = page.getByRole('dialog', { name: 'Add profile' })
-  await expect(popover).toContainText('bonsai agent account add claude <name>')
-  await expect(popover).toContainText('bonsai agent account add codex <name> [--auth device]')
-  await expect(popover).toContainText('agy is not installed')
+  const dialog = page.getByRole('dialog', { name: 'Add profile' })
+  await expect(dialog.getByRole('button', { name: /Claude/ })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: /Codex/ })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: /Antigravity/ })).toContainText('agy is not installed')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
 })
 
 test('the palette shows the agents of the active project on the canvas', async ({ page }) => {
