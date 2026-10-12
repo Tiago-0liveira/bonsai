@@ -276,8 +276,17 @@ func TestAgentUsageRealProviders(t *testing.T) {
 	if err := os.Symlink(filepath.Join(codexTestdata, "fakecodex.sh"), filepath.Join(bin, "codex")); err != nil {
 		t.Fatal(err)
 	}
+	// Claude token setup needs a claude binary on PATH; the fake never logs in.
+	claudeTestdata, err := filepath.Abs(filepath.Join("..", "..", "providers", "claude", "testdata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(claudeTestdata, "fakeclaude.sh"), filepath.Join(bin, "claude")); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("FAKE_CODEX_FIXTURES", filepath.Join(codexTestdata, "phase0"))
+	t.Setenv("FAKE_CLAUDE_FIXTURES", claudeTestdata)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	claude.UsageEndpoint = "http://127.0.0.1:1/usage"
 	runtime := s.agents.runtime
