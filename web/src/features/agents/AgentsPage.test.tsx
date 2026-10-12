@@ -277,6 +277,14 @@ describe('usage tab', () => {
 })
 
 describe('sessions tab', () => {
+  it('shows each session\'s launch details labelled by the provider\'s launch fields', async () => {
+    useBonsaiStore.setState({ agents: [agent('s-launch', { accountId: 'claude-work', providerId: 'claude', provider: 'Claude', model: 'opus', launchOptions: { effort: 'high' } }), agent('s-plain', { accountId: 'claude-work', providerId: 'claude', provider: 'Claude' })] })
+    await renderPage({ profileId: 'claude-work', tab: 'sessions' })
+    const items = within(screen.getByRole('list', { name: 'Sessions' })).getAllByRole('listitem')
+    expect(within(items.find(item => item.textContent?.includes('s-launch'))!).getByText('opus · high effort')).toBeInTheDocument()
+    expect(items.find(item => item.textContent?.includes('s-plain'))).not.toHaveTextContent('effort')
+  })
+
   it('lists the profile sessions of every project, running first', async () => {
     await renderPage({ tab: 'sessions' })
     const list = screen.getByRole('list', { name: 'Sessions' })

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Bot, Gauge, X } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { accountAddCommand } from '../../api/agentsOverview'
-import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type LaunchField } from '../../api/agents'
+import { accountAddCommand, agentUsage, byHeadroom, headroomLabel } from '../../api/agentsOverview'
+import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type AgentUsage, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { ModelCombobox } from '../../components/ui/ModelCombobox'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
@@ -45,6 +45,7 @@ function StartAgentForm() {
   const [worktreeId, setWorktreeId] = useState(targetWorktreeId)
   const [accounts, setAccounts] = useState<AgentAccount[]>([])
   const [providers, setProviders] = useState<AgentCapability[]>([])
+  const [usage, setUsage] = useState<Record<string, AgentUsage>>({})
   const [accountId, setAccountId] = useState('')
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
@@ -78,6 +79,12 @@ function StartAgentForm() {
       .finally(() => { if (!disposed) setLoading(false) })
     return () => { disposed = true }
   }, [])
+  // Cached usage only: opening the dialog never asks a provider. Without it, profiles keep their order.
+  useEffect(() => {
+    let disposed = false
+    agentUsage().then(list => { if (!disposed) setUsage(Object.fromEntries(list.map(entry => [entry.account_id, entry]))) }).catch(() => {})
+    return () => { disposed = true }
+  }, [])
   // Suggestions follow the provider and profile; failures just leave a plain input.
   const modelProvider = isLaunchable(providerId) ? providerId : ''
   useEffect(() => {
@@ -91,8 +98,11 @@ function StartAgentForm() {
   const selected = providers.find(item => item.id === providerId)
   const launchable = isLaunchable(providerId) ? providerId : undefined
   const providerLabel = selected?.label ?? ''
-  const providerAccounts = accounts.filter(account => account.provider === providerId)
+  const providerAccounts = byHeadroom(accounts.filter(account => account.provider === providerId), usage)
   const account = providerAccounts.find(item => item.id === accountId)
+  const headline = account && usage[account.id]?.headline
+  // The roomiest profile that is not low itself, to point at when the chosen one runs low.
+  const roomier = headline?.low ? providerAccounts.find(item => item.id !== accountId && usage[item.id]?.headline?.score !== undefined && !usage[item.id]?.headline?.low) : undefined
   const fields = fieldsOf(providers, providerId)
   const launchModel = chosenModel(models, model)
   const values = resolveLaunchValues(fields, launchValues, launchModel)
@@ -215,7 +225,12 @@ function StartAgentForm() {
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Profile</span>
-              <BonsaiSelect ariaLabel="Profile" disabled={pending || loading} value={accountId} placeholder={loading ? 'Loading profiles…' : 'Choose a profile'} onChange={selectAccount} options={providerAccounts.map(item => ({ value: item.id, label: item.name, icon: <ProviderLogo provider={item.provider} size={14} className="text-text" />, description: [item.auth_mode, item.identity].filter(Boolean).join(' · ') || undefined }))} />
+              <BonsaiSelect ariaLabel="Profile" disabled={pending || loading} value={accountId} placeholder={loading ? 'Loading profiles…' : 'Choose a profile'} onChange={selectAccount} options={providerAccounts.map(item => ({ value: item.id, label: item.name, icon: <ProviderLogo provider={item.provider} size={14} className="text-text" />, description: [item.auth_mode, item.identity].filter(Boolean).join(' · ') || undefined, meta: headroomLabel(usage[item.id]?.headline) || undefined }))} />
+              {headline?.low && (
+                <span role="note" className="mt-1.5 flex items-center gap-1.5 font-mono text-[10px] text-warn">
+                  <Gauge size={11} className="shrink-0" />Low headroom: {headroomLabel(headline)} left.{roomier && ` ${roomier.name} has more.`}
+                </span>
+              )}
             </label>
             <label className="block">
               <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Model</span>

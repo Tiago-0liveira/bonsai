@@ -52,6 +52,8 @@ test('branches paint while canvas is pending; unused features stay unfetched', a
     for (const feature of ['files/FilesPage', 'files/FilesPanel', 'github/PullRequestsRoute', 'github/PullRequestDetail', 'settings/SettingsPage', 'logs/LogsPage', 'terminal/AgentTerminal', 'terminal/ProcessTerminal', 'command-palette/CommandPalette', 'workspace/CreateWorktreeDialog', 'workspace/DeleteWorktreeDialog', 'workspace/StartAgentDialog', 'workspace/StartProcessDialog', 'workspace/EnvEditor', 'agents/AgentsRoute']) {
       expect(requests.has(chunk(feature).file), feature).toBe(false)
     }
+    // Session launch details load with the dialog, the Agents page or a live session's inspector card.
+    expect(requests.has(manifest()['src/api/launchDetails.ts'].file), 'api/launchDetails').toBe(false)
   } finally { release() }
   await expect(page.locator('.react-flow')).toBeVisible()
 })

@@ -118,7 +118,7 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
                   />
                 </Tabs.Content>
                 <Tabs.Content value="sessions" className="outline-none">
-                  <ProfileSessions sessions={sessions} now={now} onShowOnCanvas={onShowOnCanvas} />
+                  <ProfileSessions sessions={sessions} fields={capability?.launch_fields ?? []} now={now} onShowOnCanvas={onShowOnCanvas} />
                 </Tabs.Content>
               </div>
             </Tabs.Root>

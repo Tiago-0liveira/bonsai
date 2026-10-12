@@ -1,6 +1,7 @@
 import { Profiler } from 'react'
 import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { cachedAgentProviders } from '../../api/launchDetails'
 import { Inspector } from './Inspector'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { projects } from '../../test/fixtures/projects'
@@ -8,7 +9,30 @@ import { worktrees } from '../../test/fixtures/worktrees'
 import { pullRequests } from '../../test/fixtures/pullRequests'
 import { agents } from '../../mock/agents'
 
+vi.mock('../../api/launchDetails', async importOriginal => ({ ...await importOriginal<object>(), cachedAgentProviders: vi.fn() }))
+beforeEach(() => { vi.mocked(cachedAgentProviders).mockResolvedValue([]) })
 afterEach(cleanup)
+
+it('shows the launch details of a live session labelled by its provider\'s launch fields', async () => {
+  vi.mocked(cachedAgentProviders).mockResolvedValue([{ id: 'codex', label: 'Codex', available: true, launch_fields: [
+    { id: 'permissions', label: 'Permissions', kind: 'select', options: [{ value: 'read-only', label: 'Read only', set: { sandbox: 'read-only', approval: 'on-request' } }] },
+    { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: [{ value: '', label: 'Profile default' }, { value: 'high', label: 'high' }] },
+  ] }])
+  const live = { ...agents[0], id: 'codex-live', provider: 'Codex' as const, providerId: 'codex' as const, profileName: 'Personal', model: 'gpt-6.1-sol', reasoningEffort: 'high', launchOptions: { effort: 'high', sandbox: 'read-only', approval: 'on-request' }, projectId: 'bonsai', worktreeId: 'wt-web' }
+  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, agents: [live], activeProjectId: 'bonsai', selection: { type: 'agent', id: live.id } }, true)
+  render(<Inspector />)
+  expect((await screen.findByText('Launch')).nextElementSibling).toHaveTextContent('gpt-6.1-sol · Read only · high effort')
+  cleanup()
+  // A session launched without choices has no launch row; nor does a simulated agent.
+  useBonsaiStore.setState({ agents: [{ ...live, model: '', launchOptions: undefined }] })
+  render(<Inspector />)
+  expect(screen.queryByText('Launch')).toBeNull()
+  cleanup()
+  useBonsaiStore.setState({ agents: [{ ...live, providerId: undefined }] })
+  render(<Inspector />)
+  expect(screen.queryByText('Launch')).toBeNull()
+  expect(screen.getByText('Reasoning')).toBeInTheDocument()
+})
 
 it.each(['Claude', 'Codex', 'Antigravity', 'Gemini'] as const)('shows the %s mark on the agent card and worktree agent row', (provider) => {
   const agent = { ...agents[0], id: 'provider-agent', provider, projectId: 'bonsai', worktreeId: 'wt-web' }

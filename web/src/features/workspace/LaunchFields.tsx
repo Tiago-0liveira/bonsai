@@ -1,6 +1,7 @@
 import { Shield } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import type { AgentAccount, AgentModel, LaunchField, LaunchFieldOption, LaunchOptions } from '../../api/agents'
+import { launchOptionLabel } from '../../api/launchDetails'
 
 /** Dialog state: one value per launch field ID, a string for a select and a boolean for a toggle. */
 export type LaunchValues = Record<string, string | boolean>
@@ -67,11 +68,6 @@ export function launchRequestOptions(fields: LaunchField[], values: LaunchValues
   return out
 }
 
-function optionLabel(field: LaunchField, option: LaunchFieldOption) {
-  // A bare value such as "high" reads better with its field: "high effort".
-  return option.label === option.value ? `${option.label} ${field.label.toLowerCase()}` : option.label
-}
-
 /** Labels of the chosen non-default values, for the footer and the profile defaults. */
 export function launchSummary(fields: LaunchField[], values: Record<string, unknown>, model?: AgentModel): string[] {
   const out: string[] = []
@@ -85,7 +81,7 @@ export function launchSummary(fields: LaunchField[], values: Record<string, unkn
     }
     if (typeof value !== 'string' || !value) continue
     const option = fieldOptions(field, model).find(item => item.value === value) ?? field.options?.find(item => item.value === value)
-    out.push(option ? optionLabel(field, option) : value)
+    out.push(option ? launchOptionLabel(field, option) : value)
   }
   return out
 }
