@@ -49,7 +49,7 @@ test('branches paint while canvas is pending; unused features stay unfetched', a
     await expect(page.getByText('Loading workspace…')).toBeVisible()
     await expect(page.locator('.desktop-rail').getByText('fix/daemon-lifecycle', { exact: true }).first()).toBeVisible()
     expect(await page.locator('.react-flow').count()).toBe(0)
-    for (const feature of ['files/FilesPage', 'files/FilesPanel', 'github/PullRequestsRoute', 'github/PullRequestDetail', 'settings/SettingsPage', 'logs/LogsPage', 'terminal/AgentTerminal', 'terminal/ProcessTerminal', 'command-palette/CommandPalette', 'workspace/CreateWorktreeDialog', 'workspace/DeleteWorktreeDialog', 'workspace/StartAgentDialog', 'workspace/StartProcessDialog', 'workspace/EnvEditor']) {
+    for (const feature of ['files/FilesPage', 'files/FilesPanel', 'github/PullRequestsRoute', 'github/PullRequestDetail', 'settings/SettingsPage', 'logs/LogsPage', 'terminal/AgentTerminal', 'terminal/ProcessTerminal', 'command-palette/CommandPalette', 'workspace/CreateWorktreeDialog', 'workspace/DeleteWorktreeDialog', 'workspace/StartAgentDialog', 'workspace/StartProcessDialog', 'workspace/EnvEditor', 'agents/AgentsRoute']) {
       expect(requests.has(chunk(feature).file), feature).toBe(false)
     }
   } finally { release() }
@@ -116,7 +116,7 @@ test('command shortcut loads on demand, focuses input and dismisses with Escape'
   await expect(page.getByPlaceholder('Search commands and views…')).toHaveCount(0)
 })
 
-for (const [route, feature] of [['files', 'files/FilesPage'], ['settings', 'settings/SettingsPage'], ['logs', 'logs/LogsPage']] as const) {
+for (const [route, feature] of [['files', 'files/FilesPage'], ['settings', 'settings/SettingsPage'], ['logs', 'logs/LogsPage'], ['agents', 'agents/AgentsRoute']] as const) {
   test(`${route} loads on demand under the local production CSP without fetching canvas`, async ({ page }) => {
     const requests = new Set<string>(), scriptViolations: string[] = []
     page.on('request', request => requests.add(new URL(request.url()).pathname.slice(1)))

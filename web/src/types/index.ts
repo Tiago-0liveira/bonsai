@@ -102,7 +102,10 @@ export type AgentProviderId = 'antigravity' | 'claude' | 'codex'
 export interface Agent {
   projectId?: string
   profileName?: string
+  /** The Bonsai profile the session runs under. */
+  accountId?: string
   providerId?: AgentProviderId
+  exitCode?: number
   lifecycleState?: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
   id: string
   worktreeId: string

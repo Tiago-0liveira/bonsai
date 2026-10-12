@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Bot, Gauge, X } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { PROVIDER_LABELS, SETUP_HINTS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type LaunchField } from '../../api/agents'
+import { accountAddCommand } from '../../api/agentsOverview'
+import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { ModelCombobox } from '../../components/ui/ModelCombobox'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
@@ -11,7 +12,7 @@ import { LaunchFields, chosenModel, initialLaunchValues, launchRequestOptions, l
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
 const isLaunchable = (id: string): id is AgentProviderId => Object.hasOwn(PROVIDER_LABELS, id)
 const NO_FIELDS: LaunchField[] = []
-const setupCommand = (id: AgentProviderId) => ['bonsai agent account add', id, '<name>', SETUP_HINTS[id]].filter(Boolean).join(' ')
+const setupCommand = accountAddCommand
 const fieldsOf = (providers: AgentCapability[], id: string) => providers.find(item => item.id === id)?.launch_fields ?? NO_FIELDS
 
 function lastProvider(): string {
@@ -64,11 +65,15 @@ function StartAgentForm() {
       if (disposed) return
       setAccounts(accounts)
       setProviders(providers)
-      const initial = defaultProvider(providers, accounts)
+      // The Agents tab opens the dialog on one profile; it wins over the remembered provider.
+      const wanted = useBonsaiStore.getState().startAgentTargetAccountId
+      const target = wanted ? accounts.find(account => account.id === wanted && providers.some(item => item.id === account.provider)) : undefined
+      const initial = target?.provider ?? defaultProvider(providers, accounts)
       setProviderId(initial)
       const own = accounts.filter(account => account.provider === initial)
-      if (own.length === 1) setAccountId(own[0].id)
-      setLaunchValues(initialLaunchValues(fieldsOf(providers, initial), own.length === 1 ? own[0] : undefined))
+      const chosen = target ?? (own.length === 1 ? own[0] : undefined)
+      if (chosen) setAccountId(chosen.id)
+      setLaunchValues(initialLaunchValues(fieldsOf(providers, initial), chosen))
     }).catch(error => { if (!disposed) setError(String(error.message)) })
       .finally(() => { if (!disposed) setLoading(false) })
     return () => { disposed = true }

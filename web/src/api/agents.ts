@@ -18,6 +18,7 @@ export interface AgentAccount {
   id: string; name: string; provider: AgentProviderId
   auth_mode?: string; identity?: string; warnings?: string[]
   model?: string; auth_status?: string
+  created_at?: string; updated_at?: string
   [option: string]: unknown
 }
 /** One value of a launch field. A toggle has a "false" and a "true" option. */
@@ -43,9 +44,14 @@ export interface LaunchField {
 }
 /** Start request fields produced by the launch fields, flattened into the request body. */
 export type LaunchOptions = Record<string, string | boolean>
-export interface AgentCapability { id: string; label: string; available: boolean; unavailable_reason?: { message: string }; version?: string; launch_fields?: LaunchField[] }
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await localFetch(path, init)
+export interface AgentCapability {
+  id: string; label: string; available: boolean; unavailable_reason?: { message: string }; version?: string; launch_fields?: LaunchField[]
+  /** Where the provider's usage numbers come from, when that needs a caveat. */
+  usage_note?: string
+  /** A short install command or link, present while the provider is unavailable. */
+  install_hint?: string
+}
+async function readJSON<T>(response: Response, path: string): Promise<T> {
   if (!response.ok) {
     if (response.status === 404 && path.startsWith('/api/agents/')) throw new Error('Update Bonsai to enable agent profiles.')
     const body = await response.json().catch(() => ({}))
@@ -53,6 +59,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return response.json() as Promise<T>
 }
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return readJSON<T>(await localFetch(path, init), path)
+}
+// The read side of the Agents tab lives in agentsOverview.ts so it stays out of the first screen.
+export { readJSON as readAgentJSON, request as agentRequest }
 export const agentProviders = () => request<AgentCapability[]>('/api/agents/providers')
 export interface AgentModel {
   id: string; label: string; description?: string; source: 'alias' | 'api' | 'bundled'
@@ -65,8 +76,26 @@ export interface AgentModel {
 export const agentModels = (provider: string, accountId?: string) =>
   request<AgentModel[]>(`/api/agents/providers/${encodeURIComponent(provider)}/models${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`)
 export const agentAccounts = () => request<AgentAccount[]>('/api/agents/accounts')
+/** One plan limit: a window of the plan (5 h, weekly) or a metered feature. */
+export interface UsageLimit {
+  id: string; group?: string; label?: string; window?: string
+  /** 0..1; missing when the provider does not report it. */
+  remaining_fraction?: number
+  resets_at?: string
+}
+export interface UsageSnapshot { provider: string; account_id: string; fetched_at: string; plan?: string; limits: UsageLimit[]; warnings?: string[] }
+/** The provider's reading of a snapshot: which limits lead, and the profile's score. */
+export interface UsageHeadline { primary?: UsageLimit; secondary?: UsageLimit; extra?: UsageLimit[]; score?: number; low?: boolean; next_reset?: string }
+export type UsageErrorCode = 'unsupported' | 'not_authenticated' | 'unavailable'
+export interface AgentUsage {
+  account_id: string; provider: string
+  usage?: UsageSnapshot; headline?: UsageHeadline
+  error?: { code: UsageErrorCode | (string & {}); message: string }
+  /** A refresh was asked for too soon and the cached snapshot answered. */
+  throttled?: boolean
+}
 export const startAgent = (project: string, { options, ...body }: { worktree_id: string; account_id: string; name?: string; model?: string; prompt?: string; options?: LaunchOptions; cols: number; rows: number }, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ ...options, ...body }) })
 export const stopAgent = (project: string, id: string, key: string) => request<AgentSummary>(`/api/projects/${encodeURIComponent(project)}/agents/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'Idempotency-Key': key } })
 export function mapAgent(a: AgentSummary, previous?: Agent): Agent {
-  return { id: a.id, projectId: a.project_id, worktreeId: a.worktree_id, name: a.name || a.profile_name, provider: (Object.hasOwn(PROVIDER_LABELS, a.provider) ? PROVIDER_LABELS[a.provider] : a.provider) as AgentProvider, providerId: a.provider, profileName: a.profile_name, model: '', reasoningEffort: '', workType: '', prompt: '', archived: previous?.archived ?? false, presentation: previous?.presentation ?? 'canvas', state: a.state === 'exited' || a.state === 'failed' ? 'finished' : 'running', lifecycleState: a.state, task: a.error || a.state, runtime: '', terminalId: a.id, createdAt: a.created_at, finishedAt: a.ended_at }
+  return { id: a.id, projectId: a.project_id, worktreeId: a.worktree_id, accountId: a.account_id, name: a.name || a.profile_name, provider: (Object.hasOwn(PROVIDER_LABELS, a.provider) ? PROVIDER_LABELS[a.provider] : a.provider) as AgentProvider, providerId: a.provider, profileName: a.profile_name, model: '', reasoningEffort: '', workType: '', prompt: '', archived: previous?.archived ?? false, presentation: previous?.presentation ?? 'canvas', state: a.state === 'exited' || a.state === 'failed' ? 'finished' : 'running', lifecycleState: a.state, task: a.error || a.state, runtime: '', terminalId: a.id, createdAt: a.created_at, finishedAt: a.ended_at, exitCode: a.exit_code }
 }
