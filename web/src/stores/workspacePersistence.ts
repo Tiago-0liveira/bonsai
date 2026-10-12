@@ -6,7 +6,16 @@ import { activeRuntimePatch } from './runtimePreferences'
 import type { BonsaiState } from './bonsai'
 
 export const WORKSPACE_STORAGE_KEY = 'bonsai-web-workspace-v6'
-export const WORKSPACE_STORAGE_VERSION = 3
+export const WORKSPACE_STORAGE_VERSION = 4
+
+// Version 4 moved the canvas behind the whole shell. Viewports saved before were
+// relative to the old right pane, whose desktop origin was (428, 68).
+const PANE_ORIGIN = { x: 428, y: 68 }
+
+export function migrateWorkspacePreferences(state: Partial<WorkspacePreferences>, version: number): Partial<WorkspacePreferences> {
+  if (version >= 4 || !state.viewport) return state
+  return { ...state, viewport: { ...state.viewport, x: state.viewport.x + PANE_ORIGIN.x, y: state.viewport.y + PANE_ORIGIN.y } }
+}
 
 export interface WorkspacePreferences {
   selection: Selection
@@ -184,7 +193,8 @@ export function createWorkspaceStorage(getStorage: () => Storage = () => window.
         if (!useWorkspaceStorageStatus.getState().error) fail(INVALID_ERROR)
         return null
       }
-      const value = { state: sanitizeWorkspacePreferences(parsed.state), version: WORKSPACE_STORAGE_VERSION }
+      const version = finite(parsed.version) ? parsed.version : 0
+      const value = { state: migrateWorkspacePreferences(sanitizeWorkspacePreferences(parsed.state), version), version: WORKSPACE_STORAGE_VERSION }
       const payload = JSON.stringify(value)
       if (raw !== payload) clean(storage, name, payload)
       return value

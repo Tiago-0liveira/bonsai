@@ -5,7 +5,7 @@ import { AppShell } from './AppShell'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { BonsaiSelect } from '../ui/BonsaiSelect'
 
-const mounts = vi.hoisted(() => ({ main: 0, dock: 0 }))
+const mounts = vi.hoisted(() => ({ main: 0, dock: 0, canvas: 0 }))
 vi.mock('./TopBar', () => ({ TopBar: () => null }))
 vi.mock('../../features/inspector/Inspector', () => ({ Inspector: () => null }))
 vi.mock('../../features/command-palette/CommandPalette', () => ({ CommandPalette: () => null }))
@@ -13,6 +13,10 @@ vi.mock('../../features/workspace/CreateWorktreeDialog', () => ({ CreateWorktree
 vi.mock('../../features/workspace/DeleteWorktreeDialog', () => ({ DeleteWorktreeDialog: () => null }))
 vi.mock('../../features/workspace/EnvEditor', () => ({ EnvEditor: () => null }))
 vi.mock('../../features/workspace/StartAgentDialog', () => ({ StartAgentDialog: () => null }))
+vi.mock('../../features/workspace/WorkspacePage', () => ({ WorkspacePage: ({ route }: { route: string | null }) => {
+  useEffect(() => { mounts.canvas++ }, [])
+  return <div data-testid="canvas-layer" data-route={route ?? ''} {...(route ? {} : { inert: '' })} />
+} }))
 vi.mock('../../features/terminal/BottomWorkspace', () => ({ BottomWorkspace: () => {
   useEffect(() => { mounts.dock++ }, [])
   return <Draft label="Dock draft" />
@@ -30,7 +34,7 @@ function MainProbe() {
 
 describe('workspace panel lifecycle', () => {
   beforeEach(() => {
-    mounts.main = mounts.dock = 0
+    mounts.main = mounts.dock = mounts.canvas = 0
     useBonsaiStore.setState({ dockState: 'normal', dockHeight: 37, gitError: '', notice: '' })
   })
   afterEach(cleanup)
@@ -93,5 +97,39 @@ describe('workspace panel lifecycle', () => {
     act(() => useBonsaiStore.getState().setNotice('Managed process updated'))
     expect(screen.getByRole('status')).toHaveTextContent('Managed process updated')
     expect(renders).toHaveBeenCalledTimes(baseline)
+  })
+})
+
+describe('canvas layer', () => {
+  beforeEach(() => {
+    mounts.canvas = 0
+    useBonsaiStore.setState({ dockState: 'normal', dockHeight: 37, gitError: '', notice: '' })
+  })
+  afterEach(cleanup)
+
+  it('lets canvas routes see through the frame to the canvas behind the shell', async () => {
+    const { container } = render(<AppShell canvasRoute="canvas"><span /></AppShell>)
+    const layer = await screen.findByTestId('canvas-layer')
+    expect(layer).not.toHaveAttribute('inert')
+    expect(container.querySelector('[data-canvas-frame]')).toHaveClass('pointer-events-none')
+    // The layer renders before the shell islands so it paints behind them.
+    expect(container.firstElementChild?.querySelector('[data-testid="canvas-layer"]')).toBe(layer)
+    expect(layer.compareDocumentPosition(container.querySelector('.desktop-rail')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('keeps the canvas mounted and inert behind other pages', async () => {
+    const { container, rerender } = render(<AppShell canvasRoute="canvas"><span /></AppShell>)
+    await screen.findByTestId('canvas-layer')
+    rerender(<AppShell canvasRoute={null}><span>GitHub page</span></AppShell>)
+    expect(screen.getByTestId('canvas-layer')).toHaveAttribute('inert')
+    expect(container.querySelector('[data-canvas-frame]')).toHaveClass('pointer-events-auto')
+    rerender(<AppShell canvasRoute="worktrees"><span /></AppShell>)
+    expect(screen.getByTestId('canvas-layer')).toHaveAttribute('data-route', 'worktrees')
+    expect(mounts.canvas).toBe(1)
+  })
+
+  it('does not load the canvas for a page opened directly', () => {
+    render(<AppShell canvasRoute={null}><span>Settings page</span></AppShell>)
+    expect(screen.queryByTestId('canvas-layer')).toBeNull()
   })
 })

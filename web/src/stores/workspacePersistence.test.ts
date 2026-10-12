@@ -58,7 +58,8 @@ describe('workspace migration and hydration', () => {
     expect(state).not.toHaveProperty('editorPreference')
     expect(read().state).not.toHaveProperty('editorPreference')
     for (const key of ['boardItems', 'boardLists', 'boardPriorities', 'boardTypes', 'collapsedTagGroups']) expect(state).not.toHaveProperty(key)
-    expect(state.viewport).toEqual({ x: 15, y: 25, zoom: 0.75 })
+    // Pre-v4 viewports were relative to the right pane and move with the canvas layer.
+    expect(state.viewport).toEqual({ x: 15 + 428, y: 25 + 68, zoom: 0.75 })
     expect(state.rightPanels).toEqual({ files: false, prs: true })
     expect(read().version).toBe(WORKSPACE_STORAGE_VERSION)
     expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).not.toContain(marker)
@@ -81,6 +82,15 @@ describe('workspace migration and hydration', () => {
     await workspacePreferences.rehydrate()
     expect(useBonsaiStore.getState().agents).toEqual([])
     expect(useBonsaiStore.getState().detachedStackWorktreeIds).toEqual(['tree'])
+  })
+
+  it('moves a pane-relative viewport once and keeps current viewports', async () => {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({ state: { viewport: { x: 1, y: 2, zoom: 1 } }, version: 3 }))
+    await workspacePreferences.rehydrate()
+    expect(useBonsaiStore.getState().viewport).toEqual({ x: 429, y: 70, zoom: 1 })
+    expect(read()).toEqual({ state: { viewport: { x: 429, y: 70, zoom: 1 } }, version: WORKSPACE_STORAGE_VERSION })
+    await workspacePreferences.rehydrate()
+    expect(useBonsaiStore.getState().viewport).toEqual({ x: 429, y: 70, zoom: 1 })
   })
 
   it('sanitizes explicit rehydration even for a record claiming the current or a future version', async () => {
