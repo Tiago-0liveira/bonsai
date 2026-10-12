@@ -4,8 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/pkgmgr"
@@ -27,6 +32,85 @@ func (s *Server) registerProcessRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/processes/{id}/logs", s.processLogs)
 	mux.HandleFunc("POST /api/processes/{id}/restart", s.processRestart)
 	mux.HandleFunc("DELETE /api/processes/{id}", s.processStop)
+}
+
+// customProcess is a command line the user typed instead of choosing a
+// discovered command. It runs through the platform shell, like the TUI's
+// "new process", so the decision to run it is the user's own.
+type customProcess struct {
+	Command string `json:"command"`
+	// Name labels the process; the command line itself is used when empty.
+	Name string `json:"name,omitempty"`
+	// Dir is relative to the worktree root; empty runs at the root.
+	Dir string `json:"dir,omitempty"`
+}
+
+const (
+	maxCustomCommand = 4096
+	maxCustomName    = 128
+)
+
+type customLaunch struct{ command, label, dir string }
+
+// resolveCustomProcess checks a typed command line and its directory against
+// the worktree. The directory must exist and stay inside the worktree after
+// symlinks are resolved; the command must be one printable line.
+func resolveCustomProcess(worktree string, custom customProcess) (customLaunch, error) {
+	command := strings.TrimSpace(custom.Command)
+	switch {
+	case command == "":
+		return customLaunch{}, fmt.Errorf("enter a command to run")
+	case len(command) > maxCustomCommand:
+		return customLaunch{}, fmt.Errorf("command is longer than %d characters", maxCustomCommand)
+	case !utf8.ValidString(command):
+		return customLaunch{}, fmt.Errorf("command must be valid UTF-8")
+	}
+	for _, r := range command {
+		if r != '\t' && unicode.IsControl(r) {
+			return customLaunch{}, fmt.Errorf("command must be a single line without control characters")
+		}
+	}
+	label := strings.TrimSpace(custom.Name)
+	if utf8.RuneCountInString(label) > maxCustomName {
+		return customLaunch{}, fmt.Errorf("name is longer than %d characters", maxCustomName)
+	}
+	for _, r := range label {
+		if unicode.IsControl(r) {
+			return customLaunch{}, fmt.Errorf("name cannot contain control characters")
+		}
+	}
+	if label == "" {
+		label = command
+		if utf8.RuneCountInString(label) > 64 {
+			label = string([]rune(label)[:63]) + "…"
+		}
+	}
+	dir := worktree
+	if rel := strings.TrimSpace(custom.Dir); rel != "" && rel != "." {
+		if filepath.IsAbs(filepath.FromSlash(rel)) {
+			return customLaunch{}, fmt.Errorf("directory must be relative to the worktree")
+		}
+		clean := filepath.Clean(filepath.FromSlash(rel))
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return customLaunch{}, fmt.Errorf("directory must stay inside the worktree")
+		}
+		dir = filepath.Join(worktree, clean)
+	}
+	realRoot, err := filepath.EvalSymlinks(worktree)
+	if err != nil {
+		return customLaunch{}, fmt.Errorf("worktree directory is unavailable")
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return customLaunch{}, fmt.Errorf("directory %q does not exist", custom.Dir)
+	}
+	if rel, err := filepath.Rel(realRoot, realDir); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return customLaunch{}, fmt.Errorf("directory must stay inside the worktree")
+	}
+	if info, err := os.Stat(realDir); err != nil || !info.IsDir() {
+		return customLaunch{}, fmt.Errorf("%q is not a directory", custom.Dir)
+	}
+	return customLaunch{command: command, label: label, dir: dir}, nil
 }
 
 func (s *Server) processCatalog(r *http.Request, worktreeID string) (*pkgmgr.Project, domain.Worktree, error) {
@@ -87,6 +171,8 @@ func (s *Server) processStart(w http.ResponseWriter, r *http.Request) {
 		CommandID  string                `json:"command_id"`
 		Values     pkgmgr.ArgumentValues `json:"values,omitempty"`
 		Policy     *procstore.Policy     `json:"policy,omitempty"`
+		// Custom replaces CommandID with a typed shell command line.
+		Custom *customProcess `json:"custom,omitempty"`
 	}
 	if !decodeStrictJSON(w, r, &input) {
 		return
@@ -96,6 +182,14 @@ func (s *Server) processStart(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, 400, "invalid_policy", err.Error())
 			return
 		}
+	}
+	if input.Custom != nil {
+		if input.CommandID != "" || len(input.Values) > 0 {
+			writeAPIError(w, http.StatusBadRequest, "invalid", "A custom command cannot also name a discovered command")
+			return
+		}
+		s.customProcessStart(w, r, input.WorktreeID, *input.Custom, input.Policy)
+		return
 	}
 	catalog, tree, err := s.processCatalog(r, input.WorktreeID)
 	if err != nil {
@@ -128,6 +222,61 @@ func (s *Server) processStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAPIError(w, http.StatusConflict, "command_unavailable", "Command no longer exists. Reload the package list.")
+}
+
+// customProcessStart launches a typed command line in a worktree of the
+// project. Only the worktree must be verified; no discovery is involved.
+func (s *Server) customProcessStart(w http.ResponseWriter, r *http.Request, worktreeID string, custom customProcess, policy *procstore.Policy) {
+	tree, launch, ok := s.customProcessTarget(w, r, worktreeID, custom)
+	if !ok {
+		return
+	}
+	launcher, ok := s.registry.Default().daemon.(interface {
+		SpawnShell(string, string, string, string, string, *procstore.Policy) (*procstore.Record, error)
+	})
+	if !ok {
+		writeAPIError(w, http.StatusServiceUnavailable, "process_start_unavailable", "Process launcher unavailable")
+		return
+	}
+	record, err := launcher.SpawnShell(tree.Path, tree.Branch, launch.dir, launch.label, launch.command, policy)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "process_start_failed", err.Error())
+		return
+	}
+	s.stateSync.Queue(s.registry.Default().info.ID, refreshProcesses, false)
+	writeJSON(w, http.StatusCreated, processSummary(s.registry.Default().info.ID, record))
+}
+
+// customProcessTarget verifies the worktree belongs to the project and still
+// exists, then validates the typed command and directory against it.
+func (s *Server) customProcessTarget(w http.ResponseWriter, r *http.Request, worktreeID string, custom customProcess) (domain.Worktree, customLaunch, bool) {
+	project := s.registry.Default()
+	payload, err := s.stateSync.gitPayload(r.Context(), project, "git.worktrees", func(raw json.RawMessage) (any, error) {
+		var trees []domain.Worktree
+		err := json.Unmarshal(raw, &trees)
+		return trees, err
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "process_discovery_failed", fmt.Sprintf("cannot verify worktree: %v", err))
+		return domain.Worktree{}, customLaunch{}, false
+	}
+	for _, tree := range payload.([]domain.Worktree) {
+		if tree.ID != worktreeID {
+			continue
+		}
+		if tree.Missing || tree.Path == "" {
+			writeAPIError(w, http.StatusBadRequest, "process_discovery_failed", "worktree directory is unavailable")
+			return domain.Worktree{}, customLaunch{}, false
+		}
+		launch, err := resolveCustomProcess(tree.Path, custom)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_custom_command", err.Error())
+			return domain.Worktree{}, customLaunch{}, false
+		}
+		return tree, launch, true
+	}
+	writeAPIError(w, http.StatusBadRequest, "process_discovery_failed", "worktree no longer belongs to project")
+	return domain.Worktree{}, customLaunch{}, false
 }
 
 func (s *Server) processes(w http.ResponseWriter, _ *http.Request) {
@@ -206,8 +355,13 @@ func (s *Server) processPreview(w http.ResponseWriter, r *http.Request) {
 		WorktreeID string                `json:"worktree_id"`
 		CommandID  string                `json:"command_id"`
 		Values     pkgmgr.ArgumentValues `json:"values"`
+		Custom     *customProcess        `json:"custom,omitempty"`
 	}
 	if !decodeStrictJSON(w, r, &input) {
+		return
+	}
+	if input.Custom != nil {
+		s.customProcessPreview(w, r, input.WorktreeID, *input.Custom)
 		return
 	}
 	catalog, _, err := s.processCatalog(r, input.WorktreeID)
@@ -234,6 +388,25 @@ func (s *Server) processPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAPIError(w, 409, "command_unavailable", "Command no longer exists. Reload the package list.")
+}
+
+// customProcessPreview shows what a typed command would run as and under which
+// restart policy, without starting anything.
+func (s *Server) customProcessPreview(w http.ResponseWriter, r *http.Request, worktreeID string, custom customProcess) {
+	_, launch, ok := s.customProcessTarget(w, r, worktreeID, custom)
+	if !ok {
+		return
+	}
+	cfg, err := config.Load(s.registry.Default().info.Path)
+	if err != nil {
+		writeAPIError(w, 400, "process_policy_failed", err.Error())
+		return
+	}
+	program, args := "sh", []string{"-c", launch.command}
+	if runtime.GOOS == "windows" {
+		program, args = "cmd.exe", []string{"/c", launch.command}
+	}
+	writeJSON(w, 200, map[string]any{"program": program, "args": args, "dir": launch.dir, "default_policy": cfg.PolicyFor(launch.label, launch.command)})
 }
 
 func (s *Server) processRemove(w http.ResponseWriter, r *http.Request) {

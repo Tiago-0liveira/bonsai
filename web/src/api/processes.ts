@@ -61,6 +61,25 @@ export const startProcess = (projectId: string, worktreeId: string, commandId: s
   { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ worktree_id: worktreeId, command_id: commandId, values, ...(policy ? { policy } : {}) }) },
 )
 
+/** A typed command line, run through the shell in the worktree or one of its subdirectories. */
+export interface CustomCommand {
+  command: string
+  /** Labels the process; the command line itself when empty. */
+  name?: string
+  /** Relative to the worktree root; empty runs at the root. */
+  dir?: string
+}
+
+export const startCustomProcess = (projectId: string, worktreeId: string, custom: CustomCommand, policy?: ProcessPolicy) => request<ProcessSummary>(
+  `/api/projects/${encodeURIComponent(projectId)}/processes`,
+  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ worktree_id: worktreeId, custom, ...(policy ? { policy } : {}) }) },
+)
+
+export const previewCustomProcess = (projectId: string, worktreeId: string, custom: CustomCommand) => request<{ program: string; args: string[]; dir: string; default_policy: ProcessPolicy }>(
+  `/api/projects/${encodeURIComponent(projectId)}/process-preview`,
+  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ worktree_id: worktreeId, custom }) },
+)
+
 export function applyProcessSummary(summary: ProcessSummary, open = false) {
   useBonsaiStore.setState(state => {
     if (processDeleted(state, summary.project_id, summary.daemon_id)) return state
