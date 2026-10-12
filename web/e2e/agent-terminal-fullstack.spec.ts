@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { openFullStackApp as openConnectedApp } from './mockGit'
+import { openFullStackApp as openConnectedApp, selectMenu } from './mockGit'
 
 test.skip(!['linux', 'darwin'].includes(process.platform), 'Native Unix PTY fixture')
 
@@ -13,7 +13,7 @@ test('real API and PTY: profile launch, input, reload, stop and retained output'
   await dialog.getByRole('button', { name: /Antigravity/ }).click()
   await expect(dialog.getByLabel('Profile')).toContainText('Fixture')
   await dialog.getByLabel('Worktree and branch').click()
-  await page.getByRole('option').first().click()
+  await selectMenu(page, 'Worktree and branch').getByRole('option').first().click()
   const startResponse = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/agents'))
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
   const session = await (await startResponse).json()
@@ -48,15 +48,15 @@ test('real API and PTY: two concurrent sessions of one Claude profile, reload an
     await dialog.getByRole('button', { name: /Claude/ }).click()
     await expect(dialog.getByLabel('Profile')).toContainText('Work')
     await dialog.getByLabel('Worktree and branch').click()
-    await page.getByRole('option').first().click()
+    await selectMenu(page, 'Worktree and branch').getByRole('option').first().click()
     await dialog.getByLabel('Agent name').fill(name)
     await dialog.getByLabel('Agent model').click()
-    await expect(page.getByRole('option', { name: /^Opus/ })).toBeVisible()
-    await expect(page.getByRole('option', { name: /^Fable/ })).toBeVisible()
-    await page.getByRole('option', { name: /^Sonnet/ }).click()
+    const suggestions = page.getByRole('listbox', { name: 'Agent model suggestions' })
+    await expect(suggestions.getByRole('option', { name: /^Opus/ })).toBeVisible()
+    await expect(suggestions.getByRole('option', { name: /^Fable/ })).toBeVisible()
+    await suggestions.getByRole('option', { name: /^Sonnet/ }).click()
     await expect(dialog.getByLabel('Agent model')).toHaveValue('sonnet')
-    await dialog.getByLabel('Permission mode').click()
-    await page.getByRole('option', { name: 'Plan', exact: true }).click()
+    await dialog.getByRole('radio', { name: 'Plan', exact: true }).click()
     const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/agents'))
     await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
     const session = await (await response).json()
@@ -109,23 +109,22 @@ test('real API and PTY: two Codex profiles with two sessions each beside a Claud
     await dialog.getByRole('button', { name: new RegExp(provider) }).click()
     if (provider === 'Codex') {
       // Two profiles, so the choice is explicit; the details carry the fake login.
-      await dialog.getByLabel('Profile').click()
-      await page.getByRole('option', { name: new RegExp(`^${profile}`) }).click()
+      await dialog.getByRole('option', { name: new RegExp(`^${profile}`) }).click()
       await expect(dialog.getByTestId('profile-details')).toContainText(profile === 'Personal' ? 'me@example.com' : 'team@example.com')
       await expect(dialog.getByTestId('profile-details')).toContainText('logged in')
       await dialog.getByLabel('Agent model').click()
-      await expect(page.getByRole('option', { name: /GPT-6.1-Sol/ })).toBeVisible()
-      await page.getByRole('option', { name: /GPT-6-Luna/ }).click()
+      const suggestions = page.getByRole('listbox', { name: 'Agent model suggestions' })
+      await expect(suggestions.getByRole('option', { name: /GPT-6.1-Sol/ })).toBeVisible()
+      await suggestions.getByRole('option', { name: /GPT-6-Luna/ }).click()
       await expect(dialog.getByLabel('Agent model')).toHaveValue('gpt-6-luna')
       if (permissions) {
-        await dialog.getByLabel('Permissions').click()
-        await page.getByRole('option', { name: permissions, exact: true }).click()
+        await dialog.getByRole('radio', { name: permissions, exact: true }).click()
       }
     } else {
       await expect(dialog.getByLabel('Profile')).toContainText(profile)
     }
     await dialog.getByLabel('Worktree and branch').click()
-    await page.getByRole('option').first().click()
+    await selectMenu(page, 'Worktree and branch').getByRole('option').first().click()
     await dialog.getByLabel('Agent name').fill(name)
     const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/agents'))
     await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()

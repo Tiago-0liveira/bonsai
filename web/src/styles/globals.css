@@ -199,3 +199,84 @@ select { color-scheme: dark; }
 .xterm .xterm-fg-13 { color: rgb(var(--ansi-13)); } .xterm .xterm-bg-13 { background-color: rgb(var(--ansi-13)); }
 .xterm .xterm-fg-14 { color: rgb(var(--ansi-14)); } .xterm .xterm-bg-14 { background-color: rgb(var(--ansi-14)); }
 .xterm .xterm-fg-15 { color: rgb(var(--ansi-15)); } .xterm .xterm-bg-15 { background-color: rgb(var(--ansi-15)); }
+
+/*
+ * Dialog primitives (src/components/ui/Dialog.tsx and friends). Colors come
+ * from tokens only; every animation is off under prefers-reduced-motion.
+ */
+@keyframes dialog-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialog-card-in { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes dialog-reveal { from { grid-template-rows: 0fr; opacity: 0; } to { grid-template-rows: 1fr; opacity: 1; } }
+@keyframes dialog-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes dialog-swap { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+@keyframes dialog-ping { from { opacity: .7; transform: scale(.6); } to { opacity: 0; transform: scale(2.3); } }
+@keyframes dialog-spin { to { transform: rotate(360deg); } }
+@keyframes dialog-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@layer components {
+  .dialog-backdrop { animation: dialog-backdrop-in 160ms ease-out both; }
+  .dialog-card { animation: dialog-card-in 220ms cubic-bezier(.2, .8, .2, 1) both; }
+  .dialog-enter { animation: dialog-enter 200ms ease-out both; }
+  .dialog-swap { animation: dialog-swap 220ms cubic-bezier(.2, .8, .2, 1) both; }
+  .dialog-spin { animation: dialog-spin 700ms linear infinite; }
+  /* Opens a block to its natural height. The inner wrapper clips, so it pads for focus rings. */
+  .dialog-reveal { display: grid; animation: dialog-reveal 240ms cubic-bezier(.2, .8, .2, 1) both; }
+  .dialog-reveal > div { min-height: 0; overflow: hidden; padding: 2px; margin: -2px; }
+
+  .seg { position: relative; display: grid; gap: 0; padding: 4px; border: 1px solid rgb(var(--border)); border-radius: 10px; background: rgb(var(--well)); }
+  .seg-pill { position: absolute; top: 4px; bottom: 4px; left: 4px; border-radius: 7px; background: rgb(var(--panel-3)); box-shadow: inset 0 0 0 1px rgb(var(--border-strong)), 0 1px 3px rgb(0 0 0 / .35); transition: transform 280ms cubic-bezier(.3, 1.25, .5, 1), opacity 160ms; pointer-events: none; }
+  .seg-item { position: relative; z-index: 1; display: flex; min-width: 0; align-items: center; justify-content: center; gap: 8px; border-radius: 7px; transition: color 160ms; }
+
+  .chip-choice { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1px solid rgb(var(--border)); border-radius: 8px; background: rgb(var(--well)); color: rgb(var(--muted)); font-size: 12px; transition: border-color 140ms, background 140ms, color 140ms, transform 140ms; }
+  .chip-choice:hover:not(:disabled) { border-color: rgb(var(--border-strong)); color: rgb(var(--text)); }
+  .chip-choice:active:not(:disabled) { transform: scale(.97); }
+  .chip-choice[aria-checked='true'] { border-color: rgb(var(--accent) / .55); background: rgb(var(--accent) / .12); color: rgb(var(--text)); }
+  .chip-choice[data-tone='danger'] { color: rgb(var(--warn)); }
+  .chip-choice[data-tone='danger']:hover:not(:disabled) { border-color: rgb(var(--warn-solid) / .6); }
+  .chip-choice[data-tone='danger'][aria-checked='true'] { border-color: rgb(var(--warn-solid) / .7); background: rgb(var(--warn-solid) / .18); color: rgb(var(--warn)); }
+  .chip-choice[data-inherited='true'] { border-style: dashed; border-color: rgb(var(--muted-2) / .55); color: rgb(var(--text)); }
+  .chip-mark { transition: transform 200ms cubic-bezier(.3, 1.6, .5, 1), opacity 140ms; }
+  .chip-choice[aria-checked='false'] .chip-mark { transform: scale(0); opacity: 0; width: 0; margin-right: -6px; }
+
+  .step-slider { position: relative; height: 34px; padding: 0 22px; cursor: pointer; touch-action: none; user-select: none; outline: none; }
+  .step-slider[aria-disabled='true'] { cursor: not-allowed; opacity: .5; }
+  .step-slider:focus-visible { border-radius: 8px; outline: 1px solid rgb(var(--accent)); outline-offset: 2px; }
+  .step-rail { position: absolute; left: 22px; right: 22px; top: 50%; height: 6px; margin-top: -3px; border-radius: 999px; background: rgb(var(--well)); box-shadow: inset 0 0 0 1px rgb(var(--border)); }
+  .step-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, rgb(var(--accent-solid) / .35), rgb(var(--accent))); box-shadow: 0 0 12px rgb(var(--accent) / .35); transition: width 320ms cubic-bezier(.3, 1.25, .5, 1), opacity 160ms; }
+  .step-tick { position: absolute; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 999px; background: rgb(var(--border-strong)); transition: background 200ms, transform 200ms; }
+  .step-tick[data-passed='true'] { background: rgb(var(--well) / .7); }
+  .step-tick[data-current='true'] { transform: scale(0); }
+  .step-thumb { position: absolute; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 999px; background: rgb(var(--text)); box-shadow: 0 0 0 4px rgb(var(--accent) / .22), 0 3px 8px rgb(0 0 0 / .5); transition: left 320ms cubic-bezier(.3, 1.25, .5, 1), transform 160ms, box-shadow 200ms, opacity 160ms; }
+  .step-slider:hover:not([aria-disabled='true']) .step-thumb { transform: scale(1.08); }
+  .step-slider[data-dragging='true'] .step-thumb { transform: scale(1.18); box-shadow: 0 0 0 7px rgb(var(--accent) / .22), 0 3px 8px rgb(0 0 0 / .5); }
+  .step-slider[data-dragging='true'] .step-thumb, .step-slider[data-dragging='true'] .step-fill { transition-duration: 0ms; }
+  .step-slider:focus-visible .step-thumb { box-shadow: 0 0 0 5px rgb(var(--accent) / .38), 0 3px 8px rgb(0 0 0 / .5); }
+  .step-thumb[data-ghost='true'] { background: rgb(var(--panel)); box-shadow: inset 0 0 0 2px rgb(var(--muted-2) / .8); border-style: none; }
+  .step-thumb[data-hidden='true'] { opacity: 0; transform: scale(.3); }
+  .step-ping { position: absolute; inset: 0; border-radius: 999px; box-shadow: 0 0 0 2px rgb(var(--accent)); pointer-events: none; animation: dialog-ping 460ms ease-out both; }
+  .step-label { transition: color 160ms, transform 200ms; }
+  .step-label[data-current='true'] { color: rgb(var(--text)); transform: translateY(-1px); }
+
+  .pick-row { display: flex; width: 100%; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; text-align: left; transition: background 120ms, border-color 120ms; }
+  .pick-row[data-active='true'] { background: rgb(var(--panel-3)); }
+  .pick-row[aria-selected='true'] { border-color: rgb(var(--accent) / .45); background: rgb(var(--accent) / .1); }
+
+  .profile-card { display: flex; width: 100%; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid rgb(var(--border)); border-radius: 10px; background: rgb(var(--well)); text-align: left; transition: border-color 140ms, background 140ms; }
+  .profile-card:hover:not(:disabled) { border-color: rgb(var(--border-strong)); }
+  .profile-card[aria-selected='true'], .profile-card[data-selected='true'] { border-color: rgb(var(--accent) / .5); background: rgb(var(--accent) / .08); }
+  .skeleton { border-radius: 10px; background: linear-gradient(90deg, rgb(var(--well)), rgb(var(--panel-3) / .6), rgb(var(--well))); background-size: 200% 100%; animation: dialog-shimmer 1.2s linear infinite; }
+
+  .num-field input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
+  .num-field input[type='number']::-webkit-outer-spin-button, .num-field input[type='number']::-webkit-inner-spin-button { appearance: none; margin: 0; }
+
+  /* The dialog body lays out in two columns once its own width allows it. */
+  .dialog-body { container-type: inline-size; }
+  .dialog-cols { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+  @container (min-width: 700px) {
+    .dialog-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+    .dialog-cols-wide-left { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dialog-backdrop, .dialog-card, .dialog-enter, .dialog-swap, .dialog-reveal, .step-ping, .skeleton { animation: none; }
+  .seg-pill, .chip-choice, .chip-mark, .step-fill, .step-thumb, .step-tick, .step-label, .pick-row { transition: none; }
+}

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockGitBackend, openConnectedApp } from './mockGit'
+import { chooseEffort, mockGitBackend, openConnectedApp, selectMenu } from './mockGit'
 
 test('starts two Claude sessions on the same profile with their launch options', async ({ page }) => {
   const errors: string[] = []
@@ -15,16 +15,15 @@ test('starts two Claude sessions on the same profile with their launch options',
     await expect(dialog.getByLabel('Profile')).toContainText('Work')
     await expect(dialog.getByTestId('profile-details')).toContainText('auth: login · dev@example.com')
     await expect(dialog.getByTestId('profile-details')).toContainText('Token expires in 12 days')
-    await expect(dialog.getByRole('switch', { name: 'Antigravity full access' })).toHaveCount(0)
+    await expect(dialog.getByRole('radio', { name: 'Full access' })).toHaveCount(0)
     await dialog.getByLabel('Agent name').fill(name)
     await dialog.getByLabel('Agent model').click()
-    await expect(page.getByRole('option')).toHaveCount(3)
-    await page.getByRole('option', { name: /Claude Sonnet 5.5/ }).click()
+    const suggestions = page.getByRole('listbox', { name: 'Agent model suggestions' })
+    await expect(suggestions.getByRole('option')).toHaveCount(3)
+    await suggestions.getByRole('option', { name: /Claude Sonnet 5.5/ }).click()
     await expect(dialog.getByLabel('Agent model')).toHaveValue('claude-sonnet-5-5')
-    await dialog.getByLabel('Permission mode').click()
-    await page.getByRole('option', { name: mode, exact: true }).click()
-    await dialog.getByLabel('Effort').click()
-    await page.getByRole('option', { name: 'high', exact: true }).click()
+    await dialog.getByRole('radio', { name: mode, exact: true }).click()
+    await chooseEffort(dialog, 'high')
     const launch = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/api/projects/bonsai/agents'))
     await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
     expect((await launch).postDataJSON()).toMatchObject({ account_id: 'claude-profile', name, model: 'claude-sonnet-5-5', permission_mode: mode === 'Plan' ? 'plan' : 'acceptEdits', effort: 'high', worktree_id: 'wt-daemon' })

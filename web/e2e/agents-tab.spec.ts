@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { bonsaiTheme } from '../src/theme/themes'
-import { DEFAULT_API_ORIGIN, mockGitBackend, openConnectedApp } from './mockGit'
+import { chooseEffort, DEFAULT_API_ORIGIN, mockGitBackend, openConnectedApp, selectMenu } from './mockGit'
 
 const fixture = { enabled: true }
 const backend = (page: Page) => mockGitBackend(page, false, false, false, DEFAULT_API_ORIGIN, fixture)
@@ -139,8 +139,7 @@ test('start agent from a profile preselects it in the lazy dialog with its cache
   await expect(dialog.getByRole('button', { name: /Codex/ })).toHaveAttribute('aria-pressed', 'true')
   await expect(dialog.getByLabel('Profile')).toContainText('Personal')
   await expect(dialog.getByLabel('Profile')).toContainText('5h 72% · week 38%')
-  await dialog.getByLabel('Profile').click()
-  const options = page.getByRole('option')
+  const options = dialog.getByRole('listbox', { name: 'Profile' }).getByRole('option')
   await expect(options).toHaveCount(2)
   await expect(options.nth(0)).toContainText('Personal')
   await expect(options.nth(1)).toContainText('Team')
@@ -161,10 +160,9 @@ test('a low profile warns in the dialog, and the launch details reach the sessio
   await expect(dialog.getByLabel('Profile')).toContainText('Work')
   await expect(dialog.getByRole('note')).toContainText('Low headroom: 5h 15% · week 55% left.')
   await dialog.getByLabel('Worktree and branch').click()
-  await page.getByRole('option').first().click()
+  await selectMenu(page, 'Worktree and branch').getByRole('option').first().click()
   await dialog.getByLabel('Agent model').fill('opus')
-  await dialog.getByLabel('Effort').click()
-  await page.getByRole('option', { name: 'max', exact: true }).click()
+  await chooseEffort(dialog, 'max')
   await dialog.getByLabel('Agent name').fill('Low headroom run')
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
   await expect(dialog).toBeHidden()

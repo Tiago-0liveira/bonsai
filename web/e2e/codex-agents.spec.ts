@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mockGitBackend, openConnectedApp } from './mockGit'
+import { chooseEffort, mockGitBackend, openConnectedApp } from './mockGit'
 
 type Launch = { name: string; profile: 'Personal' | 'Team'; model?: RegExp; effort?: string; permissions?: string }
 
@@ -16,24 +16,21 @@ test('starts two Codex sessions on one profile and one on another, each with its
     await expect(dialog.getByRole('button', { name: /Codex/ })).toBeEnabled()
     await dialog.getByRole('button', { name: /Codex/ }).click()
     // Two profiles, so none is preselected.
-    await expect(dialog.getByLabel('Profile')).toContainText('Choose a profile')
-    await dialog.getByLabel('Profile').click()
-    await page.getByRole('option', { name: new RegExp(`^${launch.profile}`) }).click()
+    await expect(dialog.getByText('Choose a profile to continue.')).toBeVisible()
+    await dialog.getByRole('option', { name: new RegExp(`^${launch.profile}`) }).click()
     await expect(dialog.getByTestId('profile-details')).toContainText('logged in')
-    await expect(dialog.getByLabel('Permissions')).toContainText('Auto')
+    await expect(dialog.getByRole('radio', { name: 'Auto', exact: true })).toBeChecked()
     await expect(dialog.getByLabel('Agent model')).toHaveAttribute('placeholder', 'GPT-6.1-Sol')
     await dialog.getByLabel('Agent name').fill(launch.name)
     if (launch.model) {
       await dialog.getByLabel('Agent model').click()
-      await page.getByRole('option', { name: launch.model }).click()
+      await page.getByRole('listbox', { name: 'Agent model suggestions' }).getByRole('option', { name: launch.model }).click()
     }
     if (launch.effort) {
-      await dialog.getByLabel('Effort').click()
-      await page.getByRole('option', { name: launch.effort, exact: true }).click()
+      await chooseEffort(dialog, launch.effort)
     }
     if (launch.permissions) {
-      await dialog.getByLabel('Permissions').click()
-      await page.getByRole('option', { name: launch.permissions, exact: true }).click()
+      await dialog.getByRole('radio', { name: launch.permissions, exact: true }).click()
     }
     const request = page.waitForRequest(item => item.method() === 'POST' && item.url().endsWith('/api/projects/bonsai/agents'))
     await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
@@ -80,22 +77,21 @@ test('drops an effort the chosen model does not offer and explains the profile s
   await openConnectedApp(page)
   const dialog = await openDialog(page)
   await dialog.getByRole('button', { name: /Codex/ }).click()
-  await dialog.getByLabel('Profile').click()
-  await page.getByRole('option', { name: /^Team/ }).click()
+  await dialog.getByRole('option', { name: /^Team/ }).click()
   await expect(dialog.getByTestId('profile-details')).toContainText('auth: device · team@example.com · pro · logged in')
   await expect(dialog.getByTestId('profile-details')).toContainText('Same login as profile "Personal"')
 
-  await dialog.getByLabel('Effort').click()
-  await expect(page.getByRole('option')).toHaveText(['Profile default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
-  await page.getByRole('option', { name: 'ultra', exact: true }).click()
+  const slider = dialog.getByRole('slider', { name: 'Effort' })
+  const stops = () => slider.locator('[data-stop]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-stop')))
+  await expect(slider).toHaveAttribute('aria-valuetext', 'Profile default')
+  await expect.poll(stops).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+  await chooseEffort(dialog, 'ultra')
+  await expect(slider).toHaveAttribute('aria-valuetext', 'Ultra')
   await dialog.getByLabel('Agent model').click()
-  await page.getByRole('option', { name: /GPT-6-Luna/ }).click()
-  await expect(dialog.getByLabel('Effort')).toContainText('Profile default')
-  await dialog.getByLabel('Effort').click()
-  await expect(page.getByRole('option')).toHaveText(['Profile default', 'low', 'medium', 'high', 'xhigh', 'max'])
-  await page.keyboard.press('Escape')
+  await page.getByRole('listbox', { name: 'Agent model suggestions' }).getByRole('option', { name: /GPT-6-Luna/ }).click()
+  await expect(slider).toHaveAttribute('aria-valuetext', 'Profile default')
+  await expect.poll(stops).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
 
-  await dialog.getByLabel('Permissions').click()
-  await page.getByRole('option', { name: 'Full access', exact: true }).click()
+  await dialog.getByRole('radio', { name: 'Full access', exact: true }).click()
   await expect(dialog.getByRole('note')).toContainText('without asking')
 })

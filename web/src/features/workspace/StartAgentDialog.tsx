@@ -1,19 +1,25 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Bot, Gauge, LogIn, X } from 'lucide-react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { Bot, GitBranch, Gauge, LogIn, Play } from 'lucide-react'
 import { useRouter } from '@tanstack/react-router'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
+import { ChoiceChips } from '../../components/ui/ChoiceChips'
+import { DialogFrame, Field, TEXT_INPUT } from '../../components/ui/Dialog'
+import { Segmented } from '../../components/ui/Segmented'
 import { accountAddCommand, agentUsage, byHeadroom, headroomLabel } from '../../api/agentsOverview'
 import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type AgentUsage, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { authState } from '../agents/agentsModel'
+import { AUTH_DOT, authState } from '../agents/agentsModel'
 import { ModelCombobox } from '../../components/ui/ModelCombobox'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import type { AgentProviderId } from '../../types'
-import { LaunchFields, chosenModel, initialLaunchValues, launchRequestOptions, launchSummary, resolveLaunchValues, type LaunchValues } from './LaunchFields'
+import { chosenModel, initialLaunchValues, launchRequestOptions, launchSummary, resolveLaunchValues, type LaunchValues } from './LaunchFields'
+import { LaunchControls } from './LaunchControls'
+import { ProfilePicker } from './ProfilePicker'
 
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
 const isLaunchable = (id: string): id is AgentProviderId => Object.hasOwn(PROVIDER_LABELS, id)
 const NO_FIELDS: LaunchField[] = []
+const WORK_TYPES = ['Implementation', 'Debugging', 'Testing', 'Review', 'Research', 'Refactor', 'Documentation', 'Release']
 const setupCommand = accountAddCommand
 const fieldsOf = (providers: AgentCapability[], id: string) => providers.find(item => item.id === id)?.launch_fields ?? NO_FIELDS
 
@@ -147,178 +153,162 @@ function StartAgentForm() {
     }
   }
 
+  const detailTone = account ? authState(account).tone : 'none'
+  const worktreeOptions = availableWorktrees.map((item) => ({
+    value: item.id,
+    label: item.branch,
+    icon: <GitBranch size={13} className="text-muted" />,
+    description: item.mergeTargetBranch ? 'merges into ' + item.mergeTargetBranch : item.path,
+  }))
+  const nameId = useId()
+  const promptId = useId()
+
   return (
-    <div className="absolute inset-0 z-[85] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
-      <form
-        onSubmit={submit}
-        role="dialog" aria-modal="true" aria-labelledby="start-agent-title"
-        className="w-full max-w-[720px] overflow-hidden rounded-[14px] border border-border-strong bg-panel shadow-overlay"
-      >
-        <div className="flex h-11 items-center border-b border-border-subtle px-4">
-          <Bot size={15} className="mr-2 text-accent" />
-          <div>
-            <div id="start-agent-title" className="text-[13px] font-semibold">Start agent</div>
-            <div className="font-mono text-[10px] text-muted-2">Choose the worktree, profile and task.</div>
-          </div>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => setOpen(false)}
-            aria-label="Close start agent"
-            className="bonsai-focus ml-auto grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-panel-3 hover:text-text"
-          >
-            <X size={14} />
+    <DialogFrame
+      icon={Bot}
+      title="Start agent"
+      subtitle="Pick where it runs, how it behaves and what it should do."
+      closeLabel="Close start agent"
+      onClose={() => setOpen(false)}
+      closeDisabled={pending}
+      escapeCloses={!prompt.trim()}
+      width="lg"
+      onSubmit={submit}
+      summary={[providerLabel, ...launchSummary(fields, values, launchModel)].filter(Boolean).join(' · ')}
+      actions={
+        <>
+          <button type="button" disabled={pending} onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-9 rounded-[8px] px-3.5 text-[12px] text-muted hover:text-text">
+            Cancel
           </button>
-        </div>
+          <button type="submit" disabled={!canStart} title="Ctrl+Enter in the prompt" className="bonsai-focus btn-primary inline-flex h-9 items-center gap-1.5 px-4 text-[12px] disabled:cursor-not-allowed disabled:opacity-40">
+            <Play size={12} aria-hidden="true" />
+            {pending ? 'Starting…' : 'Start agent'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <Field label="Worktree" hint={!targetWorktreeId ? 'Project-level launches require an explicit branch choice.' : undefined}>
+          <BonsaiSelect
+            ariaLabel="Worktree and branch"
+            disabled={pending}
+            searchable
+            value={worktreeId}
+            onChange={setWorktreeId}
+            placeholder="Choose a worktree"
+            options={worktreeOptions}
+          />
+        </Field>
 
-        <div className="max-h-[72vh] space-y-5 overflow-auto p-4">
-          <label className="block">
-            <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Worktree</span>
-            <BonsaiSelect
-              ariaLabel="Worktree and branch"
+        <Field label="Provider">
+          {loading && !providers.length ? (
+            <div className="skeleton h-[46px]" />
+          ) : (
+            <Segmented
+              ariaLabel="Provider"
               disabled={pending}
-              searchable
-              value={worktreeId}
-              onChange={setWorktreeId}
-              placeholder="Choose a worktree"
-              options={availableWorktrees.map((item) => ({
-                value: item.id,
-                label: item.branch,
-                description: item.mergeTargetBranch ? 'merges into ' + item.mergeTargetBranch : item.path,
-              }))}
-            />
-            {!targetWorktreeId && (
-              <span className="mt-1.5 block font-mono text-[10px] text-muted-2">
-                Project-level launches require an explicit branch choice.
-              </span>
-            )}
-          </label>
-
-          <section>
-            <div className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Provider</div>
-            <div className="grid gap-1 rounded-[9px] border border-border bg-well p-1" style={{ gridTemplateColumns: `repeat(${Math.max(providers.length, 1)}, minmax(0, 1fr))` }}>
-              {providers.map((item) => {
+              value={providerId}
+              onChange={selectProvider}
+              itemClassName="h-[34px] text-[12px]"
+              options={providers.map((item) => {
                 const profiles = accounts.filter(candidate => candidate.provider === item.id).length
                 const connected = isLaunchable(item.id) && item.available && profiles > 0
-                const active = item.id === providerId
                 const reason = !item.available ? item.unavailable_reason?.message || 'Not available' : profiles ? `Launch with your saved ${item.label} profile.` : `No ${item.label} profile yet. Run ${isLaunchable(item.id) ? setupCommand(item.id) : 'its setup command'}.`
-                return (
-                  <button
-                    type="button"
-                    key={item.id}
-                    disabled={pending || !connected}
-                    aria-pressed={active}
-                    title={reason}
-                    onClick={() => selectProvider(item.id)}
-                    className={'bonsai-focus flex h-[30px] items-center justify-center gap-2 rounded-[7px] text-[12px] transition-colors disabled:opacity-40 ' + (active ? 'bg-panel-3 text-text' : 'text-muted hover:text-text')}
-                  >
-                    <ProviderLogo provider={item.id} size={13} className="shrink-0 text-text" />
-                    <span>{item.label}</span>
-                    {connected ? (
-                      <span className="flex items-center gap-1 font-mono text-[10px] text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent-solid" />connected</span>
-                    ) : (
-                      <span className="font-mono text-[10px] text-muted-2">{item.available && isLaunchable(item.id) ? 'no profile' : 'not connected'}</span>
-                    )}
-                    <span className="sr-only">{reason}</span>
-                  </button>
-                )
+                return {
+                  value: item.id,
+                  disabled: !connected,
+                  title: reason,
+                  label: (
+                    <>
+                      <ProviderLogo provider={item.id} size={14} className="shrink-0 text-text" />
+                      <span className="truncate">{item.label}</span>
+                      {connected ? (
+                        <span className="flex items-center gap-1 font-mono text-[10px] text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent-solid" />connected</span>
+                      ) : (
+                        <span className="font-mono text-[10px] text-muted-2">{item.available && isLaunchable(item.id) ? 'no profile' : 'not connected'}</span>
+                      )}
+                      <span className="sr-only">{reason}</span>
+                    </>
+                  ),
+                }
               })}
-            </div>
-          </section>
+            />
+          )}
+        </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Profile</span>
-              <BonsaiSelect ariaLabel="Profile" disabled={pending || loading} value={accountId} placeholder={loading ? 'Loading profiles…' : 'Choose a profile'} onChange={selectAccount} options={providerAccounts.map(item => ({ value: item.id, label: item.name, icon: <ProviderLogo provider={item.provider} size={14} className="text-text" />, description: [item.auth_mode, item.identity].filter(Boolean).join(' · ') || undefined, meta: headroomLabel(usage[item.id]?.headline) || undefined }))} />
+        <div className="dialog-cols">
+          <div className="space-y-5">
+            <Field label="Profile" hint={!loading && providerAccounts.length > 1 && !account ? 'Choose a profile to continue.' : undefined}>
+              <ProfilePicker accounts={providerAccounts} usage={usage} value={accountId} onChange={selectAccount} loading={loading} disabled={pending} />
               {headline?.low && (
-                <span role="note" className="mt-1.5 flex items-center gap-1.5 font-mono text-[10px] text-warn">
+                <span role="note" className="mt-2 flex items-center gap-1.5 font-mono text-[10px] text-warn">
                   <Gauge size={11} className="shrink-0" />Low headroom: {headroomLabel(headline)} left.{roomier && ` ${roomier.name} has more.`}
                 </span>
               )}
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Model</span>
-              <ModelCombobox ariaLabel="Agent model" disabled={pending} loading={modelsLoading} value={model} onChange={setModel} suggestions={models} placeholder={chosenModel(models, '')?.label ?? 'Use profile default'} />
-            </label>
+              {!loading && !error && selected?.available && launchable && !providerAccounts.length && <p className="mt-2 text-[11px] text-muted">Set up a profile with <code className="font-mono">{setupCommand(launchable)}</code></p>}
+              {selected && !selected.available && <p className="mt-2 text-[11px] text-muted">{selected.unavailable_reason?.message}</p>}
+            </Field>
+            {account && (signedIn.length > 0 || profileDefaults.length > 0 || account.warnings?.length) && (
+              <div className="dialog-enter space-y-1.5 rounded-[10px] border border-border-subtle bg-well/50 px-3 py-2.5 font-mono text-[10px] text-muted-2" data-testid="profile-details">
+                {signedIn.length > 0 && <div className="flex items-center gap-2"><span aria-hidden="true" className={'h-1.5 w-1.5 shrink-0 rounded-full ' + AUTH_DOT[detailTone]} />{signedIn.join(' · ')}</div>}
+                {profileDefaults.length > 0 && <div>{'profile defaults: ' + profileDefaults.join(' · ')}</div>}
+                {account.warnings?.map(warning => <div key={warning} className="text-warn">{warning}</div>)}
+                {router && detailTone === 'bad' && (
+                  <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, signin: true } }) }} className="bonsai-focus btn-bordered mt-1 inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 font-sans text-[11px] text-text">
+                    <LogIn size={11} /> Sign in again
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-          {account && (signedIn.length > 0 || profileDefaults.length > 0 || account.warnings?.length) && (
-            <div className="space-y-1 rounded-[10px] border border-border bg-well p-3 font-mono text-[10px] text-muted-2" data-testid="profile-details">
-              {signedIn.length > 0 && <div>{signedIn.join(' · ')}</div>}
-              {profileDefaults.length > 0 && <div>{'profile defaults: ' + profileDefaults.join(' · ')}</div>}
-              {account.warnings?.map(warning => <div key={warning} className="text-warn">{warning}</div>)}
-              {router && authState(account).tone === 'bad' && (
-                <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, signin: true } }) }} className="bonsai-focus btn-bordered mt-1 inline-flex h-6 items-center gap-1.5 rounded-[6px] px-2 font-sans text-[11px] text-text">
-                  <LogIn size={11} /> Sign in again
-                </button>
-              )}
-            </div>
-          )}
-          <LaunchFields fields={fields} values={values} model={launchModel} providerLabel={providerLabel} disabled={pending} onChange={(id, value) => setLaunchValues(current => ({ ...current, [id]: value }))} />
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Agent name</span>
+          <LaunchControls
+            fields={fields}
+            values={values}
+            model={launchModel}
+            account={account}
+            providerLabel={providerLabel}
+            disabled={pending}
+            onChange={(id, value) => setLaunchValues(current => ({ ...current, [id]: value }))}
+          />
+        </div>
+
+        <div className="space-y-5 border-t border-border-subtle pt-5">
+          <div className="dialog-cols">
+            <Field label="Agent name" htmlFor={nameId}>
               <input
-                aria-label="Agent name"
+                id={nameId}
                 maxLength={128}
                 disabled={pending}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="e.g. Login refactor"
-                className="bonsai-focus h-8 w-full rounded-[7px] border border-border bg-well px-2.5 text-[12px] outline-none placeholder:text-muted-2 focus:border-accent/55"
+                className={TEXT_INPUT}
               />
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Work type</span>
-              <BonsaiSelect
-                ariaLabel="Agent work type"
-                disabled={pending}
-                value={workType}
-                onChange={setWorkType}
-                options={['Implementation', 'Debugging', 'Testing', 'Review', 'Research', 'Refactor', 'Documentation', 'Release'].map((item) => ({
-                  value: item,
-                  label: item,
-                }))}
-              />
-            </label>
+            </Field>
+            <Field label="Model" hint={!model.trim() ? 'Empty uses the profile default.' : undefined}>
+              <ModelCombobox ariaLabel="Agent model" disabled={pending} loading={modelsLoading} value={model} onChange={setModel} suggestions={models} placeholder={chosenModel(models, '')?.label ?? 'Use profile default'} />
+            </Field>
           </div>
-
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">
-              <Gauge size={10} /> Prompt
-            </span>
+          <Field label="Work type">
+            <ChoiceChips ariaLabel="Agent work type" disabled={pending} value={workType} onChange={setWorkType} options={WORK_TYPES.map(item => ({ value: item, label: item }))} />
+          </Field>
+          <Field label="Prompt" htmlFor={promptId}>
             <textarea
-              aria-label="Prompt"
+              id={promptId}
               disabled={pending}
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
+              }}
               placeholder="Describe the exact work this agent should execute…"
-              rows={6}
-              className="bonsai-focus w-full resize-y rounded-[7px] border border-border bg-well px-3 py-2.5 text-[12px] leading-5 outline-none placeholder:text-muted-2 focus:border-accent/55"
+              rows={5}
+              className="bonsai-focus w-full resize-y rounded-[8px] border border-border bg-well px-3 py-2.5 text-[12.5px] leading-5 outline-none transition-colors placeholder:text-muted-2 hover:border-border-strong focus:border-accent/55 disabled:opacity-50"
             />
-          </label>
-          {!loading && !error && selected?.available && launchable && !providerAccounts.length && <p className="text-[10px] text-muted">Set up a profile with <code>{setupCommand(launchable)}</code></p>}
-          {selected && !selected.available && <p className="text-[10px] text-muted">{selected.unavailable_reason?.message}</p>}
-          {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
+          </Field>
         </div>
-
-        <div className="flex items-center justify-between border-t border-border-subtle bg-well/45 px-4 py-3">
-          <div className="font-mono text-[10px] text-muted-2">
-            {[providerLabel, ...launchSummary(fields, values, launchModel)].filter(Boolean).join(' · ')}
-          </div>
-          <div className="flex gap-2">
-            <button type="button" disabled={pending} onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px] text-muted hover:text-text">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!canStart}
-              className="bonsai-focus btn-primary h-8 px-3 text-[12px] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {pending ? 'Starting…' : 'Start agent'}
-            </button>
-          </div>
-        </div>
-      </form>
-    </div>
+        {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
+      </div>
+    </DialogFrame>
   )
 }

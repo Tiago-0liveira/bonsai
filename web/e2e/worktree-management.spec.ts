@@ -13,7 +13,7 @@ test('remote branch creation and canonical state add and remove the node', async
   await page.getByRole('button', { name: 'New worktree' }).click()
   const dialog = page.getByRole('dialog', { name: 'New worktree' })
   await dialog.getByRole('button', { name: /Remote branch/ }).first().click()
-  await expect(dialog.getByRole('button', { name: 'Remote branch', exact: true })).toHaveText('origin/discovered')
+  await expect(dialog.getByRole('option', { name: /origin\/discovered/ })).toHaveAttribute('aria-selected', 'true')
   const request = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/api/projects/bonsai/worktrees'))
   await dialog.getByRole('button', { name: 'Create worktree' }).click()
   expect((await request).postDataJSON()).toMatchObject({ mode: 'remote', branch: 'discovered', base: 'origin/discovered' })
