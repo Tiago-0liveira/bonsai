@@ -1,6 +1,6 @@
 import { startAgent, stopAgent, mapAgent, isLiveAgent, providerIdFor } from '../api/agents'
 import type { ProjectRootsSettings } from '../api/settings'
-import { loadEditors, saveEditor, openFileInEditor, openFolderInEditor, type EnvironmentEditorSettings } from '../api/editors'
+import { loadEditors, saveEditor, openFileInEditor, openFolderInEditor, openFolderInFileManager, type EnvironmentEditorSettings } from '../api/editors'
 import { create } from 'zustand'
 import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
 import { createPreferenceBoundary } from './preferenceBoundary'
@@ -142,6 +142,8 @@ export interface BonsaiState {
   pendingOpenFile: { worktreeId: string; path: string; folder?: boolean } | null
   requestOpenFile: (path: string) => Promise<void>
   requestOpenFolder: (worktreeId: string) => Promise<void>
+  /** Opens the worktree folder in Explorer, Finder or the desktop file manager. */
+  revealFolder: (worktreeId: string) => Promise<void>
   chooseFileEditor: (editor: string) => Promise<void>
   closeEditorPrompt: () => void
 
@@ -490,6 +492,17 @@ export const useBonsaiStore = create<BonsaiState>()(
           const result = await openFolderInEditor(worktreeId, settings.environment.id)
           set({ notice: 'Requested ' + result.editor + ' to open the worktree folder' })
         } catch (error) { report(error) }
+      },
+      revealFolder: async (worktreeId) => {
+        try {
+          const settings = get().editorSettings ?? await get().loadEditorSettings()
+          const result = await openFolderInFileManager(worktreeId, settings.environment.id)
+          set({ notice: 'Opened the worktree folder in ' + result.file_manager })
+        } catch (error) {
+          // A stale environment id is refreshed for the next attempt.
+          await get().loadEditorSettings().catch(() => undefined)
+          report(error)
+        }
       },
       chooseFileEditor: async (editor) => {
         const pending = get().pendingOpenFile

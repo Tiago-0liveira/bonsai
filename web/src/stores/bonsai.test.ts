@@ -133,7 +133,9 @@ describe('bonsai store', () => {
     const output = useBonsaiStore.getState().terminalOutput
     useBonsaiStore.getState().appendTerminalCommand('git ' + action)
     await vi.waitFor(() => expect(useBonsaiStore.getState().notice).toBe('daemon offline'))
-    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/worktrees/wt-web/' + action, expect.objectContaining({ method: 'POST' }))
+    // Fetch belongs to the repository, so it uses the project route.
+    const path = action === 'fetch' ? '/api/projects/bonsai/fetch' : '/api/worktrees/wt-web/' + action
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000' + path, expect.objectContaining({ method: 'POST' }))
     expect(useBonsaiStore.getState().terminalOutput).toBe(output)
   })
 

@@ -54,6 +54,8 @@ type Discovery struct {
 	AppRoots []string
 	// WindowsMounts includes nonstandard WSL drive mount locations.
 	WindowsMounts []string
+	// convertPath turns a WSL path into a Windows path; nil runs wslpath.
+	convertPath func(string) (string, error)
 }
 
 func Current() Discovery {
@@ -430,28 +432,44 @@ func (d Discovery) start(editor Editor, directory string, args []string) error {
 	if editor.windows {
 		cmd.Env = d.windowsLaunchEnv()
 	} else {
-		// Native launcher scripts must also resolve helpers in this environment.
-		cmd.Env = []string{}
-		for _, value := range os.Environ() {
-			if key, _, ok := strings.Cut(value, "="); ok && !strings.EqualFold(key, "PATH") {
-				cmd.Env = append(cmd.Env, value)
-			}
-		}
-		cmd.Env = append(cmd.Env, "PATH="+strings.Join(d.nativeDirectories(), string(os.PathListSeparator)))
+		cmd.Env = d.nativeEnv()
 	}
+	return waitBriefly(cmd, editor.Name, false)
+}
+
+// nativeEnv keeps the environment but limits PATH to native directories, so
+// launcher scripts resolve helpers in this environment, not on Windows.
+func (d Discovery) nativeEnv() []string {
+	env := []string{}
+	for _, value := range os.Environ() {
+		if key, _, ok := strings.Cut(value, "="); ok && !strings.EqualFold(key, "PATH") {
+			env = append(env, value)
+		}
+	}
+	return append(env, "PATH="+strings.Join(d.nativeDirectories(), string(os.PathListSeparator)))
+}
+
+// waitBriefly starts cmd and reports a failure within the first 300ms. The
+// process outlives the request; Wait reaps it even if its GUI stays open.
+// anyExit accepts every exit status, for launchers whose status means nothing.
+func waitBriefly(cmd *exec.Cmd, name string, anyExit bool) error {
 	var stderr limitedOutput
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("cannot launch %s: %w", editor.Name, err)
+		return fmt.Errorf("cannot launch %s: %w", name, err)
 	}
 	done := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
+		var exit *exec.ExitError
+		if anyExit && errors.As(err, &exit) {
+			err = nil
+		}
 		if err != nil {
-			err = fmt.Errorf("%s exited unsuccessfully: %w. %s", editor.Name, err, strings.TrimSpace(stderr.String()))
+			err = fmt.Errorf("%s exited unsuccessfully: %w. %s", name, err, strings.TrimSpace(stderr.String()))
 			// A GUI may stay running past the initial response. Preserve later
 			// failures in the local API log instead of silently discarding them.
-			log.Printf("editor launch: %v", err)
+			log.Printf("launch: %v", err)
 		}
 		done <- err
 	}()
