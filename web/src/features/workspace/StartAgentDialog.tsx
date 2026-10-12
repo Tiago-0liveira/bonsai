@@ -1,19 +1,16 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
-import { Bot, GitBranch, Gauge, LogIn, Play } from 'lucide-react'
+import { Bot, GitBranch, Gauge, LogIn, Play, SlidersHorizontal } from 'lucide-react'
 import { useRouter } from '@tanstack/react-router'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { ChoiceChips } from '../../components/ui/ChoiceChips'
 import { DialogFrame, Field, TEXT_INPUT } from '../../components/ui/Dialog'
 import { Segmented } from '../../components/ui/Segmented'
 import { accountAddCommand, agentUsage, byHeadroom, headroomLabel } from '../../api/agentsOverview'
-import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type AgentUsage, type LaunchField } from '../../api/agents'
+import { PROVIDER_LABELS, agentAccounts, agentProviders, type AgentAccount, type AgentCapability, type AgentUsage, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { AUTH_DOT, authState } from '../agents/agentsModel'
-import { ModelCombobox } from '../../components/ui/ModelCombobox'
+import { AUTH_DOT, authState, profileDefaults } from '../agents/agentsModel'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import type { AgentProviderId } from '../../types'
-import { chosenModel, initialLaunchValues, launchRequestOptions, launchSummary, resolveLaunchValues, type LaunchValues } from './LaunchFields'
-import { LaunchControls } from './LaunchControls'
 import { ProfilePicker } from './ProfilePicker'
 
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
@@ -58,10 +55,6 @@ function StartAgentForm() {
   const [usage, setUsage] = useState<Record<string, AgentUsage>>({})
   const [accountId, setAccountId] = useState('')
   const [providerId, setProviderId] = useState('')
-  const [model, setModel] = useState('')
-  const [models, setModels] = useState<AgentModel[]>([])
-  const [modelsLoading, setModelsLoading] = useState(false)
-  const [launchValues, setLaunchValues] = useState<LaunchValues>({})
   const [name, setName] = useState('')
   const [workType, setWorkType] = useState('Implementation')
   const [prompt, setPrompt] = useState('')
@@ -84,7 +77,6 @@ function StartAgentForm() {
       const own = accounts.filter(account => account.provider === initial)
       const chosen = target ?? (own.length === 1 ? own[0] : undefined)
       if (chosen) setAccountId(chosen.id)
-      setLaunchValues(initialLaunchValues(fieldsOf(providers, initial), chosen))
     }).catch(error => { if (!disposed) setError(String(error.message)) })
       .finally(() => { if (!disposed) setLoading(false) })
     return () => { disposed = true }
@@ -95,16 +87,6 @@ function StartAgentForm() {
     agentUsage().then(list => { if (!disposed) setUsage(Object.fromEntries(list.map(entry => [entry.account_id, entry]))) }).catch(() => {})
     return () => { disposed = true }
   }, [])
-  // Suggestions follow the provider and profile; failures just leave a plain input.
-  const modelProvider = isLaunchable(providerId) ? providerId : ''
-  useEffect(() => {
-    setModels([])
-    if (!modelProvider || !accountId) return
-    let disposed = false
-    setModelsLoading(true)
-    agentModels(modelProvider, accountId).then(list => { if (!disposed) setModels(list) }).catch(() => {}).finally(() => { if (!disposed) setModelsLoading(false) })
-    return () => { disposed = true }
-  }, [modelProvider, accountId])
   const selected = providers.find(item => item.id === providerId)
   const launchable = isLaunchable(providerId) ? providerId : undefined
   const providerLabel = selected?.label ?? ''
@@ -114,10 +96,8 @@ function StartAgentForm() {
   // The roomiest profile that is not low itself, to point at when the chosen one runs low.
   const roomier = headline?.low ? providerAccounts.find(item => item.id !== accountId && usage[item.id]?.headline?.score !== undefined && !usage[item.id]?.headline?.low) : undefined
   const fields = fieldsOf(providers, providerId)
-  const launchModel = chosenModel(models, model)
-  const values = resolveLaunchValues(fields, launchValues, launchModel)
-  const options = launchRequestOptions(fields, values)
-  const profileDefaults = [account?.model, ...launchSummary(fields.filter(field => field.kind === 'select'), account ?? {})].filter(Boolean)
+  // Model, permissions and effort come from the profile; they are edited on its Defaults tab.
+  const defaults = account ? profileDefaults(fields, account) : []
   const signedIn = [account?.auth_mode && `auth: ${account.auth_mode}`, account?.identity, account?.auth_status?.replace(/_/g, ' ')].filter(Boolean)
   const selectProvider = (id: string) => {
     if (id === providerId) return
@@ -126,14 +106,8 @@ function StartAgentForm() {
     setError('')
     rememberProvider(id)
     setAccountId(own.length === 1 ? own[0].id : '')
-    setModel('')
-    setLaunchValues(initialLaunchValues(fieldsOf(providers, id), own.length === 1 ? own[0] : undefined))
   }
-  const selectAccount = (id: string) => {
-    setAccountId(id)
-    // Toggles start from the profile's own setting; selects keep the user's choice.
-    setLaunchValues(current => ({ ...current, ...initialLaunchValues(fields.filter(field => field.kind === 'toggle'), accounts.find(item => item.id === id)) }))
-  }
+  const selectAccount = (id: string) => setAccountId(id)
   const canStart = !loading && !pending && launchable && selected?.available && account && availableWorktrees.some(item => item.id === worktreeId)
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -141,10 +115,10 @@ function StartAgentForm() {
     busy.current = true
     setPending(true)
     setError('')
-    const fingerprint = JSON.stringify({ providerId, worktreeId, accountId, name, model, workType, prompt, options })
+    const fingerprint = JSON.stringify({ providerId, worktreeId, accountId, name, workType, prompt })
     if (request.current.fingerprint !== fingerprint) request.current = { fingerprint, key: crypto.randomUUID() }
     try {
-      await createAgent({ worktreeId, accountId, requestKey: request.current.key, name: name.trim(), provider: PROVIDER_LABELS[launchable], model: model.trim(), reasoningEffort: '', fastMode: false, workType, prompt: prompt.trim(), options })
+      await createAgent({ worktreeId, accountId, requestKey: request.current.key, name: name.trim(), provider: PROVIDER_LABELS[launchable], model: '', reasoningEffort: '', fastMode: false, workType, prompt: prompt.trim(), options: {} })
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -167,14 +141,14 @@ function StartAgentForm() {
     <DialogFrame
       icon={Bot}
       title="Start agent"
-      subtitle="Pick where it runs, how it behaves and what it should do."
+      subtitle="Pick where it runs, which profile runs it and what it should do."
       closeLabel="Close start agent"
       onClose={() => setOpen(false)}
       closeDisabled={pending}
       escapeCloses={!prompt.trim()}
       width="lg"
       onSubmit={submit}
-      summary={[providerLabel, ...launchSummary(fields, values, launchModel)].filter(Boolean).join(' · ')}
+      summary={[providerLabel, account?.name, ...defaults.map(item => item.value)].filter(Boolean).join(' · ')}
       actions={
         <>
           <button type="button" disabled={pending} onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-9 rounded-[8px] px-3.5 text-[12px] text-muted hover:text-text">
@@ -248,10 +222,9 @@ function StartAgentForm() {
               {!loading && !error && selected?.available && launchable && !providerAccounts.length && <p className="mt-2 text-[11px] text-muted">Set up a profile with <code className="font-mono">{setupCommand(launchable)}</code></p>}
               {selected && !selected.available && <p className="mt-2 text-[11px] text-muted">{selected.unavailable_reason?.message}</p>}
             </Field>
-            {account && (signedIn.length > 0 || profileDefaults.length > 0 || account.warnings?.length) && (
+            {account && (signedIn.length > 0 || account.warnings?.length) && (
               <div className="dialog-enter space-y-1.5 rounded-[10px] border border-border-subtle bg-well/50 px-3 py-2.5 font-mono text-[10px] text-muted-2" data-testid="profile-details">
                 {signedIn.length > 0 && <div className="flex items-center gap-2"><span aria-hidden="true" className={'h-1.5 w-1.5 shrink-0 rounded-full ' + AUTH_DOT[detailTone]} />{signedIn.join(' · ')}</div>}
-                {profileDefaults.length > 0 && <div>{'profile defaults: ' + profileDefaults.join(' · ')}</div>}
                 {account.warnings?.map(warning => <div key={warning} className="text-warn">{warning}</div>)}
                 {router && detailTone === 'bad' && (
                   <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, signin: true } }) }} className="bonsai-focus btn-bordered mt-1 inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 font-sans text-[11px] text-text">
@@ -261,34 +234,43 @@ function StartAgentForm() {
               </div>
             )}
           </div>
-          <LaunchControls
-            fields={fields}
-            values={values}
-            model={launchModel}
-            account={account}
-            providerLabel={providerLabel}
-            disabled={pending}
-            onChange={(id, value) => setLaunchValues(current => ({ ...current, [id]: value }))}
-          />
+          <Field label="Profile defaults" hint="New launches use these. Change them on the profile's Defaults tab.">
+            <div className="space-y-2 rounded-[10px] border border-border-subtle bg-well/50 px-3 py-2.5" data-testid="launch-defaults">
+              {account ? (
+                <>
+                  <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-1.5 text-[12px]">
+                    {(defaults.length ? defaults : [{ label: 'Model, permissions, effort', value: 'Provider defaults' }]).map(item => (
+                      <div key={item.label} className="contents">
+                        <dt className="text-muted">{item.label}</dt>
+                        <dd className="min-w-0 break-words text-text">{item.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {router && (
+                    <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, tab: 'defaults' } }) }} className="bonsai-focus btn-bordered inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[11px] text-text">
+                      <SlidersHorizontal size={11} aria-hidden="true" /> Edit defaults
+                    </button>
+                  )}
+                </>
+              ) : (
+                <p className="font-mono text-[10.5px] text-muted-2">Choose a profile to see its defaults.</p>
+              )}
+            </div>
+          </Field>
         </div>
 
         <div className="space-y-5 border-t border-border-subtle pt-5">
-          <div className="dialog-cols">
-            <Field label="Agent name" htmlFor={nameId}>
-              <input
-                id={nameId}
-                maxLength={128}
-                disabled={pending}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="e.g. Login refactor"
-                className={TEXT_INPUT}
-              />
-            </Field>
-            <Field label="Model" hint={!model.trim() ? 'Empty uses the profile default.' : undefined}>
-              <ModelCombobox ariaLabel="Agent model" disabled={pending} loading={modelsLoading} value={model} onChange={setModel} suggestions={models} placeholder={chosenModel(models, '')?.label ?? 'Use profile default'} />
-            </Field>
-          </div>
+          <Field label="Agent name" htmlFor={nameId}>
+            <input
+              id={nameId}
+              maxLength={128}
+              disabled={pending}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="e.g. Login refactor"
+              className={TEXT_INPUT}
+            />
+          </Field>
           <Field label="Work type">
             <ChoiceChips ariaLabel="Agent work type" disabled={pending} value={workType} onChange={setWorkType} options={WORK_TYPES.map(item => ({ value: item, label: item }))} />
           </Field>

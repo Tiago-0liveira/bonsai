@@ -127,8 +127,10 @@ error, and later failures are retained in the local API log.
 **Agents** in the top bar lists every agent provider Bonsai knows (Claude Code,
 Codex, Antigravity), whether its CLI is installed, and each profile with its
 sign-in state, identity, warnings, plan usage and sessions in every project.
-The strip on top sums up the fleet: profiles signed in, sessions running, the
-lowest headroom and the next reset. Select a profile for its tabs:
+Providers are listed Claude, Codex, then Antigravity, and each can be collapsed
+to hide its profiles (the choice is remembered in the browser). The strip on top
+sums up the fleet: profiles signed in, sessions running, the lowest headroom and
+the next reset. Select a profile for its tabs:
 
 - **Overview**: sign-in method, identity, status, saved defaults, **Start
   agent** (the start dialog opens on this profile), **Sign in again** and
@@ -138,8 +140,9 @@ lowest headroom and the next reset. Select a profile for its tabs:
 - **Sessions**: running and recent sessions with the model, effort and
   permissions they were started with; open the terminal, stop the agent or show
   it on the canvas.
-- **Defaults**: the model, effort and permissions new sessions of the profile
-  start with. Running sessions are not changed.
+- **Defaults**: the model, permissions and effort every new session of the
+  profile starts with; the start dialog shows them and has no controls of its
+  own for them. Running sessions are not changed.
 
 **Add profile** creates a profile without a terminal: choose the provider, a
 name and how to sign in (browser sign-in, device code, or a pasted API key or

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { bonsaiTheme } from '../src/theme/themes'
-import { chooseEffort, DEFAULT_API_ORIGIN, mockGitBackend, openConnectedApp, selectMenu } from './mockGit'
+import { DEFAULT_API_ORIGIN, mockGitBackend, openConnectedApp, selectMenu } from './mockGit'
 
 const fixture = { enabled: true }
 const backend = (page: Page) => mockGitBackend(page, false, false, false, DEFAULT_API_ORIGIN, fixture)
@@ -27,9 +27,17 @@ test('the nav opens the page: no canvas, providers, profiles and the fleet summa
   await expect(list.getByRole('region', { name: 'Antigravity' })).toContainText('agy is not installed')
   await expect(list.getByRole('region', { name: 'Antigravity' })).toContainText('Install Antigravity')
   await expect(list.getByRole('region', { name: 'Codex' })).toContainText('v0.162.1')
-  await expect(list.getByRole('region', { name: 'Codex' }).getByRole('button')).toHaveCount(2)
+  await expect(list.getByRole('list', { name: 'Codex profiles' }).getByRole('button')).toHaveCount(2)
   await expect(list.getByRole('region', { name: 'Codex' }).getByRole('button', { name: /Team.*Signed out/ })).toBeVisible()
   await expect(list.getByRole('region', { name: 'Claude' }).getByRole('button', { name: /CI token/ })).toBeVisible()
+  // Claude, Codex, Antigravity, whatever order the API lists them in; each collapses.
+  expect(await list.getByRole('region').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))).toEqual(['Claude', 'Codex', 'Antigravity'])
+  const claude = list.getByRole('button', { name: /^Claude/ })
+  await claude.click()
+  await expect(claude).toHaveAttribute('aria-expanded', 'false')
+  await expect(list.getByRole('list', { name: 'Claude profiles' })).toHaveCount(0)
+  await claude.click()
+  await expect(list.getByRole('button', { name: /CI token/ })).toBeVisible()
   await expect(summary).toContainText('Profiles4')
   await expect(summary).toContainText('Signed in3/4')
   await expect(summary).toContainText('Running3')
@@ -161,15 +169,13 @@ test('a low profile warns in the dialog, and the launch details reach the sessio
   await expect(dialog.getByRole('note')).toContainText('Low headroom: 5h 15% · week 55% left.')
   await dialog.getByLabel('Worktree and branch').click()
   await selectMenu(page, 'Worktree and branch').getByRole('option').first().click()
-  await dialog.getByLabel('Agent model').fill('opus')
-  await chooseEffort(dialog, 'max')
   await dialog.getByLabel('Agent name').fill('Low headroom run')
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
   await expect(dialog).toBeHidden()
   expect(controls.usageRequests.filter(item => item.method === 'POST')).toEqual([])
 
   await page.goto('/app/agents?profile=claude-profile&tab=sessions')
-  await expect(sessions.getByRole('listitem').filter({ hasText: 'Low headroom run' })).toContainText('opus · max effort')
+  await expect(sessions.getByRole('listitem').filter({ hasText: 'Low headroom run' })).toBeVisible()
   await page.getByRole('button', { name: 'Show Release notes on canvas' }).click()
   const inspector = page.getByRole('complementary', { name: 'Inspector' })
   await expect(inspector.getByText('Launch', { exact: true })).toBeVisible()

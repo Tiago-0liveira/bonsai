@@ -52,10 +52,10 @@ const renderPage = async (rest: Partial<AgentsPageProps> = {}) => {
 }
 const defaultsForm = () => screen.getByRole('form', { name: 'Profile defaults' })
 const modelInput = () => within(defaultsForm()).getByRole('combobox', { name: 'Default model' })
-const pick = (name: string, option: string) => {
-  fireEvent.click(within(defaultsForm()).getByRole('button', { name }))
-  fireEvent.click(screen.getByRole('option', { name: option }))
-}
+// Permissions is a row of chips; effort is a slider of the model's levels.
+const pick = (_name: string, option: string) => fireEvent.click(within(defaultsForm()).getByRole('radio', { name: option }))
+const effortSlider = () => within(defaultsForm()).getByRole('slider', { name: 'Effort' })
+const effortStops = () => Array.from(effortSlider().querySelectorAll('[data-stop]')).map(stop => stop.getAttribute('data-stop'))
 
 beforeEach(() => {
   useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, activeProjectId: 'bonsai', activeWorkspaceId: 'personal', agents: [] }, true)
@@ -71,10 +71,12 @@ describe('defaults tab', () => {
   it('shows the saved defaults and lists models for the profile', async () => {
     await renderPage()
     expect(modelInput()).toHaveValue('gpt-6.1-sol')
-    expect(within(defaultsForm()).getByRole('button', { name: 'Permissions' })).toHaveTextContent('Provider default')
-    expect(within(defaultsForm()).getByRole('button', { name: 'Effort' })).toHaveTextContent('high')
+    // Nothing saved for permissions: no chip is chosen and the provider default is the pressed one.
+    expect(within(within(defaultsForm()).getByRole('radiogroup', { name: 'Permissions' })).queryAllByRole('radio', { checked: true })).toHaveLength(0)
+    expect(within(defaultsForm()).getByRole('button', { name: /Provider default/, pressed: true })).toBeInTheDocument()
+    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'High')
     expect(agentModels).toHaveBeenCalledWith('codex', 'codex-personal')
-    expect(screen.getByText(/apply to new launches of this profile only/)).toBeInTheDocument()
+    expect(screen.getByText(/Every new launch of this profile starts with these choices/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save defaults' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
   })
@@ -106,9 +108,8 @@ describe('defaults tab', () => {
     await waitFor(() => expect(agentModels).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Default model' })).not.toHaveAttribute('aria-busy'))
     fireEvent.change(modelInput(), { target: { value: 'gpt-6-luna' } })
-    expect(within(defaultsForm()).getByRole('button', { name: 'Effort' })).toHaveTextContent('Provider default')
-    fireEvent.click(within(defaultsForm()).getByRole('button', { name: 'Effort' }))
-    expect(within(screen.getByRole('listbox', { name: 'Effort' })).getAllByRole('option').map(option => option.textContent?.trim())).toEqual(['Provider default', 'low', 'medium'])
+    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Provider default')
+    expect(effortStops()).toEqual(['low', 'medium'])
   })
 
   it('shows the provider\'s message when a default is refused and keeps the edits', async () => {

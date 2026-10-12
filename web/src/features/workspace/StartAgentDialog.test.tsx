@@ -79,35 +79,38 @@ it('explains missing profile setup and older API failures', async () => {
   expect(screen.getByRole('button', { name: 'Start agent' })).toBeDisabled()
 })
 
-it('submits the prompt, model and full-access setting, and changes the request key when permissions change', async () => {
+it('submits the prompt and leaves model and options to the profile, changing the request key with the prompt', async () => {
   const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
   fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Fix the login flow' } })
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'test-model' } })
-  fireEvent.click(screen.getByRole('radio', { name: 'Full access' }))
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'Fix the login flow', model: 'test-model', options: { full_access: true } }))
-  expect(screen.getByText('Antigravity · Full access')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('radio', { name: 'Ask permissions' }))
+  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'Fix the login flow', model: '', options: {} }))
+  // The retry of the same request keeps its key; a different prompt is a different request.
   fireEvent.submit(screen.getByRole('dialog'))
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
-  expect(submit.mock.calls[1][0].options).toEqual({ full_access: false })
-  expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
+  expect(submit.mock.calls[1][0].requestKey).toBe(submit.mock.calls[0][0].requestKey)
+  fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Fix the signup flow' } })
+  fireEvent.submit(screen.getByRole('dialog'))
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(3))
+  expect(submit.mock.calls[2][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
 })
 
-const effortSlider = () => screen.getByRole('slider', { name: 'Effort' })
-const effortStops = () => Array.from(effortSlider().querySelectorAll('[data-stop]')).map(stop => stop.getAttribute('data-stop'))
-const chooseEffort = (tick: string) => fireEvent.click(within(effortSlider().parentElement as HTMLElement).getByText(tick, { selector: 'button' }))
-const suggestions = () => screen.queryByRole('listbox', { name: 'Agent model suggestions' })
-// Profiles are cards, effort is a slider and every other launch field is a row of chips.
-const pick = async (label: string, option: string | RegExp) => {
-  if (label === 'Profile') fireEvent.click(await screen.findByRole('option', { name: option }))
-  else if (label === 'Effort') chooseEffort(String(option))
-  else fireEvent.click(await screen.findByRole('radio', { name: option }))
-}
+it('no longer asks for a model, permissions or effort: they come from the profile', async () => {
+  vi.mocked(agentProviders).mockResolvedValue(providers())
+  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Work'))
+  expect(screen.queryByLabelText('Agent model')).toBeNull()
+  expect(screen.queryByRole('radiogroup', { name: 'Permission mode' })).toBeNull()
+  expect(screen.queryByRole('slider', { name: 'Effort' })).toBeNull()
+  expect(agentModels).not.toHaveBeenCalled()
+})
+
+// Profiles are cards; everything else about the launch is the profile's own.
+const pick = async (_label: string, option: string | RegExp) => { fireEvent.click(await screen.findByRole('option', { name: option })) }
 
 it('enables Claude when it is available and has profiles, and disables it with its reason otherwise', async () => {
   const { unmount } = render(<StartAgentDialog />)
@@ -138,18 +141,15 @@ it('switches provider, filters profiles, resets the selection and shows profile 
   expect(screen.getByRole('button', { name: /Antigravity/ })).toHaveAttribute('aria-pressed', 'true')
   await pick('Profile', 'Two')
   expect(screen.getByRole('option', { name: /Two/ })).toHaveAttribute('aria-selected', 'true')
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'gemini' } })
   fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
   expect(screen.getByRole('button', { name: /Claude/ })).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByLabelText('Profile')).toHaveTextContent('Work')
-  expect(screen.getByLabelText('Agent model')).toHaveValue('')
-  expect(screen.queryByRole('radio', { name: 'Full access' })).toBeNull()
   expect(screen.getByTestId('profile-details')).toHaveTextContent('auth: login · dev@example.com')
   expect(screen.getByTestId('profile-details')).toHaveTextContent('Token expires in 12 days')
   fireEvent.click(screen.getByRole('button', { name: /Antigravity/ }))
   expect(screen.getByText('Choose a profile to continue.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Start agent' })).toBeDisabled()
-  expect(screen.getByRole('radio', { name: 'Full access' })).toBeInTheDocument()
+  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Choose a profile to see its defaults.')
 })
 
 it('defaults to the only provider with profiles and then to the last used one', async () => {
@@ -166,42 +166,29 @@ it('defaults to the only provider with profiles and then to the last used one', 
   expect(screen.getByRole('button', { name: /Claude/ })).toHaveAttribute('aria-pressed', 'true')
 })
 
-it('submits Claude launch options from its declared fields', async () => {
+it('shows the profile\'s model, permissions and effort and sends no per-launch override', async () => {
   vi.mocked(agentProviders).mockResolvedValue(providers())
-  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
+  vi.mocked(agentAccounts).mockResolvedValue([{ ...claudeProfile, model: 'opus', permission_mode: 'plan', effort: 'high' }])
   const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Work'))
-  expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'Use profile default')
-  await pick('Permission mode', 'Plan')
-  await pick('Effort', 'high')
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'opus' } })
+  const defaults = screen.getByTestId('launch-defaults')
+  expect(within(defaults).getByText('Model').nextSibling).toHaveTextContent('opus')
+  expect(within(defaults).getByText('Permission mode').nextSibling).toHaveTextContent('Plan')
+  expect(within(defaults).getByText('Effort').nextSibling).toHaveTextContent('high')
+  expect(screen.getByText('Claude · Work · opus · Plan · high')).toBeInTheDocument()
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ provider: 'Claude', accountId: 'claude-one', model: 'opus', options: { permission_mode: 'plan', effort: 'high' } }))
-  expect(screen.getByText(/Claude · Plan · high effort/)).toBeInTheDocument()
+  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ provider: 'Claude', accountId: 'claude-one', model: '', options: {} }))
 })
 
-it('warns on bypass permissions, changes the request key with the mode and keeps it on retry', async () => {
+it('says the provider decides when the profile saved no defaults', async () => {
   vi.mocked(agentProviders).mockResolvedValue(providers())
   vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
-  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
-  useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Work'))
-  fireEvent.submit(screen.getByRole('dialog'))
-  await screen.findByRole('alert')
-  fireEvent.submit(screen.getByRole('dialog'))
-  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
-  expect(submit.mock.calls[1][0].requestKey).toBe(submit.mock.calls[0][0].requestKey)
-  expect(screen.queryByRole('note')).toBeNull()
-  await pick('Permission mode', 'Bypass permissions')
-  expect(screen.getByRole('note')).toHaveTextContent('without asking')
-  fireEvent.submit(screen.getByRole('dialog'))
-  await waitFor(() => expect(submit).toHaveBeenCalledTimes(3))
-  expect(submit.mock.calls[2][0].options).toEqual({ permission_mode: 'bypassPermissions' })
-  expect(submit.mock.calls[2][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
+  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
 })
 
 it('shows the setup hint of the selected provider', async () => {
@@ -232,97 +219,10 @@ it('clears a stale error and shows profile defaults when switching provider', as
   await screen.findByRole('alert')
   fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
   expect(screen.queryByRole('alert')).toBeNull()
-  expect(screen.getByTestId('profile-details')).toHaveTextContent('profile defaults: opus · Plan · high effort')
+  for (const text of ['opus', 'Plan', 'high']) expect(screen.getByTestId('launch-defaults')).toHaveTextContent(text)
 })
 
-it('suggests the profile\'s models, still accepts typed text, and ignores a failed lookup', async () => {
-  vi.mocked(agentProviders).mockResolvedValue(providers())
-  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
-  vi.mocked(agentModels).mockResolvedValue([
-    { id: 'opus', label: 'Opus', description: 'Latest Opus', source: 'alias' },
-    { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', description: 'claude-sonnet-5-5', source: 'api' },
-  ])
-  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
-  useBonsaiStore.setState({ createAgent: submit })
-  render(<StartAgentDialog />)
-  await waitFor(() => expect(agentModels).toHaveBeenCalledWith('claude', 'claude-one'))
-  const input = screen.getByLabelText('Agent model')
-  fireEvent.focus(input)
-  expect(within(await screen.findByRole('listbox', { name: 'Agent model suggestions' })).getAllByRole('option')).toHaveLength(2)
-  fireEvent.click(screen.getByRole('option', { name: /Claude Sonnet 5.5/ }))
-  expect(input).toHaveValue('claude-sonnet-5-5')
-  fireEvent.change(input, { target: { value: 'claude-future-9' } })
-  expect(suggestions()).toBeNull()
-  fireEvent.submit(screen.getByRole('dialog'))
-  await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0].model).toBe('claude-future-9')
-})
-
-it('falls back to a plain input when models cannot be loaded', async () => {
-  vi.mocked(agentModels).mockRejectedValue(new Error('offline'))
-  render(<StartAgentDialog />)
-  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
-  await waitFor(() => expect(agentModels).toHaveBeenCalledWith('antigravity', 'profile-one'))
-  fireEvent.focus(screen.getByLabelText('Agent model'))
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'test-model' } })
-  expect(suggestions()).toBeNull()
-  expect(screen.getByLabelText('Agent model')).toHaveValue('test-model')
-})
-
-// A provider declaring a preset select and a per-model effort, as Codex will.
-const PRESET_FIELDS: LaunchField[] = [
-  { id: 'permissions', label: 'Permissions', kind: 'select', default: 'auto', options: [
-    { value: 'read-only', label: 'Read only', set: { sandbox: 'read-only', approval: 'on-request' } },
-    { value: 'auto', label: 'Auto', set: { sandbox: 'workspace-write', approval: 'on-request' } },
-    { value: 'bypass', label: 'Bypass', tone: 'danger', help: 'No sandbox and no approvals.', set: { sandbox: 'bypass' } },
-  ] },
-  { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: [{ value: '', label: 'Model default' }, { value: 'low', label: 'low' }, { value: 'high', label: 'high' }] },
-]
-const schemaProviders = (): AgentCapability[] => [{ ...providers()[1], launch_fields: PRESET_FIELDS }]
-const schemaModels = [
-  { id: 'big', label: 'Big', source: 'api' as const, default: true, efforts: ['low', 'high', 'ultra'], default_effort: 'high' },
-  { id: 'small', label: 'Small', source: 'api' as const, efforts: ['low', 'medium'] },
-]
-
-it('renders a schema-declared preset and per-model effort without knowing the provider', async () => {
-  vi.mocked(agentProviders).mockResolvedValue(schemaProviders())
-  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
-  vi.mocked(agentModels).mockResolvedValue(schemaModels)
-  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
-  useBonsaiStore.setState({ createAgent: submit })
-  render(<StartAgentDialog />)
-  await waitFor(() => expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'Big'))
-  expect(screen.getByRole('radio', { name: 'Auto' })).toBeChecked()
-  // The default model's efforts are the slider's stops while no model is typed.
-  expect(effortStops()).toEqual(['low', 'high', 'ultra'])
-  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Model default')
-  chooseEffort('ultra')
-  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Ultra')
-  fireEvent.submit(screen.getByRole('dialog'))
-  await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0].options).toEqual({ sandbox: 'workspace-write', approval: 'on-request', effort: 'ultra' })
-  expect(screen.getByText('Claude · Auto · ultra effort')).toBeInTheDocument()
-
-  // A model without that effort drops it; the list follows the model.
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'small' } })
-  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Model default')
-  expect(effortStops()).toEqual(['low', 'medium'])
-  chooseEffort('medium')
-  // A typed, unlisted model falls back to the field's own options.
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'custom-model' } })
-  expect(effortStops()).toEqual(['low', 'high'])
-  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Model default')
-
-  expect(screen.queryByRole('note')).toBeNull()
-  await pick('Permissions', 'Bypass')
-  expect(screen.getByRole('note')).toHaveTextContent('No sandbox and no approvals.')
-  fireEvent.submit(screen.getByRole('dialog'))
-  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
-  expect(submit.mock.calls[1][0].options).toEqual({ sandbox: 'bypass' })
-  expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
-})
-
-it('starts each toggle from the selected profile and resets options on provider change', async () => {
+it('shows each profile\'s own toggle setting and follows the profile and provider', async () => {
   vi.mocked(agentProviders).mockResolvedValue(providers())
   vi.mocked(agentAccounts).mockResolvedValue([
     { id: 'safe', name: 'Safe', provider: 'antigravity', full_access: false },
@@ -332,15 +232,12 @@ it('starts each toggle from the selected profile and resets options on provider 
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).not.toBeDisabled())
   await pick('Profile', 'Open')
-  expect(screen.getByRole('radio', { name: 'Full access' })).toBeChecked()
+  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Full accessFull access')
   await pick('Profile', 'Safe')
-  expect(screen.getByRole('radio', { name: 'Ask permissions' })).toBeChecked()
+  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Full accessAsk permissions')
   fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
-  await pick('Permission mode', 'Plan')
-  fireEvent.click(screen.getByRole('button', { name: /Antigravity/ }))
-  fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
-  expect(within(screen.getByRole('radiogroup', { name: 'Permission mode' })).queryAllByRole('radio', { checked: true })).toHaveLength(0)
-  expect(screen.getAllByRole('button', { name: /Profile default/, pressed: true })).toHaveLength(2)
+  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
+  expect(screen.queryByText('Ask permissions')).toBeNull()
 })
 
 it('renders no options for a provider that declares none', async () => {
@@ -349,8 +246,7 @@ it('renders no options for a provider that declares none', async () => {
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
-  expect(screen.queryByRole('radiogroup', { name: 'Full access' })).toBeNull()
-  expect(screen.queryByRole('slider')).toBeNull()
+  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
   expect(submit.mock.calls[0][0].options).toEqual({})
@@ -381,42 +277,27 @@ it('enables Codex with its profile and shows its sign-in details and warnings', 
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Personal'))
   expect(screen.getByRole('button', { name: /Codex/ })).toBeEnabled()
   expect(screen.getByRole('button', { name: /Codex/ })).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'GPT-6.1-Sol')
   const details = screen.getByTestId('profile-details')
   expect(details).toHaveTextContent('auth: chatgpt · me@example.com · plus · logged in')
   expect(details).toHaveTextContent('Same login as profile "Team"')
-  expect(screen.getByRole('radio', { name: 'Auto' })).toBeChecked()
+  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
   expect(screen.queryByRole('switch')).toBeNull()
 })
 
-it('submits the Codex preset, effort and model, and drops an effort the new model lacks', async () => {
+it('shows the Codex profile\'s preset and starts it without per-launch options', async () => {
   vi.mocked(agentProviders).mockResolvedValue(codexProviders())
-  vi.mocked(agentAccounts).mockResolvedValue([codexProfile])
-  vi.mocked(agentModels).mockResolvedValue(codexModels)
+  vi.mocked(agentAccounts).mockResolvedValue([{ ...codexProfile, model: 'gpt-6.1-sol', effort: 'ultra', sandbox: 'danger-full-access', approval: 'never' }])
   const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
-  await waitFor(() => expect(screen.getByLabelText('Agent model')).toHaveAttribute('placeholder', 'GPT-6.1-Sol'))
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'gpt-6.1-sol' } })
-  await pick('Effort', 'ultra')
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Personal'))
+  const defaults = screen.getByTestId('launch-defaults')
+  expect(within(defaults).getByText('Model').nextSibling).toHaveTextContent('gpt-6.1-sol')
+  expect(within(defaults).getByText('Permissions').nextSibling).toHaveTextContent('Full access')
+  expect(within(defaults).getByText('Effort').nextSibling).toHaveTextContent('ultra')
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toMatchObject({ provider: 'Codex', accountId: 'codex-one', model: 'gpt-6.1-sol', options: { sandbox: 'workspace-write', approval: 'on-request', effort: 'ultra' } })
-  expect(screen.getByText('Codex · Auto · ultra effort')).toBeInTheDocument()
-
-  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'gpt-6-luna' } })
-  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Profile default')
-  await pick('Permissions', 'Full access')
-  expect(screen.getByRole('note')).toHaveTextContent('without asking')
-  fireEvent.submit(screen.getByRole('dialog'))
-  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
-  expect(submit.mock.calls[1][0].options).toEqual({ sandbox: 'danger-full-access', approval: 'never' })
-  expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
-
-  await pick('Permissions', 'Bypass')
-  fireEvent.submit(screen.getByRole('dialog'))
-  await waitFor(() => expect(submit).toHaveBeenCalledTimes(3))
-  expect(submit.mock.calls[2][0].options).toEqual({ sandbox: 'bypass' })
+  expect(submit.mock.calls[0][0]).toMatchObject({ provider: 'Codex', accountId: 'codex-one', model: '', options: {} })
 })
 
 it('explains why Codex is unavailable and how to add its first profile', async () => {
@@ -443,7 +324,6 @@ it('preselects the provider and profile the Agents tab opened it for, over the r
   await waitFor(() => expect(screen.getByRole('option', { name: /Second/ })).toHaveAttribute('aria-selected', 'true'))
   expect(screen.getByRole('button', { name: /Claude/ })).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByRole('button', { name: 'Start agent' })).toBeEnabled()
-  expect(effortSlider()).toBeInTheDocument()
 })
 it('ignores a target profile that no longer exists', async () => {
   useBonsaiStore.setState({ startAgentTargetAccountId: 'gone' })
@@ -547,4 +427,21 @@ it('offers no sign-in link for a signed-in profile', async () => {
   render(<StartAgentDialog />)
   await screen.findByTestId('profile-details')
   expect(screen.queryByRole('button', { name: 'Sign in again' })).toBeNull()
+})
+
+it('opens the profile\'s Defaults tab on the Agents page to change what a launch starts with', async () => {
+  const { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } = await import('@tanstack/react-router')
+  window.scrollTo = vi.fn()
+  vi.mocked(agentProviders).mockResolvedValue(providers())
+  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
+  useBonsaiStore.setState({ startAgentTargetAccountId: claudeProfile.id })
+  const root = createRootRoute({ component: StartAgentDialog })
+  const agents = createRoute({ getParentRoute: () => root, path: '/agents', component: () => null })
+  const home = createRoute({ getParentRoute: () => root, path: '/', component: () => null })
+  const router = createRouter({ routeTree: root.addChildren([agents, home]), history: createMemoryHistory({ initialEntries: ['/'] }) })
+  render(<RouterProvider router={router} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit defaults' }))
+  await waitFor(() => expect(router.state.location.pathname).toBe('/agents'))
+  expect(router.state.location.search).toEqual({ profile: claudeProfile.id, tab: 'defaults' })
+  expect(useBonsaiStore.getState().startAgentDialogOpen).toBe(false)
 })
