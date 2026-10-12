@@ -132,6 +132,10 @@ setTimeout(()=>{process.stdout.write(Buffer.from([0xa9]));process.stdout.write('
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Browser specs may first launch a process long after the fixture starts.
+	// Keep the in-process daemon alive until cleanup; a .test binary cannot
+	// autostart a replacement daemon after idle shutdown.
+	srv.SetIdleTimeout(0)
 	done := make(chan struct{})
 	go func() { defer close(done); _ = srv.Run() }()
 	c := client.For(root)
