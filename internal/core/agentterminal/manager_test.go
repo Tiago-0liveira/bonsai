@@ -314,6 +314,20 @@ func TestLaunchOptionsReachProviderUnchanged(t *testing.T) {
 	if status.ProviderSessionID != "provider-"+summary.ID {
 		t.Fatalf("provider session id = %q", status.ProviderSessionID)
 	}
+	// The summary records the accepted launch details, never the prompt, and
+	// they survive the journal's JSON round trip.
+	wantOptions := map[string]string{"full_access": "true", "permission_mode": "plan", "effort": "high"}
+	if summary.Model != "chosen-model" || !reflect.DeepEqual(summary.Options, wantOptions) || status.Model != summary.Model || !reflect.DeepEqual(status.Options, wantOptions) {
+		t.Fatalf("summary = %+v, status = %+v", summary, status)
+	}
+	encoded, _ := json.Marshal(status)
+	var restored Summary
+	if err := json.Unmarshal(encoded, &restored); err != nil || restored.Model != "chosen-model" || !reflect.DeepEqual(restored.Options, wantOptions) {
+		t.Fatalf("round trip = %+v (%v)", restored, err)
+	}
+	if strings.Contains(string(encoded), "literal task") {
+		t.Fatalf("prompt in summary: %s", encoded)
+	}
 	saved, _ := m.accounts.Get(accountID)
 	if string(saved.Settings) != string(stored.Settings) {
 		t.Fatal("launch changed stored profile settings")

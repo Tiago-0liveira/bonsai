@@ -123,6 +123,9 @@ func (p *Provider) Capabilities() agents.Capabilities {
 	}
 }
 
+// installHint is shown while Codex is missing or too old.
+const installHint = "npm install -g @openai/codex@latest"
+
 func (p *Provider) Label() string { return "Codex" }
 
 func (p *Provider) Availability(ctx context.Context) agents.Availability {
@@ -130,14 +133,14 @@ func (p *Provider) Availability(ctx context.Context) agents.Availability {
 	switch {
 	case err == nil:
 	case isMissingBinary(err):
-		return agents.Availability{Reason: "Install Codex CLI and restart Bonsai"}
+		return agents.Availability{Reason: "Install Codex CLI and restart Bonsai", Hint: installHint}
 	default:
 		return agents.Availability{Reason: "Cannot determine the Codex version"}
 	}
 	found, text, _ := parseVersion(version)
 	minimum, _, _ := parseVersion(MinVersion)
 	if found.less(minimum) {
-		return agents.Availability{Reason: fmt.Sprintf("Update Codex (found %s, need %s)", text, MinVersion), Version: text}
+		return agents.Availability{Reason: fmt.Sprintf("Update Codex (found %s, need %s)", text, MinVersion), Version: text, Hint: installHint}
 	}
 	return agents.Availability{Available: true, Version: text}
 }

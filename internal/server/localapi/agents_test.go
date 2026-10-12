@@ -508,7 +508,7 @@ func TestAgentAccountsAcrossProvidersHaveNoSecrets(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("accounts = %v", out)
 	}
-	allowed := map[string]bool{"id": true, "name": true, "provider": true, "auth_mode": true, "identity": true, "warnings": true, "full_access": true}
+	allowed := map[string]bool{"id": true, "name": true, "provider": true, "auth_mode": true, "identity": true, "warnings": true, "full_access": true, "created_at": true, "updated_at": true}
 	for _, account := range out {
 		for key := range account {
 			if !allowed[key] {

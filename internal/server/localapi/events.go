@@ -133,7 +133,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteJSON(event); err != nil {
+			if err := conn.WriteJSON(event.wire()); err != nil {
 				return
 			}
 		case <-ticker.C:

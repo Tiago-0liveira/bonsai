@@ -1,6 +1,8 @@
 package localapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
@@ -23,6 +26,9 @@ type agentAPI struct {
 	runtime   *agentruntime.Runtime
 	manager   *agentterminal.Manager
 	registry  projectRegistry
+	// revision numbers agents_changed events.
+	revision      atomic.Uint64
+	usageThrottle usageThrottle
 }
 type agentRequest struct {
 	Model  string `json:"model,omitempty"`
@@ -49,6 +55,8 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/providers", s.agentProviders)
 	mux.HandleFunc("GET /api/agents/accounts", s.agentAccounts)
 	mux.HandleFunc("GET /api/agents/providers/{provider}/models", s.agentModels)
+	mux.HandleFunc("GET /api/agents/usage", s.agentUsage)
+	mux.HandleFunc("POST /api/agents/usage/refresh", s.agentUsageRefresh)
 	mux.HandleFunc("GET /api/projects/{projectId}/agents", s.listAgents)
 	mux.HandleFunc("POST /api/projects/{projectId}/agents", s.startAgent)
 	mux.HandleFunc("DELETE /api/projects/{projectId}/agents/{sessionId}", s.stopAgent)
@@ -103,6 +111,14 @@ func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
 		out := map[string]any{"id": id, "label": label, "available": availability.Available, "unavailable_reason": map[string]string{"message": reason}}
 		if availability.Version != "" {
 			out["version"] = availability.Version
+		}
+		if !availability.Available && availability.Hint != "" {
+			out["install_hint"] = availability.Hint
+		}
+		if noter, ok := provider.(agents.UsageNoter); ok {
+			if note := noter.UsageNote(); note != "" {
+				out["usage_note"] = note
+			}
 		}
 		if schema, ok := provider.(agents.LaunchSchema); ok {
 			if fields := schema.LaunchFields(); len(fields) > 0 {
@@ -163,6 +179,7 @@ func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 			item[k] = v
 		}
 		item["id"], item["name"], item["provider"] = a.ID, a.Name, a.Provider
+		item["created_at"], item["updated_at"] = a.CreatedAt, a.UpdatedAt
 		if info.AuthMode != "" {
 			item["auth_mode"] = info.AuthMode
 		}
@@ -174,7 +191,9 @@ func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	writeJSON(w, 200, out)
+	// The ETag covers the whole answer, so a profile added, renamed or signed in
+	// from the CLI changes it too.
+	writeJSONWithETag(w, r, out)
 }
 
 // agentModels suggests models for the launch dialog. Providers that cannot list
@@ -240,8 +259,10 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 		writeAPIError(w, 400, "invalid", "Idempotency-Key is required")
 		return
 	}
+	// The journal keeps only a hash of the request, so a prompt never lands on disk.
 	encoded, _ := json.Marshal(body)
-	fingerprint := r.Method + ":" + r.URL.Path + ":" + string(encoded)
+	sum := sha256.Sum256(encoded)
+	fingerprint := r.Method + ":" + r.URL.Path + ":" + hex.EncodeToString(sum[:])
 	s.agents.mu.Lock()
 	defer s.agents.mu.Unlock()
 	var old agentMutation
@@ -399,6 +420,7 @@ func (s *Server) publishAgents(_ string) {
 			snapshot.Freshness["agents"] = browserFreshness{State: "ready", UpdatedAt: &now}
 		})
 	}
+	s.publishAgentsChanged()
 }
 
 func (s *Server) hasLiveAgents(project, tree string) bool {

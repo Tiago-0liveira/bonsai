@@ -120,6 +120,12 @@ func (p *Provider) Capabilities() agents.Capabilities {
 	}
 }
 
+// installHint and updateHint are shown while Claude Code is missing or too old.
+const (
+	installHint = "npm install -g @anthropic-ai/claude-code"
+	updateHint  = "claude update"
+)
+
 func (p *Provider) Label() string { return "Claude Code" }
 
 func (p *Provider) Availability(ctx context.Context) agents.Availability {
@@ -127,14 +133,14 @@ func (p *Provider) Availability(ctx context.Context) agents.Availability {
 	switch {
 	case err == nil:
 	case isMissingBinary(err):
-		return agents.Availability{Reason: "Install Claude Code and restart Bonsai"}
+		return agents.Availability{Reason: "Install Claude Code and restart Bonsai", Hint: installHint}
 	default:
 		return agents.Availability{Reason: "Cannot determine the Claude Code version"}
 	}
 	found, text, _ := parseVersion(version)
 	minimum, _, _ := parseVersion(MinVersion)
 	if found.less(minimum) {
-		return agents.Availability{Reason: fmt.Sprintf("Update Claude Code (found %s, need %s)", text, MinVersion), Version: text}
+		return agents.Availability{Reason: fmt.Sprintf("Update Claude Code (found %s, need %s)", text, MinVersion), Version: text, Hint: updateHint}
 	}
 	return agents.Availability{Available: true, Version: text}
 }

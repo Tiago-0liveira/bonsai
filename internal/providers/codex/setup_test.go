@@ -237,14 +237,14 @@ func TestSetupOptionValidation(t *testing.T) {
 
 func TestAvailability(t *testing.T) {
 	e := newTestEnv(t)
-	if a := e.provider.Availability(t.Context()); !a.Available || a.Version != MinVersion {
+	if a := e.provider.Availability(t.Context()); !a.Available || a.Version != MinVersion || a.Hint != "" {
 		t.Fatalf("availability = %+v", a)
 	}
 
 	old := newTestEnv(t)
 	t.Setenv("FAKE_CODEX_VERSION", "0.98.0")
 	a := old.provider.Availability(t.Context())
-	if a.Available || a.Reason != "Update Codex (found 0.98.0, need "+MinVersion+")" {
+	if a.Available || a.Reason != "Update Codex (found 0.98.0, need "+MinVersion+")" || a.Hint != installHint {
 		t.Fatalf("availability = %+v", a)
 	}
 	if _, err := old.service.Setup(t.Context(), ProviderID, "x", agents.SetupOptions{}); err == nil || !strings.Contains(err.Error(), "Update Codex") {
@@ -253,7 +253,7 @@ func TestAvailability(t *testing.T) {
 
 	missing := newTestEnv(t)
 	missing.provider.binaryResolver = resolverFunc(func() (string, error) { return "", errors.New("not found") })
-	if a := missing.provider.Availability(t.Context()); a.Available || a.Reason != "Install Codex CLI and restart Bonsai" {
+	if a := missing.provider.Availability(t.Context()); a.Available || a.Reason != "Install Codex CLI and restart Bonsai" || a.Hint != "npm install -g @openai/codex@latest" {
 		t.Fatalf("availability = %+v", a)
 	}
 }

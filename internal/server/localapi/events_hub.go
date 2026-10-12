@@ -11,6 +11,19 @@ type localEvent struct {
 	Sequence  uint64           `json:"sequence,omitempty"`
 	Projects  []ProjectInfo    `json:"projects"`
 	Snapshot  *browserSnapshot `json:"snapshot,omitempty"`
+	Revision  uint64           `json:"-"` // agents_changed only, see wire
+}
+
+// wire returns what the websocket sends for an event: agents_changed is only
+// {type, revision}; every other event keeps its full shape.
+func (e localEvent) wire() any {
+	if e.Type == agentsChangedEvent {
+		return struct {
+			Type     string `json:"type"`
+			Revision uint64 `json:"revision"`
+		}{e.Type, e.Revision}
+	}
+	return e
 }
 
 type eventHub struct {
