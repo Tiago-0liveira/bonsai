@@ -1,4 +1,4 @@
-import { Bot } from 'lucide-react'
+import { Bot, Trash2 } from 'lucide-react'
 import { PROVIDER_LABELS, type AgentAccount, type AgentCapability } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { authState, profileDefaults } from './agentsModel'
@@ -7,7 +7,7 @@ import { CopyCommand } from './CopyCommand'
 const LABEL = 'font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2'
 const when = (iso?: string) => { const time = iso ? Date.parse(iso) : NaN; return Number.isFinite(time) ? new Date(time).toLocaleString() : '' }
 
-export function ProfileOverview({ account, capability }: { account: AgentAccount; capability?: AgentCapability }) {
+export function ProfileOverview({ account, capability, onRemove }: { account: AgentAccount; capability?: AgentCapability; onRemove: () => void }) {
   const openStartAgentDialog = useBonsaiStore(state => state.openStartAgentDialog)
   const auth = authState(account)
   const defaults = profileDefaults(capability?.launch_fields ?? [], account)
@@ -70,6 +70,14 @@ export function ProfileOverview({ account, capability }: { account: AgentAccount
           <Bot size={13} /> Start agent
         </button>
       </div>
+
+      <section aria-label="Remove profile" className="space-y-2 border-t border-border-subtle pt-4">
+        <h3 className={LABEL}>Remove profile</h3>
+        <p className="max-w-[64ch] text-[11px] text-muted-2">Deletes this profile's {capability?.label ?? account.provider} home: its history, sessions and settings, and the sign-in where it is stored there.</p>
+        <button type="button" onClick={onRemove} className="bonsai-focus btn-danger-tint inline-flex h-8 items-center gap-2 rounded-[7px] px-3 text-[12px]">
+          <Trash2 size={13} /> Remove profile…
+        </button>
+      </section>
     </div>
   )
 }

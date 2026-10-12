@@ -46,7 +46,7 @@ it('restores the profile and tab from the URL and writes both back', async () =>
 })
 
 it('ignores an unknown tab and an unknown profile', async () => {
-  renderAt('/agents?profile=gone&tab=defaults')
+  renderAt('/agents?profile=gone&tab=bogus')
   expect(await screen.findByRole('heading', { level: 2, name: 'Personal' })).toBeInTheDocument()
   expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('data-state', 'active')
 })

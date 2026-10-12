@@ -182,4 +182,36 @@ describe('useAgentsData', () => {
     await flush(ACCOUNTS_INTERVAL_MS * 3)
     expect(agentAccountsIfChanged).toHaveBeenCalledTimes(calls)
   })
+
+  it('shows a profile the page changed at once, then revalidates without the old ETag', async () => {
+    const { result } = renderHook(() => useAgentsData())
+    await flush()
+    vi.mocked(agentAccountsIfChanged).mockClear()
+    vi.mocked(agentAccountsIfChanged).mockResolvedValue({ accounts: [{ id: 'a', name: 'Renamed', provider: 'codex' }], etag: '"v2"' })
+    act(() => result.current.applyAccount({ id: 'a', name: 'Renamed', provider: 'codex', defaults: { model: 'm' } }))
+    expect(result.current.accounts?.[0]).toMatchObject({ name: 'Renamed', defaults: { model: 'm' } })
+    await flush()
+    expect(agentAccountsIfChanged).toHaveBeenCalledWith(undefined)
+    expect(result.current.accounts).toEqual([{ id: 'a', name: 'Renamed', provider: 'codex' }])
+  })
+
+  it('drops a removed profile and reads again when a read was already in flight', async () => {
+    vi.mocked(agentAccountsIfChanged).mockResolvedValue({ accounts: [...accounts, { id: 'b', name: 'B', provider: 'codex' }], etag: '"v1"' })
+    const { result } = renderHook(() => useAgentsData())
+    await flush()
+    let release: (value: { accounts: AgentAccount[]; etag: string }) => void = () => {}
+    vi.mocked(agentAccountsIfChanged).mockClear()
+    vi.mocked(agentAccountsIfChanged).mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    // An interval read starts and is still waiting when the page removes a profile.
+    await flush(ACCOUNTS_INTERVAL_MS)
+    expect(agentAccountsIfChanged).toHaveBeenCalledTimes(1)
+    act(() => result.current.dropAccount('b'))
+    expect(result.current.accounts?.map(item => item.id)).toEqual(['a'])
+    vi.mocked(agentAccountsIfChanged).mockResolvedValue({ accounts, etag: '"v3"' })
+    // The in-flight answer predates the removal; the follow-up read replaces it.
+    await act(async () => { release({ accounts: [...accounts, { id: 'b', name: 'B', provider: 'codex' }], etag: '"v2"' }) })
+    await flush()
+    expect(agentAccountsIfChanged).toHaveBeenCalledTimes(2)
+    expect(result.current.accounts?.map(item => item.id)).toEqual(['a'])
+  })
 })

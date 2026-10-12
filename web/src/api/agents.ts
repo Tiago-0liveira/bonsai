@@ -21,6 +21,8 @@ export interface AgentAccount {
   auth_mode?: string; identity?: string; warnings?: string[]
   model?: string; auth_status?: string
   created_at?: string; updated_at?: string
+  /** Saved profile defaults by profile field ID; a field with no entry uses the provider's default. */
+  defaults?: Record<string, string>
   [option: string]: unknown
 }
 /** One value of a launch field. A toggle has a "false" and a "true" option. */
@@ -36,7 +38,9 @@ export interface LaunchFieldOption {
 /** A launch option the provider accepts; the dialog renders it without knowing the provider. */
 export interface LaunchField {
   /** The start request field this value is sent as. */
-  id: string; label: string; kind: 'select' | 'toggle'
+  id: string; label: string
+  /** "model" appears only in a profile's fields: free text with model suggestions. */
+  kind: 'select' | 'toggle' | 'model'
   options?: LaunchFieldOption[]
   /** Initial value; empty selects the first option. A toggle starts from the profile's value. */
   default?: string
@@ -50,6 +54,8 @@ export interface AgentCapability {
   id: string; label: string; available: boolean; unavailable_reason?: { message: string }; version?: string; launch_fields?: LaunchField[]
   /** Where the provider's usage numbers come from, when that needs a caveat. */
   usage_note?: string
+  /** The fields of a profile's defaults: the model, then the launch fields with a "Provider default" choice. */
+  profile_fields?: LaunchField[]
   /** A short install command or link, present while the provider is unavailable. */
   install_hint?: string
 }

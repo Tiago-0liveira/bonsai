@@ -214,7 +214,7 @@ for (const mode of ['dark', 'light'] as const) {
       }, theme)
     }
     await backend(page)
-    for (const tab of ['overview', 'usage', 'sessions']) {
+    for (const tab of ['overview', 'usage', 'sessions', 'defaults']) {
       await page.goto(`/app/agents?profile=codex-personal&tab=${tab}`)
       await expect(page.locator('html')).toHaveCSS('color-scheme', mode)
       await expect(page.getByRole('region', { name: 'Fleet summary' })).toContainText('Low headroom1')

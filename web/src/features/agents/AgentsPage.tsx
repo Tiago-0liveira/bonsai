@@ -1,21 +1,25 @@
 import * as Tabs from '@radix-ui/react-tabs'
-import { useMemo } from 'react'
-import { isLiveAgent } from '../../api/agents'
+import { useCallback, useMemo, useState } from 'react'
+import { isLiveAgent, type AgentAccount } from '../../api/agents'
 import { isActiveSession } from '../../api/agentsOverview'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { AddProfileCommands } from './AddProfile'
 import { AUTH_DOT, activeSessionCounts, authState, groupProfiles, profileSessions, summarizeFleet } from './agentsModel'
 import { AGENT_TABS, type AgentsTab } from './agentsSearch'
+import { ProfileDefaults } from './ProfileDefaults'
+import { DiscardChangesDialog } from './ProfileDialog'
+import { ProfileName } from './ProfileName'
 import { ProfileOverview } from './ProfileOverview'
 import { ProfileSessions } from './ProfileSessions'
 import { ProfileUsage } from './ProfileUsage'
 import { ProviderGroup } from './ProviderGroup'
+import { RemoveProfileDialog } from './RemoveProfileDialog'
 import { SummaryStrip } from './SummaryStrip'
 import { useAgentsData } from './useAgentsData'
 import { useNow } from './useNow'
 
-const TAB_LABEL: Record<AgentsTab, string> = { overview: 'Overview', usage: 'Usage', sessions: 'Sessions' }
+const TAB_LABEL: Record<AgentsTab, string> = { overview: 'Overview', usage: 'Usage', sessions: 'Sessions', defaults: 'Defaults' }
 const tabTrigger = 'bonsai-focus relative h-full text-[12px] text-muted transition-colors hover:text-text data-[state=active]:font-medium data-[state=active]:text-text data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:-bottom-px data-[state=active]:after:h-px data-[state=active]:after:bg-accent'
 
 export interface AgentsPageProps {
@@ -35,6 +39,12 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
   const projects = useBonsaiStore(state => state.projects)
   const worktrees = useBonsaiStore(state => state.worktrees)
   const { providers, accounts } = data
+  // Unsaved defaults block a tab or profile switch until the user decides.
+  const [dirty, setDirty] = useState(false)
+  const [blockedSwitch, setBlockedSwitch] = useState<(() => void) | null>(null)
+  const [removing, setRemoving] = useState<AgentAccount | null>(null)
+  const guarded = useCallback((go: () => void) => { if (dirty) setBlockedSwitch(() => go); else go() }, [dirty])
+  const closeRemove = useCallback(() => setRemoving(null), [])
 
   const groups = useMemo(() => groupProfiles(providers ?? [], accounts ?? []), [providers, accounts])
   const sessionCounts = useMemo(() => activeSessionCounts(agents), [agents])
@@ -61,6 +71,15 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
   const sessions = selected ? profileSessions(agents, selected.id, projects, worktrees) : []
   const activeSessions = selected ? sessionCounts.get(selected.id) ?? 0 : 0
   const auth = selected ? authState(selected) : undefined
+  const siblings = selected ? accounts.filter(account => account.provider === selected.provider) : []
+  const selectProfile = (accountId: string) => { if (accountId !== selected?.id) guarded(() => onSelect(accountId)) }
+  const changeTab = (next: AgentsTab) => { if (next !== tab) guarded(() => onTabChange(next)) }
+  const removed = (account: AgentAccount) => {
+    data.dropAccount(account.id)
+    // The profile list falls back to the first profile; keep the URL on a profile that exists.
+    const next = siblings.find(item => item.id !== account.id) ?? accounts.find(item => item.id !== account.id)
+    onSelect(next?.id ?? '')
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -69,7 +88,7 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
         <aside aria-label="Providers and profiles" className="island flex max-h-[42%] min-h-0 shrink-0 flex-col overflow-y-auto lg:max-h-none lg:w-[320px]">
           {groups.map(group => (
-            <ProviderGroup key={group.id} group={group} selectedId={selected?.id} sessionCounts={sessionCounts} usage={data.usage} onSelect={onSelect} />
+            <ProviderGroup key={group.id} group={group} selectedId={selected?.id} sessionCounts={sessionCounts} usage={data.usage} onSelect={selectProfile} />
           ))}
         </aside>
 
@@ -85,10 +104,10 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
               <div className="max-w-[460px]"><AddProfileCommands providers={providers} /></div>
             </div>
           ) : (
-            <Tabs.Root value={tab} onValueChange={value => onTabChange(value as AgentsTab)} className="flex min-h-0 flex-1 flex-col">
+            <Tabs.Root value={tab} onValueChange={value => changeTab(value as AgentsTab)} className="flex min-h-0 flex-1 flex-col">
               <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border-subtle px-4 pt-3">
                 <ProviderLogo provider={selected.provider} size={16} className="shrink-0 text-text" />
-                <h2 className="min-w-0 truncate text-[14px] font-semibold text-text">{selected.name}</h2>
+                <ProfileName key={selected.id} account={selected} siblings={siblings} onRenamed={data.applyAccount} />
                 <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted">
                   <span className={'h-1.5 w-1.5 rounded-full ' + AUTH_DOT[auth.tone]} aria-hidden="true" />{auth.label}
                 </span>
@@ -103,7 +122,7 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
               </header>
               <div className="min-h-0 flex-1 overflow-auto">
                 <Tabs.Content value="overview" className="outline-none">
-                  <ProfileOverview account={selected} capability={capability} />
+                  <ProfileOverview account={selected} capability={capability} onRemove={() => setRemoving(selected)} />
                 </Tabs.Content>
                 <Tabs.Content value="usage" className="outline-none">
                   <ProfileUsage
@@ -120,11 +139,28 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
                 <Tabs.Content value="sessions" className="outline-none">
                   <ProfileSessions sessions={sessions} fields={capability?.launch_fields ?? []} now={now} onShowOnCanvas={onShowOnCanvas} />
                 </Tabs.Content>
+                <Tabs.Content value="defaults" className="outline-none">
+                  <ProfileDefaults key={selected.id} account={selected} capability={capability} onSaved={data.applyAccount} onDirtyChange={setDirty} />
+                </Tabs.Content>
               </div>
             </Tabs.Root>
           )}
         </section>
       </div>
+      {blockedSwitch && (
+        <DiscardChangesDialog
+          onKeep={() => setBlockedSwitch(null)}
+          onDiscard={() => { const go = blockedSwitch; setBlockedSwitch(null); setDirty(false); go() }}
+        />
+      )}
+      {removing && (
+        <RemoveProfileDialog
+          account={removing}
+          providerLabel={providers.find(item => item.id === removing.provider)?.label ?? removing.provider}
+          onClose={closeRemove}
+          onRemoved={() => removed(removing)}
+        />
+      )}
     </div>
   )
 }

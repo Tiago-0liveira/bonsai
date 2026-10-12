@@ -1,4 +1,4 @@
-export const AGENT_TABS = ['overview', 'usage', 'sessions'] as const
+export const AGENT_TABS = ['overview', 'usage', 'sessions', 'defaults'] as const
 export type AgentsTab = typeof AGENT_TABS[number]
 
 export interface AgentsSearch {

@@ -24,6 +24,10 @@ export interface AgentsData {
   /** Profile IDs with a refresh in flight; '' stands for all profiles. */
   refreshing: string[]
   refreshUsage: (accountId?: string) => Promise<void>
+  /** Shows a profile the page itself changed, then revalidates the list without waiting for an event. */
+  applyAccount: (account: AgentAccount) => void
+  /** Drops a profile the page itself removed, then revalidates. */
+  dropAccount: (accountId: string) => void
   /** Fetches everything again, for the retry buttons. */
   reload: () => void
 }
@@ -47,7 +51,7 @@ export function useAgentsData(): AgentsData {
   const alive = useRef(true)
   const etag = useRef<string | undefined>(undefined)
   const bodies = useRef({ accounts: '', providers: '' })
-  const flight = useRef({ accounts: false, providers: false, usage: false })
+  const flight = useRef({ accounts: false, providers: false, usage: false, accountsAgain: false })
   const usageStarted = useRef(false)
   // A slower, older usage answer must not replace a newer one.
   const usageSeq = useRef({ issued: 0, applied: 0 })
@@ -88,7 +92,7 @@ export function useAgentsData(): AgentsData {
     }
   }, [])
 
-  const loadAccounts = useCallback(async () => {
+  const loadAccounts = useCallback(async (): Promise<void> => {
     if (flight.current.accounts) return
     flight.current.accounts = true
     try {
@@ -107,8 +111,26 @@ export function useAgentsData(): AgentsData {
       if (alive.current) setAccountsError(messageOf(failure))
     } finally {
       flight.current.accounts = false
+      // A change made while a read was in flight may not be in that answer.
+      if (flight.current.accountsAgain && alive.current) { flight.current.accountsAgain = false; void loadAccounts() }
     }
   }, [loadUsage])
+
+  const revalidateAccounts = useCallback(() => {
+    etag.current = undefined
+    if (flight.current.accounts) flight.current.accountsAgain = true
+    else void loadAccounts()
+  }, [loadAccounts])
+
+  const applyAccount = useCallback((account: AgentAccount) => {
+    setAccounts(current => current?.map(item => item.id === account.id ? account : item))
+    revalidateAccounts()
+  }, [revalidateAccounts])
+
+  const dropAccount = useCallback((accountId: string) => {
+    setAccounts(current => current?.filter(item => item.id !== accountId))
+    revalidateAccounts()
+  }, [revalidateAccounts])
 
   const refreshUsage = useCallback(async (accountId?: string) => {
     const key = accountId ?? ''
@@ -173,5 +195,5 @@ export function useAgentsData(): AgentsData {
     void loadUsage()
   }, [loadAccounts, loadProviders, loadUsage])
 
-  return { providers, accounts, error: providersError || accountsError, usage, usageLoaded, usageError, refreshing, refreshUsage, reload }
+  return { providers, accounts, error: providersError || accountsError, usage, usageLoaded, usageError, refreshing, refreshUsage, applyAccount, dropAccount, reload }
 }

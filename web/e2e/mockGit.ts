@@ -314,6 +314,8 @@ export async function mockLocalEventSocket(
 export interface AgentsTabFixture {
   /** Replaces profiles, providers and sessions with the Agents tab fixture. */
   enabled: boolean
+  /** Provider cleanup warnings the API returns when a profile is removed. */
+  removeWarnings?: string[]
 }
 
 /** Usage of the Agents tab fixture profiles, keyed by profile ID. */
@@ -388,7 +390,18 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
   let accountsETag = 1
   let agentsRevision = 0
   const usageRequests: { method: string; account_id?: string }[] = []
-  const addedAccounts: Record<string, unknown>[] = []
+  const profileRequests: { method: string; id: string; body: unknown }[] = []
+  const accountList: Record<string, unknown>[] = agentsTab.enabled ? [
+    { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', auth_status: 'logged_in', effort: 'high', defaults: { effort: 'high' }, created_at: '2026-10-01T09:00:00Z', updated_at: '2026-10-10T09:00:00Z' },
+    { id: 'claude-token', provider: 'claude', name: 'CI token', auth_mode: 'token', auth_status: 'token', warnings: ['Token expires in 12 days; plan to replace it'], created_at: '2026-10-02T09:00:00Z', updated_at: '2026-10-02T09:00:00Z' },
+    { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in', sandbox: 'workspace-write', approval: 'on-request', model: 'gpt-6.1-sol', defaults: { model: 'gpt-6.1-sol', permissions: 'auto' }, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-11T10:00:00Z' },
+    { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_out', warnings: ['Not logged in; run `bonsai agent run Team -- login`'], created_at: '2026-10-03T10:00:00Z', updated_at: '2026-10-03T10:00:00Z' },
+  ] : [
+    { id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' },
+    { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] },
+    { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in' },
+    { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_in', warnings: ['Same login as profile "Personal"; both share its usage limits'] },
+  ]
   const metadata: Record<string, Metadata> = {
     'wt-main': { merge_target_branch: 'main', stack_preference: 'auto' },
     'wt-web': { merge_target_branch: 'main', stack_preference: 'auto' },
@@ -489,10 +502,17 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     if (path === '/api/agents/providers') {
       const providers = [{ id: 'antigravity', label: 'Antigravity', available: true, launch_fields: [
           { id: 'full_access', label: 'Full access', kind: 'toggle', help: 'Allow Antigravity to run tools without permission prompts.', options: [{ value: 'false', label: 'Ask permissions' }, { value: 'true', label: 'Full access', tone: 'danger' }] },
+        ], profile_fields: [
+          { id: 'model', label: 'Model', kind: 'model' },
+          { id: 'full_access', label: 'Full access', kind: 'toggle', help: 'Allow Antigravity to run tools without permission prompts.', options: [{ value: 'false', label: 'Ask permissions' }, { value: 'true', label: 'Full access', tone: 'danger' }] },
         ] },
         { id: 'claude', label: 'Claude', available: true, version: '2.1.295', launch_fields: [
           { id: 'permission_mode', label: 'Permission mode', kind: 'select', options: [{ value: '', label: 'Profile default' }, { value: 'default', label: 'Default' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan' }, { value: 'auto', label: 'Auto' }, { value: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger', help: 'Claude will run tools without asking.' }] },
           { id: 'effort', label: 'Effort', kind: 'select', options: ['', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value || 'Profile default' })) },
+        ], profile_fields: [
+          { id: 'model', label: 'Model', kind: 'model' },
+          { id: 'permission_mode', label: 'Permission mode', kind: 'select', options: [{ value: '', label: 'Provider default' }, { value: 'default', label: 'Default' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan' }, { value: 'auto', label: 'Auto' }, { value: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger', help: 'Claude will run tools without asking.' }] },
+          { id: 'effort', label: 'Effort', kind: 'select', options: ['', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value || 'Provider default' })) },
         ] },
         { id: 'codex', label: 'Codex', available: true, version: '0.162.1', launch_fields: [
           { id: 'permissions', label: 'Permissions', kind: 'select', default: 'auto', options: [
@@ -502,6 +522,15 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
             { value: 'bypass', label: 'Bypass', tone: 'danger', help: 'Codex runs every command without a sandbox and without asking.', set: { sandbox: 'bypass' } },
           ] },
           { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map(value => ({ value, label: value || 'Profile default' })) },
+        ], profile_fields: [
+          { id: 'model', label: 'Model', kind: 'model' },
+          { id: 'permissions', label: 'Permissions', kind: 'select', options: [
+            { value: '', label: 'Provider default' },
+            { value: 'read-only', label: 'Read only', set: { sandbox: 'read-only', approval: 'on-request' } },
+            { value: 'auto', label: 'Auto', set: { sandbox: 'workspace-write', approval: 'on-request' } },
+            { value: 'full-access', label: 'Full access', tone: 'danger', help: 'Codex can change any file and use the network without asking.', set: { sandbox: 'danger-full-access', approval: 'never' } },
+          ] },
+          { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map(value => ({ value, label: value || 'Provider default' })) },
         ] },
       ]
       await route.fulfill({ json: agentsTab.enabled
@@ -524,19 +553,46 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       ] }); return
     }
     if (path.startsWith('/api/agents/providers/') && path.endsWith('/models')) { await route.fulfill({ json: [] }); return }
+    const profileMatch = path.match(/^\/api\/agents\/accounts\/([^/]+)$/)
+    if (profileMatch && (request.method() === 'PATCH' || request.method() === 'DELETE')) {
+      const id = decodeURIComponent(profileMatch[1])
+      const account = accountList.find(item => item.id === id)
+      if (!account) { await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Profile not found' } } }); return }
+      profileRequests.push({ method: request.method(), id, body: request.postDataJSON() })
+      if (request.method() === 'DELETE') {
+        const active = agentSessions.filter(item => item.account_id === id && ['starting', 'running', 'stopping'].includes(item.state))
+        if (active.length) {
+          await route.fulfill({ status: 409, json: { error: { code: 'profile_in_use', message: "Stop the profile's running sessions before removing it", session_ids: active.map(item => item.id) } } }); return
+        }
+        accountList.splice(accountList.indexOf(account), 1)
+        accountsETag++
+        socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision })
+        await route.fulfill({ json: { warnings: agentsTab.removeWarnings ?? [] } }); return
+      }
+      const body = request.postDataJSON() as { name?: string; defaults?: Record<string, string | null> }
+      if (body.name !== undefined) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(body.name)) {
+          await route.fulfill({ status: 400, json: { error: { code: 'invalid_name', message: "Names start with a letter or digit, then use letters, digits, '.', '_' or '-' (at most 64)" } } }); return
+        }
+        if (accountList.some(item => item.id !== id && item.provider === account.provider && item.name === body.name)) {
+          await route.fulfill({ status: 409, json: { error: { code: 'name_taken', message: 'Another profile of this provider already has this name' } } }); return
+        }
+      }
+      const defaults = { ...(account.defaults as Record<string, string> | undefined) }
+      for (const [key, value] of Object.entries(body.defaults ?? {})) {
+        if (value === null) delete defaults[key]
+        else defaults[key] = value
+      }
+      const presets: Record<string, Record<string, string>> = { 'read-only': { sandbox: 'read-only', approval: 'on-request' }, auto: { sandbox: 'workspace-write', approval: 'on-request' }, 'full-access': { sandbox: 'danger-full-access', approval: 'never' } }
+      const options: Record<string, unknown> = { sandbox: undefined, approval: undefined, ...(presets[defaults.permissions] ?? {}), model: defaults.model, effort: defaults.effort, permission_mode: defaults.permission_mode }
+      if (account.provider === 'antigravity') options.full_access = defaults.full_access === 'true'
+      Object.assign(account, options, { name: body.name ?? account.name, defaults, updated_at: new Date().toISOString() })
+      accountsETag++
+      socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision })
+      await route.fulfill({ json: account }); return
+    }
     if (path === '/api/agents/accounts') {
-      const accounts = agentsTab.enabled ? [
-        { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', auth_status: 'logged_in', effort: 'high', created_at: '2026-10-01T09:00:00Z', updated_at: '2026-10-10T09:00:00Z' },
-        { id: 'claude-token', provider: 'claude', name: 'CI token', auth_mode: 'token', auth_status: 'token', warnings: ['Token expires in 12 days; plan to replace it'], created_at: '2026-10-02T09:00:00Z', updated_at: '2026-10-02T09:00:00Z' },
-        { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in', sandbox: 'workspace-write', approval: 'on-request', model: 'gpt-6.1-sol', created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-11T10:00:00Z' },
-        { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_out', warnings: ['Not logged in; run `bonsai agent run Team -- login`'], created_at: '2026-10-03T10:00:00Z', updated_at: '2026-10-03T10:00:00Z' },
-      ] : [
-        { id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' },
-        { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] },
-        { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in' },
-        { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_in', warnings: ['Same login as profile "Personal"; both share its usage limits'] },
-      ]
-      accounts.push(...addedAccounts as typeof accounts)
+      const accounts = accountList
       // Like the API: an ETag over the answer, 304 when the page already has it.
       const etag = `"accounts-${accountsETag}"`
       if (request.headers()['if-none-match'] === etag) { await route.fulfill({ status: 304, headers: { ETag: etag } }); return }
@@ -695,8 +751,12 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     publish: () => socket.publishUpdate(projectSnapshot('bonsai', true)),
     /** Usage requests the page made, in order. */
     usageRequests,
+    /** PATCH and DELETE requests on profiles, in order. */
+    profileRequests,
     /** Adds a profile as if the CLI created it; the page learns of it from its next revalidation. */
-    addAccount: (account: Record<string, unknown>) => { addedAccounts.push(account); accountsETag++ },
+    addAccount: (account: Record<string, unknown>) => { accountList.push(account); accountsETag++ },
+    /** Profiles as the API would list them now. */
+    accounts: () => structuredClone(accountList),
     /** The global event the API sends after an account, setup or session change. */
     publishAgentsChanged: () => socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision }),
   }

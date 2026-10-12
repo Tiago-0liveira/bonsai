@@ -55,3 +55,28 @@ export function byHeadroom<T extends { id: string }>(accounts: T[], usage: Recor
     return right - left
   })
 }
+
+/** A failed profile change. `code` and `sessionIds` come from the API's error body. */
+export class AgentProfileError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string, readonly sessionIds: string[] = []) {
+    super(message)
+    this.name = 'AgentProfileError'
+  }
+}
+
+async function profileRequest<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await localFetch(path, init)
+  if (response.ok) return response.json() as Promise<T>
+  const body = await response.json().catch(() => ({})) as { error?: { code?: string; message?: string; session_ids?: unknown } }
+  const sessionIds = Array.isArray(body.error?.session_ids) ? body.error.session_ids.filter((id): id is string => typeof id === 'string') : []
+  const message = body.error?.message ?? (response.status === 404 ? 'Update Bonsai to edit agent profiles.' : `Agent request failed (${response.status})`)
+  throw new AgentProfileError(message, response.status, body.error?.code ?? '', sessionIds)
+}
+
+/** Renames a profile and/or changes its defaults; a null default returns that field to the provider's own. */
+export const updateAgentProfile = (id: string, change: { name?: string; defaults?: Record<string, string | null> }) =>
+  profileRequest<AgentAccount>(`/api/agents/accounts/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) })
+
+/** Deletes a profile; rejects with code `profile_in_use` and the session IDs while sessions run. */
+export const removeAgentProfile = (id: string) =>
+  profileRequest<{ warnings: string[] }>(`/api/agents/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })

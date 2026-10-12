@@ -165,7 +165,7 @@ describe('profileDefaults', () => {
 describe('validateAgentsSearch', () => {
   it('keeps a profile and a known tab and drops everything else', () => {
     expect(validateAgentsSearch({ profile: 'codex-1', tab: 'usage' })).toEqual({ profile: 'codex-1', tab: 'usage' })
-    expect(validateAgentsSearch({ profile: '', tab: 'defaults' })).toEqual({ profile: undefined, tab: undefined })
+    expect(validateAgentsSearch({ profile: '', tab: 'bogus' })).toEqual({ profile: undefined, tab: undefined })
     expect(validateAgentsSearch({ profile: 7, tab: ['usage'] })).toEqual({ profile: undefined, tab: undefined })
   })
 })
