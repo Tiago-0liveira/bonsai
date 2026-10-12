@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+// tempDir is t.TempDir with symlinks resolved. macOS temp folders live under
+// /var, a symlink to /private/var, which changes $PWD and path comparisons.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func executable(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -54,7 +65,7 @@ func TestWindowsEditorsOnWSL(t *testing.T) {
 		t.Skip("Unix script fixtures")
 	}
 	const wrapper = "#!/usr/bin/env sh\nif [ -n \"$WSL_DISTRO_NAME\" ]; then exec \"$0.exe\" --wsl \"$@\"; fi\n"
-	mount, native := t.TempDir(), t.TempDir()
+	mount, native := tempDir(t), tempDir(t)
 	programs := filepath.Join(mount, "Users", "me", "AppData", "Local", "Programs")
 	mkdir := func(parts ...string) string {
 		dir := filepath.Join(parts...)
@@ -101,7 +112,7 @@ func TestWindowsWrapperRejectsOutsideAndNonScripts(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix script fixtures")
 	}
-	mount, other := t.TempDir(), t.TempDir()
+	mount, other := tempDir(t), tempDir(t)
 	d := Discovery{OS: "linux", WSL: true, WindowsMounts: []string{mount}}
 	inside := executable(t, mount, "zed", "#!/bin/sh\n# WSL_DISTRO_NAME\n")
 	if !d.windowsWrapper(inside) {
@@ -161,7 +172,7 @@ func TestLaunchArgumentsAndFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix script fixture")
 	}
-	dir := t.TempDir()
+	dir := tempDir(t)
 	out := filepath.Join(dir, "arguments")
 	t.Setenv("BONSAI_EDITOR_TEST_OUTPUT", out)
 	command := executable(t, dir, "zed", "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" \"$PATH\" > \"$BONSAI_EDITOR_TEST_OUTPUT\"\n")

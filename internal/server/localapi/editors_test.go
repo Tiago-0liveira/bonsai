@@ -72,6 +72,12 @@ func TestEnvironmentEditorAPI(t *testing.T) {
 	if err := os.WriteFile(file, []byte("hello"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	// Editors see resolved paths; macOS temp folders are behind a /var symlink.
+	realLinked, evalErr := filepath.EvalSymlinks(linked)
+	if evalErr != nil {
+		t.Fatal(evalErr)
+	}
+	realFile := filepath.Join(realLinked, filename)
 	project := projectServices{info: ProjectInfo{ID: "project", Available: true, Path: root}, daemon: &syncTestDaemon{root: root, extraWorktrees: 1}}
 	s.registry = &editorTestRegistry{&syncTestRegistry{entries: map[string]projectServices{"project": project}}}
 	id := gitlocal.ID(localRepositoryID, linked)
@@ -84,7 +90,7 @@ func TestEnvironmentEditorAPI(t *testing.T) {
 		t.Fatalf("open: %d %s", got.Code, got.Body)
 	}
 	args, err := os.ReadFile(output)
-	if err != nil || string(args) != linked+"\n"+file+"\n" {
+	if err != nil || string(args) != realLinked+"\n"+realFile+"\n" {
 		t.Fatalf("wrong worktree/arguments: %q (%v)", args, err)
 	}
 	if err := os.Remove(output); err != nil {
@@ -99,7 +105,7 @@ func TestEnvironmentEditorAPI(t *testing.T) {
 		t.Fatalf("open folder: %d %s", got.Code, got.Body)
 	}
 	args, err = os.ReadFile(output)
-	if err != nil || string(args) != linked+"\n"+linked+"\n" {
+	if err != nil || string(args) != realLinked+"\n"+realLinked+"\n" {
 		t.Fatalf("folder arguments: %q (%v)", args, err)
 	}
 	if err := os.Remove(output); err != nil {
