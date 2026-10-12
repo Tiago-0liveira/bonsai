@@ -75,7 +75,7 @@ func TestLoginFailureRemovesAccountDir(t *testing.T) {
 // A login that exits 0 without signing in (closed browser tab) still fails.
 func TestLoginWithoutCredentialsFails(t *testing.T) {
 	e := newTestEnv(t)
-	e.provider.launcher = launcherFunc(func(context.Context, agents.PreparedSession) error { return nil })
+	e.service.Launcher = launcherFunc(func(context.Context, agents.PreparedSession) error { return nil })
 	if _, err := e.service.Setup(t.Context(), ProviderID, "work", agents.SetupOptions{}); err == nil || !strings.Contains(err.Error(), "did not complete") {
 		t.Fatalf("err = %v", err)
 	}
@@ -158,8 +158,16 @@ func TestAPIKeyReachesCodexStdinOnly(t *testing.T) {
 
 func TestAPIKeyPrompt(t *testing.T) {
 	e := newTestEnv(t)
-	e.provider.promptSecret = func() (string, error) { return "  " + testAPIKey + " ", nil }
-	account := e.add("ci", agents.SetupOptions{AuthMode: AuthAPIKey})
+	result, err := e.service.SetupWithIO(t.Context(), ProviderID, "ci", agents.SetupOptions{AuthMode: AuthAPIKey}, agents.SetupIO{Prompt: promptFunc(func(label string) (string, error) {
+		if label != "OpenAI API key" {
+			t.Errorf("label = %q", label)
+		}
+		return "  " + testAPIKey + " ", nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := result.Account
 	if data, _ := os.ReadFile(authPath(e.profileHome(account))); !strings.Contains(string(data), `"`+testAPIKey+`"`) {
 		t.Fatalf("auth.json = %q", data)
 	}

@@ -373,6 +373,8 @@ bonsai agent account add claude ci --auth token # long-lived token mode
 echo "$TOKEN" | bonsai agent account add claude ci --token-stdin
 bonsai agent account list                       # shows auth mode and identity
 bonsai agent run work -- --model opus           # extra args go to claude
+bonsai agent account login work                 # sign the profile in again
+bonsai agent account login ci --auth login      # switch a token profile to login
 bonsai agent account remove work                # logs the profile out, deletes it
 ```
 
@@ -426,7 +428,8 @@ bonsai agent account add codex box --auth device     # device code, for SSH, WSL
 printenv OPENAI_API_KEY | bonsai agent account add codex ci --token-stdin   # API key
 bonsai agent account list                            # shows auth mode and email · plan
 bonsai agent run work -- --search                    # extra args go to codex
-bonsai agent run work -- login                       # sign the profile in again
+bonsai agent account login work                      # sign the profile in again
+bonsai agent account login box --auth device         # same, with a device code
 bonsai agent account remove work                     # logs the profile out, deletes it
 ```
 
@@ -471,6 +474,11 @@ bonsai agent account set work model=gpt-5.5 effort=high permissions=auto
 bonsai agent account set work --unset effort         # back to the provider default
 bonsai agent account rename work personal
 ```
+
+`account login <profile> [--auth <mode>] [--token-stdin]` signs an existing
+profile in again with the provider's own login (Antigravity: `agy`, then exit
+it), or switches its sign-in mode. Running sessions keep going; the profile's
+cached usage is dropped.
 
 `account remove` warns when a session of the profile may still be running (its
 session record is still there); the local API refuses to remove a profile while

@@ -1,0 +1,83 @@
+$ bonsai agent account add codex browser
+stdout:
+seeded profile from $HOME/.codex: config.toml, AGENTS.md, prompts/ (1 files)
+  skipped config.toml projects (credential or host-specific)
+  skipped prompts/link.md (symlink)
+added codex account "browser" (acct_ID)
+stderr:
+
+$ bonsai agent account add codex device --auth device --no-seed
+stdout:
+warning: profile "browser" is already signed in as same@example.com; two profiles on one login share its usage limits
+added codex account "device" (acct_ID)
+stderr:
+
+$ bonsai agent account add codex again --auth chatgpt --seed-from $HOME/empty-seed
+stdout:
+nothing to seed from $HOME/empty-seed
+warning: profile "browser" is already signed in as same@example.com; two profiles on one login share its usage limits
+added codex account "again" (acct_ID)
+stderr:
+
+$ bonsai agent account add codex key --token-stdin
+stdout:
+seeded profile from $HOME/.codex: config.toml, AGENTS.md, prompts/ (1 files)
+  skipped config.toml projects (credential or host-specific)
+  skipped prompts/link.md (symlink)
+added codex account "key" (acct_ID)
+stderr:
+
+$ bonsai agent account add codex key2 --auth api-key --token-stdin --seed-from $HOME/missing
+stdout:
+stderr:
+error: seed source: stat $HOME/missing: no such file or directory
+
+$ bonsai agent account add claude login
+stdout:
+seeded profile from $HOME/.claude: settings.json, CLAUDE.md, commands/ (1 files)
+  skipped commands/link.md (symlink)
+added claude account "login" (acct_ID)
+stderr:
+
+$ bonsai agent account add claude login2 --no-seed
+stdout:
+warning: profile "login" is already signed in as same@example.com; two profiles on one login share its usage limits
+added claude account "login2" (acct_ID)
+stderr:
+
+$ bonsai agent account add claude token --token-stdin --seed-from $HOME/empty-seed
+stdout:
+nothing to seed from $HOME/empty-seed
+added claude account "token" (acct_ID)
+stderr:
+
+$ bonsai agent account add claude token2 --auth token --token-stdin --no-seed
+stdout:
+added claude account "token2" (acct_ID)
+stderr:
+
+$ bonsai agent account add codex browser --no-seed
+stdout:
+stderr:
+error: account already exists: codex/browser
+
+$ bonsai agent account add claude bad name
+stdout:
+stderr:
+error: invalid account name: "bad name"
+
+$ bonsai agent account add codex nohome
+stdout:
+nothing to seed: $HOME/no-codex does not exist
+warning: profile "again" is already signed in as same@example.com; two profiles on one login share its usage limits
+added codex account "nohome" (acct_ID)
+stderr:
+
+$ bonsai agent account add claude nohome
+stdout:
+nothing to seed: $HOME/no-claude does not exist
+warning: profile "login" is already signed in as same@example.com; two profiles on one login share its usage limits
+warning: profile "login2" is already signed in as same@example.com; two profiles on one login share its usage limits
+added claude account "nohome" (acct_ID)
+stderr:
+

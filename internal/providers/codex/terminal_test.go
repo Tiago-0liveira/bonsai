@@ -164,7 +164,7 @@ func TestConcurrentCodexClaudeAndAntigravitySessionsThroughTerminal(t *testing.T
 	registry := agents.NewRegistry()
 	for _, p := range []agents.Provider{
 		countedCodex{e.provider, log},
-		countedProvider{claude.New(e.accounts, e.sessions, nil, nil), log},
+		countedProvider{claude.New(e.accounts, e.sessions), log},
 		countedProvider{stubAntigravity{}, log},
 	} {
 		if err := registry.Register(p); err != nil {

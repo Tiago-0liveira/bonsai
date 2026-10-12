@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -62,14 +63,14 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	out := &bytes.Buffer{}
 	launcher := agents.NewForegroundLauncher(strings.NewReader(""), out, out)
-	provider := New(accounts, sessions, launcher, out)
+	provider := New(accounts, sessions)
 	registry := agents.NewRegistry()
 	if err := registry.Register(provider); err != nil {
 		t.Fatal(err)
 	}
 	return &testEnv{
 		t: t, home: home, log: log, out: out, accounts: accounts, sessions: sessions, registry: registry, provider: provider,
-		service: &agents.AccountService{Store: accounts, Sessions: sessions, Registry: registry, Launcher: launcher},
+		service: &agents.AccountService{Store: accounts, Sessions: sessions, Registry: registry, Launcher: launcher, Out: out},
 	}
 }
 
@@ -134,3 +135,8 @@ func dirEntries(t *testing.T, dir string) []string {
 }
 
 func removeFile(path string) error { return os.Remove(path) }
+
+// promptFunc answers secret prompts in tests.
+type promptFunc func(label string) (string, error)
+
+func (f promptFunc) Secret(_ context.Context, label string) (string, error) { return f(label) }

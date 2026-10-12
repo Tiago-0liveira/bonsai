@@ -107,11 +107,17 @@ func TestTokenStdinStoresPrivateFileAndNeverEchoes(t *testing.T) {
 
 func TestTokenSetupWithoutStdinRunsSetupTokenThenPrompts(t *testing.T) {
 	e := newTestEnv(t)
-	e.provider.promptSecret = func() (string, error) { return "  " + testToken + " ", nil }
-	account, err := e.service.Setup(t.Context(), ProviderID, "ci", agents.SetupOptions{AuthMode: AuthToken})
+	prompt := promptFunc(func(label string) (string, error) {
+		if !strings.Contains(e.out.String(), "sk-ant-oat01-FAKE") {
+			t.Error("prompted before setup-token ran")
+		}
+		return "  " + testToken + " ", nil
+	})
+	result, err := e.service.SetupWithIO(t.Context(), ProviderID, "ci", agents.SetupOptions{AuthMode: AuthToken}, agents.SetupIO{Prompt: prompt})
 	if err != nil {
 		t.Fatal(err)
 	}
+	account := result.Account
 	if file, err := readToken(tokenPath(e.accounts, account)); err != nil || file.Token != testToken {
 		t.Fatalf("token = %+v, %v", file, err)
 	}

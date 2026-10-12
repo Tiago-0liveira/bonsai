@@ -34,20 +34,20 @@ func New(in io.Reader, out, errOut io.Writer) (*Runtime, error) {
 	}
 	launcher := agents.NewForegroundLauncher(in, out, errOut)
 	registry := agents.NewRegistry()
-	if err := registry.Register(antigravity.New(accounts, sessions, launcher)); err != nil {
+	if err := registry.Register(antigravity.New(accounts, sessions)); err != nil {
 		return nil, err
 	}
-	if err := registry.Register(claude.New(accounts, sessions, launcher, out)); err != nil {
+	if err := registry.Register(claude.New(accounts, sessions)); err != nil {
 		return nil, err
 	}
-	if err := registry.Register(codex.New(accounts, sessions, launcher, out)); err != nil {
+	if err := registry.Register(codex.New(accounts, sessions)); err != nil {
 		return nil, err
 	}
 	return &Runtime{
 		Accounts: accounts, Sessions: sessions, Registry: registry,
 		AccountService: &agents.AccountService{
 			Store: accounts, Sessions: sessions, Registry: registry,
-			Launcher: launcher, Cache: cache,
+			Launcher: launcher, Cache: cache, Out: out,
 		},
 		SessionService: &agents.SessionService{
 			Accounts: accounts, Sessions: sessions, Registry: registry, Launcher: launcher,

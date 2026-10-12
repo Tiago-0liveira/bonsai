@@ -32,7 +32,7 @@ func describeHeadline(h agents.UsageHeadline) string {
 }
 
 func TestUsageHeadline(t *testing.T) {
-	var p agents.UsageLayout = New(nil, nil, nil)
+	var p agents.UsageLayout = New(nil, nil)
 	for name, tt := range map[string]struct {
 		body string
 		want string

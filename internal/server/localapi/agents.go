@@ -133,6 +133,9 @@ func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
 				out["profile_fields"] = fields
 			}
 		}
+		if schema, ok := provider.(agents.SetupSchema); ok {
+			out["setup"] = schema.SetupSpec(r.Context())
+		}
 		return out
 	}
 	out := []map[string]any{}

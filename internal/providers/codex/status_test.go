@@ -57,7 +57,7 @@ func TestLoggedOutProfileWarns(t *testing.T) {
 	}
 	e.provider.forgetStatus(account.ID)
 	info := e.provider.DescribeAccount(t.Context(), account)
-	if info.Options["auth_status"] != "logged_out" || info.Identity != "" || len(info.Warnings) != 1 || !strings.Contains(info.Warnings[0], "bonsai agent run work -- login") {
+	if info.Options["auth_status"] != "logged_out" || info.Identity != "" || len(info.Warnings) != 1 || !strings.Contains(info.Warnings[0], "bonsai agent account login work") {
 		t.Fatalf("info = %+v", info)
 	}
 	e.prepare(account, agents.LaunchOptions{}) // Codex shows its own sign-in screen

@@ -60,12 +60,9 @@ type statusEntry struct {
 type Provider struct {
 	accounts agents.AccountStore
 	sessions agents.SessionStore
-	launcher agents.Launcher
-	out      io.Writer
 
 	binaryResolver BinaryResolver
 	runner         CommandRunner
-	promptSecret   func() (string, error)
 	now            func() time.Time
 	hostEnv        func(string) string
 	hostHome       func() (string, error)
@@ -89,20 +86,14 @@ type Provider struct {
 	usageFailures map[agents.AccountID]usageFailure
 }
 
-// New builds the Codex provider. out receives setup progress (what was seeded,
-// duplicate-identity warnings); nil discards it.
-func New(accounts agents.AccountStore, sessions agents.SessionStore, launcher agents.Launcher, out io.Writer) *Provider {
-	if out == nil {
-		out = io.Discard
-	}
+// New builds the Codex provider. Setup talks to the user only through each
+// request's SetupIO.
+func New(accounts agents.AccountStore, sessions agents.SessionStore) *Provider {
 	return &Provider{
 		accounts:       accounts,
 		sessions:       sessions,
-		launcher:       launcher,
-		out:            out,
 		binaryResolver: PathBinaryResolver{},
 		runner:         execRunner{},
-		promptSecret:   promptSecretFromTerminal,
 		now:            time.Now,
 		hostEnv:        os.Getenv,
 		hostHome:       os.UserHomeDir,
@@ -207,12 +198,14 @@ func (p *Provider) requireSupported(ctx context.Context) error {
 }
 
 var (
-	_ agents.Provider         = (*Provider)(nil)
-	_ agents.Describer        = (*Provider)(nil)
-	_ agents.LaunchValidator  = (*Provider)(nil)
-	_ agents.LaunchSchema     = (*Provider)(nil)
-	_ agents.AccountDescriber = (*Provider)(nil)
-	_ agents.AccountRemover   = (*Provider)(nil)
-	_ agents.ModelLister      = (*Provider)(nil)
-	_ agents.UsagePolicy      = (*Provider)(nil)
+	_ agents.Provider             = (*Provider)(nil)
+	_ agents.Describer            = (*Provider)(nil)
+	_ agents.LaunchValidator      = (*Provider)(nil)
+	_ agents.LaunchSchema         = (*Provider)(nil)
+	_ agents.AccountDescriber     = (*Provider)(nil)
+	_ agents.AccountRemover       = (*Provider)(nil)
+	_ agents.ModelLister          = (*Provider)(nil)
+	_ agents.UsagePolicy          = (*Provider)(nil)
+	_ agents.SetupSchema          = (*Provider)(nil)
+	_ agents.AccountAuthenticator = (*Provider)(nil)
 )

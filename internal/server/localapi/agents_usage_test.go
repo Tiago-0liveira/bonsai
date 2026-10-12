@@ -291,7 +291,7 @@ func TestAgentUsageRealProviders(t *testing.T) {
 	claude.UsageEndpoint = "http://127.0.0.1:1/usage"
 	runtime := s.agents.runtime
 	launcher := agents.NewForegroundLauncher(strings.NewReader(""), io.Discard, io.Discard)
-	for _, p := range []agents.Provider{codex.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard), claude.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)} {
+	for _, p := range []agents.Provider{codex.New(runtime.Accounts, runtime.Sessions), claude.New(runtime.Accounts, runtime.Sessions)} {
 		if err := runtime.Registry.Register(p); err != nil {
 			t.Fatal(err)
 		}
@@ -341,6 +341,28 @@ func TestAgentUsageRealProviders(t *testing.T) {
 		if p["id"] == "codex" && (hasNote || p["install_hint"] != nil || p["available"] != true) {
 			t.Fatalf("codex = %v", p)
 		}
+	}
+	setupJSON := map[string]string{}
+	var raw []map[string]json.RawMessage
+	_ = json.Unmarshal(w.Body.Bytes(), &raw)
+	for _, p := range raw {
+		var id string
+		_ = json.Unmarshal(p["id"], &id)
+		setupJSON[id] = string(p["setup"])
+	}
+	for id, want := range map[string][]string{
+		"codex":  {`{"value":"chatgpt","label":"Browser sign-in"`, `"value":"device"`, `"secret":{"label":"OpenAI API key","placeholder":"sk-…"}`, `"seed":{"source":"~/.codex"}`},
+		"claude": {`{"value":"login","label":"Browser sign-in"`, `"secret":{"label":"Setup token","placeholder":"sk-ant-oat01-…","optional":true}`, `"seed":{"source":"~/.claude"}`},
+	} {
+		for _, part := range want {
+			if !strings.Contains(setupJSON[id], part) {
+				t.Errorf("%s setup = %s, lacks %s", id, setupJSON[id], part)
+			}
+		}
+	}
+	// The stub Antigravity declares no setup schema.
+	if setupJSON["antigravity"] != "" {
+		t.Errorf("antigravity setup = %s", setupJSON["antigravity"])
 	}
 }
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -15,47 +17,66 @@ type AccountService struct {
 	Registry *Registry
 	Launcher Launcher
 	Cache    UsageCache
+	// Out receives setup progress when the caller's SetupIO has no writer;
+	// nil discards it.
+	Out io.Writer
 }
 
+// Setup creates an account with the service's own IO (its launcher and Out,
+// a terminal prompt) and writes the setup warnings to Out as "warning: " lines.
 func (s *AccountService) Setup(ctx context.Context, providerID ProviderID, name string, options SetupOptions) (Account, error) {
+	result, err := s.SetupWithIO(ctx, providerID, name, options, SetupIO{})
+	if s.Out != nil {
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(s.Out, "warning: %s\n", warning)
+		}
+	}
+	return result.Account, err
+}
+
+// SetupWithIO creates an account. IO fields left empty come from the service:
+// its Launcher, its Out and a terminal prompt. On error the account directory
+// is removed.
+func (s *AccountService) SetupWithIO(ctx context.Context, providerID ProviderID, name string, options SetupOptions, setupIO SetupIO) (SetupResult, error) {
 	if err := ValidateAccountName(name); err != nil {
-		return Account{}, err
+		return SetupResult{}, err
 	}
 	provider, err := s.Registry.Get(providerID)
 	if err != nil {
-		return Account{}, err
+		return SetupResult{}, err
 	}
 	if _, err := s.Store.GetByName(providerID, name); err == nil {
-		return Account{}, fmt.Errorf("%w: %s/%s", ErrAccountExists, providerID, name)
+		return SetupResult{}, fmt.Errorf("%w: %s/%s", ErrAccountExists, providerID, name)
 	} else if !errors.Is(err, ErrAccountNotFound) {
-		return Account{}, err
+		return SetupResult{}, err
 	}
 	id, err := NewAccountID()
 	if err != nil {
-		return Account{}, err
+		return SetupResult{}, err
 	}
 	now := time.Now().UTC()
 	account := Account{ID: id, Provider: providerID, Name: name, CreatedAt: now, UpdatedAt: now}
 	if err := ensurePrivateDir(s.Store.AccountDir(id)); err != nil {
-		return Account{}, err
+		return SetupResult{}, err
 	}
 	if err := ensurePrivateDir(s.Store.CredentialDir(id)); err != nil {
 		_ = os.RemoveAll(s.Store.AccountDir(id))
-		return Account{}, err
+		return SetupResult{}, err
 	}
 
 	session, err := s.Sessions.Create(account, "")
 	if err != nil {
 		_ = os.RemoveAll(s.Store.AccountDir(id))
-		return Account{}, err
+		return SetupResult{}, err
 	}
 	result, setupErr := provider.SetupAccount(ctx, SetupRequest{
 		Account: account, RuntimeDir: session.RuntimeDir, HomeDir: session.HomeDir, Options: options,
+		IO: setupIO.withDefaults(s.Launcher, s.Out),
 	})
 	cleanupErr := s.Sessions.Cleanup(session)
 	if setupErr != nil {
 		_ = os.RemoveAll(s.Store.AccountDir(id))
-		return Account{}, errors.Join(setupErr, cleanupErr)
+		return SetupResult{}, errors.Join(setupErr, cleanupErr)
 	}
 	final := result.Account
 	final.ID = account.ID
@@ -65,9 +86,63 @@ func (s *AccountService) Setup(ctx context.Context, providerID ProviderID, name 
 	final.UpdatedAt = time.Now().UTC()
 	if err := s.Store.Create(final); err != nil {
 		_ = os.RemoveAll(s.Store.AccountDir(id))
-		return Account{}, errors.Join(err, cleanupErr)
+		return SetupResult{}, errors.Join(err, cleanupErr)
 	}
-	return final, cleanupErr
+	return SetupResult{Account: final, Warnings: result.Warnings}, cleanupErr
+}
+
+// ErrReauthUnsupported means the provider cannot sign an existing account in
+// again; remove and add the profile instead.
+var ErrReauthUnsupported = errors.New("provider cannot sign in again")
+
+// Reauthenticate signs an existing account in again, under a per-account lock
+// so two sign-ins of one profile never race. Running sessions are left alone.
+// The stored settings take the provider's answer (a changed auth mode); the
+// account's cached usage is dropped, since the login may be another one.
+func (s *AccountService) Reauthenticate(ctx context.Context, accountID AccountID, options SetupOptions, setupIO SetupIO) (SetupResult, error) {
+	account, err := s.Store.Get(accountID)
+	if err != nil {
+		return SetupResult{}, err
+	}
+	provider, err := s.Registry.Get(account.Provider)
+	if err != nil {
+		return SetupResult{}, err
+	}
+	authenticator, ok := provider.(AccountAuthenticator)
+	if !ok {
+		return SetupResult{}, fmt.Errorf("%w: %s", ErrReauthUnsupported, Label(provider))
+	}
+	lock, err := LockFileContext(ctx, filepath.Join(s.Store.AccountDir(account.ID), "login.lock"))
+	if err != nil {
+		return SetupResult{}, err
+	}
+	defer lock.Unlock()
+
+	session, err := s.Sessions.Create(account, "")
+	if err != nil {
+		return SetupResult{}, err
+	}
+	result, reauthErr := authenticator.Reauthenticate(ctx, ReauthRequest{
+		Account: account, RuntimeDir: session.RuntimeDir, HomeDir: session.HomeDir, Options: options,
+		IO: setupIO.withDefaults(s.Launcher, s.Out),
+	})
+	cleanupErr := s.Sessions.Cleanup(session)
+	if reauthErr != nil {
+		return SetupResult{}, errors.Join(reauthErr, cleanupErr)
+	}
+	updated, err := s.Store.Modify(account.ID, func(current Account) (Account, error) {
+		if result.Account.Settings != nil {
+			current.Settings = result.Account.Settings
+		}
+		return current, nil
+	})
+	if err != nil {
+		return SetupResult{}, errors.Join(err, cleanupErr)
+	}
+	if s.Cache != nil {
+		_ = s.Cache.RemoveAccount(updated.Provider, updated.ID)
+	}
+	return SetupResult{Account: updated, Warnings: result.Warnings}, cleanupErr
 }
 
 func (s *AccountService) List(context.Context) ([]Account, error) {

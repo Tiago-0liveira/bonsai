@@ -57,7 +57,7 @@ func cmdAgent(args []string, in io.Reader, out, errOut io.Writer) error {
 
 func cmdAgentAccount(ctx context.Context, runtime *agentRuntime, args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bonsai agent account <add|list|show|set|rename|remove>")
+		return fmt.Errorf("usage: bonsai agent account <add|login|list|show|set|rename|remove>")
 	}
 	switch args[0] {
 	case "add":
@@ -65,11 +65,29 @@ func cmdAgentAccount(ctx context.Context, runtime *agentRuntime, args []string, 
 		if err != nil {
 			return err
 		}
-		account, err := runtime.accountService.Setup(ctx, provider, name, options)
+		result, err := runtime.accountService.SetupWithIO(ctx, provider, name, options, agents.SetupIO{})
+		printSetupWarnings(out, result.Warnings)
 		if err != nil {
 			return err
 		}
+		account := result.Account
 		fmt.Fprintf(out, "added %s account %q (%s)\n", account.Provider, account.Name, account.ID)
+		return nil
+	case "login":
+		selector, options, err := parseAccountLoginArgs(args[1:], in)
+		if err != nil {
+			return err
+		}
+		account, err := agents.ResolveAccount(runtime.accounts, selector)
+		if err != nil {
+			return err
+		}
+		result, err := runtime.accountService.Reauthenticate(ctx, account.ID, options, agents.SetupIO{})
+		printSetupWarnings(out, result.Warnings)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "signed in %s account %q\n", result.Account.Provider, result.Account.Name)
 		return nil
 	case "list", "ls":
 		if len(args) != 1 {
@@ -319,23 +337,86 @@ func parseAccountAddArgs(args []string, in io.Reader) (agents.ProviderID, string
 		return "", "", agents.SetupOptions{}, fmt.Errorf("--no-seed and --seed-from cannot be combined")
 	}
 	if tokenStdin {
-		if in == nil {
-			return "", "", agents.SetupOptions{}, fmt.Errorf("--token-stdin: no token on standard input")
-		}
-		data, err := io.ReadAll(io.LimitReader(in, maxStdinToken+1))
+		secret, err := readStdinToken(in)
 		if err != nil {
-			return "", "", agents.SetupOptions{}, fmt.Errorf("--token-stdin: cannot read standard input")
+			return "", "", agents.SetupOptions{}, err
 		}
-		if len(data) > maxStdinToken {
-			return "", "", agents.SetupOptions{}, fmt.Errorf("--token-stdin: input too large")
-		}
-		token := strings.TrimSpace(string(data))
-		if token == "" {
-			return "", "", agents.SetupOptions{}, fmt.Errorf("--token-stdin: no token on standard input")
-		}
-		options.Secret = strings.NewReader(token)
+		options.Secret = secret
 	}
 	return agents.ProviderID(positional[0]), positional[1], options, nil
+}
+
+// readStdinToken reads a --token-stdin secret. Errors never carry the input.
+func readStdinToken(in io.Reader) (io.Reader, error) {
+	if in == nil {
+		return nil, fmt.Errorf("--token-stdin: no token on standard input")
+	}
+	data, err := io.ReadAll(io.LimitReader(in, maxStdinToken+1))
+	if err != nil {
+		return nil, fmt.Errorf("--token-stdin: cannot read standard input")
+	}
+	if len(data) > maxStdinToken {
+		return nil, fmt.Errorf("--token-stdin: input too large")
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return nil, fmt.Errorf("--token-stdin: no token on standard input")
+	}
+	return strings.NewReader(token), nil
+}
+
+const accountLoginUsage = "usage: bonsai agent account login <account> [--auth <mode>] [--token-stdin]"
+
+// parseAccountLoginArgs parses `account login` arguments. Without --auth the
+// profile keeps its sign-in mode.
+func parseAccountLoginArgs(args []string, in io.Reader) (string, agents.SetupOptions, error) {
+	var options agents.SetupOptions
+	var positional []string
+	tokenStdin := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		flag, value, hasValue := strings.Cut(arg, "=")
+		switch flag {
+		case "--auth":
+			switch {
+			case hasValue && value != "":
+				options.AuthMode = value
+			case !hasValue && i+1 < len(args) && args[i+1] != "" && !strings.HasPrefix(args[i+1], "-"):
+				i++
+				options.AuthMode = args[i]
+			default:
+				return "", agents.SetupOptions{}, fmt.Errorf("--auth requires a value")
+			}
+		case "--token-stdin":
+			if hasValue {
+				return "", agents.SetupOptions{}, fmt.Errorf("--token-stdin does not take a value")
+			}
+			tokenStdin = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", agents.SetupOptions{}, fmt.Errorf("unknown flag %q\n%s", arg, accountLoginUsage)
+			}
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) != 1 {
+		return "", agents.SetupOptions{}, fmt.Errorf("%s", accountLoginUsage)
+	}
+	if tokenStdin {
+		secret, err := readStdinToken(in)
+		if err != nil {
+			return "", agents.SetupOptions{}, err
+		}
+		options.Secret = secret
+	}
+	return positional[0], options, nil
+}
+
+// printSetupWarnings prints setup warnings where setup used to print them.
+func printSetupWarnings(out io.Writer, warnings []string) {
+	for _, warning := range warnings {
+		fmt.Fprintf(out, "warning: %s\n", warning)
+	}
 }
 
 func cmdAgentRun(ctx context.Context, runtime *agentRuntime, args []string) error {
@@ -418,6 +499,7 @@ bonsai agent — provider account and session management
 Usage:
   bonsai agent account add <provider> <name> [--auth <mode>] [--token-stdin]
                            [--no-seed] [--seed-from <dir>]
+  bonsai agent account login <account> [--auth <mode>] [--token-stdin]
   bonsai agent account list
   bonsai agent account show <account>
   bonsai agent account set <account> <field>=<value>... [--unset <field>]...
@@ -439,7 +521,8 @@ Providers:
                agents, commands, skills, output styles, MCP servers); never
                credentials or history. Use --no-seed to skip, --seed-from <dir> to
                choose another source. Several sessions of one login profile can
-               race on token refresh; token mode avoids that.
+               race on token refresh; token mode avoids that. Sign in again (or
+               switch mode) with bonsai agent account login <name> [--auth token]
   codex        bonsai agent account add codex <name>                   ChatGPT login (default)
                bonsai agent account add codex <name> --auth device     device code (SSH, WSL)
                bonsai agent account add codex <name> --auth api-key    asks for an API key
@@ -448,7 +531,12 @@ Providers:
                auth.json. New profiles are seeded from ~/.codex (config.toml without
                logins, projects or credential providers, AGENTS.md, prompts, skills,
                rules); never auth.json, sessions or history. --no-seed and
-               --seed-from <dir> work as for Claude. Re-login a profile with
-               bonsai agent run <name> -- login
+               --seed-from <dir> work as for Claude. Sign in again (or switch
+               mode) with bonsai agent account login <name> [--auth <mode>]
+
+Sign in again: bonsai agent account login <account> runs the provider's own
+  login for an existing profile (Antigravity: agy, then exit it). Running
+  sessions keep going. --auth switches the mode; --token-stdin reads a key or
+  token as for add.
 `, "\n"))
 }

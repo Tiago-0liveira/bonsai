@@ -21,7 +21,7 @@ import (
 // headlines the dashboard reads.
 var usageTestRegistry = func() *agents.Registry {
 	registry := agents.NewRegistry()
-	for _, provider := range []agents.Provider{antigravity.New(nil, nil, nil), claude.New(nil, nil, nil, nil), codex.New(nil, nil, nil, nil)} {
+	for _, provider := range []agents.Provider{antigravity.New(nil, nil), claude.New(nil, nil), codex.New(nil, nil)} {
 		if err := registry.Register(provider); err != nil {
 			panic(err)
 		}

@@ -33,7 +33,7 @@ func describeHeadline(h agents.UsageHeadline) string {
 }
 
 func TestUsageHeadline(t *testing.T) {
-	var p agents.UsageLayout = New(nil, nil, nil, nil)
+	var p agents.UsageLayout = New(nil, nil)
 	for _, tt := range []struct {
 		fixture []string
 		want    string
@@ -60,7 +60,7 @@ func TestUsageHeadline(t *testing.T) {
 
 func TestUsageHeadlineWithoutMainWindows(t *testing.T) {
 	remaining := 0.5
-	h := New(nil, nil, nil, nil).UsageHeadline(agents.UsageSnapshot{Limits: []agents.UsageLimit{{ID: "review_window_1440m", RemainingFraction: &remaining}}})
+	h := New(nil, nil).UsageHeadline(agents.UsageSnapshot{Limits: []agents.UsageLimit{{ID: "review_window_1440m", RemainingFraction: &remaining}}})
 	if got := describeHeadline(h); got != "primary=- secondary=- extra=[review_window_1440m] score=- low=false reset=-" {
 		t.Fatal(got)
 	}

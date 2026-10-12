@@ -263,7 +263,7 @@ func TestAgentBrowserFixture(t *testing.T) {
 	claude.ModelsEndpoint, claude.UsageEndpoint = "http://127.0.0.1:1/v1/models", "http://127.0.0.1:1/usage"
 	launcher := agents.NewForegroundLauncher(strings.NewReader(""), io.Discard, io.Discard)
 	runtime := s.agents.runtime
-	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)); err != nil {
+	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions)); err != nil {
 		t.Fatal(err)
 	}
 	service := &agents.AccountService{Store: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Launcher: launcher}
@@ -271,7 +271,7 @@ func TestAgentBrowserFixture(t *testing.T) {
 	if _, err := service.Setup(context.Background(), claude.ProviderID, "Work", agents.SetupOptions{Secret: strings.NewReader("sk-ant-oat01-FIXTUREFIXTUREFIXTUREFIXTUREFIXTURE\n"), Seed: &noSeed}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.Registry.Register(codex.New(runtime.Accounts, runtime.Sessions, launcher, io.Discard)); err != nil {
+	if err := runtime.Registry.Register(codex.New(runtime.Accounts, runtime.Sessions)); err != nil {
 		t.Fatal(err)
 	}
 	for _, profile := range []struct{ name, email, auth string }{{"Personal", "me@example.com", codex.AuthChatGPT}, {"Team", "team@example.com", codex.AuthDevice}} {
@@ -623,7 +623,7 @@ func TestAgentStartSandboxAndApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Claude only validates its settings before a session exists, so no binary is needed.
-	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions, nil, io.Discard)); err != nil {
+	if err := runtime.Registry.Register(claude.New(runtime.Accounts, runtime.Sessions)); err != nil {
 		t.Fatal(err)
 	}
 	account := func(provider agents.ProviderID) string {

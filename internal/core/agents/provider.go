@@ -35,10 +35,85 @@ type SetupRequest struct {
 	RuntimeDir string
 	HomeDir    string
 	Options    SetupOptions
+	IO         SetupIO
 }
 
 type SetupResult struct {
 	Account Account
+	// Warnings are shown once after setup, such as a login another profile
+	// already uses. The CLI prints each as a "warning: " line.
+	Warnings []string
+}
+
+// SetupIO is how one setup or sign-in talks to the user. The CLI uses the
+// terminal; the web runs login commands in a job terminal and asks for secrets
+// in the browser. Providers never read the process TTY or write to stdio during
+// setup: everything goes through these.
+type SetupIO struct {
+	Launcher Launcher       // runs interactive login commands
+	Out      io.Writer      // progress lines, such as the seed report
+	Prompt   SecretPrompter // hidden input for a pasted key or token
+}
+
+// SecretPrompter asks the user for a secret. label names it ("OpenAI API key").
+// The answer is never echoed, logged or stored by the prompter.
+type SecretPrompter interface {
+	Secret(ctx context.Context, label string) (string, error)
+}
+
+// ReauthRequest signs an existing account in again. RuntimeDir and HomeDir
+// belong to a throwaway session, as for setup. Options.AuthMode "" keeps the
+// account's current mode.
+type ReauthRequest struct {
+	Account    Account
+	RuntimeDir string
+	HomeDir    string
+	Options    SetupOptions
+	IO         SetupIO
+}
+
+// AccountAuthenticator signs an existing account in again. The result's
+// Account carries the settings to store (a changed auth mode); identity, name
+// and timestamps are kept by the caller.
+type AccountAuthenticator interface {
+	Reauthenticate(context.Context, ReauthRequest) (SetupResult, error)
+}
+
+// SetupSpec declares how a provider's accounts are created, so the web can
+// render the setup form without knowing the provider.
+type SetupSpec struct {
+	AuthModes []AuthModeOption `json:"auth_modes,omitempty"` // empty: one implicit mode
+	Seed      *SeedSpec        `json:"seed,omitempty"`       // nil: no seeding
+	Notes     []string         `json:"notes,omitempty"`
+}
+
+// AuthModeOption is one value of SetupOptions.AuthMode.
+type AuthModeOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Help  string `json:"help,omitempty"`
+	// Recommended is decided per host, such as device code on WSL or SSH.
+	Recommended bool        `json:"recommended,omitempty"`
+	Secret      *SecretSpec `json:"secret,omitempty"` // the mode takes a pasted key or token
+}
+
+// SecretSpec describes a pasted secret. Optional means the provider can get it
+// another way when none is given (Claude runs setup-token, then prompts).
+type SecretSpec struct {
+	Label       string `json:"label"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Optional    bool   `json:"optional,omitempty"`
+}
+
+// SeedSpec says where a new profile is seeded from, home-relative for display
+// ("~/.codex"). It is never an input: the web only toggles seeding.
+type SeedSpec struct {
+	Source string `json:"source"`
+}
+
+// SetupSchema declares a provider's setup choices.
+type SetupSchema interface {
+	SetupSpec(context.Context) SetupSpec
 }
 
 // LaunchOptions are per-launch choices from the UI or CLI. Providers map them

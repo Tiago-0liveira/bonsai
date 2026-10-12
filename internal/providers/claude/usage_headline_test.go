@@ -32,7 +32,7 @@ func describeHeadline(h agents.UsageHeadline) string {
 }
 
 func TestUsageHeadline(t *testing.T) {
-	var p agents.UsageLayout = New(nil, nil, nil, nil)
+	var p agents.UsageLayout = New(nil, nil)
 	for name, tt := range map[string]struct {
 		body []byte
 		want string
@@ -54,7 +54,7 @@ func TestUsageHeadline(t *testing.T) {
 }
 
 func TestUsageNote(t *testing.T) {
-	var noter agents.UsageNoter = New(nil, nil, nil, nil)
+	var noter agents.UsageNoter = New(nil, nil)
 	if !strings.Contains(noter.UsageNote(), "undocumented endpoint") {
 		t.Fatal(noter.UsageNote())
 	}

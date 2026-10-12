@@ -244,6 +244,21 @@ the terminal manager, local API and CLI never test a provider ID.
 - `SetupRequest.Options` carries `bonsai agent account add` flags (`--auth`,
   `--token-stdin`, `--no-seed`, `--seed-from`). Providers reject options they do
   not support rather than ignoring them.
+- `SetupRequest.IO` (`SetupIO`) is the only way setup talks to the user: its
+  `Launcher` runs interactive login commands, `Out` gets progress lines (the seed
+  report) and `Prompt` (`SecretPrompter`) asks for a pasted key or token.
+  Providers never read the process TTY or write to stdio during setup and take
+  no launcher or writer at construction. `AccountService.SetupWithIO` fills
+  missing fields from its own `Launcher`, its `Out` and `TerminalPrompter`, which
+  returns `ErrNoTerminal` without a TTY (providers turn that into their
+  "pipe it with --token-stdin" message). Notices such as a login another profile
+  already uses come back as `SetupResult.Warnings`; the CLI prints each as a
+  `warning: ` line where setup used to print it, so `account add` output is
+  unchanged (`internal/cli/testdata/account-add.golden`).
+- `AccountService.Reauthenticate` signs an existing account in again under a
+  per-account lock (`<account dir>/login.lock`) with a throwaway session, stores
+  the settings the provider returns (a changed auth mode) and drops the
+  account's cached usage. It runs while sessions of the account are active.
 
 Optional interfaces, found by type assertion:
 
@@ -259,6 +274,8 @@ Optional interfaces, found by type assertion:
 | `UsagePolicy` | Provider-specific usage cache TTL |
 | `UsageLayout` | `UsageHeadline`: the primary/secondary limits (5h, weekly), extra limits, score (lower remaining of the pair), `low` (< 0.20) and next reset; shared by `bonsai agent usage` and `/api/agents/usage` |
 | `UsageNoter` | `usage_note` in `/api/agents/providers`: a short caveat on where usage is read from |
+| `SetupSchema` | `setup` in `/api/agents/providers`: `auth_modes` (value, label, help, `recommended` per host, `secret` for a pasted key or token, `optional` when the provider can get it another way), `seed.source` for display (home-relative) and `notes` |
+| `AccountAuthenticator` | Sign in again (`bonsai agent account login <account> [--auth <mode>] [--token-stdin]`): runs the provider's own login for an existing account; without `--auth` the account keeps its mode |
 
 `/api/agents/providers` always lists `agents.KnownProviders` (Antigravity, Claude
 and Codex; unregistered ones as "Not available yet") plus any other registered
@@ -300,6 +317,14 @@ every inherited `CLAUDE*` and `ANTHROPIC_*` variable is removed
 `[explicit...] --model --permission-mode --effort --name --session-id <uuid> [-- prompt]`;
 the generated UUID is the session's `provider_session_id`.
 
+`SetupSpec`: `login` "Browser sign-in" (recommended) and `token` "Setup token",
+whose secret is optional (without one, setup runs `claude setup-token` in the
+setup terminal, then prompts); seed source `~/.claude` or the host's
+`CLAUDE_CONFIG_DIR`. Sign in again runs `auth login` + `auth status` (login) or
+stores a new token (token); switching from token to login removes the stored
+token after the login succeeded. Describe warnings for a logged-out, missing or
+expired sign-in point at `bonsai agent account login <name>`.
+
 Tests never need a Claude login: `internal/providers/claude/testdata/fakeclaude.sh`
 is a POSIX stand-in that tests put first on `PATH`; it reads the Phase 0
 `auth-status-*.json` fixtures from `FAKE_CLAUDE_FIXTURES`. `UsageService.All`
@@ -338,6 +363,15 @@ a resumed or forked TUI never attaches to a shared daemon that would outlive
 **Stop agent** or the profile. The start dialog's `permissions` select is a preset that sends `sandbox` and
 `approval` together (`bypass` is Bonsai's name for the bypass flag). Codex has no
 `--session-id`, so `provider_session_id` stays empty.
+
+`SetupSpec`: `chatgpt` "Browser sign-in", `device` "Device code" (recommended
+instead of the browser when `WSL_DISTRO_NAME` or `SSH_CONNECTION` is set) and
+`api-key` with an "OpenAI API key" secret; seed source `~/.codex` or the host's
+`CODEX_HOME`. Sign in again runs `codex login [--device-auth]` or pipes the key
+into `codex login --with-api-key`, then `login status`, in the profile's own
+`CODEX_HOME`; Codex replaces `auth.json`, and running sessions pick the new login
+up on their next refresh. A logged-out profile's warning points at
+`bonsai agent account login <name>`.
 
 Identity (`email · plan`) is decoded from the `id_token` claims in `auth.json`
 without a network call; auth status is the exit code of `codex login status`
@@ -413,7 +447,11 @@ project worktree. Set up a profile with
 PATH. Claude (`claude`) and Codex (`codex`) are supported the same way: set up a
 profile with `bonsai agent account add codex <name> [--auth device]`. Profile selection uses
 opaque account IDs; discovery responses contain only ID, provider, display name and the
-display-safe profile details.
+display-safe profile details. `SetupSpec` has no modes and no seed, only a note
+that agy must be exited to save the profile: Bonsai ignores agy's exit code and
+captures the sign-in from the setup home. `bonsai agent account login` runs agy
+again in a fresh home and stores the new sign-in with the next vault generation,
+so a running session's older tokens never overwrite it when that session ends.
 
 The local API owns these sessions, independently of request contexts and browser
 connections. Closing a terminal or refreshing detaches; reconnecting resumes the

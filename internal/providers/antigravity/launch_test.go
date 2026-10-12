@@ -79,7 +79,7 @@ func TestLaunchDoesNotChangeProfileSettings(t *testing.T) {
 }
 
 func TestValidateLaunch(t *testing.T) {
-	provider := New(nil, nil, nil)
+	provider := New(nil, nil)
 	account := agents.Account{ID: "acct_v", Provider: ProviderID}
 	yes := true
 	if err := provider.ValidateLaunch(account, agents.LaunchOptions{Model: "m", Prompt: "p", FullAccess: &yes, DisplayName: "n"}); err != nil {
@@ -106,8 +106,8 @@ func TestSetupRejectsUnsupportedOptions(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			launcher := &providerTestLauncher{}
-			provider := &Provider{binaryResolver: &providerTestBinaryResolver{path: "agy-test"}, credentialMgr: &providerTestCredentialManager{}, launcher: launcher}
-			_, err := provider.SetupAccount(context.Background(), agents.SetupRequest{Account: agents.Account{ID: "acct_s"}, RuntimeDir: t.TempDir(), HomeDir: t.TempDir(), Options: options})
+			provider := &Provider{binaryResolver: &providerTestBinaryResolver{path: "agy-test"}, credentialMgr: &providerTestCredentialManager{}}
+			_, err := provider.SetupAccount(context.Background(), agents.SetupRequest{Account: agents.Account{ID: "acct_s"}, RuntimeDir: t.TempDir(), HomeDir: t.TempDir(), Options: options, IO: agents.SetupIO{Launcher: launcher}})
 			if err == nil || launcher.calls != 0 {
 				t.Fatalf("err = %v, launches = %d", err, launcher.calls)
 			}
@@ -116,7 +116,7 @@ func TestSetupRejectsUnsupportedOptions(t *testing.T) {
 }
 
 func TestDescribe(t *testing.T) {
-	provider := New(nil, nil, nil)
+	provider := New(nil, nil)
 	provider.binaryResolver = failingResolver{}
 	if provider.Label() != "Antigravity" {
 		t.Fatal(provider.Label())
@@ -139,7 +139,7 @@ type failingResolver struct{}
 func (failingResolver) Resolve() (string, error) { return "", errors.New("missing") }
 
 func TestLaunchFieldsDeclareFullAccess(t *testing.T) {
-	provider := New(nil, nil, nil)
+	provider := New(nil, nil)
 	fields := provider.LaunchFields()
 	if len(fields) != 1 || fields[0].ID != "full_access" || fields[0].Kind != agents.LaunchFieldToggle || fields[0].Help == "" {
 		t.Fatalf("fields = %+v", fields)
