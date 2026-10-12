@@ -7,6 +7,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/core/editors"
 	"io/fs"
 	"log"
 	"net"
@@ -81,6 +82,7 @@ type Server struct {
 	eventHub      *eventHub
 	stateSync     *stateSync
 	rootsPath     string
+	editors       editors.Discovery
 	ui            http.Handler
 	// live is the webhook receiver and liveHooks its hook controller; both
 	// nil when live updates are off.
@@ -155,6 +157,7 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 		securityMode:  cfg.SecurityMode,
 		registry:      registry,
 		rootsPath:     rootsPath,
+		editors:       editors.Current(),
 		sessions:      newSessionStore(),
 		eventHub:      events,
 	}
@@ -200,6 +203,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/session", s.createSession)
 	s.registerAgentRoutes(mux)
 	s.registerSettingsRoutes(mux)
+	s.registerEditorRoutes(mux)
 	s.registerProjectRoutes(mux)
 	s.registerGitRoutes(mux)
 	s.registerProcessRoutes(mux)

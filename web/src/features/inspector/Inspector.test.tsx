@@ -90,3 +90,12 @@ it.each(['claude', 'antigravity'] as const)('enables terminal and stop for a liv
   setup({ ...agent, providerId: undefined })
   expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled()
 })
+
+it('opens the selected worktree folder in the editor from the inspector header', () => {
+  const requestOpenFolder = vi.fn().mockResolvedValue(undefined)
+  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, agents: [], pullRequests: [], activeProjectId: 'bonsai',
+    selection: { type: 'worktree', id: 'wt-web' }, requestOpenFolder }, true)
+  render(<Inspector />)
+  screen.getByRole('button', { name: 'Open worktree in editor' }).click()
+  expect(requestOpenFolder).toHaveBeenCalledWith('wt-web')
+})

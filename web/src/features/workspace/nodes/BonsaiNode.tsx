@@ -10,6 +10,7 @@ import {
   CircleX,
   Clock3,
   ExternalLink,
+  FolderOpen,
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
@@ -222,6 +223,7 @@ function DefaultBranchCard({ data }: { data: BonsaiGraphData }) {
 function StackCard({ data }: { data: BonsaiGraphData }) {
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
+  const requestOpenFolder = useBonsaiStore(state => state.requestOpenFolder)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const ejectWorktreeFromStack = useBonsaiStore((state) => state.ejectWorktreeFromStack)
   const setSelection = useBonsaiStore((state) => state.setSelection)
@@ -256,7 +258,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
             </button>
             <ContextMenu.Root>
               <ContextMenu.Trigger asChild><button type="button" aria-label={'Manage ' + item.branch} onClick={event => { event.stopPropagation(); setDeleteWorktreeId(item.id) }} className="nodrag text-[rgb(var(--muted))]" title="Delete worktree"><Trash2 size={10} /></button></ContextMenu.Trigger>
-              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay"><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
+              <ContextMenu.Portal><ContextMenu.Content className="z-[100] rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay"><MenuItem onSelect={() => { void requestOpenFolder(item.id) }}><FolderOpen size={13} /> Open in editor</MenuItem><MenuItem onSelect={() => setDeleteWorktreeId(item.id)}>Delete worktree</MenuItem></ContextMenu.Content></ContextMenu.Portal>
             </ContextMenu.Root>
             <PrBadge status={item.prStatus} number={item.prNumber} stale={item.prStale} />
             <CiBadge status={item.ciStatus} compact stale={item.ciStale} />
@@ -293,6 +295,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
   const setNotice = useBonsaiStore((state) => state.setNotice)
   const toggleAutomaticGroup = useBonsaiStore(state => state.toggleAutomaticGroup)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
+  const requestOpenFolder = useBonsaiStore(state => state.requestOpenFolder)
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const agent = useBonsaiStore((state) => data.kind === 'agent' ? state.agents.find((item) => item.id === data.entityId) : undefined)
 
@@ -485,6 +488,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
             <>
               <MenuItem onSelect={() => openStartAgentDialog(data.entityId)}><Play size={13} /> Start agent</MenuItem>
               <MenuItem onSelect={() => openStartProcessDialog(data.entityId)}><Play size={13} /> Start process</MenuItem>
+              <MenuItem onSelect={() => { void requestOpenFolder(data.entityId) }}><FolderOpen size={13} /> Open in editor</MenuItem>
               <MenuItem onSelect={() => data.prNumber ? openGitHub('pull/' + data.prNumber) : setNotice('No PR linked yet')}><GitPullRequest size={13} /> Open pull request</MenuItem>
               {data.groupId && (data.groupCount ?? 0) > 1 && <MenuItem onSelect={() => toggleAutomaticGroup(data.groupId as string)}><Layers3 size={13} /> Toggle Local / unlinked stack</MenuItem>}
               <MenuItem onSelect={() => setDeleteWorktreeId(data.entityId)}><Trash2 size={13} /> Delete worktree</MenuItem>

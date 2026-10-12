@@ -17,8 +17,6 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
-  ExternalLink,
-  FileCode2,
   GripVertical,
   Maximize2,
   Minus,
@@ -29,7 +27,6 @@ import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { StatusDot } from '../branches/BranchesIsland'
 import { useOpenRuntimeEntries, type RuntimeEntry } from './openRuntimeEntries'
-import type { EditorPreference } from '../../types'
 
 const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })))
 const ProcessTerminal = lazy(() => import('./ProcessTerminal').then(module => ({ default: module.ProcessTerminal })))
@@ -200,55 +197,12 @@ export function RuntimeWorkspace() {
   )
 }
 
-function EditorPreferenceDialog() {
-  const open = useBonsaiStore((state) => state.editorPromptOpen)
-  const path = useBonsaiStore((state) => state.pendingOpenFile)
-  const setEditorPreference = useBonsaiStore((state) => state.setEditorPreference)
-  const close = useBonsaiStore((state) => state.closeEditorPrompt)
-  if (!open) return null
-
-  const choices: Array<{ id: EditorPreference; label: string; description: string }> = [
-    { id: 'vscode', label: 'Visual Studio Code', description: 'code --goto <file>' },
-    { id: 'cursor', label: 'Cursor', description: 'cursor --goto <file>' },
-    { id: 'zed', label: 'Zed', description: 'zed <file>' },
-    { id: 'system', label: 'System default', description: 'Use the operating-system file handler' },
-  ]
-
-  return (
-    <div className="fixed inset-0 z-[120] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
-      <div className="w-full max-w-[430px] overflow-hidden rounded-[14px] border border-border-strong bg-panel shadow-overlay">
-        <div className="flex h-11 items-center border-b border-border-subtle px-3">
-          <FileCode2 size={13} className="mr-2 text-accent" />
-          <div>
-            <div className="text-[13px] font-semibold">Open files with…</div>
-            <div className="max-w-[300px] truncate font-mono text-[10px] text-muted-2">{path}</div>
-          </div>
-          <button onClick={close} className="ml-auto grid h-6 w-6 place-items-center rounded text-muted hover:bg-panel-3 hover:text-text"><X size={11} /></button>
-        </div>
-        <div className="space-y-1 p-2">
-          {choices.map((choice) => (
-            <button key={choice.id} onClick={() => setEditorPreference(choice.id)} className="flex w-full items-center gap-3 rounded-[10px] border border-transparent px-3 py-2.5 text-left hover:border-border hover:bg-panel-2">
-              <span className="grid h-8 w-8 place-items-center rounded-[7px] border border-border bg-well"><ExternalLink size={12} /></span>
-              <span className="min-w-0">
-                <span className="block text-[12px] font-medium">{choice.label}</span>
-                <span className="mt-0.5 block font-mono text-[10px] text-muted-2">{choice.description}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="border-t border-border-subtle px-3 py-2 font-mono text-[10px] text-muted-2">This saves your editor preference. Opening an external editor is unavailable in the connected app.</div>
-      </div>
-    </div>
-  )
-}
-
 export function BottomWorkspace() {
   return (
     <>
       <div className="bottom-workspace h-full min-h-0">
         <RuntimeWorkspace />
       </div>
-      <EditorPreferenceDialog />
     </>
   )
 }
