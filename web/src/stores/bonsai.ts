@@ -1,6 +1,6 @@
 import { startAgent, stopAgent, mapAgent, isLiveAgent, providerIdFor } from '../api/agents'
 import type { ProjectRootsSettings } from '../api/settings'
-import { loadEditors, saveEditor, openFileInEditor, type EnvironmentEditorSettings } from '../api/editors'
+import { loadEditors, saveEditor, openFileInEditor, openFolderInEditor, type EnvironmentEditorSettings } from '../api/editors'
 import { create } from 'zustand'
 import { SHELL_UNAVAILABLE, ENV_UNAVAILABLE } from './execution'
 import { createPreferenceBoundary } from './preferenceBoundary'
@@ -137,8 +137,9 @@ export interface BonsaiState {
   loadEditorSettings: () => Promise<EnvironmentEditorSettings>
   setEnvironmentEditor: (editor: string) => Promise<void>
   editorPromptOpen: boolean
-  pendingOpenFile: { worktreeId: string; path: string } | null
+  pendingOpenFile: { worktreeId: string; path: string; folder?: boolean } | null
   requestOpenFile: (path: string) => Promise<void>
+  requestOpenFolder: (worktreeId: string) => Promise<void>
   chooseFileEditor: (editor: string) => Promise<void>
   closeEditorPrompt: () => void
 
@@ -471,14 +472,32 @@ export const useBonsaiStore = create<BonsaiState>()(
           set({ notice: 'Requested ' + result.editor + ' to open ' + path })
         } catch (error) { report(error) }
       },
+      requestOpenFolder: async (worktreeId) => {
+        try {
+          const settings = await get().loadEditorSettings()
+          const preferred = settings.editors.find(editor => editor.id === settings.preferred)
+          // Some installed editors cannot open directories; ask which one to use.
+          if (!preferred?.folders) {
+            set({ editorPromptOpen: true, pendingOpenFile: { worktreeId, path: '', folder: true } })
+            return
+          }
+          const result = await openFolderInEditor(worktreeId, settings.environment.id)
+          set({ notice: 'Requested ' + result.editor + ' to open the worktree folder' })
+        } catch (error) { report(error) }
+      },
       chooseFileEditor: async (editor) => {
         const pending = get().pendingOpenFile
         try {
-          await get().setEnvironmentEditor(editor)
+          // A default that merely cannot open folders stays the default; the
+          // choice then applies to this launch only.
+          const keepDefault = !!pending?.folder && !!get().editorSettings?.preferred
+          if (!keepDefault) await get().setEnvironmentEditor(editor)
           if (!pending || get().pendingOpenFile !== pending) return
           const settings = get().editorSettings!
-          const result = await openFileInEditor(pending.worktreeId, pending.path, settings.environment.id)
-          set({ editorPromptOpen: false, pendingOpenFile: null, notice: 'Requested ' + result.editor + ' to open ' + pending.path })
+          const result = pending.folder
+            ? await openFolderInEditor(pending.worktreeId, settings.environment.id, keepDefault ? editor : undefined)
+            : await openFileInEditor(pending.worktreeId, pending.path, settings.environment.id)
+          set({ editorPromptOpen: false, pendingOpenFile: null, notice: 'Requested ' + result.editor + ' to open ' + (pending.folder ? 'the worktree folder' : pending.path) })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           set({ editorSettingsError: message })

@@ -8,7 +8,7 @@ import { loadEditors, saveEditor, openFileInEditor } from '../../api/editors'
 vi.mock('../../api/editors', () => ({ loadEditors: vi.fn(), saveEditor: vi.fn(), openFileInEditor: vi.fn() }))
 const settings = {
   environment: { id: 'wsl:host:Ubuntu', label: 'WSL (Ubuntu)' }, revision: 0,
-  editors: [{ id: 'zed', name: 'Zed', command: '/usr/bin/zed' }], preferred: '', saved_preferred: '',
+  editors: [{ id: 'zed', name: 'Zed', command: '/usr/bin/zed', folders: true }], preferred: '', saved_preferred: '',
 }
 
 beforeEach(() => {
@@ -23,7 +23,7 @@ it('lists installed environment editors in Settings and saves the selection', as
   expect(await screen.findByRole('option', { name: 'Zed' })).toBeVisible()
   expect(screen.queryByRole('option', { name: 'Cursor' })).toBeNull()
   expect(screen.queryByRole('option', { name: 'System default' })).toBeNull()
-  expect(screen.getByText(/Only editors installed inside WSL/)).toBeVisible()
+  expect(screen.getByText(/plus Windows VS Code, Cursor and Zed through their WSL launchers/)).toBeVisible()
   fireEvent.change(screen.getByRole('combobox', { name: 'Default editor' }), { target: { value: 'zed' } })
   await waitFor(() => expect(saveEditor).toHaveBeenCalledWith(settings, 'zed'))
   await waitFor(() => expect(screen.getByRole('combobox')).toHaveValue('zed'))

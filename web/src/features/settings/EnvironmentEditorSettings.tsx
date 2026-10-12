@@ -25,7 +25,7 @@ export function EnvironmentEditorSettings() {
       </label>
       {settings.saved_preferred && !settings.preferred && <p className="text-xs text-muted">Your previous editor is unavailable in this environment. Choose another installed editor.</p>}
       {settings.editors.length === 0 && <p className="text-sm text-muted">No supported editors were found. Install a GUI editor on this environment’s PATH, then refresh. Restart Bonsai if PATH changed.</p>}
-      {settings.environment.id.startsWith('wsl:') && <p className="text-xs text-muted">Only editors installed inside WSL are available here. Linux GUI editors need a working graphical session, such as WSLg.</p>}
+      {settings.environment.id.startsWith('wsl:') && <p className="text-xs text-muted">Editors installed inside WSL are listed, plus Windows VS Code, Cursor and Zed through their WSL launchers. Linux GUI editors need a working graphical session, such as WSLg.</p>}
     </>}
     {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     <button type="button" className="bonsai-focus btn-ghost text-[12px]" disabled={loading || saving} onClick={() => { void load().catch(() => undefined) }}>Refresh editors</button>

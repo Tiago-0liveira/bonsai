@@ -87,6 +87,11 @@ func (s *Server) openFileEditor(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		EnvironmentID string `json:"environment_id"`
 		Path          string `json:"path"`
+		// Folder opens the worktree directory itself; Path must then be empty.
+		Folder bool `json:"folder"`
+		// Editor picks an installed editor for this launch only, without
+		// changing the saved default.
+		Editor string `json:"editor"`
 	}
 	if !decodeStrictJSON(w, r, &body) {
 		return
@@ -95,7 +100,12 @@ func (s *Server) openFileEditor(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 409, "environment_changed", "The environment changed. Refresh editor settings.")
 		return
 	}
-	if !filepath.IsLocal(body.Path) || strings.ContainsRune(body.Path, 0) {
+	if body.Folder {
+		if body.Path != "" {
+			writeAPIError(w, 400, "invalid", "path must be empty when opening a folder")
+			return
+		}
+	} else if !filepath.IsLocal(body.Path) || strings.ContainsRune(body.Path, 0) {
 		writeAPIError(w, 400, "invalid", "A file path within the selected worktree is required")
 		return
 	}
@@ -105,15 +115,23 @@ func (s *Server) openFileEditor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings := s.editorSettingsValue(cfg)
+	want := settings.Preferred
+	if body.Editor != "" {
+		want = body.Editor
+	}
 	var selected *editors.Editor
 	for i := range settings.Editors {
-		if settings.Editors[i].ID == settings.Preferred {
+		if want != "" && settings.Editors[i].ID == want {
 			selected = &settings.Editors[i]
 			break
 		}
 	}
 	if selected == nil {
 		writeAPIError(w, 409, "editor_unavailable", "Choose an installed editor for "+settings.Environment.Label+" in Settings.")
+		return
+	}
+	if body.Folder && !selected.Folders {
+		writeAPIError(w, 409, "editor_folder_unsupported", selected.Name+" cannot open folders. Choose another editor.")
 		return
 	}
 	// Resolve the worktree through repository authority, not a browser-supplied
@@ -141,6 +159,19 @@ func (s *Server) openFileEditor(w http.ResponseWriter, r *http.Request) {
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
 		writeAPIError(w, 404, "worktree_unavailable", err.Error())
+		return
+	}
+	if body.Folder {
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			writeAPIError(w, 404, "worktree_unavailable", "The selected worktree is not a directory")
+			return
+		}
+		if err := s.editors.LaunchFolder(*selected, root); err != nil {
+			writeAPIError(w, 502, "editor_launch_failed", err.Error())
+			return
+		}
+		writeJSON(w, 202, map[string]string{"editor": selected.Name, "environment": settings.Environment.Label})
 		return
 	}
 	file, err := filepath.EvalSymlinks(filepath.Join(root, body.Path))

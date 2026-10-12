@@ -139,7 +139,7 @@ describe('bonsai store', () => {
 
   const editors = {
     environment: { id: 'wsl:host:Ubuntu', label: 'WSL (Ubuntu)' }, revision: 0,
-    editors: [{ id: 'zed', name: 'Zed', command: '/usr/bin/zed' }], preferred: '', saved_preferred: '',
+    editors: [{ id: 'zed', name: 'Zed', command: '/usr/bin/zed', folders: true }], preferred: '', saved_preferred: '',
   }
   const jsonResponse = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { 'Content-Type': 'application/json' },
@@ -189,6 +189,49 @@ describe('bonsai store', () => {
     await useBonsaiStore.getState().requestOpenFile('README.md')
     expect(useBonsaiStore.getState().editorPromptOpen).toBe(true)
     expect(vi.mocked(fetch).mock.calls).toHaveLength(count + 1)
+  })
+
+  it('opens the worktree folder with a default editor that supports folders', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ ...editors, preferred: 'zed', saved_preferred: 'zed' }))
+      .mockResolvedValueOnce(jsonResponse({ editor: 'Zed', environment: 'WSL (Ubuntu)' }, 202))
+    await useBonsaiStore.getState().requestOpenFolder('wt-api')
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(false)
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/worktrees/wt-api/open-editor', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ environment_id: editors.environment.id, folder: true }),
+    }))
+    expect(useBonsaiStore.getState().notice).toContain('worktree folder')
+  })
+
+  it('asks for a folder-capable editor and saves it when no default exists', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(editors))
+      .mockResolvedValueOnce(jsonResponse({ ...editors, revision: 1, preferred: 'zed', saved_preferred: 'zed' }))
+      .mockResolvedValueOnce(jsonResponse({ editor: 'Zed', environment: 'WSL (Ubuntu)' }, 202))
+    await useBonsaiStore.getState().requestOpenFolder('wt-api')
+    expect(useBonsaiStore.getState().pendingOpenFile).toEqual({ worktreeId: 'wt-api', path: '', folder: true })
+    await useBonsaiStore.getState().chooseFileEditor('zed')
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/settings/editors', expect.objectContaining({ method: 'POST' }))
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/worktrees/wt-api/open-editor', expect.objectContaining({
+      body: JSON.stringify({ environment_id: editors.environment.id, folder: true }),
+    }))
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(false)
+  })
+
+  it('keeps a default editor that cannot open folders and uses the choice once', async () => {
+    const withKate = {
+      ...editors, preferred: 'kate', saved_preferred: 'kate',
+      editors: [{ id: 'kate', name: 'Kate', command: '/usr/bin/kate', folders: false }, ...editors.editors],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(withKate))
+      .mockResolvedValueOnce(jsonResponse({ editor: 'Zed', environment: 'WSL (Ubuntu)' }, 202))
+    await useBonsaiStore.getState().requestOpenFolder('wt-api')
+    expect(useBonsaiStore.getState().editorPromptOpen).toBe(true)
+    const calls = vi.mocked(fetch).mock.calls.length
+    await useBonsaiStore.getState().chooseFileEditor('zed')
+    // Only the launch request is sent: the saved default is not rewritten.
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(calls + 1)
+    expect(fetch).toHaveBeenLastCalledWith('http://localhost:3000/api/worktrees/wt-api/open-editor', expect.objectContaining({
+      body: JSON.stringify({ environment_id: editors.environment.id, folder: true, editor: 'zed' }),
+    }))
   })
 
   it('legacy agent launch callers open profile selection without creating a session', () => {

@@ -37,7 +37,7 @@ func TestEnvironmentEditorAPI(t *testing.T) {
 	if err := os.WriteFile(command, []byte("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$BONSAI_EDITOR_TEST_OUTPUT\"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	s.editors = editors.Discovery{Environment: editors.Environment{ID: "wsl:test:Ubuntu", Label: "WSL (Ubuntu)"}, OS: runtime.GOOS, WSL: true, Path: dir}
+	s.editors = editors.Discovery{Environment: editors.Environment{ID: "wsl:test:Ubuntu", Label: "WSL (Ubuntu)"}, OS: runtime.GOOS, WSL: true, Path: dir, WindowsMounts: []string{t.TempDir()}}
 	settingsPath := s.rootsPath + ".editors.json"
 	if _, err := config.UpdateEditorSettings(settingsPath, "windows:test", "zed", 0); err != nil {
 		t.Fatal(err)
@@ -89,6 +89,40 @@ func TestEnvironmentEditorAPI(t *testing.T) {
 	}
 	if err := os.Remove(output); err != nil {
 		t.Fatal(err)
+	}
+	// Opening the worktree folder passes only the directory (no --goto/file).
+	openFolder := func(body map[string]any) *httptest.ResponseRecorder {
+		body["environment_id"] = s.editors.Environment.ID
+		return authorizedRequest(t, s, "POST", "/api/worktrees/"+id+"/open-editor", "editor-open", body)
+	}
+	if got := openFolder(map[string]any{"folder": true}); got.Code != 202 {
+		t.Fatalf("open folder: %d %s", got.Code, got.Body)
+	}
+	args, err = os.ReadFile(output)
+	if err != nil || string(args) != linked+"\n"+linked+"\n" {
+		t.Fatalf("folder arguments: %q (%v)", args, err)
+	}
+	if err := os.Remove(output); err != nil {
+		t.Fatal(err)
+	}
+	kate := filepath.Join(dir, "kate")
+	if err := os.WriteFile(kate, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if got := openFolder(map[string]any{"folder": true, "editor": "kate"}); got.Code != 409 || !strings.Contains(got.Body.String(), "editor_folder_unsupported") {
+		t.Fatalf("folder-less editor opened a folder: %d %s", got.Code, got.Body)
+	}
+	if got := openFolder(map[string]any{"folder": true, "editor": "missing"}); got.Code != 409 {
+		t.Fatalf("unknown editor override accepted: %d %s", got.Code, got.Body)
+	}
+	if got := openFolder(map[string]any{"folder": true, "path": filename}); got.Code != 400 {
+		t.Fatalf("folder with path accepted: %d %s", got.Code, got.Body)
+	}
+	if err := os.Remove(kate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatal("rejected folder request launched an editor")
 	}
 	if err := os.Symlink(t.TempDir(), filepath.Join(linked, "escape")); err != nil {
 		t.Fatal(err)

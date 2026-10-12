@@ -7,7 +7,7 @@ import * as Tabs from '@radix-ui/react-tabs'
 import { useRouter } from '@tanstack/react-router'
 import {
   Archive, Bot, Check, CheckCircle2, ChevronRight, CircleDot, Clock3, Copy,
-  ExternalLink, FileDiff, GitBranch, GitPullRequest, History, Layers3, LoaderCircle,
+  ExternalLink, FileDiff, FolderOpen, GitBranch, GitPullRequest, History, Layers3, LoaderCircle,
   Play, Plus, RotateCcw, Save, SlidersHorizontal, Square, TerminalSquare, Trash2, Undo2,
   AlertCircle, XCircle, type LucideIcon,
 } from 'lucide-react'
@@ -207,6 +207,7 @@ export function Inspector() {
   const restoreAgent = useBonsaiStore((state) => state.restoreAgent)
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
+  const requestOpenFolder = useBonsaiStore((state) => state.requestOpenFolder)
   const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
@@ -287,6 +288,7 @@ export function Inspector() {
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5 pt-0.5">
                   <IconButton icon={Copy} label="Copy branch name" onClick={() => { void navigator.clipboard?.writeText(worktree.branch); setNotice('Copied ' + worktree.branch) }} />
+                  <IconButton icon={FolderOpen} label="Open worktree in editor" onClick={() => { void requestOpenFolder(worktree.id) }} />
                   <IconButton icon={ExternalLink} label="Open on GitHub" onClick={() => openGitHub(pr ? 'pull/' + pr.number : 'tree/' + worktree.branch, worktree.projectId)} />
                 </div>
               </div>

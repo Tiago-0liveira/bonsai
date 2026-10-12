@@ -64,26 +64,61 @@ Files tab asks you to choose an installed editor, saves that choice, and opens
 the file. Files open relative to their selected worktree, including when you
 switch worktrees while the chooser is open.
 
-Discovery uses this environment's absolute PATH entries for supported GUI
-commands: `code`, `code-insiders`, `cursor`, `zed`/`zeditor`, `subl`, `kate`,
-`gedit`, and `gnome-text-editor`. Windows requires native `.exe` commands on
-PATH; terminal-only editors and generic system file handlers are not offered.
-No installation directories in another operating system are searched.
+Discovery runs in the environment where Bonsai runs and offers VS Code, VS Code
+Insiders, Cursor, Zed, Sublime Text, Kate, Gedit and GNOME Text Editor when they
+are installed. Terminal-only editors and generic system file handlers are not
+offered. Per platform, a command is looked up on PATH first and then in the
+usual install locations, so editors still appear when a background service has
+a short PATH:
 
-On WSL, Windows drive mount entries, Windows executables, symlinks to those
-mounts, and Windows forwarding scripts are excluded. Install a **Linux** editor
-inside that WSL distribution; a Windows Zed installation alone will not appear.
-GUI editors also need a graphical session such as WSLg. Preferences are keyed
-by host and OS, and additionally by distribution on WSL, so Windows and separate
-WSL distributions keep independent choices. Old browser-wide editor preferences
-are discarded rather than assigned to an environment.
+| Platform | Also searched |
+| --- | --- |
+| Linux | `~/.local/bin`, `/usr/local/bin`, `/snap/bin`; `/usr/share/code`, `/opt` and `~/.local/zed.app` installs |
+| macOS | `/opt/homebrew/bin`, `/usr/local/bin`; app bundles in `/Applications` and `~/Applications` (`Visual Studio Code`, `Cursor`, `Zed`, `Sublime Text`) |
+| Windows | `.exe` files on PATH; the `code.cmd` and `cursor.cmd` shims resolve to `Code.exe` / `Cursor.exe`; `%LOCALAPPDATA%\Programs`, `%ProgramFiles%` and `%ProgramFiles(x86)%` |
+
+Each platform only runs its own executables: a Linux or macOS host never picks
+up Windows programs, and Windows never runs shell scripts. WSL is the one
+exception, described next.
+
+### Opening a worktree folder
+
+Right-click a worktree on the canvas and choose **Open in editor**, or use the
+folder button in the Inspector header. The worktree directory opens in the
+default editor. VS Code, Cursor, Zed and Sublime Text can open folders; Kate,
+Gedit and GNOME Text Editor cannot. If the default cannot, Bonsai asks which
+folder-capable editor to use for that one launch and leaves the default alone.
+With no default, the choice is saved like it is for files.
+
+### WSL and Windows editors
+
+On WSL, Linux editors installed inside the distribution are listed as usual.
+Bonsai also offers **Visual Studio Code (Windows)**, **Visual Studio Code
+Insiders (Windows)**, **Cursor (Windows)** and **Zed (Windows)** when their
+Windows installation provides its WSL-aware launcher script (`bin/code`,
+`bin/cursor`, `bin/zed`). These scripts forward to the Windows editor and tell
+it which distribution owns the file: VS Code and Cursor open a Remote-WSL
+window (needs the *WSL* extension), and Zed runs
+`zed.exe --wsl <user>@<distro>`. Bonsai passes the Linux path unchanged and lets
+the vendor script do the translation.
+
+The launcher is looked up on the Windows drive entries of PATH first, then in
+the standard install folders (`Users/*/AppData/Local/Programs` and
+`Program Files`), so it also works when WSL does not append the Windows PATH.
+Only shell scripts that mention `WSL_DISTRO_NAME` are accepted; bare `.exe`
+files, `.cmd` shims and symlinks leaving the Windows drive are not. Windows
+editors without such a launcher (Sublime Text, for example) need a Linux
+install inside the distribution. Windows interop must be enabled
+(`[interop] enabled=true` in `wsl.conf`, the default). GUI Linux editors
+instead need a graphical session such as WSLg.
 
 Use **Refresh editors** after installing or removing an editor. Restart Bonsai
 if you changed its PATH. A missing saved editor prompts you to choose another;
-Bonsai never falls back to a Windows launcher. Launches use separate arguments,
-without shell interpolation, and reject paths or symlinks outside the worktree.
-Launcher helpers use the environment's PATH with Windows drive mounts excluded
-on WSL. The opening notice acknowledges the launch request; it does not assert
+Bonsai never substitutes a different editor and never falls back to a system
+file handler. Launches use separate arguments, without shell interpolation, and
+reject paths or symlinks outside the worktree. Native launcher scripts resolve
+helpers through the environment's PATH with Windows drive mounts excluded on
+WSL; Windows editor launchers keep the full PATH, as their scripts expect. The opening notice acknowledges the launch request; it does not assert
 that a GUI window was displayed. Immediate process failures report the editor's
 error, and later failures are retained in the local API log.
 

@@ -17,7 +17,7 @@ async function editorBackend(page: Page, installed = true) {
     }
     await route.fulfill({ json: {
       environment: { id: 'wsl:host:Ubuntu', label: 'WSL (Ubuntu)' }, revision,
-      editors: installed ? [{ id: 'zed', name: 'Zed', command: '/usr/bin/zed' }] : [],
+      editors: installed ? [{ id: 'zed', name: 'Zed', command: '/usr/bin/zed', folders: true }] : [],
       preferred, saved_preferred: preferred,
     } })
   })
@@ -53,7 +53,7 @@ test('chooses a native editor with the dock collapsed, opens the pending file, a
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('bonsai-web-workspace-v6')!).state)).not.toHaveProperty('editorPreference')
 })
 
-test('shows an empty native environment without offering Windows or system editors', async ({ page }) => {
+test('shows an empty native environment without offering system editors', async ({ page }) => {
   await editorBackend(page, false)
   await openConnectedApp(page)
   await page.getByRole('link', { name: 'Settings', exact: true }).click()
@@ -61,10 +61,10 @@ test('shows an empty native environment without offering Windows or system edito
   await expect(section).toContainText('No supported editors were found')
   await expect(section.getByRole('combobox')).toBeDisabled()
   await expect(section.getByRole('option')).toHaveCount(1)
-  await expect(section).toContainText('Only editors installed inside WSL')
+  await expect(section).toContainText('through their WSL launchers')
 })
 
-test('real discovery excludes Windows launchers in the current WSL environment', async ({ request }) => {
+test('real discovery only offers WSL-aware wrappers for Windows editors in WSL', async ({ request }) => {
   const origin = 'http://127.0.0.1:7011'
   const session = await request.post(origin + '/api/session', { headers: { Origin: origin } })
   expect(session.ok()).toBe(true)
@@ -75,8 +75,10 @@ test('real discovery excludes Windows launchers in the current WSL environment',
   expect(settings.environment.id).toBeTruthy()
   if (settings.environment.id.startsWith('wsl:')) {
     for (const editor of settings.editors) {
-      expect(editor.command).not.toMatch(/^\/mnt\/[a-z]\//)
       expect(editor.command).not.toMatch(/\.exe$/i)
+      // A Windows drive command must be a distinct "-windows" editor, launched
+      // through its WSL wrapper and never confused with a native one.
+      if (/^\/mnt\/[a-z]\//.test(editor.command)) expect(editor.id).toMatch(/-windows$/)
     }
   }
 })
