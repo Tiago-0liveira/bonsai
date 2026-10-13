@@ -413,8 +413,13 @@ bonsai agent account remove work                # logs the profile out, deletes 
   `env` or header secrets in them, into the profile (mode 0600). Symlinked files
   and directories in the source are skipped and reported. Login-pinning settings
   (`forceLoginMethod`, `forceLoginOrgUUID`) and credential helpers are dropped.
-- **Usage.** `bonsai agent usage` shows the 5-hour and weekly utilization (and
-  per-model weekly limits when present) of login profiles. Claude has no
+- **Usage.** `bonsai agent usage` shows the plan, the 5-hour and weekly
+  utilization (and per-model weekly limits when present), each next reset, the
+  dollar usage credits and any granted usage-limit resets (with what they
+  refill and when they expire) of login profiles. The resets are read the way
+  Claude Code reads them (`?cedar_ember=1`, sent with Claude Code's `x-app` and
+  `User-Agent` headers, without which the endpoint does not list them); Bonsai
+  never uses a reset. Claude has no
   documented endpoint for this, so Bonsai reads the one Claude Code's own
   `/usage` view uses (`/api/oauth/usage`). It can change or disappear without
   notice and is best effort. Bonsai only reads the profile's stored login and
@@ -435,7 +440,7 @@ your real `~/.codex` is never written.
 bonsai agent account add codex work                  # ChatGPT login in the browser (default)
 bonsai agent account add codex box --auth device     # device code, for SSH, WSL or headless hosts
 printenv OPENAI_API_KEY | bonsai agent account add codex ci --token-stdin   # API key
-bonsai agent account list                            # shows auth mode and email · plan
+bonsai agent account list                            # shows auth mode, email and plan
 bonsai agent run work -- --search                    # extra args go to codex
 bonsai agent account login work                      # sign the profile in again
 bonsai agent account login box --auth device         # same, with a device code
@@ -462,8 +467,9 @@ bonsai agent account remove work                     # logs the profile out, del
   profiles on the same ChatGPT login share its usage limits; Bonsai warns when
   you add one.
 - **Usage and models.** `bonsai agent usage` shows the 5-hour and weekly limits
-  of ChatGPT profiles (plus the limits of other metered features and a credit
-  balance when Codex reports them), read from `codex app-server`, Codex's
+  of ChatGPT profiles (plus the limits of other metered features, the credit
+  balance and the granted rate-limit resets with their expiry when Codex
+  reports them; Bonsai never redeems a reset), read from `codex app-server`, Codex's
   published protocol; Codex does any token refresh itself. API key profiles
   have no plan limits and are shown as `n/a`. Results are cached for 5 minutes;
   `--refresh` bypasses the cache. The start dialog's model suggestions come from
@@ -473,7 +479,8 @@ bonsai agent account remove work                     # logs the profile out, del
 ### Profile defaults
 
 Each profile keeps its launch defaults: the model plus Codex `permissions` and
-`effort`, Claude `permission_mode` and `effort`, or Antigravity `full_access`. The
+`effort`, Claude `permission_mode` and `effort`, or Antigravity `effort` and
+`full_access`. The
 web start dialog opens on them and can change them for one launch; set them for
 good on the profile's **Defaults** tab in the Agents tab or with `account set`.
 A launch option still wins over them, and defaults only apply to sessions
@@ -502,6 +509,15 @@ Install `agy`, then add a Bonsai profile:
 ```sh
 bonsai agent account add antigravity personal
 ```
+
+The profile list shows its email, whether its stored login is complete and,
+once read, its plan ("Google AI Pro"). `bonsai agent usage` also shows its
+credits (`/credits`). agy only paints the plan on its interactive screen, so
+Bonsai reads it now and then in a pseudo-terminal, sending nothing but Ctrl+C to
+quit; this never runs on Windows, and listing profiles never starts `agy`. The
+start dialog's models come from `agy models`; a model agy lists once per effort
+(`gemini-3.8-flash-high`, `-medium`, `-low`) is one model with an effort choice,
+passed to agy as the full ID. A model listed once has no effort choice.
 
 Start the web app with `bonsai web`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;

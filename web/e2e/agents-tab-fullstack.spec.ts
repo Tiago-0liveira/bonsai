@@ -100,7 +100,7 @@ test('real API: create Codex profiles in the browser, set defaults, run sessions
   // 3. Usage of the signed-in profile comes from the fake app-server's phase0 fixtures.
   await list.getByRole('button', { name: /^laptop/ }).click()
   await page.getByRole('tab', { name: 'Usage' }).click()
-  await expect(page.getByText('Plan: plus')).toBeVisible()
+  await expect(page.getByText('Plan: Plus')).toBeVisible()
   const limits = page.getByRole('list', { name: 'Plan limits' })
   await expect(limits.getByRole('meter', { name: '5h remaining' })).toHaveAttribute('aria-valuenow', '72')
   await expect(limits.getByRole('meter', { name: 'Weekly remaining' })).toHaveAttribute('aria-valuenow', '96')

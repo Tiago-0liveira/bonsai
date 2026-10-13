@@ -35,7 +35,7 @@ func TestLoginSetupRecordsIdentityAndForcesFileStore(t *testing.T) {
 		t.Fatalf("home = %v, %v", info, err)
 	}
 	info := e.provider.DescribeAccount(t.Context(), account)
-	if info.AuthMode != AuthChatGPT || info.Identity != "work@example.com · pro" || info.Options["auth_status"] != "logged_in" || len(info.Warnings) != 0 {
+	if info.AuthMode != AuthChatGPT || info.Identity != "work@example.com" || info.Plan != "Pro" || info.Options["auth_status"] != "logged_in" || len(info.Warnings) != 0 {
 		t.Fatalf("info = %+v", info)
 	}
 	for _, leak := range []string{"fake-access", "fake-refresh", "acct-fake", home} {

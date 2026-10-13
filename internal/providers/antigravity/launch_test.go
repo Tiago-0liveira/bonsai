@@ -35,6 +35,17 @@ func TestLaunchArgsGolden(t *testing.T) {
 		{name: "display name ignored", launch: agents.LaunchOptions{DisplayName: "named"}, want: []string{}},
 		{name: "cli explicit model wins", settings: `{"model":"p","dangerously_skip_permissions":true}`, explicit: []string{"--model", "e"}, want: []string{"--model", "e", "--dangerously-skip-permissions"}},
 		{name: "cli explicit args first", explicit: []string{"--help"}, settings: `{"model":"p"}`, want: []string{"--help", "--model", "p"}},
+		// Efforts are composed into the model ID; agy never gets --effort.
+		{name: "grouped model takes its default effort", launch: agents.LaunchOptions{Model: "gemini-3.8-flash"}, want: []string{"--model", "gemini-3.8-flash-high"}},
+		{name: "model and effort", launch: agents.LaunchOptions{Model: "gemini-3.8-flash", Effort: "low"}, want: []string{"--model", "gemini-3.8-flash-low"}},
+		{name: "full id passes through", settings: `{"effort":"medium"}`, launch: agents.LaunchOptions{Model: "gemini-3.8-flash-low"}, want: []string{"--model", "gemini-3.8-flash-low"}},
+		{name: "full id with an explicit effort swaps it", launch: agents.LaunchOptions{Model: "gemini-3.8-flash-low", Effort: "medium"}, want: []string{"--model", "gemini-3.8-flash-medium"}},
+		{name: "profile model and effort", settings: `{"model":"gemini-3.8-flash","effort":"medium"}`, want: []string{"--model", "gemini-3.8-flash-medium"}},
+		{name: "profile effort skipped for a model without it", settings: `{"model":"claude-sonnet-4-6","effort":"low"}`, want: []string{"--model", "claude-sonnet-4-6"}},
+		{name: "lone medium model stays whole", launch: agents.LaunchOptions{Model: "gpt-oss-120b-medium"}, want: []string{"--model", "gpt-oss-120b-medium"}},
+		{name: "effort dropped for a model without efforts", launch: agents.LaunchOptions{Model: "claude-opus-4-6-thinking", Effort: "high"}, want: []string{"--model", "claude-opus-4-6-thinking"}},
+		{name: "unlisted model with effort", launch: agents.LaunchOptions{Model: "gemini-9", Effort: "high"}, want: []string{"--model", "gemini-9-high"}},
+		{name: "explicit --model in args wins over effort", explicit: []string{"--model", "x-low"}, launch: agents.LaunchOptions{Model: "gemini-3.8-flash", Effort: "high"}, want: []string{"--model", "x-low"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			account := agents.Account{ID: "acct_golden", Provider: ProviderID}
@@ -42,6 +53,7 @@ func TestLaunchArgsGolden(t *testing.T) {
 				account.Settings = []byte(tc.settings)
 			}
 			provider := &Provider{binaryResolver: &providerTestBinaryResolver{path: "agy-test"}, credentialMgr: &providerTestCredentialManager{}}
+			seedModels(t, provider, account.ID)
 			prepared, err := provider.PrepareSession(context.Background(), agents.PrepareSessionRequest{
 				Account: account, Session: agents.Session{ID: "sess_golden", WorkDir: t.TempDir(), HomeDir: t.TempDir()},
 				Args: tc.explicit, Launch: tc.launch,
@@ -67,6 +79,7 @@ func TestLaunchDoesNotChangeProfileSettings(t *testing.T) {
 	yes := true
 	account := agents.Account{ID: "acct_golden", Provider: ProviderID, Settings: []byte(`{"model":"p"}`)}
 	provider := &Provider{binaryResolver: &providerTestBinaryResolver{path: "agy-test"}, credentialMgr: &providerTestCredentialManager{}}
+	seedModels(t, provider, account.ID)
 	if _, err := provider.PrepareSession(context.Background(), agents.PrepareSessionRequest{
 		Account: account, Session: agents.Session{WorkDir: t.TempDir(), HomeDir: t.TempDir()},
 		Launch: agents.LaunchOptions{FullAccess: &yes},
@@ -85,7 +98,24 @@ func TestValidateLaunch(t *testing.T) {
 	if err := provider.ValidateLaunch(account, agents.LaunchOptions{Model: "m", Prompt: "p", FullAccess: &yes, DisplayName: "n"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, launch := range []agents.LaunchOptions{{PermissionMode: "plan"}, {Effort: "high"}, {Sandbox: "read-only"}, {Approval: "never"}} {
+	for _, launch := range []agents.LaunchOptions{{PermissionMode: "plan"}, {Sandbox: "read-only"}, {Approval: "never"}, {Effort: "-x"}, {Effort: "HIGH"}} {
+		if err := provider.ValidateLaunch(account, launch); err == nil {
+			t.Fatalf("accepted %+v", launch)
+		}
+	}
+	// Without a cached list any well-formed effort is accepted.
+	if err := provider.ValidateLaunch(account, agents.LaunchOptions{Model: "gemini-3.8-flash", Effort: "ultra"}); err != nil {
+		t.Fatal(err)
+	}
+	// With one, the effort must be the model's.
+	seedModels(t, provider, account.ID)
+	// A model without efforts launches, its leftover effort dropped.
+	for _, launch := range []agents.LaunchOptions{{Model: "gemini-3.8-flash", Effort: "low"}, {Model: "gemini-3.8-flash-low", Effort: "high"}, {Model: "unlisted", Effort: "high"}, {Model: "claude-sonnet-4-6", Effort: "high"}, {Model: "gpt-oss-120b-medium", Effort: "medium"}} {
+		if err := provider.ValidateLaunch(account, launch); err != nil {
+			t.Fatalf("%+v: %v", launch, err)
+		}
+	}
+	for _, launch := range []agents.LaunchOptions{{Model: "gemini-3.8-flash", Effort: "ultra"}} {
 		if err := provider.ValidateLaunch(account, launch); err == nil {
 			t.Fatalf("accepted %+v", launch)
 		}
@@ -138,13 +168,16 @@ type failingResolver struct{}
 
 func (failingResolver) Resolve() (string, error) { return "", errors.New("missing") }
 
-func TestLaunchFieldsDeclareFullAccess(t *testing.T) {
+func TestLaunchFieldsDeclareEffortAndFullAccess(t *testing.T) {
 	provider := New(nil, nil)
 	fields := provider.LaunchFields()
-	if len(fields) != 1 || fields[0].ID != "full_access" || fields[0].Kind != agents.LaunchFieldToggle || fields[0].Help == "" {
+	if len(fields) != 2 || fields[0].ID != "effort" || !fields[0].PerModel || fields[1].ID != "full_access" || fields[1].Kind != agents.LaunchFieldToggle || fields[1].Help == "" {
 		t.Fatalf("fields = %+v", fields)
 	}
-	options := fields[0].Options
+	if got := agents.FieldValues(fields[0]); !reflect.DeepEqual(got, []string{"low", "medium", "high"}) {
+		t.Fatalf("efforts = %v", got)
+	}
+	options := fields[1].Options
 	if len(options) != 2 || options[0].Value != "false" || options[1].Value != "true" || options[1].Tone != agents.ToneDanger || options[0].Tone != "" {
 		t.Fatalf("options = %+v", options)
 	}

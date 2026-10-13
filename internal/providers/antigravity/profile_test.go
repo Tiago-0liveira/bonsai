@@ -12,11 +12,11 @@ func strPtr(s string) *string { return &s }
 
 func TestProfileFieldsMirrorLaunchFields(t *testing.T) {
 	fields := (&Provider{}).ProfileFields()
-	if got := agents.FieldIDs(fields); !reflect.DeepEqual(got, []string{"model", "full_access"}) {
+	if got := agents.FieldIDs(fields); !reflect.DeepEqual(got, []string{"model", "effort", "full_access"}) {
 		t.Fatalf("ids = %v", got)
 	}
-	if fields[1].Kind != agents.LaunchFieldToggle || !reflect.DeepEqual(agents.FieldValues(fields[1]), []string{"false", "true"}) {
-		t.Fatalf("full access = %+v", fields[1])
+	if fields[2].Kind != agents.LaunchFieldToggle || !reflect.DeepEqual(agents.FieldValues(fields[2]), []string{"false", "true"}) {
+		t.Fatalf("full access = %+v", fields[2])
 	}
 }
 
@@ -54,19 +54,19 @@ func TestProfileFieldValuesPassParseSettings(t *testing.T) {
 func TestUpdateProfile(t *testing.T) {
 	p := &Provider{}
 	account := agents.Account{Settings: json.RawMessage(`{"model":"old","future":1}`)}
-	raw, err := p.UpdateProfile(account, map[string]*string{"model": strPtr("new"), "full_access": strPtr("true")})
+	raw, err := p.UpdateProfile(account, map[string]*string{"model": strPtr("new"), "full_access": strPtr("true"), "effort": strPtr("low")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	next := agents.Account{Settings: raw}
 	settings, _ := ParseSettings(next)
-	if settings.Model != "new" || !settings.DangerouslySkipPermissions {
+	if settings.Model != "new" || !settings.DangerouslySkipPermissions || settings.Effort != "low" || p.ProfileDefaults(next)["effort"] != "low" {
 		t.Fatalf("settings = %+v", settings)
 	}
 	if args := invocationArgs(settings, nil); !reflect.DeepEqual(args, []string{"--model", "new", "--dangerously-skip-permissions"}) {
 		t.Fatalf("argv = %v", args)
 	}
-	raw, err = p.UpdateProfile(next, map[string]*string{"model": nil, "full_access": strPtr("false")})
+	raw, err = p.UpdateProfile(next, map[string]*string{"model": nil, "full_access": strPtr("false"), "effort": strPtr("")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,8 @@ func TestUpdateProfile(t *testing.T) {
 		t.Fatalf("unset settings = %s", raw)
 	}
 	for name, changes := range map[string]map[string]*string{
-		"unknown field":   {"effort": strPtr("high")},
+		"unknown field":   {"sandbox": strPtr("high")},
+		"bad effort":      {"effort": strPtr("High Effort")},
 		"raw key":         {"dangerously_skip_permissions": strPtr("true")},
 		"bad full access": {"full_access": strPtr("yes")},
 		"dash model":      {"model": strPtr("--evil")},

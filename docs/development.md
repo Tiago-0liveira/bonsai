@@ -368,7 +368,7 @@ up on their next refresh. A logged-out profile's warning points at
 (`bonsai agent account set|show`, the Agents tab's Defaults) are `model`,
 `effort` and the `permissions` preset, stored as `sandbox`/`approval`.
 
-Identity (`email · plan`) is decoded from the `id_token` claims in `auth.json`
+Identity (the email) and plan are decoded from the `id_token` claims in `auth.json`
 without a network call; auth status is the exit code of `codex login status`
 (cached 60 s, 10 s when unknown). Short commands run in their own process group,
 killed on timeout.
@@ -539,6 +539,26 @@ that agy must be exited to save the profile: Bonsai ignores agy's exit code and
 captures the sign-in from the setup home. `bonsai agent account login` runs agy
 again in a fresh home and stores the new sign-in with the next vault generation,
 so a running session's older tokens never overwrite it when that session ends.
+
+Account details never start `agy` on the profile-list path: `DescribeAccount`
+reads the email from the vault (a fallback identity counts as none),
+`auth_status` is `logged_in` when the stored credentials are complete, and the
+plan comes from `<AccountDir>/plan.json`. `Usage` runs the built-in `/usage` and
+`/credits` commands (no tokens) in a throwaway session (`withProfile`:
+materialize, run, reconcile, clean up). It also starts the plan probe in the
+background when it is due (new email, no plan, or a plan older than 24 h; a
+failure backs off 15 minutes) or on an explicit refresh: one probe per profile
+and one per process. The probe (`planprobe_unix.go`) starts interactive `agy`
+in a 140×40 PTY from an empty temporary directory, feeds its output to
+`internal/core/termscreen` and waits up to 8 s for `<email> (<plan>)`; it only
+ever writes two Ctrl+C, then ends the process group with SIGTERM and SIGKILL.
+Windows has no probe and the plan stays blank.
+
+Models come from `agy models` (cached 10 minutes, 1 minute after a failure).
+Lines that differ only by an effort suffix in both the ID and the label
+(`gemini-3.8-flash-high<TAB>Gemini 3.8 Flash (High)`) become one model whose
+default effort is the first listed; a lone `-medium` model stays whole. A launch
+composes model and effort into one `--model <id>`; agy's `--effort` is never used.
 
 The local API owns these sessions, independently of request contexts and browser
 connections. Closing a terminal or refreshing detaches; reconnecting resumes the

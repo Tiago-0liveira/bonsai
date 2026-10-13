@@ -43,7 +43,8 @@ func TestUsageHeadline(t *testing.T) {
 		"limits[] with scope":                {[]byte(`{"limits":[{"kind":"weekly_all","group":"weekly","percent":85,"resets_at":"2026-10-11T09:00:00Z"},{"kind":"weekly_model","group":"weekly","percent":10,"scope":"haiku"},{"kind":"session","percent":5}]}`), "primary=five_hour secondary=seven_day extra=[weekly_model_haiku] score=0.150 low=true reset=2026-10-11T09:00:00Z"},
 		"no limits":                          {[]byte(`{}`), "primary=- secondary=- extra=[] score=- low=false reset=-"},
 	} {
-		limits, _, err := ParseUsage(tt.body)
+		parsed, err := ParseUsage(tt.body)
+		limits := parsed.Limits
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -9,7 +9,9 @@ import (
 )
 
 type Settings struct {
-	Model                      string `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Effort is the default effort, composed into the model ID at launch.
+	Effort                     string `json:"effort,omitempty"`
 	DangerouslySkipPermissions bool   `json:"dangerously_skip_permissions,omitempty"`
 }
 
@@ -20,6 +22,9 @@ func ParseSettings(account agents.Account) (Settings, error) {
 	var settings Settings
 	if err := json.Unmarshal(account.Settings, &settings); err != nil {
 		return Settings{}, fmt.Errorf("antigravity settings: %w", err)
+	}
+	if settings.Effort != "" && !effortRE.MatchString(settings.Effort) {
+		return Settings{}, fmt.Errorf("antigravity settings: invalid effort")
 	}
 	return settings, nil
 }

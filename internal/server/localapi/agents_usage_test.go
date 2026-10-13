@@ -320,8 +320,11 @@ func TestAgentUsageRealProviders(t *testing.T) {
 	}
 	items := decodeUsage(t, w.Body.Bytes())
 	got := items[signedIn.ID]
-	if got.Usage == nil || got.Usage.Plan != "plus" || got.Headline == nil || got.Headline.Primary.ID != "five_hour" || got.Headline.Secondary.ID != "weekly" || *got.Headline.Score != 0.72 {
+	if got.Usage == nil || got.Usage.Plan != "Plus" || got.Headline == nil || got.Headline.Primary.ID != "five_hour" || got.Headline.Secondary.ID != "weekly" || *got.Headline.Score != 0.72 {
 		t.Fatalf("codex signed in = %+v", got)
+	}
+	if len(got.Usage.ResetCredits) != 3 || len(got.Usage.Credits) != 1 || !strings.Contains(w.Body.String(), `"reset_credits":[{"title":"Full reset (Weekly + 5 hr)","status":"available","granted_at":`) {
+		t.Fatalf("codex credits = %+v / %+v", got.Usage.Credits, got.Usage.ResetCredits)
 	}
 	if got := items[apiKey.ID]; got.Error == nil || got.Error.Code != "unsupported" || got.Error.Message != "API key profiles have no plan limits" {
 		t.Fatalf("codex API key = %+v", got)

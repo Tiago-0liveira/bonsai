@@ -125,7 +125,7 @@ describe('defaults tab', () => {
     expect(screen.getByRole('button', { name: 'Save defaults' })).toBeDisabled()
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
 
-    fireEvent.click(within(effortSlider().parentElement as HTMLElement).getByText('high', { selector: 'button' }))
+    fireEvent.click(effortSlider().querySelector('[data-stop="high"]') as HTMLElement)
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save defaults' }))
     await waitFor(() => expect(updateAgentProfile).toHaveBeenCalledWith('codex-team', { defaults: { effort: 'high' } }))

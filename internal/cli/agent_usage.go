@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -272,6 +273,7 @@ func renderAntigravityUsage(out io.Writer, rows []usageDashboardRow, now time.Ti
 		fmt.Fprintln(out, "  "+usageStyle("Claude & GPT Models", "\x1b[1m", color))
 		renderAntigravityUsageTable(out, rows, now, color, true)
 	}
+	renderUsageDetails(out, rows, now)
 }
 
 func usageProviders(rows []usageDashboardRow) []agents.ProviderID {
@@ -316,22 +318,11 @@ func usageProviderTitle(provider agents.ProviderID) string {
 	}
 }
 func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, color, thirdParty bool) {
-	nameWidth := len("Account")
-	for _, row := range rows {
-		if n := utf8.RuneCountInString(row.account.Name); n > nameWidth {
-			nameWidth = n
-		}
-	}
-	if nameWidth > 18 {
-		nameWidth = 18
-	}
-
-	leftHeader := "5h"
-	rightHeader := "Weekly"
-	fmt.Fprintf(out, "  %s  %s  %s\n",
-		padUsage("Account", nameWidth),
-		padUsage(leftHeader, usageCellWidth),
-		rightHeader,
+	nameWidth := usageNameWidth(rows)
+	planWidth := usagePlanWidth(rows)
+	fmt.Fprintf(out, "  %s  %s  %s  %s  %s\n",
+		padUsage("Account", nameWidth), padUsage("Plan", planWidth),
+		padUsage("5h", usageCellWidth), padUsage("Weekly", usageCellWidth), "Next reset",
 	)
 
 	for _, row := range rows {
@@ -347,7 +338,7 @@ func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now ti
 
 		if row.err != nil {
 			errCell := usageStyle(padUsage("ERR", usageCellWidth), "\x1b[91m", color)
-			fmt.Fprintf(out, "%s  %s  %s\n", renderedName, errCell, usageStyle("ERR", "\x1b[91m", color))
+			fmt.Fprintf(out, "  %s  %s  %s  %s\n", renderedName, padUsage("-", planWidth), errCell, usageStyle("ERR", "\x1b[91m", color))
 			continue
 		}
 
@@ -356,10 +347,12 @@ func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now ti
 		if thirdParty {
 			left, right = antigravityThirdParty(row)
 		}
-		fmt.Fprintf(out, "  %s  %s  %s\n",
+		fmt.Fprintf(out, "  %s  %s  %s  %s  %s\n",
 			renderedName,
+			usagePlanCell(row, planWidth),
 			renderUsageLimitCell(left, now, color, usageCellWidth),
-			renderUsageLimitCell(right, now, color, 0),
+			renderUsageLimitCell(right, now, color, usageCellWidth),
+			usageResetCell(now, left, right),
 		)
 	}
 }
@@ -392,85 +385,59 @@ func claudeModelLimits(row usageDashboardRow) []*agents.UsageLimit {
 }
 
 func renderClaudeUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
-	nameWidth := len("Account")
-	for _, row := range rows {
-		if n := utf8.RuneCountInString(row.account.Name); n > nameWidth {
-			nameWidth = n
-		}
-	}
-	if nameWidth > 18 {
-		nameWidth = 18
-	}
+	nameWidth := usageNameWidth(rows)
+	planWidth := usagePlanWidth(rows)
 	hasModels := false
 	for _, row := range rows {
 		hasModels = hasModels || len(claudeModelLimits(row)) > 0
 	}
-	header := fmt.Sprintf("  %s  %s  %s", padUsage("Account", nameWidth), padUsage("5h", usageCellWidth), "Weekly")
+	header := fmt.Sprintf("  %s  %s  %s  %s  ", padUsage("Account", nameWidth), padUsage("Plan", planWidth), padUsage("5h", usageCellWidth), padUsage("Weekly", usageCellWidth))
 	if hasModels {
-		header = fmt.Sprintf("  %s  %s  %s  %s", padUsage("Account", nameWidth), padUsage("5h", usageCellWidth), padUsage("Weekly", usageCellWidth), "Per model")
+		header += padUsage("Next reset", usageResetWidth) + "  Per model"
+	} else {
+		header += "Next reset"
 	}
 	fmt.Fprintln(out, header)
 	for _, row := range rows {
 		name := truncateRunes(row.account.Name, nameWidth)
 		if row.err != nil {
 			if errors.Is(row.err, agents.ErrUsageUnsupported) {
-				fmt.Fprintf(out, "  %s  %s  %s\n", padUsage(name, nameWidth), padUsage("n/a", usageCellWidth), usageStyle(usageUnsupportedReason(row.err), "\x1b[2m", color))
+				fmt.Fprintf(out, "  %s  %s  %s  %s\n", padUsage(name, nameWidth), padUsage("-", planWidth), padUsage("n/a", usageCellWidth), usageStyle(usageUnsupportedReason(row.err), "\x1b[2m", color))
 				continue
 			}
-			fmt.Fprintf(out, "  %s  %s  %s\n", padUsage(name, nameWidth), usageStyle(padUsage("ERR", usageCellWidth), "\x1b[91m", color), usageStyle("ERR", "\x1b[91m", color))
+			fmt.Fprintf(out, "  %s  %s  %s  %s\n", padUsage(name, nameWidth), padUsage("-", planWidth), usageStyle(padUsage("ERR", usageCellWidth), "\x1b[91m", color), usageStyle("ERR", "\x1b[91m", color))
 			continue
 		}
 		renderedName := padUsage(name, nameWidth)
 		if score, ok := usageRowScore(row); ok {
 			renderedName = usageRankStyle(renderedName, score, color)
 		}
-		weekWidth := 0
+		line := fmt.Sprintf("  %s  %s  %s  %s  ", renderedName, usagePlanCell(row, planWidth),
+			renderUsageLimitCell(row.primary(), now, color, usageCellWidth), renderUsageLimitCell(row.secondary(), now, color, usageCellWidth))
 		if hasModels {
-			weekWidth = usageCellWidth
-		}
-		line := fmt.Sprintf("  %s  %s  %s", renderedName, renderUsageLimitCell(row.primary(), now, color, usageCellWidth), renderUsageLimitCell(row.secondary(), now, color, weekWidth))
-		if hasModels {
-			line += "  " + usageModelCells(claudeModelLimits(row))
+			line += padUsage(usageResetCell(now, row.primary(), row.secondary()), usageResetWidth) + "  " + usageModelCells(claudeModelLimits(row))
+		} else {
+			line += usageResetCell(now, row.primary(), row.secondary())
 		}
 		fmt.Fprintln(out, line)
 	}
-	for _, row := range rows {
-		if row.usage != nil {
-			for _, warning := range row.usage.Warnings {
-				fmt.Fprintf(out, "  %s: %s\n", row.account.Name, warning)
-			}
-		}
-	}
+	renderUsageDetails(out, rows, now)
 }
 
-// renderCodexUsageTable draws Account, Plan, 5h, Weekly and, when any profile
-// has them, the other limits ("Spark 5h 90% · 1d 40%").
+// renderCodexUsageTable draws Account, Plan, 5h, Weekly, Next reset and, when
+// any profile has them, the other limits ("Spark 5h 90% · 1d 40%").
 func renderCodexUsageTable(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
-	nameWidth := len("Account")
-	planWidth := len("Plan")
+	nameWidth := usageNameWidth(rows)
+	planWidth := usagePlanWidth(rows)
 	hasOther := false
 	for _, row := range rows {
-		if n := utf8.RuneCountInString(row.account.Name); n > nameWidth {
-			nameWidth = n
-		}
-		if row.usage != nil {
-			if n := utf8.RuneCountInString(row.usage.Plan); n > planWidth {
-				planWidth = n
-			}
-		}
 		hasOther = hasOther || len(row.extra()) > 0
 	}
-	if nameWidth > 18 {
-		nameWidth = 18
-	}
-	if planWidth > 12 {
-		planWidth = 12
-	}
-	weekWidth := 0
-	header := fmt.Sprintf("  %s  %s  %s  %s", padUsage("Account", nameWidth), padUsage("Plan", planWidth), padUsage("5h", usageCellWidth), "Weekly")
+	header := fmt.Sprintf("  %s  %s  %s  %s  ", padUsage("Account", nameWidth), padUsage("Plan", planWidth), padUsage("5h", usageCellWidth), padUsage("Weekly", usageCellWidth))
 	if hasOther {
-		weekWidth = usageCellWidth
-		header = fmt.Sprintf("  %s  %s  %s  %s  %s", padUsage("Account", nameWidth), padUsage("Plan", planWidth), padUsage("5h", usageCellWidth), padUsage("Weekly", usageCellWidth), "Other")
+		header += padUsage("Next reset", usageResetWidth) + "  Other"
+	} else {
+		header += "Next reset"
 	}
 	fmt.Fprintln(out, header)
 	for _, row := range rows {
@@ -495,24 +462,170 @@ func renderCodexUsageTable(out io.Writer, rows []usageDashboardRow, now time.Tim
 		if score, ok := usageRowScore(row); ok {
 			renderedName = usageRankStyle(renderedName, score, color)
 		}
-		plan := "-"
-		if row.usage != nil && row.usage.Plan != "" {
-			plan = truncateRunes(row.usage.Plan, planWidth)
-		}
-		line := fmt.Sprintf("  %s  %s  %s  %s", renderedName, padUsage(plan, planWidth),
-			renderUsageLimitCell(row.primary(), now, color, usageCellWidth), renderUsageLimitCell(row.secondary(), now, color, weekWidth))
+		line := fmt.Sprintf("  %s  %s  %s  %s  ", renderedName, usagePlanCell(row, planWidth),
+			renderUsageLimitCell(row.primary(), now, color, usageCellWidth), renderUsageLimitCell(row.secondary(), now, color, usageCellWidth))
 		if hasOther {
-			line += "  " + usageOtherCells(row.extra())
+			line += padUsage(usageResetCell(now, row.primary(), row.secondary()), usageResetWidth) + "  " + usageOtherCells(row.extra())
+		} else {
+			line += usageResetCell(now, row.primary(), row.secondary())
 		}
 		fmt.Fprintln(out, line)
 	}
+	renderUsageDetails(out, rows, now)
+}
+
+func usageNameWidth(rows []usageDashboardRow) int {
+	width := len("Account")
+	for _, row := range rows {
+		if n := utf8.RuneCountInString(row.account.Name); n > width {
+			width = n
+		}
+	}
+	return min(width, 18)
+}
+
+func usagePlanWidth(rows []usageDashboardRow) int {
+	width := len("Plan")
 	for _, row := range rows {
 		if row.usage != nil {
-			for _, warning := range row.usage.Warnings {
-				fmt.Fprintf(out, "  %s: %s\n", row.account.Name, warning)
+			if n := utf8.RuneCountInString(row.usage.Plan); n > width {
+				width = n
 			}
 		}
 	}
+	return min(width, 16)
+}
+
+func usagePlanCell(row usageDashboardRow, width int) string {
+	plan := "-"
+	if row.usage != nil && row.usage.Plan != "" {
+		plan = truncateRunes(row.usage.Plan, width)
+	}
+	return padUsage(plan, width)
+}
+
+// usageResetWidth fits "in 23h · Sep 25 14:00".
+const usageResetWidth = 21
+
+// usageResetCell names the earliest future reset among limits, relative and
+// absolute in now's time zone ("in 3h · Sep 25 17:00"); "-" when none has one.
+func usageResetCell(now time.Time, limits ...*agents.UsageLimit) string {
+	var next *time.Time
+	for _, limit := range limits {
+		if limit != nil && limit.ResetsAt != nil && limit.ResetsAt.After(now) && (next == nil || limit.ResetsAt.Before(*next)) {
+			next = limit.ResetsAt
+		}
+	}
+	if next == nil {
+		return "-"
+	}
+	return "in " + usageDuration(next.Sub(now), false) + " · " + usageClock(*next, now)
+}
+
+// usageClock formats t in now's time zone, as "Sep 25 17:00".
+func usageClock(t, now time.Time) string {
+	return t.In(now.Location()).Format("Jan 2 15:04")
+}
+
+// renderUsageDetails prints, under a provider's table, each profile's credits,
+// granted rate-limit resets and warnings.
+func renderUsageDetails(out io.Writer, rows []usageDashboardRow, now time.Time) {
+	for _, row := range rows {
+		if row.usage == nil {
+			continue
+		}
+		for _, credit := range row.usage.Credits {
+			if line := usageCreditLine(credit, now); line != "" {
+				fmt.Fprintf(out, "  %s: %s\n", row.account.Name, line)
+			}
+		}
+		if line := usageResetCreditsLine(row.usage.ResetCredits, now); line != "" {
+			fmt.Fprintf(out, "  %s: %s\n", row.account.Name, line)
+		}
+		for _, warning := range row.usage.Warnings {
+			fmt.Fprintf(out, "  %s: %s\n", row.account.Name, warning)
+		}
+	}
+}
+
+// usageCreditShown reports whether a credit is worth showing: a disabled one
+// with nothing in it is not.
+func usageCreditShown(c agents.UsageCredit) bool {
+	nonZero := func(v *float64) bool { return v != nil && *v != 0 }
+	return c.Enabled || c.Unlimited || nonZero(c.Used) || nonZero(c.Limit) || nonZero(c.Balance)
+}
+
+// usageCreditLine renders "Usage credits $1.91 used of $100.00 · $98.09 left ·
+// resets Nov 5 07:59".
+func usageCreditLine(c agents.UsageCredit, now time.Time) string {
+	if !usageCreditShown(c) {
+		return ""
+	}
+	parts := []string{}
+	switch {
+	case c.Unlimited:
+		parts = append(parts, "unlimited")
+	case c.Used != nil && c.Limit != nil:
+		parts = append(parts, usageAmount(*c.Used, c.Unit)+" used of "+usageAmount(*c.Limit, c.Unit))
+	case c.Used != nil:
+		parts = append(parts, usageAmount(*c.Used, c.Unit)+" used")
+	case c.Limit != nil:
+		parts = append(parts, "limit "+usageAmount(*c.Limit, c.Unit))
+	}
+	if c.Balance != nil && !c.Unlimited {
+		parts = append(parts, usageAmount(*c.Balance, c.Unit)+" left")
+	}
+	if !c.Enabled && !c.Unlimited {
+		parts = append(parts, "off")
+	}
+	if c.ResetsAt != nil && c.ResetsAt.After(now) {
+		parts = append(parts, "resets "+usageClock(*c.ResetsAt, now))
+	}
+	label := c.Label
+	if label == "" {
+		label = "Credits"
+	}
+	if len(parts) == 0 {
+		return label
+	}
+	return label + " " + strings.Join(parts, " · ")
+}
+
+func usageAmount(v float64, unit string) string {
+	switch unit {
+	case agents.CreditUnitUSD:
+		return fmt.Sprintf("$%.2f", v)
+	case agents.CreditUnitCredits, "":
+		return strconv.FormatFloat(v, 'f', -1, 64) // the label says "credits"
+	}
+	return fmt.Sprintf("%.2f %s", v, unit)
+}
+
+// usageResetCreditsLine renders "3 rate-limit resets available · next expires
+// in 9d (Oct 22 18:13)". Expired resets are not counted.
+func usageResetCreditsLine(credits []agents.ResetCredit, now time.Time) string {
+	count := 0
+	var next *time.Time
+	for _, c := range credits {
+		if c.Status != "" && c.Status != "available" {
+			continue
+		}
+		if c.ExpiresAt != nil && !c.ExpiresAt.After(now) {
+			continue
+		}
+		count += max(c.Count, 1)
+		if c.ExpiresAt != nil && (next == nil || c.ExpiresAt.Before(*next)) {
+			next = c.ExpiresAt
+		}
+	}
+	if count == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("%d rate-limit %s available", count, plural(count, "reset", "resets"))
+	if next != nil {
+		line += fmt.Sprintf(" · next expires in %s (%s)", usageDuration(next.Sub(now), false), usageClock(*next, now))
+	}
+	return line
 }
 
 // usageOtherCells renders "Spark 5h 90% · review 1d 60%" from a row's other

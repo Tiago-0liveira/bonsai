@@ -98,10 +98,10 @@ func cmdAgentAccount(ctx context.Context, runtime *agentRuntime, args []string, 
 			return err
 		}
 		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tPROVIDER\tAUTH\tIDENTITY")
+		fmt.Fprintln(tw, "NAME\tPROVIDER\tAUTH\tIDENTITY\tPLAN")
 		for _, account := range accounts {
 			info := runtime.accountService.Registry.DescribeAccount(ctx, account)
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", account.Name, account.Provider, info.AuthMode, info.Identity)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", account.Name, account.Provider, info.AuthMode, info.Identity, info.Plan)
 		}
 		return tw.Flush()
 	case "rename":
@@ -239,6 +239,7 @@ func printAccount(ctx context.Context, out io.Writer, registry *agents.Registry,
 	row("id:", string(account.ID))
 	row("auth:", info.AuthMode)
 	row("identity:", info.Identity)
+	row("plan:", info.Plan)
 	if status, ok := info.Options["auth_status"].(string); ok {
 		row("status:", status)
 	}

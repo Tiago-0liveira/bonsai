@@ -104,7 +104,7 @@ it('submits the prompt with the model and options on screen, and changes the req
 
 const effortSlider = () => screen.getByRole('slider', { name: 'Effort' })
 const effortStops = () => Array.from(effortSlider().querySelectorAll('[data-stop]')).map(stop => stop.getAttribute('data-stop'))
-const chooseEffort = (tick: string) => fireEvent.click(within(effortSlider().parentElement as HTMLElement).getByText(tick, { selector: 'button' }))
+const chooseEffort = (level: string) => fireEvent.click(effortSlider().querySelector(`[data-stop="${level}"]`) as HTMLElement)
 // Profiles are cards, effort is a slider and every other launch field is a row of chips.
 const pick = async (label: string, option: string | RegExp) => {
   if (label === 'Profile') fireEvent.click(await screen.findByRole('option', { name: option }))
@@ -281,7 +281,7 @@ const codexModels = [
   { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', source: 'api' as const, default: true, efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], default_effort: 'low' },
   { id: 'gpt-6-luna', label: 'GPT-6-Luna', source: 'api' as const, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], default_effort: 'medium' },
 ]
-const codexProfile: AgentAccount = { id: 'codex-one', name: 'Personal', provider: 'codex', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in', warnings: ['Same login as profile "Team"; both share its usage limits'] }
+const codexProfile: AgentAccount = { id: 'codex-one', name: 'Personal', provider: 'codex', auth_mode: 'chatgpt', identity: 'me@example.com', plan: 'Plus', auth_status: 'logged_in', warnings: ['Same login as profile "Team"; both share its usage limits'] }
 
 it('enables Codex with its profile and shows its sign-in details and warnings', async () => {
   vi.mocked(agentProviders).mockResolvedValue(codexProviders())
@@ -484,4 +484,39 @@ it('has no work type, no sign-in summary for a healthy profile, and the agent na
   // Both sit in the same two-column row above the provider choice.
   expect(worktree.closest('.dialog-cols')).toBe(name.closest('.dialog-cols'))
   expect(name.compareDocumentPosition(screen.getByRole('button', { name: /Claude/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+it('offers the efforts agy lists for an Antigravity model and sends the chosen one', async () => {
+  const fields: LaunchField[] = [
+    { id: 'effort', label: 'Effort', kind: 'select', per_model: true, options: ['', 'low', 'medium', 'high'].map(value => ({ value, label: value || 'Profile default' })) },
+    ...ANTIGRAVITY_FIELDS,
+  ]
+  vi.mocked(agentProviders).mockResolvedValue([{ id: 'antigravity', label: 'Antigravity', available: true, launch_fields: fields }])
+  vi.mocked(agentAccounts).mockResolvedValue([{ id: 'profile-one', name: 'One', provider: 'antigravity', identity: 'me@example.com', plan: 'Google AI Pro' }])
+  // Like the Go parser: gemini-3.8-flash-{high,medium,low} grouped, the rest whole.
+  vi.mocked(agentModels).mockResolvedValue([
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', source: 'bundled', efforts: ['low', 'medium', 'high'], default_effort: 'high' },
+    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)', source: 'bundled', no_effort: true },
+    { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)', source: 'bundled', no_effort: true },
+  ])
+  const submit = vi.fn().mockResolvedValue(undefined)
+  useBonsaiStore.setState({ createAgent: submit })
+  render(<StartAgentDialog />)
+  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
+  expect(screen.getByLabelText('Profile')).toHaveTextContent('me@example.com · Google AI Pro')
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'gemini-3.8-flash' } })
+  await waitFor(() => expect(effortStops()).toEqual(['low', 'medium', 'high']))
+  chooseEffort('low')
+  fireEvent.submit(screen.getByRole('dialog'))
+  await waitFor(() => expect(submit).toHaveBeenCalled())
+  expect(submit.mock.calls[0][0]).toMatchObject({ provider: 'Antigravity', model: 'gemini-3.8-flash', options: { effort: 'low' } })
+
+  // A model listed once has no effort: no slider, and the chosen effort is not sent.
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'claude-sonnet-4-6' } })
+  expect(await screen.findByText('Claude Sonnet 4.6 (Thinking) has no effort setting.')).toBeInTheDocument()
+  expect(screen.queryByRole('slider', { name: 'Effort' })).toBeNull()
+  fireEvent.submit(screen.getByRole('dialog'))
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
+  expect(submit.mock.calls[1][0].model).toBe('claude-sonnet-4-6')
+  expect(submit.mock.calls[1][0].options?.effort).toBeUndefined()
 })

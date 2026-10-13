@@ -1,4 +1,4 @@
-import { isLiveAgent, type AgentAccount, type AgentCapability, type AgentUsage, type LaunchField, type UsageLimit } from '../../api/agents'
+import { isLiveAgent, type AgentAccount, type AgentCapability, type AgentUsage, type LaunchField, type ResetCredit, type UsageCredit, type UsageLimit } from '../../api/agents'
 import { isActiveSession } from '../../api/agentsOverview'
 import type { Agent, Project, Worktree } from '../../types'
 
@@ -119,6 +119,37 @@ export function formatCountdown(iso: string | undefined, now: number): string {
   if (hours < 24) return `in ${hours}h ${minutes % 60}m`
   return `in ${Math.floor(hours / 24)}d ${hours % 24}h`
 }
+
+/** The signed-in email and plan, as "me@example.com · Pro"; either may be missing. */
+export function identityLine(account: Pick<AgentAccount, 'identity' | 'plan'>): string {
+  return [account.identity, account.plan].filter(Boolean).join(' · ')
+}
+
+/** A disabled credit with nothing in it is not worth showing. */
+export function creditShown(credit: UsageCredit): boolean {
+  return credit.enabled || !!credit.unlimited || !!credit.used || !!credit.limit || !!credit.balance
+}
+
+/** "$1.91", "12.5" (the label says "credits") or "3.00 EUR". */
+export function formatAmount(value: number, unit: string): string {
+  if (unit === 'USD') return `$${value.toFixed(2)}`
+  if (unit === 'credits' || unit === '') return String(Math.round(value * 100) / 100)
+  return `${value.toFixed(2)} ${unit}`
+}
+
+/** Granted resets that can still be used, soonest expiry first. */
+export function availableResets(credits: ResetCredit[] | undefined, now: number): ResetCredit[] {
+  return (credits ?? [])
+    .filter(credit => (!credit.status || credit.status === 'available') && !(credit.expires_at && Date.parse(credit.expires_at) <= now))
+    .sort((a, b) => (a.expires_at ? Date.parse(a.expires_at) : Infinity) - (b.expires_at ? Date.parse(b.expires_at) : Infinity))
+}
+
+/** How many resets the granted credits hold. */
+export const resetCount = (credits: ResetCredit[]) => credits.reduce((sum, credit) => sum + Math.max(credit.count ?? 1, 1), 0)
+
+const CLEARS_LABEL: Record<string, string> = { five_hour: '5h', seven_day: 'weekly', seven_day_opus: 'weekly Opus', seven_day_sonnet: 'weekly Sonnet' }
+/** "5h + weekly": the limits a reset refills. */
+export const clearsLabel = (clears: string[] | undefined) => (clears ?? []).filter(id => id !== 'seven_day_overage_included').map(id => CLEARS_LABEL[id] ?? id.replaceAll('_', ' ')).join(' + ')
 
 /** "just now", "42s ago", "5m ago", "3h ago". */
 export function formatAge(iso: string | undefined, now: number): string {

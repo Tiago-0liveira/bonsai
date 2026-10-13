@@ -19,6 +19,8 @@ export interface AgentSummary {
 export interface AgentAccount {
   id: string; name: string; provider: AgentProviderId
   auth_mode?: string; identity?: string; warnings?: string[]
+  /** The subscription plan's display name ("Pro", "Google AI Pro"), when known. */
+  plan?: string
   model?: string; auth_status?: string
   created_at?: string; updated_at?: string
   /** Saved profile defaults by profile field ID; a field with no entry uses the provider's default. */
@@ -111,7 +113,28 @@ export interface UsageLimit {
   remaining_fraction?: number
   resets_at?: string
 }
-export interface UsageSnapshot { provider: string; account_id: string; fetched_at: string; plan?: string; limits: UsageLimit[]; warnings?: string[] }
+/** A balance of money (`unit` is a currency such as "USD") or provider credits (`unit` "credits"), in major units. */
+export interface UsageCredit {
+  id: string; label: string; unit: string
+  used?: number; limit?: number; balance?: number
+  unlimited?: boolean; enabled: boolean
+  resets_at?: string
+}
+/** A one-off rate-limit reset the account was granted (Codex). Shown only; Bonsai never redeems one. */
+export interface ResetCredit {
+  title: string
+  /** "available" when it can be used now. */
+  status?: string
+  /** Resets left in this grant; missing means one. */
+  count?: number
+  /** Limits a reset refills, such as "five_hour". */
+  clears?: string[]
+  granted_at?: string; expires_at?: string
+}
+export interface UsageSnapshot {
+  provider: string; account_id: string; fetched_at: string; plan?: string; limits: UsageLimit[]; warnings?: string[]
+  credits?: UsageCredit[]; reset_credits?: ResetCredit[]
+}
 /** The provider's reading of a snapshot: which limits lead, and the profile's score. */
 export interface UsageHeadline { primary?: UsageLimit; secondary?: UsageLimit; extra?: UsageLimit[]; score?: number; low?: boolean; next_reset?: string }
 export type UsageErrorCode = 'unsupported' | 'not_authenticated' | 'unavailable'

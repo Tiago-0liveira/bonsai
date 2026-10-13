@@ -3,6 +3,8 @@ package antigravity
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
@@ -14,6 +16,25 @@ type Provider struct {
 	sessions       agents.SessionStore
 	binaryResolver BinaryResolver
 	credentialMgr  CredentialManager
+
+	run cliRunner        // nil runs agy; tests replace it
+	now func() time.Time // nil is time.Now
+
+	modelsMu    sync.Mutex
+	modelsCache map[agents.AccountID]modelsEntry
+
+	// probe reads the plan from agy's screen; nil is probePlan.
+	probe       func(ctx context.Context, executable, dir string, env []string, email string) (string, error)
+	planMu      sync.Mutex
+	planFlights map[agents.AccountID]bool
+	planWG      sync.WaitGroup
+}
+
+func (p *Provider) clock() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
 }
 
 // New builds the Antigravity provider. Setup talks to the user only through
@@ -51,9 +72,35 @@ func (p *Provider) Availability(context.Context) agents.Availability {
 	return agents.Availability{Available: true}
 }
 
+// DescribeAccount reads the stored login and plan; it never starts agy. A
+// login is "logged_in" when its credentials are complete: whether agy still
+// accepts them is only known when it runs.
 func (p *Provider) DescribeAccount(_ context.Context, account agents.Account) agents.AccountInfo {
 	settings, _ := ParseSettings(account)
-	return agents.AccountInfo{Options: map[string]any{"full_access": settings.DangerouslySkipPermissions}}
+	info := agents.AccountInfo{Options: map[string]any{"full_access": settings.DangerouslySkipPermissions}}
+	if settings.Model != "" {
+		info.Options["model"] = settings.Model
+	}
+	if settings.Effort != "" {
+		info.Options["effort"] = settings.Effort
+	}
+	if p.accounts == nil {
+		return info
+	}
+	email, complete, err := p.signedIn(account)
+	switch {
+	case err != nil:
+		info.Options["auth_status"] = "unknown"
+		info.Warnings = append(info.Warnings, "Stored login is unreadable")
+	case !complete:
+		info.Options["auth_status"] = "logged_out"
+		info.Warnings = append(info.Warnings, fmt.Sprintf("Not logged in; run `bonsai agent account login %s`", account.Name))
+	default:
+		info.Options["auth_status"] = "logged_in"
+		info.Identity = email
+		info.Plan = p.planFor(account, email)
+	}
+	return info
 }
 
 // checkSetupOptions rejects setup options agy has no equivalent for.
@@ -72,4 +119,6 @@ func checkSetupOptions(options agents.SetupOptions) error {
 var (
 	_ agents.SetupSchema          = (*Provider)(nil)
 	_ agents.AccountAuthenticator = (*Provider)(nil)
+	_ agents.ModelLister          = (*Provider)(nil)
+	_ agents.LaunchValidator      = (*Provider)(nil)
 )

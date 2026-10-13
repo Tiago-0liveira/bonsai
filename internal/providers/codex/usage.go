@@ -77,16 +77,17 @@ func (p *Provider) Usage(ctx context.Context, account agents.Account, opts agent
 		p.rememberUsageFailure(ctx, account.ID, err)
 		return agents.UsageSnapshot{}, err
 	}
-	limits, plan, warnings, err := ParseRateLimits(raw)
+	parsed, err := ParseRateLimits(raw)
 	if err != nil {
 		return agents.UsageSnapshot{}, err
 	}
-	if plan == "" {
-		plan = id.Plan
+	if parsed.Plan == "" {
+		parsed.Plan = id.Plan
 	}
 	return agents.UsageSnapshot{
 		Provider: ProviderID, AccountID: account.ID, FetchedAt: p.now().UTC(),
-		Plan: plan, Limits: limits, Warnings: warnings,
+		Plan: planLabel(parsed.Plan), Limits: parsed.Limits, Credits: parsed.Credits,
+		ResetCredits: parsed.ResetCredits, Warnings: parsed.Warnings,
 	}, nil
 }
 
@@ -158,6 +159,26 @@ type rateLimitSnapshot struct {
 	PlanType string `json:"planType"`
 }
 
+// resetCredits is `rateLimitResetCredits`: one-off resets the account was granted.
+type resetCredits struct {
+	AvailableCount *int `json:"availableCount"`
+	Credits        []struct {
+		Status    string `json:"status"`
+		Title     string `json:"title"`
+		GrantedAt *int64 `json:"grantedAt"`
+		ExpiresAt *int64 `json:"expiresAt"`
+	} `json:"credits"`
+}
+
+// ParsedRateLimits is what ParseRateLimits reads from one response.
+type ParsedRateLimits struct {
+	Limits       []agents.UsageLimit
+	Plan         string
+	Credits      []agents.UsageCredit
+	ResetCredits []agents.ResetCredit
+	Warnings     []string
+}
+
 // ParseRateLimits reads an `account/rateLimits/read` result. Unknown fields and
 // shapes are ignored: valid JSON with nothing recognizable is an empty snapshot
 // with a warning, and only text that is not a JSON object is an error.
@@ -166,18 +187,20 @@ type rateLimitSnapshot struct {
 // `five_hour`, 10080 is `weekly`, anything else `window_<n>m`. Limits of other
 // metered features (`rateLimitsByLimitId`) become their own group, with ids
 // prefixed by the limit id.
-func ParseRateLimits(data []byte) (limits []agents.UsageLimit, plan string, warnings []string, err error) {
+func ParseRateLimits(data []byte) (ParsedRateLimits, error) {
 	var result struct {
-		RateLimits          *rateLimitSnapshot           `json:"rateLimits"`
-		RateLimitsByLimitID map[string]rateLimitSnapshot `json:"rateLimitsByLimitId"`
+		RateLimits            *rateLimitSnapshot           `json:"rateLimits"`
+		RateLimitsByLimitID   map[string]rateLimitSnapshot `json:"rateLimitsByLimitId"`
+		RateLimitResetCredits json.RawMessage              `json:"rateLimitResetCredits"`
 	}
 	var probe map[string]json.RawMessage
 	if json.Unmarshal(data, &probe) != nil || probe == nil {
-		return nil, "", nil, errors.New("unrecognized usage response")
+		return ParsedRateLimits{}, errors.New("unrecognized usage response")
 	}
 	if json.Unmarshal(data, &result) != nil {
-		return nil, "", []string{"Codex usage response had no recognizable limits"}, nil
+		return ParsedRateLimits{Warnings: []string{"Codex usage response had no recognizable limits"}}, nil
 	}
+	var out ParsedRateLimits
 
 	main := result.RateLimits
 	if main == nil {
@@ -191,9 +214,11 @@ func ParseRateLimits(data []byte) (limits []agents.UsageLimit, plan string, warn
 		if mainID == "" {
 			mainID = "codex"
 		}
-		plan = cleanText(main.PlanType, 32, "")
-		limits = append(limits, snapshotLimits(*main, "", "codex", "")...)
-		warnings = append(warnings, creditWarnings(*main)...)
+		out.Plan = cleanText(main.PlanType, 32, "")
+		out.Limits = append(out.Limits, snapshotLimits(*main, "", "codex", "")...)
+		if credit, ok := creditBalance(*main); ok {
+			out.Credits = append(out.Credits, credit)
+		}
 	}
 	extraIDs := make([]string, 0, len(result.RateLimitsByLimitID))
 	for id := range result.RateLimitsByLimitID {
@@ -209,13 +234,41 @@ func ParseRateLimits(data []byte) (limits []agents.UsageLimit, plan string, warn
 			continue
 		}
 		group := cleanText(first(snap.LimitName, id), 64, id)
-		limits = append(limits, snapshotLimits(snap, id+"_", group, group+" ")...)
+		out.Limits = append(out.Limits, snapshotLimits(snap, id+"_", group, group+" ")...)
 	}
-	sortLimits(limits)
-	if len(limits) == 0 {
-		warnings = append(warnings, "Codex usage response had no recognizable limits")
+	sortLimits(out.Limits)
+	out.ResetCredits = parseResetCredits(result.RateLimitResetCredits)
+	if len(out.Limits) == 0 {
+		out.Warnings = append(out.Warnings, "Codex usage response had no recognizable limits")
 	}
-	return limits, plan, warnings, nil
+	return out, nil
+}
+
+// parseResetCredits keeps each granted reset's title, status and dates; the
+// credit IDs and descriptions are dropped. A malformed block is ignored.
+func parseResetCredits(raw json.RawMessage) []agents.ResetCredit {
+	var block resetCredits
+	if len(raw) == 0 || json.Unmarshal(raw, &block) != nil {
+		return nil
+	}
+	var out []agents.ResetCredit
+	for _, c := range block.Credits {
+		out = append(out, agents.ResetCredit{
+			Title:     cleanText(c.Title, 64, "Rate limit reset"),
+			Status:    cleanText(c.Status, 32, ""),
+			GrantedAt: unixTime(c.GrantedAt),
+			ExpiresAt: unixTime(c.ExpiresAt),
+		})
+	}
+	return out
+}
+
+func unixTime(sec *int64) *time.Time {
+	if sec == nil || *sec <= 0 {
+		return nil
+	}
+	t := time.Unix(*sec, 0).UTC()
+	return &t
 }
 
 // snapshotLimits turns the windows of one snapshot into limits.
@@ -271,21 +324,23 @@ func windowName(mins *int64, slot int) (id, label, window string) {
 	return id, label, label
 }
 
-func creditWarnings(snap rateLimitSnapshot) []string {
+// creditBalance turns the `credits` block into a credit balance. The balance
+// is a decimal string; one that does not parse is left out.
+func creditBalance(snap rateLimitSnapshot) (agents.UsageCredit, bool) {
 	c := snap.Credits
-	switch {
-	case c == nil:
-		return nil
-	case c.Unlimited:
-		return []string{"Unlimited credits"}
-	case c.HasCredits && c.Balance != nil:
-		if balance := cleanText(*c.Balance, 32, ""); balance != "" {
-			return []string{"Credit balance: " + balance}
-		}
-	case c.HasCredits:
-		return []string{"Credits available"}
+	if c == nil {
+		return agents.UsageCredit{}, false
 	}
-	return nil
+	credit := agents.UsageCredit{
+		ID: "codex_credits", Label: "Credits", Unit: agents.CreditUnitCredits,
+		Unlimited: c.Unlimited, Enabled: c.HasCredits || c.Unlimited,
+	}
+	if c.Balance != nil {
+		if v, err := strconv.ParseFloat(strings.TrimSpace(*c.Balance), 64); err == nil && !math.IsNaN(v) && !math.IsInf(v, 0) {
+			credit.Balance = &v
+		}
+	}
+	return credit, true
 }
 
 // sortLimits puts the main group first (5h, weekly, other windows by length),

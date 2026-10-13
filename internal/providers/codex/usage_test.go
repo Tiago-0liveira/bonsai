@@ -43,7 +43,7 @@ func TestUsageReadsRateLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Provider != ProviderID || snapshot.AccountID != account.ID || snapshot.Plan != "plus" {
+	if snapshot.Provider != ProviderID || snapshot.AccountID != account.ID || snapshot.Plan != "Plus" {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
 	if len(snapshot.Limits) != 2 || len(snapshot.Warnings) != 0 {
@@ -100,11 +100,47 @@ func TestUsageGroupsOtherLimitsAndCredits(t *testing.T) {
 	if got := limitByID(t, snapshot.Limits, "review_window_1440m"); got.Group != "review" || got.Label != "review 1d" {
 		t.Fatalf("review = %+v", got)
 	}
-	if snapshot.Plan != "pro" || !reflect.DeepEqual(snapshot.Warnings, []string{"Credit balance: 12.50"}) {
-		t.Fatalf("plan %q warnings %v", snapshot.Plan, snapshot.Warnings)
+	if snapshot.Plan != "Pro" || len(snapshot.Warnings) != 0 || len(snapshot.Credits) != 1 {
+		t.Fatalf("plan %q warnings %v credits %+v", snapshot.Plan, snapshot.Warnings, snapshot.Credits)
+	}
+	if c := snapshot.Credits[0]; c.Unit != agents.CreditUnitCredits || !c.Enabled || c.Balance == nil || *c.Balance != 12.5 {
+		t.Fatalf("credit = %+v", c)
 	}
 	if data, _ := json.Marshal(snapshot); strings.Contains(string(data), "sk-should-never-show") {
 		t.Fatal("unknown response fields must not be carried over")
+	}
+}
+
+func TestParseRateLimitsResetCredits(t *testing.T) {
+	var response struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(readFixture(t, "phase0", "rate-limits.json"), &response); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseRateLimits(response.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.ResetCredits) != 3 || len(parsed.Warnings) != 0 {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+	first := parsed.ResetCredits[0]
+	if first.Title != "Full reset (Weekly + 5 hr)" || first.Status != "available" ||
+		first.GrantedAt.Unix() != 1790100821 || first.ExpiresAt.Unix() != 1792692821 {
+		t.Fatalf("first = %+v", first)
+	}
+	// hasCredits false with a zero balance is still a balance, just not enabled.
+	if len(parsed.Credits) != 1 || parsed.Credits[0].Enabled || *parsed.Credits[0].Balance != 0 {
+		t.Fatalf("credits = %+v", parsed.Credits)
+	}
+	if data, _ := json.Marshal(parsed.ResetCredits); strings.Contains(string(data), "RateLimitResetCredit_") || strings.Contains(string(data), "Thanks") {
+		t.Fatalf("credit ids or descriptions leaked: %s", data)
+	}
+	// A malformed block is ignored, an unlimited balance kept.
+	parsed, _ = ParseRateLimits([]byte(`{"rateLimits":{"credits":{"unlimited":true,"balance":"x"}},"rateLimitResetCredits":"nope"}`))
+	if len(parsed.ResetCredits) != 0 || len(parsed.Credits) != 1 || !parsed.Credits[0].Unlimited || parsed.Credits[0].Balance != nil {
+		t.Fatalf("parsed = %+v", parsed)
 	}
 }
 
@@ -115,23 +151,25 @@ func TestParseRateLimitsToleratesUnknownShapes(t *testing.T) {
 		"no windows":     `{"rateLimits":{"limitId":"codex","primary":null,"secondary":null}}`,
 		"missing usedPc": `{"rateLimits":{"primary":{"windowDurationMins":300}}}`,
 	} {
-		limits, _, warnings, err := ParseRateLimits([]byte(body))
-		if err != nil || len(limits) != 0 || len(warnings) != 1 {
-			t.Errorf("%s: limits=%v warnings=%v err=%v", name, limits, warnings, err)
+		parsed, err := ParseRateLimits([]byte(body))
+		if err != nil || len(parsed.Limits) != 0 || len(parsed.Warnings) != 1 {
+			t.Errorf("%s: parsed=%+v err=%v", name, parsed, err)
 		}
 	}
 	for _, body := range []string{`"text"`, `[]`, `null`, `not json`} {
-		if _, _, _, err := ParseRateLimits([]byte(body)); err == nil {
+		if _, err := ParseRateLimits([]byte(body)); err == nil {
 			t.Errorf("%s accepted", body)
 		}
 	}
 	// A window without a length is named by its slot rather than dropped.
-	limits, _, _, _ := ParseRateLimits([]byte(`{"rateLimits":{"primary":{"usedPercent":30},"secondary":{"usedPercent":10}}}`))
+	parsed, _ := ParseRateLimits([]byte(`{"rateLimits":{"primary":{"usedPercent":30},"secondary":{"usedPercent":10}}}`))
+	limits := parsed.Limits
 	if len(limits) != 2 || limits[0].ID != "primary" || limits[1].ID != "secondary" {
 		t.Fatalf("limits = %+v", limits)
 	}
 	// With only the by-id map, the `codex` entry is the main group.
-	limits, _, _, _ = ParseRateLimits([]byte(`{"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":50,"windowDurationMins":300}}}}`))
+	parsed, _ = ParseRateLimits([]byte(`{"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":50,"windowDurationMins":300}}}}`))
+	limits = parsed.Limits
 	if len(limits) != 1 || limits[0].ID != "five_hour" {
 		t.Fatalf("limits = %+v", limits)
 	}
@@ -232,7 +270,7 @@ func TestUsageServiceIncludesCodex(t *testing.T) {
 	for _, r := range results {
 		switch r.Account.Name {
 		case "work":
-			if r.Error != nil || r.Usage == nil || r.Usage.Plan != "plus" {
+			if r.Error != nil || r.Usage == nil || r.Usage.Plan != "Plus" {
 				t.Errorf("work = %+v", r)
 			}
 		case "ci":

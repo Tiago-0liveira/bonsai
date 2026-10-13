@@ -17,6 +17,9 @@ type authStatus struct {
 	LoggedIn   bool   `json:"loggedIn"`
 	AuthMethod string `json:"authMethod"`
 	Email      string `json:"email"`
+	// SubscriptionType is the plan ("pro", "max"), for the macOS keychain
+	// case where .credentials.json does not exist.
+	SubscriptionType string `json:"subscriptionType"`
 }
 
 func parseAuthStatus(data []byte) (authStatus, bool) {
@@ -127,6 +130,7 @@ func (p *Provider) DescribeAccount(ctx context.Context, account agents.Account) 
 		return info
 	}
 	info.Identity = storedIdentity(configDir(p.accounts, account))
+	info.Plan = p.storedPlan(account)
 	state := "unknown"
 	if status, known := p.queryStatus(ctx, account); known {
 		state = "logged_out"
@@ -135,7 +139,11 @@ func (p *Provider) DescribeAccount(ctx context.Context, account agents.Account) 
 			if info.Identity == "" {
 				info.Identity = status.Email
 			}
+			if info.Plan == "" {
+				info.Plan = planLabel(status.SubscriptionType, "")
+			}
 		} else {
+			info.Plan = ""
 			info.Warnings = append(info.Warnings, fmt.Sprintf("Not logged in; run `bonsai agent account login %s`", account.Name))
 		}
 	}

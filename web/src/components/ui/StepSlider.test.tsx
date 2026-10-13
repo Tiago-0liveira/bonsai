@@ -12,7 +12,7 @@ if (!('PointerEvent' in window)) {
   Object.defineProperty(window, 'PointerEvent', { value: PointerEventPolyfill, configurable: true })
 }
 
-const STOPS: Stop[] = ['low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value.toUpperCase(), tick: value }))
+const STOPS: Stop[] = ['low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value.toUpperCase() }))
 
 function Harness({ initial = '', inherited, onChange = () => {}, disabled = false }: { initial?: string; inherited?: string; onChange?: (value: string) => void; disabled?: boolean }) {
   const [value, setValue] = useState(initial)
@@ -77,10 +77,10 @@ describe('StepSlider', () => {
     expect(onChange).toHaveBeenLastCalledWith('medium')
   })
 
-  it('picks a level from its caption', () => {
+  it('picks a level from its tick', () => {
     const onChange = vi.fn()
     render(<Harness onChange={onChange} />)
-    fireEvent.click(screen.getByText('xhigh', { selector: 'button' }))
+    fireEvent.click(slider().querySelector('[data-stop="xhigh"]') as HTMLElement)
     expect(onChange).toHaveBeenCalledWith('xhigh')
   })
 
@@ -90,7 +90,7 @@ describe('StepSlider', () => {
     expect(slider()).toHaveAttribute('aria-disabled', 'true')
     fireEvent.keyDown(slider(), { key: 'ArrowRight' })
     fireEvent.pointerDown(slider(), { clientX: 90, button: 0, pointerId: 1 })
-    fireEvent.click(screen.getByText('max', { selector: 'button' }))
+    fireEvent.click(slider().querySelector('[data-stop="max"]') as HTMLElement)
     expect(onChange).not.toHaveBeenCalled()
   })
 
@@ -115,7 +115,7 @@ describe('StepSlider', () => {
       render(<StepSlider ariaLabel="Effort" stops={STOPS} value="max" defaultValue="medium" onChange={() => {}} />)
       expect(slider()).toHaveAttribute('data-heat', '0')
       expect(slider().querySelector('[data-stop="medium"]')).toHaveAttribute('data-default', 'true')
-      expect(screen.getByText('default')).toBeInTheDocument()
+      expect(slider().querySelector('[data-stop="medium"]')).toHaveAttribute('title', 'MEDIUM (default)')
     })
   })
 })
