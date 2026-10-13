@@ -50,6 +50,13 @@ test('real API and PTY: two concurrent sessions of one Claude profile, reload an
     await dialog.getByLabel('Worktree and branch').click()
     await selectMenu(page, 'Worktree and branch').getByRole('option').first().click()
     await dialog.getByLabel('Agent name').fill(name)
+    await dialog.getByLabel('Agent model').click()
+    const suggestions = page.getByRole('listbox', { name: 'Agent model suggestions' })
+    await expect(suggestions.getByRole('option', { name: /^Opus/ })).toBeVisible()
+    await expect(suggestions.getByRole('option', { name: /^Fable/ })).toBeVisible()
+    await suggestions.getByRole('option', { name: /^Sonnet/ }).click()
+    await expect(dialog.getByLabel('Agent model')).toHaveValue('sonnet')
+    await dialog.getByRole('radio', { name: 'Plan', exact: true }).click()
     const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/agents'))
     await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
     const session = await (await response).json()
@@ -95,7 +102,7 @@ test('real API and PTY: two Codex profiles with two sessions each beside a Claud
   // Five tiles share the dock; a tall window keeps each terminal readable.
   await page.setViewportSize({ width: 1800, height: 1700 })
   await openConnectedApp(page)
-  const start = async (provider: 'Codex' | 'Claude', profile: string, name: string) => {
+  const start = async (provider: 'Codex' | 'Claude', profile: string, name: string, permissions?: string) => {
     await page.keyboard.press('Control+k')
     await page.getByRole('option', { name: 'Start agent', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Start agent' })
@@ -104,6 +111,14 @@ test('real API and PTY: two Codex profiles with two sessions each beside a Claud
       // Two profiles, so the choice is explicit; the details carry the fake login.
       await dialog.getByRole('option', { name: new RegExp(`^${profile}`) }).click()
       await expect(dialog.getByLabel('Profile')).toContainText(profile === 'Personal' ? 'me@example.com' : 'team@example.com')
+      await dialog.getByLabel('Agent model').click()
+      const suggestions = page.getByRole('listbox', { name: 'Agent model suggestions' })
+      await expect(suggestions.getByRole('option', { name: /GPT-6.1-Sol/ })).toBeVisible()
+      await suggestions.getByRole('option', { name: /GPT-6-Luna/ }).click()
+      await expect(dialog.getByLabel('Agent model')).toHaveValue('gpt-6-luna')
+      if (permissions) {
+        await dialog.getByRole('radio', { name: permissions, exact: true }).click()
+      }
     } else {
       await expect(dialog.getByLabel('Profile')).toContainText(profile)
     }
@@ -125,9 +140,9 @@ test('real API and PTY: two Codex profiles with two sessions each beside a Claud
 
   const sessions = {
     'cx-personal-1': await start('Codex', 'Personal', 'cx-personal-1'),
-    'cx-personal-2': await start('Codex', 'Personal', 'cx-personal-2'),
+    'cx-personal-2': await start('Codex', 'Personal', 'cx-personal-2', 'Read only'),
     'cx-team-1': await start('Codex', 'Team', 'cx-team-1'),
-    'cx-team-2': await start('Codex', 'Team', 'cx-team-2'),
+    'cx-team-2': await start('Codex', 'Team', 'cx-team-2', 'Full access'),
     'claude-1': await start('Claude', 'Work', 'claude-1'),
   }
   const names = Object.keys(sessions)

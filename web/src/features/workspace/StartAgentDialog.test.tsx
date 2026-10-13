@@ -79,38 +79,38 @@ it('explains missing profile setup and older API failures', async () => {
   expect(screen.getByRole('button', { name: 'Start agent' })).toBeDisabled()
 })
 
-it('submits the prompt and leaves model and options to the profile, changing the request key with the prompt', async () => {
+it('submits the prompt with the model and options on screen, and changes the request key when they change', async () => {
   const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
   fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Fix the login flow' } })
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'test-model' } })
+  fireEvent.click(screen.getByRole('radio', { name: 'Full access' }))
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'Fix the login flow', model: '', options: {} }))
-  // The retry of the same request keeps its key; a different prompt is a different request.
+  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'Fix the login flow', model: 'test-model', options: { full_access: true } }))
+  // The retry of the same request keeps its key.
   fireEvent.submit(screen.getByRole('dialog'))
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
   expect(submit.mock.calls[1][0].requestKey).toBe(submit.mock.calls[0][0].requestKey)
-  fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Fix the signup flow' } })
+  // A different access choice is a different request.
+  fireEvent.click(screen.getByRole('radio', { name: 'Ask permissions' }))
   fireEvent.submit(screen.getByRole('dialog'))
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(3))
+  expect(submit.mock.calls[2][0].options).toEqual({ full_access: false })
   expect(submit.mock.calls[2][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
 })
 
-it('no longer asks for a model, permissions or effort: they come from the profile', async () => {
-  vi.mocked(agentProviders).mockResolvedValue(providers())
-  vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
-  render(<StartAgentDialog />)
-  await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Work'))
-  expect(screen.queryByLabelText('Agent model')).toBeNull()
-  expect(screen.queryByRole('radiogroup', { name: 'Permission mode' })).toBeNull()
-  expect(screen.queryByRole('slider', { name: 'Effort' })).toBeNull()
-  expect(agentModels).not.toHaveBeenCalled()
-})
-
-// Profiles are cards; everything else about the launch is the profile's own.
-const pick = async (_label: string, option: string | RegExp) => { fireEvent.click(await screen.findByRole('option', { name: option })) }
+const effortSlider = () => screen.getByRole('slider', { name: 'Effort' })
+const effortStops = () => Array.from(effortSlider().querySelectorAll('[data-stop]')).map(stop => stop.getAttribute('data-stop'))
+const chooseEffort = (tick: string) => fireEvent.click(within(effortSlider().parentElement as HTMLElement).getByText(tick, { selector: 'button' }))
+// Profiles are cards, effort is a slider and every other launch field is a row of chips.
+const pick = async (label: string, option: string | RegExp) => {
+  if (label === 'Profile') fireEvent.click(await screen.findByRole('option', { name: option }))
+  else if (label === 'Effort') chooseEffort(String(option))
+  else fireEvent.click(await screen.findByRole('radio', { name: option }))
+}
 
 it('enables Claude when it is available and has profiles, and disables it with its reason otherwise', async () => {
   const { unmount } = render(<StartAgentDialog />)
@@ -150,7 +150,7 @@ it('switches provider, filters profiles, resets the selection and shows profile 
   fireEvent.click(screen.getByRole('button', { name: /Antigravity/ }))
   expect(screen.getByText('Choose a profile to continue.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Start agent' })).toBeDisabled()
-  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Choose a profile to see its defaults.')
+  expect(screen.getByRole('radio', { name: 'Full access' })).toBeInTheDocument()
 })
 
 it('defaults to the only provider with profiles and then to the last used one', async () => {
@@ -167,29 +167,38 @@ it('defaults to the only provider with profiles and then to the last used one', 
   expect(screen.getByRole('button', { name: /Claude/ })).toHaveAttribute('aria-pressed', 'true')
 })
 
-it('shows the profile\'s model, permissions and effort and sends no per-launch override', async () => {
+it('opens on the profile\'s saved model, permission and effort and sends them', async () => {
   vi.mocked(agentProviders).mockResolvedValue(providers())
   vi.mocked(agentAccounts).mockResolvedValue([{ ...claudeProfile, model: 'opus', permission_mode: 'plan', effort: 'high' }])
   const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Work'))
-  const defaults = screen.getByTestId('launch-defaults')
-  expect(within(defaults).getByText('Model').nextSibling).toHaveTextContent('opus')
-  expect(within(defaults).getByText('Permission mode').nextSibling).toHaveTextContent('Plan')
-  expect(within(defaults).getByText('Effort').nextSibling).toHaveTextContent('high')
-  expect(screen.getByText('Claude · Work · opus · Plan · high')).toBeInTheDocument()
+  expect(screen.getByLabelText('Agent model')).toHaveValue('opus')
+  expect(screen.getByRole('radio', { name: 'Plan' })).toBeChecked()
+  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'High')
+  expect(screen.getByText('Claude · Work · opus · Plan · high effort')).toBeInTheDocument()
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ provider: 'Claude', accountId: 'claude-one', model: '', options: {} }))
+  expect(submit.mock.calls[0][0]).toEqual(expect.objectContaining({ provider: 'Claude', accountId: 'claude-one', model: 'opus', options: { permission_mode: 'plan', effort: 'high' } }))
 })
 
-it('says the provider decides when the profile saved no defaults', async () => {
+it('opens on the provider default where the profile saved none, and one click returns to it', async () => {
   vi.mocked(agentProviders).mockResolvedValue(providers())
   vi.mocked(agentAccounts).mockResolvedValue([claudeProfile])
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Work'))
-  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
+  // Permission: the provider's own default; effort: the middle of the levels on offer.
+  expect(screen.getByRole('radio', { name: /^Default/ })).toBeChecked()
+  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'High')
+  expect(effortStops()).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+  await pick('Permission mode', 'Plan')
+  chooseEffort('max')
+  expect(screen.getByRole('radio', { name: 'Plan' })).toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: /Default · Default/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Default · High/ }))
+  expect(screen.getByRole('radio', { name: /^Default/ })).toBeChecked()
+  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'High')
 })
 
 it('shows the setup hint of the selected provider', async () => {
@@ -220,10 +229,11 @@ it('clears a stale error and shows profile defaults when switching provider', as
   await screen.findByRole('alert')
   fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
   expect(screen.queryByRole('alert')).toBeNull()
-  for (const text of ['opus', 'Plan', 'high']) expect(screen.getByTestId('launch-defaults')).toHaveTextContent(text)
+  expect(screen.getByLabelText('Agent model')).toHaveValue('opus')
+  expect(screen.getByRole('radio', { name: 'Plan' })).toBeChecked()
 })
 
-it('shows each profile\'s own toggle setting and follows the profile and provider', async () => {
+it('starts each toggle from the selected profile and resets options on provider change', async () => {
   vi.mocked(agentProviders).mockResolvedValue(providers())
   vi.mocked(agentAccounts).mockResolvedValue([
     { id: 'safe', name: 'Safe', provider: 'antigravity', full_access: false },
@@ -233,12 +243,14 @@ it('shows each profile\'s own toggle setting and follows the profile and provide
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).not.toBeDisabled())
   await pick('Profile', 'Open')
-  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Full accessFull access')
+  expect(screen.getByRole('radio', { name: 'Full access' })).toBeChecked()
   await pick('Profile', 'Safe')
-  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Full accessAsk permissions')
+  expect(screen.getByRole('radio', { name: 'Ask permissions' })).toBeChecked()
   fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
-  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
-  expect(screen.queryByText('Ask permissions')).toBeNull()
+  await pick('Permission mode', 'Plan')
+  fireEvent.click(screen.getByRole('button', { name: /Antigravity/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
+  expect(screen.getByRole('radio', { name: /^Default/ })).toBeChecked()
 })
 
 it('renders no options for a provider that declares none', async () => {
@@ -247,7 +259,8 @@ it('renders no options for a provider that declares none', async () => {
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('One'))
-  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
+  expect(screen.queryByRole('radiogroup', { name: 'Full access' })).toBeNull()
+  expect(screen.queryByRole('slider')).toBeNull()
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
   expect(submit.mock.calls[0][0].options).toEqual({})
@@ -281,24 +294,34 @@ it('enables Codex with its profile and shows its sign-in details and warnings', 
   const details = screen.getByTestId('profile-details')
   expect(details).not.toHaveTextContent('logged in')
   expect(details).toHaveTextContent('Same login as profile "Team"')
-  expect(screen.getByTestId('launch-defaults')).toHaveTextContent('Provider defaults')
+  await waitFor(() => expect(screen.getByLabelText('Agent model')).toHaveValue('gpt-6.1-sol'))
+  expect(screen.getByRole('radio', { name: /^Auto/ })).toBeChecked()
   expect(screen.queryByRole('switch')).toBeNull()
 })
 
-it('shows the Codex profile\'s preset and starts it without per-launch options', async () => {
+it('submits the Codex preset, effort and model, and moves an effort the new model lacks to its default', async () => {
   vi.mocked(agentProviders).mockResolvedValue(codexProviders())
   vi.mocked(agentAccounts).mockResolvedValue([{ ...codexProfile, model: 'gpt-6.1-sol', effort: 'ultra', sandbox: 'danger-full-access', approval: 'never' }])
+  vi.mocked(agentModels).mockResolvedValue(codexModels)
   const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
   useBonsaiStore.setState({ createAgent: submit })
   render(<StartAgentDialog />)
   await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveTextContent('Personal'))
-  const defaults = screen.getByTestId('launch-defaults')
-  expect(within(defaults).getByText('Model').nextSibling).toHaveTextContent('gpt-6.1-sol')
-  expect(within(defaults).getByText('Permissions').nextSibling).toHaveTextContent('Full access')
-  expect(within(defaults).getByText('Effort').nextSibling).toHaveTextContent('ultra')
+  expect(screen.getByLabelText('Agent model')).toHaveValue('gpt-6.1-sol')
+  expect(screen.getByRole('radio', { name: 'Full access' })).toBeChecked()
+  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Ultra')
   fireEvent.submit(screen.getByRole('dialog'))
   await screen.findByRole('alert')
-  expect(submit.mock.calls[0][0]).toMatchObject({ provider: 'Codex', accountId: 'codex-one', model: '', options: {} })
+  expect(submit.mock.calls[0][0]).toMatchObject({ provider: 'Codex', accountId: 'codex-one', model: 'gpt-6.1-sol', options: { sandbox: 'danger-full-access', approval: 'never', effort: 'ultra' } })
+
+  // luna has no "ultra": the effort falls to that model's own default.
+  fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'gpt-6-luna' } })
+  expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Medium')
+  await pick('Permissions', 'Bypass')
+  fireEvent.submit(screen.getByRole('dialog'))
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
+  expect(submit.mock.calls[1][0]).toMatchObject({ model: 'gpt-6-luna', options: { sandbox: 'bypass', effort: 'medium' } })
+  expect(submit.mock.calls[1][0].requestKey).not.toBe(submit.mock.calls[0][0].requestKey)
 })
 
 it('explains why Codex is unavailable and how to add its first profile', async () => {

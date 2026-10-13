@@ -81,7 +81,7 @@ test('explicit agent presentation fixtures cannot restart, stop, or open an inte
   await expect(inspector.getByRole('button', { name: 'Archive', exact: true })).toBeEnabled()
 })
 
-test('restored start dialog launches with the profile\'s settings and keeps terminal controls in its tab', async ({ page }) => {
+test('restored start dialog launches with full access and keeps terminal controls in its tab', async ({ page }) => {
   await mockGitBackend(page)
   await openConnectedApp(page)
   await page.getByTestId('rf__node-wt-daemon').click({ button: 'right' })
@@ -89,9 +89,11 @@ test('restored start dialog launches with the profile\'s settings and keeps term
   const dialog = page.getByRole('dialog', { name: 'Start agent' })
   await expect(dialog.getByLabel('Profile')).toContainText('Fixture')
   await dialog.getByLabel('Prompt', { exact: true }).fill('Fix the login flow')
+  await dialog.getByRole('radio', { name: 'Full access', exact: true }).click()
+  await expect(dialog.getByRole('radio', { name: 'Full access', exact: true })).toBeChecked()
   const launch = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/api/projects/bonsai/agents'))
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
-  expect((await launch).postDataJSON()).toMatchObject({ prompt: 'Fix the login flow', worktree_id: 'wt-daemon' })
+  expect((await launch).postDataJSON()).toMatchObject({ prompt: 'Fix the login flow', full_access: true, worktree_id: 'wt-daemon' })
   await expect(dialog).toHaveCount(0)
   const card = page.locator('.runtime-tile').filter({ has: page.getByRole('button', { name: 'Stop agent', exact: true }) })
   await expect(card).toBeVisible()

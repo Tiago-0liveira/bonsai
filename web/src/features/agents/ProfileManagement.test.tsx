@@ -109,8 +109,8 @@ describe('defaults tab', () => {
     await waitFor(() => expect(agentModels).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Default model' })).not.toHaveAttribute('aria-busy'))
     fireEvent.change(modelInput(), { target: { value: 'gpt-6-luna' } })
-    // The new model has no effort 'high': it falls back to the model's default (medium here), not to nothing.
-    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Medium')
+    // The new model has no effort 'high': it falls back to the middle of the levels it offers (low of low/medium), not to nothing.
+    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Low')
     expect(effortStops()).toEqual(['low', 'medium'])
   })
 

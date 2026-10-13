@@ -1,13 +1,13 @@
 import { expect, test } from '@playwright/test'
-import { mockGitBackend, openConnectedApp } from './mockGit'
+import { chooseEffort, mockGitBackend, openConnectedApp, selectMenu } from './mockGit'
 
-test('starts two Claude sessions on the same profile, each launched with the profile\'s defaults', async ({ page }) => {
+test('starts two Claude sessions on the same profile with their launch options', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await mockGitBackend(page)
   await openConnectedApp(page)
 
-  const start = async (name: string) => {
+  const start = async (name: string, mode: string) => {
     await page.getByTestId('rf__node-wt-daemon').click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Start agent', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Start agent' })
@@ -15,24 +15,25 @@ test('starts two Claude sessions on the same profile, each launched with the pro
     await expect(dialog.getByLabel('Profile')).toContainText('Work')
     await expect(dialog.getByLabel('Profile')).toContainText('dev@example.com')
     await expect(dialog.getByTestId('profile-details')).toContainText('Token expires in 12 days')
-    // Model, permissions and effort are the profile's; the dialog only shows them.
-    await expect(dialog.getByTestId('launch-defaults')).toBeVisible()
-    await expect(dialog.getByLabel('Agent model')).toHaveCount(0)
-    await expect(dialog.getByRole('slider', { name: 'Effort' })).toHaveCount(0)
+    await expect(dialog.getByRole('radio', { name: 'Full access' })).toHaveCount(0)
     await dialog.getByLabel('Agent name').fill(name)
+    await dialog.getByLabel('Agent model').click()
+    const suggestions = page.getByRole('listbox', { name: 'Agent model suggestions' })
+    await expect(suggestions.getByRole('option')).toHaveCount(3)
+    await suggestions.getByRole('option', { name: /Claude Sonnet 5.5/ }).click()
+    await expect(dialog.getByLabel('Agent model')).toHaveValue('claude-sonnet-5-5')
+    await dialog.getByRole('radio', { name: mode, exact: true }).click()
+    await chooseEffort(dialog, 'high')
     const launch = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/api/projects/bonsai/agents'))
     await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
-    const body = (await launch).postDataJSON()
-    expect(body).toMatchObject({ account_id: 'claude-profile', name, worktree_id: 'wt-daemon' })
-    for (const key of ['permission_mode', 'effort']) expect(body).not.toHaveProperty(key)
-    expect(body.model ?? '').toBe('')
+    expect((await launch).postDataJSON()).toMatchObject({ account_id: 'claude-profile', name, model: 'claude-sonnet-5-5', permission_mode: mode === 'Plan' ? 'plan' : 'acceptEdits', effort: 'high', worktree_id: 'wt-daemon' })
     await expect(dialog).toHaveCount(0)
   }
 
-  await start('First')
+  await start('First', 'Plan')
   await expect(page.getByTestId('rf__node-claude-session-1')).toBeVisible()
   await expect(page.locator('.runtime-tile')).toContainText('running · connected')
-  await start('Second')
+  await start('Second', 'Accept edits')
   await expect(page.getByTestId('rf__node-claude-session-1')).toBeVisible()
   await expect(page.getByTestId('rf__node-claude-session-2')).toBeVisible()
   await expect(page.locator('.react-flow__node-agent')).toHaveCount(2)

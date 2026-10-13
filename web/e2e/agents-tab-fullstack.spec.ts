@@ -27,30 +27,22 @@ async function addCodexProfile(page: Page, name: string, mode: RegExp) {
   return dialog
 }
 
-/** Saves one permissions default on the profile's Defaults tab; every later launch starts with it. */
-async function setPermissions(page: Page, permissions: string) {
-  await page.getByRole('tab', { name: 'Defaults' }).click()
-  const form = page.getByRole('form', { name: 'Profile defaults' })
-  await form.getByRole('radio', { name: permissions, exact: true }).click()
-  await form.getByRole('button', { name: 'Save defaults' }).click()
-  await expect(form.getByText('Defaults saved')).toBeVisible()
-}
-
-async function startFromTab(page: Page, profile: string, name: string) {
+async function startFromTab(page: Page, profile: string, name: string, permissions?: string) {
   await page.getByRole('tab', { name: 'Overview' }).click()
   await page.getByRole('button', { name: 'Start agent', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Start agent' })
   await expect(dialog.getByLabel('Profile')).toContainText(profile)
-  // The dialog shows the profile's saved model and effort; it has no controls for them.
-  await expect(dialog.getByTestId('launch-defaults')).toContainText('gpt-6-luna')
-  await expect(dialog.getByLabel('Agent model')).toHaveCount(0)
+  // The dialog opens on the profile's saved model.
+  await expect(dialog.getByLabel('Agent model')).toHaveValue('gpt-6-luna')
   await dialog.getByLabel('Worktree and branch').click()
   await page.locator('[data-bonsai-select-menu="Worktree and branch"]').getByRole('option').first().click()
   await dialog.getByLabel('Agent name').fill(name)
+  await chooseEffort(dialog, 'high')
+  if (permissions) await dialog.getByRole('radio', { name: permissions, exact: true }).click()
   const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/agents'))
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
   const session = await (await response).json()
-  expect(session).toMatchObject({ provider: 'codex', profile_name: profile })
+  expect(session).toMatchObject({ provider: 'codex', profile_name: profile, model: 'gpt-6-luna' })
   await expect(dialog).toBeHidden()
   return session.id as string
 }
@@ -126,18 +118,16 @@ test('real API: create Codex profiles in the browser, set defaults, run sessions
   await page.getByRole('tab', { name: 'Overview' }).click()
   await expect(page.getByRole('region', { name: 'Profile defaults' })).toContainText('gpt-6-luna')
 
-  // 5. Two sessions from the tab; the second starts after the profile's permissions default changed.
+  // 5. Two sessions from the tab; the sessions list shows what each was launched with.
   const first = await startFromTab(page, 'laptop', 'fs-one')
-  await setPermissions(page, 'Read only')
-  const second = await startFromTab(page, 'laptop', 'fs-two')
+  const second = await startFromTab(page, 'laptop', 'fs-two', 'Read only')
   expect(second).not.toBe(first)
   await page.goto(`${ORIGIN}/app/agents`)
   await profiles(page).getByRole('button', { name: /^laptop/ }).click()
   await page.getByRole('tab', { name: /Sessions/ }).click()
   await expect(sessions(page).getByRole('listitem')).toHaveCount(2)
-  // Launched from the profile's defaults, so the sessions record no per-launch options.
-  await expect(sessions(page).getByRole('listitem').filter({ hasText: 'fs-one' })).toContainText('Running')
-  await expect(sessions(page).getByRole('listitem').filter({ hasText: 'fs-two' })).toContainText('Running')
+  await expect(sessions(page).getByRole('listitem').filter({ hasText: 'fs-one' })).toContainText('gpt-6-luna · Auto · high effort')
+  await expect(sessions(page).getByRole('listitem').filter({ hasText: 'fs-two' })).toContainText('gpt-6-luna · Read only · high effort')
   await expect(page.getByRole('region', { name: 'Fleet summary' })).toContainText('Running2')
 
   // 6. Remove while running: the API refuses and lists the sessions.

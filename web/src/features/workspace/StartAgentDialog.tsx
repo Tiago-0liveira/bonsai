@@ -1,20 +1,25 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Bot, GitBranch, Gauge, LogIn, Play, SlidersHorizontal } from 'lucide-react'
 import { useRouter } from '@tanstack/react-router'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { DialogFrame, Field, TEXT_INPUT } from '../../components/ui/Dialog'
 import { Segmented } from '../../components/ui/Segmented'
 import { accountAddCommand, agentUsage, byHeadroom, headroomLabel } from '../../api/agentsOverview'
-import { PROVIDER_LABELS, agentAccounts, agentProviders, type AgentAccount, type AgentCapability, type AgentUsage, type LaunchField } from '../../api/agents'
+import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type AgentUsage, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { authState, profileDefaults } from '../agents/agentsModel'
+import { authState } from '../agents/agentsModel'
+import { fillDefaults, savedLaunchValues } from '../agents/profileForm'
+import { ModelCombobox } from '../../components/ui/ModelCombobox'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import type { AgentProviderId } from '../../types'
+import { chosenModel, launchRequestOptions, launchSummary, type LaunchValues } from './LaunchFields'
+import { LaunchControls } from './LaunchControls'
 import { ProfilePicker } from './ProfilePicker'
 
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
 const isLaunchable = (id: string): id is AgentProviderId => Object.hasOwn(PROVIDER_LABELS, id)
 const NO_FIELDS: LaunchField[] = []
+const MODEL_FIELD: LaunchField = { id: 'model', label: 'Model', kind: 'model' }
 const setupCommand = accountAddCommand
 const fieldsOf = (providers: AgentCapability[], id: string) => providers.find(item => item.id === id)?.launch_fields ?? NO_FIELDS
 
@@ -53,6 +58,10 @@ function StartAgentForm() {
   const [usage, setUsage] = useState<Record<string, AgentUsage>>({})
   const [accountId, setAccountId] = useState('')
   const [providerId, setProviderId] = useState('')
+  const [models, setModels] = useState<AgentModel[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  // Only what the user changed here; everything else is the profile's saved choice or the provider's default.
+  const [edits, setEdits] = useState<LaunchValues>({})
   const [name, setName] = useState('')
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(true)
@@ -84,6 +93,16 @@ function StartAgentForm() {
     agentUsage().then(list => { if (!disposed) setUsage(Object.fromEntries(list.map(entry => [entry.account_id, entry]))) }).catch(() => {})
     return () => { disposed = true }
   }, [])
+  // Suggestions follow the provider and profile; failures just leave a plain input.
+  const modelProvider = isLaunchable(providerId) ? providerId : ''
+  useEffect(() => {
+    setModels([])
+    if (!modelProvider || !accountId) return
+    let disposed = false
+    setModelsLoading(true)
+    agentModels(modelProvider, accountId).then(list => { if (!disposed) setModels(list) }).catch(() => {}).finally(() => { if (!disposed) setModelsLoading(false) })
+    return () => { disposed = true }
+  }, [modelProvider, accountId])
   const selected = providers.find(item => item.id === providerId)
   const launchable = isLaunchable(providerId) ? providerId : undefined
   const providerLabel = selected?.label ?? ''
@@ -93,8 +112,13 @@ function StartAgentForm() {
   // The roomiest profile that is not low itself, to point at when the chosen one runs low.
   const roomier = headline?.low ? providerAccounts.find(item => item.id !== accountId && usage[item.id]?.headline?.score !== undefined && !usage[item.id]?.headline?.low) : undefined
   const fields = fieldsOf(providers, providerId)
-  // Model, permissions and effort come from the profile; they are edited on its Defaults tab.
-  const defaults = account ? profileDefaults(fields, account) : []
+  const allFields = useMemo(() => [MODEL_FIELD, ...fields], [fields])
+  // Opens on the profile's saved choices; where it saved none, on the provider's default
+  // (the default model, that model's default effort, the usual permission).
+  const { values, defaults } = fillDefaults(allFields, fields, models, { ...savedLaunchValues(allFields, account), ...edits }, Object.keys(edits))
+  const model = String(values.model ?? '')
+  const launchModel = chosenModel(models, model)
+  const options = launchRequestOptions(fields, values)
   const selectProvider = (id: string) => {
     if (id === providerId) return
     const own = accounts.filter(item => item.provider === id)
@@ -102,8 +126,12 @@ function StartAgentForm() {
     setError('')
     rememberProvider(id)
     setAccountId(own.length === 1 ? own[0].id : '')
+    setEdits({})
   }
-  const selectAccount = (id: string) => setAccountId(id)
+  const selectAccount = (id: string) => {
+    setAccountId(id)
+    setEdits({})
+  }
   const canStart = !loading && !pending && launchable && selected?.available && account && availableWorktrees.some(item => item.id === worktreeId)
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -111,10 +139,10 @@ function StartAgentForm() {
     busy.current = true
     setPending(true)
     setError('')
-    const fingerprint = JSON.stringify({ providerId, worktreeId, accountId, name, prompt })
+    const fingerprint = JSON.stringify({ providerId, worktreeId, accountId, name, model, prompt, options })
     if (request.current.fingerprint !== fingerprint) request.current = { fingerprint, key: crypto.randomUUID() }
     try {
-      await createAgent({ worktreeId, accountId, requestKey: request.current.key, name: name.trim(), provider: PROVIDER_LABELS[launchable], model: '', reasoningEffort: '', fastMode: false, workType: '', prompt: prompt.trim(), options: {} })
+      await createAgent({ worktreeId, accountId, requestKey: request.current.key, name: name.trim(), provider: PROVIDER_LABELS[launchable], model: model.trim(), reasoningEffort: '', fastMode: false, workType: '', prompt: prompt.trim(), options })
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -137,14 +165,14 @@ function StartAgentForm() {
     <DialogFrame
       icon={Bot}
       title="Start agent"
-      subtitle="Pick where it runs, which profile runs it and what it should do."
+      subtitle="Pick where it runs, how it behaves and what it should do."
       closeLabel="Close start agent"
       onClose={() => setOpen(false)}
       closeDisabled={pending}
       escapeCloses={!prompt.trim()}
       width="lg"
       onSubmit={submit}
-      summary={[providerLabel, account?.name, ...defaults.map(item => item.value)].filter(Boolean).join(' · ')}
+      summary={[providerLabel, account?.name, model, ...launchSummary(fields, values, launchModel)].filter(Boolean).join(' · ')}
       actions={
         <>
           <button type="button" disabled={pending} onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-9 rounded-[8px] px-3.5 text-[12px] text-muted hover:text-text">
@@ -242,29 +270,28 @@ function StartAgentForm() {
               </div>
             )}
           </div>
-          <Field label="Profile defaults" hint="New launches use these. Change them on the profile's Defaults tab.">
-            <div className="space-y-2 rounded-[10px] border border-border-subtle bg-well/50 px-3 py-2.5" data-testid="launch-defaults">
-              {account ? (
-                <>
-                  <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-1.5 text-[12px]">
-                    {(defaults.length ? defaults : [{ label: 'Model, permissions, effort', value: 'Provider defaults' }]).map(item => (
-                      <div key={item.label} className="contents">
-                        <dt className="text-muted">{item.label}</dt>
-                        <dd className="min-w-0 break-words text-text">{item.value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                  {router && (
-                    <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, tab: 'defaults' } }) }} className="bonsai-focus btn-bordered inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[11px] text-text">
-                      <SlidersHorizontal size={11} aria-hidden="true" /> Edit defaults
-                    </button>
-                  )}
-                </>
-              ) : (
-                <p className="font-mono text-[10.5px] text-muted-2">Choose a profile to see its defaults.</p>
-              )}
-            </div>
-          </Field>
+          <div className="space-y-5">
+            <Field label="Model" hint={model.trim() && model === defaults.model ? 'The provider\'s default model.' : undefined}>
+              <ModelCombobox ariaLabel="Agent model" disabled={pending} loading={modelsLoading} value={model} onChange={value => setEdits(current => ({ ...current, model: value }))} suggestions={models} placeholder={chosenModel(models, '')?.label ?? 'Use profile default'} />
+            </Field>
+            <LaunchControls
+              fields={fields}
+              values={values}
+              model={launchModel}
+              defaults={defaults}
+              providerLabel={providerLabel}
+              disabled={pending}
+              onChange={(id, value) => setEdits(current => ({ ...current, [id]: value }))}
+            />
+            {account && router && (
+              <p className="font-mono text-[10px] text-muted-2">
+                Opens on this profile's defaults.{' '}
+                <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, tab: 'defaults' } }) }} className="bonsai-focus inline-flex items-center gap-1 rounded-sm text-text underline decoration-border-strong underline-offset-2 hover:decoration-text">
+                  <SlidersHorizontal size={10} aria-hidden="true" />Edit defaults
+                </button>
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="border-t border-border-subtle pt-5">

@@ -1,35 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { agentModels, type AgentAccount, type AgentCapability, type AgentModel, type LaunchField } from '../../api/agents'
+import { agentModels, type AgentAccount, type AgentCapability, type AgentModel } from '../../api/agents'
 import { updateAgentProfile } from '../../api/agentsOverview'
 import { Field } from '../../components/ui/Dialog'
 import { ModelCombobox } from '../../components/ui/ModelCombobox'
 import { LaunchControls } from '../workspace/LaunchControls'
-import { chosenModel, fieldOptions, resolveLaunchValues, type LaunchValues } from '../workspace/LaunchFields'
-import { effectiveDefaults, profileChanges, profileFormValues } from './profileForm'
-
-/**
- * Opens every field on a real choice: a field the profile saved nothing for
- * shows the provider's default (the default model, that model's default
- * effort, the usual permission). `touched` fields are left as the user typed
- * them, so a cleared model stays empty while it is being retyped.
- */
-function withDefaults(fields: LaunchField[], launchFields: LaunchField[], models: AgentModel[], values: LaunchValues, touched: string[]) {
-  const modelId = fields.find(field => field.kind === 'model')?.id
-  const out: LaunchValues = { ...values }
-  if (modelId && !String(out[modelId] ?? '') && !touched.includes(modelId)) {
-    const fallback = effectiveDefaults(fields, launchFields, models, '')[modelId]
-    if (fallback) out[modelId] = fallback
-  }
-  // The efforts on offer, and the default among them, follow the chosen model.
-  const modelValue = String(out[modelId ?? ''] ?? '')
-  const defaults = effectiveDefaults(fields, launchFields, models, modelValue)
-  for (const field of fields) {
-    if (field.kind !== 'select' || defaults[field.id] === undefined) continue
-    const value = String(out[field.id] ?? '')
-    if (!value || !fieldOptions(field, chosenModel(models, modelValue)).some(option => option.value === value)) out[field.id] = defaults[field.id]
-  }
-  return { values: out, defaults }
-}
+import { chosenModel, resolveLaunchValues, type LaunchValues } from '../workspace/LaunchFields'
+import { effectiveDefaults, fillDefaults, profileChanges, profileFormValues } from './profileForm'
 
 /**
  * The profile's launch defaults (model, permissions, effort), rendered from the
@@ -53,8 +29,8 @@ export function ProfileDefaults({ account, capability, onSaved, onDirtyChange }:
   const [models, setModels] = useState<AgentModel[]>([])
   // Only what the user touched; everything else follows the saved defaults, so a change made elsewhere shows up.
   const [edits, setEdits] = useState<LaunchValues>({})
-  const baseline = withDefaults(fields, providerFields, models, savedValues, [])
-  const current = withDefaults(fields, providerFields, models, { ...savedValues, ...edits }, Object.keys(edits))
+  const baseline = fillDefaults(fields, providerFields, models, savedValues, [])
+  const current = fillDefaults(fields, providerFields, models, { ...savedValues, ...edits }, Object.keys(edits))
   const { values, defaults } = current
   // Against what the form opened on: a field back on its default is "unset", not a new explicit value.
   const rawChanges = profileChanges(fields, Object.fromEntries(Object.entries(baseline.values).map(([id, value]) => [id, value === true ? 'true' : value === false ? '' : String(value)])), values)

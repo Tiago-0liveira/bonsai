@@ -1,5 +1,5 @@
-import type { AgentModel, LaunchField } from '../../api/agents'
-import { fieldOptions, type LaunchValues } from '../workspace/LaunchFields'
+import type { AgentAccount, AgentModel, LaunchField } from '../../api/agents'
+import { chosenModel, fieldOptions, type LaunchValues } from '../workspace/LaunchFields'
 
 /** Profile names as the API accepts them: a letter or digit first, then letters, digits, `.`, `_`, `-`; at most 64. */
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
@@ -47,8 +47,8 @@ export function profileChanges(fields: LaunchField[], defaults: Record<string, s
 /**
  * What each field takes when the profile saved nothing, so every control opens
  * on a real choice: the provider's default model (the one flagged, else the
- * first listed); the effort that model defaults to (else "medium", else the
- * middle level); the permission the provider launches with (its declared
+ * first listed); the effort that model defaults to (else the middle of the
+ * levels it offers); the permission the provider launches with (its declared
  * default, else "default", else the first). A toggle has no entry: off is its
  * default. A field with no usable option has none either.
  */
@@ -64,9 +64,55 @@ export function effectiveDefaults(fields: LaunchField[], launchFields: LaunchFie
     if (options.length === 0) continue
     const has = (value?: string) => options.find(option => option.value === value)?.value
     if (field.id === 'effort' || field.per_model) {
-      out[field.id] = has(model?.default_effort) ?? has('medium') ?? options[Math.floor((options.length - 1) / 2)].value
+      out[field.id] = has(model?.default_effort) ?? options[Math.floor((options.length - 1) / 2)].value
     } else {
       out[field.id] = has(launchFields.find(item => item.id === field.id)?.default) ?? has('default') ?? options[0].value
+    }
+  }
+  return out
+}
+
+/**
+ * Opens every field on a real choice: a field the profile saved nothing for
+ * shows the provider's default (the default model, that model's default
+ * effort, the usual permission). `touched` fields are left as the user typed
+ * them, so a cleared model stays empty while it is being retyped.
+ */
+export function fillDefaults(fields: LaunchField[], launchFields: LaunchField[], models: AgentModel[], values: LaunchValues, touched: string[]) {
+  const modelId = fields.find(field => field.kind === 'model')?.id
+  const out: LaunchValues = { ...values }
+  if (modelId && !String(out[modelId] ?? '') && !touched.includes(modelId)) {
+    const fallback = effectiveDefaults(fields, launchFields, models, '')[modelId]
+    if (fallback) out[modelId] = fallback
+  }
+  // The efforts on offer, and the default among them, follow the chosen model.
+  const modelValue = String(out[modelId ?? ''] ?? '')
+  const defaults = effectiveDefaults(fields, launchFields, models, modelValue)
+  for (const field of fields) {
+    if (field.kind !== 'select' || defaults[field.id] === undefined) continue
+    const value = String(out[field.id] ?? '')
+    if (!value || !fieldOptions(field, chosenModel(models, modelValue)).some(option => option.value === value)) out[field.id] = defaults[field.id]
+  }
+  return { values: out, defaults }
+}
+
+/**
+ * What a profile has saved for each field, as form values: '' when it saved
+ * nothing. A preset (an option whose `set` matches the profile's own keys)
+ * wins over a bare saved value; a toggle is its boolean setting.
+ */
+export function savedLaunchValues(fields: LaunchField[], account?: AgentAccount): LaunchValues {
+  const out: LaunchValues = {}
+  for (const field of fields) {
+    const own = account?.[field.id]
+    const stored = account?.defaults?.[field.id]
+    if (field.kind === 'toggle') {
+      out[field.id] = typeof own === 'boolean' ? own : stored === 'true'
+    } else if (field.kind === 'model') {
+      out[field.id] = typeof own === 'string' ? own : stored ?? ''
+    } else {
+      const preset = field.options?.find(option => option.set && Object.entries(option.set).every(([key, expected]) => account?.[key] === expected))
+      out[field.id] = preset?.value ?? (typeof own === 'string' ? own : stored ?? '')
     }
   }
   return out
