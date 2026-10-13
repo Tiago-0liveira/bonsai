@@ -895,7 +895,8 @@ export async function mockUpdateSettings(page: Page, settings: () => unknown, ap
 
 /** Picks a level on the start dialog's effort slider by its caption under the track. */
 export async function chooseEffort(dialog: Locator, level: string) {
-  await dialog.getByRole('slider', { name: 'Effort' }).locator('..').getByText(level, { exact: true }).click()
+  // The default level's caption carries a "default" tag, so match on its start.
+  await dialog.getByRole('slider', { name: 'Effort' }).locator('..').locator('button.step-label').filter({ hasText: new RegExp(`^${level}`) }).click()
 }
 
 /** A select's menu, which renders outside the dialog that owns the select. */

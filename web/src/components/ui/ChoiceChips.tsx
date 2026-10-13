@@ -9,6 +9,8 @@ export interface ChoiceOption {
   tone?: 'danger'
   disabled?: boolean
   title?: string
+  /** A small tag after the label, such as "default". */
+  badge?: string
 }
 
 /**
@@ -42,6 +44,7 @@ export function ChoiceChips({ options, value, onChange, ariaLabel, disabled = fa
           >
             {option.icon}
             <span>{option.label}</span>
+            {option.badge && <span className="chip-badge">{option.badge}</span>}
             <Check size={12} className="chip-mark" aria-hidden="true" />
           </button>
         )

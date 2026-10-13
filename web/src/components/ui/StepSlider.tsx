@@ -1,4 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { Flame } from 'lucide-react'
 
 export interface Stop {
   value: string
@@ -16,12 +17,19 @@ const KEYS: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, PageUp: 1, Arr
  * or hidden when the default is unknown. Pointer, arrow keys, Home and End all
  * work; the end captions say which way is faster and which is smarter.
  */
-export function StepSlider({ stops, value, onChange, ariaLabel, inherited, lowCaption = 'Faster', highCaption = 'Smarter', unsetText = 'Profile default', disabled = false }: {
+export function StepSlider({ stops, value, onChange, ariaLabel, inherited, defaultValue, heat = false, lowCaption = 'Faster', highCaption = 'Smarter', unsetText = 'Profile default', disabled = false }: {
   stops: Stop[]
   value: string
   onChange: (value: string) => void
   ariaLabel: string
   inherited?: string
+  /** The stop that is the default: its tick gets a ring and its caption "default". */
+  defaultValue?: string
+  /**
+   * Past the middle the track warms up (amber, then orange, then red) and the
+   * thumb turns into a flame: high effort costs more and runs longer.
+   */
+  heat?: boolean
   lowCaption?: string
   highCaption?: string
   /** The value text read out while nothing is chosen. */
@@ -36,6 +44,9 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, lowCa
   const ghost = chosen < 0 ? stops.findIndex(stop => stop.value === inherited) : -1
   const shown = chosen >= 0 ? chosen : ghost
   const percent = (index: number) => (stops.length < 2 ? 50 : (index / last) * 100)
+  // 0 cool up to the middle, then 1 warm, 2 hot, 3 at the top.
+  const ratio = shown >= 0 ? shown / last : 0
+  const warmth = !heat || shown < 0 || ratio <= 0.5 ? 0 : shown === last ? 3 : ratio >= 0.7 ? 2 : 1
 
   const pick = (index: number) => {
     const stop = stops[Math.min(Math.max(index, 0), stops.length - 1)]
@@ -86,6 +97,7 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, lowCa
         aria-valuenow={chosen >= 0 ? chosen : undefined}
         aria-valuetext={chosen >= 0 ? stops[chosen].label : ghost >= 0 ? `${unsetText}: ${stops[ghost].label}` : unsetText}
         data-dragging={dragging || undefined}
+        data-heat={warmth}
         className="step-slider"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -102,6 +114,7 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, lowCa
               data-stop={stop.value}
               data-passed={chosen >= 0 && index <= chosen ? 'true' : undefined}
               data-current={index === shown ? 'true' : undefined}
+              data-default={stop.value === defaultValue ? 'true' : undefined}
               className="step-tick"
               style={{ left: `${percent(index)}%` }}
             />
@@ -112,11 +125,12 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, lowCa
             data-hidden={shown < 0 ? 'true' : undefined}
             style={{ left: `${percent(Math.max(shown, 0))}%` }}
           >
+            {warmth > 0 && chosen >= 0 && <Flame size={12} strokeWidth={2.4} aria-hidden="true" className="step-flame" />}
             {pings > 0 && chosen >= 0 && <span key={pings} className="step-ping" />}
           </span>
         </div>
       </div>
-      <div className="relative mx-[22px] mt-1 h-4 font-mono text-[10px] text-muted-2" aria-hidden="true">
+      <div className={'relative mx-[22px] mt-1 h-4 font-mono text-[10px] text-muted-2' + (defaultValue ? ' mb-3.5' : '')} aria-hidden="true">
         {stops.map((stop, index) => (
           <button
             type="button"
@@ -129,6 +143,7 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, lowCa
             style={{ left: `${percent(index)}%` }}
           >
             {stop.tick ?? stop.label}
+            {stop.value === defaultValue && <span className="step-default">default</span>}
           </button>
         ))}
       </div>

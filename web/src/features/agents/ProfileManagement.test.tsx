@@ -71,9 +71,10 @@ describe('defaults tab', () => {
   it('shows the saved defaults and lists models for the profile', async () => {
     await renderPage()
     expect(modelInput()).toHaveValue('gpt-6.1-sol')
-    // Nothing saved for permissions: no chip is chosen and the provider default is the pressed one.
-    expect(within(within(defaultsForm()).getByRole('radiogroup', { name: 'Permissions' })).queryAllByRole('radio', { checked: true })).toHaveLength(0)
-    expect(within(defaultsForm()).getByRole('button', { name: /Provider default/, pressed: true })).toBeInTheDocument()
+    // Nothing saved for permissions: the provider's default (the first option here) is the chosen chip, tagged.
+    expect(within(defaultsForm()).getByRole('radio', { name: /^Auto/ })).toBeChecked()
+    expect(within(within(defaultsForm()).getByRole('radiogroup', { name: 'Permissions' })).getByText('default')).toBeInTheDocument()
+    expect(within(defaultsForm()).getByRole('button', { name: /Default · Auto/, pressed: true })).toBeInTheDocument()
     expect(effortSlider()).toHaveAttribute('aria-valuetext', 'High')
     expect(agentModels).toHaveBeenCalledWith('codex', 'codex-personal')
     expect(screen.getByText(/Every new launch of this profile starts with these choices/)).toBeInTheDocument()
@@ -108,8 +109,37 @@ describe('defaults tab', () => {
     await waitFor(() => expect(agentModels).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Default model' })).not.toHaveAttribute('aria-busy'))
     fireEvent.change(modelInput(), { target: { value: 'gpt-6-luna' } })
-    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Provider default')
+    // The new model has no effort 'high': it falls back to the model's default (medium here), not to nothing.
+    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Medium')
     expect(effortStops()).toEqual(['low', 'medium'])
+  })
+
+  it('opens a profile with no saved defaults on the provider defaults, not dirty, and saves only a real change', async () => {
+    vi.mocked(updateAgentProfile).mockResolvedValue({ ...team, defaults: { effort: 'high' } })
+    await renderPage({ profileId: 'codex-team' })
+    // The default model is the one the provider flags; its default effort is not listed, so the middle level is used.
+    await waitFor(() => expect(modelInput()).toHaveValue('gpt-6.1-sol'))
+    expect(within(defaultsForm()).getByRole('radio', { name: /^Auto/ })).toBeChecked()
+    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Medium')
+    expect(within(defaultsForm()).getByRole('button', { name: /Default · Medium/, pressed: true })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save defaults' })).toBeDisabled()
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
+
+    fireEvent.click(within(effortSlider().parentElement as HTMLElement).getByText('high', { selector: 'button' }))
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save defaults' }))
+    await waitFor(() => expect(updateAgentProfile).toHaveBeenCalledWith('codex-team', { defaults: { effort: 'high' } }))
+  })
+
+  it('puts a saved choice back on the provider default with one click and saves it as null', async () => {
+    vi.mocked(updateAgentProfile).mockResolvedValue({ ...personal, defaults: { model: 'gpt-6.1-sol' } })
+    await renderPage()
+    await waitFor(() => expect(modelInput()).toHaveValue('gpt-6.1-sol'))
+    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'High')
+    fireEvent.click(within(defaultsForm()).getByRole('button', { name: /Default · Medium/ }))
+    expect(effortSlider()).toHaveAttribute('aria-valuetext', 'Medium')
+    fireEvent.click(screen.getByRole('button', { name: 'Save defaults' }))
+    await waitFor(() => expect(updateAgentProfile).toHaveBeenCalledWith('codex-personal', { defaults: { effort: null } }))
   })
 
   it('shows the provider\'s message when a default is refused and keeps the edits', async () => {

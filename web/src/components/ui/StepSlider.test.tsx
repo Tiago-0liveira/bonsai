@@ -93,4 +93,29 @@ describe('StepSlider', () => {
     fireEvent.click(screen.getByText('max', { selector: 'button' }))
     expect(onChange).not.toHaveBeenCalled()
   })
+
+  describe('heat', () => {
+    const heated = (value: string) => render(<StepSlider ariaLabel="Effort" stops={STOPS} value={value} heat defaultValue="medium" onChange={() => {}} />)
+
+    it('stays cool up to the middle and warms past it, with a flame on the thumb', () => {
+      // Five stops: "high" is the middle, so the heat starts after it.
+      const { unmount } = heated('high')
+      expect(slider()).toHaveAttribute('data-heat', '0')
+      expect(slider().querySelector('.step-flame')).toBeNull()
+      unmount()
+      for (const [value, heat] of [['xhigh', '2'], ['max', '3']] as const) {
+        const view = heated(value)
+        expect(slider()).toHaveAttribute('data-heat', heat)
+        expect(slider().querySelector('.step-flame')).not.toBeNull()
+        view.unmount()
+      }
+    })
+
+    it('does not heat without the heat prop, and marks the default stop', () => {
+      render(<StepSlider ariaLabel="Effort" stops={STOPS} value="max" defaultValue="medium" onChange={() => {}} />)
+      expect(slider()).toHaveAttribute('data-heat', '0')
+      expect(slider().querySelector('[data-stop="medium"]')).toHaveAttribute('data-default', 'true')
+      expect(screen.getByText('default')).toBeInTheDocument()
+    })
+  })
 })

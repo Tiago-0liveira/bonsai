@@ -1,4 +1,4 @@
-import { Gauge, RotateCcw, Shield } from 'lucide-react'
+import { Flame, Gauge, RotateCcw, Shield } from 'lucide-react'
 import { ChoiceChips, type ChoiceOption } from '../../components/ui/ChoiceChips'
 import { Field } from '../../components/ui/Dialog'
 import { Reveal } from '../../components/ui/Dialog'
@@ -38,11 +38,13 @@ function Note({ children }: { children: string }) {
 }
 
 /** A select or toggle field as chips, with its danger note and its profile default. */
-function ChoiceField({ field, value, model, account, disabled, onChange }: {
+function ChoiceField({ field, value, model, account, defaultValue, disabled, onChange }: {
   field: LaunchField
   value: string | boolean | undefined
   model?: AgentModel
   account?: AgentAccount
+  /** The option the provider uses when nothing is set: tagged "default" and one click away. */
+  defaultValue?: string
   disabled: boolean
   onChange: (value: string | boolean) => void
 }) {
@@ -58,13 +60,18 @@ function ChoiceField({ field, value, model, account, disabled, onChange }: {
     value: option.value,
     label: option.label,
     tone: option.tone,
+    badge: defaultValue !== undefined && option.value === defaultValue ? 'default' : undefined,
     icon: option.tone === 'danger' ? <Shield size={12} aria-hidden="true" /> : undefined,
   }))
   const note = chosen?.tone === 'danger' ? chosen.help || field.help : ''
+  const defaultLabel = defaultValue === undefined ? undefined : choices.find(option => option.value === defaultValue)?.label
+  const aside = defaultValue !== undefined && defaultLabel
+    ? <DefaultChip label={`Default · ${defaultLabel}`} pressed={current === defaultValue} disabled={disabled} onClick={() => onChange(defaultValue)} />
+    : reset && <DefaultChip label={reset.label} detail={inheritedLabel} pressed={current === ''} disabled={disabled} onClick={() => onChange('')} />
   return (
     <Field
       label={field.label}
-      aside={reset && <DefaultChip label={reset.label} detail={inheritedLabel} pressed={current === ''} disabled={disabled} onClick={() => onChange('')} />}
+      aside={aside}
       hint={!note && toggle ? field.help : undefined}
     >
       <ChoiceChips
@@ -81,28 +88,36 @@ function ChoiceField({ field, value, model, account, disabled, onChange }: {
 }
 
 /** The effort field as a slider; fewer than two levels fall back to chips. */
-function EffortField({ field, value, model, account, disabled, onChange }: {
+function EffortField({ field, value, model, account, defaultValue, disabled, onChange }: {
   field: LaunchField
   value: string
   model?: AgentModel
   account?: AgentAccount
+  defaultValue?: string
   disabled: boolean
   onChange: (value: string) => void
 }) {
   const all = fieldOptions(field, model)
   const reset = all.find(option => option.value === '')
   const levels = all.filter(option => option.value !== '')
-  if (levels.length < 2) return <ChoiceField field={field} value={value} model={model} account={account} disabled={disabled} onChange={next => onChange(String(next))} />
+  if (levels.length < 2) return <ChoiceField field={field} value={value} model={model} account={account} defaultValue={defaultValue} disabled={disabled} onChange={next => onChange(String(next))} />
   const stops = levels.map(option => ({ value: option.value, label: option.label === option.value ? levelName(option.label) : option.label, tick: option.label }))
   const inherited = profileValue(field, account)
   const current = stops.find(stop => stop.value === value)
   const fallback = stops.find(stop => stop.value === inherited)
+  const defaultStop = stops.find(stop => stop.value === defaultValue)
+  // Past the middle of the scale the label gets a flame, as the slider does.
+  const index = current ? stops.indexOf(current) : -1
+  const hot = index >= 0 && index / (stops.length - 1) > 0.5
+  const aside = defaultStop
+    ? <DefaultChip label={`Default · ${defaultStop.label}`} pressed={value === defaultStop.value} disabled={disabled} onClick={() => onChange(defaultStop.value)} />
+    : reset && <DefaultChip label={reset.label} detail={fallback?.label} pressed={value === ''} disabled={disabled} onClick={() => onChange('')} />
   return (
     <Field
-      label={<>{field.label}{current && <span key={current.value} className="dialog-enter ml-1.5 text-[12px] font-semibold normal-case tracking-normal text-text">{current.label}</span>}</>}
-      aside={reset && <DefaultChip label={reset.label} detail={fallback?.label} pressed={value === ''} disabled={disabled} onClick={() => onChange('')} />}
+      label={<>{field.label}{current && <span key={current.value} className={'dialog-enter ml-1.5 inline-flex items-center gap-1 text-[12px] font-semibold normal-case tracking-normal ' + (hot ? 'text-warn' : 'text-text')}>{hot && <Flame size={12} aria-hidden="true" />}{current.label}</span>}</>}
+      aside={aside}
     >
-      <StepSlider ariaLabel={field.label} stops={stops} value={value} inherited={inherited} unsetText={reset?.label} disabled={disabled} onChange={onChange} />
+      <StepSlider ariaLabel={field.label} stops={stops} value={value} inherited={inherited} defaultValue={defaultStop?.value} heat unsetText={reset?.label} disabled={disabled} onChange={onChange} />
     </Field>
   )
 }
@@ -112,11 +127,13 @@ function EffortField({ field, value, model, account, disabled, onChange }: {
  * then effort (a slider). A provider without one of them keeps its slot, so
  * switching providers never reflows the dialog.
  */
-export function LaunchControls({ fields, values, model, account, providerLabel, disabled, onChange }: {
+export function LaunchControls({ fields, values, model, account, defaults, providerLabel, disabled, onChange }: {
   fields: LaunchField[]
   values: LaunchValues
   model?: AgentModel
   account?: AgentAccount
+  /** The value each field takes when nothing is set, by field ID. Tagged "default" and selectable in one click. */
+  defaults?: Record<string, string>
   providerLabel: string
   disabled: boolean
   onChange: (id: string, value: string | boolean) => void
@@ -126,10 +143,10 @@ export function LaunchControls({ fields, values, model, account, providerLabel, 
   return (
     <div className="space-y-5">
       {access.map(field => (
-        <ChoiceField key={field.id} field={field} value={values[field.id]} model={model} account={account} disabled={disabled} onChange={value => onChange(field.id, value)} />
+        <ChoiceField key={field.id} field={field} value={values[field.id]} model={model} account={account} defaultValue={defaults?.[field.id]} disabled={disabled} onChange={value => onChange(field.id, value)} />
       ))}
       {effort ? (
-        <EffortField field={effort} value={String(values[effort.id] ?? '')} model={model} account={account} disabled={disabled} onChange={value => onChange(effort.id, value)} />
+        <EffortField field={effort} value={String(values[effort.id] ?? '')} model={model} account={account} defaultValue={defaults?.[effort.id]} disabled={disabled} onChange={value => onChange(effort.id, value)} />
       ) : (
         <Field label="Effort">
           <div className="flex h-[74px] items-center justify-center gap-2 rounded-[10px] border border-dashed border-border bg-well/40 px-3 text-center font-mono text-[10.5px] text-muted-2">

@@ -21,8 +21,9 @@ test('defaults: edit, save only the changed fields, reset, and guard an unsaved 
   await expect(form.getByRole('combobox', { name: 'Default model' })).toHaveValue('gpt-6.1-sol')
   const effort = form.getByRole('slider', { name: 'Effort' })
   const stops = () => effort.locator('[data-stop]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-stop')))
-  await expect(form.getByRole('radio', { name: 'Auto', exact: true })).toBeChecked()
-  await expect(effort).toHaveAttribute('aria-valuetext', 'Provider default')
+  await expect(form.getByRole('radio', { name: /^Auto/ })).toBeChecked()
+  // Nothing saved for effort: the model's default level is the chosen one.
+  await expect(effort).toHaveAttribute('aria-valuetext', 'Low')
   await expect(page.getByText(/Every new launch of this profile starts with these choices/)).toBeVisible()
   await expect(form.getByRole('button', { name: 'Save defaults' })).toBeDisabled()
 
@@ -31,18 +32,18 @@ test('defaults: edit, save only the changed fields, reset, and guard an unsaved 
   await expect(form.getByRole('note')).toContainText('Codex can change any file')
   await expect(form.getByText('Unsaved changes')).toBeVisible()
   await form.getByRole('button', { name: 'Reset' }).click()
-  await expect(form.getByRole('radio', { name: 'Auto', exact: true })).toBeChecked()
+  await expect(form.getByRole('radio', { name: /^Auto/ })).toBeChecked()
 
   // The effort list follows the chosen model.
   await form.getByRole('combobox', { name: 'Default model' }).fill('gpt-6-luna')
   await expect.poll(stops).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
-  await chooseEffort(form, 'medium')
+  await chooseEffort(form, 'high')
   await form.getByRole('button', { name: 'Save defaults' }).click()
   await expect(form.getByText('Defaults saved')).toBeVisible()
-  expect(controls.profileRequests.at(-1)).toEqual({ method: 'PATCH', id: 'codex-personal', body: { defaults: { model: 'gpt-6-luna', effort: 'medium' } } })
+  expect(controls.profileRequests.at(-1)).toEqual({ method: 'PATCH', id: 'codex-personal', body: { defaults: { model: 'gpt-6-luna', effort: 'high' } } })
 
   // Back to the provider default sends null; the overview shows what was saved.
-  await effort.locator('xpath=../..').getByRole('button', { name: /Provider default/ }).click()
+  await effort.locator('xpath=../..').getByRole('button', { name: /^Default/ }).click()
   await form.getByRole('button', { name: 'Save defaults' }).click()
   await expect.poll(() => controls.profileRequests.at(-1)?.body).toEqual({ defaults: { effort: null } })
 

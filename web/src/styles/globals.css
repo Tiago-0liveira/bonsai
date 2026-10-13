@@ -209,6 +209,8 @@ select { color-scheme: dark; }
 @keyframes dialog-reveal { from { grid-template-rows: 0fr; opacity: 0; } to { grid-template-rows: 1fr; opacity: 1; } }
 @keyframes dialog-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes dialog-swap { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+@keyframes step-flicker { from { transform: scale(.94) rotate(-4deg); } to { transform: scale(1.12) rotate(4deg); } }
+@keyframes step-glow { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }
 @keyframes dialog-ping { from { opacity: .7; transform: scale(.6); } to { opacity: 0; transform: scale(2.3); } }
 @keyframes dialog-spin { to { transform: rotate(360deg); } }
 @keyframes dialog-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
@@ -234,6 +236,8 @@ select { color-scheme: dark; }
   .chip-choice[data-tone='danger']:hover:not(:disabled) { border-color: rgb(var(--warn-solid) / .6); }
   .chip-choice[data-tone='danger'][aria-checked='true'] { border-color: rgb(var(--warn-solid) / .7); background: rgb(var(--warn-solid) / .18); color: rgb(var(--warn)); }
   .chip-choice[data-inherited='true'] { border-style: dashed; border-color: rgb(var(--muted-2) / .55); color: rgb(var(--text)); }
+  .chip-badge { font-family: var(--font-mono); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; color: rgb(var(--muted-2)); }
+  .chip-choice[aria-checked='true'] .chip-badge { color: rgb(var(--accent)); }
   .chip-mark { transition: transform 200ms cubic-bezier(.3, 1.6, .5, 1), opacity 140ms; }
   .chip-choice[aria-checked='false'] .chip-mark { transform: scale(0); opacity: 0; width: 0; margin-right: -6px; }
 
@@ -254,6 +258,19 @@ select { color-scheme: dark; }
   .step-thumb[data-hidden='true'] { opacity: 0; transform: scale(.3); }
   .step-ping { position: absolute; inset: 0; border-radius: 999px; box-shadow: 0 0 0 2px rgb(var(--accent)); pointer-events: none; animation: dialog-ping 460ms ease-out both; }
   .step-label { transition: color 160ms, transform 200ms; }
+  /* Effort heat: past the middle the track warms and the thumb becomes a flame. */
+  .step-slider { --heat: var(--accent); }
+  .step-slider[data-heat='1'] { --heat: var(--warn); }
+  .step-slider[data-heat='2'] { --heat: var(--warn-solid); }
+  .step-slider[data-heat='3'] { --heat: var(--danger); }
+  .step-slider:not([data-heat='0']) .step-fill { background: linear-gradient(90deg, rgb(var(--accent-solid) / .4) 0%, rgb(var(--warn) / .85) 60%, rgb(var(--heat))); box-shadow: 0 0 14px rgb(var(--heat) / .55); }
+  .step-slider:not([data-heat='0']) .step-thumb { box-shadow: 0 0 0 4px rgb(var(--heat) / .28), 0 0 16px rgb(var(--heat) / .65), 0 3px 8px rgb(0 0 0 / .5); }
+  .step-slider[data-heat='3'] .step-thumb { animation: step-glow 1.6s ease-in-out infinite; }
+  .step-slider:not([data-heat='0']) .step-ping { box-shadow: 0 0 0 2px rgb(var(--heat)); }
+  .step-flame { position: absolute; inset: 0; margin: auto; color: rgb(var(--heat)); fill: rgb(var(--heat) / .35); filter: drop-shadow(0 0 3px rgb(var(--heat) / .8)); }
+  .step-slider[data-heat='2'] .step-flame, .step-slider[data-heat='3'] .step-flame { animation: step-flicker 900ms ease-in-out infinite alternate; transform-origin: 50% 90%; }
+  .step-tick[data-default='true'] { box-shadow: 0 0 0 2px rgb(var(--panel)), 0 0 0 3px rgb(var(--muted-2)); }
+  .step-default { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); font-size: 9px; letter-spacing: .04em; color: rgb(var(--muted-2)); }
   .step-label[data-current='true'] { color: rgb(var(--text)); transform: translateY(-1px); }
 
   .pick-row { display: flex; width: 100%; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; text-align: left; transition: background 120ms, border-color 120ms; }
@@ -277,6 +294,6 @@ select { color-scheme: dark; }
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dialog-backdrop, .dialog-card, .dialog-enter, .dialog-swap, .dialog-reveal, .step-ping, .skeleton { animation: none; }
+  .dialog-backdrop, .dialog-card, .dialog-enter, .dialog-swap, .dialog-reveal, .step-ping, .skeleton, .step-flame, .step-slider .step-thumb { animation: none; }
   .seg-pill, .chip-choice, .chip-mark, .step-fill, .step-thumb, .step-tick, .step-label, .pick-row { transition: none; }
 }

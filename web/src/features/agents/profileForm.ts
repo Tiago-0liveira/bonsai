@@ -1,5 +1,5 @@
-import type { LaunchField } from '../../api/agents'
-import type { LaunchValues } from '../workspace/LaunchFields'
+import type { AgentModel, LaunchField } from '../../api/agents'
+import { fieldOptions, type LaunchValues } from '../workspace/LaunchFields'
 
 /** Profile names as the API accepts them: a letter or digit first, then letters, digits, `.`, `_`, `-`; at most 64. */
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
@@ -42,4 +42,32 @@ export function profileChanges(fields: LaunchField[], defaults: Record<string, s
     if (next !== saved) changes[field.id] = next === '' ? null : next
   }
   return changes
+}
+
+/**
+ * What each field takes when the profile saved nothing, so every control opens
+ * on a real choice: the provider's default model (the one flagged, else the
+ * first listed); the effort that model defaults to (else "medium", else the
+ * middle level); the permission the provider launches with (its declared
+ * default, else "default", else the first). A toggle has no entry: off is its
+ * default. A field with no usable option has none either.
+ */
+export function effectiveDefaults(fields: LaunchField[], launchFields: LaunchField[], models: AgentModel[], modelValue: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const fallbackModel = models.find(item => item.default) ?? models[0]
+  const modelField = fields.find(field => field.kind === 'model')
+  if (modelField && fallbackModel) out[modelField.id] = fallbackModel.id
+  const model = modelValue.trim() ? models.find(item => item.id === modelValue.trim()) : fallbackModel
+  for (const field of fields) {
+    if (field.kind !== 'select') continue
+    const options = fieldOptions(field, model).filter(option => option.value !== '')
+    if (options.length === 0) continue
+    const has = (value?: string) => options.find(option => option.value === value)?.value
+    if (field.id === 'effort' || field.per_model) {
+      out[field.id] = has(model?.default_effort) ?? has('medium') ?? options[Math.floor((options.length - 1) / 2)].value
+    } else {
+      out[field.id] = has(launchFields.find(item => item.id === field.id)?.default) ?? has('default') ?? options[0].value
+    }
+  }
+  return out
 }
