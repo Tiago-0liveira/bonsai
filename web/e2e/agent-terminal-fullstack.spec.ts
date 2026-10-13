@@ -103,8 +103,7 @@ test('real API and PTY: two Codex profiles with two sessions each beside a Claud
     if (provider === 'Codex') {
       // Two profiles, so the choice is explicit; the details carry the fake login.
       await dialog.getByRole('option', { name: new RegExp(`^${profile}`) }).click()
-      await expect(dialog.getByTestId('profile-details')).toContainText(profile === 'Personal' ? 'me@example.com' : 'team@example.com')
-      await expect(dialog.getByTestId('profile-details')).toContainText('logged in')
+      await expect(dialog.getByLabel('Profile')).toContainText(profile === 'Personal' ? 'me@example.com' : 'team@example.com')
     } else {
       await expect(dialog.getByLabel('Profile')).toContainText(profile)
     }

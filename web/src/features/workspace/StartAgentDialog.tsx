@@ -2,13 +2,12 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { Bot, GitBranch, Gauge, LogIn, Play, SlidersHorizontal } from 'lucide-react'
 import { useRouter } from '@tanstack/react-router'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { ChoiceChips } from '../../components/ui/ChoiceChips'
 import { DialogFrame, Field, TEXT_INPUT } from '../../components/ui/Dialog'
 import { Segmented } from '../../components/ui/Segmented'
 import { accountAddCommand, agentUsage, byHeadroom, headroomLabel } from '../../api/agentsOverview'
 import { PROVIDER_LABELS, agentAccounts, agentProviders, type AgentAccount, type AgentCapability, type AgentUsage, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
-import { AUTH_DOT, authState, profileDefaults } from '../agents/agentsModel'
+import { authState, profileDefaults } from '../agents/agentsModel'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import type { AgentProviderId } from '../../types'
 import { ProfilePicker } from './ProfilePicker'
@@ -16,7 +15,6 @@ import { ProfilePicker } from './ProfilePicker'
 const LAST_PROVIDER_KEY = 'bonsai.startAgent.provider'
 const isLaunchable = (id: string): id is AgentProviderId => Object.hasOwn(PROVIDER_LABELS, id)
 const NO_FIELDS: LaunchField[] = []
-const WORK_TYPES = ['Implementation', 'Debugging', 'Testing', 'Review', 'Research', 'Refactor', 'Documentation', 'Release']
 const setupCommand = accountAddCommand
 const fieldsOf = (providers: AgentCapability[], id: string) => providers.find(item => item.id === id)?.launch_fields ?? NO_FIELDS
 
@@ -56,7 +54,6 @@ function StartAgentForm() {
   const [accountId, setAccountId] = useState('')
   const [providerId, setProviderId] = useState('')
   const [name, setName] = useState('')
-  const [workType, setWorkType] = useState('Implementation')
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
@@ -98,7 +95,6 @@ function StartAgentForm() {
   const fields = fieldsOf(providers, providerId)
   // Model, permissions and effort come from the profile; they are edited on its Defaults tab.
   const defaults = account ? profileDefaults(fields, account) : []
-  const signedIn = [account?.auth_mode && `auth: ${account.auth_mode}`, account?.identity, account?.auth_status?.replace(/_/g, ' ')].filter(Boolean)
   const selectProvider = (id: string) => {
     if (id === providerId) return
     const own = accounts.filter(item => item.provider === id)
@@ -115,10 +111,10 @@ function StartAgentForm() {
     busy.current = true
     setPending(true)
     setError('')
-    const fingerprint = JSON.stringify({ providerId, worktreeId, accountId, name, workType, prompt })
+    const fingerprint = JSON.stringify({ providerId, worktreeId, accountId, name, prompt })
     if (request.current.fingerprint !== fingerprint) request.current = { fingerprint, key: crypto.randomUUID() }
     try {
-      await createAgent({ worktreeId, accountId, requestKey: request.current.key, name: name.trim(), provider: PROVIDER_LABELS[launchable], model: '', reasoningEffort: '', fastMode: false, workType, prompt: prompt.trim(), options: {} })
+      await createAgent({ worktreeId, accountId, requestKey: request.current.key, name: name.trim(), provider: PROVIDER_LABELS[launchable], model: '', reasoningEffort: '', fastMode: false, workType: '', prompt: prompt.trim(), options: {} })
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -162,17 +158,30 @@ function StartAgentForm() {
       }
     >
       <div className="space-y-5">
-        <Field label="Worktree" hint={!targetWorktreeId ? 'Project-level launches require an explicit branch choice.' : undefined}>
-          <BonsaiSelect
-            ariaLabel="Worktree and branch"
-            disabled={pending}
-            searchable
-            value={worktreeId}
-            onChange={setWorktreeId}
-            placeholder="Choose a worktree"
-            options={worktreeOptions}
-          />
-        </Field>
+        <div className="dialog-cols">
+          <Field label="Worktree" hint={!targetWorktreeId ? 'Project-level launches require an explicit branch choice.' : undefined}>
+            <BonsaiSelect
+              ariaLabel="Worktree and branch"
+              disabled={pending}
+              searchable
+              value={worktreeId}
+              onChange={setWorktreeId}
+              placeholder="Choose a worktree"
+              options={worktreeOptions}
+            />
+          </Field>
+          <Field label="Agent name" htmlFor={nameId}>
+            <input
+              id={nameId}
+              maxLength={128}
+              disabled={pending}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="e.g. Login refactor"
+              className={TEXT_INPUT}
+            />
+          </Field>
+        </div>
 
         <Field label="Provider">
           {loading && !providers.length ? (
@@ -222,9 +231,8 @@ function StartAgentForm() {
               {!loading && !error && selected?.available && launchable && !providerAccounts.length && <p className="mt-2 text-[11px] text-muted">Set up a profile with <code className="font-mono">{setupCommand(launchable)}</code></p>}
               {selected && !selected.available && <p className="mt-2 text-[11px] text-muted">{selected.unavailable_reason?.message}</p>}
             </Field>
-            {account && (signedIn.length > 0 || account.warnings?.length) && (
-              <div className="dialog-enter space-y-1.5 rounded-[10px] border border-border-subtle bg-well/50 px-3 py-2.5 font-mono text-[10px] text-muted-2" data-testid="profile-details">
-                {signedIn.length > 0 && <div className="flex items-center gap-2"><span aria-hidden="true" className={'h-1.5 w-1.5 shrink-0 rounded-full ' + AUTH_DOT[detailTone]} />{signedIn.join(' · ')}</div>}
+            {account && (account.warnings?.length || (router && detailTone === 'bad')) && (
+              <div className="dialog-enter space-y-1.5 rounded-[10px] border border-warn-solid/30 bg-warn-solid/10 px-3 py-2.5 font-mono text-[10px]" data-testid="profile-details">
                 {account.warnings?.map(warning => <div key={warning} className="text-warn">{warning}</div>)}
                 {router && detailTone === 'bad' && (
                   <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, signin: true } }) }} className="bonsai-focus btn-bordered mt-1 inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 font-sans text-[11px] text-text">
@@ -259,21 +267,7 @@ function StartAgentForm() {
           </Field>
         </div>
 
-        <div className="space-y-5 border-t border-border-subtle pt-5">
-          <Field label="Agent name" htmlFor={nameId}>
-            <input
-              id={nameId}
-              maxLength={128}
-              disabled={pending}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Login refactor"
-              className={TEXT_INPUT}
-            />
-          </Field>
-          <Field label="Work type">
-            <ChoiceChips ariaLabel="Agent work type" disabled={pending} value={workType} onChange={setWorkType} options={WORK_TYPES.map(item => ({ value: item, label: item }))} />
-          </Field>
+        <div className="border-t border-border-subtle pt-5">
           <Field label="Prompt" htmlFor={promptId}>
             <textarea
               id={promptId}

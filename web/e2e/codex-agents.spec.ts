@@ -16,7 +16,7 @@ test('starts three Codex sessions on two profiles, each launched with its profil
     // Two profiles, so none is preselected.
     await expect(dialog.getByText('Choose a profile to continue.')).toBeVisible()
     await dialog.getByRole('option', { name: new RegExp(`^${profile}`) }).click()
-    await expect(dialog.getByTestId('profile-details')).toContainText('logged in')
+    await expect(dialog.getByLabel('Profile')).toContainText(profile === 'Personal' ? 'me@example.com' : 'team@example.com')
     // Model, permissions and effort are set on the profile's Defaults tab, not per launch.
     await expect(dialog.getByTestId('launch-defaults')).toBeVisible()
     await expect(dialog.getByLabel('Agent model')).toHaveCount(0)
@@ -67,7 +67,7 @@ test('explains the profile setup and opens its Defaults tab from the dialog', as
   const dialog = await openDialog(page)
   await dialog.getByRole('button', { name: /Codex/ }).click()
   await dialog.getByRole('option', { name: /^Team/ }).click()
-  await expect(dialog.getByTestId('profile-details')).toContainText('auth: device · team@example.com · pro · logged in')
+  await expect(dialog.getByLabel('Profile')).toContainText('team@example.com')
   await expect(dialog.getByTestId('profile-details')).toContainText('Same login as profile "Personal"')
 
   await dialog.getByRole('button', { name: 'Edit defaults' }).click()

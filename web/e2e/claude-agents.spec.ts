@@ -13,7 +13,7 @@ test('starts two Claude sessions on the same profile, each launched with the pro
     const dialog = page.getByRole('dialog', { name: 'Start agent' })
     await dialog.getByRole('button', { name: /Claude/ }).click()
     await expect(dialog.getByLabel('Profile')).toContainText('Work')
-    await expect(dialog.getByTestId('profile-details')).toContainText('auth: login · dev@example.com')
+    await expect(dialog.getByLabel('Profile')).toContainText('dev@example.com')
     await expect(dialog.getByTestId('profile-details')).toContainText('Token expires in 12 days')
     // Model, permissions and effort are the profile's; the dialog only shows them.
     await expect(dialog.getByTestId('launch-defaults')).toBeVisible()
