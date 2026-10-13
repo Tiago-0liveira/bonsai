@@ -564,7 +564,8 @@ or browser-supplied executable/path option.
 Limits: 16 active sessions (adopted ones included), 32 retained completed sessions, 2 MiB of recent output
 per session, 64 KiB per input frame, and 1–500 terminal rows/columns. Only one
 attachment writes; other attachments observe. After the writer disconnects, a
-new attachment can claim writing. Slow readers are disconnected. Bounded replay
+new attachment can claim writing, and any attachment (browser or
+`bonsai agents attach`) can take control at any time. Slow readers are disconnected. Bounded replay
 cannot fully reconstruct every full-screen terminal after truncation; the UI
 explicitly resets and reports the gap.
 
@@ -594,6 +595,11 @@ The dedicated terminal stream uses version 1 JSON envelopes:
   by the retained tail. Generation changes reset the browser display/cursor.
 - Input is `{type:"input", data}` (base64); resize is
   `{type:"resize", cols, rows}`. Input is never queued across reconnects.
+  Without control they are dropped (control can move at any time).
+- `{type:"take"}` asks for control of an agent terminal (setup jobs close the
+  socket on it). `{type:"writer", offset, writer}` tells each terminal whose
+  control changed, whether it now writes; the browser's new writer sends its
+  size. The CLI (`bonsai agents attach`) takes part in the same election.
 - Lifecycle updates are `{type:"status", offset, status:<safe agent summary>}`.
   Final status follows output drain. Protocol errors close the connection;
   clients also understand `{type:"error", message}` for future diagnostics.

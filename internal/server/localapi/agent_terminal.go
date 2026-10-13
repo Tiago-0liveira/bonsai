@@ -3,6 +3,7 @@ package localapi
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
@@ -46,6 +47,7 @@ func (s *Server) agentTerminal(w http.ResponseWriter, r *http.Request) {
 				detach:     a.Close,
 				input:      a.Input,
 				resize:     a.Resize,
+				take:       a.Take,
 			}, nil
 		}, true
 	})
@@ -65,6 +67,9 @@ type terminalAttachment[S any] struct {
 	detach     func()
 	input      func(data []byte) error
 	resize     func(cols, rows int) error
+	// take asks for control (a writer frame confirms it); nil when the
+	// stream's writer cannot change hands.
+	take func() error
 }
 
 // streamAttachment attaches to an in-process stream, which lives as long as
@@ -90,7 +95,10 @@ func streamAttachment[S any](epoch string, cursor uint64, generation string, att
 
 // serveTerminal runs the terminal websocket protocol (version 1): authenticate,
 // attach, then ready, replay and live frames; the writer may send input and
-// resize. resolve runs after authentication and finds the stream.
+// resize, and any client of a stream with a take may ask for control. A
+// writer frame tells the browser its control changed; input or resize sent
+// without control (just after losing it) is dropped. resolve runs after
+// authentication and finds the stream.
 func serveTerminal[S any](s *Server, w http.ResponseWriter, r *http.Request, resolve func() (terminalEndpoint[S], bool)) {
 	upgrader := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool {
 		return s.allowedHost(r.Host) && s.allowedOrigin(r.Header.Get("Origin"))
@@ -123,12 +131,14 @@ func serveTerminal[S any](s *Server, w http.ResponseWriter, r *http.Request, res
 		return
 	}
 	defer attachment.detach()
-	generation, writer, replay, frames := attachment.generation, attachment.writer, attachment.replay, attachment.frames
+	generation, replay, frames := attachment.generation, attachment.replay, attachment.frames
+	var writer atomic.Bool
+	writer.Store(attachment.writer)
 	send := func(value any) error {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		return conn.WriteJSON(value)
 	}
-	if send(map[string]any{"type": "ready", "version": 1, "generation": generation, "writer": writer}) != nil {
+	if send(map[string]any{"type": "ready", "version": 1, "generation": generation, "writer": writer.Load()}) != nil {
 		return
 	}
 	for _, frame := range replay {
@@ -153,16 +163,20 @@ func serveTerminal[S any](s *Server, w http.ResponseWriter, r *http.Request, res
 			if conn.ReadJSON(&message) != nil {
 				return
 			}
-			if !writer {
-				return
-			}
 			switch message.Type {
 			case "input":
-				if len(message.Data) > agentterminal.InputLimit || attachment.input(message.Data) != nil {
+				if len(message.Data) > agentterminal.InputLimit {
+					return
+				}
+				if writer.Load() && attachment.input(message.Data) != nil {
 					return
 				}
 			case "resize":
-				if attachment.resize(message.Cols, message.Rows) != nil {
+				if writer.Load() && attachment.resize(message.Cols, message.Rows) != nil {
+					return
+				}
+			case "take":
+				if attachment.take == nil || attachment.take() != nil {
 					return
 				}
 			default:
@@ -181,6 +195,9 @@ func serveTerminal[S any](s *Server, w http.ResponseWriter, r *http.Request, res
 		case frame, ok := <-frames:
 			if !ok {
 				return
+			}
+			if frame.Type == "writer" && frame.Writer != nil {
+				writer.Store(*frame.Writer)
 			}
 			if send(frame) != nil {
 				return

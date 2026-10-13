@@ -18,6 +18,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
   const [error, setError] = useState('')
   const [loadFailed, setLoadFailed] = useState(false)
   const [lifecycle, setLifecycle] = useState(agent.lifecycleState ?? 'starting')
+  const control = useRef<{ take(): void } | undefined>(undefined)
   useEffect(() => {
     const element = host.current
     if (!element || !agent.projectId) return
@@ -51,6 +52,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
           status: summary => { setLifecycle(summary.state); if (summary.state === 'running') resize(); if (summary.error) setError(summary.error) },
           error: setError,
         })
+        control.current = controller
         input = terminal.onData(data => controller?.input(data))
       }).catch(() => { if (!disposed) { setLoadFailed(true); acknowledgePreloadFailure() } })
     })
@@ -61,6 +63,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
       input?.dispose()
       unbind?.()
       controller?.dispose()
+      control.current = undefined
       requestAnimationFrame(() => requestAnimationFrame(() => terminal?.dispose()))
     }
   }, [agent.id, agent.projectId])
@@ -78,6 +81,10 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
       }}><Square size={9} fill="currentColor" /></button>
     </>, actionsHost)}
     {error && <p role="alert" className="px-2 text-xs text-danger">{error}</p>}
+    {connection === 'read-only' && (lifecycle === 'starting' || lifecycle === 'running') && <div role="status" className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-2 py-1 text-[11px] text-muted">
+      Controlled from another terminal
+      <button type="button" className="bonsai-focus btn-bordered h-6 rounded-[6px] px-2 text-[11px]" onClick={() => control.current?.take()}>Take control</button>
+    </div>}
     <div ref={host} className="min-h-0 flex-1 overflow-hidden" />
   </div>
 }
