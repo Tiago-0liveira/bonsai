@@ -5,7 +5,7 @@ import { isActiveSession } from '../../api/agentsOverview'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { SetupTarget } from './AddProfileDialog'
-import { AUTH_DOT, activeSessionCounts, authState, groupProfiles, profileSessions, summarizeFleet } from './agentsModel'
+import { AUTH_DOT, activeSessionCounts, authState, groupProfiles, profileSessions, summarizeFleet, summarizeProviders, usageReadAt } from './agentsModel'
 import { AGENT_TABS, type AgentsTab } from './agentsSearch'
 import { ProfileDefaults } from './ProfileDefaults'
 import { DiscardChangesDialog } from './ProfileDialog'
@@ -65,6 +65,8 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
   const sessionCounts = useMemo(() => activeSessionCounts(agents), [agents])
   const running = useMemo(() => agents.filter(agent => isLiveAgent(agent) && isActiveSession(agent.lifecycleState)).length, [agents])
   const summary = useMemo(() => summarizeFleet(accounts ?? [], data.usage, running, now), [accounts, data.usage, running, now])
+  const providerSummaries = useMemo(() => summarizeProviders(groups, data.usage, sessionCounts, now), [groups, data.usage, sessionCounts, now])
+  const usageAt = useMemo(() => usageReadAt(data.usage), [data.usage])
   const selected = accounts?.find(account => account.id === profileId) ?? groups.flatMap(group => group.accounts)[0]
 
   useEffect(() => {
@@ -104,7 +106,16 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <SummaryStrip summary={summary} usageLoaded={data.usageLoaded} now={now} onAddProfile={() => setSetup({ kind: 'create' })} />
+      <SummaryStrip
+        summary={summary}
+        providers={providerSummaries}
+        usageLoaded={data.usageLoaded}
+        usageAt={usageAt}
+        refreshing={data.refreshing.length > 0}
+        now={now}
+        onAddProfile={() => setSetup({ kind: 'create' })}
+        onRefresh={() => void data.refreshUsage()}
+      />
       {data.error && <div role="status" className="island shrink-0 px-3 py-2 text-[11px] text-warn">Could not refresh agents: {data.error}</div>}
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
         <aside aria-label="Providers and profiles" className="island flex max-h-[42%] min-h-0 shrink-0 flex-col overflow-y-auto lg:max-h-none lg:w-[320px]">

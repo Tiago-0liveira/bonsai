@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentAccount, AgentCapability, AgentUsage, LaunchField } from '../../api/agents'
 import type { Agent, Project, Worktree } from '../../types'
-import { activeSessionCounts, authState, formatAge, formatCountdown, groupExtraLimits, groupProfiles, limitName, profileDefaults, profileSessions, summarizeFleet, toPercent } from './agentsModel'
+import { activeSessionCounts, authState, formatAge, formatCountdown, groupExtraLimits, groupProfiles, limitName, profileDefaults, profileSessions, summarizeFleet, summarizeProviders, toPercent, usageReadAt } from './agentsModel'
 import { validateAgentsSearch } from './agentsSearch'
 
 const NOW = Date.parse('2026-10-12T12:00:00Z')
@@ -172,5 +172,35 @@ describe('validateAgentsSearch', () => {
     expect(validateAgentsSearch({ profile: 'codex-1', tab: 'usage' })).toEqual({ profile: 'codex-1', tab: 'usage' })
     expect(validateAgentsSearch({ profile: '', tab: 'bogus' })).toEqual({ profile: undefined, tab: undefined })
     expect(validateAgentsSearch({ profile: 7, tab: ['usage'] })).toEqual({ profile: undefined, tab: undefined })
+  })
+})
+
+describe('summarizeProviders', () => {
+  const groups = groupProfiles(
+    [{ id: 'claude', label: 'Claude', available: true, version: '2.1.296' }, { id: 'codex', label: 'Codex', available: true, version: '0.162.1' }, { id: 'antigravity', label: 'Antigravity', available: false, unavailable_reason: { message: 'agy is not installed' } }],
+    [
+      account('k1', 'work', 'claude', { auth_status: 'logged_in' }),
+      account('c1', 'Personal', 'codex', { auth_status: 'logged_in' }),
+      account('c2', 'Team', 'codex', { auth_status: 'logged_out' }),
+    ],
+  )
+  const usage: Record<string, AgentUsage> = {
+    c1: { account_id: 'c1', provider: 'codex', usage: { provider: 'codex', account_id: 'c1', fetched_at: '2026-10-12T11:58:00Z', limits: [] }, headline: { score: 0.4, next_reset: '2026-10-12T14:00:00Z' } },
+    c2: { account_id: 'c2', provider: 'codex', usage: { provider: 'codex', account_id: 'c2', fetched_at: '2026-10-12T11:59:30Z', limits: [] }, headline: { score: 0.1, low: true, next_reset: '2026-10-12T13:00:00Z' } },
+  }
+
+  it('counts sign-ins and running sessions per provider and finds the tightest headroom and next reset', () => {
+    const [claude, codex, antigravity] = summarizeProviders(groups, usage, new Map([['c1', 2], ['k1', 1]]), NOW)
+    expect(claude).toMatchObject({ id: 'claude', note: 'v2.1.296', profiles: 1, signedIn: 1, running: 1, tones: ['ok'] })
+    expect(claude.lowest).toBeUndefined()
+    expect(codex).toMatchObject({ profiles: 2, signedIn: 1, running: 2, tones: ['ok', 'bad'] })
+    expect(codex.lowest).toEqual({ name: 'Team', score: 0.1 })
+    expect(codex.nextReset).toEqual({ name: 'Team', at: '2026-10-12T13:00:00Z' })
+    expect(antigravity).toMatchObject({ available: false, note: 'agy is not installed', profiles: 0 })
+  })
+
+  it('reads the newest usage reading time', () => {
+    expect(usageReadAt(usage)).toBe('2026-10-12T11:59:30Z')
+    expect(usageReadAt({})).toBeUndefined()
   })
 })

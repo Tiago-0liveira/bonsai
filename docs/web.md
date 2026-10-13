@@ -129,8 +129,10 @@ Codex, Antigravity), whether its CLI is installed, and each profile with its
 sign-in state, identity, warnings, plan usage and sessions in every project.
 Providers are listed Claude, Codex, then Antigravity, and each can be collapsed
 to hide its profiles (the choice is remembered in the browser). The strip on top
-sums up the fleet: profiles signed in, sessions running, the lowest headroom and
-the next reset. Select a profile for its tabs:
+sums up the fleet (profiles signed in, sessions running, the lowest headroom and
+the next reset), shows each provider's sign-ins, tightest headroom, running
+sessions and next reset, says how old the usage reading is and re-reads it on
+**Check usage**. Select a profile for its tabs:
 
 - **Overview**: sign-in method, identity, status, saved defaults, **Start
   agent** (the start dialog opens on this profile), **Sign in again** and
@@ -142,7 +144,10 @@ the next reset. Select a profile for its tabs:
   it on the canvas.
 - **Defaults**: the model, permissions and effort every new session of the
   profile starts with; the start dialog shows them and has no controls of its
-  own for them. Running sessions are not changed.
+  own for them. Each control opens on the provider's default (the default model,
+  that model's default effort, the usual permission), tagged "default" and one
+  click away; a choice left on it is not saved. The effort slider warms up past
+  its middle and the thumb turns into a flame. Running sessions are not changed.
 
 **Add profile** creates a profile without a terminal: choose the provider, a
 name and how to sign in (browser sign-in, device code, or a pasted API key or

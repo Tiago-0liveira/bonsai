@@ -160,6 +160,61 @@ export function summarizeFleet(accounts: AgentAccount[], usage: Record<string, A
   return summary
 }
 
+/** One provider's slice of the fleet, for the summary strip. */
+export interface ProviderSummary {
+  id: string
+  label: string
+  available: boolean
+  /** The version, or why the provider is unavailable. */
+  note: string
+  /** Sign-in tone of each profile, in list order. */
+  tones: AuthTone[]
+  profiles: number
+  signedIn: number
+  running: number
+  lowest?: { name: string; score: number }
+  nextReset?: { name: string; at: string }
+}
+
+export function summarizeProviders(groups: ProviderGroupModel[], usage: Record<string, AgentUsage>, sessionCounts: Map<string, number>, now: number): ProviderSummary[] {
+  return groups.map(group => {
+    const capability = group.capability
+    const available = capability === undefined || capability.available
+    const version = capability?.version ? (/^\d/.test(capability.version) ? `v${capability.version}` : capability.version) : ''
+    const summary: ProviderSummary = {
+      id: group.id,
+      label: group.label,
+      available,
+      note: available ? version : capability?.unavailable_reason?.message || 'Not available',
+      tones: group.accounts.map(account => authState(account).tone),
+      profiles: group.accounts.length,
+      signedIn: 0,
+      running: 0,
+    }
+    for (const account of group.accounts) {
+      if (authState(account).tone === 'ok') summary.signedIn++
+      summary.running += sessionCounts.get(account.id) ?? 0
+      const headline = usage[account.id]?.headline
+      if (!headline) continue
+      if (headline.score !== undefined && (!summary.lowest || headline.score < summary.lowest.score)) summary.lowest = { name: account.name, score: headline.score }
+      const reset = headline.next_reset ? Date.parse(headline.next_reset) : NaN
+      if (Number.isFinite(reset) && reset > now && (!summary.nextReset || reset < Date.parse(summary.nextReset.at))) summary.nextReset = { name: account.name, at: headline.next_reset! }
+    }
+    return summary
+  })
+}
+
+/** When the newest usage reading was taken, or undefined when none was. */
+export function usageReadAt(usage: Record<string, AgentUsage>): string | undefined {
+  let newest: { at: number; iso: string } | undefined
+  for (const entry of Object.values(usage)) {
+    const iso = entry.usage?.fetched_at
+    const at = iso ? Date.parse(iso) : NaN
+    if (Number.isFinite(at) && (!newest || at > newest.at)) newest = { at, iso: iso! }
+  }
+  return newest?.iso
+}
+
 /** Extra limits grouped by their `group`, keeping provider order; ungrouped limits come first. */
 export function groupExtraLimits(extra: UsageLimit[] | undefined): { group: string; limits: UsageLimit[] }[] {
   const groups = new Map<string, UsageLimit[]>()

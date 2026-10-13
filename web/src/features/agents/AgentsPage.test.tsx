@@ -124,6 +124,28 @@ describe('status', () => {
     expect(within(list).getByRole('list', { name: 'Codex profiles' })).toBeInTheDocument()
   })
 
+  it('shows each provider at a glance in the summary: sign-ins, tightest headroom, running and reset', async () => {
+    await renderPage()
+    const summary = screen.getByRole('region', { name: 'Fleet summary' })
+    await waitFor(() => expect(within(summary).getByRole('meter', { name: 'Codex tightest headroom remaining' })).toHaveAttribute('aria-valuenow', '12'))
+    const tiles = within(within(summary).getByRole('list', { name: 'Providers at a glance' }))
+    const codex = within(tiles.getByRole('listitem', { name: 'Codex' }))
+    expect(codex.getByText('1/2 signed in')).toBeInTheDocument()
+    expect(codex.getByText('12%')).toBeInTheDocument()
+    expect(codex.getByText('2 running')).toBeInTheDocument()
+    expect(codex.getByText(/resets in 2h 15m/)).toBeInTheDocument()
+    const antigravity = within(tiles.getByRole('listitem', { name: 'Antigravity' }))
+    expect(antigravity.getByText('Not installed')).toBeInTheDocument()
+  })
+
+  it('says how old the usage reading is and re-reads every profile on demand', async () => {
+    await renderPage()
+    const summary = screen.getByRole('region', { name: 'Fleet summary' })
+    await waitFor(() => expect(within(summary).getByText(/Usage read 2m ago/)).toBeInTheDocument())
+    fireEvent.click(within(summary).getByRole('button', { name: 'Check usage' }))
+    await waitFor(() => expect(refreshAgentUsage).toHaveBeenCalledWith(undefined))
+  })
+
   it('colours the sign-in dot by state', async () => {
     vi.mocked(agentAccountsIfChanged).mockResolvedValue({ accounts: [
       { id: 'a', provider: 'codex', name: 'A', auth_status: 'logged_in' },
