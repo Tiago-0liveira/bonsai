@@ -176,12 +176,13 @@ describe('status', () => {
     expect(within(screen.getByRole('button', { name: /Personal/ })).getByText('2 running')).toBeInTheDocument()
   })
 
-  it('shows a mini usage bar on the profile row and tints it when low', async () => {
+  it('shows a mini usage bar on the profile row, coloured by how much is left', async () => {
     await renderPage()
     const meter = await screen.findByRole('meter', { name: 'Personal headroom remaining' })
     expect(meter).toHaveAttribute('aria-valuenow', '12')
-    expect(meter.firstElementChild).toHaveClass('bg-warn-solid')
-    expect(screen.getByRole('meter', { name: 'Work headroom remaining' }).firstElementChild).toHaveClass('bg-accent-solid')
+    expect(meter.firstElementChild).toHaveAttribute('data-rank', '2')
+    const work = screen.getByRole('meter', { name: 'Work headroom remaining' })
+    expect(Number(work.firstElementChild?.getAttribute('data-rank'))).toBeGreaterThan(2)
   })
 
   it('selects the first profile without a deep link, or the one named by it', async () => {
@@ -293,8 +294,8 @@ describe('usage tab', () => {
     expect(within(limits).getByText('resets in 2h 15m')).toBeInTheDocument()
     expect(within(limits).getByText('resets in 3d 4h')).toBeInTheDocument()
     const weekly = within(limits).getByRole('meter', { name: 'Weekly remaining' })
-    expect(weekly.firstElementChild).toHaveClass('bg-warn-solid')
-    expect(five.firstElementChild).toHaveClass('bg-accent-solid')
+    expect(Number(weekly.firstElementChild?.getAttribute('data-rank'))).toBeLessThan(3)
+    expect(five.firstElementChild).toHaveAttribute('data-rank', '8')
     expect(within(screen.getByRole('region', { name: 'Codex Spark' })).getByRole('meter', { name: '5 hour remaining' })).toHaveAttribute('aria-valuenow', '90')
     expect(screen.getByText('Credits balance is low')).toBeInTheDocument()
     cleanup()

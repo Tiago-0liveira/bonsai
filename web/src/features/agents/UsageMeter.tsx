@@ -4,10 +4,17 @@ import type { UsageLimit } from '../../api/agents'
 /** Same threshold as `bonsai agent usage` and the API's `low` flag. */
 export const LOW_HEADROOM = 0.2
 
-/** A thin bar of remaining headroom, tinted when it runs low. */
+/** How many colours a meter has: rank 1 is almost empty (red), rank 10 is nearly full (green). */
+export const USAGE_RANKS = 10
+
+/** 0-9% remaining is rank 1, 10-19% rank 2, and so on up to 90-100% as rank 10. */
+export function usageRank(fraction: number): number {
+  return Math.min(USAGE_RANKS, Math.floor(toPercent(fraction) / (100 / USAGE_RANKS)) + 1)
+}
+
+/** A thin bar of remaining headroom, coloured by how much is left: the fuller, the better. */
 export function UsageMeter({ label, fraction, className = '' }: { label: string; fraction?: number; className?: string }) {
   const percent = fraction === undefined ? undefined : toPercent(fraction)
-  const low = fraction !== undefined && fraction < LOW_HEADROOM
   return (
     <div
       role="meter"
@@ -18,7 +25,7 @@ export function UsageMeter({ label, fraction, className = '' }: { label: string;
       aria-valuetext={percent === undefined ? 'unknown' : `${percent}% remaining`}
       className={'h-1.5 overflow-hidden rounded-full bg-panel-4 ' + className}
     >
-      <div className={'h-full rounded-full ' + (low ? 'bg-warn-solid' : 'bg-accent-solid')} style={{ width: `${percent ?? 0}%` }} />
+      <div className="usage-fill h-full rounded-full" data-rank={fraction === undefined ? undefined : usageRank(fraction)} style={{ width: `${percent ?? 0}%` }} />
     </div>
   )
 }

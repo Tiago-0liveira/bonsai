@@ -260,6 +260,18 @@ select { color-scheme: dark; }
   .step-ping { position: absolute; inset: 0; border-radius: 999px; box-shadow: 0 0 0 2px rgb(var(--accent)); pointer-events: none; animation: dialog-ping 460ms ease-out both; }
   .step-label { transition: color 160ms, transform 200ms; }
   /* Effort heat: past the middle the track warms, the thumb turns red and holds a flame; xhigh and up jitter. */
+  /* Usage meters: ten ranks of remaining headroom, red when nearly gone through amber and yellow to full green. */
+  .usage-fill { --rank: 120 130 140; background: linear-gradient(90deg, rgb(var(--rank) / .72), rgb(var(--rank))); box-shadow: 0 0 8px rgb(var(--rank) / .35); transition: width 320ms cubic-bezier(.3, 1.25, .5, 1), background-color 200ms; }
+  .usage-fill[data-rank='1'] { --rank: 239 56 56; }
+  .usage-fill[data-rank='2'] { --rank: 244 100 50; }
+  .usage-fill[data-rank='3'] { --rank: 249 135 36; }
+  .usage-fill[data-rank='4'] { --rank: 250 170 25; }
+  .usage-fill[data-rank='5'] { --rank: 238 205 30; }
+  .usage-fill[data-rank='6'] { --rank: 205 220 40; }
+  .usage-fill[data-rank='7'] { --rank: 160 220 45; }
+  .usage-fill[data-rank='8'] { --rank: 110 215 50; }
+  .usage-fill[data-rank='9'] { --rank: 65 205 55; }
+  .usage-fill[data-rank='10'] { --rank: 30 200 60; }
   .step-slider, .effort-label { --heat: var(--accent); }
   .step-slider[data-heat='1'], .effort-label[data-heat='1'] { --heat: 251 146 60; }
   .step-slider[data-heat='2'], .effort-label[data-heat='2'] { --heat: 244 90 50; }
