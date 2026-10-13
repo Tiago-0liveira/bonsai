@@ -34,6 +34,19 @@ it('takes per-model values from the chosen or default model and drops unsupporte
   expect(resolveLaunchValues(fields, { effort: 'max' }, models[0]).effort).toBe('max')
 })
 
+it('offers the efforts listed models accept to a typed model, and none to one without effort control', () => {
+  const listed = [
+    { id: 'a', label: 'A', source: 'api' as const, efforts: ['low', 'high', 'xhigh'] },
+    { id: 'b', label: 'B', source: 'api' as const, efforts: ['low', 'max'] },
+    { id: 'c', label: 'C', source: 'api' as const, no_effort: true },
+  ]
+  const field = { id: 'effort', label: 'Effort', kind: 'select' as const, per_model: true, options: [{ value: '', label: 'Default' }, ...['low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value }))] }
+  expect(fieldOptions(field, undefined, listed).map(option => option.value)).toEqual(['', 'low', 'high', 'xhigh', 'max'])
+  expect(fieldOptions(field, listed[2], listed).map(option => option.value)).toEqual([''])
+  // Nothing listed at all: the field's own options.
+  expect(fieldOptions(field, undefined, []).map(option => option.value)).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max'])
+})
+
 it('summarises chosen values with readable labels', () => {
   expect(launchSummary(fields, { permissions: 'auto', effort: 'max', mode: 'b', full_access: true }, models[0])).toEqual(['Auto', 'max effort', 'B', 'Full'])
   expect(launchSummary(fields, { effort: '', full_access: 'no' })).toEqual([])

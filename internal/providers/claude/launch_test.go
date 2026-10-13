@@ -276,7 +276,7 @@ func TestLaunchFieldsMatchValidation(t *testing.T) {
 			}
 		}
 	}
-	if danger != 1 || len(fields[1].Options) != len(effortLevels)+1 {
+	if danger != 1 || len(fields[1].Options) != len(effortLevels)+1 || !fields[1].PerModel {
 		t.Fatalf("danger = %d, efforts = %+v", danger, fields[1].Options)
 	}
 }

@@ -60,7 +60,7 @@ export function effectiveDefaults(fields: LaunchField[], launchFields: LaunchFie
   const model = modelValue.trim() ? models.find(item => item.id === modelValue.trim()) : fallbackModel
   for (const field of fields) {
     if (field.kind !== 'select') continue
-    const options = fieldOptions(field, model).filter(option => option.value !== '')
+    const options = fieldOptions(field, model, models).filter(option => option.value !== '')
     if (options.length === 0) continue
     const has = (value?: string) => options.find(option => option.value === value)?.value
     if (field.id === 'effort' || field.per_model) {
@@ -91,7 +91,7 @@ export function fillDefaults(fields: LaunchField[], launchFields: LaunchField[],
   for (const field of fields) {
     if (field.kind !== 'select' || defaults[field.id] === undefined) continue
     const value = String(out[field.id] ?? '')
-    if (!value || !fieldOptions(field, chosenModel(models, modelValue)).some(option => option.value === value)) out[field.id] = defaults[field.id]
+    if (!value || !fieldOptions(field, chosenModel(models, modelValue), models).some(option => option.value === value)) out[field.id] = defaults[field.id]
   }
   return { values: out, defaults }
 }

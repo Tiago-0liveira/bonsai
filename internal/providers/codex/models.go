@@ -177,6 +177,8 @@ func modelOptions(models []appModel, source string) []agents.ModelOption {
 		if slices.Contains(option.Efforts, m.DefaultReasoningEffort) {
 			option.DefaultEffort = m.DefaultReasoningEffort
 		}
+		// A listed model with no reasoning levels at all has no effort control.
+		option.NoEffort = len(option.Efforts) == 0 && m.DefaultReasoningEffort == ""
 		out = append(out, option)
 		if len(out) == maxModels {
 			break

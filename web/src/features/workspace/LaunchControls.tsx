@@ -38,10 +38,11 @@ function Note({ children }: { children: string }) {
 }
 
 /** A select or toggle field as chips, with its danger note and its profile default. */
-function ChoiceField({ field, value, model, account, defaultValue, disabled, onChange }: {
+function ChoiceField({ field, value, model, models, account, defaultValue, disabled, onChange }: {
   field: LaunchField
   value: string | boolean | undefined
   model?: AgentModel
+  models?: AgentModel[]
   account?: AgentAccount
   /** The option the provider uses when nothing is set: tagged "default" and one click away. */
   defaultValue?: string
@@ -49,7 +50,7 @@ function ChoiceField({ field, value, model, account, defaultValue, disabled, onC
   onChange: (value: string | boolean) => void
 }) {
   const toggle = field.kind === 'toggle'
-  const all = fieldOptions(field, model)
+  const all = fieldOptions(field, model, models)
   const reset = toggle ? undefined : all.find(option => option.value === '')
   const choices = all.filter(option => option.value !== '')
   const current = toggle ? String(value === true) : String(value ?? '')
@@ -87,20 +88,32 @@ function ChoiceField({ field, value, model, account, defaultValue, disabled, onC
   )
 }
 
+/** The effort slot when there is nothing to set: it keeps its height so the dialog never reflows. */
+function NoEffort({ text }: { text: string }) {
+  return (
+    <div className="flex h-[74px] items-center justify-center gap-2 rounded-[10px] border border-dashed border-border bg-well/40 px-3 text-center font-mono text-[10.5px] text-muted-2">
+      <Gauge size={13} className="shrink-0" aria-hidden="true" />
+      {text}
+    </div>
+  )
+}
+
 /** The effort field as a slider; fewer than two levels fall back to chips. */
-function EffortField({ field, value, model, account, defaultValue, disabled, onChange }: {
+function EffortField({ field, value, model, models, account, defaultValue, disabled, onChange }: {
   field: LaunchField
   value: string
   model?: AgentModel
+  models?: AgentModel[]
   account?: AgentAccount
   defaultValue?: string
   disabled: boolean
   onChange: (value: string) => void
 }) {
-  const all = fieldOptions(field, model)
+  const all = fieldOptions(field, model, models)
   const reset = all.find(option => option.value === '')
   const levels = all.filter(option => option.value !== '')
-  if (levels.length < 2) return <ChoiceField field={field} value={value} model={model} account={account} defaultValue={defaultValue} disabled={disabled} onChange={next => onChange(String(next))} />
+  if (levels.length === 0 && model?.no_effort) return <Field label={field.label}><NoEffort text={`${model.label} has no effort setting.`} /></Field>
+  if (levels.length < 2) return <ChoiceField field={field} value={value} model={model} models={models} account={account} defaultValue={defaultValue} disabled={disabled} onChange={next => onChange(String(next))} />
   const stops = levels.map(option => ({ value: option.value, label: option.label === option.value ? levelName(option.label) : option.label, tick: option.label }))
   const inherited = profileValue(field, account)
   const current = stops.find(stop => stop.value === value)
@@ -126,10 +139,12 @@ function EffortField({ field, value, model, account, defaultValue, disabled, onC
  * then effort (a slider). A provider without one of them keeps its slot, so
  * switching providers never reflows the dialog.
  */
-export function LaunchControls({ fields, values, model, account, defaults, providerLabel, disabled, onChange }: {
+export function LaunchControls({ fields, values, model, models, account, defaults, providerLabel, disabled, onChange }: {
   fields: LaunchField[]
   values: LaunchValues
   model?: AgentModel
+  /** Every model the provider lists: the effort levels of a typed model come from these. */
+  models?: AgentModel[]
   account?: AgentAccount
   /** The value each field takes when nothing is set, by field ID. Tagged "default" and selectable in one click. */
   defaults?: Record<string, string>
@@ -142,16 +157,13 @@ export function LaunchControls({ fields, values, model, account, defaults, provi
   return (
     <div className="space-y-5">
       {access.map(field => (
-        <ChoiceField key={field.id} field={field} value={values[field.id]} model={model} account={account} defaultValue={defaults?.[field.id]} disabled={disabled} onChange={value => onChange(field.id, value)} />
+        <ChoiceField key={field.id} field={field} value={values[field.id]} model={model} models={models} account={account} defaultValue={defaults?.[field.id]} disabled={disabled} onChange={value => onChange(field.id, value)} />
       ))}
       {effort ? (
-        <EffortField field={effort} value={String(values[effort.id] ?? '')} model={model} account={account} defaultValue={defaults?.[effort.id]} disabled={disabled} onChange={value => onChange(effort.id, value)} />
+        <EffortField field={effort} value={String(values[effort.id] ?? '')} model={model} models={models} account={account} defaultValue={defaults?.[effort.id]} disabled={disabled} onChange={value => onChange(effort.id, value)} />
       ) : (
         <Field label="Effort">
-          <div className="flex h-[74px] items-center justify-center gap-2 rounded-[10px] border border-dashed border-border bg-well/40 px-3 text-center font-mono text-[10.5px] text-muted-2">
-            <Gauge size={13} className="shrink-0" aria-hidden="true" />
-            {providerLabel ? `${providerLabel} has no effort setting.` : 'Choose a provider to set effort.'}
-          </div>
+          <NoEffort text={providerLabel ? `${providerLabel} has no effort setting.` : 'Choose a provider to set effort.'} />
         </Field>
       )}
     </div>

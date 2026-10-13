@@ -278,6 +278,7 @@ function StartAgentForm() {
               fields={fields}
               values={values}
               model={launchModel}
+              models={models}
               defaults={defaults}
               providerLabel={providerLabel}
               disabled={pending}

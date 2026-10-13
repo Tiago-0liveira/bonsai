@@ -76,7 +76,7 @@ export function ProfileDefaults({ account, capability, onSaved, onDirtyChange }:
       const next = { ...savedValues, ...currentEdits, [id]: value }
       if (id !== modelField?.id) return { ...currentEdits, [id]: value }
       // A different model may not offer the chosen effort: it falls back to that model's default.
-      const resolved = resolveLaunchValues(launchFields, next, chosenModel(models, String(value)))
+      const resolved = resolveLaunchValues(launchFields, next, chosenModel(models, String(value)), models)
       const dropped = Object.fromEntries(launchFields.filter(field => resolved[field.id] !== next[field.id]).map(field => [field.id, resolved[field.id]]))
       return { ...currentEdits, ...dropped, [id]: value }
     })
@@ -121,7 +121,7 @@ export function ProfileDefaults({ account, capability, onSaved, onDirtyChange }:
             />
           </Field>
         )}
-        <LaunchControls fields={launchFields} values={values} model={model} defaults={defaults} providerLabel={capability?.label ?? account.provider} disabled={pending} onChange={change} />
+        <LaunchControls fields={launchFields} values={values} model={model} models={models} defaults={defaults} providerLabel={capability?.label ?? account.provider} disabled={pending} onChange={change} />
       </div>
       {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
       {savedNote && !dirty && <p role="status" className="font-mono text-[10px] text-accent">Defaults saved</p>}

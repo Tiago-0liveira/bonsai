@@ -159,3 +159,47 @@ func TestModelsNeverLeakTokenAndImplementLister(t *testing.T) {
 		}
 	}
 }
+
+func TestModelsCarryEffortsFromCapabilities(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
+	server := newUsageServer(t, 200, readFixture(t, "models-response.json"))
+	e.provider.modelsEndpoint = server.URL
+
+	models, err := e.provider.Models(t.Context(), account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]agents.ModelOption{}
+	for _, m := range models {
+		byID[m.ID] = m
+	}
+	for id, want := range map[string]string{
+		"claude-opus-5-5":   "low,medium,high,xhigh,max",
+		"claude-sonnet-5-5": "low,medium,high",
+		// Aliases resolve to the newest listed model of their line.
+		"opus":   "low,medium,high,xhigh,max",
+		"sonnet": "low,medium,high",
+	} {
+		if got := strings.Join(byID[id].Efforts, ","); got != want || byID[id].NoEffort {
+			t.Errorf("%s efforts = %q (no effort %v), want %q", id, got, byID[id].NoEffort, want)
+		}
+	}
+	for _, id := range []string{"claude-haiku-4-5-20251001", "haiku"} {
+		if m := byID[id]; len(m.Efforts) != 0 || !m.NoEffort {
+			t.Errorf("%s = %+v, want no effort control", id, m)
+		}
+	}
+	// Nothing known: neither levels nor a "no effort" claim, so the dialog's fallback applies.
+	if m := byID["fable"]; len(m.Efforts) != 0 || m.NoEffort {
+		t.Errorf("fable = %+v, want unknown efforts", m)
+	}
+}
+
+func TestParseModelsDropsEffortsTheCLIRejects(t *testing.T) {
+	models, err := ParseModels([]byte(`{"data":[{"id":"claude-opus-9","capabilities":{"effort":{"supported":true,"low":{"supported":true},"turbo":{"supported":true},"max":{"supported":true}}}}]}`))
+	if err != nil || len(models) != 1 || strings.Join(models[0].Efforts, ",") != "low,max" {
+		t.Fatalf("models = %+v, err = %v", models, err)
+	}
+}

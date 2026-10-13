@@ -29,22 +29,36 @@ export function chosenModel(models: AgentModel[], model: string): AgentModel | u
 }
 
 /**
- * The options a field offers. A per-model field lists the chosen model's
- * efforts, keeping the field's own empty "default" option; typed or unlisted
- * models fall back to the field's options.
+ * The options a field offers. A per-model field lists the efforts the chosen
+ * model's provider reported, keeping the field's own empty "default" option. A
+ * model the provider says has no effort control offers only that option. A
+ * typed or unlisted model gets the levels any listed model accepts, in the
+ * field's own order; the field's static options are the last resort, for a
+ * provider whose list could not be read.
  */
-export function fieldOptions(field: LaunchField, model?: AgentModel): LaunchFieldOption[] {
+export function fieldOptions(field: LaunchField, model?: AgentModel, models: AgentModel[] = []): LaunchFieldOption[] {
   const own = field.options ?? []
-  if (!field.per_model || !model?.efforts?.length) return own
-  return [...own.filter(option => option.value === ''), ...model.efforts.map(value => ({ value, label: value }))]
+  if (!field.per_model) return own
+  const reset = own.filter(option => option.value === '')
+  if (model?.efforts?.length) return [...reset, ...model.efforts.map(value => ({ value, label: value }))]
+  if (model?.no_effort) return reset
+  if (model) return own
+  const listed = [...new Set(models.flatMap(item => item.efforts ?? []))]
+  if (!listed.length) return own
+  const rank = (value: string) => {
+    const index = own.findIndex(option => option.value === value)
+    return index < 0 ? own.length : index
+  }
+  listed.sort((a, b) => rank(a) - rank(b))
+  return [...reset, ...listed.map(value => ({ value, label: value }))]
 }
 
 /** Drops select values the current options no longer offer, such as an effort the new model lacks. */
-export function resolveLaunchValues(fields: LaunchField[], values: LaunchValues, model?: AgentModel): LaunchValues {
+export function resolveLaunchValues(fields: LaunchField[], values: LaunchValues, model?: AgentModel, models: AgentModel[] = []): LaunchValues {
   const resolved = { ...values }
   for (const field of fields) {
     if (field.kind !== 'select') continue
-    const options = fieldOptions(field, model)
+    const options = fieldOptions(field, model, models)
     if (options.length && !options.some(option => option.value === resolved[field.id])) {
       resolved[field.id] = options.some(option => option.value === '') ? '' : field.default ?? options[0].value
     }
