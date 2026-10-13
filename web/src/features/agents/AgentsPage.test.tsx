@@ -59,6 +59,7 @@ const renderPage = async (rest: Partial<AgentsPageProps> = {}) => {
 }
 
 beforeEach(() => {
+  localStorage.clear()
   useBonsaiStore.setState({
     ...useBonsaiStore.getInitialState(), projects, worktrees: [...worktrees, labWorktree], activeProjectId: 'bonsai', activeWorkspaceId: 'personal',
     agents: [agent('s-running'), agent('s-lab', { projectId: 'sprout-lab', worktreeId: 'wt-lab' }), agent('s-done', { lifecycleState: 'exited', state: 'finished', exitCode: 0, finishedAt: new Date(Date.now() - 60_000).toISOString() }), agent('s-other', { accountId: 'claude-work', providerId: 'claude', provider: 'Claude' })],
@@ -77,7 +78,7 @@ describe('status', () => {
     const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
     const codex = within(within(list).getByRole('region', { name: 'Codex' }))
     expect(codex.getByText('v0.162.1')).toBeInTheDocument()
-    const rows = codex.getAllByRole('button')
+    const rows = within(codex.getByRole('list', { name: 'Codex profiles' })).getAllByRole('button')
     expect(rows.map(row => within(row).getByText(/Personal|Team/).textContent)).toEqual(['Personal', 'Team'])
     expect(rows[0]).toHaveTextContent('Signed in')
     expect(rows[1]).toHaveTextContent('Signed out')
@@ -85,6 +86,68 @@ describe('status', () => {
     expect(antigravity.getByText('agy is not installed')).toBeInTheDocument()
     expect(antigravity.getByText('npm i -g agy')).toBeInTheDocument()
     expect(antigravity.getByText('No profiles')).toBeInTheDocument()
+  })
+
+  it('lists providers as Claude, Codex, Antigravity whatever order the API uses', async () => {
+    await renderPage()
+    const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
+    expect(within(list).getAllByRole('region').map(region => region.getAttribute('aria-label'))).toEqual(['Claude', 'Codex', 'Antigravity'])
+  })
+
+  it('collapses and expands a provider, remembers it, and keeps the profile list out of the page while collapsed', async () => {
+    await renderPage({ profileId: 'codex-personal' })
+    const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
+    const claude = within(within(list).getByRole('region', { name: 'Claude' }))
+    const toggle = claude.getByRole('button', { name: /^Claude/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(claude.getByRole('list', { name: 'Claude profiles' })).toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(claude.queryByRole('list', { name: 'Claude profiles' })).not.toBeInTheDocument()
+    expect(claude.getByLabelText('2 profiles')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('bonsai.agents.collapsedProviders') ?? '[]')).toEqual(['claude'])
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(claude.getByRole('list', { name: 'Claude profiles' })).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('bonsai.agents.collapsedProviders') ?? '[]')).toEqual([])
+  })
+
+  it('starts collapsed when it was left collapsed, and opens the group of the selected profile', async () => {
+    localStorage.setItem('bonsai.agents.collapsedProviders', JSON.stringify(['claude', 'codex']))
+    await renderPage({ profileId: 'codex-personal' })
+    const list = screen.getByRole('complementary', { name: 'Providers and profiles' })
+    expect(within(list).getByRole('button', { name: /^Claude/ })).toHaveAttribute('aria-expanded', 'false')
+    // The selected profile's group opens so the selection is never hidden.
+    expect(within(list).getByRole('button', { name: /^Codex/ })).toHaveAttribute('aria-expanded', 'true')
+    expect(within(list).getByRole('list', { name: 'Codex profiles' })).toBeInTheDocument()
+  })
+
+  it('shows each provider at a glance: sign-ins, both plan windows pooled over its profiles, running and reset', async () => {
+    await renderPage()
+    const summary = screen.getByRole('region', { name: 'Fleet summary' })
+    const tiles = within(within(summary).getByRole('list', { name: 'Providers at a glance' }))
+    const codex = within(tiles.getByRole('listitem', { name: 'Codex' }))
+    await waitFor(() => expect(codex.getByRole('list', { name: 'Codex plan windows' })).toBeInTheDocument())
+    expect(codex.getByText('1/2 signed in')).toBeInTheDocument()
+    expect(codex.getByText('2 running')).toBeInTheDocument()
+    // Only Personal reports its windows; Team's reading failed, so the pool is one profile.
+    const five = codex.getByRole('meter', { name: '5 hour pooled remaining' })
+    expect(five).toHaveAttribute('aria-valuenow', '72')
+    const weekly = codex.getByRole('meter', { name: 'Weekly pooled remaining' })
+    expect(weekly).toHaveAttribute('aria-valuenow', '12')
+    expect(codex.getAllByText(/next reset 2h 15m/).length).toBeGreaterThan(0)
+    const antigravity = within(tiles.getByRole('listitem', { name: 'Antigravity' }))
+    expect(antigravity.getByText('Not installed')).toBeInTheDocument()
+  })
+
+  it('says how old the usage reading is and re-reads every profile on demand', async () => {
+    await renderPage()
+    const summary = screen.getByRole('region', { name: 'Fleet summary' })
+    await waitFor(() => expect(within(summary).getByText(/Usage read 2m ago/)).toBeInTheDocument())
+    fireEvent.click(within(summary).getByRole('button', { name: 'Check usage' }))
+    await waitFor(() => expect(refreshAgentUsage).toHaveBeenCalledWith(undefined))
   })
 
   it('colours the sign-in dot by state', async () => {
@@ -113,12 +176,13 @@ describe('status', () => {
     expect(within(screen.getByRole('button', { name: /Personal/ })).getByText('2 running')).toBeInTheDocument()
   })
 
-  it('shows a mini usage bar on the profile row and tints it when low', async () => {
+  it('shows a mini usage bar on the profile row, coloured by how much is left', async () => {
     await renderPage()
     const meter = await screen.findByRole('meter', { name: 'Personal headroom remaining' })
     expect(meter).toHaveAttribute('aria-valuenow', '12')
-    expect(meter.firstElementChild).toHaveClass('bg-warn-solid')
-    expect(screen.getByRole('meter', { name: 'Work headroom remaining' }).firstElementChild).toHaveClass('bg-accent-solid')
+    expect(meter.firstElementChild).toHaveAttribute('data-rank', '2')
+    const work = screen.getByRole('meter', { name: 'Work headroom remaining' })
+    expect(Number(work.firstElementChild?.getAttribute('data-rank'))).toBeGreaterThan(2)
   })
 
   it('selects the first profile without a deep link, or the one named by it', async () => {
@@ -230,8 +294,8 @@ describe('usage tab', () => {
     expect(within(limits).getByText('resets in 2h 15m')).toBeInTheDocument()
     expect(within(limits).getByText('resets in 3d 4h')).toBeInTheDocument()
     const weekly = within(limits).getByRole('meter', { name: 'Weekly remaining' })
-    expect(weekly.firstElementChild).toHaveClass('bg-warn-solid')
-    expect(five.firstElementChild).toHaveClass('bg-accent-solid')
+    expect(Number(weekly.firstElementChild?.getAttribute('data-rank'))).toBeLessThan(3)
+    expect(five.firstElementChild).toHaveAttribute('data-rank', '8')
     expect(within(screen.getByRole('region', { name: 'Codex Spark' })).getByRole('meter', { name: '5 hour remaining' })).toHaveAttribute('aria-valuenow', '90')
     expect(screen.getByText('Credits balance is low')).toBeInTheDocument()
     cleanup()

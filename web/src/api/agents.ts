@@ -95,6 +95,8 @@ export interface AgentModel {
   id: string; label: string; description?: string; source: 'alias' | 'api' | 'bundled'
   /** Reasoning efforts this model accepts, when they vary by model. */
   efforts?: string[]; default_effort?: string
+  /** The provider says this model has no effort control (as opposed to not saying). */
+  no_effort?: boolean
   /** The model the provider uses when none is chosen. */
   default?: boolean
 }

@@ -472,10 +472,12 @@ bonsai agent account remove work                     # logs the profile out, del
 
 ### Profile defaults
 
-Each profile can keep launch defaults: the model and the same choices the start
-dialog offers (Codex `permissions` and `effort`, Claude `permission_mode` and
-`effort`, Antigravity `full_access`). A launch option still wins over them, and
-they only apply to sessions started afterwards.
+Each profile keeps its launch defaults: the model plus Codex `permissions` and
+`effort`, Claude `permission_mode` and `effort`, or Antigravity `full_access`. The
+web start dialog opens on them and can change them for one launch; set them for
+good on the profile's **Defaults** tab in the Agents tab or with `account set`.
+A launch option still wins over them, and defaults only apply to sessions
+started afterwards.
 
 ```sh
 bonsai agent account show work                       # sign-in, identity, defaults and accepted values
@@ -504,8 +506,8 @@ bonsai agent account add antigravity personal
 Start the web app with `bonsai web`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;
 enter instructions directly in it. Claude Code and Codex profiles start the same
-way (`bonsai agent account add codex work`); the dialog shows the permissions
-preset and, for Codex, the reasoning effort the chosen model supports. The
+way (`bonsai agent account add codex work`); the dialog opens on the profile's
+model, permissions and effort (its **Defaults** tab). The
 **Agents** tab does the same profile work in the browser; see
 [docs/web.md](docs/web.md#agents-tab).
 

@@ -13,9 +13,15 @@ export interface ProviderGroupModel {
 
 const byName = (a: AgentAccount, b: AgentAccount) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)
 
-/** Providers in API order, then providers only known from profiles; profiles by name. */
+/** The providers the Agents tab lists first, in this order; any other provider follows in API order. */
+const PROVIDER_ORDER = ['claude', 'codex', 'antigravity']
+const providerRank = (id: string) => { const rank = PROVIDER_ORDER.indexOf(id); return rank < 0 ? PROVIDER_ORDER.length : rank }
+
+/** Claude, Codex, Antigravity, then other providers in API order, then providers only known from profiles; profiles by name. */
 export function groupProfiles(providers: AgentCapability[], accounts: AgentAccount[]): ProviderGroupModel[] {
-  const groups = providers.map<ProviderGroupModel>(capability => ({ id: capability.id, label: capability.label || capability.id, capability, accounts: [] }))
+  // Array.prototype.sort is stable, so providers of equal rank keep the API order.
+  const ordered = [...providers].sort((a, b) => providerRank(a.id) - providerRank(b.id))
+  const groups = ordered.map<ProviderGroupModel>(capability => ({ id: capability.id, label: capability.label || capability.id, capability, accounts: [] }))
   const byId = new Map(groups.map(group => [group.id, group]))
   for (const account of [...accounts].sort(byName)) {
     let group = byId.get(account.provider)
@@ -152,6 +158,93 @@ export function summarizeFleet(accounts: AgentAccount[], usage: Record<string, A
     }
   }
   return summary
+}
+
+/** One provider's slice of the fleet, for the summary strip. */
+export interface ProviderSummary {
+  id: string
+  label: string
+  available: boolean
+  /** The version, or why the provider is unavailable. */
+  note: string
+  /** Sign-in tone of each profile, in list order. */
+  tones: AuthTone[]
+  profiles: number
+  signedIn: number
+  running: number
+  lowest?: { name: string; score: number }
+  nextReset?: { name: string; at: string }
+  /** The plan windows (5h, weekly) pooled over every profile of the provider that reports them. */
+  windows: ProviderWindow[]
+}
+
+/** One plan window of a provider with the headroom of all its profiles added up. */
+export interface ProviderWindow {
+  slot: 'primary' | 'secondary'
+  label: string
+  /** Sum of the remaining fractions: 6.9 means "6.9 profiles' worth" left. */
+  remaining: number
+  /** How many profiles report this window. */
+  count: number
+  /** remaining / count, 0..1. */
+  fraction: number
+  /** The soonest reset of any profile, when one is in the future. */
+  resetsAt?: string
+}
+
+export function summarizeProviders(groups: ProviderGroupModel[], usage: Record<string, AgentUsage>, sessionCounts: Map<string, number>, now: number): ProviderSummary[] {
+  return groups.map(group => {
+    const capability = group.capability
+    const available = capability === undefined || capability.available
+    const version = capability?.version ? (/^\d/.test(capability.version) ? `v${capability.version}` : capability.version) : ''
+    const summary: ProviderSummary = {
+      id: group.id,
+      label: group.label,
+      available,
+      note: available ? version : capability?.unavailable_reason?.message || 'Not available',
+      tones: group.accounts.map(account => authState(account).tone),
+      profiles: group.accounts.length,
+      signedIn: 0,
+      running: 0,
+      windows: [],
+    }
+    const pooled = new Map<'primary' | 'secondary', { label: string; remaining: number; count: number; resetsAt?: string }>()
+    for (const account of group.accounts) {
+      if (authState(account).tone === 'ok') summary.signedIn++
+      summary.running += sessionCounts.get(account.id) ?? 0
+      const headline = usage[account.id]?.headline
+      if (!headline) continue
+      if (headline.score !== undefined && (!summary.lowest || headline.score < summary.lowest.score)) summary.lowest = { name: account.name, score: headline.score }
+      const reset = headline.next_reset ? Date.parse(headline.next_reset) : NaN
+      if (Number.isFinite(reset) && reset > now && (!summary.nextReset || reset < Date.parse(summary.nextReset.at))) summary.nextReset = { name: account.name, at: headline.next_reset! }
+      for (const slot of ['primary', 'secondary'] as const) {
+        const limit = headline[slot]
+        if (!limit || limit.remaining_fraction === undefined) continue
+        const entry = pooled.get(slot) ?? { label: limitName(limit), remaining: 0, count: 0 }
+        entry.remaining += Math.min(Math.max(limit.remaining_fraction, 0), 1)
+        entry.count++
+        const at = limit.resets_at ? Date.parse(limit.resets_at) : NaN
+        if (Number.isFinite(at) && at > now && (!entry.resetsAt || at < Date.parse(entry.resetsAt))) entry.resetsAt = limit.resets_at
+        pooled.set(slot, entry)
+      }
+    }
+    for (const slot of ['primary', 'secondary'] as const) {
+      const entry = pooled.get(slot)
+      if (entry) summary.windows.push({ slot, ...entry, fraction: entry.remaining / entry.count })
+    }
+    return summary
+  })
+}
+
+/** When the newest usage reading was taken, or undefined when none was. */
+export function usageReadAt(usage: Record<string, AgentUsage>): string | undefined {
+  let newest: { at: number; iso: string } | undefined
+  for (const entry of Object.values(usage)) {
+    const iso = entry.usage?.fetched_at
+    const at = iso ? Date.parse(iso) : NaN
+    if (Number.isFinite(at) && (!newest || at > newest.at)) newest = { at, iso: iso! }
+  }
+  return newest?.iso
 }
 
 /** Extra limits grouped by their `group`, keeping provider order; ungrouped limits come first. */

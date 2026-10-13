@@ -236,6 +236,23 @@ func (c *Client) Spawn(worktree, branch, label, command string, policy *procstor
 	return resp.Record, nil
 }
 
+// SpawnShell starts a shell command line in workingDir, which may be a
+// subdirectory of the owning worktree. Unlike SpawnExec the command goes through
+// the platform shell, so pipes, && and environment assignments work.
+func (c *Client) SpawnShell(worktree, branch, workingDir, label, command string, policy *procstore.Policy) (*procstore.Record, error) {
+	if err := c.ensureDaemon(); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundtrip(&protocol.Request{
+		Kind: protocol.KindSpawn, Worktree: worktree, Branch: branch,
+		Label: label, Command: command, WorkingDir: workingDir, Policy: policy,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Record, nil
+}
+
 // SpawnExec starts a shell-free program+argv command. worktree remains the
 // owning Git worktree while workingDir may point at a nested project.
 func (c *Client) SpawnExec(worktree, branch, workingDir, label, program string, args []string, policy *procstore.Policy) (*procstore.Record, error) {

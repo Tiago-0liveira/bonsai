@@ -25,9 +25,11 @@ describe('worktree dialogs', () => {
     const candidate = { id: 'refs/remotes/origin/feature', ref: 'refs/remotes/origin/feature', name: 'feature', source: 'remote' as const, remote: 'origin', worktree_ids: [], pull_requests: [], creation_mode: 'remote' as const, source_ref: 'origin/feature' }
     useBonsaiStore.getState().openCreateWorktree('bonsai', candidate)
     render(<CreateWorktreeDialog />)
-    expect(screen.getByRole('button', { name: 'Remote branch' })).toHaveTextContent('origin/feature')
+    expect(screen.getByRole('button', { name: /Remote branch/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('option', { name: /origin\/feature/ })).toHaveAttribute('aria-selected', 'true')
     act(() => { useBonsaiStore.setState({ gitBranches: { bonsai: [{ name: 'origin/another', remote: true }, { name: 'origin/feature', remote: true }] } }) })
-    expect(screen.getByRole('button', { name: 'Remote branch' })).toHaveTextContent('origin/feature')
+    expect(screen.getByRole('option', { name: /origin\/feature/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('option', { name: /origin\/another/ })).toHaveAttribute('aria-selected', 'false')
   })
   it('blocks duplicate submission and shows actionable inline errors', async () => {
     let reject!: (reason: Error) => void

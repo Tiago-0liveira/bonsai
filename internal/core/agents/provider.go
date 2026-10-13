@@ -124,7 +124,7 @@ type LaunchOptions struct {
 	DisplayName    string
 	FullAccess     *bool  // Antigravity
 	PermissionMode string // Claude: default|acceptEdits|plan|auto|dontAsk|bypassPermissions
-	Effort         string // Claude: low|medium|high|xhigh|max
+	Effort         string // provider-defined level, from the chosen model's Efforts
 	Sandbox        string // Codex: read-only|workspace-write|danger-full-access|bypass
 	Approval       string // Codex: untrusted|on-request|never
 }
@@ -283,6 +283,9 @@ type ModelOption struct {
 	// Efforts are the reasoning efforts this model accepts, when they vary by model.
 	Efforts       []string `json:"efforts,omitempty"`
 	DefaultEffort string   `json:"default_effort,omitempty"`
+	// NoEffort means the provider says this model has no effort control, as
+	// opposed to Efforts being empty because nothing is known about it.
+	NoEffort bool `json:"no_effort,omitempty"`
 	// Default marks the model the provider uses when none is chosen.
 	Default bool `json:"default,omitempty"`
 }

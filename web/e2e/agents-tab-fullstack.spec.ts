@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { chooseEffort } from './mockGit'
 
 test.skip(!['linux', 'darwin'].includes(process.platform), 'Native Unix PTY fixture')
 
@@ -31,19 +32,13 @@ async function startFromTab(page: Page, profile: string, name: string, permissio
   await page.getByRole('button', { name: 'Start agent', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Start agent' })
   await expect(dialog.getByLabel('Profile')).toContainText(profile)
-  await expect(dialog).toContainText('profile defaults: gpt-6-luna')
-  await dialog.getByLabel('Worktree and branch').click()
-  await page.getByRole('option').first().click()
-  await dialog.getByLabel('Agent name').fill(name)
-  await dialog.getByLabel('Agent model').click()
-  await page.getByRole('option', { name: /GPT-6-Luna/ }).click()
+  // The dialog opens on the profile's saved model.
   await expect(dialog.getByLabel('Agent model')).toHaveValue('gpt-6-luna')
-  await dialog.getByLabel('Effort').click()
-  await page.getByRole('option', { name: 'high', exact: true }).click()
-  if (permissions) {
-    await dialog.getByLabel('Permissions').click()
-    await page.getByRole('option', { name: permissions, exact: true }).click()
-  }
+  await dialog.getByLabel('Worktree and branch').click()
+  await page.locator('[data-bonsai-select-menu="Worktree and branch"]').getByRole('option').first().click()
+  await dialog.getByLabel('Agent name').fill(name)
+  await chooseEffort(dialog, 'high')
+  if (permissions) await dialog.getByRole('radio', { name: permissions, exact: true }).click()
   const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/agents'))
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
   const session = await (await response).json()
@@ -117,8 +112,7 @@ test('real API: create Codex profiles in the browser, set defaults, run sessions
   await page.getByRole('tab', { name: 'Defaults' }).click()
   const form = page.getByRole('form', { name: 'Profile defaults' })
   await form.getByRole('combobox', { name: 'Default model' }).fill('gpt-6-luna')
-  await form.getByRole('button', { name: 'Effort' }).click()
-  await page.getByRole('option', { name: 'medium', exact: true }).click()
+  await chooseEffort(form, 'medium')
   await form.getByRole('button', { name: 'Save defaults' }).click()
   await expect(form.getByText('Defaults saved')).toBeVisible()
   await page.getByRole('tab', { name: 'Overview' }).click()

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { openFullStackApp as openConnectedApp } from './mockGit'
+import { openFullStackApp as openConnectedApp, selectMenu } from './mockGit'
 import './presentationFixtures'
 
 test.skip(!['linux', 'darwin'].includes(process.platform), 'Native daemon fixture')
@@ -9,15 +9,14 @@ async function launch(page: Page, command: string, policy: string, retries = 0, 
   await page.keyboard.press('Control+k')
   await page.getByRole('option', { name: 'Start process', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Start process' })
-  if (branch || !(await dialog.getByLabel('Process command').isVisible())) {
+  if (branch || !(await dialog.getByRole('listbox', { name: 'Process command' }).isVisible())) {
     await dialog.getByLabel('Process worktree and branch').click()
-    if (branch) await page.getByRole('option', { name: new RegExp(`^${branch}\\b`) }).click()
-    else await page.getByRole('option').first().click()
+    const menu = selectMenu(page, 'Process worktree and branch')
+    if (branch) await menu.getByRole('option', { name: new RegExp(`^${branch}\\b`) }).click()
+    else await menu.getByRole('option').first().click()
   }
-  await dialog.getByLabel('Process command').click()
-  await page.getByRole('option', { name: new RegExp(`^${command}\\b`) }).click()
-  await dialog.getByLabel('Restart policy').click()
-  await page.getByRole('option', { name: policy, exact: true }).click()
+  await dialog.getByRole('option', { name: new RegExp(`^${command}\\b`) }).click()
+  await dialog.getByRole('button', { name: policy, exact: true }).click()
   if (policy !== 'Never') await dialog.getByLabel('Maximum retries').fill(String(retries))
   if (args) await dialog.getByLabel('arguments', { exact: true }).fill(args)
   const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/projects/repo/processes'))

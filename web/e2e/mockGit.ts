@@ -1,5 +1,5 @@
 import type { AgentSummary } from '../src/api/agents'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 type Metadata = {
   merge_target_branch: string
@@ -892,6 +892,15 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
 export async function mockUpdateSettings(page: Page, settings: () => unknown, apiOrigin = DEFAULT_API_ORIGIN) {
   await page.route(url => url.origin === apiOrigin && url.pathname === '/api/settings/updates', route => route.fulfill({ json: settings() }))
 }
+
+/** Picks a level on the start dialog's effort slider by its caption under the track. */
+export async function chooseEffort(dialog: Locator, level: string) {
+  // The default level's caption carries a "default" tag, so match on its start.
+  await dialog.getByRole('slider', { name: 'Effort' }).locator('..').locator('button.step-label').filter({ hasText: new RegExp(`^${level}`) }).click()
+}
+
+/** A select's menu, which renders outside the dialog that owns the select. */
+export const selectMenu = (page: Page, label: string) => page.locator(`[data-bonsai-select-menu="${label}"]`)
 
 export async function openConnectedApp(page: Page) {
   await page.goto('/app')

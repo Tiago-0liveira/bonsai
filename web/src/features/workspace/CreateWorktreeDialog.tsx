@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { GitBranch, GitFork, Plus, Radio, X } from 'lucide-react'
-import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
+import { GitBranch, GitFork, GitMerge, Plus, Radio } from 'lucide-react'
+import { DialogFrame, Field, Reveal, TEXT_INPUT } from '../../components/ui/Dialog'
+import { OptionList } from '../../components/ui/OptionList'
+import { Segmented } from '../../components/ui/Segmented'
 import { WorktreeMetadataError } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { WorktreeSourceType } from '../../types'
@@ -93,82 +95,103 @@ function CreateWorktreeDialogBody() {
     }
   }
 
-  const branchOptions = (sourceType === 'existing' ? localBranches : originBranches).map((branch) => ({
+  const branchBadge = (text: string, tone: 'plain' | 'accent' = 'plain') => (
+    <span className={'rounded-[4px] border px-1.5 py-px font-mono text-[9.5px] ' + (tone === 'accent' ? 'border-accent/35 text-accent' : 'border-border text-muted-2')}>{text}</span>
+  )
+  const isDefault = (name: string) => name === project.defaultBranch
+  const baseOptions = (allBranches ?? []).map(branch => ({
+    value: branch.ref || branch.name,
+    label: branch.name,
+    icon: branch.remote ? <Radio size={12} /> : <GitBranch size={12} />,
+    meta: isDefault(branch.name) ? branchBadge('default', 'accent') : branchBadge(branch.remote ? 'remote' : 'local'),
+  }))
+  const pickOptions = (sourceType === 'existing' ? localBranches : originBranches).map(branch => ({
     value: branch,
     label: branch,
-    description: sourceType === 'origin' ? 'remote tracking branch' : 'local branch',
+    icon: sourceType === 'origin' ? <Radio size={12} /> : <GitBranch size={12} />,
+    meta: isDefault(branch) ? branchBadge('default', 'accent') : branchBadge(sourceType === 'origin' ? 'remote' : 'local'),
   }))
-  const mergeOptions = mergeTargets.map((branch) => ({
+  const mergeOptions = mergeTargets.map(branch => ({
     value: branch,
     label: branch,
-    description: branch === project.defaultBranch ? 'default branch' : 'worktree branch',
+    icon: <GitMerge size={12} />,
+    meta: branch === project.defaultBranch ? branchBadge('default', 'accent') : branchBadge('worktree'),
   }))
+  const sourceLabel = sourceType === 'new' ? 'Branch from' : sourceType === 'existing' ? 'Local branch' : 'Remote branch'
+  const sourceNote = sourceType === 'existing' ? 'Every local branch already has a worktree.' : sourceType === 'origin' ? 'No remote branches left. Fetch to refresh the list.' : 'No branches found.'
+  const branchLabel = sourceType === 'new' ? branchName.trim() || 'new branch' : selectedLocal || 'no branch'
+  const summary = [branchLabel, sourceType === 'new' && sourceRef && `from ${sourceRef.replace(/^refs\/(heads|remotes)\//, '')}`, mergeTargetBranch && `merges into ${mergeTargetBranch}`].filter(Boolean).join(' · ')
 
   return (
-    <div className="absolute inset-0 z-[80] grid place-items-center bg-well/70 p-6 backdrop-blur-[2px]">
-      <form role="dialog" aria-modal="true" aria-label="New worktree" onSubmit={submit} className="w-full max-w-[620px] overflow-hidden rounded-[14px] border border-border-strong bg-panel shadow-overlay">
-        <div className="flex h-11 items-center border-b border-border-subtle px-4">
-          <GitFork size={15} className="mr-2 text-accent" />
-          <div>
-            <div className="text-[13px] font-semibold">New worktree</div>
-            <div className="font-mono text-[10px] text-muted-2">{project.repository}</div>
+    <DialogFrame
+      icon={GitFork}
+      title="New worktree"
+      subtitle={project.repository}
+      closeLabel="Close"
+      onClose={() => setOpen(false)}
+      closeDisabled={pending}
+      layer={80}
+      width="md"
+      onSubmit={submit}
+      summary={summary}
+      actions={
+        <>
+          <button type="button" onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-9 rounded-[8px] px-3.5 text-[12px] text-muted hover:text-text">Cancel</button>
+          <button type="submit" disabled={pending || !sourceRef || (sourceType === 'new' && !branchName.trim())} className="bonsai-focus btn-primary h-9 px-4 text-[12px] disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Creating…' : createdId ? 'Retry saving settings' : existingWorktree ? 'Open worktree' : 'Create worktree'}</button>
+        </>
+      }
+    >
+      <fieldset disabled={pending || !!createdId} className="m-0 min-w-0 space-y-5 border-0 p-0">
+        <Field label="Branch source">
+          <Segmented
+            ariaLabel="Branch source"
+            value={sourceType}
+            onChange={value => changeSourceType(value as WorktreeSourceType)}
+            options={sourceOptions.map(option => {
+              const Icon = option.icon
+              return {
+                value: option.id,
+                title: option.description,
+                label: <><Icon size={13} className={option.id === sourceType ? 'text-accent' : 'text-muted'} /><span>{option.label}</span></>,
+              }
+            })}
+          />
+        </Field>
+
+        <div key={sourceType} className="dialog-swap space-y-5">
+          {sourceType === 'new' && (
+            <Field label="New branch name" htmlFor="worktree-branch-name">
+              <div className="relative">
+                <GitBranch size={13} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-2" />
+                <input id="worktree-branch-name" autoFocus value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="feat/my-branch" spellCheck={false} className={TEXT_INPUT + ' pl-8 font-mono'} />
+              </div>
+            </Field>
+          )}
+          <div className="dialog-cols">
+            <Field label={sourceLabel} aside={<span className="font-mono text-[10px] text-muted-2">{sourceType === 'new' ? 'the new branch starts here' : 'checked out into the new worktree'}</span>}>
+              <OptionList
+                searchable
+                mono
+                ariaLabel={sourceLabel}
+                filterLabel="Filter branches"
+                placeholder="Filter branches…"
+                emptyText={sourceNote}
+                options={sourceType === 'new' ? baseOptions : pickOptions}
+                value={sourceRef}
+                onChange={setSourceRef}
+              />
+            </Field>
+            <Field label="Merges into" aside={<span className="font-mono text-[10px] text-muted-2">where its PR lands</span>}>
+              <OptionList mono ariaLabel="Merge target" options={mergeOptions} value={mergeTargetBranch} onChange={setMergeTargetBranch} height={224 + 36} />
+            </Field>
           </div>
-          <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="bonsai-focus ml-auto grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-panel-3 hover:text-text">
-            <X size={14} />
-          </button>
         </div>
-
-        <fieldset disabled={pending || !!createdId} className="space-y-5 p-4">
-          <section>
-            <div className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Branch source</div>
-            <div className="grid grid-cols-3 gap-1 rounded-[9px] border border-border bg-well p-1">
-              {sourceOptions.map((option) => {
-                const Icon = option.icon
-                const active = option.id === sourceType
-                return (
-                  <button type="button" key={option.id} title={option.description} onClick={() => changeSourceType(option.id)} className={'bonsai-focus flex h-[30px] items-center justify-center gap-2 rounded-[7px] text-[12px] transition-colors ' + (active ? 'bg-panel-3 text-text' : 'text-muted hover:text-text')}>
-                    <Icon size={13} className={active ? 'text-accent' : 'text-muted'} />
-                    <span>{option.label}</span>
-                    <span className="sr-only">{option.description}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </section>
-
-          <div className="grid grid-cols-2 gap-3">
-            {sourceType === 'new' ? (
-              <>
-                <label className="block">
-                  <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">New branch name</span>
-                  <input autoFocus value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="feat/my-branch" className="bonsai-focus h-8 w-full rounded-[7px] border border-border bg-well px-2.5 font-mono text-[12px] outline-none placeholder:text-muted-2 focus:border-accent/55" />
-                </label>
-                <label className="block">
-                  <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Branch from</span>
-                  <BonsaiSelect ariaLabel="Branch from" searchable value={sourceRef} onChange={setSourceRef} options={(allBranches ?? []).map(branch => ({ value: branch.ref || branch.name, label: branch.name, description: branch.remote ? 'fetched remote base' : 'local base' }))} />
-                </label>
-              </>
-            ) : (
-              <label className="col-span-2 block">
-                <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">{sourceType === 'existing' ? 'Local branch' : 'Remote branch'}</span>
-                <BonsaiSelect ariaLabel={sourceType === 'existing' ? 'Local branch' : 'Remote branch'} searchable value={sourceRef} onChange={setSourceRef} options={branchOptions} />
-              </label>
-            )}
-          </div>
-
-          <label className="block">
-            <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Merges into</span>
-            <BonsaiSelect ariaLabel="Merge target" searchable value={mergeTargetBranch} onChange={setMergeTargetBranch} options={mergeOptions} />
-            <span className="mt-1.5 block font-mono text-[10px] text-muted-2">Non-default targets become explicit PR relationships on the canvas.</span>
-          </label>
-        </fieldset>
-        {error && <p role="alert" className="px-4 pb-3 text-[11px] text-danger">{error}</p>}
-
-        <div className="flex items-center justify-end gap-2 border-t border-border-subtle bg-well/45 px-4 py-3">
-          <button type="button" onClick={() => setOpen(false)} className="bonsai-focus btn-bordered h-8 rounded-[7px] px-3 text-[12px] text-muted hover:text-text">Cancel</button>
-          <button type="submit" disabled={pending || !sourceRef || (sourceType === 'new' && !branchName.trim())} className="bonsai-focus btn-primary h-8 px-3 text-[12px] disabled:cursor-not-allowed disabled:opacity-40">{pending ? 'Creating…' : createdId ? 'Retry saving settings' : existingWorktree ? 'Open worktree' : 'Create worktree'}</button>
-        </div>
-      </form>
-    </div>
+        <p className="font-mono text-[10px] leading-4 text-muted-2">Non-default targets become explicit PR relationships on the canvas.</p>
+        {existingWorktree && !createdId && (
+          <Reveal><p role="status" className="rounded-[8px] border border-accent/30 bg-accent/10 px-3 py-2 text-[11px] text-accent">{selectedLocal} already has a worktree. Creating opens it instead.</p></Reveal>
+        )}
+      </fieldset>
+      {error && <p role="alert" className="mt-4 text-[11px] text-danger">{error}</p>}
+    </DialogFrame>
   )
 }

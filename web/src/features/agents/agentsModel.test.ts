@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentAccount, AgentCapability, AgentUsage, LaunchField } from '../../api/agents'
 import type { Agent, Project, Worktree } from '../../types'
-import { activeSessionCounts, authState, formatAge, formatCountdown, groupExtraLimits, groupProfiles, limitName, profileDefaults, profileSessions, summarizeFleet, toPercent } from './agentsModel'
+import { activeSessionCounts, authState, formatAge, formatCountdown, groupExtraLimits, groupProfiles, limitName, profileDefaults, profileSessions, summarizeFleet, summarizeProviders, toPercent, usageReadAt } from './agentsModel'
 import { validateAgentsSearch } from './agentsSearch'
 
 const NOW = Date.parse('2026-10-12T12:00:00Z')
@@ -9,19 +9,24 @@ const account = (id: string, name: string, provider: AgentAccount['provider'] = 
 const capability = (id: string, label: string, available = true): AgentCapability => ({ id, label, available })
 
 describe('groupProfiles', () => {
-  it('keeps the provider order, sorts profiles by name and adds providers only profiles know', () => {
+  it('lists Claude, Codex and Antigravity first, sorts profiles by name and adds providers only profiles know', () => {
     const groups = groupProfiles(
-      [capability('antigravity', 'Antigravity', false), capability('claude', 'Claude'), capability('codex', 'Codex')],
+      [capability('antigravity', 'Antigravity', false), capability('codex', 'Codex'), capability('claude', 'Claude')],
       [account('c2', 'team'), account('c1', 'Personal'), account('x1', 'Solo', 'future' as never), account('k1', 'Work', 'claude')],
     )
     expect(groups.map(group => [group.id, group.label, group.accounts.map(item => item.name)])).toEqual([
-      ['antigravity', 'Antigravity', []],
       ['claude', 'Claude', ['Work']],
       ['codex', 'Codex', ['Personal', 'team']],
+      ['antigravity', 'Antigravity', []],
       ['future', 'future', ['Solo']],
     ])
-    expect(groups[0].capability?.available).toBe(false)
+    expect(groups[2].capability?.available).toBe(false)
     expect(groups[3].capability).toBeUndefined()
+  })
+
+  it('puts other listed providers after the three, in API order', () => {
+    const groups = groupProfiles([capability('zed', 'Zed'), capability('antigravity', 'Antigravity'), capability('aider', 'Aider'), capability('claude', 'Claude')], [])
+    expect(groups.map(group => group.id)).toEqual(['claude', 'antigravity', 'zed', 'aider'])
   })
 
   it('breaks name ties by id so the order is stable', () => {
@@ -167,5 +172,54 @@ describe('validateAgentsSearch', () => {
     expect(validateAgentsSearch({ profile: 'codex-1', tab: 'usage' })).toEqual({ profile: 'codex-1', tab: 'usage' })
     expect(validateAgentsSearch({ profile: '', tab: 'bogus' })).toEqual({ profile: undefined, tab: undefined })
     expect(validateAgentsSearch({ profile: 7, tab: ['usage'] })).toEqual({ profile: undefined, tab: undefined })
+  })
+})
+
+describe('summarizeProviders', () => {
+  const groups = groupProfiles(
+    [{ id: 'claude', label: 'Claude', available: true, version: '2.1.296' }, { id: 'codex', label: 'Codex', available: true, version: '0.162.1' }, { id: 'antigravity', label: 'Antigravity', available: false, unavailable_reason: { message: 'agy is not installed' } }],
+    [
+      account('k1', 'work', 'claude', { auth_status: 'logged_in' }),
+      account('c1', 'Personal', 'codex', { auth_status: 'logged_in' }),
+      account('c2', 'Team', 'codex', { auth_status: 'logged_out' }),
+    ],
+  )
+  const usage: Record<string, AgentUsage> = {
+    c1: { account_id: 'c1', provider: 'codex', usage: { provider: 'codex', account_id: 'c1', fetched_at: '2026-10-12T11:58:00Z', limits: [] }, headline: { score: 0.4, next_reset: '2026-10-12T14:00:00Z' } },
+    c2: { account_id: 'c2', provider: 'codex', usage: { provider: 'codex', account_id: 'c2', fetched_at: '2026-10-12T11:59:30Z', limits: [] }, headline: { score: 0.1, low: true, next_reset: '2026-10-12T13:00:00Z' } },
+  }
+
+  it('counts sign-ins and running sessions per provider and finds the tightest headroom and next reset', () => {
+    const [claude, codex, antigravity] = summarizeProviders(groups, usage, new Map([['c1', 2], ['k1', 1]]), NOW)
+    expect(claude).toMatchObject({ id: 'claude', note: 'v2.1.296', profiles: 1, signedIn: 1, running: 1, tones: ['ok'] })
+    expect(claude.lowest).toBeUndefined()
+    expect(codex).toMatchObject({ profiles: 2, signedIn: 1, running: 2, tones: ['ok', 'bad'] })
+    expect(codex.lowest).toEqual({ name: 'Team', score: 0.1 })
+    expect(claude.windows).toEqual([])
+    expect(codex.nextReset).toEqual({ name: 'Team', at: '2026-10-12T13:00:00Z' })
+    expect(antigravity).toMatchObject({ available: false, note: 'agy is not installed', profiles: 0 })
+  })
+
+  it('reads the newest usage reading time', () => {
+    expect(usageReadAt(usage)).toBe('2026-10-12T11:59:30Z')
+    expect(usageReadAt({})).toBeUndefined()
+  })
+})
+
+describe('pooled plan windows', () => {
+  const limit = (id: string, label: string, remaining: number, resets?: string) => ({ id, label, remaining_fraction: remaining, resets_at: resets })
+  const groups = groupProfiles([{ id: 'codex', label: 'Codex', available: true }], [account('a', 'A'), account('b', 'B'), account('c', 'C')])
+  const usage: Record<string, AgentUsage> = {
+    a: { account_id: 'a', provider: 'codex', headline: { primary: limit('five_hour', '5h', 0.5, '2026-10-12T15:00:00Z'), secondary: limit('weekly', 'Weekly', 0.9) } },
+    b: { account_id: 'b', provider: 'codex', headline: { primary: limit('five_hour', '5h', 1, '2026-10-12T13:00:00Z'), secondary: limit('weekly', 'Weekly', 0.3) } },
+    c: { account_id: 'c', provider: 'codex', error: { code: 'unavailable', message: 'offline' } },
+  }
+
+  it('adds the remaining headroom of every profile that reports a window and keeps the soonest reset', () => {
+    const [codex] = summarizeProviders(groups, usage, new Map(), NOW)
+    expect(codex.windows).toEqual([
+      { slot: 'primary', label: '5h', remaining: 1.5, count: 2, fraction: 0.75, resetsAt: '2026-10-12T13:00:00Z' },
+      { slot: 'secondary', label: 'Weekly', remaining: 1.2, count: 2, fraction: 0.6 },
+    ])
   })
 })
