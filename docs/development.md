@@ -649,6 +649,12 @@ running holder (`Adopt`). Closing the API only disconnects. Tests use
 `agenthost.InProcess`, which serves holders from the test process so fake
 providers still apply.
 
+`agents.keep_running` in `web.json` (`GET`/`POST /api/settings/agents` with
+`{keep_running, revision}`, `409` on a stale revision; the answer adds
+`active_sessions`) only changes `bonsai web stop`: off, it stops the live
+holders before `ServeStop` (so the API records their end) and sweeps any
+survivor after it. API shutdown never stops holders, whatever the setting.
+
 Ended records are pruned when a holder starts: the newest 32 are kept, none
 older than a day. After its session ends the holder rewrites its record,
 broadcasts the final status, waits up to 10 s for its clients to disconnect,

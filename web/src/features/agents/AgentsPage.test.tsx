@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentProviders, stopAgent, type AgentAccount, type AgentCapability, type AgentUsage } from '../../api/agents'
 import { agentAccountsIfChanged, agentUsage, refreshAgentUsage } from '../../api/agentsOverview'
+import { loadAgentSettings } from '../../api/settings'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { projects } from '../../test/fixtures/projects'
 import { worktrees } from '../../test/fixtures/worktrees'
@@ -9,6 +10,7 @@ import type { Agent, Worktree } from '../../types'
 import { AgentsPage, type AgentsPageProps } from './AgentsPage'
 
 vi.mock('../../api/agents', async importOriginal => ({ ...await importOriginal<object>(), agentProviders: vi.fn(), stopAgent: vi.fn() }))
+vi.mock('../../api/settings', () => ({ loadAgentSettings: vi.fn(), saveAgentSettings: vi.fn() }))
 vi.mock('../../api/agentsOverview', async importOriginal => ({
   ...await importOriginal<object>(),
   agentAccountsIfChanged: vi.fn(), agentUsage: vi.fn(), refreshAgentUsage: vi.fn(),
@@ -68,6 +70,7 @@ beforeEach(() => {
   vi.mocked(agentAccountsIfChanged).mockResolvedValue({ accounts, etag: '"v1"' })
   vi.mocked(agentUsage).mockResolvedValue(usage)
   vi.mocked(refreshAgentUsage).mockResolvedValue([])
+  vi.mocked(loadAgentSettings).mockResolvedValue({ revision: 1, keep_running: true, active_sessions: 3 })
   vi.mocked(stopAgent).mockResolvedValue({} as never)
 })
 afterEach(() => { cleanup(); vi.clearAllMocks() })
@@ -174,6 +177,15 @@ describe('status', () => {
     expect(summary).toHaveTextContent('Lowest12%')
     expect(summary).toHaveTextContent('Next reset2h 15m')
     expect(within(screen.getByRole('button', { name: /Personal/ })).getByText('2 running')).toBeInTheDocument()
+  })
+
+  it('warns that running agents stop with Bonsai web unless they are kept running', async () => {
+    await renderPage()
+    expect(screen.queryByRole('note', { name: 'Agents stop with Bonsai web' })).toBeNull()
+    cleanup()
+    vi.mocked(loadAgentSettings).mockResolvedValue({ revision: 1, keep_running: false, active_sessions: 3 })
+    await renderPage()
+    expect(await screen.findByRole('note', { name: 'Agents stop with Bonsai web' })).toHaveTextContent('3 agents are running — they will be stopped when Bonsai web stops.')
   })
 
   it('shows a mini usage bar on the profile row, coloured by how much is left', async () => {

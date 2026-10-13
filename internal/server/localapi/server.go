@@ -61,7 +61,8 @@ type Config struct {
 	WebhookSecret  []byte
 	// WebConfigPath, WebStatePath and WebHome (web.json, web-state.json and
 	// the bonsai web daemon home) let the receiver's live controller manage
-	// the repository hooks. Empty paths leave the hooks alone.
+	// the repository hooks. Empty paths leave the hooks alone. WebConfigPath
+	// also holds the agent settings; Run fills it in.
 	WebConfigPath string
 	WebStatePath  string
 	WebHome       string
@@ -86,6 +87,8 @@ type Server struct {
 	eventHub      *eventHub
 	stateSync     *stateSync
 	rootsPath     string
+	// webConfigPath is web.json, which holds the agent settings.
+	webConfigPath string
 	editors       editors.Discovery
 	ui            http.Handler
 	// live is the webhook receiver and liveHooks its hook controller; both
@@ -161,6 +164,7 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 		securityMode:  cfg.SecurityMode,
 		registry:      registry,
 		rootsPath:     rootsPath,
+		webConfigPath: cfg.WebConfigPath,
 		editors:       editors.Current(),
 		sessions:      newSessionStore(),
 		eventHub:      events,
@@ -223,6 +227,7 @@ func (s *Server) routes() *http.ServeMux {
 	s.registerAgentRoutes(mux)
 	s.registerSettingsRoutes(mux)
 	s.registerEditorRoutes(mux)
+	s.registerAgentSettingsRoutes(mux)
 	s.registerProjectRoutes(mux)
 	s.registerGitRoutes(mux)
 	s.registerProcessRoutes(mux)
@@ -371,6 +376,11 @@ func Run(cfg Config) error {
 			cfg.SnapshotCacheDir = filepath.Join(home, "warm-start")
 		} else {
 			log.Printf("Warm start is off: %v", err)
+		}
+	}
+	if cfg.WebConfigPath == "" {
+		if path, err := config.WebConfigPath(); err == nil {
+			cfg.WebConfigPath = path
 		}
 	}
 	if cfg.AgentHosts == (agenthost.Paths{}) {

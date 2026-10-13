@@ -371,6 +371,7 @@ const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
 }
 
 export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false, apiOrigin = DEFAULT_API_ORIGIN, agentsTab: AgentsTabFixture = { enabled: false }) {
+  let agentSettings = { revision: 1, keep_running: false, active_sessions: 0 }
   const rootSettings: {
     version: number
     revision: number
@@ -777,6 +778,18 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     }
     if (path === '/api/settings/updates') {
       await route.fulfill({ json: { mode: 'standard', standard_interval_seconds: 120, live: null } })
+      return
+    }
+    if (path === '/api/settings/agents') {
+      if (request.method() === 'POST') {
+        const body = request.postDataJSON() as { keep_running: boolean; revision: number }
+        if (body.revision !== agentSettings.revision) {
+          await route.fulfill({ status: 409, json: { error: { code: 'settings_update_failed', message: 'web settings changed; reload and try again' } } })
+          return
+        }
+        agentSettings = { ...agentSettings, keep_running: body.keep_running, revision: agentSettings.revision + 1 }
+      }
+      await route.fulfill({ json: agentSettings })
       return
     }
     if (path === '/api/settings/project-selection' && request.method() === 'POST') {

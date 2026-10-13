@@ -224,7 +224,7 @@ bonsai web setup                # guided projects, browser and update settings
 bonsai web status
 bonsai web logs api
 bonsai web restart api
-bonsai web stop
+bonsai web stop [--stop-agents|--keep-agents]  # agents stop too unless kept running
 bonsai agent account add <provider> <name>          # new Claude Code, Codex or Antigravity profile
 bonsai agent account login <account>                # sign a profile in again
 bonsai agent account list                           # profiles, sign-in state and identity
@@ -339,7 +339,10 @@ to loopback. Production accepts its exact local origins only; capability
 sessions protect privileged HTTP and WebSocket requests.
 
 `bonsai web --attach` shows the log viewer. Detaching leaves the app running;
-`bonsai web stop` stops its API and tunnel. Retained logs remain readable.
+`bonsai web stop` stops its API and tunnel, and the running agent sessions
+unless **Settings → Agents → Keep agents running when Bonsai web stops** is on
+(it asks first on a terminal). Restarting or upgrading the API never stops
+agents. Retained logs remain readable.
 The hidden contributor stack has its own development services and explicit
 loopback frontend origin; see [docs/development.md](docs/development.md).
 
