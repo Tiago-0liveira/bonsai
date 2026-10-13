@@ -3,6 +3,7 @@ package agentterminal
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
@@ -17,11 +18,20 @@ type StreamFrame[S any] struct {
 	Offset uint64 `json:"offset"`
 	Data   []byte `json:"data,omitempty"`
 	Status *S     `json:"status,omitempty"`
+	// Writer is set on writer frames, sent to a subscriber whose control
+	// changed: whether it now writes.
+	Writer *bool `json:"writer,omitempty"`
+}
+
+// StreamClient is one subscriber as Clients reports it.
+type StreamClient struct {
+	Client string `json:"client"`
+	Writer bool   `json:"writer"`
 }
 
 // Stream is the bounded output buffer of one terminal with its subscribers.
-// The first attachment writes; the others observe until the writer detaches.
-// Input and resize reach the process bound by RunInStream; between processes
+// The first attachment writes; the others observe until the writer detaches
+// or one of them takes control. Input and resize reach the process bound by RunInStream; between processes
 // input is refused and the last size is kept for the next one.
 type Stream[S any] struct {
 	mu          sync.Mutex
@@ -29,15 +39,17 @@ type Stream[S any] struct {
 	head        int
 	offset      uint64
 	subscribers map[uint64]chan StreamFrame[S]
+	clients     map[uint64]string
 	writer      uint64
 	next        uint64
 	proc        *process
 	cols, rows  int
+	lastOutput  time.Time
 }
 
 // NewStream returns an empty stream whose first process starts at cols×rows.
 func NewStream[S any](cols, rows int) *Stream[S] {
-	return &Stream[S]{subscribers: map[uint64]chan StreamFrame[S]{}, cols: cols, rows: rows}
+	return &Stream[S]{subscribers: map[uint64]chan StreamFrame[S]{}, clients: map[uint64]string{}, cols: cols, rows: rows}
 }
 
 // Write appends terminal output and sends it to every subscriber.
@@ -50,6 +62,7 @@ func (s *Stream[S]) Write(b []byte) (int, error) {
 	data := append([]byte(nil), b...)
 	offset := s.offset
 	s.offset += uint64(len(b))
+	s.lastOutput = time.Now().UTC()
 	if len(b) >= OutputLimit {
 		s.output = append(s.output[:0], b[len(b)-OutputLimit:]...)
 		s.head = 0
@@ -83,18 +96,44 @@ func (s *Stream[S]) Offset() uint64 {
 	return s.offset
 }
 
+// LastOutput is when output last arrived; zero before any.
+func (s *Stream[S]) LastOutput() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastOutput
+}
+
 // broadcast drops subscribers that cannot keep up. Callers hold s.mu.
 func (s *Stream[S]) broadcast(f StreamFrame[S]) {
-	for id, ch := range s.subscribers {
-		select {
-		case ch <- f:
-		default:
-			close(ch)
-			delete(s.subscribers, id)
-			if s.writer == id {
-				s.writer = 0
-			}
-		}
+	for id := range s.subscribers {
+		s.send(id, f)
+	}
+}
+
+// send delivers f to one subscriber, dropping it when it cannot keep up.
+// Callers hold s.mu.
+func (s *Stream[S]) send(id uint64, f StreamFrame[S]) {
+	ch, ok := s.subscribers[id]
+	if !ok {
+		return
+	}
+	select {
+	case ch <- f:
+	default:
+		s.remove(id)
+	}
+}
+
+// remove closes a subscriber and releases writing if it held it. Callers
+// hold s.mu.
+func (s *Stream[S]) remove(id uint64) {
+	if ch, ok := s.subscribers[id]; ok {
+		close(ch)
+		delete(s.subscribers, id)
+		delete(s.clients, id)
+	}
+	if s.writer == id {
+		s.writer = 0
 	}
 }
 
@@ -102,12 +141,24 @@ func (s *Stream[S]) broadcast(f StreamFrame[S]) {
 // first when cursor is outside the retained range) followed by status.
 // Replay and subscription are atomic: no output is missed or repeated.
 func (s *Stream[S]) Attach(cursor uint64, status S) (uint64, bool, []StreamFrame[S], <-chan StreamFrame[S]) {
+	return s.AttachAs(cursor, status, "", false)
+}
+
+// AttachAs is Attach for a named client (such as web or cli, reported by
+// Clients). With take the subscriber writes even when another one does; the
+// previous writer gets a writer frame.
+func (s *Stream[S]) AttachAs(cursor uint64, status S, client string, take bool) (uint64, bool, []StreamFrame[S], <-chan StreamFrame[S]) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.next++
 	subscriber := s.next
 	ch := make(chan StreamFrame[S], 64)
 	s.subscribers[subscriber] = ch
+	s.clients[subscriber] = client
+	if take && s.writer != 0 {
+		s.sendWriter(s.writer, false)
+		s.writer = 0
+	}
 	if s.writer == 0 {
 		s.writer = subscriber
 	}
@@ -128,13 +179,47 @@ func (s *Stream[S]) Attach(cursor uint64, status S) (uint64, bool, []StreamFrame
 func (s *Stream[S]) Detach(subscriber uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if ch, ok := s.subscribers[subscriber]; ok {
-		close(ch)
-		delete(s.subscribers, subscriber)
+	s.remove(subscriber)
+}
+
+// Take makes subscriber the writer. The previous writer and subscriber each
+// get a writer frame; taking control already held changes nothing.
+func (s *Stream[S]) Take(subscriber uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.subscribers[subscriber]; !ok {
+		return fmt.Errorf("terminal subscriber not attached")
 	}
 	if s.writer == subscriber {
-		s.writer = 0
+		return nil
 	}
+	if s.writer != 0 {
+		s.sendWriter(s.writer, false)
+	}
+	s.writer = subscriber
+	s.sendWriter(subscriber, true)
+	return nil
+}
+
+// Clients lists the subscribers in attachment order.
+func (s *Stream[S]) Clients() []StreamClient {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]uint64, 0, len(s.subscribers))
+	for id := range s.subscribers {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	out := make([]StreamClient, len(ids))
+	for i, id := range ids {
+		out[i] = StreamClient{Client: s.clients[id], Writer: s.writer == id}
+	}
+	return out
+}
+
+// sendWriter tells one subscriber whether it writes. Callers hold s.mu.
+func (s *Stream[S]) sendWriter(id uint64, writer bool) {
+	s.send(id, StreamFrame[S]{Type: "writer", Offset: s.offset, Writer: &writer})
 }
 
 // DetachAll closes every subscriber; their connections end.
@@ -145,11 +230,9 @@ func (s *Stream[S]) DetachAll() {
 }
 
 func (s *Stream[S]) detachAll() {
-	for id, ch := range s.subscribers {
-		close(ch)
-		delete(s.subscribers, id)
+	for id := range s.subscribers {
+		s.remove(id)
 	}
-	s.writer = 0
 }
 
 // Release detaches everyone and frees the buffer. Offsets keep counting, so a

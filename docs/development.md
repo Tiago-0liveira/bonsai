@@ -613,6 +613,49 @@ home was confirmed removed. The CLI reported that the profile was not signed
 in, so an authenticated model conversation remains unverified. No login or
 profile settings were changed for this check.
 
+## Agent hosts
+
+Each agent session runs in its own holder, `bonsai __agent-host`
+(`internal/core/agenthost`), started detached (new session, stdio on
+`/dev/null`) so it does not depend on the process that launched it. The
+holder owns the session's PTY, its 2 MiB terminal stream and the whole
+lifecycle `agentterminal.RunSession` runs: `PrepareSession`, the process,
+`FinalizeSession` and the session store's cleanup. A per-agent holder rather
+than one shared agent daemon keeps a crash to one session, and lets an
+upgrade leave running sessions alone: an old holder keeps its own binary and
+protocol version.
+
+The launch spec, prompt included, reaches the holder on stdin and is never
+written to disk or argv. The holder answers one JSON line on stdout (`{ok}` or
+`{error}`) once its socket serves, then points stdout at `/dev/null`.
+`BONSAI_DAEMON_BIN` overrides the binary, as for daemons.
+
+| File | Purpose |
+| --- | --- |
+| `<socket dir>/agents/<session>.sock` | The holder's socket (0600, directory 0700); the socket dir is `$XDG_RUNTIME_DIR/bonsai`, else `/tmp/bonsai` |
+| `<web home>/agents/<session>.json` | Its record (0600, atomic): `pid`, `socket`, `generation`, `binary_version`, `protocol`, `work_dir`, the session summary, `last_output_at`; rewritten on every state change |
+| `<web home>/agents/<session>.lock` | Held by the holder for its lifetime: a record whose lock is free belongs to an ended holder, and one still showing an active session reads as failed, `Agent host exited unexpectedly.` |
+
+Ended records are pruned when a holder starts: the newest 32 are kept, none
+older than a day. After its session ends the holder rewrites its record,
+broadcasts the final status, waits up to 10 s for its clients to disconnect,
+then exits. SIGTERM stops the session (SIGTERM to the process group, SIGKILL
+after 2 s).
+
+The holder protocol (version 1) is newline-delimited JSON. A client sends
+`{type:"hello", version, mode, offset, generation, take, client}` first:
+`terminal` mode attaches to the stream (replay from `offset` when `generation`
+matches the holder's, else from the start; `take` writes at once), `status`
+mode receives summaries only and is never the writer. The holder answers
+`{type:"ready", version, generation, writer}` (status mode adds the summary),
+then the terminal stream's `output`, `gap` and `status` frames, and
+`{type:"writer", writer}` to the clients whose control changed. Requests:
+`input`, `resize` (writer only, else an `error` frame), `take`, `stop`
+(optional `error` to record on the session) and `info`, answered by
+`{type:"info", info:{summary, pid, clients:[{client, writer}], last_output_at,
+cols, rows}}`. A hello of another version gets an `error` frame; clients check
+the record's `protocol` first and leave such a holder alone.
+
 ## Release and deferred architecture
 
 See [releasing.md](releasing.md) for embedded release builds and archive smoke

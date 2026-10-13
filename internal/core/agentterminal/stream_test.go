@@ -193,3 +193,52 @@ func TestRunInStreamCanceledBeforeStart(t *testing.T) {
 		t.Fatalf("%d %v", code, err)
 	}
 }
+
+func TestStreamTakeSendsWriterFrames(t *testing.T) {
+	s := NewStream[streamStatus](80, 24)
+	if !s.LastOutput().IsZero() {
+		t.Fatal("output time before any output")
+	}
+	_, _ = s.Write([]byte("x"))
+	if s.LastOutput().IsZero() {
+		t.Fatal("output time not tracked")
+	}
+	web, writer, _, webFrames := s.AttachAs(0, streamStatus{}, "web", false)
+	cli, observer, _, cliFrames := s.AttachAs(0, streamStatus{}, "cli", false)
+	if !writer || observer {
+		t.Fatal("first attachment writes")
+	}
+	if got := s.Clients(); len(got) != 2 || got[0] != (StreamClient{"web", true}) || got[1] != (StreamClient{"cli", false}) {
+		t.Fatalf("clients %+v", got)
+	}
+	if err := s.Take(cli); err != nil {
+		t.Fatal(err)
+	}
+	if f := <-webFrames; f.Type != "writer" || *f.Writer {
+		t.Fatalf("old writer frame %+v", f)
+	}
+	if f := <-cliFrames; f.Type != "writer" || !*f.Writer {
+		t.Fatalf("new writer frame %+v", f)
+	}
+	if s.Resize(web, 90, 30) == nil || s.Resize(cli, 90, 30) != nil {
+		t.Fatal("control did not move")
+	}
+	if err := s.Take(cli); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case f := <-cliFrames:
+		t.Fatalf("taking held control sent %+v", f)
+	default:
+	}
+	_, taken, _, _ := s.AttachAs(0, streamStatus{}, "cli", true)
+	if !taken {
+		t.Fatal("take on attach")
+	}
+	if f := <-cliFrames; f.Type != "writer" || *f.Writer {
+		t.Fatalf("taken writer frame %+v", f)
+	}
+	if s.Take(999) == nil {
+		t.Fatal("took control for an unknown subscriber")
+	}
+}
