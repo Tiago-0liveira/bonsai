@@ -565,12 +565,13 @@ func TestAgentSummaryLaunchDetailsAndEvents(t *testing.T) {
 	}
 
 	// Terminal bytes never announce a change.
-	subscriber, _, _, frames, err := s.agents.manager.Attach("repo", summary.ID, 0)
+	attachment, err := s.agents.manager.Attach("repo", summary.ID, 0, "", "web")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.agents.manager.Detach(summary.ID, subscriber)
-	if err := s.agents.manager.Input(summary.ID, subscriber, []byte("hello\n")); err != nil {
+	defer attachment.Close()
+	frames := attachment.Frames
+	if err := attachment.Input([]byte("hello\n")); err != nil {
 		t.Fatal(err)
 	}
 	echoed := ""

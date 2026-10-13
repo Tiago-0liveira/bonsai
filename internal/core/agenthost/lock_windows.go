@@ -13,3 +13,5 @@ func lockFile(string) (*os.File, error) {
 }
 
 func held(string) bool { return false }
+
+func terminate(int) error { return fmt.Errorf("agent hosts are unsupported on this platform") }

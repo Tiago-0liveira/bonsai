@@ -42,7 +42,7 @@ func TestEventBootstrapSendsTheActiveProjectBeforeLargeBackgroundProjects(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.agents.manager.Close()
+	defer s.agents.manager.Close(true, 0)
 	// Background projects with thousands of worktrees each.
 	for _, id := range []string{"a", "b"} {
 		s.stateSync.commit(id, "local", func(snapshot *browserSnapshot) {

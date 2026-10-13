@@ -3,10 +3,10 @@
 package agentterminal
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
@@ -85,30 +85,15 @@ func TestPTYChildSeesTerminalColorEnvironment(t *testing.T) {
 	t.Setenv("FORCE_COLOR", "1")
 	t.Setenv("CLICOLOR_FORCE", "1")
 	t.Setenv("NO_COLOR", "1")
-	m, _, account, _ := testManager(t, `printf 'ENV:%s:%s:%s:%s:%s\n' "$TERM" "$COLORTERM" "${FORCE_COLOR-unset}" "${CLICOLOR_FORCE-unset}" "$NO_COLOR"`)
-	s, err := m.Start("project", "tree", account, "", t.TempDir(), 80, 24)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, replay, frames, err := m.Attach("project", s.ID, 0)
-	if err != nil {
+	stream := NewStream[streamStatus](80, 24)
+	_, _, _, frames := stream.Attach(0, streamStatus{})
+	prepared := agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", `printf 'ENV:%s:%s:%s:%s:%s\n' "$TERM" "$COLORTERM" "${FORCE_COLOR-unset}" "${CLICOLOR_FORCE-unset}" "$NO_COLOR"`}, Dir: t.TempDir()}
+	if _, err := RunInStream(context.Background(), stream, prepared, 80, 24); err != nil {
 		t.Fatal(err)
 	}
 	var output strings.Builder
-	done := false
-	for _, f := range replay {
-		output.Write(f.Data)
-		done = done || (f.Type == "status" && f.Status != nil && !f.Status.Active())
-	}
-	timeout := time.After(5 * time.Second)
-	for !done {
-		select {
-		case f := <-frames:
-			output.Write(f.Data)
-			done = f.Type == "status" && f.Status != nil && !f.Status.Active()
-		case <-timeout:
-			t.Fatalf("no final status; output %q", output.String())
-		}
+	for len(frames) > 0 {
+		output.Write((<-frames).Data)
 	}
 	if !strings.Contains(output.String(), "ENV:xterm-256color:truecolor:unset:unset:1") {
 		t.Fatalf("unexpected child environment: %q", output.String())

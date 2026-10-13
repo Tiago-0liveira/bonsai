@@ -15,22 +15,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 )
 
-type testProvider struct {
-	agents.Provider
-	script string
-}
-
-func (p *testProvider) ID() agents.ProviderID { return "fake" }
-func (p *testProvider) Capabilities() agents.Capabilities {
-	return agents.Capabilities{Interactive: true, MultiAccount: true, ConcurrentSameAccount: true, ConcurrentCrossAccount: true}
-}
-func (p *testProvider) PrepareSession(_ context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
-	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", p.script}, Dir: r.Session.WorkDir, EnvSet: map[string]string{"HOME": r.Session.HomeDir}}, nil
-}
-func (p *testProvider) FinalizeSession(context.Context, agents.FinalizeSessionRequest) error {
-	return nil
-}
-
 // testPaths keeps sockets under a short directory: t.TempDir paths can pass
 // the Unix socket path limit.
 func testPaths(t *testing.T) Paths {
@@ -55,7 +39,7 @@ func newFixture(t *testing.T, script string) fixture {
 		t.Fatal(err)
 	}
 	id, _ := agents.NewAccountID()
-	account := agents.Account{ID: id, Provider: "fake", Name: "fixture"}
+	account := agents.Account{ID: id, Provider: testProviderID, Name: "fixture"}
 	if err := accounts.Create(account); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +48,7 @@ func newFixture(t *testing.T, script string) fixture {
 		t.Fatal(err)
 	}
 	registry := agents.NewRegistry()
-	if err := registry.Register(&testProvider{script: script}); err != nil {
+	if err := registry.Register(&testProvider{script: script, capabilities: agents.Capabilities{Interactive: true}}); err != nil {
 		t.Fatal(err)
 	}
 	return fixture{deps: Deps{Accounts: accounts, Sessions: sessions, Registry: registry, Paths: testPaths(t), Linger: 200 * time.Millisecond}, account: account}
@@ -77,7 +61,7 @@ func (f fixture) start(t *testing.T) (Record, <-chan error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := Spec{Summary: agentterminal.Summary{ID: string(runtime.ID), ProjectID: "project", WorktreeID: "tree", AccountID: f.account.ID, Provider: "fake", Name: "fixture", State: "starting", CreatedAt: time.Now().UTC()}, WorkDir: runtime.WorkDir, Cols: 80, Rows: 24}
+	spec := Spec{Summary: agentterminal.Summary{ID: string(runtime.ID), ProjectID: "project", WorktreeID: "tree", AccountID: f.account.ID, Provider: testProviderID, Name: "fixture", State: "starting", CreatedAt: time.Now().UTC()}, WorkDir: runtime.WorkDir, Cols: 80, Rows: 24}
 	ready := make(chan error, 1)
 	done := make(chan error, 1)
 	exited := make(chan struct{})

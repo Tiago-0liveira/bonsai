@@ -23,32 +23,69 @@ func (s *Server) agentTerminal(w http.ResponseWriter, r *http.Request) {
 	serveTerminal(s, w, r, func() (terminalEndpoint[agentterminal.Summary], bool) {
 		summary, ok := manager.Get(project, id)
 		if !ok {
-			return terminalEndpoint[agentterminal.Summary]{}, false
+			return nil, false
 		}
 		if _, err := s.agentWorktree(r, summary.WorktreeID); err != nil {
-			return terminalEndpoint[agentterminal.Summary]{}, false
+			return nil, false
 		}
 		if _, err := s.agents.runtime.Accounts.Get(summary.AccountID); err != nil {
-			return terminalEndpoint[agentterminal.Summary]{}, false
+			return nil, false
 		}
-		return terminalEndpoint[agentterminal.Summary]{
-			attach: func(cursor uint64) (uint64, bool, []agentterminal.Frame, <-chan agentterminal.Frame, error) {
-				return manager.Attach(project, id, cursor)
-			},
-			detach: func(subscriber uint64) { manager.Detach(id, subscriber) },
-			input:  func(subscriber uint64, data []byte) error { return manager.Input(id, subscriber, data) },
-			resize: func(subscriber uint64, cols, rows int) error { return manager.Resize(id, subscriber, cols, rows) },
+		// The holder owns the stream, so its generation, not the API's epoch,
+		// tells a reconnecting browser whether its offset still applies.
+		return func(cursor uint64, generation string) (terminalAttachment[agentterminal.Summary], error) {
+			a, err := manager.Attach(project, id, cursor, generation, "web")
+			if err != nil {
+				return terminalAttachment[agentterminal.Summary]{}, err
+			}
+			return terminalAttachment[agentterminal.Summary]{
+				generation: a.Generation,
+				writer:     a.Writer(),
+				replay:     a.Replay,
+				frames:     a.Frames,
+				detach:     a.Close,
+				input:      a.Input,
+				resize:     a.Resize,
+			}, nil
 		}, true
 	})
 }
 
-// terminalEndpoint is one terminal stream a websocket attaches to: an agent
-// session or a setup job.
-type terminalEndpoint[S any] struct {
-	attach func(cursor uint64) (uint64, bool, []agentterminal.StreamFrame[S], <-chan agentterminal.StreamFrame[S], error)
-	detach func(subscriber uint64)
-	input  func(subscriber uint64, data []byte) error
-	resize func(subscriber uint64, cols, rows int) error
+// terminalEndpoint attaches a websocket to one terminal stream (an agent
+// session or a setup job) at cursor; generation is the one the browser last
+// saw.
+type terminalEndpoint[S any] func(cursor uint64, generation string) (terminalAttachment[S], error)
+
+// terminalAttachment is one websocket's attachment to a terminal stream.
+type terminalAttachment[S any] struct {
+	generation string
+	writer     bool
+	replay     []agentterminal.StreamFrame[S]
+	frames     <-chan agentterminal.StreamFrame[S]
+	detach     func()
+	input      func(data []byte) error
+	resize     func(cols, rows int) error
+}
+
+// streamAttachment attaches to an in-process stream, which lives as long as
+// the API: its generation is the API's epoch.
+func streamAttachment[S any](epoch string, cursor uint64, generation string, attach func(uint64) (uint64, bool, []agentterminal.StreamFrame[S], <-chan agentterminal.StreamFrame[S], error), detach func(uint64), input func(uint64, []byte) error, resize func(uint64, int, int) error) (terminalAttachment[S], error) {
+	if generation != "" && generation != epoch {
+		cursor = 0
+	}
+	subscriber, writer, replay, frames, err := attach(cursor)
+	if err != nil {
+		return terminalAttachment[S]{}, err
+	}
+	return terminalAttachment[S]{
+		generation: epoch,
+		writer:     writer,
+		replay:     replay,
+		frames:     frames,
+		detach:     func() { detach(subscriber) },
+		input:      func(data []byte) error { return input(subscriber, data) },
+		resize:     func(cols, rows int) error { return resize(subscriber, cols, rows) },
+	}, nil
 }
 
 // serveTerminal runs the terminal websocket protocol (version 1): authenticate,
@@ -81,15 +118,12 @@ func serveTerminal[S any](s *Server, w http.ResponseWriter, r *http.Request, res
 	if !ok {
 		return
 	}
-	generation := s.stateSync.epoch
-	if attach.Generation != "" && attach.Generation != generation {
-		attach.Offset = 0
-	}
-	subscriber, writer, replay, frames, err := endpoint.attach(attach.Offset)
+	attachment, err := endpoint(attach.Offset, attach.Generation)
 	if err != nil {
 		return
 	}
-	defer endpoint.detach(subscriber)
+	defer attachment.detach()
+	generation, writer, replay, frames := attachment.generation, attachment.writer, attachment.replay, attachment.frames
 	send := func(value any) error {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		return conn.WriteJSON(value)
@@ -124,11 +158,11 @@ func serveTerminal[S any](s *Server, w http.ResponseWriter, r *http.Request, res
 			}
 			switch message.Type {
 			case "input":
-				if len(message.Data) > agentterminal.InputLimit || endpoint.input(subscriber, message.Data) != nil {
+				if len(message.Data) > agentterminal.InputLimit || attachment.input(message.Data) != nil {
 					return
 				}
 			case "resize":
-				if endpoint.resize(subscriber, message.Cols, message.Rows) != nil {
+				if attachment.resize(message.Cols, message.Rows) != nil {
 					return
 				}
 			default:

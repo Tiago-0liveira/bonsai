@@ -590,14 +590,18 @@ Lines that differ only by an effort suffix in both the ID and the label
 default effort is the first listed; a lone `-medium` model stays whole. A launch
 composes model and effort into one `--model <id>`; agy's `--effort` is never used.
 
-The local API owns these sessions, independently of request contexts and browser
-connections. Closing a terminal or refreshing detaches; reconnecting resumes the
-same process. Explicit Stop and graceful API shutdown terminate the process group,
-reap it, reconcile credentials using a fresh cleanup context, and delete its
-isolated session home. API restart never automatically relaunches an agent.
-Durable mutation records recover interrupted sessions as failed; their former
-terminal output is not persisted. Abrupt API/OS termination can leave temporary
-homes requiring inspection; graceful cleanup is the supported path.
+Each session runs in its own [agent host](#agent-hosts), independently of
+request contexts, browser connections and the API itself. Closing a terminal or
+refreshing detaches; reconnecting resumes the same process. Explicit Stop
+terminates the process group, reaps it, reconciles credentials using a fresh
+cleanup context, and deletes its isolated session home. API shutdown, restart
+or a crash only disconnects: the next API adopts every running holder, so its
+sessions stay active in the journal and the Agents tab, and a browser holding
+the holder's generation resumes at its offset. API restart never relaunches an
+agent. Journal entries without a holder record (from before agent hosts) are
+recovered as failed; a holder that died mid-session reads as failed,
+`Agent host exited unexpectedly.` Terminal output lives in the holder only, so
+it is gone once an ended session's holder exits.
 
 Native PTYs are implemented for Linux, macOS, FreeBSD, OpenBSD, NetBSD and
 DragonFly using `github.com/creack/pty` v1.1.24. Linux has runtime coverage here;
@@ -607,7 +611,7 @@ The adapter launches the provider's executable and argument vector directly,
 with its isolated environment and working directory; there is no generic shell
 or browser-supplied executable/path option.
 
-Limits: 16 active sessions, 32 retained completed sessions, 2 MiB of recent output
+Limits: 16 active sessions (adopted ones included), 32 retained completed sessions, 2 MiB of recent output
 per session, 64 KiB per input frame, and 1–500 terminal rows/columns. Only one
 attachment writes; other attachments observe. After the writer disconnects, a
 new attachment can claim writing. Slow readers are disconnected. Bounded replay
@@ -631,6 +635,8 @@ The dedicated terminal stream uses version 1 JSON envelopes:
   `{type:"attach", offset, generation}` within the authentication deadline.
   Tokens never appear in URLs.
 - Server sends `{type:"ready", version:1, generation, writer}` before replay.
+  An agent's generation is its holder's, so it survives API restarts; a setup
+  job's is the API epoch.
 - Output is `{type:"output", offset, data}` where `data` is base64 bytes and
   `offset` is the absolute starting byte offset. Replay and subscription are
   registered atomically. The browser writes decoded bytes directly to xterm.
@@ -685,6 +691,13 @@ written to disk or argv. The holder answers one JSON line on stdout (`{ok}` or
 | `<socket dir>/agents/<session>.sock` | The holder's socket (0600, directory 0700); the socket dir is `$XDG_RUNTIME_DIR/bonsai`, else `/tmp/bonsai` |
 | `<web home>/agents/<session>.json` | Its record (0600, atomic): `pid`, `socket`, `generation`, `binary_version`, `protocol`, `work_dir`, the session summary, `last_output_at`; rewritten on every state change |
 | `<web home>/agents/<session>.lock` | Held by the holder for its lifetime: a record whose lock is free belongs to an ended holder, and one still showing an active session reads as failed, `Agent host exited unexpectedly.` |
+
+The API's `agenthost.Manager` starts a holder per session, follows each over a
+status connection (redialing while the holder runs), proxies each browser
+terminal websocket to its own holder connection, and on start adopts every
+running holder (`Adopt`). Closing the API only disconnects. Tests use
+`agenthost.InProcess`, which serves holders from the test process so fake
+providers still apply.
 
 Ended records are pruned when a holder starts: the newest 32 are kept, none
 older than a day. After its session ends the holder rewrites its record,

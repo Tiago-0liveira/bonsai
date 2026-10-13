@@ -251,7 +251,7 @@ func TestWarmStartBootstrapServesRestoredSnapshotWhileProviderIsBlocked(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.agents.manager.Close()
+	defer s.agents.manager.Close(true, 0)
 	defer s.stateSync.closeWarm(time.Second)
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()

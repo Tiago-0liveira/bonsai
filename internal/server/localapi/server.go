@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentsetup"
-	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/editors"
 	"io/fs"
@@ -65,6 +65,9 @@ type Config struct {
 	WebConfigPath string
 	WebStatePath  string
 	WebHome       string
+	// AgentHosts locates the agent holders' records and sockets. Zero paths
+	// turn agent sessions off; Run fills in the user's.
+	AgentHosts agenthost.Paths
 	// SnapshotCacheDir holds the warm-start snapshot documents, one
 	// namespace per roots file, launch repository and security mode. Empty
 	// turns warm start off; Run fills in the user state directory.
@@ -190,7 +193,7 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 		return nil, err
 	}
 	s.agents = &agentAPI{runtime: runtime, registry: s.registry}
-	s.agents.manager = agentterminal.New(runtime.Accounts, runtime.Sessions, runtime.Registry, s.publishAgents)
+	s.agents.manager = agenthost.NewManager(runtime.Accounts, runtime.Sessions, runtime.Registry, cfg.AgentHosts, nil, s.publishAgents)
 	s.agents.setup = agentsetup.New(runtime.AccountService, s.publishAgentsChanged)
 	if err := s.recoverAgents(); err != nil {
 		return nil, err
@@ -199,7 +202,9 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 }
 
 // Close ends web sign-ins (killing their login processes and removing
-// half-created profiles), then stops agent sessions.
+// half-created profiles), then disconnects from the agent holders. Their
+// sessions keep running: the next API adopts them, and `bonsai web stop`
+// stops them unless they are kept running.
 func (s *Server) Close() {
 	if s.agents == nil {
 		return
@@ -207,7 +212,7 @@ func (s *Server) Close() {
 	if s.agents.setup != nil {
 		s.agents.setup.Close()
 	}
-	s.agents.manager.Close()
+	s.agents.manager.Close(true, 0)
 }
 
 func (s *Server) routes() *http.ServeMux {
@@ -366,6 +371,13 @@ func Run(cfg Config) error {
 			cfg.SnapshotCacheDir = filepath.Join(home, "warm-start")
 		} else {
 			log.Printf("Warm start is off: %v", err)
+		}
+	}
+	if cfg.AgentHosts == (agenthost.Paths{}) {
+		if paths, err := agenthost.DefaultPaths(); err == nil {
+			cfg.AgentHosts = paths
+		} else {
+			log.Printf("Agent sessions are off: %v", err)
 		}
 	}
 	s, err := New(cfg)
