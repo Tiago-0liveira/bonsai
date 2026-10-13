@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { Square, Wifi, WifiOff } from 'lucide-react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
-import { connectAgentTerminal, type TerminalConnection } from '../../api/agentTerminal'
+import { agentTerminalPath, connectTerminal, type TerminalConnection } from '../../api/agentTerminal'
 import { stopAgent } from '../../api/agents'
 import type { Agent } from '../../types'
 import { TERMINAL_FONT, bindTerminalAppearance, terminalTheme } from '../../theme/terminal'
@@ -23,7 +23,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
     if (!element || !agent.projectId) return
     let terminal: Terminal | undefined
     let fit: FitAddon | undefined
-    let controller: ReturnType<typeof connectAgentTerminal> | undefined
+    let controller: ReturnType<typeof connectTerminal> | undefined
     let input: { dispose(): void } | undefined
     let unbind: (() => void) | undefined
     let disposed = false
@@ -43,7 +43,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
         terminal.open(element)
         unbind = bindTerminalAppearance(terminal, resize)
         resize()
-        controller = connectAgentTerminal(agent.projectId!, agent.id, {
+        controller = connectTerminal(agentTerminalPath(agent.projectId!, agent.id), {
           connection: setConnection,
           output: bytes => terminal?.write(bytes),
           reset: gap => { terminal?.reset(); if (gap) terminal?.writeln('[Recent output was truncated; terminal display may be incomplete.]') },

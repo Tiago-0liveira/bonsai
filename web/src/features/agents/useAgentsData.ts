@@ -24,7 +24,7 @@ export interface AgentsData {
   /** Profile IDs with a refresh in flight; '' stands for all profiles. */
   refreshing: string[]
   refreshUsage: (accountId?: string) => Promise<void>
-  /** Shows a profile the page itself changed, then revalidates the list without waiting for an event. */
+  /** Shows a profile the page itself changed or created, then revalidates the list without waiting for an event. */
   applyAccount: (account: AgentAccount) => void
   /** Drops a profile the page itself removed, then revalidates. */
   dropAccount: (accountId: string) => void
@@ -123,7 +123,8 @@ export function useAgentsData(): AgentsData {
   }, [loadAccounts])
 
   const applyAccount = useCallback((account: AgentAccount) => {
-    setAccounts(current => current?.map(item => item.id === account.id ? account : item))
+    // A profile created on this page is added until the list read catches up.
+    setAccounts(current => current && (current.some(item => item.id === account.id) ? current.map(item => item.id === account.id ? account : item) : [...current, account]))
     revalidateAccounts()
   }, [revalidateAccounts])
 

@@ -64,7 +64,8 @@ export class AgentProfileError extends Error {
   }
 }
 
-async function profileRequest<T>(path: string, init: RequestInit): Promise<T> {
+/** A profile or setup request whose failure keeps the API's error code. */
+export async function agentProfileRequest<T>(path: string, init: RequestInit): Promise<T> {
   const response = await localFetch(path, init)
   if (response.ok) return response.json() as Promise<T>
   const body = await response.json().catch(() => ({})) as { error?: { code?: string; message?: string; session_ids?: unknown } }
@@ -75,8 +76,8 @@ async function profileRequest<T>(path: string, init: RequestInit): Promise<T> {
 
 /** Renames a profile and/or changes its defaults; a null default returns that field to the provider's own. */
 export const updateAgentProfile = (id: string, change: { name?: string; defaults?: Record<string, string | null> }) =>
-  profileRequest<AgentAccount>(`/api/agents/accounts/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) })
+  agentProfileRequest<AgentAccount>(`/api/agents/accounts/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) })
 
 /** Deletes a profile; rejects with code `profile_in_use` and the session IDs while sessions run. */
 export const removeAgentProfile = (id: string) =>
-  profileRequest<{ warnings: string[] }>(`/api/agents/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  agentProfileRequest<{ warnings: string[] }>(`/api/agents/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })

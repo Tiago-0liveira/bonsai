@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Bot, Gauge, X } from 'lucide-react'
+import { Bot, Gauge, LogIn, X } from 'lucide-react'
+import { useRouter } from '@tanstack/react-router'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { accountAddCommand, agentUsage, byHeadroom, headroomLabel } from '../../api/agentsOverview'
 import { PROVIDER_LABELS, agentAccounts, agentModels, agentProviders, type AgentAccount, type AgentCapability, type AgentModel, type AgentUsage, type LaunchField } from '../../api/agents'
 import { useBonsaiStore } from '../../stores/bonsai'
+import { authState } from '../agents/agentsModel'
 import { ModelCombobox } from '../../components/ui/ModelCombobox'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import type { AgentProviderId } from '../../types'
@@ -40,6 +42,8 @@ function StartAgentForm() {
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const worktrees = useBonsaiStore((state) => state.worktrees)
   const createAgent = useBonsaiStore((state) => state.createAgent)
+  // The router is there in the app; the dialog renders without one in isolation.
+  const router = useRouter({ warn: false }) as ReturnType<typeof useRouter> | undefined
 
   const availableWorktrees = worktrees.filter(item => item.projectId === activeProjectId && !item.missing)
   const [worktreeId, setWorktreeId] = useState(targetWorktreeId)
@@ -242,6 +246,11 @@ function StartAgentForm() {
               {signedIn.length > 0 && <div>{signedIn.join(' · ')}</div>}
               {profileDefaults.length > 0 && <div>{'profile defaults: ' + profileDefaults.join(' · ')}</div>}
               {account.warnings?.map(warning => <div key={warning} className="text-warn">{warning}</div>)}
+              {router && authState(account).tone === 'bad' && (
+                <button type="button" disabled={pending} onClick={() => { setOpen(false); void router.navigate({ to: '/agents', search: { profile: account.id, signin: true } }) }} className="bonsai-focus btn-bordered mt-1 inline-flex h-6 items-center gap-1.5 rounded-[6px] px-2 font-sans text-[11px] text-text">
+                  <LogIn size={11} /> Sign in again
+                </button>
+              )}
             </div>
           )}
           <LaunchFields fields={fields} values={values} model={launchModel} providerLabel={providerLabel} disabled={pending} onChange={(id, value) => setLaunchValues(current => ({ ...current, [id]: value }))} />

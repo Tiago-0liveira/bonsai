@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package localapi
 
 import (
@@ -292,13 +294,25 @@ func TestAgentAccountDeleteGuardsActiveSessions(t *testing.T) {
 	if _, err := runtime.Accounts.Get(id); !errors.Is(err, agents.ErrAccountNotFound) {
 		t.Fatalf("profile kept: %v", err)
 	}
-	select {
-	case event := <-events:
-		if event.Type != agentsChangedEvent {
-			t.Fatalf("event = %+v", event)
+	// Session stops publish project updates asynchronously, so they can still
+	// arrive after subscribing. Wait for the deletion's agents_changed event.
+	timeout := time.NewTimer(time.Second)
+	defer timeout.Stop()
+waitForDeletion:
+	for {
+		select {
+		case event := <-events:
+			switch event.Type {
+			case agentsChangedEvent:
+				break waitForDeletion
+			case "project_update":
+				continue
+			default:
+				t.Fatalf("event = %+v", event)
+			}
+		case <-timeout.C:
+			t.Fatal("no agents_changed after DELETE")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("no agents_changed after DELETE")
 	}
 	if w := agentAPIRequest(t, s, "DELETE", path, "", ""); w.Code != 404 {
 		t.Fatalf("second delete: %d", w.Code)

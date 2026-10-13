@@ -1,6 +1,5 @@
-import type { AgentCapability } from '../../api/agents'
+import { Plus } from 'lucide-react'
 import { toPercent, formatCountdown, type FleetSummary } from './agentsModel'
-import { AddProfile } from './AddProfile'
 
 function Stat({ label, value, detail, tone }: { label: string; value: string; detail?: string; tone?: 'warn' }) {
   return (
@@ -12,11 +11,11 @@ function Stat({ label, value, detail, tone }: { label: string; value: string; de
   )
 }
 
-export function SummaryStrip({ summary, providers, usageLoaded, now }: {
+export function SummaryStrip({ summary, usageLoaded, now, onAddProfile }: {
   summary: FleetSummary
-  providers: AgentCapability[]
   usageLoaded: boolean
   now: number
+  onAddProfile: () => void
 }) {
   const { lowest, nextReset } = summary
   return (
@@ -32,7 +31,15 @@ export function SummaryStrip({ summary, providers, usageLoaded, now }: {
       />
       <Stat label="Lowest" value={lowest ? `${toPercent(lowest.score)}%` : '—'} detail={lowest?.name} tone={lowest && lowest.score < 0.2 ? 'warn' : undefined} />
       <Stat label="Next reset" value={nextReset ? formatCountdown(nextReset.at, now).replace(/^in /, '') : '—'} detail={nextReset?.name} />
-      <div className="ml-auto pl-3"><AddProfile providers={providers} /></div>
+      <div className="ml-auto pl-3"><AddProfileButton onClick={onAddProfile} /></div>
     </div>
+  )
+}
+
+export function AddProfileButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" aria-haspopup="dialog" onClick={onClick} className="bonsai-focus btn-accent-tint inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[11px] font-medium">
+      <Plus size={12} /> Add profile
+    </button>
   )
 }

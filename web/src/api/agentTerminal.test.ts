@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { connectAgentTerminal } from './agentTerminal'
+import { agentTerminalPath, connectTerminal, setupTerminalPath } from './agentTerminal'
 vi.mock('./localClient', () => ({ LOCAL_API_HTTP: 'http://127.0.0.1:7001', terminalCapability: vi.fn().mockResolvedValue('capability'), invalidateLocalSession: vi.fn() }))
 class Socket {
   static OPEN = 1
@@ -18,9 +18,10 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); Socket.instances = 
 it('authenticates without URL tokens and resumes bytes while dropping disconnected input', async () => {
   vi.useFakeTimers(); vi.stubGlobal('WebSocket', Socket)
   const output = vi.fn(), reset = vi.fn(), error = vi.fn()
-  const controller = connectAgentTerminal('project', 'session', { connection: vi.fn(), output, reset, status: vi.fn(), ready: vi.fn(), error })
+  const controller = connectTerminal(agentTerminalPath('project', 'session'), { connection: vi.fn(), output, reset, status: vi.fn(), ready: vi.fn(), error })
   await Promise.resolve()
   const first = Socket.instances[0]
+  expect(first.url).toBe('ws://127.0.0.1:7001/api/projects/project/agents/session/terminal')
   expect(first.url).not.toContain('capability')
   first.onopen?.()
   expect(first.sent).toEqual([{ type: 'authenticate', token: 'capability' }, { type: 'attach', offset: 0, generation: '' }])
@@ -43,4 +44,18 @@ it('authenticates without URL tokens and resumes bytes while dropping disconnect
   controller.dispose()
   await vi.advanceTimersByTimeAsync(10000)
   expect(Socket.instances).toHaveLength(2)
+})
+
+it('attaches a setup job terminal and passes its status frames on', async () => {
+  vi.stubGlobal('WebSocket', Socket)
+  const status = vi.fn()
+  const controller = connectTerminal<{ id: string; state: string }>(setupTerminalPath('job 1'), { connection: vi.fn(), output: vi.fn(), reset: vi.fn(), status, ready: vi.fn(), error: vi.fn() })
+  await Promise.resolve()
+  const socket = Socket.instances[0]
+  expect(socket.url).toBe('ws://127.0.0.1:7001/api/agents/setup/job%201/terminal')
+  socket.onopen?.()
+  socket.frame({ type: 'ready', version: 1, generation: 'epoch', writer: true })
+  socket.frame({ type: 'status', offset: 0, status: { id: 'job 1', state: 'waiting_secret' } })
+  expect(status).toHaveBeenCalledWith({ id: 'job 1', state: 'waiting_secret' })
+  controller.dispose()
 })

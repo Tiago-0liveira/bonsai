@@ -316,7 +316,27 @@ export interface AgentsTabFixture {
   enabled: boolean
   /** Provider cleanup warnings the API returns when a profile is removed. */
   removeWarnings?: string[]
+  /** Answers setup routes with `501 terminal_unsupported`, as on native Windows. */
+  setupUnsupported?: boolean
 }
+
+/** Sign-in methods the Agents tab fixture providers declare, as the Go providers do. */
+const SETUP_SPECS: Record<string, Record<string, unknown>> = {
+  antigravity: { notes: ['Exit agy after signing in to save the profile'] },
+  claude: { auth_modes: [
+    { value: 'login', label: 'Browser sign-in', help: 'Sign in with your Claude account in a browser', recommended: true },
+    { value: 'token', label: 'Setup token', help: 'A long-lived token from claude setup-token', secret: { label: 'Claude setup token', placeholder: 'sk-ant-oat01-…', optional: true } },
+  ], seed: { source: '~/.claude' } },
+  codex: { auth_modes: [
+    { value: 'chatgpt', label: 'Browser sign-in', help: 'Sign in with ChatGPT in a browser on this computer' },
+    { value: 'device', label: 'Device code', help: 'Sign in on any device with a one-time code', recommended: true },
+    { value: 'api-key', label: 'API key', help: 'Use an OpenAI API key', secret: { label: 'OpenAI API key', placeholder: 'sk-…' } },
+  ], seed: { source: '~/.codex' } },
+}
+
+/** A scripted sign-in: what the login prints, then how it ends. */
+interface SetupScript { output: string; end: 'succeed' | 'fail' | 'prompt'; error?: string; /** How long the login runs after printing. */ holdMs?: number }
+interface MockSetupJob { job: Record<string, unknown>; script: SetupScript; send?: (frame: Record<string, unknown>) => void; ran: boolean }
 
 /** Usage of the Agents tab fixture profiles, keyed by profile ID. */
 const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
@@ -391,6 +411,48 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
   let agentsRevision = 0
   const usageRequests: { method: string; account_id?: string }[] = []
   const profileRequests: { method: string; id: string; body: unknown }[] = []
+  // Every setup request as the page sent it; only a start or a secret answer may carry a secret.
+  const setupRequests: { method: string; path: string; body: unknown; key?: string }[] = []
+  const setupJobs = new Map<string, MockSetupJob>()
+  const setupStatus = (entry: MockSetupJob) => entry.send?.({ type: 'status', offset: 0, status: entry.job })
+  const endSetup = (entry: MockSetupJob) => {
+    const { job, script } = entry
+    if (job.state === 'canceled') return
+    job.ended_at = new Date().toISOString()
+    delete job.prompt
+    if (script.end === 'fail') {
+      Object.assign(job, { state: 'failed', error: script.error ?? 'Sign-in failed' })
+    } else if (job.kind === 'login') {
+      const account = accountList.find(item => item.id === job.account_id)
+      if (account) Object.assign(account, { auth_status: 'logged_in', warnings: undefined, updated_at: job.ended_at })
+      Object.assign(job, { state: 'succeeded' })
+    } else {
+      const id = `${job.provider}-${job.name}`
+      const identity = job.auth_mode === 'api-key' ? 'API key' : `${job.name}@example.com · plus`
+      accountList.push({ id, provider: job.provider, name: job.name, auth_mode: job.auth_mode, identity, auth_status: job.auth_mode === 'token' ? 'token' : 'logged_in', created_at: job.ended_at, updated_at: job.ended_at })
+      Object.assign(job, { state: 'succeeded', account_id: id, warnings: job.provider === 'codex' && job.auth_mode !== 'api-key' ? [] : job.auth_mode === 'token' ? ['Token profiles cannot read plan usage'] : [] })
+    }
+    accountsETag++
+    socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision })
+    setupStatus(entry)
+  }
+  const runSetup = (entry: MockSetupJob) => {
+    if (entry.ran) return
+    entry.ran = true
+    setTimeout(() => {
+      entry.send?.({ type: 'output', offset: 0, data: Buffer.from(entry.script.output).toString('base64') })
+      setTimeout(() => {
+        if (entry.job.state === 'canceled') return
+        if (entry.script.end !== 'prompt') { endSetup(entry); return }
+        Object.assign(entry.job, { state: 'waiting_secret', prompt: { label: 'Claude setup token' } })
+        setupStatus(entry)
+      }, entry.script.holdMs ?? 400)
+    }, 150)
+  }
+  const setupJobItem = (job: Record<string, unknown>) => {
+    const account = job.state === 'succeeded' ? accountList.find(item => item.id === job.account_id) : undefined
+    return account ? { ...job, account } : job
+  }
   const accountList: Record<string, unknown>[] = agentsTab.enabled ? [
     { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', auth_status: 'logged_in', effort: 'high', defaults: { effort: 'high' }, created_at: '2026-10-01T09:00:00Z', updated_at: '2026-10-10T09:00:00Z' },
     { id: 'claude-token', provider: 'claude', name: 'CI token', auth_mode: 'token', auth_status: 'token', warnings: ['Token expires in 12 days; plan to replace it'], created_at: '2026-10-02T09:00:00Z', updated_at: '2026-10-02T09:00:00Z' },
@@ -489,6 +551,18 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       }
     })
   })
+  await page.routeWebSocket(new RegExp(`^${escapeRegExp(webSocketOrigin(apiOrigin))}/api/agents/setup/[^/]+/terminal$`), terminal => {
+    const id = decodeURIComponent(new URL(terminal.url()).pathname.split('/')[4])
+    terminal.onMessage(message => {
+      const frame = JSON.parse(String(message))
+      const entry = setupJobs.get(id)
+      if (frame.type !== 'attach' || !entry) return
+      entry.send = value => terminal.send(JSON.stringify(value))
+      terminal.send(JSON.stringify({ type: 'ready', version: 1, generation: 'e2e-epoch', writer: true }))
+      setupStatus(entry)
+      runSetup(entry)
+    })
+  })
   await page.route(url => url.origin === apiOrigin && !isUIPath(url.pathname), async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -537,7 +611,56 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
         ? providers.map(provider => provider.id === 'antigravity'
           ? { id: provider.id, label: provider.label, available: false, unavailable_reason: { message: 'agy is not installed' }, install_hint: 'Install Antigravity and make sure agy is on PATH' }
           : provider.id === 'claude' ? { ...provider, usage_note: 'Read from an undocumented Claude endpoint; it can change without notice.' } : provider)
+          .map(provider => ({ ...provider, setup: SETUP_SPECS[provider.id] }))
         : providers }); return
+    }
+    const setupStart = path === '/api/agents/setup' && request.method() === 'POST'
+    const loginStart = path.match(/^\/api\/agents\/accounts\/([^/]+)\/login$/)
+    const setupJobPath = path.match(/^\/api\/agents\/setup\/([^/]+)(\/secret)?$/)
+    if (setupStart || loginStart || setupJobPath) {
+      const body = request.postData() ? request.postDataJSON() : undefined
+      setupRequests.push({ method: request.method(), path, body, key: request.headers()['idempotency-key'] })
+      if (agentsTab.setupUnsupported) {
+        await route.fulfill({ status: 501, json: { error: { code: 'terminal_unsupported', message: 'Signing in from the browser needs a terminal, which this platform does not support. Use the bonsai agent CLI.' } } }); return
+      }
+      if (setupStart || loginStart) {
+        const account = loginStart ? accountList.find(item => item.id === decodeURIComponent(loginStart[1])) : undefined
+        if (loginStart && !account) { await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Profile not found' } } }); return }
+        const provider = String(account?.provider ?? body.provider)
+        const name = String(account?.name ?? body.name)
+        const mode = String(body.auth_mode ?? account?.auth_mode ?? (provider === 'codex' ? 'chatgpt' : provider === 'claude' ? 'login' : ''))
+        if (!account && accountList.some(item => item.provider === provider && item.name === name)) {
+          await route.fulfill({ status: 409, json: { error: { code: 'name_taken', message: 'Another profile of this provider already has this name' } } }); return
+        }
+        const script: SetupScript = name === 'broken'
+          ? { output: 'Starting login…\r\nError: the sign-in was refused\r\n', end: 'fail', error: 'codex login exited with status 1' }
+          : body.secret ? { output: 'Signing in with the pasted key…\r\n', end: 'succeed' }
+            : mode === 'device' ? { output: 'Follow these steps to sign in:\r\n1. Open https://auth.example.com/codex/device\r\n2. Enter this one-time code: WXYZ-2345\r\n', end: 'succeed', holdMs: 1500 }
+              : mode === 'token' ? { output: 'Visit https://claude.example.com/oauth/authorize?code=true to create a token.\r\nToken created.\r\n', end: 'prompt' }
+                : { output: 'Opening https://auth.example.com/login in your browser…\r\n', end: 'succeed', holdMs: 5000 }
+        const id = `job-${setupJobs.size + 1}`
+        const job: Record<string, unknown> = { id, kind: account ? 'login' : 'create', provider, name, auth_mode: body.auth_mode, state: 'running', warnings: [], created_at: new Date().toISOString() }
+        if (account) job.account_id = account.id
+        setupJobs.set(id, { job, script, ran: false })
+        socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision })
+        await route.fulfill({ status: 202, json: job }); return
+      }
+      const entry = setupJobs.get(decodeURIComponent(setupJobPath![1]))
+      if (!entry) { await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Setup job not found' } } }); return }
+      if (setupJobPath![2]) {
+        if (entry.job.state !== 'waiting_secret') { await route.fulfill({ status: 409, json: { error: { code: 'no_prompt', message: 'The sign-in is not waiting for a secret' } } }); return }
+        Object.assign(entry.job, { state: 'running' })
+        delete entry.job.prompt
+        setupStatus(entry)
+        setTimeout(() => endSetup(entry), 300)
+        await route.fulfill({ status: 204, body: '' }); return
+      }
+      if (request.method() === 'DELETE' && ['running', 'waiting_secret', 'preparing', 'verifying'].includes(String(entry.job.state))) {
+        Object.assign(entry.job, { state: 'canceled', ended_at: new Date().toISOString() })
+        delete entry.job.prompt
+        setupStatus(entry)
+      }
+      await route.fulfill({ json: setupJobItem(entry.job) }); return
     }
     if (path === '/api/agents/providers/claude/models') {
       await route.fulfill({ json: [
@@ -753,6 +876,8 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     usageRequests,
     /** PATCH and DELETE requests on profiles, in order. */
     profileRequests,
+    /** Setup and sign-in requests, in order, with their bodies and request keys. */
+    setupRequests,
     /** Adds a profile as if the CLI created it; the page learns of it from its next revalidation. */
     addAccount: (account: Record<string, unknown>) => { accountList.push(account); accountsETag++ },
     /** Profiles as the API would list them now. */

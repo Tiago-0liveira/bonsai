@@ -70,9 +70,10 @@ type Server struct {
 	serveLogSubs     map[string]map[int]chan string
 	serveLogNextSub  int
 
-	ln        net.Listener
-	lock      *procstore.FileLock
-	idleTimer *time.Timer
+	ln          net.Listener
+	lock        *procstore.FileLock
+	idleTimer   *time.Timer
+	idleTimeout time.Duration
 
 	done         chan struct{}
 	closeOnce    sync.Once
@@ -82,6 +83,14 @@ type Server struct {
 // SetLogCap sets a custom log capacity before rotation (used by tests).
 func (s *Server) SetLogCap(cap int64) {
 	s.logCap = cap
+}
+
+// SetIdleTimeout configures idle shutdown before Run starts (used by tests).
+// A non-positive duration disables idle shutdown; Stop still shuts the server down.
+func (s *Server) SetIdleTimeout(timeout time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.idleTimeout = timeout
 }
 
 // SetStartBarrier sets a deterministic test hook called between StatusStarting and start().
@@ -187,6 +196,7 @@ func newServer(root string) (*Server, error) {
 		root:             store.Root(),
 		store:            store,
 		logCap:           logCap,
+		idleTimeout:      idleTimeout,
 		procs:            map[int]*managedProc{},
 		serveGroups:      map[string]*serveRuntime{},
 		serveLogRings:    map[string]*serveLogRing{},
@@ -438,7 +448,7 @@ func (s *Server) runningCountLocked() int {
 
 // armIdleLocked manages the idle exit timer. Caller holds s.mu.
 func (s *Server) armIdleLocked() {
-	if s.activeCountLocked() > 0 {
+	if s.idleTimeout <= 0 || s.activeCountLocked() > 0 {
 		if s.idleTimer != nil {
 			s.idleTimer.Stop()
 			s.idleTimer = nil
@@ -448,7 +458,7 @@ func (s *Server) armIdleLocked() {
 	if s.idleTimer != nil {
 		s.idleTimer.Stop()
 	}
-	s.idleTimer = time.AfterFunc(idleTimeout, func() {
+	s.idleTimer = time.AfterFunc(s.idleTimeout, func() {
 		s.mu.Lock()
 		idle := s.activeCountLocked() == 0
 		s.mu.Unlock()

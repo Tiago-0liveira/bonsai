@@ -143,16 +143,20 @@ describe('status', () => {
 })
 
 describe('overview', () => {
-  it('shows identity, warnings, defaults from the launch fields and the sign-in command', async () => {
+  it('shows identity, warnings, defaults from the launch fields and sign in again', async () => {
     await renderPage({ profileId: 'claude-work' })
     const details = screen.getByRole('region', { name: 'Profile details' })
     expect(details).toHaveTextContent('dev@example.com')
     expect(within(details).getByRole('region', { name: 'Profile defaults' })).toHaveTextContent('Modelopus')
     expect(within(details).getByRole('region', { name: 'Profile defaults' })).toHaveTextContent('Efforthigh')
-    expect(within(details).getByText('bonsai agent run claude/Work')).toBeInTheDocument()
+    expect(within(details).getByRole('button', { name: 'Sign in again…' })).toBeEnabled()
+    // Only a signed-out profile's warnings offer to sign in right there.
+    expect(within(details).queryByRole('button', { name: 'Sign in now' })).toBeNull()
     cleanup()
     await renderPage({ profileId: 'codex-team' })
     expect(screen.getByRole('list', { name: 'Warnings' })).toHaveTextContent('Not logged in')
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in now' }))
+    expect(await screen.findByRole('dialog', { name: 'Sign in to Team again' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Profile defaults' })).toHaveTextContent('None saved')
   })
 
@@ -171,17 +175,16 @@ describe('overview', () => {
 })
 
 describe('add profile', () => {
-  it('lists the exact CLI command per provider with a copy button', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  it('opens the sign-in dialog on provider cards; unavailable providers are disabled with their reason', async () => {
     await renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'Add profile' }))
-    const dialog = screen.getByRole('dialog', { name: 'Add profile' })
-    expect(within(dialog).getByText('bonsai agent account add claude <name>')).toBeInTheDocument()
-    expect(within(dialog).getByText('bonsai agent account add codex <name> [--auth device]')).toBeInTheDocument()
-    expect(within(dialog).getByText('agy is not installed')).toBeInTheDocument()
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy Codex command' }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('bonsai agent account add codex <name> [--auth device]'))
+    const dialog = await screen.findByRole('dialog', { name: 'Add profile' })
+    const cards = within(within(dialog).getByRole('list', { name: 'Providers' }))
+    expect(cards.getByRole('button', { name: /Antigravity/ })).toBeDisabled()
+    expect(cards.getByRole('button', { name: /Antigravity/ })).toHaveTextContent('agy is not installed')
+    expect(cards.getByRole('button', { name: /Antigravity/ })).toHaveTextContent('npm i -g agy')
+    expect(cards.getByRole('button', { name: /Codex/ })).toHaveTextContent('v0.162.1 · 2 profiles')
+    expect(cards.getByRole('button', { name: /Claude/ })).toBeEnabled()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Add profile' })).toBeNull()
   })
@@ -202,7 +205,8 @@ describe('empty states', () => {
     await renderPage()
     const details = screen.getByRole('region', { name: 'Profile details' })
     expect(details).toHaveTextContent('No profiles yet')
-    expect(within(details).getByText('bonsai agent account add codex <name> [--auth device]')).toBeInTheDocument()
+    fireEvent.click(within(details).getByRole('button', { name: 'Add profile' }))
+    expect(await screen.findByRole('dialog', { name: 'Add profile' })).toBeInTheDocument()
   })
 
   it('explains a failed first load and retries', async () => {

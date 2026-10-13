@@ -58,6 +58,24 @@ export interface AgentCapability {
   profile_fields?: LaunchField[]
   /** A short install command or link, present while the provider is unavailable. */
   install_hint?: string
+  /** How profiles of this provider are created and signed in; missing when the provider declares nothing. */
+  setup?: SetupSpec
+}
+/** A pasted key or token a sign-in method takes. Optional: the provider can get one another way. */
+export interface SecretSpec { label: string; placeholder?: string; optional?: boolean }
+/** One sign-in method of a provider. */
+export interface AuthModeOption {
+  value: string; label: string; help?: string
+  /** The provider's choice for this host (device code over SSH, say). */
+  recommended?: boolean
+  secret?: SecretSpec
+}
+export interface SetupSpec {
+  /** Empty: the provider has one implicit method. */
+  auth_modes?: AuthModeOption[]
+  /** Where a new profile is seeded from, home-relative for display; missing when the provider does not seed. */
+  seed?: { source: string }
+  notes?: string[]
 }
 async function readJSON<T>(response: Response, path: string): Promise<T> {
   if (!response.ok) {
