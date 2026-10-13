@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
-import { StepSlider, type Stop } from './StepSlider'
+import { StepSlider, heatLevel, type Stop } from './StepSlider'
 
 // jsdom has no PointerEvent; Testing Library falls back to a bare Event that drops clientX and button.
 if (!('PointerEvent' in window)) {
@@ -117,5 +117,22 @@ describe('StepSlider', () => {
       expect(slider().querySelector('[data-stop="medium"]')).toHaveAttribute('data-default', 'true')
       expect(screen.getByText('default')).toBeInTheDocument()
     })
+  })
+})
+
+describe('heatLevel', () => {
+  it('is cool up to the middle, warm after it, hot near the top and 3 at the top', () => {
+    expect([0, 1, 2, 3, 4, 5].map(index => heatLevel(index, 6))).toEqual([0, 0, 0, 1, 2, 3])
+    expect([0, 1, 2].map(index => heatLevel(index, 3))).toEqual([0, 0, 3])
+    expect(heatLevel(-1, 5)).toBe(0)
+    expect(heatLevel(0, 1)).toBe(0)
+  })
+
+  it('never reads the named top efforts below hot, so they jitter on any scale', () => {
+    // xhigh sits at index 3 of 6 (warm by position), yet it is hot by name.
+    expect(heatLevel(3, 6, 'xhigh')).toBe(2)
+    expect(heatLevel(3, 6, 'high')).toBe(1)
+    expect(heatLevel(4, 6, 'max')).toBe(2)
+    expect(heatLevel(5, 6, 'ultra')).toBe(3)
   })
 })

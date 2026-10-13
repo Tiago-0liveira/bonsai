@@ -2,7 +2,7 @@ import { Flame, Gauge, RotateCcw, Shield } from 'lucide-react'
 import { ChoiceChips, type ChoiceOption } from '../../components/ui/ChoiceChips'
 import { Field } from '../../components/ui/Dialog'
 import { Reveal } from '../../components/ui/Dialog'
-import { StepSlider } from '../../components/ui/StepSlider'
+import { StepSlider, heatLevel } from '../../components/ui/StepSlider'
 import type { AgentAccount, AgentModel, LaunchField } from '../../api/agents'
 import { fieldOptions, type LaunchValues } from './LaunchFields'
 
@@ -107,14 +107,13 @@ function EffortField({ field, value, model, account, defaultValue, disabled, onC
   const fallback = stops.find(stop => stop.value === inherited)
   const defaultStop = stops.find(stop => stop.value === defaultValue)
   // Past the middle of the scale the label gets a flame, as the slider does.
-  const index = current ? stops.indexOf(current) : -1
-  const hot = index >= 0 && index / (stops.length - 1) > 0.5
+  const heat = current ? heatLevel(stops.indexOf(current), stops.length, current.value) : 0
   const aside = defaultStop
     ? <DefaultChip label={`Default · ${defaultStop.label}`} pressed={value === defaultStop.value} disabled={disabled} onClick={() => onChange(defaultStop.value)} />
     : reset && <DefaultChip label={reset.label} detail={fallback?.label} pressed={value === ''} disabled={disabled} onClick={() => onChange('')} />
   return (
     <Field
-      label={<>{field.label}{current && <span key={current.value} className={'dialog-enter ml-1.5 inline-flex items-center gap-1 text-[12px] font-semibold normal-case tracking-normal ' + (hot ? 'text-warn' : 'text-text')}>{hot && <Flame size={12} aria-hidden="true" />}{current.label}</span>}</>}
+      label={<>{field.label}{current && <span key={current.value} data-heat={heat} className={'effort-label dialog-enter ml-1.5 inline-flex items-center gap-1 text-[12px] font-semibold normal-case tracking-normal ' + (heat === 0 ? 'text-text' : '')}>{heat > 0 && <Flame size={13} strokeWidth={2.4} aria-hidden="true" className="effort-flame" />}{current.label}</span>}</>}
       aside={aside}
     >
       <StepSlider ariaLabel={field.label} stops={stops} value={value} inherited={inherited} defaultValue={defaultStop?.value} heat unsetText={reset?.label} disabled={disabled} onChange={onChange} />

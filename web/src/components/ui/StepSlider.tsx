@@ -8,6 +8,21 @@ export interface Stop {
   tick?: string
 }
 
+const INTENSE = new Set(['xhigh', 'max', 'ultra'])
+
+/**
+ * How hot a level reads on a scale of `count` levels: 0 up to the middle, then
+ * 1 (warm), 2 (hot, jitters) and 3 at the top. The named top efforts
+ * (xhigh, max, ultra) are never below 2, whatever the length of the scale.
+ */
+export function heatLevel(index: number, count: number, value = ''): 0 | 1 | 2 | 3 {
+  if (index < 0 || count < 2) return 0
+  const ratio = index / (count - 1)
+  let level: 0 | 1 | 2 | 3 = ratio <= 0.5 ? 0 : index === count - 1 ? 3 : ratio >= 0.7 ? 2 : 1
+  if (INTENSE.has(value.toLowerCase()) && level < 2) level = 2
+  return level
+}
+
 const KEYS: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, PageUp: 1, ArrowLeft: -1, ArrowDown: -1, PageDown: -1 }
 
 /**
@@ -44,9 +59,7 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, defau
   const ghost = chosen < 0 ? stops.findIndex(stop => stop.value === inherited) : -1
   const shown = chosen >= 0 ? chosen : ghost
   const percent = (index: number) => (stops.length < 2 ? 50 : (index / last) * 100)
-  // 0 cool up to the middle, then 1 warm, 2 hot, 3 at the top.
-  const ratio = shown >= 0 ? shown / last : 0
-  const warmth = !heat || shown < 0 || ratio <= 0.5 ? 0 : shown === last ? 3 : ratio >= 0.7 ? 2 : 1
+  const warmth = heat && chosen >= 0 ? heatLevel(chosen, stops.length, stops[chosen].value) : 0
 
   const pick = (index: number) => {
     const stop = stops[Math.min(Math.max(index, 0), stops.length - 1)]
