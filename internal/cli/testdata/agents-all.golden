@@ -1,0 +1,4 @@
+ID        NAME       PROVIDER  PROFILE  WORKTREE                STATE       ACTIVITY  UP   CLIENTS
+0a1b2c3d  fix-login  claude    work     ~/src/bonsai-fix-login  exited (0)  -         44m  -
+9f8e7d6c  refactor   claude    work     ~/src/bonsai-refactor   failed (2)  -         44m  -
+77aa88bb  crashed    claude    work     ~/src/bonsai-crashed    failed      -         -    -

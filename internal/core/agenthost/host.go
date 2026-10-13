@@ -323,7 +323,14 @@ func (h *host) handle(conn net.Conn) {
 			offset = 0
 		}
 		h.mu.Lock()
-		id, writer, replay, frames := h.stream.AttachAs(offset, h.summary, hello.Client, hello.Take)
+		control := agentterminal.ControlAuto
+		switch {
+		case hello.ReadOnly:
+			control = agentterminal.ControlNever
+		case hello.Take:
+			control = agentterminal.ControlTake
+		}
+		id, writer, replay, frames := h.stream.AttachAs(offset, h.summary, hello.Client, control)
 		c.queue(Frame{Type: "ready", Version: Version, Generation: h.generation, Writer: &writer})
 		for _, f := range replay {
 			for f.Type == "output" && len(f.Data) > replayChunk {

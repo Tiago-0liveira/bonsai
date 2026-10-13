@@ -234,6 +234,9 @@ bonsai agent account rename <account> <new-name>
 bonsai agent account remove <account>
 bonsai agent run <account> [-- <args…>]             # run the provider CLI as that profile
 bonsai agent usage [<account>] [--refresh]          # plan limits of every profile
+bonsai agents [--all] [--json]                      # running agent sessions, from any directory
+bonsai agents attach <id|name> [--take] [--read-only]  # this terminal joins the session (Ctrl-] d detaches)
+bonsai agents stop <id|name>
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage

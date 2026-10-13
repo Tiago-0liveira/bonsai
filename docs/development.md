@@ -662,9 +662,9 @@ then exits. SIGTERM stops the session (SIGTERM to the process group, SIGKILL
 after 2 s).
 
 The holder protocol (version 1) is newline-delimited JSON. A client sends
-`{type:"hello", version, mode, offset, generation, take, client}` first:
+`{type:"hello", version, mode, offset, generation, take, read_only, client}` first:
 `terminal` mode attaches to the stream (replay from `offset` when `generation`
-matches the holder's, else from the start; `take` writes at once), `status`
+matches the holder's, else from the start; `take` writes at once, `read_only` never writes), `status`
 mode receives summaries only and is never the writer. The holder answers
 `{type:"ready", version, generation, writer}` (status mode adds the summary),
 then the terminal stream's `output`, `gap` and `status` frames, and

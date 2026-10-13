@@ -42,6 +42,31 @@ Each agent runs in its own background process, not inside the API, so
 `bonsai web restart api`, an upgrade or an API crash never stops it: the next
 API picks it up, and the browser terminal continues where it was.
 
+From any directory, whether Bonsai web runs or not:
+
+```sh
+bonsai agents                      # running sessions
+bonsai agents --all --json         # ended ones too, as JSON
+bonsai agents attach 3f9c2a1d      # by ID prefix or name
+bonsai agents attach fix-login --take
+bonsai agents attach fix-login --read-only
+bonsai agents stop fix-login
+```
+
+The list shows `ID  NAME  PROVIDER  PROFILE  WORKTREE  STATE  ACTIVITY  UP
+CLIENTS`: ACTIVITY is `working` while output arrived in the last 5 seconds,
+else how long the terminal has been quiet, and CLIENTS the attached terminals
+(`web*,cli`; `*` writes). A name or prefix that matches several sessions lists
+them; a single running one wins.
+
+`attach` replays the session's retained output and connects this terminal.
+One client types at a time: the first to attach, until it leaves or another
+takes control. In the terminal, **Ctrl-] d** detaches (the agent keeps
+running), **Ctrl-] t** takes control, and **Ctrl-] Ctrl-]** sends a Ctrl-].
+`--take` takes control on connect; `--read-only` only watches and never
+writes. Status lines say who has control (`control taken by web`) and when the
+agent exits.
+
 `bonsai web stop` stops running agents unless **Settings → Agents → Keep
 agents running when Bonsai web stops** is on (`agents.keep_running` in
 `web.json`, off by default). With it off and agents running, a stop in a
