@@ -3,7 +3,6 @@ package agentterminal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -151,54 +150,21 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 func (m *Manager) run(ctx context.Context, e *session, a agents.Account, r agents.Session, p agents.Provider, cols, rows int, options agents.LaunchOptions) {
 	defer close(e.done)
 	defer e.cancel()
-	prepared, err := p.PrepareSession(ctx, agents.PrepareSessionRequest{Account: a, Session: r, Launch: options})
-	preparedOK := err == nil
-	code := -1
-	if err == nil {
+	RunSession(ctx, e.stream, p, a, r, m.sessions, cols, rows, options, func(change func(*Summary) error) error {
 		m.mu.Lock()
-		e.summary.ProviderSessionID = prepared.ProviderSessionID
-		m.mu.Unlock()
-		code, err = runInStream(ctx, e.stream, prepared, cols, rows, func() error {
-			m.mu.Lock()
-			if ctx.Err() != nil {
-				m.mu.Unlock()
-				return ctx.Err()
-			}
-			e.summary.State = "running"
-			now := time.Now().UTC()
-			e.summary.StartedAt = &now
-			e.stream.Status(e.summary)
+		if err := change(&e.summary); err != nil {
 			m.mu.Unlock()
-			m.notify(e.summary.ProjectID)
-			return nil
-		})
-	}
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var finalErr error
-	if preparedOK {
-		finalErr = p.FinalizeSession(cleanupCtx, agents.FinalizeSessionRequest{Account: a, Session: r})
-	}
-	cleanupErr := m.sessions.Cleanup(r)
-	m.mu.Lock()
-	now := time.Now().UTC()
-	e.summary.EndedAt = &now
-	e.summary.ExitCode = &code
-	e.summary.State = "exited"
-	if e.summary.Error != "" {
-		e.summary.State = "failed"
-	}
-	if err != nil && ctx.Err() == nil {
-		e.summary.State = "failed"
-		e.summary.Error = "Agent failed to start or exited unsuccessfully. Check the " + agents.Label(p) + " installation and profile setup."
-	}
-	if errors.Join(finalErr, cleanupErr) != nil {
-		e.summary.Error = "Profile finalization or session cleanup failed."
-	}
-	e.stream.Status(e.summary)
-	m.evict()
-	m.mu.Unlock()
-	m.notify(e.summary.ProjectID)
+			return err
+		}
+		e.stream.Status(e.summary)
+		if !e.summary.Active() {
+			m.evict()
+		}
+		project := e.summary.ProjectID
+		m.mu.Unlock()
+		m.notify(project)
+		return nil
+	})
 }
 func (m *Manager) evict() {
 	var ended []*session
