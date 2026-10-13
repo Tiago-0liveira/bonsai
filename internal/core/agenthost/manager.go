@@ -324,6 +324,19 @@ func (m *Manager) ActiveSessions(account agents.AccountID) []string {
 	return ids
 }
 
+// ActiveCount is the number of active sessions in every project.
+func (m *Manager) ActiveCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.entries {
+		if e.summary.Active() {
+			n++
+		}
+	}
+	return n
+}
+
 func (m *Manager) Get(project, id string) (Summary, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

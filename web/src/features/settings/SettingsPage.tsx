@@ -2,6 +2,7 @@ import { ProjectRootsSettings } from './ProjectRootsSettings'
 import { LiveUpdatesSettings } from './LiveUpdatesSettings'
 import { EnvironmentEditorSettings } from './EnvironmentEditorSettings'
 import { CanvasSettings } from './CanvasSettings'
+import { AgentSettings } from './AgentSettings'
 import { useBonsaiStore } from '../../stores/bonsai'
 export function SettingsPage() {
   const projectId = useBonsaiStore(state => state.activeProjectId)
@@ -26,6 +27,7 @@ export function SettingsPage() {
     </section>}
     <CanvasSettings />
     <EnvironmentEditorSettings />
+    <AgentSettings />
     <ProjectRootsSettings />
     <LiveUpdatesSettings />
     </div>

@@ -65,7 +65,7 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 		if err != nil {
 			return err
 		}
-		return runServeTUI(in, out, c, group)
+		return runServeTUI(in, out, c, group, nil)
 	case "logs":
 		return cmdServeLogsForMode(c, workspaceID, procstore.ServeModeDevelopment, "bonsai __serve-dev-stack", args, out, errOut)
 	case "stop":
@@ -188,7 +188,7 @@ func cmdServeDevStack(repoDir string, args []string, in io.Reader, out, errOut i
 	if err := printDevServeStatus(out, group); err != nil {
 		return err
 	}
-	return runServeTUI(in, out, c, group)
+	return runServeTUI(in, out, c, group, nil)
 }
 
 func prepareDevWebhookSecret(repoDir, workspaceID, secret string) error {
