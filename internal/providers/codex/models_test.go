@@ -259,3 +259,12 @@ func TestParseBundledModels(t *testing.T) {
 		t.Fatal("garbage accepted")
 	}
 }
+
+func TestModelOptionsFlagModelsWithoutEfforts(t *testing.T) {
+	options := modelOptions([]appModel{{ID: "plain"}, {ID: "smart", DefaultReasoningEffort: "high", SupportedReasoningEfforts: []struct {
+		ReasoningEffort string `json:"reasoningEffort"`
+	}{{"high"}}}}, "api")
+	if len(options) != 2 || !options[0].NoEffort || options[1].NoEffort || options[1].DefaultEffort != "high" {
+		t.Fatalf("options = %+v", options)
+	}
+}

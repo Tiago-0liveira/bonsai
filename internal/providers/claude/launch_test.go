@@ -134,7 +134,7 @@ func TestRealHomeIsNeverWritten(t *testing.T) {
 	}
 	e.provider.DescribeAccount(t.Context(), account)
 	for _, a := range []agents.Account{account, token} {
-		if _, err := e.service.Remove(t.Context(), a.ID); err != nil {
+		if _, err := e.service.Remove(t.Context(), a.ID, agents.RemoveOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -276,7 +276,7 @@ func TestLaunchFieldsMatchValidation(t *testing.T) {
 			}
 		}
 	}
-	if danger != 1 || len(fields[1].Options) != len(effortLevels)+1 {
+	if danger != 1 || len(fields[1].Options) != len(effortLevels)+1 || !fields[1].PerModel {
 		t.Fatalf("danger = %d, efforts = %+v", danger, fields[1].Options)
 	}
 }

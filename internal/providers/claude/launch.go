@@ -79,7 +79,8 @@ func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOp
 }
 
 // LaunchFields declares the permission mode and effort selects. An empty value
-// keeps the profile default.
+// keeps the profile default. The effort options are only the fallback: each
+// listed model carries the efforts the API says it supports.
 func (p *Provider) LaunchFields() []agents.LaunchField {
 	efforts := []agents.FieldOption{{Value: "", Label: "Profile default"}}
 	for _, effort := range effortLevels {
@@ -94,7 +95,7 @@ func (p *Provider) LaunchFields() []agents.LaunchField {
 			{Value: "auto", Label: "Auto"},
 			{Value: "bypassPermissions", Label: "Bypass permissions", Tone: agents.ToneDanger, Help: "Claude will run tools without asking."},
 		}},
-		{ID: "effort", Label: "Effort", Kind: agents.LaunchFieldSelect, Options: efforts},
+		{ID: "effort", Label: "Effort", Kind: agents.LaunchFieldSelect, PerModel: true, Options: efforts},
 	}
 }
 

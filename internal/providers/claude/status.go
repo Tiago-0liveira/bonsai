@@ -136,7 +136,7 @@ func (p *Provider) DescribeAccount(ctx context.Context, account agents.Account) 
 				info.Identity = status.Email
 			}
 		} else {
-			info.Warnings = append(info.Warnings, "Not logged in; start a session and run /login")
+			info.Warnings = append(info.Warnings, fmt.Sprintf("Not logged in; run `bonsai agent account login %s`", account.Name))
 		}
 	}
 	info.Options["auth_status"] = state
@@ -146,14 +146,14 @@ func (p *Provider) DescribeAccount(ctx context.Context, account agents.Account) 
 func (p *Provider) describeToken(account agents.Account) (state string, warnings []string) {
 	token, err := readToken(tokenPath(p.accounts, account))
 	if err != nil {
-		return "missing", []string{"Token missing; remove and add the profile again"}
+		return "missing", []string{fmt.Sprintf("Token missing; run `bonsai agent account login %s`", account.Name)}
 	}
 	remaining := token.ExpiresAt.Sub(p.now())
 	switch {
 	case token.ExpiresAt.IsZero():
 		return "token", nil
 	case remaining <= 0:
-		return "expired", []string{"Token expired; remove and add the profile again"}
+		return "expired", []string{fmt.Sprintf("Token expired; run `bonsai agent account login %s`", account.Name)}
 	case remaining < 30*24*time.Hour:
 		return "token", []string{"Token expires in " + humanDays(remaining) + "; plan to replace it"}
 	}

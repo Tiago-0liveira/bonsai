@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,8 +10,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"golang.org/x/term"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
@@ -64,36 +63,87 @@ func (p *Provider) SetupAccount(ctx context.Context, req agents.SetupRequest) (a
 	}
 	settings := Settings{AuthMode: mode}
 	if req.Options.Seed == nil || *req.Options.Seed {
-		if settings.SeededFrom, err = p.seed(req.Options.SeedFrom, home); err != nil {
+		if settings.SeededFrom, err = p.seed(req.IO.Out, req.Options.SeedFrom, home); err != nil {
 			return agents.SetupResult{}, err
 		}
 	}
-	if err := ensureFileStore(home); err != nil {
-		return agents.SetupResult{}, fmt.Errorf("configure the credential store: %w", err)
-	}
-	account := req.Account
-	if mode == AuthAPIKey {
-		err = p.loginAPIKey(ctx, account, req.Options.Secret)
-	} else {
-		err = p.loginInteractive(ctx, account, mode == AuthDevice)
-	}
+	warnings, err := p.signIn(ctx, req.Account, mode, req.Options.Secret, req.IO)
 	if err != nil {
 		return agents.SetupResult{}, err
 	}
-	if err := p.requireLoggedIn(ctx, account); err != nil {
+	account := req.Account
+	account.Settings = settings.raw()
+	return agents.SetupResult{Account: account, Warnings: warnings}, nil
+}
+
+// Reauthenticate signs an existing profile in again with Codex's own login,
+// which replaces the profile's auth.json. Without --auth it keeps the profile's
+// mode. Running sessions keep going and pick the new login up on their next
+// token refresh.
+func (p *Provider) Reauthenticate(ctx context.Context, req agents.ReauthRequest) (agents.SetupResult, error) {
+	settings, err := ParseSettings(req.Account)
+	if err != nil {
 		return agents.SetupResult{}, err
+	}
+	options := req.Options
+	if options.Seed != nil || options.SeedFrom != "" {
+		return agents.SetupResult{}, fmt.Errorf("seeding only applies to new profiles")
+	}
+	if options.AuthMode == "" && options.Secret == nil {
+		options.AuthMode = settings.AuthMode
+	}
+	mode, err := setupMode(options)
+	if err != nil {
+		return agents.SetupResult{}, err
+	}
+	if err := p.requireSupported(ctx); err != nil {
+		return agents.SetupResult{}, err
+	}
+	home := homeDir(p.accounts, req.Account)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return agents.SetupResult{}, err
+	}
+	defer p.forgetAccount(req.Account.ID)
+	p.forgetStatus(req.Account.ID)
+	warnings, err := p.signIn(ctx, req.Account, mode, options.Secret, req.IO)
+	if err != nil {
+		return agents.SetupResult{}, err
+	}
+	settings.AuthMode = mode
+	account := req.Account
+	account.Settings = settings.raw()
+	return agents.SetupResult{Account: account, Warnings: warnings}, nil
+}
+
+// signIn forces the file credential store, runs the login for mode and checks
+// it with `codex login status`. It warns when another profile has the same login.
+func (p *Provider) signIn(ctx context.Context, account agents.Account, mode string, secret io.Reader, setupIO agents.SetupIO) ([]string, error) {
+	home := homeDir(p.accounts, account)
+	if err := ensureFileStore(home); err != nil {
+		return nil, fmt.Errorf("configure the credential store: %w", err)
+	}
+	var err error
+	if mode == AuthAPIKey {
+		err = p.loginAPIKey(ctx, account, secret, setupIO.Prompt)
+	} else {
+		err = p.loginInteractive(ctx, account, mode == AuthDevice, setupIO.Launcher)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := p.requireLoggedIn(ctx, account); err != nil {
+		return nil, err
 	}
 	id := readIdentity(home)
 	if other := p.sameLoginAs(account.ID, id); other != "" {
-		fmt.Fprintf(p.out, "warning: profile %q is already signed in as %s; two profiles on one login share its usage limits\n", other, id.Email)
+		return []string{fmt.Sprintf("profile %q is already signed in as %s; two profiles on one login share its usage limits", other, id.Email)}, nil
 	}
-	account.Settings = settings.raw()
-	return agents.SetupResult{Account: account}, nil
+	return nil, nil
 }
 
 // loginInteractive runs `codex login` (browser) or `codex login --device-auth`
 // (a code to enter on another device; for SSH, WSL or headless hosts).
-func (p *Provider) loginInteractive(ctx context.Context, account agents.Account, device bool) error {
+func (p *Provider) loginInteractive(ctx context.Context, account agents.Account, device bool, launcher agents.Launcher) error {
 	args := []string{"login"}
 	if device {
 		args = append(args, "--device-auth")
@@ -102,7 +152,7 @@ func (p *Provider) loginInteractive(ctx context.Context, account agents.Account,
 	if err != nil {
 		return err
 	}
-	if err := p.launcher.RunForeground(ctx, prepared); err != nil {
+	if err := launcher.RunForeground(ctx, prepared); err != nil {
 		return fmt.Errorf("codex login failed: %w", err)
 	}
 	return nil
@@ -111,7 +161,7 @@ func (p *Provider) loginInteractive(ctx context.Context, account agents.Account,
 // loginAPIKey pipes the key from --token-stdin or a hidden prompt into
 // `codex login --with-api-key`. The key never reaches an argument, a log or an
 // error, and Codex's own output is discarded.
-func (p *Provider) loginAPIKey(ctx context.Context, account agents.Account, secret io.Reader) error {
+func (p *Provider) loginAPIKey(ctx context.Context, account agents.Account, secret io.Reader, prompt agents.SecretPrompter) error {
 	var key string
 	if secret != nil {
 		data, err := io.ReadAll(io.LimitReader(secret, maxKeyInput+1))
@@ -121,7 +171,7 @@ func (p *Provider) loginAPIKey(ctx context.Context, account agents.Account, secr
 		key = string(data)
 	} else {
 		var err error
-		if key, err = p.promptSecret(); err != nil {
+		if key, err = promptKey(ctx, prompt); err != nil {
 			return err
 		}
 	}
@@ -154,16 +204,16 @@ func (p *Provider) requireLoggedIn(ctx context.Context, account agents.Account) 
 	return nil
 }
 
-func promptSecretFromTerminal() (string, error) {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
+// promptKey asks for the API key. Errors never carry what was typed.
+func promptKey(ctx context.Context, prompt agents.SecretPrompter) (string, error) {
+	key, err := prompt.Secret(ctx, "OpenAI API key")
+	switch {
+	case err == nil:
+		return key, nil
+	case errors.Is(err, agents.ErrNoTerminal):
 		return "", fmt.Errorf("no terminal to read the API key from; pipe it with --token-stdin")
+	case ctx.Err() != nil:
+		return "", ctx.Err()
 	}
-	fmt.Fprint(os.Stderr, "Paste the OpenAI API key (input hidden): ")
-	data, err := term.ReadPassword(fd)
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return "", fmt.Errorf("cannot read the API key")
-	}
-	return string(data), nil
+	return "", fmt.Errorf("cannot read the API key")
 }

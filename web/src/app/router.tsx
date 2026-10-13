@@ -12,13 +12,15 @@ import { AppShell } from '../components/layout/AppShell'
 import type { CanvasRoute } from '../features/workspace/WorkspacePage'
 import { ShellRouteProvider, type ShellPage, type ShellRoute } from './shellRoute'
 import { validatePullRequestsSearch } from '../features/github/pullRequestsSearch'
+import { validateAgentsSearch } from '../features/agents/agentsSearch'
 
 const FilesPage = lazy(() => import('../features/files/FilesPage').then(module => ({ default: module.FilesPage })))
 const LogsPage = lazy(() => import('../features/logs/LogsPage').then(module => ({ default: module.LogsPage })))
 const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then(module => ({ default: module.SettingsPage })))
+const AgentsRoute = lazy(() => import('../features/agents/AgentsRoute').then(module => ({ default: module.AgentsRoute })))
 const PullRequestsRoute = lazy(() => import('../features/github/PullRequestsRoute').then(module => ({ default: module.PullRequestsRoute })))
 
-const CANVAS_ROUTES: Record<string, CanvasRoute> = { '/': 'canvas', '/worktrees': 'worktrees', '/agents': 'agents' }
+const CANVAS_ROUTES: Record<string, CanvasRoute> = { '/': 'canvas', '/worktrees': 'worktrees' }
 const GITHUB_ROUTES = new Set<string>(['/github', '/pull-requests'])
 
 function RootLayout() {
@@ -45,7 +47,7 @@ const rootRoute = createRootRoute({ component: RootLayout })
 
 const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => null })
 const worktreesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/worktrees', component: () => null })
-const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/agents', component: () => null })
+const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/agents', component: () => <FeatureBoundary loading="Loading agents…"><AgentsRoute /></FeatureBoundary>, validateSearch: validateAgentsSearch })
 const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: '/github', component: () => <FeatureBoundary loading="Loading pull requests…"><PullRequestsRoute /></FeatureBoundary>, validateSearch: validatePullRequestsSearch })
 const prsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pull-requests', component: () => <FeatureBoundary loading="Loading pull requests…"><PullRequestsRoute /></FeatureBoundary>, validateSearch: validatePullRequestsSearch })
 const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/files', component: () => <FeatureBoundary loading="Loading files…"><FilesPage /></FeatureBoundary> })

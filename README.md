@@ -225,6 +225,15 @@ bonsai web status
 bonsai web logs api
 bonsai web restart api
 bonsai web stop
+bonsai agent account add <provider> <name>          # new Claude Code, Codex or Antigravity profile
+bonsai agent account login <account>                # sign a profile in again
+bonsai agent account list                           # profiles, sign-in state and identity
+bonsai agent account show <account>                 # one profile with its launch defaults
+bonsai agent account set <account> <field>=<value>  # set profile launch defaults
+bonsai agent account rename <account> <new-name>
+bonsai agent account remove <account>
+bonsai agent run <account> [-- <args…>]             # run the provider CLI as that profile
+bonsai agent usage [<account>] [--refresh]          # plan limits of every profile
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage
@@ -373,6 +382,8 @@ bonsai agent account add claude ci --auth token # long-lived token mode
 echo "$TOKEN" | bonsai agent account add claude ci --token-stdin
 bonsai agent account list                       # shows auth mode and identity
 bonsai agent run work -- --model opus           # extra args go to claude
+bonsai agent account login work                 # sign the profile in again
+bonsai agent account login ci --auth login      # switch a token profile to login
 bonsai agent account remove work                # logs the profile out, deletes it
 ```
 
@@ -426,7 +437,8 @@ bonsai agent account add codex box --auth device     # device code, for SSH, WSL
 printenv OPENAI_API_KEY | bonsai agent account add codex ci --token-stdin   # API key
 bonsai agent account list                            # shows auth mode and email · plan
 bonsai agent run work -- --search                    # extra args go to codex
-bonsai agent run work -- login                       # sign the profile in again
+bonsai agent account login work                      # sign the profile in again
+bonsai agent account login box --auth device         # same, with a device code
 bonsai agent account remove work                     # logs the profile out, deletes it
 ```
 
@@ -458,6 +470,31 @@ bonsai agent account remove work                     # logs the profile out, del
   the same place, with the list bundled in Codex as the fallback.
 - Requires Codex CLI 0.162.1 or newer.
 
+### Profile defaults
+
+Each profile keeps its launch defaults: the model plus Codex `permissions` and
+`effort`, Claude `permission_mode` and `effort`, or Antigravity `full_access`. The
+web start dialog opens on them and can change them for one launch; set them for
+good on the profile's **Defaults** tab in the Agents tab or with `account set`.
+A launch option still wins over them, and defaults only apply to sessions
+started afterwards.
+
+```sh
+bonsai agent account show work                       # sign-in, identity, defaults and accepted values
+bonsai agent account set work model=gpt-5.5 effort=high permissions=auto
+bonsai agent account set work --unset effort         # back to the provider default
+bonsai agent account rename work personal
+```
+
+`account login <profile> [--auth <mode>] [--token-stdin]` signs an existing
+profile in again with the provider's own login (Antigravity: `agy`, then exit
+it), or switches its sign-in mode. Running sessions keep going; the profile's
+cached usage is dropped.
+
+`account remove` warns when a session of the profile may still be running (its
+session record is still there); the local API refuses to remove a profile while
+one of its web sessions is active.
+
 ### Antigravity in the web workspace
 
 Install `agy`, then add a Bonsai profile:
@@ -469,8 +506,10 @@ bonsai agent account add antigravity personal
 Start the web app with `bonsai web`, select a worktree, choose **Start agent**,
 and select your profile. The terminal uses that profile's existing settings;
 enter instructions directly in it. Claude Code and Codex profiles start the same
-way (`bonsai agent account add codex work`); the dialog shows the permissions
-preset and, for Codex, the reasoning effort the chosen model supports.
+way (`bonsai agent account add codex work`); the dialog opens on the profile's
+model, permissions and effort (its **Defaults** tab). The
+**Agents** tab does the same profile work in the browser; see
+[docs/web.md](docs/web.md#agents-tab).
 
 Closing the dock or reloading the browser detaches without stopping the agent.
 Use **Stop agent** to terminate it and reconcile profile credentials. Sessions

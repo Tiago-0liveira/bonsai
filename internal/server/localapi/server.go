@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentsetup"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/editors"
@@ -190,10 +191,23 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 	}
 	s.agents = &agentAPI{runtime: runtime, registry: s.registry}
 	s.agents.manager = agentterminal.New(runtime.Accounts, runtime.Sessions, runtime.Registry, s.publishAgents)
+	s.agents.setup = agentsetup.New(runtime.AccountService, s.publishAgentsChanged)
 	if err := s.recoverAgents(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// Close ends web sign-ins (killing their login processes and removing
+// half-created profiles), then stops agent sessions.
+func (s *Server) Close() {
+	if s.agents == nil {
+		return
+	}
+	if s.agents.setup != nil {
+		s.agents.setup.Close()
+	}
+	s.agents.manager.Close()
 }
 
 func (s *Server) routes() *http.ServeMux {
@@ -358,7 +372,7 @@ func Run(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer s.agents.manager.Close()
+	defer s.Close()
 	// Runs before the agents close: the last commits reach disk first.
 	defer s.stateSync.closeWarm(warmStartShutdownFlush)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

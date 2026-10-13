@@ -244,18 +244,38 @@ the terminal manager, local API and CLI never test a provider ID.
 - `SetupRequest.Options` carries `bonsai agent account add` flags (`--auth`,
   `--token-stdin`, `--no-seed`, `--seed-from`). Providers reject options they do
   not support rather than ignoring them.
+- `SetupRequest.IO` (`SetupIO`) is the only way setup talks to the user: its
+  `Launcher` runs interactive login commands, `Out` gets progress lines (the seed
+  report) and `Prompt` (`SecretPrompter`) asks for a pasted key or token.
+  Providers never read the process TTY or write to stdio during setup and take
+  no launcher or writer at construction. `AccountService.SetupWithIO` fills
+  missing fields from its own `Launcher`, its `Out` and `TerminalPrompter`, which
+  returns `ErrNoTerminal` without a TTY (providers turn that into their
+  "pipe it with --token-stdin" message). Notices such as a login another profile
+  already uses come back as `SetupResult.Warnings`; the CLI prints each as a
+  `warning: ` line where setup used to print it, so `account add` output is
+  unchanged (`internal/cli/testdata/account-add.golden`).
+- `AccountService.Reauthenticate` signs an existing account in again under a
+  per-account lock (`<account dir>/login.lock`) with a throwaway session, stores
+  the settings the provider returns (a changed auth mode) and drops the
+  account's cached usage. It runs while sessions of the account are active.
 
 Optional interfaces, found by type assertion:
 
 | Interface | Used for |
 | --- | --- |
-| `Describer` | Provider label and host availability in `/api/agents/providers` |
+| `Describer` | Provider label and host availability in `/api/agents/providers`; `Availability.Hint` becomes `install_hint` while the provider is unavailable |
 | `LaunchValidator` | Synchronous launch-option check; errors return `400 invalid_launch_options` and leave no session |
 | `LaunchSchema` | `launch_fields` in `/api/agents/providers`: the launch options the start dialog renders, see below |
 | `ModelLister` | Model suggestions in `/api/agents/providers/{id}/models`; per-model `efforts`, `default_effort` and the `default` model |
 | `AccountDescriber` | Display-safe `auth_mode`, `identity`, `warnings` and options in `/api/agents/accounts` and `account list`; never tokens, paths or raw settings |
 | `AccountRemover` | Best-effort provider cleanup before an account is deleted; failure is a warning |
+| `ProfileEditor` | Profile launch defaults: `profile_fields` in `/api/agents/providers` (the `model` field, then the launch fields with an empty "Provider default" choice), `defaults` in account responses, `PATCH /api/agents/accounts/{id}` and `bonsai agent account set`/`show`. `UpdateProfile` merges into the stored settings, never touches sign-in keys and validates with the provider's own settings parser |
 | `UsagePolicy` | Provider-specific usage cache TTL |
+| `UsageLayout` | `UsageHeadline`: the primary/secondary limits (5h, weekly), extra limits, score (lower remaining of the pair), `low` (< 0.20) and next reset; shared by `bonsai agent usage` and `/api/agents/usage` |
+| `UsageNoter` | `usage_note` in `/api/agents/providers`: a short caveat on where usage is read from |
+| `SetupSchema` | `setup` in `/api/agents/providers`: `auth_modes` (value, label, help, `recommended` per host, `secret` for a pasted key or token, `optional` when the provider can get it another way), `seed.source` for display (home-relative) and `notes` |
+| `AccountAuthenticator` | Sign in again (`bonsai agent account login <account> [--auth <mode>] [--token-stdin]`): runs the provider's own login for an existing account; without `--auth` the account keeps its mode |
 
 `/api/agents/providers` always lists `agents.KnownProviders` (Antigravity, Claude
 and Codex; unregistered ones as "Not available yet") plus any other registered
@@ -274,6 +294,8 @@ value a provider declares must pass its `ValidateLaunch` (each provider has a
 test for this).
 `/api/agents/accounts` lists accounts of registered providers only.
 
+Routes, setup jobs and the web page are described in [Agents tab](#agents-tab).
+
 ## Claude provider
 
 `internal/providers/claude` runs Claude Code. Each profile owns
@@ -285,6 +307,16 @@ every inherited `CLAUDE*` and `ANTHROPIC_*` variable is removed
 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. Argv is built in `launch.go` only:
 `[explicit...] --model --permission-mode --effort --name --session-id <uuid> [-- prompt]`;
 the generated UUID is the session's `provider_session_id`.
+
+`SetupSpec`: `login` "Browser sign-in" (recommended) and `token` "Setup token",
+whose secret is optional (without one, setup runs `claude setup-token` in the
+setup terminal, then prompts); seed source `~/.claude` or the host's
+`CLAUDE_CONFIG_DIR`. Sign in again runs `auth login` + `auth status` (login) or
+stores a new token (token); switching from token to login removes the stored
+token after the login succeeded. Describe warnings for a logged-out, missing or
+expired sign-in point at `bonsai agent account login <name>`. Profile defaults
+(`bonsai agent account set|show`, the Agents tab's Defaults) are `model`,
+`permission_mode` and `effort`, stored in the account settings.
 
 Tests never need a Claude login: `internal/providers/claude/testdata/fakeclaude.sh`
 is a POSIX stand-in that tests put first on `PATH`; it reads the Phase 0
@@ -325,6 +357,17 @@ a resumed or forked TUI never attaches to a shared daemon that would outlive
 `approval` together (`bypass` is Bonsai's name for the bypass flag). Codex has no
 `--session-id`, so `provider_session_id` stays empty.
 
+`SetupSpec`: `chatgpt` "Browser sign-in", `device` "Device code" (recommended
+instead of the browser when `WSL_DISTRO_NAME` or `SSH_CONNECTION` is set) and
+`api-key` with an "OpenAI API key" secret; seed source `~/.codex` or the host's
+`CODEX_HOME`. Sign in again runs `codex login [--device-auth]` or pipes the key
+into `codex login --with-api-key`, then `login status`, in the profile's own
+`CODEX_HOME`; Codex replaces `auth.json`, and running sessions pick the new login
+up on their next refresh. A logged-out profile's warning points at
+`bonsai agent account login <name>`. Profile defaults
+(`bonsai agent account set|show`, the Agents tab's Defaults) are `model`,
+`effort` and the `permissions` preset, stored as `sandbox`/`approval`.
+
 Identity (`email · plan`) is decoded from the `id_token` claims in `auth.json`
 without a network call; auth status is the exit code of `codex login status`
 (cached 60 s, 10 s when unknown). Short commands run in their own process group,
@@ -354,9 +397,9 @@ never a server message or body, and Bonsai never writes `auth.json`.
   profiles are `ErrUsageUnsupported` and logged-out ones `ErrNotAuthenticated`,
   both decided from `auth.json` without starting Codex. Failures are remembered
   for a minute.
-- `bonsai agent usage` renders each provider through the adapter table in
-  `internal/cli/agent_usage.go` (`usageSpec`): slot assignment, fleet score,
-  next reset and table per provider.
+- `bonsai agent usage` reads slots, score and next reset from each provider's
+  `UsageLayout` headline; `internal/cli/agent_usage.go` (`usageSpec`) only holds
+  the table renderer per provider.
 
 Tests never need a Codex login: `testdata/fakecodex.sh` is a POSIX stand-in put
 first on `PATH`; `login` writes an `auth.json` with an unsigned JWT, `app-server`
@@ -391,6 +434,98 @@ seeding, no network): two Codex profiles with two sessions each plus one Claude
 session, input routed to the right PTY, reload and reattach, stop one while the
 others keep running. These fixture-server specs need ports 7011-7014 free.
 
+## Agents tab
+
+`/app/agents` (`web/src/features/agents/`, a lazy route chunk) lists every
+provider and profile with sign-in state, usage and sessions, edits profile
+defaults, renames and removes profiles, and creates or signs profiles in again
+in the browser. Everything it renders comes from provider-declared data
+(`launch_fields`, `profile_fields`, `setup`, `usage_note`, `install_hint`,
+usage headlines); no provider ID appears in `localapi`, `internal/core/agents`
+or web code.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/agents/providers` | Availability, version, `install_hint`, `launch_fields`, `profile_fields`, `setup`, `usage_note` |
+| `GET /api/agents/accounts` | Described profiles with `created_at`/`updated_at` and `defaults`; `ETag`, `If-None-Match` → `304` |
+| `GET`/`PATCH`/`DELETE /api/agents/accounts/{id}` | One profile; rename and defaults; guarded remove |
+| `GET /api/agents/usage[?account_id=]` | Cached usage snapshots with the provider's `headline`, or `error: {code, message}` |
+| `POST /api/agents/usage/refresh` | `{account_id?}`; bypasses the cache at most every 30 s per profile, else `throttled: true` |
+| `POST /api/agents/setup`, `POST /api/agents/accounts/{id}/login` | Start a setup job (create, sign in again) |
+| `GET`/`DELETE /api/agents/setup/{job}`, `POST …/secret`, `GET …/terminal` | Read, cancel, answer and attach to a job |
+
+Usage errors are `unsupported`, `not_authenticated` or `unavailable` with a
+generic message, never a provider body. `GET` serves cached snapshots (provider
+`UsagePolicy` TTLs) and nothing on the first screen loads usage; the page polls
+it every 60 s while visible. Session summaries carry the accepted launch values
+(`model`, `options`: effort, permission mode, sandbox, approval, full access;
+never the prompt), which the sessions list and the inspector show. The Start
+agent dialog orders a provider's profiles by cached headroom and warns below
+20 %; it never asks for a refresh.
+
+`GET /api/agents/accounts/{id}` re-describes one profile.
+`PATCH /api/agents/accounts/{id}` takes `{name?, defaults?: {field: value | null}}`
+and writes both under the registry lock in one step (`400 invalid_name`,
+`409 name_taken`, `400 invalid_profile` with the provider's message; never raw
+settings). `DELETE` answers `{warnings}` (provider cleanup failures), or
+`409 profile_in_use` with `error.session_ids` while a session of the profile is
+active in any project, or `409 setup_busy` while a sign-in-again job of the
+profile runs (its login writes into the profile directory); it holds the agents
+and setup locks so no API start or sign-in slips in. Both publish
+`agents_changed`. `bonsai agent account remove` has no view of the API's
+sessions, so it warns (and still removes) when the session store holds records
+of the profile: web and `agent run` sessions keep one until they end, and a
+crash can leave one behind.
+
+Web sign-in runs as a **setup job** (`internal/core/agentsetup`), in memory and
+not project-scoped. `POST /api/agents/setup` (`{provider, name, auth_mode?,
+seed?, secret?}`) creates a profile and `POST /api/agents/accounts/{id}/login`
+(`{auth_mode?, secret?}`) signs one in again; both need `Idempotency-Key` and
+answer `202` with the job (a retry with the same key and body gets the same job,
+another body `409 mutation_conflict`). `GET`/`DELETE /api/agents/setup/{job}`
+read or cancel it, `POST …/secret` answers a `waiting_secret` prompt (`204`, or
+`409 no_prompt`), and `GET …/terminal` is a websocket with the agent terminal
+protocol whose `status` is the job. States: `preparing → running →
+(waiting_secret ↔ running)* → verifying → succeeded | failed | canceled`; a
+succeeded job's HTTP answer carries the described `account`. The job's
+`SetupIO` runs each login command with `agentterminal.RunInStream` in one
+terminal (a `── <command> ──` line between commands), writes progress lines
+CRLF-normalised into it and asks for secrets through the job. Limits: 2 active
+jobs (`409 setup_limit`), one per provider and name or per account
+(`409 setup_busy`), 15 minutes (then `failed`), ended jobs and their output
+dropped after 2 minutes. Cancel, timeout and API shutdown (`Server.Close`) kill
+the login's process group; a failed or canceled create removes the profile
+directory. A pasted secret is turned into a reader at once and is never in a
+response, the job, its fingerprint (the body hashed without it), a journal or a
+log; Claude's `setup-token` prints its token into the terminal, which is why
+the output is dropped. Without PTYs (native Windows) every setup route answers
+`501 terminal_unsupported`.
+
+**Freshness.** The accounts `ETag` hashes the whole answer, so a profile added,
+renamed or signed in from the CLI changes it. The page revalidates on focus, on
+visibility, after its own mutations, every 30 s while visible and on the global
+`{"type":"agents_changed","revision":n}` event, which the API publishes for
+account, setup-job and session lifecycle changes it makes (never for terminal
+output).
+
+**Secrets.** A pasted API key or token travels once, in the start body or a
+prompt answer, becomes an `io.Reader` and is never in a response, job, log,
+journal, idempotency fingerprint, warm-start cache or snapshot. The browser
+clears the field after sending and keeps only the job ID in `sessionStorage` to
+reattach after a reload. `--seed-from` stays CLI-only; the web seeds from the
+provider's own source (`setup.seed.source`) or not at all.
+
+**Browser coverage.** Mocked: `agents-tab.spec.ts` (status, sessions, usage,
+screenshots), `agents-profile.spec.ts` (defaults, rename, remove) and
+`agents-setup.spec.ts` (create, sign in again, prompt, cancel, CLI fallback).
+Full stack: `agents-tab-fullstack.spec.ts` against `TestAgentsTabBrowserFixture`
+(port 7012), the production agent runtime with no profiles, `fakecodex.sh` and
+`fakeclaude.sh` on `PATH` and a temp `HOME`: it creates a Codex profile with a
+device code (typing into the job terminal) and one with an API key (checking
+that only the start request carries it), reads usage from the phase0 fixtures,
+saves defaults, starts two sessions from the tab and checks their launch
+details, gets `409 profile_in_use` on remove, stops both and removes the profile.
+
 ## Antigravity web terminals
 
 The web client can start an existing Bonsai Antigravity profile in a configured
@@ -399,7 +534,11 @@ project worktree. Set up a profile with
 PATH. Claude (`claude`) and Codex (`codex`) are supported the same way: set up a
 profile with `bonsai agent account add codex <name> [--auth device]`. Profile selection uses
 opaque account IDs; discovery responses contain only ID, provider, display name and the
-display-safe profile details.
+display-safe profile details. `SetupSpec` has no modes and no seed, only a note
+that agy must be exited to save the profile: Bonsai ignores agy's exit code and
+captures the sign-in from the setup home. `bonsai agent account login` runs agy
+again in a fresh home and stores the new sign-in with the next vault generation,
+so a running session's older tokens never overwrite it when that session ends.
 
 The local API owns these sessions, independently of request contexts and browser
 connections. Closing a terminal or refreshing detaches; reconnecting resumes the

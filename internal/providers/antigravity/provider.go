@@ -12,16 +12,16 @@ const ProviderID agents.ProviderID = "antigravity"
 type Provider struct {
 	accounts       agents.AccountStore
 	sessions       agents.SessionStore
-	launcher       agents.Launcher
 	binaryResolver BinaryResolver
 	credentialMgr  CredentialManager
 }
 
-func New(accounts agents.AccountStore, sessions agents.SessionStore, launcher agents.Launcher) *Provider {
+// New builds the Antigravity provider. Setup talks to the user only through
+// each request's SetupIO.
+func New(accounts agents.AccountStore, sessions agents.SessionStore) *Provider {
 	return &Provider{
 		accounts:       accounts,
 		sessions:       sessions,
-		launcher:       launcher,
 		binaryResolver: PathBinaryResolver{},
 		credentialMgr:  NewCredentialManager(accounts),
 	}
@@ -39,11 +39,14 @@ func (p *Provider) Capabilities() agents.Capabilities {
 	}
 }
 
+// installHint is shown while agy is missing from PATH.
+const installHint = "Install Antigravity, then make sure agy is on PATH"
+
 func (p *Provider) Label() string { return "Antigravity" }
 
 func (p *Provider) Availability(context.Context) agents.Availability {
 	if _, err := p.binaryResolver.Resolve(); err != nil {
-		return agents.Availability{Reason: "Install agy and restart Bonsai"}
+		return agents.Availability{Reason: "Install agy and restart Bonsai", Hint: installHint}
 	}
 	return agents.Availability{Available: true}
 }
@@ -65,3 +68,8 @@ func checkSetupOptions(options agents.SetupOptions) error {
 	}
 	return nil
 }
+
+var (
+	_ agents.SetupSchema          = (*Provider)(nil)
+	_ agents.AccountAuthenticator = (*Provider)(nil)
+)

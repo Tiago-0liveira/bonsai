@@ -49,7 +49,7 @@ type seeder struct {
 }
 
 // seed copies the user's own Codex setup into the new profile and reports it.
-func (p *Provider) seed(from, dst string) (string, error) {
+func (p *Provider) seed(out io.Writer, from, dst string) (string, error) {
 	src, explicit, err := p.seedSource(from)
 	if err != nil {
 		return "", err
@@ -58,7 +58,7 @@ func (p *Provider) seed(from, dst string) (string, error) {
 		if explicit {
 			return "", fmt.Errorf("seed source: %w", statErr)
 		}
-		fmt.Fprintf(p.out, "nothing to seed: %s does not exist\n", src)
+		fmt.Fprintf(out, "nothing to seed: %s does not exist\n", src)
 		return "", nil
 	}
 	report, err := seedProfile(src, dst, maxSeedBytes)
@@ -66,12 +66,12 @@ func (p *Provider) seed(from, dst string) (string, error) {
 		return "", fmt.Errorf("seed profile: %w", err)
 	}
 	if len(report.copied) == 0 {
-		fmt.Fprintf(p.out, "nothing to seed from %s\n", src)
+		fmt.Fprintf(out, "nothing to seed from %s\n", src)
 	} else {
-		fmt.Fprintf(p.out, "seeded profile from %s: %s\n", src, strings.Join(report.copied, ", "))
+		fmt.Fprintf(out, "seeded profile from %s: %s\n", src, strings.Join(report.copied, ", "))
 	}
 	for _, skipped := range report.skipped {
-		fmt.Fprintf(p.out, "  skipped %s\n", skipped)
+		fmt.Fprintf(out, "  skipped %s\n", skipped)
 	}
 	return src, nil
 }

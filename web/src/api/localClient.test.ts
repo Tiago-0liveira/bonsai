@@ -6,6 +6,7 @@ import {
   localFetch,
   openLocalEvents,
   sendEventFocus,
+  subscribeAgentsChanged,
 } from './localClient'
 
 function jsonResponse(value: unknown, status = 200) {
@@ -186,6 +187,36 @@ describe('local event authentication', () => {
       expect(second?.sent).toEqual([JSON.stringify({ type: 'authenticate', token: 'event-session' })])
       second?.message({ type: 'ready', epoch: 'backend-epoch' })
       await without
+    } finally {
+      Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: original })
+      FakeWebSocket.latest = undefined
+    }
+  })
+  it('forwards agents_changed to subscribers and still hands it to the event handler', async () => {
+    vi.restoreAllMocks()
+    __resetLocalClientForTests()
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ version: 'test', api_version: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'event-session', expires_at: new Date(Date.now() + 60_000).toISOString() }, 201))
+    await connectLocalBonsai()
+    const original = globalThis.WebSocket
+    Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: FakeWebSocket })
+    try {
+      const revisions: number[] = []
+      const events: unknown[] = []
+      const unsubscribe = subscribeAgentsChanged(revision => revisions.push(revision))
+      const pending = openLocalEvents(event => events.push(event))
+      FakeWebSocket.latest?.open()
+      FakeWebSocket.latest?.message({ type: 'ready', epoch: 'backend-epoch' })
+      await pending
+      FakeWebSocket.latest?.message({ type: 'agents_changed', revision: 7 })
+      FakeWebSocket.latest?.message({ type: 'project_update', project_id: 'p' })
+      expect(revisions).toEqual([7])
+      expect(events).toContainEqual({ type: 'agents_changed', revision: 7 })
+      unsubscribe()
+      FakeWebSocket.latest?.message({ type: 'agents_changed', revision: 8 })
+      expect(revisions).toEqual([7])
     } finally {
       Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: original })
       FakeWebSocket.latest = undefined

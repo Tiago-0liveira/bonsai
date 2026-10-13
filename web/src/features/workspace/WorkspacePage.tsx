@@ -2,7 +2,7 @@ import '@xyflow/react/dist/style.css'
 import { ReactFlowProvider } from '@xyflow/react'
 import { BonsaiCanvas } from './canvas/BonsaiCanvas'
 
-export type CanvasRoute = 'canvas' | 'worktrees' | 'agents'
+export type CanvasRoute = 'canvas' | 'worktrees'
 
 /**
  * The canvas layer. The shell mounts it behind every island once a canvas
@@ -19,7 +19,7 @@ export function WorkspacePage({ route }: { route: CanvasRoute | null }) {
       {...(active ? {} : { inert: '' })}
     >
       <ReactFlowProvider>
-        <BonsaiCanvas focus={route === 'worktrees' || route === 'agents' ? route : undefined} active={active} />
+        <BonsaiCanvas focus={route === 'worktrees' ? route : undefined} active={active} />
       </ReactFlowProvider>
     </div>
   )

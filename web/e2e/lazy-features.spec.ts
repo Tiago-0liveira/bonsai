@@ -49,9 +49,11 @@ test('branches paint while canvas is pending; unused features stay unfetched', a
     await expect(page.getByText('Loading workspace…')).toBeVisible()
     await expect(page.locator('.desktop-rail').getByText('fix/daemon-lifecycle', { exact: true }).first()).toBeVisible()
     expect(await page.locator('.react-flow').count()).toBe(0)
-    for (const feature of ['files/FilesPage', 'files/FilesPanel', 'github/PullRequestsRoute', 'github/PullRequestDetail', 'settings/SettingsPage', 'logs/LogsPage', 'terminal/AgentTerminal', 'terminal/ProcessTerminal', 'command-palette/CommandPalette', 'workspace/CreateWorktreeDialog', 'workspace/DeleteWorktreeDialog', 'workspace/StartAgentDialog', 'workspace/StartProcessDialog', 'workspace/EnvEditor']) {
+    for (const feature of ['files/FilesPage', 'files/FilesPanel', 'github/PullRequestsRoute', 'github/PullRequestDetail', 'settings/SettingsPage', 'logs/LogsPage', 'terminal/AgentTerminal', 'terminal/ProcessTerminal', 'command-palette/CommandPalette', 'workspace/CreateWorktreeDialog', 'workspace/DeleteWorktreeDialog', 'workspace/StartAgentDialog', 'workspace/StartProcessDialog', 'workspace/EnvEditor', 'agents/AgentsRoute', 'agents/AddProfileDialog']) {
       expect(requests.has(chunk(feature).file), feature).toBe(false)
     }
+    // Session launch details load with the dialog, the Agents page or a live session's inspector card.
+    expect(requests.has(manifest()['src/api/launchDetails.ts'].file), 'api/launchDetails').toBe(false)
   } finally { release() }
   await expect(page.locator('.react-flow')).toBeVisible()
 })
@@ -116,7 +118,7 @@ test('command shortcut loads on demand, focuses input and dismisses with Escape'
   await expect(page.getByPlaceholder('Search commands and views…')).toHaveCount(0)
 })
 
-for (const [route, feature] of [['files', 'files/FilesPage'], ['settings', 'settings/SettingsPage'], ['logs', 'logs/LogsPage']] as const) {
+for (const [route, feature] of [['files', 'files/FilesPage'], ['settings', 'settings/SettingsPage'], ['logs', 'logs/LogsPage'], ['agents', 'agents/AgentsRoute']] as const) {
   test(`${route} loads on demand under the local production CSP without fetching canvas`, async ({ page }) => {
     const requests = new Set<string>(), scriptViolations: string[] = []
     page.on('request', request => requests.add(new URL(request.url()).pathname.slice(1)))
@@ -128,6 +130,19 @@ for (const [route, feature] of [['files', 'files/FilesPage'], ['settings', 'sett
     expect(scriptViolations).toEqual([])
   })
 }
+
+test('the sign-in dialog loads only when a profile is added', async ({ page }) => {
+  const requests = new Set<string>()
+  page.on('request', request => requests.add(new URL(request.url()).pathname.slice(1)))
+  await openLocal(page, '/agents')
+  await expect(page.getByRole('button', { name: 'Add profile' }).first()).toBeVisible()
+  expect(requests.has(chunk('agents/AgentsRoute').file)).toBe(true)
+  expect(requests.has(chunk('agents/AddProfileDialog').file)).toBe(false)
+  expect(requests.has(chunk('terminal/AgentTerminal').file)).toBe(false)
+  await page.getByRole('button', { name: 'Add profile' }).first().click()
+  await expect(page.getByRole('dialog', { name: 'Add profile' })).toBeVisible()
+  expect(requests.has(chunk('agents/AddProfileDialog').file)).toBe(true)
+})
 
 test('a restored terminal in the collapsed dock waits for visibility and stays mounted across navigation', async ({ page }) => {
   const requests = new Set<string>()

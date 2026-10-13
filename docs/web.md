@@ -122,6 +122,48 @@ WSL; Windows editor launchers keep the full PATH, as their scripts expect. The o
 that a GUI window was displayed. Immediate process failures report the editor's
 error, and later failures are retained in the local API log.
 
+## Agents tab
+
+**Agents** in the top bar lists every agent provider Bonsai knows (Claude Code,
+Codex, Antigravity), whether its CLI is installed, and each profile with its
+sign-in state, identity, warnings, plan usage and sessions in every project.
+Providers are listed Claude, Codex, then Antigravity, and each can be collapsed
+to hide its profiles (the choice is remembered in the browser). The strip on top
+sums up the fleet (profiles signed in, sessions running, the lowest headroom and
+the next reset), shows each provider's sign-ins, its 5-hour and weekly windows
+pooled over all of its profiles, its running sessions, says how old the usage
+reading is and re-reads it on **Check usage**. Select a profile for its tabs:
+
+- **Overview**: sign-in method, identity, status, saved defaults, **Start
+  agent** (the start dialog opens on this profile), **Sign in again** and
+  **Remove profile**.
+- **Usage**: plan limits with their resets. Usage is cached by the API;
+  **Refresh** asks the provider again, at most every 30 seconds per profile.
+- **Sessions**: running and recent sessions with the model, effort and
+  permissions they were started with; open the terminal, stop the agent or show
+  it on the canvas.
+- **Defaults**: the model, permissions and effort new sessions of the profile
+  start with. The start dialog uses the same controls and opens on them. Each
+  control opens on the profile's saved choice, or where it saved none on the
+  provider's default (the default model, that model's default effort or the
+  middle of the levels it offers, the usual permission), tagged "default" and
+  one click away; a choice left on it is not saved. The effort slider warms up
+  past its middle, the thumb turns into a flame, and xhigh and above jitter.
+  Running sessions are not changed.
+
+**Add profile** creates a profile without a terminal: choose the provider, a
+name and how to sign in (browser sign-in, device code, or a pasted API key or
+token), and whether to copy your own settings (for example `~/.codex`) into it.
+The provider's login runs in a terminal inside the dialog, so you can open its
+link, read its code or answer its questions there. Closing the dialog while it
+runs asks first; canceling the sign-in removes the new profile, and a reload
+reattaches to a sign-in still running. A pasted key or token is
+sent once and never shown, stored by Bonsai or logged. Removing a profile is
+refused while one of its sessions runs; the dialog offers to stop them first.
+Signing in from the browser needs a terminal, which native Windows does not
+have yet: there the dialog shows the `bonsai agent account` command to run
+instead. Profiles added or changed with the CLI show up without a reload.
+
 ## Updates and exposure
 
 Standard mode needs no tunnel. It checks visible GitHub projects every 30

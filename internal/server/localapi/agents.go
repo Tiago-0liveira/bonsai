@@ -1,6 +1,8 @@
 package localapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,10 +10,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentsetup"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
@@ -23,6 +27,12 @@ type agentAPI struct {
 	runtime   *agentruntime.Runtime
 	manager   *agentterminal.Manager
 	registry  projectRegistry
+	// revision numbers agents_changed events.
+	revision      atomic.Uint64
+	usageThrottle usageThrottle
+	// setup runs web sign-ins; setupKeys are their request keys.
+	setup     *agentsetup.Jobs
+	setupKeys setupKeys
 }
 type agentRequest struct {
 	Model  string `json:"model,omitempty"`
@@ -48,11 +58,17 @@ type agentMutation struct {
 func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/providers", s.agentProviders)
 	mux.HandleFunc("GET /api/agents/accounts", s.agentAccounts)
+	mux.HandleFunc("GET /api/agents/accounts/{id}", s.agentAccount)
+	mux.HandleFunc("PATCH /api/agents/accounts/{id}", s.updateAgentAccount)
+	mux.HandleFunc("DELETE /api/agents/accounts/{id}", s.removeAgentAccount)
 	mux.HandleFunc("GET /api/agents/providers/{provider}/models", s.agentModels)
+	mux.HandleFunc("GET /api/agents/usage", s.agentUsage)
+	mux.HandleFunc("POST /api/agents/usage/refresh", s.agentUsageRefresh)
 	mux.HandleFunc("GET /api/projects/{projectId}/agents", s.listAgents)
 	mux.HandleFunc("POST /api/projects/{projectId}/agents", s.startAgent)
 	mux.HandleFunc("DELETE /api/projects/{projectId}/agents/{sessionId}", s.stopAgent)
 	mux.HandleFunc("GET /api/projects/{projectId}/agents/{sessionId}/terminal", s.agentTerminal)
+	s.registerAgentSetupRoutes(mux)
 }
 
 func (s *Server) agentRegistry() *agents.Registry {
@@ -104,10 +120,26 @@ func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
 		if availability.Version != "" {
 			out["version"] = availability.Version
 		}
+		if !availability.Available && availability.Hint != "" {
+			out["install_hint"] = availability.Hint
+		}
+		if noter, ok := provider.(agents.UsageNoter); ok {
+			if note := noter.UsageNote(); note != "" {
+				out["usage_note"] = note
+			}
+		}
 		if schema, ok := provider.(agents.LaunchSchema); ok {
 			if fields := schema.LaunchFields(); len(fields) > 0 {
 				out["launch_fields"] = fields
 			}
+		}
+		if editor, ok := provider.(agents.ProfileEditor); ok {
+			if fields := editor.ProfileFields(); len(fields) > 0 {
+				out["profile_fields"] = fields
+			}
+		}
+		if schema, ok := provider.(agents.SetupSchema); ok {
+			out["setup"] = schema.SetupSpec(r.Context())
 		}
 		return out
 	}
@@ -157,24 +189,41 @@ func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 	out := []map[string]any{}
 	for i, a := range visible {
-		info := infos[i]
-		item := map[string]any{}
-		for k, v := range info.Options {
-			item[k] = v
-		}
-		item["id"], item["name"], item["provider"] = a.ID, a.Name, a.Provider
-		if info.AuthMode != "" {
-			item["auth_mode"] = info.AuthMode
-		}
-		if info.Identity != "" {
-			item["identity"] = info.Identity
-		}
-		if len(info.Warnings) > 0 {
-			item["warnings"] = info.Warnings
-		}
-		out = append(out, item)
+		out = append(out, accountItem(registry, a, infos[i]))
 	}
-	writeJSON(w, 200, out)
+	// The ETag covers the whole answer, so a profile added, renamed or signed in
+	// from the CLI changes it too.
+	writeJSONWithETag(w, r, out)
+}
+
+// accountItem is one profile as the API shows it: describe output plus the
+// profile's launch defaults by profile field ID. Never settings or paths.
+func accountItem(registry *agents.Registry, a agents.Account, info agents.AccountInfo) map[string]any {
+	item := map[string]any{}
+	for k, v := range info.Options {
+		item[k] = v
+	}
+	item["id"], item["name"], item["provider"] = a.ID, a.Name, a.Provider
+	item["created_at"], item["updated_at"] = a.CreatedAt, a.UpdatedAt
+	if info.AuthMode != "" {
+		item["auth_mode"] = info.AuthMode
+	}
+	if info.Identity != "" {
+		item["identity"] = info.Identity
+	}
+	if len(info.Warnings) > 0 {
+		item["warnings"] = info.Warnings
+	}
+	if provider, err := registry.Get(a.Provider); err == nil {
+		if editor, ok := provider.(agents.ProfileEditor); ok {
+			defaults := editor.ProfileDefaults(a)
+			if defaults == nil {
+				defaults = map[string]string{}
+			}
+			item["defaults"] = defaults
+		}
+	}
+	return item
 }
 
 // agentModels suggests models for the launch dialog. Providers that cannot list
@@ -240,8 +289,10 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 		writeAPIError(w, 400, "invalid", "Idempotency-Key is required")
 		return
 	}
+	// The journal keeps only a hash of the request, so a prompt never lands on disk.
 	encoded, _ := json.Marshal(body)
-	fingerprint := r.Method + ":" + r.URL.Path + ":" + string(encoded)
+	sum := sha256.Sum256(encoded)
+	fingerprint := r.Method + ":" + r.URL.Path + ":" + hex.EncodeToString(sum[:])
 	s.agents.mu.Lock()
 	defer s.agents.mu.Unlock()
 	var old agentMutation
@@ -399,6 +450,7 @@ func (s *Server) publishAgents(_ string) {
 			snapshot.Freshness["agents"] = browserFreshness{State: "ready", UpdatedAt: &now}
 		})
 	}
+	s.publishAgentsChanged()
 }
 
 func (s *Server) hasLiveAgents(project, tree string) bool {

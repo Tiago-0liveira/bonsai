@@ -176,7 +176,7 @@ func TestAccountServiceRemoveClearsUsageCacheBeforeAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	warnings, err := service.Remove(context.Background(), account.ID)
+	warnings, err := service.Remove(context.Background(), account.ID, RemoveOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestAccountServiceRemovePreservesAccountWhenCacheCleanupFails(t *testing.T)
 		t.Fatal(err)
 	}
 
-	if _, err := service.Remove(context.Background(), account.ID); !errors.Is(err, sentinel) {
+	if _, err := service.Remove(context.Background(), account.ID, RemoveOptions{}); !errors.Is(err, sentinel) {
 		t.Fatalf("remove error = %v, want %v", err, sentinel)
 	}
 	if _, err := store.Get(account.ID); err != nil {
@@ -288,7 +288,7 @@ func TestAccountServiceRemoveCallsAccountRemoverBeforeDeletingDir(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	warnings, err := service.Remove(context.Background(), account.ID)
+	warnings, err := service.Remove(context.Background(), account.ID, RemoveOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestAccountServiceRemoveAccountRemoverErrorBecomesWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	warnings, err := service.Remove(context.Background(), account.ID)
+	warnings, err := service.Remove(context.Background(), account.ID, RemoveOptions{})
 	if err != nil {
 		t.Fatalf("remove error = %v, want nil", err)
 	}
@@ -339,7 +339,7 @@ func TestAccountServiceRemoveWithoutRemoverHasNoWarnings(t *testing.T) {
 	if err := store.Create(account); err != nil {
 		t.Fatal(err)
 	}
-	warnings, err := service.Remove(context.Background(), account.ID)
+	warnings, err := service.Remove(context.Background(), account.ID, RemoveOptions{})
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("Remove = %v, %v; want no warnings and no error", warnings, err)
 	}

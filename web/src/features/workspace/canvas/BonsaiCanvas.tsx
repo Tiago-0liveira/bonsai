@@ -107,7 +107,7 @@ function storablePositions(
   return result
 }
 
-export function BonsaiCanvas({ focus, active = true }: { focus?: 'worktrees' | 'agents'; active?: boolean }) {
+export function BonsaiCanvas({ focus, active = true }: { focus?: 'worktrees'; active?: boolean }) {
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const activeProject = useBonsaiStore(state => state.projects.find(project => project.id === activeProjectId) ?? state.projects[0])
   const worktrees = useProjectWorktrees(activeProject?.id ?? '')
@@ -347,16 +347,25 @@ export function BonsaiCanvas({ focus, active = true }: { focus?: 'worktrees' | '
       return
     }
     if (!nodesInitialized || lastFocusFit.current === focus) return
-    const ids =
-      focus === 'agents'
-        ? nodes.filter((node) => node.type === 'agent').map((node) => node.id)
-        : nodes.filter((node) => node.type === 'worktree' || node.type === 'stack').map((node) => node.id)
-    const visible = nodes.filter((node) => ids.includes(node.id))
+    const visible = nodes.filter((node) => node.type === 'worktree' || node.type === 'stack')
     if (!visible.length) return
     lastFocusFit.current = focus
     const animation = requestAnimationFrame(() => fitFrameRef.current({ nodes: visible, padding: 0.2 }))
     return () => cancelAnimationFrame(animation)
   }, [focus, nodesInitialized, nodes])
+
+  // "Show agents on canvas": a one-shot request, so returning to the canvas later does not refit.
+  const fitAgentsPending = useBonsaiStore(state => state.canvasFitAgents)
+  useEffect(() => {
+    // Wait for the canvas route: the layer stays mounted (and inert) behind other pages.
+    if (!fitAgentsPending || !nodesInitialized || !active) return
+    const animation = requestAnimationFrame(() => {
+      const agentNodes = getNodes().filter(node => node.type === 'agent')
+      fitFrameRef.current(agentNodes.length ? { nodes: agentNodes, padding: 0.2 } : undefined)
+      useBonsaiStore.setState({ canvasFitAgents: false })
+    })
+    return () => cancelAnimationFrame(animation)
+  }, [fitAgentsPending, nodesInitialized, active, getNodes])
 
   useEffect(() => {
     if (!canvasCommand.nonce || lastCommand.current === canvasCommand.nonce) return

@@ -63,7 +63,22 @@ func (s *UsageService) Account(ctx context.Context, accountID AccountID, opts Us
 	return snapshot, nil
 }
 
+// Headline returns the provider's headline of a snapshot, or nil when the
+// provider has no UsageLayout.
+func (s *UsageService) Headline(snapshot UsageSnapshot) *UsageHeadline {
+	if s.Registry == nil {
+		return nil
+	}
+	return s.Registry.UsageHeadline(snapshot)
+}
+
 func (s *UsageService) All(ctx context.Context, opts UsageOptions) []AccountUsageResult {
+	return s.AllFunc(ctx, func(Account) UsageOptions { return opts })
+}
+
+// AllFunc is All with options chosen per account, such as a refresh throttled
+// per account.
+func (s *UsageService) AllFunc(ctx context.Context, opts func(Account) UsageOptions) []AccountUsageResult {
 	accounts, err := s.Accounts.List()
 	if err != nil {
 		return []AccountUsageResult{{Error: err}}
@@ -92,10 +107,11 @@ func (s *UsageService) All(ctx context.Context, opts UsageOptions) []AccountUsag
 			defer wg.Done()
 			for idx := range jobs {
 				account := accounts[idx]
-				snapshot, err := s.Account(ctx, account.ID, opts)
+				snapshot, err := s.Account(ctx, account.ID, opts(account))
 				results[idx] = AccountUsageResult{Account: account, Error: err}
 				if err == nil {
 					results[idx].Usage = &snapshot
+					results[idx].Headline = s.Headline(snapshot)
 				}
 			}
 		}()

@@ -83,6 +83,11 @@ func (m *fileCredentialManager) CaptureSetup(ctx context.Context, account agents
 	}
 	candidate.Version = 1
 	candidate.Generation = 1
+	// A sign-in again replaces the vault with the next generation, so sessions
+	// materialized from the old one do not write their older tokens back.
+	if current, err := m.readVault(account); err == nil {
+		candidate.Generation = current.Generation + 1
+	}
 	candidate.UpdatedAt = time.Now().UTC()
 	return m.writeVault(account, candidate)
 }

@@ -18,6 +18,11 @@
 #   FAKE_CODEX_DELAY        seconds the app-server waits before it handles anything
 #   FAKE_CODEX_PIDFILE      file the app-server appends its own and its child's pid to
 #   FAKE_CODEX_DEBUG_FAIL   1 = `debug models` exits 1
+#   FAKE_CODEX_LOGIN_PIDFILE file the interactive `login` appends its own and its child's pid to
+#   FAKE_CODEX_LOGIN_HANG   1 = interactive `login` prints FAKE_LOGIN_WAITING and never finishes
+#   FAKE_CODEX_LOGIN_PROMPT 1 = interactive `login` prints its terminal size, reads a line
+#                           after "Enter code: ", echoes it as GOT:<line> and prints the size again
+#   FAKE_CODEX_DEVICE_CODE  code `login --device-auth` prints with a verification URL
 home="${CODEX_HOME:-$HOME/.codex}"
 log() {
 	if [ -n "$FAKE_CODEX_LOG" ]; then
@@ -84,6 +89,28 @@ login)
 	mode=browser
 	has --device-auth "$@" && mode=device
 	log "login $mode home=$home store=$store"
+	if [ -n "$FAKE_CODEX_LOGIN_PIDFILE" ]; then
+		printf '%s\n' "$$" >>"$FAKE_CODEX_LOGIN_PIDFILE"
+	fi
+	if [ "$mode" = device ] && [ -n "$FAKE_CODEX_DEVICE_CODE" ]; then
+		echo "Open https://auth.openai.com/codex/device and enter $FAKE_CODEX_DEVICE_CODE"
+	fi
+	if [ "$FAKE_CODEX_LOGIN_HANG" = 1 ]; then
+		echo FAKE_LOGIN_WAITING
+		sleep 60 &
+		if [ -n "$FAKE_CODEX_LOGIN_PIDFILE" ]; then
+			printf '%s\n' "$!" >>"$FAKE_CODEX_LOGIN_PIDFILE"
+		fi
+		wait
+		exit 1
+	fi
+	if [ "$FAKE_CODEX_LOGIN_PROMPT" = 1 ]; then
+		echo "SIZE:$(stty size)"
+		printf 'Enter code: '
+		IFS= read -r code
+		echo "GOT:$code"
+		echo "SIZE:$(stty size)"
+	fi
 	if [ "$FAKE_CODEX_LOGIN_FAIL" = 1 ]; then
 		echo "login failed" >&2
 		exit 1

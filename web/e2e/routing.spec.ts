@@ -29,3 +29,14 @@ test('local entry sends restrictive security headers', async ({ page }) => {
   expect(headers['x-content-type-options']).toBe('nosniff')
   expect(await page.locator('script[src^="http"]').count()).toBe(0)
 })
+
+test('/agents renders the Agents page and no canvas', async ({ page }) => {
+  await mockGitBackend(page)
+  await page.goto('/app/agents')
+  await expect(page.getByRole('region', { name: 'Fleet summary' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Agents', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(page.locator('.react-flow')).toHaveCount(0)
+  // The old canvas focus route is gone: the canvas has its own nav item.
+  await page.getByRole('link', { name: 'Canvas', exact: true }).click()
+  await expect(page.locator('.react-flow')).toBeVisible()
+})

@@ -101,7 +101,12 @@ export type AgentProviderId = 'antigravity' | 'claude' | 'codex'
 export interface Agent {
   projectId?: string
   profileName?: string
+  /** The Bonsai profile the session runs under. */
+  accountId?: string
   providerId?: AgentProviderId
+  exitCode?: number
+  /** Accepted launch options of a live session, keyed by start request field (effort, sandbox…). */
+  launchOptions?: Record<string, string>
   lifecycleState?: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
   id: string
   worktreeId: string

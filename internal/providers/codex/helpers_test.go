@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io/fs"
@@ -71,7 +72,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	out := &bytes.Buffer{}
 	launcher := agents.NewForegroundLauncher(strings.NewReader(""), out, out)
-	provider := New(accounts, sessions, launcher, out)
+	provider := New(accounts, sessions)
 	scratch := t.TempDir()
 	provider.scratchRoot = func() (string, error) { return scratch, nil }
 	registry := agents.NewRegistry()
@@ -80,7 +81,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	return &testEnv{
 		t: t, home: home, log: log, out: out, accounts: accounts, sessions: sessions, registry: registry, provider: provider,
-		service: &agents.AccountService{Store: accounts, Sessions: sessions, Registry: registry, Launcher: launcher},
+		service: &agents.AccountService{Store: accounts, Sessions: sessions, Registry: registry, Launcher: launcher, Out: out},
 	}
 }
 
@@ -217,3 +218,8 @@ func writeFile(t *testing.T, path, content string, mode os.FileMode) {
 		t.Fatal(err)
 	}
 }
+
+// promptFunc answers secret prompts in tests.
+type promptFunc func(label string) (string, error)
+
+func (f promptFunc) Secret(_ context.Context, label string) (string, error) { return f(label) }

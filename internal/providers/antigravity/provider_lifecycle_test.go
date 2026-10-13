@@ -56,7 +56,6 @@ func TestProviderLifecycleWiresIsolatedSessionState(t *testing.T) {
 	provider := &Provider{
 		binaryResolver: resolver,
 		credentialMgr:  credentials,
-		launcher:       launcher,
 	}
 
 	account := agents.Account{
@@ -66,7 +65,7 @@ func TestProviderLifecycleWiresIsolatedSessionState(t *testing.T) {
 	runtimeDir := t.TempDir()
 	homeDir := t.TempDir()
 	if _, err := provider.SetupAccount(context.Background(), agents.SetupRequest{
-		Account: account, RuntimeDir: runtimeDir, HomeDir: homeDir,
+		Account: account, RuntimeDir: runtimeDir, HomeDir: homeDir, IO: agents.SetupIO{Launcher: launcher},
 	}); err != nil {
 		t.Fatal(err)
 	}

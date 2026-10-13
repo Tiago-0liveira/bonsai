@@ -94,7 +94,9 @@ export interface BonsaiState {
   openStartProcessDialog: (worktreeId?: string, projectId?: string) => void
   setStartProcessDialogOpen: (open: boolean) => void
   startAgentTargetWorktreeId: string
-  openStartAgentDialog: (worktreeId?: string) => void
+  /** Profile the dialog preselects; empty lets the dialog choose. */
+  startAgentTargetAccountId: string
+  openStartAgentDialog: (worktreeId?: string, accountId?: string) => void
   setStartAgentDialogOpen: (open: boolean) => void
   createAgent: (input: StartAgentInput) => Promise<void>
   startMockAgent: () => void
@@ -174,6 +176,9 @@ export interface BonsaiState {
   /** `reveal` scrolls a node into view only when hidden; `center` always centres it. `nodeId` may be an entity id. */
   canvasReveal: { projectId: string; nodeId: string; nonce: number; mode?: 'reveal' | 'center' }
   requestCanvasAction: (type: 'fit' | 'layout') => void
+  /** Set by "Show agents on canvas"; the canvas fits its agent nodes once and clears it. */
+  canvasFitAgents: boolean
+  requestFitAgents: () => void
   requestCanvasFocus: (projectId: string, entityId: string) => void
   canvasPreferences: CanvasPreferences
   setCanvasPreferences: (patch: Partial<CanvasPreferences>) => void
@@ -323,7 +328,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       openStartProcessDialog: (worktreeId = '', projectId) => set(state => ({ startProcessDialogOpen: true, startProcessTargetWorktreeId: worktreeId, startProcessTargetProjectId: projectId ?? state.worktrees.find(tree => tree.id === worktreeId)?.projectId ?? state.activeProjectId })),
       setStartProcessDialogOpen: (startProcessDialogOpen) => set({ startProcessDialogOpen }),
       startAgentTargetWorktreeId: '',
-      openStartAgentDialog: (worktreeId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId }),
+      startAgentTargetAccountId: '',
+      openStartAgentDialog: (worktreeId = '', accountId = '') => set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: worktreeId, startAgentTargetAccountId: accountId }),
       setStartAgentDialogOpen: (startAgentDialogOpen) => set({ startAgentDialogOpen }),
       createAgent: async (input) => {
         const tree = get().worktrees.find(w => w.id === input.worktreeId)
@@ -350,7 +356,7 @@ export const useBonsaiStore = create<BonsaiState>()(
             : state.selection.type === 'agent'
               ? state.agents.find((item) => item.id === state.selection.id)?.worktreeId ?? ''
               : ''
-        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target })
+        set({ startAgentDialogOpen: true, startAgentTargetWorktreeId: target, startAgentTargetAccountId: '' })
       },
       moveAgentToHistory: (id) =>
         set((state) => ({
@@ -600,6 +606,8 @@ export const useBonsaiStore = create<BonsaiState>()(
       requestCanvasAction: (type) => set((state) => ({
         canvasCommand: { type, nonce: state.canvasCommand.nonce + 1 },
       })),
+      canvasFitAgents: false,
+      requestFitAgents: () => set({ canvasFitAgents: true }),
       requestCanvasFocus: (projectId, nodeId) => set((state) => ({
         canvasReveal: { projectId, nodeId, nonce: state.canvasReveal.nonce + 1, mode: 'center' },
       })),

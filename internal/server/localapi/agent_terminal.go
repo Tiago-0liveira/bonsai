@@ -18,6 +18,43 @@ func (s *Server) agentTerminal(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 503, "agents_unavailable", "Agent runtime unavailable")
 		return
 	}
+	project, id := r.PathValue("projectId"), r.PathValue("sessionId")
+	manager := s.agents.manager
+	serveTerminal(s, w, r, func() (terminalEndpoint[agentterminal.Summary], bool) {
+		summary, ok := manager.Get(project, id)
+		if !ok {
+			return terminalEndpoint[agentterminal.Summary]{}, false
+		}
+		if _, err := s.agentWorktree(r, summary.WorktreeID); err != nil {
+			return terminalEndpoint[agentterminal.Summary]{}, false
+		}
+		if _, err := s.agents.runtime.Accounts.Get(summary.AccountID); err != nil {
+			return terminalEndpoint[agentterminal.Summary]{}, false
+		}
+		return terminalEndpoint[agentterminal.Summary]{
+			attach: func(cursor uint64) (uint64, bool, []agentterminal.Frame, <-chan agentterminal.Frame, error) {
+				return manager.Attach(project, id, cursor)
+			},
+			detach: func(subscriber uint64) { manager.Detach(id, subscriber) },
+			input:  func(subscriber uint64, data []byte) error { return manager.Input(id, subscriber, data) },
+			resize: func(subscriber uint64, cols, rows int) error { return manager.Resize(id, subscriber, cols, rows) },
+		}, true
+	})
+}
+
+// terminalEndpoint is one terminal stream a websocket attaches to: an agent
+// session or a setup job.
+type terminalEndpoint[S any] struct {
+	attach func(cursor uint64) (uint64, bool, []agentterminal.StreamFrame[S], <-chan agentterminal.StreamFrame[S], error)
+	detach func(subscriber uint64)
+	input  func(subscriber uint64, data []byte) error
+	resize func(subscriber uint64, cols, rows int) error
+}
+
+// serveTerminal runs the terminal websocket protocol (version 1): authenticate,
+// attach, then ready, replay and live frames; the writer may send input and
+// resize. resolve runs after authentication and finds the stream.
+func serveTerminal[S any](s *Server, w http.ResponseWriter, r *http.Request, resolve func() (terminalEndpoint[S], bool)) {
 	upgrader := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool {
 		return s.allowedHost(r.Host) && s.allowedOrigin(r.Header.Get("Origin"))
 	}}
@@ -40,26 +77,19 @@ func (s *Server) agentTerminal(w http.ResponseWriter, r *http.Request) {
 	if err := conn.ReadJSON(&attach); err != nil || attach.Type != "attach" {
 		return
 	}
-	project, id := r.PathValue("projectId"), r.PathValue("sessionId")
-	summary, ok := s.agents.manager.Get(project, id)
+	endpoint, ok := resolve()
 	if !ok {
-		return
-	}
-	if _, err = s.agentWorktree(r, summary.WorktreeID); err != nil {
-		return
-	}
-	if _, err = s.agents.runtime.Accounts.Get(summary.AccountID); err != nil {
 		return
 	}
 	generation := s.stateSync.epoch
 	if attach.Generation != "" && attach.Generation != generation {
 		attach.Offset = 0
 	}
-	subscriber, writer, replay, frames, err := s.agents.manager.Attach(project, id, attach.Offset)
+	subscriber, writer, replay, frames, err := endpoint.attach(attach.Offset)
 	if err != nil {
 		return
 	}
-	defer s.agents.manager.Detach(id, subscriber)
+	defer endpoint.detach(subscriber)
 	send := func(value any) error {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		return conn.WriteJSON(value)
@@ -94,11 +124,11 @@ func (s *Server) agentTerminal(w http.ResponseWriter, r *http.Request) {
 			}
 			switch message.Type {
 			case "input":
-				if len(message.Data) > agentterminal.InputLimit || s.agents.manager.Input(id, subscriber, message.Data) != nil {
+				if len(message.Data) > agentterminal.InputLimit || endpoint.input(subscriber, message.Data) != nil {
 					return
 				}
 			case "resize":
-				if s.agents.manager.Resize(id, subscriber, message.Cols, message.Rows) != nil {
+				if endpoint.resize(subscriber, message.Cols, message.Rows) != nil {
 					return
 				}
 			default:

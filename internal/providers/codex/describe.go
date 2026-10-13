@@ -26,7 +26,7 @@ func (p *Provider) DescribeAccount(ctx context.Context, account agents.Account) 
 	info.Options["auth_status"] = status.String()
 	switch {
 	case status == statusLoggedOut:
-		info.Warnings = append(info.Warnings, fmt.Sprintf("Not logged in; run `bonsai agent run %s -- login`", account.Name))
+		info.Warnings = append(info.Warnings, fmt.Sprintf("Not logged in; run `bonsai agent account login %s`", account.Name))
 	case status == statusLoggedIn && !id.Present:
 		// Only a store enforced by an administrator keeps the login elsewhere.
 		info.Warnings = append(info.Warnings, "Login is not stored in the profile (keyring storage enforced?); identity is unknown")

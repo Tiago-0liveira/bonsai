@@ -57,7 +57,7 @@ func TestLoggedOutProfileWarns(t *testing.T) {
 	}
 	e.provider.forgetStatus(account.ID)
 	info := e.provider.DescribeAccount(t.Context(), account)
-	if info.Options["auth_status"] != "logged_out" || info.Identity != "" || len(info.Warnings) != 1 || !strings.Contains(info.Warnings[0], "bonsai agent run work -- login") {
+	if info.Options["auth_status"] != "logged_out" || info.Identity != "" || len(info.Warnings) != 1 || !strings.Contains(info.Warnings[0], "bonsai agent account login work") {
 		t.Fatalf("info = %+v", info)
 	}
 	e.prepare(account, agents.LaunchOptions{}) // Codex shows its own sign-in screen
@@ -130,7 +130,7 @@ func TestRemoveLogsOutWithProfileEnvironment(t *testing.T) {
 	e := newTestEnv(t)
 	account := e.addLogin("work")
 	t.Setenv("CODEX_HOME", "/elsewhere")
-	warnings, err := e.service.Remove(t.Context(), account.ID)
+	warnings, err := e.service.Remove(t.Context(), account.ID, agents.RemoveOptions{})
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("remove: %v, %v", warnings, err)
 	}
@@ -146,7 +146,7 @@ func TestRemoveFailureStillRemoves(t *testing.T) {
 	e := newTestEnv(t)
 	account := e.addLogin("work")
 	t.Setenv("FAKE_CODEX_LOGOUT_FAIL", "1")
-	warnings, err := e.service.Remove(t.Context(), account.ID)
+	warnings, err := e.service.Remove(t.Context(), account.ID, agents.RemoveOptions{})
 	if err != nil || len(warnings) != 1 || !strings.Contains(warnings[0], "Codex provider cleanup failed") {
 		t.Fatalf("remove: %v, %v", warnings, err)
 	}
@@ -162,7 +162,7 @@ func TestRemoveLoggedOutProfileSkipsLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.provider.forgetStatus(account.ID)
-	if warnings, err := e.service.Remove(t.Context(), account.ID); err != nil || len(warnings) != 0 {
+	if warnings, err := e.service.Remove(t.Context(), account.ID, agents.RemoveOptions{}); err != nil || len(warnings) != 0 {
 		t.Fatalf("remove: %v, %v", warnings, err)
 	}
 	if strings.Contains(e.calls(), "logout") {
@@ -194,7 +194,7 @@ func TestRealCodexHomeIsNeverWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, a := range []agents.Account{work, key} {
-		if _, err := e.service.Remove(t.Context(), a.ID); err != nil {
+		if _, err := e.service.Remove(t.Context(), a.ID, agents.RemoveOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}

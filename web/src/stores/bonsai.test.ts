@@ -359,3 +359,19 @@ describe('dock sizing', () => {
     expect(useBonsaiStore.getState().dockHeight).toBe(72)
   })
 })
+
+describe('agents tab hooks', () => {
+  it('opens the start dialog on a profile and forgets it for other callers', () => {
+    const store = useBonsaiStore.getState()
+    store.openStartAgentDialog('', 'codex-team')
+    expect(useBonsaiStore.getState()).toMatchObject({ startAgentDialogOpen: true, startAgentTargetWorktreeId: '', startAgentTargetAccountId: 'codex-team' })
+    store.openStartAgentDialog('wt-web')
+    expect(useBonsaiStore.getState()).toMatchObject({ startAgentTargetWorktreeId: 'wt-web', startAgentTargetAccountId: '' })
+  })
+
+  it('asks the canvas to fit its agents once', () => {
+    useBonsaiStore.getState().requestFitAgents()
+    expect(useBonsaiStore.getState().canvasFitAgents).toBe(true)
+    useBonsaiStore.setState({ canvasFitAgents: false })
+  })
+})

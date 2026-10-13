@@ -1,4 +1,5 @@
 import type { ITheme } from '@xterm/xterm'
+import { resolveAnsiPalette } from './ansi'
 import { getActiveTheme, subscribeTheme } from './themeStore'
 import type { Theme } from './tokens'
 
@@ -13,22 +14,7 @@ export function terminalTheme(theme: Theme): ITheme {
     cursor: c.accent,
     cursorAccent: c.well,
     selectionBackground: c.accent + '47',
-    black: c.well,
-    red: c.danger,
-    green: c['accent-solid'],
-    yellow: c.warn,
-    blue: c.ok,
-    magenta: c['warn-solid'],
-    cyan: c.ok,
-    white: c.muted,
-    brightBlack: c['muted-2'],
-    brightRed: c.danger,
-    brightGreen: c.accent,
-    brightYellow: c.warn,
-    brightBlue: c.ok,
-    brightMagenta: c.warn,
-    brightCyan: c.ok,
-    brightWhite: c.text,
+    ...resolveAnsiPalette(theme),
     ...theme.terminal,
   }
 }

@@ -18,20 +18,18 @@ test('renders the Bonsai workspace and core dialogs without page errors', async 
   await expect(page.getByText('Existing branch', { exact: true })).toBeVisible()
   await expect(page.getByText('Remote branch', { exact: true })).toBeVisible()
   await expect(page.getByText('New branch', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Merge target' }).click()
-  const mergeMenu = page.locator('[data-bonsai-select-menu="Merge target"]')
-  await expect(mergeMenu).toBeVisible()
-  const menuBox = await mergeMenu.boundingBox()
+  // Merge targets are listed in the dialog itself, not behind a menu.
+  await expect(page.getByRole('listbox', { name: 'Merge target' })).toBeVisible()
+  const dialogBox = await page.getByRole('dialog', { name: 'New worktree' }).boundingBox()
   const viewport = page.viewportSize()
-  expect(menuBox).not.toBeNull()
+  expect(dialogBox).not.toBeNull()
   expect(viewport).not.toBeNull()
-  if (menuBox && viewport) {
-    expect(menuBox.x).toBeGreaterThanOrEqual(0)
-    expect(menuBox.y).toBeGreaterThanOrEqual(0)
-    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(viewport.width)
-    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(viewport.height)
+  if (dialogBox && viewport) {
+    expect(dialogBox.x).toBeGreaterThanOrEqual(0)
+    expect(dialogBox.y).toBeGreaterThanOrEqual(0)
+    expect(dialogBox.x + dialogBox.width).toBeLessThanOrEqual(viewport.width)
+    expect(dialogBox.y + dialogBox.height).toBeLessThanOrEqual(viewport.height)
   }
-  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Close', exact: true }).click()
 
   await page.locator('.react-flow__node-project').click()

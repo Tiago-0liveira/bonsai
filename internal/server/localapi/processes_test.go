@@ -132,6 +132,10 @@ setTimeout(()=>{process.stdout.write(Buffer.from([0xa9]));process.stdout.write('
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Browser specs may first launch a process long after the fixture starts.
+	// Keep the in-process daemon alive until cleanup; a .test binary cannot
+	// autostart a replacement daemon after idle shutdown.
+	srv.SetIdleTimeout(0)
 	done := make(chan struct{})
 	go func() { defer close(done); _ = srv.Run() }()
 	c := client.For(root)
@@ -200,6 +204,78 @@ func TestProcessAPIValidationPreviewAndFailedSummary(t *testing.T) {
 		t.Fatalf("failed summary: %+v", failure)
 	}
 
+}
+
+func TestProcessAPICustomCommand(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	attachProcessFixture(t, s)
+	root := s.registry.Default().info.Path
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	token, _ := s.sessions.create()
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://"+s.expectedHost+path, strings.NewReader(body))
+		r.Host = s.expectedHost
+		r.Header.Set("Origin", "http://"+s.expectedHost)
+		r.Header.Set("X-Bonsai-Session", token.Token)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	worktree := publicWorktreeID(root)
+	custom := func(fields string) string {
+		return `{"worktree_id":"` + worktree + `","custom":{` + fields + `},"policy":{"mode":"no","max_restarts":0}}`
+	}
+
+	preview := request("POST", "/api/projects/repo/process-preview", `{"worktree_id":"`+worktree+`","custom":{"command":"echo hi","dir":"sub"}}`)
+	if preview.Code != 200 || !strings.Contains(preview.Body.String(), `"program":"sh"`) || !strings.Contains(preview.Body.String(), `"args":["-c","echo hi"]`) || !strings.Contains(preview.Body.String(), filepath.Join(root, "sub")) {
+		t.Fatalf("preview: %d %s", preview.Code, preview.Body.String())
+	}
+	for name, fields := range map[string]string{
+		"empty":          `"command":"   "`,
+		"two lines":      `"command":"echo a\necho b"`,
+		"absolute dir":   `"command":"pwd","dir":"/etc"`,
+		"parent dir":     `"command":"pwd","dir":"../elsewhere"`,
+		"symlink escape": `"command":"pwd","dir":"escape"`,
+		"missing dir":    `"command":"pwd","dir":"nope"`,
+		"long name":      `"command":"pwd","name":"` + strings.Repeat("n", 200) + `"`,
+	} {
+		if got := request("POST", "/api/projects/repo/processes", custom(fields)); got.Code != 400 {
+			t.Errorf("%s: %d %s", name, got.Code, got.Body.String())
+		}
+	}
+	mixed := request("POST", "/api/projects/repo/processes", `{"worktree_id":"`+worktree+`","command_id":"node:script:fail","custom":{"command":"pwd"}}`)
+	if mixed.Code != 400 {
+		t.Fatalf("custom with command_id: %d %s", mixed.Code, mixed.Body.String())
+	}
+
+	launched := request("POST", "/api/projects/repo/processes", custom(`"command":"pwd","name":"Where","dir":"sub"`))
+	if launched.Code != 201 {
+		t.Fatalf("launch: %d %s", launched.Code, launched.Body.String())
+	}
+	var summary browserProcessSummary
+	if err := json.Unmarshal(launched.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Label != "Where" || summary.Command != "pwd" || summary.WorktreeID != worktree || summary.Policy.Mode != "no" {
+		t.Fatalf("summary: %+v", summary)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		logs := request("GET", "/api/projects/repo/processes/"+strconv.Itoa(summary.DaemonID)+"/logs?n=0", "")
+		if logs.Code == 200 && strings.Contains(logs.Body.String(), "/sub") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("command did not run in the sub directory: %d %s", logs.Code, logs.Body.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func TestProcessRemovalPreservesStopContractAndPublishesVisibility(t *testing.T) {
