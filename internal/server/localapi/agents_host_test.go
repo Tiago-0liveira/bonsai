@@ -1,13 +1,20 @@
 package localapi
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	gitlocal "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
@@ -87,4 +94,71 @@ func TestRecoveryAdoptsRunningHolders(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// A read-only browser takes control: both sockets hear about it, the old
+// writer's input is dropped without closing it, and the new writer types.
+func TestAgentTerminalTakeControl(t *testing.T) {
+	s, account, _ := terminalTestServer(t)
+	httpServer := httptest.NewServer(s.Handler())
+	defer httpServer.Close()
+	s.expectedHost = strings.TrimPrefix(httpServer.URL, "http://")
+	project := s.registry.Default()
+	summary, err := s.agents.manager.Start("repo", gitlocal.ID(localRepositoryID, project.info.Path), agents.AccountID(account), "", project.info.Path, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { current, _ := s.agents.manager.Get("repo", summary.ID); return current.State == "running" })
+	capability, _ := s.sessions.create()
+	open := func() (*websocket.Conn, bool) {
+		t.Helper()
+		url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/api/projects/repo/agents/" + summary.ID + "/terminal"
+		conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": []string{"http://" + s.expectedHost}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.WriteJSON(map[string]any{"type": "authenticate", "token": capability.Token})
+		_ = conn.WriteJSON(map[string]any{"type": "attach", "offset": 0})
+		var ready map[string]any
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if err := conn.ReadJSON(&ready); err != nil || ready["type"] != "ready" {
+			t.Fatalf("ready %v %v", ready, err)
+		}
+		return conn, ready["writer"] == true
+	}
+	// next reads frames until match accepts one, collecting output.
+	next := func(conn *websocket.Conn, output *bytes.Buffer, match func(agentterminal.Frame) bool) {
+		t.Helper()
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		for {
+			var frame agentterminal.Frame
+			if err := conn.ReadJSON(&frame); err != nil {
+				t.Fatalf("read: %v (output %q)", err, output.String())
+			}
+			output.Write(frame.Data)
+			if match(frame) {
+				return
+			}
+		}
+	}
+	first, writes := open()
+	defer first.Close()
+	second, observes := open()
+	defer second.Close()
+	if !writes || observes {
+		t.Fatal("first attachment should write, second observe")
+	}
+	var firstOut, secondOut bytes.Buffer
+	_ = second.WriteJSON(map[string]any{"type": "take"})
+	next(second, &secondOut, func(f agentterminal.Frame) bool { return f.Type == "writer" && *f.Writer })
+	next(first, &firstOut, func(f agentterminal.Frame) bool { return f.Type == "writer" && !*f.Writer })
+	_ = first.WriteJSON(map[string]any{"type": "input", "data": []byte("from-first\n")})
+	_ = second.WriteJSON(map[string]any{"type": "input", "data": []byte("from-second\n")})
+	next(first, &firstOut, func(agentterminal.Frame) bool { return strings.Contains(firstOut.String(), "REPLY:from-second") })
+	if strings.Contains(firstOut.String(), "REPLY:from-first") {
+		t.Fatal("input without control reached the agent")
+	}
+	// The first socket is still open and can take control back.
+	_ = first.WriteJSON(map[string]any{"type": "take"})
+	next(first, &firstOut, func(f agentterminal.Frame) bool { return f.Type == "writer" && *f.Writer })
 }

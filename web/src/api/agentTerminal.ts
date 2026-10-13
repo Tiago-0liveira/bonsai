@@ -16,6 +16,7 @@ type Frame<S> =
   | { type: 'output'; offset: number; data: string }
   | { type: 'gap'; offset: number }
   | { type: 'status'; status: S }
+  | { type: 'writer'; writer: boolean }
   | { type: 'error'; message: string }
 
 /** The websocket path of an agent session's terminal. */
@@ -75,6 +76,12 @@ export function connectTerminal<S = AgentSummary>(path: string, callbacks: Termi
             offset = frame.offset
           } else if (frame.type === 'status') {
             callbacks.status(frame.status)
+          } else if (frame.type === 'writer') {
+            // Control moved: another terminal took it, or a take succeeded.
+            // A new writer sends its size, so the agent fits this display.
+            writer = frame.writer
+            callbacks.connection(writer ? 'connected' : 'read-only')
+            if (writer) callbacks.ready()
           } else if (frame.type === 'error') {
             callbacks.error(frame.message)
           }
@@ -91,6 +98,8 @@ export function connectTerminal<S = AgentSummary>(path: string, callbacks: Termi
       for (let i = 0; i < bytes.length; i += 16384) send({ type: 'input', data: btoa(String.fromCharCode(...bytes.slice(i, i + 16384))) })
     },
     resize(cols: number, rows: number) { send({ type: 'resize', cols: Math.min(500, Math.max(1, cols)), rows: Math.min(500, Math.max(1, rows)) }) },
+    /** Asks for control while another terminal has it; a writer frame confirms. */
+    take() { if (socket?.readyState === WebSocket.OPEN && connected && !writer) socket.send(JSON.stringify({ type: 'take' })) },
     dispose() { disposed = true; clearTimeout(retry); clearTimeout(deadline); socket?.close() },
   }
 }

@@ -65,7 +65,8 @@ takes control. In the terminal, **Ctrl-] d** detaches (the agent keeps
 running), **Ctrl-] t** takes control, and **Ctrl-] Ctrl-]** sends a Ctrl-].
 `--take` takes control on connect; `--read-only` only watches and never
 writes. Status lines say who has control (`control taken by web`) and when the
-agent exits.
+agent exits. In the browser, a terminal another client controls says
+**Controlled from another terminal** and offers **Take control**.
 
 `bonsai web stop` stops running agents unless **Settings → Agents → Keep
 agents running when Bonsai web stops** is on (`agents.keep_running` in
