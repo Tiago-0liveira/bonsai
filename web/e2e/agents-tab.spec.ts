@@ -120,8 +120,8 @@ test('usage: Codex 5h/weekly with an extra group, Claude per model, a token prof
   await expect(page.getByRole('meter', { name: 'Opus (weekly) remaining' })).toHaveAttribute('aria-valuenow', '40')
   await expect(page.getByRole('meter', { name: 'Sonnet (weekly) remaining' })).toHaveAttribute('aria-valuenow', '80')
   await expect(page.getByText('Read from an undocumented Claude endpoint')).toBeVisible()
-  // 15% is below the 20% threshold: tinted as low.
-  await expect(page.getByRole('list', { name: 'Plan limits' }).getByRole('meter', { name: '5 hour remaining' }).locator('div')).toHaveClass(/bg-warn-solid/)
+  // 15% left is the second of ten colour ranks.
+  await expect(page.getByRole('list', { name: 'Plan limits' }).getByRole('meter', { name: '5 hour remaining' }).locator('div')).toHaveAttribute('data-rank', '2')
 
   await profiles.getByRole('button', { name: /^CI token/ }).click()
   await expect(page.getByText('Usage is not available for this profile')).toBeVisible()
