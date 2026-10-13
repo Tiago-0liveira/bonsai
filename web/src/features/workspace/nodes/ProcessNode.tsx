@@ -1,12 +1,13 @@
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useMemo } from 'react'
-import { ExternalLink, GitBranch, LoaderCircle, RotateCcw, Square, TerminalSquare } from 'lucide-react'
+import { GitBranch, LoaderCircle, PanelRight, RotateCcw, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import { useBonsaiStore } from '../../../stores/bonsai'
 import { processNodeSelector } from '../../../stores/projectSelectors'
 import type { ProcessLifecycleStatus } from '../../../types'
 import { useProcessActions } from '../../terminal/useProcessActions'
 import { MoveSubtreeGrip, type BonsaiGraphData } from './BonsaiNode'
+import { MenuContent, MenuItem, MenuSeparator } from '../../../components/ui/ContextMenu'
 
 const statusLabels: Record<ProcessLifecycleStatus, string> = {
   starting: 'Starting',
@@ -20,7 +21,6 @@ const statusLabels: Record<ProcessLifecycleStatus, string> = {
   orphan: 'Orphaned',
 }
 
-const menuItemClass = 'flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-muted outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent/12 data-[highlighted]:text-text'
 const iconButtonClass = 'bonsai-focus icon-btn-20 transition-colors hover:bg-panel-3 hover:text-text disabled:cursor-default disabled:opacity-30 disabled:hover:bg-panel-2 disabled:hover:text-muted'
 
 export function ProcessNode({ data: raw, selected }: NodeProps) {
@@ -64,17 +64,15 @@ export function ProcessNode({ data: raw, selected }: NodeProps) {
         </div>
       </div>
     </ContextMenu.Trigger>
-    <ContextMenu.Portal>
-      <ContextMenu.Content aria-label="Process actions" className="nodrag nopan z-[100] min-w-48 rounded-[10px] border border-border-strong bg-panel-3 p-1 shadow-overlay" onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
-        <ContextMenu.Item disabled={!process} onSelect={openOutput} className={menuItemClass}><TerminalSquare size={13} />Open output</ContextMenu.Item>
-        <ContextMenu.Item disabled={!process} onSelect={inspect} className={menuItemClass}><ExternalLink size={13} />Open inspector</ContextMenu.Item>
-        <ContextMenu.Item disabled={!worktree} onSelect={() => { if (worktree) setSelection({ type: 'worktree', id: worktree.id }) }} className={menuItemClass}><GitBranch size={13} />Open worktree</ContextMenu.Item>
-        <ContextMenu.Separator className="my-1 h-px bg-border-subtle" />
-        <ContextMenu.Item disabled={!canStop} onSelect={stop} className={menuItemClass}><Square size={13} />{pending === 'stop' ? 'Stopping process…' : 'Stop process'}</ContextMenu.Item>
-        <ContextMenu.Item disabled={!canRestart} onSelect={restart} className={menuItemClass}><RotateCcw size={13} />{pending === 'restart' ? 'Restarting process…' : 'Restart process'}</ContextMenu.Item>
-        <ContextMenu.Item disabled={!process || !!pending} onSelect={remove} className={menuItemClass}>{pending === 'remove' ? 'Deleting process…' : deleteLabel}</ContextMenu.Item>
-      </ContextMenu.Content>
-    </ContextMenu.Portal>
+    <MenuContent aria-label="Process actions" className="nodrag nopan" onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+      <MenuItem icon={TerminalSquare} disabled={!process} onSelect={openOutput}>Open output</MenuItem>
+      <MenuItem icon={PanelRight} disabled={!process} onSelect={inspect}>Open inspector</MenuItem>
+      <MenuItem icon={GitBranch} disabled={!worktree} onSelect={() => { if (worktree) setSelection({ type: 'worktree', id: worktree.id }) }}>Open worktree</MenuItem>
+      <MenuSeparator />
+      <MenuItem icon={Square} disabled={!canStop} onSelect={stop}>{pending === 'stop' ? 'Stopping process…' : 'Stop process'}</MenuItem>
+      <MenuItem icon={RotateCcw} disabled={!canRestart} onSelect={restart}>{pending === 'restart' ? 'Restarting process…' : 'Restart process'}</MenuItem>
+      <MenuItem icon={Trash2} danger disabled={!process || !!pending} onSelect={remove}>{pending === 'remove' ? 'Deleting process…' : deleteLabel}</MenuItem>
+    </MenuContent>
   </ContextMenu.Root>
 }
 

@@ -13,7 +13,7 @@ function trackPageErrors(page: Page) {
 
 test.beforeEach(async ({ page }) => { await page.setViewportSize({ width: 1600, height: 960 }) })
 
-test('the nav opens the page: no canvas, providers, profiles and the fleet summary', async ({ page }) => {
+test('the nav opens the page: inert canvas, providers, profiles and the fleet summary', async ({ page }) => {
   const errors = trackPageErrors(page)
   await backend(page)
   await openConnectedApp(page)
@@ -21,7 +21,8 @@ test('the nav opens the page: no canvas, providers, profiles and the fleet summa
   await expect(page).toHaveURL(/\/app\/agents$/)
   const summary = page.getByRole('region', { name: 'Fleet summary' })
   await expect(summary).toBeVisible()
-  await expect(page.locator('.react-flow')).toHaveCount(0)
+  // The canvas is a shell layer: it stays mounted behind the page, but inert.
+  await expect(page.locator('[data-canvas-layer]')).toHaveAttribute('inert', '')
 
   const list = page.getByRole('complementary', { name: 'Providers and profiles' })
   await expect(list.getByRole('region', { name: 'Antigravity' })).toContainText('agy is not installed')

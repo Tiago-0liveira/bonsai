@@ -1,5 +1,6 @@
 import { processActive } from '../../stores/processProjection'
 import { openGitHub } from '../../api/git'
+import { fileManagerAction } from '../../api/editors'
 import { isLiveAgent } from '../../api/agents'
 import { lazy, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
@@ -8,7 +9,7 @@ import { useRouter } from '@tanstack/react-router'
 import {
   Archive, Bot, Check, CheckCircle2, ChevronRight, CircleDot, Clock3, Copy,
   ExternalLink, FileDiff, FolderOpen, GitBranch, GitPullRequest, History, Layers3, LoaderCircle,
-  Play, Plus, RotateCcw, Save, SlidersHorizontal, Square, TerminalSquare, Trash2, Undo2,
+  Play, Plus, RotateCcw, Save, SlidersHorizontal, Square, SquareCode, TerminalSquare, Trash2, Undo2,
   AlertCircle, XCircle, type LucideIcon,
 } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
@@ -222,6 +223,8 @@ export function Inspector() {
   const openTerminal = useBonsaiStore((state) => state.openTerminal)
   const openStartAgentDialog = useBonsaiStore((state) => state.openStartAgentDialog)
   const requestOpenFolder = useBonsaiStore((state) => state.requestOpenFolder)
+  const revealFolder = useBonsaiStore((state) => state.revealFolder)
+  const fileManager = useBonsaiStore((state) => state.editorSettings?.file_manager?.label)
   const openStartProcessDialog = useBonsaiStore((state) => state.openStartProcessDialog)
   const setWorktreeDialogOpen = useBonsaiStore((state) => state.setWorktreeDialogOpen)
   const setDeleteWorktreeId = useBonsaiStore(state => state.setDeleteWorktreeId)
@@ -302,7 +305,8 @@ export function Inspector() {
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5 pt-0.5">
                   <IconButton icon={Copy} label="Copy branch name" onClick={() => { void navigator.clipboard?.writeText(worktree.branch); setNotice('Copied ' + worktree.branch) }} />
-                  <IconButton icon={FolderOpen} label="Open worktree in editor" onClick={() => { void requestOpenFolder(worktree.id) }} />
+                  <IconButton icon={SquareCode} label="Open worktree in editor" onClick={() => { void requestOpenFolder(worktree.id) }} />
+                  <IconButton icon={FolderOpen} label={fileManagerAction(fileManager)} onClick={() => { void revealFolder(worktree.id) }} />
                   <IconButton icon={ExternalLink} label="Open on GitHub" onClick={() => openGitHub(pr ? 'pull/' + pr.number : 'tree/' + worktree.branch, worktree.projectId)} />
                 </div>
               </div>

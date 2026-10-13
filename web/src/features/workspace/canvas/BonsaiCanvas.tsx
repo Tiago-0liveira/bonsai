@@ -22,6 +22,9 @@ import { report, syncProject } from '../../../api/git'
 import { getDescendantIds, getStructuralParentMap } from './layout/graphModel'
 import { computeGlobalPlacements } from './layout/globalLayout'
 import { buildCanvasGraph } from './buildCanvasGraph'
+import { useCanvasFrame } from './canvasFrame'
+import { FrameBox } from './FrameBox'
+import { centerInFrame, fitBoundsInFrame, isRectInFrame, resolveFrame } from './frameViewport'
 import { useActiveTheme } from '../../../theme/themeStore'
 import { applyCanvasSelection, createPrLabelSelector, reconcileCanvasNodes } from './graphReconciliation'
 import { reconcileById, shareEqual } from '../../../stores/reconciliation'
@@ -56,6 +59,22 @@ const edgeTypes = {
   prMerge: PullRequestMergeEdge,
 }
 
+const MIN_ZOOM = 0.28
+const MAX_ZOOM = 1.8
+
+interface FitFrameOptions {
+  nodes?: Node[]
+  padding?: number
+  duration?: number
+}
+
+// The vignette follows the visible frame so the canvas reads as centred there.
+function CanvasBackdrop() {
+  const frame = useCanvasFrame(state => state.frame)
+  const at = frame.width > 0 ? `${Math.round(frame.left + frame.width * 0.4)}px ${Math.round(frame.top + frame.height * 0.45)}px` : '40% 45%'
+  return <div aria-hidden className="pointer-events-none absolute inset-0" style={{ backgroundImage: `radial-gradient(ellipse at ${at}, transparent 48%, rgb(var(--well) / .55) 100%), radial-gradient(640px 380px at ${at}, rgb(var(--accent-solid) / .06), transparent 70%)` }} />
+}
+
 interface DragSnapshot {
   rootId: string
   rootStart: { x: number; y: number }
@@ -88,7 +107,7 @@ function storablePositions(
   return result
 }
 
-export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
+export function BonsaiCanvas({ focus, active = true }: { focus?: 'worktrees'; active?: boolean }) {
   const activeProjectId = useBonsaiStore((state) => state.activeProjectId)
   const activeProject = useBonsaiStore(state => state.projects.find(project => project.id === activeProjectId) ?? state.projects[0])
   const worktrees = useProjectWorktrees(activeProject?.id ?? '')
@@ -124,13 +143,25 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
     stacks: Map<string, string[]>
   } | null>(null)
   const theme = useActiveTheme()
-  const { fitView, getEdges, getNodes, getViewport, setCenter, zoomIn, zoomOut } = useReactFlow()
+  const { getEdges, getNodes, getNodesBounds, getViewport, setViewport: setFlowViewport, zoomIn, zoomOut } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
-  const fitViewRef = useRef(fitView)
+
+  // The canvas fills the whole shell; fit and center target the visible frame instead.
+  const currentFrame = useCallback(() => {
+    const host = hostRef.current
+    return resolveFrame(useCanvasFrame.getState().frame, { width: host?.clientWidth ?? 0, height: host?.clientHeight ?? 0 })
+  }, [])
+  const fitFrame = useCallback(({ nodes: targets, padding = 0.14, duration = 300 }: FitFrameOptions = {}) => {
+    const fitted = targets ?? getNodes()
+    const frame = currentFrame()
+    if (!fitted.length || !frame.width || !frame.height) return
+    void setFlowViewport(fitBoundsInFrame(getNodesBounds(fitted), frame, { padding, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM }), { duration })
+  }, [currentFrame, getNodes, getNodesBounds, setFlowViewport])
+  const fitFrameRef = useRef(fitFrame)
 
   useEffect(() => {
-    fitViewRef.current = fitView
-  }, [fitView])
+    fitFrameRef.current = fitFrame
+  }, [fitFrame])
 
   const activeAvailable = !!activeProject && activeProject.available !== false
   useEffect(() => {
@@ -205,7 +236,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
           stacks: currentStacks,
         }
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
+          requestAnimationFrame(() => fitFrameRef.current())
         })
         return
       }
@@ -299,14 +330,16 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
 
   useEffect(() => {
     if (!nodesInitialized || !canvasReveal.nonce || lastReveal.current === canvasReveal.nonce || canvasReveal.projectId !== activeProjectId) return
-    const node = nodes.find(node => node.id === canvasReveal.nodeId)
-    if (!node || !nodePlacements[node.id] || !hostRef.current) return
+    // A worktree may be drawn as its collapsed stack or as the default branch node.
+    const nodeId = graph.worktreeNodeIds.get(canvasReveal.nodeId) ?? canvasReveal.nodeId
+    const node = nodes.find(node => node.id === nodeId)
+    // Wait for layout; the default branch node is positioned from the project placement.
+    if (!node || !nodePlacements[node.type === 'defaultBranch' ? activeProjectId : node.id] || !hostRef.current) return
     lastReveal.current = canvasReveal.nonce
-    const viewport = getViewport(), size = getNodeSize(node), host = hostRef.current
-    const x = node.position.x * viewport.zoom + viewport.x, y = node.position.y * viewport.zoom + viewport.y
-    if (x >= 0 && y >= 0 && x + size.width * viewport.zoom <= host.clientWidth && y + size.height * viewport.zoom <= host.clientHeight) return
-    void setCenter(node.position.x + size.width / 2, node.position.y + size.height / 2, { zoom: viewport.zoom, duration: 250 })
-  }, [activeProjectId, canvasReveal, nodesInitialized, nodes, nodePlacements, getViewport, setCenter])
+    const viewport = getViewport(), size = getNodeSize(node), frame = currentFrame()
+    if (canvasReveal.mode !== 'center' && isRectInFrame({ ...node.position, ...size }, viewport, frame)) return
+    void setFlowViewport(centerInFrame({ x: node.position.x + size.width / 2, y: node.position.y + size.height / 2 }, viewport.zoom, frame), { duration: 250 })
+  }, [activeProjectId, canvasReveal, graph.worktreeNodeIds, nodesInitialized, nodes, nodePlacements, currentFrame, getViewport, setFlowViewport])
 
   useEffect(() => {
     if (!focus) {
@@ -317,27 +350,28 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
     const visible = nodes.filter((node) => node.type === 'worktree' || node.type === 'stack')
     if (!visible.length) return
     lastFocusFit.current = focus
-    const frame = requestAnimationFrame(() => void fitViewRef.current({ nodes: visible, padding: 0.2, duration: 300 }))
-    return () => cancelAnimationFrame(frame)
+    const animation = requestAnimationFrame(() => fitFrameRef.current({ nodes: visible, padding: 0.2 }))
+    return () => cancelAnimationFrame(animation)
   }, [focus, nodesInitialized, nodes])
 
   // "Show agents on canvas": a one-shot request, so returning to the canvas later does not refit.
   const fitAgentsPending = useBonsaiStore(state => state.canvasFitAgents)
   useEffect(() => {
-    if (!fitAgentsPending || !nodesInitialized) return
-    const frame = requestAnimationFrame(() => {
+    // Wait for the canvas route: the layer stays mounted (and inert) behind other pages.
+    if (!fitAgentsPending || !nodesInitialized || !active) return
+    const animation = requestAnimationFrame(() => {
       const agentNodes = getNodes().filter(node => node.type === 'agent')
-      void fitViewRef.current(agentNodes.length ? { nodes: agentNodes, padding: 0.2, duration: 300 } : { padding: 0.14, duration: 300 })
+      fitFrameRef.current(agentNodes.length ? { nodes: agentNodes, padding: 0.2 } : undefined)
       useBonsaiStore.setState({ canvasFitAgents: false })
     })
-    return () => cancelAnimationFrame(frame)
-  }, [fitAgentsPending, nodesInitialized, getNodes])
+    return () => cancelAnimationFrame(animation)
+  }, [fitAgentsPending, nodesInitialized, active, getNodes])
 
   useEffect(() => {
     if (!canvasCommand.nonce || lastCommand.current === canvasCommand.nonce) return
     lastCommand.current = canvasCommand.nonce
     if (canvasCommand.type === 'fit') {
-      void fitViewRef.current({ padding: 0.14, duration: 300 })
+      fitFrameRef.current()
       return
     }
 
@@ -359,7 +393,7 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
         const generated = storablePositions(currentNodes, positions)
         setGeneratedNodePlacements(generated)
         useBonsaiStore.setState({ expandedHistoryWorktreeIds: [] })
-        requestAnimationFrame(() => void fitViewRef.current({ padding: 0.14, duration: 300 }))
+        requestAnimationFrame(() => fitFrameRef.current())
       })
     })
     return () => {
@@ -444,8 +478,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
     <div
       ref={hostRef}
       className="relative h-full min-h-0 w-full bg-bg"
-      style={{ backgroundImage: 'radial-gradient(ellipse at 40% 45%, transparent 48%, rgb(var(--well) / .55) 100%), radial-gradient(640px 380px at 38% 46%, rgb(var(--accent-solid) / .06), transparent 70%)' }}
     >
+      <CanvasBackdrop />
       <ReactFlow
         nodes={nodes}
         edges={displayEdges}
@@ -459,8 +493,8 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
         onNodeDragStop={finishDrag}
         onMoveEnd={onMoveEnd}
         defaultViewport={viewport}
-        minZoom={0.28}
-        maxZoom={1.8}
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
         selectionOnDrag
         panOnScroll={false}
         zoomOnScroll
@@ -473,28 +507,30 @@ export function BonsaiCanvas({ focus }: { focus?: 'worktrees' }) {
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="rgb(var(--text) / .07)" />
       </ReactFlow>
 
-      <div className="island island-topbar absolute right-1 top-1 z-10 flex h-[30px] items-center gap-0.5 px-1">
-        <button aria-label="Fit" title="Fit" onClick={() => void fitViewRef.current({ padding: 0.14, duration: 300 })} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
-          <Maximize size={13} />
-        </button>
-        <button aria-label="Auto-layout" title="Auto-layout" onClick={autoLayout} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
-          <Network size={13} />
-        </button>
-        <span className="mx-1 h-4 w-px bg-border" />
-        <button aria-label="Zoom out" title="Zoom out" onClick={() => void zoomOut()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
-          <Minus size={13} />
-        </button>
-        <button aria-label="Zoom in" title="Zoom in" onClick={() => void zoomIn()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
-          <Plus size={13} />
-        </button>
-        <button aria-label="Fit view" title="Fit view" onClick={() => void fitView()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
-          <Square size={12} />
-        </button>
-        <span className="mx-1 h-4 w-px bg-border" />
-        <button onClick={() => setWorktreeDialogOpen(true)} className="bonsai-focus btn-accent-tint inline-flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium">
-          <Plus size={12} /> New worktree
-        </button>
-      </div>
+      {active && <FrameBox className="pointer-events-none z-10">
+        <div className="island island-topbar pointer-events-auto absolute right-1 top-1 flex h-[30px] items-center gap-0.5 px-1">
+          <button aria-label="Fit" title="Fit" onClick={() => fitFrame()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+            <Maximize size={13} />
+          </button>
+          <button aria-label="Auto-layout" title="Auto-layout" onClick={autoLayout} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+            <Network size={13} />
+          </button>
+          <span className="mx-1 h-4 w-px bg-border" />
+          <button aria-label="Zoom out" title="Zoom out" onClick={() => void zoomOut()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+            <Minus size={13} />
+          </button>
+          <button aria-label="Zoom in" title="Zoom in" onClick={() => void zoomIn()} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+            <Plus size={13} />
+          </button>
+          <button aria-label="Fit view" title="Fit view" onClick={() => fitFrame({ padding: 0.1, duration: 0 })} className="bonsai-focus btn-ghost h-6 w-6 justify-center px-0">
+            <Square size={12} />
+          </button>
+          <span className="mx-1 h-4 w-px bg-border" />
+          <button onClick={() => setWorktreeDialogOpen(true)} className="bonsai-focus btn-accent-tint inline-flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium">
+            <Plus size={12} /> New worktree
+          </button>
+        </div>
+      </FrameBox>}
     </div>
   )
 }

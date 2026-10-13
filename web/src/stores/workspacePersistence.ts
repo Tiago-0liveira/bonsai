@@ -1,12 +1,22 @@
 import { create } from 'zustand'
 import type { PersistStorage, StorageValue } from 'zustand/middleware'
 import { isLiveAgent } from '../api/agents'
-import type { Agent, DockState, DockTab, NodePlacement, RuntimeReference, Selection, TerminalViewPreferences, ViewportState } from '../types'
+import type { Agent, CanvasPreferences, DockState, DockTab, NodePlacement, RuntimeReference, Selection, TerminalViewPreferences, ViewportState } from '../types'
+import { DEFAULT_CANVAS_PREFERENCES } from '../types'
 import { activeRuntimePatch } from './runtimePreferences'
 import type { BonsaiState } from './bonsai'
 
 export const WORKSPACE_STORAGE_KEY = 'bonsai-web-workspace-v6'
-export const WORKSPACE_STORAGE_VERSION = 3
+export const WORKSPACE_STORAGE_VERSION = 4
+
+// Version 4 moved the canvas behind the whole shell. Viewports saved before were
+// relative to the old right pane, whose desktop origin was (428, 68).
+const PANE_ORIGIN = { x: 428, y: 68 }
+
+export function migrateWorkspacePreferences(state: Partial<WorkspacePreferences>, version: number): Partial<WorkspacePreferences> {
+  if (version >= 4 || !state.viewport) return state
+  return { ...state, viewport: { ...state.viewport, x: state.viewport.x + PANE_ORIGIN.x, y: state.viewport.y + PANE_ORIGIN.y } }
+}
 
 export interface WorkspacePreferences {
   selection: Selection
@@ -25,6 +35,7 @@ export interface WorkspacePreferences {
   detachedStackWorktreeIds: string[]
   expandedAutomaticGroups: string[]
   terminalViewPreferences: TerminalViewPreferences
+  canvasPreferences: CanvasPreferences
 }
 
 type RecordValue = Record<string, unknown>
@@ -95,6 +106,12 @@ export function sanitizeWorkspacePreferences(value: unknown): Partial<WorkspaceP
   if (panels && typeof panels.files === 'boolean' && typeof panels.prs === 'boolean') result.rightPanels = { files: panels.files, prs: panels.prs }
   const viewport = record(raw.viewport)
   if (viewport && finite(viewport.x) && finite(viewport.y) && finite(viewport.zoom) && viewport.zoom > 0) result.viewport = { x: viewport.x, y: viewport.y, zoom: viewport.zoom }
+  const canvas = record(raw.canvasPreferences)
+  if (canvas) result.canvasPreferences = {
+    focusOnBranchSelect: typeof canvas.focusOnBranchSelect === 'boolean' ? canvas.focusOnBranchSelect : DEFAULT_CANVAS_PREFERENCES.focusOnBranchSelect,
+    focusAgentsOnBranchSelect: typeof canvas.focusAgentsOnBranchSelect === 'boolean' ? canvas.focusAgentsOnBranchSelect : DEFAULT_CANVAS_PREFERENCES.focusAgentsOnBranchSelect,
+    githubBranchSelect: member(canvas.githubBranchSelect, ['show-pr', 'open-canvas']) ? canvas.githubBranchSelect : DEFAULT_CANVAS_PREFERENCES.githubBranchSelect,
+  }
 
   const agents = Array.isArray(raw.agents) ? raw.agents.map(record).filter((agent): agent is RecordValue => Boolean(agent)) : []
   const discardedIds = new Set(agents.flatMap(agent => typeof agent.id === 'string' && (!views || !isLiveAgent(agent as Pick<Agent, 'providerId'>)) ? [agent.id] : []))
@@ -184,7 +201,8 @@ export function createWorkspaceStorage(getStorage: () => Storage = () => window.
         if (!useWorkspaceStorageStatus.getState().error) fail(INVALID_ERROR)
         return null
       }
-      const value = { state: sanitizeWorkspacePreferences(parsed.state), version: WORKSPACE_STORAGE_VERSION }
+      const version = finite(parsed.version) ? parsed.version : 0
+      const value = { state: migrateWorkspacePreferences(sanitizeWorkspacePreferences(parsed.state), version), version: WORKSPACE_STORAGE_VERSION }
       const payload = JSON.stringify(value)
       if (raw !== payload) clean(storage, name, payload)
       return value

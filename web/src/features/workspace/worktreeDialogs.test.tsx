@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { projects } from '../../test/fixtures/projects'
 import { worktrees } from '../../test/fixtures/worktrees'
@@ -31,6 +31,32 @@ describe('worktree dialogs', () => {
     expect(screen.getByRole('option', { name: /origin\/feature/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('option', { name: /origin\/another/ })).toHaveAttribute('aria-selected', 'false')
   })
+  it('merges and rebases a new branch into its base until a target is chosen', async () => {
+    const create = vi.fn(async () => 'created')
+    useBonsaiStore.setState({ createWorktree: create, worktrees, gitBranches: { bonsai: [{ name: 'main', remote: false }, { name: 'feat/web-workspace', remote: false }, { name: 'origin/release', ref: 'refs/remotes/origin/release', remote: true, remote_name: 'origin' }] } })
+    useBonsaiStore.getState().setWorktreeDialogOpen(true)
+    render(<CreateWorktreeDialog />)
+    const pick = (list: string, option: RegExp) => fireEvent.click(within(screen.getByRole('listbox', { name: list })).getByRole('option', { name: option }))
+    const mergeTarget = () => within(screen.getByRole('listbox', { name: 'Merge target' })).getByRole('option', { selected: true })
+    expect(mergeTarget()).toHaveTextContent('main')
+    pick('Branch from', /^origin\/release/)
+    expect(mergeTarget()).toHaveTextContent('release')
+    pick('Branch from', /^feat\/web-workspace/)
+    expect(mergeTarget()).toHaveTextContent('feat/web-workspace')
+    fireEvent.click(screen.getByRole('button', { name: 'Create worktree' }))
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'feat/web-workspace', mergeTargetBranch: 'feat/web-workspace' }), expect.anything()))
+  })
+
+  it('keeps a merge target picked by hand when the base changes', () => {
+    useBonsaiStore.setState({ worktrees, gitBranches: { bonsai: [{ name: 'main', remote: false }, { name: 'feat/web-workspace', remote: false }, { name: 'origin/release', remote: true }] } })
+    useBonsaiStore.getState().setWorktreeDialogOpen(true)
+    render(<CreateWorktreeDialog />)
+    const mergeTargets = screen.getByRole('listbox', { name: 'Merge target' })
+    fireEvent.click(within(mergeTargets).getByRole('option', { name: /^feat\/web-workspace/ }))
+    fireEvent.click(within(screen.getByRole('listbox', { name: 'Branch from' })).getByRole('option', { name: /^origin\/release/ }))
+    expect(within(mergeTargets).getByRole('option', { selected: true })).toHaveTextContent('feat/web-workspace')
+  })
+
   it('blocks duplicate submission and shows actionable inline errors', async () => {
     let reject!: (reason: Error) => void
     const create = vi.fn(() => new Promise<string>((_, fail) => { reject = fail }))
