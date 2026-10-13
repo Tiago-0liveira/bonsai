@@ -363,7 +363,7 @@ func (f *warmFixture) stopLocked() {
 	<-f.runDone
 	// A graceful shutdown: the last commits reach the warm-start cache.
 	f.server.stateSync.closeWarm(warmStartShutdownFlush)
-	f.server.agents.manager.Close()
+	f.server.agents.manager.Close(true, 0)
 	// Open event sockets belong to the old process.
 	for conn := range f.hijacked {
 		_ = conn.Close()

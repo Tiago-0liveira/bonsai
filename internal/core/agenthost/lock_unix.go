@@ -35,3 +35,6 @@ func held(path string) bool {
 	}
 	return err == syscall.EWOULDBLOCK || err == syscall.EAGAIN
 }
+
+// terminate sends SIGTERM to a holder, which stops its session and exits.
+func terminate(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
