@@ -203,8 +203,8 @@ func TestStreamTakeSendsWriterFrames(t *testing.T) {
 	if s.LastOutput().IsZero() {
 		t.Fatal("output time not tracked")
 	}
-	web, writer, _, webFrames := s.AttachAs(0, streamStatus{}, "web", false)
-	cli, observer, _, cliFrames := s.AttachAs(0, streamStatus{}, "cli", false)
+	web, writer, _, webFrames := s.AttachAs(0, streamStatus{}, "web", ControlAuto)
+	cli, observer, _, cliFrames := s.AttachAs(0, streamStatus{}, "cli", ControlAuto)
 	if !writer || observer {
 		t.Fatal("first attachment writes")
 	}
@@ -231,7 +231,7 @@ func TestStreamTakeSendsWriterFrames(t *testing.T) {
 		t.Fatalf("taking held control sent %+v", f)
 	default:
 	}
-	_, taken, _, _ := s.AttachAs(0, streamStatus{}, "cli", true)
+	_, taken, _, _ := s.AttachAs(0, streamStatus{}, "cli", ControlTake)
 	if !taken {
 		t.Fatal("take on attach")
 	}
@@ -240,5 +240,16 @@ func TestStreamTakeSendsWriterFrames(t *testing.T) {
 	}
 	if s.Take(999) == nil {
 		t.Fatal("took control for an unknown subscriber")
+	}
+	watcher, writes, _, _ := s.AttachAs(0, streamStatus{}, "cli", ControlNever)
+	if writes || s.Take(watcher) == nil {
+		t.Fatal("a read-only attachment wrote")
+	}
+	s2 := NewStream[streamStatus](80, 24)
+	if _, writes, _, _ := s2.AttachAs(0, streamStatus{}, "cli", ControlNever); writes {
+		t.Fatal("a read-only first attachment wrote")
+	}
+	if _, writes, _, _ := s2.AttachAs(0, streamStatus{}, "web", ControlAuto); !writes {
+		t.Fatal("the next attachment after a read-only one did not write")
 	}
 }

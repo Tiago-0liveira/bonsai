@@ -39,6 +39,8 @@ type Request struct {
 	Offset     uint64 `json:"offset,omitempty"`
 	Generation string `json:"generation,omitempty"`
 	Take       bool   `json:"take,omitempty"`
+	// ReadOnly observes only: never the writer, cannot take control.
+	ReadOnly bool `json:"read_only,omitempty"`
 	// Client labels the connection in info: web or cli.
 	Client string `json:"client,omitempty"`
 	// Input.

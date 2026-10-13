@@ -37,6 +37,12 @@ func startFakeAgent(t *testing.T, name string) agenthost.Record {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return startFakeAgentAt(t, paths, name)
+}
+
+// startFakeAgentAt serves one agent session from the test process under paths.
+func startFakeAgentAt(t *testing.T, paths agenthost.Paths, name string) agenthost.Record {
+	t.Helper()
 	accounts, err := agents.NewFileAccountStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

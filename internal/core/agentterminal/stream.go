@@ -23,6 +23,18 @@ type StreamFrame[S any] struct {
 	Writer *bool `json:"writer,omitempty"`
 }
 
+// Control is how an attachment takes part in writing.
+type Control int
+
+const (
+	// ControlAuto writes when no other subscriber does.
+	ControlAuto Control = iota
+	// ControlTake writes at once; the previous writer observes.
+	ControlTake
+	// ControlNever only observes, and cannot take control later.
+	ControlNever
+)
+
 // StreamClient is one subscriber as Clients reports it.
 type StreamClient struct {
 	Client string `json:"client"`
@@ -40,6 +52,7 @@ type Stream[S any] struct {
 	offset      uint64
 	subscribers map[uint64]chan StreamFrame[S]
 	clients     map[uint64]string
+	observers   map[uint64]bool
 	writer      uint64
 	next        uint64
 	proc        *process
@@ -49,7 +62,7 @@ type Stream[S any] struct {
 
 // NewStream returns an empty stream whose first process starts at cols×rows.
 func NewStream[S any](cols, rows int) *Stream[S] {
-	return &Stream[S]{subscribers: map[uint64]chan StreamFrame[S]{}, clients: map[uint64]string{}, cols: cols, rows: rows}
+	return &Stream[S]{subscribers: map[uint64]chan StreamFrame[S]{}, clients: map[uint64]string{}, observers: map[uint64]bool{}, cols: cols, rows: rows}
 }
 
 // Write appends terminal output and sends it to every subscriber.
@@ -131,6 +144,7 @@ func (s *Stream[S]) remove(id uint64) {
 		close(ch)
 		delete(s.subscribers, id)
 		delete(s.clients, id)
+		delete(s.observers, id)
 	}
 	if s.writer == id {
 		s.writer = 0
@@ -141,13 +155,13 @@ func (s *Stream[S]) remove(id uint64) {
 // first when cursor is outside the retained range) followed by status.
 // Replay and subscription are atomic: no output is missed or repeated.
 func (s *Stream[S]) Attach(cursor uint64, status S) (uint64, bool, []StreamFrame[S], <-chan StreamFrame[S]) {
-	return s.AttachAs(cursor, status, "", false)
+	return s.AttachAs(cursor, status, "", ControlAuto)
 }
 
 // AttachAs is Attach for a named client (such as web or cli, reported by
-// Clients). With take the subscriber writes even when another one does; the
-// previous writer gets a writer frame.
-func (s *Stream[S]) AttachAs(cursor uint64, status S, client string, take bool) (uint64, bool, []StreamFrame[S], <-chan StreamFrame[S]) {
+// Clients) with its control: ControlTake writes even when another subscriber
+// does (the previous writer gets a writer frame), ControlNever never writes.
+func (s *Stream[S]) AttachAs(cursor uint64, status S, client string, control Control) (uint64, bool, []StreamFrame[S], <-chan StreamFrame[S]) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.next++
@@ -155,11 +169,14 @@ func (s *Stream[S]) AttachAs(cursor uint64, status S, client string, take bool) 
 	ch := make(chan StreamFrame[S], 64)
 	s.subscribers[subscriber] = ch
 	s.clients[subscriber] = client
-	if take && s.writer != 0 {
+	if control == ControlNever {
+		s.observers[subscriber] = true
+	}
+	if control == ControlTake && s.writer != 0 {
 		s.sendWriter(s.writer, false)
 		s.writer = 0
 	}
-	if s.writer == 0 {
+	if s.writer == 0 && control != ControlNever {
 		s.writer = subscriber
 	}
 	start := s.offset - uint64(len(s.output))
@@ -183,12 +200,13 @@ func (s *Stream[S]) Detach(subscriber uint64) {
 }
 
 // Take makes subscriber the writer. The previous writer and subscriber each
-// get a writer frame; taking control already held changes nothing.
+// get a writer frame; taking control already held changes nothing. A
+// ControlNever subscriber cannot take control.
 func (s *Stream[S]) Take(subscriber uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.subscribers[subscriber]; !ok {
-		return fmt.Errorf("terminal subscriber not attached")
+	if _, ok := s.subscribers[subscriber]; !ok || s.observers[subscriber] {
+		return fmt.Errorf("terminal subscriber cannot take control")
 	}
 	if s.writer == subscriber {
 		return nil
