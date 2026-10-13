@@ -34,6 +34,7 @@ export function PullRequestsPage({ selectedId: routeSelectedId, onSelect, onShow
   const showOnCanvas = (worktreeId: string) => {
     setSelection({ type: 'worktree', id: worktreeId })
     onShowOnCanvas?.()
+    useBonsaiStore.getState().requestCanvasFocus(activeProjectId, worktreeId)
   }
 
   useEffect(() => { if (selected?.id) void loadPullRequest(selected.id) }, [selected?.id, selected?.updatedAt])

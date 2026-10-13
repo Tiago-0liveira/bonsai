@@ -31,7 +31,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
     const placement = nodePlacements[id]
     return placement ? { x: placement.x, y: placement.y } : fallback
   }
-  if (!project) return { nodes: [] as Node[], edges: [] as Edge[], projectId: '', topologyKey: 'empty' }
+  if (!project) return { nodes: [] as Node[], edges: [] as Edge[], projectId: '', topologyKey: 'empty', worktreeNodeIds: new Map<string, string>() }
 
   const allProjectWorktrees = worktrees.filter((worktree) => worktree.projectId === project.id)
   const projectProcesses = processes.filter(process => process.projectId === project.id)
@@ -80,6 +80,10 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
   const branchToWorktree = new Map(projectWorktrees.map((worktree) => [worktree.branch, worktree]))
   const rootDefault = positionFor(project.id, { x: 420, y: 34 })
   const defaultBranchId = 'default:' + project.id
+  // Worktrees left off the canvas (the main checkout) are represented by the default branch node.
+  allProjectWorktrees.forEach((worktree) => {
+    if (!visibleNodeForWorktree.has(worktree.id)) visibleNodeForWorktree.set(worktree.id, defaultBranchId)
+  })
   const nodes: Node[] = [
     {
       id: project.id,
@@ -323,5 +327,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
       projectWorktrees.map((worktree) => worktree.id + '>' + worktree.mergeTargetBranch).join('|') +
       '|' +
       edges.filter(edge => edge.data?.relationship === 'agent' || edge.data?.relationship === 'process').map(edge => `${edge.source}>${edge.target}`).join('|'),
+    /** The node that shows each worktree: its own node, its collapsed stack, or the default branch. */
+    worktreeNodeIds: visibleNodeForWorktree,
   }
 }

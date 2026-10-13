@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { GitBranch, GitFork, Plus, Radio, X } from 'lucide-react'
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
-import { WorktreeMetadataError } from '../../api/git'
+import { WorktreeMetadataError, type Branch } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { WorktreeSourceType } from '../../types'
 
@@ -10,6 +10,17 @@ const sourceOptions: Array<{ id: WorktreeSourceType; label: string; description:
   { id: 'origin', label: 'Remote branch', description: 'Create the worktree from a fetched tracking branch.', icon: Radio },
   { id: 'new', label: 'New branch', description: 'Create a branch from an existing base ref.', icon: Plus },
 ]
+
+/** The branch a base ref names, without its remote: `origin/feat/x` and `refs/heads/feat/x` are `feat/x`. */
+export function baseBranchName(ref: string, branches: Branch[] = []) {
+  const branch = branches.find(item => (item.ref || item.name) === ref)
+  if (branch?.remote) {
+    const remote = branch.remote_name ?? branch.name.split('/')[0]
+    return branch.name.startsWith(remote + '/') ? branch.name.slice(remote.length + 1) : branch.name
+  }
+  if (branch) return branch.name
+  return ref.replace(/^refs\/heads\//, '').replace(/^refs\/remotes\/[^/]+\//, '')
+}
 
 export function CreateWorktreeDialog() {
   const visible = useBonsaiStore(state => state.worktreeDialogOpen)
@@ -33,12 +44,20 @@ function CreateWorktreeDialogBody() {
   const defaultBase = allBranches?.find(branch => !branch.remote && branch.name === project?.defaultBranch)?.ref ?? project?.defaultBranch ?? 'main'
   const localBranches = useMemo(() => (allBranches ?? []).filter(b => !b.remote && !checkedOutBranches.has(b.name)).map(b => b.name), [allBranches, checkedOutBranches])
   const originBranches = useMemo(() => (allBranches ?? []).filter(b => b.remote && !checkedOutBranches.has(b.name.replace(/^origin\//, ''))).map(b => b.name), [allBranches, checkedOutBranches])
-  const mergeTargets = [project?.defaultBranch ?? 'main', ...projectWorktrees.filter((item) => item.branch !== project?.defaultBranch).map((item) => item.branch)]
+  const worktreeTargets = [project?.defaultBranch ?? 'main', ...projectWorktrees.filter((item) => item.branch !== project?.defaultBranch).map((item) => item.branch)]
 
   const [sourceType, setSourceType] = useState<WorktreeSourceType>('new')
   const [sourceRef, setSourceRef] = useState(project?.defaultBranch ?? 'main')
   const [branchName, setBranchName] = useState('feat/new-worktree')
   const [mergeTargetBranch, setMergeTargetBranch] = useState(project?.defaultBranch ?? 'main')
+  // A new branch merges into, and rebases onto, the base it was cut from
+  // until the merge target is picked by hand.
+  const mergeTargetChosen = useRef(false)
+  const chooseMergeTarget = (branch: string) => { mergeTargetChosen.current = true; setMergeTargetBranch(branch) }
+  const chooseSourceRef = (ref: string) => {
+    setSourceRef(ref)
+    if (sourceType === 'new' && !mergeTargetChosen.current) setMergeTargetBranch(baseBranchName(ref, allBranches))
+  }
 
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
@@ -50,7 +69,9 @@ function CreateWorktreeDialogBody() {
     setSourceType(target?.sourceType ?? 'new')
     setSourceRef(target?.sourceRef ?? defaultBase)
     setBranchName(target?.branchName ?? 'feat/new-worktree')
-    setMergeTargetBranch(project?.defaultBranch ?? 'main')
+    const initialType = target?.sourceType ?? 'new'
+    setMergeTargetBranch(initialType === 'new' ? baseBranchName(target?.sourceRef ?? defaultBase, allBranches) : project?.defaultBranch ?? 'main')
+    mergeTargetChosen.current = false
     setError('')
     setCreatedId('')
     submission.current = { payload: '', key: '' }
@@ -64,6 +85,7 @@ function CreateWorktreeDialogBody() {
   const changeSourceType = (type: WorktreeSourceType) => {
     setSourceType(type)
     setSourceRef(type === 'existing' ? localBranches[0] ?? '' : type === 'origin' ? originBranches[0] ?? '' : defaultBase)
+    if (!mergeTargetChosen.current) setMergeTargetBranch(type === 'new' ? baseBranchName(defaultBase, allBranches) : project.defaultBranch)
     setError('')
   }
   const submit = async (event: FormEvent) => {
@@ -98,10 +120,11 @@ function CreateWorktreeDialogBody() {
     label: branch,
     description: sourceType === 'origin' ? 'remote tracking branch' : 'local branch',
   }))
+  const mergeTargets = worktreeTargets.includes(mergeTargetBranch) ? worktreeTargets : [...worktreeTargets, mergeTargetBranch]
   const mergeOptions = mergeTargets.map((branch) => ({
     value: branch,
     label: branch,
-    description: branch === project.defaultBranch ? 'default branch' : 'worktree branch',
+    description: branch === project.defaultBranch ? 'default branch' : worktreeTargets.includes(branch) ? 'worktree branch' : 'base branch',
   }))
 
   return (
@@ -145,7 +168,7 @@ function CreateWorktreeDialogBody() {
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Branch from</span>
-                  <BonsaiSelect ariaLabel="Branch from" searchable value={sourceRef} onChange={setSourceRef} options={(allBranches ?? []).map(branch => ({ value: branch.ref || branch.name, label: branch.name, description: branch.remote ? 'fetched remote base' : 'local base' }))} />
+                  <BonsaiSelect ariaLabel="Branch from" searchable value={sourceRef} onChange={chooseSourceRef} options={(allBranches ?? []).map(branch => ({ value: branch.ref || branch.name, label: branch.name, description: branch.remote ? 'fetched remote base' : 'local base' }))} />
                 </label>
               </>
             ) : (
@@ -158,8 +181,8 @@ function CreateWorktreeDialogBody() {
 
           <label className="block">
             <span className="mb-1.5 block font-mono text-[10px] font-semibold uppercase tracking-[.1em] text-muted-2">Merges into</span>
-            <BonsaiSelect ariaLabel="Merge target" searchable value={mergeTargetBranch} onChange={setMergeTargetBranch} options={mergeOptions} />
-            <span className="mt-1.5 block font-mono text-[10px] text-muted-2">Non-default targets become explicit PR relationships on the canvas.</span>
+            <BonsaiSelect ariaLabel="Merge target" searchable value={mergeTargetBranch} onChange={chooseMergeTarget} options={mergeOptions} />
+            <span className="mt-1.5 block font-mono text-[10px] text-muted-2">Follows the base branch. Rebase onto in the worktree menu uses it; non-default targets become explicit PR relationships on the canvas.</span>
           </label>
         </fieldset>
         {error && <p role="alert" className="px-4 pb-3 text-[11px] text-danger">{error}</p>}

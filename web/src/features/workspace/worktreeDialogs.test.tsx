@@ -29,6 +29,35 @@ describe('worktree dialogs', () => {
     act(() => { useBonsaiStore.setState({ gitBranches: { bonsai: [{ name: 'origin/another', remote: true }, { name: 'origin/feature', remote: true }] } }) })
     expect(screen.getByRole('button', { name: 'Remote branch' })).toHaveTextContent('origin/feature')
   })
+  it('merges and rebases a new branch into its base until a target is chosen', async () => {
+    const create = vi.fn(async () => 'created')
+    useBonsaiStore.setState({ createWorktree: create, worktrees, gitBranches: { bonsai: [{ name: 'main', remote: false }, { name: 'feat/web-workspace', remote: false }, { name: 'origin/release', ref: 'refs/remotes/origin/release', remote: true, remote_name: 'origin' }] } })
+    useBonsaiStore.getState().setWorktreeDialogOpen(true)
+    render(<CreateWorktreeDialog />)
+    const pick = (select: string, option: RegExp) => {
+      fireEvent.click(screen.getByRole('button', { name: select }))
+      fireEvent.click(screen.getByRole('option', { name: option }))
+    }
+    expect(screen.getByRole('button', { name: 'Merge target' })).toHaveTextContent('main')
+    pick('Branch from', /^origin\/release/)
+    expect(screen.getByRole('button', { name: 'Merge target' })).toHaveTextContent('release')
+    pick('Branch from', /^feat\/web-workspace/)
+    expect(screen.getByRole('button', { name: 'Merge target' })).toHaveTextContent('feat/web-workspace')
+    fireEvent.click(screen.getByRole('button', { name: 'Create worktree' }))
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'feat/web-workspace', mergeTargetBranch: 'feat/web-workspace' }), expect.anything()))
+  })
+
+  it('keeps a merge target picked by hand when the base changes', () => {
+    useBonsaiStore.setState({ worktrees, gitBranches: { bonsai: [{ name: 'main', remote: false }, { name: 'feat/web-workspace', remote: false }, { name: 'origin/release', remote: true }] } })
+    useBonsaiStore.getState().setWorktreeDialogOpen(true)
+    render(<CreateWorktreeDialog />)
+    fireEvent.click(screen.getByRole('button', { name: 'Merge target' }))
+    fireEvent.click(screen.getByRole('option', { name: /^feat\/web-workspace/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Branch from' }))
+    fireEvent.click(screen.getByRole('option', { name: /^origin\/release/ }))
+    expect(screen.getByRole('button', { name: 'Merge target' })).toHaveTextContent('feat/web-workspace')
+  })
+
   it('blocks duplicate submission and shows actionable inline errors', async () => {
     let reject!: (reason: Error) => void
     const create = vi.fn(() => new Promise<string>((_, fail) => { reject = fail }))

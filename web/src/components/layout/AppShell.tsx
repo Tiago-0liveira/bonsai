@@ -1,5 +1,5 @@
-import { lazy, useEffect, useRef } from 'react'
-import { OverlayBoundary } from '../../app/chunkRecovery'
+import { lazy, useEffect, useRef, useState } from 'react'
+import { ChunkRecovery, FeatureBoundary, OverlayBoundary } from '../../app/chunkRecovery'
 import {
   Panel,
   PanelGroup,
@@ -17,20 +17,46 @@ import { TopBar } from './TopBar'
 import { WorkspaceNotice } from './WorkspaceNotice'
 import { WorkspaceVisibility } from '../ui/WorkspaceVisibility'
 import { ProviderBadge } from '../ui/ProviderBadge'
+import { observeCanvasFrame } from '../../features/workspace/canvas/canvasFrame'
+import { FrameBox } from '../../features/workspace/canvas/FrameBox'
+import type { CanvasRoute } from '../../features/workspace/WorkspacePage'
 
+const WorkspacePage = lazy(() => import('../../features/workspace/WorkspacePage').then(module => ({ default: module.WorkspacePage })))
 const CommandPalette = lazy(() => import('../../features/command-palette/CommandPalette').then(module => ({ default: module.CommandPalette })))
 const CreateWorktreeDialog = lazy(() => import('../../features/workspace/CreateWorktreeDialog').then(module => ({ default: module.CreateWorktreeDialog })))
+const RebaseDialog = lazy(() => import('../../features/workspace/RebaseDialog').then(module => ({ default: module.RebaseDialog })))
 const DeleteWorktreeDialog = lazy(() => import('../../features/workspace/DeleteWorktreeDialog').then(module => ({ default: module.DeleteWorktreeDialog })))
 const EnvEditor = lazy(() => import('../../features/workspace/EnvEditor').then(module => ({ default: module.EnvEditor })))
 const EditorPreferenceDialog = lazy(() => import('../../features/files/EditorPreferenceDialog').then(module => ({ default: module.EditorPreferenceDialog })))
 const StartAgentDialog = lazy(() => import('../../features/workspace/StartAgentDialog').then(module => ({ default: module.StartAgentDialog })))
 const StartProcessDialog = lazy(() => import('../../features/workspace/StartProcessDialog').then(module => ({ default: module.StartProcessDialog })))
 
-function MainWorkspace({ children }: { children: React.ReactNode }) {
+// On canvas routes the frame is an empty window onto the canvas layer behind the shell.
+function MainWorkspace({ children, canvasActive, frameRef }: { children: React.ReactNode; canvasActive: boolean; frameRef: React.RefObject<HTMLDivElement> }) {
   return (
-    <div className="flex h-full min-h-0 overflow-hidden rounded-[14px]">
+    <div ref={frameRef} data-canvas-frame className={'flex h-full min-h-0 overflow-hidden rounded-[14px] ' + (canvasActive ? 'pointer-events-none' : 'pointer-events-auto')}>
       <main className="min-w-0 flex-1">{children}</main>
     </div>
+  )
+}
+
+function CanvasStatus({ children }: { children: React.ReactNode }) {
+  return <FrameBox className="pointer-events-auto">{children}</FrameBox>
+}
+
+// Mounted on the first canvas visit, then kept behind every page so leaving the canvas never resets it.
+function CanvasLayer({ route }: { route: CanvasRoute | null }) {
+  const [visited, setVisited] = useState(route !== null)
+  useEffect(() => { if (route !== null) setVisited(true) }, [route])
+  if (!visited) return null
+  return (
+    <FeatureBoundary
+      loading="Loading workspace…"
+      fallback={<CanvasStatus><div role="status" className="grid h-full min-h-[100px] place-items-center p-4 text-sm text-muted">Loading workspace…</div></CanvasStatus>}
+      recovery={<CanvasStatus><ChunkRecovery /></CanvasStatus>}
+    >
+      <WorkspacePage route={route} />
+    </FeatureBoundary>
   )
 }
 
@@ -46,7 +72,7 @@ function CollapsedTerminalsBar({ reopenRef }: { reopenRef: React.RefObject<HTMLB
   const focusRuntime = useBonsaiStore((state) => state.focusRuntime)
   const setDockState = useBonsaiStore((state) => state.setDockState)
   return (
-    <div className="island mt-3 flex h-[34px] shrink-0 items-center gap-2 rounded-[12px] px-3">
+    <div className="island pointer-events-auto mt-3 flex h-[34px] shrink-0 items-center gap-2 rounded-[12px] px-3">
       <TerminalSquare size={13} className="shrink-0 text-ok" />
       <span className="font-mono text-[10.5px] uppercase tracking-[.08em] text-muted">Terminals</span>
       <span className="island-count">{openRuntimeIds.length}</span>
@@ -75,7 +101,10 @@ function CollapsedTerminalsBar({ reopenRef }: { reopenRef: React.RefObject<HTMLB
   )
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children, canvasRoute = null }: { children: React.ReactNode; canvasRoute?: CanvasRoute | null }) {
+  const canvasActive = canvasRoute !== null
+  const groundRef = useRef<HTMLDivElement>(null)
+  const frameRef = useRef<HTMLDivElement>(null)
   const gitError = useBonsaiStore(state => state.gitError)
   const dockRef = useRef<ImperativePanelHandle>(null)
   const dockState = useBonsaiStore((state) => state.dockState)
@@ -106,22 +135,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [dockHeight, dockState])
 
+  useEffect(() => {
+    if (!frameRef.current || !groundRef.current) return
+    return observeCanvasFrame(frameRef.current, groundRef.current)
+  }, [])
 
   return (
     <Tooltip.Provider delayDuration={250}>
-      <div className="shell-ground relative h-full w-full overflow-hidden">
+      <div ref={groundRef} className="shell-ground relative h-full w-full overflow-hidden">
+        <CanvasLayer route={canvasRoute} />
         <TopBar />
         <div className="pointer-events-none absolute inset-0">
           <aside className="desktop-rail pointer-events-auto absolute bottom-4 left-4 top-[68px] flex w-[400px] flex-col gap-3">
             <Inspector />
             <BranchesIsland />
           </aside>
-          <div className="shell-main pointer-events-auto absolute bottom-4 left-[428px] right-4 top-[68px] flex flex-col">
-            {gitError && <div role="status" className="island mb-3 shrink-0 px-3 py-2 text-sm text-warn">{gitError}</div>}
+          <div className="shell-main pointer-events-none absolute bottom-4 left-[428px] right-4 top-[68px] flex flex-col">
+            {gitError && <div role="status" className="island pointer-events-auto mb-3 shrink-0 px-3 py-2 text-sm text-warn">{gitError}</div>}
             <div className="min-h-0 flex-1">
               <PanelGroup id="workspace-layout" direction="vertical">
                 <Panel id="main-workspace" order={1} minSize={24} defaultSize={100 - initialDockSize}>
-                  <MainWorkspace>{children}</MainWorkspace>
+                  <MainWorkspace canvasActive={canvasActive} frameRef={frameRef}>{children}</MainWorkspace>
                 </Panel>
                 <PanelResizeHandle
                   id="workspace-resize"
@@ -132,7 +166,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   disabled={dockState === 'collapsed'}
                   tabIndex={dockState === 'collapsed' ? -1 : 0}
                   style={{ display: dockState === 'collapsed' ? 'none' : undefined }}
-                  className="group relative h-3 shrink-0 cursor-row-resize bg-transparent"
+                  className="group pointer-events-auto relative h-3 shrink-0 cursor-row-resize bg-transparent"
                 >
                   <div className="absolute left-1/2 top-1/2 h-px w-10 -translate-x-1/2 -translate-y-1/2 bg-border-strong opacity-0 transition-opacity group-hover:opacity-100" />
                 </PanelResizeHandle>
@@ -157,7 +191,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   <div
                     ref={dockContentRef}
-                    className="h-full min-h-0 overflow-hidden pt-3"
+                    className="h-full min-h-0 overflow-hidden pt-3 [&>*]:pointer-events-auto"
                     aria-hidden={dockState === 'collapsed'}
                     {...(dockState === 'collapsed' ? { inert: '' } : {})}
                     style={{ visibility: dockState === 'collapsed' ? 'hidden' : undefined }}
@@ -185,6 +219,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 function ShellOverlays() {
   const worktree = useBonsaiStore(state => state.worktreeDialogOpen)
   const deletion = useBonsaiStore(state => state.deleteWorktreeId)
+  const rebase = useBonsaiStore(state => state.rebaseWorktreeId)
   const agent = useBonsaiStore(state => state.startAgentDialogOpen)
   const process = useBonsaiStore(state => state.startProcessDialogOpen)
   const environment = useBonsaiStore(state => state.envEditorOpen)
@@ -205,6 +240,7 @@ function ShellOverlays() {
   }, [])
   return <>
     {worktree && <OverlayBoundary loading="Loading worktree dialog…" onDismiss={() => useBonsaiStore.getState().setWorktreeDialogOpen(false)}><CreateWorktreeDialog /></OverlayBoundary>}
+    {rebase && <OverlayBoundary loading="Loading rebase dialog…" onDismiss={() => useBonsaiStore.getState().setRebaseWorktreeId('')}><RebaseDialog /></OverlayBoundary>}
     {deletion && <OverlayBoundary loading="Loading delete dialog…" onDismiss={() => useBonsaiStore.getState().setDeleteWorktreeId('')}><DeleteWorktreeDialog /></OverlayBoundary>}
     {agent && <OverlayBoundary loading="Loading agent dialog…" onDismiss={() => useBonsaiStore.getState().setStartAgentDialogOpen(false)}><StartAgentDialog /></OverlayBoundary>}
     {process && <OverlayBoundary loading="Loading process dialog…" onDismiss={() => useBonsaiStore.getState().setStartProcessDialogOpen(false)}><StartProcessDialog /></OverlayBoundary>}

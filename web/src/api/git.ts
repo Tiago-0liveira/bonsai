@@ -808,16 +808,20 @@ export function startGitBackend() {
     }
   }
 }
-export async function localCommand(action: string, args: Record<string, unknown> = {}) {
-  const id = useBonsaiStore.getState().dockWorktreeId
+/** Runs a Git operation on a worktree: the dock worktree unless `worktreeId` names another. */
+export async function localCommand(action: string, args: Record<string, unknown> = {}, worktreeId?: string) {
+  if (action === 'fetch') return fetchProject(useBonsaiStore.getState().activeProjectId)
+  const id = worktreeId ?? useBonsaiStore.getState().dockWorktreeId
   if (!id) {
     report(new Error('Select a connected worktree first'))
     return
   }
   try {
+    // continue and abort resume the merge or rebase Git left in progress.
+    const path = action === 'continue' || action === 'abort' ? `operations/${action}` : action
     const response = await request<{ result?: { state?: string; conflicted_paths?: string[]; error?: string } }>(
-      `/api/worktrees/${encodeURIComponent(id)}/${action}`,
-      args,
+      `/api/worktrees/${encodeURIComponent(id)}/${path}`,
+      action === 'continue' || action === 'abort' ? { operation_id: 'recover', ...args } : args,
     )
     const op = response.result
     useBonsaiStore.setState({
@@ -830,11 +834,31 @@ export async function localCommand(action: string, args: Record<string, unknown>
   }
 }
 
-export function openGitHub(path: string, projectId = useBonsaiStore.getState().activeProjectId) {
-  const p = useBonsaiStore.getState().projects.find(project => project.id === projectId)
-  if (p && /^[^/\s]+\/[^/\s]+$/.test(p.repository)) {
-    window.open(`https://github.com/${p.repository}/${path}`, '_blank', 'noopener,noreferrer')
+/** Fetches every remote of the project's repository; fetch is not per worktree. */
+export async function fetchProject(projectId: string) {
+  if (!projectId) return
+  try {
+    await request(`/api/projects/${encodeURIComponent(projectId)}/fetch`, {})
+    useBonsaiStore.setState({ notice: 'Fetch completed' })
+  } catch (error) {
+    report(error)
   }
+}
+
+/** The github.com URL for `path` in the project's repository, if it is hosted on GitHub. */
+export function githubUrl(path: string, projectId = useBonsaiStore.getState().activeProjectId) {
+  const p = useBonsaiStore.getState().projects.find(project => project.id === projectId)
+  return p && /^[^/\s]+\/[^/\s]+$/.test(p.repository) ? `https://github.com/${p.repository}/${path}` : undefined
+}
+
+/** Encodes a branch for a URL path, keeping its slashes as path separators. */
+export function branchPath(branch: string) {
+  return branch.split('/').map(encodeURIComponent).join('/')
+}
+
+export function openGitHub(path: string, projectId = useBonsaiStore.getState().activeProjectId) {
+  const url = githubUrl(path, projectId)
+  if (url) window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 export function __resetGitSyncForTests() {
