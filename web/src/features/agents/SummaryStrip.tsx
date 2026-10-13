@@ -1,51 +1,105 @@
-import { Plus, RefreshCw } from 'lucide-react'
+import type { ComponentType } from 'react'
+import { Activity, Clock, Gauge, Plus, RefreshCw, ShieldCheck, TrendingDown, UsersRound, type LucideProps } from 'lucide-react'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
-import { AUTH_DOT, formatAge, formatCountdown, toPercent, type FleetSummary, type ProviderSummary } from './agentsModel'
+import { AUTH_DOT, formatAge, formatCountdown, toPercent, type FleetSummary, type ProviderSummary, type ProviderWindow } from './agentsModel'
 import { LOW_HEADROOM, UsageMeter } from './UsageMeter'
 
-type Tone = 'warn' | 'ok'
+type Tone = 'warn' | 'ok' | 'bad'
 
-function Stat({ label, value, detail, tone }: { label: string; value: string; detail?: string; tone?: Tone }) {
+const TONE_TEXT: Record<Tone | 'none', string> = { ok: 'text-accent', warn: 'text-warn', bad: 'text-danger', none: 'text-text' }
+const TONE_BUBBLE: Record<Tone | 'none', string> = {
+  ok: 'bg-accent/12 text-accent',
+  warn: 'bg-warn-solid/18 text-warn',
+  bad: 'bg-danger-solid/30 text-danger',
+  none: 'bg-panel-3 text-muted',
+}
+
+/** A fleet number with its own icon bubble. Label, then value, then detail, in that reading order. */
+function Metric({ icon: Icon, label, value, detail, tone, title }: {
+  icon: ComponentType<LucideProps>
+  label: string
+  value: string
+  detail?: string
+  tone?: Tone
+  title?: string
+}) {
+  const key = tone ?? 'none'
   return (
-    <div className="min-w-0 border-l border-border-subtle px-4 py-0.5 first:border-l-0 first:pl-3" title={detail}>
-      <div className="font-mono text-[9.5px] uppercase tracking-[.1em] text-muted-2">{label}</div>
-      <div className={'truncate text-[15px] font-semibold leading-6 ' + (tone === 'warn' ? 'text-warn' : tone === 'ok' ? 'text-accent' : 'text-text')}>{value}</div>
-      <div className="h-[14px] truncate font-mono text-[10px] text-muted-2">{detail ?? ''}</div>
+    <div className="flex min-w-0 items-center gap-2.5 rounded-[11px] border border-border-subtle bg-well/45 py-1.5 pl-1.5 pr-3.5" title={title ?? detail}>
+      <span className={'grid h-8 w-8 shrink-0 place-items-center rounded-[9px] ' + TONE_BUBBLE[key]} aria-hidden="true"><Icon size={15} /></span>
+      <span className="min-w-0">
+        <span className="block font-mono text-[9.5px] uppercase leading-3 tracking-[.1em] text-muted-2">{label}</span>
+        <span className={'block truncate text-[15px] font-semibold leading-5 ' + TONE_TEXT[key]}>{value}</span>
+        <span className="block h-3 truncate font-mono text-[10px] leading-3 text-muted-2">{detail ?? ''}</span>
+      </span>
     </div>
   )
 }
 
-/** One provider: how many of its profiles are signed in, its tightest headroom, what is running and the next reset. */
-function ProviderTile({ item, usageLoaded, now }: { item: ProviderSummary; usageLoaded: boolean; now: number }) {
-  const lowest = item.lowest
-  const low = lowest !== undefined && lowest.score < LOW_HEADROOM
-  const reset = item.nextReset ? formatCountdown(item.nextReset.at, now).replace(/^in /, '') : ''
+/** One segment per profile, grouped by provider and coloured by sign-in state. */
+function HealthBar({ providers }: { providers: ProviderSummary[] }) {
+  const groups = providers.filter(item => item.profiles > 0)
+  const signedOut = groups.reduce((sum, item) => sum + item.profiles - item.signedIn, 0)
+  const total = groups.reduce((sum, item) => sum + item.profiles, 0)
+  if (total === 0) return null
   return (
-    <li className={'min-w-0 rounded-[10px] border border-border-subtle bg-well/45 px-3 py-2 ' + (item.available ? '' : 'opacity-70')} aria-label={item.label}>
+    <div role="img" aria-label={`${total} profiles, ${total - signedOut} signed in`} className="flex min-w-[96px] max-w-[260px] flex-1 items-end gap-2.5">
+      {groups.map(item => (
+        <div key={item.id} className="flex min-w-0 flex-1 flex-col gap-1" style={{ flexGrow: item.profiles }} title={`${item.label}: ${item.signedIn}/${item.profiles} signed in`}>
+          <span className="flex gap-[3px]">
+            {item.tones.map((tone, index) => <span key={index} className={'h-[7px] min-w-[5px] flex-1 rounded-[3px] ' + AUTH_DOT[tone]} />)}
+          </span>
+          <ProviderLogo provider={item.id} size={11} className="shrink-0 text-muted" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** A pooled plan window: the headroom of every profile of the provider added up. */
+function WindowRow({ item, now }: { item: ProviderWindow; now: number }) {
+  const low = item.fraction < LOW_HEADROOM
+  const reset = item.resetsAt ? formatCountdown(item.resetsAt, now).replace(/^in /, '') : ''
+  const left = item.remaining.toFixed(1).replace(/\.0$/, '')
+  return (
+    <li className="grid grid-cols-[3.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2.5" title={`${item.label}: ${left} of ${item.count} ${item.count === 1 ? 'profile' : 'profiles'} left${reset ? `, first reset in ${reset}` : ''}`}>
+      <span className="truncate font-mono text-[10px] uppercase tracking-[.06em] text-muted-2">{item.label}</span>
+      <UsageMeter label={`${item.label} pooled`} fraction={item.fraction} />
+      <span className={'text-right font-mono text-[11px] ' + (low ? 'text-warn' : 'text-text')}>{toPercent(item.fraction)}%</span>
+      <span />
+      <span className="col-span-2 truncate font-mono text-[10px] text-muted-2">
+        {[item.count > 1 ? `${left} of ${item.count} left` : '', reset ? `next reset ${reset}` : ''].filter(Boolean).join(' · ') || 'no reset reported'}
+      </span>
+    </li>
+  )
+}
+
+/** One provider: its sign-ins, its plan windows pooled over every profile, and what is running. */
+function ProviderTile({ item, usageLoaded, now }: { item: ProviderSummary; usageLoaded: boolean; now: number }) {
+  return (
+    <li className={'min-w-0 rounded-[11px] border border-border-subtle bg-well/45 px-3.5 py-2.5 ' + (item.available ? '' : 'opacity-70')} aria-label={item.label}>
       <div className="flex items-center gap-2">
-        <ProviderLogo provider={item.id} size={14} className="shrink-0 text-text" />
-        <span className="text-[12px] font-semibold text-text">{item.label}</span>
+        <ProviderLogo provider={item.id} size={15} className="shrink-0 text-text" />
+        <span className="text-[12.5px] font-semibold text-text">{item.label}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-2" title={item.note}>{item.note}</span>
         {item.running > 0 && <span className="shrink-0 rounded-[5px] bg-accent/12 px-1.5 font-mono text-[9.5px] text-accent">{item.running} running</span>}
       </div>
       {item.profiles === 0 ? (
         <p className="mt-2 font-mono text-[10px] text-muted-2">{item.available ? 'No profiles yet' : 'Not installed'}</p>
       ) : (
-        <div className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1">
-          <span className="flex items-center gap-1" title={`${item.signedIn} of ${item.profiles} signed in`}>
-            {item.tones.slice(0, 8).map((tone, index) => <span key={index} aria-hidden="true" className={'h-1.5 w-1.5 rounded-full ' + AUTH_DOT[tone]} />)}
+        <>
+          <div className="mt-2 flex items-center gap-1" title={`${item.signedIn} of ${item.profiles} signed in`}>
+            {item.tones.slice(0, 10).map((tone, index) => <span key={index} aria-hidden="true" className={'h-1.5 w-1.5 rounded-full ' + AUTH_DOT[tone]} />)}
             <span className="ml-1 font-mono text-[10px] text-muted">{item.signedIn}/{item.profiles} signed in</span>
-          </span>
-          <span className="flex min-w-0 items-center justify-end gap-2" title={lowest ? `${lowest.name} has the least headroom` : undefined}>
-            {lowest ? (
-              <>
-                <UsageMeter label={`${item.label} tightest headroom`} fraction={lowest.score} className="w-14" />
-                <span className={'font-mono text-[10px] ' + (low ? 'text-warn' : 'text-muted')}>{toPercent(lowest.score)}%</span>
-              </>
-            ) : <span className="font-mono text-[10px] text-muted-2">{usageLoaded ? 'no usage data' : 'loading usage'}</span>}
-          </span>
-          {reset && <span className="col-span-2 truncate font-mono text-[10px] text-muted-2">resets in {reset}{item.nextReset && item.profiles > 1 ? ` · ${item.nextReset.name}` : ''}</span>}
-        </div>
+          </div>
+          {item.windows.length > 0 ? (
+            <ul aria-label={`${item.label} plan windows`} className="mt-2 space-y-1.5">
+              {item.windows.map(window => <WindowRow key={window.slot} item={window} now={now} />)}
+            </ul>
+          ) : (
+            <p className="mt-2 font-mono text-[10px] text-muted-2">{usageLoaded ? 'no usage data' : 'loading usage'}</p>
+          )}
+        </>
       )}
     </li>
   )
@@ -63,35 +117,39 @@ export function SummaryStrip({ summary, providers, usageLoaded, usageAt, refresh
   onRefresh: () => void
 }) {
   const { lowest, nextReset } = summary
+  const needSignIn = summary.profiles - summary.signedIn
   const age = formatAge(usageAt, now)
   return (
-    <div className="island shrink-0 space-y-2.5 px-2 py-2.5" role="region" aria-label="Fleet summary">
-      <div className="flex flex-wrap items-center gap-y-2">
-        <Stat label="Profiles" value={String(summary.profiles)} detail={providers.length ? `${providers.filter(item => item.profiles > 0).length} providers` : undefined} />
-        <Stat
+    <div className="island shrink-0 space-y-3 px-3 py-3" role="region" aria-label="Fleet summary">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Metric icon={UsersRound} label="Profiles" value={String(summary.profiles)} detail={`${providers.filter(item => item.profiles > 0).length} providers`} />
+        <HealthBar providers={providers} />
+        <Metric
+          icon={ShieldCheck}
           label="Signed in"
           value={`${summary.signedIn}/${summary.profiles}`}
-          detail={summary.profiles - summary.signedIn > 0 ? `${summary.profiles - summary.signedIn} need sign-in` : 'all signed in'}
-          tone={summary.profiles > 0 && summary.signedIn === summary.profiles ? 'ok' : summary.signedIn < summary.profiles ? 'warn' : undefined}
+          detail={needSignIn > 0 ? `${needSignIn} need sign-in` : 'all signed in'}
+          tone={summary.profiles === 0 ? undefined : needSignIn > 0 ? 'warn' : 'ok'}
         />
-        <Stat label="Running" value={String(summary.running)} detail={summary.running === 1 ? 'session' : 'sessions'} tone={summary.running > 0 ? 'ok' : undefined} />
-        <Stat
+        <Metric icon={Activity} label="Running" value={String(summary.running)} detail={summary.running === 1 ? 'session' : 'sessions'} tone={summary.running > 0 ? 'ok' : undefined} />
+        <Metric
+          icon={Gauge}
           label="Low headroom"
           value={usageLoaded ? String(summary.low) : '—'}
           detail={usageLoaded ? 'under 20%' : 'loading usage'}
           tone={summary.low > 0 ? 'warn' : undefined}
         />
-        <Stat label="Lowest" value={lowest ? `${toPercent(lowest.score)}%` : '—'} detail={lowest?.name} tone={lowest && lowest.score < LOW_HEADROOM ? 'warn' : undefined} />
-        <Stat label="Next reset" value={nextReset ? formatCountdown(nextReset.at, now).replace(/^in /, '') : '—'} detail={nextReset?.name} />
-        <div className="ml-auto flex items-center gap-2 pl-3 pr-1">
-          <span className="hidden font-mono text-[10px] text-muted-2 sm:inline" title={usageAt ? new Date(usageAt).toLocaleString() : undefined}>
+        <Metric icon={TrendingDown} label="Lowest" value={lowest ? `${toPercent(lowest.score)}%` : '—'} detail={lowest?.name} tone={lowest && lowest.score < LOW_HEADROOM ? 'warn' : undefined} />
+        <Metric icon={Clock} label="Next reset" value={nextReset ? formatCountdown(nextReset.at, now).replace(/^in /, '') : '—'} detail={nextReset?.name} />
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden font-mono text-[10px] text-muted-2 lg:inline" title={usageAt ? new Date(usageAt).toLocaleString() : undefined}>
             {refreshing ? 'Reading usage…' : age ? `Usage read ${age}` : usageLoaded ? 'No usage read yet' : ''}
           </span>
           <button
             type="button"
             disabled={refreshing}
             onClick={onRefresh}
-            className="bonsai-focus btn-bordered inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[11px] text-muted hover:text-text disabled:opacity-50"
+            className="bonsai-focus btn-bordered inline-flex h-8 items-center gap-1.5 rounded-[8px] px-3 text-[11px] text-muted hover:text-text disabled:opacity-50"
           >
             <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" /> Check usage
           </button>
@@ -99,7 +157,7 @@ export function SummaryStrip({ summary, providers, usageLoaded, usageAt, refresh
         </div>
       </div>
       {providers.length > 0 && (
-        <ul aria-label="Providers at a glance" className="grid gap-2 px-1 sm:grid-cols-2 xl:grid-cols-3">
+        <ul aria-label="Providers at a glance" className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
           {providers.map(item => <ProviderTile key={item.id} item={item} usageLoaded={usageLoaded} now={now} />)}
         </ul>
       )}
@@ -109,7 +167,7 @@ export function SummaryStrip({ summary, providers, usageLoaded, usageAt, refresh
 
 export function AddProfileButton({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" aria-haspopup="dialog" onClick={onClick} className="bonsai-focus btn-accent-tint inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[11px] font-medium">
+    <button type="button" aria-haspopup="dialog" onClick={onClick} className="bonsai-focus btn-accent-tint inline-flex h-8 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-medium">
       <Plus size={12} /> Add profile
     </button>
   )

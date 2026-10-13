@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { bonsaiTheme } from '../src/theme/themes'
-import { DEFAULT_API_ORIGIN, mockGitBackend, openConnectedApp, selectMenu } from './mockGit'
+import { chooseEffort, DEFAULT_API_ORIGIN, mockGitBackend, openConnectedApp, selectMenu } from './mockGit'
 
 const fixture = { enabled: true }
 const backend = (page: Page) => mockGitBackend(page, false, false, false, DEFAULT_API_ORIGIN, fixture)
@@ -169,13 +169,15 @@ test('a low profile warns in the dialog, and the launch details reach the sessio
   await expect(dialog.getByRole('note')).toContainText('Low headroom: 5h 15% · week 55% left.')
   await dialog.getByLabel('Worktree and branch').click()
   await selectMenu(page, 'Worktree and branch').getByRole('option').first().click()
+  await dialog.getByLabel('Agent model').fill('opus')
+  await chooseEffort(dialog, 'max')
   await dialog.getByLabel('Agent name').fill('Low headroom run')
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
   await expect(dialog).toBeHidden()
   expect(controls.usageRequests.filter(item => item.method === 'POST')).toEqual([])
 
   await page.goto('/app/agents?profile=claude-profile&tab=sessions')
-  await expect(sessions.getByRole('listitem').filter({ hasText: 'Low headroom run' })).toBeVisible()
+  await expect(sessions.getByRole('listitem').filter({ hasText: 'Low headroom run' })).toContainText('opus · Default · max effort')
   await page.getByRole('button', { name: 'Show Release notes on canvas' }).click()
   const inspector = page.getByRole('complementary', { name: 'Inspector' })
   await expect(inspector.getByText('Launch', { exact: true })).toBeVisible()

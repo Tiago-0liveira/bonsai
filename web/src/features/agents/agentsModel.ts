@@ -174,6 +174,22 @@ export interface ProviderSummary {
   running: number
   lowest?: { name: string; score: number }
   nextReset?: { name: string; at: string }
+  /** The plan windows (5h, weekly) pooled over every profile of the provider that reports them. */
+  windows: ProviderWindow[]
+}
+
+/** One plan window of a provider with the headroom of all its profiles added up. */
+export interface ProviderWindow {
+  slot: 'primary' | 'secondary'
+  label: string
+  /** Sum of the remaining fractions: 6.9 means "6.9 profiles' worth" left. */
+  remaining: number
+  /** How many profiles report this window. */
+  count: number
+  /** remaining / count, 0..1. */
+  fraction: number
+  /** The soonest reset of any profile, when one is in the future. */
+  resetsAt?: string
 }
 
 export function summarizeProviders(groups: ProviderGroupModel[], usage: Record<string, AgentUsage>, sessionCounts: Map<string, number>, now: number): ProviderSummary[] {
@@ -190,7 +206,9 @@ export function summarizeProviders(groups: ProviderGroupModel[], usage: Record<s
       profiles: group.accounts.length,
       signedIn: 0,
       running: 0,
+      windows: [],
     }
+    const pooled = new Map<'primary' | 'secondary', { label: string; remaining: number; count: number; resetsAt?: string }>()
     for (const account of group.accounts) {
       if (authState(account).tone === 'ok') summary.signedIn++
       summary.running += sessionCounts.get(account.id) ?? 0
@@ -199,6 +217,20 @@ export function summarizeProviders(groups: ProviderGroupModel[], usage: Record<s
       if (headline.score !== undefined && (!summary.lowest || headline.score < summary.lowest.score)) summary.lowest = { name: account.name, score: headline.score }
       const reset = headline.next_reset ? Date.parse(headline.next_reset) : NaN
       if (Number.isFinite(reset) && reset > now && (!summary.nextReset || reset < Date.parse(summary.nextReset.at))) summary.nextReset = { name: account.name, at: headline.next_reset! }
+      for (const slot of ['primary', 'secondary'] as const) {
+        const limit = headline[slot]
+        if (!limit || limit.remaining_fraction === undefined) continue
+        const entry = pooled.get(slot) ?? { label: limitName(limit), remaining: 0, count: 0 }
+        entry.remaining += Math.min(Math.max(limit.remaining_fraction, 0), 1)
+        entry.count++
+        const at = limit.resets_at ? Date.parse(limit.resets_at) : NaN
+        if (Number.isFinite(at) && at > now && (!entry.resetsAt || at < Date.parse(entry.resetsAt))) entry.resetsAt = limit.resets_at
+        pooled.set(slot, entry)
+      }
+    }
+    for (const slot of ['primary', 'secondary'] as const) {
+      const entry = pooled.get(slot)
+      if (entry) summary.windows.push({ slot, ...entry, fraction: entry.remaining / entry.count })
     }
     return summary
   })

@@ -124,16 +124,20 @@ describe('status', () => {
     expect(within(list).getByRole('list', { name: 'Codex profiles' })).toBeInTheDocument()
   })
 
-  it('shows each provider at a glance in the summary: sign-ins, tightest headroom, running and reset', async () => {
+  it('shows each provider at a glance: sign-ins, both plan windows pooled over its profiles, running and reset', async () => {
     await renderPage()
     const summary = screen.getByRole('region', { name: 'Fleet summary' })
-    await waitFor(() => expect(within(summary).getByRole('meter', { name: 'Codex tightest headroom remaining' })).toHaveAttribute('aria-valuenow', '12'))
     const tiles = within(within(summary).getByRole('list', { name: 'Providers at a glance' }))
     const codex = within(tiles.getByRole('listitem', { name: 'Codex' }))
+    await waitFor(() => expect(codex.getByRole('list', { name: 'Codex plan windows' })).toBeInTheDocument())
     expect(codex.getByText('1/2 signed in')).toBeInTheDocument()
-    expect(codex.getByText('12%')).toBeInTheDocument()
     expect(codex.getByText('2 running')).toBeInTheDocument()
-    expect(codex.getByText(/resets in 2h 15m/)).toBeInTheDocument()
+    // Only Personal reports its windows; Team's reading failed, so the pool is one profile.
+    const five = codex.getByRole('meter', { name: '5 hour pooled remaining' })
+    expect(five).toHaveAttribute('aria-valuenow', '72')
+    const weekly = codex.getByRole('meter', { name: 'Weekly pooled remaining' })
+    expect(weekly).toHaveAttribute('aria-valuenow', '12')
+    expect(codex.getAllByText(/next reset 2h 15m/).length).toBeGreaterThan(0)
     const antigravity = within(tiles.getByRole('listitem', { name: 'Antigravity' }))
     expect(antigravity.getByText('Not installed')).toBeInTheDocument()
   })
