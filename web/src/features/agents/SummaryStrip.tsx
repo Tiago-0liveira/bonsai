@@ -36,25 +36,6 @@ function Metric({ icon: Icon, label, value, detail, tone, title }: {
   )
 }
 
-/** One segment per profile, grouped by provider and coloured by sign-in state. */
-function HealthBar({ providers }: { providers: ProviderSummary[] }) {
-  const groups = providers.filter(item => item.profiles > 0)
-  const signedOut = groups.reduce((sum, item) => sum + item.profiles - item.signedIn, 0)
-  const total = groups.reduce((sum, item) => sum + item.profiles, 0)
-  if (total === 0) return null
-  return (
-    <div role="img" aria-label={`${total} profiles, ${total - signedOut} signed in`} className="flex min-w-[96px] max-w-[260px] flex-1 items-end gap-2.5">
-      {groups.map(item => (
-        <div key={item.id} className="flex min-w-0 flex-1 flex-col gap-1" style={{ flexGrow: item.profiles }} title={`${item.label}: ${item.signedIn}/${item.profiles} signed in`}>
-          <span className="flex gap-[3px]">
-            {item.tones.map((tone, index) => <span key={index} className={'h-[7px] min-w-[5px] flex-1 rounded-[3px] ' + AUTH_DOT[tone]} />)}
-          </span>
-          <ProviderLogo provider={item.id} size={11} className="shrink-0 text-muted" />
-        </div>
-      ))}
-    </div>
-  )
-}
 
 /** A pooled plan window: the headroom of every profile of the provider added up. */
 function WindowRow({ item, now }: { item: ProviderWindow; now: number }) {
@@ -123,7 +104,6 @@ export function SummaryStrip({ summary, providers, usageLoaded, usageAt, refresh
     <div className="island shrink-0 space-y-3 px-3 py-3" role="region" aria-label="Fleet summary">
       <div className="flex flex-wrap items-center gap-2.5">
         <Metric icon={UsersRound} label="Profiles" value={String(summary.profiles)} detail={`${providers.filter(item => item.profiles > 0).length} providers`} />
-        <HealthBar providers={providers} />
         <Metric
           icon={ShieldCheck}
           label="Signed in"
