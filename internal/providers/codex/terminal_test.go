@@ -82,7 +82,8 @@ type terminal struct {
 // here; sockets go under a short temp dir for the Unix socket path limit.
 func newManager(t *testing.T, accounts agents.AccountStore, sessions agents.SessionStore, registry *agents.Registry) *agenthost.Manager {
 	t.Helper()
-	sockets, err := os.MkdirTemp("", "bah")
+	// macOS's default temp directory can exceed the Unix socket path limit.
+	sockets, err := os.MkdirTemp("/tmp", "bah")
 	if err != nil {
 		t.Fatal(err)
 	}
