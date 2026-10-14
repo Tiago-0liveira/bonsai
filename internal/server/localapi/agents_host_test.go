@@ -25,7 +25,8 @@ import (
 // short one: t.TempDir paths can pass the Unix socket path limit.
 func testAgentHostPaths(t *testing.T) agenthost.Paths {
 	t.Helper()
-	sockets, err := os.MkdirTemp("", "bah")
+	// macOS's default temp directory can exceed the Unix socket path limit.
+	sockets, err := os.MkdirTemp("/tmp", "bah")
 	if err != nil {
 		t.Fatal(err)
 	}

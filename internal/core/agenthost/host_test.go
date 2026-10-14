@@ -19,7 +19,8 @@ import (
 // the Unix socket path limit.
 func testPaths(t *testing.T) Paths {
 	t.Helper()
-	sockets, err := os.MkdirTemp("", "bah")
+	// macOS's default temp directory can exceed the Unix socket path limit.
+	sockets, err := os.MkdirTemp("/tmp", "bah")
 	if err != nil {
 		t.Fatal(err)
 	}
