@@ -26,10 +26,14 @@ test('context menus only appear at the click point', async ({ page }) => {
     }
     record()
   })
-  for (const [id, x, y] of [['wt-web', 60, 20], ['wt-daemon', 40, 20], ['wt-web', 200, 30]] as const) {
+  // Click points are fractions of the node box: the initial fit's zoom varies
+  // with load, and a fixed offset can land past the node on an edge.
+  for (const [id, fx, fy] of [['wt-web', 0.3, 0.4], ['wt-daemon', 0.2, 0.4], ['wt-web', 0.9, 0.6]] as const) {
     await page.evaluate(() => { (window as unknown as { __menuFrames: unknown[] }).__menuFrames.length = 0 })
     const node = page.getByTestId('rf__node-' + id)
     const box = (await node.boundingBox())!
+    const x = Math.round(box.width * fx)
+    const y = Math.round(box.height * fy)
     await node.click({ button: 'right', position: { x, y } })
     await expect(page.getByRole('menuitem', { name: 'Open inspector', exact: true })).toBeVisible()
     await page.waitForTimeout(150)
