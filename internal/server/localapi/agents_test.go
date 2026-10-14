@@ -96,9 +96,8 @@ func terminalTestServer(t *testing.T) (*Server, string, *terminalTestProvider) {
 	s.stateSync = newStateSync(projects, events)
 	s.stateSync.ReconcileCatalog()
 	s.agents = &agentAPI{runtime: &agentruntime.Runtime{Accounts: accounts, Sessions: sessions, Registry: registry}}
-	s.agents.manager = agentterminal.New(accounts, sessions, registry, s.publishAgents)
+	s.agents.manager = testAgentManager(t, testAgentHostPaths(t), accounts, sessions, registry, s.publishAgents)
 	s.publishAgents("repo")
-	t.Cleanup(s.agents.manager.Close)
 	return s, string(id), provider
 }
 func TestAgentAPIAndTerminal(t *testing.T) {
@@ -196,7 +195,7 @@ func TestAgentAPIAndTerminal(t *testing.T) {
 	if w.Code != 202 {
 		t.Fatal(w.Body.String())
 	}
-	s.agents.manager.Close()
+	s.agents.manager.Close(false, 10*time.Second)
 	if provider.finalizes.Load() != 1 {
 		t.Fatal("not finalized exactly once")
 	}
@@ -307,16 +306,16 @@ func TestAgentCrashRecoveryDoesNotRelaunch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s.agents.manager.Close()
-	// Simulate a crash leaving the accepted record active on disk.
+	s.agents.manager.Close(false, 10*time.Second)
+	// Simulate a crash leaving the accepted record active on disk, with no
+	// holder record (an API from before agent hosts).
 	if err := project.state.Update(func(data gitstore.Data) error {
 		return gitstore.Put(data, "api_agent_mutations", "accepted", agentMutation{Fingerprint: "request", Summary: summary})
 	}); err != nil {
 		t.Fatal(err)
 	}
 	starts := provider.starts.Load()
-	s.agents.manager = agentterminal.New(s.agents.runtime.Accounts, s.agents.runtime.Sessions, s.agents.runtime.Registry, s.publishAgents)
-	defer s.agents.manager.Close()
+	s.agents.manager = testAgentManager(t, testAgentHostPaths(t), s.agents.runtime.Accounts, s.agents.runtime.Sessions, s.agents.runtime.Registry, s.publishAgents)
 	if err := s.recoverAgents(); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +363,7 @@ func TestAgentOwnershipAndRemovalConflicts(t *testing.T) {
 	if _, ok := s.agents.manager.Get("different-project", summary.ID); ok {
 		t.Fatal("cross-project read")
 	}
-	if _, _, _, _, err := s.agents.manager.Attach("different-project", summary.ID, 0); err == nil {
+	if _, err := s.agents.manager.Attach("different-project", summary.ID, 0, "", "web"); err == nil {
 		t.Fatal("cross-project attach")
 	}
 	scoped := *s

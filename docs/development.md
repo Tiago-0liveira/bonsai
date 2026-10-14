@@ -540,14 +540,18 @@ captures the sign-in from the setup home. `bonsai agent account login` runs agy
 again in a fresh home and stores the new sign-in with the next vault generation,
 so a running session's older tokens never overwrite it when that session ends.
 
-The local API owns these sessions, independently of request contexts and browser
-connections. Closing a terminal or refreshing detaches; reconnecting resumes the
-same process. Explicit Stop and graceful API shutdown terminate the process group,
-reap it, reconcile credentials using a fresh cleanup context, and delete its
-isolated session home. API restart never automatically relaunches an agent.
-Durable mutation records recover interrupted sessions as failed; their former
-terminal output is not persisted. Abrupt API/OS termination can leave temporary
-homes requiring inspection; graceful cleanup is the supported path.
+Each session runs in its own [agent host](#agent-hosts), independently of
+request contexts, browser connections and the API itself. Closing a terminal or
+refreshing detaches; reconnecting resumes the same process. Explicit Stop
+terminates the process group, reaps it, reconciles credentials using a fresh
+cleanup context, and deletes its isolated session home. API shutdown, restart
+or a crash only disconnects: the next API adopts every running holder, so its
+sessions stay active in the journal and the Agents tab, and a browser holding
+the holder's generation resumes at its offset. API restart never relaunches an
+agent. Journal entries without a holder record (from before agent hosts) are
+recovered as failed; a holder that died mid-session reads as failed,
+`Agent host exited unexpectedly.` Terminal output lives in the holder only, so
+it is gone once an ended session's holder exits.
 
 Native PTYs are implemented for Linux, macOS, FreeBSD, OpenBSD, NetBSD and
 DragonFly using `github.com/creack/pty` v1.1.24. Linux has runtime coverage here;
@@ -557,10 +561,11 @@ The adapter launches the provider's executable and argument vector directly,
 with its isolated environment and working directory; there is no generic shell
 or browser-supplied executable/path option.
 
-Limits: 16 active sessions, 32 retained completed sessions, 2 MiB of recent output
+Limits: 16 active sessions (adopted ones included), 32 retained completed sessions, 2 MiB of recent output
 per session, 64 KiB per input frame, and 1–500 terminal rows/columns. Only one
 attachment writes; other attachments observe. After the writer disconnects, a
-new attachment can claim writing. Slow readers are disconnected. Bounded replay
+new attachment can claim writing, and any attachment (browser or
+`bonsai agents attach`) can take control at any time. Slow readers are disconnected. Bounded replay
 cannot fully reconstruct every full-screen terminal after truncation; the UI
 explicitly resets and reports the gap.
 
@@ -581,6 +586,8 @@ The dedicated terminal stream uses version 1 JSON envelopes:
   `{type:"attach", offset, generation}` within the authentication deadline.
   Tokens never appear in URLs.
 - Server sends `{type:"ready", version:1, generation, writer}` before replay.
+  An agent's generation is its holder's, so it survives API restarts; a setup
+  job's is the API epoch.
 - Output is `{type:"output", offset, data}` where `data` is base64 bytes and
   `offset` is the absolute starting byte offset. Replay and subscription are
   registered atomically. The browser writes decoded bytes directly to xterm.
@@ -588,6 +595,11 @@ The dedicated terminal stream uses version 1 JSON envelopes:
   by the retained tail. Generation changes reset the browser display/cursor.
 - Input is `{type:"input", data}` (base64); resize is
   `{type:"resize", cols, rows}`. Input is never queued across reconnects.
+  Without control they are dropped (control can move at any time).
+- `{type:"take"}` asks for control of an agent terminal (setup jobs close the
+  socket on it). `{type:"writer", offset, writer}` tells each terminal whose
+  control changed, whether it now writes; the browser's new writer sends its
+  size. The CLI (`bonsai agents attach`) takes part in the same election.
 - Lifecycle updates are `{type:"status", offset, status:<safe agent summary>}`.
   Final status follows output drain. Protocol errors close the connection;
   clients also understand `{type:"error", message}` for future diagnostics.
@@ -612,6 +624,62 @@ browser reload, then stopped it with no cleanup error. Its temporary session
 home was confirmed removed. The CLI reported that the profile was not signed
 in, so an authenticated model conversation remains unverified. No login or
 profile settings were changed for this check.
+
+## Agent hosts
+
+Each agent session runs in its own holder, `bonsai __agent-host`
+(`internal/core/agenthost`), started detached (new session, stdio on
+`/dev/null`) so it does not depend on the process that launched it. The
+holder owns the session's PTY, its 2 MiB terminal stream and the whole
+lifecycle `agentterminal.RunSession` runs: `PrepareSession`, the process,
+`FinalizeSession` and the session store's cleanup. A per-agent holder rather
+than one shared agent daemon keeps a crash to one session, and lets an
+upgrade leave running sessions alone: an old holder keeps its own binary and
+protocol version.
+
+The launch spec, prompt included, reaches the holder on stdin and is never
+written to disk or argv. The holder answers one JSON line on stdout (`{ok}` or
+`{error}`) once its socket serves, then points stdout at `/dev/null`.
+`BONSAI_DAEMON_BIN` overrides the binary, as for daemons.
+
+| File | Purpose |
+| --- | --- |
+| `<socket dir>/agents/<session>.sock` | The holder's socket (0600, directory 0700); the socket dir is `$XDG_RUNTIME_DIR/bonsai`, else `/tmp/bonsai` |
+| `<web home>/agents/<session>.json` | Its record (0600, atomic): `pid`, `socket`, `generation`, `binary_version`, `protocol`, `work_dir`, the session summary, `last_output_at`; rewritten on every state change |
+| `<web home>/agents/<session>.lock` | Held by the holder for its lifetime: a record whose lock is free belongs to an ended holder, and one still showing an active session reads as failed, `Agent host exited unexpectedly.` |
+
+The API's `agenthost.Manager` starts a holder per session, follows each over a
+status connection (redialing while the holder runs), proxies each browser
+terminal websocket to its own holder connection, and on start adopts every
+running holder (`Adopt`). Closing the API only disconnects. Tests use
+`agenthost.InProcess`, which serves holders from the test process so fake
+providers still apply.
+
+`agents.keep_running` in `web.json` (`GET`/`POST /api/settings/agents` with
+`{keep_running, revision}`, `409` on a stale revision; the answer adds
+`active_sessions`) only changes `bonsai web stop`: off, it stops the live
+holders before `ServeStop` (so the API records their end) and sweeps any
+survivor after it. API shutdown never stops holders, whatever the setting.
+
+Ended records are pruned when a holder starts: the newest 32 are kept, none
+older than a day. After its session ends the holder rewrites its record,
+broadcasts the final status, waits up to 10 s for its clients to disconnect,
+then exits. SIGTERM stops the session (SIGTERM to the process group, SIGKILL
+after 2 s).
+
+The holder protocol (version 1) is newline-delimited JSON. A client sends
+`{type:"hello", version, mode, offset, generation, take, read_only, client}` first:
+`terminal` mode attaches to the stream (replay from `offset` when `generation`
+matches the holder's, else from the start; `take` writes at once, `read_only` never writes), `status`
+mode receives summaries only and is never the writer. The holder answers
+`{type:"ready", version, generation, writer}` (status mode adds the summary),
+then the terminal stream's `output`, `gap` and `status` frames, and
+`{type:"writer", writer}` to the clients whose control changed. Requests:
+`input`, `resize` (writer only, else an `error` frame), `take`, `stop`
+(optional `error` to record on the session) and `info`, answered by
+`{type:"info", info:{summary, pid, clients:[{client, writer}], last_output_at,
+cols, rows}}`. A hello of another version gets an `error` frame; clients check
+the record's `protocol` first and leave such a holder alone.
 
 ## Release and deferred architecture
 

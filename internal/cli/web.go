@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/browser"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -37,7 +39,8 @@ type ExitError struct{ Code int }
 func (e *ExitError) Error() string { return fmt.Sprintf("exit status %d", e.Code) }
 
 const webUsage = `usage: bonsai web [--attach] [--no-open] [--no-setup] [--port N]
-       bonsai web setup|doctor|status|open|attach|stop
+       bonsai web setup|doctor|status|open|attach
+       bonsai web stop [--stop-agents|--keep-agents]
        bonsai web logs [api|tunnel] [-f|--follow] [-n N] [--grep TEXT] [-i]
        bonsai web restart [api|tunnel]`
 
@@ -61,6 +64,8 @@ type webCLI struct {
 	// hooks holds the GitHub client for repository webhooks (hookAPI);
 	// tests set a fake.
 	hooks *hookClient
+	// agents locates the agent holders `bonsai web stop` may stop.
+	agents agenthost.Paths
 }
 
 var execLookPath = exec.LookPath
@@ -81,8 +86,13 @@ func newWebCLI(in io.Reader, out, errOut io.Writer) (*webCLI, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot locate the bonsai web state: %w", err)
 	}
+	agentPaths, err := agenthost.DefaultPaths()
+	if err != nil {
+		return nil, err
+	}
 	return &webCLI{
 		in: in, out: out, errOut: errOut,
+		agents:     agentPaths,
 		home:       home,
 		configPath: configPath,
 		statePath:  statePath,
@@ -133,7 +143,7 @@ func cmdWeb(args []string, in io.Reader, out, errOut io.Writer) error {
 		case "restart":
 			return w.restart(rest)
 		case "stop":
-			return w.noArgs("stop", rest, w.stop)
+			return w.stop(rest)
 		case "doctor":
 			return w.noArgs("doctor", rest, w.doctor)
 		default:
@@ -455,7 +465,7 @@ func humanInterval(d time.Duration) string {
 // terminal, plain followed logs otherwise (never an interactive prompt).
 func (w *webCLI) follow(group *procstore.ServeGroup) error {
 	if w.tty {
-		return runServeTUI(w.in, w.out, w.client, group)
+		return runServeTUI(w.in, w.out, w.client, group, w.stopGuard())
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -470,17 +480,25 @@ func (w *webCLI) status() error {
 	if err != nil {
 		return err
 	}
-	if group == nil {
-		fmt.Fprintln(w.out, "bonsai web is not running. Start it with: bonsai web")
-		return nil
-	}
 	cfg, _, err := config.ReadWebConfig(w.configPath)
 	if err != nil {
 		cfg = config.DefaultWebConfig()
 	}
+	live := len(liveAgents(w.agents))
+	if group == nil {
+		fmt.Fprintln(w.out, "bonsai web is not running. Start it with: bonsai web")
+		if live > 0 {
+			fmt.Fprintf(w.out, "%s still running — see `bonsai agents`\n", agentCount(live))
+		}
+		return nil
+	}
 	fmt.Fprintf(w.out, "bonsai web · %s\n", group.State)
 	w.printAccess(cfg, group)
-	fmt.Fprintf(w.out, "  settings  %s\n\n", w.configPath)
+	fmt.Fprintf(w.out, "  settings  %s\n", w.configPath)
+	if live > 0 || cfg.Agents.KeepRunning {
+		fmt.Fprintf(w.out, "  agents    %s running · %s\n", strconv.Itoa(live), agentStopText(cfg))
+	}
+	fmt.Fprintln(w.out)
 	tw := tabwriter.NewWriter(w.out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "PROCESS\tSTATUS\tPID\tADDRESS")
 	for _, process := range group.Processes {
@@ -533,20 +551,126 @@ func (w *webCLI) attach() error {
 	return w.follow(group)
 }
 
-func (w *webCLI) stop() error {
+// stop stops the web stack. Agent sessions keep running when the Keep agents
+// running setting is on (or with --keep-agents); otherwise they are stopped
+// too, after a confirmation on a terminal (skipped by --stop-agents).
+func (w *webCLI) stop(args []string) error {
+	fs := flag.NewFlagSet("web stop", flag.ContinueOnError)
+	fs.SetOutput(w.errOut)
+	stopFlag := fs.Bool("stop-agents", false, "stop running agent sessions without asking")
+	keepFlag := fs.Bool("keep-agents", false, "keep agent sessions running, for this stop only")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *stopFlag && *keepFlag {
+		return errors.New("usage: bonsai web stop [--stop-agents|--keep-agents]")
+	}
 	group, err := w.group(true)
 	if err != nil {
 		return err
 	}
+	cfg, _, err := config.ReadWebConfig(w.configPath)
+	if err != nil {
+		cfg = config.DefaultWebConfig()
+	}
+	stopping := (!cfg.Agents.KeepRunning || *stopFlag) && !*keepFlag
 	if group == nil {
 		fmt.Fprintln(w.out, "bonsai web is not running")
+		// Kept agents outlive the stack; only an explicit --stop-agents ends them here.
+		if live := liveAgents(w.agents); len(live) > 0 {
+			if *stopFlag {
+				fmt.Fprintf(w.out, "✓ stopped %s\n", agentCount(stopAgents(w.agents, live, 5*time.Second)))
+			} else {
+				fmt.Fprintf(w.out, "%s still running — see `bonsai agents`\n", agentCount(len(live)))
+			}
+		}
 		return nil
 	}
-	if err := w.client.ServeStop(procstore.WebServeGroupID); err != nil {
+	live := liveAgents(w.agents)
+	if stopping && len(live) > 0 && !*stopFlag {
+		if !w.confirmAgentStop(live) {
+			fmt.Fprintln(w.out, "Nothing was stopped.")
+			return nil
+		}
+	}
+	stopped, err := w.stopStack(stopping, live)
+	if err != nil {
 		return err
 	}
 	fmt.Fprintln(w.out, "✓ bonsai web stopped")
+	switch {
+	case stopping && stopped > 0:
+		fmt.Fprintf(w.out, "✓ stopped %s\n", agentCount(stopped))
+	case !stopping && len(live) > 0:
+		fmt.Fprintf(w.out, "%s still running — see `bonsai agents`\n", agentCount(len(live)))
+	}
 	return nil
+}
+
+// stopStack stops the web group, and with stopping its agent sessions too:
+// live first, while the API still runs and records their end, then any
+// holder that did not answer or that a killed API left behind.
+func (w *webCLI) stopStack(stopping bool, live []agentRow) (int, error) {
+	stopped := 0
+	if stopping {
+		stopped = stopAgents(w.agents, live, 5*time.Second)
+	}
+	if err := w.client.ServeStop(procstore.WebServeGroupID); err != nil {
+		return stopped, err
+	}
+	if stopping {
+		stopped += stopAgents(w.agents, liveAgents(w.agents), 3*time.Second)
+	}
+	return stopped, nil
+}
+
+// stopGuard is the live log viewer's X for the web stack: with Keep agents
+// running off, a first X warns that running agents will be stopped.
+func (w *webCLI) stopGuard() *serveStopGuard {
+	keep := func() bool {
+		cfg, _, err := config.ReadWebConfig(w.configPath)
+		return err == nil && cfg.Agents.KeepRunning
+	}
+	return &serveStopGuard{
+		warning: func() string {
+			if keep() {
+				return ""
+			}
+			if n := len(liveAgents(w.agents)); n > 0 {
+				return agentCount(n) + " still running will be stopped (Settings → Agents → Keep agents running keeps them)."
+			}
+			return ""
+		},
+		stop: func() error {
+			_, err := w.stopStack(!keep(), liveAgents(w.agents))
+			return err
+		},
+	}
+}
+
+func agentStopText(cfg config.WebConfig) string {
+	if cfg.Agents.KeepRunning {
+		return "kept running by bonsai web stop"
+	}
+	return "stopped by bonsai web stop"
+}
+
+// confirmAgentStop warns that live agents will be stopped. On a terminal it
+// asks, defaulting to no; scripts get the warning on stderr and proceed.
+func (w *webCLI) confirmAgentStop(live []agentRow) bool {
+	if !w.tty {
+		fmt.Fprintf(w.errOut, "warning: stopping %s (keep them with --keep-agents or Settings → Agents → Keep agents running)\n", agentCount(len(live)))
+		return true
+	}
+	_ = writeAgentTable(w.out, live, time.Now())
+	verb := "are"
+	if len(live) == 1 {
+		verb = "is"
+	}
+	fmt.Fprintf(w.out, "\n%s %s still running and will be stopped. Stop anyway? [y/N]\n(enable Settings → Agents → Keep agents running, or pass --keep-agents) ", agentCount(len(live)), verb)
+	answer, _ := bufio.NewReader(w.in).ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes"
 }
 
 func webProcessName(name string) (string, error) {

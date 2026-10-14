@@ -4,10 +4,13 @@ package claude
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 )
@@ -32,21 +35,36 @@ func (stubAntigravity) FinalizeSession(context.Context, agents.FinalizeSessionRe
 
 type terminal struct {
 	t      *testing.T
-	m      *agentterminal.Manager
 	id     string
-	writer uint64
+	a      *agenthost.Attachment
 	frames <-chan agentterminal.Frame
 	output strings.Builder
 }
 
-func attach(t *testing.T, m *agentterminal.Manager, id string) *terminal {
+// newManager serves holders in the test process, whose providers exist only
+// here; sockets go under a short temp dir for the Unix socket path limit.
+func newManager(t *testing.T, accounts agents.AccountStore, sessions agents.SessionStore, registry *agents.Registry) *agenthost.Manager {
 	t.Helper()
-	writer, writable, replay, frames, err := m.Attach("project", id, 0)
-	if err != nil || !writable {
-		t.Fatalf("attach %s: writable=%v err=%v", id, writable, err)
+	sockets, err := os.MkdirTemp("", "bah")
+	if err != nil {
+		t.Fatal(err)
 	}
-	term := &terminal{t: t, m: m, id: id, writer: writer, frames: frames}
-	for _, f := range replay {
+	t.Cleanup(func() { _ = os.RemoveAll(sockets) })
+	paths := agenthost.Paths{Records: filepath.Join(t.TempDir(), "agents"), Sockets: sockets}
+	m := agenthost.NewManager(accounts, sessions, registry, paths, agenthost.InProcess(agenthost.Deps{Accounts: accounts, Sessions: sessions, Registry: registry, Linger: 200 * time.Millisecond}), nil)
+	t.Cleanup(func() { m.Close(false, 10*time.Second) })
+	return m
+}
+
+func attach(t *testing.T, m *agenthost.Manager, id string) *terminal {
+	t.Helper()
+	a, err := m.Attach("project", id, 0, "", "web")
+	if err != nil || !a.Writer() {
+		t.Fatalf("attach %s: err=%v", id, err)
+	}
+	t.Cleanup(a.Close)
+	term := &terminal{t: t, id: id, a: a, frames: a.Frames}
+	for _, f := range a.Replay {
 		term.output.Write(f.Data)
 	}
 	return term
@@ -70,7 +88,7 @@ func (term *terminal) waitFor(want string) {
 
 func (term *terminal) send(line string) {
 	term.t.Helper()
-	if err := term.m.Input(term.id, term.writer, []byte(line+"\n")); err != nil {
+	if err := term.a.Input([]byte(line + "\n")); err != nil {
 		term.t.Fatal(err)
 	}
 }
@@ -88,10 +106,9 @@ func TestConcurrentClaudeSessionsAndAntigravityThroughTerminal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m := agentterminal.New(e.accounts, e.sessions, registry, nil)
-	t.Cleanup(m.Close)
+	m := newManager(t, e.accounts, e.sessions, registry)
 
-	start := func(account agents.AccountID, name string, options ...agentterminal.StartOptions) agentterminal.Summary {
+	start := func(account agents.AccountID, name string, options ...agenthost.StartOptions) agentterminal.Summary {
 		t.Helper()
 		s, err := m.Start("project", "tree", account, name, t.TempDir(), 80, 24, options...)
 		if err != nil {
@@ -153,12 +170,12 @@ func TestConcurrentClaudeSessionsAndAntigravityThroughTerminal(t *testing.T) {
 	t2.waitFor("REPLY:still alive")
 }
 
-func awaitRunning(t *testing.T, m *agentterminal.Manager, id string) {
+func awaitRunning(t *testing.T, m *agenthost.Manager, id string) {
 	t.Helper()
 	awaitState(t, m, id, "running")
 }
 
-func awaitState(t *testing.T, m *agentterminal.Manager, id string, states ...string) {
+func awaitState(t *testing.T, m *agenthost.Manager, id string, states ...string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
