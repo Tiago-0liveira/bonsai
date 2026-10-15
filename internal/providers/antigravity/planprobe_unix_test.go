@@ -180,3 +180,28 @@ func TestProbePlanStopsOnCancel(t *testing.T) {
 	}
 	assertGone(t, pids)
 }
+
+func TestProbePlanLogsEveryAttemptAndTheScreen(t *testing.T) {
+	shortProbeTimings(t)
+	path := filepath.Join(t.TempDir(), planLogName)
+	logf := openProbeLog(path)
+	plan, err, pids := runFake(t, withProbeLog(context.Background(), logf), "found")
+	logf.Close()
+	if err != nil || plan != "Google AI Pro" {
+		t.Fatalf("plan = %q, err = %v", plan, err)
+	}
+	assertGone(t, pids)
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	log := string(data)
+	for _, want := range []string{"pty started", "attempt 1: no match", "found plan \"Google AI Pro\"", "me@example.com", "stop: "} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q:\n%s", want, log)
+		}
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("log mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+}

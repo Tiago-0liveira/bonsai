@@ -81,7 +81,8 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 	if !planProbeSupported || p.accounts == nil || email == "" {
 		return
 	}
-	if !force && !needsProbe(p.readPlanState(account), email, p.clock()) {
+	before := p.readPlanState(account)
+	if !force && !needsProbe(before, email, p.clock()) {
 		return
 	}
 	p.planMu.Lock()
@@ -104,10 +105,17 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), planProbeTimeout)
 		defer cancel()
+		logf := openProbeLog(planLogPath(p.accounts, account))
+		defer logf.Close()
+		ctx = withProbeLog(ctx, logf)
+		logf.Printf("probe for %s (profile %s, force=%t)", email, account.ID, force)
+		logf.Printf("stored state: plan=%q email=%q checked_at=%s failed_at=%s",
+			before.Plan, before.Email, before.CheckedAt.Format(time.RFC3339), before.FailedAt.Format(time.RFC3339))
 		select {
 		case planProbes <- struct{}{}:
 			defer func() { <-planProbes }()
 		case <-ctx.Done():
+			logf.Printf("gave up waiting for another probe to finish: %v", ctx.Err())
 			return
 		}
 		plan, err := p.probeAccountPlan(ctx, account, email)
@@ -117,10 +125,14 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 		}
 		if err != nil || plan == "" {
 			state.FailedAt = p.clock().UTC()
+			logf.Printf("probe failed: err=%v plan=%q; next try after %s", err, plan, planRetryAfter)
 		} else {
 			state = planState{Plan: plan, Email: email, CheckedAt: p.clock().UTC()}
+			logf.Printf("probe ok: plan=%q", plan)
 		}
-		_ = writePrivateJSON(planPath(p.accounts, account), state)
+		if err := writePrivateJSON(planPath(p.accounts, account), state); err != nil {
+			logf.Printf("could not write %s: %v", planPath(p.accounts, account), err)
+		}
 	}()
 }
 
@@ -138,9 +150,14 @@ func (p *Provider) probeAccountPlan(ctx context.Context, account agents.Account,
 			return err
 		}
 		defer os.RemoveAll(dir)
+		logf := probeLogFrom(ctx)
+		logf.Printf("starting %s in %s", run.executable, dir)
 		plan, err = probe(ctx, run.executable, dir, agents.BuildEnvironment(os.Environ(), run.env, nil), email)
 		return err
 	})
+	if err != nil {
+		probeLogFrom(ctx).Printf("profile run ended with error: %v", err)
+	}
 	return plan, err
 }
 
