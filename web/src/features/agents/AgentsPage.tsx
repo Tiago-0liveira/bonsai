@@ -19,7 +19,7 @@ import { recallSetupJob } from './setupModel'
 import { AddProfileButton, SummaryStrip } from './SummaryStrip'
 import { useAgentsData } from './useAgentsData'
 import { useNow } from './useNow'
-import { useAgentSettings, willStopNotice } from '../settings/agentSettings'
+import { useAgentSettings, willStopNotice } from '../settings/useAgentSettings'
 
 // Sign-in needs a terminal; it loads when a profile is added or signed in again.
 const AddProfileDialog = lazy(() => import('./AddProfileDialog').then(module => ({ default: module.AddProfileDialog })))
