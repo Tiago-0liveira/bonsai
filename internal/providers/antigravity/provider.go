@@ -28,6 +28,10 @@ type Provider struct {
 	planMu      sync.Mutex
 	planFlights map[agents.AccountID]bool
 	planWG      sync.WaitGroup
+	// planCtx is the probes' context; SettleUsage cancels it and the next
+	// probe starts a new one.
+	planCtx    context.Context
+	planCancel context.CancelFunc
 }
 
 func (p *Provider) clock() time.Time {
@@ -121,4 +125,5 @@ var (
 	_ agents.AccountAuthenticator = (*Provider)(nil)
 	_ agents.ModelLister          = (*Provider)(nil)
 	_ agents.LaunchValidator      = (*Provider)(nil)
+	_ agents.UsageSettler         = (*Provider)(nil)
 )

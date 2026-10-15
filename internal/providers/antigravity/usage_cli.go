@@ -98,5 +98,12 @@ func (p *Provider) withHome(ctx context.Context, account agents.Account, home, d
 		return err
 	}
 	runErr := fn(ctx, profileRun{executable: executable, dir: dir, env: buildEnvironment(account, session)})
-	return errors.Join(runErr, p.credentialMgr.Reconcile(ctx, account, session))
+	// A cancelled run still saves a token agy refreshed in the home.
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reconcileWait)
+	defer cancel()
+	return errors.Join(runErr, p.credentialMgr.Reconcile(reconcileCtx, account, session))
 }
+
+// reconcileWait bounds the credential lock wait of a reconcile that runs
+// after its caller was cancelled.
+const reconcileWait = 5 * time.Second

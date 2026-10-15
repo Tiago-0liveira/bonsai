@@ -102,6 +102,10 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 		return
 	}
 	p.planFlights[account.ID] = true
+	if p.planCtx == nil {
+		p.planCtx, p.planCancel = context.WithCancel(context.Background())
+	}
+	base := p.planCtx
 	p.planWG.Add(1)
 	p.planMu.Unlock()
 	go func() {
@@ -113,7 +117,7 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 		}()
 		logf := openProbeLog(planLogPath(p.accounts, account))
 		defer logf.Close()
-		ctx := withProbeLog(context.Background(), logf)
+		ctx := withProbeLog(base, logf)
 		logf.Printf("probe for %s (profile %s, force=%t)", email, account.ID, force)
 		logf.Printf("stored state: plan=%q email=%q checked_at=%s failed_at=%s",
 			before.Plan, before.Email, before.CheckedAt.Format(time.RFC3339), before.FailedAt.Format(time.RFC3339))
@@ -135,6 +139,10 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 		plan, ran, err := p.probeAccountPlan(ctx, account, email)
 		if !ran {
 			logf.Printf("skipped: agy did not start (%v); no backoff", err)
+			return
+		}
+		if ctx.Err() != nil {
+			logf.Printf("cancelled: %v; no backoff", ctx.Err())
 			return
 		}
 		state := p.readPlanState(account)
@@ -197,6 +205,30 @@ func (p *Provider) ensureProbeHome(ctx context.Context, account agents.Account) 
 
 // waitPlanProbes waits for the background probes; tests use it.
 func (p *Provider) waitPlanProbes() { p.planWG.Wait() }
+
+// SettleUsage waits for the plan probes Usage started, so a CLI run that
+// exits right after its usage does not cut one off. When ctx ends first, the
+// probes are cancelled (agy is stopped, the token reconciled) and waited for;
+// a cancelled probe records no failure.
+func (p *Provider) SettleUsage(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		p.planWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return
+	case <-ctx.Done():
+	}
+	p.planMu.Lock()
+	if p.planCancel != nil {
+		p.planCancel()
+		p.planCtx, p.planCancel = nil, nil
+	}
+	p.planMu.Unlock()
+	<-done
+}
 
 // findPlan reads "<email> (<plan>)" from the screen. Only the signed-in email
 // counts, so text that merely looks like a header is not taken.

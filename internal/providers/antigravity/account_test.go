@@ -564,3 +564,58 @@ func TestProbeThatNeverRanAgyDoesNotBackOff(t *testing.T) {
 		t.Fatalf("state = %+v", state)
 	}
 }
+
+func TestSettleUsageWaitsForProbes(t *testing.T) {
+	if !planProbeSupported {
+		t.Skip("no plan probe on this platform")
+	}
+	e := newAccountEnv(t)
+	e.signIn(t, "me@example.com")
+	gate := make(chan struct{})
+	e.mu.Lock()
+	e.gate = gate
+	e.mu.Unlock()
+	if _, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(100*time.Millisecond, func() { close(gate) })
+	e.provider.SettleUsage(t.Context())
+	if plan := e.provider.planFor(e.account, "me@example.com"); plan != "Google AI Pro" {
+		t.Fatalf("plan after settle = %q", plan)
+	}
+}
+
+func TestSettleUsageCancelsProbesWhenItsContextEnds(t *testing.T) {
+	if !planProbeSupported {
+		t.Skip("no plan probe on this platform")
+	}
+	e := newAccountEnv(t)
+	e.signIn(t, "me@example.com")
+	cancelled := make(chan struct{})
+	e.provider.probe = func(ctx context.Context, _, _ string, _ []string, _ string) (string, error) {
+		<-ctx.Done()
+		close(cancelled)
+		return "", ctx.Err()
+	}
+	e.provider.refreshPlan(e.account, "me@example.com", true)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	e.provider.SettleUsage(ctx)
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("SettleUsage returned before the probe stopped")
+	}
+	if _, err := os.Stat(planPath(e.accounts, e.account)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a cancelled probe wrote plan.json: %v", err)
+	}
+	// Later probes get a live context again.
+	e.provider.probe = func(ctx context.Context, _, _ string, _ []string, _ string) (string, error) {
+		return "Google AI Pro", ctx.Err()
+	}
+	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.SettleUsage(t.Context())
+	if plan := e.provider.planFor(e.account, "me@example.com"); plan != "Google AI Pro" {
+		t.Fatalf("plan = %q", plan)
+	}
+}
