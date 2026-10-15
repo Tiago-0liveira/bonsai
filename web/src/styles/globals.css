@@ -258,7 +258,6 @@ select { color-scheme: dark; }
   .step-thumb[data-ghost='true'] { background: rgb(var(--panel)); box-shadow: inset 0 0 0 2px rgb(var(--muted-2) / .8); border-style: none; }
   .step-thumb[data-hidden='true'] { opacity: 0; transform: scale(.3); }
   .step-ping { position: absolute; inset: 0; border-radius: 999px; box-shadow: 0 0 0 2px rgb(var(--accent)); pointer-events: none; animation: dialog-ping 460ms ease-out both; }
-  .step-label { transition: color 160ms, transform 200ms; }
   /* Effort heat: past the middle the track warms, the thumb turns red and holds a flame; xhigh and up jitter. */
   /* Usage meters: ten ranks of remaining headroom, red when nearly gone through amber and yellow to full green. */
   .usage-fill { --rank: 120 130 140; background: linear-gradient(90deg, rgb(var(--rank) / .72), rgb(var(--rank))); box-shadow: 0 0 8px rgb(var(--rank) / .35); transition: width 320ms cubic-bezier(.3, 1.25, .5, 1), background-color 200ms; }
@@ -287,8 +286,6 @@ select { color-scheme: dark; }
   .effort-label[data-heat='2'] .effort-flame, .effort-label[data-heat='3'] .effort-flame { animation: step-jitter 190ms linear infinite; }
   .effort-label[data-heat='3'] { animation: step-jitter 190ms linear infinite; }
   .step-tick[data-default='true'] { box-shadow: 0 0 0 2px rgb(var(--panel)), 0 0 0 3px rgb(var(--muted-2)); }
-  .step-default { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); font-size: 9px; letter-spacing: .04em; color: rgb(var(--muted-2)); }
-  .step-label[data-current='true'] { color: rgb(var(--text)); transform: translateY(-1px); }
 
   .pick-row { display: flex; width: 100%; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; text-align: left; transition: background 120ms, border-color 120ms; }
   .pick-row[data-active='true'] { background: rgb(var(--panel-3)); }
@@ -312,5 +309,5 @@ select { color-scheme: dark; }
 }
 @media (prefers-reduced-motion: reduce) {
   .dialog-backdrop, .dialog-card, .dialog-enter, .dialog-swap, .dialog-reveal, .step-ping, .skeleton, .step-flame, .step-slider .step-thumb, .effort-label, .effort-flame { animation: none; }
-  .seg-pill, .chip-choice, .chip-mark, .step-fill, .step-thumb, .step-tick, .step-label, .pick-row { transition: none; }
+  .seg-pill, .chip-choice, .chip-mark, .step-fill, .step-thumb, .step-tick, .pick-row { transition: none; }
 }

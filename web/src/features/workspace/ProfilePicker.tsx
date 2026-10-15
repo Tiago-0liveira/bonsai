@@ -26,7 +26,7 @@ export function ProfilePicker({ accounts, usage, value, onChange, loading, disab
     <div role="listbox" aria-label="Profile" className={'space-y-2 ' + (accounts.length > 4 ? 'max-h-[260px] overflow-auto pr-1' : '')}>
       {accounts.map(account => {
         const selected = account.id === value
-        const detail = account.identity || account.auth_mode
+        const detail = [account.identity, account.plan].filter(Boolean).join(' · ') || account.auth_mode
         const headroom = headroomLabel(usage[account.id]?.headline)
         return (
           <button

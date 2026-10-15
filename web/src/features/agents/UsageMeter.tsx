@@ -30,20 +30,27 @@ export function UsageMeter({ label, fraction, className = '' }: { label: string;
   )
 }
 
-/** One plan limit: name, remaining bar, percentage and reset countdown (absolute time on hover). */
+/** "Oct 18, 09:00": a reset's date and time in the viewer's time zone. */
+export function formatResetDate(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** One plan limit: name, remaining bar, percentage, reset countdown and its date. */
 export function LimitRow({ limit, now }: { limit: UsageLimit; now: number }) {
   const name = limitName(limit)
   const percent = limit.remaining_fraction === undefined ? undefined : toPercent(limit.remaining_fraction)
   const reset = formatCountdown(limit.resets_at, now)
   const low = limit.remaining_fraction !== undefined && limit.remaining_fraction < LOW_HEADROOM
+  // A window that has not started yet (nothing used) has no reset time.
+  const notStarted = !limit.resets_at && percent === 100
   return (
-    <li className="grid grid-cols-[minmax(0,8.5rem)_minmax(0,1fr)_3rem_minmax(0,8rem)] items-center gap-3 text-[12px]">
+    <li className="grid grid-cols-[minmax(0,8.5rem)_minmax(0,1fr)_3rem_minmax(0,11rem)] items-center gap-3 text-[12px]">
       <span className="truncate" title={limit.window ? `${name} · ${limit.window}` : name}>{name}</span>
       <UsageMeter label={name} fraction={limit.remaining_fraction} />
       <span className={'text-right font-mono text-[11px] ' + (low ? 'text-warn' : 'text-text')}>{percent === undefined ? '—' : `${percent}%`}</span>
       {limit.resets_at && reset
-        ? <time dateTime={limit.resets_at} title={new Date(limit.resets_at).toLocaleString()} className="truncate font-mono text-[10px] text-muted-2">resets {reset}</time>
-        : <span />}
+        ? <time dateTime={limit.resets_at} title={new Date(limit.resets_at).toLocaleString()} className="truncate font-mono text-[10px] text-muted-2">resets {reset} · {formatResetDate(limit.resets_at)}</time>
+        : notStarted ? <span className="truncate font-mono text-[10px] text-muted-2">window not started</span> : <span />}
     </li>
   )
 }

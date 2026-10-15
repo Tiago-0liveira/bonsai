@@ -211,6 +211,9 @@ func accountItem(registry *agents.Registry, a agents.Account, info agents.Accoun
 	if info.Identity != "" {
 		item["identity"] = info.Identity
 	}
+	if info.Plan != "" {
+		item["plan"] = info.Plan
+	}
 	if len(info.Warnings) > 0 {
 		item["warnings"] = info.Warnings
 	}

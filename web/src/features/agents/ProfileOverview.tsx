@@ -15,6 +15,7 @@ export function ProfileOverview({ account, capability, onRemove, onSignIn }: { a
     ['Provider', capability?.label ?? PROVIDER_LABELS[account.provider as keyof typeof PROVIDER_LABELS] ?? account.provider],
     ['Sign-in method', account.auth_mode ?? ''],
     ['Identity', account.identity ?? ''],
+    ['Plan', account.plan ?? ''],
     ['Status', auth.label],
     ['Created', when(account.created_at)],
     ['Updated', when(account.updated_at)],

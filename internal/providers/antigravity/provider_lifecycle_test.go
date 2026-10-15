@@ -62,6 +62,7 @@ func TestProviderLifecycleWiresIsolatedSessionState(t *testing.T) {
 		ID: "acct_provider", Provider: ProviderID, Name: "personal",
 		Settings: []byte(`{"model":"gemini-test"}`),
 	}
+	seedModels(t, provider, account.ID)
 	runtimeDir := t.TempDir()
 	homeDir := t.TempDir()
 	if _, err := provider.SetupAccount(context.Background(), agents.SetupRequest{

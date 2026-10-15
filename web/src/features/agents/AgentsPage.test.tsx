@@ -22,8 +22,8 @@ const providers: AgentCapability[] = [
   { id: 'codex', label: 'Codex', available: true, version: '0.162.1' },
 ]
 const accounts: AgentAccount[] = [
-  { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in', created_at: '2026-10-01T10:00:00Z' },
-  { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_out', warnings: ['Not logged in; run `bonsai agent run Team -- login`'] },
+  { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com', plan: 'Plus', auth_status: 'logged_in', created_at: '2026-10-01T10:00:00Z' },
+  { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com', plan: 'Pro', auth_status: 'logged_out', warnings: ['Not logged in; run `bonsai agent run Team -- login`'] },
   { id: 'claude-work', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', auth_status: 'logged_in', effort: 'high', model: 'opus' },
   { id: 'claude-token', provider: 'claude', name: 'CI token', auth_mode: 'token', auth_status: 'token' },
 ]
@@ -31,7 +31,18 @@ const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000 + 
 const usage: AgentUsage[] = [
   {
     account_id: 'codex-personal', provider: 'codex',
-    usage: { provider: 'codex', account_id: 'codex-personal', fetched_at: new Date(Date.now() - 120_000).toISOString(), plan: 'plus', warnings: ['Credits balance is low'], limits: [] },
+    usage: { provider: 'codex', account_id: 'codex-personal', fetched_at: new Date(Date.now() - 120_000).toISOString(), plan: 'Plus', warnings: ['Credits balance is low'], limits: [],
+      credits: [
+        { id: 'codex_credits', label: 'Credits', unit: 'credits', balance: 0, enabled: false },
+        { id: 'pool', label: 'Usage credits', unit: 'USD', used: 1.9, limit: 100, balance: 98.1, enabled: true, resets_at: inMinutes(30 * 24 * 60) },
+      ],
+      reset_credits: [
+        { title: 'Full reset', status: 'available', count: 2, clears: ['five_hour', 'seven_day', 'seven_day_overage_included'], expires_at: inMinutes(9 * 24 * 60) },
+        { title: 'Full reset', status: 'available', expires_at: inMinutes(2 * 24 * 60) },
+        { title: 'Used reset', status: 'redeemed', expires_at: inMinutes(60) },
+        { title: 'Old reset', status: 'available', expires_at: inMinutes(-60) },
+      ],
+    },
     headline: {
       primary: { id: 'five_hour', label: '5 hour', remaining_fraction: 0.72, resets_at: inMinutes(135) },
       secondary: { id: 'weekly', label: 'Weekly', remaining_fraction: 0.12, resets_at: inMinutes(3 * 24 * 60 + 4 * 60) },
@@ -283,16 +294,24 @@ describe('empty states', () => {
 })
 
 describe('usage tab', () => {
+  it('shows the plan beside the email in the profile list, the header and the overview', async () => {
+    await renderPage()
+    const profiles = screen.getByRole('complementary', { name: 'Providers and profiles' })
+    expect(within(profiles).getByText('me@example.com · Plus')).toBeInTheDocument()
+    expect(within(profiles).getByText('dev@example.com')).toBeInTheDocument()
+    expect(screen.getAllByText('me@example.com · Plus').length).toBeGreaterThan(1)
+  })
+
   it('shows plan, headline bars, extra groups, countdowns, warnings and the provider note', async () => {
     await renderPage({ tab: 'usage' })
-    await screen.findByText('Plan: plus')
+    await screen.findByText('Plan: Plus')
     expect(screen.getByText(/Updated 2m ago/)).toBeInTheDocument()
     const limits = screen.getByRole('list', { name: 'Plan limits' })
     const five = within(limits).getByRole('meter', { name: '5 hour remaining' })
     expect(five).toHaveAttribute('aria-valuenow', '72')
     expect(within(limits).getByText('72%')).toBeInTheDocument()
-    expect(within(limits).getByText('resets in 2h 15m')).toBeInTheDocument()
-    expect(within(limits).getByText('resets in 3d 4h')).toBeInTheDocument()
+    expect(within(limits).getByText(/^resets in 2h 15m · /)).toBeInTheDocument()
+    expect(within(limits).getByText(/^resets in 3d 4h · /)).toBeInTheDocument()
     const weekly = within(limits).getByRole('meter', { name: 'Weekly remaining' })
     expect(Number(weekly.firstElementChild?.getAttribute('data-rank'))).toBeLessThan(3)
     expect(five.firstElementChild).toHaveAttribute('data-rank', '8')
@@ -305,8 +324,31 @@ describe('usage tab', () => {
 
   it('shows the absolute reset time on hover', async () => {
     await renderPage({ tab: 'usage' })
-    const reset = await screen.findByText('resets in 2h 15m')
+    const reset = await screen.findByText(/^resets in 2h 15m · /)
     expect(reset).toHaveAttribute('title', new Date(usage[0].headline!.primary!.resets_at!).toLocaleString())
+  })
+
+  it('shows credits with a bar and the granted resets with their expiry, soonest first', async () => {
+    await renderPage({ tab: 'usage' })
+    const credits = await screen.findByRole('region', { name: 'Credits' })
+    // The disabled, empty Codex balance is left out.
+    expect(within(credits).getAllByRole('listitem')).toHaveLength(1)
+    expect(credits).toHaveTextContent('$1.90 of $100.00 used · $98.10 left')
+    expect(within(credits).getByRole('meter', { name: 'Usage credits remaining' })).toHaveAttribute('aria-valuenow', '98')
+    expect(within(credits).getByText(/^resets in 30d/)).toBeInTheDocument()
+    const resets = screen.getByRole('region', { name: 'Rate-limit resets' })
+    expect(resets).toHaveTextContent('3 available')
+    expect(resets).toHaveTextContent('2× Full reset')
+    expect(resets).toHaveTextContent('refills 5h + weekly')
+    expect(within(resets).getAllByText(/^expires in/).map(item => item.textContent)).toEqual([expect.stringMatching(/^expires in 2d/), expect.stringMatching(/^expires in 9d/)])
+    expect(resets).not.toHaveTextContent('Used reset')
+    expect(resets).not.toHaveTextContent('Old reset')
+  })
+
+  it('says a window has not started when it has no reset and nothing is used', async () => {
+    vi.mocked(agentUsage).mockResolvedValue([{ account_id: 'codex-personal', provider: 'codex', headline: { primary: { id: 'five_hour', label: '5 hour', remaining_fraction: 1 }, score: 1 } }])
+    await renderPage({ tab: 'usage' })
+    expect(await screen.findByText('window not started')).toBeInTheDocument()
   })
 
   it('maps usage errors to what the user can do', async () => {
@@ -327,7 +369,7 @@ describe('usage tab', () => {
 
   it('refreshes one profile or all, and labels a throttled answer with the saved reading age', async () => {
     await renderPage({ tab: 'usage' })
-    await screen.findByText('Plan: plus')
+    await screen.findByText('Plan: Plus')
     vi.mocked(refreshAgentUsage).mockResolvedValue([{ ...usage[0], throttled: true }])
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
     expect(refreshAgentUsage).toHaveBeenLastCalledWith('codex-personal')

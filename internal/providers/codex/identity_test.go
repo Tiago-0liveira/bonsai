@@ -24,7 +24,7 @@ func TestReadIdentity(t *testing.T) {
 		{name: "garbage", auth: "{", want: identity{}},
 		{name: "chatgpt",
 			auth: `{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"` + fakeIDToken(`{"email":"me@example.com","https://api.openai.com/auth":{"chatgpt_plan_type":"plus","chatgpt_account_id":"acct-1"}}`) + `","access_token":"a","refresh_token":"r","account_id":"acct-0"},"last_refresh":"x"}`,
-			want: identity{Present: true, Email: "me@example.com", Plan: "plus", AccountID: "acct-1"}, text: "me@example.com · plus"},
+			want: identity{Present: true, Email: "me@example.com", Plan: "plus", AccountID: "acct-1"}, text: "me@example.com"},
 		{name: "no plan", auth: `{"tokens":{"id_token":"` + fakeIDToken(`{"email":"me@example.com"}`) + `","account_id":"acct-0"}}`,
 			want: identity{Present: true, Email: "me@example.com", AccountID: "acct-0"}, text: "me@example.com"},
 		{name: "bad token", auth: `{"tokens":{"id_token":"not.a-jwt!.x","account_id":"acct-0"}}`, want: identity{Present: true, AccountID: "acct-0"}},

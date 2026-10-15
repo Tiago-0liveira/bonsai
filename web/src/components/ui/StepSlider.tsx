@@ -3,9 +3,8 @@ import { Flame } from 'lucide-react'
 
 export interface Stop {
   value: string
-  /** Read out and shown by the caller; the tick caption uses `tick` when given. */
+  /** Read out, and shown by the caller above the slider. */
   label: string
-  tick?: string
 }
 
 const INTENSE = new Set(['xhigh', 'max', 'ultra'])
@@ -30,7 +29,8 @@ const KEYS: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, PageUp: 1, Arr
  * fills up to it and the chosen label lifts. An empty `value` means nothing is
  * chosen yet (a profile default): the thumb is a hollow ghost at `inherited`,
  * or hidden when the default is unknown. Pointer, arrow keys, Home and End all
- * work; the end captions say which way is faster and which is smarter.
+ * work; the end captions say which way is faster and which is smarter. The
+ * ticks carry no captions: the caller names the chosen level once, above.
  */
 export function StepSlider({ stops, value, onChange, ariaLabel, inherited, defaultValue, heat = false, lowCaption = 'Faster', highCaption = 'Smarter', unsetText = 'Profile default', disabled = false }: {
   stops: Stop[]
@@ -38,7 +38,7 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, defau
   onChange: (value: string) => void
   ariaLabel: string
   inherited?: string
-  /** The stop that is the default: its tick gets a ring and its caption "default". */
+  /** The stop that is the default: its tick gets a ring. */
   defaultValue?: string
   /**
    * Past the middle the track warms up (amber, then orange, then red) and the
@@ -128,8 +128,10 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, defau
               data-passed={chosen >= 0 && index <= chosen ? 'true' : undefined}
               data-current={index === shown ? 'true' : undefined}
               data-default={stop.value === defaultValue ? 'true' : undefined}
+              title={stop.value === defaultValue ? `${stop.label} (default)` : stop.label}
               className="step-tick"
               style={{ left: `${percent(index)}%` }}
+              onClick={() => pick(index)}
             />
           ))}
           <span
@@ -142,23 +144,6 @@ export function StepSlider({ stops, value, onChange, ariaLabel, inherited, defau
             {pings > 0 && chosen >= 0 && <span key={pings} className="step-ping" />}
           </span>
         </div>
-      </div>
-      <div className={'relative mx-[22px] mt-1 h-4 font-mono text-[10px] text-muted-2' + (defaultValue ? ' mb-3.5' : '')} aria-hidden="true">
-        {stops.map((stop, index) => (
-          <button
-            type="button"
-            tabIndex={-1}
-            key={stop.value}
-            disabled={disabled}
-            data-current={index === shown ? 'true' : undefined}
-            onClick={() => pick(index)}
-            className="step-label absolute top-0 -translate-x-1/2 whitespace-nowrap px-0.5 hover:text-text disabled:cursor-not-allowed"
-            style={{ left: `${percent(index)}%` }}
-          >
-            {stop.tick ?? stop.label}
-            {stop.value === defaultValue && <span className="step-default">default</span>}
-          </button>
-        ))}
       </div>
     </div>
   )

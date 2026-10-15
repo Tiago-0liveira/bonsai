@@ -9,8 +9,8 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
 
-// ProfileFields declares the profile defaults: a model and full access (stored
-// as dangerously_skip_permissions).
+// ProfileFields declares the profile defaults: a model, an effort and full
+// access (stored as dangerously_skip_permissions).
 func (p *Provider) ProfileFields() []agents.LaunchField {
 	return agents.ProfileFieldsFrom(p.LaunchFields())
 }
@@ -25,6 +25,9 @@ func (p *Provider) ProfileDefaults(account agents.Account) map[string]string {
 	out := map[string]string{}
 	if settings.Model != "" {
 		out["model"] = settings.Model
+	}
+	if settings.Effort != "" {
+		out["effort"] = settings.Effort
 	}
 	if settings.DangerouslySkipPermissions {
 		out["full_access"] = "true"
@@ -49,6 +52,14 @@ func (p *Provider) UpdateProfile(account agents.Account, changes map[string]*str
 			merged["model"] = nil
 			if v != "" {
 				merged["model"] = v
+			}
+		case "effort":
+			if v != "" && !effortRE.MatchString(v) {
+				return nil, fmt.Errorf("invalid effort")
+			}
+			merged["effort"] = nil
+			if v != "" {
+				merged["effort"] = v
 			}
 		case "full_access":
 			on := false

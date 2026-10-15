@@ -368,6 +368,7 @@ export function AddProfileDialog({ target, providers, accounts, onClose, onSigne
           {account && (
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-1.5 text-[12px]">
               {account.identity && <><dt className="text-muted">Identity</dt><dd className="min-w-0 break-words text-text">{account.identity}</dd></>}
+              {account.plan && <><dt className="text-muted">Plan</dt><dd className="min-w-0 break-words text-text">{account.plan}</dd></>}
               <dt className="text-muted">Status</dt><dd className="text-text">{authState(account).label}</dd>
             </dl>
           )}

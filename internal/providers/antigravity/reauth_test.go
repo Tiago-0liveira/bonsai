@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,11 +22,17 @@ type signInLauncher struct {
 	expiry  time.Time
 	calls   int
 	lastEnv map[string]string
+	lastDir string
+	// hadLogin: the home held a login when agy started.
+	hadLogin bool
 }
 
 func (l *signInLauncher) RunForeground(_ context.Context, prepared agents.PreparedSession) error {
 	l.calls++
 	l.lastEnv = prepared.EnvSet
+	l.lastDir = prepared.Dir
+	_, err := os.Stat(oauthPath(prepared.EnvSet["HOME"]))
+	l.hadLogin = err == nil
 	writeSessionAuth(l.t, prepared.EnvSet["HOME"], l.access, l.access+"-refresh", "user@example.com", l.expiry)
 	return nil
 }
@@ -73,6 +81,22 @@ func TestReauthenticateBumpsGenerationAndKeepsRunningSessions(t *testing.T) {
 	if first.calls != 1 || readTestVault(t, accounts, account).Generation != 1 {
 		t.Fatalf("setup: calls %d, vault %+v", first.calls, readTestVault(t, accounts, account))
 	}
+	// Setup runs agy in the home the plan probe reuses, and trusts its workspace.
+	home := filepath.Join(accounts.AccountDir(account.ID), "home")
+	workspace := filepath.Join(home, "workspace")
+	if first.lastEnv["HOME"] != home || first.lastDir != workspace {
+		t.Fatalf("setup ran agy with HOME=%q in %q", first.lastEnv["HOME"], first.lastDir)
+	}
+	var settings struct {
+		TrustedWorkspaces []string `json:"trustedWorkspaces"`
+		GCP               any      `json:"gcp"`
+	}
+	if err := json.Unmarshal(readTestVault(t, accounts, account).ProviderSettings, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(settings.TrustedWorkspaces, workspace) || settings.GCP == nil {
+		t.Fatalf("vault settings = %+v", settings)
+	}
 
 	running, err := sessions.Create(account, t.TempDir())
 	if err != nil {
@@ -90,8 +114,11 @@ func TestReauthenticateBumpsGenerationAndKeepsRunningSessions(t *testing.T) {
 	if second.calls != 1 || vault.Generation != 2 || !strings.Contains(string(vault.OAuth), "second") {
 		t.Fatalf("reauth: calls %d, vault generation %d", second.calls, vault.Generation)
 	}
-	if second.lastEnv["HOME"] == running.HomeDir {
-		t.Fatal("sign-in again must use a fresh home, not a running session's")
+	if second.lastEnv["HOME"] != home || second.lastDir != workspace {
+		t.Fatalf("sign-in again ran agy with HOME=%q in %q", second.lastEnv["HOME"], second.lastDir)
+	}
+	if second.hadLogin {
+		t.Fatal("sign-in again started agy with the old login in its home")
 	}
 
 	// The running session refreshed nothing newer; ending it keeps the new login.

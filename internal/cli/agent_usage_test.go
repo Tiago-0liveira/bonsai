@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -32,12 +33,16 @@ var usageTestRegistry = func() *agents.Registry {
 // renderUsageTestDashboard fills each result's headline as UsageService does,
 // then renders the dashboard.
 func renderUsageTestDashboard(out *bytes.Buffer, results []agents.AccountUsageResult, now time.Time, color bool) {
+	renderUsageTestDashboardView(out, results, now, color, usageView{})
+}
+
+func renderUsageTestDashboardView(out *bytes.Buffer, results []agents.AccountUsageResult, now time.Time, color bool, view usageView) {
 	for i := range results {
 		if results[i].Usage != nil {
 			results[i].Headline = usageTestRegistry.UsageHeadline(*results[i].Usage)
 		}
 	}
-	renderUsageDashboard(out, results, now, color)
+	renderUsageDashboard(out, results, now, color, view)
 }
 
 // usageTestRow is the dashboard row of one result.
@@ -133,11 +138,32 @@ func TestRenderUsageDashboardIncludesThirdPartyPool(t *testing.T) {
 
 	var out bytes.Buffer
 	renderUsageTestDashboard(&out, []agents.AccountUsageResult{result}, now, false)
+	if got := out.String(); strings.Contains(got, "Claude & GPT Models") || !strings.Contains(got, "Gemini Models") {
+		t.Fatalf("third-party pool shown by default:\n%s", got)
+	}
+
+	out.Reset()
+	renderUsageTestDashboardView(&out, []agents.AccountUsageResult{result}, now, false, usageView{claudeGPT: true})
 	got := out.String()
 	if !strings.Contains(got, "Claude & GPT Models") ||
 		!strings.Contains(got, "5h") ||
 		!strings.Contains(got, "Weekly") {
 		t.Fatalf("third-party pool missing:\n%s", got)
+	}
+}
+
+func TestUsageProvidersAreOrderedClaudeCodexAntigravity(t *testing.T) {
+	rows := []usageDashboardRow{
+		{account: agents.Account{Provider: "antigravity"}},
+		{account: agents.Account{Provider: "zeta"}},
+		{account: agents.Account{Provider: "codex"}},
+		{account: agents.Account{Provider: "claude"}},
+		{account: agents.Account{Provider: "alpha"}},
+	}
+	got := usageProviders(rows)
+	want := []agents.ProviderID{"claude", "codex", "antigravity", "alpha", "zeta"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
 	}
 }
 
@@ -307,7 +333,7 @@ func codexTestResult(name, plan string, five, week float64, other map[string]flo
 func TestRenderUsageDashboardCodex(t *testing.T) {
 	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
 	spare := codexTestResult("spare", "free", 0.10, 0.80, nil, now)
-	spare.Usage.Warnings = []string{"Credit balance: 12.50"}
+	spare.Usage.Credits = []agents.UsageCredit{{ID: "codex_credits", Label: "Credits", Unit: agents.CreditUnitCredits, Balance: ptrFloat(12.5), Enabled: true}}
 	results := []agents.AccountUsageResult{
 		spare,
 		codexTestResult("work", "plus", 0.90, 0.50, map[string]float64{"codex_spark_five_hour": 0.35}, now),
@@ -328,7 +354,7 @@ func TestRenderUsageDashboardCodex(t *testing.T) {
 		"API key profiles have no plan limits",
 		"not logged in",
 		"ERR",
-		"spare: Credit balance: 12.50",
+		"spare: Credits 12.5 left",
 		"Next Reset: work in 48h00m",
 	} {
 		if !strings.Contains(got, want) {
@@ -360,12 +386,29 @@ func TestRenderUsageDashboardCodexWithoutOtherLimits(t *testing.T) {
 
 // The three-provider dashboard is pinned in full so a change to any adapter
 // shows up as one readable diff.
+func ptrFloat(v float64) *float64    { return &v }
+func ptrTime(t time.Time) *time.Time { return &t }
+
 func TestRenderUsageDashboardThreeProvidersGolden(t *testing.T) {
 	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
 	results := []agents.AccountUsageResult{
 		usageTestResult("google", 0.70, 0.90, now.Add(48*time.Hour), now.Add(3*time.Hour)),
 		claudeTestResult("work", 0.90, 0.50, map[string]float64{"seven_day_opus": 0.25}, now),
-		codexTestResult("main", "plus", 0.72, 0.96, map[string]float64{"codex_spark_five_hour": 0.35}, now),
+		codexTestResult("main", "Plus", 0.72, 0.96, map[string]float64{"codex_spark_five_hour": 0.35}, now),
+	}
+	results[0].Usage.Plan = "Google AI Pro"
+	results[0].Usage.Credits = []agents.UsageCredit{{ID: "antigravity_credits", Label: "Credits", Unit: agents.CreditUnitCredits, Balance: ptrFloat(250), Enabled: true}}
+	results[1].Usage.Plan = "Max 5x"
+	results[1].Usage.Credits = []agents.UsageCredit{
+		{ID: "iguana_necktie", Label: "Usage credits", Unit: agents.CreditUnitUSD, Used: ptrFloat(1.90559), Limit: ptrFloat(100), Balance: ptrFloat(98.09441), Enabled: true, ResetsAt: ptrTime(now.Add(41 * 24 * time.Hour))},
+		{ID: "extra_usage", Label: "Extra usage", Unit: agents.CreditUnitUSD, Used: ptrFloat(0)},
+	}
+	results[2].Usage.Credits = []agents.UsageCredit{{ID: "codex_credits", Label: "Credits", Unit: agents.CreditUnitCredits, Balance: ptrFloat(12.5), Enabled: true}}
+	results[2].Usage.ResetCredits = []agents.ResetCredit{
+		{Title: "Full reset", Status: "available", ExpiresAt: ptrTime(now.Add(20 * 24 * time.Hour))},
+		{Title: "Full reset", Status: "available", ExpiresAt: ptrTime(now.Add(9 * 24 * time.Hour))},
+		{Title: "Full reset", Status: "redeemed"},
+		{Title: "Full reset", Status: "available", ExpiresAt: ptrTime(now.Add(-time.Hour))},
 	}
 	var out bytes.Buffer
 	renderUsageTestDashboard(&out, results, now, false)

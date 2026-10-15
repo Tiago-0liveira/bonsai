@@ -48,7 +48,8 @@ test('create a Codex profile with a device code, then start an agent with it', a
   await expect(terminalText(page)).toContainText('WXYZ-2345')
   await expect(terminalText(page)).toContainText('https://auth.example.com/codex/device')
   await expect(signin.getByText('laptop is ready.')).toBeVisible()
-  await expect(signin).toContainText('laptop@example.com · plus')
+  await expect(signin).toContainText('laptop@example.com')
+  await expect(signin).toContainText('Plus')
   const start = controls.setupRequests.find(item => item.path === '/api/agents/setup')!
   expect(start.body).toEqual({ provider: 'codex', name: 'laptop', auth_mode: 'device', seed: true })
   expect(start.key).toBeTruthy()

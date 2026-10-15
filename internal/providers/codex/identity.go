@@ -21,17 +21,25 @@ type identity struct {
 	AccountID string
 }
 
-// String renders "email · plan" for a ChatGPT login.
+// String renders the email of a ChatGPT login; the plan is shown apart.
 func (id identity) String() string {
 	switch {
-	case id.Email != "" && id.Plan != "":
-		return id.Email + " · " + id.Plan
 	case id.Email != "":
 		return id.Email
 	case id.APIKey:
 		return "API key"
 	}
 	return ""
+}
+
+// planLabel names a ChatGPT plan type ("plus") for display. Unknown types pass
+// through as sent.
+func planLabel(plan string) string {
+	switch p := strings.ToLower(strings.TrimSpace(plan)); p {
+	case "free", "go", "plus", "pro", "team", "business", "enterprise", "edu":
+		return strings.ToUpper(p[:1]) + p[1:]
+	}
+	return plan
 }
 
 // sameLogin reports whether two profiles are signed in to the same ChatGPT

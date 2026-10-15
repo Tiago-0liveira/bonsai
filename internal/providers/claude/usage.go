@@ -30,7 +30,7 @@ import (
 const (
 	usageBeta    = "oauth-2025-04-20"
 	usageTimeout = 10 * time.Second
-	usageTTL     = 5 * time.Minute
+	usageTTL     = time.Minute
 	// maxUsageBody caps what is read from the endpoint.
 	maxUsageBody = 1 << 20
 )
@@ -39,15 +39,15 @@ const (
 // it at a local server so no test ever reaches the network.
 var UsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
-// UsageTTL tells the usage service how long a snapshot stays fresh; the
-// endpoint is rate limited and the numbers move slowly.
+// UsageTTL tells the usage service how long a snapshot stays fresh. The
+// endpoint is rate limited; usageFailureTTL keeps a 429 from being retried at once.
 func (p *Provider) UsageTTL() time.Duration { return usageTTL }
 
 func unsupported(reason string) error {
 	return fmt.Errorf("%w: %s", agents.ErrUsageUnsupported, reason)
 }
 
-// Usage reads the 5-hour and weekly utilization of one profile.
+// Usage reads the 5-hour and weekly utilization, credits and plan of one profile.
 func (p *Provider) Usage(ctx context.Context, account agents.Account, opts agents.UsageOptions) (agents.UsageSnapshot, error) {
 	settings, err := ParseSettings(account)
 	if err != nil {
@@ -73,11 +73,14 @@ func (p *Provider) Usage(ctx context.Context, account agents.Account, opts agent
 		p.rememberUsageFailure(account.ID, err)
 		return agents.UsageSnapshot{}, err
 	}
-	limits, warnings, err := ParseUsage(body)
+	parsed, err := ParseUsage(body)
 	if err != nil {
 		return agents.UsageSnapshot{}, err
 	}
-	return agents.UsageSnapshot{Provider: ProviderID, AccountID: account.ID, FetchedAt: p.now().UTC(), Limits: limits, Warnings: warnings}, nil
+	return agents.UsageSnapshot{
+		Provider: ProviderID, AccountID: account.ID, FetchedAt: p.now().UTC(), Plan: p.storedPlan(account),
+		Limits: parsed.Limits, Credits: parsed.Credits, ResetCredits: parsed.ResetCredits, Warnings: parsed.Warnings,
+	}, nil
 }
 
 // usageFailureTTL is how long an HTTP failure (rate limit, outage) is remembered
@@ -147,7 +150,7 @@ func (p *Provider) goos() string {
 }
 
 func (p *Provider) fetchUsage(ctx context.Context, token string) ([]byte, error) {
-	body, status, err := p.getJSON(ctx, p.usageEndpoint, token)
+	body, status, err := p.getJSON(ctx, withResetGrants(p.usageEndpoint), token)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +164,39 @@ func (p *Provider) fetchUsage(ctx context.Context, token string) ([]byte, error)
 	default:
 		return nil, fmt.Errorf("usage request failed (HTTP %d)", status)
 	}
+}
+
+// withResetGrants asks the usage endpoint for the rate-limit reset grants
+// (the "cedar_ember" block), as Claude Code's own reset offer does.
+func withResetGrants(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	q := u.Query()
+	q.Set("cedar_ember", "1")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// clientUserAgent is the User-Agent Claude Code sends. The endpoints answer
+// some fields, such as the reset grants, only for Claude Code. The version is
+// the one already read for availability; no process is started for it.
+func (p *Provider) clientUserAgent() string {
+	p.versionMu.Lock()
+	version := p.version
+	p.versionMu.Unlock()
+	if found, text, ok := parseVersion(version); ok && !found.less(versionOf(MinVersion)) {
+		version = text
+	} else {
+		version = MinVersion
+	}
+	return "claude-cli/" + version + " (external, cli)"
+}
+
+func versionOf(s string) semver {
+	v, _, _ := parseVersion(s)
+	return v
 }
 
 // getJSON is the one place Bonsai sends a Claude bearer token over HTTP: GET
@@ -180,6 +216,8 @@ func (p *Provider) getJSON(ctx context.Context, endpoint, token string) (body []
 	req.Header.Set("anthropic-beta", usageBeta)
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("x-app", "cli")
+	req.Header.Set("User-Agent", p.clientUserAgent())
 	client := p.usageClient
 	if client == nil {
 		client = noRedirectClient
@@ -236,15 +274,25 @@ var kindIDs = map[string]string{"session": "five_hour", "weekly_all": "seven_day
 
 var limitLabels = map[string]string{"five_hour": "Session (5h)", "seven_day": "Weekly", "seven_day_opus": "Weekly Opus", "seven_day_sonnet": "Weekly Sonnet"}
 
+// ParsedUsage is what ParseUsage reads from one usage response.
+type ParsedUsage struct {
+	Limits       []agents.UsageLimit
+	Credits      []agents.UsageCredit
+	ResetCredits []agents.ResetCredit
+	Warnings     []string
+}
+
 // ParseUsage reads both response shapes: the newer limits[] array and the flat
-// buckets ({"five_hour": {"utilization": 10, "resets_at": ...}}). Unknown or
-// extra fields are ignored. Valid JSON with nothing recognizable is an empty
-// snapshot with a warning; text that is not a JSON object is an error.
-func ParseUsage(data []byte) (limits []agents.UsageLimit, warnings []string, err error) {
+// buckets ({"five_hour": {"utilization": 10, "resets_at": ...}}), plus the
+// dollar credit pools and extra usage spend. Unknown or extra fields are
+// ignored. Valid JSON with nothing recognizable is an empty snapshot with a
+// warning; text that is not a JSON object is an error.
+func ParseUsage(data []byte) (ParsedUsage, error) {
 	var root map[string]json.RawMessage
 	if json.Unmarshal(data, &root) != nil || root == nil {
-		return nil, nil, errors.New("unrecognized usage response")
+		return ParsedUsage{}, errors.New("unrecognized usage response")
 	}
+	var out ParsedUsage
 	seen := map[string]bool{}
 	add := func(id, group string, percent float64, resets string) {
 		if seen[id] || math.IsNaN(percent) || math.IsInf(percent, 0) {
@@ -256,11 +304,8 @@ func ParseUsage(data []byte) (limits []agents.UsageLimit, warnings []string, err
 		if limit.Label == "" {
 			limit.Label = strings.ReplaceAll(id, "_", " ")
 		}
-		if t, err := time.Parse(time.RFC3339Nano, resets); err == nil {
-			utc := t.UTC()
-			limit.ResetsAt = &utc
-		}
-		limits = append(limits, limit)
+		limit.ResetsAt = parseTime(resets)
+		out.Limits = append(out.Limits, limit)
 	}
 
 	var list []struct {
@@ -299,11 +344,195 @@ func ParseUsage(data []byte) (limits []agents.UsageLimit, warnings []string, err
 		}
 		add(key, "", *bucket.Utilization, bucket.ResetsAt)
 	}
-	sortLimits(limits)
-	if len(limits) == 0 {
-		warnings = append(warnings, "Claude usage response had no recognizable limits")
+	sortLimits(out.Limits)
+	out.Credits = parseCredits(root)
+	out.ResetCredits = parseResetGrants(root["cedar_ember"])
+	if len(out.Limits) == 0 {
+		out.Warnings = append(out.Warnings, "Claude usage response had no recognizable limits")
 	}
-	return limits, warnings, nil
+	return out, nil
+}
+
+// parseCredits reads the dollar credit pools (any top-level bucket with a
+// limit_dollars) and the extra usage spend. spend is the newer shape of
+// extra_usage, so only one of them is read.
+func parseCredits(root map[string]json.RawMessage) []agents.UsageCredit {
+	var credits []agents.UsageCredit
+	keys := make([]string, 0, len(root))
+	for key := range root {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		var pool struct {
+			LimitDollars     *float64 `json:"limit_dollars"`
+			UsedDollars      *float64 `json:"used_dollars"`
+			RemainingDollars *float64 `json:"remaining_dollars"`
+			ResetsAt         string   `json:"resets_at"`
+		}
+		if json.Unmarshal(root[key], &pool) != nil || !finite(pool.LimitDollars) {
+			continue
+		}
+		// Pool keys are code names ("iguana_necktie"), so they are not shown.
+		credit := agents.UsageCredit{
+			ID: key, Label: "Usage credits", Unit: agents.CreditUnitUSD, Enabled: true,
+			Limit: pool.LimitDollars, ResetsAt: parseTime(pool.ResetsAt),
+		}
+		if finite(pool.UsedDollars) {
+			credit.Used = pool.UsedDollars
+		}
+		if finite(pool.RemainingDollars) {
+			credit.Balance = pool.RemainingDollars
+		}
+		credits = append(credits, credit)
+	}
+	if raw, ok := root["spend"]; ok && string(raw) != "null" {
+		if credit, ok := parseSpend(raw); ok {
+			credits = append(credits, credit)
+		}
+	} else if raw, ok := root["extra_usage"]; ok {
+		if credit, ok := parseExtraUsage(raw); ok {
+			credits = append(credits, credit)
+		}
+	}
+	return credits
+}
+
+// parseResetGrants reads the "cedar_ember" block: one-off usage-limit resets
+// the account was granted. Only what is shown is kept; the grant IDs are not
+// copied, and Bonsai never claims a reset. A malformed block is ignored.
+func parseResetGrants(raw json.RawMessage) []agents.ResetCredit {
+	var block struct {
+		Eligible bool `json:"eligible"`
+		Grants   []struct {
+			Label      string   `json:"label"`
+			ResetsLeft *int     `json:"resets_left"`
+			StartsAt   string   `json:"starts_at"`
+			EndsAt     string   `json:"ends_at"`
+			Clears     []string `json:"clears"`
+			Paused     bool     `json:"paused"`
+			UsableNow  bool     `json:"usable_now"`
+		} `json:"grants"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &block) != nil {
+		return nil
+	}
+	var out []agents.ResetCredit
+	for _, g := range block.Grants {
+		if g.ResetsLeft == nil || *g.ResetsLeft < 0 {
+			continue
+		}
+		status := "available"
+		switch {
+		case *g.ResetsLeft == 0:
+			status = "used"
+		case !block.Eligible:
+			status = "unavailable"
+		case g.Paused:
+			status = "paused"
+		case !g.UsableNow:
+			status = "not_usable_yet"
+		}
+		credit := agents.ResetCredit{
+			Title: cleanLabel(g.Label, 100), Status: status, Count: min(*g.ResetsLeft, 99),
+			GrantedAt: parseTime(g.StartsAt), ExpiresAt: parseTime(g.EndsAt),
+		}
+		if credit.Title == "" {
+			credit.Title = "Usage limit reset"
+		}
+		for _, id := range g.Clears {
+			if bucketKeyRE.MatchString(id) || strings.HasPrefix(id, "seven_day_") {
+				credit.Clears = append(credit.Clears, id)
+			}
+		}
+		out = append(out, credit)
+	}
+	return out
+}
+
+// money is the spend shape of an amount: {"amount_minor": 190, "exponent": 2}.
+type money struct {
+	AmountMinor *float64 `json:"amount_minor"`
+	Currency    string   `json:"currency"`
+	Exponent    *int     `json:"exponent"`
+}
+
+func (m *money) major() *float64 {
+	if m == nil || !finite(m.AmountMinor) || m.Exponent == nil || *m.Exponent < 0 || *m.Exponent > 6 {
+		return nil
+	}
+	v := *m.AmountMinor / math.Pow10(*m.Exponent)
+	return &v
+}
+
+func parseSpend(raw json.RawMessage) (agents.UsageCredit, bool) {
+	var spend struct {
+		Used    *money `json:"used"`
+		Limit   *money `json:"limit"`
+		Balance *money `json:"balance"`
+		Enabled bool   `json:"enabled"`
+	}
+	if json.Unmarshal(raw, &spend) != nil {
+		return agents.UsageCredit{}, false
+	}
+	credit := agents.UsageCredit{
+		ID: "extra_usage", Label: "Extra usage", Enabled: spend.Enabled,
+		Used: spend.Used.major(), Limit: spend.Limit.major(), Balance: spend.Balance.major(),
+	}
+	for _, m := range []*money{spend.Used, spend.Limit, spend.Balance} {
+		if m != nil && credit.Unit == "" {
+			credit.Unit = currencyUnit(m.Currency)
+		}
+	}
+	if credit.Unit == "" {
+		credit.Unit = agents.CreditUnitUSD
+	}
+	return credit, spend.Enabled || nonZero(credit.Used) || credit.Limit != nil || credit.Balance != nil
+}
+
+// parseExtraUsage reads the older extra_usage shape. Amounts are assumed to be
+// minor units with decimal_places digits (never seen filled in); without
+// decimal_places the amounts are ambiguous and skipped.
+func parseExtraUsage(raw json.RawMessage) (agents.UsageCredit, bool) {
+	var extra struct {
+		Enabled       bool     `json:"is_enabled"`
+		MonthlyLimit  *float64 `json:"monthly_limit"`
+		UsedCredits   *float64 `json:"used_credits"`
+		Currency      string   `json:"currency"`
+		DecimalPlaces *int     `json:"decimal_places"`
+	}
+	if json.Unmarshal(raw, &extra) != nil {
+		return agents.UsageCredit{}, false
+	}
+	credit := agents.UsageCredit{ID: "extra_usage", Label: "Extra usage", Unit: currencyUnit(extra.Currency), Enabled: extra.Enabled}
+	if extra.DecimalPlaces != nil {
+		credit.Used = (&money{AmountMinor: extra.UsedCredits, Exponent: extra.DecimalPlaces}).major()
+		credit.Limit = (&money{AmountMinor: extra.MonthlyLimit, Exponent: extra.DecimalPlaces}).major()
+	}
+	return credit, extra.Enabled || nonZero(credit.Used) || credit.Limit != nil
+}
+
+func currencyUnit(currency string) string {
+	if c := strings.ToUpper(strings.TrimSpace(currency)); len(c) == 3 && strings.Trim(c, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") == "" {
+		return c
+	}
+	return agents.CreditUnitUSD
+}
+
+func finite(v *float64) bool {
+	return v != nil && !math.IsNaN(*v) && !math.IsInf(*v, 0)
+}
+
+func nonZero(v *float64) bool { return v != nil && *v != 0 }
+
+// parseTime reads an RFC 3339 time; anything else, including null, is nil.
+func parseTime(s string) *time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
 
 func windowOf(id, group string) string {

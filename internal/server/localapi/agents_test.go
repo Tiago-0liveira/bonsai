@@ -422,7 +422,7 @@ func (p *describedTestProvider) Availability(context.Context) agents.Availabilit
 	return p.available
 }
 func (p *describedTestProvider) DescribeAccount(context.Context, agents.Account) agents.AccountInfo {
-	return agents.AccountInfo{AuthMode: "token", Identity: "someone", Warnings: []string{"expires soon"}}
+	return agents.AccountInfo{AuthMode: "token", Identity: "someone", Plan: "Pro", Warnings: []string{"expires soon"}}
 }
 
 func agentAPIRequest(t *testing.T, s *Server, method, path, key, body string) *httptest.ResponseRecorder {
@@ -508,14 +508,14 @@ func TestAgentAccountsAcrossProvidersHaveNoSecrets(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("accounts = %v", out)
 	}
-	allowed := map[string]bool{"id": true, "name": true, "provider": true, "auth_mode": true, "identity": true, "warnings": true, "full_access": true, "created_at": true, "updated_at": true}
+	allowed := map[string]bool{"id": true, "name": true, "provider": true, "auth_mode": true, "identity": true, "plan": true, "warnings": true, "full_access": true, "created_at": true, "updated_at": true}
 	for _, account := range out {
 		for key := range account {
 			if !allowed[key] {
 				t.Fatalf("unexpected key %q in %v", key, account)
 			}
 		}
-		if account["provider"] == "claude" && (account["auth_mode"] != "token" || account["identity"] != "someone") {
+		if account["provider"] == "claude" && (account["auth_mode"] != "token" || account["identity"] != "someone" || account["plan"] != "Pro") {
 			t.Fatalf("claude = %v", account)
 		}
 		if account["provider"] == "antigravity" && account["auth_mode"] != nil {
