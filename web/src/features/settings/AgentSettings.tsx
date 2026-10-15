@@ -1,4 +1,4 @@
-import { useAgentSettings, useRunningAgents, willStopNotice } from './agentSettings'
+import { useAgentSettings, useRunningAgents, willStopNotice } from './useAgentSettings'
 
 // AgentSettings decides whether `bonsai web stop` ends agent sessions. Kept
 // running, they stay reachable with `bonsai agents attach` and reappear here

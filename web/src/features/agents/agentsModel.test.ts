@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentAccount, AgentCapability, AgentUsage, LaunchField } from '../../api/agents'
 import type { Agent, Project, Worktree } from '../../types'
-import { activeSessionCounts, authState, formatAge, formatCountdown, groupExtraLimits, groupProfiles, limitName, profileDefaults, profileSessions, summarizeFleet, summarizeProviders, toPercent, usageReadAt } from './agentsModel'
+import { activeSessionCounts, authState, creditShown, formatAge, formatAmount, formatCountdown, groupExtraLimits, groupProfiles, identityLine, limitName, profileDefaults, profileSessions, summarizeFleet, summarizeProviders, toPercent, usageReadAt } from './agentsModel'
 import { validateAgentsSearch } from './agentsSearch'
 
 const NOW = Date.parse('2026-10-12T12:00:00Z')
@@ -221,5 +221,26 @@ describe('pooled plan windows', () => {
       { slot: 'primary', label: '5h', remaining: 1.5, count: 2, fraction: 0.75, resetsAt: '2026-10-12T13:00:00Z' },
       { slot: 'secondary', label: 'Weekly', remaining: 1.2, count: 2, fraction: 0.6 },
     ])
+  })
+})
+
+describe('credit helpers', () => {
+  it('joins the identity and plan', () => {
+    expect(identityLine({ identity: 'me@example.com', plan: 'Pro' })).toBe('me@example.com · Pro')
+    expect(identityLine({ identity: 'me@example.com' })).toBe('me@example.com')
+    expect(identityLine({ plan: 'Pro' })).toBe('Pro')
+    expect(identityLine({})).toBe('')
+  })
+
+  it('formats amounts by unit', () => {
+    expect(formatAmount(1.90559, 'USD')).toBe('$1.91')
+    expect(formatAmount(12.5, 'credits')).toBe('12.5')
+    expect(formatAmount(3, 'EUR')).toBe('3.00 EUR')
+  })
+
+  it('hides a disabled, empty credit', () => {
+    expect(creditShown({ id: 'c', label: 'Credits', unit: 'credits', balance: 0, enabled: false })).toBe(false)
+    expect(creditShown({ id: 'c', label: 'Credits', unit: 'credits', balance: 2, enabled: false })).toBe(true)
+    expect(creditShown({ id: 'c', label: 'Credits', unit: 'credits', unlimited: true, enabled: false })).toBe(true)
   })
 })

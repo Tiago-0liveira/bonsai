@@ -89,9 +89,13 @@ export function fillDefaults(fields: LaunchField[], launchFields: LaunchField[],
   const modelValue = String(out[modelId ?? ''] ?? '')
   const defaults = effectiveDefaults(fields, launchFields, models, modelValue)
   for (const field of fields) {
-    if (field.kind !== 'select' || defaults[field.id] === undefined) continue
+    if (field.kind !== 'select') continue
     const value = String(out[field.id] ?? '')
-    if (!value || !fieldOptions(field, chosenModel(models, modelValue), models).some(option => option.value === value)) out[field.id] = defaults[field.id]
+    const offered = !value || fieldOptions(field, chosenModel(models, modelValue), models).some(option => option.value === value)
+    // A value the chosen model does not offer falls to its default, or is cleared
+    // when the model has no choice at all (a model without efforts).
+    if (!offered) out[field.id] = defaults[field.id] ?? ''
+    else if (!value && defaults[field.id] !== undefined) out[field.id] = defaults[field.id]
   }
   return { values: out, defaults }
 }

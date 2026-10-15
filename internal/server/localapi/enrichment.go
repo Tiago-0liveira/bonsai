@@ -535,7 +535,7 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 
 	// The PR catalog and worktree links are useful immediately. CI requests can
 	// take much longer, especially when a repository has many worktrees.
-	s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
+	current := s.commitProviderIfCurrent(project, token, func(snapshot *browserSnapshot) {
 		snapshot.Remote = remote
 		snapshot.Freshness["provider"] = providerFreshness
 		// The checks loop continues building states after this publication.
@@ -548,6 +548,12 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 			snapshot.Repository.DefaultBranch = remote.Repository.DefaultBranch
 		}
 	})
+	if !current {
+		// The local state moved while the provider was read, so nothing was
+		// published and a new job is already queued. Waiting for checks here
+		// would hold that job, and the PRs it publishes, behind them.
+		return
+	}
 	// Checks are independent per worktree; a bounded pool replaces the serial
 	// loop. providerCache coalesces worktrees that share a repository and SHA.
 	// states was cloned for the publication above, so writing it is private.
@@ -596,18 +602,27 @@ func (s *stateSync) refreshProvider(projectID string, force bool) {
 	}
 }
 
-func (s *stateSync) commitProviderIfCurrent(project projectServices, token string, mutate func(*browserSnapshot)) {
+// commitProviderIfCurrent applies mutate only while the local identity still
+// matches token. It reports false, after queueing a new provider job, when it
+// does not.
+func (s *stateSync) commitProviderIfCurrent(project projectServices, token string, mutate func(*browserSnapshot)) bool {
 	current, ok := s.CachedSnapshot(project.info.ID)
 	if !ok || localIdentityToken(current) != token {
 		s.queueProvider(project.info.ID, false)
-		return
+		return false
 	}
+	stale := false
 	s.commitProject(project, "provider", func(snapshot *browserSnapshot) {
 		if localIdentityToken(*snapshot) != token {
+			stale = true
 			return
 		}
 		mutate(snapshot)
 	})
+	if stale {
+		s.queueProvider(project.info.ID, false)
+	}
+	return !stale
 }
 
 // checkTargetFor is the repository and commit whose checks describe worktree.

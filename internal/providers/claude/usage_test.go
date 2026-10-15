@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -270,7 +271,8 @@ func TestUsageErrorsNeverContainTokenOrBody(t *testing.T) {
 
 func TestParseUsageShapes(t *testing.T) {
 	t.Run("recorded response uses limits and ignores unknown buckets", func(t *testing.T) {
-		limits, warnings, err := ParseUsage(readFixture(t, "usage-response.json"))
+		parsed, err := ParseUsage(readFixture(t, "usage-response.json"))
+		limits, warnings := parsed.Limits, parsed.Warnings
 		if err != nil || len(warnings) != 0 || len(limits) != 2 {
 			t.Fatalf("limits=%+v warnings=%v err=%v", limits, warnings, err)
 		}
@@ -282,7 +284,8 @@ func TestParseUsageShapes(t *testing.T) {
 		}
 	})
 	t.Run("flat buckets with per-model weekly", func(t *testing.T) {
-		limits, _, err := ParseUsage([]byte(`{"five_hour":{"utilization":25,"resets_at":"2026-10-09T19:00:00Z"},"seven_day":{"utilization":40.5,"resets_at":null},"seven_day_opus":{"utilization":100,"resets_at":"2026-10-11T09:00:00Z"},"seven_day_sonnet":null,"tangelo":{"utilization":3}}`))
+		parsed, err := ParseUsage([]byte(`{"five_hour":{"utilization":25,"resets_at":"2026-10-09T19:00:00Z"},"seven_day":{"utilization":40.5,"resets_at":null},"seven_day_opus":{"utilization":100,"resets_at":"2026-10-11T09:00:00Z"},"seven_day_sonnet":null,"tangelo":{"utilization":3}}`))
+		limits := parsed.Limits
 		if err != nil || len(limits) != 3 {
 			t.Fatalf("limits=%+v err=%v", limits, err)
 		}
@@ -294,7 +297,8 @@ func TestParseUsageShapes(t *testing.T) {
 		}
 	})
 	t.Run("limits array with scope", func(t *testing.T) {
-		limits, _, err := ParseUsage([]byte(`{"limits":[{"kind":"weekly_all","group":"weekly","percent":60,"resets_at":"2026-10-11T09:00:00Z"},{"kind":"weekly_model","group":"weekly","percent":10,"scope":"haiku"},{"kind":"session","percent":5},{"kind":"broken"}]}`))
+		parsed, err := ParseUsage([]byte(`{"limits":[{"kind":"weekly_all","group":"weekly","percent":60,"resets_at":"2026-10-11T09:00:00Z"},{"kind":"weekly_model","group":"weekly","percent":10,"scope":"haiku"},{"kind":"session","percent":5},{"kind":"broken"}]}`))
+		limits := parsed.Limits
 		if err != nil || len(limits) != 3 {
 			t.Fatalf("limits=%+v err=%v", limits, err)
 		}
@@ -303,26 +307,162 @@ func TestParseUsageShapes(t *testing.T) {
 		}
 	})
 	t.Run("percent is clamped and flat duplicates do not repeat", func(t *testing.T) {
-		limits, _, _ := ParseUsage([]byte(`{"limits":[{"kind":"session","percent":250}],"five_hour":{"utilization":1}}`))
+		parsed, _ := ParseUsage([]byte(`{"limits":[{"kind":"session","percent":250}],"five_hour":{"utilization":1}}`))
+		limits := parsed.Limits
 		if len(limits) != 1 || fraction(t, limits, "five_hour") != 0 {
 			t.Fatalf("limits = %+v", limits)
 		}
 	})
 	t.Run("unknown JSON is an empty snapshot with a warning", func(t *testing.T) {
 		for _, body := range []string{`{}`, `{"hello":"world"}`, `{"limits":"nope","five_hour":7}`, `{"limits":[1,2,3]}`} {
-			limits, warnings, err := ParseUsage([]byte(body))
-			if err != nil || len(limits) != 0 || len(warnings) != 1 {
-				t.Fatalf("%s: limits=%v warnings=%v err=%v", body, limits, warnings, err)
+			parsed, err := ParseUsage([]byte(body))
+			if err != nil || len(parsed.Limits) != 0 || len(parsed.Credits) != 0 || len(parsed.Warnings) != 1 {
+				t.Fatalf("%s: parsed=%+v err=%v", body, parsed, err)
 			}
 		}
 	})
 	t.Run("non-objects are errors", func(t *testing.T) {
 		for _, body := range []string{``, `not json`, `[]`, `null`, `42`} {
-			if _, _, err := ParseUsage([]byte(body)); err == nil {
+			if _, err := ParseUsage([]byte(body)); err == nil {
 				t.Fatalf("%q parsed", body)
 			}
 		}
 	})
+}
+
+func TestParseUsageCredits(t *testing.T) {
+	t.Run("recorded dollar pool, disabled spend and a window not started", func(t *testing.T) {
+		parsed, err := ParseUsage(readFixture(t, "usage-response-credits.json"))
+		if err != nil || len(parsed.Limits) != 2 || len(parsed.Warnings) != 0 {
+			t.Fatalf("parsed=%+v err=%v", parsed, err)
+		}
+		if parsed.Limits[0].ID != "five_hour" || parsed.Limits[0].ResetsAt != nil || fraction(t, parsed.Limits, "five_hour") != 1 {
+			t.Fatalf("five hour = %+v", parsed.Limits[0])
+		}
+		if len(parsed.Credits) != 1 {
+			t.Fatalf("credits = %+v", parsed.Credits)
+		}
+		c := parsed.Credits[0]
+		if c.ID != "iguana_necktie" || c.Label != "Usage credits" || c.Unit != agents.CreditUnitUSD || !c.Enabled {
+			t.Fatalf("credit = %+v", c)
+		}
+		if *c.Limit != 100 || *c.Used != 1.90559 || *c.Balance != 98.09441 || c.ResetsAt.Format(time.RFC3339) != "2026-11-05T07:59:00Z" {
+			t.Fatalf("credit amounts = %v %v %v %v", *c.Limit, *c.Used, *c.Balance, c.ResetsAt)
+		}
+	})
+	// Synthetic: no capture has spend or extra_usage enabled yet.
+	t.Run("enabled spend wins over extra_usage", func(t *testing.T) {
+		parsed, err := ParseUsage([]byte(`{"five_hour":{"utilization":1},
+			"extra_usage":{"is_enabled":true,"monthly_limit":5000,"used_credits":1234,"currency":"USD","decimal_places":2},
+			"spend":{"used":{"amount_minor":1234,"currency":"USD","exponent":2},"limit":{"amount_minor":5000,"currency":"USD","exponent":2},"enabled":true}}`))
+		if err != nil || len(parsed.Credits) != 1 {
+			t.Fatalf("parsed=%+v err=%v", parsed, err)
+		}
+		c := parsed.Credits[0]
+		if c.ID != "extra_usage" || !c.Enabled || c.Unit != "USD" || *c.Used != 12.34 || *c.Limit != 50 || c.Balance != nil {
+			t.Fatalf("credit = %+v", c)
+		}
+	})
+	t.Run("extra_usage alone, in minor units", func(t *testing.T) {
+		parsed, _ := ParseUsage([]byte(`{"extra_usage":{"is_enabled":true,"monthly_limit":2000,"used_credits":150,"currency":"eur","decimal_places":2}}`))
+		if len(parsed.Credits) != 1 || *parsed.Credits[0].Used != 1.5 || *parsed.Credits[0].Limit != 20 || parsed.Credits[0].Unit != "EUR" {
+			t.Fatalf("credits = %+v", parsed.Credits)
+		}
+	})
+	t.Run("extra_usage without decimal places keeps no amounts", func(t *testing.T) {
+		parsed, _ := ParseUsage([]byte(`{"extra_usage":{"is_enabled":true,"monthly_limit":2000,"used_credits":150}}`))
+		if len(parsed.Credits) != 1 || parsed.Credits[0].Used != nil || parsed.Credits[0].Limit != nil {
+			t.Fatalf("credits = %+v", parsed.Credits)
+		}
+	})
+	t.Run("disabled with no values emits nothing", func(t *testing.T) {
+		parsed, _ := ParseUsage([]byte(`{"spend":{"used":{"amount_minor":0,"currency":"USD","exponent":2},"limit":null,"enabled":false},"tangelo":{"limit_dollars":null}}`))
+		if len(parsed.Credits) != 0 {
+			t.Fatalf("credits = %+v", parsed.Credits)
+		}
+	})
+}
+
+func TestParseUsageResetGrants(t *testing.T) {
+	parsed, err := ParseUsage(readFixture(t, "usage-response-resets.json"))
+	if err != nil || len(parsed.ResetCredits) != 1 {
+		t.Fatalf("parsed=%+v err=%v", parsed, err)
+	}
+	r := parsed.ResetCredits[0]
+	if r.Title != "Claude Opus 5.5 launch: one usage-limit reset for Pro and Max" || r.Status != "available" || r.Count != 1 ||
+		r.GrantedAt.Format(time.RFC3339) != "2026-09-22T16:00:00Z" || r.ExpiresAt.Format(time.RFC3339) != "2026-10-22T16:00:00Z" {
+		t.Fatalf("reset = %+v", r)
+	}
+	if strings.Join(r.Clears, ",") != "five_hour,seven_day,seven_day_overage_included" {
+		t.Fatalf("clears = %v", r.Clears)
+	}
+	if data, _ := json.Marshal(parsed.ResetCredits); strings.Contains(string(data), "opus55-launch-promax") {
+		t.Fatalf("grant id leaked: %s", data)
+	}
+	for body, want := range map[string]string{
+		`{"cedar_ember":{"eligible":true,"grants":[{"label":"x","resets_left":0}]}}`:                    "used",
+		`{"cedar_ember":{"eligible":false,"grants":[{"label":"x","resets_left":2,"usable_now":true}]}}`: "unavailable",
+		`{"cedar_ember":{"eligible":true,"grants":[{"label":"x","resets_left":2,"paused":true}]}}`:      "paused",
+		`{"cedar_ember":{"eligible":true,"grants":[{"label":"x","resets_left":2,"usable_now":false}]}}`: "not_usable_yet",
+	} {
+		parsed, _ := ParseUsage([]byte(body))
+		if len(parsed.ResetCredits) != 1 || parsed.ResetCredits[0].Status != want {
+			t.Errorf("%s = %+v", body, parsed.ResetCredits)
+		}
+	}
+	for _, body := range []string{`{"cedar_ember":null}`, `{"cedar_ember":"x"}`, `{"cedar_ember":{"grants":[{"label":"no count"}]}}`} {
+		if parsed, _ := ParseUsage([]byte(body)); len(parsed.ResetCredits) != 0 {
+			t.Errorf("%s = %+v", body, parsed.ResetCredits)
+		}
+	}
+}
+
+func TestUsageAsksForResetGrantsAsClaudeCode(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
+	server := newUsageServer(t, 200, readFixture(t, "usage-response-resets.json"))
+	e.provider.usageEndpoint = server.URL + "/api/oauth/usage"
+	snapshot, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{})
+	if err != nil || len(snapshot.ResetCredits) != 1 {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+	req := server.last.Load()
+	if req.URL.Query().Get("cedar_ember") != "1" || req.Header.Get("x-app") != "cli" || !strings.HasPrefix(req.Header.Get("User-Agent"), "claude-cli/") {
+		t.Fatalf("request = %s %v", req.URL, req.Header)
+	}
+}
+
+func TestUsageReportsPlanAndCredits(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	path := writeCredentials(t, e, account, "access-abc", time.Now().Add(time.Hour))
+	data := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"access-abc","expiresAt":%d,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}`, time.Now().Add(time.Hour).UnixMilli())
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.provider.usageEndpoint = newUsageServer(t, 200, readFixture(t, "usage-response-credits.json")).URL
+	snapshot, err := e.provider.Usage(t.Context(), account, agents.UsageOptions{})
+	if err != nil || snapshot.Plan != "Max 20x" || len(snapshot.Credits) != 1 {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+}
+
+func TestPlanLabel(t *testing.T) {
+	for _, tc := range []struct{ sub, tier, want string }{
+		{"pro", "default_claude_ai", "Pro"},
+		{"max", "default_claude_max_5x", "Max 5x"},
+		{"max", "default_claude_max_20x", "Max 20x"},
+		{"max", "", "Max"},
+		{"team", "", "Team"},
+		{"enterprise", "", "Enterprise"},
+		{"", "x", ""},
+		{"ultra\x00", "", "ultra"},
+	} {
+		if got := planLabel(tc.sub, tc.tier); got != tc.want {
+			t.Errorf("planLabel(%q, %q) = %q, want %q", tc.sub, tc.tier, got, tc.want)
+		}
+	}
 }
 
 func TestUsageUnknownResponseThroughProvider(t *testing.T) {
@@ -338,7 +478,7 @@ func TestUsageUnknownResponseThroughProvider(t *testing.T) {
 
 func TestUsageCapabilityAndPolicy(t *testing.T) {
 	e := newTestEnv(t)
-	if !e.provider.Capabilities().Usage || e.provider.UsageTTL() != 5*time.Minute {
+	if !e.provider.Capabilities().Usage || e.provider.UsageTTL() != time.Minute {
 		t.Fatalf("usage=%v ttl=%v", e.provider.Capabilities().Usage, e.provider.UsageTTL())
 	}
 	var _ agents.UsagePolicy = e.provider

@@ -86,6 +86,45 @@ on, the stop prints how many agents still run. `bonsai web status` shows the
 running agents and what a stop does with them. While the setting is off and
 agents run, Settings and the Agents tab say they will be stopped.
 
+## Local API and supervisor
+
+`bonsai web` uses one user-level supervisor for the local API and, when you
+choose Live updates, its webhook receiver and tunnel. The API remains bound to
+loopback. Production accepts its exact local origins only; capability sessions
+protect privileged HTTP and WebSocket requests. `bonsai web` starts the
+supervisor in the background and returns; `bonsai web --attach` (or
+`bonsai web attach` later) shows the live log viewer. Detaching leaves the app
+running; `bonsai web stop` stops its API and tunnel, and retained logs remain
+readable. The hidden contributor stack has its own development services and
+explicit loopback frontend origin; see [development.md](development.md).
+
+## Project folders
+
+After starting `bonsai web`, choose the local folders Bonsai should scan. You can
+select a suggested directory or enter an absolute path (or `~/projects`), then
+confirm **Add folder**. Nothing is registered automatically, and starting from a
+Git repository does not add it: the browser catalog is empty until project
+folders are configured. The same editor is available from **Settings**. Folder
+settings belong to your local user and survive browser and backend restarts.
+
+Discovery includes each selected folder and up to four levels of descendants,
+skipping dependency, build and cache directories and directory symlinks. You can
+explicitly select a symlinked folder. Overlapping folders are supported; separate
+clones remain separate projects, even when they share a GitHub remote. Linked
+worktrees outside the selected folders remain visible through their repository.
+Unavailable folders and scan limits appear in Settings; select a deeper folder
+when a scan is truncated. The catalog reconciles every 30 seconds.
+
+New browser worktrees default to
+`<owning-folder>/.bonsai/worktrees/<project-id>/<branch-hash>`. An explicit
+`.bonsai.yaml` `worktree.root` must resolve within a configured folder. Settings
+changes affect future creation without a daemon restart. The CLI/TUI continues
+using its existing `worktree.root` and `worktree.path_template` behavior.
+Removing a folder never deletes files or worktrees, stops processes, or shuts
+down the hosting daemon. Existing metadata and worktree IDs are preserved. See
+[development.md](development.md#project-roots-and-multi-repository-routing) for
+the endpoints and discovery limits.
+
 ## Settings and runtime files
 
 | Platform | Settings directory | Runtime directory |
@@ -231,6 +270,20 @@ webhook receiver on port 7002 may be exposed. The API and browser stay local.
 Healthy delivery slows polling to a 10-minute safety interval; failed delivery
 or a stopped tunnel restores ordinary polling. Pending or paused Live badges
 show the reason; doctor and tunnel logs provide the same diagnosis.
+
+### Cloudflare named-tunnel setup
+
+Run `bonsai web setup` to configure live GitHub updates. With **Cloudflare +
+domain**, Review shows the tunnel creation and DNS routing commands before Apply
+runs them. Setup prompts for `cloudflared tunnel login` when needed, reuses an
+existing tunnel, and reports failed commands with their output. Conflicting DNS
+records are never overwritten.
+
+You can reapply the named-tunnel setup without changing settings to repair its
+DNS route and restart Bonsai. The browser shows **Live pending** until delivery
+is confirmed, or **Live paused** when delivery fails; it continues polling GitHub
+meanwhile. Hover over the badge for the reason, or run `bonsai web doctor` and
+`bonsai web logs tunnel`.
 
 ## Recovery
 

@@ -106,6 +106,20 @@ Only the webhook target `http://127.0.0.1:7002` is passed to the tunnel
 process. The Bonsai API and local Vite server remain loopback-only. Never tunnel
 the API, WebSocket control endpoint, daemon socket, or project services.
 
+## Building a binary with the web UI
+
+A plain `go build` (or `go install`) keeps the TUI/CLI and serves an explanatory
+placeholder at `/app`. To embed the full web app from source, use Node
+**22.12.0**, pnpm **12.9.1** and the repository Go version:
+
+```sh
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web build
+pnpm --dir web bundle:check
+go test -tags embedui ./web/
+go build -tags embedui -o bonsai .
+```
+
 ## Frontend-only iteration
 
 The hidden stack is preferred when changing networking or integration behavior,
@@ -334,7 +348,7 @@ without any request (setup tokens always get 403). Redirects are not followed, t
 endpoint must be https or loopback, and HTTP failures are remembered for a minute. It never refreshes a login, never puts the
 token or the response body in an error, and accepts both the flat-bucket and the
 `limits[]` response shapes (`testdata/usage-response*.json`). The provider
-implements `UsagePolicy` (5 minutes), which `UsageService` prefers over its own
+implements `UsagePolicy` (1 minute), which `UsageService` prefers over its own
 TTL. Tests point `claude.UsageEndpoint` or the provider's `usageEndpoint` at an
 `httptest` server; nothing reaches the network.
 
@@ -368,7 +382,7 @@ up on their next refresh. A logged-out profile's warning points at
 (`bonsai agent account set|show`, the Agents tab's Defaults) are `model`,
 `effort` and the `permissions` preset, stored as `sandbox`/`approval`.
 
-Identity (`email · plan`) is decoded from the `id_token` claims in `auth.json`
+Identity (the email) and plan are decoded from the `id_token` claims in `auth.json`
 without a network call; auth status is the exit code of `codex login status`
 (cached 60 s, 10 s when unknown). Short commands run in their own process group,
 killed on timeout.
@@ -389,7 +403,7 @@ never a server message or body, and Bonsai never writes `auth.json`.
   of a launch is checked against the cached list of its model (or the default
   model) and against every shipped level when the list is not cached; validation
   never starts Codex.
-- `usage.go` (`Usage`, `UsagePolicy` 5 minutes): `account/rateLimits/read`. A
+- `usage.go` (`Usage`, `UsagePolicy` 1 minute): `account/rateLimits/read`. A
   window is named by its length: 300 minutes `five_hour`, 10080 `weekly`, any
   other `window_<n>m`; remaining is `1 - usedPercent/100`. Limits of other metered
   features (`rateLimitsByLimitId`) get their own group and ids prefixed by the
@@ -536,9 +550,45 @@ profile with `bonsai agent account add codex <name> [--auth device]`. Profile se
 opaque account IDs; discovery responses contain only ID, provider, display name and the
 display-safe profile details. `SetupSpec` has no modes and no seed, only a note
 that agy must be exited to save the profile: Bonsai ignores agy's exit code and
-captures the sign-in from the setup home. `bonsai agent account login` runs agy
-again in a fresh home and stores the new sign-in with the next vault generation,
-so a running session's older tokens never overwrite it when that session ends.
+captures the sign-in from `<AccountDir>/home`, run from `<AccountDir>/home/workspace`.
+`bonsai agent account login` runs agy again in that home, after removing the old
+token from it, and stores the new sign-in with the next vault generation, so a
+running session's older tokens never overwrite it when that session ends.
+
+Account details never start `agy` on the profile-list path: `DescribeAccount`
+reads the email from the vault (a fallback identity counts as none),
+`auth_status` is `logged_in` when the stored credentials are complete, and the
+plan comes from `<AccountDir>/plan.json`. `Usage` first reads the quota from
+the Cloud Code API agy itself uses (`cloudcode.go`): `POST
+/v1internal:loadCodeAssist` (`{"metadata":{"ideType":"ANTIGRAVITY"}}`, answers
+`cloudaicompanionProject`, remembered per profile in memory, and the plan:
+`paidTier.name`, or `currentTier.name` without a paid tier, and the credit
+balance: the sum of `paidTier.availableCredits[].creditAmount` of type
+`GOOGLE_ONE_AI`, an int64 string; the list is absent at 0, and a balance of 0 is
+not shown. It is asked on every
+read, beside the quota call once the project is remembered, and the plan is
+stored in `plan.json` with the email) and `POST
+/v1internal:retrieveUserQuotaSummary` (`{"project": ...}`, the same groups and
+buckets as `/usage`, parsed by `ParseUsage`), on
+`daily-cloudcode-pa.googleapis.com` then `cloudcode-pa.googleapis.com`, 3 s per
+host (the second is asked at once when the first fails, or after 800 ms when it
+has not answered: the daily host sometimes takes 3 s; the first answer wins), with the vault's access token and `User-Agent: antigravity` (without it
+loadCodeAssist reports an unsupported client). Both are internal endpoints.
+Bonsai never refreshes the token: one missing or expiring within a minute skips
+the API. When every host fails, `Usage` runs the built-in `/usage` command (no
+tokens) in a throwaway session (`withProfile`: materialize, run, reconcile,
+clean up); agy refreshes the token there, so the next read can use the API
+again. That fallback has no credits, and the plan is the one stored by the last
+API read, or none. No `agy` is started for the plan or the credits, and nothing
+runs in the background after `Usage` returns. A `loadCodeAssist` that fails
+beside a working quota call leaves the plan and credits out of that read. Tests
+point `cloudCodeHosts` at an `httptest` server.
+
+Models come from `agy models` (cached 10 minutes, 1 minute after a failure).
+Lines that differ only by an effort suffix in both the ID and the label
+(`gemini-3.8-flash-high<TAB>Gemini 3.8 Flash (High)`) become one model whose
+default effort is the first listed; a lone `-medium` model stays whole. A launch
+composes model and effort into one `--model <id>`; agy's `--effort` is never used.
 
 Each session runs in its own [agent host](#agent-hosts), independently of
 request contexts, browser connections and the API itself. Closing a terminal or

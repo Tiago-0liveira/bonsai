@@ -47,11 +47,11 @@ func TestUsageHeadline(t *testing.T) {
 		if err := json.Unmarshal(readFixture(t, tt.fixture...), &response); err != nil {
 			t.Fatal(err)
 		}
-		limits, _, _, err := ParseRateLimits(response.Result)
+		parsed, err := ParseRateLimits(response.Result)
 		if err != nil {
 			t.Fatal(err)
 		}
-		snapshot := agents.UsageSnapshot{Provider: ProviderID, Limits: limits}
+		snapshot := agents.UsageSnapshot{Provider: ProviderID, Limits: parsed.Limits}
 		if got := describeHeadline(p.UsageHeadline(snapshot)); got != tt.want {
 			t.Errorf("%v:\n got %s\nwant %s", tt.fixture, got, tt.want)
 		}

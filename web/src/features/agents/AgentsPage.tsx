@@ -5,7 +5,7 @@ import { isActiveSession } from '../../api/agentsOverview'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
 import { useBonsaiStore } from '../../stores/bonsai'
 import type { SetupTarget } from './AddProfileDialog'
-import { AUTH_DOT, activeSessionCounts, authState, groupProfiles, profileSessions, summarizeFleet, summarizeProviders, usageReadAt } from './agentsModel'
+import { AUTH_DOT, activeSessionCounts, authState, groupProfiles, identityLine, profileSessions, summarizeFleet, summarizeProviders, usageReadAt } from './agentsModel'
 import { AGENT_TABS, type AgentsTab } from './agentsSearch'
 import { ProfileDefaults } from './ProfileDefaults'
 import { DiscardChangesDialog } from './ProfileDialog'
@@ -19,7 +19,7 @@ import { recallSetupJob } from './setupModel'
 import { AddProfileButton, SummaryStrip } from './SummaryStrip'
 import { useAgentsData } from './useAgentsData'
 import { useNow } from './useNow'
-import { useAgentSettings, willStopNotice } from '../settings/agentSettings'
+import { useAgentSettings, willStopNotice } from '../settings/useAgentSettings'
 
 // Sign-in needs a terminal; it loads when a profile is added or signed in again.
 const AddProfileDialog = lazy(() => import('./AddProfileDialog').then(module => ({ default: module.AddProfileDialog })))
@@ -162,7 +162,7 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
                 <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted">
                   <span className={'h-1.5 w-1.5 rounded-full ' + AUTH_DOT[auth.tone]} aria-hidden="true" />{auth.label}
                 </span>
-                {selected.identity && <span className="min-w-0 truncate font-mono text-[10px] text-muted-2">{selected.identity}</span>}
+                {identityLine(selected) && <span className="min-w-0 truncate font-mono text-[10px] text-muted-2">{identityLine(selected)}</span>}
                 <Tabs.List aria-label="Profile sections" className="flex h-9 w-full items-end gap-[22px]">
                   {AGENT_TABS.map(value => (
                     <Tabs.Trigger key={value} value={value} className={tabTrigger}>

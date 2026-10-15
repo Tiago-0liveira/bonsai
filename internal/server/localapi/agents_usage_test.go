@@ -33,6 +33,7 @@ type meterTestProvider struct {
 	mu        sync.Mutex
 	remaining map[agents.AccountID]float64
 	fail      map[agents.AccountID]error
+	panics    map[agents.AccountID]bool
 	reads     []string
 }
 
@@ -45,6 +46,9 @@ func (p *meterTestProvider) Usage(_ context.Context, account agents.Account, opt
 	p.reads = append(p.reads, fmt.Sprintf("%s:%v", account.Name, opts.Refresh))
 	if err := p.fail[account.ID]; err != nil {
 		return agents.UsageSnapshot{}, err
+	}
+	if p.panics[account.ID] {
+		panic("meter exploded")
 	}
 	five, week := p.remaining[account.ID], 0.9
 	reset := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
@@ -266,6 +270,37 @@ func TestAgentUsageErrors(t *testing.T) {
 	}
 }
 
+// A provider panic fails only its profile, as a normal per-profile error.
+func TestAgentUsageProviderPanic(t *testing.T) {
+	s, meter, alpha, beta := usageTestServer(t)
+	meter.panics = map[agents.AccountID]bool{alpha: true}
+	w := agentAPIRequest(t, s, "GET", "/api/agents/usage", "", "")
+	items := decodeUsage(t, w.Body.Bytes())
+	if w.Code != 200 || items[alpha].Error == nil || items[alpha].Error.Code != "unavailable" || items[beta].Error != nil || items[beta].Usage == nil {
+		t.Fatalf("all: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "exploded") {
+		t.Fatalf("panic text leaked: %s", w.Body.String())
+	}
+	w = agentAPIRequest(t, s, "POST", "/api/agents/usage/refresh", "", `{"account_id":"`+string(alpha)+`"}`)
+	if items := decodeUsage(t, w.Body.Bytes()); w.Code != 200 || items[alpha].Error == nil || items[alpha].Error.Code != "unavailable" {
+		t.Fatalf("one: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAgentUsageProviderPanicSingleAccountGet(t *testing.T) {
+	s, meter, alpha, _ := usageTestServer(t)
+	meter.panics = map[agents.AccountID]bool{alpha: true}
+	w := agentAPIRequest(t, s, "GET", "/api/agents/usage?account_id="+string(alpha), "", "")
+	items := decodeUsage(t, w.Body.Bytes())
+	if w.Code != 200 || len(items) != 1 || items[alpha].Error == nil || items[alpha].Error.Code != "unavailable" || items[alpha].Usage != nil {
+		t.Fatalf("get: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "exploded") || strings.Contains(w.Body.String(), "goroutine ") {
+		t.Fatalf("panic text leaked: %s", w.Body.String())
+	}
+}
+
 func TestAgentUsageRealProviders(t *testing.T) {
 	s, _, _ := terminalTestServer(t)
 	codexTestdata, err := filepath.Abs(filepath.Join("..", "..", "providers", "codex", "testdata"))
@@ -320,8 +355,11 @@ func TestAgentUsageRealProviders(t *testing.T) {
 	}
 	items := decodeUsage(t, w.Body.Bytes())
 	got := items[signedIn.ID]
-	if got.Usage == nil || got.Usage.Plan != "plus" || got.Headline == nil || got.Headline.Primary.ID != "five_hour" || got.Headline.Secondary.ID != "weekly" || *got.Headline.Score != 0.72 {
+	if got.Usage == nil || got.Usage.Plan != "Plus" || got.Headline == nil || got.Headline.Primary.ID != "five_hour" || got.Headline.Secondary.ID != "weekly" || *got.Headline.Score != 0.72 {
 		t.Fatalf("codex signed in = %+v", got)
+	}
+	if len(got.Usage.ResetCredits) != 3 || len(got.Usage.Credits) != 1 || !strings.Contains(w.Body.String(), `"reset_credits":[{"title":"Full reset (Weekly + 5 hr)","status":"available","granted_at":`) {
+		t.Fatalf("codex credits = %+v / %+v", got.Usage.Credits, got.Usage.ResetCredits)
 	}
 	if got := items[apiKey.ID]; got.Error == nil || got.Error.Code != "unsupported" || got.Error.Message != "API key profiles have no plan limits" {
 		t.Fatalf("codex API key = %+v", got)

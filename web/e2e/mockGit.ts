@@ -338,33 +338,49 @@ const SETUP_SPECS: Record<string, Record<string, unknown>> = {
 interface SetupScript { output: string; end: 'succeed' | 'fail' | 'prompt'; error?: string; /** How long the login runs after printing. */ holdMs?: number }
 interface MockSetupJob { job: Record<string, unknown>; script: SetupScript; send?: (frame: Record<string, unknown>) => void; ran: boolean }
 
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+/** A reset time relative to now, so a fixture never lands in the past. */
+const fromNow = (ms: number) => new Date(Date.now() + ms).toISOString()
+
 /** Usage of the Agents tab fixture profiles, keyed by profile ID. */
 const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
   'codex-personal': {
     account_id: 'codex-personal', provider: 'codex',
-    usage: { provider: 'codex', account_id: 'codex-personal', fetched_at: '2026-10-12T11:58:00Z', plan: 'plus', limits: [] },
-    headline: {
-      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.72, resets_at: '2026-10-12T14:15:00Z' },
-      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.38, resets_at: '2026-10-15T16:00:00Z' },
-      extra: [
-        { id: 'spark_five_hour', group: 'Codex Spark', label: '5 hour', remaining_fraction: 0.9, resets_at: '2026-10-12T14:30:00Z' },
-        { id: 'spark_weekly', group: 'Codex Spark', label: 'Weekly', remaining_fraction: 0.64, resets_at: '2026-10-15T16:00:00Z' },
+    usage: {
+      provider: 'codex', account_id: 'codex-personal', fetched_at: '2026-10-12T11:58:00Z', plan: 'Plus', limits: [],
+      credits: [{ id: 'codex_credits', label: 'Credits', unit: 'credits', balance: 0, enabled: false }],
+      reset_credits: [
+        { title: 'Full reset (Weekly + 5 hr)', status: 'available', granted_at: '2026-09-22T18:13:41Z', expires_at: '2036-10-22T18:13:41Z' },
+        { title: 'Full reset (Weekly + 5 hr)', status: 'available', granted_at: '2026-09-29T17:31:24Z', expires_at: '2036-10-29T17:31:24Z' },
       ],
-      score: 0.38, next_reset: '2026-10-12T14:15:00Z',
+    },
+    headline: {
+      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.72, resets_at: fromNow(2 * HOUR + 15 * MINUTE) },
+      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.38, resets_at: fromNow(3 * DAY + 4 * HOUR) },
+      extra: [
+        { id: 'spark_five_hour', group: 'Codex Spark', label: '5 hour', remaining_fraction: 0.9, resets_at: fromNow(2 * HOUR + 30 * MINUTE) },
+        { id: 'spark_weekly', group: 'Codex Spark', label: 'Weekly', remaining_fraction: 0.64, resets_at: fromNow(3 * DAY + 4 * HOUR) },
+      ],
+      score: 0.38, next_reset: fromNow(2 * HOUR + 15 * MINUTE),
     },
   },
   'codex-team': { account_id: 'codex-team', provider: 'codex', error: { code: 'not_authenticated', message: 'Not signed in' } },
   'claude-profile': {
     account_id: 'claude-profile', provider: 'claude',
-    usage: { provider: 'claude', account_id: 'claude-profile', fetched_at: '2026-10-12T11:59:00Z', plan: 'max', limits: [] },
+    usage: {
+      provider: 'claude', account_id: 'claude-profile', fetched_at: '2026-10-12T11:59:00Z', plan: 'Max 5x', limits: [],
+      credits: [{ id: 'iguana_necktie', label: 'Usage credits', unit: 'USD', used: 1.91, limit: 100, balance: 98.09, enabled: true, resets_at: fromNow(30 * DAY) }],
+    },
     headline: {
-      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.15, resets_at: '2026-10-12T13:00:00Z' },
-      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.55, resets_at: '2026-10-16T09:00:00Z' },
+      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.15, resets_at: fromNow(HOUR) },
+      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.55, resets_at: fromNow(2 * DAY) },
       extra: [
-        { id: 'seven_day_opus', label: 'Opus (weekly)', remaining_fraction: 0.4, resets_at: '2026-10-16T09:00:00Z' },
-        { id: 'seven_day_sonnet', label: 'Sonnet (weekly)', remaining_fraction: 0.8, resets_at: '2026-10-16T09:00:00Z' },
+        { id: 'seven_day_opus', label: 'Opus (weekly)', remaining_fraction: 0.4, resets_at: fromNow(2 * DAY) },
+        { id: 'seven_day_sonnet', label: 'Sonnet (weekly)', remaining_fraction: 0.8, resets_at: fromNow(2 * DAY) },
       ],
-      score: 0.15, low: true, next_reset: '2026-10-12T13:00:00Z',
+      score: 0.15, low: true, next_reset: fromNow(HOUR),
     },
   },
   'claude-token': { account_id: 'claude-token', provider: 'claude', error: { code: 'unsupported', message: 'Setup tokens cannot read plan usage' } },
@@ -429,8 +445,9 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
       Object.assign(job, { state: 'succeeded' })
     } else {
       const id = `${job.provider}-${job.name}`
-      const identity = job.auth_mode === 'api-key' ? 'API key' : `${job.name}@example.com · plus`
-      accountList.push({ id, provider: job.provider, name: job.name, auth_mode: job.auth_mode, identity, auth_status: job.auth_mode === 'token' ? 'token' : 'logged_in', created_at: job.ended_at, updated_at: job.ended_at })
+      const identity = job.auth_mode === 'api-key' ? 'API key' : `${job.name}@example.com`
+      const plan = job.provider === 'codex' && job.auth_mode !== 'api-key' ? 'Plus' : undefined
+      accountList.push({ id, provider: job.provider, name: job.name, auth_mode: job.auth_mode, identity, plan, auth_status: job.auth_mode === 'token' ? 'token' : 'logged_in', created_at: job.ended_at, updated_at: job.ended_at })
       Object.assign(job, { state: 'succeeded', account_id: id, warnings: job.provider === 'codex' && job.auth_mode !== 'api-key' ? [] : job.auth_mode === 'token' ? ['Token profiles cannot read plan usage'] : [] })
     }
     accountsETag++
@@ -457,13 +474,13 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
   const accountList: Record<string, unknown>[] = agentsTab.enabled ? [
     { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', auth_status: 'logged_in', effort: 'high', defaults: { effort: 'high' }, created_at: '2026-10-01T09:00:00Z', updated_at: '2026-10-10T09:00:00Z' },
     { id: 'claude-token', provider: 'claude', name: 'CI token', auth_mode: 'token', auth_status: 'token', warnings: ['Token expires in 12 days; plan to replace it'], created_at: '2026-10-02T09:00:00Z', updated_at: '2026-10-02T09:00:00Z' },
-    { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in', sandbox: 'workspace-write', approval: 'on-request', model: 'gpt-6.1-sol', defaults: { model: 'gpt-6.1-sol', permissions: 'auto' }, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-11T10:00:00Z' },
-    { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_out', warnings: ['Not logged in; run `bonsai agent run Team -- login`'], created_at: '2026-10-03T10:00:00Z', updated_at: '2026-10-03T10:00:00Z' },
+    { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com', plan: 'Plus', auth_status: 'logged_in', sandbox: 'workspace-write', approval: 'on-request', model: 'gpt-6.1-sol', defaults: { model: 'gpt-6.1-sol', permissions: 'auto' }, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-11T10:00:00Z' },
+    { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com', plan: 'Pro', auth_status: 'logged_out', warnings: ['Not logged in; run `bonsai agent run Team -- login`'], created_at: '2026-10-03T10:00:00Z', updated_at: '2026-10-03T10:00:00Z' },
   ] : [
     { id: 'fixture-profile', provider: 'antigravity', name: 'Fixture' },
     { id: 'claude-profile', provider: 'claude', name: 'Work', auth_mode: 'login', identity: 'dev@example.com', warnings: ['Token expires in 12 days'] },
-    { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com · plus', auth_status: 'logged_in' },
-    { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com · pro', auth_status: 'logged_in', warnings: ['Same login as profile "Personal"; both share its usage limits'] },
+    { id: 'codex-personal', provider: 'codex', name: 'Personal', auth_mode: 'chatgpt', identity: 'me@example.com', plan: 'Plus', auth_status: 'logged_in' },
+    { id: 'codex-team', provider: 'codex', name: 'Team', auth_mode: 'device', identity: 'team@example.com', plan: 'Pro', auth_status: 'logged_in', warnings: ['Same login as profile "Personal"; both share its usage limits'] },
   ]
   const metadata: Record<string, Metadata> = {
     'wt-main': { merge_target_branch: 'main', stack_preference: 'auto' },
@@ -906,10 +923,15 @@ export async function mockUpdateSettings(page: Page, settings: () => unknown, ap
   await page.route(url => url.origin === apiOrigin && url.pathname === '/api/settings/updates', route => route.fulfill({ json: settings() }))
 }
 
-/** Picks a level on the start dialog's effort slider by its caption under the track. */
+/** Picks a level on the start dialog's effort slider with the keyboard: Home, then one step per tick. */
 export async function chooseEffort(dialog: Locator, level: string) {
-  // The default level's caption carries a "default" tag, so match on its start.
-  await dialog.getByRole('slider', { name: 'Effort' }).locator('..').locator('button.step-label').filter({ hasText: new RegExp(`^${level}`) }).click()
+  const slider = dialog.getByRole('slider', { name: 'Effort' })
+  const stops = await slider.locator('[data-stop]').evaluateAll(ticks => ticks.map(tick => tick.getAttribute('data-stop')))
+  const index = stops.indexOf(level)
+  if (index < 0) throw new Error(`effort ${level} is not offered (${stops.join(', ')})`)
+  await slider.focus()
+  await slider.press('Home')
+  for (let step = 0; step < index; step++) await slider.press('ArrowRight')
 }
 
 /** A select's menu, which renders outside the dialog that owns the select. */

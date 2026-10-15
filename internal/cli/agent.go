@@ -98,10 +98,10 @@ func cmdAgentAccount(ctx context.Context, runtime *agentRuntime, args []string, 
 			return err
 		}
 		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tPROVIDER\tAUTH\tIDENTITY")
+		fmt.Fprintln(tw, "NAME\tPROVIDER\tAUTH\tIDENTITY\tPLAN")
 		for _, account := range accounts {
 			info := runtime.accountService.Registry.DescribeAccount(ctx, account)
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", account.Name, account.Provider, info.AuthMode, info.Identity)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", account.Name, account.Provider, info.AuthMode, info.Identity, info.Plan)
 		}
 		return tw.Flush()
 	case "rename":
@@ -239,6 +239,7 @@ func printAccount(ctx context.Context, out io.Writer, registry *agents.Registry,
 	row("id:", string(account.ID))
 	row("auth:", info.AuthMode)
 	row("identity:", info.Identity)
+	row("plan:", info.Plan)
 	if status, ok := info.Options["auth_status"].(string); ok {
 		row("status:", status)
 	}
@@ -444,19 +445,25 @@ func cmdAgentRun(ctx context.Context, runtime *agentRuntime, args []string) erro
 func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, out, errOut io.Writer) error {
 	var selector string
 	refresh := false
+	noProgress := false
+	var view usageView
 	for _, arg := range args {
 		switch arg {
 		case "--refresh":
 			refresh = true
+		case "--no-progress":
+			noProgress = true
+		case "--claude-gpt":
+			view.claudeGPT = true
 		case "-h", "--help":
-			fmt.Fprintln(out, "usage: bonsai agent usage [<account>] [--refresh]")
+			fmt.Fprintln(out, "usage: bonsai agent usage [<account>] [--refresh] [--claude-gpt] [--no-progress]")
 			return nil
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return fmt.Errorf("unknown usage flag %q", arg)
 			}
 			if selector != "" {
-				return fmt.Errorf("usage: bonsai agent usage [<account>] [--refresh]")
+				return fmt.Errorf("usage: bonsai agent usage [<account>] [--refresh] [--claude-gpt] [--no-progress]")
 			}
 			selector = arg
 		}
@@ -470,17 +477,26 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 		snapshot, err := runtime.usageService.Account(ctx, account.ID, opts)
 		if errors.Is(err, agents.ErrUsageUnsupported) {
 			// Expected for some profiles (long-lived tokens, macOS): show it, do not fail.
-			printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Error: err}})
+			printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Error: err}}, view)
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Usage: &snapshot, Headline: runtime.usageService.Headline(snapshot)}})
+		printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Usage: &snapshot, Headline: runtime.usageService.Headline(snapshot)}}, view)
 		return nil
 	}
 
-	results := runtime.usageService.All(ctx, opts)
+	var results []agents.AccountUsageResult
+	if usageProgressEnabled(errOut, noProgress) {
+		// Live progress goes to stderr, so stdout stays the dashboard alone.
+		progress := newUsageProgress(errOut, usageColorEnabled(errOut), func() int { return terminalWidth(errOut) }, time.Now)
+		progress.Start()
+		results = runtime.usageService.AllObserved(ctx, func(agents.Account) agents.UsageOptions { return opts }, progress.Observe)
+		progress.Stop()
+	} else {
+		results = runtime.usageService.All(ctx, opts)
+	}
 	var errs []error
 	for _, result := range results {
 		if result.Error != nil && !errors.Is(result.Error, agents.ErrUsageUnsupported) {
@@ -488,7 +504,7 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 			errs = append(errs, result.Error)
 		}
 	}
-	printUsageDashboard(out, results)
+	printUsageDashboard(out, results, view)
 	return errors.Join(errs...)
 }
 
@@ -506,7 +522,7 @@ Usage:
   bonsai agent account rename <account> <new-name>
   bonsai agent account remove <account>
   bonsai agent run <account> [-- <provider-args...>]
-  bonsai agent usage [<account>] [--refresh]
+  bonsai agent usage [<account>] [--refresh] [--claude-gpt] [--no-progress]
 
 Usage (Claude): reads the 5-hour and weekly utilization of login profiles from an
   undocumented Anthropic endpoint, so it may stop working. It uses the profile's

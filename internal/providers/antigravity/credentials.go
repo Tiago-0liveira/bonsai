@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -88,8 +89,51 @@ func (m *fileCredentialManager) CaptureSetup(ctx context.Context, account agents
 	if current, err := m.readVault(account); err == nil {
 		candidate.Generation = current.Generation + 1
 	}
+	// The sign-in workspace is trusted from the start, so agy never asks.
+	if candidate.ProviderSettings, _, err = trustWorkspace(candidate.ProviderSettings, probeWorkspaceDir(m.accounts, account)); err != nil {
+		return err
+	}
 	candidate.UpdatedAt = time.Now().UTC()
 	return m.writeVault(account, candidate)
+}
+
+// trustWorkspace returns agy settings with dir, and its symlink-resolved path
+// when that differs (agy may compare either), in "trustedWorkspaces". Every
+// other key and trusted folder is kept; changed is false when nothing was
+// missing.
+func trustWorkspace(settings json.RawMessage, dir string) (out json.RawMessage, changed bool, err error) {
+	fields := map[string]json.RawMessage{}
+	if len(settings) > 0 && string(settings) != "null" {
+		if err := json.Unmarshal(settings, &fields); err != nil {
+			return settings, false, fmt.Errorf("read antigravity provider settings: %w", err)
+		}
+	}
+	var trusted []string
+	if raw, ok := fields["trustedWorkspaces"]; ok && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &trusted); err != nil {
+			return settings, false, fmt.Errorf("read antigravity trusted workspaces: %w", err)
+		}
+	}
+	want := []string{dir}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != dir {
+		want = append(want, resolved)
+	}
+	for _, path := range want {
+		if !slices.Contains(trusted, path) {
+			trusted = append(trusted, path)
+			changed = true
+		}
+	}
+	if !changed {
+		return settings, false, nil
+	}
+	if fields["trustedWorkspaces"], err = json.Marshal(trusted); err != nil {
+		return settings, false, err
+	}
+	if out, err = json.Marshal(fields); err != nil {
+		return settings, false, err
+	}
+	return out, true, nil
 }
 
 func (m *fileCredentialManager) Reconcile(ctx context.Context, account agents.Account, session agents.Session) error {

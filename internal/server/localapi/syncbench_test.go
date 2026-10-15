@@ -66,13 +66,16 @@ func TestSyncBenchReportsMilestonesSpawnsAndSpans(t *testing.T) {
 	if result.GitSpawns == 0 || result.GHSpawns != 0 {
 		t.Fatalf("spawns git=%d gh=%d", result.GitSpawns, result.GHSpawns)
 	}
-	seen := map[string]int{}
-	for _, line := range strings.Split(strings.TrimSpace(spans.String()), "\n") {
-		var rec struct{ Span string }
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Fatalf("span line is not JSON: %q", line)
+	// The provider span closes after the snapshot commit the bench waits on, so
+	// give it a moment to be written before asserting.
+	var seen map[string]int
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		seen = spanCounts(t, spans.String())
+		if seen["local.inventory"] > 0 && seen["local.ready"] > 0 && seen["provider.ready"] > 0 || time.Now().After(deadline) {
+			break
 		}
-		seen[rec.Span]++
+		time.Sleep(10 * time.Millisecond)
 	}
 	for _, name := range []string{"local.inventory", "local.ready", "provider.ready"} {
 		if seen[name] == 0 {
@@ -84,6 +87,22 @@ func TestSyncBenchReportsMilestonesSpawnsAndSpans(t *testing.T) {
 	if seen["local.status"] < 2 {
 		t.Errorf("local.status spans = %d, want at least one per worktree (2)", seen["local.status"])
 	}
+}
+
+func spanCounts(t *testing.T, output string) map[string]int {
+	t.Helper()
+	seen := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec struct{ Span string }
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("span line is not JSON: %q", line)
+		}
+		seen[rec.Span]++
+	}
+	return seen
 }
 
 func TestSyncBenchWithoutProjectsFails(t *testing.T) {

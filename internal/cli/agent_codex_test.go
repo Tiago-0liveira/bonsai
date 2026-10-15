@@ -108,7 +108,7 @@ func TestCodexLoginAccountThroughCLI(t *testing.T) {
 		t.Fatalf("add: %v (stderr=%q)", err, errOut)
 	}
 	out, _, err := runAgent(t, "", "account", "list")
-	if err != nil || !containsAll(strings.Fields(out), "personal", "device", "me@example.com", "plus") {
+	if err != nil || !containsAll(strings.Fields(out), "personal", "device", "me@example.com", "Plus") {
 		t.Fatalf("list = %q, %v", out, err)
 	}
 }

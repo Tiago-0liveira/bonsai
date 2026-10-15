@@ -22,6 +22,7 @@ func (p *Provider) DescribeAccount(ctx context.Context, account agents.Account) 
 	}
 	id := readIdentity(homeDir(p.accounts, account))
 	info.Identity = id.String()
+	info.Plan = planLabel(id.Plan)
 	status := p.queryStatus(ctx, account)
 	info.Options["auth_status"] = status.String()
 	switch {

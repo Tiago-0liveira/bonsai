@@ -114,7 +114,7 @@ function EffortField({ field, value, model, models, account, defaultValue, disab
   const levels = all.filter(option => option.value !== '')
   if (levels.length === 0 && model?.no_effort) return <Field label={field.label}><NoEffort text={`${model.label} has no effort setting.`} /></Field>
   if (levels.length < 2) return <ChoiceField field={field} value={value} model={model} models={models} account={account} defaultValue={defaultValue} disabled={disabled} onChange={next => onChange(String(next))} />
-  const stops = levels.map(option => ({ value: option.value, label: option.label === option.value ? levelName(option.label) : option.label, tick: option.label }))
+  const stops = levels.map(option => ({ value: option.value, label: option.label === option.value ? levelName(option.label) : option.label }))
   const inherited = profileValue(field, account)
   const current = stops.find(stop => stop.value === value)
   const fallback = stops.find(stop => stop.value === inherited)

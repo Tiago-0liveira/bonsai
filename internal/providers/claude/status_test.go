@@ -14,7 +14,7 @@ import (
 
 func TestParseAuthStatusFixtures(t *testing.T) {
 	for file, want := range map[string]authStatus{
-		"auth-status-claudeai.json":    {LoggedIn: true, AuthMethod: "claude.ai", Email: "<redacted>"},
+		"auth-status-claudeai.json":    {LoggedIn: true, AuthMethod: "claude.ai", Email: "<redacted>", SubscriptionType: "pro"},
 		"auth-status-logged-out.json":  {LoggedIn: false, AuthMethod: "none"},
 		"auth-status-oauth-token.json": {LoggedIn: true, AuthMethod: "oauth_token"},
 	} {
@@ -222,5 +222,21 @@ func TestVersionCheckUsesThrowawayConfigDir(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(e.home); len(entries) != 0 {
 		t.Fatalf("version check wrote into HOME: %v", entries)
+	}
+}
+
+func TestDescribeReportsPlan(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	// The fake login stores no subscription, so the plan comes from auth status.
+	if info := e.provider.DescribeAccount(t.Context(), account); info.Plan != "Pro" || info.Options["auth_status"] != "logged_in" {
+		t.Fatalf("info = %+v", info)
+	}
+	path := filepath.Join(configDir(e.accounts, account), ".credentials.json")
+	if err := os.WriteFile(path, []byte(`{"claudeAiOauth":{"accessToken":"x","subscriptionType":"max","rateLimitTier":"default_claude_max_5x"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if info := e.provider.DescribeAccount(t.Context(), account); info.Plan != "Max 5x" {
+		t.Fatalf("info = %+v", info)
 	}
 }

@@ -1,5 +1,5 @@
 import type { AgentAccount, UsageHeadline } from '../../api/agents'
-import { AUTH_DOT, authState, toPercent } from './agentsModel'
+import { AUTH_DOT, authState, identityLine, toPercent } from './agentsModel'
 import { UsageMeter } from './UsageMeter'
 
 export function ProfileRow({ account, selected, sessions, headline, onSelect }: {
@@ -12,6 +12,7 @@ export function ProfileRow({ account, selected, sessions, headline, onSelect }: 
 }) {
   const auth = authState(account)
   const score = headline?.score
+  const identity = identityLine(account)
   return (
     <li>
       <button
@@ -26,9 +27,9 @@ export function ProfileRow({ account, selected, sessions, headline, onSelect }: 
           <span className="sr-only">{auth.label}</span>
           {sessions > 0 && <span className="shrink-0 rounded-[5px] bg-accent/12 px-1.5 font-mono text-[9.5px] text-accent">{sessions} running</span>}
         </span>
-        {(account.identity || score !== undefined) && (
+        {(identity || score !== undefined) && (
           <span className="flex items-center gap-2 pl-3.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-2">{account.identity ?? ''}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-2">{identity}</span>
             {score !== undefined && (
               <span className="flex shrink-0 items-center gap-1.5" title={`${toPercent(score)}% headroom${headline?.low ? ' (low)' : ''}`}>
                 <UsageMeter label={`${account.name} headroom`} fraction={score} className="w-12" />

@@ -214,7 +214,8 @@ type LaunchValidator interface {
 // paths or raw settings.
 type AccountInfo struct {
 	AuthMode string
-	Identity string
+	Identity string // the signed-in email, or a short stand-in such as "API key"
+	Plan     string // the subscription plan's display name, when known
 	Options  map[string]any
 	Warnings []string
 }

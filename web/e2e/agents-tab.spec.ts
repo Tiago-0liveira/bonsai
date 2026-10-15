@@ -108,13 +108,18 @@ test('usage: Codex 5h/weekly with an extra group, Claude per model, a token prof
   const errors = trackPageErrors(page)
   const controls = await backend(page)
   await page.goto('/app/agents?profile=codex-personal&tab=usage')
-  await expect(page.getByText('Plan: plus')).toBeVisible()
+  await expect(page.getByText('Plan: Plus')).toBeVisible()
   const limits = page.getByRole('list', { name: 'Plan limits' })
   await expect(limits.getByRole('meter', { name: '5 hour remaining' })).toHaveAttribute('aria-valuenow', '72')
   await expect(limits.getByRole('meter', { name: 'Weekly remaining' })).toHaveAttribute('aria-valuenow', '38')
   await expect(limits.getByText(/^resets in/).first()).toBeVisible()
   const spark = page.getByRole('region', { name: 'Codex Spark' })
   await expect(spark.getByRole('meter')).toHaveCount(2)
+  // An empty, disabled credit balance is not shown; granted resets are, with their expiry.
+  await expect(page.getByRole('region', { name: 'Credits' })).toHaveCount(0)
+  const resets = page.getByRole('region', { name: 'Rate-limit resets' })
+  await expect(resets).toContainText('2 available')
+  await expect(resets.getByText(/^expires /)).toHaveCount(2)
 
   const profiles = page.getByRole('complementary', { name: 'Providers and profiles' })
   await profiles.getByRole('button', { name: /^Work / }).click()
@@ -232,7 +237,7 @@ for (const mode of ['dark', 'light'] as const) {
     }
     await page.setViewportSize({ width: 420, height: 900 })
     await page.goto('/app/agents?profile=codex-personal&tab=usage')
-    await expect(page.getByText('Plan: plus')).toBeVisible()
+    await expect(page.getByText('Plan: Plus')).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath(`agents-narrow-${mode}.png`) })
   })
