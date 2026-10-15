@@ -318,14 +318,6 @@ type UsagePolicy interface {
 	UsageTTL() time.Duration
 }
 
-// UsageSettler is a provider whose Usage may leave work running in the
-// background, such as a probe that writes what the next read shows. A
-// short-lived caller (the CLI) settles it before exiting: SettleUsage returns
-// once that work is done, or when ctx ends, after stopping what still runs.
-type UsageSettler interface {
-	SettleUsage(ctx context.Context)
-}
-
 // UsageLayout picks the headline limits of a provider's usage snapshot.
 type UsageLayout interface {
 	UsageHeadline(UsageSnapshot) UsageHeadline

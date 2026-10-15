@@ -51,8 +51,14 @@ func (row usageDashboardRow) extra() []agents.UsageLimit {
 	return row.headline.Extra
 }
 
+// usageView is what the dashboard shows beyond its default.
+type usageView struct {
+	// claudeGPT adds Antigravity's Claude & GPT model pools.
+	claudeGPT bool
+}
+
 // usageRender draws one provider's table from the rows' headlines.
-type usageRender func(out io.Writer, rows []usageDashboardRow, now time.Time, color bool)
+type usageRender func(out io.Writer, rows []usageDashboardRow, now time.Time, color bool, view usageView)
 
 // usageSpec returns the table renderer of a provider, if there is one. Scores,
 // slots and resets come from the provider's agents.UsageLayout.
@@ -61,21 +67,23 @@ func usageSpec(provider agents.ProviderID) (usageRender, bool) {
 	case "antigravity":
 		return renderAntigravityUsage, true
 	case "claude":
-		return func(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
+		return func(out io.Writer, rows []usageDashboardRow, now time.Time, color bool, _ usageView) {
 			renderClaudeUsageTable(out, rows, now, color)
 			fmt.Fprintln(out, "  "+usageStyle("Read from an undocumented endpoint; it may change. Bonsai never refreshes logins.", "\x1b[2m", color))
 		}, true
 	case "codex":
-		return renderCodexUsageTable, true
+		return func(out io.Writer, rows []usageDashboardRow, now time.Time, color bool, _ usageView) {
+			renderCodexUsageTable(out, rows, now, color)
+		}, true
 	}
 	return nil, false
 }
 
-func printUsageDashboard(out io.Writer, results []agents.AccountUsageResult) {
-	renderUsageDashboard(out, results, time.Now(), usageColorEnabled(out))
+func printUsageDashboard(out io.Writer, results []agents.AccountUsageResult, view usageView) {
+	renderUsageDashboard(out, results, time.Now(), usageColorEnabled(out), view)
 }
 
-func renderUsageDashboard(out io.Writer, results []agents.AccountUsageResult, now time.Time, color bool) {
+func renderUsageDashboard(out io.Writer, results []agents.AccountUsageResult, now time.Time, color bool, view usageView) {
 	rows := make([]usageDashboardRow, 0, len(results))
 	for _, result := range results {
 		row := usageDashboardRow{account: result.Account, usage: result.Usage, headline: result.Headline, err: result.Error}
@@ -109,7 +117,7 @@ func renderUsageDashboard(out io.Writer, results []agents.AccountUsageResult, no
 	renderFleetSummary(out, rows, now, color)
 	for _, provider := range usageProviders(rows) {
 		fmt.Fprintln(out)
-		renderUsageProvider(out, provider, usageRowsForProvider(rows, provider), now, color)
+		renderUsageProvider(out, provider, usageRowsForProvider(rows, provider), now, color, view)
 	}
 }
 
@@ -246,18 +254,18 @@ func usageNextReset(rows []usageDashboardRow, now time.Time, color bool) (string
 	return plain, usageStyle(plain, "\x1b[36m", color)
 }
 
-func renderUsageProvider(out io.Writer, provider agents.ProviderID, rows []usageDashboardRow, now time.Time, color bool) {
+func renderUsageProvider(out io.Writer, provider agents.ProviderID, rows []usageDashboardRow, now time.Time, color bool, view usageView) {
 	title := fmt.Sprintf("◆ %s · %d %s", usageProviderTitle(provider), len(rows), plural(len(rows), "account", "accounts"))
 	fmt.Fprintln(out, usageStyle(title, "\x1b[1;36m", color))
 
 	if render, ok := usageSpec(provider); ok {
-		render(out, rows, now, color)
+		render(out, rows, now, color, view)
 		return
 	}
 	fmt.Fprintln(out, "  Usage dashboard adapter not implemented yet.")
 }
 
-func renderAntigravityUsage(out io.Writer, rows []usageDashboardRow, now time.Time, color bool) {
+func renderAntigravityUsage(out io.Writer, rows []usageDashboardRow, now time.Time, color bool, view usageView) {
 	fmt.Fprintln(out, "  "+usageStyle("Gemini Models", "\x1b[1m", color))
 	renderAntigravityUsageTable(out, rows, now, color, false)
 
@@ -268,7 +276,7 @@ func renderAntigravityUsage(out io.Writer, rows []usageDashboardRow, now time.Ti
 			break
 		}
 	}
-	if hasThirdParty {
+	if hasThirdParty && view.claudeGPT {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "  "+usageStyle("Claude & GPT Models", "\x1b[1m", color))
 		renderAntigravityUsageTable(out, rows, now, color, true)
@@ -287,9 +295,26 @@ func usageProviders(rows []usageDashboardRow) []agents.ProviderID {
 		providers = append(providers, row.account.Provider)
 	}
 	sort.Slice(providers, func(i, j int) bool {
+		if ri, rj := usageProviderRank(providers[i]), usageProviderRank(providers[j]); ri != rj {
+			return ri < rj
+		}
 		return strings.ToLower(usageProviderTitle(providers[i])) < strings.ToLower(usageProviderTitle(providers[j]))
 	})
 	return providers
+}
+
+// usageProviderRank orders the provider sections: Claude, Codex, Antigravity,
+// then any other provider by title.
+func usageProviderRank(provider agents.ProviderID) int {
+	switch provider {
+	case "claude", "claude-code":
+		return 0
+	case "codex":
+		return 1
+	case "antigravity":
+		return 2
+	}
+	return 3
 }
 
 func usageRowsForProvider(rows []usageDashboardRow, provider agents.ProviderID) []usageDashboardRow {

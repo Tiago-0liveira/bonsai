@@ -233,7 +233,7 @@ bonsai agent account set <account> <field>=<value>  # set profile launch default
 bonsai agent account rename <account> <new-name>
 bonsai agent account remove <account>
 bonsai agent run <account> [-- <args…>]             # run the provider CLI as that profile
-bonsai agent usage [<account>] [--refresh]          # plan limits of every profile
+bonsai agent usage [<account>] [--refresh] [--claude-gpt]  # plan limits of every profile
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage
@@ -515,12 +515,12 @@ once read, its plan ("Google AI Pro"). `bonsai agent usage` reads its quota
 from the Cloud Code API agy itself uses (undocumented; it can change without
 notice) with the stored login, and falls back to running agy's `/usage` when
 that fails or the login is about to expire; Bonsai never refreshes the login.
-Results are cached for 1 minute. It also shows the profile's credits
-(`/credits`, read again in the background every 15 minutes). agy only paints the plan on its interactive screen, so
-Bonsai reads it now and then in a pseudo-terminal, sending nothing but Ctrl+C to
-quit; this never runs on Windows, and listing profiles never starts `agy`. The
-start dialog's models come from `agy models`; a model agy lists once per effort
-(`gemini-3.8-flash-high`, `-medium`, `-low`) is one model with an effort choice,
+Results are cached for 1 minute. The plan and the profile's credits come from
+the same API read (credits only when above 0), so no `agy` is started for them and listing profiles never
+starts `agy` either; the `/usage` fallback shows neither credits nor a fresh
+plan. The table lists Gemini models only; `--claude-gpt` adds the Claude & GPT
+model pools. Providers are listed Claude, Codex, then Antigravity. The start dialog's models come from `agy models`; a model agy lists once
+per effort (`gemini-3.8-flash-high`, `-medium`, `-low`) is one model with an effort choice,
 passed to agy as the full ID. A model listed once has no effort choice.
 
 Start the web app with `bonsai web`, select a worktree, choose **Start agent**,

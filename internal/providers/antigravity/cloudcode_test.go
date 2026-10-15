@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +18,10 @@ type cloudCodeServer struct {
 	mu     sync.Mutex
 	status int
 	calls  map[string]int
+	// loadBody, when set, is the loadCodeAssist answer; loadStatus, when set,
+	// its status.
+	loadBody   string
+	loadStatus int
 }
 
 func newCloudCodeServer(t *testing.T) (*cloudCodeServer, string) {
@@ -28,7 +30,7 @@ func newCloudCodeServer(t *testing.T) (*cloudCodeServer, string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.calls[r.URL.Path]++
-		status := s.status
+		status, loadBody, loadStatus := s.status, s.loadBody, s.loadStatus
 		s.mu.Unlock()
 		if r.Header.Get("Authorization") != "Bearer live-token" || r.Header.Get("User-Agent") != cloudCodeUserAgent {
 			t.Errorf("headers = %v", r.Header)
@@ -39,7 +41,14 @@ func newCloudCodeServer(t *testing.T) (*cloudCodeServer, string) {
 		}
 		switch r.URL.Path {
 		case "/v1internal:loadCodeAssist":
-			_, _ = w.Write([]byte(`{"cloudaicompanionProject":"proj-1","paidTier":{"name":"Google AI Pro"}}`))
+			if loadStatus != 0 {
+				w.WriteHeader(loadStatus)
+				return
+			}
+			if loadBody == "" {
+				loadBody = `{"cloudaicompanionProject":"proj-1","paidTier":{"name":"Google AI Pro","availableCredits":[{"creditType":"GOOGLE_ONE_AI","creditAmount":"250"}]}}`
+			}
+			_, _ = w.Write([]byte(loadBody))
 		case "/v1internal:retrieveUserQuotaSummary":
 			var body map[string]string
 			if json.NewDecoder(r.Body).Decode(&body) != nil || body["project"] != "proj-1" {
@@ -79,63 +88,86 @@ func (e *accountEnv) signInToken(t *testing.T, email string, expiry time.Time) {
 	}
 }
 
-// noPlanProbe keeps tests about quota from waiting on a plan probe.
-func (e *accountEnv) noPlanProbe(t *testing.T, email string) {
-	t.Helper()
-	if err := writePrivateJSON(planPath(e.accounts, e.account), planState{Plan: "Google AI Pro", Email: email, CheckedAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func (e *accountEnv) usageRuns(t *testing.T) (usage, credits int) {
-	t.Helper()
-	return int(e.usageCmds.Load()), int(e.creditCmds.Load())
-}
-
 func TestUsageReadsCloudCodeWithoutStartingAgy(t *testing.T) {
 	e := newAccountEnv(t)
 	server, url := newCloudCodeServer(t)
 	useCloudCodeHosts(t, url)
 	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
-	e.noPlanProbe(t, "me@example.com")
 
 	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
-	e.provider.waitPlanProbes()
 	if err != nil || len(snapshot.Limits) != 2 || snapshot.Limits[0].ID != "gemini-weekly" || *snapshot.Limits[0].RemainingFraction != 0.5 {
 		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.Limits[0].Window != "weekly" || snapshot.Limits[0].Group != "Gemini Models" || snapshot.Limits[0].ResetsAt == nil {
 		t.Fatalf("limit = %+v", snapshot.Limits[0])
 	}
-	// No balance was stored yet: the first read shows none and reads one.
-	if len(snapshot.Credits) != 0 {
-		t.Fatalf("credits = %+v", snapshot.Credits)
+	if len(snapshot.Credits) != 1 || *snapshot.Credits[0].Balance != 250 || snapshot.Credits[0].Unit != agents.CreditUnitCredits || snapshot.Plan != "Google AI Pro" {
+		t.Fatalf("credits=%+v plan=%q", snapshot.Credits, snapshot.Plan)
 	}
-	if usage, credits := e.usageRuns(t); usage != 0 || credits != 1 {
-		t.Fatalf("agy runs: /usage=%d /credits=%d", usage, credits)
-	}
-	snapshot, err = e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
-	e.provider.waitPlanProbes()
-	if err != nil || len(snapshot.Credits) != 1 || *snapshot.Credits[0].Balance != 250 {
-		t.Fatalf("stored credits = %+v err=%v", snapshot.Credits, err)
-	}
-	// The project is remembered and fresh credits are not read again.
-	if server.count("loadCodeAssist") != 1 || server.count("retrieveUserQuotaSummary") != 2 {
-		t.Fatalf("calls = %v", server.calls)
-	}
-	if usage, credits := e.usageRuns(t); usage != 0 || credits != 1 {
-		t.Fatalf("agy runs: /usage=%d /credits=%d", usage, credits)
-	}
-	if info, err := os.Stat(filepath.Join(e.accounts.AccountDir(e.account.ID), "credits.json")); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("credits.json = %v, %v", info, err)
-	}
-	// An explicit refresh reads the credits again.
+	// Every read asks loadCodeAssist again: it answers the plan and the credits.
 	if _, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{Refresh: true}); err != nil {
 		t.Fatal(err)
 	}
-	e.provider.waitPlanProbes()
-	if _, credits := e.usageRuns(t); credits != 2 {
-		t.Fatalf("refresh /credits runs = %d", credits)
+	if server.count("loadCodeAssist") != 2 || server.count("retrieveUserQuotaSummary") != 2 {
+		t.Fatalf("calls = %v", server.calls)
+	}
+	if e.runs.Load() != 0 {
+		t.Fatalf("agy ran %d times", e.runs.Load())
+	}
+}
+
+func TestCreditsComeFromAvailableCredits(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want float64
+	}{
+		"none":         {`{"cloudaicompanionProject":"proj-1","paidTier":{"name":"Google AI Pro"}}`, 0},
+		"one":          {`{"cloudaicompanionProject":"proj-1","paidTier":{"availableCredits":[{"creditType":"GOOGLE_ONE_AI","creditAmount":"1500"}]}}`, 1500},
+		"summed":       {`{"cloudaicompanionProject":"proj-1","paidTier":{"availableCredits":[{"creditType":"GOOGLE_ONE_AI","creditAmount":"100"},{"creditType":"GOOGLE_ONE_AI","creditAmount":"20"}]}}`, 120},
+		"other type":   {`{"cloudaicompanionProject":"proj-1","paidTier":{"availableCredits":[{"creditType":"CREDIT_TYPE_UNSPECIFIED","creditAmount":"9"}]}}`, 0},
+		"bad amounts":  {`{"cloudaicompanionProject":"proj-1","paidTier":{"availableCredits":[{"creditType":"GOOGLE_ONE_AI","creditAmount":"x"},{"creditType":"GOOGLE_ONE_AI","creditAmount":"-5"}]}}`, 0},
+		"no paid tier": {`{"cloudaicompanionProject":"proj-1","currentTier":{"name":"Antigravity"}}`, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newAccountEnv(t)
+			server, url := newCloudCodeServer(t)
+			server.loadBody = tc.body
+			useCloudCodeHosts(t, url)
+			e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+			snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case tc.want == 0 && len(snapshot.Credits) != 0:
+				t.Fatalf("a zero balance is shown: %+v", snapshot.Credits)
+			case tc.want != 0 && (len(snapshot.Credits) != 1 || *snapshot.Credits[0].Balance != tc.want):
+				t.Fatalf("credits = %+v, want %v", snapshot.Credits, tc.want)
+			}
+		})
+	}
+}
+
+func TestUsageAsksTheNextHostWhenTheFirstIsSlow(t *testing.T) {
+	e := newAccountEnv(t)
+	_, fastURL := newCloudCodeServer(t)
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(slow.Close)
+	t.Cleanup(func() { close(release) }) // runs first, so Close does not wait
+	useCloudCodeHosts(t, slow.URL, fastURL)
+	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+
+	start := time.Now()
+	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
+	if err != nil || len(snapshot.Limits) != 2 {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+	if took := time.Since(start); took > cloudCodeTimeout/2 {
+		t.Fatalf("took %v: waited for the slow host", took)
+	}
+	if e.runs.Load() != 0 {
+		t.Fatalf("agy ran %d times", e.runs.Load())
 	}
 }
 
@@ -146,18 +178,16 @@ func TestUsageTriesTheNextCloudCodeHost(t *testing.T) {
 	up, upURL := newCloudCodeServer(t)
 	useCloudCodeHosts(t, downURL, upURL)
 	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
-	e.noPlanProbe(t, "me@example.com")
 
 	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
-	e.provider.waitPlanProbes()
 	if err != nil || len(snapshot.Limits) != 2 {
 		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
 	}
 	if down.count("loadCodeAssist") != 1 || up.count("retrieveUserQuotaSummary") != 1 {
 		t.Fatalf("down=%v up=%v", down.calls, up.calls)
 	}
-	if usage, _ := e.usageRuns(t); usage != 0 {
-		t.Fatalf("/usage runs = %d", usage)
+	if e.usageCmds.Load() != 0 {
+		t.Fatalf("/usage runs = %d", e.usageCmds.Load())
 	}
 }
 
@@ -166,28 +196,26 @@ func TestUsageFallsBackToAgyWhenCloudCodeFails(t *testing.T) {
 	server, url := newCloudCodeServer(t)
 	useCloudCodeHosts(t, url)
 	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
-	e.noPlanProbe(t, "me@example.com")
 
-	// The quota call fails after the project was found: the project is
-	// forgotten and agy answers.
+	// The first read stores the plan.
+	if _, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// The quota call then fails after the project was found: the project is
+	// forgotten and agy answers its quota. It has no credits; the stored plan
+	// stands and no agy run reads one.
 	server.mu.Lock()
 	server.status = http.StatusForbidden
 	server.mu.Unlock()
-	e.provider.projects.set(e.account.ID, "proj-1")
 	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
-	e.provider.waitPlanProbes()
-	if err != nil || len(snapshot.Limits) != 4 || len(snapshot.Credits) != 1 || *snapshot.Credits[0].Balance != 250 {
+	if err != nil || len(snapshot.Limits) != 4 || len(snapshot.Credits) != 0 || snapshot.Plan != "Google AI Pro" {
 		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
 	}
-	if usage, credits := e.usageRuns(t); usage != 1 || credits != 1 {
-		t.Fatalf("agy runs: /usage=%d /credits=%d", usage, credits)
+	if e.usageCmds.Load() != 1 || e.runs.Load() != 1 {
+		t.Fatalf("agy runs = %d (/usage %d)", e.runs.Load(), e.usageCmds.Load())
 	}
 	if e.provider.projects.get(e.account.ID) != "" {
 		t.Fatal("project kept after a failed quota read")
-	}
-	// The fallback stored the balance it read.
-	if state := e.provider.readCreditsState(e.account); state.Balance == nil || *state.Balance != 250 || state.CheckedAt.IsZero() {
-		t.Fatalf("credits state = %+v", state)
 	}
 }
 
@@ -196,17 +224,69 @@ func TestUsageSkipsCloudCodeWithAnExpiringToken(t *testing.T) {
 	server, url := newCloudCodeServer(t)
 	useCloudCodeHosts(t, url)
 	e.signInToken(t, "me@example.com", time.Now().Add(30*time.Second))
-	e.noPlanProbe(t, "me@example.com")
 
 	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
-	e.provider.waitPlanProbes()
 	if err != nil || len(snapshot.Limits) != 4 {
 		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
 	}
 	if server.count("loadCodeAssist")+server.count("retrieveUserQuotaSummary") != 0 {
 		t.Fatalf("expiring token was sent: %v", server.calls)
 	}
-	if usage, _ := e.usageRuns(t); usage != 1 {
-		t.Fatalf("/usage runs = %d", usage)
+	if e.usageCmds.Load() != 1 {
+		t.Fatalf("/usage runs = %d", e.usageCmds.Load())
+	}
+}
+
+func TestUsageShowsThePlanFromLoadCodeAssist(t *testing.T) {
+	e := newAccountEnv(t)
+	_, url := newCloudCodeServer(t)
+	useCloudCodeHosts(t, url)
+	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+
+	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
+	if err != nil || snapshot.Plan != "Google AI Pro" {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+	if state := e.provider.readPlanState(e.account); state.Plan != "Google AI Pro" || state.Email != "me@example.com" || state.CheckedAt.IsZero() {
+		t.Fatalf("stored plan = %+v", state)
+	}
+	// Listing profiles shows the stored plan without any call.
+	if info := e.provider.DescribeAccount(t.Context(), e.account); info.Plan != "Google AI Pro" {
+		t.Fatalf("describe = %+v", info)
+	}
+}
+
+func TestPlanFallsBackToTheCurrentTier(t *testing.T) {
+	e := newAccountEnv(t)
+	server, url := newCloudCodeServer(t)
+	server.loadBody = `{"cloudaicompanionProject":"proj-1","currentTier":{"name":"Antigravity"}}`
+	useCloudCodeHosts(t, url)
+	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+
+	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
+	if err != nil || snapshot.Plan != "Antigravity" {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+}
+
+func TestFailedLoadCodeAssistKeepsTheQuotaAndStoredPlan(t *testing.T) {
+	e := newAccountEnv(t)
+	server, url := newCloudCodeServer(t)
+	useCloudCodeHosts(t, url)
+	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+	if _, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// The project is remembered, so the quota is read without waiting for
+	// loadCodeAssist; its failure leaves credits unknown and the plan stored.
+	server.mu.Lock()
+	server.loadStatus = http.StatusInternalServerError
+	server.mu.Unlock()
+	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
+	if err != nil || len(snapshot.Limits) != 2 || len(snapshot.Credits) != 0 || snapshot.Plan != "Google AI Pro" {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+	if e.runs.Load() != 0 {
+		t.Fatalf("agy ran %d times", e.runs.Load())
 	}
 }

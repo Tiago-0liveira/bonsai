@@ -445,19 +445,22 @@ func cmdAgentRun(ctx context.Context, runtime *agentRuntime, args []string) erro
 func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, out, errOut io.Writer) error {
 	var selector string
 	refresh := false
+	var view usageView
 	for _, arg := range args {
 		switch arg {
 		case "--refresh":
 			refresh = true
+		case "--claude-gpt":
+			view.claudeGPT = true
 		case "-h", "--help":
-			fmt.Fprintln(out, "usage: bonsai agent usage [<account>] [--refresh]")
+			fmt.Fprintln(out, "usage: bonsai agent usage [<account>] [--refresh] [--claude-gpt]")
 			return nil
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return fmt.Errorf("unknown usage flag %q", arg)
 			}
 			if selector != "" {
-				return fmt.Errorf("usage: bonsai agent usage [<account>] [--refresh]")
+				return fmt.Errorf("usage: bonsai agent usage [<account>] [--refresh] [--claude-gpt]")
 			}
 			selector = arg
 		}
@@ -469,21 +472,19 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 			return err
 		}
 		snapshot, err := runtime.usageService.Account(ctx, account.ID, opts)
-		defer settleUsage(ctx, runtime.usageService)
 		if errors.Is(err, agents.ErrUsageUnsupported) {
 			// Expected for some profiles (long-lived tokens, macOS): show it, do not fail.
-			printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Error: err}})
+			printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Error: err}}, view)
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Usage: &snapshot, Headline: runtime.usageService.Headline(snapshot)}})
+		printUsageDashboard(out, []agents.AccountUsageResult{{Account: account, Usage: &snapshot, Headline: runtime.usageService.Headline(snapshot)}}, view)
 		return nil
 	}
 
 	results := runtime.usageService.All(ctx, opts)
-	defer settleUsage(ctx, runtime.usageService)
 	var errs []error
 	for _, result := range results {
 		if result.Error != nil && !errors.Is(result.Error, agents.ErrUsageUnsupported) {
@@ -491,19 +492,8 @@ func cmdAgentUsage(ctx context.Context, runtime *agentRuntime, args []string, ou
 			errs = append(errs, result.Error)
 		}
 	}
-	printUsageDashboard(out, results)
+	printUsageDashboard(out, results, view)
 	return errors.Join(errs...)
-}
-
-// usageSettleWait bounds how long `bonsai agent usage` waits, after printing,
-// for work a provider left running, such as an Antigravity plan probe (7 s of
-// agy plus its start and stop). The next run shows what it found.
-const usageSettleWait = 12 * time.Second
-
-func settleUsage(ctx context.Context, usage *agents.UsageService) {
-	ctx, cancel := context.WithTimeout(ctx, usageSettleWait)
-	defer cancel()
-	usage.Settle(ctx)
 }
 
 func printAgentUsage(w io.Writer) {
@@ -520,7 +510,7 @@ Usage:
   bonsai agent account rename <account> <new-name>
   bonsai agent account remove <account>
   bonsai agent run <account> [-- <provider-args...>]
-  bonsai agent usage [<account>] [--refresh]
+  bonsai agent usage [<account>] [--refresh] [--claude-gpt]
 
 Usage (Claude): reads the 5-hour and weekly utilization of login profiles from an
   undocumented Anthropic endpoint, so it may stop working. It uses the profile's

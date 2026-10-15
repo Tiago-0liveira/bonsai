@@ -25,15 +25,6 @@ type Provider struct {
 
 	projects projectCache // Cloud Code project per profile
 
-	// probe reads the plan from agy's screen; nil is probePlan.
-	probe       func(ctx context.Context, executable, dir string, env []string, email string) (string, error)
-	planMu      sync.Mutex
-	planFlights map[flightKey]bool
-	planWG      sync.WaitGroup
-	// planCtx is the context of the plan probes and credit reads; SettleUsage
-	// cancels it and the next one starts a new one.
-	planCtx    context.Context
-	planCancel context.CancelFunc
 }
 
 func (p *Provider) clock() time.Time {
@@ -127,5 +118,4 @@ var (
 	_ agents.AccountAuthenticator = (*Provider)(nil)
 	_ agents.ModelLister          = (*Provider)(nil)
 	_ agents.LaunchValidator      = (*Provider)(nil)
-	_ agents.UsageSettler         = (*Provider)(nil)
 )

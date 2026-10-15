@@ -82,28 +82,6 @@ func (p *Provider) withProfile(ctx context.Context, account agents.Account, fn f
 	return errors.Join(runErr, reconcileErr, cleanupErr)
 }
 
-// withHome runs fn with agy in a fixed home of the profile, such as the plan
-// probe's, from dir: the credentials are materialized into the home before and
-// reconciled after, and the home is kept. The caller keeps other processes out
-// of it. No credential lock is held while fn runs.
-func (p *Provider) withHome(ctx context.Context, account agents.Account, home, dir string, fn func(context.Context, profileRun) error) error {
-	// The home also holds the generation marker a session keeps in its
-	// runtime directory.
-	session := agents.Session{ID: "plan-probe", Provider: ProviderID, AccountID: account.ID, WorkDir: dir, RuntimeDir: home, HomeDir: home}
-	if err := p.credentialMgr.Materialize(ctx, account, session); err != nil {
-		return err
-	}
-	executable, err := p.binaryResolver.Resolve()
-	if err != nil {
-		return err
-	}
-	runErr := fn(ctx, profileRun{executable: executable, dir: dir, env: buildEnvironment(account, session)})
-	// A cancelled run still saves a token agy refreshed in the home.
-	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reconcileWait)
-	defer cancel()
-	return errors.Join(runErr, p.credentialMgr.Reconcile(reconcileCtx, account, session))
-}
-
 // reconcileWait bounds the credential lock wait of a reconcile that runs
 // after its caller was cancelled.
 const reconcileWait = 5 * time.Second

@@ -72,21 +72,6 @@ func (s *UsageService) Headline(snapshot UsageSnapshot) *UsageHeadline {
 	return s.Registry.UsageHeadline(snapshot)
 }
 
-// Settle waits for the background work providers left from reading usage
-// (UsageSettler), until ctx ends. A long-running caller never needs it.
-func (s *UsageService) Settle(ctx context.Context) {
-	if s.Registry == nil {
-		return
-	}
-	var wg sync.WaitGroup
-	for _, provider := range s.Registry.List() {
-		if settler, ok := provider.(UsageSettler); ok {
-			wg.Go(func() { settler.SettleUsage(ctx) })
-		}
-	}
-	wg.Wait()
-}
-
 func (s *UsageService) All(ctx context.Context, opts UsageOptions) []AccountUsageResult {
 	return s.AllFunc(ctx, func(Account) UsageOptions { return opts })
 }

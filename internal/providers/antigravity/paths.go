@@ -30,9 +30,9 @@ func generationPath(session agents.Session) string {
 	return filepath.Join(session.RuntimeDir, "credential-generation.json")
 }
 
-// The plan probe runs agy in one persistent home per profile, so agy's own
-// first-run and trust state survive between probes, from a fixed workspace in
-// it. probe.lock keeps two processes from running agy in that home at once.
+// Sign-in runs agy in one persistent home per profile, so agy's own first-run
+// and trust state survive between sign-ins, from a fixed workspace in it.
+// probe.lock keeps two processes from running agy in that home at once.
 func probeHomeDir(accounts agents.AccountStore, account agents.Account) string {
 	return filepath.Join(accounts.AccountDir(account.ID), "home")
 }

@@ -263,33 +263,3 @@ func TestUsageServiceHonoursProviderTTL(t *testing.T) {
 		})
 	}
 }
-
-type settlingUsageProvider struct {
-	usageTestProvider
-	settled chan error
-}
-
-func (p *settlingUsageProvider) SettleUsage(ctx context.Context) {
-	<-ctx.Done()
-	p.settled <- ctx.Err()
-}
-
-func TestUsageServiceSettleWaitsForSettlers(t *testing.T) {
-	provider := &settlingUsageProvider{settled: make(chan error, 1)}
-	registry := NewRegistry()
-	_ = registry.Register(provider)
-	_ = registry.Register(&noUsageProvider{})
-	service := &UsageService{Registry: registry}
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	service.Settle(ctx)
-	select {
-	case err := <-provider.settled:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("settled with %v", err)
-		}
-	default:
-		t.Fatal("Settle returned before the provider settled")
-	}
-	(&UsageService{}).Settle(ctx) // no registry: nothing to wait for
-}

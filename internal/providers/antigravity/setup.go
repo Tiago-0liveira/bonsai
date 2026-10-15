@@ -44,9 +44,9 @@ func (p *Provider) SetupSpec(context.Context) agents.SetupSpec {
 }
 
 // signIn runs agy in the foreground for the user to sign in and captures the
-// login. It runs in the profile's persistent probe home, from its workspace, so
-// the user goes through agy's first-run wizard there once and the plan probe
-// finds it done. Without an account store it falls back to the request's home.
+// login. It runs in the profile's persistent home, from its workspace, so the
+// user goes through agy's first-run wizard there once. Without an account store
+// it falls back to the request's home.
 func (p *Provider) signIn(ctx context.Context, account agents.Account, runtimeDir, homeDir string, launcher agents.Launcher) error {
 	executable, err := p.binaryResolver.Resolve()
 	if err != nil {
@@ -55,7 +55,7 @@ func (p *Provider) signIn(ctx context.Context, account agents.Account, runtimeDi
 	home, dir := homeDir, ""
 	if p.accounts != nil {
 		home, dir = probeHomeDir(p.accounts, account), probeWorkspaceDir(p.accounts, account)
-		// No plan probe runs agy in the home while the user is in it.
+		// One sign-in at a time uses the home.
 		lock, err := agents.LockFileContext(ctx, probeLockPath(p.accounts, account))
 		if err != nil {
 			return err

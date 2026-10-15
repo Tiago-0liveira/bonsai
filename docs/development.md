@@ -547,42 +547,28 @@ reads the email from the vault (a fallback identity counts as none),
 plan comes from `<AccountDir>/plan.json`. `Usage` first reads the quota from
 the Cloud Code API agy itself uses (`cloudcode.go`): `POST
 /v1internal:loadCodeAssist` (`{"metadata":{"ideType":"ANTIGRAVITY"}}`, answers
-`cloudaicompanionProject`, remembered per profile in memory) then `POST
+`cloudaicompanionProject`, remembered per profile in memory, and the plan:
+`paidTier.name`, or `currentTier.name` without a paid tier, and the credit
+balance: the sum of `paidTier.availableCredits[].creditAmount` of type
+`GOOGLE_ONE_AI`, an int64 string; the list is absent at 0, and a balance of 0 is
+not shown. It is asked on every
+read, beside the quota call once the project is remembered, and the plan is
+stored in `plan.json` with the email) and `POST
 /v1internal:retrieveUserQuotaSummary` (`{"project": ...}`, the same groups and
 buckets as `/usage`, parsed by `ParseUsage`), on
 `daily-cloudcode-pa.googleapis.com` then `cloudcode-pa.googleapis.com`, 3 s per
-host, with the vault's access token and `User-Agent: antigravity` (without it
+host (the second is asked at once when the first fails, or after 800 ms when it
+has not answered: the daily host sometimes takes 3 s; the first answer wins), with the vault's access token and `User-Agent: antigravity` (without it
 loadCodeAssist reports an unsupported client). Both are internal endpoints.
 Bonsai never refreshes the token: one missing or expiring within a minute skips
-the API. When every host fails, `Usage` runs the built-in `/usage` and
-`/credits` commands (no tokens) in a throwaway session (`withProfile`:
-materialize, run, reconcile, clean up); agy refreshes the token there, so the
-next read can use the API again. The API has no credit balance: an API read
-shows the one in `<AccountDir>/credits.json` (written by every `/credits` run)
-and runs `/credits` in the background when it is older than 15 minutes (15
-minutes after a failure) or on an explicit refresh. Tests point `cloudCodeHosts`
-at an `httptest` server. It also starts the plan probe in the
-background when it is due (new email, no plan, or a plan older than 24 h; an
-explicit refresh does not force one): one probe per profile, up to five at once per process, and
-one per profile across processes (`<AccountDir>/probe.lock`; a probe that waits
-12 s for it is skipped). Waiting for a slot or the lock costs the probe nothing.
-The probe runs in the profile's persistent home `<AccountDir>/home` (about 17 MB,
-kept between probes so agy's first-run state survives) from
-`<AccountDir>/home/workspace`, which setup and the first probe add to the vault's
-`provider_settings.trustedWorkspaces`; the token is materialized into the home
-before and reconciled after. `planprobe_unix.go` starts interactive `agy` in a
-140×40 PTY, feeds its output to `internal/core/termscreen`, reads the screen
-first after 1 s, then every 50 ms, and gives agy 7 s to paint
-`<email> (<plan>)`. If agy shows its first-run wizard instead, each page is
-answered once by its text (colour scheme: Enter; consent: Down, Right, Enter to
-reach [Done] with the checkbox left as it is); a page still on screen 2 s later
-fails the probe. Apart from those keys it only writes two Ctrl+C, then ends the
-process group with SIGTERM and SIGKILL. Only a probe that ran agy and found no
-plan backs off 15 minutes. `bonsai agent usage` waits up to 12 s after printing
-for probes and credit reads to finish (`UsageSettler`), then cancels them. Each probe appends to
-`<AccountDir>/plan-probe.log` (0600): the screens, the wizard keys sent and how
-it ended.
-Windows has no probe and the plan stays blank.
+the API. When every host fails, `Usage` runs the built-in `/usage` command (no
+tokens) in a throwaway session (`withProfile`: materialize, run, reconcile,
+clean up); agy refreshes the token there, so the next read can use the API
+again. That fallback has no credits, and the plan is the one stored by the last
+API read, or none. No `agy` is started for the plan or the credits, and nothing
+runs in the background after `Usage` returns. A `loadCodeAssist` that fails
+beside a working quota call leaves the plan and credits out of that read. Tests
+point `cloudCodeHosts` at an `httptest` server.
 
 Models come from `agy models` (cached 10 minutes, 1 minute after a failure).
 Lines that differ only by an effort suffix in both the ID and the label

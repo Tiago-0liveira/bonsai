@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -32,12 +33,16 @@ var usageTestRegistry = func() *agents.Registry {
 // renderUsageTestDashboard fills each result's headline as UsageService does,
 // then renders the dashboard.
 func renderUsageTestDashboard(out *bytes.Buffer, results []agents.AccountUsageResult, now time.Time, color bool) {
+	renderUsageTestDashboardView(out, results, now, color, usageView{})
+}
+
+func renderUsageTestDashboardView(out *bytes.Buffer, results []agents.AccountUsageResult, now time.Time, color bool, view usageView) {
 	for i := range results {
 		if results[i].Usage != nil {
 			results[i].Headline = usageTestRegistry.UsageHeadline(*results[i].Usage)
 		}
 	}
-	renderUsageDashboard(out, results, now, color)
+	renderUsageDashboard(out, results, now, color, view)
 }
 
 // usageTestRow is the dashboard row of one result.
@@ -133,11 +138,32 @@ func TestRenderUsageDashboardIncludesThirdPartyPool(t *testing.T) {
 
 	var out bytes.Buffer
 	renderUsageTestDashboard(&out, []agents.AccountUsageResult{result}, now, false)
+	if got := out.String(); strings.Contains(got, "Claude & GPT Models") || !strings.Contains(got, "Gemini Models") {
+		t.Fatalf("third-party pool shown by default:\n%s", got)
+	}
+
+	out.Reset()
+	renderUsageTestDashboardView(&out, []agents.AccountUsageResult{result}, now, false, usageView{claudeGPT: true})
 	got := out.String()
 	if !strings.Contains(got, "Claude & GPT Models") ||
 		!strings.Contains(got, "5h") ||
 		!strings.Contains(got, "Weekly") {
 		t.Fatalf("third-party pool missing:\n%s", got)
+	}
+}
+
+func TestUsageProvidersAreOrderedClaudeCodexAntigravity(t *testing.T) {
+	rows := []usageDashboardRow{
+		{account: agents.Account{Provider: "antigravity"}},
+		{account: agents.Account{Provider: "zeta"}},
+		{account: agents.Account{Provider: "codex"}},
+		{account: agents.Account{Provider: "claude"}},
+		{account: agents.Account{Provider: "alpha"}},
+	}
+	got := usageProviders(rows)
+	want := []agents.ProviderID{"claude", "codex", "antigravity", "alpha", "zeta"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
 	}
 }
 

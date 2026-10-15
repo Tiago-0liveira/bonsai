@@ -89,36 +89,12 @@ func (m *fileCredentialManager) CaptureSetup(ctx context.Context, account agents
 	if current, err := m.readVault(account); err == nil {
 		candidate.Generation = current.Generation + 1
 	}
-	// The plan probe's workspace is trusted from the start, so agy never asks.
+	// The sign-in workspace is trusted from the start, so agy never asks.
 	if candidate.ProviderSettings, _, err = trustWorkspace(candidate.ProviderSettings, probeWorkspaceDir(m.accounts, account)); err != nil {
 		return err
 	}
 	candidate.UpdatedAt = time.Now().UTC()
 	return m.writeVault(account, candidate)
-}
-
-// ensureTrusted adds dir to the vault's provider_settings.trustedWorkspaces,
-// keeping every other key. A vault that already trusts it is not written. The
-// trust lives in the vault, not in a home's settings.json: Materialize
-// overwrites that file from the vault and Reconcile copies it back.
-func (m *fileCredentialManager) ensureTrusted(ctx context.Context, account agents.Account, dir string) error {
-	lock, err := agents.LockFileContext(ctx, credentialLockPath(m.accounts, account))
-	if err != nil {
-		return err
-	}
-	defer lock.Unlock()
-
-	vault, err := m.readVault(account)
-	if err != nil {
-		return err
-	}
-	settings, changed, err := trustWorkspace(vault.ProviderSettings, dir)
-	if err != nil || !changed {
-		return err
-	}
-	vault.ProviderSettings = settings
-	vault.UpdatedAt = time.Now().UTC()
-	return m.writeVault(account, vault)
 }
 
 // trustWorkspace returns agy settings with dir, and its symlink-resolved path

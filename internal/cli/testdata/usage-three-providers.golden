@@ -5,12 +5,6 @@ Agent Fleet Usage
 │ Next Reset: Codex/main in 48h00m                                                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-◆ Antigravity · 1 account
-  Gemini Models
-  Account  Plan           5h                              Weekly                          Next reset
-  google   Google AI Pro  [█████████░]  90%  3h           [███████░░░]  70%  2d           in 3h · Sep 25 17:00
-  google: Credits 250 left
-
 ◆ Claude Code · 1 account
   Account  Plan    5h                              Weekly                          Next reset             Per model
   work     Max 5x  [█████████░]  90%  3h           [█████░░░░░]  50%  2d           in 3h · Sep 25 17:00   opus 25%
@@ -22,3 +16,9 @@ Agent Fleet Usage
   main     Plus  [███████░░░]  72%  3h           [██████████]  96%  2d           in 3h · Sep 25 17:00   Spark 5h 35%
   main: Credits 12.5 left
   main: 2 rate-limit resets available · next expires in 9d (Oct 4 14:00)
+
+◆ Antigravity · 1 account
+  Gemini Models
+  Account  Plan           5h                              Weekly                          Next reset
+  google   Google AI Pro  [█████████░]  90%  3h           [███████░░░]  70%  2d           in 3h · Sep 25 17:00
+  google: Credits 250 left

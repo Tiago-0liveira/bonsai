@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +17,8 @@ import (
 )
 
 // agy reads its quota from Google's Cloud Code API: loadCodeAssist names the
-// profile's project and retrieveUserQuotaSummary returns the groups and
-// buckets `/usage` prints. Two HTTPS calls are much faster than starting agy,
+// profile's project, its plan (paidTier.name) and its credit balance
+// (paidTier.availableCredits), and retrieveUserQuotaSummary returns the groups and buckets `/usage` prints. Two HTTPS calls are much faster than starting agy,
 // so usage asks them first and falls back to `/usage` when they fail. Both
 // are internal endpoints and can change or disappear without notice.
 //
@@ -36,6 +37,9 @@ const (
 	// cloudCodeTimeout bounds the read from one host, so a host that hangs
 	// leaves time for the next before the fallback starts agy.
 	cloudCodeTimeout = 3 * time.Second
+	// cloudCodeHedge is how long a host may take before the next one is asked
+	// too. The daily host sometimes answers in 3 s; production does not.
+	cloudCodeHedge = 800 * time.Millisecond
 	// tokenMargin: a token that expires sooner than this is not used.
 	tokenMargin = time.Minute
 	// maxCloudCodeBody caps what is read from a response.
@@ -49,8 +53,9 @@ var errNoAccessToken = errors.New("antigravity access token missing or expiring"
 
 var cloudCodeClient = &http.Client{}
 
-// projectCache remembers each profile's Cloud Code project, so a read is one
-// call instead of two. A failed quota read forgets it.
+// projectCache remembers each profile's Cloud Code project, so the quota read
+// starts with loadCodeAssist instead of waiting for it. A failed quota read
+// forgets it.
 type projectCache struct {
 	mu       sync.Mutex
 	projects map[agents.AccountID]string
@@ -101,63 +106,177 @@ func (p *Provider) accessToken(account agents.Account) (string, error) {
 	return token, nil
 }
 
-// cloudCodeUsage reads the quota buckets from the Cloud Code API, trying each
-// host until one answers.
-func (p *Provider) cloudCodeUsage(ctx context.Context, account agents.Account) ([]agents.UsageLimit, error) {
-	token, err := p.accessToken(account)
-	if err != nil {
-		return nil, err
-	}
-	var errs []error
-	for _, host := range cloudCodeHosts {
-		hostCtx, cancel := context.WithTimeout(ctx, cloudCodeTimeout)
-		limits, err := p.quotaSummary(hostCtx, host, token, account.ID)
-		cancel()
-		if err == nil {
-			return limits, nil
-		}
-		errs = append(errs, err)
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	if len(errs) == 0 {
-		return nil, errors.New("antigravity: no Cloud Code host")
-	}
-	return nil, errors.Join(errs...)
+// cloudCodeRead is what one Cloud Code read returns: the quota buckets and what
+// loadCodeAssist named, the plan ("" when it did not answer) and the credit
+// balance (nil then).
+type cloudCodeRead struct {
+	limits  []agents.UsageLimit
+	plan    string
+	credits []agents.UsageCredit
 }
 
-func (p *Provider) quotaSummary(ctx context.Context, host, token string, id agents.AccountID) ([]agents.UsageLimit, error) {
+// cloudCodeUsage reads the quota buckets and the plan from the Cloud Code API.
+// The first host is asked first; the next is asked when it fails or has not
+// answered within cloudCodeHedge, and the first answer wins.
+func (p *Provider) cloudCodeUsage(ctx context.Context, account agents.Account) (cloudCodeRead, error) {
+	token, err := p.accessToken(account)
+	if err != nil {
+		return cloudCodeRead{}, err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type answer struct {
+		read cloudCodeRead
+		err  error
+	}
+	answers := make(chan answer, len(cloudCodeHosts))
+	ask := func(host string) {
+		hostCtx, cancelHost := context.WithTimeout(ctx, cloudCodeTimeout)
+		defer cancelHost()
+		read, err := p.quotaSummary(hostCtx, host, token, account.ID)
+		answers <- answer{read, err}
+	}
+	var errs []error
+	next, pending := 0, 0
+	for {
+		if next < len(cloudCodeHosts) {
+			go ask(cloudCodeHosts[next])
+			next++
+			pending++
+		}
+		hedge := time.NewTimer(cloudCodeHedge)
+		select {
+		case a := <-answers:
+			hedge.Stop()
+			pending--
+			if a.err == nil {
+				return a.read, nil
+			}
+			errs = append(errs, a.err)
+			if ctx.Err() != nil || (next >= len(cloudCodeHosts) && pending == 0) {
+				return cloudCodeRead{}, errors.Join(errs...)
+			}
+			if next >= len(cloudCodeHosts) {
+				// Only a hedged host is left: wait for it.
+				a := <-answers
+				pending--
+				if a.err == nil {
+					return a.read, nil
+				}
+				return cloudCodeRead{}, errors.Join(append(errs, a.err)...)
+			}
+		case <-hedge.C:
+			if next >= len(cloudCodeHosts) {
+				// Nothing left to hedge with: wait for the pending hosts.
+				for pending > 0 {
+					a := <-answers
+					pending--
+					if a.err == nil {
+						return a.read, nil
+					}
+					errs = append(errs, a.err)
+				}
+				return cloudCodeRead{}, errors.Join(errs...)
+			}
+		case <-ctx.Done():
+			hedge.Stop()
+			return cloudCodeRead{}, errors.Join(append(errs, ctx.Err())...)
+		}
+	}
+}
+
+// codeAssist is what loadCodeAssist answers that Bonsai uses.
+type codeAssist struct {
+	project string
+	plan    string
+	credits []agents.UsageCredit
+	err     error
+}
+
+// creditTypeGoogleOneAI is the credit type agy spends: Google One AI credits.
+const creditTypeGoogleOneAI = "GOOGLE_ONE_AI"
+
+// loadCodeAssist names the profile's project, plan and credits. The plan is
+// paidTier's name, or currentTier's when the account has no paid tier. The
+// balance is the sum of paidTier.availableCredits; the API leaves the list out
+// when the account has none, and a balance of 0 is not shown.
+func loadCodeAssist(ctx context.Context, host, token string) codeAssist {
+	body, err := cloudCodeCall(ctx, host, "loadCodeAssist", token, map[string]any{"metadata": map[string]string{"ideType": "ANTIGRAVITY"}})
+	if err != nil {
+		return codeAssist{err: err}
+	}
+	var info struct {
+		Project  string `json:"cloudaicompanionProject"`
+		PaidTier struct {
+			Name             string `json:"name"`
+			AvailableCredits []struct {
+				CreditType   string `json:"creditType"`
+				CreditAmount string `json:"creditAmount"` // int64 as a string
+			} `json:"availableCredits"`
+		} `json:"paidTier"`
+		CurrentTier struct{ Name string } `json:"currentTier"`
+	}
+	if json.Unmarshal(body, &info) != nil || strings.TrimSpace(info.Project) == "" {
+		return codeAssist{err: fmt.Errorf("antigravity loadCodeAssist: no project")}
+	}
+	plan := cleanPlan(info.PaidTier.Name)
+	if plan == "" {
+		plan = cleanPlan(info.CurrentTier.Name)
+	}
+	var balance float64
+	for _, credit := range info.PaidTier.AvailableCredits {
+		if credit.CreditType != creditTypeGoogleOneAI {
+			continue
+		}
+		if amount, err := strconv.ParseInt(strings.TrimSpace(credit.CreditAmount), 10, 64); err == nil && amount > 0 {
+			balance += float64(amount)
+		}
+	}
+	assist := codeAssist{project: strings.TrimSpace(info.Project), plan: plan}
+	if balance > 0 {
+		assist.credits = []agents.UsageCredit{{ID: "antigravity_credits", Label: "Credits", Unit: agents.CreditUnitCredits, Balance: &balance, Enabled: true}}
+	}
+	return assist
+}
+
+// quotaSummary reads the quota and the plan from one host. loadCodeAssist
+// runs beside the quota call when the project is remembered; a failed
+// loadCodeAssist then only leaves the plan out.
+func (p *Provider) quotaSummary(ctx context.Context, host, token string, id agents.AccountID) (cloudCodeRead, error) {
 	project := p.projects.get(id)
+	loaded := make(chan codeAssist, 1)
+	go func() { loaded <- loadCodeAssist(ctx, host, token) }()
+	var assist codeAssist
+	received := false
 	if project == "" {
-		var info struct {
-			Project string `json:"cloudaicompanionProject"`
+		assist, received = <-loaded, true
+		if assist.err != nil {
+			return cloudCodeRead{}, assist.err
 		}
-		body, err := cloudCodeCall(ctx, host, "loadCodeAssist", token, map[string]any{"metadata": map[string]string{"ideType": "ANTIGRAVITY"}})
-		if err != nil {
-			return nil, err
-		}
-		if json.Unmarshal(body, &info) != nil || strings.TrimSpace(info.Project) == "" {
-			return nil, fmt.Errorf("antigravity loadCodeAssist: no project")
-		}
-		project = strings.TrimSpace(info.Project)
+		project = assist.project
 	}
 	body, err := cloudCodeCall(ctx, host, "retrieveUserQuotaSummary", token, map[string]string{"project": project})
 	if err != nil {
 		p.projects.set(id, "")
-		return nil, err
+		return cloudCodeRead{}, err
 	}
 	limits, err := ParseUsage(body)
 	if err != nil {
 		p.projects.set(id, "")
-		return nil, err
+		return cloudCodeRead{}, err
 	}
 	if len(limits) == 0 {
 		p.projects.set(id, "")
-		return nil, fmt.Errorf("antigravity retrieveUserQuotaSummary: no quota buckets")
+		return cloudCodeRead{}, fmt.Errorf("antigravity retrieveUserQuotaSummary: no quota buckets")
+	}
+	if !received {
+		assist = <-loaded
+	}
+	if assist.err == nil {
+		project = assist.project
 	}
 	p.projects.set(id, project)
-	return limits, nil
+	return cloudCodeRead{limits: limits, plan: assist.plan, credits: assist.credits}, nil
 }
 
 // cloudCodeCall POSTs one v1internal method and returns the response body.
