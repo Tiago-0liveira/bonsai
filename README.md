@@ -233,7 +233,7 @@ bonsai agent account set <account> <field>=<value>  # set profile launch default
 bonsai agent account rename <account> <new-name>
 bonsai agent account remove <account>
 bonsai agent run <account> [-- <args…>]             # run the provider CLI as that profile
-bonsai agent usage [<account>] [--refresh] [--claude-gpt]  # plan limits of every profile
+bonsai agent usage [<account>] [--refresh] [--claude-gpt] [--no-progress]  # plan limits of every profile
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install latest release
 bonsai help                     # full usage
@@ -519,7 +519,10 @@ Results are cached for 1 minute. The plan and the profile's credits come from
 the same API read (credits only when above 0), so no `agy` is started for them and listing profiles never
 starts `agy` either; the `/usage` fallback shows neither credits nor a fresh
 plan. The table lists Gemini models only; `--claude-gpt` adds the Claude & GPT
-model pools. Providers are listed Claude, Codex, then Antigravity. The start dialog's models come from `agy models`; a model agy lists once
+model pools. Providers are listed Claude, Codex, then Antigravity. On a terminal, a
+run that takes longer than a third of a second shows one live line per provider on
+stderr, a cell per profile and who is still being waited on; `--no-progress` or
+`BONSAI_PROGRESS=0` turns it off, and piped output is unchanged. The start dialog's models come from `agy models`; a model agy lists once
 per effort (`gemini-3.8-flash-high`, `-medium`, `-low`) is one model with an effort choice,
 passed to agy as the full ID. A model listed once has no effort choice.
 
