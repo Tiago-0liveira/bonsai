@@ -66,7 +66,7 @@ func TestUsageReadsRateLimits(t *testing.T) {
 	if after, _ := os.ReadFile(auth); string(after) != string(before) {
 		t.Fatal("auth.json changed")
 	}
-	if !e.provider.Capabilities().Usage || e.provider.UsageTTL() != 5*time.Minute {
+	if !e.provider.Capabilities().Usage || e.provider.UsageTTL() != time.Minute {
 		t.Fatal("usage capability and 5 minute policy expected")
 	}
 }

@@ -30,7 +30,7 @@ import (
 const (
 	usageBeta    = "oauth-2025-04-20"
 	usageTimeout = 10 * time.Second
-	usageTTL     = 5 * time.Minute
+	usageTTL     = time.Minute
 	// maxUsageBody caps what is read from the endpoint.
 	maxUsageBody = 1 << 20
 )
@@ -39,8 +39,8 @@ const (
 // it at a local server so no test ever reaches the network.
 var UsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
-// UsageTTL tells the usage service how long a snapshot stays fresh; the
-// endpoint is rate limited and the numbers move slowly.
+// UsageTTL tells the usage service how long a snapshot stays fresh. The
+// endpoint is rate limited; usageFailureTTL keeps a 429 from being retried at once.
 func (p *Provider) UsageTTL() time.Duration { return usageTTL }
 
 func unsupported(reason string) error {

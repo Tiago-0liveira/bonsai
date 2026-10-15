@@ -478,7 +478,7 @@ func TestUsageUnknownResponseThroughProvider(t *testing.T) {
 
 func TestUsageCapabilityAndPolicy(t *testing.T) {
 	e := newTestEnv(t)
-	if !e.provider.Capabilities().Usage || e.provider.UsageTTL() != 5*time.Minute {
+	if !e.provider.Capabilities().Usage || e.provider.UsageTTL() != time.Minute {
 		t.Fatalf("usage=%v ttl=%v", e.provider.Capabilities().Usage, e.provider.UsageTTL())
 	}
 	var _ agents.UsagePolicy = e.provider

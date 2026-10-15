@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	usageTTL = 5 * time.Minute
+	usageTTL = time.Minute
 	// usageFailureTTL is how long a failed read is remembered so repeated
 	// dashboard runs do not spawn Codex for a login that is rate limited or down.
 	usageFailureTTL = time.Minute

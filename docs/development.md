@@ -334,7 +334,7 @@ without any request (setup tokens always get 403). Redirects are not followed, t
 endpoint must be https or loopback, and HTTP failures are remembered for a minute. It never refreshes a login, never puts the
 token or the response body in an error, and accepts both the flat-bucket and the
 `limits[]` response shapes (`testdata/usage-response*.json`). The provider
-implements `UsagePolicy` (5 minutes), which `UsageService` prefers over its own
+implements `UsagePolicy` (1 minute), which `UsageService` prefers over its own
 TTL. Tests point `claude.UsageEndpoint` or the provider's `usageEndpoint` at an
 `httptest` server; nothing reaches the network.
 
@@ -389,7 +389,7 @@ never a server message or body, and Bonsai never writes `auth.json`.
   of a launch is checked against the cached list of its model (or the default
   model) and against every shipped level when the list is not cached; validation
   never starts Codex.
-- `usage.go` (`Usage`, `UsagePolicy` 5 minutes): `account/rateLimits/read`. A
+- `usage.go` (`Usage`, `UsagePolicy` 1 minute): `account/rateLimits/read`. A
   window is named by its length: 300 minutes `five_hour`, 10080 `weekly`, any
   other `window_<n>m`; remaining is `1 - usedPercent/100`. Limits of other metered
   features (`rateLimitsByLimitId`) get their own group and ids prefixed by the

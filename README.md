@@ -427,7 +427,7 @@ bonsai agent account remove work                # logs the profile out, deletes 
   whose login expired shows an error until a session refreshes it. Token
   profiles are shown as `n/a` because long-lived tokens cannot read usage, and so
   are macOS profiles (the login lives in the Keychain). Results are cached for
-  5 minutes; `--refresh` bypasses the cache.
+  1 minute; `--refresh` bypasses the cache.
 - Requires Claude Code 2.1.295 or newer.
 
 ### Codex profiles
@@ -471,7 +471,7 @@ bonsai agent account remove work                     # logs the profile out, del
   balance and the granted rate-limit resets with their expiry when Codex
   reports them; Bonsai never redeems a reset), read from `codex app-server`, Codex's
   published protocol; Codex does any token refresh itself. API key profiles
-  have no plan limits and are shown as `n/a`. Results are cached for 5 minutes;
+  have no plan limits and are shown as `n/a`. Results are cached for 1 minute;
   `--refresh` bypasses the cache. The start dialog's model suggestions come from
   the same place, with the list bundled in Codex as the fallback.
 - Requires Codex CLI 0.162.1 or newer.
