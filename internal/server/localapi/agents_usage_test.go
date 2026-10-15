@@ -33,6 +33,7 @@ type meterTestProvider struct {
 	mu        sync.Mutex
 	remaining map[agents.AccountID]float64
 	fail      map[agents.AccountID]error
+	panics    map[agents.AccountID]bool
 	reads     []string
 }
 
@@ -45,6 +46,9 @@ func (p *meterTestProvider) Usage(_ context.Context, account agents.Account, opt
 	p.reads = append(p.reads, fmt.Sprintf("%s:%v", account.Name, opts.Refresh))
 	if err := p.fail[account.ID]; err != nil {
 		return agents.UsageSnapshot{}, err
+	}
+	if p.panics[account.ID] {
+		panic("meter exploded")
 	}
 	five, week := p.remaining[account.ID], 0.9
 	reset := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
@@ -263,6 +267,37 @@ func TestAgentUsageErrors(t *testing.T) {
 		if w := agentAPIRequest(t, s, "POST", "/api/agents/usage/refresh", "", `{"account_id":"`+id+`"}`); w.Code != 404 {
 			t.Errorf("refresh %s: %d %s", name, w.Code, w.Body.String())
 		}
+	}
+}
+
+// A provider panic fails only its profile, as a normal per-profile error.
+func TestAgentUsageProviderPanic(t *testing.T) {
+	s, meter, alpha, beta := usageTestServer(t)
+	meter.panics = map[agents.AccountID]bool{alpha: true}
+	w := agentAPIRequest(t, s, "GET", "/api/agents/usage", "", "")
+	items := decodeUsage(t, w.Body.Bytes())
+	if w.Code != 200 || items[alpha].Error == nil || items[alpha].Error.Code != "unavailable" || items[beta].Error != nil || items[beta].Usage == nil {
+		t.Fatalf("all: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "exploded") {
+		t.Fatalf("panic text leaked: %s", w.Body.String())
+	}
+	w = agentAPIRequest(t, s, "POST", "/api/agents/usage/refresh", "", `{"account_id":"`+string(alpha)+`"}`)
+	if items := decodeUsage(t, w.Body.Bytes()); w.Code != 200 || items[alpha].Error == nil || items[alpha].Error.Code != "unavailable" {
+		t.Fatalf("one: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAgentUsageProviderPanicSingleAccountGet(t *testing.T) {
+	s, meter, alpha, _ := usageTestServer(t)
+	meter.panics = map[agents.AccountID]bool{alpha: true}
+	w := agentAPIRequest(t, s, "GET", "/api/agents/usage?account_id="+string(alpha), "", "")
+	items := decodeUsage(t, w.Body.Bytes())
+	if w.Code != 200 || len(items) != 1 || items[alpha].Error == nil || items[alpha].Error.Code != "unavailable" || items[alpha].Usage != nil {
+		t.Fatalf("get: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "exploded") || strings.Contains(w.Body.String(), "goroutine ") {
+		t.Fatalf("panic text leaked: %s", w.Body.String())
 	}
 }
 
