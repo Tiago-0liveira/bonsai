@@ -1,11 +1,13 @@
 package antigravity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -262,5 +264,115 @@ func TestFailedProbeLeavesThePlanBlankAndBacksOff(t *testing.T) {
 	}
 	if info := e.provider.DescribeAccount(t.Context(), e.account); info.Plan != "" || len(info.Warnings) != 0 {
 		t.Fatalf("info = %+v", info)
+	}
+}
+
+// vaultSettings reads the vault's provider settings as a map.
+func vaultSettings(t *testing.T, e *accountEnv) map[string]json.RawMessage {
+	t.Helper()
+	vault, err := (&fileCredentialManager{accounts: e.accounts}).readVault(e.account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]json.RawMessage{}
+	if len(vault.ProviderSettings) > 0 {
+		if err := json.Unmarshal(vault.ProviderSettings, &settings); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return settings
+}
+
+func trustedIn(t *testing.T, settings map[string]json.RawMessage) []string {
+	t.Helper()
+	var trusted []string
+	if raw, ok := settings["trustedWorkspaces"]; ok {
+		if err := json.Unmarshal(raw, &trusted); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return trusted
+}
+
+func TestEnsureProbeHomeTrustsTheWorkspaceOnce(t *testing.T) {
+	for name, settings := range map[string]string{
+		"no settings":       "",
+		"existing settings": `{"trustedWorkspaces":["/home/me/code"],"theme":"dark"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newAccountEnv(t)
+			e.signIn(t, "me@example.com")
+			manager := &fileCredentialManager{accounts: e.accounts}
+			if settings != "" {
+				vault, err := manager.readVault(e.account)
+				if err != nil {
+					t.Fatal(err)
+				}
+				vault.ProviderSettings = json.RawMessage(settings)
+				if err := manager.writeVault(e.account, vault); err != nil {
+					t.Fatal(err)
+				}
+			}
+			home, workspace, err := e.provider.ensureProbeHome(t.Context(), e.account)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := filepath.Join(e.accounts.AccountDir(e.account.ID), "home"); home != want || workspace != filepath.Join(want, "workspace") {
+				t.Fatalf("home = %q, workspace = %q", home, workspace)
+			}
+			if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
+				t.Fatalf("workspace: %v, %v", info, err)
+			}
+			got := vaultSettings(t, e)
+			trusted := trustedIn(t, got)
+			if !slices.Contains(trusted, workspace) {
+				t.Fatalf("trustedWorkspaces = %v, want %q", trusted, workspace)
+			}
+			if settings != "" && (!slices.Contains(trusted, "/home/me/code") || string(got["theme"]) != `"dark"`) {
+				t.Fatalf("other settings lost: %s", got)
+			}
+			before, err := os.ReadFile(vaultPath(e.accounts, e.account))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := e.provider.ensureProbeHome(t.Context(), e.account); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := os.ReadFile(vaultPath(e.accounts, e.account))
+			if !bytes.Equal(before, after) {
+				t.Fatal("a second call rewrote the vault")
+			}
+		})
+	}
+}
+
+func TestTrustWorkspaceAddsTheResolvedPath(t *testing.T) {
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	resolved, _ := filepath.EvalSymlinks(real)
+	out, changed, err := trustWorkspace(json.RawMessage(`{"trustedWorkspaces":null}`), link)
+	if err != nil || !changed {
+		t.Fatalf("changed = %v, err = %v", changed, err)
+	}
+	var settings struct {
+		TrustedWorkspaces []string `json:"trustedWorkspaces"`
+	}
+	if err := json.Unmarshal(out, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(settings.TrustedWorkspaces, []string{link, resolved}) {
+		t.Fatalf("trustedWorkspaces = %v", settings.TrustedWorkspaces)
+	}
+	if _, changed, err := trustWorkspace(out, link); err != nil || changed {
+		t.Fatalf("second add: changed = %v, err = %v", changed, err)
+	}
+	if _, _, err := trustWorkspace(json.RawMessage(`{"trustedWorkspaces":"x"}`), link); err == nil {
+		t.Fatal("malformed trustedWorkspaces accepted")
 	}
 }

@@ -161,6 +161,20 @@ func (p *Provider) probeAccountPlan(ctx context.Context, account agents.Account,
 	return plan, err
 }
 
+// ensureProbeHome creates the profile's probe home and its workspace and
+// trusts the workspace in the vault. Profiles set up before the probe had a
+// home get both on their first probe; afterwards nothing is written.
+func (p *Provider) ensureProbeHome(ctx context.Context, account agents.Account) (home, workspace string, err error) {
+	home, workspace = probeHomeDir(p.accounts, account), probeWorkspaceDir(p.accounts, account)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		return "", "", err
+	}
+	if err := (&fileCredentialManager{accounts: p.accounts}).ensureTrusted(ctx, account, workspace); err != nil {
+		return "", "", err
+	}
+	return home, workspace, nil
+}
+
 // waitPlanProbes waits for the background probes; tests use it.
 func (p *Provider) waitPlanProbes() { p.planWG.Wait() }
 

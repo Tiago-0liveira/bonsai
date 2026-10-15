@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -88,8 +89,75 @@ func (m *fileCredentialManager) CaptureSetup(ctx context.Context, account agents
 	if current, err := m.readVault(account); err == nil {
 		candidate.Generation = current.Generation + 1
 	}
+	// The plan probe's workspace is trusted from the start, so agy never asks.
+	if candidate.ProviderSettings, _, err = trustWorkspace(candidate.ProviderSettings, probeWorkspaceDir(m.accounts, account)); err != nil {
+		return err
+	}
 	candidate.UpdatedAt = time.Now().UTC()
 	return m.writeVault(account, candidate)
+}
+
+// ensureTrusted adds dir to the vault's provider_settings.trustedWorkspaces,
+// keeping every other key. A vault that already trusts it is not written. The
+// trust lives in the vault, not in a home's settings.json: Materialize
+// overwrites that file from the vault and Reconcile copies it back.
+func (m *fileCredentialManager) ensureTrusted(ctx context.Context, account agents.Account, dir string) error {
+	lock, err := agents.LockFileContext(ctx, credentialLockPath(m.accounts, account))
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+
+	vault, err := m.readVault(account)
+	if err != nil {
+		return err
+	}
+	settings, changed, err := trustWorkspace(vault.ProviderSettings, dir)
+	if err != nil || !changed {
+		return err
+	}
+	vault.ProviderSettings = settings
+	vault.UpdatedAt = time.Now().UTC()
+	return m.writeVault(account, vault)
+}
+
+// trustWorkspace returns agy settings with dir, and its symlink-resolved path
+// when that differs (agy may compare either), in "trustedWorkspaces". Every
+// other key and trusted folder is kept; changed is false when nothing was
+// missing.
+func trustWorkspace(settings json.RawMessage, dir string) (out json.RawMessage, changed bool, err error) {
+	fields := map[string]json.RawMessage{}
+	if len(settings) > 0 && string(settings) != "null" {
+		if err := json.Unmarshal(settings, &fields); err != nil {
+			return settings, false, fmt.Errorf("read antigravity provider settings: %w", err)
+		}
+	}
+	var trusted []string
+	if raw, ok := fields["trustedWorkspaces"]; ok && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &trusted); err != nil {
+			return settings, false, fmt.Errorf("read antigravity trusted workspaces: %w", err)
+		}
+	}
+	want := []string{dir}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != dir {
+		want = append(want, resolved)
+	}
+	for _, path := range want {
+		if !slices.Contains(trusted, path) {
+			trusted = append(trusted, path)
+			changed = true
+		}
+	}
+	if !changed {
+		return settings, false, nil
+	}
+	if fields["trustedWorkspaces"], err = json.Marshal(trusted); err != nil {
+		return settings, false, err
+	}
+	if out, err = json.Marshal(fields); err != nil {
+		return settings, false, err
+	}
+	return out, true, nil
 }
 
 func (m *fileCredentialManager) Reconcile(ctx context.Context, account agents.Account, session agents.Session) error {
