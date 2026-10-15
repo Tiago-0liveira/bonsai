@@ -93,28 +93,12 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 	if !force && !needsProbe(before, email, p.clock()) {
 		return
 	}
-	p.planMu.Lock()
-	if p.planFlights == nil {
-		p.planFlights = map[agents.AccountID]bool{}
-	}
-	if p.planFlights[account.ID] {
-		p.planMu.Unlock()
+	base, done, ok := p.startFlight(flightKey{"plan", account.ID})
+	if !ok {
 		return
 	}
-	p.planFlights[account.ID] = true
-	if p.planCtx == nil {
-		p.planCtx, p.planCancel = context.WithCancel(context.Background())
-	}
-	base := p.planCtx
-	p.planWG.Add(1)
-	p.planMu.Unlock()
 	go func() {
-		defer func() {
-			p.planMu.Lock()
-			delete(p.planFlights, account.ID)
-			p.planMu.Unlock()
-			p.planWG.Done()
-		}()
+		defer done()
 		logf := openProbeLog(planLogPath(p.accounts, account))
 		defer logf.Close()
 		ctx := withProbeLog(base, logf)
@@ -203,13 +187,44 @@ func (p *Provider) ensureProbeHome(ctx context.Context, account agents.Account) 
 	return home, workspace, nil
 }
 
-// waitPlanProbes waits for the background probes; tests use it.
+// flightKey names one kind of background work for one profile.
+type flightKey struct {
+	kind    string
+	account agents.AccountID
+}
+
+// startFlight claims key for background work and returns its context and the
+// func that releases the claim; ok is false while the same work already runs.
+// SettleUsage waits for every flight and cancels them when its ctx ends.
+func (p *Provider) startFlight(key flightKey) (ctx context.Context, done func(), ok bool) {
+	p.planMu.Lock()
+	defer p.planMu.Unlock()
+	if p.planFlights[key] {
+		return nil, nil, false
+	}
+	if p.planFlights == nil {
+		p.planFlights = map[flightKey]bool{}
+	}
+	p.planFlights[key] = true
+	if p.planCtx == nil {
+		p.planCtx, p.planCancel = context.WithCancel(context.Background())
+	}
+	p.planWG.Add(1)
+	return p.planCtx, func() {
+		p.planMu.Lock()
+		delete(p.planFlights, key)
+		p.planMu.Unlock()
+		p.planWG.Done()
+	}, true
+}
+
+// waitPlanProbes waits for the background probes and credit reads; tests use it.
 func (p *Provider) waitPlanProbes() { p.planWG.Wait() }
 
-// SettleUsage waits for the plan probes Usage started, so a CLI run that
-// exits right after its usage does not cut one off. When ctx ends first, the
-// probes are cancelled (agy is stopped, the token reconciled) and waited for;
-// a cancelled probe records no failure.
+// SettleUsage waits for the plan probes and credit reads Usage started, so a
+// CLI run that exits right after its usage does not cut one off. When ctx ends
+// first, they are cancelled (agy is stopped, the token reconciled) and waited
+// for; a cancelled one records no failure.
 func (p *Provider) SettleUsage(ctx context.Context) {
 	done := make(chan struct{})
 	go func() {

@@ -511,8 +511,12 @@ bonsai agent account add antigravity personal
 ```
 
 The profile list shows its email, whether its stored login is complete and,
-once read, its plan ("Google AI Pro"). `bonsai agent usage` also shows its
-credits (`/credits`). agy only paints the plan on its interactive screen, so
+once read, its plan ("Google AI Pro"). `bonsai agent usage` reads its quota
+from the Cloud Code API agy itself uses (undocumented; it can change without
+notice) with the stored login, and falls back to running agy's `/usage` when
+that fails or the login is about to expire; Bonsai never refreshes the login.
+Results are cached for 1 minute. It also shows the profile's credits
+(`/credits`, read again in the background every 15 minutes). agy only paints the plan on its interactive screen, so
 Bonsai reads it now and then in a pseudo-terminal, sending nothing but Ctrl+C to
 quit; this never runs on Windows, and listing profiles never starts `agy`. The
 start dialog's models come from `agy models`; a model agy lists once per effort

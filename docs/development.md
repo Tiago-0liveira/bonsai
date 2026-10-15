@@ -544,9 +544,24 @@ running session's older tokens never overwrite it when that session ends.
 Account details never start `agy` on the profile-list path: `DescribeAccount`
 reads the email from the vault (a fallback identity counts as none),
 `auth_status` is `logged_in` when the stored credentials are complete, and the
-plan comes from `<AccountDir>/plan.json`. `Usage` runs the built-in `/usage` and
+plan comes from `<AccountDir>/plan.json`. `Usage` first reads the quota from
+the Cloud Code API agy itself uses (`cloudcode.go`): `POST
+/v1internal:loadCodeAssist` (`{"metadata":{"ideType":"ANTIGRAVITY"}}`, answers
+`cloudaicompanionProject`, remembered per profile in memory) then `POST
+/v1internal:retrieveUserQuotaSummary` (`{"project": ...}`, the same groups and
+buckets as `/usage`, parsed by `ParseUsage`), on
+`daily-cloudcode-pa.googleapis.com` then `cloudcode-pa.googleapis.com`, 3 s per
+host, with the vault's access token and `User-Agent: antigravity` (without it
+loadCodeAssist reports an unsupported client). Both are internal endpoints.
+Bonsai never refreshes the token: one missing or expiring within a minute skips
+the API. When every host fails, `Usage` runs the built-in `/usage` and
 `/credits` commands (no tokens) in a throwaway session (`withProfile`:
-materialize, run, reconcile, clean up). It also starts the plan probe in the
+materialize, run, reconcile, clean up); agy refreshes the token there, so the
+next read can use the API again. The API has no credit balance: an API read
+shows the one in `<AccountDir>/credits.json` (written by every `/credits` run)
+and runs `/credits` in the background when it is older than 15 minutes (15
+minutes after a failure) or on an explicit refresh. Tests point `cloudCodeHosts`
+at an `httptest` server. It also starts the plan probe in the
 background when it is due (new email, no plan, or a plan older than 24 h) or on
 an explicit refresh: one probe per profile, up to five at once per process, and
 one per profile across processes (`<AccountDir>/probe.lock`; a probe that waits
@@ -564,7 +579,7 @@ reach [Done] with the checkbox left as it is); a page still on screen 2 s later
 fails the probe. Apart from those keys it only writes two Ctrl+C, then ends the
 process group with SIGTERM and SIGKILL. Only a probe that ran agy and found no
 plan backs off 15 minutes. `bonsai agent usage` waits up to 12 s after printing
-for probes to finish (`UsageSettler`), then cancels them. Each probe appends to
+for probes and credit reads to finish (`UsageSettler`), then cancels them. Each probe appends to
 `<AccountDir>/plan-probe.log` (0600): the screens, the wizard keys sent and how
 it ended.
 Windows has no probe and the plan stays blank.

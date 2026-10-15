@@ -101,11 +101,14 @@ type accountEnv struct {
 	accounts *agents.FileAccountStore
 	account  agents.Account
 	runs     atomic.Int32
-	probes   atomic.Int32
-	mu       sync.Mutex
-	plan     string
-	probeErr error
-	gate     chan struct{} // when set, a probe waits for it
+	// usageCmds and creditCmds count the /usage and /credits runs in runs.
+	usageCmds  atomic.Int32
+	creditCmds atomic.Int32
+	probes     atomic.Int32
+	mu         sync.Mutex
+	plan       string
+	probeErr   error
+	gate       chan struct{} // when set, a probe waits for it
 }
 
 func newAccountEnv(t *testing.T) *accountEnv {
@@ -118,6 +121,8 @@ func newAccountEnv(t *testing.T) *accountEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// No test reaches the Cloud Code API unless it serves one.
+	useCloudCodeHosts(t)
 	e := &accountEnv{accounts: accounts, plan: "Google AI Pro"}
 	e.account = agents.Account{ID: "acct_agy", Provider: ProviderID, Name: "personal", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := accounts.Create(e.account); err != nil {
@@ -129,8 +134,10 @@ func newAccountEnv(t *testing.T) *accountEnv {
 		e.runs.Add(1)
 		switch args[2] {
 		case "/usage":
+			e.usageCmds.Add(1)
 			return os.ReadFile(filepath.Join("testdata", "usage.json"))
 		case "/credits":
+			e.creditCmds.Add(1)
 			return []byte(`{"remaining_credits":250,"upgrade_uri":"https://example.com"}`), nil
 		}
 		return nil, errors.New("unexpected command")
