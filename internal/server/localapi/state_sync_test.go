@@ -497,3 +497,60 @@ func TestStateSyncDeduplicatesSemanticProjectUpdates(t *testing.T) {
 	default:
 	}
 }
+
+// staleDuringReadGitHub changes the local identity while the repository is
+// being read, the way a local refresh that finishes mid-read does.
+type staleDuringReadGitHub struct {
+	*syncTestGitHub
+	onRepository func()
+}
+
+func (g *staleDuringReadGitHub) Repository(ctx context.Context, repo string) (githubdomain.RemoteRepository, error) {
+	g.onRepository()
+	return g.syncTestGitHub.Repository(ctx, repo)
+}
+
+func TestProviderRefreshStopsBeforeChecksWhenLocalStateMoved(t *testing.T) {
+	root := t.TempDir()
+	checksRelease := make(chan struct{})
+	defer close(checksRelease)
+	projectID := "project-v1-stale-read"
+	var syncer *stateSync
+	var project projectServices
+	seed := func(head string) {
+		syncer.commitProject(project, "seed", func(snapshot *browserSnapshot) {
+			snapshot.Local = &domain.RepositoryState{
+				ID:      projectID,
+				Remotes: []domain.RemoteIdentity{{Name: "origin", FullName: "acme/repo"}},
+				Worktrees: []domain.Worktree{{
+					ID: "wt", RepositoryID: projectID, Path: root, Branch: "main", HeadSHA: head, Main: true,
+				}},
+			}
+		})
+	}
+	provider := &staleDuringReadGitHub{syncTestGitHub: &syncTestGitHub{checksBlock: checksRelease}, onRepository: func() { seed("moved-head") }}
+	project = projectServices{
+		info:   ProjectInfo{ID: projectID, Path: root, Name: "repo", FullName: "repo", Available: true},
+		daemon: &syncTestDaemon{root: root}, github: provider,
+	}
+	syncer = newStateSync(&syncTestRegistry{entries: map[string]projectServices{projectID: project}}, newEventHub())
+	syncer.ReconcileCatalog()
+	seed("first-head")
+
+	done := make(chan struct{})
+	go func() {
+		syncer.refreshProvider(projectID, false)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stale provider job kept waiting for checks")
+	}
+	syncer.mu.Lock()
+	pending := syncer.jobLocked(projectID).providerRunning || syncer.jobLocked(projectID).providerPending
+	syncer.mu.Unlock()
+	if !pending {
+		t.Fatal("no provider job queued after the stale read")
+	}
+}
