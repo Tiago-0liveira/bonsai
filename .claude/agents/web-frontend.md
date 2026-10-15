@@ -15,7 +15,7 @@ Rules:
 - Persist only approved preferences; never tokens, terminal output or env values. No external origins or cloud fallbacks.
 - API clients mirror Go JSON in `internal/server/localapi`; if the backend contract is missing, report it as OPEN instead of inventing it.
 - Add/extend vitest tests beside the source. Use Playwright only for browser-level behavior; run only the relevant spec.
-- New dependency or new eager import: `pnpm --dir web build` then `pnpm --dir web bundle:check`. Never raise a budget without a rationale in `web/bundle-budget.json` and `docs/performance.md`; report it as OPEN for the user.
+- New dependency or new eager import: `pnpm --dir web build` then `pnpm --dir web bundle:check`. Never raise a budget without a rationale in `web/bundle-budget.json`; report it as OPEN for the user.
 - Keep fixtures' dates in the future relative to now.
 - Do not commit.
 

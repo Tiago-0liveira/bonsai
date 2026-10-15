@@ -27,8 +27,7 @@ Compared with the earlier plan (written on the unmerged Claude branch):
   no rebase prerequisite any more.
 - **Agent code itself barely moved** since #54 (only `BonsaiNode.tsx`, canvas agent shelves
   in `buildCanvasGraph.ts`, persistence tests). All line references below are on `56c64b0`.
-- **Bundle budgets are enforced** (`web/bundle-budget.json`, `pnpm bundle:check`, see
-  `docs/performance.md`). `ClaudeLogo` is already its own chunk in the application static
+- **Bundle budgets are enforced** (`web/bundle-budget.json`, `pnpm bundle:check`). `ClaudeLogo` is already its own chunk in the application static
   closure and in first-screen JS. New logo bytes count against the first-screen ceiling
   (pre-P7 ceiling 887 385 raw vs. current baseline 812 388 raw ⇒ ~75 KB headroom). Logos
   must be small, filter-free inline paths; budget changes need a written rationale.
@@ -36,7 +35,7 @@ Compared with the earlier plan (written on the unmerged Claude branch):
   overlays are lazy. `ProviderBadge` is used by first-screen surfaces (AppShell, branches,
   canvas), so the logo module is on the first screen; dialog-only code (launch-field
   rendering, presets copy) must stay inside the lazy dialog chunk.
-- **Warm start** persists no agent data (`docs/performance.md`), so nothing to migrate there.
+- **Warm start** persists no agent data (`docs/architecture.md`), so nothing to migrate there.
 - The **marketing/landing page is gone**; no logo work there.
 - Old plan docs were removed from `docs/`; this plan is delivered as a file, not committed.
 - **Port 7001**: the fixture-server Playwright specs (`agent-terminal-fullstack`,
@@ -203,7 +202,7 @@ script automates the non-interactive steps.
      provider mark per option; otherwise skip (one provider per list anyway).
 5. Budget: `pnpm build && pnpm bundle:check`. Expected growth < 3 KB raw. If a limit
    trips, keep `ProviderLogo` as its own chunk like `ClaudeLogo` and add the rationale to
-   `bundle-budget.json` + `docs/performance.md` (never silently raise).
+   `web/bundle-budget.json` (never silently raise).
 
 **Tests**
 
@@ -481,7 +480,8 @@ licensed and attributed. Fixes go into the commit they belong to (no fixups), th
 > You are implementing **Phase N** of the Codex provider plan (attached). Base:
 > `feat/codex` (created from `main` @ `56c64b0`). Read the plan fully, then
 > `docs/development.md` ("Agent provider contract", "Claude provider"),
-> `docs/performance.md` (budgets, lazy boundaries) and the files in §3 for your phase.
+> `web/AGENTS.md` (lazy boundaries), `web/bundle-budget.json` (budgets) and the files
+> in §3 for your phase.
 > Do only Phase N's changes and write every listed test; tests never need a real Codex,
 > Claude or Antigravity login or the network. Keep Antigravity and Claude behaviour
 > byte-identical. Finish with `go test -race ./...` and, if web changed,

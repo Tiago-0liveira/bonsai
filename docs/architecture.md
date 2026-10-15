@@ -25,7 +25,6 @@ Disk warm-start metadata is an explicitly sanitized cache. It creates sequence
 0 in a new backend epoch and stays stale until live validation. Runtime process
 and agent authority is always read afresh. Browser persistence contains approved
 preferences, never credentials, snapshots, terminal output or environment values.
-See [performance.md](performance.md).
 
 Agent sessions run in one detached holder process per session
 (`bonsai __agent-host`), not inside the API: the holder owns the PTY, terminal

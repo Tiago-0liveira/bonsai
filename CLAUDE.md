@@ -6,7 +6,7 @@
 
 - Main thread decides and edits. Delegate broad searches, test/lint runs and diff review to cheap subagents in `.claude/agents/` and use only their compressed result.
 - Do not run `go test ./...` or `pnpm test` inline when output may be long: delegate to `test-runner` (returns failures only).
-- Do not read generated or huge files unless the task needs them: `web/pnpm-lock.yaml`, `go.sum`, `docs/evidence/**`, `web/bundle-budget.json` (only when changing budgets), `*.golden`, `web/dist*`.
+- Do not read generated or huge files unless the task needs them: `web/pnpm-lock.yaml`, `go.sum`, `web/bundle-budget.json` (only when changing budgets), `*.golden`, `web/dist*`.
 - Search with Grep/Glob first, then Read with `offset`/`limit`. Prefer `code-locator` over reading several files to find one symbol.
 - Do not re-run Playwright e2e unless browser behavior or `web/e2e` changed. Run one spec: `pnpm --dir web exec playwright test e2e/<name>.spec.ts`.
 - Nested guides (`web/AGENTS.md`, `internal/AGENTS.md`, `internal/providers/AGENTS.md`) load when you work there. Do not read them manually from elsewhere.

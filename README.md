@@ -1,4 +1,4 @@
-<div align="center">
+<div align="">
 
 ```
           .&&&&&&&&&&.
@@ -161,7 +161,6 @@ variables are listed in [docs/tui-cli.md](docs/tui-cli.md#hook-and-alias-variabl
 | [docs/architecture.md](docs/architecture.md) | How the local web stack fits together |
 | [docs/git-backend.md](docs/git-backend.md) | Local API security model, webhook receiver, Git backend |
 | [docs/development.md](docs/development.md) | Contributor stack, ports, provider contract, validation |
-| [docs/performance.md](docs/performance.md) | Warm start, caching and bundle budgets |
 | [docs/releasing.md](docs/releasing.md) | CI, release builds and validation |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing checklist |
 

@@ -16,7 +16,7 @@ Module `github.com/Tiago-0liveira/bonsai`, Go per `go.mod` (1.26). Node 22.12.0,
 - `internal/server/localapi`: loopback HTTP/WS API, projections, warm start, live hooks. `webhooks`: loopback webhook receiver. `webui`: serves embedded UI. `runtime`: thin `RunAPI` wrapper over localapi.
 - `internal/websetup`, `internal/webtunnel`: `bonsai web` setup checks/plan and tunnel presets (cloudflared, ngrok, ...). `internal/livehooks`: repo webhook registration.
 - `web/`: React/Vite app. `web/embed.go` (tag `embedui`) embeds `web/dist`; `embed_stub.go` is the untagged placeholder.
-- `docs/`: architecture, development, git-backend, performance, releasing, web (+ `docs/evidence/**`, generated, do not read).
+- `docs/`: architecture, development, git-backend, releasing, web.
 - Area guides load on demand: `web/AGENTS.md`, `internal/AGENTS.md`.
 
 ## Invariants (do not break)
@@ -27,7 +27,7 @@ Module `github.com/Tiago-0liveira/bonsai`, Go per `go.mod` (1.26). Node 22.12.0,
 - State ordering: per-project epoch/sequence. Stale reads and late events must never overwrite newer state. Provider failure keeps last good data as stale; only a successful empty result clears a list.
 - Persisted warm-start/browser data is sanitized: no tokens, credentials, process commands, terminal output, env values.
 - Agents: profiles run with isolated per-account config dirs (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`); inherited provider env vars are scrubbed; `HOME` is not overridden. Never write the user's `~/.claude`, `~/.claude.json` or `~/.codex`: read-only seeding source only. Never refresh a provider login or token (read stored tokens only; the provider CLI refreshes). Secrets are never logged or echoed. Providers do no direct stdio in setup: use `SetupIO`.
-- Web: keep lazy loading and chunk-failure recovery (explicit reload, no loop). Production build has no test hooks (`e2e` mode only) and no cloud fallbacks. Bundle budgets in `web/bundle-budget.json` are enforced against historical revisions: raising one needs a written rationale in that file and `docs/performance.md`.
+- Web: keep lazy loading and chunk-failure recovery (explicit reload, no loop). Production build has no test hooks (`e2e` mode only) and no cloud fallbacks. Bundle budgets in `web/bundle-budget.json` are enforced against historical revisions: raising one needs a written rationale in that file.
 - Plain `go build ./...` and `go test ./...` must not need Node.
 
 ## Commands (run from repo root)
@@ -62,4 +62,4 @@ Dev stack: `bonsai __serve-dev-stack` (hidden; API 7001, webhook 7002, Vite 7003
 
 ## Docs
 
-`CONTRIBUTING.md` (checks), `docs/architecture.md`, `docs/git-backend.md` (security boundary), `docs/development.md`, `docs/web.md` (user guide), `docs/agents.md` (agent profiles), `docs/tui-cli.md` (TUI/CLI), `docs/performance.md` (budgets), `docs/releasing.md`, `web/README.md`.
+`CONTRIBUTING.md` (checks), `docs/architecture.md`, `docs/git-backend.md` (security boundary), `docs/development.md`, `docs/web.md` (user guide), `docs/agents.md` (agent profiles), `docs/tui-cli.md` (TUI/CLI), `docs/releasing.md`, `web/README.md`.

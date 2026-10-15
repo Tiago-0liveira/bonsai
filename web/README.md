@@ -58,5 +58,7 @@ and route navigation.
 
 Canonical state comes from epoch/sequence-ordered backend snapshots. Browser
 storage contains approved preferences only. Warm-start data remains server-side;
-see [performance.md](../docs/performance.md) for budgets, historical source
-revisions and measurement commands.
+see [architecture.md](../docs/architecture.md) for the state model. Bundle budgets
+and historical source revisions are recorded in [bundle-budget.json](bundle-budget.json).
+Run `pnpm --dir web build` followed by `pnpm --dir web bundle:check` from the repo
+root to check the production build against those budgets.

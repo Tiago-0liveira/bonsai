@@ -80,7 +80,7 @@ func main() {
 		return
 	}
 
-	// Hidden: in-process cold sync benchmark (see docs/performance.md).
+	// Hidden: in-process cold sync benchmark.
 	if len(args) >= 1 && args[0] == "__sync-bench" {
 		if err := runSyncBench(args[1:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)

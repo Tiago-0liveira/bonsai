@@ -152,5 +152,4 @@ Project settings are revisioned, locked and atomically replaced. Never turn an
 unreadable or future-schema settings file into empty defaults. Warm-start
 metadata is a disposable cache with an explicit safe DTO and strict size/age
 limits; restored values remain stale until current authorities validate them.
-See [performance.md](performance.md), [web.md](web.md) and
-[architecture.md](architecture.md).
+See [web.md](web.md) and [architecture.md](architecture.md).
