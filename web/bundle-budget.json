@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "rationale": "Freeze the byte-identical integrated 7a/7b production artifacts. Application remains below 70% of rebuilt Phase 4; application and its static closure each allow at most 10% growth. First-screen JS retains the exact pre-P7 ceiling with no override. Budget changes require an explicit rationale in this file and docs/performance.md.",
+  "rationale": "Freeze the byte-identical integrated 7a/7b production artifacts. Application remains below 70% of rebuilt Phase 4; application and its static closure each allow at most 10% growth. First-screen JS retains the exact pre-P7 ceiling with no override. Budget changes require an explicit rationale in this file.",
   "references": {
     "phase4": {
       "sourceRevision": "ee66e170914575b003084ab01bc5dc32c0f42c34",

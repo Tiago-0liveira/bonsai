@@ -25,7 +25,6 @@ Disk warm-start metadata is an explicitly sanitized cache. It creates sequence
 0 in a new backend epoch and stays stale until live validation. Runtime process
 and agent authority is always read afresh. Browser persistence contains approved
 preferences, never credentials, snapshots, terminal output or environment values.
-See [performance.md](performance.md).
 
 The shell and retained branches remain available while lazy features load.
 Import failures are recoverable with an explicit reload; there is no automatic

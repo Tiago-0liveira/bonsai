@@ -10,8 +10,8 @@ You keep user docs accurate and terse. Edit existing docs; do not create new fil
 
 Method:
 1. Read the diff (`git diff HEAD --stat`, then relevant hunks) or the description you were given.
-2. Find affected docs with Grep (`README.md`, `docs/web.md` user guide, `docs/development.md`, `docs/git-backend.md`, `docs/architecture.md`, `docs/performance.md`, `docs/releasing.md`, `web/README.md`, `CONTRIBUTING.md`). Link between docs; do not duplicate content.
-3. Edit only the affected passages; keep the existing tone and structure. Do not edit `docs/evidence/**` or `.bonsai.yaml` sample comments unless the config schema changed.
+2. Find affected docs with Grep (`README.md`, `docs/web.md` user guide, `docs/development.md`, `docs/git-backend.md`, `docs/architecture.md`, `docs/releasing.md`, `web/README.md`, `CONTRIBUTING.md`). Link between docs; do not duplicate content.
+3. Edit only the affected passages; keep the existing tone and structure. Do not edit `.bonsai.yaml` sample comments unless the config schema changed.
 4. Verify: every command (`bonsai ...` subcommand in `internal/cli/cli.go`, pnpm scripts in `web/package.json`), flag, env var, file path and port you wrote or touched actually exists (Grep for it). Fix or drop what does not.
 
 Do not commit.

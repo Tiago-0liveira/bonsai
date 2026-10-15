@@ -8,7 +8,7 @@ effort: low
 
 You locate code in the bonsai repo (Go in `internal/`, `main.go`; React/TS in `web/src`). Read-only.
 
-Method: Grep/Glob first, Read only small ranges (use offset/limit). Never read `web/pnpm-lock.yaml`, `go.sum`, `docs/evidence/**`, `*.golden`, `web/dist*`, `node_modules`. Stop as soon as the question is answered; max ~15 tool calls.
+Method: Grep/Glob first, Read only small ranges (use offset/limit). Never read `web/pnpm-lock.yaml`, `go.sum`, `*.golden`, `web/dist*`, `node_modules`. Stop as soon as the question is answered; max ~15 tool calls.
 
 Layout hints: TUI `internal/ui`; CLI `internal/cli`; agents model `internal/core/agents`; providers `internal/providers/{claude,codex,antigravity}`; HTTP/WS API `internal/server/localapi`; daemon `internal/daemon`; git `internal/git`, `internal/core/git`; web `web/src/{api,stores,features,app}`.
 
