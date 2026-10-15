@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
 // Prefs holds personal UI preferences that override the repo's .bonsai.yaml
@@ -93,7 +95,7 @@ func (s *State) Save() error {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	return gitstore.ReplaceFile(tmp, s.path)
 }
 
 // RecordCopy increments the copy frequency for relPath and persists.

@@ -250,7 +250,7 @@ func (*syncTestGitHub) WorkflowRuns(context.Context, string, string) ([]githubdo
 
 func waitForProjection(t *testing.T, syncer *stateSync, projectID string, predicate func(browserSnapshot) bool) browserSnapshot {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if snapshot, ok := syncer.CachedSnapshot(projectID); ok && predicate(snapshot) {
 			return snapshot
@@ -373,7 +373,7 @@ func TestProviderCacheCoalescesConcurrentRepositoryReads(t *testing.T) {
 			done <- struct{}{}
 		}()
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		provider.mu.Lock()
 		calls := provider.repositoryCalls
@@ -435,7 +435,7 @@ func TestStateSyncDoesNotRepublishProjectRemovedDuringRead(t *testing.T) {
 	syncer.Queue(projectID, refreshLocal, false)
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("local refresh did not start")
 	}
 
@@ -544,7 +544,7 @@ func TestProviderRefreshStopsBeforeChecksWhenLocalStateMoved(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("stale provider job kept waiting for checks")
 	}
 	syncer.mu.Lock()

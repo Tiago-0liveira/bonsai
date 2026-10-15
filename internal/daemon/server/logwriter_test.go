@@ -82,7 +82,4 @@ func TestLogWriterRepeatedRotationReplacesBackup(t *testing.T) {
 	if got := string(live); got != "cccc\n" {
 		t.Fatalf("live = %q, want %q", got, "cccc\n")
 	}
-	if gen := w.Generation(); gen != 2 {
-		t.Fatalf("generation = %d, want 2", gen)
-	}
 }

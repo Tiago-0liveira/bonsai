@@ -351,15 +351,16 @@ func (s *Server) agentSetupTerminal(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("job")
 	serveTerminal(s, w, r, func() (terminalEndpoint[agentsetup.Job], bool) {
 		if _, ok := jobs.Get(id); !ok {
-			return terminalEndpoint[agentsetup.Job]{}, false
+			return nil, false
 		}
-		return terminalEndpoint[agentsetup.Job]{
-			attach: func(cursor uint64) (uint64, bool, []agentsetup.Frame, <-chan agentsetup.Frame, error) {
-				return jobs.Attach(id, cursor)
-			},
-			detach: func(subscriber uint64) { jobs.Detach(id, subscriber) },
-			input:  func(subscriber uint64, data []byte) error { return jobs.Input(id, subscriber, data) },
-			resize: func(subscriber uint64, cols, rows int) error { return jobs.Resize(id, subscriber, cols, rows) },
+		return func(cursor uint64, generation string) (terminalAttachment[agentsetup.Job], error) {
+			return streamAttachment(s.stateSync.epoch, cursor, generation,
+				func(cursor uint64) (uint64, bool, []agentsetup.Frame, <-chan agentsetup.Frame, error) {
+					return jobs.Attach(id, cursor)
+				},
+				func(subscriber uint64) { jobs.Detach(id, subscriber) },
+				func(subscriber uint64, data []byte) error { return jobs.Input(id, subscriber, data) },
+				func(subscriber uint64, cols, rows int) error { return jobs.Resize(id, subscriber, cols, rows) })
 		}, true
 	})
 }

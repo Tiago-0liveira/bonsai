@@ -177,19 +177,24 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 
 	mp.logw = logw
 	s.appendMarker(mp.rec.ID, procstore.Marker{Kind: procstore.MarkerStart, Text: startText(mp.rec)})
+	// Written before Start: a process that prints at once must not have its
+	// first lines land before the marker, or readers that keep only the text
+	// after the last "started" (the live tunnel's public URL) would drop them.
+	if mp.rec.ServeGroup != "" {
+		s.appendServeLog(mp.rec.ServeGroup, mp.rec.ServeName, "SYS", []byte("started\n"))
+	}
 	if err := cmd.Start(); err != nil {
+		if mp.rec.ServeGroup != "" {
+			s.appendServeLog(mp.rec.ServeGroup, mp.rec.ServeName, "SYS", []byte("failed to start: "+err.Error()+"\n"))
+		}
 		s.appendMarker(mp.rec.ID, procstore.Marker{
 			Kind: procstore.MarkerExit,
 			Code: -1,
 			Text: "failed to start · " + err.Error(),
 		})
 		_ = logw.Close()
-		mp.rec.Status = procstore.StatusFailed
-		mp.rec.ExitError = err.Error()
-		code := -1
-		mp.rec.ExitCode = &code
-		mp.rec.RetryAt = nil
-		_ = s.store.WriteRecord(mp.rec)
+		// onExit owns the policy decision; publishing failed here would expose
+		// a terminal state even when another attempt is about to be scheduled.
 		return err
 	}
 
@@ -203,9 +208,6 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	mp.rec.ExitCode = nil
 	mp.rec.ExitError = ""
 	_ = s.store.WriteRecord(mp.rec)
-	if mp.rec.ServeGroup != "" {
-		s.appendServeLog(mp.rec.ServeGroup, mp.rec.ServeName, "SYS", []byte("started\n"))
-	}
 
 	started := mp.rec.StartedAt
 	done := mp.waitDone

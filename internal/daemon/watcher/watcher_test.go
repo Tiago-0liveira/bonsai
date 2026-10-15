@@ -25,10 +25,25 @@ func TestDirtyContentChangesAndSemanticDedupe(t *testing.T) {
 		t.Fatal(e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	out := make(chan domain.RepositoryState, 10)
-	w := Watcher{Local: svc, RepositoryID: "repo", Roots: []string{root}, Interval: 100 * time.Millisecond, Publish: func(_ context.Context, s domain.RepositoryState) error { out <- s; return nil }}
-	go w.Run(ctx)
+	w := Watcher{Local: svc, RepositoryID: "repo", Roots: []string{root}, Interval: 100 * time.Millisecond, Publish: func(ctx context.Context, s domain.RepositoryState) error {
+		select {
+		case out <- s:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = w.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		// Stop Git refreshes before TempDir removes the repository.
+		cancel()
+		<-done
+	})
 	next := func() domain.RepositoryState {
 		t.Helper()
 		select {
@@ -69,10 +84,24 @@ func TestLinkedWorktreeChangesPublishWithoutPeriodicScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	updates := make(chan domain.RepositoryState, 10)
-	w := Watcher{Local: svc, RepositoryID: "repo", DiscoverRoots: func(context.Context) []string { return []string{root, linked} }, Interval: time.Hour, Publish: func(_ context.Context, state domain.RepositoryState) error { updates <- state; return nil }}
-	go w.Run(ctx)
+	w := Watcher{Local: svc, RepositoryID: "repo", DiscoverRoots: func(context.Context) []string { return []string{root, linked} }, Interval: time.Hour, Publish: func(ctx context.Context, state domain.RepositoryState) error {
+		select {
+		case updates <- state:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = w.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 	select {
 	case <-updates:
 	case <-time.After(3 * time.Second):

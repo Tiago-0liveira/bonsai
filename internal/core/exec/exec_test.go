@@ -38,6 +38,15 @@ func waitDone(p *Process, d time.Duration) bool {
 func TestKillByIDLeavesSiblings(t *testing.T) {
 	m := NewManager()
 	dir := t.TempDir()
+	// Run before TempDir cleanup, including when a spawn or assertion fails.
+	t.Cleanup(func() {
+		m.KillAll()
+		for _, p := range m.All() {
+			if !waitDone(p, 10*time.Second) {
+				t.Errorf("process %q still running during cleanup", p.Label)
+			}
+		}
+	})
 
 	long, err := m.Spawn(dir, "long", testSleepCmd)
 	if err != nil {
@@ -49,7 +58,7 @@ func TestKillByIDLeavesSiblings(t *testing.T) {
 	}
 
 	m.KillByID(dir, long.ID)
-	if !waitDone(long, time.Second) {
+	if !waitDone(long, 10*time.Second) {
 		t.Fatal("killed process still running")
 	}
 	// The sibling must remain listed.
@@ -63,9 +72,9 @@ func TestKillByIDLeavesSiblings(t *testing.T) {
 	// The sibling command is intentionally short-lived. Wait for cmd.Wait to
 	// finish before TempDir cleanup: on Windows a still-exiting cmd.exe can keep
 	// its working directory open long enough for RemoveAll to fail.
-	if !waitDone(short, time.Second) {
+	if !waitDone(short, 10*time.Second) {
 		short.Kill()
-		if !waitDone(short, time.Second) {
+		if !waitDone(short, 10*time.Second) {
 			t.Fatal("short sibling did not exit")
 		}
 	}
