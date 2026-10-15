@@ -24,7 +24,7 @@ One test file: `pnpm --dir web exec vitest run src/features/agents/UsageMeter.te
 - Browser storage: approved preferences only (`stores/preferenceBoundary.ts` guards this). Never store tokens, snapshots, terminal output, env values. Capability token lives in memory.
 - Production must use only the page origin. `VITE_BONSAI_LOCAL_API_ORIGIN`/`VITE_BONSAI_RELAY_ORIGIN` and the SSE client are dev/test only. No external URLs, no cloud fallbacks.
 - `vite build --mode e2e` writes `dist-e2e` with test hooks (`__bonsaiTestStore`, react-dom profiling). These must never reach `dist`; `go test -tags embedui ./web/` checks that.
-- New dependency or new eager import: run `build` then `bundle:check`. If over budget, justify in `web/bundle-budget.json` (`rationale`) and `docs/performance.md`; do not silently raise limits.
+- New dependency or new eager import: run `build` then `bundle:check`. If over budget, justify in `web/bundle-budget.json` (`rationale`); do not silently raise limits.
 - Tests sit beside source. Prefer vitest + Testing Library for logic and components; use Playwright (`web/e2e`) only for browser-level behavior (layout, canvas, routing, terminals). e2e starts Go fixtures (`go test ./internal/server/localapi -run Test...BrowserFixture`) on ports 7011-7014; keep them free. Shared e2e helpers: `e2e/mockGit.ts`, `e2e/presentationFixtures.ts`, `e2e/viewport.ts`; `*-fullstack.spec.ts` specs use real Go fixtures.
 - Fixtures with dates must stay in the future relative to "now" (reset times), or tests rot.
 

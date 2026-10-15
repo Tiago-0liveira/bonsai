@@ -666,7 +666,6 @@ profile settings were changed for this check.
 ## Release and deferred architecture
 
 See [releasing.md](releasing.md) for embedded release builds and archive smoke
-checks, [performance.md](performance.md) for warm-start storage, measurement
-limits and historical evidence, and [architecture.md](architecture.md) for
-future multi-workspace constraints. These documents replace the temporary web
+checks and [architecture.md](architecture.md) for future multi-workspace
+constraints. These documents replace the temporary web
 project and Phase 7 plans.

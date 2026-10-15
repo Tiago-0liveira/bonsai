@@ -30,7 +30,7 @@ capability sessions, authenticated WebSockets and mutation protections.
 
 Keep frontend lazy loading and chunk-failure recovery intact. Bundle budgets
 are enforced against historical source revisions; changes need an explicit
-rationale in `web/bundle-budget.json`. See [performance.md](docs/performance.md).
+rationale in `web/bundle-budget.json`.
 
 Phase 8 targets `feat/bonsai-web`. The eventual release PR from that integration
 branch into `main` must carry **`release:minor`**: this release retires hosted
