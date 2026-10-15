@@ -163,11 +163,13 @@ func TestRunInStreamCancelKillsProcessGroup(t *testing.T) {
 	for _, field := range strings.Fields(string(data)) {
 		pid, _ := strconv.Atoi(field)
 		deadline := time.Now().Add(2 * time.Second)
-		for processAlive(pid) && time.Now().Before(deadline) {
+		// Observe death only once: probing again can race with reaping between
+		// kill(0) and the /proc read and conservatively report the process alive.
+		for processAlive(pid) {
+			if !time.Now().Before(deadline) {
+				t.Fatalf("process %d survived cancel", pid)
+			}
 			time.Sleep(10 * time.Millisecond)
-		}
-		if processAlive(pid) {
-			t.Fatalf("process %d survived cancel", pid)
 		}
 	}
 }
