@@ -536,9 +536,10 @@ profile with `bonsai agent account add codex <name> [--auth device]`. Profile se
 opaque account IDs; discovery responses contain only ID, provider, display name and the
 display-safe profile details. `SetupSpec` has no modes and no seed, only a note
 that agy must be exited to save the profile: Bonsai ignores agy's exit code and
-captures the sign-in from the setup home. `bonsai agent account login` runs agy
-again in a fresh home and stores the new sign-in with the next vault generation,
-so a running session's older tokens never overwrite it when that session ends.
+captures the sign-in from `<AccountDir>/home`, run from `<AccountDir>/home/workspace`.
+`bonsai agent account login` runs agy again in that home, after removing the old
+token from it, and stores the new sign-in with the next vault generation, so a
+running session's older tokens never overwrite it when that session ends.
 
 Account details never start `agy` on the profile-list path: `DescribeAccount`
 reads the email from the vault (a fallback identity counts as none),
@@ -546,12 +547,26 @@ reads the email from the vault (a fallback identity counts as none),
 plan comes from `<AccountDir>/plan.json`. `Usage` runs the built-in `/usage` and
 `/credits` commands (no tokens) in a throwaway session (`withProfile`:
 materialize, run, reconcile, clean up). It also starts the plan probe in the
-background when it is due (new email, no plan, or a plan older than 24 h; a
-failure backs off 15 minutes) or on an explicit refresh: one probe per profile
-and one per process. The probe (`planprobe_unix.go`) starts interactive `agy`
-in a 140×40 PTY from an empty temporary directory, feeds its output to
-`internal/core/termscreen` and waits up to 8 s for `<email> (<plan>)`; it only
-ever writes two Ctrl+C, then ends the process group with SIGTERM and SIGKILL.
+background when it is due (new email, no plan, or a plan older than 24 h) or on
+an explicit refresh: one probe per profile, up to five at once per process, and
+one per profile across processes (`<AccountDir>/probe.lock`; a probe that waits
+12 s for it is skipped). Waiting for a slot or the lock costs the probe nothing.
+The probe runs in the profile's persistent home `<AccountDir>/home` (about 17 MB,
+kept between probes so agy's first-run state survives) from
+`<AccountDir>/home/workspace`, which setup and the first probe add to the vault's
+`provider_settings.trustedWorkspaces`; the token is materialized into the home
+before and reconciled after. `planprobe_unix.go` starts interactive `agy` in a
+140×40 PTY, feeds its output to `internal/core/termscreen`, reads the screen
+first after 1 s, then every 50 ms, and gives agy 7 s to paint
+`<email> (<plan>)`. If agy shows its first-run wizard instead, each page is
+answered once by its text (colour scheme: Enter; consent: Down, Right, Enter to
+reach [Done] with the checkbox left as it is); a page still on screen 2 s later
+fails the probe. Apart from those keys it only writes two Ctrl+C, then ends the
+process group with SIGTERM and SIGKILL. Only a probe that ran agy and found no
+plan backs off 15 minutes. `bonsai agent usage` waits up to 12 s after printing
+for probes to finish (`UsageSettler`), then cancels them. Each probe appends to
+`<AccountDir>/plan-probe.log` (0600): the screens, the wizard keys sent and how
+it ended.
 Windows has no probe and the plan stays blank.
 
 Models come from `agy models` (cached 10 minutes, 1 minute after a failure).
