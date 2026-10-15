@@ -562,8 +562,8 @@ shows the one in `<AccountDir>/credits.json` (written by every `/credits` run)
 and runs `/credits` in the background when it is older than 15 minutes (15
 minutes after a failure) or on an explicit refresh. Tests point `cloudCodeHosts`
 at an `httptest` server. It also starts the plan probe in the
-background when it is due (new email, no plan, or a plan older than 24 h) or on
-an explicit refresh: one probe per profile, up to five at once per process, and
+background when it is due (new email, no plan, or a plan older than 24 h; an
+explicit refresh does not force one): one probe per profile, up to five at once per process, and
 one per profile across processes (`<AccountDir>/probe.lock`; a probe that waits
 12 s for it is skipped). Waiting for a slot or the lock costs the probe nothing.
 The probe runs in the profile's persistent home `<AccountDir>/home` (about 17 MB,

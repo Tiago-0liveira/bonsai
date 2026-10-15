@@ -240,13 +240,21 @@ func TestUsageReadsCreditsAndProbesThePlanOnce(t *testing.T) {
 	if info, err := os.Stat(planPath(e.accounts, e.account)); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("plan.json = %v, %v", info, err)
 	}
-	// An explicit refresh probes again.
+	// An explicit refresh does not probe a fresh plan again; a day later it is due.
 	if _, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{Refresh: true}); err != nil {
 		t.Fatal(err)
 	}
 	e.provider.waitPlanProbes()
-	if e.probes.Load() != 2 {
+	if e.probes.Load() != 1 {
 		t.Fatalf("refresh probes = %d", e.probes.Load())
+	}
+	e.provider.now = func() time.Time { return time.Now().Add(planMaxAge + time.Hour) }
+	if _, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e.provider.waitPlanProbes()
+	if e.probes.Load() != 2 {
+		t.Fatalf("probes a day later = %d", e.probes.Load())
 	}
 }
 
@@ -416,8 +424,10 @@ func TestProbeReusesThePersistentHome(t *testing.T) {
 		return "Google AI Pro", os.WriteFile(marker, nil, 0o600)
 	}
 	for range 2 {
-		e.provider.refreshPlan(e.account, "me@example.com", true)
+		e.provider.refreshPlan(e.account, "me@example.com")
 		e.provider.waitPlanProbes()
+		// A day later the plan is due again.
+		e.provider.now = func() time.Time { return time.Now().Add(planMaxAge + time.Hour) }
 	}
 	if !slices.Equal(kept, []bool{false, true}) {
 		t.Fatalf("state agy left in the home kept = %v", kept)
@@ -462,7 +472,7 @@ func TestAtMostFiveProbesRunAtOnce(t *testing.T) {
 		return "Google AI Pro", nil
 	}
 	for _, account := range accounts {
-		e.provider.refreshPlan(account, "me@example.com", false)
+		e.provider.refreshPlan(account, "me@example.com")
 	}
 	for range 5 {
 		<-started
@@ -510,9 +520,9 @@ func TestProbeLockSerialisesProcesses(t *testing.T) {
 		return "Google AI Pro", nil
 	}
 	e.provider.probe, other.probe = probe, probe
-	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.refreshPlan(e.account, "me@example.com")
 	<-inFirst
-	other.refreshPlan(e.account, "me@example.com", true)
+	other.refreshPlan(e.account, "me@example.com")
 	time.Sleep(100 * time.Millisecond)
 	close(gate)
 	e.provider.waitPlanProbes()
@@ -535,7 +545,7 @@ func TestProbeSkippedOnLockTimeoutDoesNotBackOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.refreshPlan(e.account, "me@example.com")
 	e.provider.waitPlanProbes()
 	lock.Unlock()
 	if e.probes.Load() != 0 {
@@ -562,7 +572,7 @@ func TestProbeThatNeverRanAgyDoesNotBackOff(t *testing.T) {
 	e := newAccountEnv(t)
 	e.signIn(t, "me@example.com")
 	e.provider.binaryResolver = failingBinaryResolver{}
-	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.refreshPlan(e.account, "me@example.com")
 	e.provider.waitPlanProbes()
 	if e.probes.Load() != 0 {
 		t.Fatalf("probes = %d", e.probes.Load())
@@ -604,7 +614,7 @@ func TestSettleUsageCancelsProbesWhenItsContextEnds(t *testing.T) {
 		close(cancelled)
 		return "", ctx.Err()
 	}
-	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.refreshPlan(e.account, "me@example.com")
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	e.provider.SettleUsage(ctx)
@@ -620,7 +630,7 @@ func TestSettleUsageCancelsProbesWhenItsContextEnds(t *testing.T) {
 	e.provider.probe = func(ctx context.Context, _, _ string, _ []string, _ string) (string, error) {
 		return "Google AI Pro", ctx.Err()
 	}
-	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.refreshPlan(e.account, "me@example.com")
 	e.provider.SettleUsage(t.Context())
 	if plan := e.provider.planFor(e.account, "me@example.com"); plan != "Google AI Pro" {
 		t.Fatalf("plan = %q", plan)

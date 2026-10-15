@@ -79,18 +79,19 @@ func needsProbe(state planState, email string, now time.Time) bool {
 	return now.Sub(state.CheckedAt) > planMaxAge
 }
 
-// refreshPlan probes the plan in the background when it is due, or always when
-// forced (an explicit usage refresh). One probe runs per profile and process,
+// refreshPlan probes the plan in the background when it is due: a new email, no
+// plan yet, or one older than a day. An explicit usage refresh does not force
+// one; the plan barely changes. One probe runs per profile and process,
 // five in the whole process, and one per profile across processes; a probe
 // that is already running is not repeated. Only a probe that ran agy and found
 // no plan backs off: waiting for a slot or the lock, or failing before agy
 // started, leaves plan.json as it was.
-func (p *Provider) refreshPlan(account agents.Account, email string, force bool) {
+func (p *Provider) refreshPlan(account agents.Account, email string) {
 	if !planProbeSupported || p.accounts == nil || email == "" {
 		return
 	}
 	before := p.readPlanState(account)
-	if !force && !needsProbe(before, email, p.clock()) {
+	if !needsProbe(before, email, p.clock()) {
 		return
 	}
 	base, done, ok := p.startFlight(flightKey{"plan", account.ID})
@@ -102,7 +103,7 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 		logf := openProbeLog(planLogPath(p.accounts, account))
 		defer logf.Close()
 		ctx := withProbeLog(base, logf)
-		logf.Printf("probe for %s (profile %s, force=%t)", email, account.ID, force)
+		logf.Printf("probe for %s (profile %s)", email, account.ID)
 		logf.Printf("stored state: plan=%q email=%q checked_at=%s failed_at=%s",
 			before.Plan, before.Email, before.CheckedAt.Format(time.RFC3339), before.FailedAt.Format(time.RFC3339))
 		select {

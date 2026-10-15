@@ -53,7 +53,7 @@ func (p *Provider) Usage(ctx context.Context, account agents.Account, opts agent
 	if p.accounts != nil {
 		if email, complete, _ := p.signedIn(account); complete {
 			snapshot.Plan = p.planFor(account, email)
-			p.refreshPlan(account, email, opts.Refresh)
+			p.refreshPlan(account, email)
 		}
 	}
 	return snapshot, nil
