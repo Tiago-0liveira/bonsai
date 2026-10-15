@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -558,6 +559,62 @@ func TestUsageServiceAllFuncKeepsOrderAroundPanic(t *testing.T) {
 		}
 		if bad := accounts[i].ID == "acct_2"; bad != (r.Error != nil) || bad == (r.Usage != nil) {
 			t.Fatalf("result %d = %+v", i, r)
+		}
+	}
+}
+
+func TestUsageServiceAllObservedReportsEveryPhase(t *testing.T) {
+	service, _, _ := valuePanicService(t, 4, 2, "boom", 1)
+	var mu sync.Mutex
+	var events []UsageEvent
+	results := service.AllObserved(context.Background(), func(Account) UsageOptions { return UsageOptions{} }, func(e UsageEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	})
+	if len(results) != 4 {
+		t.Fatalf("results = %d, want 4", len(results))
+	}
+	phases := map[AccountID][]UsagePhase{}
+	queuedBeforeStart := true
+	seenStart := false
+	for _, e := range events {
+		if e.Phase == UsageStarted {
+			seenStart = true
+		}
+		if e.Phase == UsageQueued && seenStart {
+			queuedBeforeStart = false
+		}
+		phases[e.Account.ID] = append(phases[e.Account.ID], e.Phase)
+		if e.Phase == UsageFinished && (e.Err != nil) != (e.Account.ID == "acct_1") {
+			t.Errorf("%s finished with err = %v", e.Account.ID, e.Err)
+		}
+	}
+	if !queuedBeforeStart {
+		t.Error("an account was queued after a fetch started")
+	}
+	want := []UsagePhase{UsageQueued, UsageStarted, UsageFinished}
+	for id, got := range phases {
+		if !slices.Equal(got, want) {
+			t.Errorf("%s phases = %v, want %v", id, got, want)
+		}
+	}
+	if len(phases) != 4 {
+		t.Errorf("observed %d accounts, want 4", len(phases))
+	}
+}
+
+func TestUsageServiceAllObservedSurvivesPanickingObserver(t *testing.T) {
+	service, _, _ := valuePanicService(t, 3, 1, "boom")
+	results := service.AllObserved(context.Background(), func(Account) UsageOptions { return UsageOptions{} }, func(UsageEvent) {
+		panic("observer exploded")
+	})
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	for _, r := range results {
+		if r.Error != nil || r.Usage == nil {
+			t.Errorf("%s: err = %v, usage nil = %v", r.Account.ID, r.Error, r.Usage == nil)
 		}
 	}
 }

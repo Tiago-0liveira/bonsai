@@ -97,6 +97,43 @@ func (s *UsageService) All(ctx context.Context, opts UsageOptions) []AccountUsag
 // AllFunc is All with options chosen per account, such as a refresh throttled
 // per account.
 func (s *UsageService) AllFunc(ctx context.Context, opts func(Account) UsageOptions) []AccountUsageResult {
+	return s.AllObserved(ctx, opts, nil)
+}
+
+// UsagePhase is where one account is in an AllObserved run.
+type UsagePhase int
+
+const (
+	// UsageQueued is sent once for every account before any fetch starts.
+	UsageQueued UsagePhase = iota
+	UsageStarted
+	UsageFinished
+)
+
+// UsageEvent reports one account's progress. Err is set on UsageFinished.
+type UsageEvent struct {
+	Account Account
+	Phase   UsagePhase
+	Err     error
+}
+
+// AllObserved is AllFunc that also reports each account's progress to observe.
+// Every account gets UsageQueued before the first fetch starts, then
+// UsageStarted and UsageFinished as its worker reaches it. Workers call observe
+// concurrently, so it must be safe for that and quick. A panicking observe is
+// ignored. A nil observe is allowed.
+func (s *UsageService) AllObserved(ctx context.Context, opts func(Account) UsageOptions, observe func(UsageEvent)) []AccountUsageResult {
+	notify := func(event UsageEvent) {
+		if observe == nil {
+			return
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("agents: usage observer panicked: %v\n%s", r, debug.Stack())
+			}
+		}()
+		observe(event)
+	}
 	accounts, err := s.Accounts.List()
 	if err != nil {
 		return []AccountUsageResult{{Error: err}}
@@ -109,6 +146,9 @@ func (s *UsageService) AllFunc(ctx context.Context, opts func(Account) UsageOpti
 	results := make([]AccountUsageResult, len(accounts))
 	if len(accounts) == 0 {
 		return results
+	}
+	for _, account := range accounts {
+		notify(UsageEvent{Account: account, Phase: UsageQueued})
 	}
 	limit := s.WorkerLimit
 	if limit <= 0 {
@@ -124,7 +164,9 @@ func (s *UsageService) AllFunc(ctx context.Context, opts func(Account) UsageOpti
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
+				notify(UsageEvent{Account: accounts[idx], Phase: UsageStarted})
 				results[idx] = s.accountResult(ctx, accounts[idx], opts)
+				notify(UsageEvent{Account: accounts[idx], Phase: UsageFinished, Err: results[idx].Error})
 			}
 		}()
 	}
