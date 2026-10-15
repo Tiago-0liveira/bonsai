@@ -193,12 +193,8 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 			Text: "failed to start · " + err.Error(),
 		})
 		_ = logw.Close()
-		mp.rec.Status = procstore.StatusFailed
-		mp.rec.ExitError = err.Error()
-		code := -1
-		mp.rec.ExitCode = &code
-		mp.rec.RetryAt = nil
-		_ = s.store.WriteRecord(mp.rec)
+		// onExit owns the policy decision; publishing failed here would expose
+		// a terminal state even when another attempt is about to be scheduled.
 		return err
 	}
 

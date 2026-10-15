@@ -936,7 +936,13 @@ func TestAutomaticRestartFails(t *testing.T) {
 	// Failed starts also count against the remaining retry budget (1s + 2s + 4s).
 	if !waitFor(t, 9*time.Second, func() bool {
 		r := recByID(t, c, rec.ID)
-		return r != nil && r.Status == procstore.StatusFailed && r.ExitError != ""
+		if r == nil || r.Status != procstore.StatusFailed {
+			return false
+		}
+		if r.RetryCount != r.Policy.MaxRestarts || r.RetryAt != nil || r.ExitCode == nil || *r.ExitCode != -1 || r.ExitError == "" {
+			t.Fatalf("failed was published before retries finished: %+v", r)
+		}
+		return true
 	}) {
 		t.Fatalf("expected status failed with exit error, got %+v", recByID(t, c, rec.ID))
 	}
@@ -951,8 +957,48 @@ func TestAutomaticRestartFails(t *testing.T) {
 	}
 
 	r := recByID(t, c, rec.ID)
-	if r.Status == procstore.StatusRunning {
-		t.Fatalf("invariant violated: failed process still marked running: %+v", r)
+	if r.Status != procstore.StatusFailed {
+		t.Fatalf("terminal failure changed after it was observed: %+v", r)
+	}
+}
+
+func TestAutomaticRestartFailedLaunchStaysTerminal(t *testing.T) {
+	c, root := newDaemon(t)
+	const maxRestarts = 2
+	rec, err := c.SpawnExec(root, "", root, "missing", filepath.Join(root, "missing-executable"), nil,
+		&procstore.Policy{Mode: procstore.PolicyOnFailure, MaxRestarts: maxRestarts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != procstore.StatusBackoff {
+		t.Fatalf("failed launch must retry: %+v", rec)
+	}
+	if !waitFor(t, 6*time.Second, func() bool {
+		r := recByID(t, c, rec.ID)
+		if r == nil {
+			t.Fatal("failed launch record disappeared")
+		}
+		if r.Status != procstore.StatusFailed {
+			return false
+		}
+		if r.RetryCount != maxRestarts || r.Attempt != maxRestarts+1 || r.RetryAt != nil || r.ExitError == "" || r.ExitCode == nil || *r.ExitCode != -1 {
+			t.Fatalf("observed failure before retries were exhausted: %+v", r)
+		}
+		return true
+	}) {
+		t.Fatalf("launch retries did not finish: %+v", recByID(t, c, rec.ID))
+	}
+	for i := 0; i < 2; i++ {
+		ping, err := c.Ping()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ping.ProcCount != 0 {
+			t.Fatalf("terminal failure counted as active: %d", ping.ProcCount)
+		}
+		if r := recByID(t, c, rec.ID); r == nil || r.Status != procstore.StatusFailed {
+			t.Fatalf("terminal failure changed after observation: %+v", r)
+		}
 	}
 }
 
