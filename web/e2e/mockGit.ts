@@ -338,6 +338,12 @@ const SETUP_SPECS: Record<string, Record<string, unknown>> = {
 interface SetupScript { output: string; end: 'succeed' | 'fail' | 'prompt'; error?: string; /** How long the login runs after printing. */ holdMs?: number }
 interface MockSetupJob { job: Record<string, unknown>; script: SetupScript; send?: (frame: Record<string, unknown>) => void; ran: boolean }
 
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+/** A reset time relative to now, so a fixture never lands in the past. */
+const fromNow = (ms: number) => new Date(Date.now() + ms).toISOString()
+
 /** Usage of the Agents tab fixture profiles, keyed by profile ID. */
 const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
   'codex-personal': {
@@ -351,13 +357,13 @@ const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
       ],
     },
     headline: {
-      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.72, resets_at: '2026-10-12T14:15:00Z' },
-      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.38, resets_at: '2026-10-15T16:00:00Z' },
+      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.72, resets_at: fromNow(2 * HOUR + 15 * MINUTE) },
+      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.38, resets_at: fromNow(3 * DAY + 4 * HOUR) },
       extra: [
-        { id: 'spark_five_hour', group: 'Codex Spark', label: '5 hour', remaining_fraction: 0.9, resets_at: '2026-10-12T14:30:00Z' },
-        { id: 'spark_weekly', group: 'Codex Spark', label: 'Weekly', remaining_fraction: 0.64, resets_at: '2026-10-15T16:00:00Z' },
+        { id: 'spark_five_hour', group: 'Codex Spark', label: '5 hour', remaining_fraction: 0.9, resets_at: fromNow(2 * HOUR + 30 * MINUTE) },
+        { id: 'spark_weekly', group: 'Codex Spark', label: 'Weekly', remaining_fraction: 0.64, resets_at: fromNow(3 * DAY + 4 * HOUR) },
       ],
-      score: 0.38, next_reset: '2026-10-12T14:15:00Z',
+      score: 0.38, next_reset: fromNow(2 * HOUR + 15 * MINUTE),
     },
   },
   'codex-team': { account_id: 'codex-team', provider: 'codex', error: { code: 'not_authenticated', message: 'Not signed in' } },
@@ -365,16 +371,16 @@ const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
     account_id: 'claude-profile', provider: 'claude',
     usage: {
       provider: 'claude', account_id: 'claude-profile', fetched_at: '2026-10-12T11:59:00Z', plan: 'Max 5x', limits: [],
-      credits: [{ id: 'iguana_necktie', label: 'Usage credits', unit: 'USD', used: 1.91, limit: 100, balance: 98.09, enabled: true, resets_at: '2026-11-05T07:59:00Z' }],
+      credits: [{ id: 'iguana_necktie', label: 'Usage credits', unit: 'USD', used: 1.91, limit: 100, balance: 98.09, enabled: true, resets_at: fromNow(30 * DAY) }],
     },
     headline: {
-      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.15, resets_at: '2026-10-12T13:00:00Z' },
-      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.55, resets_at: '2026-10-16T09:00:00Z' },
+      primary: { id: 'five_hour', label: '5 hour', window: '5h', remaining_fraction: 0.15, resets_at: fromNow(HOUR) },
+      secondary: { id: 'weekly', label: 'Weekly', window: 'weekly', remaining_fraction: 0.55, resets_at: fromNow(2 * DAY) },
       extra: [
-        { id: 'seven_day_opus', label: 'Opus (weekly)', remaining_fraction: 0.4, resets_at: '2026-10-16T09:00:00Z' },
-        { id: 'seven_day_sonnet', label: 'Sonnet (weekly)', remaining_fraction: 0.8, resets_at: '2026-10-16T09:00:00Z' },
+        { id: 'seven_day_opus', label: 'Opus (weekly)', remaining_fraction: 0.4, resets_at: fromNow(2 * DAY) },
+        { id: 'seven_day_sonnet', label: 'Sonnet (weekly)', remaining_fraction: 0.8, resets_at: fromNow(2 * DAY) },
       ],
-      score: 0.15, low: true, next_reset: '2026-10-12T13:00:00Z',
+      score: 0.15, low: true, next_reset: fromNow(HOUR),
     },
   },
   'claude-token': { account_id: 'claude-token', provider: 'claude', error: { code: 'unsupported', message: 'Setup tokens cannot read plan usage' } },
