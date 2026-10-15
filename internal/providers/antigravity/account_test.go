@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,7 +124,7 @@ func newAccountEnv(t *testing.T) *accountEnv {
 		t.Fatal(err)
 	}
 	e.provider = New(accounts, sessions)
-	e.provider.binaryResolver = &providerTestBinaryResolver{path: "agy-test"}
+	e.provider.binaryResolver = fixedBinaryResolver("agy-test")
 	e.provider.run = func(_ context.Context, _, _ string, _ map[string]string, args ...string) ([]byte, error) {
 		e.runs.Add(1)
 		switch args[2] {
@@ -374,5 +376,191 @@ func TestTrustWorkspaceAddsTheResolvedPath(t *testing.T) {
 	}
 	if _, _, err := trustWorkspace(json.RawMessage(`{"trustedWorkspaces":"x"}`), link); err == nil {
 		t.Fatal("malformed trustedWorkspaces accepted")
+	}
+}
+
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func TestProbeReusesThePersistentHome(t *testing.T) {
+	if !planProbeSupported {
+		t.Skip("no plan probe on this platform")
+	}
+	e := newAccountEnv(t)
+	e.signIn(t, "me@example.com")
+	home := filepath.Join(e.accounts.AccountDir(e.account.ID), "home")
+	var kept []bool
+	e.provider.probe = func(_ context.Context, _, dir string, env []string, _ string) (string, error) {
+		if envValue(env, "HOME") != home || dir != filepath.Join(home, "workspace") {
+			t.Errorf("HOME = %q, dir = %q", envValue(env, "HOME"), dir)
+		}
+		if _, err := os.Stat(oauthPath(home)); err != nil {
+			t.Errorf("token not materialized: %v", err)
+		}
+		marker := filepath.Join(home, ".gemini", "antigravity-cli", "first-run-done")
+		_, err := os.Stat(marker)
+		kept = append(kept, err == nil)
+		return "Google AI Pro", os.WriteFile(marker, nil, 0o600)
+	}
+	for range 2 {
+		e.provider.refreshPlan(e.account, "me@example.com", true)
+		e.provider.waitPlanProbes()
+	}
+	if !slices.Equal(kept, []bool{false, true}) {
+		t.Fatalf("state agy left in the home kept = %v", kept)
+	}
+	if plan := e.provider.planFor(e.account, "me@example.com"); plan != "Google AI Pro" {
+		t.Fatalf("plan = %q", plan)
+	}
+}
+
+func TestAtMostFiveProbesRunAtOnce(t *testing.T) {
+	if !planProbeSupported {
+		t.Skip("no plan probe on this platform")
+	}
+	e := newAccountEnv(t)
+	accounts := []agents.Account{e.account}
+	for i := range 5 {
+		account := e.account
+		account.ID = agents.AccountID(fmt.Sprintf("acct_agy%d", i))
+		account.Name = fmt.Sprintf("p%d", i)
+		if err := e.accounts.Create(account); err != nil {
+			t.Fatal(err)
+		}
+		accounts = append(accounts, account)
+	}
+	for _, account := range accounts {
+		e.account = account
+		e.signIn(t, "me@example.com")
+	}
+	var running, peak atomic.Int32
+	started := make(chan struct{}, len(accounts))
+	gate := make(chan struct{})
+	e.provider.probe = func(context.Context, string, string, []string, string) (string, error) {
+		n := running.Add(1)
+		defer running.Add(-1)
+		for {
+			if p := peak.Load(); n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-gate
+		return "Google AI Pro", nil
+	}
+	for _, account := range accounts {
+		e.provider.refreshPlan(account, "me@example.com", false)
+	}
+	for range 5 {
+		<-started
+	}
+	select {
+	case <-started:
+		t.Fatal("a sixth probe started while five ran")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(gate)
+	e.provider.waitPlanProbes()
+	if peak.Load() != 5 {
+		t.Fatalf("peak = %d, want 5", peak.Load())
+	}
+	// The queued profile ran once a slot was free, with no failure recorded.
+	for _, account := range accounts {
+		if state := e.provider.readPlanState(account); state.Plan != "Google AI Pro" || !state.FailedAt.IsZero() {
+			t.Fatalf("%s: %+v", account.ID, state)
+		}
+	}
+}
+
+func TestProbeLockSerialisesProcesses(t *testing.T) {
+	if !planProbeSupported {
+		t.Skip("no plan probe on this platform")
+	}
+	e := newAccountEnv(t)
+	e.signIn(t, "me@example.com")
+	// A second provider over the same stores stands in for another process.
+	other := New(e.accounts, e.provider.sessions)
+	other.binaryResolver = e.provider.binaryResolver
+	var running atomic.Int32
+	inFirst := make(chan struct{})
+	gate := make(chan struct{})
+	var calls atomic.Int32
+	probe := func(context.Context, string, string, []string, string) (string, error) {
+		if running.Add(1) > 1 {
+			t.Error("two probes ran in one home")
+		}
+		defer running.Add(-1)
+		if calls.Add(1) == 1 {
+			close(inFirst)
+			<-gate
+		}
+		return "Google AI Pro", nil
+	}
+	e.provider.probe, other.probe = probe, probe
+	e.provider.refreshPlan(e.account, "me@example.com", true)
+	<-inFirst
+	other.refreshPlan(e.account, "me@example.com", true)
+	time.Sleep(100 * time.Millisecond)
+	close(gate)
+	e.provider.waitPlanProbes()
+	other.waitPlanProbes()
+	if calls.Load() != 2 {
+		t.Fatalf("probes = %d, want the second after the first", calls.Load())
+	}
+}
+
+func TestProbeSkippedOnLockTimeoutDoesNotBackOff(t *testing.T) {
+	if !planProbeSupported {
+		t.Skip("no plan probe on this platform")
+	}
+	old := planLockWait
+	planLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { planLockWait = old })
+	e := newAccountEnv(t)
+	e.signIn(t, "me@example.com")
+	lock, err := agents.LockFile(probeLockPath(e.accounts, e.account))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.waitPlanProbes()
+	lock.Unlock()
+	if e.probes.Load() != 0 {
+		t.Fatalf("probes = %d", e.probes.Load())
+	}
+	if _, err := os.Stat(planPath(e.accounts, e.account)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("plan.json written: %v", err)
+	}
+}
+
+// fixedBinaryResolver is safe for concurrent probes.
+type fixedBinaryResolver string
+
+func (r fixedBinaryResolver) Resolve() (string, error) { return string(r), nil }
+
+type failingBinaryResolver struct{}
+
+func (failingBinaryResolver) Resolve() (string, error) { return "", errors.New("agy not found") }
+
+func TestProbeThatNeverRanAgyDoesNotBackOff(t *testing.T) {
+	if !planProbeSupported {
+		t.Skip("no plan probe on this platform")
+	}
+	e := newAccountEnv(t)
+	e.signIn(t, "me@example.com")
+	e.provider.binaryResolver = failingBinaryResolver{}
+	e.provider.refreshPlan(e.account, "me@example.com", true)
+	e.provider.waitPlanProbes()
+	if e.probes.Load() != 0 {
+		t.Fatalf("probes = %d", e.probes.Load())
+	}
+	if state := e.provider.readPlanState(e.account); !state.FailedAt.IsZero() {
+		t.Fatalf("state = %+v", state)
 	}
 }

@@ -19,14 +19,19 @@ import (
 // (probePlan) and keeps the answer in <AccountDir>/plan.json. Listing profiles
 // only reads that file; it never starts agy.
 const (
-	planMaxAge       = 24 * time.Hour
-	planRetryAfter   = 15 * time.Minute
-	planProbeTimeout = 20 * time.Second
-	maxPlanLength    = 40
+	planMaxAge     = 24 * time.Hour
+	planRetryAfter = 15 * time.Minute
+	maxPlanLength  = 40
 )
 
-// planProbes allows one probe at a time in the whole process.
-var planProbes = make(chan struct{}, 1)
+// planProbes allows five probes at a time in the whole process. A probe waits
+// for a slot with no clock running: its time only starts with agy.
+var planProbes = make(chan struct{}, 5)
+
+// planLockWait caps how long a probe waits for another process probing the
+// same profile, about one probe's run; then it is skipped, not failed.
+// A variable so tests can shorten it.
+var planLockWait = 12 * time.Second
 
 type planState struct {
 	Plan      string    `json:"plan,omitempty"`
@@ -75,8 +80,11 @@ func needsProbe(state planState, email string, now time.Time) bool {
 }
 
 // refreshPlan probes the plan in the background when it is due, or always when
-// forced (an explicit usage refresh). One probe runs per profile and one in the
-// whole process; a probe that is already running is not repeated.
+// forced (an explicit usage refresh). One probe runs per profile and process,
+// five in the whole process, and one per profile across processes; a probe
+// that is already running is not repeated. Only a probe that ran agy and found
+// no plan backs off: waiting for a slot or the lock, or failing before agy
+// started, leaves plan.json as it was.
 func (p *Provider) refreshPlan(account agents.Account, email string, force bool) {
 	if !planProbeSupported || p.accounts == nil || email == "" {
 		return
@@ -103,11 +111,9 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 			p.planMu.Unlock()
 			p.planWG.Done()
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), planProbeTimeout)
-		defer cancel()
 		logf := openProbeLog(planLogPath(p.accounts, account))
 		defer logf.Close()
-		ctx = withProbeLog(ctx, logf)
+		ctx := withProbeLog(context.Background(), logf)
 		logf.Printf("probe for %s (profile %s, force=%t)", email, account.ID, force)
 		logf.Printf("stored state: plan=%q email=%q checked_at=%s failed_at=%s",
 			before.Plan, before.Email, before.CheckedAt.Format(time.RFC3339), before.FailedAt.Format(time.RFC3339))
@@ -115,10 +121,22 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 		case planProbes <- struct{}{}:
 			defer func() { <-planProbes }()
 		case <-ctx.Done():
-			logf.Printf("gave up waiting for another probe to finish: %v", ctx.Err())
+			logf.Printf("gave up waiting for a probe slot: %v", ctx.Err())
 			return
 		}
-		plan, err := p.probeAccountPlan(ctx, account, email)
+		lockCtx, cancelLock := context.WithTimeout(ctx, planLockWait)
+		lock, err := agents.LockFileContext(lockCtx, probeLockPath(p.accounts, account))
+		cancelLock()
+		if err != nil {
+			logf.Printf("skipped: another process is probing this profile (%v)", err)
+			return
+		}
+		defer lock.Unlock()
+		plan, ran, err := p.probeAccountPlan(ctx, account, email)
+		if !ran {
+			logf.Printf("skipped: agy did not start (%v); no backoff", err)
+			return
+		}
 		state := p.readPlanState(account)
 		if !strings.EqualFold(state.Email, email) {
 			state = planState{Email: email}
@@ -136,29 +154,31 @@ func (p *Provider) refreshPlan(account agents.Account, email string, force bool)
 	}()
 }
 
-// probeAccountPlan runs the probe in a throwaway session of the profile, from
-// an empty working directory, and reconciles the credentials after it.
-func (p *Provider) probeAccountPlan(ctx context.Context, account agents.Account, email string) (string, error) {
+// probeAccountPlan runs the probe in the profile's persistent probe home, from
+// its trusted workspace, with the credentials materialized before and
+// reconciled after. ran tells whether the probe itself started.
+func (p *Provider) probeAccountPlan(ctx context.Context, account agents.Account, email string) (plan string, ran bool, err error) {
 	probe := p.probe
 	if probe == nil {
 		probe = probePlan
 	}
-	var plan string
-	err := p.withProfile(ctx, account, func(ctx context.Context, run profileRun) error {
-		dir, err := os.MkdirTemp("", "bonsai-agy-plan-")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(dir)
-		logf := probeLogFrom(ctx)
-		logf.Printf("starting %s in %s", run.executable, dir)
-		plan, err = probe(ctx, run.executable, dir, agents.BuildEnvironment(os.Environ(), run.env, nil), email)
-		return err
+	logf := probeLogFrom(ctx)
+	home, workspace, err := p.ensureProbeHome(ctx, account)
+	if err != nil {
+		logf.Printf("could not prepare the probe home: %v", err)
+		return "", false, err
+	}
+	err = p.withHome(ctx, account, home, workspace, func(ctx context.Context, run profileRun) error {
+		logf.Printf("starting %s in %s (HOME=%s)", run.executable, run.dir, home)
+		ran = true
+		var probeErr error
+		plan, probeErr = probe(ctx, run.executable, run.dir, agents.BuildEnvironment(os.Environ(), run.env, nil), email)
+		return probeErr
 	})
 	if err != nil {
-		probeLogFrom(ctx).Printf("profile run ended with error: %v", err)
+		logf.Printf("profile run ended with error: %v", err)
 	}
-	return plan, err
+	return plan, ran, err
 }
 
 // ensureProbeHome creates the profile's probe home and its workspace and
