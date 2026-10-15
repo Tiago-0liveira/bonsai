@@ -44,6 +44,23 @@ immediately, along with hosted access, the cloud relay, landing page and public
 deployment inputs. No external hosting shutdown or DNS changes are included.
 Product webhook tunnels and GitHub release publishing remain supported.
 
+## CI and release triggers
+
+Pull requests targeting `main` run formatting, module checks, vet, builds and
+tests on Linux/macOS/Windows, Linux race tests, and a GoReleaser snapshot build
+with the production UI. Native archive smoke tests on all three platforms verify
+checksums, `/app`, its assets, deep links, capability access and shutdown. The
+`CI passes` aggregate must pass before merging into protected `main`.
+
+A merged PR triggers a queued release, defaulting to the next patch version. Use
+at most one label: `release:patch`, `release:minor`, `release:major`, or
+`release:none`. With no existing stable tags, the first patch is `v0.0.1`.
+Release jobs check out the exact merge commit, create a tag, build all six
+platform archives and `checksums.txt`, then publish the completed draft. They run
+only for merged PRs, including fork PRs; direct pushes and manual tags do not
+trigger releases. A failed run can be rerun: it reuses that merge's tag and
+rebuilds an incomplete draft. Published releases are left intact.
+
 ## First-run acceptance evidence
 
 Automated Go CI exercises wizard models and setup backend application on Linux,

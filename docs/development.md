@@ -106,6 +106,20 @@ Only the webhook target `http://127.0.0.1:7002` is passed to the tunnel
 process. The Bonsai API and local Vite server remain loopback-only. Never tunnel
 the API, WebSocket control endpoint, daemon socket, or project services.
 
+## Building a binary with the web UI
+
+A plain `go build` (or `go install`) keeps the TUI/CLI and serves an explanatory
+placeholder at `/app`. To embed the full web app from source, use Node
+**22.12.0**, pnpm **12.9.1** and the repository Go version:
+
+```sh
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web build
+pnpm --dir web bundle:check
+go test -tags embedui ./web/
+go build -tags embedui -o bonsai .
+```
+
 ## Frontend-only iteration
 
 The hidden stack is preferred when changing networking or integration behavior,
