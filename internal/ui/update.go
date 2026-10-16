@@ -54,6 +54,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case worktreesMsg:
 		return m.onWorktrees(msg)
 
+	case agentsListMsg:
+		return m.onAgentsList(msg)
+	case agentsSubscribedMsg:
+		return m.onAgentsSubscribed(msg)
+	case agentsChangedMsg:
+		return m.onAgentsChanged(msg)
+	case agentsClosedMsg:
+		return m, nil
+
 	case metricsMsg:
 		return m.onMetrics(msg), nil
 
@@ -266,6 +275,13 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 	// Fetch metrics per branch, connected PRs, dirty state, activity, and the log
 	// for the selection.
 	cmds := []tea.Cmd{fetchPRs(m.repoDir, m.ghCache, msg.force)}
+	// Which sessions belong to which row depends on the worktree set.
+	if c := m.relistAgents(); c != nil {
+		cmds = append(cmds, c)
+	}
+	if c := m.resubscribeAgents(); c != nil {
+		cmds = append(cmds, c)
+	}
 	for _, t := range msg.trees {
 		cmds = append(cmds, loadStatus(t.Path), loadActivity(t.Path))
 		if t.Branch != "" && t.Branch != "(detached)" {
