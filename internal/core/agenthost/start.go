@@ -82,7 +82,11 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (Record, error) {
 	case err != nil:
 		return Record{}, fmt.Errorf("cannot lock agent admission: %w", err)
 	}
-	defer func() { _ = lock.Unlock() }()
+	defer func() {
+		if lock != nil {
+			_ = lock.Unlock()
+		}
+	}()
 
 	records, err := List(s.Paths)
 	if err != nil {
@@ -134,17 +138,32 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (Record, error) {
 				r = Record{ID: summary.ID, Socket: s.Paths.socket(summary.ID), Protocol: Version}
 			}
 			_ = StopHolder(s.Paths, r, "")
-			Wait(s.Paths, summary.ID, 5*time.Second)
+			// A live holder's record keeps it visible to admission while it exits.
+			_ = lock.Unlock()
+			lock = nil
+			if !Wait(s.Paths, summary.ID, 5*time.Second) {
+				// A holder that resisted stop still needs its runtime directory.
+				return
+			}
 		}
 		_ = s.Sessions.Cleanup(runtime)
 	}()
-	if err := launcher(s.Paths, Spec{Summary: summary, WorkDir: req.Dir, Cols: req.Cols, Rows: req.Rows, Launch: launch}); err != nil {
-		return Record{}, fmt.Errorf("cannot start agent host: %v", err)
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("agent start cancelled: %w", err)
 	}
 	launched = true
+	if err := launcher(ctx, s.Paths, Spec{Summary: summary, WorkDir: req.Dir, Cols: req.Cols, Rows: req.Rows, Launch: launch}); err != nil {
+		return Record{}, fmt.Errorf("cannot start agent host: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("agent start cancelled: %w", err)
+	}
 	record, err := Read(s.Paths, summary.ID)
 	if err != nil {
-		return Record{}, fmt.Errorf("cannot start agent host: %v", err)
+		return Record{}, fmt.Errorf("cannot start agent host: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("agent start cancelled: %w", err)
 	}
 	ok = true
 	return record, nil

@@ -569,6 +569,89 @@ func TestManagerStartsWithWebOriginAndAdmitsThroughDisk(t *testing.T) {
 	}
 }
 
+func TestManagerCloseCancelsStartMidLaunch(t *testing.T) {
+	m, _, account, store := testManager(t, `while :; do sleep 1; done`)
+	launch := m.starter.Launch
+	ready := make(chan string, 1)
+	m.starter.Launch = func(ctx context.Context, p Paths, spec Spec) error {
+		if err := launch(ctx, p, spec); err != nil {
+			return err
+		}
+		ready <- spec.Summary.ID
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	started := make(chan error, 1)
+	dir := t.TempDir()
+	go func() {
+		_, err := m.Start("project", "tree", account, "", dir, 80, 24)
+		started <- err
+	}()
+	var id string
+	select {
+	case id = <-ready:
+	case err := <-started:
+		t.Fatalf("launch failed before ready: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("launcher never became ready")
+	}
+	closed := make(chan struct{})
+	go func() {
+		m.Close(true, 0)
+		close(closed)
+	}()
+	select {
+	case err := <-started:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("start err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("start did not cancel on close")
+	}
+	<-closed
+	if held(m.paths.lock(id)) {
+		t.Fatal("holder survived cancelled start")
+	}
+	if entries, _ := os.ReadDir(store.Root()); len(entries) != 0 {
+		t.Fatal("cancelled start left a runtime dir")
+	}
+}
+
+func TestManagerCloseCancelsLaunchBeforeReady(t *testing.T) {
+	m, _, account, store := testManager(t, `exit 0`)
+	launching := make(chan struct{})
+	m.starter.Launch = func(ctx context.Context, _ Paths, _ Spec) error {
+		close(launching)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	dir := t.TempDir()
+	started := make(chan error, 1)
+	go func() {
+		_, err := m.Start("project", "tree", account, "", dir, 80, 24)
+		started <- err
+	}()
+	select {
+	case <-launching:
+	case err := <-started:
+		t.Fatalf("start failed before launch: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("start never reached launcher")
+	}
+	m.Close(true, 0)
+	select {
+	case err := <-started:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("start err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("start did not cancel on close")
+	}
+	if entries, _ := os.ReadDir(store.Root()); len(entries) != 0 {
+		t.Fatal("cancelled start left a runtime dir")
+	}
+}
+
 func TestCloseStopsOnlyWebStartedSessions(t *testing.T) {
 	m, _, account, _ := testManager(t, `while :; do sleep 1; done`)
 	web, err := m.Start("project", "tree", account, "web", t.TempDir(), 80, 24)

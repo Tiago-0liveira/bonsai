@@ -2,6 +2,7 @@ package agenthost
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,8 @@ import (
 )
 
 // Launcher starts a holder for spec and returns once it serves its socket.
-type Launcher func(Paths, Spec) error
+// Its context bounds readiness; a ready holder outlives the caller.
+type Launcher func(context.Context, Paths, Spec) error
 
 // readyLine is the holder's one stdout message.
 type readyLine struct {
@@ -25,7 +27,7 @@ type readyLine struct {
 // Launch starts `bonsai __agent-host` detached (new session, no terminal), so
 // it outlives the caller, passes it spec on stdin and waits up to five
 // seconds for it to report ready. BONSAI_DAEMON_BIN overrides the binary.
-func Launch(p Paths, spec Spec) error {
+func Launch(ctx context.Context, p Paths, spec Spec) error {
 	bin := os.Getenv("BONSAI_DAEMON_BIN")
 	if bin == "" {
 		var err error
@@ -53,6 +55,9 @@ func Launch(p Paths, spec Spec) error {
 		return err
 	}
 	setDetach(cmd)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("agent host launch cancelled: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -76,6 +81,11 @@ func Launch(p Paths, spec Spec) error {
 			return errors.New(line.Error)
 		}
 		return nil
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		<-answer
+		_ = cmd.Wait()
+		return fmt.Errorf("agent host launch cancelled: %w", ctx.Err())
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
 		<-answer

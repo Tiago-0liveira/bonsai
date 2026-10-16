@@ -153,7 +153,7 @@ func TestStarterValidationErrors(t *testing.T) {
 
 func TestStarterLaunchFailureCleansUpRuntime(t *testing.T) {
 	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
-	s.Launch = func(Paths, Spec) error { return errors.New("boom") }
+	s.Launch = func(context.Context, Paths, Spec) error { return errors.New("boom") }
 	if _, err := s.Start(context.Background(), startRequest(t, account)); err == nil || !strings.Contains(err.Error(), "cannot start agent host") {
 		t.Fatalf("err = %v", err)
 	}
@@ -168,6 +168,90 @@ func TestStarterLaunchFailureCleansUpRuntime(t *testing.T) {
 		t.Fatalf("lock still held after failure: %v", err)
 	}
 	_ = lock.Unlock()
+}
+
+func TestStarterLaunchErrorAfterHolderReadyStopsIt(t *testing.T) {
+	s, _, account := testStarter(t, `while :; do sleep 1; done`, agents.Capabilities{Interactive: true})
+	launch := s.Launch
+	var id string
+	s.Launch = func(ctx context.Context, p Paths, spec Spec) error {
+		if err := launch(ctx, p, spec); err != nil {
+			return err
+		}
+		id = spec.Summary.ID
+		return errors.New("launcher failed after ready")
+	}
+	if _, err := s.Start(context.Background(), startRequest(t, account)); err == nil || !strings.Contains(err.Error(), "launcher failed after ready") {
+		t.Fatalf("err = %v", err)
+	}
+	if id == "" || held(s.Paths.lock(id)) {
+		t.Fatalf("holder %q survived failed start", id)
+	}
+	assertNoRuntimeDirs(t, s)
+}
+
+func TestFailedStartReleasesAdmissionBeforeHolderExit(t *testing.T) {
+	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true, ConcurrentSameAccount: true})
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	releaseHolder := sync.OnceFunc(func() { close(release) })
+	defer releaseHolder()
+	first := s
+	first.Launch = func(_ context.Context, p Paths, spec Spec) error {
+		lock, err := lockFile(p.lock(spec.Summary.ID))
+		if err != nil {
+			return err
+		}
+		if err := writeRecord(p, Record{Version: RecordVersion, ID: spec.Summary.ID, Protocol: Version, Socket: p.socket(spec.Summary.ID), Summary: spec.Summary}); err != nil {
+			_ = lock.Close()
+			return err
+		}
+		go func() {
+			<-release
+			_ = lock.Close()
+		}()
+		close(ready)
+		return errors.New("failed after holder record")
+	}
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := first.Start(context.Background(), startRequest(t, account))
+		firstDone <- err
+	}()
+	select {
+	case <-ready:
+	case err := <-firstDone:
+		t.Fatalf("first start failed before launch: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first start never reached launcher")
+	}
+	secondLaunched := make(chan struct{})
+	second := s
+	second.Launch = func(context.Context, Paths, Spec) error {
+		close(secondLaunched)
+		return errors.New("second launch")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := second.Start(ctx, startRequest(t, account))
+		secondDone <- err
+	}()
+	select {
+	case <-secondLaunched:
+	case err := <-secondDone:
+		t.Fatalf("second admission failed before launch: %v", err)
+	case <-ctx.Done():
+		t.Fatal("second admission waited for failed holder to exit")
+	}
+	releaseHolder()
+	if err := <-firstDone; err == nil || !strings.Contains(err.Error(), "failed after holder record") {
+		t.Fatalf("first err = %v", err)
+	}
+	if err := <-secondDone; err == nil || !strings.Contains(err.Error(), "second launch") {
+		t.Fatalf("second err = %v", err)
+	}
 }
 
 func TestStartersAdmitOneSessionPerAccountAcrossStarters(t *testing.T) {
@@ -365,7 +449,7 @@ func TestStartLockErrorsAreDistinguished(t *testing.T) {
 
 func TestStartPanickingLauncherReleasesLockAndRuntime(t *testing.T) {
 	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
-	s.Launch = func(Paths, Spec) error { panic("launcher exploded") }
+	s.Launch = func(context.Context, Paths, Spec) error { panic("launcher exploded") }
 	func() {
 		defer func() {
 			if recover() == nil {
@@ -382,7 +466,7 @@ func TestStartCleansUpWhenLaunchLeavesNoRecord(t *testing.T) {
 	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
 	// A launcher that reports ready without a record: Read must fail the
 	// start, and the cleanup must still release the lock and the runtime.
-	s.Launch = func(Paths, Spec) error { return nil }
+	s.Launch = func(context.Context, Paths, Spec) error { return nil }
 	if _, err := s.Start(context.Background(), startRequest(t, account)); err == nil || !strings.Contains(err.Error(), "cannot start agent host") {
 		t.Fatalf("err = %v", err)
 	}

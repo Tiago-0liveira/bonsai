@@ -28,14 +28,16 @@ const ActiveLimit = 16
 // history. Holders outlive it: closing the manager only disconnects, unless
 // asked to stop them.
 type Manager struct {
-	mu       sync.Mutex
-	sessions agents.SessionStore
-	paths    Paths
-	starter  Starter
-	entries  map[string]*entry
-	closed   bool
-	quit     chan struct{}
-	changed  func(string)
+	mu          sync.Mutex
+	sessions    agents.SessionStore
+	paths       Paths
+	starter     Starter
+	entries     map[string]*entry
+	closed      bool
+	quit        chan struct{}
+	startCtx    context.Context
+	cancelStart context.CancelFunc
+	changed     func(string)
 }
 
 type entry struct {
@@ -58,19 +60,36 @@ func NewManager(accounts agents.AccountStore, sessions agents.SessionStore, regi
 		launch = Launch
 	}
 	starter := Starter{Accounts: accounts, Sessions: sessions, Registry: registry, Paths: paths, Launch: launch, Origin: "web"}
-	return &Manager{sessions: sessions, paths: paths, starter: starter, entries: map[string]*entry{}, quit: make(chan struct{}), changed: changed}
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	return &Manager{sessions: sessions, paths: paths, starter: starter, entries: map[string]*entry{}, quit: make(chan struct{}), startCtx: startCtx, cancelStart: cancelStart, changed: changed}
 }
 
 // InProcess returns a Launcher that serves each session from this process,
 // with deps' stores and providers. Tests use it: their providers exist only
 // in the test process.
 func InProcess(deps Deps) Launcher {
-	return func(p Paths, spec Spec) error {
+	return func(ctx context.Context, p Paths, spec Spec) error {
 		deps := deps
 		deps.Paths = p
 		ready := make(chan error, 1)
-		go func() { _ = Serve(context.Background(), spec, deps, func(err error) { ready <- err }) }()
-		return <-ready
+		serveCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer cancel()
+			_ = Serve(serveCtx, spec, deps, func(err error) { ready <- err })
+		}()
+		select {
+		case err := <-ready:
+			if err != nil {
+				cancel()
+			}
+			return err
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return fmt.Errorf("agent host launch cancelled: %w", ctx.Err())
+		}
 	}
 }
 
@@ -93,7 +112,7 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 	if len(options) > 0 {
 		launch = options[0]
 	}
-	record, err := m.starter.Start(context.Background(), StartRequest{Project: project, Tree: tree, Name: name, Dir: dir, AccountID: accountID, Cols: cols, Rows: rows, Launch: launch})
+	record, err := m.starter.Start(m.startCtx, StartRequest{Project: project, Tree: tree, Name: name, Dir: dir, AccountID: accountID, Cols: cols, Rows: rows, Launch: launch})
 	if err != nil {
 		return Summary{}, err
 	}
@@ -336,6 +355,7 @@ func (m *Manager) Close(keepRunning bool, timeout time.Duration) {
 		return
 	}
 	m.closed = true
+	m.cancelStart()
 	var live, stopping []*entry
 	for _, e := range m.entries {
 		if e.live && e.record.ID != "" {

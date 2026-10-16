@@ -297,7 +297,7 @@ func TestLaunchReportsHolderStartFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	p := testPaths(t)
 	spec := Spec{Summary: agentterminal.Summary{ID: "sess_0123", AccountID: "acct_missing", State: "starting"}, Cols: 80, Rows: 24}
-	err := Launch(p, spec)
+	err := Launch(context.Background(), p, spec)
 	if err == nil || !strings.Contains(err.Error(), "profile unavailable") {
 		t.Fatalf("launch: %v", err)
 	}
