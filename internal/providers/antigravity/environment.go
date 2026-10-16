@@ -9,6 +9,9 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
 
+// buildEnvironment overrides HOME, unlike the other providers: agy 1.x keeps
+// everything under $HOME/.gemini and ignores ANTIGRAVITY_GEMINI_DIR, so the
+// home is the only way to give a session its own profile.
 func buildEnvironment(account agents.Account, session agents.Session) map[string]string {
 	env := map[string]string{
 		"HOME":                      session.HomeDir,
