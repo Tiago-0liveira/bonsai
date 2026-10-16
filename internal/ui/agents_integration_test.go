@@ -125,7 +125,7 @@ func TestAgentsIntegrationLiveReadOnlyView(t *testing.T) {
 		t.Fatalf("view = %+v, want an attach of %s", v, s.ID)
 	}
 	// The command the update returned would run these two steps: dial, then pump.
-	nm, _ := e.m.Update(within(t, attachCmd(e.m.agents.ctx, api.Sessions, v.sessionID, v.token)))
+	nm, _ := e.m.Update(within(t, attachCmd(e.m.agents.ctx, api.Sessions, v.sessionID, v.token, v.attachOptions())))
 	e.m = nm.(Model)
 	if v.err != "" || v.stream == nil {
 		t.Fatalf("attach failed: %q", v.err)
@@ -158,5 +158,77 @@ func TestAgentsIntegrationLiveReadOnlyView(t *testing.T) {
 	pump(func() bool { return v.state == attachEnded })
 	if got := screen(); !strings.Contains(got, "KNOWN SCREEN") || !strings.Contains(got, "exited") {
 		t.Errorf("ended screen:\n%s", got)
+	}
+}
+
+func TestAgentsIntegrationTerminalMode(t *testing.T) {
+	api, account := newRealBackend(t, `printf 'KNOWN SCREEN'; cat`)
+	e := newAgentsEnv(t, WithAgents(api))
+	s, err := api.Sessions.Start(t.Context(), agentsapi.StartRequest{
+		ProjectID: e.project, WorkDir: e.wtA, AccountID: account, Name: "Fixture", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.apply(t, e.m.relistAgents())
+	e.openTab(t)
+	v := e.m.agents.view
+	deliver := func(msg tea.Msg) {
+		nm, cmd := e.m.Update(msg)
+		e.m, e.lastCmd = nm.(Model), cmd
+		e.run(t, cmd)
+	}
+	deliver(within(t, attachCmd(e.m.agents.ctx, api.Sessions, v.sessionID, v.token, v.attachOptions())))
+	pump := func(until func() bool) {
+		t.Helper()
+		for i := 0; i < 50 && !until(); i++ {
+			deliver(within(t, waitFramesCmd(v.token, v.stream)))
+		}
+		if !until() {
+			t.Fatalf("condition not reached; screen:\n%s", ansi.Strip(e.m.View()))
+		}
+	}
+	screen := func() string { return ansi.Strip(e.m.View()) }
+	pump(func() bool { return strings.Contains(screen(), "KNOWN SCREEN") && !v.replaying })
+
+	// enter: terminal mode as the writer, at the offset the viewer reached.
+	deliver(tea.KeyMsg{Type: tea.KeyEnter})
+	// deliver also ran the commands the key produced: release, dial, nudge.
+	if !v.control || v.opts.ReadOnly {
+		t.Fatalf("control=%v opts=%+v", v.control, v.opts)
+	}
+	pump(func() bool { return v.state == attachControlling && !v.replaying })
+	if !v.stream.Writer() {
+		t.Fatal("terminal mode must hold the write role")
+	}
+
+	// Typed keys travel to the script (the pty echoes them back).
+	for _, r := range "hi there" {
+		deliver(runes(string(r)))
+	}
+	e.pump(t)
+	pump(func() bool { return strings.Contains(screen(), "hi there") })
+
+	// ctrl+] d: leave terminal mode; the holder keeps running.
+	deliver(ctrlBracket)
+	deliver(runes("d"))
+	if v.control {
+		t.Fatal("still in terminal mode")
+	}
+	pump(func() bool { return v.state == attachObserving && !v.replaying })
+	if v.stream.Writer() {
+		t.Error("detach must give up the write role")
+	}
+	list, err := api.Sessions.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range list {
+		if got.ID == s.ID && got.State != "running" {
+			t.Errorf("holder state = %q after detach, want running", got.State)
+		}
+	}
+	if !strings.Contains(screen(), "hi there") {
+		t.Errorf("the screen lost the typed text:\n%s", screen())
 	}
 }

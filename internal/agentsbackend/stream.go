@@ -25,6 +25,8 @@ type stream struct {
 	record   agenthost.Record
 	conn     streamConn
 	readOnly bool
+	// generation is the holder's, from the ready frame.
+	generation string
 
 	frames chan agentterminal.Frame
 	writer atomic.Bool
@@ -40,7 +42,7 @@ type dimensions struct{ cols, rows int }
 
 func newStream(b *Backend, r agenthost.Record, conn streamConn, ready agenthost.Frame, readOnly bool, info agenthost.Info) *stream {
 	s := &stream{
-		backend: b, record: r, conn: conn, readOnly: readOnly,
+		backend: b, record: r, conn: conn, readOnly: readOnly, generation: ready.Generation,
 		frames: make(chan agentterminal.Frame, 256),
 		done:   make(chan struct{}), ended: make(chan struct{}),
 	}
@@ -112,6 +114,7 @@ func (s *stream) poll() {
 
 func (s *stream) Frames() <-chan agentterminal.Frame { return s.frames }
 func (s *stream) Writer() bool                       { return s.writer.Load() }
+func (s *stream) Generation() string                 { return s.generation }
 func (s *stream) Size() (int, int) {
 	d := s.size.Load()
 	return d.cols, d.rows

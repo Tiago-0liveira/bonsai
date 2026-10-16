@@ -49,6 +49,7 @@ type keyMap struct {
 	AgentNew      key.Binding
 	AgentAccounts key.Binding
 	AgentUsage    key.Binding
+	AgentAttach   key.Binding
 	Prefs         key.Binding
 	Help          key.Binding
 	Quit          key.Binding
@@ -104,6 +105,7 @@ var defaultBindings = map[string]bindingSpec{
 	"agent_new":      {[]string{"n"}, "new agent"},
 	"agent_accounts": {[]string{"m"}, "agent accounts"},
 	"agent_usage":    {[]string{"u"}, "agent usage"},
+	"agent_attach":   {[]string{"enter"}, "control agent (terminal mode)"},
 	"prefs":          {[]string{","}, "preferences"},
 	"help":           {[]string{"?"}, "keys"},
 	"quit":           {[]string{"q", "ctrl+c"}, "quit"},
@@ -204,6 +206,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		AgentNew:      b("agent_new"),
 		AgentAccounts: b("agent_accounts"),
 		AgentUsage:    b("agent_usage"),
+		AgentAttach:   b("agent_attach"),
 		Prefs:         b("prefs"),
 		Help:          b("help"),
 		Quit:          b("quit"),
@@ -224,7 +227,7 @@ var keymapSections = []keymapSection{
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
-	{"Agents tab", []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage"}},
+	{"Agents tab", []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach"}},
 	{"Processes tab", []string{"kill_proc", "restart_proc", "set_policy", "proc_modal", "multi_view", "rename_proc", "proc_search"}},
 }
 

@@ -102,6 +102,7 @@ const agentsTitleMinArea = 20
 // rows left for the terminal area.
 type agentsLayout struct {
 	fixed []string
+	tail  []string // rows after the terminal area (terminal mode's hint row)
 	body  int
 	ok    bool // false: nothing to lay out, or the pane is too small
 }
@@ -118,6 +119,10 @@ func (m Model) agentsLayout(w, h int) agentsLayout {
 	strip := m.stripSessions(path)
 	sel, selIdx, hasSel := m.selectedSession(path)
 	rule := dimText(strings.Repeat("─", w))
+
+	if hasSel && m.agentTerminalMode() && m.agents.view.sessionID == sel.ID {
+		return m.terminalLayout(w, h, strip, sel, selIdx, rule)
+	}
 
 	var fixed []string
 	switch {
@@ -172,7 +177,8 @@ func (m Model) agentsRows(w, h int) []string {
 	} else {
 		area = emptyArea(wt.Branch, w, lay.body)
 	}
-	return append(lay.fixed, area...)
+	rows := append(append(append([]string(nil), lay.fixed...), area...), lay.tail...)
+	return rows
 }
 
 func (m Model) emptyStrip(w int) string {
@@ -283,11 +289,15 @@ func (m Model) fullHeaderTitle(s agentsapi.Session) string {
 
 // compactHeader is the one-row header for panes under 100 cells.
 func (m Model) compactHeader(s agentsapi.Session, w int) string {
+	return m.compactHeaderHint(s, w, "u: Usage")
+}
+
+func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string {
 	left := m.agentGlyph(s.Provider) + " " + s.ProfileName
 	if u := m.usageText(s, true); u != "" {
 		left += " · " + u
 	}
-	return leftRight(left, dimText("u: Usage"), w)
+	return leftRight(left, dimText(hint), w)
 }
 
 // usageRow is the second header row: usage text plus the usage hint.

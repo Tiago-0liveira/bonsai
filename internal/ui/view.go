@@ -929,6 +929,13 @@ func (m Model) statusBar() string {
 func (m Model) contextHelp() string {
 	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
 	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	if m.agentTerminalMode() {
+		if v := m.agents.view; v.state == attachObservingOther {
+			return keySt.Render("Ctrl+] t") + " " + descSt.Render("take control") + descSt.Render(" · ") +
+				keySt.Render("Ctrl+] d") + " " + descSt.Render("detach")
+		}
+		return keySt.Render("Ctrl+]") + " " + descSt.Render("Bonsai command prefix")
+	}
 	if m.rightTab == tabAgents && m.agents.active() {
 		pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
 		return strings.Join([]string{

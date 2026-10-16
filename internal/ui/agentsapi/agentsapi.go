@@ -49,6 +49,10 @@ type Stream interface {
 	Frames() <-chan agentterminal.Frame
 	Writer() bool
 	Size() (cols, rows int) // holder PTY size at attach and after resize frames
+	// Generation identifies the holder run this stream belongs to ("" for a
+	// retained record with no holder). Re-attaching at a stream offset must pass
+	// it back in AttachOptions, or the holder replays everything.
+	Generation() string
 	Input(p []byte) error
 	Resize(cols, rows int) error
 	Take() error
