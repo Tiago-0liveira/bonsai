@@ -927,6 +927,17 @@ func (m Model) statusBar() string {
 // the list is focused, tab cycling while the right pane is, plus the always-on
 // palette/preferences/keys/quit.
 func (m Model) contextHelp() string {
+	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
+	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	if m.rightTab == tabAgents && m.agents.active() {
+		pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
+		return strings.Join([]string{
+			pair(m.keys.Tab.Help().Key, "focus"),
+			pair(m.keys.AgentsTab.Help().Key, "agents"),
+			pair("ctrl+]", "menu"),
+			pair(m.keys.Help.Help().Key, "keys"),
+		}, descSt.Render(" · "))
+	}
 	bindings := []key.Binding{m.keys.Tab}
 	if m.focus == focusList {
 		bindings = append(bindings, m.keys.Enter, m.keys.Create, m.keys.Filter)
@@ -935,8 +946,6 @@ func (m Model) contextHelp() string {
 	}
 	bindings = append(bindings, m.keys.Palette, m.keys.Prefs, m.keys.Help, m.keys.Quit)
 
-	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
-	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
 	parts := make([]string, 0, len(bindings))
 	for _, b := range bindings {
 		h := b.Help()

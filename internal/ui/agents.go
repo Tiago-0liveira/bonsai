@@ -72,6 +72,10 @@ type agentState struct {
 	// the open picker belongs to.
 	pickIDs  map[string]string
 	pickPath string
+
+	// view is the one live attachment; attachSeq numbers streams for its token.
+	view      *agentView
+	attachSeq uint64
 }
 
 // enabled: a backend is present (the tab will exist). active: it is also

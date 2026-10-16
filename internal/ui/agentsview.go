@@ -84,7 +84,8 @@ func leftRight(left, right string, width int) string {
 }
 
 // renderAgentsPane draws the Agents tab body in exactly h rows of at most w
-// cells: strip, header, rule, then the terminal area with every remaining row.
+// cells: optional title, strip, header, rules, then the terminal area with every
+// remaining row.
 func (m Model) renderAgentsPane(w, h int) string {
 	rows := m.agentsRows(w, h)
 	for len(rows) < h {
@@ -93,13 +94,25 @@ func (m Model) renderAgentsPane(w, h int) string {
 	return strings.Join(rows[:h], "\n")
 }
 
-func (m Model) agentsRows(w, h int) []string {
+// agentsTitleMinArea is the terminal height below which the title and blank
+// rows give way, so the agent keeps the room.
+const agentsTitleMinArea = 20
+
+// agentsLayout is the Agents pane split into its fixed header rows and the
+// rows left for the terminal area.
+type agentsLayout struct {
+	fixed []string
+	body  int
+	ok    bool // false: nothing to lay out, or the pane is too small
+}
+
+func (m Model) agentsLayout(w, h int) agentsLayout {
 	if !m.agents.active() {
-		return []string{fit(unsupportedNotice, w)}
+		return agentsLayout{}
 	}
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		return []string{fit(dimText("(no worktree selected)"), w)}
+		return agentsLayout{}
 	}
 	path := cleanPath(wt.Path)
 	strip := m.stripSessions(path)
@@ -125,22 +138,41 @@ func (m Model) agentsRows(w, h int) []string {
 	default:
 		fixed = []string{
 			m.sessionStrip(strip, selIdx, w, "Sessions: ", "a: All  n: New"),
+			rule,
 			fit(m.fullHeaderTitle(sel), w),
 			fit(m.usageRow(sel, w), w),
 			rule,
 		}
+		if h-len(fixed)-2 >= agentsTitleMinArea {
+			title := lipgloss.NewStyle().Bold(true).Render("AGENTS") + dimText(" · "+branchOf(wt))
+			fixed = append([]string{fit(title, w), ""}, fixed...)
+		}
 	}
 	if h-len(fixed) < minTerminalRows {
+		return agentsLayout{}
+	}
+	return agentsLayout{fixed: fixed, body: h - len(fixed), ok: true}
+}
+
+func (m Model) agentsRows(w, h int) []string {
+	if !m.agents.active() {
+		return []string{fit(unsupportedNotice, w)}
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return []string{fit(dimText("(no worktree selected)"), w)}
+	}
+	lay := m.agentsLayout(w, h)
+	if !lay.ok {
 		return []string{fit("Pane too small", w)}
 	}
-	body := h - len(fixed)
 	var area []string
-	if hasSel {
-		area = placeholderArea(sel, w, body)
+	if sel, _, hasSel := m.selectedSession(cleanPath(wt.Path)); hasSel {
+		area = m.agentTerminalArea(sel, w, lay.body)
 	} else {
-		area = emptyArea(wt.Branch, w, body)
+		area = emptyArea(wt.Branch, w, lay.body)
 	}
-	return append(fixed, area...)
+	return append(lay.fixed, area...)
 }
 
 func (m Model) emptyStrip(w int) string {
@@ -242,7 +274,11 @@ func (m Model) fullHeaderTitle(s agentsapi.Session) string {
 	if s.Model != "" {
 		parts = append(parts, s.Model)
 	}
-	return m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(s.State)
+	head := m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(s.State)
+	if v := m.agents.view; v != nil && v.sessionID == s.ID && v.state == attachObservingOther {
+		head += dimText(" · read-only")
+	}
+	return head
 }
 
 // compactHeader is the one-row header for panes under 100 cells.
@@ -287,7 +323,7 @@ func (m Model) usageText(s agentsapi.Session, compact bool) string {
 	return text
 }
 
-// placeholderArea stands in for the terminal until it is attached.
+// placeholderArea stands in for the terminal when no view is attached to s.
 func placeholderArea(s agentsapi.Session, w, rows int) []string {
 	lines := []string{sessionName(s), dimText(s.State)}
 	return centered(lines, w, rows)
