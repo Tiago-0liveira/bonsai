@@ -28,6 +28,8 @@ type agentsEnv struct {
 	project string
 	fb      *fake.Backend
 	m       Model
+	// lastCmd is the command returned by the latest key press.
+	lastCmd tea.Cmd
 }
 
 func newAgentsEnv(t *testing.T, opts ...Option) *agentsEnv {
@@ -245,10 +247,12 @@ func TestAgentsStaleListDropped(t *testing.T) {
 	}
 }
 
-func TestAgentsListErrorKeepsLastGood(t *testing.T) {
+func TestAgentsListErrorKeepsLastGoodAndShowsStale(t *testing.T) {
 	e := newAgentsEnv(t)
-	e.fb.Sessions.Add(e.session("s1", "claude", "running", e.wtA))
+	s := e.agent("s1", "claude", "running", e.wtA, "Working", 1)
+	e.fb.Sessions.Add(s)
 	e.relist(t)
+	e.openTab(t)
 
 	e.fb.Sessions.ListErr = errors.New("holder dir unreadable")
 	e.relist(t)
@@ -258,12 +262,22 @@ func TestAgentsListErrorKeepsLastGood(t *testing.T) {
 	if row := e.rowOf("feat-a"); !strings.Contains(row, "✳") {
 		t.Errorf("glyph lost on list error: %q", row)
 	}
+	if out := e.pane(120, 20); !strings.Contains(out, "Working") || !strings.Contains(out, "⚠ stale") {
+		t.Errorf("last good sessions and stale indicator must remain visible:\n%s", out)
+	}
+	e.m.state.Prefs.AgentGlyphs = "ascii"
+	if out := e.pane(120, 20); !strings.Contains(out, "! stale") {
+		t.Errorf("ASCII stale indicator missing:\n%s", out)
+	}
 
 	e.fb.Sessions.ListErr = nil
-	e.fb.Sessions.Set(e.session("s1", "claude", "exited", e.wtA))
+	e.fb.Sessions.Set(s)
 	e.relist(t)
 	if e.m.agents.err != "" {
 		t.Errorf("err not cleared by a good list: %q", e.m.agents.err)
+	}
+	if out := e.pane(120, 20); strings.Contains(out, "stale") {
+		t.Errorf("successful list did not clear stale indicator:\n%s", out)
 	}
 }
 

@@ -36,6 +36,7 @@ const (
 	tabPR
 	tabInspect
 	tabChecks
+	tabAgents
 )
 
 // sortMode orders the worktree list.

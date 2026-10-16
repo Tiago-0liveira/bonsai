@@ -61,7 +61,7 @@ serves only a placeholder (no embedded web UI; see [Building](#building-from-sou
 
 - **Web workspace**: `bonsai web` serves a local app at
   `http://127.0.0.1:7001/app`, embedded in release binaries. No hosted service.
-- **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`).
+- **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`) and an Agents tab (`g`, see [docs/agents.md](docs/agents.md)).
 - **CLI**: every feature is also a plain, scriptable command.
 
 ### ⚙️ Background supervisor

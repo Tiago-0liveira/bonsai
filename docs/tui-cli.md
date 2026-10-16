@@ -19,6 +19,11 @@ stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 (`http://localhost:…`) detected in process output are shown next to each process.
 
+The Agents tab lists the agents running in the selected worktree and the
+selected account's usage; worktree rows group running agents by provider with a
+glyph and count, plus `!` for an unseen failure.
+See [agents.md](agents.md) for profiles and accounts.
+
 ### Keybindings
 
 | Key | Action |
@@ -30,6 +35,7 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 | `n` | New worktree (new branch / existing branch / PR) |
 | `ctrl+n` | Create a PR from the selected worktree |
 | `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
+| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session. `n` / `m` / `u` (new, accounts, usage) are placeholders for now |
 | `i` | Inspector tab (status, last commit, diff, disk, stashes) |
 | `b` | Checks tab (GitHub Actions runs for the branch) |
 | `o` | Cycle list sort (name / ahead / behind / PR / activity / dirty) |

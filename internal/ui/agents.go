@@ -27,6 +27,9 @@ func WithAgents(b agentsapi.Backend) Option {
 		}
 		// Kept even when unsupported so the tab can explain why it is idle.
 		m.agents.api = b
+		m.agents.selected = map[string]string{}
+		m.agents.usage = map[agents.AccountID]usageEntry{}
+		m.agents.ack = map[string]bool{}
 		if !b.Sessions.Supported() {
 			return
 		}
@@ -34,6 +37,7 @@ func WithAgents(b agentsapi.Backend) Option {
 		// Init issues the first list with seq 1.
 		m.agents.seq = 1
 		m.agents.subscribed = true // Init subscribes
+		m.agents.usageTickGen = 1
 	}
 }
 
@@ -54,6 +58,20 @@ type agentState struct {
 	// ack holds failed session IDs the user has already seen, so their "!"
 	// stops showing.
 	ack map[string]bool
+
+	// selected remembers each worktree's chosen session for the TUI's lifetime.
+	selected map[string]string
+	// usage is the last usage per account; usageSeq numbers requests and
+	// usageAccount is the account the latest one asked for.
+	usage        map[agents.AccountID]usageEntry
+	usageSeq     uint64
+	usageAccount agents.AccountID
+	// usageTickGen makes duplicate Init timers stale after one re-arms.
+	usageTickGen uint64
+	// pickIDs maps picker item text to its session; pickPath is the worktree
+	// the open picker belongs to.
+	pickIDs  map[string]string
+	pickPath string
 }
 
 // enabled: a backend is present (the tab will exist). active: it is also
@@ -184,6 +202,7 @@ func (m Model) initAgents() tea.Cmd {
 	return tea.Batch(
 		listAgentsCmd(m.agents.ctx, m.agents.api.Sessions, m.repoDir, nil, 1),
 		subscribeAgentsCmd(m.agents.ctx, m.agents.api.Sessions),
+		tickAgentUsage(m.agents.usageTickGen),
 	)
 }
 
@@ -210,6 +229,15 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 	m.agents.sessions = msg.sessions
 	m.agents.byTree = msg.byTree
 	m.refreshAgentBadges()
+	// New or ended sessions can change which account the open tab shows.
+	if m.rightTab == tabAgents {
+		if wt, ok := m.selectedWorktree(); ok {
+			if s, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && s.AccountID != m.agents.usageAccount {
+				cmd := m.requestAgentUsage()
+				return m, cmd
+			}
+		}
+	}
 	return m, nil
 }
 
