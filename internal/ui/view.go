@@ -686,6 +686,9 @@ func (m Model) View() string {
 	if m.prefs != nil {
 		return clampHeight(m.prefs.View(), m.height)
 	}
+	if m.agents.overlay != nil {
+		return clampHeight(m.agentOverlayView(), m.height)
+	}
 	if m.modal != nil {
 		return clampHeight(m.modal.View(), m.height)
 	}

@@ -471,12 +471,33 @@ func TestTerminalPrefixAgentsLeavesModeKeepsStream(t *testing.T) {
 	}
 }
 
-func TestTerminalPrefixComingSoonKeepsMode(t *testing.T) {
+func TestTerminalPrefixOverlaysLeaveModeKeepStream(t *testing.T) {
 	for _, k := range []string{"u", "m", "s"} {
-		e, _ := terminalEnv(t)
+		e, st := terminalEnv(t)
 		e.typeKeys(t, ctrlBracket, runes(k))
-		if e.m.status != "agents: coming soon" || !e.m.agentTerminalMode() {
-			t.Errorf("%s: status %q mode %v", k, e.m.status, e.m.agentTerminalMode())
+		if e.m.agentTerminalMode() {
+			t.Errorf("%s: terminal mode must end under the overlay", k)
+		}
+		switch k {
+		case "u":
+			if e.m.agents.overlay == nil || e.m.agents.overlay.quick == nil {
+				t.Errorf("%s: no usage overlay", k)
+			}
+		case "m":
+			if e.m.agents.overlay == nil || e.m.agents.overlay.accounts == nil {
+				t.Errorf("%s: no accounts overlay", k)
+			}
+		case "s":
+			if e.m.modal == nil || e.m.pendingConfirm == nil {
+				t.Errorf("%s: no stop confirmation", k)
+			}
+		}
+		if st.Closed() || e.m.agents.view.stream != agentsapi.Stream(st) {
+			t.Errorf("%s: the stream must stay attached under the overlay", k)
+		}
+		e.frames(t, out("still going"))
+		if !strings.Contains(ansi.Strip(e.m.agents.view.term.View()), "still going") {
+			t.Errorf("%s: output stops rendering under the overlay", k)
 		}
 	}
 }

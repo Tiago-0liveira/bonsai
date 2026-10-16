@@ -206,10 +206,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case modals.ActionMsg:
 		if msg.Kind == kindAgents && msg.Key == "n" {
-			// The launch dialog arrives with D5; until then n is as inert here
-			// as it is on the tab.
 			m.modal = nil
-			m.status = "agents: coming soon"
+			return m.openAgentLaunch()
 		}
 		return m, nil
 
@@ -246,6 +244,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.agentOverlayOpen() && m.agentTerminalMode() {
 			return m.agentTerminalKey(msg)
 		}
+		// An agent overlay owns every key, including the ones the update prompt
+		// would take.
+		if m.agents.overlay != nil {
+			return m.overlayUpdate(msg)
+		}
 		if m.updatePromptVisible() && msg.String() != "ctrl+c" {
 			switch msg.String() {
 			case "u":
@@ -272,8 +275,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onKey(msg)
 	}
 
-	// Forward remaining messages to the focused pane.
-	return m.forwardToPane(msg)
+	if handled, nm, cmd := m.onAgentOverlayMsg(msg); handled {
+		return nm, cmd
+	}
+	// Forward remaining messages to the focused pane; an open agent overlay
+	// also gets them (its backend results arrive here).
+	var ocmd tea.Cmd
+	if m.agents.overlay != nil {
+		m, ocmd = m.overlayUpdate(msg)
+	}
+	nm, cmd := m.forwardToPane(msg)
+	return nm, tea.Batch(ocmd, cmd)
 }
 
 // onMouse scrolls the pane the pointer is over — the log on the right, the
@@ -281,7 +293,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // aiming the wheel is how a mouse says "this one". Only wheel events are acted
 // on: clicks and drags belong to the terminal's own text selection.
 func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.mouseOff || m.prefs != nil || m.modal != nil {
+	if m.mouseOff || m.prefs != nil || m.modal != nil || m.agents.overlay != nil {
 		return m, nil
 	}
 	// The TUI owns the mouse (cell motion) and agents get none in this
@@ -309,6 +321,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) Model {
 	if m.prefs != nil {
 		m.prefs.SetSize(msg.Width, msg.Height)
 	}
+	m.sizeAgentOverlay()
 	m.layout()
 	m.ready = true
 	return m

@@ -76,6 +76,17 @@ type agentState struct {
 	// view is the one live attachment; attachSeq numbers streams for its token.
 	view      *agentView
 	attachSeq uint64
+
+	// overlay is the one agent overlay on top of the tab, if any; launchSeq
+	// numbers launch dialogs so a start answer reaching a closed dialog is told apart.
+	overlay   *agentOverlay
+	launchSeq uint64
+	// enterAfter is a session this client just started: the live view for it
+	// attaches as the writer and enters terminal mode. enterSeq is the list
+	// request that must contain it before the wish is dropped.
+	enterAfter string
+	enterSeq   uint64
+	enterPath  string
 }
 
 // enabled: a backend is present (the tab will exist). active: it is also
@@ -230,6 +241,9 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.agents.err = ""
+	if m.agents.enterAfter != "" && msg.seq >= m.agents.enterSeq && !hasSession(msg.sessions, m.agents.enterAfter) {
+		m.agents.enterAfter = "" // the started session is gone already
+	}
 	m.agents.sessions = msg.sessions
 	m.agents.byTree = msg.byTree
 	m.refreshAgentBadges()
@@ -260,6 +274,15 @@ func (m Model) onAgentsChanged(msg agentsChangedMsg) (tea.Model, tea.Cmd) {
 	// m for the return versus runs the call is unspecified.
 	list := m.relistAgents()
 	return m, tea.Batch(list, waitAgentsCmd(msg.ch))
+}
+
+func hasSession(list []agentsapi.Session, id string) bool {
+	for _, s := range list {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // agentGlyphsASCII reports the glyph preference.

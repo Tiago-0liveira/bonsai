@@ -30,7 +30,11 @@ type Sidebar struct {
 	// AddSelected puts the marker on "+ Add account" instead of an account.
 	AddSelected bool
 	Usage       map[agents.AccountID]agentsapi.Usage
-	ASCII       bool
+	// Busy accounts show "busy" in place of their usage percentage.
+	Busy  map[agents.AccountID]bool
+	ASCII bool
+	// HideAdd drops the "+ Add account" row, for callers that cannot add.
+	HideAdd bool
 }
 
 // Ordered returns the accounts in display order (provider groups, then input
@@ -99,6 +103,9 @@ func (s Sidebar) View(w, h int) []string {
 	// Rows between the two-line heading and the pinned add row; scroll so the
 	// selected account stays visible when they do not all fit.
 	avail := h - 3
+	if s.HideAdd {
+		avail = h - 2
+	}
 	start := 0
 	if avail > 0 && selected >= avail {
 		start = selected - avail + 1
@@ -110,7 +117,9 @@ func (s Sidebar) View(w, h int) []string {
 	for i := 0; i < avail && start+i < len(body); i++ {
 		lines[2+i] = fit(body[start+i], w)
 	}
-	lines[h-1] = fit(s.addRow(), w)
+	if !s.HideAdd {
+		lines[h-1] = fit(s.addRow(), w)
+	}
 	return lines
 }
 
@@ -133,7 +142,10 @@ func (s Sidebar) row(a agentsapi.Account, w int, selected bool) string {
 	right := s.dot(a)
 	rightW := 1
 	if w >= usageMinWidth {
-		if pct, ok := s.usageText(a.ID); ok {
+		if s.Busy[a.ID] {
+			right = lipgloss.NewStyle().Foreground(th.Warning).Render(fmt.Sprintf("%4s", "busy")) + " " + right
+			rightW += 5
+		} else if pct, ok := s.usageText(a.ID); ok {
 			right = pct + " " + right
 			rightW += 5
 		}
@@ -205,6 +217,9 @@ func authOf(info agents.AccountInfo) authState {
 	}
 	return authUnknown
 }
+
+// NeedsSignIn reports that the provider says the account has no usable login.
+func NeedsSignIn(info agents.AccountInfo) bool { return authOf(info) == authNeedsSignIn }
 
 func (s Sidebar) dot(a agentsapi.Account) string {
 	th := theme.Current
