@@ -422,3 +422,24 @@ func TestRenderUsageDashboardThreeProvidersGolden(t *testing.T) {
 		t.Fatalf("dashboard differs from testdata/usage-three-providers.golden:\n%s", got)
 	}
 }
+
+// The API reports a Gemini pool only for some profiles. One with only its
+// Claude & GPT pool must not render as a blank row.
+func TestRenderUsageDashboardShowsThirdPartyPoolWhenGeminiIsMissing(t *testing.T) {
+	now := time.Date(2026, 9, 25, 14, 0, 0, 0, time.UTC)
+	result := agents.AccountUsageResult{
+		Account: agents.Account{ID: "acct_tp", Provider: "antigravity", Name: "thirdonly"},
+		Usage: &agents.UsageSnapshot{Provider: "antigravity", AccountID: "acct_tp", Limits: []agents.UsageLimit{
+			usageTestLimit("3p-5h", "Claude and GPT models", "5h", 0.40, now.Add(2*time.Hour)),
+			usageTestLimit("3p-weekly", "Claude and GPT models", "weekly", 0.70, now.Add(24*time.Hour)),
+		}},
+	}
+	var out bytes.Buffer
+	renderUsageTestDashboard(&out, []agents.AccountUsageResult{result}, now, false)
+	got := out.String()
+	for _, want := range []string{"40%", "70%", "(Claude & GPT)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dashboard missing %q:\n%s", want, got)
+		}
+	}
+}
