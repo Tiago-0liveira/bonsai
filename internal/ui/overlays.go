@@ -76,6 +76,7 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 		m.sort.name(),
 		m.state.Prefs.PruneMerge,
 		m.state.Prefs.PRStatus,
+		m.state.Prefs.AgentGlyphs,
 		m.state.Prefs.Editor,
 		theme.Presets(),
 		prefsActions(m.cfg.Keys),
@@ -92,12 +93,13 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 // preview live while the overlay is open.
 func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 	m.state.Prefs = config.Prefs{
-		Theme:      p.Theme,
-		Sort:       p.Sort,
-		PruneMerge: p.PruneMerge,
-		PRStatus:   p.PRStatus,
-		Editor:     p.Editor,
-		Keys:       p.Keys,
+		Theme:       p.Theme,
+		Sort:        p.Sort,
+		PruneMerge:  p.PruneMerge,
+		PRStatus:    p.PRStatus,
+		AgentGlyphs: p.AgentGlyphs,
+		Editor:      p.Editor,
+		Keys:        p.Keys,
 	}
 	if err := m.state.Save(); err != nil {
 		m.err = err
@@ -110,6 +112,8 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 	worktreelist.SetPRStatusMode(p.PRStatus)
 	modals.SetTheme(theme.Current)
 	prefs.SetTheme(theme.Current)
+
+	m.refreshAgentBadges()
 
 	m.keys = newKeyMap(m.mergedKeyOverrides())
 	if cols := keyCollisions(m.mergedKeyOverrides()); len(cols) > 0 {
