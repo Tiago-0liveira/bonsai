@@ -214,6 +214,9 @@ type Model struct {
 	// (see the "Mouse" palette command).
 	mouseOff bool
 
+	// agents is the live agent session index; zero when no backend is injected.
+	agents agentState
+
 	// Layout / status.
 	width, height int
 	focus         focusArea
@@ -225,7 +228,7 @@ type Model struct {
 }
 
 // New constructs the root model with its core-layer dependencies injected.
-func New(repoDir string, cfg *config.Config, state *config.State) Model {
+func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option) Model {
 	// Resolve the color palette: a personal in-app pick (state.json) overrides
 	// the repo's .bonsai.yaml preset; per-role overrides stay repo-level.
 	preset := cfg.Theme.Preset
@@ -276,6 +279,9 @@ func New(repoDir string, cfg *config.Config, state *config.State) Model {
 		diffFileContent:   map[string]string{},
 		yankTargets:       map[string]string{},
 	}
+	for _, o := range opts {
+		o(&m)
+	}
 	m.list.Focus()
 	m.procSearchInput.Placeholder = "search output…"
 	m.term.SetTitle("Git Log")
@@ -324,7 +330,7 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs())
+	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs(), m.initAgents())
 }
 
 // selectedWorktree returns the highlighted worktree, if any.

@@ -113,6 +113,8 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 	modals.SetTheme(theme.Current)
 	prefs.SetTheme(theme.Current)
 
+	m.refreshAgentBadges()
+
 	m.keys = newKeyMap(m.mergedKeyOverrides())
 	if cols := keyCollisions(m.mergedKeyOverrides()); len(cols) > 0 {
 		m.status = "key conflicts ignored: " + cols[0]
