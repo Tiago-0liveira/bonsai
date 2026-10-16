@@ -283,6 +283,19 @@ func (m Model) paletteCommands() []paletteCmd {
 		}),
 	})...)
 
+	if m.agents.enabled() {
+		soon := func(m Model) (tea.Model, tea.Cmd) {
+			m.status = "agents: coming soon"
+			return m, nil
+		}
+		cmds = append(cmds, tag("Agents", []paletteCmd{
+			global("Agents: open tab", m.keys.AgentsTab, Model.openAgentsTab),
+			global("Agents: new agent", m.keys.AgentNew, soon),
+			global("Agents: accounts", m.keys.AgentAccounts, soon),
+			global("Agents: usage", m.keys.AgentUsage, soon),
+		})...)
+	}
+
 	// Process control (normally tab-local).
 	cmds = append(cmds, tag("Processes", []paletteCmd{
 		{label: "Process: kill selected", binding: m.keys.Kill, scopeHint: wtScope, available: needProcess, run: func(m Model) (tea.Model, tea.Cmd) {

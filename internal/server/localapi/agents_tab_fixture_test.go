@@ -15,7 +15,6 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentsetup"
-	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/providers/claude"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webui"
 )
@@ -62,13 +61,13 @@ func TestAgentsTabBrowserFixture(t *testing.T) {
 	claude.ModelsEndpoint, claude.UsageEndpoint = "http://127.0.0.1:1/v1/models", "http://127.0.0.1:1/usage"
 
 	s, _, _ := terminalTestServer(t)
-	s.agents.manager.Close()
+	s.agents.manager.Close(false, 10*time.Second)
 	runtime, err := agentruntime.New(nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.agents = &agentAPI{runtime: runtime, registry: s.registry}
-	s.agents.manager = agentterminal.New(runtime.Accounts, runtime.Sessions, runtime.Registry, s.publishAgents)
+	s.agents.manager = testAgentManager(t, testAgentHostPaths(t), runtime.Accounts, runtime.Sessions, runtime.Registry, s.publishAgents)
 	s.agents.setup = agentsetup.New(runtime.AccountService, s.publishAgentsChanged)
 	t.Cleanup(s.Close)
 	s.publishAgents("repo")

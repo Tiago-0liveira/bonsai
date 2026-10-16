@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
 // Prefs holds personal UI preferences that override the repo's .bonsai.yaml
@@ -25,6 +27,9 @@ type Prefs struct {
 	// PRStatus is the worktree-list PR status display mode: "full" (glyph
 	// plus label), "compact" (glyph only) or "off" ("" = full).
 	PRStatus string `json:"pr_status,omitempty"`
+	// AgentGlyphs picks how agent providers are drawn: "unicode" (✳ ◎ ✦) or
+	// "ascii" (C X A) for fonts that render the glyphs badly ("" = unicode).
+	AgentGlyphs string `json:"agent_glyphs,omitempty"`
 	// Editor is a personal override for the "open editor" command, taking
 	// priority over .bonsai.yaml's editor setting ("" = defer to it).
 	Editor string `json:"editor,omitempty"`
@@ -93,7 +98,7 @@ func (s *State) Save() error {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	return gitstore.ReplaceFile(tmp, s.path)
 }
 
 // RecordCopy increments the copy frequency for relPath and persists.

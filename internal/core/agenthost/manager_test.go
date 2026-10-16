@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package agentterminal
+package agenthost
 
 import (
 	"context"
@@ -75,8 +75,8 @@ func testManager(t *testing.T, script string) (*Manager, *testProvider, agents.A
 	if err = registry.Register(provider); err != nil {
 		t.Fatal(err)
 	}
-	m := New(accounts, sessions, registry, nil)
-	t.Cleanup(m.Close)
+	m := NewManager(accounts, sessions, registry, testPaths(t), InProcess(Deps{Accounts: accounts, Sessions: sessions, Registry: registry, Linger: 200 * time.Millisecond}), nil)
+	t.Cleanup(func() { m.Close(false, 10*time.Second) })
 	return m, provider, id, sessions
 }
 func awaitState(t *testing.T, m *Manager, id, state string) {
@@ -102,49 +102,53 @@ func TestPTYLifecycleAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitState(t, m, s.ID, "running")
-	writer, writable, _, frames, err := m.Attach("project", s.ID, 0)
-	if err != nil || !writable {
-		t.Fatalf("attach %v %v", writable, err)
+	writer, err := m.Attach("project", s.ID, 0, "", "web")
+	if err != nil || !writer.Writer() {
+		t.Fatalf("attach %v", err)
 	}
-	observer, writable, _, _, err := m.Attach("project", s.ID, 0)
-	if err != nil || writable {
+	observer, err := m.Attach("project", s.ID, 0, "", "web")
+	if err != nil || observer.Writer() {
 		t.Fatal("second attachment should observe")
 	}
-	if m.Input(s.ID, observer, []byte("bad\n")) == nil {
+	if observer.Input([]byte("bad\n")) == nil {
 		t.Fatal("observer accepted input")
 	}
-	if err = m.Resize(s.ID, writer, 101, 31); err != nil {
+	if err = writer.Resize(101, 31); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Input(s.ID, writer, []byte("hello\n")); err != nil {
+	if err = writer.Input([]byte("hello\n")); err != nil {
 		t.Fatal(err)
+	}
+	var output string
+	for _, f := range writer.Replay {
+		output += string(f.Data)
 	}
 	timeout := time.After(5 * time.Second)
 	finished := false
 	for !finished {
 		select {
-		case f := <-frames:
+		case f := <-writer.Frames:
+			output += string(f.Data)
 			finished = f.Type == "status" && f.Status != nil && !f.Status.Active()
 		case <-timeout:
 			t.Fatal("no final status")
 		}
 	}
-	m.Detach(s.ID, writer)
-	m.Detach(s.ID, observer)
-	_, writable, replay, _, err := m.Attach("project", s.ID, 0)
-	if err != nil || !writable {
-		t.Fatal(err)
+	writer.Close()
+	observer.Close()
+	// Once the holder has exited, an attachment replays the final status.
+	awaitHolderExit(t, m, s.ID)
+	ended, err := m.Attach("project", s.ID, 0, "", "web")
+	if err != nil || len(ended.Replay) != 1 || ended.Replay[0].Status.State != "exited" {
+		t.Fatalf("ended attach %+v %v", ended, err)
 	}
-	var output string
-	for _, f := range replay {
-		output += string(f.Data)
-	}
+	ended.Close()
 	for _, want := range []string{"\x1b[32mREADY", dir, "isolated:unset:unset", "31 101", "INPUT:hello"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q in %q", want, output)
 		}
 	}
-	m.Close()
+	m.Close(false, 10*time.Second)
 	if p.finalized.Load() != 1 {
 		t.Fatal("finalized more than once")
 	}
@@ -173,7 +177,7 @@ func TestStopConcurrentSameProfileAndLimits(t *testing.T) {
 		}
 		_ = m.Stop("project", id)
 	}
-	m.Close()
+	m.Close(false, 10*time.Second)
 	if p.finalized.Load() != 16 {
 		t.Fatalf("finalized %d", p.finalized.Load())
 	}
@@ -182,32 +186,17 @@ func TestStopConcurrentSameProfileAndLimits(t *testing.T) {
 		t.Fatal("homes leaked")
 	}
 }
-func TestBoundedReplaySlowReadersAndRetention(t *testing.T) {
-	m := New(nil, nil, nil, nil)
-	e := &session{summary: Summary{ID: "one", ProjectID: "project", State: "running"}, stream: NewStream[Summary](80, 24)}
-	m.entries["one"] = e
-	id, _, _, ch, _ := m.Attach("project", "one", 0)
-	for i := 0; i < 200; i++ {
-		_, _ = e.stream.Write(make([]byte, 16384))
-	}
-	if len(e.stream.output) != OutputLimit {
-		t.Fatal(len(e.stream.output))
-	}
-	for range ch {
-	}
-	if e.stream.writer != 0 {
-		t.Fatal("slow writer retained")
-	}
-	m.Detach("one", id)
-	_, _, replay, _, _ := m.Attach("project", "one", 0)
-	if replay[0].Type != "gap" || replay[1].Offset != e.stream.offset-OutputLimit {
-		t.Fatal("missing gap")
-	}
+func TestEndedSessionRetention(t *testing.T) {
+	m := NewManager(nil, nil, nil, Paths{}, nil, nil)
 	for i := 0; i < 40; i++ {
 		m.Restore(Summary{ID: strings.Repeat("x", i+1), ProjectID: "project", State: "failed", CreatedAt: time.Now()})
 	}
-	if len(m.List("project")) != 33 {
+	if len(m.List("project")) != 32 {
 		t.Fatal("completed retention limit")
+	}
+	m.Restore(Summary{ID: "active", ProjectID: "project", State: "running", CreatedAt: time.Now()})
+	if s, _ := m.Get("project", "active"); s.State != "failed" || !strings.Contains(s.Error, "interrupted") {
+		t.Fatalf("restored active session %+v", s)
 	}
 }
 
@@ -218,35 +207,36 @@ func TestCtrlCAndDetachWriterHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitState(t, m, summary.ID, "running")
-	first, _, _, _, _ := m.Attach("project", summary.ID, 0)
-	m.Detach(summary.ID, first)
-	second, writer, _, frames, err := m.Attach("project", summary.ID, 0)
-	if err != nil || !writer {
+	first, err := m.Attach("project", summary.ID, 0, "", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+	awaitClients(t, m, summary.ID, 0)
+	second, err := m.Attach("project", summary.ID, 0, "", "web")
+	if err != nil || !second.Writer() {
 		t.Fatal("writer ownership not released")
 	}
+	defer second.Close()
 	// Wait for the helper to install its handler before sending the interrupt.
+	output := ""
+	for _, f := range second.Replay {
+		output += string(f.Data)
+	}
 	deadline := time.After(5 * time.Second)
-	ready := false
-	for !ready {
-		m.mu.Lock()
-		stream := m.entries[summary.ID].stream
-		m.mu.Unlock()
-		stream.mu.Lock()
-		ready = strings.Contains(string(stream.replay(0)), "ready")
-		stream.mu.Unlock()
-		if !ready {
-			select {
-			case <-frames:
-			case <-deadline:
-				t.Fatal("helper not ready")
-			}
+	for !strings.Contains(output, "ready") {
+		select {
+		case f := <-second.Frames:
+			output += string(f.Data)
+		case <-deadline:
+			t.Fatal("helper not ready")
 		}
 	}
-	if err := m.Input(summary.ID, second, []byte{3}); err != nil {
+	if err := second.Input([]byte{3}); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, m, summary.ID, "exited")
-	m.Close()
+	m.Close(false, 10*time.Second)
 	if p.finalized.Load() != 1 {
 		t.Fatal("interrupt did not finalize")
 	}
@@ -255,7 +245,7 @@ func TestCtrlCAndDetachWriterHandoff(t *testing.T) {
 func TestTwoProfilesAndWorktreesAreScoped(t *testing.T) {
 	m, _, first, _ := testManager(t, `pwd; read line`)
 	second, _ := agents.NewAccountID()
-	if err := m.accounts.Create(agents.Account{ID: second, Provider: testProviderID, Name: "second"}); err != nil {
+	if err := m.starter.Accounts.Create(agents.Account{ID: second, Provider: testProviderID, Name: "second"}); err != nil {
 		t.Fatal(err)
 	}
 	a, err := m.Start("one", "tree-one", first, "", t.TempDir(), 80, 24)
@@ -275,20 +265,20 @@ func TestTwoProfilesAndWorktreesAreScoped(t *testing.T) {
 	if err := m.Stop("one", b.ID); err == nil {
 		t.Fatal("cross-project stop")
 	}
-	m.Close()
+	m.Close(false, 10*time.Second)
 }
 
 func TestLaunchOptionsReachProviderUnchanged(t *testing.T) {
 	m, p, accountID, _ := testManager(t, `exit 0`)
-	account, err := m.accounts.Get(accountID)
+	account, err := m.starter.Accounts.Get(accountID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	account.Settings = json.RawMessage(`{"model":"profile-model"}`)
-	if err := m.accounts.Update(account); err != nil {
+	if err := m.starter.Accounts.Update(account); err != nil {
 		t.Fatal(err)
 	}
-	stored, _ := m.accounts.Get(accountID)
+	stored, _ := m.starter.Accounts.Get(accountID)
 	p.prepared = make(chan agents.PrepareSessionRequest, 1)
 	fullAccess := true
 	options := StartOptions{Model: "chosen-model", Prompt: "--literal task", FullAccess: &fullAccess, PermissionMode: "plan", Effort: "high"}
@@ -331,7 +321,7 @@ func TestLaunchOptionsReachProviderUnchanged(t *testing.T) {
 	if strings.Contains(string(encoded), "literal task") {
 		t.Fatalf("prompt in summary: %s", encoded)
 	}
-	saved, _ := m.accounts.Get(accountID)
+	saved, _ := m.starter.Accounts.Get(accountID)
 	if string(saved.Settings) != string(stored.Settings) {
 		t.Fatal("launch changed stored profile settings")
 	}
@@ -369,7 +359,7 @@ func TestConcurrencyCapabilitiesEnforced(t *testing.T) {
 	m, p, first, _ := testManager(t, `while :; do sleep 1; done`)
 	p.capabilities.ConcurrentSameAccount = false
 	second, _ := agents.NewAccountID()
-	if err := m.accounts.Create(agents.Account{ID: second, Provider: testProviderID, Name: "second"}); err != nil {
+	if err := m.starter.Accounts.Create(agents.Account{ID: second, Provider: testProviderID, Name: "second"}); err != nil {
 		t.Fatal(err)
 	}
 	a, err := m.Start("project", "tree", first, "", t.TempDir(), 80, 24)
@@ -384,7 +374,7 @@ func TestConcurrencyCapabilitiesEnforced(t *testing.T) {
 	}
 	p.capabilities.ConcurrentCrossAccount = false
 	third, _ := agents.NewAccountID()
-	if err := m.accounts.Create(agents.Account{ID: third, Provider: testProviderID, Name: "third"}); err != nil {
+	if err := m.starter.Accounts.Create(agents.Account{ID: third, Provider: testProviderID, Name: "third"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Start("project", "tree", third, "", t.TempDir(), 80, 24); !errors.Is(err, agents.ErrProviderBusy) {
@@ -400,7 +390,7 @@ func TestConcurrencyCapabilitiesEnforced(t *testing.T) {
 	if _, err := m.Start("project", "tree", first, "", t.TempDir(), 80, 24); err != nil {
 		t.Fatalf("restart after stop: %v", err)
 	}
-	m.Close()
+	m.Close(false, 10*time.Second)
 }
 
 func TestConcurrentSessionsOnOneAccount(t *testing.T) {
@@ -434,7 +424,7 @@ func TestConcurrentSessionsOnOneAccount(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m.Close()
+	m.Close(false, 10*time.Second)
 	if p.finalized.Load() != 3 {
 		t.Fatalf("finalized %d", p.finalized.Load())
 	}
@@ -453,5 +443,194 @@ func TestFailureNamesProviderLabel(t *testing.T) {
 	status, _ := m.Get("project", summary.ID)
 	if !strings.Contains(status.Error, "Check the Fake Agent installation") {
 		t.Fatalf("error = %q", status.Error)
+	}
+}
+
+func awaitHolderExit(t *testing.T, m *Manager, id string) {
+	t.Helper()
+	if !Wait(m.paths, id, 5*time.Second) {
+		t.Fatal("holder did not exit")
+	}
+}
+
+func awaitClients(t *testing.T, m *Manager, id string, n int) {
+	t.Helper()
+	r, err := Read(m.paths, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, err := Query(r); err == nil && len(info.Clients) == n {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("holder never had %d clients", n)
+}
+
+func TestCloseKeepsHoldersAndNextManagerAdopts(t *testing.T) {
+	m, p, account, _ := testManager(t, `printf 'BEFORE\n'; while read line; do printf 'GOT:%s\n' "$line"; done`)
+	s, err := m.Start("project", "tree", account, "kept", t.TempDir(), 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, m, s.ID, "running")
+	a, err := m.Attach("project", s.ID, 0, "", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := a.Generation
+	m.Close(true, 0)
+	if _, ok := <-a.Frames; ok {
+		for range a.Frames {
+		}
+	}
+	r, err := Read(m.paths, s.ID)
+	if err != nil || !r.Alive || r.Summary.State != "running" {
+		t.Fatalf("holder after keep-running close: %+v %v", r, err)
+	}
+
+	next := NewManager(m.starter.Accounts, m.sessions, m.starter.Registry, m.paths, m.starter.Launch, nil)
+	t.Cleanup(func() { next.Close(false, 10*time.Second) })
+	adopted := next.Adopt()
+	if adopted[s.ID].State != "running" {
+		t.Fatalf("adopted %+v", adopted)
+	}
+	if got, ok := next.Get("project", s.ID); !ok || got.Name != "kept" || !got.Active() {
+		t.Fatalf("adopted session %+v", got)
+	}
+	if _, err := next.Start("project", "tree", account, "", t.TempDir(), 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(next.ActiveSessions(account)); n != 2 {
+		t.Fatalf("adopted sessions count toward the active ones: %d", n)
+	}
+	resumed, err := next.Attach("project", s.ID, 0, generation, "web")
+	if err != nil || resumed.Generation != generation || !resumed.Writer() {
+		t.Fatalf("resume %+v %v", resumed, err)
+	}
+	if err := resumed.Input([]byte("after\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	output := ""
+	for !strings.Contains(output, "GOT:after") {
+		select {
+		case f := <-resumed.Frames:
+			output += string(f.Data)
+		case <-deadline:
+			t.Fatalf("no echo: %q", output)
+		}
+	}
+	resumed.Close()
+	if err := next.Stop("project", s.ID); err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, next, s.ID, "exited")
+	next.Close(false, 10*time.Second)
+	if p.finalized.Load() != 2 {
+		t.Fatalf("finalized %d", p.finalized.Load())
+	}
+}
+
+func TestLostHolderFailsItsSession(t *testing.T) {
+	m := NewManager(nil, nil, nil, testPaths(t), nil, nil)
+	if err := m.paths.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	id := "sess_0abc"
+	if err := writeRecord(m.paths, Record{Version: RecordVersion, ID: id, Protocol: Version, Socket: m.paths.socket(id), Summary: Summary{ID: id, ProjectID: "project", State: "running", CreatedAt: time.Now().UTC()}}); err != nil {
+		t.Fatal(err)
+	}
+	adopted := m.Adopt()
+	if s := adopted[id]; s.State != "failed" || s.Error != LostError {
+		t.Fatalf("dead holder's session %+v", s)
+	}
+	if _, ok := m.Get("project", id); ok {
+		t.Fatal("adopted a dead holder")
+	}
+}
+
+func TestManagerStartsWithWebOriginAndAdmitsThroughDisk(t *testing.T) {
+	m, p, account, _ := testManager(t, `while :; do sleep 1; done`)
+	p.capabilities.ConcurrentSameAccount = false
+	s, err := m.Start("project", "tree", account, "", t.TempDir(), 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Origin != "web" {
+		t.Fatalf("origin = %q", s.Origin)
+	}
+	// A session another process started counts against the manager's start.
+	other := Starter{Accounts: m.starter.Accounts, Sessions: m.sessions, Registry: m.starter.Registry, Paths: m.paths, Launch: m.starter.Launch, Origin: "tui"}
+	if _, err := other.Start(context.Background(), StartRequest{Project: "project", Tree: "tree", Dir: t.TempDir(), AccountID: account, Cols: 80, Rows: 24}); !errors.Is(err, agents.ErrAccountBusy) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCloseStopsOnlyWebStartedSessions(t *testing.T) {
+	m, _, account, _ := testManager(t, `while :; do sleep 1; done`)
+	web, err := m.Start("project", "tree", account, "web", t.TempDir(), 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := Starter{Accounts: m.starter.Accounts, Sessions: m.sessions, Registry: m.starter.Registry, Paths: m.paths, Launch: m.starter.Launch, Origin: "tui"}
+	tui, err := other.Start(context.Background(), StartRequest{Project: "project", Tree: "tree", Dir: t.TempDir(), AccountID: account, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAll(t, m.paths) })
+	if adopted := m.Adopt(); adopted[tui.ID].Origin != "tui" {
+		t.Fatalf("adopted %+v", adopted)
+	}
+	awaitState(t, m, web.ID, "running")
+	awaitState(t, m, tui.ID, "running")
+	m.Close(false, 10*time.Second)
+	if r, err := Read(m.paths, web.ID); err != nil || r.Alive || r.Summary.Active() {
+		t.Fatalf("web session after close: %+v %v", r.Summary, err)
+	}
+	if r, err := Read(m.paths, tui.ID); err != nil || !r.Alive || r.Summary.State != "running" {
+		t.Fatalf("tui session after close: %+v %v", r.Summary, err)
+	}
+}
+
+func TestAdoptRacingStartKeepsOneEntry(t *testing.T) {
+	m, _, account, _ := testManager(t, `while :; do sleep 1; done`)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				m.Adopt()
+			}
+		}
+	}()
+	s, err := m.Start("project", "tree", account, "", t.TempDir(), 80, 24)
+	close(stop)
+	wg.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Adopt()
+	m.mu.Lock()
+	n := len(m.entries)
+	e := m.entries[s.ID]
+	m.mu.Unlock()
+	if n != 1 || e == nil || e.record.ID != s.ID {
+		t.Fatalf("entries = %d, entry = %+v", n, e)
+	}
+	awaitState(t, m, s.ID, "running")
+	closed := make(chan struct{})
+	go func() { m.Close(false, 10*time.Second); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(8 * time.Second):
+		t.Fatal("Close did not return")
 	}
 }

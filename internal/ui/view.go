@@ -707,7 +707,9 @@ func (m Model) View() string {
 	left = clampHeight(left, targetPaneH)
 
 	var rightBody string
-	if m.rightTab == tabProcs {
+	if m.rightTab == tabAgents {
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.renderAgentsPane(rightInnerW, innerH-1)
+	} else if m.rightTab == tabProcs {
 		// Output scrolls in the term viewport (already sized to leave the footer
 		// room, see layout); the process list + hint sit in a footer pinned to
 		// the bottom.
@@ -741,6 +743,8 @@ func tabLabel(t rightTab, compact bool) string {
 			return " Insp (i) "
 		case tabChecks:
 			return " Checks (b) "
+		case tabAgents:
+			return " Agents (g) "
 		default:
 			return " Log (l) "
 		}
@@ -756,6 +760,8 @@ func tabLabel(t rightTab, compact bool) string {
 		return " Inspect (i) "
 	case tabChecks:
 		return " Checks (b) "
+	case tabAgents:
+		return " Agents (g) "
 	default:
 		return " Git Log "
 	}
@@ -776,6 +782,10 @@ func (m Model) visibleTabs() []rightTab {
 		if _, isPR := m.prForBranch(wt.Branch); isPR {
 			tabs = append(tabs, tabPR)
 		}
+	}
+	if m.agents.enabled() {
+		// Present even with zero agents: it is where the first one is started.
+		tabs = append(tabs, tabAgents)
 	}
 	return tabs
 }

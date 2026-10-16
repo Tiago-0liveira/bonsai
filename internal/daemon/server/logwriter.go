@@ -9,13 +9,12 @@ import (
 // "<path>.1" once the live file passes cap bytes (one backup kept). It is
 // goroutine-safe: the child's stdout and stderr both write through it.
 type logWriter struct {
-	mu         *sync.Mutex
-	path       string
-	cap        int64
-	f          *os.File
-	size       int64
-	generation uint64
-	onWrite    func([]byte)
+	mu      *sync.Mutex
+	path    string
+	cap     int64
+	f       *os.File
+	size    int64
+	onWrite func([]byte)
 }
 
 func newLogWriter(path string, cap int64, onWrite func([]byte)) (*logWriter, error) {
@@ -115,7 +114,6 @@ func (w *logWriter) rotate() error {
 	}
 	w.f = f
 	w.size = 0
-	w.generation++
 	return nil
 }
 
@@ -143,11 +141,4 @@ func (w *logWriter) Close() error {
 	err := w.f.Close()
 	w.f = nil
 	return err
-}
-
-// Generation returns the current rotation generation.
-func (w *logWriter) Generation() uint64 {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.generation
 }

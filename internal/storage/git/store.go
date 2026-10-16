@@ -119,7 +119,7 @@ func WriteJSON(path string, b []byte) error {
 	if ce != nil {
 		return ce
 	}
-	if e = os.Rename(f.Name(), path); e != nil {
+	if e = ReplaceFile(f.Name(), path); e != nil {
 		return e
 	}
 	return syncDir(filepath.Dir(path))

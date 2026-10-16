@@ -44,9 +44,17 @@ type WebConfig struct {
 	APIPort      int        `json:"api_port"`
 	OpenBrowser  bool       `json:"open_browser"`
 	Updates      WebUpdates `json:"updates"`
+	Agents       WebAgents  `json:"agents,omitzero"`
 	// Zero means the daemon defaults (30 s to become ready, 5 s to stop).
 	StartupTimeoutSeconds  int `json:"startup_timeout_seconds,omitempty"`
 	ShutdownTimeoutSeconds int `json:"shutdown_timeout_seconds,omitempty"`
+}
+
+// WebAgents are the agent session settings.
+type WebAgents struct {
+	// KeepRunning keeps agent sessions running when `bonsai web stop` stops
+	// the web stack. Off, the stop ends them (after a warning on a terminal).
+	KeepRunning bool `json:"keep_running"`
 }
 
 type WebUpdates struct {

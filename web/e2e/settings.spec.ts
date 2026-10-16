@@ -72,3 +72,17 @@ test('updates badge and the read-only Live updates section', async ({ page }) =>
   await expect(badge).toHaveAttribute('title', /Live updates are paused: the tunnel is not running/)
   await expect(section.getByText('Tunnel: down (the tunnel is not running)')).toBeVisible()
 })
+
+test('keeping agents running when Bonsai web stops', async ({ page }) => {
+  await mockGitBackend(page)
+  await openConnectedApp(page)
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  const section = page.getByRole('region', { name: 'Agents' })
+  const toggle = section.getByRole('checkbox', { name: 'Keep agents running when Bonsai web stops' })
+  await expect(toggle).not.toBeChecked()
+  await expect(section.getByText('bonsai agents attach <id>')).toBeVisible()
+  await toggle.click()
+  await expect(toggle).toBeChecked()
+  await page.reload()
+  await expect(page.getByRole('region', { name: 'Agents' }).getByRole('checkbox', { name: 'Keep agents running when Bonsai web stops' })).toBeChecked()
+})

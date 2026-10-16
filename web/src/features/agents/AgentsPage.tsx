@@ -19,6 +19,7 @@ import { recallSetupJob } from './setupModel'
 import { AddProfileButton, SummaryStrip } from './SummaryStrip'
 import { useAgentsData } from './useAgentsData'
 import { useNow } from './useNow'
+import { useAgentSettings, willStopNotice } from '../settings/useAgentSettings'
 
 // Sign-in needs a terminal; it loads when a profile is added or signed in again.
 const AddProfileDialog = lazy(() => import('./AddProfileDialog').then(module => ({ default: module.AddProfileDialog })))
@@ -60,6 +61,7 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
   const { applyAccount } = data
   const signedIn = useCallback((account: AgentAccount) => { applyAccount(account); onSelect(account.id) }, [applyAccount, onSelect])
   const openStartAgentDialog = useBonsaiStore(state => state.openStartAgentDialog)
+  const { settings: agentSettings } = useAgentSettings()
 
   const groups = useMemo(() => groupProfiles(providers ?? [], accounts ?? []), [providers, accounts])
   const sessionCounts = useMemo(() => activeSessionCounts(agents), [agents])
@@ -117,6 +119,11 @@ export function AgentsPage({ profileId, tab = 'overview', onSelect, onTabChange,
         onRefresh={() => void data.refreshUsage()}
       />
       {data.error && <div role="status" className="island shrink-0 px-3 py-2 text-[11px] text-warn">Could not refresh agents: {data.error}</div>}
+      {agentSettings && !agentSettings.keep_running && running > 0 && (
+        <div role="note" aria-label="Agents stop with Bonsai web" className="island shrink-0 px-3 py-2 text-[11px] text-warn">
+          {willStopNotice(running)} To keep them, turn on Keep agents running in Settings → Agents.
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
         <aside aria-label="Providers and profiles" className="island flex max-h-[42%] min-h-0 shrink-0 flex-col overflow-y-auto lg:max-h-none lg:w-[320px]">
           {groups.map(group => (
