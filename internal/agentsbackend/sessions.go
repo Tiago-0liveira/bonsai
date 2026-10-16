@@ -113,6 +113,9 @@ func (s *sessions) Attach(ctx context.Context, id string, opts agentsapi.AttachO
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		if errors.Is(err, agenthost.ErrVersion) {
+			return nil, fmt.Errorf("attach agent session: %w", agentsapi.ErrVersion)
+		}
 		return nil, fmt.Errorf("attach agent session: %w", ErrSessionUnavailable)
 	}
 	info, err := agenthost.QueryContext(ctx, record)

@@ -5,12 +5,18 @@ package agentsapi
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 )
+
+// ErrVersion means the holder was started by a bonsai build speaking another
+// protocol version. It is re-exported here so the TUI can tell this apart from
+// a dial failure without importing the holder package.
+var ErrVersion = errors.New("agent started by another bonsai version")
 
 // Session is one hosted agent as the TUI sees it: the holder's summary plus
 // the directory it runs in, which is how the TUI matches it to a worktree.
