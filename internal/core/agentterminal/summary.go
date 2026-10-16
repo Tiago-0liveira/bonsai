@@ -31,6 +31,11 @@ type Summary struct {
 	// start request field, such as effort). The prompt is never recorded.
 	Model   string            `json:"model,omitempty"`
 	Options map[string]string `json:"options,omitempty"`
+	// Origin is the client that started the session (web, tui or cli). It
+	// decides what stopping the web server may stop: only web-started
+	// sessions; empty means a holder from before the field existed, which
+	// the web started.
+	Origin string `json:"origin,omitempty"`
 }
 
 func (s Summary) Active() bool {
