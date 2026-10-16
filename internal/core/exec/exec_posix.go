@@ -12,6 +12,12 @@ func setProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+// attachProcessTree and releaseProcessTree only matter on Windows, where a Job
+// Object backs process-tree kills; Setpgid already covers the group elsewhere.
+func attachProcessTree(*exec.Cmd) {}
+
+func releaseProcessTree(*exec.Cmd) {}
+
 func killProcessTree(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
