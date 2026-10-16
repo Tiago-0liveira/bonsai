@@ -413,6 +413,20 @@ func TestUnsupportedWithoutPaths(t *testing.T) {
 func TestAttachSurfacesVersionMismatch(t *testing.T) {
 	e := newEnv(t, chatty)
 	s := e.start(t)
+	// The holder rewrites its record on every summary change, which would
+	// restore the real protocol over the tampered one. Let the start-up
+	// transitions finish first.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rec, err := agenthost.Read(e.paths, s.ID)
+		if err == nil && rec.Summary.State == "running" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session never reached running: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	path := filepath.Join(e.paths.Records, s.ID+".json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
