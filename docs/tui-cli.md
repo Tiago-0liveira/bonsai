@@ -22,15 +22,41 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 The Agents tab lists the agents running in the selected worktree and the
 selected account's usage; worktree rows group running agents by provider with a
 glyph and count, plus `!` for an unseen failure. It shows the selected session's
-live terminal read-only: you can watch the agent, but keys are not forwarded to it
-yet. The title row (`AGENTS · <branch>`) appears when the terminal is tall enough.
-A header shows the session's provider, profile, model and state, with `· read-only`
-when another client is controlling it. The TUI uses the same agent sessions as the
-web UI and `bonsai agents`. If it starts without that backend, the Agents tab is
-unavailable and the TUI prints `agents unavailable: <err>` to stderr after exit.
-Press `enter` on a session that failed to attach to retry. A session started by
-another bonsai version cannot be opened here; the tab says to run
+live terminal read-only: you can watch the agent. The title row (`AGENTS · <branch>`)
+appears when the terminal is tall enough. A header shows the session's provider,
+profile, model and state, with `· read-only` when another client is controlling it.
+The TUI uses the same agent sessions as the web UI and `bonsai agents`. If it starts
+without that backend, the Agents tab is unavailable and the TUI prints
+`agents unavailable: <err>` to stderr after exit. A session started by another
+bonsai version cannot be opened here; the tab says to run
 `bonsai agents attach <name>` instead.
+
+Press `enter` on a session to enter terminal mode and type into it. The client
+attaches as the writer and every key goes to the agent, including `esc`, `tab`,
+`ctrl+c` and `q`. The PTY is resized to the pane when you enter, and window
+resizes are debounced so the agent gets one redraw for the final size. Mouse
+wheel events over the terminal area are ignored in terminal mode. Press `enter`
+on a session that failed or dropped its attach to retry first. The binding is
+`agent_attach` and can be rebound.
+
+The terminal has a two-row header, the agent output, and a hint row at the bottom.
+Only `ctrl+]` is handled by Bonsai; it opens the **BONSAI CONTROL** strip:
+
+| After `ctrl+]` | Action |
+|----------------|--------|
+| `d` | Detach: leave terminal mode and keep showing the agent read-only |
+| `a` | Open the agents picker |
+| `t` | Take control (only when another client is the writer) |
+| `esc` | Back to the agent |
+| `ctrl+]` | Send a literal `ctrl+]` (0x1d) to the agent |
+
+`u` (usage), `m` (accounts) and `s` (stop) show "coming soon" and do nothing yet.
+Any other key after `ctrl+]` closes the strip and is not forwarded to the agent.
+
+If another client is the writer, the agent is read-only here: the banner reads
+`Controlled by another client` and keys are swallowed. Press `ctrl+]` then `t` to
+take control. If another client takes control away, the hint row reads
+`Control taken by another client  ·  Ctrl+] t Take back`; `ctrl+] t` takes it back.
 
 Press `a` on the Agents tab to open the session picker. It lists the worktree's
 sessions as one flat list, running ones first, then ended ones, marked `●` running,
@@ -49,7 +75,7 @@ now. See [agents.md](agents.md) for profiles and accounts.
 | `n` | New worktree (new branch / existing branch / PR) |
 | `ctrl+n` | Create a PR from the selected worktree |
 | `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
-| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session. `n` / `m` / `u` (new, accounts, usage) are placeholders for now |
+| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session, `enter` terminal mode (every key goes to the agent except `ctrl+]`, see the prefix table above). `n` / `m` / `u` (new, accounts, usage) are placeholders for now |
 | `i` | Inspector tab (status, last commit, diff, disk, stashes) |
 | `b` | Checks tab (GitHub Actions runs for the branch) |
 | `o` | Cycle list sort (name / ahead / behind / PR / activity / dirty) |
