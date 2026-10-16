@@ -179,6 +179,13 @@ func (m *Model) syncAgentView(cmd tea.Cmd) tea.Cmd {
 	if !m.agents.active() {
 		return cmd
 	}
+	if id := m.agents.enterAfter; id != "" {
+		// The wish holds only while the user stays on the started session.
+		wt, ok := m.selectedWorktree()
+		if !ok || cleanPath(wt.Path) != m.agents.enterPath || m.agents.selected[m.agents.enterPath] != id {
+			m.agents.enterAfter = ""
+		}
+	}
 	want := m.wantedSession()
 	v := m.agents.view
 	if v != nil && v.sessionID != want {
@@ -188,6 +195,12 @@ func (m *Model) syncAgentView(cmd tea.Cmd) tea.Cmd {
 	if v == nil && want != "" {
 		m.agents.attachSeq++
 		m.agents.view = &agentView{sessionID: want, token: m.agents.attachSeq, opts: agentsapi.AttachOptions{ReadOnly: true}}
+		if want == m.agents.enterAfter {
+			// This client just started it: attach as the writer and type into it.
+			m.agents.enterAfter = ""
+			m.agents.view.opts.ReadOnly = false
+			m.agents.view.control = true
+		}
 		return tea.Batch(cmd, attachCmd(m.agents.ctx, m.agents.api.Sessions, want, m.agents.attachSeq, m.agents.view.attachOptions()))
 	}
 	if v != nil && v.term != nil {

@@ -284,15 +284,11 @@ func (m Model) paletteCommands() []paletteCmd {
 	})...)
 
 	if m.agents.enabled() {
-		soon := func(m Model) (tea.Model, tea.Cmd) {
-			m.status = "agents: coming soon"
-			return m, nil
-		}
 		cmds = append(cmds, tag("Agents", []paletteCmd{
 			global("Agents: open tab", m.keys.AgentsTab, Model.openAgentsTab),
-			global("Agents: new agent", m.keys.AgentNew, soon),
-			global("Agents: accounts", m.keys.AgentAccounts, soon),
-			global("Agents: usage", m.keys.AgentUsage, soon),
+			global("Agents: new agent", m.keys.AgentNew, Model.openAgentLaunch),
+			global("Agents: accounts", m.keys.AgentAccounts, Model.openAgentAccounts),
+			global("Agents: usage", m.keys.AgentUsage, Model.openAgentUsage),
 		})...)
 	}
 

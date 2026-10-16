@@ -208,9 +208,18 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		handled, cmd := m.enterTerminalMode()
 		return handled, m, cmd
-	case key.Matches(msg, m.keys.AgentNew, m.keys.AgentAccounts, m.keys.AgentUsage):
-		m.status = "agents: coming soon"
-		return true, m, nil
+	case key.Matches(msg, m.keys.AgentNew):
+		nm, cmd := m.openAgentLaunch()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentAccounts):
+		nm, cmd := m.openAgentAccounts()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentUsage):
+		nm, cmd := m.openAgentUsage()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentStop):
+		nm, cmd := m.askStopAgent()
+		return true, nm, cmd
 	case len(s) == 1 && s[0] >= '1' && s[0] <= '9', s == "[", s == "]":
 		wt, ok := m.selectedWorktree()
 		if !ok || !m.agents.active() {

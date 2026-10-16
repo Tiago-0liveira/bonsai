@@ -180,8 +180,14 @@ summary has an `origin` field: `web`, `tui` or `cli` (an empty origin counts as
 from the CLI appears live in the browser. `bonsai agents` lists every running
 session.
 
-`bonsai web stop` ends running agents unless `agents.keep_running` is on (see
-[web app](web.md)). `--stop-agents` and `--keep-agents` override it for one stop.
+The TUI's Agents tab is another client of these sessions. It watches the selected
+session read-only; `enter` takes control to type, and `ctrl+] t` takes control back
+when another client is writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
+
+`bonsai web stop` stops the agents the web started (origin `web`) unless
+`agents.keep_running` is on (see [web app](web.md)). Sessions with origin `tui` or
+`cli` are left running either way. `--stop-agents` and `--keep-agents` override the
+setting for one stop.
 
 ## Profile defaults
 

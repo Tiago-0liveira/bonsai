@@ -241,6 +241,9 @@ func TestRemoveRefusedWhileRunning(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].Running != 1 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
+	if list[0].ConcurrentSameAccount {
+		t.Error("testProvider forbids concurrent same-account sessions")
+	}
 	if err := f.acc.Remove(ctx, f.account.ID); !errors.Is(err, ErrAccountInUse) {
 		t.Fatalf("Remove = %v, want ErrAccountInUse", err)
 	}

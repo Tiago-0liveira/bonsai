@@ -76,6 +76,8 @@ type Account struct {
 	agents.Account
 	Info    agents.AccountInfo // identity, plan, auth; zero until described
 	Running int                // active sessions on this account
+	// ConcurrentSameAccount: the provider allows several sessions on one account.
+	ConcurrentSameAccount bool
 }
 
 // Usage is an account's usage with its freshness, so a failed refresh can

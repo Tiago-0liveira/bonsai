@@ -62,7 +62,11 @@ func (a *accounts) List(ctx context.Context) ([]agentsapi.Account, error) {
 	}
 	out := make([]agentsapi.Account, 0, len(list))
 	for _, acct := range list {
-		out = append(out, agentsapi.Account{Account: acct, Running: len(running[acct.ID])})
+		item := agentsapi.Account{Account: acct, Running: len(running[acct.ID])}
+		if p, err := a.rt.Registry.Get(acct.Provider); err == nil {
+			item.ConcurrentSameAccount = p.Capabilities().ConcurrentSameAccount
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }

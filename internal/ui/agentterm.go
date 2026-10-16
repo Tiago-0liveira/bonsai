@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/vterm"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
@@ -26,6 +27,8 @@ const (
 	hintControlLost         = "Control taken by another client  ·  Ctrl+] t Take back"
 	hintPrefix              = "Ctrl+]  →  Bonsai command prefix"
 	observingOtherNote      = "Another client controls this agent: Ctrl+] t takes control"
+	inputDroppedNote        = "agents: input dropped, the agent is not reading"
+	hintConnecting          = "Connecting to the agent…  ·  keys are ignored until attached  ·  Ctrl+] d Detach"
 )
 
 // agentInputMsg carries one chunk the emulator wants sent to the agent. It
@@ -55,9 +58,14 @@ func (m Model) agentTerminalMode() bool {
 	return v != nil && v.control && m.agents.active() && m.rightTab == tabAgents
 }
 
-// agentOverlayOpen is true while something owns the keyboard on top of the tab.
-// D5's agent overlays join it.
-func (m Model) agentOverlayOpen() bool { return m.prefs != nil || m.modal != nil }
+// agentOverlayOpen is true while something owns the keyboard on top of the tab:
+// preferences, any modal (this includes the stop confirmation, whose
+// pendingConfirm only exists with its modal) and the agent overlays. They all
+// win over terminal mode, so a confirmation can be answered even though the
+// agent view stays attached underneath.
+func (m Model) agentOverlayOpen() bool {
+	return m.prefs != nil || m.modal != nil || m.agents.overlay != nil
+}
 
 // waitInputCmd blocks for the next chunk of the terminal's input. The handler
 // re-issues it, so exactly one is outstanding per vterm; it ends (nil message)
@@ -106,13 +114,24 @@ func (v *agentView) canSend() bool {
 
 // queueInput is the only path to Stream.Input. Chunks join one FIFO and one
 // write batch is in flight at a time, so bytes reach the holder in the order
-// Update saw them even though the writes run in commands.
-func (v *agentView) queueInput(data []byte) tea.Cmd {
-	if !v.canSend() || len(v.inq) >= maxInputQueue {
-		return nil
+// Update saw them even though the writes run in commands. The holder rejects a
+// chunk over InputLimit, so a large paste is split. dropped reports input that
+// was lost because the queue is full (a stalled stream); input that is not
+// meant to be sent (not the writer, replaying) is not "dropped".
+func (v *agentView) queueInput(data []byte) (cmd tea.Cmd, dropped bool) {
+	if !v.canSend() {
+		return nil, false
 	}
-	v.inq = append(v.inq, data)
-	return v.flushInput()
+	chunks := (len(data) + agentterminal.InputLimit - 1) / agentterminal.InputLimit
+	if len(v.inq)+chunks > maxInputQueue {
+		return nil, true
+	}
+	for len(data) > 0 {
+		n := min(len(data), agentterminal.InputLimit)
+		v.inq = append(v.inq, data[:n:n])
+		data = data[n:]
+	}
+	return v.flushInput(), false
 }
 
 func (v *agentView) flushInput() tea.Cmd {
@@ -131,7 +150,10 @@ func (m Model) onAgentInput(msg agentInputMsg) (tea.Model, tea.Cmd) {
 	}
 	// Dropped unless controlling: this is also what keeps terminal replies
 	// (focus reports, cursor queries) away from an agent we do not control.
-	send := v.queueInput(msg.data)
+	send, dropped := v.queueInput(msg.data)
+	if dropped {
+		m.status = inputDroppedNote
+	}
 	return m, tea.Batch(send, waitInputCmd(v.term))
 }
 
@@ -293,15 +315,23 @@ func (m Model) agentTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		v.prefix = false
 		switch msg.String() {
 		case "ctrl+]":
-			return m, v.queueInput([]byte{0x1d})
+			send, dropped := v.queueInput([]byte{0x1d})
+			if dropped {
+				m.status = inputDroppedNote
+			}
+			return m, send
 		case "d":
 			m.leaveTerminalMode(v)
 			return m, m.reattachAgent(v, true)
 		case "a":
 			m.leaveTerminalMode(v)
 			return m.openAgentsPicker()
-		case "u", "m", "s":
-			m.status = "agents: coming soon"
+		case "u":
+			return m.openAgentUsage()
+		case "m":
+			return m.openAgentAccounts()
+		case "s":
+			return m.askStopAgent()
 		case "t":
 			if v.state == attachObservingOther && v.stream != nil {
 				return m, takeCmd(v.token, v.stream)
@@ -363,6 +393,10 @@ func (m Model) terminalHint() string {
 	v := m.agents.view
 	warn := lipgloss.NewStyle().Foreground(theme.Current.Warning)
 	switch {
+	case v.stream == nil:
+		// A re-attach is in flight (take-over, detach, retry): keys are
+		// swallowed until it lands, so say so instead of looking frozen.
+		return warn.Render(hintConnecting)
 	case v.state == attachObservingOther && v.lost:
 		return warn.Render(hintControlLost)
 	case v.state == attachObservingOther:

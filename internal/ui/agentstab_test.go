@@ -509,11 +509,20 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e.fb.Sessions.Add(e.agent("a", "claude", "running", e.wtA, "One", 1))
 		e.relist(t)
 		e.openTab(t)
+		kinds := map[string]func(*agentOverlay) bool{
+			"n": func(o *agentOverlay) bool { return o.launch != nil },
+			"m": func(o *agentOverlay) bool { return o.accounts != nil },
+			"u": func(o *agentOverlay) bool { return o.quick != nil },
+		}
 		for _, k := range []string{"n", "m", "u"} {
-			e.m.status = ""
 			e.key(t, k)
-			if !strings.Contains(e.m.status, "coming soon") || e.m.modal != nil {
-				t.Errorf("%s on the Agents tab: status=%q modal=%v", k, e.m.status, e.m.modal != nil)
+			if e.m.agents.overlay == nil || !kinds[k](e.m.agents.overlay) || e.m.modal != nil {
+				t.Fatalf("%s on the Agents tab: overlay=%+v modal=%v", k, e.m.agents.overlay, e.m.modal != nil)
+			}
+			e.send(t, tea.KeyMsg{Type: tea.KeyEsc})
+			e.run(t, e.lastCmd)
+			if e.m.agents.overlay != nil {
+				t.Fatalf("esc must close the %s overlay", k)
 			}
 		}
 	})
@@ -521,7 +530,7 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e := newAgentsEnv(t)
 		e.selectWT(e.wtA)
 		e.key(t, "n") // list focused: new worktree modal
-		if e.m.modal == nil || e.m.status == "agents: coming soon" {
+		if e.m.modal == nil || e.m.agents.overlay != nil {
 			t.Errorf("global n must still open the create flow (modal=%v status=%q)", e.m.modal != nil, e.m.status)
 		}
 	})
@@ -530,7 +539,7 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e.selectWT(e.wtA)
 		e.m.rightTab, e.m.focus = tabLog, focusTerminal
 		e.key(t, "n")
-		if e.m.status == "agents: coming soon" {
+		if e.m.agents.overlay != nil {
 			t.Error("n on the log tab must not reach the agents handler")
 		}
 	})
@@ -546,9 +555,8 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e := newAgentsEnv(t)
 		e.m.keys = newKeyMap(map[string]string{"agent_new": "N"})
 		e.openTab(t)
-		e.m.status = ""
 		e.key(t, "N")
-		if !strings.Contains(e.m.status, "coming soon") {
+		if e.m.agents.overlay == nil || e.m.agents.overlay.launch == nil {
 			t.Error("rebound key not honored")
 		}
 	})
@@ -638,8 +646,8 @@ func TestAgentsPickerEmptyAndActions(t *testing.T) {
 	e.m = nm.(Model)
 	nm, _ = e.m.Update(cmd())
 	e.m = nm.(Model)
-	if e.m.modal != nil || !strings.Contains(e.m.status, "coming soon") {
-		t.Errorf("n in the picker: modal=%v status=%q", e.m.modal != nil, e.m.status)
+	if e.m.modal != nil || e.m.agents.overlay == nil || e.m.agents.overlay.launch == nil {
+		t.Errorf("n in the picker must open the launch dialog: modal=%v overlay=%+v", e.m.modal != nil, e.m.agents.overlay)
 	}
 }
 
