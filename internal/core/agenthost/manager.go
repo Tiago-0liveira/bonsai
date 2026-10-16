@@ -2,6 +2,7 @@ package agenthost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -116,13 +117,20 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 	if err != nil {
 		return Summary{}, err
 	}
+	return m.trackStarted(record, dir, project)
+}
+
+func (m *Manager) trackStarted(record Record, dir, project string) (Summary, error) {
 	e := &entry{summary: record.Summary, workDir: dir, record: record, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
 	m.mu.Lock()
 	if m.closed {
 		// Close ran while the holder launched and cannot see it: a session
 		// the caller is told failed must not keep running.
 		m.mu.Unlock()
-		_ = StopHolder(m.paths, record, "")
+		stopErr := StopHolder(m.paths, record, "")
+		if !Wait(m.paths, record.ID, 5*time.Second) {
+			return Summary{}, errors.Join(fmt.Errorf("server shutting down: agent holder %s did not exit after stop and may still be running", record.ID), stopErr)
+		}
 		return Summary{}, fmt.Errorf("server shutting down")
 	}
 	if known, ok := m.entries[record.ID]; ok {

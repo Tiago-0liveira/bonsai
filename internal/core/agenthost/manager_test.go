@@ -569,6 +569,39 @@ func TestManagerStartsWithWebOriginAndAdmitsThroughDisk(t *testing.T) {
 	}
 }
 
+func TestManagerCloseWaitsForUnregisteredHolderExit(t *testing.T) {
+	p := testPaths(t)
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockFile(p.lock("sess_a1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	m := NewManager(nil, nil, nil, p, nil, nil)
+	m.Close(true, 0)
+	record := Record{ID: "sess_a1", Socket: p.socket("sess_a1"), Protocol: Version}
+	finished := make(chan error, 1)
+	go func() { _, err := m.trackStarted(record, "", "project"); finished <- err }()
+	select {
+	case err := <-finished:
+		t.Fatalf("returned before holder exited: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-finished:
+		if err == nil || !strings.Contains(err.Error(), "server shutting down") {
+			t.Fatalf("start result after holder exit: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("start did not finish after holder exit")
+	}
+}
+
 func TestManagerCloseCancelsStartMidLaunch(t *testing.T) {
 	m, _, account, store := testManager(t, `while :; do sleep 1; done`)
 	launch := m.starter.Launch

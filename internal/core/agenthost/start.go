@@ -39,7 +39,7 @@ type StartRequest struct {
 // running, creates the session's runtime and starts its holder. It returns the
 // holder's record, whose session is starting until the holder reports it
 // running.
-func (s Starter) Start(ctx context.Context, req StartRequest) (Record, error) {
+func (s Starter) Start(ctx context.Context, req StartRequest) (_ Record, startErr error) {
 	if !agentterminal.Supported {
 		return Record{}, fmt.Errorf("interactive terminals unsupported on this platform")
 	}
@@ -132,19 +132,24 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (Record, error) {
 			return
 		}
 		if launched {
-			// Without a readable record the socket still names the holder.
+			// Keep an unresponsive holder visible to admission if launch failed
+			// before it wrote its own record.
 			r, err := Read(s.Paths, summary.ID)
 			if err != nil {
-				r = Record{ID: summary.ID, Socket: s.Paths.socket(summary.ID), Protocol: Version}
+				r = Record{Version: RecordVersion, ID: summary.ID, Socket: s.Paths.socket(summary.ID), Protocol: Version, Summary: summary}
+				if writeErr := writeRecord(s.Paths, r); writeErr != nil {
+					startErr = errors.Join(startErr, fmt.Errorf("cannot preserve agent admission record: %w", writeErr))
+				}
 			}
-			_ = StopHolder(s.Paths, r, "")
-			// A live holder's record keeps it visible to admission while it exits.
-			_ = lock.Unlock()
-			lock = nil
+			stopErr := StopHolder(s.Paths, r, "")
 			if !Wait(s.Paths, summary.ID, 5*time.Second) {
-				// A holder that resisted stop still needs its runtime directory.
+				startErr = errors.Join(startErr, fmt.Errorf("agent holder %s did not exit after stop; it may still be running", summary.ID), stopErr)
+				// A still-running holder needs its runtime directory.
 				return
 			}
+		}
+		if r, err := Read(s.Paths, summary.ID); err == nil && r.Generation == "" {
+			_ = Remove(s.Paths, summary.ID)
 		}
 		_ = s.Sessions.Cleanup(runtime)
 	}()
