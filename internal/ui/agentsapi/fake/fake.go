@@ -475,6 +475,9 @@ func (a *Accounts) Defaults(_ context.Context, id agents.AccountID) (agentsapi.D
 		values[k] = v
 	}
 	d.Values = values
+	if d.LaunchFields == nil {
+		d.LaunchFields = SampleLaunchFields()
+	}
 	return d, nil
 }
 
@@ -560,4 +563,24 @@ func (a *Accounts) Removed() []agents.AccountID {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]agents.AccountID(nil), a.removed...)
+}
+
+// SampleLaunchFields is a small provider-neutral launch schema: a preset
+// select, a per-model effort select and a toggle, covering every kind the
+// launch form handles.
+func SampleLaunchFields() []agents.LaunchField {
+	return []agents.LaunchField{
+		{ID: "permissions", Label: "Permissions", Kind: agents.LaunchFieldSelect, Default: "auto", Options: []agents.FieldOption{
+			{Value: "read-only", Label: "Read only", Set: map[string]string{"sandbox": "read-only", "approval": "on-request"}},
+			{Value: "auto", Label: "Auto", Set: map[string]string{"sandbox": "workspace-write", "approval": "on-request"}},
+			{Value: "full-access", Label: "Full access", Tone: agents.ToneDanger, Help: "Can change any file without asking.",
+				Set: map[string]string{"sandbox": "danger-full-access", "approval": "never"}},
+		}},
+		{ID: "effort", Label: "Effort", Kind: agents.LaunchFieldSelect, PerModel: true, Options: []agents.FieldOption{
+			{Value: "", Label: "Profile default"}, {Value: "low", Label: "low"}, {Value: "high", Label: "high"},
+		}},
+		{ID: "full_access", Label: "Full access", Kind: agents.LaunchFieldToggle, Options: []agents.FieldOption{
+			{Value: "false", Label: "Ask permissions"}, {Value: "true", Label: "Full access", Tone: agents.ToneDanger},
+		}},
+	}
 }

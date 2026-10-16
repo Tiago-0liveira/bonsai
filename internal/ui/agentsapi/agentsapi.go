@@ -82,8 +82,11 @@ type Usage struct {
 // defaults without knowing the provider.
 type Defaults struct {
 	Fields []agents.LaunchField
-	Models []agents.ModelOption // from ModelLister.Models
-	Values map[string]string    // current per-account defaults
+	// LaunchFields are the provider's LaunchFields; the new agent dialog edits
+	// these, not Fields (the profile defaults).
+	LaunchFields []agents.LaunchField
+	Models       []agents.ModelOption // from ModelLister.Models
+	Values       map[string]string    // current per-account defaults
 }
 
 // Accounts reads and edits agent profiles. Adding an account and signing in
