@@ -171,6 +171,16 @@ func (m Model) openKeymap() (tea.Model, tea.Cmd) {
 		sections = append(sections, kmSection{name: sec.name, entries: entries})
 	}
 
+	// The ctrl+] menu belongs to terminal mode and is not a binding: listed so
+	// it is discoverable, but absent from the preferences key editor.
+	var prefix []paletteEntry
+	for _, e := range agentPrefixKeys {
+		plain := fmt.Sprintf("ctrl+] %s %s %s", e.key, e.desc, agentPrefixSection)
+		display := keySt.Render(padRight("ctrl+] "+e.key, 10)) + padRight(e.desc, 20) + dim.Render("· "+agentPrefixSection)
+		prefix = append(prefix, paletteEntry{display: display, plain: plain})
+	}
+	sections = append(sections, kmSection{name: agentPrefixSection, entries: prefix})
+
 	filter := func(q string) []modals.Section {
 		q = strings.ToLower(strings.TrimSpace(q))
 		out := make([]modals.Section, 0, len(sections))

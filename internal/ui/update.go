@@ -1934,6 +1934,7 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 
 // onModalSubmit routes a confirmed modal value to the right core operation.
 func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
+	open := m.modal
 	m.modal = nil
 
 	// These kinds do not require an existing selection.
@@ -1942,7 +1943,12 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		return m.onAgentsPick(msg.Value)
 
 	case modals.KindKeymap:
-		// Any selection in the key reference jumps to the key editor.
+		// The ctrl+] menu is fixed, so there is nothing to edit: keep the help open.
+		if strings.Contains(ansi.Strip(msg.Value), agentPrefixSection) {
+			m.modal = open
+			return m, nil
+		}
+		// Any other selection in the key reference jumps to the key editor.
 		return m.openPrefs(true)
 
 	case modals.KindProcesses:

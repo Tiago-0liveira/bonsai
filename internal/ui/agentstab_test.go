@@ -654,11 +654,11 @@ func TestAgentsPickerEmptyAndActions(t *testing.T) {
 func TestAgentsStatusBar(t *testing.T) {
 	e := newAgentsEnv(t)
 	e.openTab(t)
-	if got := ansi.Strip(e.m.contextHelp()); got != "tab focus · g agents · ctrl+] menu · ? keys" {
+	if got := ansi.Strip(e.m.contextHelp()); got != "tab focus · g agents · ? keys" {
 		t.Errorf("agents tab hints = %q", got)
 	}
 	e.m.rightTab = tabLog
-	if strings.Contains(ansi.Strip(e.m.contextHelp()), "ctrl+]") {
+	if strings.Contains(ansi.Strip(e.m.contextHelp()), "agents") {
 		t.Error("other tabs keep their own hints")
 	}
 }

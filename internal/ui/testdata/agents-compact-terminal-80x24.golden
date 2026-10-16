@@ -1,0 +1,26 @@
+[1 ✳ Auth fix] [2 ◎ Tests]                                                a: All
+◎ work · 5h 72% · W 41%                                          Ctrl+] u: Usage
+────────────────────────────────────────────────────────────────────────────────
+$ claude
+
+  Welcome to Claude Code
+
+  > fix the auth redirect
+
+  Reading internal/auth/redirect.go
+
+
+
+
+
+
+
+
+
+
+
+> ──────────
+────────────────────────────────────────────────────────────────────────────────
+Ctrl+]  →  Bonsai command prefix
+================================================================================
+Ctrl+] Bonsai command prefix

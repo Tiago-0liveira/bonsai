@@ -186,7 +186,7 @@ func (m Model) agentOverlayView() string {
 	case o.quick != nil:
 		s = o.quick.View()
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, s)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.chrome(s))
 }
 
 // onAgentOverlayMsg handles the messages overlays send to their parent. handled

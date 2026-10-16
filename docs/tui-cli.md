@@ -37,8 +37,9 @@ The TUI is a client of the same sessions as the web app; see
 [agents.md](agents.md#sessions-shared-with-the-tui-and-cli). It is read-only by
 default: the terminal only watches until you press `enter`. On the focused Agents
 tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops the
-selected running agent after a confirmation. The command palette (`ctrl+k`) has the
-same four under **Agents**.
+selected running agent after a confirmation. The command palette (`ctrl+k`) has
+**Agents: open tab**, **new agent**, **accounts** and **usage** under **Agents**;
+stop is on the tab and in the `ctrl+]` menu only.
 
 Press `enter` on a session to enter terminal mode and type into it. The client
 attaches as the writer and every key goes to the agent, including `esc`, `tab`,
@@ -49,6 +50,8 @@ on a session that failed or dropped its attach to retry first. The binding is
 `agent_attach` and can be rebound.
 
 The terminal has a two-row header, the agent output, and a hint row at the bottom.
+The bottom status bar reads `Ctrl+] Bonsai command prefix` in terminal mode, or
+`Ctrl+] t take control · Ctrl+] d detach` while observing another client's session.
 Only `ctrl+]` is handled by Bonsai; it opens the **BONSAI CONTROL** strip:
 
 | After `ctrl+]` | Action |
@@ -72,7 +75,8 @@ take control. If another client takes control away, the hint row reads
 Press `a` on the Agents tab to open the session picker. It lists the worktree's
 sessions as one flat list, running ones first, then ended ones, marked `●` running,
 `✓` exited and `✗` failed. It opens even when there are no sessions. `Enter` opens
-the chosen session.
+the chosen session. Opening the picker clears the `!` failure markers on that
+worktree's rows, so the failures stay listed here with `✗`.
 
 The new-agent dialog (`n`) picks an account with `j`/`k` and moves between fields
 with `Tab`. `Enter` edits the focused field, `ctrl+s` starts the agent and `Esc`
@@ -115,7 +119,18 @@ CLI flow in the terminal, then returns to Bonsai. See
 | `q` / `ctrl+c` | Quit |
 
 Every key can be rebound under `keybindings` in `.bonsai.yaml`; the
-[annotated example](../.bonsai.yaml) lists the action names.
+[annotated example](../.bonsai.yaml) lists the action names. The keys after
+`ctrl+]` are fixed and not rebindable; `?` lists them in a separate **Agent
+terminal (ctrl+] first, fixed keys)** section.
+
+The navigation status bar shows `tab focus · g agents · ? keys` on the Agents tab,
+with a state prefix when it applies: `connecting…`, `enter retry` after a failed
+attach, or `n new · a all` for an ended session. `ctrl+]` is not advertised there.
+
+Agent glyphs follow the `agent glyphs` row in preferences (`,`). `ascii` swaps
+bonsai's own drawing to ASCII: provider glyphs (`C X A`), state dots, picker marks
+(`*` running, `+` exited, `x` failed), rules, hint rows and agent overlay borders.
+It does not touch the agent's terminal output or the status-bar separators.
 
 ## CLI
 
