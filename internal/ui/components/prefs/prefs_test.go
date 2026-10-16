@@ -16,7 +16,7 @@ func testActions() []Action {
 }
 
 func testModel() Model {
-	return New("bonsai", "name", false, "", "", []string{"bonsai", "sakura"}, testActions(), false)
+	return New("bonsai", "name", false, "", "", "", []string{"bonsai", "sakura"}, testActions(), false)
 }
 
 // keyMsg simulates pressing a rune key.
@@ -88,7 +88,7 @@ func TestKeybindingsCollapsedByDefault(t *testing.T) {
 }
 
 func TestStartOnKeysExpandsKeybindings(t *testing.T) {
-	m := New("bonsai", "name", false, "", "", []string{"bonsai"}, testActions(), true)
+	m := New("bonsai", "name", false, "", "", "", []string{"bonsai"}, testActions(), true)
 	if m.rows[m.cursor].kind != rowKey {
 		t.Fatal("startOnKeys should land the cursor on a key row")
 	}
@@ -257,5 +257,25 @@ func TestPRStatusCycle(t *testing.T) {
 	snap := saveFrom(t, cmd)
 	if snap == nil || snap.PRStatus != "compact" {
 		t.Errorf("right on PR status should cycle full→compact, got %+v", snap)
+	}
+}
+
+func TestAgentGlyphsToggle(t *testing.T) {
+	m := testModel()
+	if m.agentGlyphs != "unicode" {
+		t.Fatalf("default agent glyphs = %q, want unicode", m.agentGlyphs)
+	}
+	for i, r := range m.rows {
+		if r.kind == rowAgentGlyphs {
+			m.cursor = i
+		}
+	}
+	for _, want := range []string{"ascii", "unicode"} {
+		var cmd tea.Cmd
+		m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+		snap := saveFrom(t, cmd)
+		if snap == nil || snap.AgentGlyphs != want {
+			t.Fatalf("right on agent glyphs: want %q, got %+v", want, snap)
+		}
 	}
 }
