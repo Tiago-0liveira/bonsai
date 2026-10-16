@@ -62,6 +62,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAgentsChanged(msg)
 	case agentsClosedMsg:
 		return m, nil
+	case agentUsageMsg:
+		return m.onAgentUsage(msg)
+	case agentUsageTickMsg:
+		return m.onAgentUsageTick(msg)
 
 	case metricsMsg:
 		return m.onMetrics(msg), nil
@@ -770,6 +774,13 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.forwardToPane(msg)
 		}
 	}
+	// On the Agents tab (focused), its keys win over the globals that share
+	// their letters (n new worktree, a aliases, u update base, m multi-view).
+	if m.rightTab == tabAgents && m.focus == focusTerminal && m.agents.enabled() {
+		if handled, nm, cmd := m.agentsTabKey(msg); handled {
+			return nm, cmd
+		}
+	}
 	// On the PR tab (focused), PR-action keys win over the globals.
 	if m.rightTab == tabPR && m.focus == focusTerminal {
 		if handled, nm, cmd := m.prTabKey(msg); handled {
@@ -817,6 +828,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Create):
 		return m.openCreateSourceModal()
+
+	case m.agents.enabled() && key.Matches(msg, m.keys.AgentsTab):
+		return m.openAgentsTab()
 
 	case key.Matches(msg, m.keys.ViewProcs):
 		return m.toggleProcsTab()
@@ -907,7 +921,8 @@ func (m Model) forwardToPane(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(msg)
 		// Reload the active tab's content when the highlighted worktree changes.
 		if newPath := selectedPath(m.list); newPath != "" && newPath != prevPath {
-			return m, tea.Batch(cmd, m.reloadRightPane())
+			reload := m.reloadRightPane()
+			return m, tea.Batch(cmd, reload)
 		}
 		return m, cmd
 	}
@@ -1294,6 +1309,8 @@ func (m *Model) reloadRightPane() tea.Cmd {
 	case tabProcs:
 		m.refreshProcPane()
 		return nil
+	case tabAgents:
+		return m.requestAgentUsage()
 	default:
 		m.term.SetTitle("Git Log")
 		return loadLog(wt.Path)
@@ -1382,7 +1399,8 @@ func (m Model) openInspectTab() (tea.Model, tea.Cmd) {
 	m.focus = focusTerminal
 	m.list.Blur()
 	m.term.Focus()
-	return m, m.enterInspect(wt)
+	cmd := m.enterInspect(wt)
+	return m, cmd
 }
 
 // enterInspect shows the inspector for wt, showing cached data instantly when it
@@ -1444,7 +1462,8 @@ func (m Model) openChecksTab() (tea.Model, tea.Cmd) {
 	m.focus = focusTerminal
 	m.list.Blur()
 	m.term.Focus()
-	return m, m.enterChecks(wt)
+	cmd := m.enterChecks(wt)
+	return m, cmd
 }
 
 // enterChecks shows the Checks tab for wt, keeping cached runs when they belong
@@ -1860,6 +1879,9 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	// These kinds do not require an existing selection.
 	switch msg.Kind {
+	case kindAgents:
+		return m.onAgentsPick(msg.Value)
+
 	case modals.KindKeymap:
 		// Any selection in the key reference jumps to the key editor.
 		return m.openPrefs(true)
