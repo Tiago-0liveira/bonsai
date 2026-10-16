@@ -458,6 +458,9 @@ func (m *Manager) WatchRecords(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	// A record may predate watcher registration; adopt it before waiting for
+	// changes so an ended session is not missed until another record changes.
+	m.syncRecords()
 	for {
 		select {
 		case <-ctx.Done():

@@ -781,10 +781,6 @@ func TestWatchRecordsAdoptsOtherClientsSessions(t *testing.T) {
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 	go late.WatchRecords(ctx2)
-	// A write to any record triggers the first sync.
-	if err := writeRecord(s.Paths, mustRead(t, s.Paths, record.ID)); err != nil {
-		t.Fatal(err)
-	}
 	deadline = time.Now().Add(5 * time.Second)
 	for {
 		if got, ok := late.Get("project", ended.ID); ok && !got.Active() {
@@ -795,13 +791,4 @@ func TestWatchRecordsAdoptsOtherClientsSessions(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-}
-
-func mustRead(t *testing.T, p Paths, id string) Record {
-	t.Helper()
-	r, err := Read(p, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
 }
