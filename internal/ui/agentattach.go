@@ -47,13 +47,29 @@ type agentView struct {
 	state  attachState
 	// replaying lasts until the first status frame, which ends the holder's
 	// replay of what happened before this attach.
-	replaying  bool
+	replaying bool
+	// offset is the end of the last output applied and generation the holder
+	// run it belongs to: together they let a re-attach continue the same
+	// emulator instead of replaying (and redrawing) everything.
 	offset     uint64
-	cols, rows int // emulator size, kept in step with the holder's PTY
-	attempts   int // failed dials so far
+	generation string
+	opts       agentsapi.AttachOptions // how this view attaches (offset/generation are filled at dial time)
+	cols, rows int                     // emulator size, kept in step with the holder's PTY
+	attempts   int                     // failed dials so far
 	banner     string
 	err        string
 	retry      bool // enter attaches again; false when retrying cannot help
+
+	// control is terminal mode: the user is typing into the agent. state says
+	// whether that is actually possible (controlling) or not (observingOther).
+	control bool
+	prefix  bool // ctrl+] pressed: the control strip is open
+	lost    bool // this client wrote and another took over
+	hinted  bool // the "another client controls" note was shown
+	// inq/sending order writes to the holder: see queueInput.
+	inq       [][]byte
+	sending   bool
+	resizeGen uint64 // debounce generation for window resizes
 }
 
 type agentAttachedMsg struct {
@@ -70,9 +86,9 @@ type agentFramesMsg struct {
 	closed bool
 }
 
-func attachCmd(ctx context.Context, s agentsapi.Sessions, id string, token uint64) tea.Cmd {
+func attachCmd(ctx context.Context, s agentsapi.Sessions, id string, token uint64, opts agentsapi.AttachOptions) tea.Cmd {
 	return func() tea.Msg {
-		st, err := s.Attach(ctx, id, agentsapi.AttachOptions{ReadOnly: true})
+		st, err := s.Attach(ctx, id, opts)
 		return agentAttachedMsg{token: token, stream: st, err: err}
 	}
 }
@@ -171,8 +187,8 @@ func (m *Model) syncAgentView(cmd tea.Cmd) tea.Cmd {
 	}
 	if v == nil && want != "" {
 		m.agents.attachSeq++
-		m.agents.view = &agentView{sessionID: want, token: m.agents.attachSeq}
-		return tea.Batch(cmd, attachCmd(m.agents.ctx, m.agents.api.Sessions, want, m.agents.attachSeq))
+		m.agents.view = &agentView{sessionID: want, token: m.agents.attachSeq, opts: agentsapi.AttachOptions{ReadOnly: true}}
+		return tea.Batch(cmd, attachCmd(m.agents.ctx, m.agents.api.Sessions, want, m.agents.attachSeq, m.agents.view.attachOptions()))
 	}
 	if v != nil && v.term != nil {
 		w, rows := m.agentAreaSize()
@@ -213,7 +229,7 @@ func (m Model) onAgentAttached(msg agentAttachedMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.err != nil {
 		if errors.Is(msg.err, agentsapi.ErrVersion) {
-			v.err = "Started by another bonsai version; run bonsai agents attach " + m.viewSessionName(v)
+			v.fail("Started by another bonsai version; run bonsai agents attach "+m.viewSessionName(v), false)
 			return m, nil
 		}
 		if errors.Is(msg.err, context.Canceled) {
@@ -224,20 +240,59 @@ func (m Model) onAgentAttached(msg agentAttachedMsg) (tea.Model, tea.Cmd) {
 			token := v.token
 			return m, tea.Tick(attachRetryDelay, func(time.Time) tea.Msg { return agentRetryMsg{token: token} })
 		}
-		v.err, v.retry = "Could not attach to this agent", true
+		v.fail("Could not attach to this agent", true)
 		return m, nil
 	}
-	cols, rows := msg.stream.Size()
+	var cmds []tea.Cmd
+	st := msg.stream
+	v.err, v.banner, v.retry, v.attempts = "", "", false, 0
+	cols, rows := st.Size()
 	if cols <= 0 || rows <= 0 {
 		cols, rows = m.agentPaneSize() // an ended session has no PTY to size from
 	}
-	v.stream, v.cols, v.rows = msg.stream, cols, rows
-	v.term = vterm.New(cols, rows)
+	if v.term != nil && v.generation != "" && st.Generation() != v.generation {
+		// A different holder run: our offset means nothing there and the
+		// replay is complete, so the old screen would only corrupt it.
+		cmds = append(cmds, releaseCmd(nil, v.term))
+		v.term, v.offset = nil, 0
+	}
+	v.stream, v.generation, v.cols, v.rows = st, st.Generation(), cols, rows
+	if v.term == nil {
+		v.term = vterm.New(cols, rows)
+		cmds = append(cmds, waitInputCmd(v.term))
+	} else {
+		v.term.ResizeEmulator(cols, rows)
+	}
 	w, area := m.agentAreaSize()
 	v.term.SetViewport(w, area)
 	v.term.SetReplaying(true)
 	v.replaying, v.state = true, attachObserving
-	return m, waitFramesCmd(v.token, v.stream)
+	v.term.SetFocused(false)
+	if v.control {
+		if st.Writer() {
+			v.state = attachControlling
+			v.term.SetFocused(true)
+			cmds = append(cmds, m.nudge(v))
+		} else {
+			v.state, v.banner = attachObservingOther, bannerControlledByOther
+		}
+	}
+	cmds = append(cmds, waitFramesCmd(v.token, v.stream))
+	return m, tea.Batch(cmds...)
+}
+
+// fail records an attach that cannot continue. With an emulator already on
+// screen the message goes in the banner so the last screen stays visible.
+func (v *agentView) fail(text string, retry bool) {
+	v.control, v.prefix, v.retry = false, false, retry
+	if v.term != nil {
+		v.banner = text
+		if retry {
+			v.banner += " · enter: retry"
+		}
+		return
+	}
+	v.err = text
 }
 
 func (m Model) viewSessionName(v *agentView) string {
@@ -254,12 +309,12 @@ func (m Model) onAgentRetry(msg agentRetryMsg) (tea.Model, tea.Cmd) {
 	if v == nil || v.token != msg.token || v.stream != nil {
 		return m, nil
 	}
-	return m, attachCmd(m.agents.ctx, m.agents.api.Sessions, v.sessionID, v.token)
+	return m, attachCmd(m.agents.ctx, m.agents.api.Sessions, v.sessionID, v.token, v.attachOptions())
 }
 
 func (m Model) onAgentFrames(msg agentFramesMsg) (tea.Model, tea.Cmd) {
 	v := m.agents.view
-	if v == nil || v.token != msg.token || v.term == nil {
+	if v == nil || v.token != msg.token || v.term == nil || v.stream == nil {
 		return m, nil
 	}
 	var cmds []tea.Cmd
@@ -273,10 +328,12 @@ func (m Model) onAgentFrames(msg agentFramesMsg) (tea.Model, tea.Cmd) {
 			// what follows, so start from a blank emulator.
 			old := v.term
 			v.term = vterm.New(v.cols, v.rows)
+			v.offset = f.Offset
 			w, area := m.agentAreaSize()
 			v.term.SetViewport(w, area)
 			v.term.SetReplaying(v.replaying)
-			cmds = append(cmds, releaseCmd(nil, old))
+			v.term.SetFocused(v.control && v.state == attachControlling)
+			cmds = append(cmds, releaseCmd(nil, old), waitInputCmd(v.term))
 		case "status":
 			if v.replaying {
 				v.replaying = false
@@ -287,13 +344,24 @@ func (m Model) onAgentFrames(msg agentFramesMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	if c, r := v.stream.Size(); c > 0 && r > 0 && (c != v.cols || r != v.rows) {
+	if v.state == attachEnded {
+		m.leaveTerminalMode(v)
+	}
+	// The stream's writer flag moves before the frame that announces it, so
+	// checking after the batch also covers writer frames.
+	if c := m.syncAgentControl(v); c != nil {
+		cmds = append(cmds, c)
+	}
+	// While this client writes, its own size is the truth: the polled holder
+	// size lags a resize we just sent and would shrink the emulator back.
+	if c, r := v.stream.Size(); v.state != attachControlling && c > 0 && r > 0 && (c != v.cols || r != v.rows) {
 		v.cols, v.rows = c, r
 		v.term.ResizeEmulator(c, r)
 	}
 	if msg.closed {
 		if v.state != attachEnded {
 			v.banner, v.err, v.retry = "disconnected · enter: retry", "disconnected", true
+			m.leaveTerminalMode(v)
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -356,6 +424,9 @@ func (m Model) agentTerminalArea(sel agentsapi.Session, w, rows int) []string {
 	if v.banner != "" && rows > 0 {
 		style := lipgloss.NewStyle().Foreground(theme.Current.Warning)
 		area[rows-1] = fit(style.Render(ansi.Truncate(v.banner, w, "…")), w)
+	}
+	if v.prefix && v.control && rows >= 3 {
+		copy(area[rows-3:], controlStrip(w, v.state == attachControlling))
 	}
 	return area
 }

@@ -435,3 +435,14 @@ func TestAttachSurfacesVersionMismatch(t *testing.T) {
 		t.Fatalf("err = %v, want agentsapi.ErrVersion", err)
 	}
 }
+
+func TestStreamReportsHolderGeneration(t *testing.T) {
+	st := newStream(&Backend{streams: map[*stream]struct{}{}}, agenthost.Record{}, &floodConn{allRead: make(chan struct{}), closed: make(chan struct{})},
+		agenthost.Frame{Generation: "gen-7"}, true, agenthost.Info{Cols: 80, Rows: 24})
+	if got := st.Generation(); got != "gen-7" {
+		t.Errorf("Generation = %q, want the ready frame's", got)
+	}
+	if got := newEndedStream(agenthost.Record{}).Generation(); got != "" {
+		t.Errorf("ended stream Generation = %q, want empty", got)
+	}
+}

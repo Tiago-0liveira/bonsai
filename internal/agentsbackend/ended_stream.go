@@ -21,6 +21,7 @@ func newEndedStream(record agenthost.Record) *endedStream {
 
 func (s *endedStream) Frames() <-chan agentterminal.Frame { return s.frames }
 func (s *endedStream) Writer() bool                       { return false }
+func (s *endedStream) Generation() string                 { return "" }
 
 // Retained records have no PTY dimensions; zero reports that size is unknown.
 func (s *endedStream) Size() (int, int)      { return 0, 0 }

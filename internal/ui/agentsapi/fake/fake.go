@@ -255,6 +255,7 @@ type Stream struct {
 	closed   bool
 	writer   bool
 	readOnly bool
+	gen      string
 	cols     int
 	rows     int
 	inputs   [][]byte
@@ -267,7 +268,7 @@ var _ agentsapi.Stream = (*Stream)(nil)
 // NewStream returns an open stream of the given holder size with room for
 // 256 queued frames.
 func NewStream(cols, rows int) *Stream {
-	return &Stream{frames: make(chan agentterminal.Frame, 256), cols: cols, rows: rows}
+	return &Stream{frames: make(chan agentterminal.Frame, 256), cols: cols, rows: rows, gen: "fake-gen"}
 }
 
 // Push queues a frame. It reports false when the stream is closed or the
@@ -312,6 +313,20 @@ func (s *Stream) Size() (int, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cols, s.rows
+}
+
+// Generation reports the holder generation (see SetGeneration).
+func (s *Stream) Generation() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gen
+}
+
+// SetGeneration changes the generation Generation reports.
+func (s *Stream) SetGeneration(g string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gen = g
 }
 
 func (s *Stream) Input(p []byte) error {

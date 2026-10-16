@@ -60,7 +60,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
-		return m.onResize(msg), nil
+		nm := m.onResize(msg)
+		return nm, nm.agentResizeDebounce()
 
 	case worktreesMsg:
 		return m.onWorktrees(msg)
@@ -79,6 +80,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAgentRetry(msg)
 	case agentFramesMsg:
 		return m.onAgentFrames(msg)
+	case agentInputMsg:
+		return m.onAgentInput(msg)
+	case agentInputSentMsg:
+		return m.onAgentInputSent(msg)
+	case agentTookMsg:
+		return m.onAgentTook(msg)
+	case agentResizeTickMsg:
+		return m.onAgentResizeTick(msg)
 	case agentUsageMsg:
 		return m.onAgentUsage(msg)
 	case agentUsageTickMsg:
@@ -232,6 +241,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onMouse(msg)
 
 	case tea.KeyMsg:
+		// Terminal mode comes first: every key but ctrl+] belongs to the agent,
+		// so no global (quit, help, tab, update prompt) may see it.
+		if !m.agentOverlayOpen() && m.agentTerminalMode() {
+			return m.agentTerminalKey(msg)
+		}
 		if m.updatePromptVisible() && msg.String() != "ctrl+c" {
 			switch msg.String() {
 			case "u":
@@ -268,6 +282,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // on: clicks and drags belong to the terminal's own text selection.
 func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.mouseOff || m.prefs != nil || m.modal != nil {
+		return m, nil
+	}
+	// The TUI owns the mouse (cell motion) and agents get none in this
+	// project, so in terminal mode the wheel over the agent does nothing
+	// rather than scrolling a pane the user cannot see.
+	if leftW, _, _ := m.dims(); m.agentTerminalMode() && msg.X >= leftW {
 		return m, nil
 	}
 	switch msg.Button {

@@ -201,10 +201,13 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		nm, cmd := m.openAgentsPicker()
 		return true, nm, cmd
-	case s == "enter":
-		// Retry a failed attach; terminal mode takes over this key in D4.
-		cmd := m.retryAgentAttach()
-		return cmd != nil, m, cmd
+	case key.Matches(msg, m.keys.AgentAttach):
+		// A failed or dropped attach retries first; otherwise enter takes control.
+		if cmd := m.retryAgentAttach(); cmd != nil {
+			return true, m, cmd
+		}
+		handled, cmd := m.enterTerminalMode()
+		return handled, m, cmd
 	case key.Matches(msg, m.keys.AgentNew, m.keys.AgentAccounts, m.keys.AgentUsage):
 		m.status = "agents: coming soon"
 		return true, m, nil
