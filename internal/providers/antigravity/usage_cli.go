@@ -10,15 +10,30 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 )
+
+// cliTimeout bounds one non-interactive agy command. agy can hang on a network
+// or login problem, and nothing else would end it, so a usage read that fell
+// back to it would never finish.
+const cliTimeout = 45 * time.Second
 
 // cliRunner runs one non-interactive agy command and returns its standard
 // output. Tests replace it.
 type cliRunner func(ctx context.Context, executable, dir string, envSet map[string]string, args ...string) ([]byte, error)
 
 func runCLI(ctx context.Context, executable, dir string, envSet map[string]string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, cliTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir = dir
+	// agy starts helper processes; ending only the main one would leave them
+	// running, so the whole group goes.
+	coreexec.SetProcessGroup(cmd)
+	cmd.Cancel = func() error {
+		coreexec.KillProcessTree(cmd)
+		return nil
+	}
 	cmd.Env = agents.BuildEnvironment(os.Environ(), envSet, nil)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -77,7 +92,11 @@ func (p *Provider) withProfile(ctx context.Context, account agents.Account, fn f
 		return errors.Join(err, p.sessions.Cleanup(session))
 	}
 	runErr := fn(ctx, profileRun{executable: executable, dir: session.WorkDir, env: buildEnvironment(account, session)})
-	reconcileErr := p.credentialMgr.Reconcile(ctx, account, session)
+	// A caller that gave up (the race was won elsewhere) still gets agy's
+	// refreshed token saved: the reconcile runs on its own, bounded context.
+	reconcileCtx, cancelReconcile := context.WithTimeout(context.WithoutCancel(ctx), reconcileWait)
+	reconcileErr := p.credentialMgr.Reconcile(reconcileCtx, account, session)
+	cancelReconcile()
 	cleanupErr := p.sessions.Cleanup(session)
 	return errors.Join(runErr, reconcileErr, cleanupErr)
 }
