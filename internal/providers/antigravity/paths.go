@@ -26,6 +26,13 @@ func providerSettingsPath(home string) string {
 	return filepath.Join(antigravityDir(home), "settings.json")
 }
 
+// onboardingPath is agy's first-run state (onboardingComplete and the
+// consumer/enterprise flags). A session home starts empty, so without it agy
+// would run its welcome screens in every session.
+func onboardingPath(home string) string {
+	return filepath.Join(antigravityDir(home), "cache", "onboarding.json")
+}
+
 func generationPath(session agents.Session) string {
 	return filepath.Join(session.RuntimeDir, "credential-generation.json")
 }

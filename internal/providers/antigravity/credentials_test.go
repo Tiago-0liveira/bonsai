@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -177,5 +179,134 @@ func TestCaptureSetupAcceptsTokenWithoutIdentityClaims(t *testing.T) {
 	}
 	if err := NewCredentialManager(accountStore).CaptureSetup(context.Background(), account, session); err != nil {
 		t.Fatalf("capture rejected a valid Antigravity token without identity claims: %v", err)
+	}
+}
+
+// agy's first-run state follows the profile into every session home, so the
+// welcome screens do not repeat; a profile signed in before the vault kept it
+// gets the state of its sign-in home.
+func TestOnboardingStateReachesEverySession(t *testing.T) {
+	accountStore, err := agents.NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionStore, err := agents.NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := agents.Account{ID: "acct_onboard", Provider: ProviderID, Name: "onboard", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if err := accountStore.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewCredentialManager(accountStore)
+	ctx := context.Background()
+	const onboarding = `{"onboardingComplete":true,"consumerOnboardingComplete":true}`
+
+	setup, err := sessionStore.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSessionAuth(t, setup.HomeDir, "access", "refresh", "user@example.com", time.Now().Add(time.Hour))
+	if err := manager.CaptureSetup(ctx, account, setup); err != nil {
+		t.Fatal(err)
+	}
+
+	// Vault without onboarding, sign-in home with it.
+	probe := probeHomeDir(accountStore, account)
+	if err := os.MkdirAll(filepath.Dir(onboardingPath(probe)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(onboardingPath(probe), []byte(onboarding), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := sessionStore.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Materialize(ctx, account, first); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(onboardingPath(first.HomeDir)); err != nil || string(got) != onboarding {
+		t.Fatalf("session onboarding = %q, %v", got, err)
+	}
+
+	// A session that finishes onboarding on its own saves it to the vault.
+	if err := os.RemoveAll(probe); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(ctx, account, first); err != nil {
+		t.Fatal(err)
+	}
+	second, err := sessionStore.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Materialize(ctx, account, second); err != nil {
+		t.Fatal(err)
+	}
+	// The vault is indented JSON, so compare the data, not the layout.
+	got, err := os.ReadFile(onboardingPath(second.HomeDir))
+	var state struct{ OnboardingComplete, ConsumerOnboardingComplete bool }
+	if err != nil || json.Unmarshal(got, &state) != nil || !state.OnboardingComplete || !state.ConsumerOnboardingComplete {
+		t.Fatalf("second session onboarding = %q, %v", got, err)
+	}
+}
+
+// Two sessions of one profile each trust their own folder. Whichever ends
+// last must not drop the other's.
+func TestReconcileKeepsFoldersTrustedByOtherSessions(t *testing.T) {
+	accountStore, err := agents.NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionStore, err := agents.NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := agents.Account{ID: "acct_trust", Provider: ProviderID, Name: "trust", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if err := accountStore.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewCredentialManager(accountStore)
+	ctx := context.Background()
+	setup, err := sessionStore.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(time.Hour)
+	writeSessionAuth(t, setup.HomeDir, "access", "refresh", "user@example.com", expiry)
+	if err := manager.CaptureSetup(ctx, account, setup); err != nil {
+		t.Fatal(err)
+	}
+	var sessions [2]agents.Session
+	for i, folder := range []string{"/work/a", "/work/b"} {
+		if sessions[i], err = sessionStore.Create(account, t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Materialize(ctx, account, sessions[i]); err != nil {
+			t.Fatal(err)
+		}
+		// The user trusts the folder: agy saves it into the session's settings.
+		settings := `{"gcp":{"project":"test-project","location":"global"},"trustedWorkspaces":["` + folder + `"]}`
+		if err := os.WriteFile(providerSettingsPath(sessions[i].HomeDir), []byte(settings), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, session := range sessions {
+		if err := manager.Reconcile(ctx, account, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var settings struct {
+		TrustedWorkspaces []string `json:"trustedWorkspaces"`
+	}
+	vault := readTestVault(t, accountStore, account)
+	if err := json.Unmarshal(vault.ProviderSettings, &settings); err != nil {
+		t.Fatal(err)
+	}
+	for _, folder := range []string{"/work/a", "/work/b"} {
+		if !slices.Contains(settings.TrustedWorkspaces, folder) {
+			t.Fatalf("trusted workspaces = %v, missing %s", settings.TrustedWorkspaces, folder)
+		}
 	}
 }
