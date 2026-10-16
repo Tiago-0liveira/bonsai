@@ -451,3 +451,26 @@ func controlStrip(w int, writer bool) []string {
 		fit(styled(rows[1]), w),
 	}
 }
+
+// agentNavHints are the state-specific hints ahead of the standing ones in
+// navigation mode: what the selected session lets you do right now.
+func (m Model) agentNavHints(pair func(k, d string) string, descSt lipgloss.Style) []string {
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return nil
+	}
+	sel, _, ok := m.selectedSession(cleanPath(wt.Path))
+	if !ok {
+		return nil
+	}
+	v := m.agents.view
+	switch {
+	case v == nil || v.sessionID != sel.ID || (v.stream == nil && v.err == ""):
+		return []string{descSt.Render("connecting…")}
+	case v.err != "" && v.retry:
+		return []string{pair(m.keys.AgentAttach.Help().Key, "retry")}
+	case v.state == attachEnded:
+		return []string{pair(m.keys.AgentNew.Help().Key, "new"), pair(m.keys.AgentAll.Help().Key, "all")}
+	}
+	return nil
+}

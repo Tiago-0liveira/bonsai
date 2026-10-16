@@ -259,12 +259,30 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 	path := cleanPath(wt.Path)
 	m.agents.pickPath = path
 	m.agents.pickIDs = map[string]string{}
+	// Opening the list is seeing it: failed sessions of this worktree list
+	// their ✗ there, so the worktree row's "!" has done its job.
+	m.ackFailedAgents(path)
 	build := func(query string) []string { return m.agentPickerItems(path, query) }
 	modal := modals.NewPicker(kindAgents, "AGENTS IN "+branchOf(wt), build, build(""),
 		"/ Search    Enter Open    n New    Esc Close", "No agents in this worktree yet", "n")
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
+}
+
+// ackFailedAgents marks the failed sessions of a worktree as seen and refreshes
+// the "!" badges.
+func (m *Model) ackFailedAgents(path string) {
+	changed := false
+	for _, i := range m.agents.byTree[path] {
+		if s := m.agents.sessions[i]; s.State == "failed" && !m.agents.ack[s.ID] {
+			m.agents.ack[s.ID] = true
+			changed = true
+		}
+	}
+	if changed {
+		m.refreshAgentBadges()
+	}
 }
 
 // agentPickerItems lists a worktree's sessions as one flat list: running
@@ -295,8 +313,8 @@ func (m Model) agentPickerItems(path, query string) []string {
 		if q != "" && !strings.Contains(strings.ToLower(plain), q) {
 			continue
 		}
-		text := stateMarkStyled(s.State) + " " + m.agentGlyph(s.Provider) + " " + fit(name, nameW) + "  " +
-			dimText(providerName(s.Provider)+" · "+s.ProfileName)
+		text := m.chrome(stateMarkStyled(s.State) + " " + m.agentGlyph(s.Provider) + " " + fit(name, nameW) + "  " +
+			dimText(providerName(s.Provider)+" · "+s.ProfileName))
 		if prev, dup := m.agents.pickIDs[text]; dup && prev != s.ID {
 			text += " #" + s.ID
 		}

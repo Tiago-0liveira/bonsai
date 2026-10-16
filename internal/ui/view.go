@@ -932,21 +932,25 @@ func (m Model) statusBar() string {
 func (m Model) contextHelp() string {
 	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
 	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
+	sep := descSt.Render(" · ")
 	if m.agentTerminalMode() {
-		if v := m.agents.view; v.state == attachObservingOther {
-			return keySt.Render("Ctrl+] t") + " " + descSt.Render("take control") + descSt.Render(" · ") +
-				keySt.Render("Ctrl+] d") + " " + descSt.Render("detach")
+		switch v := m.agents.view; {
+		case v.stream == nil:
+			return descSt.Render("connecting…") + sep + pair("Ctrl+] d", "detach")
+		case v.state == attachObservingOther:
+			return pair("Ctrl+] t", "take control") + sep + pair("Ctrl+] d", "detach")
 		}
-		return keySt.Render("Ctrl+]") + " " + descSt.Render("Bonsai command prefix")
+		return pair("Ctrl+]", "Bonsai command prefix")
 	}
 	if m.rightTab == tabAgents && m.agents.active() {
-		pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
-		return strings.Join([]string{
+		// ctrl+] only means something in terminal mode, so navigation mode does
+		// not advertise it.
+		parts := append(m.agentNavHints(pair, descSt),
 			pair(m.keys.Tab.Help().Key, "focus"),
 			pair(m.keys.AgentsTab.Help().Key, "agents"),
-			pair("ctrl+]", "menu"),
-			pair(m.keys.Help.Help().Key, "keys"),
-		}, descSt.Render(" · "))
+			pair(m.keys.Help.Help().Key, "keys"))
+		return strings.Join(parts, sep)
 	}
 	bindings := []key.Binding{m.keys.Tab}
 	if m.focus == focusList {

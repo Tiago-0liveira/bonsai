@@ -18,6 +18,9 @@ const (
 	agentsNarrowMin = 60  // below: a single summary row, no header
 )
 
+// agentNow is the clock for relative reset times; tests pin it.
+var agentNow = time.Now
+
 func providerName(p agents.ProviderID) string {
 	if p == "" {
 		return "Agent"
@@ -35,6 +38,34 @@ func sessionName(s agentsapi.Session) string {
 
 func (m Model) agentGlyph(p agents.ProviderID) string {
 	return theme.ProviderStyle(p).Render(theme.ProviderGlyph(p, m.agentGlyphsASCII()))
+}
+
+// asciiRunes maps the chrome's non-ASCII runes to one-cell ASCII stand-ins.
+// One cell each, so a row laid out before the swap keeps its width.
+var asciiRunes = strings.NewReplacer(
+	"●", "*", "✓", "+", "✗", "x", "│", "|", "─", "-", "·", "-", "→", ">",
+	"…", "~", "⚠", "!", "▼", "v",
+	"╭", "+", "╮", "+", "╰", "+", "╯", "+", "├", "+", "┤", "+", "┬", "+", "┴", "+", "┼", "+", "╷", "|",
+)
+
+// chrome applies the glyph preference to bonsai's own drawing (never to the
+// agent's terminal output, which is the agent's to draw).
+func (m Model) chrome(s string) string {
+	if !m.agentGlyphsASCII() {
+		return s
+	}
+	return asciiRunes.Replace(s)
+}
+
+func (m Model) chromeRows(rows []string) []string {
+	if !m.agentGlyphsASCII() {
+		return rows
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = asciiRunes.Replace(r)
+	}
+	return out
 }
 
 func dimText(s string) string { return lipgloss.NewStyle().Foreground(theme.Current.Dim).Render(s) }
@@ -175,9 +206,9 @@ func (m Model) agentsRows(w, h int) []string {
 	if sel, _, hasSel := m.selectedSession(cleanPath(wt.Path)); hasSel {
 		area = m.agentTerminalArea(sel, w, lay.body)
 	} else {
-		area = emptyArea(wt.Branch, w, lay.body)
+		area = m.chromeRows(emptyArea(wt.Branch, w, lay.body))
 	}
-	rows := append(append(append([]string(nil), lay.fixed...), area...), lay.tail...)
+	rows := append(append(append([]string(nil), m.chromeRows(lay.fixed)...), area...), m.chromeRows(lay.tail)...)
 	return rows
 }
 
@@ -322,7 +353,7 @@ func (m Model) usageText(s agentsapi.Session, compact bool) string {
 	if compact {
 		text = usagefmt.Compact(e.usage.Headline)
 	} else {
-		text = usagefmt.Headline(e.usage.Headline, time.Now())
+		text = usagefmt.Headline(e.usage.Headline, agentNow())
 	}
 	if text == "" {
 		text = "no usage data"

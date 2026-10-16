@@ -415,7 +415,7 @@ func applyAgentStatus(v *agentView, s agentterminal.Summary) {
 func (m Model) agentTerminalArea(sel agentsapi.Session, w, rows int) []string {
 	v := m.agents.view
 	if v == nil || v.sessionID != sel.ID {
-		return placeholderArea(sel, w, rows)
+		return m.chromeRows(placeholderArea(sel, w, rows))
 	}
 	var area []string
 	switch {
@@ -424,9 +424,9 @@ func (m Model) agentTerminalArea(sel agentsapi.Session, w, rows int) []string {
 		if v.retry {
 			lines = append(lines, dimText("enter: retry"))
 		}
-		area = centered(lines, w, rows)
+		area = m.chromeRows(centered(lines, w, rows))
 	case v.term == nil:
-		area = centered([]string{sessionName(sel), dimText("connecting…")}, w, rows)
+		area = m.chromeRows(centered([]string{sessionName(sel), dimText("connecting…")}, w, rows))
 	default:
 		area = strings.Split(v.term.View(), "\n")
 		for len(area) < rows {
@@ -436,10 +436,10 @@ func (m Model) agentTerminalArea(sel agentsapi.Session, w, rows int) []string {
 	}
 	if v.banner != "" && rows > 0 {
 		style := lipgloss.NewStyle().Foreground(theme.Current.Warning)
-		area[rows-1] = fit(style.Render(ansi.Truncate(v.banner, w, "…")), w)
+		area[rows-1] = fit(m.chrome(style.Render(ansi.Truncate(v.banner, w, "…"))), w)
 	}
 	if v.prefix && v.control && rows >= 3 {
-		copy(area[rows-3:], controlStrip(w, v.state == attachControlling))
+		copy(area[rows-3:], m.chromeRows(controlStrip(w, v.state == attachControlling)))
 	}
 	return area
 }
