@@ -225,13 +225,13 @@ func TestAgentsCompactBreakpoints(t *testing.T) {
 		})
 	}
 	t.Run("too small", func(t *testing.T) {
-		out := e.pane(120, 8) // 4 fixed rows leave 4 < 5
+		out := e.pane(120, 9) // 5 fixed rows leave 4 < 5
 		if !strings.Contains(out, "Pane too small") {
 			t.Errorf("want too-small notice:\n%s", out)
 		}
-		assertBox(t, out, 120, 8)
-		if strings.Contains(e.pane(120, 9), "Pane too small") {
-			t.Error("9 rows leave exactly 5 for the terminal")
+		assertBox(t, out, 120, 9)
+		if strings.Contains(e.pane(120, 10), "Pane too small") {
+			t.Error("10 rows leave exactly 5 for the terminal")
 		}
 	})
 }
@@ -319,21 +319,36 @@ func TestAgentsPicker(t *testing.T) {
 	if e.m.modal == nil || !strings.Contains(ansi.Strip(e.m.modal.View()), "AGENTS IN feat-a") {
 		t.Fatal("picker not open with the branch title")
 	}
-	secs := e.m.agentPickerSections(cleanPath(e.wtA), "")
-	if len(secs) != 2 || secs[0].Name != "Running" || secs[1].Name != "Recent" {
-		t.Fatalf("sections = %+v", secs)
+	// Flat list, no section headers: running newest first, then ended newest
+	// first, with the name column aligned across both groups.
+	items := e.m.agentPickerItems(cleanPath(e.wtA), "")
+	var plain []string
+	for _, it := range items {
+		plain = append(plain, ansi.Strip(it))
 	}
-	if len(secs[0].Items) != 2 || !strings.HasPrefix(secs[0].Items[0], "● ✳ ") && !strings.HasPrefix(secs[0].Items[0], "● ◎ ") {
-		t.Errorf("running items: %q", secs[0].Items)
+	want := []string{
+		"● ◎ Run tests           Codex · work",
+		"● ✳ Fix authentication  Claude · work",
+		"✗ ✳ Broken run          Claude · work",
+		"✓ ◎ Previous attempt    Codex · work",
 	}
-	if secs[1].Items[0] != "✗ ✳ Broken run   Claude · work" || secs[1].Items[1] != "✓ ◎ Previous attempt   Codex · work" {
-		t.Errorf("recent items (newest first): %q", secs[1].Items)
+	if strings.Join(plain, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("items:\n%s\nwant:\n%s", strings.Join(plain, "\n"), strings.Join(want, "\n"))
 	}
-	if got := e.m.agentPickerSections(cleanPath(e.wtA), "previous"); len(got) != 1 || got[0].Name != "Recent" || len(got[0].Items) != 1 {
-		t.Errorf("search should keep only the match: %+v", got)
+	if got := e.m.agentPickerItems(cleanPath(e.wtA), "previous"); len(got) != 1 {
+		t.Errorf("search should keep only the match: %q", got)
+	}
+	view := ansi.Strip(e.m.modal.View())
+	for _, s := range []string{"/ Search    Enter Open    n New    Esc Close"} {
+		if !strings.Contains(view, s) {
+			t.Errorf("picker view missing %q:\n%s", s, view)
+		}
+	}
+	if strings.Contains(view, "Running") || strings.Contains(view, "Recent") {
+		t.Errorf("picker must not show sections:\n%s", view)
 	}
 
-	nm, _ := e.m.Update(modals.SubmitMsg{Kind: kindAgents, Value: secs[1].Items[0]})
+	nm, _ := e.m.Update(modals.SubmitMsg{Kind: kindAgents, Value: items[2]})
 	e.m = nm.(Model)
 	if e.m.modal != nil {
 		t.Error("picker should close")
@@ -372,13 +387,13 @@ func TestAgentsUsageOrdering(t *testing.T) {
 	e.key(t, "1") // switch to a (claude): request 2 supersedes
 	cmdA := e.lastCmd
 
-	lateB := cmdB() // answer for the account the user already left
+	lateB := usageMsgOf(t, cmdB) // answer for the account the user already left
 	nm, _ := e.m.Update(lateB)
 	e.m = nm.(Model)
 	if _, ok := e.m.agents.usage["codex:work"]; ok {
 		t.Error("late result for the previous account must be dropped")
 	}
-	nm, _ = e.m.Update(cmdA())
+	nm, _ = e.m.Update(usageMsgOf(t, cmdA))
 	e.m = nm.(Model)
 	if !strings.Contains(e.pane(120, 20), "5h 72% left") {
 		t.Errorf("current account usage not shown:\n%s", e.pane(120, 20))
@@ -388,7 +403,7 @@ func TestAgentsUsageOrdering(t *testing.T) {
 	e.fb.Accounts.UsageErr = errors.New("rate limited")
 	e.key(t, "]")
 	e.key(t, "[")
-	nm, _ = e.m.Update(e.lastCmd())
+	nm, _ = e.m.Update(usageMsgOf(t, e.lastCmd))
 	e.m = nm.(Model)
 	out := e.pane(120, 20)
 	if !strings.Contains(out, "5h 72% left (stale)") {
@@ -421,11 +436,7 @@ func TestAgentsWorktreeMoveAcceptsNewAccountUsage(t *testing.T) {
 	if e.m.agents.usageAccount != "codex:work" || e.m.agents.usageSeq != before+1 {
 		t.Fatalf("usage request state = (%q, %d), want (codex:work, %d)", e.m.agents.usageAccount, e.m.agents.usageSeq, before+1)
 	}
-	msg := cmd()
-	if _, ok := msg.(agentUsageMsg); !ok {
-		t.Fatalf("selection reload result = %T, want agentUsageMsg", msg)
-	}
-	nm, _ = e.m.Update(msg)
+	nm, _ = e.m.Update(usageMsgOf(t, cmd))
 	e.m = nm.(Model)
 	if out := e.pane(120, 20); !strings.Contains(out, "5h 33% left") {
 		t.Errorf("new account usage response was rejected:\n%s", out)
@@ -559,5 +570,87 @@ func TestAgentsPaletteAndHelp(t *testing.T) {
 		if strings.HasPrefix(c.label, "Agents:") {
 			t.Errorf("palette shows %q without a backend", c.label)
 		}
+	}
+}
+
+func TestAgentsWideLayoutRows(t *testing.T) {
+	e := newAgentsEnv(t)
+	e.fb.Sessions.Add(
+		e.agent("a", "claude", "running", e.wtA, "Auth fix", 1),
+		e.agent("b", "codex", "running", e.wtA, "Tests", 2),
+	)
+	e.relist(t)
+	e.openTab(t)
+
+	t.Run("title and blank row when the terminal keeps 20 rows", func(t *testing.T) {
+		rows := strings.Split(e.pane(120, 27), "\n")
+		assertBox(t, strings.Join(rows, "\n"), 120, 27)
+		if !strings.HasPrefix(rows[0], "AGENTS · feat-a") || strings.TrimSpace(rows[1]) != "" {
+			t.Errorf("title rows: %q / %q", rows[0], rows[1])
+		}
+		if !strings.HasPrefix(rows[2], "Sessions: ") || !strings.HasPrefix(rows[3], "──") {
+			t.Errorf("strip then rule expected: %q / %q", rows[2], rows[3])
+		}
+		if !strings.Contains(rows[4], "Codex · work") || !strings.Contains(rows[4], "● Running") {
+			t.Errorf("header 1: %q", rows[4])
+		}
+		if !strings.Contains(rows[5], "u: Usage") || !strings.HasPrefix(rows[6], "──") {
+			t.Errorf("header 2 then rule expected: %q / %q", rows[5], rows[6])
+		}
+	})
+	t.Run("title drops first when the terminal would get under 20 rows", func(t *testing.T) {
+		rows := strings.Split(e.pane(120, 26), "\n")
+		if !strings.HasPrefix(rows[0], "Sessions: ") || strings.Contains(strings.Join(rows, "\n"), "AGENTS ·") {
+			t.Errorf("title should be gone:\n%s", strings.Join(rows, "\n"))
+		}
+		if !strings.HasPrefix(rows[1], "──") {
+			t.Errorf("rule after the strip: %q", rows[1])
+		}
+	})
+	t.Run("compact keeps one header row and no title", func(t *testing.T) {
+		rows := strings.Split(e.pane(80, 40), "\n")
+		if !strings.HasPrefix(rows[0], "[1 ") || !strings.HasPrefix(rows[2], "──") || strings.Contains(strings.Join(rows, "\n"), "AGENTS ·") {
+			t.Errorf("compact rows:\n%s", strings.Join(rows[:4], "\n"))
+		}
+	})
+	t.Run("narrow is a single summary row", func(t *testing.T) {
+		rows := strings.Split(e.pane(50, 40), "\n")
+		if !strings.HasPrefix(rows[0], "Agents (g) │") {
+			t.Errorf("row 0: %q", rows[0])
+		}
+	})
+}
+
+func TestAgentsPickerEmptyAndActions(t *testing.T) {
+	e := newAgentsEnv(t)
+	e.relist(t)
+	e.openTab(t)
+	e.key(t, "a")
+	if e.m.modal == nil {
+		t.Fatal("the picker opens even with zero sessions")
+	}
+	view := ansi.Strip(e.m.modal.View())
+	if !strings.Contains(view, "No agents in this worktree yet") || !strings.Contains(view, "n New") {
+		t.Errorf("empty picker:\n%s", view)
+	}
+	// n inside the picker is an action, not search text.
+	nm, cmd := e.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	e.m = nm.(Model)
+	nm, _ = e.m.Update(cmd())
+	e.m = nm.(Model)
+	if e.m.modal != nil || !strings.Contains(e.m.status, "coming soon") {
+		t.Errorf("n in the picker: modal=%v status=%q", e.m.modal != nil, e.m.status)
+	}
+}
+
+func TestAgentsStatusBar(t *testing.T) {
+	e := newAgentsEnv(t)
+	e.openTab(t)
+	if got := ansi.Strip(e.m.contextHelp()); got != "tab focus · g agents · ctrl+] menu · ? keys" {
+		t.Errorf("agents tab hints = %q", got)
+	}
+	e.m.rightTab = tabLog
+	if strings.Contains(ansi.Strip(e.m.contextHelp()), "ctrl+]") {
+		t.Error("other tabs keep their own hints")
 	}
 }

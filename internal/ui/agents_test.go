@@ -78,6 +78,49 @@ func (e *agentsEnv) apply(t *testing.T, cmd tea.Cmd) {
 	e.m = nm.(Model)
 }
 
+// flatten runs cmd and every command of nested batches, returning their
+// messages. A command that has not answered shortly is a wait on a channel or
+// a timer (frame pump, change watch, tick): it is skipped, since tests build
+// the message such a command would produce instead.
+func flatten(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+	switch msg := msg.(type) {
+	case tea.BatchMsg:
+		var out []tea.Msg
+		for _, c := range msg {
+			out = append(out, flatten(c)...)
+		}
+		return out
+	case nil:
+		return nil
+	default:
+		return []tea.Msg{msg}
+	}
+}
+
+// usageMsgOf finds the usage answer among a command's messages; since the live
+// view attaches from the same update, a usage request now travels in a batch.
+func usageMsgOf(t *testing.T, cmd tea.Cmd) agentUsageMsg {
+	t.Helper()
+	for _, m := range flatten(cmd) {
+		if u, ok := m.(agentUsageMsg); ok {
+			return u
+		}
+	}
+	t.Fatal("no usage message among the command results")
+	return agentUsageMsg{}
+}
+
 func (e *agentsEnv) session(id, provider, state, dir string) agentsapi.Session {
 	return agentsapi.Session{
 		Summary: agentterminal.Summary{ID: id, ProjectID: e.project, Provider: agents.ProviderID(provider), State: state},

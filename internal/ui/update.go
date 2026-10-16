@@ -28,6 +28,17 @@ import (
 // Update routes messages: layout, data results, the process tick, an active
 // modal, or global keys.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	nm, cmd := m.update(msg)
+	// Every update can change what the Agents tab shows, so the live view is
+	// reconciled here rather than at each place that changes the selection.
+	if next, ok := nm.(Model); ok {
+		cmd = next.syncAgentView(cmd)
+		return next, cmd
+	}
+	return nm, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The right pane's viewport height depends on the active tab (the Processes
 	// footer eats into it), so re-derive it before any message — scroll keys in
 	// particular are computed against the viewport's own height and go nowhere
@@ -62,6 +73,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAgentsChanged(msg)
 	case agentsClosedMsg:
 		return m, nil
+	case agentAttachedMsg:
+		return m.onAgentAttached(msg)
+	case agentRetryMsg:
+		return m.onAgentRetry(msg)
+	case agentFramesMsg:
+		return m.onAgentFrames(msg)
 	case agentUsageMsg:
 		return m.onAgentUsage(msg)
 	case agentUsageTickMsg:
@@ -176,6 +193,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.onMultiViewSubmit(msg.Selected)
 		}
 		m.modal = nil
+		return m, nil
+
+	case modals.ActionMsg:
+		if msg.Kind == kindAgents && msg.Key == "n" {
+			// The launch dialog arrives with D5; until then n is as inert here
+			// as it is on the tab.
+			m.modal = nil
+			m.status = "agents: coming soon"
+		}
 		return m, nil
 
 	case modals.CancelMsg:

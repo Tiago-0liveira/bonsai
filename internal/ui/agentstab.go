@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -10,6 +9,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
@@ -26,6 +27,7 @@ const (
 	usageRefresh      = 60 * time.Second
 	minTerminalRows   = 5
 	stripNameCells    = 12
+	pickerNameCells   = 28
 	unsupportedNotice = "Interactive agents need a Unix host (Linux or macOS)."
 )
 
@@ -199,6 +201,10 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		nm, cmd := m.openAgentsPicker()
 		return true, nm, cmd
+	case s == "enter":
+		// Retry a failed attach; terminal mode takes over this key in D4.
+		cmd := m.retryAgentAttach()
+		return cmd != nil, m, cmd
 	case key.Matches(msg, m.keys.AgentNew, m.keys.AgentAccounts, m.keys.AgentUsage):
 		m.status = "agents: coming soon"
 		return true, m, nil
@@ -239,59 +245,53 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	path := cleanPath(wt.Path)
-	if len(m.agents.byTree[path]) == 0 {
-		m.status = "no agents in this worktree"
-		return m, nil
-	}
 	m.agents.pickPath = path
 	m.agents.pickIDs = map[string]string{}
-	build := func(query string) []modals.Section { return m.agentPickerSections(path, query) }
-	title := "AGENTS IN " + branchOf(wt)
-	modal := modals.NewSectionedFuzzy(kindAgents, title, build, build(""))
+	build := func(query string) []string { return m.agentPickerItems(path, query) }
+	modal := modals.NewPicker(kindAgents, "AGENTS IN "+branchOf(wt), build, build(""),
+		"/ Search    Enter Open    n New    Esc Close", "No agents in this worktree yet", "n")
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
 }
 
-// agentPickerSections splits a worktree's sessions into Running and Recent
-// (newest first) and records which session each item text stands for.
-func (m Model) agentPickerSections(path, query string) []modals.Section {
+// agentPickerItems lists a worktree's sessions as one flat list: running
+// first, then ended, each newest first, with the name column aligned. It also
+// records which session each item text stands for.
+func (m Model) agentPickerItems(path, query string) []string {
 	q := strings.ToLower(strings.TrimSpace(query))
-	var running, recent []agentsapi.Session
+	var running, ended []agentsapi.Session
 	for _, i := range m.agents.byTree[path] {
 		if s := m.agents.sessions[i]; s.Active() {
 			running = append(running, s)
 		} else {
-			recent = append(recent, s)
+			ended = append(ended, s)
 		}
 	}
 	sort.SliceStable(running, func(a, b int) bool { return running[a].CreatedAt.After(running[b].CreatedAt) })
-	sort.SliceStable(recent, func(a, b int) bool { return recent[a].CreatedAt.After(recent[b].CreatedAt) })
+	sort.SliceStable(ended, func(a, b int) bool { return ended[a].CreatedAt.After(ended[b].CreatedAt) })
+	all := append(running, ended...)
 
-	ascii := m.agentGlyphsASCII()
-	build := func(name string, list []agentsapi.Session) (modals.Section, bool) {
-		var items []string
-		for _, s := range list {
-			text := fmt.Sprintf("%s %s %s   %s · %s", stateMark(s.State), theme.ProviderGlyph(s.Provider, ascii), sessionName(s), providerName(s.Provider), s.ProfileName)
-			if q != "" && !strings.Contains(strings.ToLower(text), q) {
-				continue
-			}
-			if prev, dup := m.agents.pickIDs[text]; dup && prev != s.ID {
-				text += " #" + s.ID
-			}
-			m.agents.pickIDs[text] = s.ID
-			items = append(items, text)
+	nameW := 0
+	for _, s := range all {
+		nameW = max(nameW, min(ansi.StringWidth(sessionName(s)), pickerNameCells))
+	}
+	var items []string
+	for _, s := range all {
+		name := ansi.Truncate(sessionName(s), pickerNameCells, "…")
+		plain := name + " " + providerName(s.Provider) + " " + s.ProfileName
+		if q != "" && !strings.Contains(strings.ToLower(plain), q) {
+			continue
 		}
-		return modals.Section{Name: name, Items: items}, len(items) > 0
+		text := stateMarkStyled(s.State) + " " + m.agentGlyph(s.Provider) + " " + fit(name, nameW) + "  " +
+			dimText(providerName(s.Provider)+" · "+s.ProfileName)
+		if prev, dup := m.agents.pickIDs[text]; dup && prev != s.ID {
+			text += " #" + s.ID
+		}
+		m.agents.pickIDs[text] = s.ID
+		items = append(items, text)
 	}
-	var sections []modals.Section
-	if sec, ok := build("Running", running); ok {
-		sections = append(sections, sec)
-	}
-	if sec, ok := build("Recent", recent); ok {
-		sections = append(sections, sec)
-	}
-	return sections
+	return items
 }
 
 // onAgentsPick selects the chosen session and acknowledges its failure mark.
@@ -307,14 +307,19 @@ func (m Model) onAgentsPick(value string) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func stateMark(state string) string {
+// stateMarkStyled is the picker's state mark: running green, exited dim,
+// failed red.
+func stateMarkStyled(state string) string {
+	mark, c := "●", theme.Current.Success
 	switch state {
 	case "exited":
-		return "✓"
+		mark, c = "✓", theme.Current.Dim
 	case "failed":
-		return "✗"
+		mark, c = "✗", theme.Current.Danger
+	case "starting", "stopping":
+		c = theme.Current.Warning
 	}
-	return "●"
+	return lipgloss.NewStyle().Foreground(c).Render(mark)
 }
 
 func branchOf(wt git.Worktree) string {

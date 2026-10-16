@@ -21,8 +21,22 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 
 The Agents tab lists the agents running in the selected worktree and the
 selected account's usage; worktree rows group running agents by provider with a
-glyph and count, plus `!` for an unseen failure.
-See [agents.md](agents.md) for profiles and accounts.
+glyph and count, plus `!` for an unseen failure. It shows the selected session's
+live terminal read-only: you can watch the agent, but keys are not forwarded to it
+yet. The title row (`AGENTS · <branch>`) appears when the terminal is tall enough.
+A header shows the session's provider, profile, model and state, with `· read-only`
+when another client is controlling it. The TUI uses the same agent sessions as the
+web UI and `bonsai agents`. If it starts without that backend, the Agents tab is
+unavailable and the TUI prints `agents unavailable: <err>` to stderr after exit.
+Press `enter` on a session that failed to attach to retry. A session started by
+another bonsai version cannot be opened here; the tab says to run
+`bonsai agents attach <name>` instead.
+
+Press `a` on the Agents tab to open the session picker. It lists the worktree's
+sessions as one flat list, running ones first, then ended ones, marked `●` running,
+`✓` exited and `✗` failed. It opens even when there are no sessions. `Enter` opens
+the chosen session. `n` (new), `m` (accounts) and `u` (usage) are placeholders for
+now. See [agents.md](agents.md) for profiles and accounts.
 
 ### Keybindings
 

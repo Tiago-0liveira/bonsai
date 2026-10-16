@@ -4,6 +4,8 @@ package agentsbackend
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -405,5 +407,31 @@ func TestUnsupportedWithoutPaths(t *testing.T) {
 	}
 	if list, err := b.API().Sessions.List(context.Background()); err != nil || len(list) != 0 {
 		t.Fatalf("list = %v, %v", list, err)
+	}
+}
+
+func TestAttachSurfacesVersionMismatch(t *testing.T) {
+	e := newEnv(t, chatty)
+	s := e.start(t)
+	path := filepath.Join(e.paths.Records, s.ID+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec["protocol"] = agenthost.Version + 1
+	mismatched, _ := json.Marshal(rec)
+	if err := os.WriteFile(path, mismatched, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Cleanup stops the holder, and for a record it cannot dial that falls back
+	// to signalling the PID, which here is the test process itself.
+	t.Cleanup(func() { _ = os.WriteFile(path, raw, 0o600) })
+	_, err = e.api.Sessions.Attach(context.Background(), s.ID, agentsapi.AttachOptions{ReadOnly: true})
+	if !errors.Is(err, agentsapi.ErrVersion) {
+		t.Fatalf("err = %v, want agentsapi.ErrVersion", err)
 	}
 }
