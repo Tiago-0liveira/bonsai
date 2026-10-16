@@ -1,0 +1,30 @@
+╭─ AGENT ACCOUNTS ─────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                  │
+│ ACCOUNTS                   │ ✳ Claude · work                                                     │
+│                            │                                                                     │
+│ CLAUDE                     │ [Overview]  Usage  Defaults                                         │
+│ > ✳ work             72% ● │ ─────────────────────────────────────────────────────────────────── │
+│   ✳ personal             ● │                                                                     │
+│                            │ Status       Connected                                              │
+│ CODEX                      │ Identity     work@example.com                                       │
+│   ◎ work                 ● │ Provider     Claude Code                                            │
+│   ◎ personal             ● │ Plan         Max                                                    │
+│                            │ Auth         Browser login                                          │
+│ ANTIGRAVITY                │                                                                     │
+│   ✦ personal             ● │ Default model    Opus                                               │
+│                            │ Default effort   High                                               │
+│                            │                                                                     │
+│                            │ Sessions         2 running                                          │
+│                            │                                                                     │
+│                            │ [Sign in again]  [Remove account]                                   │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │                                                                     │
+│ + Add account              │                                                                     │
+├────────────────────────────┴─────────────────────────────────────────────────────────────────────┤
+│ j/k Navigate  ·  Tab Section  ·  Enter Select  ·  Esc Close                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

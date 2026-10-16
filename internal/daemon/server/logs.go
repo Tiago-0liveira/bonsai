@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -60,15 +61,12 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 		return
 	}
 
-	// Rotation holds the path lock, so reading the live file and the generation
-	// together keeps the offset and generation describing the same file.
-	lock := logPathLock(path)
-	writer := s.logWriterFor(req.ID)
-	lock.Lock()
-	data, _ := os.ReadFile(path)
-	lastGen := writerGenerationLocked(writer)
-	lock.Unlock()
-	offset := int64(len(data))
+	follower := logFollower{path: path}
+	data, err := follower.read()
+	if err != nil {
+		writeResult(enc, nil, err)
+		return
+	}
 	if req.TailLines > 0 {
 		initial := string(data)
 		lastNL := bytes.LastIndexByte(data, '\n')
@@ -119,57 +117,18 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 		case <-ticker.C:
 		}
 
-		// Check for rotation and read new data under the path lock so a rotation
-		// cannot land between the generation check and the reads. Emit afterwards,
-		// since the client write may block.
-		writer := s.logWriterFor(req.ID)
-		var chunks [][]byte
-		lock.Lock()
-		curGen := writerGenerationLocked(writer)
-		fi, statErr := os.Stat(path)
-		if curGen != lastGen || (statErr == nil && fi.Size() < offset) {
-			// Drain remaining data from previous file (.1)
-			if oldF, err := os.Open(path + ".1"); err == nil {
-				if _, err := oldF.Seek(offset, 0); err == nil {
-					chunks = appendReadChunks(chunks, oldF, nil)
-				}
-				_ = oldF.Close()
-			}
-			offset = 0
-			lastGen = curGen
+		// A terminal observation must precede the rotation-aware read. Checking
+		// afterwards could require another drain after the live file changed.
+		terminal := s.isTerminal(req.ID)
+		data, err := follower.read()
+		if err != nil {
+			writeResult(enc, nil, err)
+			return
 		}
-		if f, err := os.Open(path); err == nil {
-			if _, err := f.Seek(offset, 0); err == nil {
-				chunks = appendReadChunks(chunks, f, &offset)
-			}
-			_ = f.Close()
+		if err := emitChunk(data, false); err != nil {
+			return
 		}
-		lock.Unlock()
-		for _, chunk := range chunks {
-			if err := emitChunk(chunk, false); err != nil {
-				return
-			}
-		}
-
-		if s.isTerminal(req.ID) {
-			// One final drain attempt
-			if f, err := os.Open(path); err == nil {
-				if _, err := f.Seek(offset, 0); err == nil {
-					buf := make([]byte, 32<<10)
-					for {
-						n, _ := f.Read(buf)
-						if n <= 0 {
-							break
-						}
-						offset += int64(n)
-						if err := emitChunk(buf[:n], false); err != nil {
-							_ = f.Close()
-							return
-						}
-					}
-				}
-				_ = f.Close()
-			}
+		if terminal {
 			_ = emitChunk(nil, true)
 			_ = enc.WriteResponse(&protocol.Response{OK: true, EOF: true})
 			return
@@ -177,42 +136,61 @@ func (s *Server) streamLogs(conn net.Conn, enc *protocol.Encoder, req *protocol.
 	}
 }
 
-// logWriterFor returns the live log writer for a process, or nil.
-func (s *Server) logWriterFor(id int) *logWriter {
-	s.mu.Lock()
-	mp, ok := s.procs[id]
-	s.mu.Unlock()
-	if !ok {
-		return nil
-	}
-	mp.mu.Lock()
-	defer mp.mu.Unlock()
-	return mp.logw
+// Absolute offsets survive writer replacement and rotations even when the new
+// live file has already grown beyond the previous file's offset.
+type logFollower struct {
+	path       string
+	offset     int64
+	generation string
 }
 
-// writerGenerationLocked reads a writer's rotation generation. The caller holds
-// the log path lock, which is the writer's own mutex.
-func writerGenerationLocked(w *logWriter) uint64 {
-	if w == nil {
-		return 0
+func (f *logFollower) read() ([]byte, error) {
+	lock := logPathLock(f.path)
+	lock.Lock()
+	defer lock.Unlock()
+	state, err := loadLogCursor(f.path)
+	if err != nil {
+		return nil, fmt.Errorf("read log cursor: %w", err)
 	}
-	return w.generation
-}
-
-// appendReadChunks reads r to EOF, appending each chunk and advancing offset by
-// the bytes read when it is non-nil.
-func appendReadChunks(chunks [][]byte, r io.Reader, offset *int64) [][]byte {
-	buf := make([]byte, 32<<10)
-	for {
-		n, _ := r.Read(buf)
-		if n <= 0 {
-			return chunks
-		}
-		if offset != nil {
-			*offset += int64(n)
-		}
-		chunks = append(chunks, append([]byte(nil), buf[:n]...))
+	start := state.Base - state.BackupSize
+	if f.generation != "" && f.generation != state.Generation {
+		// A recreated cursor renumbers offsets, so replay retained bytes rather
+		// than suppressing new output with an offset from the old cursor.
+		f.offset = start
 	}
+	f.generation = state.Generation
+	// Only the live file and one backup are retained. A slow follower resumes
+	// from the oldest retained byte when earlier generations were evicted.
+	if f.offset < start {
+		f.offset = start
+	}
+	var data bytes.Buffer
+	for _, part := range []struct {
+		path string
+		base int64
+	}{{f.path + ".1", start}, {f.path, state.Base}} {
+		file, err := os.Open(part.path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("open log %s: %w", part.path, err)
+		}
+		if f.offset < part.base {
+			f.offset = part.base
+		}
+		_, err = file.Seek(f.offset-part.base, io.SeekStart)
+		if err == nil {
+			var n int64
+			n, err = data.ReadFrom(file)
+			f.offset += n
+		}
+		_ = file.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read log %s: %w", part.path, err)
+		}
+	}
+	return data.Bytes(), nil
 }
 
 func (s *Server) isTerminal(id int) bool {

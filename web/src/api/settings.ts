@@ -96,3 +96,17 @@ export interface UpdateSettings {
 export function loadUpdateSettings() {
   return request<UpdateSettings>('/api/settings/updates')
 }
+
+// GET/POST /api/settings/agents: whether `bonsai web stop` keeps agent
+// sessions running. active_sessions counts the running ones in every project.
+export interface AgentSettings {
+  revision: number
+  keep_running: boolean
+  active_sessions: number
+}
+export function loadAgentSettings() {
+  return request<AgentSettings>('/api/settings/agents')
+}
+export function saveAgentSettings(settings: AgentSettings, keepRunning: boolean) {
+  return request<AgentSettings>('/api/settings/agents', { keep_running: keepRunning, revision: settings.revision })
+}

@@ -686,6 +686,9 @@ func (m Model) View() string {
 	if m.prefs != nil {
 		return clampHeight(m.prefs.View(), m.height)
 	}
+	if m.agents.overlay != nil {
+		return clampHeight(m.agentOverlayView(), m.height)
+	}
 	if m.modal != nil {
 		return clampHeight(m.modal.View(), m.height)
 	}
@@ -707,7 +710,9 @@ func (m Model) View() string {
 	left = clampHeight(left, targetPaneH)
 
 	var rightBody string
-	if m.rightTab == tabProcs {
+	if m.rightTab == tabAgents {
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.renderAgentsPane(rightInnerW, innerH-1)
+	} else if m.rightTab == tabProcs {
 		// Output scrolls in the term viewport (already sized to leave the footer
 		// room, see layout); the process list + hint sit in a footer pinned to
 		// the bottom.
@@ -741,6 +746,8 @@ func tabLabel(t rightTab, compact bool) string {
 			return " Insp (i) "
 		case tabChecks:
 			return " Checks (b) "
+		case tabAgents:
+			return " Agents (g) "
 		default:
 			return " Log (l) "
 		}
@@ -756,6 +763,8 @@ func tabLabel(t rightTab, compact bool) string {
 		return " Inspect (i) "
 	case tabChecks:
 		return " Checks (b) "
+	case tabAgents:
+		return " Agents (g) "
 	default:
 		return " Git Log "
 	}
@@ -776,6 +785,10 @@ func (m Model) visibleTabs() []rightTab {
 		if _, isPR := m.prForBranch(wt.Branch); isPR {
 			tabs = append(tabs, tabPR)
 		}
+	}
+	if m.agents.enabled() {
+		// Present even with zero agents: it is where the first one is started.
+		tabs = append(tabs, tabAgents)
 	}
 	return tabs
 }
@@ -917,6 +930,28 @@ func (m Model) statusBar() string {
 // the list is focused, tab cycling while the right pane is, plus the always-on
 // palette/preferences/keys/quit.
 func (m Model) contextHelp() string {
+	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
+	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
+	sep := descSt.Render(" · ")
+	if m.agentTerminalMode() {
+		switch v := m.agents.view; {
+		case v.stream == nil:
+			return descSt.Render("connecting…") + sep + pair("Ctrl+] d", "detach")
+		case v.state == attachObservingOther:
+			return pair("Ctrl+] t", "take control") + sep + pair("Ctrl+] d", "detach")
+		}
+		return pair("Ctrl+]", "Bonsai command prefix")
+	}
+	if m.rightTab == tabAgents && m.agents.active() {
+		// ctrl+] only means something in terminal mode, so navigation mode does
+		// not advertise it.
+		parts := append(m.agentNavHints(pair, descSt),
+			pair(m.keys.Tab.Help().Key, "focus"),
+			pair(m.keys.AgentsTab.Help().Key, "agents"),
+			pair(m.keys.Help.Help().Key, "keys"))
+		return strings.Join(parts, sep)
+	}
 	bindings := []key.Binding{m.keys.Tab}
 	if m.focus == focusList {
 		bindings = append(bindings, m.keys.Enter, m.keys.Create, m.keys.Filter)
@@ -925,8 +960,6 @@ func (m Model) contextHelp() string {
 	}
 	bindings = append(bindings, m.keys.Palette, m.keys.Prefs, m.keys.Help, m.keys.Quit)
 
-	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
-	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
 	parts := make([]string, 0, len(bindings))
 	for _, b := range bindings {
 		h := b.Help()

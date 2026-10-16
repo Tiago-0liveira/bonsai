@@ -52,6 +52,8 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		return cmdShellInit(out)
 	case "agent":
 		return cmdAgent(args[1:], in, out, errOut)
+	case "agents":
+		return cmdAgents(args[1:], in, out, errOut)
 	case "web":
 		return cmdWeb(args[1:], in, out, errOut)
 	case "serve":
@@ -461,7 +463,7 @@ Usage:
   bonsai attach <id>              stream a process log (Ctrl-C detaches)
   bonsai daemon status|stop       control the background daemon
   bonsai web [--attach] [--no-open] [--no-setup] [--port N]  start the web client stack (any directory)
-  bonsai web status|open|stop     inspect, open in the browser, stop
+  bonsai web status|open|stop     inspect, open in the browser, stop (stop: [--stop-agents|--keep-agents])
   bonsai web logs [api] [-f]      local API logs
   bonsai web attach               live log viewer
   bonsai web restart [api]        restart the local API
@@ -472,6 +474,9 @@ Usage:
   bonsai alias rm <name>          remove a user alias
   bonsai shell-init               print a shell 'bcd' cd helper
   bonsai agent ...                manage provider accounts and sessions
+  bonsai agents [--all] [--json]  list running agent sessions (any directory)
+  bonsai agents attach <id|name> [--take] [--read-only]  attach this terminal (Ctrl-] d detaches)
+  bonsai agents stop <id|name>    stop an agent session
   bonsai version (-v, --version)  print the installed version
   bonsai update (-u, --update)    check or install updates
   bonsai help                     show this help

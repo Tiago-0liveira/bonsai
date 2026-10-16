@@ -19,6 +19,72 @@ stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 (`http://localhost:…`) detected in process output are shown next to each process.
 
+### Agents tab
+
+The Agents tab lists the agents running in the selected worktree and the
+selected account's usage; worktree rows group running agents by provider with a
+glyph and count, plus `!` for an unseen failure. It shows the selected session's
+live terminal read-only: you can watch the agent. The title row (`AGENTS · <branch>`)
+appears when the terminal is tall enough. A header shows the session's provider,
+profile, model and state, with `· read-only` when another client is controlling it.
+The TUI uses the same agent sessions as the web UI and `bonsai agents`. If it starts
+without that backend, the Agents tab is unavailable and the TUI prints
+`agents unavailable: <err>` to stderr after exit. A session started by another
+bonsai version cannot be opened here; the tab says to run
+`bonsai agents attach <name>` instead.
+
+The TUI is a client of the same sessions as the web app; see
+[agents.md](agents.md#sessions-shared-with-the-tui-and-cli). It is read-only by
+default: the terminal only watches until you press `enter`. On the focused Agents
+tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops the
+selected running agent after a confirmation. The command palette (`ctrl+k`) has
+**Agents: open tab**, **new agent**, **accounts** and **usage** under **Agents**;
+stop is on the tab and in the `ctrl+]` menu only.
+
+Press `enter` on a session to enter terminal mode and type into it. The client
+attaches as the writer and every key goes to the agent, including `esc`, `tab`,
+`ctrl+c` and `q`. The PTY is resized to the pane when you enter, and window
+resizes are debounced so the agent gets one redraw for the final size. Mouse
+wheel events over the terminal area are ignored in terminal mode. Press `enter`
+on a session that failed or dropped its attach to retry first. The binding is
+`agent_attach` and can be rebound.
+
+The terminal has a two-row header, the agent output, and a hint row at the bottom.
+The bottom status bar reads `Ctrl+] Bonsai command prefix` in terminal mode, or
+`Ctrl+] t take control · Ctrl+] d detach` while observing another client's session.
+Only `ctrl+]` is handled by Bonsai; it opens the **BONSAI CONTROL** strip:
+
+| After `ctrl+]` | Action |
+|----------------|--------|
+| `d` | Detach: leave terminal mode and keep showing the agent read-only |
+| `a` | Open the agents picker |
+| `t` | Take control (only when another client is the writer) |
+| `u` | Usage |
+| `m` | Accounts |
+| `s` | Stop the selected agent (asks first) |
+| `esc` | Back to the agent |
+| `ctrl+]` | Send a literal `ctrl+]` (0x1d) to the agent |
+
+Any other key after `ctrl+]` closes the strip and is not forwarded to the agent.
+
+If another client is the writer, the agent is read-only here: the banner reads
+`Controlled by another client` and keys are swallowed. Press `ctrl+]` then `t` to
+take control. If another client takes control away, the hint row reads
+`Control taken by another client  ·  Ctrl+] t Take back`; `ctrl+] t` takes it back.
+
+Press `a` on the Agents tab to open the session picker. It lists the worktree's
+sessions as one flat list, running ones first, then ended ones, marked `●` running,
+`✓` exited and `✗` failed. It opens even when there are no sessions. `Enter` opens
+the chosen session. Opening the picker clears the `!` failure markers on that
+worktree's rows, so the failures stay listed here with `✗`.
+
+The new-agent dialog (`n`) picks an account with `j`/`k` and moves between fields
+with `Tab`. `Enter` edits the focused field, `ctrl+s` starts the agent and `Esc`
+closes the dialog. An account that needs a sign-in shows `[Sign in first]` in place
+of start. Signing in or adding an account suspends the TUI and runs the provider's
+CLI flow in the terminal, then returns to Bonsai. See
+[agents.md](agents.md) for profiles and accounts.
+
 ### Keybindings
 
 | Key | Action |
@@ -30,6 +96,7 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 | `n` | New worktree (new branch / existing branch / PR) |
 | `ctrl+n` | Create a PR from the selected worktree |
 | `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
+| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session, `enter` terminal mode (every key goes to the agent except `ctrl+]`, see the prefix table above). On the focused Agents tab, `n` (new agent), `m` (accounts), `u` (usage) and `s` (stop agent) take precedence over the globals with the same letters |
 | `i` | Inspector tab (status, last commit, diff, disk, stashes) |
 | `b` | Checks tab (GitHub Actions runs for the branch) |
 | `o` | Cycle list sort (name / ahead / behind / PR / activity / dirty) |
@@ -52,7 +119,18 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 | `q` / `ctrl+c` | Quit |
 
 Every key can be rebound under `keybindings` in `.bonsai.yaml`; the
-[annotated example](../.bonsai.yaml) lists the action names.
+[annotated example](../.bonsai.yaml) lists the action names. The keys after
+`ctrl+]` are fixed and not rebindable; `?` lists them in a separate **Agent
+terminal (ctrl+] first, fixed keys)** section.
+
+The navigation status bar shows `tab focus · g agents · ? keys` on the Agents tab,
+with a state prefix when it applies: `connecting…`, `enter retry` after a failed
+attach, or `n new · a all` for an ended session. `ctrl+]` is not advertised there.
+
+Agent glyphs follow the `agent glyphs` row in preferences (`,`). `ascii` swaps
+bonsai's own drawing to ASCII: provider glyphs (`C X A`), state dots, picker marks
+(`*` running, `+` exited, `x` failed), rules, hint rows and agent overlay borders.
+It does not touch the agent's terminal output or the status-bar separators.
 
 ## CLI
 

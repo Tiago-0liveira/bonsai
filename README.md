@@ -61,7 +61,7 @@ serves only a placeholder (no embedded web UI; see [Building](#building-from-sou
 
 - **Web workspace**: `bonsai web` serves a local app at
   `http://127.0.0.1:7001/app`, embedded in release binaries. No hosted service.
-- **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`).
+- **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`) and an Agents tab (`g`, see [docs/agents.md](docs/agents.md)).
 - **CLI**: every feature is also a plain, scriptable command.
 
 ### ⚙️ Background supervisor
@@ -77,6 +77,8 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
   directory, so accounts never leak into each other.
 - Run **many agent sessions at once** across worktrees, in the web terminal dock
   or with `bonsai agent run`.
+- Start, watch, control and stop the same sessions from the **TUI's Agents tab**
+  ([docs/tui-cli.md](docs/tui-cli.md#agents-tab)).
 - Per-profile **launch defaults** (model, effort, permissions) and an **Agents
   tab** in the web app to manage profiles, sign-ins and sessions.
 - `bonsai agent usage` shows **plan limits** (5-hour and weekly windows, credits,

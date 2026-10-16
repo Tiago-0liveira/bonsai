@@ -147,11 +147,15 @@ func (c *Client) autostart() error {
 			return errors.New("cannot autostart daemon from test binary")
 		}
 	}
-	flag := "--repo"
-	if c.userHome {
-		flag = "--home"
+	bin, err := resolveDaemonBin(bin)
+	if err != nil {
+		return err
 	}
-	cmd := exec.Command(bin, "__daemon", flag, c.store.Root())
+	root := c.store.Root()
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	cmd := daemonCommand(bin, c.userHome, root)
 	// Fully detach: new session, no controlling terminal, stdio to /dev/null.
 	devnull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if devnull != nil {
@@ -172,6 +176,26 @@ func (c *Client) autostart() error {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return errors.New("daemon did not start in time")
+}
+
+func resolveDaemonBin(bin string) (string, error) {
+	// Resolve paths before cmd.Dir changes the child's working directory;
+	// bare names must retain exec.Command's PATH lookup.
+	if filepath.Base(bin) != bin {
+		return filepath.Abs(bin)
+	}
+	return bin, nil
+}
+
+func daemonCommand(bin string, userHome bool, root string) *exec.Cmd {
+	flag := "--repo"
+	if userHome {
+		flag = "--home"
+	}
+	cmd := exec.Command(bin, "__daemon", flag, root)
+	// A detached daemon must not pin the caller's working directory on Windows.
+	cmd.Dir = root
+	return cmd
 }
 
 // roundtrip sends one request and returns the single terminal response frame.

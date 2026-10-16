@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentsetup"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
@@ -25,7 +26,7 @@ type agentAPI struct {
 	mu        sync.Mutex
 	publishMu sync.Mutex
 	runtime   *agentruntime.Runtime
-	manager   *agentterminal.Manager
+	manager   *agenthost.Manager
 	registry  projectRegistry
 	// revision numbers agents_changed events.
 	revision      atomic.Uint64
@@ -404,8 +405,8 @@ func (s *Server) startAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	s.agentMutation(w, r, body, false)
 }
-func (b agentRequest) launchOptions() agentterminal.StartOptions {
-	return agentterminal.StartOptions{Model: b.Model, Prompt: b.Prompt, FullAccess: b.FullAccess, PermissionMode: b.PermissionMode, Effort: b.Effort, Sandbox: b.Sandbox, Approval: b.Approval}
+func (b agentRequest) launchOptions() agenthost.StartOptions {
+	return agenthost.StartOptions{Model: b.Model, Prompt: b.Prompt, FullAccess: b.FullAccess, PermissionMode: b.PermissionMode, Effort: b.Effort, Sandbox: b.Sandbox, Approval: b.Approval}
 }
 func (s *Server) stopAgent(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 {
@@ -430,16 +431,31 @@ func (s *Server) publishAgents(_ string) {
 				byID[summary.ID] = summary
 			}
 			if err := project.state.Update(func(data gitstore.Data) error {
-				for key := range data["api_agent_mutations"] {
-					record, ok := gitstore.Get[agentMutation](data, "api_agent_mutations", key)
-					if !ok {
+				journaled := map[string]bool{}
+				for _, section := range []string{"api_agent_mutations", "api_agent_adoptions"} {
+					for key := range data[section] {
+						record, ok := gitstore.Get[agentMutation](data, section, key)
+						if !ok {
+							continue
+						}
+						if summary, ok := byID[record.Summary.ID]; ok {
+							record.Summary = summary
+							if err := gitstore.Put(data, section, key, record); err != nil {
+								return err
+							}
+						}
+						journaled[record.Summary.ID] = true
+					}
+				}
+				// Sessions another client started have no request key, so they
+				// get one of their own to survive an API restart. Web sessions
+				// are journaled by their request.
+				for _, summary := range summaries {
+					if summary.Origin == "" || summary.Origin == "web" || journaled[summary.ID] {
 						continue
 					}
-					if summary, ok := byID[record.Summary.ID]; ok {
-						record.Summary = summary
-						if err := gitstore.Put(data, "api_agent_mutations", key, record); err != nil {
-							return err
-						}
+					if err := gitstore.Put(data, "api_agent_adoptions", summary.ID, agentMutation{Summary: summary}); err != nil {
+						return err
 					}
 				}
 				return nil
@@ -468,28 +484,36 @@ func (s *Server) hasLiveAgents(project, tree string) bool {
 	return false
 }
 
+// recoverAgents rebuilds the session list after an API start. Holders still
+// running are adopted; journal entries take their holder's current or final
+// summary; sessions without a holder record were interrupted.
 func (s *Server) recoverAgents() error {
+	held := s.agents.manager.Adopt()
 	for _, info := range s.registry.List() {
 		project, ok := s.registry.Lookup(info.ID)
 		if !ok || project.state == nil {
 			continue
 		}
 		if err := project.state.Update(func(data gitstore.Data) error {
-			for key := range data["api_agent_mutations"] {
-				record, ok := gitstore.Get[agentMutation](data, "api_agent_mutations", key)
-				if !ok || record.Summary.ID == "" {
-					continue
-				}
-				if record.Summary.Active() {
-					now := time.Now().UTC()
-					record.Summary.State = "failed"
-					record.Summary.EndedAt = &now
-					record.Summary.Error = "Agent interrupted by API restart; start explicitly to run again."
-					if err := gitstore.Put(data, "api_agent_mutations", key, record); err != nil {
+			for _, section := range []string{"api_agent_mutations", "api_agent_adoptions"} {
+				for key := range data[section] {
+					record, ok := gitstore.Get[agentMutation](data, section, key)
+					if !ok || record.Summary.ID == "" {
+						continue
+					}
+					if summary, ok := held[record.Summary.ID]; ok {
+						record.Summary = summary
+					} else if record.Summary.Active() {
+						now := time.Now().UTC()
+						record.Summary.State = "failed"
+						record.Summary.EndedAt = &now
+						record.Summary.Error = "Agent interrupted by API restart; start explicitly to run again."
+					}
+					if err := gitstore.Put(data, section, key, record); err != nil {
 						return err
 					}
+					s.agents.manager.Restore(record.Summary)
 				}
-				s.agents.manager.Restore(record.Summary)
 			}
 			return nil
 		}); err != nil {

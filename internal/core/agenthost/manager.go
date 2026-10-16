@@ -1,0 +1,732 @@
+package agenthost
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
+)
+
+// Summary is an agent session as the API and its clients see it.
+type Summary = agentterminal.Summary
+
+// StartOptions are the per-launch options forwarded to the provider unchanged.
+type StartOptions = agents.LaunchOptions
+
+// ActiveLimit bounds the active sessions, adopted ones included.
+const ActiveLimit = 16
+
+// Manager is the API's view of agent sessions. It starts a holder per
+// session, follows each holder's summary over a status connection, adopts the
+// holders an earlier API started and keeps ended sessions' summaries as
+// history. Holders outlive it: closing the manager only disconnects, unless
+// asked to stop them.
+type Manager struct {
+	mu          sync.Mutex
+	sessions    agents.SessionStore
+	paths       Paths
+	starter     Starter
+	entries     map[string]*entry
+	closed      bool
+	quit        chan struct{}
+	startCtx    context.Context
+	cancelStart context.CancelFunc
+	changed     func(string)
+}
+
+type entry struct {
+	summary Summary
+	workDir string
+	// record locates the holder; its ID is empty for history restored from
+	// the API journal.
+	record      Record
+	live        bool
+	attachments map[*Attachment]struct{}
+	// done closes once the manager stops following the holder.
+	done chan struct{}
+}
+
+// NewManager returns a manager whose holders keep their records and sockets
+// under paths. Zero paths mean no holders: Start fails and nothing is
+// adopted. A nil launch starts real holder processes (Launch).
+func NewManager(accounts agents.AccountStore, sessions agents.SessionStore, registry *agents.Registry, paths Paths, launch Launcher, changed func(string)) *Manager {
+	if launch == nil {
+		launch = Launch
+	}
+	starter := Starter{Accounts: accounts, Sessions: sessions, Registry: registry, Paths: paths, Launch: launch, Origin: "web"}
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	return &Manager{sessions: sessions, paths: paths, starter: starter, entries: map[string]*entry{}, quit: make(chan struct{}), startCtx: startCtx, cancelStart: cancelStart, changed: changed}
+}
+
+// InProcess returns a Launcher that serves each session from this process,
+// with deps' stores and providers. Tests use it: their providers exist only
+// in the test process.
+func InProcess(deps Deps) Launcher {
+	return func(ctx context.Context, p Paths, spec Spec) error {
+		deps := deps
+		deps.Paths = p
+		ready := make(chan error, 1)
+		serveCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer cancel()
+			_ = Serve(serveCtx, spec, deps, func(err error) { ready <- err })
+		}()
+		select {
+		case err := <-ready:
+			if err != nil {
+				cancel()
+			}
+			return err
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return fmt.Errorf("agent host launch cancelled: %w", ctx.Err())
+		}
+	}
+}
+
+func (m *Manager) notify(project string) {
+	if m.changed != nil {
+		m.changed(project)
+	}
+}
+
+// Start validates the launch, creates the session's runtime and starts its
+// holder. The session is starting until the holder reports it running.
+func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, dir string, cols, rows int, options ...StartOptions) (Summary, error) {
+	m.mu.Lock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
+		return Summary{}, fmt.Errorf("server shutting down")
+	}
+	var launch agents.LaunchOptions
+	if len(options) > 0 {
+		launch = options[0]
+	}
+	record, err := m.starter.Start(m.startCtx, StartRequest{Project: project, Tree: tree, Name: name, Dir: dir, AccountID: accountID, Cols: cols, Rows: rows, Launch: launch})
+	if err != nil {
+		return Summary{}, err
+	}
+	return m.trackStarted(record, dir, project)
+}
+
+func (m *Manager) trackStarted(record Record, dir, project string) (Summary, error) {
+	e := &entry{summary: record.Summary, workDir: dir, record: record, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
+	m.mu.Lock()
+	if m.closed {
+		// Close ran while the holder launched and cannot see it: a session
+		// the caller is told failed must not keep running.
+		m.mu.Unlock()
+		stopErr := StopHolder(m.paths, record, "")
+		if !Wait(m.paths, record.ID, 5*time.Second) {
+			return Summary{}, errors.Join(fmt.Errorf("server shutting down: agent holder %s did not exit after stop and may still be running", record.ID), stopErr)
+		}
+		return Summary{}, fmt.Errorf("server shutting down")
+	}
+	if known, ok := m.entries[record.ID]; ok {
+		// Adopt saw the record first and already follows the holder.
+		result := known.summary
+		m.mu.Unlock()
+		m.notify(project)
+		return result, nil
+	}
+	m.entries[record.ID] = e
+	m.mu.Unlock()
+	conn, ready, err := Dial(record, Request{Mode: ModeStatus})
+	m.mu.Lock()
+	if err == nil && ready.Status != nil {
+		e.summary = *ready.Status
+	}
+	result := e.summary
+	m.mu.Unlock()
+	if err != nil {
+		conn = nil
+	}
+	go m.follow(e, conn)
+	m.notify(project)
+	return result, nil
+}
+
+// follow keeps e's summary current from its holder until the session ends or
+// the manager closes. A dropped connection is redialed while the holder runs;
+// a holder that cannot be dialed (another protocol version) is watched
+// through its lock instead.
+func (m *Manager) follow(e *entry, conn *Conn) {
+	defer close(e.done)
+	for {
+		if conn != nil && m.watch(e, conn) {
+			return
+		}
+		select {
+		case <-m.quit:
+			return
+		default:
+		}
+		r, err := Read(m.paths, e.record.ID)
+		if err != nil || !r.Alive {
+			m.mu.Lock()
+			summary := e.summary
+			m.mu.Unlock()
+			if err == nil {
+				summary = r.Summary
+			}
+			if summary.Active() {
+				summary.State, summary.Error = "failed", LostError
+				if summary.EndedAt == nil {
+					now := time.Now().UTC()
+					summary.EndedAt = &now
+				}
+			}
+			m.apply(e, summary)
+			return
+		}
+		select {
+		case <-m.quit:
+			return
+		case <-time.After(time.Second):
+		}
+		conn = nil
+		if c, ready, err := Dial(r, Request{Mode: ModeStatus}); err == nil {
+			conn = c
+			if ready.Status != nil && m.apply(e, *ready.Status) {
+				_ = conn.Close()
+				return
+			}
+		}
+	}
+}
+
+// watch applies the summaries conn delivers until the session ends (true),
+// or the connection or the manager closes (false).
+func (m *Manager) watch(e *entry, conn *Conn) bool {
+	done := make(chan struct{})
+	defer close(done)
+	defer conn.Close()
+	go func() {
+		select {
+		case <-m.quit:
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	for {
+		f, err := conn.Recv()
+		if err != nil {
+			return false
+		}
+		if f.Type == "status" && f.Status != nil && m.apply(e, *f.Status) {
+			return true
+		}
+	}
+}
+
+// apply records a holder's summary and reports whether the session ended.
+func (m *Manager) apply(e *entry, summary Summary) bool {
+	m.mu.Lock()
+	e.summary = summary
+	ended := !summary.Active()
+	if ended {
+		e.live = false
+		m.evict()
+	}
+	m.mu.Unlock()
+	m.notify(summary.ProjectID)
+	return ended
+}
+
+// evict drops the oldest ended sessions beyond 32. Callers hold m.mu.
+func (m *Manager) evict() {
+	var ended []*entry
+	for _, e := range m.entries {
+		if !e.summary.Active() && !e.live {
+			ended = append(ended, e)
+		}
+	}
+	sort.Slice(ended, func(i, j int) bool { return ended[i].summary.CreatedAt.Before(ended[j].summary.CreatedAt) })
+	for len(ended) > keepEnded {
+		e := ended[0]
+		for a := range e.attachments {
+			a.close()
+		}
+		delete(m.entries, e.summary.ID)
+		ended = ended[1:]
+	}
+}
+
+func (m *Manager) List(project string) []Summary {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []Summary{}
+	for _, e := range m.entries {
+		if e.summary.ProjectID == project {
+			out = append(out, e.summary)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
+}
+
+// ActiveSessions returns the IDs of the account's active sessions in every
+// project, oldest first.
+func (m *Manager) ActiveSessions(account agents.AccountID) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var active []Summary
+	for _, e := range m.entries {
+		if e.summary.AccountID == account && e.summary.Active() {
+			active = append(active, e.summary)
+		}
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i].CreatedAt.Before(active[j].CreatedAt) })
+	ids := make([]string, len(active))
+	for i, summary := range active {
+		ids[i] = summary.ID
+	}
+	return ids
+}
+
+// ActiveCount is the number of active sessions in every project.
+func (m *Manager) ActiveCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.entries {
+		if e.summary.Active() {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Manager) Get(project, id string) (Summary, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.entries[id]
+	if !ok || e.summary.ProjectID != project {
+		return Summary{}, false
+	}
+	return e.summary, true
+}
+
+// Stop asks the session's holder to stop it; the holder reports the end.
+func (m *Manager) Stop(project, id string) error {
+	m.mu.Lock()
+	e, ok := m.entries[id]
+	if !ok || e.summary.ProjectID != project {
+		m.mu.Unlock()
+		return fmt.Errorf("session not found")
+	}
+	record, live := e.record, e.live && e.record.ID != ""
+	if live && e.summary.Active() {
+		e.summary.State = "stopping"
+	}
+	m.mu.Unlock()
+	if live {
+		if err := StopHolder(m.paths, record, ""); err != nil {
+			return err
+		}
+	}
+	m.notify(project)
+	return nil
+}
+
+// StopHolder stops r's session: through its socket, or with SIGTERM to the
+// holder when it speaks another protocol version or no longer answers.
+func StopHolder(p Paths, r Record, reason string) error {
+	err := Stop(r, reason)
+	if err == nil || !held(p.lock(r.ID)) {
+		return nil
+	}
+	if r.PID > 0 && terminate(r.PID) == nil {
+		return nil
+	}
+	return err
+}
+
+// Close disconnects from every holder. With keepRunning false it first stops
+// their sessions and waits, at most timeout in all, for their holders to
+// report the end and exit.
+func (m *Manager) Close(keepRunning bool, timeout time.Duration) {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.closed = true
+	m.cancelStart()
+	var live, stopping []*entry
+	for _, e := range m.entries {
+		if e.live && e.record.ID != "" {
+			live = append(live, e)
+			// Sessions another client started stay: only the web's own are
+			// its to stop.
+			if e.summary.Origin == "web" || e.summary.Origin == "" {
+				stopping = append(stopping, e)
+			}
+		}
+	}
+	m.mu.Unlock()
+	if !keepRunning {
+		deadline := time.Now().Add(timeout)
+		for _, e := range stopping {
+			_ = StopHolder(m.paths, e.record, "")
+		}
+		expired := time.After(timeout)
+	wait:
+		for _, e := range stopping {
+			select {
+			case <-e.done:
+			case <-expired:
+				break wait
+			}
+		}
+		for _, e := range stopping {
+			Wait(m.paths, e.record.ID, time.Until(deadline))
+		}
+	}
+	close(m.quit)
+	m.mu.Lock()
+	var attachments []*Attachment
+	for _, e := range m.entries {
+		for a := range e.attachments {
+			attachments = append(attachments, a)
+		}
+	}
+	m.mu.Unlock()
+	for _, a := range attachments {
+		a.close()
+	}
+	for _, e := range live {
+		<-e.done
+	}
+}
+
+// CheckDirectories stops sessions whose worktree directory disappeared.
+func (m *Manager) CheckDirectories() {
+	m.mu.Lock()
+	var gone []Record
+	for _, e := range m.entries {
+		if e.summary.Active() && e.live && e.record.ID != "" {
+			if _, err := os.Stat(e.workDir); err != nil {
+				gone = append(gone, e.record)
+			}
+		}
+	}
+	m.mu.Unlock()
+	for _, r := range gone {
+		_ = StopHolder(m.paths, r, "Worktree directory disappeared.")
+	}
+}
+
+// Restore records a session from the API journal that has no holder, without
+// constructing a process or a home. An active one was interrupted.
+func (m *Manager) Restore(summary Summary) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if summary.ID == "" {
+		return
+	}
+	if _, ok := m.entries[summary.ID]; ok {
+		return
+	}
+	if summary.Active() {
+		now := time.Now().UTC()
+		summary.State = "failed"
+		summary.EndedAt = &now
+		summary.Error = "Agent interrupted by API restart; start explicitly to run again."
+	}
+	done := make(chan struct{})
+	close(done)
+	m.entries[summary.ID] = &entry{summary: summary, attachments: map[*Attachment]struct{}{}, done: done}
+	m.evict()
+}
+
+// WatchRecords keeps the manager current with holders other clients start or
+// end (the TUI, the CLI) until ctx ends or the manager closes. Running ones
+// are followed; ended ones that were never seen show as history. It notifies
+// each project whose sessions changed.
+func (m *Manager) WatchRecords(ctx context.Context) {
+	if m.paths.Records == "" {
+		return
+	}
+	// Watch ends with its context, so stopping on quit must cancel it too.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	changes, err := Watch(ctx, m.paths)
+	if err != nil {
+		return
+	}
+	// A record may predate watcher registration; adopt it before waiting for
+	// changes so an ended session is not missed until another record changes.
+	m.syncRecords(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.quit:
+			return
+		case _, ok := <-changes:
+			if !ok {
+				return
+			}
+			m.syncRecords(ctx)
+		}
+	}
+}
+
+func (m *Manager) syncRecords(ctx context.Context) {
+	before := m.states()
+	for _, summary := range m.AdoptContext(ctx) {
+		if !summary.Active() {
+			m.Restore(summary)
+		}
+	}
+	after := m.states()
+	projects := map[string]struct{}{}
+	for id, now := range after {
+		if was, ok := before[id]; !ok || was != now {
+			projects[now.project] = struct{}{}
+		}
+	}
+	for id, was := range before {
+		if _, ok := after[id]; !ok {
+			projects[was.project] = struct{}{}
+		}
+	}
+	for project := range projects {
+		m.notify(project)
+	}
+}
+
+type sessionState struct{ project, state string }
+
+// states maps each known session to its project and state.
+func (m *Manager) states() map[string]sessionState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]sessionState, len(m.entries))
+	for id, e := range m.entries {
+		out[id] = sessionState{e.summary.ProjectID, e.summary.State}
+	}
+	return out
+}
+
+// Adopt follows every running holder this manager does not know yet, such as
+// those an earlier API started, and returns the summaries of all recorded
+// sessions by ID, running or ended.
+func (m *Manager) Adopt() map[string]Summary {
+	return m.AdoptContext(context.Background())
+}
+
+// AdoptContext lets record watching stop during a holder's dial or handshake.
+func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
+	out := map[string]Summary{}
+	if m.paths.Records == "" {
+		return out
+	}
+	records, _ := List(m.paths)
+	for _, r := range records {
+		if ctx.Err() != nil {
+			break
+		}
+		out[r.ID] = r.Summary
+		if !r.Alive {
+			continue
+		}
+		m.mu.Lock()
+		_, known := m.entries[r.ID]
+		closed := m.closed
+		m.mu.Unlock()
+		if known || closed {
+			continue
+		}
+		e := &entry{summary: r.Summary, workDir: r.WorkDir, record: r, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
+		conn, ready, err := DialContext(ctx, r, Request{Mode: ModeStatus})
+		if ctx.Err() != nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			break
+		}
+		if err != nil {
+			conn = nil
+		} else if ready.Status != nil {
+			e.summary = *ready.Status
+			out[r.ID] = e.summary
+		}
+		m.mu.Lock()
+		if _, raced := m.entries[r.ID]; raced || m.closed {
+			// Start registered it while this dialed.
+			m.mu.Unlock()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			continue
+		}
+		m.entries[r.ID] = e
+		m.mu.Unlock()
+		go m.follow(e, conn)
+	}
+	return out
+}
+
+// Attachment is one terminal client of a session: the replay, then live
+// frames until Close. Input and Resize reach the session while the
+// attachment writes; a writer frame on Frames reports a change.
+type Attachment struct {
+	// Generation identifies the holder's stream, for resuming at an offset.
+	Generation string
+	// Replay is the retained output from the requested offset (a gap first
+	// when it is gone), then the current status.
+	Replay []agentterminal.Frame
+	// Frames carries live output, status and writer frames; it closes when
+	// the holder ends the connection or the attachment closes.
+	Frames <-chan agentterminal.Frame
+
+	writer  atomic.Bool
+	conn    *Conn
+	frames  chan agentterminal.Frame
+	gone    chan struct{}
+	once    sync.Once
+	release func()
+}
+
+// Writer reports whether the attachment writes now.
+func (a *Attachment) Writer() bool { return a.writer.Load() }
+
+// Input sends terminal input; only the writer may.
+func (a *Attachment) Input(data []byte) error {
+	if !a.writer.Load() || a.conn == nil || len(data) > agentterminal.InputLimit {
+		return fmt.Errorf("terminal input unavailable")
+	}
+	return a.conn.Send(Request{Type: "input", Data: data})
+}
+
+// Resize changes the terminal size; only the writer may.
+func (a *Attachment) Resize(cols, rows int) error {
+	if !a.writer.Load() || a.conn == nil || !agentterminal.Dimensions(cols, rows) {
+		return fmt.Errorf("terminal resize unavailable")
+	}
+	return a.conn.Send(Request{Type: "resize", Cols: cols, Rows: rows})
+}
+
+// Take makes this attachment the writer; a writer frame confirms it.
+func (a *Attachment) Take() error {
+	if a.conn == nil {
+		return fmt.Errorf("session has ended")
+	}
+	return a.conn.Send(Request{Type: "take"})
+}
+
+// Close detaches; the session keeps running.
+func (a *Attachment) Close() { a.close() }
+
+func (a *Attachment) close() {
+	a.once.Do(func() {
+		close(a.gone)
+		if a.conn != nil {
+			_ = a.conn.Close()
+		} else {
+			close(a.frames)
+		}
+		if a.release != nil {
+			a.release()
+		}
+	})
+}
+
+// Attach connects a terminal client (client labels it: web or cli) to the
+// session at cursor. A cursor from another generation replays everything. An
+// ended session replays its final status only.
+func (m *Manager) Attach(project, id string, cursor uint64, generation, client string) (*Attachment, error) {
+	m.mu.Lock()
+	e, ok := m.entries[id]
+	if !ok || e.summary.ProjectID != project {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("session not found")
+	}
+	record, live, summary := e.record, e.live && e.record.ID != "", e.summary
+	m.mu.Unlock()
+	var a *Attachment
+	if live {
+		a, _ = attach(record, Request{Mode: ModeTerminal, Offset: cursor, Generation: generation, Client: client})
+	}
+	if a == nil {
+		frames := make(chan agentterminal.Frame)
+		a = &Attachment{Replay: []agentterminal.Frame{{Type: "status", Status: &summary}}, Frames: frames, frames: frames, gone: make(chan struct{})}
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		a.close()
+		return nil, fmt.Errorf("server shutting down")
+	}
+	e.attachments[a] = struct{}{}
+	a.release = func() {
+		m.mu.Lock()
+		delete(e.attachments, a)
+		m.mu.Unlock()
+	}
+	m.mu.Unlock()
+	return a, nil
+}
+
+// attach dials r's holder as a terminal client and reads the replay, which
+// ends with the status frame.
+func attach(r Record, hello Request) (*Attachment, error) {
+	conn, ready, err := Dial(r, hello)
+	if err != nil {
+		return nil, err
+	}
+	a := &Attachment{Generation: ready.Generation, conn: conn, gone: make(chan struct{})}
+	a.writer.Store(ready.Writer != nil && *ready.Writer)
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	for {
+		f, err := conn.Recv()
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		if f.Type == "error" {
+			continue
+		}
+		a.Replay = append(a.Replay, f.TerminalFrame())
+		if f.Type == "status" {
+			break
+		}
+	}
+	_ = conn.SetDeadline(time.Time{})
+	frames := make(chan agentterminal.Frame, 64)
+	a.Frames, a.frames = frames, frames
+	go func() {
+		defer close(frames)
+		for {
+			f, err := conn.Recv()
+			if err != nil {
+				return
+			}
+			switch f.Type {
+			case "error", "info":
+				continue
+			case "writer":
+				a.writer.Store(f.Writer != nil && *f.Writer)
+			}
+			select {
+			case frames <- f.TerminalFrame():
+			case <-a.gone:
+				return
+			}
+		}
+	}()
+	return a, nil
+}

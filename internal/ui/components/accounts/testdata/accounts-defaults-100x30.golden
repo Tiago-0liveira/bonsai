@@ -1,0 +1,30 @@
+╭─ AGENT ACCOUNTS ─────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                  │
+│ ACCOUNTS                   │ ◎ Codex · personal                                                  │
+│                            │                                                                     │
+│ CLAUDE                     │ Overview  Usage  [Defaults]                                         │
+│   ✳ work                 ● │ ─────────────────────────────────────────────────────────────────── │
+│   ✳ personal             ● │                                                                     │
+│                            │ Model                                                               │
+│ CODEX                      │ > gpt-5.5                                                       [▼] │
+│   ◎ work                 ● │                                                                     │
+│ > ◎ personal         15% ● │ Reasoning effort                                                    │
+│                            │ > High (default)                                                [▼] │
+│ ANTIGRAVITY                │                                                                     │
+│   ✦ personal             ● │ Permissions                                                         │
+│                            │ > Auto                                                          [▼] │
+│                            │                                                                     │
+│                            │ Other provider-specific options                                     │
+│                            │ Web search                                                          │
+│                            │ > Off                                                       [space] │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │                                                                     │
+│                            │ These defaults apply to new sessions.                               │
+│                            │ Running agents are not affected.                                    │
+│                            │                                                                     │
+│ + Add account              │                                            [Reset]  [Save defaults] │
+├────────────────────────────┴─────────────────────────────────────────────────────────────────────┤
+│ Tab Section  ·  Enter Edit  ·  Esc Back                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

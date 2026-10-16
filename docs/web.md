@@ -30,9 +30,61 @@ bonsai web stop
 
 Doctor prints the same checks as setup and exits 1 on failures. Missing/logged
 out `gh` is a warning: local work still works. The attach/log views detach
-without stopping the app. Stop terminates the API and supervised tunnel,
-including active agent sessions; repository processes have their own daemons.
-The idle web supervisor retains logs and exits according to its idle policy.
+without stopping the app. Stop terminates the API and supervised tunnel;
+repository processes have their own daemons. Agent sessions are stopped too
+unless **Settings → Agents → Keep agents running when Bonsai web stops** is on
+(see [Agent sessions](#agent-sessions)). The idle web supervisor retains logs
+and exits according to its idle policy.
+
+## Agent sessions
+
+Each agent runs in its own background process, not inside the API, so
+`bonsai web restart api`, an upgrade or an API crash never stops it: the next
+API picks it up, and the browser terminal continues where it was.
+
+From any directory, whether Bonsai web runs or not:
+
+```sh
+bonsai agents                      # running sessions
+bonsai agents --all --json         # ended ones too, as JSON
+bonsai agents attach 3f9c2a1d      # by ID prefix or name
+bonsai agents attach fix-login --take
+bonsai agents attach fix-login --read-only
+bonsai agents stop fix-login
+```
+
+The list shows `ID  NAME  PROVIDER  PROFILE  WORKTREE  STATE  ACTIVITY  UP
+CLIENTS`: ACTIVITY is `working` while output arrived in the last 5 seconds,
+else how long the terminal has been quiet, and CLIENTS the attached terminals
+(`web*,cli`; `*` writes). A name or prefix that matches several sessions lists
+them; a single running one wins.
+
+`attach` replays the session's retained output and connects this terminal.
+One client types at a time: the first to attach, until it leaves or another
+takes control. In the terminal, **Ctrl-] d** detaches (the agent keeps
+running), **Ctrl-] t** takes control, and **Ctrl-] Ctrl-]** sends a Ctrl-].
+`--take` takes control on connect; `--read-only` only watches and never
+writes. Status lines say who has control (`control taken by web`) and when the
+agent exits. In the browser, a terminal another client controls says
+**Controlled from another terminal** and offers **Take control**.
+
+`bonsai web stop` stops running agents unless **Settings → Agents → Keep
+agents running when Bonsai web stops** is on (`agents.keep_running` in
+`web.json`, off by default). With it off and agents running, a stop in a
+terminal lists them and asks first:
+
+```text
+1 agent is still running and will be stopped. Stop anyway? [y/N]
+(enable Settings → Agents → Keep agents running, or pass --keep-agents)
+```
+
+`N` or Ctrl-C stops nothing. In scripts (no terminal) the warning goes to
+stderr and the stop proceeds. `bonsai web stop --stop-agents` skips the
+question; `--keep-agents` keeps them for this stop only. In `bonsai web
+--attach`, `X` warns the same way and stops on a second `X`. With the setting
+on, the stop prints how many agents still run. `bonsai web status` shows the
+running agents and what a stop does with them. While the setting is off and
+agents run, Settings and the Agents tab say they will be stopped.
 
 ## Local API and supervisor
 
@@ -81,13 +133,15 @@ the endpoints and discovery limits.
 | macOS | `~/Library/Application Support/bonsai` | `~/Library/Application Support/bonsai/web` |
 | Windows | `%AppData%\bonsai` | `%LocalAppData%\bonsai\web` |
 
-`web.json` holds ports, browser preferences and update choices. Project folders
+`web.json` holds ports, browser preferences, update choices and whether agents
+keep running when Bonsai web stops. Project folders
 and selected repositories live in `project-roots.json` and
 `project-roots.json.repositories.json`. Environment editor preferences live in
 `project-roots.json.editors.json`. Machine-managed hook state lives in `web-state.json`.
 The webhook secret is in its own private `web-webhook-secret` file. Runtime
 supervisor records and logs are under `.bonsai` in the runtime directory;
-server-side warm snapshots are under `warm-start`.
+server-side warm snapshots are under `warm-start`, and each agent session's
+record is under `agents`.
 
 Settings schema remains version 1. Existing `interfaces.local` and
 `interfaces.hosted` fields are ignored and disappear on the next successful

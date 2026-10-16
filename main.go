@@ -12,18 +12,23 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/agentsbackend"
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 )
 
 func main() {
@@ -61,6 +66,17 @@ func main() {
 	if len(args) >= 1 && args[0] == "__serve-api" {
 		if err := runServeInternal(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Hidden: `bonsai __agent-host` holds one agent session (its PTY, terminal
+	// stream and lifecycle) detached from the API that launched it, so the
+	// session survives API restarts and `bonsai web stop`.
+	if len(args) >= 1 && args[0] == "__agent-host" {
+		if err := runAgentHost(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai agent host:", err)
 			os.Exit(1)
 		}
 		return
@@ -180,14 +196,36 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	model := ui.New(repoDir, cfg, state)
+	// The TUI always starts: without a backend it just has no Agents tab.
+	var agentsAPI *agentsapi.Backend
+	backend, backendErr := agentsbackend.New()
+	if backendErr == nil {
+		// Closing only ends the TUI's attachments; holders keep running.
+		defer backend.Close()
+		api := backend.API()
+		agentsAPI = &api
+	}
+	model := newTUIModel(repoDir, cfg, state, agentsAPI)
 	// Mouse tracking is on so the wheel scrolls the pane under the pointer.
 	// Without it, terminals translate the wheel into arrow keys, which the panes
 	// read as "move the selection". The cost is that dragging to select text now
 	// needs shift held (or the mouse turned off from the command palette).
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
+	if backendErr != nil {
+		// After the TUI has left the alternate screen, so the line stays visible.
+		fmt.Fprintln(os.Stderr, "agents unavailable:", backendErr)
+	}
 	return err
+}
+
+// newTUIModel builds the TUI, with agent support when a backend is given.
+func newTUIModel(repoDir string, cfg *config.Config, state *config.State, agents *agentsapi.Backend) ui.Model {
+	var opts []ui.Option
+	if agents != nil {
+		opts = append(opts, ui.WithAgents(*agents))
+	}
+	return ui.New(repoDir, cfg, state, opts...)
 }
 
 func runServeInternal(args []string) error {
@@ -236,6 +274,36 @@ func runServeInternal(args []string) error {
 		}
 	}
 	return localapi.Run(cfg)
+}
+
+// runAgentHost serves the session whose spec arrives on stdin. SIGTERM stops
+// the session; the holder exits once it has ended.
+func runAgentHost(args []string) error {
+	fs := flag.NewFlagSet("__agent-host", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	records := fs.String("records", "", "agent host record directory")
+	sockets := fs.String("sockets", "", "agent host socket directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *records == "" || *sockets == "" {
+		return fmt.Errorf("__agent-host requires --records and --sockets")
+	}
+	spec, err := agenthost.ReadSpec(os.Stdin)
+	if err != nil {
+		agenthost.Ready(fmt.Errorf("read agent spec: %w", err))
+		return err
+	}
+	runtime, err := agentruntime.New(nil, nil, nil)
+	if err != nil {
+		agenthost.Ready(err)
+		return err
+	}
+	signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	paths := agenthost.Paths{Records: *records, Sockets: *sockets}
+	return agenthost.Serve(ctx, spec, agenthost.Deps{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Paths: paths}, agenthost.Ready)
 }
 
 func runDevWebhookInternal(args []string) error {
