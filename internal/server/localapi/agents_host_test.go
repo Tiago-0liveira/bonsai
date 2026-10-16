@@ -207,7 +207,7 @@ func TestWatchRecordsAdoptsSessionsStartedElsewhere(t *testing.T) {
 	journal := func() agentMutation {
 		var got agentMutation
 		_ = project.state.View(func(data gitstore.Data) error {
-			got, _ = gitstore.Get[agentMutation](data, "api_agent_mutations", "adopted-"+record.ID)
+			got, _ = gitstore.Get[agentMutation](data, "api_agent_adoptions", record.ID)
 			return nil
 		})
 		return got
@@ -219,4 +219,32 @@ func TestWatchRecordsAdoptsSessionsStartedElsewhere(t *testing.T) {
 	}
 	waitFor(t, listed("exited"))
 	waitFor(t, func() bool { return journal().Summary.State == "exited" })
+}
+
+func TestAdoptedSessionDoesNotOverwriteRequestKey(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	project := s.registry.Default()
+	summary := agentterminal.Summary{ID: "sess_a1", ProjectID: "repo", State: "exited", Origin: "tui", CreatedAt: time.Now().UTC()}
+	key := "adopted-" + summary.ID
+	request := agentMutation{Fingerprint: "client request", Summary: agentterminal.Summary{ID: "sess_b2", ProjectID: "repo", State: "exited"}}
+	if err := project.state.Update(func(data gitstore.Data) error {
+		return gitstore.Put(data, "api_agent_mutations", key, request)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.agents.manager.Restore(summary)
+	s.publishAgents("repo")
+	if err := project.state.View(func(data gitstore.Data) error {
+		got, ok := gitstore.Get[agentMutation](data, "api_agent_mutations", key)
+		if !ok || got.Fingerprint != request.Fingerprint || got.Summary.ID != request.Summary.ID {
+			t.Errorf("client request overwritten: %+v", got)
+		}
+		adopted, ok := gitstore.Get[agentMutation](data, "api_agent_adoptions", summary.ID)
+		if !ok || adopted.Summary.ID != summary.ID {
+			t.Errorf("adopted session missing: %+v", adopted)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
