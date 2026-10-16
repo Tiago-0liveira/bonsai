@@ -98,6 +98,7 @@ type Server struct {
 	webhookAddress string
 	// stopAgentWatch ends the watch for agent sessions other clients start.
 	stopAgentWatch context.CancelFunc
+	agentWatchDone chan struct{}
 }
 
 // New builds the local API. RepoDir is optional: a repository-scoped API (the
@@ -206,7 +207,11 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 	}
 	watchCtx, stop := context.WithCancel(context.Background())
 	s.stopAgentWatch = stop
-	go s.agents.manager.WatchRecords(watchCtx)
+	s.agentWatchDone = make(chan struct{})
+	go func() {
+		defer close(s.agentWatchDone)
+		s.agents.manager.WatchRecords(watchCtx)
+	}()
 	return s, nil
 }
 
@@ -220,6 +225,7 @@ func (s *Server) Close() {
 	}
 	if s.stopAgentWatch != nil {
 		s.stopAgentWatch()
+		<-s.agentWatchDone
 	}
 	if s.agents.setup != nil {
 		s.agents.setup.Close()

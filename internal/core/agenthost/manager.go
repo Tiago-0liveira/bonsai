@@ -460,7 +460,7 @@ func (m *Manager) WatchRecords(ctx context.Context) {
 	}
 	// A record may predate watcher registration; adopt it before waiting for
 	// changes so an ended session is not missed until another record changes.
-	m.syncRecords()
+	m.syncRecords(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -471,14 +471,14 @@ func (m *Manager) WatchRecords(ctx context.Context) {
 			if !ok {
 				return
 			}
-			m.syncRecords()
+			m.syncRecords(ctx)
 		}
 	}
 }
 
-func (m *Manager) syncRecords() {
+func (m *Manager) syncRecords(ctx context.Context) {
 	before := m.states()
-	for _, summary := range m.Adopt() {
+	for _, summary := range m.AdoptContext(ctx) {
 		if !summary.Active() {
 			m.Restore(summary)
 		}
@@ -517,12 +517,20 @@ func (m *Manager) states() map[string]sessionState {
 // those an earlier API started, and returns the summaries of all recorded
 // sessions by ID, running or ended.
 func (m *Manager) Adopt() map[string]Summary {
+	return m.AdoptContext(context.Background())
+}
+
+// AdoptContext lets record watching stop during a holder's dial or handshake.
+func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
 	out := map[string]Summary{}
 	if m.paths.Records == "" {
 		return out
 	}
 	records, _ := List(m.paths)
 	for _, r := range records {
+		if ctx.Err() != nil {
+			break
+		}
 		out[r.ID] = r.Summary
 		if !r.Alive {
 			continue
@@ -535,7 +543,13 @@ func (m *Manager) Adopt() map[string]Summary {
 			continue
 		}
 		e := &entry{summary: r.Summary, workDir: r.WorkDir, record: r, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
-		conn, ready, err := Dial(r, Request{Mode: ModeStatus})
+		conn, ready, err := DialContext(ctx, r, Request{Mode: ModeStatus})
+		if ctx.Err() != nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			break
+		}
 		if err != nil {
 			conn = nil
 		} else if ready.Status != nil {

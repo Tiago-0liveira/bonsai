@@ -27,13 +27,30 @@ func expectSignal(t *testing.T, ch <-chan struct{}, within time.Duration, what s
 	}
 }
 
-// quiet drains signals until none arrives for a while.
-func quiet(ch <-chan struct{}) {
+// quiet drains signals until none arrives for a while, up to a fixed deadline.
+func quiet(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	idle := time.NewTimer(300 * time.Millisecond)
+	defer idle.Stop()
 	for {
 		select {
-		case <-ch:
-		case <-time.After(300 * time.Millisecond):
+		case _, ok := <-ch:
+			if !ok {
+				t.Fatal("watch channel closed while waiting for quiet")
+			}
+			if !idle.Stop() {
+				select {
+				case <-idle.C:
+				default:
+				}
+			}
+			idle.Reset(300 * time.Millisecond)
+		case <-idle.C:
 			return
+		case <-deadline.C:
+			t.Fatal("watch did not become quiet")
 		}
 	}
 }
@@ -50,12 +67,12 @@ func TestWatchSignalsRecordChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectSignal(t, ch, time.Second, "create")
-	quiet(ch)
+	quiet(t, ch)
 	if err := writeRecord(p, watchRecord("sess_a1", "exited")); err != nil {
 		t.Fatal(err)
 	}
 	expectSignal(t, ch, time.Second, "rewrite")
-	quiet(ch)
+	quiet(t, ch)
 	if err := remove(p, "sess_a1"); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +101,7 @@ func TestWatchRescanSeesDeadHolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quiet(ch)
+	quiet(t, ch)
 	// The holder dies without rewriting its record: only the lock goes.
 	_ = lock.Close()
 	expectSignal(t, ch, time.Second, "dead holder")
