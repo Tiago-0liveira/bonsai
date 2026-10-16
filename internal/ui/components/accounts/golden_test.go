@@ -152,7 +152,8 @@ func checkGolden(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatalf("missing golden %s (run with -update): %v", path, err)
 	}
-	if string(want) != got {
+	// Windows checkouts may convert the golden to CRLF.
+	if strings.ReplaceAll(string(want), "\r\n", "\n") != got {
 		t.Errorf("%s differs from the golden file (run with -update to accept):\n--- got\n%s--- want\n%s", name, got, want)
 	}
 }
