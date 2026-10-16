@@ -171,6 +171,18 @@ session. Interactive PTYs require a supported Unix platform; Windows support is
 not yet available. See
 [development details](development.md#antigravity-web-terminals).
 
+### Sessions shared with the TUI and CLI
+
+The web app and the TUI use the same agent holders: each session is its own
+process with a record, `agents/<id>.json` under the web home. A session record's
+summary has an `origin` field: `web`, `tui` or `cli` (an empty origin counts as
+`web`). The web app watches these records, so a session started in the TUI or
+from the CLI appears live in the browser. `bonsai agents` lists every running
+session.
+
+`bonsai web stop` ends running agents unless `agents.keep_running` is on (see
+[web app](web.md)). `--stop-agents` and `--keep-agents` override it for one stop.
+
 ## Profile defaults
 
 Each profile keeps its launch defaults: the model plus Codex `permissions` and
