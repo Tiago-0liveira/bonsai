@@ -94,18 +94,38 @@ func (c *Conn) SetDeadline(t time.Time) error { return c.conn.SetDeadline(t) }
 
 // Query asks a running holder for its info.
 func Query(r Record) (Info, error) {
-	c, _, err := Dial(r, Request{Mode: ModeStatus})
+	return QueryContext(context.Background(), r)
+}
+
+// QueryContext lets a caller abandon an in-flight status request.
+func QueryContext(ctx context.Context, r Record) (Info, error) {
+	c, _, err := DialContext(ctx, r, Request{Mode: ModeStatus})
 	if err != nil {
 		return Info{}, err
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
-	if err := c.Send(Request{Type: "info"}); err != nil {
+	stop := context.AfterFunc(ctx, func() { _ = c.SetDeadline(time.Now()) })
+	defer stop()
+	deadline := time.Now().Add(3 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = c.SetDeadline(deadline)
+	if err := ctx.Err(); err != nil {
+		return Info{}, err
+	}
+	if err := encode(c.conn, Request{Type: "info"}); err != nil {
+		if ctx.Err() != nil {
+			return Info{}, ctx.Err()
+		}
 		return Info{}, err
 	}
 	for {
 		f, err := c.Recv()
 		if err != nil {
+			if ctx.Err() != nil {
+				return Info{}, ctx.Err()
+			}
 			return Info{}, err
 		}
 		if f.Type == "info" && f.Info != nil {
