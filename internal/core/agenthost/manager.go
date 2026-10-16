@@ -423,6 +423,73 @@ func (m *Manager) Restore(summary Summary) {
 	m.evict()
 }
 
+// WatchRecords keeps the manager current with holders other clients start or
+// end (the TUI, the CLI) until ctx ends or the manager closes. Running ones
+// are followed; ended ones that were never seen show as history. It notifies
+// each project whose sessions changed.
+func (m *Manager) WatchRecords(ctx context.Context) {
+	if m.paths.Records == "" {
+		return
+	}
+	// Watch ends with its context, so stopping on quit must cancel it too.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	changes, err := Watch(ctx, m.paths)
+	if err != nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.quit:
+			return
+		case _, ok := <-changes:
+			if !ok {
+				return
+			}
+			m.syncRecords()
+		}
+	}
+}
+
+func (m *Manager) syncRecords() {
+	before := m.states()
+	for _, summary := range m.Adopt() {
+		if !summary.Active() {
+			m.Restore(summary)
+		}
+	}
+	after := m.states()
+	projects := map[string]struct{}{}
+	for id, now := range after {
+		if was, ok := before[id]; !ok || was != now {
+			projects[now.project] = struct{}{}
+		}
+	}
+	for id, was := range before {
+		if _, ok := after[id]; !ok {
+			projects[was.project] = struct{}{}
+		}
+	}
+	for project := range projects {
+		m.notify(project)
+	}
+}
+
+type sessionState struct{ project, state string }
+
+// states maps each known session to its project and state.
+func (m *Manager) states() map[string]sessionState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]sessionState, len(m.entries))
+	for id, e := range m.entries {
+		out[id] = sessionState{e.summary.ProjectID, e.summary.State}
+	}
+	return out
+}
+
 // Adopt follows every running holder this manager does not know yet, such as
 // those an earlier API started, and returns the summaries of all recorded
 // sessions by ID, running or ended.

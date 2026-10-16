@@ -634,3 +634,91 @@ func TestAdoptRacingStartKeepsOneEntry(t *testing.T) {
 		t.Fatal("Close did not return")
 	}
 }
+
+// A session another client starts shows up in the manager and a project
+// notification, and an external stop shows it ended.
+func TestWatchRecordsAdoptsOtherClientsSessions(t *testing.T) {
+	s, _, account := testStarter(t, `while :; do sleep 1; done`, agents.Capabilities{Interactive: true})
+	var mu sync.Mutex
+	notified := 0
+	m := NewManager(s.Accounts, s.Sessions, s.Registry, s.Paths, s.Launch, func(project string) {
+		if project == "project" {
+			mu.Lock()
+			notified++
+			mu.Unlock()
+		}
+	})
+	t.Cleanup(func() { m.Close(true, 0) })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); m.WatchRecords(ctx) }()
+
+	record, err := s.Start(context.Background(), startRequest(t, account))
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, m, record.ID, "running")
+	if got, _ := m.Get("project", record.ID); got.Origin != "tui" {
+		t.Fatalf("origin %q", got.Origin)
+	}
+	mu.Lock()
+	if notified == 0 {
+		t.Error("adoption sent no notification")
+	}
+	mu.Unlock()
+
+	if err := StopHolder(s.Paths, record, ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := m.Get("project", record.ID)
+		if got.State != "" && !got.Active() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("still %q after external stop", got.State)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// A session that ended before the manager saw it still shows as history.
+	ended, err := s.Start(context.Background(), startRequest(t, account))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	<-done
+	if err := StopHolder(s.Paths, ended, ""); err != nil {
+		t.Fatal(err)
+	}
+	Wait(s.Paths, ended.ID, 10*time.Second)
+	late := NewManager(s.Accounts, s.Sessions, s.Registry, s.Paths, s.Launch, nil)
+	t.Cleanup(func() { late.Close(true, 0) })
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go late.WatchRecords(ctx2)
+	// A write to any record triggers the first sync.
+	if err := writeRecord(s.Paths, mustRead(t, s.Paths, record.ID)); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if got, ok := late.Get("project", ended.ID); ok && !got.Active() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ended session never appeared as history")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func mustRead(t *testing.T, p Paths, id string) Record {
+	t.Helper()
+	r, err := Read(p, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}

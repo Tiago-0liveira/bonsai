@@ -431,6 +431,7 @@ func (s *Server) publishAgents(_ string) {
 				byID[summary.ID] = summary
 			}
 			if err := project.state.Update(func(data gitstore.Data) error {
+				journaled := map[string]bool{}
 				for key := range data["api_agent_mutations"] {
 					record, ok := gitstore.Get[agentMutation](data, "api_agent_mutations", key)
 					if !ok {
@@ -441,6 +442,18 @@ func (s *Server) publishAgents(_ string) {
 						if err := gitstore.Put(data, "api_agent_mutations", key, record); err != nil {
 							return err
 						}
+					}
+					journaled[record.Summary.ID] = true
+				}
+				// Sessions another client started have no request key, so they
+				// get one of their own to survive an API restart. Web sessions
+				// are journaled by their request.
+				for _, summary := range summaries {
+					if summary.Origin == "" || summary.Origin == "web" || journaled[summary.ID] {
+						continue
+					}
+					if err := gitstore.Put(data, "api_agent_mutations", "adopted-"+summary.ID, agentMutation{Summary: summary}); err != nil {
+						return err
 					}
 				}
 				return nil
