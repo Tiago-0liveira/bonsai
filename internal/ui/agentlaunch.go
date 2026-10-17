@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
-	"github.com/Tiago-0liveira/bonsai/internal/core/agents/usagefmt"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/launchform"
@@ -555,12 +554,12 @@ func (d launchDialog) View() string {
 		return ""
 	}
 	leftW := accounts.LeftWidth(w)
-	rw := max(w-leftW-7, 0)
+	rw := accounts.RightWidth(w)
 	rows := accounts.BodyRows(h)
 	title := "New agent · " + d.target.branch
 	if accounts.Compact(w) {
 		body := []string{d.sidebar().Selector(d.focus == launchFocusAccount), ""}
-		body = append(body, d.right(max(w-4, 0), max(rows-2, 0))...)
+		body = append(body, d.right(accounts.ContentWidth(w), max(rows-2, 0))...)
 		return accounts.FrameSingle(title, body, d.footer(), w, h)
 	}
 	return accounts.Frame(title, d.sidebar().View(leftW, rows), d.right(rw, rows), d.footer(), w, h)
@@ -595,10 +594,10 @@ func (d launchDialog) right(rw, rows int) []string {
 	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, d.ascii)) + " " + providerName(a.Provider) + " · " + a.Name
 	usage := dim.Render("usage loading…")
 	if u, ok := d.usage[a.ID]; ok {
-		if text := usagefmt.Headline(u.Headline, d.now()); text != "" {
+		if text := accounts.Headline(u.Headline, d.now(), d.ascii, false); text != "" {
 			usage = text
 			if u.Stale {
-				usage = dim.Render(text + " (stale)")
+				usage = dim.Render(ansi.Strip(text) + " (stale)")
 			}
 		} else {
 			usage = dim.Render("no usage data")

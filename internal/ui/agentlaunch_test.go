@@ -683,7 +683,7 @@ func TestLaunchModelChangeRevalidatesEffort(t *testing.T) {
 
 func TestAgentDialogsStayInsideTabOnOpenAndResize(t *testing.T) {
 	for _, action := range []string{"n", "m", "u", "a", "s"} {
-		for _, size := range [][2]int{{160, 40}, {100, 30}, {80, 24}, {58, 20}} {
+		for _, size := range [][2]int{{240, 65}, {160, 40}, {100, 30}, {80, 24}, {58, 20}} {
 			t.Run(fmt.Sprintf("%s-%dx%d", action, size[0], size[1]), func(t *testing.T) {
 				e := accountsEnv(t)
 				e.fb.Sessions.Add(e.agent("a", "claude", "running", e.wtA, "Auth fix", 1))
@@ -708,8 +708,16 @@ func TestAgentDialogsStayInsideTabOnOpenAndResize(t *testing.T) {
 				if after[1] != before[1] {
 					t.Fatalf("dialog replaced tab strip:\n%s", e.m.View())
 				}
-				e.send(t, tea.WindowSizeMsg{Width: 80, Height: 24})
 				w, h := e.m.agentPaneSize()
+				paneView := ansi.Strip(e.m.renderAgentsPane(w, h))
+				if strings.ContainsAny(paneView, "╭╮╰╯├┤┴") {
+					t.Fatalf("agent view has modal borders:\n%s", paneView)
+				}
+				if action == "u" && !strings.Contains(strings.Split(paneView, "\n")[h-1], "Refresh") {
+					t.Fatalf("usage view must reach the bottom of the pane:\n%s", paneView)
+				}
+				e.send(t, tea.WindowSizeMsg{Width: 80, Height: 24})
+				w, h = e.m.agentPaneSize()
 				pane := strings.Split(e.m.renderAgentsPane(w, h), "\n")
 				if len(pane) != h {
 					t.Fatalf("resized pane has %d rows, want %d", len(pane), h)

@@ -135,14 +135,14 @@ func TestFooterAddStages(t *testing.T) {
 }
 
 func TestSidebarUsageColumnNeedsWideSidebar(t *testing.T) {
-	// 80x24 gives a 76-cell frame, whose sidebar is 26 cells wide.
+	// An 80-cell pane has room for the 26-cell sidebar.
 	m := opened(t, newFake(), 80, 24)
-	if out := plain(m); !strings.Contains(out, " 72%") {
+	if out := plain(m); !strings.Contains(out, " ███░") {
 		t.Fatalf("usage column missing at 26-cell sidebar:\n%s", out)
 	}
-	// 60x24 gives a 56-cell frame and a 24-cell sidebar.
+	// A compact pane uses a profile selector without an inline usage bar.
 	m = opened(t, newFake(), 60, 24)
-	if out := plain(m); strings.Contains(out, "72%") {
+	if out := plain(m); strings.Contains(out, "███░") {
 		t.Fatalf("usage column shown at 24-cell sidebar:\n%s", out)
 	}
 }
@@ -189,7 +189,7 @@ func TestUsageRefreshErrorKeepsLastGoodNumbers(t *testing.T) {
 	m, _ = press(m, "r")
 
 	out := plain(m)
-	for _, want := range []string{"72% remaining", "Updated 35 seconds ago", "Showing last good data · provider returned 503"} {
+	for _, want := range []string{"███████░░░", "Updated 35 seconds ago", "Showing last good data · provider returned 503"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stale usage lacks %q:\n%s", want, out)
 		}
@@ -280,7 +280,7 @@ func TestSwitchingAccountWithUnsavedDefaultsAsks(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
 	m, _ = press(m, "3", "enter", "down", "enter", "esc", "j")
 	out := plain(m)
-	if !strings.Contains(out, "Discard unsaved defaults?") || !strings.Contains(out, "Claude · work") {
+	if !strings.Contains(out, "Discard unsaved defaults?") || m.selected != "c1" {
 		t.Fatalf("switching with unsaved edits must ask:\n%s", out)
 	}
 	m, _ = press(m, "enter") // "Keep editing" is the safe default

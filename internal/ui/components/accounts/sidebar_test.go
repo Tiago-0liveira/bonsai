@@ -22,7 +22,7 @@ func acct(id, provider, name, auth string) agentsapi.Account {
 
 func usageOf(remaining float64, stale bool) agentsapi.Usage {
 	return agentsapi.Usage{
-		Headline: agents.UsageHeadline{Primary: &agents.UsageLimit{RemainingFraction: &remaining}},
+		Headline: agents.UsageHeadline{Primary: &agents.UsageLimit{Window: "5h", RemainingFraction: &remaining}},
 		Stale:    stale,
 	}
 }
@@ -112,13 +112,13 @@ func TestSidebarUsageOnlyWhenWide(t *testing.T) {
 	s := Sidebar{Accounts: fixture(), Selected: "c1", Usage: usage}
 
 	narrow := strings.Join(s.View(25, 20), "\n")
-	if strings.Contains(narrow, "72%") {
+	if strings.Contains(narrow, "███░") {
 		t.Fatalf("usage shown at w=25:\n%s", narrow)
 	}
 	lines := s.View(26, 20)
 	assertBox(t, lines, 26, 20)
 	row := stripLine(lines[3])
-	if !strings.Contains(row, " 72% ●") || !strings.HasSuffix(row, "●") {
+	if !strings.Contains(row, " ███░ ●") || !strings.HasSuffix(row, "●") {
 		t.Fatalf("usage row at w=26: %q", row)
 	}
 	if strings.Contains(stripLine(lines[4]), "%") {
@@ -131,7 +131,7 @@ func TestSidebarStaleUsageStillShowsNumbers(t *testing.T) {
 		Accounts: fixture(),
 		Usage:    map[agents.AccountID]agentsapi.Usage{"c1": usageOf(1, true)},
 	}
-	if row := stripLine(s.View(26, 20)[3]); !strings.Contains(row, "100%") {
+	if row := stripLine(s.View(26, 20)[3]); !strings.Contains(row, "████") {
 		t.Fatalf("stale usage dropped: %q", row)
 	}
 }

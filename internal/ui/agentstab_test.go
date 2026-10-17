@@ -204,8 +204,8 @@ func TestAgentsCompactBreakpoints(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{120, []string{"Sessions: ", "n: New", "Claude · work", "│ ● Running", "5h 72% left", "Week 41% left", "u: Usage"}, nil},
-		{70, []string{"[1 ✳ Auth fix]", "a: All", "work · 5h 72% · W 41%", "u: Usage"}, []string{"Sessions:", "n: New", "left"}},
+		{120, []string{"Sessions: ", "n: New", "Claude · work", "│ ● Running", "5h ███████░░░ left", "Week 41% left", "u: Usage"}, nil},
+		{70, []string{"[1 ✳ Auth fix]", "a: All", "work · 5h ███████░░░ · W 41%", "u: Usage"}, []string{"Sessions:", "n: New", "left"}},
 		{50, []string{"Agents (g) │", "[3/3]", "a: Switch"}, []string{"u: Usage", "5h"}},
 	}
 	for _, tc := range tests {
@@ -395,7 +395,7 @@ func TestAgentsUsageOrdering(t *testing.T) {
 	}
 	nm, _ = e.m.Update(usageMsgOf(t, cmdA))
 	e.m = nm.(Model)
-	if !strings.Contains(e.pane(120, 20), "5h 72% left") {
+	if !strings.Contains(e.pane(120, 20), "5h ███████░░░ left") {
 		t.Errorf("current account usage not shown:\n%s", e.pane(120, 20))
 	}
 
@@ -406,7 +406,7 @@ func TestAgentsUsageOrdering(t *testing.T) {
 	nm, _ = e.m.Update(usageMsgOf(t, e.lastCmd))
 	e.m = nm.(Model)
 	out := e.pane(120, 20)
-	if !strings.Contains(out, "5h 72% left (stale)") {
+	if !strings.Contains(out, "5h ███████░░░ left (stale)") {
 		t.Errorf("stale usage not shown:\n%s", out)
 	}
 }
@@ -438,7 +438,7 @@ func TestAgentsWorktreeMoveAcceptsNewAccountUsage(t *testing.T) {
 	}
 	nm, _ = e.m.Update(usageMsgOf(t, cmd))
 	e.m = nm.(Model)
-	if out := e.pane(120, 20); !strings.Contains(out, "5h 33% left") {
+	if out := e.pane(120, 20); !strings.Contains(out, "5h ███░░░░░░░ left") {
 		t.Errorf("new account usage response was rejected:\n%s", out)
 	}
 }

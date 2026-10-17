@@ -1,7 +1,6 @@
 package accounts
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 	"sort"
@@ -19,8 +18,6 @@ import (
 )
 
 const (
-	// quickMaxW caps the overlay; it is one column and never needs more.
-	quickMaxW = 64
 	// quickInflight bounds concurrent Usage calls so opening the overlay does
 	// not hit every provider at once.
 	quickInflight = 3
@@ -54,8 +51,7 @@ type usageJob struct {
 	refresh bool
 }
 
-// Quick is the usage overlay: the focused account in detail, every other
-// account on one line. It is a value type like Model; results are ordered by
+// Quick shows the focused account in detail and a stable list of all accounts. It is a value type like Model; results are ordered by
 // per-account sequence numbers so a late answer never overwrites newer data.
 type Quick struct {
 	api   agentsapi.Accounts
@@ -107,13 +103,8 @@ func (q Quick) WithClock(now func() time.Time) Quick {
 // Init lists accounts; usage loads once the list is in.
 func (q Quick) Init() tea.Cmd { return quickListCmd(q.api, q.listSeq) }
 
-// SetSize gives the overlay the screen size; it sizes itself inside it.
+// SetSize gives the view the available pane size.
 func (q *Quick) SetSize(w, h int) { q.w, q.h = w, h }
-
-func quickSize(screenW, screenH, rows int) (w, h int) {
-	fw, fh := FrameSize(screenW, screenH)
-	return min(fw, quickMaxW), min(chrome+rows, fh)
-}
 
 func quickListCmd(api agentsapi.Accounts, seq int) tea.Cmd {
 	return func() tea.Msg {
@@ -285,16 +276,15 @@ func (q Quick) onUsage(msg quickUsageMsg) (Quick, tea.Cmd) {
 
 func (q Quick) busy() bool { return q.inflight > 0 || len(q.queue) > 0 }
 
-// View renders the overlay sized to its content.
+// View fills the Agents pane and keeps the profile list in a stable order.
 func (q Quick) View() string {
 	if q.w <= 0 || q.h <= 0 {
 		return ""
 	}
 	th := theme.Current
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
-	fw, fh := FrameSize(q.w, q.h)
-	w := min(fw, quickMaxW)
-	inner := max(w-4, 0)
+	w, h := FrameSize(q.w, q.h)
+	inner := ContentWidth(w)
 
 	footer := "↑↓ Profile · r Refresh · m Profiles · Esc Close"
 	if inner < ansi.StringWidth(footer) {
@@ -310,9 +300,8 @@ func (q Quick) View() string {
 	case len(q.accounts) == 0:
 		body = []string{dim.Render("No accounts yet.")}
 	default:
-		body = q.body(inner, max(BodyRows(fh), 0))
+		body = q.body(inner, max(BodyRows(h), 0))
 	}
-	_, h := quickSize(q.w, q.h, len(body))
 	return FrameSingle("Usage", body, footer, w, h)
 }
 
@@ -320,35 +309,25 @@ func (q Quick) body(inner, rows int) []string {
 	th := theme.Current
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
 
-	var focus agentsapi.Account
-	var others []agentsapi.Account
-	for _, a := range q.ordered() {
-		if a.ID == q.focus {
-			focus = a
-			continue
-		}
-		others = append(others, a)
+	accts := q.ordered()
+	selected := slices.IndexFunc(accts, func(a agentsapi.Account) bool { return a.ID == q.focus })
+	if selected < 0 {
+		return nil
 	}
-
-	out := q.focusBlock(focus, inner)
+	out := q.focusBlock(accts[selected], inner)
 	out = append(out, dim.Render(strings.Repeat("─", inner)))
 
-	// Rows left for the list when the fixed parts are accounted for.
+	// Include the selected profile in the list. Removing it used to reshuffle
+	// every row on each arrow key, making the selection hard to follow.
 	space := max(rows-quickFocusRows-quickTailRows, 0)
-	shown := others
-	extra := 0
-	if len(others) > space {
-		keep := max(space-1, 0)
-		shown, extra = others[:keep], len(others)-keep
+	list := q.otherRows(accts, inner)
+	start := max(selected-space+1, 0)
+	end := min(start+space, len(list))
+	out = append(out, list[start:end]...)
+	for len(out) < rows-quickTailRows {
+		out = append(out, "")
 	}
-	out = append(out, q.otherRows(shown, inner)...)
-	if extra > 0 && space > 0 {
-		out = append(out, dim.Render(fmt.Sprintf("+%d more", extra)))
-	}
-	out = append(out, "")
-	if t := q.updated(); t != "" {
-		out = append(out, dim.Render(t))
-	}
+	out = append(out, "", dim.Render(q.updated()))
 	return out
 }
 
@@ -384,7 +363,7 @@ func (q Quick) focusBlock(a agentsapi.Account, inner int) []string {
 			lines = append(lines, dim.Render(e))
 		}
 	default:
-		for _, l := range q.meterRows(a.Provider, u, inner) {
+		for _, l := range q.meterRows(u, inner) {
 			if u.Stale {
 				l = dim.Render(ansi.Strip(l))
 			}
@@ -398,17 +377,15 @@ func (q Quick) focusBlock(a agentsapi.Account, inner int) []string {
 }
 
 type meterRow struct {
-	name     string
-	limit    *agents.UsageLimit
-	fraction float64
-	known    bool
+	name  string
+	limit *agents.UsageLimit
 }
 
 // meterRows are the two meters of the focused account: the headline windows,
 // or the first two pools for providers that report pools.
-func (q Quick) meterRows(p agents.ProviderID, u agentsapi.Usage, inner int) []string {
+func (q Quick) meterRows(u agentsapi.Usage, inner int) []string {
 	var rows []meterRow
-	if usesPools(p, u) {
+	if usesPools(u) {
 		for i := range u.Snapshot.Limits {
 			l := &u.Snapshot.Limits[i]
 			rows = append(rows, meterRow{name: limitLabel(*l), limit: l})
@@ -438,14 +415,13 @@ func (q Quick) meterRows(p agents.ProviderID, u agentsapi.Usage, inner int) []st
 	for _, r := range rows {
 		label := ansi.Truncate(r.name, labelW, "…")
 		line := label + strings.Repeat(" ", max(labelW-ansi.StringWidth(label), 0)) + "  "
-		fraction, ok := agents.RemainingFraction(r.limit)
+		_, ok := agents.RemainingFraction(r.limit)
 		if !ok {
 			out = append(out, line+lipgloss.NewStyle().Foreground(theme.Current.Dim).Render("Unknown"))
 			continue
 		}
-		pct := usagefmt.Percent(fraction)
-		long := line + meter(fraction, q.ascii) + fmt.Sprintf("  %d%% remaining", pct)
-		short := line + meter(fraction, q.ascii) + fmt.Sprintf("  %d%%", pct)
+		long := line + limitValue(r.limit, q.ascii, true)
+		short := line + limitValue(r.limit, q.ascii, false)
 		if r.limit.ResetsAt != nil {
 			long += " · " + resetsText(q.now(), r.limit.ResetsAt)
 			short += " · " + usagefmt.ResetsIn(q.now(), r.limit.ResetsAt, true)
@@ -470,13 +446,14 @@ func quickWindowName(l *agents.UsageLimit, fallback string) string {
 }
 
 type quickRow struct {
-	glyph  string
-	name   string
-	body   string // styled
-	reset  string // styled; "stale" replaces it on stale rows
-	bold   bool
-	bodyW  int
-	resetW int
+	glyph    string
+	name     string
+	body     string // styled
+	reset    string // styled; "stale" replaces it on stale rows
+	bold     bool
+	selected bool
+	bodyW    int
+	resetW   int
 }
 
 func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
@@ -487,8 +464,9 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 	nameW, bodyW, resetW := 0, 0, 0
 	for _, a := range accts {
 		r := quickRow{
-			glyph: theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, q.ascii)),
-			name:  a.Name,
+			glyph:    theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, q.ascii)),
+			name:     a.Name,
+			selected: a.ID == q.focus,
 		}
 		u, have := q.usage[a.ID]
 		switch {
@@ -497,21 +475,21 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 		case !have:
 			r.body = dim.Render("unavailable")
 		default:
-			text, rank, ok := q.compact(a.Provider, u)
+			text, rank, ok := q.compact(u)
 			switch {
 			case !ok:
 				r.body = dim.Render("no usage")
 			case u.Stale:
-				r.body = dim.Render(text)
+				r.body = dim.Render(ansi.Strip(text))
 			case rank >= usagefmt.RankLow:
-				r.body, r.bold = rankStyle(rank).Render(text), true
+				r.body, r.bold = text, true
 			default:
 				r.body = text
 			}
 			switch {
 			case u.Stale:
 				r.reset = dim.Render("stale")
-			case u.Headline.NextReset != nil && !usesPools(a.Provider, u):
+			case u.Headline.NextReset != nil && !usesPools(u):
 				r.reset = dim.Render("reset " + usagefmt.ResetsIn(q.now(), u.Headline.NextReset, true))
 			}
 		}
@@ -525,18 +503,22 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 	// glyph + space + name + gap + body (+ gap + reset): drop the reset
 	// column, then shrink the name, before anything gets cut mid-number.
 	withReset := resetW > 0
-	if 2+nameW+2+bodyW+2+resetW > inner {
+	if 4+nameW+2+bodyW+2+resetW > inner {
 		withReset = false
 	}
-	nameW = min(nameW, max(inner-2-2-bodyW, min(nameW, 10)))
+	nameW = min(nameW, max(inner-4-2-bodyW, min(nameW, 10)))
 
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
 		name := ansi.Truncate(r.name, nameW, "…")
-		if r.bold {
+		if r.bold || r.selected {
 			name = lipgloss.NewStyle().Bold(true).Render(name)
 		}
-		line := r.glyph + " " + name + strings.Repeat(" ", max(nameW-ansi.StringWidth(r.name), 0)) + "  " + r.body
+		marker := "  "
+		if r.selected {
+			marker = lipgloss.NewStyle().Foreground(th.Accent).Bold(true).Render("> ")
+		}
+		line := marker + r.glyph + " " + name + strings.Repeat(" ", max(nameW-ansi.StringWidth(r.name), 0)) + "  " + r.body
 		if withReset && r.reset != "" {
 			line += strings.Repeat(" ", bodyW-r.bodyW) + "  " + r.reset
 		}
@@ -546,8 +528,8 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 }
 
 // compact is the one-line reading of an account and its worst severity.
-// Pools read "Gemini Pro 12% · Flash 80%"; windows use usagefmt.Compact.
-func (q Quick) compact(p agents.ProviderID, u agentsapi.Usage) (string, usagefmt.Rank, bool) {
+// Providers with headline windows share the same bars and percentages.
+func (q Quick) compact(u agentsapi.Usage) (string, usagefmt.Rank, bool) {
 	var parts []string
 	worst, found := 1.0, false
 	note := func(l *agents.UsageLimit) (float64, bool) {
@@ -558,11 +540,11 @@ func (q Quick) compact(p agents.ProviderID, u agentsapi.Usage) (string, usagefmt
 		}
 		return f, ok
 	}
-	if usesPools(p, u) {
+	if usesPools(u) {
 		for i := range u.Snapshot.Limits {
 			l := &u.Snapshot.Limits[i]
-			if f, ok := note(l); ok {
-				parts = append(parts, fmt.Sprintf("%s %d%%", limitLabel(*l), usagefmt.Percent(f)))
+			if _, ok := note(l); ok {
+				parts = append(parts, limitLabel(*l)+" "+limitValue(l, q.ascii, false))
 			}
 		}
 		if !found {
@@ -572,7 +554,7 @@ func (q Quick) compact(p agents.ProviderID, u agentsapi.Usage) (string, usagefmt
 	}
 	note(u.Headline.Primary)
 	note(u.Headline.Secondary)
-	text := usagefmt.Compact(u.Headline)
+	text := Headline(u.Headline, q.now(), q.ascii, true)
 	if !found || text == "" {
 		return "", 0, false
 	}

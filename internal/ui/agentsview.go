@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
-	"github.com/Tiago-0liveira/bonsai/internal/core/agents/usagefmt"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -364,17 +364,12 @@ func (m Model) usageText(s agentsapi.Session, compact bool) string {
 		}
 		return dimText("usage loading…")
 	}
-	var text string
-	if compact {
-		text = usagefmt.Compact(e.usage.Headline)
-	} else {
-		text = usagefmt.Headline(e.usage.Headline, agentNow())
-	}
+	text := accounts.Headline(e.usage.Headline, agentNow(), m.agentGlyphsASCII(), compact)
 	if text == "" {
 		text = "no usage data"
 	}
 	if e.stale {
-		return dimText(text + " (stale)")
+		return dimText(ansi.Strip(text) + " (stale)")
 	}
 	return text
 }

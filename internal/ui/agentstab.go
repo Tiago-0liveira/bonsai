@@ -268,6 +268,7 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 	build := func(query string) []string { return m.agentPickerItems(path, query) }
 	modal := modals.NewPicker(kindAgents, "AGENTS IN "+branchOf(wt), build, build(""),
 		"/ Search    Enter Open    n New    Esc Close", "No agents in this worktree yet", "n")
+	modal.SetInline(true)
 	modal.SetSize(m.agentPaneSize())
 	m.modal = &modal
 	return m, nil

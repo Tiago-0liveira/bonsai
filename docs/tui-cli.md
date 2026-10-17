@@ -40,8 +40,8 @@ tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops t
 selected running agent after a confirmation. The command palette (`ctrl+k`) has
 **Agents: open tab**, **new agent**, **accounts** and **usage** under **Agents**;
 stop is on the tab and in the `ctrl+]` menu only. Profiles, usage, the session
-picker and launch/stop dialogs stay inside the Agents tab; the worktree list and
-right-pane tab bar remain visible.
+picker and launch/stop views fill the available Agents tab without modal borders
+or size caps; the worktree list and right-pane tab bar remain visible.
 
 Press `enter` on a session to enter terminal mode and type into it. The client
 attaches as the writer and every key goes to the agent, including `esc`, `tab`,
@@ -94,7 +94,13 @@ focused section tabs, and `Enter` to enter the details or edit a field. `1`/`2`/
 jump directly to Overview, Usage or Defaults. `Esc` returns focus to profiles;
 press it again to close. Unsaved defaults require confirmation before closing or
 switching profiles. Usage (`u`) uses `↑`/`↓` to select a profile, `r` to refresh,
-`m` for its profile details and `Esc` to close. Narrow panes use a single column
+`m` for its profile details and `Esc` to close. The profile list stays in provider
+and name order while the selection moves, scrolling to keep it visible.
+Five-hour limits use remaining-capacity bars; weekly and other limits use
+percentages. Both are green with at least half left, yellow below half and red
+below a quarter. Antigravity uses the same 5-hour and weekly summary as Claude
+and Codex, with its other pools available in profile usage details.
+Narrow profile and launch panes use a single column
 with the selected profile shown above the content.
 
 An account that needs a sign-in shows `[Sign in first]` in place of start.

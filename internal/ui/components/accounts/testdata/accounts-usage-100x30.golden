@@ -1,30 +1,30 @@
-╭─ AGENT PROFILES ─────────────────────────────────────────────────────────────────────────────────╮
-│                                                                                                  │
-│ ACCOUNTS                   │ ✳ Claude · work                                                     │
-│                            │                                                                     │
-│ CLAUDE                     │ Overview  [Usage]  Defaults                                         │
-│ > ✳ work             72% ● │ ─────────────────────────────────────────────────────────────────── │
-│   ✳ personal             ● │                                                                     │
-│                            │ 5-hour window                                                       │
-│ CODEX                      │ ███████░░░  72% remaining                                           │
-│   ◎ work                 ● │ Resets in 2h14m                                                     │
-│   ◎ personal             ● │                                                                     │
-│                            │ Weekly window                                                       │
-│ ANTIGRAVITY                │ ████░░░░░░  41% remaining                                           │
-│   ✦ personal             ● │ Resets in 3d                                                        │
-│                            │                                                                     │
-│                            │ Additional limits                                                   │
-│                            │ Sonnet weekly  82% remaining                                        │
-│                            │ Credits        $12.50                                               │
-│                            │                                                                     │
-│                            │                                                                     │
-│                            │                                                                     │
-│                            │                                                                     │
-│                            │                                                                     │
-│                            │                                                                     │
-│                            │ Updated 35 seconds ago                                              │
-│                            │                                                                     │
-│ + Add account              │ [r] Refresh usage                                                   │
-├────────────────────────────┴─────────────────────────────────────────────────────────────────────┤
-│ ↑↓ Profile · Tab Sections · Esc Close                                                            │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ AGENT PROFILES
+
+ ACCOUNTS                    ✳ Claude · work
+
+ CLAUDE                      Overview  [Usage]  Defaults
+ > ✳ work            ███░ ●  ──────────────────────────────────────────────────────────────────────
+   ✳ personal             ●
+                             5-hour window
+ CODEX                       ███████░░░
+   ◎ work                 ●  Resets in 2h14m
+   ◎ personal             ●
+                             Weekly window
+ ANTIGRAVITY                 41% remaining
+   ✦ personal             ●  Resets in 3d
+
+                             Additional limits
+                             Sonnet weekly  82% remaining
+                             Credits        $12.50
+
+
+
+
+
+
+
+
+                             Updated 35 seconds ago
+
+ + Add account               [r] Refresh usage
+ ↑↓ Profile · Tab Sections · Esc Close

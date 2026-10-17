@@ -191,7 +191,7 @@ func (m Model) agentOverlayView(w, h int) string {
 	case o.quick != nil:
 		s = o.quick.View()
 	}
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Top, m.chrome(s))
+	return lipgloss.Place(w, h, lipgloss.Left, lipgloss.Top, m.chrome(s))
 }
 
 // onAgentOverlayMsg handles the messages overlays send to their parent. handled
@@ -338,6 +338,7 @@ func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 	m.pendingConfirm = &confirmState{action: stopAgentCmd(m.agents.ctx, m.agents.api.Sessions, s.ID, name)}
 	modal := modals.NewConfirm(kindAgentStop, fmt.Sprintf("Stop %s?", name))
 	modal.SetBody("The agent process ends.")
+	modal.SetInline(true)
 	modal.SetSize(m.agentPaneSize())
 	m.modal = &modal
 	return m, nil

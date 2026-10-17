@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	dialogMaxW = 60
 	// dialogRows is the body height: up to two message lines, a gap, the buttons.
 	dialogRows = 4
 )
@@ -66,17 +65,16 @@ func (m Model) dialogKey(k tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// view draws the dialog in the modal's frame style, sized for the message.
-func (d dialog) view(frameW int) string {
-	w := max(min(dialogMaxW, frameW-4), 12)
-	inner := max(w-4, 1)
+// view fills the pane with a confirmation and identifies the affected profile.
+func (d dialog) view(profile string, w, h int) string {
+	inner := max(ContentWidth(w), 1)
 	body := strings.Split(ansi.Wrap(d.text, inner, ""), "\n")
 	body = body[:min(len(body), dialogRows-2)]
 	for len(body) < dialogRows-1 {
 		body = append(body, "")
 	}
 	body = append(body, button(d.cancel, d.focus == 0, false)+"  "+button(d.confirm, d.focus == 1, false))
-	return FrameSingle(d.title, body, "←/→ Choose  ·  Enter Confirm  ·  Esc Cancel", w, dialogRows+chrome)
+	return FrameSingle(d.title+" · "+profile, body, "←/→ Choose  ·  Enter Confirm  ·  Esc Cancel", w, h)
 }
 
 // button is "[label]", reversed when focused and dim when unavailable.
@@ -89,25 +87,4 @@ func button(label string, focused, disabled bool) string {
 		s = s.Faint(true)
 	}
 	return s.Render("[" + label + "]")
-}
-
-// overlay draws box centered over base. Both are full-width lines; box rows
-// replace the middle of base.
-func overlay(base, box string, w int) string {
-	lines := strings.Split(base, "\n")
-	boxLines := strings.Split(box, "\n")
-	boxW := 0
-	for _, l := range boxLines {
-		boxW = max(boxW, ansi.StringWidth(l))
-	}
-	top := max((len(lines)-len(boxLines))/2, 0)
-	left := max((w-boxW)/2, 0)
-	for i, bl := range boxLines {
-		row := top + i
-		if row >= len(lines) {
-			break
-		}
-		lines[row] = ansi.Truncate(lines[row], left, "") + "\x1b[0m" + bl + "\x1b[0m" + ansi.Cut(lines[row], left+boxW, w)
-	}
-	return strings.Join(lines, "\n")
 }

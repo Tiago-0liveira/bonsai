@@ -3,7 +3,6 @@ package accounts
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -16,7 +15,7 @@ import (
 )
 
 // usageMinWidth is the narrowest sidebar that still has room for a usage
-// percentage between the name and the auth dot.
+// indicator between the name and the auth dot.
 const usageMinWidth = 26
 
 // groupOrder fixes the provider order; providers not listed follow, by ID.
@@ -30,7 +29,7 @@ type Sidebar struct {
 	// AddSelected puts the marker on "+ Add account" instead of an account.
 	AddSelected bool
 	Usage       map[agents.AccountID]agentsapi.Usage
-	// Busy accounts show "busy" in place of their usage percentage.
+	// Busy accounts show "busy" in place of their usage.
 	Busy  map[agents.AccountID]bool
 	ASCII bool
 	// HideAdd drops the "+ Add account" row, for callers that cannot add.
@@ -165,23 +164,29 @@ func (s Sidebar) row(a agentsapi.Account, w int, selected bool) string {
 	return left + strings.Repeat(" ", pad) + right
 }
 
-// usageText is the remaining percentage of the account's headline window,
-// right-aligned in 4 cells and colored by rank, or false when unknown.
+// usageText fits the headline usage in four cells, or hides unknown usage.
 func (s Sidebar) usageText(id agents.AccountID) (string, bool) {
 	u, ok := s.Usage[id]
 	if !ok {
 		return "", false
 	}
-	fraction, ok := agents.RemainingFraction(u.Headline.Primary)
+	limit := u.Headline.Primary
+	fraction, ok := agents.RemainingFraction(limit)
 	if !ok {
-		fraction, ok = agents.RemainingFraction(u.Headline.Secondary)
+		limit = u.Headline.Secondary
+		fraction, ok = agents.RemainingFraction(limit)
 	}
 	if !ok {
 		return "", false
 	}
-	text := fmt.Sprintf("%4s", strconv.Itoa(usagefmt.Percent(fraction))+"%")
+	var text string
+	if fiveHour(limit) {
+		text = meterWidth(fraction, 4, s.ASCII)
+	} else {
+		text = fmt.Sprintf("%4s", fmt.Sprintf("%d%%", usagefmt.Percent(fraction)))
+	}
 	if u.Stale {
-		return lipgloss.NewStyle().Foreground(theme.Current.Dim).Render(text), true
+		return lipgloss.NewStyle().Foreground(theme.Current.Dim).Render(ansi.Strip(text)), true
 	}
 	return rankStyle(usagefmt.RankOf(fraction)).Render(text), true
 }

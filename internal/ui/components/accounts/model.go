@@ -24,12 +24,7 @@ const (
 	tabCount
 )
 
-const (
-	// maxW and maxH cap the modal on big terminals.
-	maxW, maxH = 100, 32
-)
-
-// Options configures a new modal.
+// Options configures the profile view.
 type Options struct {
 	ASCII   bool
 	Initial agents.AccountID // account to select; the first one when empty or unknown
@@ -51,7 +46,7 @@ type ReloadMsg struct{}
 // seqs holds the sequence of the latest request of each kind.
 type seqs struct{ list, describe, usage, defaults, save, remove int }
 
-// Model is the agent accounts modal. It is a value type; backend calls run as
+// Model is the agent profile view. It is a value type; backend calls run as
 // commands and their results are ordered by sequence number before they are
 // applied.
 type Model struct {
@@ -123,13 +118,12 @@ func New(api agentsapi.Accounts, opts Options) Model {
 // Init lists accounts; the selected account's details load once the list is in.
 func (m Model) Init() tea.Cmd { return listCmd(m.api, m.latest.list, m.selected) }
 
-// SetSize gives the modal the screen size; it sizes itself inside it.
+// SetSize gives the view the available pane size.
 func (m *Model) SetSize(w, h int) { m.w, m.h = w, h }
 
-// FrameSize uses the available pane, capped on large terminals.
-// The new-agent dialog uses it too so both modals line up.
+// FrameSize uses the entire available Agents pane.
 func FrameSize(screenW, screenH int) (w, h int) {
-	return max(min(screenW, maxW), 0), max(min(screenH, maxH), 0)
+	return max(screenW, 0), max(screenH, 0)
 }
 
 // Capturing reports that keys must all reach the modal: a text input, a
@@ -149,7 +143,7 @@ func (m Model) View() string {
 		return ""
 	}
 	leftW := LeftWidth(w)
-	rightW := max(w-leftW-7, 0)
+	rightW := RightWidth(w)
 	rows := BodyRows(h)
 
 	side := Sidebar{
@@ -163,13 +157,14 @@ func (m Model) View() string {
 	var out string
 	if Compact(w) {
 		body := []string{side.Selector(m.focus == focusProfiles), ""}
-		body = append(body, m.right(max(w-4, 0), max(rows-2, 0))...)
+		body = append(body, m.right(ContentWidth(w), max(rows-2, 0))...)
 		out = FrameSingle("Agent profiles", body, m.footer(), w, h)
 	} else {
 		out = Frame("Agent profiles", side.View(leftW, rows), m.right(rightW, rows), m.footer(), w, h)
 	}
 	if m.dlg != nil {
-		out = overlay(out, m.dlg.view(w), w)
+		a, _ := m.current()
+		out = m.dlg.view(providerName(a.Provider)+" · "+a.Name, w, h)
 	}
 	return out
 }

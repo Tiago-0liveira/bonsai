@@ -26,8 +26,8 @@ func assertBox(t *testing.T, lines []string, w, h int) {
 func TestFrameSizes(t *testing.T) {
 	left := []string{"left one", "\x1b[31mred left\x1b[0m"}
 	right := []string{"right " + strings.Repeat("long ", 40)}
-	for _, w := range []int{40, 80, 100} {
-		for _, h := range []int{10, 30} {
+	for _, w := range []int{1, 2, 6, 40, 80, 100, 180} {
+		for _, h := range []int{1, 2, 10, 30, 60} {
 			out := Frame("agent accounts", left, right, "j/k Navigate  ·  Esc Close", w, h)
 			assertBox(t, plainLines(out), w, h)
 			single := FrameSingle("usage", right, "Esc Close", w, h)
@@ -36,42 +36,22 @@ func TestFrameSizes(t *testing.T) {
 	}
 }
 
-func TestFrameChrome(t *testing.T) {
-	lines := plainLines(Frame("agent accounts", []string{"ACCOUNTS"}, []string{"detail"}, "Esc Close", 80, 12))
-	if !strings.HasPrefix(lines[0], "╭─ AGENT ACCOUNTS ─") || !strings.HasSuffix(lines[0], "╮") {
-		t.Fatalf("top border: %q", lines[0])
-	}
-	if strings.Trim(lines[1], "│ ") != "" || strings.Contains(lines[1][3:len(lines[1])-3], "│") {
-		t.Fatalf("row under the border should be blank without a divider: %q", lines[1])
-	}
-	div := strings.Index(lines[2], "│ ACCOUNTS") // first body row
-	if div != 0 || !strings.Contains(lines[2], "│ detail") {
-		t.Fatalf("body row: %q", lines[2])
-	}
-	sep := lines[len(lines)-3]
-	if !strings.HasPrefix(sep, "├") || !strings.HasSuffix(sep, "┤") || strings.Count(sep, "┴") != 1 {
-		t.Fatalf("separator: %q", sep)
-	}
-	// The join must sit directly under the column divider.
-	if ansi.StringWidth(sep[:strings.Index(sep, "┴")]) != ansi.StringWidth(lines[2][:strings.Index(lines[2], "│ detail")]) {
-		t.Fatalf("separator join not under divider:\n%s\n%s", lines[2], sep)
-	}
-	if lines[len(lines)-2] != "│ Esc Close"+strings.Repeat(" ", 80-ansi.StringWidth("│ Esc Close")-1)+"│" {
-		t.Fatalf("footer: %q", lines[len(lines)-2])
-	}
-	if !strings.HasPrefix(lines[len(lines)-1], "╰") || !strings.HasSuffix(lines[len(lines)-1], "╯") {
-		t.Fatalf("bottom border: %q", lines[len(lines)-1])
-	}
-}
-
-func TestFrameSingleSeparatorHasNoJoin(t *testing.T) {
-	lines := plainLines(FrameSingle("usage", []string{"x"}, "Esc", 64, 10))
-	sep := lines[len(lines)-3]
-	if strings.Contains(sep, "┴") || !strings.HasPrefix(sep, "├") || !strings.HasSuffix(sep, "┤") {
-		t.Fatalf("separator: %q", sep)
-	}
-	if !strings.HasPrefix(lines[0], "╭─ USAGE ─") {
-		t.Fatalf("title: %q", lines[0])
+func TestFrameHasNoModalChrome(t *testing.T) {
+	for _, out := range []string{
+		Frame("agent accounts", []string{"ACCOUNTS"}, []string{"detail"}, "Esc Close", 160, 48),
+		FrameSingle("agent accounts", []string{"detail"}, "Esc Close", 160, 48),
+	} {
+		lines := plainLines(out)
+		assertBox(t, lines, 160, 48)
+		if strings.TrimSpace(lines[0]) != "AGENT ACCOUNTS" || strings.TrimSpace(lines[len(lines)-1]) != "Esc Close" {
+			t.Fatalf("title/footer missing:\n%s", out)
+		}
+		if strings.ContainsAny(out, "╭╮╰╯├┤┴│") {
+			t.Fatalf("pane still has modal borders:\n%s", out)
+		}
+		if !strings.Contains(lines[2], "detail") {
+			t.Fatalf("missing content: %q", lines[2])
+		}
 	}
 }
 
@@ -95,7 +75,7 @@ func TestLeftWidth(t *testing.T) {
 	if got := LeftWidth(60); got != 24 {
 		t.Fatalf("medium: %d", got)
 	}
-	if got := LeftWidth(40); got*2+7 > 40 {
+	if got := LeftWidth(40); got*2+4 > 40 {
 		t.Fatalf("narrow left %d leaves no right column", got)
 	}
 }

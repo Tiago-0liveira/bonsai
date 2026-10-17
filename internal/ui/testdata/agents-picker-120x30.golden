@@ -1,3 +1,9 @@
+ AGENTS IN feat-a
+
+ › ● ◎ Run integration tests  Codex · work
+   ● ✳ Fix authentication     Claude · work
+   ✗ ✳ Broken run             Claude · work
+   ✓ ◎ Previous attempt       Codex · work
 
 
 
@@ -7,18 +13,6 @@
 
 
 
-                                   ╭────────────────────────────────────────────────╮
-                                   │                                                │
-                                   │  AGENTS IN feat-a                              │
-                                   │                                                │
-                                   │  › ● ◎ Run integration tests  Codex · work     │
-                                   │    ● ✳ Fix authentication     Claude · work    │
-                                   │    ✗ ✳ Broken run             Claude · work    │
-                                   │    ✓ ◎ Previous attempt       Codex · work     │
-                                   │                                                │
-                                   │  / Search    Enter Open    n New    Esc Close  │
-                                   │                                                │
-                                   ╰────────────────────────────────────────────────╯
 
 
 
@@ -28,3 +22,9 @@
 
 
 
+
+
+
+
+
+ / Search    Enter Open    n New    Esc Close

@@ -46,15 +46,14 @@ func (m Model) usageView(rw, rows int) []string {
 		return pinned(body, []string{refresh}, rows)
 	}
 
-	a, _ := m.current()
-	pools := usesPools(a.Provider, u)
+	pools := usesPools(u)
 	var body []string
 	if pools {
 		body = poolLines(u, rw, m.ascii)
 	} else {
 		body = windowLines(u, m.now(), m.ascii)
 	}
-	body = append(body, additionalLines(u, pools)...)
+	body = append(body, additionalLines(u, pools, m.ascii)...)
 	if len(body) == 0 {
 		body = []string{dim.Render("No usage reported.")}
 	}
@@ -98,11 +97,8 @@ func pinned(body, tail []string, rows int) []string {
 }
 
 // usesPools reports that the account shows per-model pools instead of two
-// shared windows: Antigravity, or any provider whose headline names none.
-func usesPools(p agents.ProviderID, u agentsapi.Usage) bool {
-	if p == "antigravity" {
-		return true
-	}
+// shared windows, when the provider has no headline pair.
+func usesPools(u agentsapi.Usage) bool {
 	return u.Headline.Primary == nil && u.Headline.Secondary == nil && len(u.Snapshot.Limits) > 0
 }
 
@@ -117,12 +113,12 @@ func windowLines(u agentsapi.Usage, now time.Time, ascii bool) []string {
 			continue
 		}
 		out = append(out, windowTitle(w.limit, w.fallback))
-		fraction, ok := agents.RemainingFraction(w.limit)
+		_, ok := agents.RemainingFraction(w.limit)
 		if !ok {
 			out = append(out, lipgloss.NewStyle().Foreground(theme.Current.Dim).Render("Unknown"), "")
 			continue
 		}
-		out = append(out, meter(fraction, ascii)+"  "+fmt.Sprintf("%d%% remaining", usagefmt.Percent(fraction)))
+		out = append(out, limitValue(w.limit, ascii, true))
 		if w.limit.ResetsAt != nil {
 			out = append(out, resetsText(now, w.limit.ResetsAt))
 		}
@@ -151,7 +147,11 @@ func resetsText(now time.Time, t *time.Time) string {
 
 // meter is the bar colored by how much is left.
 func meter(fraction float64, ascii bool) string {
-	bar := usagefmt.Bar(fraction, barCells)
+	return meterWidth(fraction, barCells, ascii)
+}
+
+func meterWidth(fraction float64, width int, ascii bool) string {
+	bar := usagefmt.Bar(fraction, width)
 	if ascii {
 		bar = strings.NewReplacer("█", "#", "░", ".").Replace(bar)
 	}
@@ -193,8 +193,8 @@ func poolLines(u agentsapi.Usage, rw int, ascii bool) []string {
 		for _, l := range p.limits {
 			label := ansi.Truncate(limitLabel(l), labelW, "…")
 			row := label + strings.Repeat(" ", max(labelW-lipgloss.Width(label), 0)) + "  "
-			if fraction, ok := agents.RemainingFraction(&l); ok {
-				row += meter(fraction, ascii) + fmt.Sprintf(" %3d%%", usagefmt.Percent(fraction))
+			if _, ok := agents.RemainingFraction(&l); ok {
+				row += limitValue(&l, ascii, false)
 			} else {
 				row += dim.Render("unknown")
 			}
@@ -212,17 +212,20 @@ func limitLabel(l agents.UsageLimit) string {
 }
 
 // additionalLines lists limits beyond the headline windows plus credit balances.
-func additionalLines(u agentsapi.Usage, pools bool) []string {
+func additionalLines(u agentsapi.Usage, pools bool, ascii bool) []string {
 	type row struct{ label, value string }
 	var rows []row
 	if !pools {
 		for _, l := range u.Headline.Extra {
 			value := "unknown"
-			if fraction, ok := agents.RemainingFraction(&l); ok {
-				text := fmt.Sprintf("%d%% remaining", usagefmt.Percent(fraction))
-				value = rankStyle(usagefmt.RankOf(fraction)).Render(text)
+			if _, ok := agents.RemainingFraction(&l); ok {
+				value = limitValue(&l, ascii, true)
 			}
-			rows = append(rows, row{limitLabel(l), value})
+			label := limitLabel(l)
+			if l.Group != "" && l.Window != "" {
+				label = l.Group + " · " + usagefmt.WindowName(&l, "")
+			}
+			rows = append(rows, row{label, value})
 		}
 	}
 	for _, c := range u.Snapshot.Credits {

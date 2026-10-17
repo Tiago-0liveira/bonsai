@@ -137,7 +137,7 @@ func TestInitLoadsSelectedAccount(t *testing.T) {
 func TestTabsAndFrameSizes(t *testing.T) {
 	for _, size := range [][2]int{{104, 34}, {80, 24}} {
 		m := opened(t, newFake(), size[0], size[1])
-		for key, want := range map[string]string{"2": "72% remaining", "3": "[Defaults]", "1": "[Overview]"} {
+		for key, want := range map[string]string{"2": "███████░░░", "3": "[Defaults]", "1": "[Overview]"} {
 			m, _ = press(m, key)
 			out := plain(m)
 			if !strings.Contains(out, want) {

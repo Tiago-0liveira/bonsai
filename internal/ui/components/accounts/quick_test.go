@@ -17,8 +17,7 @@ import (
 
 func quickClock() time.Time { return testNow }
 
-// quickFake is mockupFake plus a second, stale Antigravity account so the
-// overlay has five other rows (a 64x16 frame).
+// quickFake adds a second, stale Antigravity profile to the usage list.
 func quickFake() *fake.Accounts {
 	api := mockupFake()
 	api.Items = append(api.Items, agentsapi.Account{Account: agents.Account{ID: "a2", Provider: "antigravity", Name: "work"}})
@@ -96,14 +95,14 @@ func TestQuickLoadsAndOrders(t *testing.T) {
 	api := quickFake()
 	q := opennedQuick(t, api, "c1", false)
 	out := quickPlain(q)
-	for _, want := range []string{"USAGE", "Claude · work", "5-hour", "72% remaining · Resets in 2h14m", "Weekly", "41% remaining",
+	for _, want := range []string{"USAGE", "Claude · work", "5-hour", "███████░░░ · Resets in 2h14m", "Weekly", "41% remaining",
 		"Updated 35 seconds ago", "↑↓ Profile · r Refresh · m Profiles · Esc Close", "Gemini Pro 12% · Flash 80%", "stale"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}
 	}
-	// Focus first, then provider, then name; the focused account is not repeated.
-	order(t, out, "Claude · work", "personal  5h 72%", "personal  5h 15%", "work      5h 91%", "personal  Gemini", "work      Gemini")
+	// The list always contains all profiles in provider/name order.
+	order(t, out, "Claude · work", "personal  5h ███████░░░", "personal  5h ██░░░░░░░░", "work      5h █████████░", "personal  Gemini", "work      Gemini")
 	if strings.Count(out, "work") < 3 {
 		t.Fatalf("unexpected rows:\n%s", out)
 	}
@@ -299,7 +298,7 @@ func TestQuickLateResultsAreDropped(t *testing.T) {
 	}
 	// The current one applies.
 	q2, _ = q.Update(quickUsageMsg{id: "x2", seq: cur, usage: old})
-	if !strings.Contains(quickPlain(q2), "5h 1%") {
+	if !strings.Contains(quickPlain(q2), "5h ░░░░░░░░░░") {
 		t.Errorf("current result not applied:\n%s", quickPlain(q2))
 	}
 	// A late list is dropped too.
@@ -326,7 +325,7 @@ func TestQuickFailureKeepsStaleData(t *testing.T) {
 	api.UsageErr = errString("boom at /home/me/.claude/secret.json")
 	q, _ = quickKey(q, "r")
 	out := quickPlain(q)
-	if !strings.Contains(out, "72% remaining") || !strings.Contains(out, "5h 15%") {
+	if !strings.Contains(out, "███████░░░") || !strings.Contains(out, "5h ██░░░░░░░░") {
 		t.Errorf("failed refresh dropped the last good numbers:\n%s", out)
 	}
 	if strings.Count(out, "stale") < 6 { // header marker + 5 rows? every account is stale
@@ -504,12 +503,12 @@ func TestQuickSizeInvariants(t *testing.T) {
 			if out == "" {
 				continue
 			}
-			if len(lines) > sz[1] {
-				t.Errorf("%v: %d lines exceed the screen", sz, len(lines))
+			if len(lines) != sz[1] {
+				t.Errorf("%v: %d lines, want full pane height", sz, len(lines))
 			}
 			for i, l := range lines {
-				if w := ansi.StringWidth(l); w > min(sz[0], quickMaxW) || w != ansi.StringWidth(lines[0]) {
-					t.Errorf("%v line %d width %d (first %d, cap %d): %q", sz, i, w, ansi.StringWidth(lines[0]), quickMaxW, ansi.Strip(l))
+				if w := ansi.StringWidth(l); w != sz[0] {
+					t.Errorf("%v line %d width %d: %q", sz, i, w, ansi.Strip(l))
 				}
 			}
 		}
@@ -517,11 +516,11 @@ func TestQuickSizeInvariants(t *testing.T) {
 	q := loaded
 	q.SetSize(80, 24)
 	lines := strings.Split(q.View(), "\n")
-	if w := ansi.StringWidth(lines[0]); w != quickMaxW {
-		t.Errorf("wide width = %d, want %d", w, quickMaxW)
+	if w := ansi.StringWidth(lines[0]); w != 80 {
+		t.Errorf("wide width = %d, want %d", w, 80)
 	}
-	if len(lines) != 16 {
-		t.Errorf("height = %d, want 16 for 6 accounts", len(lines))
+	if len(lines) != 24 {
+		t.Errorf("height = %d, want 24 for the full pane", len(lines))
 	}
 }
 
@@ -538,4 +537,35 @@ func TestGoldenQuickUsage(t *testing.T) {
 	q := newQuick(quickFake(), "c1", false, 64, 16) // a 64-wide frame
 	q, _ = quickDrain(q, q.Init())
 	checkGolden(t, "quick-usage-64x16", quickPlain(q))
+}
+
+func TestQuickNavigationKeepsRowsStableAndSelectionVisible(t *testing.T) {
+	q := opennedQuick(t, quickFake(), "c1", false)
+	before := strings.Split(quickPlain(q), "\n")
+	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyUp, tea.KeyUp, tea.KeyDown} {
+		q, _ = q.Update(tea.KeyMsg{Type: key})
+		after := strings.Split(quickPlain(q), "\n")
+		// The title/spacer and fixed detail block occupy six rows. Every
+		// profile keeps its position; only its selection marker changes.
+		for i := 6; i < 12; i++ {
+			if strings.TrimLeft(before[i], " >") != strings.TrimLeft(after[i], " >") {
+				t.Fatalf("profile row %d moved on %v:\nbefore: %q\nafter: %q", i, key, before[i], after[i])
+			}
+		}
+		if strings.Count(strings.Join(after, "\n"), "> ") != 1 {
+			t.Fatal("usage list must show exactly one selection marker")
+		}
+		before = after
+	}
+
+	q.SetSize(64, 11) // two profile rows fit between details and footer
+	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyUp} {
+		for range len(q.accounts) {
+			q, _ = q.Update(tea.KeyMsg{Type: key})
+			out := quickPlain(q)
+			if !strings.Contains(out, "> ") {
+				t.Fatalf("selected profile %s scrolled out:\n%s", q.focus, out)
+			}
+		}
+	}
 }

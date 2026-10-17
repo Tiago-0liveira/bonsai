@@ -1,16 +1,16 @@
-╭─ USAGE ──────────────────────────────────────────────────────╮
-│                                                              │
-│ ✳ Claude · work                                              │
-│ 5-hour  ███████░░░  72% remaining · Resets in 2h14m          │
-│ Weekly  ████░░░░░░  41% remaining · Resets in 3d             │
-│ ──────────────────────────────────────────────────────────── │
-│ ✳ personal  5h 72% · W 41%              reset 3d             │
-│ ◎ personal  5h 15%                                           │
-│ ◎ work      5h 91%                                           │
-│ ✦ personal  Gemini Pro 12% · Flash 80%                       │
-│ ✦ work      Gemini Pro 90% · Flash 70%  stale                │
-│                                                              │
-│ Updated 35 seconds ago                                       │
-├──────────────────────────────────────────────────────────────┤
-│ ↑↓ Profile · r Refresh · m Profiles · Esc Close              │
-╰──────────────────────────────────────────────────────────────╯
+ USAGE
+
+ ✳ Claude · work
+ 5-hour  ███████░░░ · Resets in 2h14m
+ Weekly  41% remaining · Resets in 3d
+ ──────────────────────────────────────────────────────────────
+   ✳ personal  5h ███████░░░ · W 41%       reset 3d
+ > ✳ work      5h ███████░░░ · W 41%       reset 3d
+   ◎ personal  5h ██░░░░░░░░
+   ◎ work      5h █████████░
+   ✦ personal  Gemini Pro 12% · Flash 80%
+   ✦ work      Gemini Pro 90% · Flash 70%  stale
+
+
+ Updated 35 seconds ago
+ ↑↓ Profile · r Refresh · m Profiles · Esc Close
