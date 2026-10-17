@@ -64,17 +64,22 @@ func (e *agentsEnv) sendKey(t *testing.T, typ tea.KeyType) {
 }
 
 func TestLaunchDialogGroupsAccountsAndShowsBusy(t *testing.T) {
-	for _, size := range [][2]int{{120, 40}, {80, 24}} {
+	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		e := accountsEnv(t)
 		e.m.width, e.m.height = size[0], size[1]
 		e.openLaunch(t)
 		view := e.overlayView()
 		claude, codex := strings.Index(view, "CLAUDE"), strings.Index(view, "CODEX")
-		if claude < 0 || codex < claude {
+		if size[0] >= 160 && (claude < 0 || codex < claude) {
 			t.Fatalf("%v: providers must be grouped Claude then Codex:\n%s", size, view)
 		}
 		if !strings.Contains(view, "NEW AGENT · FEAT-A") || strings.Contains(view, "Add account") {
 			t.Errorf("%v: title or add row wrong:\n%s", size, view)
+		}
+		if size[0] < 160 {
+			e.sendKey(t, tea.KeyDown)
+			e.sendKey(t, tea.KeyDown)
+			view = e.overlayView()
 		}
 		var codexRow string
 		for _, l := range strings.Split(view, "\n") {
@@ -112,6 +117,8 @@ func TestLaunchDialogStartsWithTheWebIdentities(t *testing.T) {
 	e.send(t, tea.KeyMsg{Type: tea.KeyCtrlU})
 	e.key(t, "Auth fix")
 	e.sendKey(t, tea.KeyTab)
+	e.sendKey(t, tea.KeyDown) // effort
+	e.sendKey(t, tea.KeyDown) // permissions
 	e.sendKey(t, tea.KeyRight)
 
 	wantCols, wantRows := e.m.agentAreaSize()
@@ -197,9 +204,12 @@ func TestLaunchSuccessSelectsAndEntersTerminalMode(t *testing.T) {
 func TestLaunchSaveAsDefaultsSendsChangesAfterStart(t *testing.T) {
 	e := accountsEnv(t)
 	e.openLaunch(t)
-	e.sendKey(t, tea.KeyTab) // name
-	e.sendKey(t, tea.KeyTab) // form
+	e.sendKey(t, tea.KeyTab)  // name
+	e.sendKey(t, tea.KeyTab)  // model
+	e.sendKey(t, tea.KeyDown) // effort
+	e.sendKey(t, tea.KeyDown) // permissions
 	e.sendKey(t, tea.KeyRight)
+	e.sendKey(t, tea.KeyTab) // full access
 	e.sendKey(t, tea.KeyTab) // save checkbox
 	e.key(t, " ")
 	if !e.dialog().save {
@@ -225,8 +235,11 @@ func TestLaunchSaveAsDefaultsSkippedWhenStartFails(t *testing.T) {
 	e.openLaunch(t)
 	e.sendKey(t, tea.KeyTab)
 	e.sendKey(t, tea.KeyTab)
+	e.sendKey(t, tea.KeyDown) // effort
+	e.sendKey(t, tea.KeyDown) // permissions
 	e.sendKey(t, tea.KeyRight)
-	e.sendKey(t, tea.KeyTab)
+	e.sendKey(t, tea.KeyTab) // full access
+	e.sendKey(t, tea.KeyTab) // save checkbox
 	e.key(t, " ")
 	e.sendKey(t, tea.KeyCtrlS)
 	if len(e.fb.Accounts.Updates()) != 0 {
@@ -467,7 +480,7 @@ func TestAgentOverlayOwnsKeysAndStreamKeepsPumping(t *testing.T) {
 		t.Error("the overlay must not touch the stream")
 	}
 	if view := e.overlayView(); strings.Contains(view, "behind the overlay") {
-		t.Error("the overlay is full screen")
+		t.Error("the agent dialog must cover the terminal area")
 	}
 	e.sendKey(t, tea.KeyEsc)
 	if e.m.agents.overlay != nil || st.Closed() {
@@ -599,5 +612,114 @@ func TestLateStartShowsStatus(t *testing.T) {
 	e.send(t, launchStartedMsg{dlg: 99, session: agentsapi.Session{Summary: agentterminal.Summary{ID: "x", Name: "Late"}}, workDir: e.wtA})
 	if e.m.status != "agents: started Late" {
 		t.Errorf("status = %q", e.m.status)
+	}
+}
+
+func TestLaunchModelAndEffortOverridesStayWithSession(t *testing.T) {
+	e := accountsEnv(t)
+	e.fb.Accounts.LaunchDefaults["claude:work"] = agentsapi.Defaults{
+		Values: map[string]string{"model": "small", "effort": "low", "permissions": "auto"},
+		Models: []agents.ModelOption{
+			{ID: "small", Label: "Small", Efforts: []string{"low", "high"}},
+			{ID: "large", Label: "Large", Efforts: []string{"low", "high"}},
+		},
+	}
+	e.openLaunch(t)
+	if view := e.overlayView(); !strings.Contains(view, "Model") || !strings.Contains(view, "Effort") || !strings.Contains(view, "This agent only") {
+		t.Fatalf("launch overrides must be visible:\n%s", view)
+	}
+	e.sendKey(t, tea.KeyTab) // name
+	e.sendKey(t, tea.KeyTab) // model
+	e.sendKey(t, tea.KeyRight)
+	e.sendKey(t, tea.KeyTab) // effort, rather than leaving the form
+	e.sendKey(t, tea.KeyEnter)
+	e.sendKey(t, tea.KeyDown)
+	e.sendKey(t, tea.KeyEnter)
+	if got := e.dialog().form.Values(); got["model"] != "large" || got["effort"] != "high" {
+		t.Fatalf("edited launch values = %v", got)
+	}
+	e.sendKey(t, tea.KeyCtrlS)
+	starts := e.fb.Sessions.Starts()
+	if len(starts) != 1 || starts[0].Launch.Model != "large" || starts[0].Launch.Effort != "high" {
+		t.Fatalf("session overrides = %+v", starts)
+	}
+	if got := e.fb.Accounts.Updates(); len(got) != 0 {
+		t.Fatalf("session overrides saved profile defaults: %+v", got)
+	}
+	defaults := e.fb.Accounts.LaunchDefaults["claude:work"].Values
+	if defaults["model"] != "small" || defaults["effort"] != "low" {
+		t.Fatalf("profile defaults changed: %v", defaults)
+	}
+}
+
+func TestLaunchModelChangeRevalidatesEffort(t *testing.T) {
+	for _, noEffort := range []bool{false, true} {
+		t.Run(fmt.Sprintf("no-effort=%v", noEffort), func(t *testing.T) {
+			e := accountsEnv(t)
+			e.fb.Accounts.LaunchDefaults["claude:work"] = agentsapi.Defaults{
+				Values: map[string]string{"model": "small", "effort": "high"},
+				Models: []agents.ModelOption{
+					{ID: "small", Efforts: []string{"low", "high"}},
+					{ID: "large", Efforts: []string{"low"}, DefaultEffort: "low", NoEffort: noEffort},
+				},
+			}
+			e.openLaunch(t)
+			e.sendKey(t, tea.KeyTab)
+			e.sendKey(t, tea.KeyTab)
+			e.sendKey(t, tea.KeyRight)
+			want := "low"
+			if noEffort {
+				want = ""
+			}
+			if got := e.dialog().form.Values()["effort"]; got != want {
+				t.Fatalf("effort = %q, want %q", got, want)
+			}
+			if noEffort && strings.Contains(e.overlayView(), "Effort") {
+				t.Fatal("models without effort must hide the effort control")
+			}
+		})
+	}
+}
+
+func TestAgentDialogsStayInsideTabOnOpenAndResize(t *testing.T) {
+	for _, action := range []string{"n", "m", "u", "a", "s"} {
+		for _, size := range [][2]int{{160, 40}, {100, 30}, {80, 24}, {58, 20}} {
+			t.Run(fmt.Sprintf("%s-%dx%d", action, size[0], size[1]), func(t *testing.T) {
+				e := accountsEnv(t)
+				e.fb.Sessions.Add(e.agent("a", "claude", "running", e.wtA, "Auth fix", 1))
+				e.relist(t)
+				e.send(t, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+				before := strings.Split(ansi.Strip(e.m.View()), "\n")
+				e.key(t, action)
+				e.run(t, e.lastCmd)
+				after := strings.Split(ansi.Strip(e.m.View()), "\n")
+				leftW, _, _ := e.m.dims()
+				if len(after) != size[1] {
+					t.Fatalf("view has %d rows, want %d", len(after), size[1])
+				}
+				for i, line := range after {
+					if ansi.StringWidth(line) > size[0] {
+						t.Fatalf("row %d exceeds screen: %q", i, line)
+					}
+					if i < len(after)-1 && ansi.Cut(line, 0, leftW) != ansi.Cut(before[i], 0, leftW) {
+						t.Fatalf("dialog replaced worktree pane at row %d:\n%s", i, e.m.View())
+					}
+				}
+				if after[1] != before[1] {
+					t.Fatalf("dialog replaced tab strip:\n%s", e.m.View())
+				}
+				e.send(t, tea.WindowSizeMsg{Width: 80, Height: 24})
+				w, h := e.m.agentPaneSize()
+				pane := strings.Split(e.m.renderAgentsPane(w, h), "\n")
+				if len(pane) != h {
+					t.Fatalf("resized pane has %d rows, want %d", len(pane), h)
+				}
+				for _, row := range pane {
+					if ansi.StringWidth(row) > w {
+						t.Fatalf("resized dialog exceeds pane: %q", row)
+					}
+				}
+			})
+		}
 	}
 }

@@ -77,7 +77,8 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
   directory, so accounts never leak into each other.
 - Run **many agent sessions at once** across worktrees, in the web terminal dock
   or with `bonsai agent run`.
-- Start, watch, control and stop the same sessions from the **TUI's Agents tab**
+- Start, watch, control and stop sessions from the **TUI's Agents tab**, with
+  profiles and usage inside the tab and model/effort overrides for each new agent
   ([docs/tui-cli.md](docs/tui-cli.md#agents-tab)).
 - Per-profile **launch defaults** (model, effort, permissions) and an **Agents
   tab** in the web app to manage profiles, sign-ins and sessions.

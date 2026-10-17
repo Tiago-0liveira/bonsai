@@ -35,6 +35,7 @@ type Sidebar struct {
 	ASCII bool
 	// HideAdd drops the "+ Add account" row, for callers that cannot add.
 	HideAdd bool
+	Focused bool
 }
 
 // Ordered returns the accounts in display order (provider groups, then input
@@ -82,6 +83,9 @@ func (s Sidebar) View(w, h int) []string {
 	}
 	th := theme.Current
 	head := lipgloss.NewStyle().Bold(true).Foreground(th.Text)
+	if s.Focused {
+		head = head.Reverse(true)
+	}
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
 
 	var body []string
@@ -234,4 +238,25 @@ func (s Sidebar) dot(a agentsapi.Account) string {
 		return lipgloss.NewStyle().Foreground(th.Warning).Render(off)
 	}
 	return lipgloss.NewStyle().Foreground(th.Dim).Render(off)
+}
+
+// Selector keeps profile selection visible in a single-column pane.
+func (s Sidebar) Selector(focused bool) string {
+	label := "+ Add account"
+	if !s.AddSelected {
+		ordered := s.Ordered()
+		for i, a := range ordered {
+			if a.ID == s.Selected {
+				label = fmt.Sprintf("%s · %s (%d/%d)", providerName(a.Provider), a.Name, i+1, len(ordered))
+				if s.Busy[a.ID] {
+					label += " · busy"
+				}
+				break
+			}
+		}
+	}
+	if focused {
+		return lipgloss.NewStyle().Bold(true).Reverse(true).Render("↑↓ " + label)
+	}
+	return label
 }

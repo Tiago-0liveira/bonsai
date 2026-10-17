@@ -208,7 +208,7 @@ func (d launchDialog) sidebar() accounts.Sidebar {
 	}
 	return accounts.Sidebar{
 		Accounts: d.accounts, Selected: d.selected, Usage: d.usage, Busy: busy,
-		ASCII: d.ascii, HideAdd: true,
+		ASCII: d.ascii, HideAdd: true, Focused: d.focus == launchFocusAccount,
 	}
 }
 
@@ -334,9 +334,28 @@ func (d launchDialog) onDefaults(msg launchDefaultsMsg) launchDialog {
 	d.defaults = msg.d
 	// Changes here apply to this launch only: the provider's own launch fields
 	// seeded from the account's defaults.
-	d.form = launchform.New(msg.d.LaunchFields, msg.d.Models, msg.d.Values, d.ascii).Focus(d.focus == launchFocusForm)
+	d.form = launchform.New(launchDialogFields(msg.d.LaunchFields), msg.d.Models, msg.d.Values, d.ascii).Focus(d.focus == launchFocusForm)
 	d.formLoaded = true
 	return d
+}
+
+// The launch schema omits model because it is normally a top-level request
+// field. Put it and effort first so one-session overrides are easy to find.
+func launchDialogFields(fields []agents.LaunchField) []agents.LaunchField {
+	model := agents.ProfileModelField()
+	model.Options = []agents.FieldOption{{Value: "", Label: "Profile default"}}
+	out := []agents.LaunchField{model}
+	for _, f := range fields {
+		if f.ID == "effort" {
+			out = append(out, f)
+		}
+	}
+	for _, f := range fields {
+		if f.ID != "model" && f.ID != "effort" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func (d launchDialog) setFocus(f launchFocus) launchDialog {
@@ -371,8 +390,16 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 		case "esc":
 			return d, close
 		case "tab":
+			if d.focus == launchFocusForm && !d.form.AtLast() {
+				d.form, _ = d.form.Update(tea.KeyMsg{Type: tea.KeyDown})
+				return d, nil
+			}
 			return d.setFocus(d.focus + 1), nil
 		case "shift+tab":
+			if d.focus == launchFocusForm && !d.form.AtFirst() {
+				d.form, _ = d.form.Update(tea.KeyMsg{Type: tea.KeyUp})
+				return d, nil
+			}
 			return d.setFocus(d.focus - 1), nil
 		}
 	}
@@ -380,23 +407,40 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 	case launchFocusAccount:
 		return d.accountKey(s)
 	case launchFocusName:
-		if s == "enter" {
+		if s == "enter" || s == "down" {
 			return d.setFocus(launchFocusForm), nil
+		}
+		if s == "up" {
+			return d.setFocus(launchFocusAccount), nil
 		}
 		d.nameTouched = true
 		var cmd tea.Cmd
 		d.name, cmd = d.name.Update(k)
 		return d, cmd
 	case launchFocusForm:
+		if !editing && s == "down" && d.form.AtLast() {
+			return d.setFocus(launchFocusSave), nil
+		}
+		if !editing && s == "up" && d.form.AtFirst() {
+			return d.setFocus(launchFocusName), nil
+		}
 		if d.formLoaded {
 			d.form, _ = d.form.Update(k)
 		}
 	case launchFocusSave:
+		if s == "up" {
+			return d.setFocus(launchFocusForm), nil
+		}
+		if s == "down" {
+			return d.setFocus(launchFocusButtons), nil
+		}
 		if s == "enter" || s == " " {
 			d.save = !d.save
 		}
 	case launchFocusButtons:
 		switch s {
+		case "up":
+			return d.setFocus(launchFocusSave), nil
 		case "left", "h":
 			d.button = 0
 		case "right", "l":
@@ -514,11 +558,23 @@ func (d launchDialog) View() string {
 	rw := max(w-leftW-7, 0)
 	rows := accounts.BodyRows(h)
 	title := "New agent · " + d.target.branch
+	if accounts.Compact(w) {
+		body := []string{d.sidebar().Selector(d.focus == launchFocusAccount), ""}
+		body = append(body, d.right(max(w-4, 0), max(rows-2, 0))...)
+		return accounts.FrameSingle(title, body, d.footer(), w, h)
+	}
 	return accounts.Frame(title, d.sidebar().View(leftW, rows), d.right(rw, rows), d.footer(), w, h)
 }
 
 func (d launchDialog) footer() string {
-	return "j/k Account  ·  Tab Field  ·  Enter Edit  ·  ctrl+s Start  ·  Esc Close"
+	switch d.focus {
+	case launchFocusAccount:
+		return "↑↓ Profile · Tab Options · ^S Start · Esc"
+	case launchFocusForm:
+		return "↑↓ Field · ←→ Value · ^S Start · Esc"
+	default:
+		return "Tab Next · Enter Select · ^S Start · Esc"
+	}
 }
 
 func (d launchDialog) right(rw, rows int) []string {
@@ -557,8 +613,15 @@ func (d launchDialog) right(rw, rows int) []string {
 	d.name.Width = max(rw-4, 1)
 	lines := []string{head, usage, dim.Render(strings.Repeat("─", rw)), "",
 		label("Name", d.focus == launchFocusName), d.name.View(), ""}
+	if accounts.Compact(d.w) {
+		lines = []string{label("Name", d.focus == launchFocusName) + " " + d.name.View()}
+	}
 
-	tail := []string{"", d.saveRow(a)}
+	scope := "This agent only"
+	if d.save {
+		scope = "Also saves profile defaults"
+	}
+	tail := []string{dim.Render(scope), d.saveRow()}
 	if d.err != "" {
 		errLines := strings.Split(ansi.Wrap(d.err, max(rw, 1), ""), "\n")
 		for _, l := range errLines[:min(len(errLines), 2)] {
@@ -583,12 +646,12 @@ func (d launchDialog) right(rw, rows int) []string {
 	return append(lines[:max(rows-len(tail), 0)], tail...)
 }
 
-func (d launchDialog) saveRow(a agentsapi.Account) string {
+func (d launchDialog) saveRow() string {
 	box := "[ ]"
 	if d.save {
 		box = "[x]"
 	}
-	row := box + " Save as defaults for this account"
+	row := box + " Save profile defaults"
 	if d.focus == launchFocusSave {
 		return lipgloss.NewStyle().Bold(true).Foreground(theme.Current.Accent).Render(row)
 	}

@@ -1976,7 +1976,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		}
 		return c.run(m)
 
-	case modals.KindConfirm:
+	case modals.KindConfirm, kindAgentStop:
 		if m.pendingConfirm != nil {
 			action := m.pendingConfirm.action
 			m.pendingConfirm = nil

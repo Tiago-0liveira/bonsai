@@ -136,3 +136,6 @@ func fit(s string, n int) string {
 	}
 	return s + strings.Repeat(" ", n-width)
 }
+
+// Compact switches to a single column when two columns would crowd the fields.
+func Compact(w int) bool { return w < 76 }

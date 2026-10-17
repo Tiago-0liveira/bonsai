@@ -123,7 +123,7 @@ func TestInitLoadsSelectedAccount(t *testing.T) {
 	api := newFake()
 	m := opened(t, api, 104, 34)
 	out := plain(m)
-	for _, want := range []string{"AGENT ACCOUNTS", "Claude · work", "[Overview]", "Connected", "work@example.com", "Max", "Browser login", "0 running"} {
+	for _, want := range []string{"AGENT PROFILES", "Claude · work", "[Overview]", "Connected", "work@example.com", "Max", "Browser login", "0 running"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}
@@ -181,7 +181,7 @@ func TestEscClosesAndDirtyDefaultsAsk(t *testing.T) {
 	if !strings.Contains(plain(m), "● unsaved") {
 		t.Fatalf("no unsaved marker:\n%s", plain(m))
 	}
-	m, msgs := press(m, "esc")
+	m, msgs := press(m, "esc", "esc")
 	if len(msgs) != 0 || !m.Capturing() || !strings.Contains(plain(m), "Discard unsaved defaults?") {
 		t.Fatalf("esc on dirty defaults must ask, msgs=%#v\n%s", msgs, plain(m))
 	}

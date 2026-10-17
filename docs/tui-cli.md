@@ -39,7 +39,9 @@ default: the terminal only watches until you press `enter`. On the focused Agent
 tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops the
 selected running agent after a confirmation. The command palette (`ctrl+k`) has
 **Agents: open tab**, **new agent**, **accounts** and **usage** under **Agents**;
-stop is on the tab and in the `ctrl+]` menu only.
+stop is on the tab and in the `ctrl+]` menu only. Profiles, usage, the session
+picker and launch/stop dialogs stay inside the Agents tab; the worktree list and
+right-pane tab bar remain visible.
 
 Press `enter` on a session to enter terminal mode and type into it. The client
 attaches as the writer and every key goes to the agent, including `esc`, `tab`,
@@ -78,12 +80,27 @@ sessions as one flat list, running ones first, then ended ones, marked `●` run
 the chosen session. Opening the picker clears the `!` failure markers on that
 worktree's rows, so the failures stay listed here with `✗`.
 
-The new-agent dialog (`n`) picks an account with `j`/`k` and moves between fields
-with `Tab`. `Enter` edits the focused field, `ctrl+s` starts the agent and `Esc`
-closes the dialog. An account that needs a sign-in shows `[Sign in first]` in place
-of start. Signing in or adding an account suspends the TUI and runs the provider's
-CLI flow in the terminal, then returns to Bonsai. See
-[agents.md](agents.md) for profiles and accounts.
+The new-agent dialog (`n`) selects a profile with `↑`/`↓` (or `j`/`k`). `Tab`
+and `Shift+Tab` move through the name, model, effort, other launch options and
+buttons. Within the options, `↑`/`↓` moves between fields, `←`/`→` changes a value,
+and `Enter` opens a choice list. `Esc` dismisses that list before closing the
+dialog. `ctrl+s` starts the agent. Model and effort start from the selected
+profile's defaults; edits apply only to this new agent unless **Save profile
+defaults** is checked. Effort choices follow the selected model's capabilities.
+
+In profiles (`m`), `Tab` and `Shift+Tab` move focus between the profile list,
+section tabs and details. Use `↑`/`↓` to select a profile, `←`/`→` to switch the
+focused section tabs, and `Enter` to enter the details or edit a field. `1`/`2`/`3`
+jump directly to Overview, Usage or Defaults. `Esc` returns focus to profiles;
+press it again to close. Unsaved defaults require confirmation before closing or
+switching profiles. Usage (`u`) uses `↑`/`↓` to select a profile, `r` to refresh,
+`m` for its profile details and `Esc` to close. Narrow panes use a single column
+with the selected profile shown above the content.
+
+An account that needs a sign-in shows `[Sign in first]` in place of start.
+Signing in or adding an account suspends the TUI and runs the provider's CLI
+flow in the terminal, then returns to Bonsai. See [agents.md](agents.md) for
+profiles and accounts.
 
 ### Keybindings
 

@@ -44,7 +44,7 @@ func (m Model) agentGlyph(p agents.ProviderID) string {
 // One cell each, so a row laid out before the swap keeps its width.
 var asciiRunes = strings.NewReplacer(
 	"●", "*", "✓", "+", "✗", "x", "│", "|", "─", "-", "·", "-", "→", ">",
-	"…", "~", "⚠", "!", "▼", "v",
+	"…", "~", "⚠", "!", "▼", "v", "↑", "^", "↓", "v", "←", "<",
 	"╭", "+", "╮", "+", "╰", "+", "╯", "+", "├", "+", "┤", "+", "┬", "+", "┴", "+", "┼", "+", "╷", "|",
 )
 
@@ -118,7 +118,22 @@ func leftRight(left, right string, width int) string {
 // cells: optional title, strip, header, rules, then the terminal area with every
 // remaining row.
 func (m Model) renderAgentsPane(w, h int) string {
-	rows := m.agentsRows(w, h)
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	var content string
+	switch {
+	case m.agents.overlay != nil:
+		content = m.agentOverlayView(w, h)
+	case m.agentPaneModal():
+		content = m.chrome(m.modal.View())
+	default:
+		content = strings.Join(m.agentsRows(w, h), "\n")
+	}
+	rows := strings.Split(content, "\n")
+	for i := range rows {
+		rows[i] = fit(rows[i], w)
+	}
 	for len(rows) < h {
 		rows = append(rows, "")
 	}
@@ -398,4 +413,9 @@ func centered(lines []string, w, rows int) []string {
 		out = append(out, "")
 	}
 	return out[:rows]
+}
+
+// agentPaneModal distinguishes agent-local pickers from app-wide dialogs.
+func (m Model) agentPaneModal() bool {
+	return m.modal != nil && (m.modal.Kind() == kindAgents || m.modal.Kind() == kindAgentStop)
 }

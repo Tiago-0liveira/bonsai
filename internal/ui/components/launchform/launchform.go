@@ -73,6 +73,9 @@ func (f Form) Focus(on bool) Form {
 // as "close" while it is.
 func (f Form) Editing() bool { return f.open }
 
+// AtFirst reports whether moving up would leave the form.
+func (f Form) AtFirst() bool { return f.cursor == 0 }
+
 // AtLast reports that the cursor is on the last shown field, so a parent can
 // hand "down" to its own buttons.
 func (f Form) AtLast() bool { return f.cursor >= len(f.visible())-1 }
@@ -182,7 +185,14 @@ func (f Form) effective(values map[string]string, fd agents.LaunchField) string 
 
 func (f Form) choices(fd agents.LaunchField) []choice {
 	if fd.Kind == agents.LaunchFieldModel {
-		out := []choice{{label: agents.ProviderDefaultLabel}}
+		label := agents.ProviderDefaultLabel
+		for _, o := range fd.Options {
+			if o.Value == "" && o.Label != "" {
+				label = o.Label
+				break
+			}
+		}
+		out := []choice{{label: label}}
 		for _, m := range f.models {
 			label := m.Label
 			if label == "" {
@@ -356,7 +366,7 @@ func (f Form) updateOpen(km tea.KeyMsg, fd agents.LaunchField) Form {
 		f.pick = min(f.pick+1, len(cs)-1)
 	case "k", "up":
 		f.pick = max(f.pick-1, 0)
-	case "enter":
+	case "enter", "tab":
 		f.open = false
 		if f.pick < len(cs) {
 			f = f.apply(fd, cs[f.pick].value)

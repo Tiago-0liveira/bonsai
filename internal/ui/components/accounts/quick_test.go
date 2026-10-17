@@ -97,7 +97,7 @@ func TestQuickLoadsAndOrders(t *testing.T) {
 	q := opennedQuick(t, api, "c1", false)
 	out := quickPlain(q)
 	for _, want := range []string{"USAGE", "Claude · work", "5-hour", "72% remaining · Resets in 2h14m", "Weekly", "41% remaining",
-		"Updated 35 seconds ago", "j/k Account  ·  r Refresh  ·  m Accounts  ·  Esc Close", "Gemini Pro 12% · Flash 80%", "stale"} {
+		"Updated 35 seconds ago", "↑↓ Profile · r Refresh · m Profiles · Esc Close", "Gemini Pro 12% · Flash 80%", "stale"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}
@@ -527,7 +527,7 @@ func TestQuickSizeInvariants(t *testing.T) {
 
 func TestQuickTruncatesListWhenShort(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "c1", false)
-	q.SetSize(68, 14) // frame of 10 rows: 5 body rows, fewer than the list needs
+	q.SetSize(64, 10) // frame of 10 rows: 5 body rows, fewer than the list needs
 	out := quickPlain(q)
 	if got := len(strings.Split(out, "\n")); got > 10 {
 		t.Errorf("lines = %d, want <= 10", got)
@@ -535,7 +535,7 @@ func TestQuickTruncatesListWhenShort(t *testing.T) {
 }
 
 func TestGoldenQuickUsage(t *testing.T) {
-	q := newQuick(quickFake(), "c1", false, 68, 20) // a 64-wide frame
+	q := newQuick(quickFake(), "c1", false, 64, 16) // a 64-wide frame
 	q, _ = quickDrain(q, q.Init())
 	checkGolden(t, "quick-usage-64x16", quickPlain(q))
 }

@@ -639,6 +639,10 @@ func (m *Model) layout() {
 	}
 	m.list.SetSize(leftInnerW, innerH)
 	m.term.SetSize(rightInnerW, m.termHeight(innerH))
+	m.sizeAgentOverlay()
+	if m.agentPaneModal() {
+		m.modal.SetSize(m.agentPaneSize())
+	}
 }
 
 // termHeight is the right pane's viewport height: the pane body minus the tab
@@ -686,10 +690,7 @@ func (m Model) View() string {
 	if m.prefs != nil {
 		return clampHeight(m.prefs.View(), m.height)
 	}
-	if m.agents.overlay != nil {
-		return clampHeight(m.agentOverlayView(), m.height)
-	}
-	if m.modal != nil {
+	if m.modal != nil && !m.agentPaneModal() {
 		return clampHeight(m.modal.View(), m.height)
 	}
 

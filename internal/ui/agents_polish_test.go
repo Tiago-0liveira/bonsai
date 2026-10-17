@@ -336,7 +336,7 @@ func TestAgentsASCIIPreferenceEndToEnd(t *testing.T) {
 		e.m.state.Prefs.AgentGlyphs = "ascii"
 		e.m.width, e.m.height = 100, 30
 		e.openLaunch(t)
-		check(t, "launch dialog", e.m.agentOverlayView())
+		check(t, "launch dialog", e.m.agentOverlayView(e.m.agentPaneSize()))
 	})
 }
 

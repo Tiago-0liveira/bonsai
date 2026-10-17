@@ -122,7 +122,7 @@ func TestGoldenAccounts(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := New(mockupFake(), Options{Initial: c.initial, Tab: c.tab, Now: func() time.Time { return testNow }})
-			m.SetSize(104, 34) // a 100x30 frame
+			m.SetSize(100, 30) // the available pane is a 100x30 frame
 			m, _ = drain(m, m.Init())
 			checkGolden(t, c.name, plain(m))
 		})

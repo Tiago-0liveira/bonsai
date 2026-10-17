@@ -197,24 +197,52 @@ func (m Model) onKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch key := k.String(); key {
+	key := k.String()
+	switch key {
 	case "esc":
+		if m.focus != focusProfiles {
+			m.focus = focusProfiles
+			return m.syncFocus(), nil
+		}
 		return m.guard(func(m Model) (Model, tea.Cmd) { return m, emit(CloseMsg{}) })
-	case "j":
-		return m.moveAccount(1)
-	case "k":
-		return m.moveAccount(-1)
-	case "tab":
-		return m.setTab((m.tab + 1) % tabCount).syncFocus(), nil
-	case "shift+tab":
-		return m.setTab((m.tab + tabCount - 1) % tabCount).syncFocus(), nil
+	case "tab", "shift+tab":
+		delta := accountFocus(1)
+		if key == "shift+tab" {
+			delta = 2
+		}
+		m.focus = (m.focus + delta) % 3
+		return m.syncFocus(), nil
 	case "1", "2", "3":
+		m.focus = focusContent
 		return m.setTab(Tab(key[0] - '1')).syncFocus(), nil
 	case "ctrl+s":
 		if m.tab == TabDefaults {
 			return m.save()
 		}
 		return m, nil
+	}
+	if m.focus == focusProfiles {
+		switch key {
+		case "j", "down":
+			return m.moveAccount(1)
+		case "k", "up":
+			return m.moveAccount(-1)
+		case "enter", "right":
+			m.focus = focusContent
+			return m.syncFocus(), nil
+		}
+		return m, nil
+	}
+	if m.focus == focusSections {
+		switch key {
+		case "left", "h":
+			m = m.setTab((m.tab + tabCount - 1) % tabCount)
+		case "right", "l":
+			m = m.setTab((m.tab + 1) % tabCount)
+		case "enter", "down":
+			m.focus = focusContent
+		}
+		return m.syncFocus(), nil
 	}
 	if m.selected == "" {
 		return m, nil

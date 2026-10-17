@@ -21,7 +21,10 @@ import (
 
 // kindAgents is the session picker modal. It lives here, not in the modals
 // package, because Kind is only an identifier the parent routes on.
-const kindAgents modals.Kind = "agents"
+const (
+	kindAgents    modals.Kind = "agents"
+	kindAgentStop modals.Kind = "agent-stop"
+)
 
 const (
 	usageRefresh      = 60 * time.Second
@@ -265,7 +268,7 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 	build := func(query string) []string { return m.agentPickerItems(path, query) }
 	modal := modals.NewPicker(kindAgents, "AGENTS IN "+branchOf(wt), build, build(""),
 		"/ Search    Enter Open    n New    Esc Close", "No agents in this worktree yet", "n")
-	modal.SetSize(m.width, m.height)
+	modal.SetSize(m.agentPaneSize())
 	m.modal = &modal
 	return m, nil
 }

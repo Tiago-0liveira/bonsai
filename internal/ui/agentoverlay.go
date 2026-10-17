@@ -17,7 +17,7 @@ import (
 
 const accountsUnavailable = "agents: accounts are unavailable"
 
-// agentOverlay is the one full-screen agent overlay on top of the tab. At most
+// agentOverlay is the active agent view inside the tab. At most
 // one field is set. The live stream keeps pumping underneath: opening an
 // overlay never touches the attachment.
 type agentOverlay struct {
@@ -68,7 +68,12 @@ func (m Model) selectedAgentAccount() agents.AccountID {
 }
 
 func (m *Model) setAgentOverlay(o agentOverlay) {
+	m.rightTab = tabAgents
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
 	m.agents.overlay = &o
+	m.sizeAgentOverlay()
 }
 
 func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
@@ -93,7 +98,7 @@ func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
 		}
 	}
 	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), seed, m.agentGlyphsASCII())
-	d.SetSize(m.width, m.height)
+	d.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{launch: &d})
 	return m, d.Init()
 }
@@ -108,7 +113,7 @@ func (m Model) openAgentAccounts() (tea.Model, tea.Cmd) {
 
 func (m Model) showAccounts(initial agents.AccountID, tab accounts.Tab) (tea.Model, tea.Cmd) {
 	am := accounts.New(m.agents.api.Accounts, accounts.Options{ASCII: m.agentGlyphsASCII(), Initial: initial, Tab: tab})
-	am.SetSize(m.width, m.height)
+	am.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{accounts: &am})
 	return m, am.Init()
 }
@@ -119,12 +124,12 @@ func (m Model) openAgentUsage() (tea.Model, tea.Cmd) {
 	}
 	m.leaveAgentTerminal()
 	q := accounts.NewQuick(m.agents.api.Accounts, m.selectedAgentAccount(), m.agentGlyphsASCII())
-	q.SetSize(m.width, m.height)
+	q.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{quick: &q})
 	return m, q.Init()
 }
 
-// sizeAgentOverlay hands the screen size to the open overlay.
+// sizeAgentOverlay keeps child views within the Agents tab body.
 func (m *Model) sizeAgentOverlay() {
 	o := m.agents.overlay
 	if o == nil {
@@ -132,11 +137,11 @@ func (m *Model) sizeAgentOverlay() {
 	}
 	switch {
 	case o.launch != nil:
-		o.launch.SetSize(m.width, m.height)
+		o.launch.SetSize(m.agentPaneSize())
 	case o.accounts != nil:
-		o.accounts.SetSize(m.width, m.height)
+		o.accounts.SetSize(m.agentPaneSize())
 	case o.quick != nil:
-		o.quick.SetSize(m.width, m.height)
+		o.quick.SetSize(m.agentPaneSize())
 	}
 }
 
@@ -174,8 +179,8 @@ func (m Model) closeAgentOverlay() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// agentOverlayView draws the open overlay centered on the whole screen.
-func (m Model) agentOverlayView() string {
+// agentOverlayView draws the open view inside the Agents tab.
+func (m Model) agentOverlayView(w, h int) string {
 	o := m.agents.overlay
 	var s string
 	switch {
@@ -186,7 +191,7 @@ func (m Model) agentOverlayView() string {
 	case o.quick != nil:
 		s = o.quick.View()
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.chrome(s))
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Top, m.chrome(s))
 }
 
 // onAgentOverlayMsg handles the messages overlays send to their parent. handled
@@ -331,9 +336,9 @@ func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 	m.leaveAgentTerminal()
 	name := sessionName(s)
 	m.pendingConfirm = &confirmState{action: stopAgentCmd(m.agents.ctx, m.agents.api.Sessions, s.ID, name)}
-	modal := modals.NewConfirm(modals.KindConfirm, fmt.Sprintf("Stop %s?", name))
+	modal := modals.NewConfirm(kindAgentStop, fmt.Sprintf("Stop %s?", name))
 	modal.SetBody("The agent process ends.")
-	modal.SetSize(m.width, m.height)
+	modal.SetSize(m.agentPaneSize())
 	m.modal = &modal
 	return m, nil
 }

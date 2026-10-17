@@ -27,8 +27,6 @@ const (
 const (
 	// maxW and maxH cap the modal on big terminals.
 	maxW, maxH = 100, 32
-	// margin is the empty border kept around the modal on every side.
-	margin = 2
 )
 
 // Options configures a new modal.
@@ -62,6 +60,7 @@ type Model struct {
 	now   func() time.Time
 	w, h  int // screen size; the frame is derived by FrameSize
 	tab   Tab
+	focus accountFocus
 
 	accounts []agentsapi.Account
 	listed   bool
@@ -87,6 +86,14 @@ type Model struct {
 	// next list selects it.
 	pendingAdd *newAccount
 }
+
+type accountFocus int
+
+const (
+	focusProfiles accountFocus = iota
+	focusSections
+	focusContent
+)
 
 type newAccount struct {
 	provider agents.ProviderID
@@ -119,10 +126,10 @@ func (m Model) Init() tea.Cmd { return listCmd(m.api, m.latest.list, m.selected)
 // SetSize gives the modal the screen size; it sizes itself inside it.
 func (m *Model) SetSize(w, h int) { m.w, m.h = w, h }
 
-// FrameSize is the modal size for a screen: a margin on every side, capped.
+// FrameSize uses the available pane, capped on large terminals.
 // The new-agent dialog uses it too so both modals line up.
 func FrameSize(screenW, screenH int) (w, h int) {
-	return max(min(screenW-2*margin, maxW), 0), max(min(screenH-2*margin, maxH), 0)
+	return max(min(screenW, maxW), 0), max(min(screenH, maxH), 0)
 }
 
 // Capturing reports that keys must all reach the modal: a text input, a
@@ -151,8 +158,16 @@ func (m Model) View() string {
 		AddSelected: m.add.active,
 		Usage:       m.usage,
 		ASCII:       m.ascii,
+		Focused:     m.focus == focusProfiles,
 	}
-	out := Frame("Agent accounts", side.View(leftW, rows), m.right(rightW, rows), m.footer(), w, h)
+	var out string
+	if Compact(w) {
+		body := []string{side.Selector(m.focus == focusProfiles), ""}
+		body = append(body, m.right(max(w-4, 0), max(rows-2, 0))...)
+		out = FrameSingle("Agent profiles", body, m.footer(), w, h)
+	} else {
+		out = Frame("Agent profiles", side.View(leftW, rows), m.right(rightW, rows), m.footer(), w, h)
+	}
 	if m.dlg != nil {
 		out = overlay(out, m.dlg.view(w), w)
 	}
@@ -164,13 +179,17 @@ func (m Model) footer() string {
 	case m.add.active:
 		return m.addFooter()
 	}
-	switch m.tab {
-	case TabUsage:
-		return "j/k Account  ·  Tab Section  ·  r Refresh  ·  Esc Close"
-	case TabDefaults:
-		return "Tab Section  ·  Enter Edit  ·  Esc Back"
+	switch m.focus {
+	case focusProfiles:
+		return "↑↓ Profile · Tab Sections · Esc Close"
+	case focusSections:
+		return "←→ Section · Tab Details · Esc Back"
+	default:
+		if m.tab == TabDefaults {
+			return "↑↓ Field · Enter Edit · ^S Save · Esc"
+		}
+		return "↑↓ Action · Enter Select · Esc Back"
 	}
-	return "j/k Navigate  ·  Tab Section  ·  Enter Select  ·  Esc Close"
 }
 
 // right builds the right column's rows.
@@ -194,6 +213,9 @@ func (m Model) right(rw, rows int) []string {
 	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, m.ascii)) +
 		" " + providerName(a.Provider) + " · " + a.Name
 	lines := []string{head, "", m.tabRow(), dim.Render(strings.Repeat("─", rw)), ""}
+	if Compact(m.w) {
+		lines = []string{m.tabRow(), dim.Render(strings.Repeat("─", rw))}
+	}
 	body := max(rows-len(lines), 0)
 
 	switch m.tab {
@@ -219,6 +241,9 @@ func (m Model) tabRow() string {
 		parts = append(parts, lipgloss.NewStyle().Foreground(th.Dim).Render(names[t]))
 	}
 	row := strings.Join(parts, "  ")
+	if m.focus == focusSections {
+		row = lipgloss.NewStyle().Reverse(true).Render(row)
+	}
 	switch {
 	case m.df.saved:
 		row += "  " + lipgloss.NewStyle().Foreground(th.Success).Render("Saved")

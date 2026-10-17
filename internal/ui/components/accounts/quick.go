@@ -296,9 +296,9 @@ func (q Quick) View() string {
 	w := min(fw, quickMaxW)
 	inner := max(w-4, 0)
 
-	footer := "j/k Account  ·  r Refresh  ·  m Accounts  ·  Esc Close"
+	footer := "↑↓ Profile · r Refresh · m Profiles · Esc Close"
 	if inner < ansi.StringWidth(footer) {
-		footer = "j/k  ·  r Refresh  ·  m Accounts  ·  Esc"
+		footer = "↑↓ Profile · r Refresh · m More · Esc"
 	}
 
 	var body []string

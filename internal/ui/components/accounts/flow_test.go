@@ -16,9 +16,9 @@ import (
 
 // Footer hints per tab, as the UX mockups spell them.
 const (
-	footerOverview = "j/k Navigate  ·  Tab Section  ·  Enter Select  ·  Esc Close"
-	footerUsage    = "j/k Account  ·  Tab Section  ·  r Refresh  ·  Esc Close"
-	footerDefaults = "Tab Section  ·  Enter Edit  ·  Esc Back"
+	footerOverview = "↑↓ Action · Enter Select · Esc Back"
+	footerUsage    = "↑↓ Action · Enter Select · Esc Back"
+	footerDefaults = "↑↓ Field · Enter Edit · ^S Save · Esc"
 )
 
 // reload delivers a ReloadMsg, as the parent does after a terminal flow ends.
@@ -81,10 +81,10 @@ func TestNavigationWalksProviderGroupsAndReachesAdd(t *testing.T) {
 func TestTabCyclingAndDirectKeys(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
 	steps := []struct{ key, want string }{
-		{"tab", "[Usage]"},
-		{"tab", "[Defaults]"},
 		{"tab", "[Overview]"},
-		{"shift+tab", "[Defaults]"},
+		{"right", "[Usage]"},
+		{"right", "[Defaults]"},
+		{"left", "[Usage]"},
 		{"2", "[Usage]"},
 		{"3", "[Defaults]"},
 		{"1", "[Overview]"},
@@ -263,7 +263,7 @@ func TestEscLeavesDropdownBeforeClosing(t *testing.T) {
 func TestDiscardDialogCanDiscardThenClose(t *testing.T) {
 	api := newFake()
 	m := opened(t, api, 104, 34)
-	m, _ = press(m, "3", "enter", "down", "enter", "esc")
+	m, _ = press(m, "3", "enter", "down", "enter", "esc", "esc")
 	if !strings.Contains(plain(m), "Discard unsaved defaults?") {
 		t.Fatalf("no discard dialog:\n%s", plain(m))
 	}
@@ -278,7 +278,7 @@ func TestDiscardDialogCanDiscardThenClose(t *testing.T) {
 
 func TestSwitchingAccountWithUnsavedDefaultsAsks(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
-	m, _ = press(m, "3", "enter", "down", "enter", "j")
+	m, _ = press(m, "3", "enter", "down", "enter", "esc", "j")
 	out := plain(m)
 	if !strings.Contains(out, "Discard unsaved defaults?") || !strings.Contains(out, "Claude · work") {
 		t.Fatalf("switching with unsaved edits must ask:\n%s", out)
@@ -293,7 +293,7 @@ func TestRemoveBlockedWhileRunning(t *testing.T) {
 	api := newFake()
 	api.Items[0].Running = 2
 	m := opened(t, api, 104, 34)
-	m, _ = press(m, "down", "enter")
+	m, _ = press(m, "1", "down", "enter")
 	out := plain(m)
 	if !strings.Contains(out, "Stop 2 running sessions first.") || m.dlg != nil {
 		t.Fatalf("remove while running:\n%s", out)
@@ -306,7 +306,7 @@ func TestRemoveBlockedWhileRunning(t *testing.T) {
 func TestRemoveConfirmReloadsAndSelectsNeighbor(t *testing.T) {
 	api := newFake()
 	m := opened(t, api, 104, 34)
-	m, _ = press(m, "down", "enter")
+	m, _ = press(m, "1", "down", "enter")
 	if out := plain(m); !strings.Contains(out, "Remove ✳ work? Its Bonsai config dir is deleted.") {
 		t.Fatalf("no confirm dialog:\n%s", out)
 	}
@@ -315,7 +315,7 @@ func TestRemoveConfirmReloadsAndSelectsNeighbor(t *testing.T) {
 		t.Fatalf("esc must cancel the removal")
 	}
 
-	m, _ = press(m, "down", "enter", "right", "enter")
+	m, _ = press(m, "1", "down", "enter", "right", "enter")
 	if got := api.Removed(); len(got) != 1 || got[0] != "c1" {
 		t.Fatalf("removed = %v", got)
 	}
@@ -329,7 +329,7 @@ func TestRemoveErrorShownInline(t *testing.T) {
 	api := newFake()
 	api.RemoveErr = errors.New("permission denied")
 	m := opened(t, api, 104, 34)
-	m, _ = press(m, "down", "enter", "right", "enter")
+	m, _ = press(m, "1", "down", "enter", "right", "enter")
 	if out := plain(m); !strings.Contains(out, "Couldn't remove: permission denied") {
 		t.Fatalf("remove error not shown:\n%s", out)
 	}
@@ -337,7 +337,7 @@ func TestRemoveErrorShownInline(t *testing.T) {
 
 func TestLoginEmitsTerminalCommand(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
-	_, msgs := press(m, "enter")
+	_, msgs := press(m, "1", "enter")
 	args := strings.Join(execOf(t, msgs).Args, " ")
 	if !strings.HasSuffix(args, "agent account login c1") {
 		t.Fatalf("login argv = %q", args)
@@ -496,5 +496,29 @@ func TestSanitizeRedactsPathsAndControls(t *testing.T) {
 	}
 	if sanitize(nil) != "" {
 		t.Fatal("nil error must sanitize to empty")
+	}
+}
+
+func TestArrowKeysFollowFocusedArea(t *testing.T) {
+	m := opened(t, newFake(), 80, 24)
+	m, _ = press(m, "down")
+	if m.selected != "c2" || m.focus != focusProfiles {
+		t.Fatalf("down must select a profile: selected=%s focus=%d", m.selected, m.focus)
+	}
+	m, _ = press(m, "tab", "right", "right")
+	if m.tab != TabDefaults || m.focus != focusSections || m.selected != "c2" {
+		t.Fatalf("section arrows changed the wrong area: tab=%d focus=%d profile=%s", m.tab, m.focus, m.selected)
+	}
+	m, _ = press(m, "tab", "down", "right")
+	if m.selected != "c2" || m.focus != focusContent || !m.df.form.Dirty() {
+		t.Fatalf("detail arrows must edit only this profile: profile=%s focus=%d dirty=%v", m.selected, m.focus, m.df.form.Dirty())
+	}
+	m, _ = press(m, "esc")
+	if m.focus != focusProfiles || m.dlg != nil {
+		t.Fatal("escape must return focus to profiles and keep the edits")
+	}
+	m, _ = press(m, "up")
+	if m.dlg == nil || m.selected != "c2" {
+		t.Fatal("switching profiles must guard unsaved defaults")
 	}
 }

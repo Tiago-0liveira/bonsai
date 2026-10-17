@@ -40,7 +40,7 @@ func (m Model) dirty() bool { return m.df.loaded && m.df.form.Dirty() }
 
 // syncFocus shows the form's focus highlight only while it owns the keys.
 func (m Model) syncFocus() Model {
-	m.df.form = m.df.form.Focus(m.tab == TabDefaults && m.df.zone == zoneForm)
+	m.df.form = m.df.form.Focus(m.focus == focusContent && m.tab == TabDefaults && m.df.zone == zoneForm)
 	return m
 }
 

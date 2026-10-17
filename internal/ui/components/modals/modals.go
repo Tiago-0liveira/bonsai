@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
@@ -676,7 +677,15 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("↑/↓ move · enter select · esc cancel"))
 	}
 
-	box := boxStyle.Render(b.String())
+	body := b.String()
+	if m.width > 0 {
+		lines := strings.Split(body, "\n")
+		for i := range lines {
+			lines[i] = ansi.Truncate(lines[i], max(m.width-6, 1), "…")
+		}
+		body = strings.Join(lines, "\n")
+	}
+	box := boxStyle.Render(body)
 	if m.width == 0 || m.height == 0 {
 		return box
 	}
@@ -795,7 +804,10 @@ func (m Model) renderList() string {
 	if len(m.items) == 0 {
 		return dimStyle.Render("(no matches)")
 	}
-	const maxRows = 12
+	maxRows := 12
+	if m.height > 0 {
+		maxRows = min(maxRows, max(m.height-10, 1))
+	}
 	start := 0
 	if m.cursor >= maxRows {
 		start = m.cursor - maxRows + 1
