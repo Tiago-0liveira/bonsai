@@ -266,9 +266,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	default:
 		leftW := ansi.StringWidth(head) + ansi.StringWidth(name) + ansi.StringWidth(tail)
 		if leftW+1+agentsW <= width {
-			// Right-aligned at the row end.
-			pad := strings.Repeat(" ", width-leftW-agentsW)
-			title = head + nameStyle.Render(name) + tail + pad + agents
+			title = head + nameStyle.Render(name) + tail + " " + agents
 			break
 		}
 		// Too tight: the branch name gives way first, the agents stay next

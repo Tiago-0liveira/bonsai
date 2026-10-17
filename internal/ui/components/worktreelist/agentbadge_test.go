@@ -75,15 +75,15 @@ func TestAgentBadgePlacement(t *testing.T) {
 	}
 }
 
-func TestAgentBadgeRightAlignedWhenRoomy(t *testing.T) {
+func TestAgentBadgeFollowsOtherBadgesWhenRoomy(t *testing.T) {
 	m := New()
 	m.SetSize(80, 10)
-	m.SetItems([]Item{{WT: git.Worktree{Path: "/w/x", Branch: "x"}}})
-	m.SetAgentBadges(func(string) string { return "✳" })
+	m.SetItems([]Item{{WT: git.Worktree{Path: "/w/x", Branch: "x"}, Running: 1}})
+	m.SetAgentBadges(func(string) string { return "✳2" })
 	for _, l := range strings.Split(ansi.Strip(m.View()), "\n") {
 		if strings.Contains(l, "x") && strings.Contains(l, "✳") {
-			if got := ansi.StringWidth(strings.TrimRight(l, " ")); got != 80 {
-				t.Errorf("badge should sit at the right edge, row width %d", got)
+			if got := strings.TrimSpace(l); !strings.HasSuffix(got, "x ▶1 ✳2") {
+				t.Errorf("agent count should follow the branch badges with one space: %q", got)
 			}
 			return
 		}

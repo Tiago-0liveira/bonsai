@@ -23,7 +23,8 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 
 The Agents tab lists the agents running in the selected worktree and the
 selected account's usage; worktree rows group running agents by provider with a
-glyph and count, plus `!` for an unseen failure. It shows the selected session's
+glyph and count directly after the branch's other badges, plus `!` for an unseen
+failure. It shows the selected session's
 live terminal read-only: you can watch the agent. The title row (`AGENTS · <branch>`)
 appears when the terminal is tall enough. A header shows the session's provider,
 profile, model and state, with `· read-only` when another client is controlling it.
