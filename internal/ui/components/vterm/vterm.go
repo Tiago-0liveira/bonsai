@@ -224,6 +224,22 @@ func (m *Model) SendPaste(s string) {
 	}
 }
 
+// SendEvent encodes a decoded terminal key or paste using the agent's current
+// modes. The CLI uses this when hosting the emulator in a real terminal.
+func (m *Model) SendEvent(event uv.Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	switch event := event.(type) {
+	case uv.KeyPressEvent:
+		m.emu.SendKey(event)
+	case uv.PasteEvent:
+		m.emu.Paste(event.Content)
+	}
+}
+
 // Title returns the last OSC 0/2 window title.
 func (m *Model) Title() string {
 	m.mu.Lock()

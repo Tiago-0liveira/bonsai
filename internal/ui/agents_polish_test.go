@@ -16,7 +16,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi/fake"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
@@ -88,76 +87,24 @@ func TestAgentKeysHaveTheirOwnHelpSection(t *testing.T) {
 	nm, _ := e.m.openKeymap()
 	e.m = nm.(Model)
 	view := ansi.Strip(e.m.modal.View())
-	for _, s := range []string{"Agents tab (7)", agentPrefixSection + " (8)"} {
+	for _, s := range []string{"Agents tab (7)", agentTerminalSection + " (1)"} {
 		if !strings.Contains(view, s) {
 			t.Errorf("help lacks %q:\n%s", s, view)
 		}
 	}
 }
 
-func TestAgentPrefixKeysDriveTheRouter(t *testing.T) {
-	// Every key the help lists does what it says after ctrl+]; anything else is swallowed.
-	type effect func(t *testing.T, e *agentsEnv, st *fake.Stream)
-	tests := []struct {
-		key  tea.KeyMsg
-		want effect
-	}{
-		{runes("d"), func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if e.m.agentTerminalMode() {
-				t.Error("d should leave terminal mode")
-			}
-		}},
-		{runes("a"), func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if e.m.modal == nil || e.m.agentTerminalMode() {
-				t.Error("a should open the picker and leave terminal mode")
-			}
-		}},
-		{runes("u"), func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if e.m.agents.overlay == nil || e.m.agents.overlay.quick == nil {
-				t.Error("u should open quick usage")
-			}
-		}},
-		{runes("m"), func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if e.m.agents.overlay == nil || e.m.agents.overlay.accounts == nil {
-				t.Error("m should open accounts")
-			}
-		}},
-		{runes("s"), func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if e.m.modal == nil || !strings.Contains(ansi.Strip(e.m.modal.View()), "Stop") {
-				t.Error("s should ask to stop")
-			}
-		}},
-		{runes("t"), func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if st.Takes() != 0 || len(st.Inputs()) != 0 {
-				t.Error("t as the writer has nothing to take and sends nothing")
-			}
-		}},
-		{tea.KeyMsg{Type: tea.KeyEsc}, func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if !e.m.agentTerminalMode() || len(st.Inputs()) != 0 || e.m.agents.view.prefix {
-				t.Error("esc closes the strip without reaching the agent")
-			}
-		}},
-		{ctrlBracket, func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if got := inputsOf(st); len(got) != 1 || got[0] != "\x1d" {
-				t.Errorf("ctrl+] ctrl+] sends 0x1d, got %q", got)
-			}
-		}},
-		{runes("x"), func(t *testing.T, e *agentsEnv, st *fake.Stream) {
-			if !e.m.agentTerminalMode() || len(st.Inputs()) != 0 || e.m.modal != nil || e.m.agents.overlay != nil {
-				t.Error("an unknown key is swallowed")
-			}
-		}},
+func TestAgentEscapeReturnsToNavigationImmediately(t *testing.T) {
+	e, st := terminalEnv(t)
+	e.typeKeys(t, ctrlBracket)
+	if e.m.agentTerminalMode() || e.m.modal != nil || e.m.agents.overlay != nil {
+		t.Fatal("Ctrl+] must immediately return to navigation without a menu")
 	}
-	for _, tc := range tests {
-		t.Run(tc.key.String(), func(t *testing.T) {
-			e, st := terminalEnv(t)
-			e.typeKeys(t, ctrlBracket, tc.key)
-			tc.want(t, e, st)
-		})
+	if len(st.Inputs()) != 0 {
+		t.Fatal("escape key reached agent")
 	}
-	// The help lists exactly these keys.
-	if len(agentPrefixKeys) != 8 {
-		t.Errorf("help lists %d prefix keys, want 8", len(agentPrefixKeys))
+	if len(agentTerminalKeys) != 1 || agentTerminalKeys[0].key != "ctrl+]" {
+		t.Fatal("terminal help must advertise the escape key")
 	}
 }
 
@@ -165,7 +112,7 @@ func TestKeymapPrefixRowsAreInert(t *testing.T) {
 	e := newAgentsEnv(t)
 	nm, _ := e.m.openKeymap()
 	e.m = nm.(Model)
-	row := "ctrl+] d  detach  · " + agentPrefixSection
+	row := "ctrl+]  unfocus agent  · " + agentTerminalSection
 	nm, _ = e.m.Update(modals.SubmitMsg{Kind: modals.KindKeymap, Value: row})
 	e.m = nm.(Model)
 	if e.m.prefs != nil || e.m.modal == nil {
@@ -187,7 +134,7 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e := liveEnv(t)
 		e.attached(t)
 		e.frames(t, status("running"))
-		if got := plain(e); got != "tab focus · g agents · ? keys" {
+		if got := plain(e); got != "enter focus agent · a all · m profiles · u usage · n new · s stop · tab focus · ? keys" {
 			t.Errorf("navigation = %q", got)
 		}
 	})
@@ -201,13 +148,13 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e := liveEnv(t)
 		e.attached(t)
 		e.frames(t, status("exited"))
-		if got := plain(e); got != "n new · a all · tab focus · g agents · ? keys" {
+		if got := plain(e); got != "a all · m profiles · u usage · n new · tab focus · ? keys" {
 			t.Errorf("ended = %q", got)
 		}
 	})
 	t.Run("terminal", func(t *testing.T) {
 		e, _ := terminalEnv(t)
-		if got := plain(e); got != "Ctrl+] Bonsai command prefix" {
+		if got := plain(e); got != "FOCUSED · Input goes to agent · Ctrl+] unfocus" {
 			t.Errorf("terminal = %q", got)
 		}
 	})
@@ -219,14 +166,14 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e.send(t, tea.KeyMsg{Type: tea.KeyEnter})
 		e.attached(t)
 		e.frames(t, status("running"))
-		if got := plain(e); got != "Ctrl+] t take control · Ctrl+] d detach" {
+		if got := plain(e); got != "READ-ONLY · Ctrl+] unfocus" {
 			t.Errorf("observing other = %q", got)
 		}
 	})
 	t.Run("terminal while reconnecting", func(t *testing.T) {
 		e, _ := terminalEnv(t)
 		e.m.agents.view.stream = nil
-		if got := plain(e); got != "connecting… · Ctrl+] d detach" {
+		if got := plain(e); got != "connecting… · Ctrl+] unfocus" {
 			t.Errorf("reconnecting = %q", got)
 		}
 	})
@@ -410,7 +357,7 @@ func agentSurfaces(t *testing.T, p theme.Palette) map[string]string {
 		e.enterTerminal(t)
 		out["terminal "+name] = e.m.renderAgentsPane(w, h)
 		e.send(t, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-		out["control strip "+name] = e.m.renderAgentsPane(w, h)
+		out["unfocused "+name] = e.m.renderAgentsPane(w, h)
 		out["status bar "+name] = e.m.contextHelp()
 	}
 	return out
@@ -431,10 +378,8 @@ func useTheme(t *testing.T, p theme.Palette) {
 	t.Cleanup(func() { theme.Current = old; applyTheme() })
 }
 
-// A palette of unique truecolor values: any color in the output that is not one
-// of them is hard-coded, and would ignore the user's theme (a hard-coded light
-// or dark color is unreadable on the opposite theme).
-func TestAgentsColorsComeOnlyFromThePalette(t *testing.T) {
+// Interface colors follow the palette; provider identities keep their brand colors.
+func TestAgentsColorsUsePaletteAndProviderIdentity(t *testing.T) {
 	useTrueColor(t)
 	roles := []string{"#010203", "#040506", "#070809", "#0a0b0c", "#0d0e0f", "#101112", "#131415", "#161718", "#191a1b"}
 	p := theme.Palette{
@@ -447,11 +392,17 @@ func TestAgentsColorsComeOnlyFromThePalette(t *testing.T) {
 		n := func(s string) int { v, _ := strconv.ParseInt(s, 16, 0); return int(v) }
 		allowed[fmt.Sprintf("2;%d;%d;%d", n(r[1:3]), n(r[3:5]), n(r[5:7]))] = true
 	}
+	for _, provider := range []agents.ProviderID{"claude", "codex", "antigravity"} {
+		colors, _ := sgrColors(theme.ProviderStyle(provider).Render("provider"))
+		for color := range colors {
+			allowed[color] = true
+		}
+	}
 	for name, out := range agentSurfaces(t, p) {
 		fg, bg := sgrColors(out)
 		for spec := range fg {
 			if !allowed[spec] {
-				t.Errorf("%s uses a color outside the palette: %q", name, spec)
+				t.Errorf("%s uses a color outside the palette and provider identities: %q", name, spec)
 			}
 		}
 		// Only foregrounds are set, so none can equal its background.

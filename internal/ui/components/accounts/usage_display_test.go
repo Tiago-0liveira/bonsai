@@ -10,6 +10,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/providers/antigravity"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
@@ -85,5 +86,54 @@ func TestAntigravityUsesHeadlineWindows(t *testing.T) {
 	}
 	if strings.Contains(out, "72%") || strings.Contains(out, "30%") {
 		t.Fatalf("five-hour pool reported as a percentage:\n%s", out)
+	}
+}
+
+func TestProfilesAndUsageGroupByProviderWithIdentityColors(t *testing.T) {
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
+	q := opennedQuick(t, quickFake(), "c1", false)
+	q.SetSize(120, 30)
+	m := opened(t, quickFake(), 120, 30)
+	for _, provider := range []agents.ProviderID{"claude", "codex", "antigravity"} {
+		heading := theme.ProviderStyle(provider).Bold(true).Render(strings.ToUpper(providerName(provider)))
+		for _, view := range []string{q.View(), m.View()} {
+			if !strings.Contains(view, heading) {
+				t.Fatalf("missing colored provider heading %s", provider)
+			}
+		}
+	}
+	if strings.Contains(plain(m), "+ Add account") || !strings.Contains(plain(m), "n Add") {
+		t.Fatal("adding a profile must be advertised as a shortcut")
+	}
+}
+
+func TestGeminiRefreshKeepsWindowLayout(t *testing.T) {
+	api := mockupFake()
+	q := opennedQuick(t, api, "a1", false)
+	m := selectByID(t, opened(t, api, 120, 40), "a1")
+	m, _ = press(m, "2")
+	// Refresh returns the API's display labels and alternate window spelling,
+	// while the first view used canonical cached windows.
+	limits, err := antigravity.ParseUsage([]byte(`{"groups":[{"name":"Gemini Models","buckets":[
+		{"id":"g1","name":"Five Hour Limit Remaining","window":"five_hour","remaining_fraction":0.3},
+		{"id":"g2","name":"Weekly Limit Remaining","window":"7_day","remaining_fraction":0.6}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := agents.UsageSnapshot{Provider: "antigravity", Limits: limits}
+	api.Usages["a1"] = agentsapi.Usage{Snapshot: snapshot, Headline: antigravity.New(nil, nil).UsageHeadline(snapshot)}
+	q, _ = quickKey(q, "r")
+	m, _ = press(m, "r")
+	for _, out := range []string{quickPlain(q), plain(m)} {
+		for _, want := range []string{"5-hour", "Weekly", "███░░░░░░░", "60%"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("refresh lost %q:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "Limit Remaining") || strings.Contains(out, "30%") {
+			t.Fatalf("refresh restored the pool layout:\n%s", out)
+		}
 	}
 }

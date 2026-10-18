@@ -475,7 +475,7 @@ Usage:
   bonsai shell-init               print a shell 'bcd' cd helper
   bonsai agent ...                manage provider accounts and sessions
   bonsai agents [--all] [--json]  list running agent sessions (any directory)
-  bonsai agents attach <id|name> [--take] [--read-only]  attach this terminal (Ctrl-] d detaches)
+  bonsai agents attach <id|name> [--take] [--read-only]  attach (Ctrl-] d detaches; Ctrl-] k confirms kill)
   bonsai agents stop <id|name>    stop an agent session
   bonsai version (-v, --version)  print the installed version
   bonsai update (-u, --update)    check or install updates

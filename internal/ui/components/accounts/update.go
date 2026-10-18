@@ -21,6 +21,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.onList(msg)
 	case describeMsg:
 		return m.onDescribe(msg), nil
+	case sidebarInfoMsg:
+		if msg.seq == m.latest.list {
+			m.accounts = slices.Clone(m.accounts)
+			for i := range m.accounts {
+				id := m.accounts[i].ID
+				if info, ok := msg.infos[id]; ok && id != m.selected && m.describeSeq[id] < msg.seq {
+					m.accounts[i].Info = info
+				}
+			}
+		}
+		return m, nil
 	case usageMsg:
 		return m.onUsage(msg), nil
 	case defaultsMsg:
@@ -77,7 +88,7 @@ func (m Model) onList(msg listMsg) (Model, tea.Cmd) {
 		m.resetAccount()
 	}
 	m.selected = pick
-	return m, m.loadSelected()
+	return m, tea.Batch(m.loadSelected(), sidebarInfoCmd(m.api, m.accounts, m.selected, m.latest.list))
 }
 
 // findNew is the account the last terminal add flow created, or "" when it
@@ -187,13 +198,10 @@ func (m Model) onKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		return m.dialogKey(k)
 	case m.add.active:
 		return m.addKey(k)
+	case m.formEditing() && (k.String() == "tab" || k.String() == "shift+tab"):
+		m.df.form, _ = m.df.form.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	case m.formEditing():
 		m.df.form, _ = m.df.form.Update(k)
-		return m, nil
-	case !m.listed:
-		if k.String() == "esc" {
-			return m, emit(CloseMsg{})
-		}
 		return m, nil
 	}
 
@@ -206,19 +214,27 @@ func (m Model) onKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m.guard(func(m Model) (Model, tea.Cmd) { return m, emit(CloseMsg{}) })
 	case "tab", "shift+tab":
-		delta := accountFocus(1)
+		delta := Tab(1)
 		if key == "shift+tab" {
-			delta = 2
+			delta = tabCount - 1
 		}
-		m.focus = (m.focus + delta) % 3
-		return m.syncFocus(), nil
+		return m.setTab((m.tab + delta) % tabCount).syncFocus(), nil
 	case "1", "2", "3":
 		m.focus = focusContent
 		return m.setTab(Tab(key[0] - '1')).syncFocus(), nil
+	case "n":
+		return m.guard(func(m Model) (Model, tea.Cmd) { return m.openAdd(), nil })
 	case "ctrl+s":
 		if m.tab == TabDefaults {
 			return m.save()
 		}
+		return m, nil
+	case "r":
+		if m.tab == TabUsage {
+			return m.usageKey(k)
+		}
+	}
+	if !m.listed {
 		return m, nil
 	}
 	if m.focus == focusProfiles {
@@ -232,17 +248,6 @@ func (m Model) onKey(k tea.KeyMsg) (Model, tea.Cmd) {
 			return m.syncFocus(), nil
 		}
 		return m, nil
-	}
-	if m.focus == focusSections {
-		switch key {
-		case "left", "h":
-			m = m.setTab((m.tab + tabCount - 1) % tabCount)
-		case "right", "l":
-			m = m.setTab((m.tab + 1) % tabCount)
-		case "enter", "down":
-			m.focus = focusContent
-		}
-		return m.syncFocus(), nil
 	}
 	if m.selected == "" {
 		return m, nil
@@ -261,9 +266,7 @@ func (m Model) setTab(t Tab) Model {
 	return m
 }
 
-// moveAccount steps the selection through the provider groups; past the last
-// account it lands on "+ Add account". Leaving the account asks first when
-// its defaults have unsaved edits.
+// moveAccount steps through provider groups. Unsaved defaults require confirmation.
 func (m Model) moveAccount(delta int) (Model, tea.Cmd) {
 	ids := m.orderedIDs()
 	if len(ids) == 0 {
@@ -274,7 +277,7 @@ func (m Model) moveAccount(delta int) (Model, tea.Cmd) {
 	case i < 0:
 		return m, nil
 	case i >= len(ids):
-		return m.guard(func(m Model) (Model, tea.Cmd) { return m.openAdd(), nil })
+		return m, nil
 	}
 	id := ids[i]
 	return m.guard(func(m Model) (Model, tea.Cmd) { return m.selectAccount(id) })

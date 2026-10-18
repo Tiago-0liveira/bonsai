@@ -35,6 +35,8 @@ type Sidebar struct {
 	// HideAdd drops the "+ Add account" row, for callers that cannot add.
 	HideAdd bool
 	Focused bool
+	// ShowPlan replaces usage with a plan label in the profiles view.
+	ShowPlan bool
 }
 
 // Ordered returns the accounts in display order (provider groups, then input
@@ -85,15 +87,13 @@ func (s Sidebar) View(w, h int) []string {
 	if s.Focused {
 		head = head.Reverse(true)
 	}
-	dim := lipgloss.NewStyle().Foreground(th.Dim)
-
 	var body []string
 	selected := -1
 	for i, g := range s.groups() {
 		if i > 0 {
 			body = append(body, "")
 		}
-		body = append(body, dim.Render(strings.ToUpper(string(g.provider))))
+		body = append(body, theme.ProviderStyle(g.provider).Bold(true).Render(strings.ToUpper(providerName(g.provider))))
 		for _, a := range g.accounts {
 			if !s.AddSelected && a.ID == s.Selected {
 				selected = len(body)
@@ -144,7 +144,7 @@ func (s Sidebar) row(a agentsapi.Account, w int, selected bool) string {
 
 	right := s.dot(a)
 	rightW := 1
-	if w >= usageMinWidth {
+	if !s.ShowPlan && w >= usageMinWidth {
 		if s.Busy[a.ID] {
 			right = lipgloss.NewStyle().Foreground(th.Warning).Render(fmt.Sprintf("%4s", "busy")) + " " + right
 			rightW += 5
@@ -155,13 +155,30 @@ func (s Sidebar) row(a agentsapi.Account, w int, selected bool) string {
 	}
 	// marker, space, glyph, space precede the name; one gap precedes the right part.
 	nameW := max(w-4-rightW-1, 1)
-	name := ansi.Truncate(a.Name, nameW, "…")
+	name := ansi.Truncate(s.profileLabel(a), nameW, "…")
 	if selected {
 		name = lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render(name)
 	}
 	left := marker + " " + glyph + " " + name
 	pad := max(w-ansi.StringWidth(left)-rightW, 1)
 	return left + strings.Repeat(" ", pad) + right
+}
+
+func (s Sidebar) profileLabel(a agentsapi.Account) string {
+	if !s.ShowPlan {
+		return a.Name
+	}
+	plan := a.Info.Plan
+	if u, ok := s.Usage[a.ID]; ok && u.Snapshot.Plan != "" {
+		plan = u.Snapshot.Plan
+	}
+	if a.Provider == "antigravity" {
+		plan = strings.TrimSpace(strings.TrimPrefix(plan, "Google AI"))
+	}
+	if plan == "" {
+		return a.Name
+	}
+	return plan + " · " + a.Name
 }
 
 // usageText fits the headline usage in four cells, or hides unknown usage.
@@ -252,7 +269,7 @@ func (s Sidebar) Selector(focused bool) string {
 		ordered := s.Ordered()
 		for i, a := range ordered {
 			if a.ID == s.Selected {
-				label = fmt.Sprintf("%s · %s (%d/%d)", providerName(a.Provider), a.Name, i+1, len(ordered))
+				label = fmt.Sprintf("%s · %s (%d/%d)", theme.ProviderStyle(a.Provider).Render(providerName(a.Provider)), s.profileLabel(a), i+1, len(ordered))
 				if s.Busy[a.ID] {
 					label += " · busy"
 				}

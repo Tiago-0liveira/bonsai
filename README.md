@@ -78,13 +78,15 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
 - Run **many agent sessions at once** across worktrees, in the web terminal dock
   or with `bonsai agent run`.
 - Start, watch, control and stop sessions from the **TUI's Agents tab**, with
-  full-tab profiles and usage, color-coded capacity bars, and model/effort
-  overrides for each new agent. Compact provider counts sit beside worktree badges
+  provider-grouped profiles and usage, clear input-focus hints, color-coded
+  capacity bars, and model/effort overrides for each new agent. Compact provider counts sit beside worktree badges
   ([docs/tui-cli.md](docs/tui-cli.md#agents-tab)).
 - Per-profile **launch defaults** (model, effort, permissions) and an **Agents
   tab** in the web app to manage profiles, sign-ins and sessions.
 - `bonsai agent usage` shows **plan limits** (5-hour and weekly windows, credits,
   resets) for **every profile of every provider at once**, with live progress.
+- `bonsai agents attach <id>` keeps detach, kill and control shortcuts visible;
+  killing requires confirmation ([session controls](docs/agents.md#sessions-shared-with-the-tui-and-cli)).
 
 Details: [docs/agents.md](docs/agents.md).
 

@@ -46,7 +46,7 @@ func TestFrameHasNoModalChrome(t *testing.T) {
 		if strings.TrimSpace(lines[0]) != "AGENT ACCOUNTS" || strings.TrimSpace(lines[len(lines)-1]) != "Esc Close" {
 			t.Fatalf("title/footer missing:\n%s", out)
 		}
-		if strings.ContainsAny(out, "╭╮╰╯├┤┴│") {
+		if strings.ContainsAny(out, "╭╮╰╯├┤┴") {
 			t.Fatalf("pane still has modal borders:\n%s", out)
 		}
 		if !strings.Contains(lines[2], "detail") {
@@ -69,7 +69,7 @@ func TestFrameTinyKeepsHeight(t *testing.T) {
 }
 
 func TestLeftWidth(t *testing.T) {
-	if got := LeftWidth(100); got != 26 {
+	if got := LeftWidth(100); got != 32 {
 		t.Fatalf("wide: %d", got)
 	}
 	if got := LeftWidth(60); got != 24 {
@@ -81,3 +81,12 @@ func TestLeftWidth(t *testing.T) {
 }
 
 func stripLine(s string) string { return ansi.Strip(s) }
+
+func TestFrameSeparatesColumns(t *testing.T) {
+	lines := plainLines(Frame("profiles", []string{"accounts"}, []string{"details"}, "Esc", 100, 20))
+	for _, line := range lines[2:19] {
+		if !strings.Contains(line, " │ ") {
+			t.Fatalf("missing divider: %q", line)
+		}
+	}
+}

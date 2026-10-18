@@ -1,5 +1,5 @@
-[1 ✳ Auth fix] [2 ◎ Tests]                                                                                a: All  n: New
-◎ Codex · work │ 5h ███████░░░ left · Week 41% left · Reset 2h14m                                        Ctrl+] u: Usage
+[1 ✳ Auth fix] [2 ◎ Tests]
+◎ Codex · work │ 5h ███████░░░ left · Week 41% left · Reset 2h14m                                                FOCUSED
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 $ claude
 
@@ -27,6 +27,6 @@ $ claude
 >
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Ctrl+]  →  Bonsai command prefix
+FOCUSED · Input goes to agent · Ctrl+] Unfocus
 ========================================================================================================================
-Ctrl+] Bonsai command prefix
+FOCUSED · Input goes to agent · Ctrl+] unfocus

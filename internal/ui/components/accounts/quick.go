@@ -321,9 +321,41 @@ func (q Quick) body(inner, rows int) []string {
 	// every row on each arrow key, making the selection hard to follow.
 	space := max(rows-quickFocusRows-quickTailRows, 0)
 	list := q.otherRows(accts, inner)
-	start := max(selected-space+1, 0)
-	end := min(start+space, len(list))
-	out = append(out, list[start:end]...)
+	selectedRow := selected
+	headings := map[int]agents.ProviderID{}
+	row := 0
+	for i, a := range accts {
+		if i == 0 || a.Provider != accts[i-1].Provider {
+			headings[row] = a.Provider
+			row++
+		}
+		if i == selected {
+			selectedRow = row
+		}
+		row++
+	}
+	start := max(selectedRow-space+1, 0)
+	var visible []string
+	if space > 1 {
+		if _, heading := headings[start]; !heading && start > 0 {
+			// Reserve a repeated heading when scrolling starts inside a group.
+			start = max(selectedRow-space+2, start)
+			if _, heading := headings[start]; !heading {
+				for i := start; i >= 0; i-- {
+					if p, ok := headings[i]; ok {
+						visible = append(visible, theme.ProviderStyle(p).Bold(true).Render(strings.ToUpper(providerName(p))))
+						break
+					}
+				}
+			}
+		}
+	}
+	end := min(start+space-len(visible), len(list))
+	if _, heading := headings[end-1]; heading && end < len(list) {
+		end--
+	}
+	visible = append(visible, list[start:max(end, start)]...)
+	out = append(out, visible...)
 	for len(out) < rows-quickTailRows {
 		out = append(out, "")
 	}
@@ -346,8 +378,7 @@ func (q Quick) focusBlock(a agentsapi.Account, inner int) []string {
 	th := theme.Current
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
 
-	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, q.ascii)) +
-		" " + providerName(a.Provider) + " · " + a.Name
+	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, q.ascii)+" "+providerName(a.Provider)) + " · " + a.Name
 	u, have := q.usage[a.ID]
 	if have && u.Stale {
 		head += dim.Render("  stale")
@@ -381,27 +412,22 @@ type meterRow struct {
 	limit *agents.UsageLimit
 }
 
-// meterRows are the two meters of the focused account: the headline windows,
-// or the first two pools for providers that report pools.
+// meterRows uses the provider's headline windows for every refresh.
 func (q Quick) meterRows(u agentsapi.Usage, inner int) []string {
 	var rows []meterRow
-	if usesPools(u) {
-		for i := range u.Snapshot.Limits {
-			l := &u.Snapshot.Limits[i]
-			rows = append(rows, meterRow{name: limitLabel(*l), limit: l})
-		}
-	} else {
-		for _, w := range []struct {
-			l        *agents.UsageLimit
-			fallback string
-		}{{u.Headline.Primary, "Primary"}, {u.Headline.Secondary, "Secondary"}} {
-			if w.l != nil {
-				rows = append(rows, meterRow{name: quickWindowName(w.l, w.fallback), limit: w.l})
-			}
+	for _, w := range []struct {
+		l        *agents.UsageLimit
+		fallback string
+	}{{u.Headline.Primary, "Primary"}, {u.Headline.Secondary, "Secondary"}} {
+		if w.l != nil {
+			rows = append(rows, meterRow{name: quickWindowName(w.l, w.fallback), limit: w.l})
 		}
 	}
 	rows = rows[:min(len(rows), 2)]
 	if len(rows) == 0 {
+		if len(u.Snapshot.Limits) > 0 {
+			return []string{lipgloss.NewStyle().Foreground(theme.Current.Dim).Render("No shared usage windows reported.")}
+		}
 		return []string{lipgloss.NewStyle().Foreground(theme.Current.Dim).Render("No usage reported.")}
 	}
 
@@ -479,6 +505,9 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 			switch {
 			case !ok:
 				r.body = dim.Render("no usage")
+				if len(u.Snapshot.Limits) > 0 {
+					r.body = dim.Render("no shared windows")
+				}
 			case u.Stale:
 				r.body = dim.Render(ansi.Strip(text))
 			case rank >= usagefmt.RankLow:
@@ -489,7 +518,7 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 			switch {
 			case u.Stale:
 				r.reset = dim.Render("stale")
-			case u.Headline.NextReset != nil && !usesPools(u):
+			case u.Headline.NextReset != nil:
 				r.reset = dim.Render("reset " + usagefmt.ResetsIn(q.now(), u.Headline.NextReset, true))
 			}
 		}
@@ -509,7 +538,11 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 	nameW = min(nameW, max(inner-4-2-bodyW, min(nameW, 10)))
 
 	out := make([]string, 0, len(rows))
-	for _, r := range rows {
+	for i, r := range rows {
+		if i == 0 || accts[i].Provider != accts[i-1].Provider {
+			p := accts[i].Provider
+			out = append(out, theme.ProviderStyle(p).Bold(true).Render(strings.ToUpper(providerName(p))))
+		}
 		name := ansi.Truncate(r.name, nameW, "…")
 		if r.bold || r.selected {
 			name = lipgloss.NewStyle().Bold(true).Render(name)
@@ -530,7 +563,6 @@ func (q Quick) otherRows(accts []agentsapi.Account, inner int) []string {
 // compact is the one-line reading of an account and its worst severity.
 // Providers with headline windows share the same bars and percentages.
 func (q Quick) compact(u agentsapi.Usage) (string, usagefmt.Rank, bool) {
-	var parts []string
 	worst, found := 1.0, false
 	note := func(l *agents.UsageLimit) (float64, bool) {
 		f, ok := agents.RemainingFraction(l)
@@ -539,18 +571,6 @@ func (q Quick) compact(u agentsapi.Usage) (string, usagefmt.Rank, bool) {
 			worst = min(worst, f)
 		}
 		return f, ok
-	}
-	if usesPools(u) {
-		for i := range u.Snapshot.Limits {
-			l := &u.Snapshot.Limits[i]
-			if _, ok := note(l); ok {
-				parts = append(parts, limitLabel(*l)+" "+limitValue(l, q.ascii, false))
-			}
-		}
-		if !found {
-			return "", 0, false
-		}
-		return strings.Join(parts, " · "), usagefmt.RankOf(worst), true
 	}
 	note(u.Headline.Primary)
 	note(u.Headline.Secondary)

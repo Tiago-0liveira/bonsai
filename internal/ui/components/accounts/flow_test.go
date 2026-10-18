@@ -16,9 +16,9 @@ import (
 
 // Footer hints per tab, as the UX mockups spell them.
 const (
-	footerOverview = "↑↓ Action · Enter Select · Esc Back"
-	footerUsage    = "↑↓ Action · Enter Select · Esc Back"
-	footerDefaults = "↑↓ Field · Enter Edit · ^S Save · Esc"
+	footerOverview = "↑↓ Action · Enter Select · Tab Section · Esc Profiles"
+	footerUsage    = "r Refresh · Tab Section · Esc Profiles"
+	footerDefaults = "↑↓ Field · Enter Edit · ^S Save · Tab Section · Esc Profiles"
 )
 
 // reload delivers a ReloadMsg, as the parent does after a terminal flow ends.
@@ -40,7 +40,7 @@ func execOf(t *testing.T, msgs []tea.Msg) *exec.Cmd {
 	return nil
 }
 
-func TestNavigationWalksProviderGroupsAndReachesAdd(t *testing.T) {
+func TestNavigationWalksProviderGroupsAndAddShortcut(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
 	// Display order is claude work, claude personal, codex work.
 	for _, want := range []string{"Claude · personal", "Codex · work"} {
@@ -59,11 +59,15 @@ func TestNavigationWalksProviderGroupsAndReachesAdd(t *testing.T) {
 	}
 
 	m, _ = press(m, "j", "j", "j")
+	if m.add.active {
+		t.Fatal("profile navigation must stop at last profile")
+	}
+	m, _ = press(m, "n")
 	if !m.add.active {
-		t.Fatalf("j past the last account must reach + Add account:\n%s", plain(m))
+		t.Fatalf("n must open Add profile:\n%s", plain(m))
 	}
 	out := plain(m)
-	for _, want := range []string{"ADD ACCOUNT", "> + Add account"} {
+	for _, want := range []string{"ADD ACCOUNT"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("add view lacks %q:\n%s", want, out)
 		}
@@ -81,10 +85,10 @@ func TestNavigationWalksProviderGroupsAndReachesAdd(t *testing.T) {
 func TestTabCyclingAndDirectKeys(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
 	steps := []struct{ key, want string }{
+		{"tab", "[Usage]"},
+		{"tab", "[Defaults]"},
 		{"tab", "[Overview]"},
-		{"right", "[Usage]"},
-		{"right", "[Defaults]"},
-		{"left", "[Usage]"},
+		{"shift+tab", "[Defaults]"},
 		{"2", "[Usage]"},
 		{"3", "[Defaults]"},
 		{"1", "[Overview]"},
@@ -120,7 +124,7 @@ func TestFooterMatchesMockupPerTab(t *testing.T) {
 
 func TestFooterAddStages(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
-	m, _ = press(m, "j", "j", "j")
+	m, _ = press(m, "n")
 	if out := plain(m); !strings.Contains(out, "j/k Provider  ·  Enter Continue  ·  Esc Back") {
 		t.Fatalf("provider stage footer:\n%s", out)
 	}
@@ -134,16 +138,26 @@ func TestFooterAddStages(t *testing.T) {
 	}
 }
 
-func TestSidebarUsageColumnNeedsWideSidebar(t *testing.T) {
-	// An 80-cell pane has room for the 26-cell sidebar.
-	m := opened(t, newFake(), 80, 24)
-	if out := plain(m); !strings.Contains(out, " ███░") {
-		t.Fatalf("usage column missing at 26-cell sidebar:\n%s", out)
-	}
-	// A compact pane uses a profile selector without an inline usage bar.
-	m = opened(t, newFake(), 60, 24)
-	if out := plain(m); strings.Contains(out, "███░") {
-		t.Fatalf("usage column shown at 24-cell sidebar:\n%s", out)
+func TestProfileListShowsPlansWithoutUsageBars(t *testing.T) {
+	api := newFake()
+	api.Infos["x1"] = agents.AccountInfo{Plan: "Plus"}
+	api.Items = append(api.Items, acct("a1", "antigravity", "home", "logged_in"))
+	api.Infos["a1"] = agents.AccountInfo{Plan: "Google AI Ultra"}
+	for _, width := range []int{80, 104} {
+		m := opened(t, api, width, 24)
+		out := plain(m)
+		for _, want := range []string{"Max · work", "Plus · work", "Ultra · home"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("unselected profile plan %q missing:\n%s", want, out)
+			}
+		}
+		if strings.ContainsAny(out, "█░") || strings.Contains(out, "Google AI") {
+			t.Fatalf("sidebar still shows usage or unshortened Gemini plan:\n%s", out)
+		}
+		m = selectByID(t, m, "a1")
+		if out := plain(m); !strings.Contains(out, "Google AI Ultra") {
+			t.Fatalf("Overview must retain the full plan name:\n%s", out)
+		}
 	}
 }
 
@@ -210,28 +224,23 @@ func TestUsageWithoutDataShowsErrorNotNumbers(t *testing.T) {
 	}
 }
 
-func TestAntigravityShowsModelPools(t *testing.T) {
-	api := newFake()
-	api.Items = append(api.Items, acct("a1", "antigravity", "personal", "logged_in"))
-	low, high := 0.12, 0.8
-	api.Usages["a1"] = agentsapi.Usage{
-		Snapshot: agents.UsageSnapshot{Limits: []agents.UsageLimit{
-			{ID: "pro", Group: "Gemini", Label: "Gemini Pro", RemainingFraction: &low},
-			{ID: "flash", Group: "Gemini", Label: "Flash", RemainingFraction: &high},
-		}},
-		FetchedAt: testNow,
-	}
+func TestAntigravityDoesNotSwitchToLegacyPools(t *testing.T) {
+	api := mockupFake()
 	m := opened(t, api, 104, 34)
 	m = selectByID(t, m, "a1")
 	m, _ = press(m, "2")
-	out := plain(m)
-	for _, want := range []string{"Gemini", "Gemini Pro", "12%", "Flash", "80%"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("antigravity pools lack %q:\n%s", want, out)
-		}
+	if out := plain(m); !strings.Contains(out, "5-hour window") || !strings.Contains(out, "Weekly window") {
+		t.Fatalf("missing headline windows:\n%s", out)
 	}
-	if strings.Contains(out, "5-hour window") {
-		t.Fatalf("pools must not show the shared windows:\n%s", out)
+	// Unfamiliar limits use the same additional-limits layout, preserving the
+	// reported values without switching to a separate pool UI.
+	api.Usages["a1"] = agentsapi.Usage{Snapshot: agents.UsageSnapshot{Limits: []agents.UsageLimit{
+		{ID: "legacy", Label: "Legacy pool", RemainingFraction: ptr(0.3)},
+	}}}
+	m, _ = press(m, "r")
+	out := plain(m)
+	if !strings.Contains(out, "Additional limits") || !strings.Contains(out, "Legacy pool  30% remaining") || strings.Contains(out, "Weekly window") {
+		t.Fatalf("refresh hid values or restored the legacy layout:\n%s", out)
 	}
 }
 
@@ -354,7 +363,7 @@ func TestAddNameValidation(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := opened(t, newFake(), 104, 34)
-			m, _ = press(m, "j", "j", "j", "enter") // claude, name stage
+			m, _ = press(m, "n", "enter") // claude, name stage
 			if c.name != "" {
 				m, _ = press(m, c.name)
 			}
@@ -372,8 +381,8 @@ func TestAddNameValidation(t *testing.T) {
 func TestAddFlowEmitsCommandAndSelectsCreated(t *testing.T) {
 	api := newFake()
 	m := opened(t, api, 104, 34)
-	m, _ = press(m, "j", "j", "j") // + Add account
-	m, _ = press(m, "j", "j")      // antigravity; "work" is free there
+	m, _ = press(m, "n")      // + Add account
+	m, _ = press(m, "j", "j") // antigravity; "work" is free there
 	m, _ = press(m, "enter", "work", "enter")
 	if out := plain(m); !strings.Contains(out, "Enter Continue in terminal") {
 		t.Fatalf("continue stage:\n%s", out)
@@ -397,7 +406,7 @@ func TestAddFlowEmitsCommandAndSelectsCreated(t *testing.T) {
 
 func TestAddEscBacksOutOneStage(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
-	m, _ = press(m, "j", "j", "j", "enter", "x", "enter")
+	m, _ = press(m, "n", "enter", "x", "enter")
 	m, _ = press(m, "esc") // continue -> name
 	if out := plain(m); !strings.Contains(out, "Type a name") {
 		t.Fatalf("esc from continue must go back to the name:\n%s", out)
@@ -442,7 +451,7 @@ func TestASCIIVariants(t *testing.T) {
 	m.SetSize(104, 34)
 	m, _ = drain(m, m.Init())
 	out := plain(m)
-	for _, want := range []string{"C Claude · work", "> C work", "  C personal", "  X work", "  * "} {
+	for _, want := range []string{"C Claude · work", "> C Max · work", "  C personal", "  X work", "  * "} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("ascii overview lacks %q:\n%s", want, out)
 		}
@@ -501,24 +510,50 @@ func TestSanitizeRedactsPathsAndControls(t *testing.T) {
 
 func TestArrowKeysFollowFocusedArea(t *testing.T) {
 	m := opened(t, newFake(), 80, 24)
-	m, _ = press(m, "down")
-	if m.selected != "c2" || m.focus != focusProfiles {
-		t.Fatalf("down must select a profile: selected=%s focus=%d", m.selected, m.focus)
+	m, _ = press(m, "down", "tab")
+	if m.selected != "c2" || m.focus != focusProfiles || m.tab != TabUsage {
+		t.Fatalf("Tab must switch section and keep profile navigation: selected=%s focus=%d tab=%d", m.selected, m.focus, m.tab)
 	}
-	m, _ = press(m, "tab", "right", "right")
-	if m.tab != TabDefaults || m.focus != focusSections || m.selected != "c2" {
-		t.Fatalf("section arrows changed the wrong area: tab=%d focus=%d profile=%s", m.tab, m.focus, m.selected)
+	m, _ = press(m, "down", "tab", "up")
+	if m.selected != "c2" || m.focus != focusProfiles || m.tab != TabDefaults {
+		t.Fatalf("arrows and Tab must work together: selected=%s focus=%d tab=%d", m.selected, m.focus, m.tab)
 	}
-	m, _ = press(m, "tab", "down", "right")
+	m, _ = press(m, "enter", "down", "right")
 	if m.selected != "c2" || m.focus != focusContent || !m.df.form.Dirty() {
 		t.Fatalf("detail arrows must edit only this profile: profile=%s focus=%d dirty=%v", m.selected, m.focus, m.df.form.Dirty())
 	}
-	m, _ = press(m, "esc")
-	if m.focus != focusProfiles || m.dlg != nil {
-		t.Fatal("escape must return focus to profiles and keep the edits")
+	m, _ = press(m, "tab", "shift+tab")
+	if m.tab != TabDefaults || m.focus != focusContent || !m.dirty() {
+		t.Fatal("Tab must also cycle sections from details without losing edits")
 	}
-	m, _ = press(m, "up")
+	m, _ = press(m, "esc", "up")
 	if m.dlg == nil || m.selected != "c2" {
 		t.Fatal("switching profiles must guard unsaved defaults")
+	}
+}
+
+func TestTabSwitchesSectionWhileDropdownIsOpen(t *testing.T) {
+	m := opened(t, newFake(), 104, 34)
+	m, _ = press(m, "3", "enter")
+	if !m.formEditing() {
+		t.Fatal("expected an open dropdown")
+	}
+	m, _ = press(m, "tab")
+	if m.tab != TabOverview || m.Capturing() {
+		t.Fatal("Tab must leave the dropdown and switch section")
+	}
+}
+
+func TestLateSidebarPlanCannotOverwriteNewerProfileDetails(t *testing.T) {
+	m := opened(t, newFake(), 104, 34)
+	seq := m.latest.list
+	m, _ = press(m, "down", "up")
+	m, _ = m.Update(sidebarInfoMsg{seq: seq, infos: map[agents.AccountID]agents.AccountInfo{
+		"c2": {Plan: "old plan"},
+	}})
+	for _, a := range m.accounts {
+		if a.ID == "c2" && a.Info.Plan == "old plan" {
+			t.Fatal("late sidebar data overwrote newer profile details")
+		}
 	}
 }

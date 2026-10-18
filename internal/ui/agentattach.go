@@ -63,7 +63,6 @@ type agentView struct {
 	// control is terminal mode: the user is typing into the agent. state says
 	// whether that is actually possible (controlling) or not (observingOther).
 	control bool
-	prefix  bool // ctrl+] pressed: the control strip is open
 	lost    bool // this client wrote and another took over
 	hinted  bool // the "another client controls" note was shown
 	// inq/sending order writes to the holder: see queueInput.
@@ -297,7 +296,7 @@ func (m Model) onAgentAttached(msg agentAttachedMsg) (tea.Model, tea.Cmd) {
 // fail records an attach that cannot continue. With an emulator already on
 // screen the message goes in the banner so the last screen stays visible.
 func (v *agentView) fail(text string, retry bool) {
-	v.control, v.prefix, v.retry = false, false, retry
+	v.control, v.retry = false, retry
 	if v.term != nil {
 		v.banner = text
 		if retry {
@@ -437,9 +436,6 @@ func (m Model) agentTerminalArea(sel agentsapi.Session, w, rows int) []string {
 	if v.banner != "" && rows > 0 {
 		style := lipgloss.NewStyle().Foreground(theme.Current.Warning)
 		area[rows-1] = fit(m.chrome(style.Render(ansi.Truncate(v.banner, w, "…"))), w)
-	}
-	if v.prefix && v.control && rows >= 3 {
-		copy(area[rows-3:], m.chromeRows(controlStrip(w, v.state == attachControlling)))
 	}
 	return area
 }

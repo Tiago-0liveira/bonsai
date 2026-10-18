@@ -938,20 +938,40 @@ func (m Model) contextHelp() string {
 	if m.agentTerminalMode() {
 		switch v := m.agents.view; {
 		case v.stream == nil:
-			return descSt.Render("connecting…") + sep + pair("Ctrl+] d", "detach")
+			return descSt.Render("connecting…") + sep + pair("Ctrl+]", "unfocus")
 		case v.state == attachObservingOther:
-			return pair("Ctrl+] t", "take control") + sep + pair("Ctrl+] d", "detach")
+			return descSt.Render("READ-ONLY") + sep + pair("Ctrl+]", "unfocus")
 		}
-		return pair("Ctrl+]", "Bonsai command prefix")
+		return descSt.Render("FOCUSED · Input goes to agent") + sep + pair("Ctrl+]", "unfocus")
 	}
 	if m.rightTab == tabAgents && m.agents.active() {
-		// ctrl+] only means something in terminal mode, so navigation mode does
-		// not advertise it.
-		parts := append(m.agentNavHints(pair, descSt),
-			pair(m.keys.Tab.Help().Key, "focus"),
-			pair(m.keys.AgentsTab.Help().Key, "agents"),
-			pair(m.keys.Help.Help().Key, "keys"))
-		return strings.Join(parts, sep)
+		if o := m.agents.overlay; o != nil {
+			if o.accounts != nil {
+				return descSt.Render(o.accounts.Help())
+			}
+			if o.quick != nil {
+				return descSt.Render("Usage · ↑↓ profile · r refresh · m profiles · Esc close")
+			}
+			return descSt.Render(o.launch.footer())
+		}
+		if m.modal != nil {
+			return descSt.Render("Enter select · Esc close")
+		}
+		if m.focus == focusTerminal {
+			parts := append(m.agentNavHints(pair, descSt),
+				pair(m.keys.AgentAll.Help().Key, "all"),
+				pair(m.keys.AgentAccounts.Help().Key, "profiles"),
+				pair(m.keys.AgentUsage.Help().Key, "usage"),
+				pair(m.keys.AgentNew.Help().Key, "new"))
+			if wt, ok := m.selectedWorktree(); ok {
+				if s, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && s.Active() && (m.agents.view == nil || m.agents.view.sessionID != s.ID || m.agents.view.state != attachEnded) {
+					parts = append(parts, pair(m.keys.AgentStop.Help().Key, "stop"))
+				}
+			}
+			parts = append(parts, pair(m.keys.Tab.Help().Key, "focus"), pair(m.keys.Help.Help().Key, "keys"))
+			return strings.Join(parts, sep)
+		}
+		return strings.Join([]string{pair(m.keys.Tab.Help().Key, "focus agents"), pair(m.keys.AgentsTab.Help().Key, "agents"), pair(m.keys.Help.Help().Key, "keys")}, sep)
 	}
 	bindings := []key.Binding{m.keys.Tab}
 	if m.focus == focusList {

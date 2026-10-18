@@ -74,10 +74,9 @@ func mockupFake() *fake.Accounts {
 			"c2": claudeUsage,
 			"x1": {Headline: agents.NewUsageHeadline(&agents.UsageLimit{ID: "5h", Window: "5h", RemainingFraction: ptr(0.91)}, nil, nil), FetchedAt: testNow},
 			"x2": {Headline: agents.NewUsageHeadline(&agents.UsageLimit{ID: "5h", Window: "5h", RemainingFraction: ptr(0.15)}, nil, nil), FetchedAt: testNow},
-			"a1": {Snapshot: agents.UsageSnapshot{Limits: []agents.UsageLimit{
-				{ID: "pro", Group: "Gemini", Label: "Gemini Pro", RemainingFraction: ptr(0.12)},
-				{ID: "flash", Group: "Gemini", Label: "Flash", RemainingFraction: ptr(0.8)},
-			}}, FetchedAt: testNow},
+			"a1": {Headline: agents.NewUsageHeadline(
+				&agents.UsageLimit{ID: "gemini-5h", Window: "5h", RemainingFraction: ptr(0.12)},
+				&agents.UsageLimit{ID: "gemini-weekly", Window: "weekly", RemainingFraction: ptr(0.8)}, nil), FetchedAt: testNow},
 		},
 		LaunchDefaults: map[agents.AccountID]agentsapi.Defaults{
 			"c1": claudeDefaults,

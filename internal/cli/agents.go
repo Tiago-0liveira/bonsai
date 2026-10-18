@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	uv "github.com/charmbracelet/ultraviolet"
 	"golang.org/x/term"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
@@ -22,7 +23,7 @@ const agentsUsage = `usage: bonsai agents [ls] [--all] [--json]
        bonsai agents attach <id|name> [--take] [--read-only]
        bonsai agents stop <id|name>`
 
-// escapeKey (Ctrl-]) starts an attach command: d detaches, t takes control,
+// escapeKey (Ctrl-]) starts an attach command: d detaches, k asks to kill, t takes control,
 // a second Ctrl-] sends one to the agent.
 const escapeKey = 0x1d
 
@@ -275,12 +276,44 @@ func attachTerminal(r agenthost.Record, name string, opts attachOptions, in io.R
 		return fmt.Errorf("attach %s: %w", name, err)
 	}
 	defer conn.Close()
-	say := func(format string, args ...any) { fmt.Fprintf(errOut, "\r\n[bonsai] "+format+"\r\n", args...) }
 	writer := ready.Writer != nil && *ready.Writer
+	var display *attachDisplay
+	var terminalInput <-chan []byte
+	var lastStatus string
+	if cols, rows, ok := size(); ok {
+		display = newAttachDisplay(out, cols, rows, opts.readOnly, writer)
+		if !writer {
+			// Replay must use the holder's geometry even when this observer's
+			// viewport is smaller. Observing never resizes the agent.
+			if info, err := agenthost.Query(r); err == nil {
+				display.term.ResizeEmulator(info.Cols, info.Rows)
+			}
+		}
+		terminalInput = display.term.Input()
+		_ = conn.Send(agenthost.Request{Type: "info"})
+		defer func() {
+			display.close()
+			fmt.Fprintf(errOut, "\r\n[bonsai] %s\r\n", lastStatus)
+		}()
+	}
+	say := func(format string, args ...any) {
+		lastStatus = fmt.Sprintf(format, args...)
+		if display != nil {
+			display.status, display.dirty = lastStatus, true
+			display.render()
+		} else {
+			fmt.Fprintf(errOut, "\r\n[bonsai] %s\r\n", lastStatus)
+		}
+	}
 	sendSize := func(nudge bool) {
 		cols, rows, ok := size()
 		if !ok {
 			return
+		}
+		if display != nil {
+			display.writer = writer
+			display.resize(cols, rows)
+			rows = display.bodyRows()
 		}
 		// Shrinking first makes a full-screen program redraw even when the
 		// size is unchanged.
@@ -291,14 +324,16 @@ func attachTerminal(r agenthost.Record, name string, opts attachOptions, in io.R
 	}
 	switch {
 	case opts.readOnly:
-		say("watching %s (read-only; Ctrl-] d to detach)", name)
+		say("watching %s (read-only; Ctrl-] d to detach, Ctrl-] k to kill)", name)
 	case writer:
-		say("attached to %s (Ctrl-] d to detach)", name)
+		say("attached to %s (Ctrl-] d to detach, Ctrl-] k to kill)", name)
 		sendSize(true)
 	default:
-		say("attached to %s (read-only — Ctrl-] t to take control, Ctrl-] d to detach)", name)
+		say("attached to %s (read-only — Ctrl-] t to take control, Ctrl-] d to detach, Ctrl-] k to kill)", name)
 	}
 
+	done := make(chan struct{})
+	defer close(done)
 	frames := make(chan agenthost.Frame, 64)
 	go func() {
 		defer close(frames)
@@ -307,31 +342,148 @@ func attachTerminal(r agenthost.Record, name string, opts attachOptions, in io.R
 			if err != nil {
 				return
 			}
-			frames <- f
-		}
-	}()
-	keys := make(chan []byte)
-	go func() {
-		defer close(keys)
-		buf := make([]byte, 4096)
-		for {
-			n, err := in.Read(buf)
-			if n > 0 {
-				keys <- append([]byte(nil), buf[:n]...)
-			}
-			if err != nil {
+			select {
+			case frames <- f:
+			case <-done:
 				return
 			}
 		}
 	}()
+	var keys <-chan []byte
+	var events <-chan uv.Event
+	if display != nil {
+		var cleanup func()
+		events, cleanup, err = attachEvents(in)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+	} else {
+		raw := make(chan []byte)
+		keys = raw
+		go func() {
+			defer close(raw)
+			buf := make([]byte, 4096)
+			for {
+				n, err := in.Read(buf)
+				if n > 0 {
+					select {
+					case raw <- append([]byte(nil), buf[:n]...):
+					case <-done:
+						return
+					}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
 
-	escaped, hinted, askedWho := false, false, false
+	escaped, hinted, askedWho, confirming, stopping := false, false, false, false, false
+	handleInput := func(data []byte) (bool, error) {
+		var send []byte
+		for _, b := range data {
+			if confirming {
+				confirming = false
+				if display != nil {
+					display.confirm = false
+					display.term.SetFocused(writer)
+				}
+				if b == 'y' || b == 'Y' {
+					if err := conn.Send(agenthost.Request{Type: "stop"}); err != nil {
+						return true, fmt.Errorf("stop %s: %w", name, err)
+					}
+					stopping = true
+					say("stopping %s…", name)
+				} else {
+					say("kill cancelled; %s keeps running", name)
+				}
+				// Do not forward the answer or the rest of a key sequence
+				// (such as an arrow key) into the agent.
+				break
+			}
+			if escaped {
+				escaped = false
+				switch b {
+				case 'd', 'D':
+					say("detached from %s; it keeps running", name)
+					return true, nil
+				case 't', 'T':
+					if opts.readOnly {
+						say("started with --read-only; attach again to take control")
+					} else if !writer {
+						_ = conn.Send(agenthost.Request{Type: "take"})
+					}
+				case 'k', 'K':
+					confirming = true
+					if display != nil {
+						display.confirm = true
+						display.term.SetFocused(false)
+					}
+					say("kill %s? [y/N] (Esc cancels)", name)
+					send = nil
+				case escapeKey:
+					send = append(send, escapeKey)
+				}
+				continue
+			}
+			if b == escapeKey {
+				escaped = true
+				continue
+			}
+			send = append(send, b)
+		}
+		if len(send) == 0 {
+			return false, nil
+		}
+		if stopping || confirming {
+			return false, nil
+		}
+		if !writer {
+			if !hinted && !opts.readOnly {
+				hinted = true
+				say("read-only — Ctrl-] t to take control")
+			}
+			return false, nil
+		}
+		for len(send) > 0 {
+			n := min(len(send), agentterminal.InputLimit)
+			_ = conn.Send(agenthost.Request{Type: "input", Data: send[:n]})
+			send = send[n:]
+		}
+		return false, nil
+	}
+	tick := time.NewTicker(time.Second / 30)
+	defer tick.Stop()
+	observeTick := time.NewTicker(time.Second)
+	defer observeTick.Stop()
 	for {
 		select {
+		case <-observeTick.C:
+			if display != nil && !writer {
+				_ = conn.Send(agenthost.Request{Type: "info"})
+			}
+		case <-tick.C:
+			if display != nil {
+				display.render()
+			}
+		case data, ok := <-terminalInput:
+			if !ok {
+				terminalInput = nil
+			} else if writer && !confirming && !stopping {
+				_ = conn.Send(agenthost.Request{Type: "input", Data: data})
+			}
 		case <-quit:
 			say("detached from %s", name)
 			return nil
 		case <-resize:
+			if display != nil {
+				if cols, rows, ok := size(); ok {
+					display.resize(cols, rows)
+				}
+				_ = conn.Send(agenthost.Request{Type: "info"})
+			}
 			if writer {
 				sendSize(false)
 			}
@@ -342,9 +494,18 @@ func attachTerminal(r agenthost.Record, name string, opts attachOptions, in io.R
 			}
 			switch f.Type {
 			case "output":
-				_, _ = out.Write(f.Data)
+				if display == nil {
+					_, _ = out.Write(f.Data)
+				} else {
+					display.term.Write(f.Data)
+					display.dirty = true
+				}
 			case "writer":
 				writer = f.Writer != nil && *f.Writer
+				if display != nil {
+					display.writer, display.dirty = writer, true
+					display.term.SetFocused(writer && !confirming)
+				}
 				if writer {
 					say("you have control of %s", name)
 					sendSize(true)
@@ -353,6 +514,10 @@ func attachTerminal(r agenthost.Record, name string, opts attachOptions, in io.R
 					_ = conn.Send(agenthost.Request{Type: "info"})
 				}
 			case "info":
+				if display != nil && !writer && f.Info != nil {
+					display.term.ResizeEmulator(f.Info.Cols, f.Info.Rows)
+					display.dirty = true
+				}
 				if askedWho && f.Info != nil {
 					askedWho = false
 					by := "another terminal"
@@ -364,6 +529,9 @@ func attachTerminal(r agenthost.Record, name string, opts attachOptions, in io.R
 					say("control taken by %s (Ctrl-] t to take it back)", by)
 				}
 			case "status":
+				if display != nil {
+					display.term.SetReplaying(false)
+				}
 				if f.Status != nil && !f.Status.Active() {
 					switch {
 					case f.Status.State == "failed" && f.Status.Error != "":
@@ -376,51 +544,42 @@ func attachTerminal(r agenthost.Record, name string, opts attachOptions, in io.R
 					return nil
 				}
 			}
-		case data, ok := <-keys:
+		case event, ok := <-events:
 			if !ok {
-				// Input ended (a pipe): keep showing output until the end.
-				keys = nil
+				events = nil
 				continue
 			}
-			var send []byte
-			for _, b := range data {
-				if escaped {
-					escaped = false
-					switch b {
-					case 'd', 'D':
-						say("detached from %s; it keeps running", name)
-						return nil
-					case 't', 'T':
-						if opts.readOnly {
-							say("started with --read-only; attach again to take control")
-						} else if !writer {
-							_ = conn.Send(agenthost.Request{Type: "take"})
-						}
-					case escapeKey:
-						send = append(send, escapeKey)
+			if k, ok := event.(uv.KeyPressEvent); ok {
+				var command []byte
+				if k.MatchString("ctrl+]") {
+					command = []byte{escapeKey}
+				} else if escaped || confirming {
+					command = []byte{0}
+					if text := k.String(); len(text) == 1 {
+						command = []byte(text)
+					}
+				}
+				if command != nil {
+					if finished, err := handleInput(command); finished {
+						return err
 					}
 					continue
 				}
-				if b == escapeKey {
-					escaped = true
-					continue
-				}
-				send = append(send, b)
 			}
-			if len(send) == 0 {
+			if writer && !escaped && !confirming && !stopping {
+				display.term.SendEvent(event)
+			} else if !confirming && !stopping {
+				if finished, err := handleInput([]byte{0}); finished {
+					return err
+				}
+			}
+		case data, ok := <-keys:
+			if !ok {
+				keys = nil // Input EOF keeps the output watch open.
 				continue
 			}
-			if !writer {
-				if !hinted && !opts.readOnly {
-					hinted = true
-					say("read-only — Ctrl-] t to take control")
-				}
-				continue
-			}
-			for len(send) > 0 {
-				n := min(len(send), agentterminal.InputLimit)
-				_ = conn.Send(agenthost.Request{Type: "input", Data: send[:n]})
-				send = send[n:]
+			if finished, err := handleInput(data); finished {
+				return err
 			}
 		}
 	}

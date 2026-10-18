@@ -182,7 +182,7 @@ func TestAgentsGolden(t *testing.T) {
 			e.frames(t, status("running"))
 			return e
 		}},
-		{"agents-control-strip-120x30", 120, 30, func(t *testing.T, w, h int) *agentsEnv {
+		{"agents-unfocused-120x30", 120, 30, func(t *testing.T, w, h int) *agentsEnv {
 			e := terminal(t, w, h)
 			e.send(t, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 			return e

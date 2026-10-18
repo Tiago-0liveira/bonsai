@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 const (
@@ -69,6 +70,23 @@ func collectUntil(t *testing.T, m *Model, end string) string {
 func enableMode(t *testing.T, m *Model, seq string) {
 	t.Helper()
 	m.Write([]byte(seq))
+}
+
+func TestTerminalEventsFollowAgentInputModes(t *testing.T) {
+	m := newTerm(t, 80, 24, 80, 24)
+	m.Write([]byte("\x1b[?1h\x1b[?2004h"))
+	m.SendEvent(uv.KeyPressEvent{Code: uv.KeyUp})
+	if got := string(readChunk(t, m)); got != "\x1bOA" {
+		t.Fatalf("application cursor key = %q", got)
+	}
+	m.SendEvent(uv.PasteEvent{Content: "hello\nworld"})
+	if got := collectUntil(t, m, "\x1b[201~"); got != "\x1b[200~hello\nworld\x1b[201~" {
+		t.Fatalf("bracketed paste = %q", got)
+	}
+	m.SendEvent(uv.KeyPressEvent{Code: 'c', Mod: uv.ModCtrl})
+	if got := string(readChunk(t, m)); got != "\x03" {
+		t.Fatalf("Ctrl-C = %q", got)
+	}
 }
 
 func TestSendKeyEncoding(t *testing.T) {

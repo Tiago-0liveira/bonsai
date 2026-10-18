@@ -242,17 +242,9 @@ func effectiveKey(action string, overrides map[string]string) string {
 	return defaultBindings[action].keys[0]
 }
 
-// agentPrefixSection names the help section for the keys after ctrl+] in
-// terminal mode. They are fixed, so they are not in defaultBindings.
-const agentPrefixSection = "Agent terminal (ctrl+] first, fixed keys)"
+// agentTerminalSection lists the fixed escape key separately from rebindable actions.
+const agentTerminalSection = "Agent terminal (fixed key)"
 
-var agentPrefixKeys = []struct{ key, desc string }{
-	{"d", "detach"},
-	{"a", "all agents"},
-	{"u", "agent usage"},
-	{"m", "agent accounts"},
-	{"t", "take control"},
-	{"s", "stop agent"},
-	{"esc", "back to the agent"},
-	{"ctrl+]", "send ctrl+] to the agent"},
+var agentTerminalKeys = []struct{ key, desc string }{
+	{"ctrl+]", "unfocus agent"},
 }

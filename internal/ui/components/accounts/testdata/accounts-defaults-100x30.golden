@@ -1,30 +1,30 @@
  AGENT PROFILES
 
- ACCOUNTS                    ◎ Codex · personal
-
- CLAUDE                      Overview  Usage  [Defaults]
-   ✳ work                 ●  ──────────────────────────────────────────────────────────────────────
-   ✳ personal             ●
-                             Model
- CODEX                       > gpt-5.5                                                          [▼]
-   ◎ work                 ●
- > ◎ personal        █░░░ ●  Reasoning effort
-                             > High (default)                                                   [▼]
- ANTIGRAVITY
-   ✦ personal             ●  Permissions
-                             > Auto                                                             [▼]
-
-                             Other provider-specific options
-                             Web search
-                             > Off                                                          [space]
-
-
-
-
-
-
-                             These defaults apply to new sessions.
-                             Running agents are not affected.
-
- + Add account                                                             [Reset]  [Save defaults]
- ↑↓ Profile · Tab Sections · Esc Close
+ ACCOUNTS                         │ ◎ Codex · personal
+                                  │
+ CLAUDE                           │ Overview  Usage  [Defaults]
+   ✳ Max · work                 ● │ ───────────────────────────────────────────────────────────────
+   ✳ Pro · personal             ● │
+                                  │ Model
+ CODEX                            │ > gpt-5.5                                                   [▼]
+   ◎ work                       ● │
+ > ◎ personal                   ● │ Reasoning effort
+                                  │ > High (default)                                            [▼]
+ ANTIGRAVITY                      │
+   ✦ personal                   ● │ Permissions
+                                  │ > Auto                                                      [▼]
+                                  │
+                                  │ Other provider-specific options
+                                  │ Web search
+                                  │ > Off                                                   [space]
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │ These defaults apply to new sessions.
+                                  │ Running agents are not affected.
+                                  │
+                                  │                                        [Reset]  [Save defaults]
+ ↑↓ Profile · Tab Section · Enter Details · n Add · Esc Close

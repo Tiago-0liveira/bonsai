@@ -122,7 +122,7 @@ func (m Model) overviewView(rw, rows int) []string {
 	lines := []string{
 		kv("Status", status, first),
 		kv("Identity", identity, first),
-		kv("Provider", providerLabel(a.Provider), first),
+		kv("Provider", theme.ProviderStyle(a.Provider).Render(providerLabel(a.Provider)), first),
 		kv("Plan", info(a.Info.Plan), first),
 		kv("Auth", info(authLabel(a.Info.AuthMode)), first),
 		"",

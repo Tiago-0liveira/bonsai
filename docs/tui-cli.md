@@ -40,7 +40,7 @@ default: the terminal only watches until you press `enter`. On the focused Agent
 tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops the
 selected running agent after a confirmation. The command palette (`ctrl+k`) has
 **Agents: open tab**, **new agent**, **accounts** and **usage** under **Agents**;
-stop is on the tab and in the `ctrl+]` menu only. Profiles, usage, the session
+stop is available on the focused tab. Profiles, usage, the session
 picker and launch/stop views fill the available Agents tab without modal borders
 or size caps; the worktree list and right-pane tab bar remain visible.
 
@@ -53,27 +53,17 @@ on a session that failed or dropped its attach to retry first. The binding is
 `agent_attach` and can be rebound.
 
 The terminal has a two-row header, the agent output, and a hint row at the bottom.
-The bottom status bar reads `Ctrl+] Bonsai command prefix` in terminal mode, or
-`Ctrl+] t take control · Ctrl+] d detach` while observing another client's session.
-Only `ctrl+]` is handled by Bonsai; it opens the **BONSAI CONTROL** strip:
-
-| After `ctrl+]` | Action |
-|----------------|--------|
-| `d` | Detach: leave terminal mode and keep showing the agent read-only |
-| `a` | Open the agents picker |
-| `t` | Take control (only when another client is the writer) |
-| `u` | Usage |
-| `m` | Accounts |
-| `s` | Stop the selected agent (asks first) |
-| `esc` | Back to the agent |
-| `ctrl+]` | Send a literal `ctrl+]` (0x1d) to the agent |
-
-Any other key after `ctrl+]` closes the strip and is not forwarded to the agent.
+The bottom status bar shows **FOCUSED · Input goes to agent** while you are
+controlling the agent. Press `ctrl+]` to leave focus immediately and return to
+Bonsai navigation. The agent keeps running and its output continues to update.
+The navigation footer shows the available actions: `a` all agents, `m` profiles,
+`u` usage, `n` new agent, `s` stop, and `enter` focus the selected agent. Enter is
+shown as retry while an attach has failed, and is hidden for an ended session.
 
 If another client is the writer, the agent is read-only here: the banner reads
-`Controlled by another client` and keys are swallowed. Press `ctrl+]` then `t` to
-take control. If another client takes control away, the hint row reads
-`Control taken by another client  ·  Ctrl+] t Take back`; `ctrl+] t` takes it back.
+`Controlled by another client` and keys are swallowed. Press `ctrl+]`, then
+`enter` in navigation to take control. If another client takes control away, the
+hint explains how to leave focus and take it back.
 
 Press `a` on the Agents tab to open the session picker. It lists the worktree's
 sessions as one flat list, running ones first, then ended ones, marked `●` running,
@@ -89,14 +79,24 @@ dialog. `ctrl+s` starts the agent. Model and effort start from the selected
 profile's defaults; edits apply only to this new agent unless **Save profile
 defaults** is checked. Effort choices follow the selected model's capabilities.
 
-In profiles (`m`), `Tab` and `Shift+Tab` move focus between the profile list,
-section tabs and details. Use `↑`/`↓` to select a profile, `←`/`→` to switch the
-focused section tabs, and `Enter` to enter the details or edit a field. `1`/`2`/`3`
+In profiles (`m`), `Tab` and `Shift+Tab` cycle the right-hand Overview, Usage and
+Defaults tabs while `↑`/`↓` keeps selecting profiles. No selection confirmation
+is needed to browse. Press `Enter` to focus the details or edit a field; Tab
+still switches sections there, including while a choice list is open. `1`/`2`/`3`
 jump directly to Overview, Usage or Defaults. `Esc` returns focus to profiles;
 press it again to close. Unsaved defaults require confirmation before closing or
-switching profiles. Usage (`u`) uses `↑`/`↓` to select a profile, `r` to refresh,
+switching profiles or adding a new one. Press `n` to add a profile; the shortcut
+is shown in the footer, and arrow navigation stops at the last profile. A
+vertical divider separates the wider profile list from its details in wide
+panes. The list shows the plan before each profile name instead of usage bars.
+Antigravity's `Google AI` prefix is omitted only in this list; Overview keeps the
+full plan name.
+Usage (`u`) uses `↑`/`↓` to select a profile, `r` to refresh,
 `m` for its profile details and `Esc` to close. The profile list stays in provider
-and name order while the selection moves, scrolling to keep it visible.
+and name order under colored provider headings, scrolling to keep the selection
+visible. Provider labels use orange for Claude, gray for Codex and blue for
+Antigravity across the TUI. All three providers use the same headline-window
+usage layout before and after a refresh: five-hour bars and weekly percentages.
 Five-hour limits use remaining-capacity bars; weekly and other limits use
 percentages. Both are green with at least half left, yellow below half and red
 below a quarter. Antigravity uses the same 5-hour and weekly summary as Claude
@@ -120,7 +120,7 @@ profiles and accounts.
 | `n` | New worktree (new branch / existing branch / PR) |
 | `ctrl+n` | Create a PR from the selected worktree |
 | `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
-| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session, `enter` terminal mode (every key goes to the agent except `ctrl+]`, see the prefix table above). On the focused Agents tab, `n` (new agent), `m` (accounts), `u` (usage) and `s` (stop agent) take precedence over the globals with the same letters |
+| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session, `enter` terminal mode (every key goes to the agent except `ctrl+]`, press `ctrl+]` to leave focus). On the focused Agents tab, `n` (new agent), `m` (accounts), `u` (usage) and `s` (stop agent) take precedence over the globals with the same letters |
 | `i` | Inspector tab (status, last commit, diff, disk, stashes) |
 | `b` | Checks tab (GitHub Actions runs for the branch) |
 | `o` | Cycle list sort (name / ahead / behind / PR / activity / dirty) |
@@ -143,13 +143,14 @@ profiles and accounts.
 | `q` / `ctrl+c` | Quit |
 
 Every key can be rebound under `keybindings` in `.bonsai.yaml`; the
-[annotated example](../.bonsai.yaml) lists the action names. The keys after
-`ctrl+]` are fixed and not rebindable; `?` lists them in a separate **Agent
-terminal (ctrl+] first, fixed keys)** section.
+[annotated example](../.bonsai.yaml) lists the action names. The terminal escape
+key `ctrl+]` is fixed; `?` lists it in a separate **Agent terminal (fixed key)**
+section.
 
-The navigation status bar shows `tab focus · g agents · ? keys` on the Agents tab,
-with a state prefix when it applies: `connecting…`, `enter retry` after a failed
-attach, or `n new · a all` for an ended session. `ctrl+]` is not advertised there.
+The navigation status bar follows keyboard focus. With the Agents pane focused,
+it shows agent actions and the selected session's Enter action. With the
+worktree list focused, it shows how to focus the Agents pane. Profile and usage
+views show their own navigation keys.
 
 Agent glyphs follow the `agent glyphs` row in preferences (`,`). `ascii` swaps
 bonsai's own drawing to ASCII: provider glyphs (`C X A`), state dots, picker marks

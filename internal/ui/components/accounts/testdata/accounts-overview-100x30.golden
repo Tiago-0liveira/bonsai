@@ -1,30 +1,30 @@
  AGENT PROFILES
 
- ACCOUNTS                    ✳ Claude · work
-
- CLAUDE                      [Overview]  Usage  Defaults
- > ✳ work            ███░ ●  ──────────────────────────────────────────────────────────────────────
-   ✳ personal             ●
-                             Status       Connected
- CODEX                       Identity     work@example.com
-   ◎ work                 ●  Provider     Claude Code
-   ◎ personal             ●  Plan         Max
-                             Auth         Browser login
- ANTIGRAVITY
-   ✦ personal             ●  Default model    Opus
-                             Default effort   High
-
-                             Sessions         2 running
-
-                             [Sign in again]  [Remove account]
-
-
-
-
-
-
-
-
-
- + Add account
- ↑↓ Profile · Tab Sections · Esc Close
+ ACCOUNTS                         │ ✳ Claude · work
+                                  │
+ CLAUDE                           │ [Overview]  Usage  Defaults
+ > ✳ Max · work                 ● │ ───────────────────────────────────────────────────────────────
+   ✳ Pro · personal             ● │
+                                  │ Status       Connected
+ CODEX                            │ Identity     work@example.com
+   ◎ work                       ● │ Provider     Claude Code
+   ◎ personal                   ● │ Plan         Max
+                                  │ Auth         Browser login
+ ANTIGRAVITY                      │
+   ✦ personal                   ● │ Default model    Opus
+                                  │ Default effort   High
+                                  │
+                                  │ Sessions         2 running
+                                  │
+                                  │ [Sign in again]  [Remove account]
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+ ↑↓ Profile · Tab Section · Enter Details · n Add · Esc Close

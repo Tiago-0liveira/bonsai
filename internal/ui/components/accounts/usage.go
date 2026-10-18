@@ -46,14 +46,8 @@ func (m Model) usageView(rw, rows int) []string {
 		return pinned(body, []string{refresh}, rows)
 	}
 
-	pools := usesPools(u)
-	var body []string
-	if pools {
-		body = poolLines(u, rw, m.ascii)
-	} else {
-		body = windowLines(u, m.now(), m.ascii)
-	}
-	body = append(body, additionalLines(u, pools, m.ascii)...)
+	body := windowLines(u, m.now(), m.ascii)
+	body = append(body, additionalLines(u, m.ascii)...)
 	if len(body) == 0 {
 		body = []string{dim.Render("No usage reported.")}
 	}
@@ -94,12 +88,6 @@ func pinned(body, tail []string, rows int) []string {
 		out = append(out, "")
 	}
 	return append(out, tail...)
-}
-
-// usesPools reports that the account shows per-model pools instead of two
-// shared windows, when the provider has no headline pair.
-func usesPools(u agentsapi.Usage) bool {
-	return u.Headline.Primary == nil && u.Headline.Secondary == nil && len(u.Snapshot.Limits) > 0
 }
 
 // windowLines draws the two headline windows: name, meter, reset, blank.
@@ -158,52 +146,6 @@ func meterWidth(fraction float64, width int, ascii bool) string {
 	return rankStyle(usagefmt.RankOf(fraction)).Render(bar)
 }
 
-// poolLines lists every limit as its own meter, grouped by Group in the order
-// the provider reported them.
-func poolLines(u agentsapi.Usage, rw int, ascii bool) []string {
-	type pool struct {
-		name   string
-		limits []agents.UsageLimit
-	}
-	var pools []*pool
-	byName := map[string]*pool{}
-	labelW := 0
-	for _, l := range u.Snapshot.Limits {
-		p, ok := byName[l.Group]
-		if !ok {
-			p = &pool{name: l.Group}
-			byName[l.Group] = p
-			pools = append(pools, p)
-		}
-		p.limits = append(p.limits, l)
-		labelW = max(labelW, lipgloss.Width(limitLabel(l)))
-	}
-	// The label column leaves room for the meter and a percentage.
-	labelW = min(labelW, max(rw-barCells-6, 1))
-
-	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
-	var out []string
-	for i, p := range pools {
-		if i > 0 {
-			out = append(out, "")
-		}
-		if p.name != "" {
-			out = append(out, dim.Render(p.name))
-		}
-		for _, l := range p.limits {
-			label := ansi.Truncate(limitLabel(l), labelW, "…")
-			row := label + strings.Repeat(" ", max(labelW-lipgloss.Width(label), 0)) + "  "
-			if _, ok := agents.RemainingFraction(&l); ok {
-				row += limitValue(&l, ascii, false)
-			} else {
-				row += dim.Render("unknown")
-			}
-			out = append(out, row)
-		}
-	}
-	return append(out, "")
-}
-
 func limitLabel(l agents.UsageLimit) string {
 	if l.Label != "" {
 		return l.Label
@@ -212,21 +154,25 @@ func limitLabel(l agents.UsageLimit) string {
 }
 
 // additionalLines lists limits beyond the headline windows plus credit balances.
-func additionalLines(u agentsapi.Usage, pools bool, ascii bool) []string {
+func additionalLines(u agentsapi.Usage, ascii bool) []string {
 	type row struct{ label, value string }
 	var rows []row
-	if !pools {
-		for _, l := range u.Headline.Extra {
-			value := "unknown"
-			if _, ok := agents.RemainingFraction(&l); ok {
-				value = limitValue(&l, ascii, true)
-			}
-			label := limitLabel(l)
-			if l.Group != "" && l.Window != "" {
-				label = l.Group + " · " + usagefmt.WindowName(&l, "")
-			}
-			rows = append(rows, row{label, value})
+	extra := u.Headline.Extra
+	if u.Headline.Primary == nil && u.Headline.Secondary == nil && len(extra) == 0 {
+		// Keep unfamiliar limits visible in the same details layout without
+		// reviving a separate pool UI or inventing shared windows.
+		extra = u.Snapshot.Limits
+	}
+	for _, l := range extra {
+		value := "unknown"
+		if _, ok := agents.RemainingFraction(&l); ok {
+			value = limitValue(&l, ascii, true)
 		}
+		label := limitLabel(l)
+		if l.Group != "" && l.Window != "" {
+			label = l.Group + " · " + usagefmt.WindowName(&l, "")
+		}
+		rows = append(rows, row{label, value})
 	}
 	for _, c := range u.Snapshot.Credits {
 		rows = append(rows, row{c.Label, creditText(c)})

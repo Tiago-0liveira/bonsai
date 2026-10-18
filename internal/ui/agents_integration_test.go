@@ -209,15 +209,13 @@ func TestAgentsIntegrationTerminalMode(t *testing.T) {
 	e.pump(t)
 	pump(func() bool { return strings.Contains(screen(), "hi there") })
 
-	// ctrl+] d: leave terminal mode; the holder keeps running.
+	// Ctrl+] immediately leaves focus while the stream and holder keep running.
 	deliver(ctrlBracket)
-	deliver(runes("d"))
 	if v.control {
 		t.Fatal("still in terminal mode")
 	}
-	pump(func() bool { return v.state == attachObserving && !v.replaying })
-	if v.stream.Writer() {
-		t.Error("detach must give up the write role")
+	if !v.stream.Writer() {
+		t.Error("leaving focus must keep the stream attached")
 	}
 	list, err := api.Sessions.List(t.Context())
 	if err != nil {

@@ -41,16 +41,28 @@ func (p *Provider) UsageHeadline(snapshot agents.UsageSnapshot) agents.UsageHead
 			extra = append(extra, limit)
 		}
 	}
-	return agents.NewUsageHeadline(gemini5h, geminiWeek, extra)
+	// Copy the headline limits: API labels such as "5h session limit" must
+	// use the same canonical windows as the other providers.
+	normalize := func(limit *agents.UsageLimit, window string) *agents.UsageLimit {
+		if limit == nil {
+			return nil
+		}
+		copy := *limit
+		copy.Window = window
+		return &copy
+	}
+	return agents.NewUsageHeadline(normalize(gemini5h, "5h"), normalize(geminiWeek, "weekly"), extra)
 }
 
 // classifyUsageLimit names the pool of a limit from its id, group, label and
 // window: "gemini-5h", "gemini-weekly", "third-5h", "third-weekly", or "".
 func classifyUsageLimit(limit agents.UsageLimit) string {
-	text := strings.ToLower(strings.Join([]string{limit.ID, limit.Group, limit.Label}, " "))
-	window := strings.ToLower(limit.Window)
-	weekly := strings.Contains(window, "week") || strings.Contains(text, "weekly")
-	fiveHour := window == "5h" || strings.Contains(window, "5h") || strings.Contains(text, "5h")
+	// Cloud Code and agy spell the same windows differently. Normalize their
+	// separators before classification so refreshes keep the same headline.
+	text := strings.ToLower(strings.Join([]string{limit.ID, limit.Group, limit.Label, limit.Window}, " "))
+	text = strings.NewReplacer("_", " ", "-", " ").Replace(text)
+	weekly := strings.Contains(text, "week") || strings.Contains(text, "7 day") || strings.Contains(text, "7d")
+	fiveHour := strings.Contains(text, "5h") || strings.Contains(text, "five hour") || strings.Contains(text, "5 hour")
 	if !weekly && !fiveHour {
 		return ""
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	wideLeft   = 26
+	wideLeft   = 32
 	narrowLeft = 24
 	wideBreak  = 76
 	// Title, spacer and footer; all other rows belong to the content.
@@ -31,7 +31,7 @@ func LeftWidth(w int) int {
 func ContentWidth(w int) int { return max(w-2, 0) }
 
 // RightWidth is the detail column width of a two-column frame.
-func RightWidth(w int) int { return max(w-LeftWidth(w)-4, 0) }
+func RightWidth(w int) int { return max(w-LeftWidth(w)-5, 0) }
 
 // BodyRows is the available height after the title and footer.
 func BodyRows(h int) int { return max(h-chrome, 0) }
@@ -39,8 +39,9 @@ func BodyRows(h int) int { return max(h-chrome, 0) }
 // Frame fills the pane with two columns, without an enclosing border.
 func Frame(title string, left, right []string, footer string, w, h int) string {
 	body := make([]string, BodyRows(h))
+	divider := lipgloss.NewStyle().Foreground(theme.Current.Border).Render(" │ ")
 	for i := range body {
-		body[i] = fit(at(left, i), LeftWidth(w)) + "  " + fit(at(right, i), RightWidth(w))
+		body[i] = fit(at(left, i), LeftWidth(w)) + divider + fit(at(right, i), RightWidth(w))
 	}
 	return FrameSingle(title, body, footer, w, h)
 }

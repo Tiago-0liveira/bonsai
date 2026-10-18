@@ -1,5 +1,5 @@
-[1 ✳ Auth fix] [2 ◎ Tests]                                                                                a: All  n: New
-◎ Codex · work │ 5h ███████░░░ left · Week 41% left · Reset 2h14m                                        Ctrl+] u: Usage
+[1 ✳ Auth fix] [2 ◎ Tests]
+◎ Codex · work │ 5h ███████░░░ left · Week 41% left · Reset 2h14m                                              READ-ONLY
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 $ claude
 
@@ -25,8 +25,8 @@ $ claude
 
 ────────────
 >
-Controlled by another client · Ctrl+] t to take control
+Controlled by another client · Ctrl+] then Enter to take control
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Controlled by another client  ·  Ctrl+] t Take control  ·  Ctrl+] d Detach
+READ-ONLY · Ctrl+] Unfocus, then Enter to take control
 ========================================================================================================================
-Ctrl+] t take control · Ctrl+] d detach
+READ-ONLY · Ctrl+] unfocus

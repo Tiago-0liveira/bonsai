@@ -154,7 +154,7 @@ func (m Model) addView(rw int) []string {
 				marker, label = accent.Render("> "), accent.Render(label)
 			}
 		}
-		lines = append(lines, marker+theme.ProviderStyle(p).Render(theme.ProviderGlyph(p, m.ascii))+" "+label)
+		lines = append(lines, marker+theme.ProviderStyle(p).Render(theme.ProviderGlyph(p, m.ascii)+" "+label))
 	}
 
 	in := a.input

@@ -1943,8 +1943,8 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		return m.onAgentsPick(msg.Value)
 
 	case modals.KindKeymap:
-		// The ctrl+] menu is fixed, so there is nothing to edit: keep the help open.
-		if strings.Contains(ansi.Strip(msg.Value), agentPrefixSection) {
+		// The terminal escape key is fixed, so keep the help open.
+		if strings.Contains(ansi.Strip(msg.Value), agentTerminalSection) {
 			m.modal = open
 			return m, nil
 		}

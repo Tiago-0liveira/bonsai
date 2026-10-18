@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
@@ -22,13 +21,13 @@ const (
 	// input is dropped rather than growing without limit.
 	maxInputQueue = 1024
 
-	bannerControlledByOther = "Controlled by another client · Ctrl+] t to take control"
-	hintOtherControls       = "Controlled by another client  ·  Ctrl+] t Take control  ·  Ctrl+] d Detach"
-	hintControlLost         = "Control taken by another client  ·  Ctrl+] t Take back"
-	hintPrefix              = "Ctrl+]  →  Bonsai command prefix"
-	observingOtherNote      = "Another client controls this agent: Ctrl+] t takes control"
+	bannerControlledByOther = "Controlled by another client · Ctrl+] then Enter to take control"
+	hintOtherControls       = "READ-ONLY · Ctrl+] Unfocus, then Enter to take control"
+	hintControlLost         = "Control taken by another client  ·  Ctrl+] then Enter Take back"
+	hintAgentFocused        = "FOCUSED · Input goes to agent · Ctrl+] Unfocus"
+	observingOtherNote      = "Another client controls this agent: Ctrl+] then Enter takes control"
 	inputDroppedNote        = "agents: input dropped, the agent is not reading"
-	hintConnecting          = "Connecting to the agent…  ·  keys are ignored until attached  ·  Ctrl+] d Detach"
+	hintConnecting          = "Connecting to the agent…  ·  keys are ignored until attached  ·  Ctrl+] Unfocus"
 )
 
 // agentInputMsg carries one chunk the emulator wants sent to the agent. It
@@ -236,7 +235,7 @@ func (m *Model) enterTerminalMode() (handled bool, cmd tea.Cmd) {
 	if v.term == nil || v.stream == nil {
 		return true, nil // still connecting
 	}
-	v.control, v.prefix = true, false
+	v.control = true
 	switch v.state {
 	case attachControlling:
 		// A stream kept from an earlier visit: it still writes, no re-attach.
@@ -244,7 +243,7 @@ func (m *Model) enterTerminalMode() (handled bool, cmd tea.Cmd) {
 		return true, m.nudge(v)
 	case attachObservingOther:
 		v.term.SetFocused(false)
-		return true, nil
+		return true, takeCmd(v.token, v.stream)
 	}
 	return true, m.reattachAgent(v, false)
 }
@@ -253,7 +252,7 @@ func (m *Model) enterTerminalMode() (handled bool, cmd tea.Cmd) {
 // and rendering: interrupting the agent is never a side effect of opening an
 // overlay.
 func (m *Model) leaveTerminalMode(v *agentView) {
-	v.control, v.prefix = false, false
+	v.control = false
 	if v.term != nil {
 		v.term.SetFocused(false)
 	}
@@ -307,40 +306,11 @@ func (m Model) onAgentResizeTick(msg agentResizeTickMsg) (tea.Model, tea.Cmd) {
 
 // agentTerminalKey routes every key while in terminal mode. Only ctrl+] is
 // ours; everything else, including q, ctrl+c, esc, tab and ?, belongs to the
-// agent. The prefix has no bypass: any key after it that is not a menu key
-// closes the strip and is swallowed, never forwarded.
+// agent. Ctrl+] immediately returns the keyboard to Bonsai.
 func (m Model) agentTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.agents.view
-	if v.prefix {
-		v.prefix = false
-		switch msg.String() {
-		case "ctrl+]":
-			send, dropped := v.queueInput([]byte{0x1d})
-			if dropped {
-				m.status = inputDroppedNote
-			}
-			return m, send
-		case "d":
-			m.leaveTerminalMode(v)
-			return m, m.reattachAgent(v, true)
-		case "a":
-			m.leaveTerminalMode(v)
-			return m.openAgentsPicker()
-		case "u":
-			return m.openAgentUsage()
-		case "m":
-			return m.openAgentAccounts()
-		case "s":
-			return m.askStopAgent()
-		case "t":
-			if v.state == attachObservingOther && v.stream != nil {
-				return m, takeCmd(v.token, v.stream)
-			}
-		}
-		return m, nil // esc and anything else: back to the agent
-	}
 	if msg.Type == tea.KeyCtrlCloseBracket {
-		v.prefix = true
+		m.leaveTerminalMode(v)
 		return m, nil
 	}
 	switch v.state {
@@ -366,9 +336,16 @@ func (m Model) agentTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // gets the height, and a hint row closing the pane.
 func (m Model) terminalLayout(w, h int, strip []agentsapi.Session, sel agentsapi.Session, selIdx int, rule string) agentsLayout {
 	var head string
-	stripHints := "a: All  n: New"
+	focusLabel := "FOCUSED"
+	if v := m.agents.view; v != nil {
+		if v.stream == nil {
+			focusLabel = "CONNECTING"
+		} else if v.state == attachObservingOther {
+			focusLabel = "READ-ONLY"
+		}
+	}
 	if w >= agentsWideMin {
-		parts := []string{providerName(sel.Provider)}
+		parts := []string{theme.ProviderStyle(sel.Provider).Render(providerName(sel.Provider))}
 		if sel.ProfileName != "" {
 			parts = append(parts, sel.ProfileName)
 		}
@@ -376,12 +353,11 @@ func (m Model) terminalLayout(w, h int, strip []agentsapi.Session, sel agentsapi
 		if u := m.usageText(sel, false); u != "" {
 			left += " │ " + u
 		}
-		head = leftRight(left, dimText("Ctrl+] u: Usage"), w)
+		head = leftRight(left, dimText(focusLabel), w)
 	} else {
-		stripHints = "a: All"
-		head = m.compactHeaderHint(sel, w, "Ctrl+] u: Usage")
+		head = m.compactHeaderHint(sel, w, focusLabel)
 	}
-	fixed := []string{m.sessionStrip(strip, selIdx, w, "", stripHints), fit(head, w), rule}
+	fixed := []string{m.sessionStrip(strip, selIdx, w, "", ""), fit(head, w), rule}
 	tail := []string{rule, fit(m.terminalHint(), w)}
 	if h-len(fixed)-len(tail) < minTerminalRows {
 		return agentsLayout{}
@@ -402,54 +378,7 @@ func (m Model) terminalHint() string {
 	case v.state == attachObservingOther:
 		return warn.Render(hintOtherControls)
 	}
-	return dimText(hintPrefix)
-}
-
-// controlStrip is the three-row menu drawn over the bottom of the terminal
-// area after ctrl+]. It overlays rows rather than resizing the PTY, so opening
-// it never makes the agent redraw.
-func controlStrip(w int, writer bool) []string {
-	accent := lipgloss.NewStyle().Foreground(theme.Current.Accent)
-	type entry struct{ key, label string }
-	first := []entry{{"d", "Detach"}, {"a", "Agents"}, {"u", "Usage"}, {"m", "Accounts"}}
-	if !writer {
-		first = append(first, entry{"t", "Take control"})
-	}
-	second := []entry{{"s", "Stop"}, {"Esc", "Return to agent"}}
-	plain := func(es []entry) string {
-		parts := make([]string, len(es))
-		for i, e := range es {
-			parts[i] = "[" + e.key + "] " + e.label
-		}
-		return " " + strings.Join(parts, "  ")
-	}
-	styled := func(es []entry) string {
-		parts := make([]string, len(es))
-		for i, e := range es {
-			parts[i] = accent.Render("["+e.key+"]") + " " + e.label
-		}
-		return " " + strings.Join(parts, "  ")
-	}
-	rows := [][]entry{first, second}
-	if ansi.StringWidth(plain(first)) > w || ansi.StringWidth(plain(second)) > w {
-		// Too narrow for the designed split: pack greedily over the same two rows.
-		all := append(append([]entry(nil), first...), second...)
-		rows = [][]entry{nil, nil}
-		r := 0
-		for _, e := range all {
-			if r == 0 && len(rows[0]) > 0 && ansi.StringWidth(plain(append(append([]entry(nil), rows[0]...), e))) > w {
-				r = 1
-			}
-			rows[r] = append(rows[r], e)
-		}
-	}
-	title := "─ BONSAI CONTROL "
-	title += strings.Repeat("─", max(w-ansi.StringWidth(title), 0))
-	return []string{
-		accent.Bold(true).Render(ansi.Truncate(title, w, "")),
-		fit(styled(rows[0]), w),
-		fit(styled(rows[1]), w),
-	}
+	return dimText(hintAgentFocused)
 }
 
 // agentNavHints are the state-specific hints ahead of the standing ones in
@@ -470,7 +399,11 @@ func (m Model) agentNavHints(pair func(k, d string) string, descSt lipgloss.Styl
 	case v.err != "" && v.retry:
 		return []string{pair(m.keys.AgentAttach.Help().Key, "retry")}
 	case v.state == attachEnded:
-		return []string{pair(m.keys.AgentNew.Help().Key, "new"), pair(m.keys.AgentAll.Help().Key, "all")}
+		return nil
 	}
-	return nil
+	label := "focus agent"
+	if v.state == attachObservingOther {
+		label = "take control"
+	}
+	return []string{pair(m.keys.AgentAttach.Help().Key, label)}
 }

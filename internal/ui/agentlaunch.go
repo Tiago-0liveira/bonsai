@@ -591,7 +591,7 @@ func (d launchDialog) right(rw, rows int) []string {
 		return []string{dim.Render("No accounts yet."), dim.Render("Esc, then m to add one.")}
 	}
 
-	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, d.ascii)) + " " + providerName(a.Provider) + " · " + a.Name
+	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, d.ascii)+" "+providerName(a.Provider)) + " · " + a.Name
 	usage := dim.Render("usage loading…")
 	if u, ok := d.usage[a.ID]; ok {
 		if text := accounts.Headline(u.Headline, d.now(), d.ascii, false); text != "" {

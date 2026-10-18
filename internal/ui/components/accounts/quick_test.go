@@ -22,10 +22,9 @@ func quickFake() *fake.Accounts {
 	api := mockupFake()
 	api.Items = append(api.Items, agentsapi.Account{Account: agents.Account{ID: "a2", Provider: "antigravity", Name: "work"}})
 	api.Usages["a2"] = agentsapi.Usage{
-		Snapshot: agents.UsageSnapshot{Limits: []agents.UsageLimit{
-			{ID: "pro", Group: "Gemini", Label: "Gemini Pro", RemainingFraction: ptr(0.9)},
-			{ID: "flash", Group: "Gemini", Label: "Flash", RemainingFraction: ptr(0.7)},
-		}},
+		Headline: agents.NewUsageHeadline(
+			&agents.UsageLimit{ID: "gemini-5h", Window: "5h", RemainingFraction: ptr(0.9)},
+			&agents.UsageLimit{ID: "gemini-weekly", Window: "weekly", RemainingFraction: ptr(0.7)}, nil),
 		FetchedAt: testNow.Add(-time.Hour), Stale: true, Err: "rate limited",
 	}
 	return api
@@ -96,13 +95,13 @@ func TestQuickLoadsAndOrders(t *testing.T) {
 	q := opennedQuick(t, api, "c1", false)
 	out := quickPlain(q)
 	for _, want := range []string{"USAGE", "Claude · work", "5-hour", "███████░░░ · Resets in 2h14m", "Weekly", "41% remaining",
-		"Updated 35 seconds ago", "↑↓ Profile · r Refresh · m Profiles · Esc Close", "Gemini Pro 12% · Flash 80%", "stale"} {
+		"Updated 35 seconds ago", "↑↓ Profile · r Refresh · m Profiles · Esc Close", "5h █░░░░░░░░░ · W 80%", "stale"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}
 	}
 	// The list always contains all profiles in provider/name order.
-	order(t, out, "Claude · work", "personal  5h ███████░░░", "personal  5h ██░░░░░░░░", "work      5h █████████░", "personal  Gemini", "work      Gemini")
+	order(t, out, "Claude · work", "personal  5h ███████░░░", "personal  5h ██░░░░░░░░", "work      5h █████████░", "personal  5h █░░░░░░░░░", "work      5h █████████░ · W 70%")
 	if strings.Count(out, "work") < 3 {
 		t.Fatalf("unexpected rows:\n%s", out)
 	}
@@ -354,9 +353,9 @@ func TestQuickStaleRowsAreDimmedAndLabelled(t *testing.T) {
 	var staleRow, goodRow string
 	for _, l := range strings.Split(q.View(), "\n") {
 		switch {
-		case strings.Contains(ansi.Strip(l), "work      Gemini"):
+		case strings.Contains(ansi.Strip(l), "work      5h █████████░ · W 70%"):
 			staleRow = l
-		case strings.Contains(ansi.Strip(l), "personal  Gemini"):
+		case strings.Contains(ansi.Strip(l), "personal  5h █░░░░░░░░░"):
 			goodRow = l
 		}
 	}
@@ -458,11 +457,11 @@ func TestQuickUnknownFocusFallsBack(t *testing.T) {
 	}
 }
 
-func TestQuickFocusedAntigravityShowsPools(t *testing.T) {
+func TestQuickFocusedAntigravityShowsWindows(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "a1", false)
 	out := quickPlain(q)
-	if !strings.Contains(out, "Antigravity · personal") || !strings.Contains(out, "Gemini Pro") {
-		t.Errorf("pool meters missing:\n%s", out)
+	if !strings.Contains(out, "Antigravity · personal") || !strings.Contains(out, "5-hour") || !strings.Contains(out, "Weekly") {
+		t.Errorf("headline windows missing:\n%s", out)
 	}
 }
 
@@ -567,5 +566,17 @@ func TestQuickNavigationKeepsRowsStableAndSelectionVisible(t *testing.T) {
 				t.Fatalf("selected profile %s scrolled out:\n%s", q.focus, out)
 			}
 		}
+	}
+}
+
+func TestQuickScrollingKeepsProviderHeadingWithSelectedProfile(t *testing.T) {
+	q := opennedQuick(t, quickFake(), "c2", false)
+	q.SetSize(64, 11)
+	for _, a := range q.ordered() {
+		lines := strings.Split(quickPlain(q), "\n")
+		if strings.TrimSpace(lines[6]) != strings.ToUpper(providerName(a.Provider)) || !strings.Contains(lines[7], "> ") || !strings.Contains(lines[7], a.Name) {
+			t.Fatalf("missing group heading or selected profile %s:\n%s", a.ID, quickPlain(q))
+		}
+		q, _ = quickKey(q, "j")
 	}
 }

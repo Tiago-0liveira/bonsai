@@ -319,7 +319,7 @@ func moreLabel(n int) string { return "[+" + itoa(n) + " more]" }
 
 // fullHeaderTitle: provider · profile · model │ state.
 func (m Model) fullHeaderTitle(s agentsapi.Session) string {
-	parts := []string{providerName(s.Provider)}
+	parts := []string{theme.ProviderStyle(s.Provider).Render(providerName(s.Provider))}
 	if s.ProfileName != "" {
 		parts = append(parts, s.ProfileName)
 	}

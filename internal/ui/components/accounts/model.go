@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"fmt"
+	"maps"
 	"os/exec"
 	"strings"
 	"time"
@@ -62,8 +63,9 @@ type Model struct {
 	listErr  string
 	selected agents.AccountID
 
-	n      int // request counter
-	latest seqs
+	n           int // request counter
+	latest      seqs
+	describeSeq map[agents.AccountID]int
 
 	usage        map[agents.AccountID]agentsapi.Usage
 	usageLoading bool
@@ -86,7 +88,6 @@ type accountFocus int
 
 const (
 	focusProfiles accountFocus = iota
-	focusSections
 	focusContent
 )
 
@@ -102,13 +103,14 @@ func New(api agentsapi.Accounts, opts Options) Model {
 		now = time.Now
 	}
 	m := Model{
-		api:      api,
-		ascii:    opts.ASCII,
-		now:      now,
-		tab:      min(max(opts.Tab, TabOverview), tabCount-1),
-		selected: opts.Initial,
-		usage:    map[agents.AccountID]agentsapi.Usage{},
-		add:      newAddState(),
+		api:         api,
+		ascii:       opts.ASCII,
+		now:         now,
+		tab:         min(max(opts.Tab, TabOverview), tabCount-1),
+		selected:    opts.Initial,
+		usage:       map[agents.AccountID]agentsapi.Usage{},
+		describeSeq: map[agents.AccountID]int{},
+		add:         newAddState(),
 	}
 	m.n = 1
 	m.latest.list = 1
@@ -151,8 +153,10 @@ func (m Model) View() string {
 		Selected:    m.selected,
 		AddSelected: m.add.active,
 		Usage:       m.usage,
+		ShowPlan:    true,
 		ASCII:       m.ascii,
 		Focused:     m.focus == focusProfiles,
+		HideAdd:     true,
 	}
 	var out string
 	if Compact(w) {
@@ -169,21 +173,29 @@ func (m Model) View() string {
 	return out
 }
 
+// Help describes the keys available in the current profile view.
+func (m Model) Help() string { return m.footer() }
+
 func (m Model) footer() string {
 	switch {
+	case m.dlg != nil:
+		return "←→ Choice · Enter Confirm · Esc Cancel"
 	case m.add.active:
 		return m.addFooter()
+	case m.formEditing():
+		return "↑↓ Choice · Enter Select · Tab Section · Esc Cancel"
 	}
 	switch m.focus {
 	case focusProfiles:
-		return "↑↓ Profile · Tab Sections · Esc Close"
-	case focusSections:
-		return "←→ Section · Tab Details · Esc Back"
+		return "↑↓ Profile · Tab Section · Enter Details · n Add · Esc Close"
 	default:
 		if m.tab == TabDefaults {
-			return "↑↓ Field · Enter Edit · ^S Save · Esc"
+			return "↑↓ Field · Enter Edit · ^S Save · Tab Section · Esc Profiles"
 		}
-		return "↑↓ Action · Enter Select · Esc Back"
+		if m.tab == TabUsage {
+			return "r Refresh · Tab Section · Esc Profiles"
+		}
+		return "↑↓ Action · Enter Select · Tab Section · Esc Profiles"
 	}
 }
 
@@ -205,8 +217,7 @@ func (m Model) right(rw, rows int) []string {
 		return []string{dim.Render("No accounts yet.")}
 	}
 
-	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, m.ascii)) +
-		" " + providerName(a.Provider) + " · " + a.Name
+	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, m.ascii)+" "+providerName(a.Provider)) + " · " + a.Name
 	lines := []string{head, "", m.tabRow(), dim.Render(strings.Repeat("─", rw)), ""}
 	if Compact(m.w) {
 		lines = []string{m.tabRow(), dim.Render(strings.Repeat("─", rw))}
@@ -236,9 +247,6 @@ func (m Model) tabRow() string {
 		parts = append(parts, lipgloss.NewStyle().Foreground(th.Dim).Render(names[t]))
 	}
 	row := strings.Join(parts, "  ")
-	if m.focus == focusSections {
-		row = lipgloss.NewStyle().Reverse(true).Render(row)
-	}
 	switch {
 	case m.df.saved:
 		row += "  " + lipgloss.NewStyle().Foreground(th.Success).Render("Saved")
@@ -286,8 +294,11 @@ func (m *Model) loadSelected() tea.Cmd {
 	}
 	m.describing, m.describeErr = true, ""
 	m.usageLoading = true
+	seq := m.next(&m.latest.describe)
+	m.describeSeq = maps.Clone(m.describeSeq)
+	m.describeSeq[id] = seq
 	return tea.Batch(
-		describeCmd(m.api, id, m.next(&m.latest.describe)),
+		describeCmd(m.api, id, seq),
 		usageCmd(m.api, id, m.next(&m.latest.usage), false),
 		defaultsCmd(m.api, id, m.next(&m.latest.defaults)),
 	)

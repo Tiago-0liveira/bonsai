@@ -138,7 +138,7 @@ func TestTerminalEnterReattachesAtOffsetAsWriter(t *testing.T) {
 	if e.m.agents.view.state != attachControlling || !e.m.agentTerminalMode() {
 		t.Errorf("state = %v", e.m.agents.view.state)
 	}
-	if !strings.Contains(ansi.Strip(e.m.statusBar()), "Ctrl+] Bonsai command prefix") {
+	if !strings.Contains(ansi.Strip(e.m.statusBar()), "FOCUSED · Input goes to agent · Ctrl+] unfocus") {
 		t.Errorf("status bar = %q", ansi.Strip(e.m.statusBar()))
 	}
 }
@@ -207,12 +207,12 @@ func TestTerminalObservingOtherSwallowsKeysWithOneHint(t *testing.T) {
 		t.Fatalf("state = %v", v.state)
 	}
 	view := ansi.Strip(e.m.View())
-	for _, want := range []string{"Controlled by another client", "Ctrl+] t Take control", "Ctrl+] d Detach"} {
+	for _, want := range []string{"Controlled by another client", "Ctrl+] Unfocus, then Enter", "Ctrl+] Unfocus"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("View lacks %q:\n%s", want, view)
 		}
 	}
-	if bar := ansi.Strip(e.m.statusBar()); !strings.Contains(bar, "Ctrl+] t take control") {
+	if bar := ansi.Strip(e.m.statusBar()); !strings.Contains(bar, "READ-ONLY · Ctrl+] unfocus") {
 		t.Errorf("status bar = %q", bar)
 	}
 	e.typeKeys(t, runes("q"))
@@ -226,59 +226,23 @@ func TestTerminalObservingOtherSwallowsKeysWithOneHint(t *testing.T) {
 	}
 }
 
-func TestTerminalPrefixDetachReattachesReadOnlyAtOffset(t *testing.T) {
+func TestTerminalEscapeKeepsStreamAndReturnsKeyboard(t *testing.T) {
 	e, st := terminalEnv(t)
-	e.frames(t, agentterminal.Frame{Type: "output", Offset: 3, Data: []byte("more")})
-	e.send(t, ctrlBracket)
-	e.send(t, runes("d"))
-	e.run(t, e.lastCmd)
-	if !st.Closed() {
-		t.Error("the writer stream stays open after detach")
+	attaches := len(e.fb.Sessions.Attaches())
+	e.typeKeys(t, ctrlBracket, runes("z"), ctrlBracket)
+	if e.m.agentTerminalMode() || e.m.modal != nil || e.m.agents.overlay != nil {
+		t.Fatal("escape should leave focus immediately")
 	}
-	ro := e.attached(t)
-	calls := e.fb.Sessions.Attaches()
-	last := calls[len(calls)-1].Opts
-	if !last.ReadOnly || last.Offset != 7 || last.Generation != "fake-gen" {
-		t.Errorf("detach attach = %+v, want read-only at offset 7", last)
+	if st.Closed() || len(e.fb.Sessions.Attaches()) != attaches || len(st.Inputs()) != 0 {
+		t.Fatal("leaving focus must keep stream and swallow no further agent input")
 	}
-	if e.m.agentTerminalMode() || ro.Writer() {
-		t.Error("detach must leave terminal mode and the write role")
+	e.frames(t, out("still running"))
+	if !strings.Contains(ansi.Strip(e.m.agents.view.term.View()), "still running") {
+		t.Fatal("output stopped")
 	}
-	if !strings.Contains(ansi.Strip(e.m.View()), "hello") {
-		t.Error("the screen must stay while re-attaching")
-	}
-}
-
-func TestTerminalPrefixCannotBeBypassed(t *testing.T) {
-	e, st := terminalEnv(t)
-	for _, k := range []tea.KeyMsg{runes("x"), runes("q"), {Type: tea.KeyCtrlC}, {Type: tea.KeyTab}, {Type: tea.KeyEnter}} {
-		e.typeKeys(t, ctrlBracket, k)
-		if e.m.agents.view.prefix {
-			t.Errorf("strip still open after %v", k)
-		}
-	}
-	if len(st.Inputs()) != 0 || e.m.rightTab != tabAgents || e.m.modal != nil {
-		t.Errorf("inputs %q: a key after the prefix must be swallowed", inputsOf(st))
-	}
-	e.typeKeys(t, runes("q"))
-	if got := inputsOf(st); !reflect.DeepEqual(got, []string{"q"}) {
-		t.Errorf("after the strip closes keys flow again: %q", got)
-	}
-}
-
-func TestTerminalPrefixEscReturnsToAgent(t *testing.T) {
-	e, st := terminalEnv(t)
-	e.typeKeys(t, ctrlBracket, tea.KeyMsg{Type: tea.KeyEsc})
-	if e.m.agents.view.prefix || !e.m.agentTerminalMode() || len(st.Inputs()) != 0 {
-		t.Error("esc after the prefix only closes the strip")
-	}
-}
-
-func TestTerminalPrefixPrefixSendsLiteral(t *testing.T) {
-	e, st := terminalEnv(t)
-	e.typeKeys(t, ctrlBracket, ctrlBracket)
-	if got := st.Inputs(); len(got) != 1 || string(got[0]) != "\x1d" {
-		t.Errorf("inputs = %q, want 0x1d", got)
+	e.typeKeys(t, tea.KeyMsg{Type: tea.KeyEnter}, runes("hello"))
+	if !e.m.agentTerminalMode() || !reflect.DeepEqual(inputsOf(st), []string{"hello"}) {
+		t.Fatalf("enter did not restore agent input: %q", inputsOf(st))
 	}
 }
 
@@ -294,10 +258,10 @@ func TestTerminalPrefixTakeControl(t *testing.T) {
 		t.Fatal("setup")
 	}
 	e.send(t, ctrlBracket)
-	if !strings.Contains(ansi.Strip(e.m.View()), "[t] Take control") {
-		t.Error("the strip offers take control to an observer")
+	if e.m.agentTerminalMode() {
+		t.Fatal("Ctrl+] must leave focus")
 	}
-	e.send(t, runes("t"))
+	e.send(t, tea.KeyMsg{Type: tea.KeyEnter})
 	e.run(t, e.lastCmd)
 	if st.Takes() != 1 {
 		t.Fatalf("takes = %d", st.Takes())
@@ -328,7 +292,7 @@ func TestTerminalWriterLost(t *testing.T) {
 		t.Fatalf("state = %v", e.m.agents.view.state)
 	}
 	view := ansi.Strip(e.m.View())
-	if !strings.Contains(view, "Control taken by another client  ·  Ctrl+] t Take back") {
+	if !strings.Contains(view, "Control taken by another client  ·  Ctrl+] then Enter Take back") {
 		t.Errorf("View lacks the lost-control hint:\n%s", view)
 	}
 	e.typeKeys(t, runes("q"))
@@ -387,37 +351,22 @@ func TestTerminalResizeIsDebounced(t *testing.T) {
 	}
 }
 
-func TestTerminalControlStripOverlaysWithoutResize(t *testing.T) {
+func TestTerminalEscapeDoesNotShowControlMenu(t *testing.T) {
 	for _, size := range [][2]int{{120, 40}, {80, 24}, {50, 24}} {
-		e, st := terminalEnv(t)
+		e, _ := terminalEnv(t)
 		e.send(t, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		before := len(st.Resizes())
-		lines := strings.Split(ansi.Strip(e.m.View()), "\n")
 		e.send(t, ctrlBracket)
 		view := ansi.Strip(e.m.View())
-		wide := size[0] >= 80
-		for _, want := range []string{"BONSAI CONTROL", "[d] Detach", "[Esc] Return to agent", "[s] Stop"} {
-			if wide && !strings.Contains(view, want) {
-				t.Errorf("%v: View lacks %q:\n%s", size, want, view)
+		if strings.Contains(view, "BONSAI CONTROL") || e.m.agentTerminalMode() {
+			t.Fatal("escape opened a menu or kept focus")
+		}
+		if len(strings.Split(view, "\n")) > size[1] {
+			t.Fatal("view exceeds screen height")
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if ansi.StringWidth(line) > size[0] {
+				t.Fatal("view exceeds screen width")
 			}
-		}
-		if !strings.Contains(view, "BONSAI CONTROL") || (wide && !strings.Contains(view, "[Esc]")) {
-			t.Errorf("%v: strip missing:\n%s", size, view)
-		}
-		if strings.Contains(view, "[t]") {
-			t.Errorf("%v: the writer is offered take control", size)
-		}
-		after := strings.Split(view, "\n")
-		if len(after) != len(lines) || len(after) > size[1] {
-			t.Errorf("%v: rows %d -> %d", size, len(lines), len(after))
-		}
-		for _, l := range after {
-			if ansi.StringWidth(l) > size[0] {
-				t.Errorf("%v: line wider than the screen: %q", size, l)
-			}
-		}
-		if len(st.Resizes()) != before {
-			t.Errorf("%v: the strip resized the PTY", size)
 		}
 	}
 }
@@ -427,7 +376,7 @@ func TestTerminalLayoutFitsNarrowAndWide(t *testing.T) {
 		e, _ := terminalEnv(t)
 		e.send(t, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		view := ansi.Strip(e.m.View())
-		if !strings.Contains(view, "Ctrl+]  →  Bonsai command prefix") || !strings.Contains(view, "Ctrl+] u: Usage") {
+		if !strings.Contains(view, "FOCUSED") || !strings.Contains(view, "Ctrl+] Unfocus") {
 			if size[0] >= 80 {
 				t.Errorf("%v: View lacks the hint row or usage hint:\n%s", size, view)
 			}

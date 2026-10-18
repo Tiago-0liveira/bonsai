@@ -181,8 +181,21 @@ from the CLI appears live in the browser. `bonsai agents` lists every running
 session.
 
 The TUI's Agents tab is another client of these sessions. It watches the selected
-session read-only; `enter` takes control to type, and `ctrl+] t` takes control back
-when another client is writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
+session read-only; `enter` takes control to type, and `ctrl+]` immediately returns
+input to Bonsai. Press `enter` again to take control back when another client is
+writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
+
+`bonsai agents attach <id|name>` opens a terminal with pinned controls below the
+agent output. Press `Ctrl+]`, release it, then `d` to detach and leave the agent
+running, or `k` to request a kill. The kill prompt defaults to cancel: press `y`
+to stop the agent, or `n`, `Enter` or `Esc` to cancel. These controls also work
+with `--read-only` and when another client holds control. Press `Ctrl+]` then `t`
+to take control, or attach with `--take` to take it immediately. An explicit
+`--read-only` attachment cannot take control; detach and attach again without
+that flag. `Ctrl+C` reaches the agent while controlling it. When output is piped,
+`--read-only` streams output with control hints on stderr instead of a pinned
+display. The separate `bonsai agents stop <id|name>` command stops a session
+without asking for confirmation.
 
 `bonsai web stop` stops the agents the web started (origin `web`) unless
 `agents.keep_running` is on (see [web app](web.md)). Sessions with origin `tui` or

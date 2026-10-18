@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,6 +32,10 @@ type (
 		accounts []agentsapi.Account
 		err      error
 		want     agents.AccountID
+	}
+	sidebarInfoMsg struct {
+		seq   int
+		infos map[agents.AccountID]agents.AccountInfo
 	}
 	describeMsg struct {
 		id   agents.AccountID
@@ -86,6 +91,40 @@ func describeCmd(api agentsapi.Accounts, id agents.AccountID, seq int) tea.Cmd {
 		defer cancel()
 		info, err := api.Describe(ctx, id)
 		return describeMsg{id: id, seq: seq, info: info, err: err}
+	}
+}
+
+// Load plans for the unselected profiles without delaying the selected details
+// or starting an unbounded number of provider status commands.
+func sidebarInfoCmd(api agentsapi.Accounts, accounts []agentsapi.Account, selected agents.AccountID, seq int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := callCtx()
+		defer cancel()
+		infos := make(map[agents.AccountID]agents.AccountInfo)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		slots := make(chan struct{}, 3)
+		for _, a := range accounts {
+			if a.ID == selected {
+				continue
+			}
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				wg.Wait()
+				return sidebarInfoMsg{seq: seq, infos: infos}
+			}
+			wg.Go(func() {
+				defer func() { <-slots }()
+				if info, err := api.Describe(ctx, a.ID); err == nil {
+					mu.Lock()
+					infos[a.ID] = info
+					mu.Unlock()
+				}
+			})
+		}
+		wg.Wait()
+		return sidebarInfoMsg{seq: seq, infos: infos}
 	}
 }
 

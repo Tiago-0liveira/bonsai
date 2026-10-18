@@ -3,6 +3,7 @@ package theme
 import (
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
@@ -57,7 +58,7 @@ func TestAgentBadge(t *testing.T) {
 	}
 }
 
-func TestProviderStyleFollowsPalette(t *testing.T) {
+func TestProviderIdentityColors(t *testing.T) {
 	old := Current
 	t.Cleanup(func() { Current = old })
 	Current = Resolve("nord", nil)
@@ -65,9 +66,9 @@ func TestProviderStyleFollowsPalette(t *testing.T) {
 		provider agents.ProviderID
 		want     interface{}
 	}{
-		{"claude", Current.Warning},
-		{"codex", Current.Text},
-		{"antigravity", Current.Accent},
+		{"claude", lipgloss.Color("#D97757")},
+		{"codex", lipgloss.Color("#D1D5DB")},
+		{"antigravity", lipgloss.Color("#4285F4")},
 		{"other", Current.Dim},
 	}
 	for _, tt := range tests {

@@ -1,5 +1,5 @@
-[1 ✳ Auth fix] [2 ◎ Tests]                                                a: All
-◎ work · 5h ███████░░░ · W 41%                                   Ctrl+] u: Usage
+[1 ✳ Auth fix] [2 ◎ Tests]
+◎ work · 5h ███████░░░ · W 41%                                           FOCUSED
 ────────────────────────────────────────────────────────────────────────────────
 $ claude
 
@@ -21,6 +21,6 @@ $ claude
 
 > ──────────
 ────────────────────────────────────────────────────────────────────────────────
-Ctrl+]  →  Bonsai command prefix
+FOCUSED · Input goes to agent · Ctrl+] Unfocus
 ================================================================================
-Ctrl+] Bonsai command prefix
+FOCUSED · Input goes to agent · Ctrl+] unfocus
