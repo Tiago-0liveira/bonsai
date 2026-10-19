@@ -173,6 +173,8 @@ variables are listed in [docs/tui-cli.md](docs/tui-cli.md#hook-and-alias-variabl
 | [docs/web.md](docs/web.md) | Running the web app: setup, project folders, settings, updates and tunnels, Agents tab, recovery |
 | [docs/agents.md](docs/agents.md) | Claude Code, Codex and Antigravity profiles, seeding, isolation, usage, defaults |
 | [docs/tui-cli.md](docs/tui-cli.md) | TUI keybindings, CLI reference, configuration, hooks, prune, updates |
+| [TUI redesign plans](docs/plans/tui-redesign/README.md) | Planned sequence: shell, Settings, Accounts, Garden, Playground, Worktrees |
+| [Approved TUI mockups](docs/design/tui-redesign/README.md) | Revision 02 reference images and PDF; design artifacts, not implemented features |
 | [docs/architecture.md](docs/architecture.md) | How the local web stack fits together |
 | [docs/git-backend.md](docs/git-backend.md) | Local API security model, webhook receiver, Git backend |
 | [docs/development.md](docs/development.md) | Contributor stack, ports, provider contract, validation |

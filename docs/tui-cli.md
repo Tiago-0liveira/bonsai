@@ -5,6 +5,10 @@ a repository), the plain CLI subcommands, project configuration, hooks, prune an
 updates. For the browser workspace see [web.md](web.md); for AI agents see
 [agents.md](agents.md).
 
+The full terminal redesign has [approved mockups](design/tui-redesign/README.md)
+and [sequential implementation plans](plans/tui-redesign/README.md). It is planning
+work; the reference below describes the currently implemented TUI.
+
 ## TUI
 
 Run `bonsai` inside a repository. Press `n` to create a worktree, `enter` to
