@@ -3,6 +3,7 @@ package theme
 import (
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
@@ -13,8 +14,8 @@ func TestProviderGlyphs(t *testing.T) {
 		provider     agents.ProviderID
 		unicode, asc string
 	}{
-		{"claude", "✳", "C"},
-		{"codex", "◎", "X"},
+		{"claude", "✹", "C"},
+		{"codex", "❃", "X"},
 		{"antigravity", "✦", "A"},
 		{"other", "•", "?"},
 	}
@@ -41,9 +42,9 @@ func TestAgentBadge(t *testing.T) {
 		ascii    bool
 		want     string
 	}{
-		{"single", "claude", 1, false, "✳"},
-		{"zero", "codex", 0, false, "◎"},
-		{"count", "claude", 2, false, "✳2"},
+		{"single", "claude", 1, false, "✹"},
+		{"zero", "codex", 0, false, "❃"},
+		{"count", "claude", 2, false, "✹2"},
 		{"ascii count", "antigravity", 3, true, "A3"},
 		{"ascii single", "codex", 1, true, "X"},
 		{"unknown count", "other", 12, false, "•12"},
@@ -57,7 +58,7 @@ func TestAgentBadge(t *testing.T) {
 	}
 }
 
-func TestProviderStyleFollowsPalette(t *testing.T) {
+func TestProviderIdentityColors(t *testing.T) {
 	old := Current
 	t.Cleanup(func() { Current = old })
 	Current = Resolve("nord", nil)
@@ -65,9 +66,9 @@ func TestProviderStyleFollowsPalette(t *testing.T) {
 		provider agents.ProviderID
 		want     interface{}
 	}{
-		{"claude", Current.Warning},
-		{"codex", Current.Text},
-		{"antigravity", Current.Accent},
+		{"claude", lipgloss.Color("#D97757")},
+		{"codex", lipgloss.Color("#D1D5DB")},
+		{"antigravity", lipgloss.Color("#4285F4")},
 		{"other", Current.Dim},
 	}
 	for _, tt := range tests {

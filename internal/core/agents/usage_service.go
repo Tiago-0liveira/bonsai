@@ -49,6 +49,11 @@ func (s *UsageService) Account(ctx context.Context, accountID AccountID, opts Us
 			ttl = providerTTL
 		}
 	}
+	// A caller's freshness window beats the provider's, so a consumer that
+	// polls slowly does not refetch what a restart already has on disk.
+	if opts.MaxAge > 0 {
+		ttl = opts.MaxAge
+	}
 	if !opts.Refresh && s.Cache != nil {
 		if cached, ok, err := s.Cache.Get(account.Provider, account.ID); err != nil {
 			return UsageSnapshot{}, err

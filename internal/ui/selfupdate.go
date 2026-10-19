@@ -37,7 +37,7 @@ func installUpdate(r updater.Release) tea.Cmd {
 	}
 }
 func (m Model) updatePromptVisible() bool {
-	return m.availableUpdate.Tag != "" && m.modal == nil && m.prefs == nil && m.ready
+	return m.availableUpdate.Tag != "" && m.modal == nil && m.prefs == nil && m.agents.overlay == nil && m.ready
 }
 func (m Model) updatePrompt() string {
 	if m.updating {

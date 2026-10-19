@@ -13,7 +13,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi/fake"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 )
 
 var t0 = time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -197,15 +196,15 @@ func TestAgentsCompactBreakpoints(t *testing.T) {
 	)
 	e.relist(t)
 	e.openTab(t)
-	e.apply(t, fetchAgentUsage(e.fb.Accounts, e.m.agents.usageSeq, e.m.agents.usageAccount))
+	e.fetchUsage(t)
 
 	tests := []struct {
 		w       int
 		want    []string
 		notWant []string
 	}{
-		{120, []string{"Sessions: ", "n: New", "Claude · work", "│ ● Running", "5h 72% left", "Week 41% left", "u: Usage"}, nil},
-		{70, []string{"[1 ✳ Auth fix]", "a: All", "work · 5h 72% · W 41%", "u: Usage"}, []string{"Sessions:", "n: New", "left"}},
+		{120, []string{"Sessions: ", "n: New", "Claude · work", "│ ● Running", "5h ███████░░░ left", "Week 41% left", "u: Usage"}, nil},
+		{70, []string{"[1 ✹ Auth fix]", "a: All", "work · 5h ███████░░░ · W 41%", "u: Usage"}, []string{"Sessions:", "n: New", "left"}},
 		{50, []string{"Agents (g) │", "[3/3]", "a: Switch"}, []string{"u: Usage", "5h"}},
 	}
 	for _, tc := range tests {
@@ -225,13 +224,13 @@ func TestAgentsCompactBreakpoints(t *testing.T) {
 		})
 	}
 	t.Run("too small", func(t *testing.T) {
-		out := e.pane(120, 8) // 4 fixed rows leave 4 < 5
+		out := e.pane(120, 9) // 5 fixed rows leave 4 < 5
 		if !strings.Contains(out, "Pane too small") {
 			t.Errorf("want too-small notice:\n%s", out)
 		}
-		assertBox(t, out, 120, 8)
-		if strings.Contains(e.pane(120, 9), "Pane too small") {
-			t.Error("9 rows leave exactly 5 for the terminal")
+		assertBox(t, out, 120, 9)
+		if strings.Contains(e.pane(120, 10), "Pane too small") {
+			t.Error("10 rows leave exactly 5 for the terminal")
 		}
 	})
 }
@@ -315,27 +314,47 @@ func TestAgentsPicker(t *testing.T) {
 		t.Fatalf("setup: failed marker missing: %q", row)
 	}
 
+	e.m.width, e.m.height = 140, 40
+	e.m.layout()
 	e.key(t, "a")
-	if e.m.modal == nil || !strings.Contains(ansi.Strip(e.m.modal.View()), "AGENTS IN feat-a") {
-		t.Fatal("picker not open with the branch title")
+	if e.m.agents.overlay == nil || e.m.agents.overlay.sessions == nil || e.m.modal != nil {
+		t.Fatal("picker not open as an agent overlay")
 	}
-	secs := e.m.agentPickerSections(cleanPath(e.wtA), "")
-	if len(secs) != 2 || secs[0].Name != "Running" || secs[1].Name != "Recent" {
-		t.Fatalf("sections = %+v", secs)
+	view := e.pickerView()
+	if !strings.Contains(view, "Sessions") || !strings.Contains(view, "feat-a") || !strings.Contains(view, "4 sessions") {
+		t.Fatalf("picker lacks the title, branch and count:\n%s", view)
 	}
-	if len(secs[0].Items) != 2 || !strings.HasPrefix(secs[0].Items[0], "● ✳ ") && !strings.HasPrefix(secs[0].Items[0], "● ◎ ") {
-		t.Errorf("running items: %q", secs[0].Items)
+	// Flat list, no section headers: running newest first, then ended newest
+	// first.
+	var order []string
+	for _, s := range e.m.agents.overlay.sessions.visible() {
+		order = append(order, s.ID)
 	}
-	if secs[1].Items[0] != "✗ ✳ Broken run   Claude · work" || secs[1].Items[1] != "✓ ◎ Previous attempt   Codex · work" {
-		t.Errorf("recent items (newest first): %q", secs[1].Items)
+	if got := strings.Join(order, ","); got != "r2,r1,f1,x1" {
+		t.Fatalf("order = %s, want r2,r1,f1,x1", got)
 	}
-	if got := e.m.agentPickerSections(cleanPath(e.wtA), "previous"); len(got) != 1 || got[0].Name != "Recent" || len(got[0].Items) != 1 {
+	for _, want := range []string{"Run tests", "Codex · work", "● Starting", "● Running", "✗ Failed", "✓ Exited"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("picker view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Recent") {
+		t.Errorf("picker must not show sections:\n%s", view)
+	}
+	e.key(t, "/")
+	e.key(t, "previous")
+	if got := e.m.agents.overlay.sessions.visible(); len(got) != 1 || got[0].ID != "x1" {
 		t.Errorf("search should keep only the match: %+v", got)
 	}
-
-	nm, _ := e.m.Update(modals.SubmitMsg{Kind: kindAgents, Value: secs[1].Items[0]})
-	e.m = nm.(Model)
-	if e.m.modal != nil {
+	e.send(t, tea.KeyMsg{Type: tea.KeyEsc}) // clears the search, keeps the picker
+	if e.m.agents.overlay == nil || len(e.m.agents.overlay.sessions.visible()) != 4 {
+		t.Fatal("esc in search clears the query")
+	}
+	e.send(t, tea.KeyMsg{Type: tea.KeyDown})
+	e.send(t, tea.KeyMsg{Type: tea.KeyDown})
+	e.send(t, tea.KeyMsg{Type: tea.KeyEnter})
+	e.run(t, e.lastCmd)
+	if e.m.agents.overlay != nil {
 		t.Error("picker should close")
 	}
 	if s, _, _ := e.m.selectedSession(cleanPath(e.wtA)); s.ID != "f1" {
@@ -372,15 +391,17 @@ func TestAgentsUsageOrdering(t *testing.T) {
 	e.key(t, "1") // switch to a (claude): request 2 supersedes
 	cmdA := e.lastCmd
 
-	lateB := cmdB() // answer for the account the user already left
+	lateB := usageMsgOf(t, cmdB) // answer for the account the user already left
 	nm, _ := e.m.Update(lateB)
 	e.m = nm.(Model)
-	if _, ok := e.m.agents.usage["codex:work"]; ok {
-		t.Error("late result for the previous account must be dropped")
+	// The answer lands on its own account's entry and never on the one the
+	// strip is showing.
+	if !e.m.agents.usage["codex:work"].Have || e.m.agents.usage["claude:work"].Have {
+		t.Error("late result must update only the account it was fetched for")
 	}
-	nm, _ = e.m.Update(cmdA())
+	nm, _ = e.m.Update(usageMsgOf(t, cmdA))
 	e.m = nm.(Model)
-	if !strings.Contains(e.pane(120, 20), "5h 72% left") {
+	if !strings.Contains(e.pane(120, 20), "5h ███████░░░ left") {
 		t.Errorf("current account usage not shown:\n%s", e.pane(120, 20))
 	}
 
@@ -388,10 +409,10 @@ func TestAgentsUsageOrdering(t *testing.T) {
 	e.fb.Accounts.UsageErr = errors.New("rate limited")
 	e.key(t, "]")
 	e.key(t, "[")
-	nm, _ = e.m.Update(e.lastCmd())
+	nm, _ = e.m.Update(usageMsgOf(t, e.lastCmd))
 	e.m = nm.(Model)
 	out := e.pane(120, 20)
-	if !strings.Contains(out, "5h 72% left (stale)") {
+	if !strings.Contains(out, "5h ███████░░░ left (stale)") {
 		t.Errorf("stale usage not shown:\n%s", out)
 	}
 }
@@ -411,23 +432,19 @@ func TestAgentsWorktreeMoveAcceptsNewAccountUsage(t *testing.T) {
 	e.relist(t)
 	e.openTab(t)
 	e.key(t, "tab")
-	before := e.m.agents.usageSeq
+	before := e.usageSeq("codex:work")
 
 	nm, cmd := e.m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	e.m = nm.(Model)
 	if got := selectedPath(e.m.list); got != e.wtB {
 		t.Fatalf("selected worktree = %q, want %q", got, e.wtB)
 	}
-	if e.m.agents.usageAccount != "codex:work" || e.m.agents.usageSeq != before+1 {
-		t.Fatalf("usage request state = (%q, %d), want (codex:work, %d)", e.m.agents.usageAccount, e.m.agents.usageSeq, before+1)
+	if e.m.agents.usageAccount != "codex:work" || e.usageSeq("codex:work") == before {
+		t.Fatalf("usage request state = (%q, %d), want a new codex:work request", e.m.agents.usageAccount, e.usageSeq("codex:work"))
 	}
-	msg := cmd()
-	if _, ok := msg.(agentUsageMsg); !ok {
-		t.Fatalf("selection reload result = %T, want agentUsageMsg", msg)
-	}
-	nm, _ = e.m.Update(msg)
+	nm, _ = e.m.Update(usageMsgOf(t, cmd))
 	e.m = nm.(Model)
-	if out := e.pane(120, 20); !strings.Contains(out, "5h 33% left") {
+	if out := e.pane(120, 20); !strings.Contains(out, "5h ███░░░░░░░ left") {
 		t.Errorf("new account usage response was rejected:\n%s", out)
 	}
 }
@@ -437,17 +454,17 @@ func TestAgentsUsageTickOnlyWhenTabVisible(t *testing.T) {
 	e.fb.Sessions.Add(e.agent("a", "claude", "running", e.wtA, "One", 1))
 	e.relist(t)
 	e.selectWT(e.wtA)
-	before := e.m.agents.usageSeq
+	before := e.usageSeq("claude:work")
 	nm, cmd := e.m.Update(agentUsageTickMsg{gen: e.m.agents.usageTickGen})
 	e.m = nm.(Model)
-	if e.m.agents.usageSeq != before || cmd == nil {
+	if e.usageSeq("claude:work") != before || cmd == nil {
 		t.Error("hidden tab: no request, but the tick must re-arm")
 	}
 	e.openTab(t)
-	before = e.m.agents.usageSeq
+	before = e.usageSeq("claude:work")
 	nm, _ = e.m.Update(agentUsageTickMsg{gen: e.m.agents.usageTickGen})
 	e.m = nm.(Model)
-	if e.m.agents.usageSeq != before+1 {
+	if e.usageSeq("claude:work") == before {
 		t.Error("visible tab: tick must request usage")
 	}
 }
@@ -474,11 +491,11 @@ func TestAgentsUsageTickInitChainIsSingle(t *testing.T) {
 	}
 
 	callsBefore := len(e.fb.Accounts.UsageCalls())
-	before := e.m.agents.usageSeq
+	before := e.usageSeq("claude:work")
 	nm, staleCmd := e.m.Update(agentUsageTickMsg{gen: gen})
 	e.m = nm.(Model)
-	if staleCmd != nil || e.m.agents.usageSeq != before {
-		t.Errorf("old generation re-armed or requested usage: cmd=%v seq=%d want=%d", staleCmd != nil, e.m.agents.usageSeq, before)
+	if staleCmd != nil || e.usageSeq("claude:work") != before {
+		t.Errorf("old generation re-armed or requested usage: cmd=%v seq=%d want=%d", staleCmd != nil, e.usageSeq("claude:work"), before)
 	}
 	nm, currentCmd := e.m.Update(agentUsageTickMsg{gen: e.m.agents.usageTickGen})
 	e.m = nm.(Model)
@@ -498,11 +515,20 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e.fb.Sessions.Add(e.agent("a", "claude", "running", e.wtA, "One", 1))
 		e.relist(t)
 		e.openTab(t)
+		kinds := map[string]func(*agentOverlay) bool{
+			"n": func(o *agentOverlay) bool { return o.launch != nil },
+			"m": func(o *agentOverlay) bool { return o.accounts != nil },
+			"u": func(o *agentOverlay) bool { return o.quick != nil },
+		}
 		for _, k := range []string{"n", "m", "u"} {
-			e.m.status = ""
 			e.key(t, k)
-			if !strings.Contains(e.m.status, "coming soon") || e.m.modal != nil {
-				t.Errorf("%s on the Agents tab: status=%q modal=%v", k, e.m.status, e.m.modal != nil)
+			if e.m.agents.overlay == nil || !kinds[k](e.m.agents.overlay) || e.m.modal != nil {
+				t.Fatalf("%s on the Agents tab: overlay=%+v modal=%v", k, e.m.agents.overlay, e.m.modal != nil)
+			}
+			e.send(t, tea.KeyMsg{Type: tea.KeyEsc})
+			e.run(t, e.lastCmd)
+			if e.m.agents.overlay != nil {
+				t.Fatalf("esc must close the %s overlay", k)
 			}
 		}
 	})
@@ -510,7 +536,7 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e := newAgentsEnv(t)
 		e.selectWT(e.wtA)
 		e.key(t, "n") // list focused: new worktree modal
-		if e.m.modal == nil || e.m.status == "agents: coming soon" {
+		if e.m.modal == nil || e.m.agents.overlay != nil {
 			t.Errorf("global n must still open the create flow (modal=%v status=%q)", e.m.modal != nil, e.m.status)
 		}
 	})
@@ -519,7 +545,7 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e.selectWT(e.wtA)
 		e.m.rightTab, e.m.focus = tabLog, focusTerminal
 		e.key(t, "n")
-		if e.m.status == "agents: coming soon" {
+		if e.m.agents.overlay != nil {
 			t.Error("n on the log tab must not reach the agents handler")
 		}
 	})
@@ -535,9 +561,8 @@ func TestAgentsKeyPrecedence(t *testing.T) {
 		e := newAgentsEnv(t)
 		e.m.keys = newKeyMap(map[string]string{"agent_new": "N"})
 		e.openTab(t)
-		e.m.status = ""
 		e.key(t, "N")
-		if !strings.Contains(e.m.status, "coming soon") {
+		if e.m.agents.overlay == nil || e.m.agents.overlay.launch == nil {
 			t.Error("rebound key not honored")
 		}
 	})
@@ -559,5 +584,85 @@ func TestAgentsPaletteAndHelp(t *testing.T) {
 		if strings.HasPrefix(c.label, "Agents:") {
 			t.Errorf("palette shows %q without a backend", c.label)
 		}
+	}
+}
+
+func TestAgentsWideLayoutRows(t *testing.T) {
+	e := newAgentsEnv(t)
+	e.fb.Sessions.Add(
+		e.agent("a", "claude", "running", e.wtA, "Auth fix", 1),
+		e.agent("b", "codex", "running", e.wtA, "Tests", 2),
+	)
+	e.relist(t)
+	e.openTab(t)
+
+	t.Run("title and blank row when the terminal keeps 20 rows", func(t *testing.T) {
+		rows := strings.Split(e.pane(120, 27), "\n")
+		assertBox(t, strings.Join(rows, "\n"), 120, 27)
+		if !strings.HasPrefix(rows[0], "AGENTS · feat-a") || strings.TrimSpace(rows[1]) != "" {
+			t.Errorf("title rows: %q / %q", rows[0], rows[1])
+		}
+		if !strings.HasPrefix(rows[2], "Sessions: ") || !strings.HasPrefix(rows[3], "──") {
+			t.Errorf("strip then rule expected: %q / %q", rows[2], rows[3])
+		}
+		if !strings.Contains(rows[4], "Codex · work") || !strings.Contains(rows[4], "● Running") {
+			t.Errorf("header 1: %q", rows[4])
+		}
+		if !strings.Contains(rows[5], "u: Usage") || !strings.HasPrefix(rows[6], "──") {
+			t.Errorf("header 2 then rule expected: %q / %q", rows[5], rows[6])
+		}
+	})
+	t.Run("title drops first when the terminal would get under 20 rows", func(t *testing.T) {
+		rows := strings.Split(e.pane(120, 26), "\n")
+		if !strings.HasPrefix(rows[0], "Sessions: ") || strings.Contains(strings.Join(rows, "\n"), "AGENTS ·") {
+			t.Errorf("title should be gone:\n%s", strings.Join(rows, "\n"))
+		}
+		if !strings.HasPrefix(rows[1], "──") {
+			t.Errorf("rule after the strip: %q", rows[1])
+		}
+	})
+	t.Run("compact keeps one header row and no title", func(t *testing.T) {
+		rows := strings.Split(e.pane(80, 40), "\n")
+		if !strings.HasPrefix(rows[0], "[1 ") || !strings.HasPrefix(rows[2], "──") || strings.Contains(strings.Join(rows, "\n"), "AGENTS ·") {
+			t.Errorf("compact rows:\n%s", strings.Join(rows[:4], "\n"))
+		}
+	})
+	t.Run("narrow is a single summary row", func(t *testing.T) {
+		rows := strings.Split(e.pane(50, 40), "\n")
+		if !strings.HasPrefix(rows[0], "Agents (g) │") {
+			t.Errorf("row 0: %q", rows[0])
+		}
+	})
+}
+
+func TestAgentsPickerEmptyAndActions(t *testing.T) {
+	e := newAgentsEnv(t)
+	e.relist(t)
+	e.openTab(t)
+	e.key(t, "a")
+	if e.m.agents.overlay == nil || e.m.agents.overlay.sessions == nil {
+		t.Fatal("the picker opens even with zero sessions")
+	}
+	view := e.pickerView()
+	if !strings.Contains(view, "No sessions in this worktree yet") || !strings.Contains(view, "n New session") {
+		t.Errorf("empty picker:\n%s", view)
+	}
+	// n inside the picker is an action, not search text.
+	e.key(t, "n")
+	e.run(t, e.lastCmd)
+	if e.m.modal != nil || e.m.agents.overlay == nil || e.m.agents.overlay.launch == nil {
+		t.Errorf("n in the picker must open the launch dialog: modal=%v overlay=%+v", e.m.modal != nil, e.m.agents.overlay)
+	}
+}
+
+func TestAgentsStatusBar(t *testing.T) {
+	e := newAgentsEnv(t)
+	e.openTab(t)
+	if got := ansi.Strip(e.m.contextHelp()); got != "a all · m profiles · u usage · n new · tab focus · ? keys" {
+		t.Errorf("agents tab hints = %q", got)
+	}
+	e.m.rightTab = tabLog
+	if strings.Contains(ansi.Strip(e.m.contextHelp()), "agents") {
+		t.Error("other tabs keep their own hints")
 	}
 }

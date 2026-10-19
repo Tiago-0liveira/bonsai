@@ -569,6 +569,122 @@ func TestManagerStartsWithWebOriginAndAdmitsThroughDisk(t *testing.T) {
 	}
 }
 
+func TestManagerCloseWaitsForUnregisteredHolderExit(t *testing.T) {
+	p := testPaths(t)
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockFile(p.lock("sess_a1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	m := NewManager(nil, nil, nil, p, nil, nil)
+	m.Close(true, 0)
+	record := Record{ID: "sess_a1", Socket: p.socket("sess_a1"), Protocol: Version}
+	finished := make(chan error, 1)
+	go func() { _, err := m.trackStarted(record, "", "project"); finished <- err }()
+	select {
+	case err := <-finished:
+		t.Fatalf("returned before holder exited: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-finished:
+		if err == nil || !strings.Contains(err.Error(), "server shutting down") {
+			t.Fatalf("start result after holder exit: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("start did not finish after holder exit")
+	}
+}
+
+func TestManagerCloseCancelsStartMidLaunch(t *testing.T) {
+	m, _, account, store := testManager(t, `while :; do sleep 1; done`)
+	launch := m.starter.Launch
+	ready := make(chan string, 1)
+	m.starter.Launch = func(ctx context.Context, p Paths, spec Spec) error {
+		if err := launch(ctx, p, spec); err != nil {
+			return err
+		}
+		ready <- spec.Summary.ID
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	started := make(chan error, 1)
+	dir := t.TempDir()
+	go func() {
+		_, err := m.Start("project", "tree", account, "", dir, 80, 24)
+		started <- err
+	}()
+	var id string
+	select {
+	case id = <-ready:
+	case err := <-started:
+		t.Fatalf("launch failed before ready: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("launcher never became ready")
+	}
+	closed := make(chan struct{})
+	go func() {
+		m.Close(true, 0)
+		close(closed)
+	}()
+	select {
+	case err := <-started:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("start err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("start did not cancel on close")
+	}
+	<-closed
+	if held(m.paths.lock(id)) {
+		t.Fatal("holder survived cancelled start")
+	}
+	if entries, _ := os.ReadDir(store.Root()); len(entries) != 0 {
+		t.Fatal("cancelled start left a runtime dir")
+	}
+}
+
+func TestManagerCloseCancelsLaunchBeforeReady(t *testing.T) {
+	m, _, account, store := testManager(t, `exit 0`)
+	launching := make(chan struct{})
+	m.starter.Launch = func(ctx context.Context, _ Paths, _ Spec) error {
+		close(launching)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	dir := t.TempDir()
+	started := make(chan error, 1)
+	go func() {
+		_, err := m.Start("project", "tree", account, "", dir, 80, 24)
+		started <- err
+	}()
+	select {
+	case <-launching:
+	case err := <-started:
+		t.Fatalf("start failed before launch: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("start never reached launcher")
+	}
+	m.Close(true, 0)
+	select {
+	case err := <-started:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("start err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("start did not cancel on close")
+	}
+	if entries, _ := os.ReadDir(store.Root()); len(entries) != 0 {
+		t.Fatal("cancelled start left a runtime dir")
+	}
+}
+
 func TestCloseStopsOnlyWebStartedSessions(t *testing.T) {
 	m, _, account, _ := testManager(t, `while :; do sleep 1; done`)
 	web, err := m.Start("project", "tree", account, "web", t.TempDir(), 80, 24)
@@ -632,5 +748,80 @@ func TestAdoptRacingStartKeepsOneEntry(t *testing.T) {
 	case <-closed:
 	case <-time.After(8 * time.Second):
 		t.Fatal("Close did not return")
+	}
+}
+
+// A session another client starts shows up in the manager and a project
+// notification, and an external stop shows it ended.
+func TestWatchRecordsAdoptsOtherClientsSessions(t *testing.T) {
+	s, _, account := testStarter(t, `while :; do sleep 1; done`, agents.Capabilities{Interactive: true})
+	var mu sync.Mutex
+	notified := 0
+	m := NewManager(s.Accounts, s.Sessions, s.Registry, s.Paths, s.Launch, func(project string) {
+		if project == "project" {
+			mu.Lock()
+			notified++
+			mu.Unlock()
+		}
+	})
+	t.Cleanup(func() { m.Close(true, 0) })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); m.WatchRecords(ctx) }()
+
+	record, err := s.Start(context.Background(), startRequest(t, account))
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, m, record.ID, "running")
+	if got, _ := m.Get("project", record.ID); got.Origin != "tui" {
+		t.Fatalf("origin %q", got.Origin)
+	}
+	mu.Lock()
+	if notified == 0 {
+		t.Error("adoption sent no notification")
+	}
+	mu.Unlock()
+
+	if err := StopHolder(s.Paths, record, ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := m.Get("project", record.ID)
+		if got.State != "" && !got.Active() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("still %q after external stop", got.State)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// A session that ended before the manager saw it still shows as history.
+	ended, err := s.Start(context.Background(), startRequest(t, account))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	<-done
+	if err := StopHolder(s.Paths, ended, ""); err != nil {
+		t.Fatal(err)
+	}
+	Wait(s.Paths, ended.ID, 10*time.Second)
+	late := NewManager(s.Accounts, s.Sessions, s.Registry, s.Paths, s.Launch, nil)
+	t.Cleanup(func() { late.Close(true, 0) })
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go late.WatchRecords(ctx2)
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if got, ok := late.Get("project", ended.ID); ok && !got.Active() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ended session never appeared as history")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

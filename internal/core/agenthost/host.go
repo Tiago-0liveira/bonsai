@@ -154,13 +154,15 @@ func (h *host) update(change func(*agentterminal.Summary) error) error {
 
 // publish sends the summary everywhere. Callers hold h.mu.
 func (h *host) publish() {
+	// Admission reads records, so persist the state before clients can act on
+	// its notification (including restarting an exited account).
+	_ = h.writeRecord()
 	h.stream.Status(h.summary)
 	summary := h.summary
 	frame := Frame{Type: "status", Offset: h.stream.Offset(), Status: &summary}
 	for c := range h.monitors {
 		c.queue(frame)
 	}
-	_ = h.writeRecord()
 }
 
 // writeRecord saves the holder's record. Callers hold h.mu, or own h alone.

@@ -22,9 +22,9 @@ func ProviderGlyph(p agents.ProviderID, ascii bool) string {
 	var u, a string
 	switch p {
 	case providerClaude:
-		u, a = "✳", "C"
+		u, a = "✹", "C"
 	case providerCodex:
-		u, a = "◎", "X"
+		u, a = "❃", "X"
 	case providerAntigravity:
 		u, a = "✦", "A"
 	default:
@@ -36,17 +36,16 @@ func ProviderGlyph(p agents.ProviderID, ascii bool) string {
 	return u
 }
 
-// ProviderStyle colors a provider's glyph from the active palette, so presets
-// and overrides restyle agents with everything else.
+// ProviderStyle keeps provider identity consistent across themes and views.
 func ProviderStyle(p agents.ProviderID) lipgloss.Style {
 	c := Current.Dim
 	switch p {
 	case providerClaude:
-		c = Current.Warning
+		c = lipgloss.Color("#D97757")
 	case providerCodex:
-		c = Current.Text
+		c = lipgloss.Color("#D1D5DB")
 	case providerAntigravity:
-		c = Current.Accent
+		c = lipgloss.Color("#4285F4")
 	}
 	return lipgloss.NewStyle().Foreground(c)
 }

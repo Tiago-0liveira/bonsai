@@ -13,6 +13,7 @@ import (
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 // Option customizes a Model at construction.
@@ -28,7 +29,7 @@ func WithAgents(b agentsapi.Backend) Option {
 		// Kept even when unsupported so the tab can explain why it is idle.
 		m.agents.api = b
 		m.agents.selected = map[string]string{}
-		m.agents.usage = map[agents.AccountID]usageEntry{}
+		m.agents.usage = usagestore.Store{}
 		m.agents.ack = map[string]bool{}
 		if !b.Sessions.Supported() {
 			return
@@ -38,6 +39,7 @@ func WithAgents(b agentsapi.Backend) Option {
 		m.agents.seq = 1
 		m.agents.subscribed = true // Init subscribes
 		m.agents.usageTickGen = 1
+		m.agents.pane = newPaneState()
 	}
 }
 
@@ -61,17 +63,30 @@ type agentState struct {
 
 	// selected remembers each worktree's chosen session for the TUI's lifetime.
 	selected map[string]string
-	// usage is the last usage per account; usageSeq numbers requests and
-	// usageAccount is the account the latest one asked for.
-	usage        map[agents.AccountID]usageEntry
-	usageSeq     uint64
+	// usage is the one usage store of the TUI: the strip and the pane read it,
+	// and every overlay reports its results into it. usageAccount is the
+	// account the Agents tab last asked for.
+	usage        usagestore.Store
 	usageAccount agents.AccountID
 	// usageTickGen makes duplicate Init timers stale after one re-arms.
 	usageTickGen uint64
-	// pickIDs maps picker item text to its session; pickPath is the worktree
-	// the open picker belongs to.
-	pickIDs  map[string]string
-	pickPath string
+	// pane is the always-on usage pane under the worktree list.
+	pane paneState
+
+	// view is the one live attachment; attachSeq numbers streams for its token.
+	view      *agentView
+	attachSeq uint64
+
+	// overlay is the one agent overlay on top of the tab, if any; launchSeq
+	// numbers launch dialogs so a start answer reaching a closed dialog is told apart.
+	overlay   *agentOverlay
+	launchSeq uint64
+	// enterAfter is a session this client just started: the live view for it
+	// attaches as the writer and enters terminal mode. enterSeq is the list
+	// request that must contain it before the wish is dropped.
+	enterAfter string
+	enterSeq   uint64
+	enterPath  string
 }
 
 // enabled: a backend is present (the tab will exist). active: it is also
@@ -203,6 +218,7 @@ func (m Model) initAgents() tea.Cmd {
 		listAgentsCmd(m.agents.ctx, m.agents.api.Sessions, m.repoDir, nil, 1),
 		subscribeAgentsCmd(m.agents.ctx, m.agents.api.Sessions),
 		tickAgentUsage(m.agents.usageTickGen),
+		m.initPane(),
 	)
 }
 
@@ -226,9 +242,15 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.agents.err = ""
+	if m.agents.enterAfter != "" && msg.seq >= m.agents.enterSeq && !hasSession(msg.sessions, m.agents.enterAfter) {
+		m.agents.enterAfter = "" // the started session is gone already
+	}
 	m.agents.sessions = msg.sessions
 	m.agents.byTree = msg.byTree
 	m.refreshAgentBadges()
+	if o := m.agents.overlay; o != nil && o.sessions != nil {
+		o.sessions.setSessions(m.orderedSessions(o.sessions.path))
+	}
 	// New or ended sessions can change which account the open tab shows.
 	if m.rightTab == tabAgents {
 		if wt, ok := m.selectedWorktree(); ok {
@@ -256,6 +278,15 @@ func (m Model) onAgentsChanged(msg agentsChangedMsg) (tea.Model, tea.Cmd) {
 	// m for the return versus runs the call is unspecified.
 	list := m.relistAgents()
 	return m, tea.Batch(list, waitAgentsCmd(msg.ch))
+}
+
+func hasSession(list []agentsapi.Session, id string) bool {
+	for _, s := range list {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // agentGlyphsASCII reports the glyph preference.

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 )
@@ -155,5 +156,28 @@ func TestUpdateDefaults(t *testing.T) {
 	}
 	if got := a.Updates(); len(got) != 2 || got[1].Values["effort"] != nil {
 		t.Fatalf("updates = %+v", got)
+	}
+}
+
+func TestUsageServesStoredInsideTheSharedWindow(t *testing.T) {
+	now := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	a := &Accounts{
+		Usages: map[agents.AccountID]agentsapi.Usage{"a": {FetchedAt: now}},
+		Now:    func() time.Time { return now },
+	}
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := a.Usage(ctx, "a", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := a.Fetches(); len(got) != 1 {
+		t.Fatalf("fetches = %v, want the first call only", got)
+	}
+	now = now.Add(agents.UsageMaxAge + time.Second)
+	a.Usage(ctx, "a", false)
+	a.Usage(ctx, "a", true)
+	if got := a.Fetches(); len(got) != 3 {
+		t.Fatalf("fetches = %v, want a refetch past the window and on refresh", got)
 	}
 }

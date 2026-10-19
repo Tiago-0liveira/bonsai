@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
@@ -255,6 +256,7 @@ type Stream struct {
 	closed   bool
 	writer   bool
 	readOnly bool
+	gen      string
 	cols     int
 	rows     int
 	inputs   [][]byte
@@ -267,7 +269,7 @@ var _ agentsapi.Stream = (*Stream)(nil)
 // NewStream returns an open stream of the given holder size with room for
 // 256 queued frames.
 func NewStream(cols, rows int) *Stream {
-	return &Stream{frames: make(chan agentterminal.Frame, 256), cols: cols, rows: rows}
+	return &Stream{frames: make(chan agentterminal.Frame, 256), cols: cols, rows: rows, gen: "fake-gen"}
 }
 
 // Push queues a frame. It reports false when the stream is closed or the
@@ -312,6 +314,20 @@ func (s *Stream) Size() (int, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cols, s.rows
+}
+
+// Generation reports the holder generation (see SetGeneration).
+func (s *Stream) Generation() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gen
+}
+
+// SetGeneration changes the generation Generation reports.
+func (s *Stream) SetGeneration(g string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gen = g
 }
 
 func (s *Stream) Input(p []byte) error {
@@ -401,11 +417,17 @@ type Accounts struct {
 	Infos          map[agents.AccountID]agents.AccountInfo
 	Usages         map[agents.AccountID]agentsapi.Usage
 	LaunchDefaults map[agents.AccountID]agentsapi.Defaults
+	// Stored is the persisted snapshot UsageStored reads and Usage serves
+	// while it is fresh.
+	Stored map[agents.AccountID]agentsapi.Usage
+	// Now is the clock for Usage's freshness check; nil means time.Now.
+	Now func() time.Time
 
 	ListErr, DescribeErr, UsageErr, DefaultsErr, UpdateErr, RemoveErr error
 
 	mu         sync.Mutex
 	usageCalls []UsageCall
+	fetches    []agents.AccountID
 	updates    []DefaultsUpdate
 	removed    []agents.AccountID
 }
@@ -446,10 +468,23 @@ func (a *Accounts) Describe(_ context.Context, id agents.AccountID) (agents.Acco
 	return info, nil
 }
 
+// Usage answers like the real adapter: refresh=false serves Stored when its
+// snapshot is no older than agents.UsageMaxAge on the Now clock, otherwise the
+// fake "calls the provider" (counted in Fetches) and answers from Usages,
+// which then becomes the stored snapshot the next call sees.
 func (a *Accounts) Usage(_ context.Context, id agents.AccountID, refresh bool) (agentsapi.Usage, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.usageCalls = append(a.usageCalls, UsageCall{ID: id, Refresh: refresh})
+	now := time.Now
+	if a.Now != nil {
+		now = a.Now
+	}
+	st, stored := a.Stored[id]
+	if !refresh && stored && !st.FetchedAt.IsZero() && now().Sub(st.FetchedAt) <= agents.UsageMaxAge {
+		return st, nil
+	}
+	a.fetches = append(a.fetches, id)
 	if a.UsageErr != nil {
 		return agentsapi.Usage{}, a.UsageErr
 	}
@@ -457,7 +492,20 @@ func (a *Accounts) Usage(_ context.Context, id agents.AccountID, refresh bool) (
 	if !ok {
 		return agentsapi.Usage{}, ErrNotFound
 	}
+	if !u.FetchedAt.IsZero() {
+		if a.Stored == nil {
+			a.Stored = map[agents.AccountID]agentsapi.Usage{}
+		}
+		a.Stored[id] = u
+	}
 	return u, nil
+}
+
+func (a *Accounts) UsageStored(_ context.Context, id agents.AccountID) (agentsapi.Usage, bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	u, ok := a.Stored[id]
+	return u, ok, nil
 }
 
 func (a *Accounts) Defaults(_ context.Context, id agents.AccountID) (agentsapi.Defaults, error) {
@@ -475,6 +523,9 @@ func (a *Accounts) Defaults(_ context.Context, id agents.AccountID) (agentsapi.D
 		values[k] = v
 	}
 	d.Values = values
+	if d.LaunchFields == nil {
+		d.LaunchFields = SampleLaunchFields()
+	}
 	return d, nil
 }
 
@@ -548,6 +599,14 @@ func (a *Accounts) UsageCalls() []UsageCall {
 	return append([]UsageCall(nil), a.usageCalls...)
 }
 
+// Fetches returns the accounts Usage had to "fetch from the provider", in
+// order: calls answered from a fresh Stored snapshot are not listed.
+func (a *Accounts) Fetches() []agents.AccountID {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]agents.AccountID(nil), a.fetches...)
+}
+
 // Updates returns the recorded UpdateDefaults requests.
 func (a *Accounts) Updates() []DefaultsUpdate {
 	a.mu.Lock()
@@ -560,4 +619,24 @@ func (a *Accounts) Removed() []agents.AccountID {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]agents.AccountID(nil), a.removed...)
+}
+
+// SampleLaunchFields is a small provider-neutral launch schema: a preset
+// select, a per-model effort select and a toggle, covering every kind the
+// launch form handles.
+func SampleLaunchFields() []agents.LaunchField {
+	return []agents.LaunchField{
+		{ID: "permissions", Label: "Permissions", Kind: agents.LaunchFieldSelect, Default: "auto", Options: []agents.FieldOption{
+			{Value: "read-only", Label: "Read only", Set: map[string]string{"sandbox": "read-only", "approval": "on-request"}},
+			{Value: "auto", Label: "Auto", Set: map[string]string{"sandbox": "workspace-write", "approval": "on-request"}},
+			{Value: "full-access", Label: "Full access", Tone: agents.ToneDanger, Help: "Can change any file without asking.",
+				Set: map[string]string{"sandbox": "danger-full-access", "approval": "never"}},
+		}},
+		{ID: "effort", Label: "Effort", Kind: agents.LaunchFieldSelect, PerModel: true, Options: []agents.FieldOption{
+			{Value: "", Label: "Profile default"}, {Value: "low", Label: "low"}, {Value: "high", Label: "high"},
+		}},
+		{ID: "full_access", Label: "Full access", Kind: agents.LaunchFieldToggle, Options: []agents.FieldOption{
+			{Value: "false", Label: "Ask permissions"}, {Value: "true", Label: "Full access", Tone: agents.ToneDanger},
+		}},
+	}
 }

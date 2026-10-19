@@ -153,7 +153,7 @@ func TestStarterValidationErrors(t *testing.T) {
 
 func TestStarterLaunchFailureCleansUpRuntime(t *testing.T) {
 	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
-	s.Launch = func(Paths, Spec) error { return errors.New("boom") }
+	s.Launch = func(context.Context, Paths, Spec) error { return errors.New("boom") }
 	if _, err := s.Start(context.Background(), startRequest(t, account)); err == nil || !strings.Contains(err.Error(), "cannot start agent host") {
 		t.Fatalf("err = %v", err)
 	}
@@ -168,6 +168,76 @@ func TestStarterLaunchFailureCleansUpRuntime(t *testing.T) {
 		t.Fatalf("lock still held after failure: %v", err)
 	}
 	_ = lock.Unlock()
+}
+
+func TestStarterLaunchErrorAfterHolderReadyStopsIt(t *testing.T) {
+	s, _, account := testStarter(t, `while :; do sleep 1; done`, agents.Capabilities{Interactive: true})
+	launch := s.Launch
+	var id string
+	s.Launch = func(ctx context.Context, p Paths, spec Spec) error {
+		if err := launch(ctx, p, spec); err != nil {
+			return err
+		}
+		id = spec.Summary.ID
+		return errors.New("launcher failed after ready")
+	}
+	if _, err := s.Start(context.Background(), startRequest(t, account)); err == nil || !strings.Contains(err.Error(), "launcher failed after ready") {
+		t.Fatalf("err = %v", err)
+	}
+	if id == "" || held(s.Paths.lock(id)) {
+		t.Fatalf("holder %q survived failed start", id)
+	}
+	assertNoRuntimeDirs(t, s)
+}
+
+func TestFailedStartKeepsUnstoppedHolderVisibleToAdmission(t *testing.T) {
+	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	releaseHolder := sync.OnceFunc(func() { close(release) })
+	defer releaseHolder()
+	var id string
+	first := s
+	first.Launch = func(_ context.Context, p Paths, spec Spec) error {
+		id = spec.Summary.ID
+		lock, err := lockFile(p.lock(spec.Summary.ID))
+		if err != nil {
+			return err
+		}
+		go func() {
+			<-release
+			_ = lock.Close()
+		}()
+		close(ready)
+		return errors.New("failed before holder record")
+	}
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := first.Start(context.Background(), startRequest(t, account))
+		firstDone <- err
+	}()
+	select {
+	case <-ready:
+	case err := <-firstDone:
+		t.Fatalf("first start failed before launch: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first start never reached launcher")
+	}
+	select {
+	case err := <-firstDone:
+		if err == nil || !strings.Contains(err.Error(), "may still be running") {
+			t.Fatalf("failed start did not report live holder: %v", err)
+		}
+	case <-time.After(7 * time.Second):
+		t.Fatal("failed start cleanup did not finish within its bound")
+	}
+	if r, err := Read(s.Paths, id); err != nil || !r.Alive {
+		t.Fatalf("failed holder has no readable live record: %+v, %v", r, err)
+	}
+	if _, err := s.Start(context.Background(), startRequest(t, account)); !errors.Is(err, agents.ErrAccountBusy) {
+		t.Fatalf("second start bypassed live holder: %v", err)
+	}
+	releaseHolder()
 }
 
 func TestStartersAdmitOneSessionPerAccountAcrossStarters(t *testing.T) {
@@ -365,7 +435,7 @@ func TestStartLockErrorsAreDistinguished(t *testing.T) {
 
 func TestStartPanickingLauncherReleasesLockAndRuntime(t *testing.T) {
 	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
-	s.Launch = func(Paths, Spec) error { panic("launcher exploded") }
+	s.Launch = func(context.Context, Paths, Spec) error { panic("launcher exploded") }
 	func() {
 		defer func() {
 			if recover() == nil {
@@ -382,7 +452,7 @@ func TestStartCleansUpWhenLaunchLeavesNoRecord(t *testing.T) {
 	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
 	// A launcher that reports ready without a record: Read must fail the
 	// start, and the cleanup must still release the lock and the runtime.
-	s.Launch = func(Paths, Spec) error { return nil }
+	s.Launch = func(context.Context, Paths, Spec) error { return nil }
 	if _, err := s.Start(context.Background(), startRequest(t, account)); err == nil || !strings.Contains(err.Error(), "cannot start agent host") {
 		t.Fatalf("err = %v", err)
 	}

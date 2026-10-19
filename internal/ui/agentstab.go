@@ -1,26 +1,25 @@
 package ui
 
 import (
-	"context"
-	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
-// kindAgents is the session picker modal. It lives here, not in the modals
+// kindAgentStop is the stop confirmation. It lives here, not in the modals
 // package, because Kind is only an identifier the parent routes on.
-const kindAgents modals.Kind = "agents"
+const kindAgentStop modals.Kind = "agent-stop"
 
 const (
 	usageRefresh      = 60 * time.Second
@@ -29,33 +28,18 @@ const (
 	unsupportedNotice = "Interactive agents need a Unix host (Linux or macOS)."
 )
 
-// usageEntry is the last usage shown for an account. A failed refresh keeps
-// the last good data and marks it stale instead of clearing it.
-type usageEntry struct {
-	usage agentsapi.Usage
-	have  bool
-	stale bool
-	err   string
-}
-
-type agentUsageMsg struct {
-	seq     uint64
-	account agents.AccountID
-	usage   agentsapi.Usage
-	err     error
-}
-
 type agentUsageTickMsg struct{ gen uint64 }
 
 func tickAgentUsage(gen uint64) tea.Cmd {
 	return tea.Tick(usageRefresh, func(time.Time) tea.Msg { return agentUsageTickMsg{gen: gen} })
 }
 
-func fetchAgentUsage(a agentsapi.Accounts, seq uint64, account agents.AccountID) tea.Cmd {
-	return func() tea.Msg {
-		u, err := a.Usage(context.Background(), account, false)
-		return agentUsageMsg{seq: seq, account: account, usage: u, err: err}
-	}
+// fetchUsage begins a shared-store fetch for the account. lim bounds provider
+// calls in flight for callers that fetch many accounts at once.
+func (m *Model) fetchUsage(id agents.AccountID, lim usagestore.Limiter) tea.Cmd {
+	var seq uint64
+	m.agents.usage, seq = m.agents.usage.Begin(id)
+	return usagestore.Fetch(m.agents.ctx, m.agents.api.Accounts, lim, id, seq, false)
 }
 
 // --- selection ---
@@ -128,9 +112,9 @@ func (m *Model) selectStripIndex(path string, i int) bool {
 
 // --- usage ---
 
-// requestAgentUsage fetches usage for the selected session's account. Each
-// request supersedes the previous one, so a late answer for an account the
-// user already left cannot overwrite what is shown.
+// requestAgentUsage fetches usage for the selected session's account through
+// the shared store; the answer for an account the user already left still
+// lands on that account's own entry.
 func (m *Model) requestAgentUsage() tea.Cmd {
 	if !m.agents.active() || m.agents.api.Accounts == nil {
 		return nil
@@ -143,22 +127,34 @@ func (m *Model) requestAgentUsage() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	m.agents.usageSeq++
 	m.agents.usageAccount = s.AccountID
-	return fetchAgentUsage(m.agents.api.Accounts, m.agents.usageSeq, s.AccountID)
+	return m.fetchUsage(s.AccountID, nil)
 }
 
-func (m Model) onAgentUsage(msg agentUsageMsg) (tea.Model, tea.Cmd) {
-	if msg.seq != m.agents.usageSeq || msg.account != m.agents.usageAccount {
+// onUsageResult applies a fetch or stored read to the shared store and hands
+// fetch results to the open overlay, whose own store ignores answers it did
+// not ask for.
+func (m Model) onUsageResult(r usagestore.Result) (tea.Model, tea.Cmd) {
+	var applied bool
+	m.agents.usage, applied = m.agents.usage.Apply(r)
+	if applied {
+		m.layout()
+	}
+	if r.Stored || m.agents.overlay == nil {
 		return m, nil
 	}
-	e := m.agents.usage[msg.account]
-	if msg.err != nil {
-		e.stale, e.err = true, msg.err.Error()
-	} else {
-		e = usageEntry{usage: msg.usage, have: true, stale: msg.usage.Stale, err: msg.usage.Err}
+	m, cmd := m.overlayUpdate(r)
+	return m, cmd
+}
+
+// onUsageObserved takes in a result an overlay applied, so the strip and the
+// pane show it without fetching again.
+func (m Model) onUsageObserved(o usagestore.Observation) (tea.Model, tea.Cmd) {
+	var applied bool
+	m.agents.usage, applied = m.agents.usage.Apply(usagestore.Result(o))
+	if applied {
+		m.layout()
 	}
-	m.agents.usage[msg.account] = e
 	return m, nil
 }
 
@@ -199,9 +195,25 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		nm, cmd := m.openAgentsPicker()
 		return true, nm, cmd
-	case key.Matches(msg, m.keys.AgentNew, m.keys.AgentAccounts, m.keys.AgentUsage):
-		m.status = "agents: coming soon"
-		return true, m, nil
+	case key.Matches(msg, m.keys.AgentAttach):
+		// A failed or dropped attach retries first; otherwise enter takes control.
+		if cmd := m.retryAgentAttach(); cmd != nil {
+			return true, m, cmd
+		}
+		handled, cmd := m.enterTerminalMode()
+		return handled, m, cmd
+	case key.Matches(msg, m.keys.AgentNew):
+		nm, cmd := m.openAgentLaunch()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentAccounts):
+		nm, cmd := m.openAgentAccounts()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentUsage):
+		nm, cmd := m.openAgentUsage()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentStop):
+		nm, cmd := m.askStopAgent()
+		return true, nm, cmd
 	case len(s) == 1 && s[0] >= '1' && s[0] <= '9', s == "[", s == "]":
 		wt, ok := m.selectedWorktree()
 		if !ok || !m.agents.active() {
@@ -239,82 +251,57 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	path := cleanPath(wt.Path)
-	if len(m.agents.byTree[path]) == 0 {
-		m.status = "no agents in this worktree"
-		return m, nil
-	}
-	m.agents.pickPath = path
-	m.agents.pickIDs = map[string]string{}
-	build := func(query string) []modals.Section { return m.agentPickerSections(path, query) }
-	title := "AGENTS IN " + branchOf(wt)
-	modal := modals.NewSectionedFuzzy(kindAgents, title, build, build(""))
-	modal.SetSize(m.width, m.height)
-	m.modal = &modal
+	// Opening the list is seeing it: failed sessions of this worktree list
+	// their ✗ there, so the worktree row's "!" has done its job.
+	m.ackFailedAgents(path)
+	m.leaveAgentTerminal()
+	p := newSessionsPicker(branchOf(wt), m.agentGlyphsASCII())
+	p.path = path
+	p.setSessions(m.orderedSessions(path))
+	m.setAgentOverlay(agentOverlay{sessions: &p})
 	return m, nil
 }
 
-// agentPickerSections splits a worktree's sessions into Running and Recent
-// (newest first) and records which session each item text stands for.
-func (m Model) agentPickerSections(path, query string) []modals.Section {
-	q := strings.ToLower(strings.TrimSpace(query))
-	var running, recent []agentsapi.Session
+// ackFailedAgents marks the failed sessions of a worktree as seen and refreshes
+// the "!" badges.
+func (m *Model) ackFailedAgents(path string) {
+	changed := false
 	for _, i := range m.agents.byTree[path] {
-		if s := m.agents.sessions[i]; s.Active() {
-			running = append(running, s)
-		} else {
-			recent = append(recent, s)
+		if s := m.agents.sessions[i]; s.State == "failed" && !m.agents.ack[s.ID] {
+			m.agents.ack[s.ID] = true
+			changed = true
 		}
 	}
-	sort.SliceStable(running, func(a, b int) bool { return running[a].CreatedAt.After(running[b].CreatedAt) })
-	sort.SliceStable(recent, func(a, b int) bool { return recent[a].CreatedAt.After(recent[b].CreatedAt) })
-
-	ascii := m.agentGlyphsASCII()
-	build := func(name string, list []agentsapi.Session) (modals.Section, bool) {
-		var items []string
-		for _, s := range list {
-			text := fmt.Sprintf("%s %s %s   %s · %s", stateMark(s.State), theme.ProviderGlyph(s.Provider, ascii), sessionName(s), providerName(s.Provider), s.ProfileName)
-			if q != "" && !strings.Contains(strings.ToLower(text), q) {
-				continue
-			}
-			if prev, dup := m.agents.pickIDs[text]; dup && prev != s.ID {
-				text += " #" + s.ID
-			}
-			m.agents.pickIDs[text] = s.ID
-			items = append(items, text)
-		}
-		return modals.Section{Name: name, Items: items}, len(items) > 0
+	if changed {
+		m.refreshAgentBadges()
 	}
-	var sections []modals.Section
-	if sec, ok := build("Running", running); ok {
-		sections = append(sections, sec)
-	}
-	if sec, ok := build("Recent", recent); ok {
-		sections = append(sections, sec)
-	}
-	return sections
 }
 
 // onAgentsPick selects the chosen session and acknowledges its failure mark.
-func (m Model) onAgentsPick(value string) (tea.Model, tea.Cmd) {
-	id, ok := m.agents.pickIDs[value]
-	if !ok {
+func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
+	if path == "" {
 		return m, nil
 	}
-	m.agents.selected[m.agents.pickPath] = id
+	m.agents.selected[cleanPath(path)] = id
 	m.agents.ack[id] = true
 	m.refreshAgentBadges()
 	cmd := m.requestAgentUsage()
 	return m, cmd
 }
 
-func stateMark(state string) string {
+// stateMarkStyled is the picker's state mark: running green, exited dim,
+// failed red.
+func stateMarkStyled(state string) string {
+	mark, c := "●", theme.Current.Success
 	switch state {
 	case "exited":
-		return "✓"
+		mark, c = "✓", theme.Current.Dim
 	case "failed":
-		return "✗"
+		mark, c = "✗", theme.Current.Danger
+	case "starting", "stopping":
+		c = theme.Current.Warning
 	}
-	return "●"
+	return lipgloss.NewStyle().Foreground(c).Render(mark)
 }
 
 func branchOf(wt git.Worktree) string {

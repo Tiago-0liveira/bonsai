@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
-	"github.com/Tiago-0liveira/bonsai/internal/core/agents/usagefmt"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -17,6 +17,9 @@ const (
 	agentsWideMin   = 100 // below: one-row header, shorter strip hints
 	agentsNarrowMin = 60  // below: a single summary row, no header
 )
+
+// agentNow is the clock for relative reset times; tests pin it.
+var agentNow = time.Now
 
 func providerName(p agents.ProviderID) string {
 	if p == "" {
@@ -35,6 +38,34 @@ func sessionName(s agentsapi.Session) string {
 
 func (m Model) agentGlyph(p agents.ProviderID) string {
 	return theme.ProviderStyle(p).Render(theme.ProviderGlyph(p, m.agentGlyphsASCII()))
+}
+
+// asciiRunes maps the chrome's non-ASCII runes to one-cell ASCII stand-ins.
+// One cell each, so a row laid out before the swap keeps its width.
+var asciiRunes = strings.NewReplacer(
+	"●", "*", "✓", "+", "✗", "x", "│", "|", "─", "-", "·", "-", "→", ">",
+	"…", "~", "▌", ">", "⚠", "!", "▼", "v", "↑", "^", "↓", "v", "←", "<",
+	"╭", "+", "╮", "+", "╰", "+", "╯", "+", "├", "+", "┤", "+", "┬", "+", "┴", "+", "┼", "+", "╷", "|",
+)
+
+// chrome applies the glyph preference to bonsai's own drawing (never to the
+// agent's terminal output, which is the agent's to draw).
+func (m Model) chrome(s string) string {
+	if !m.agentGlyphsASCII() {
+		return s
+	}
+	return asciiRunes.Replace(s)
+}
+
+func (m Model) chromeRows(rows []string) []string {
+	if !m.agentGlyphsASCII() {
+		return rows
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = asciiRunes.Replace(r)
+	}
+	return out
 }
 
 func dimText(s string) string { return lipgloss.NewStyle().Foreground(theme.Current.Dim).Render(s) }
@@ -84,27 +115,60 @@ func leftRight(left, right string, width int) string {
 }
 
 // renderAgentsPane draws the Agents tab body in exactly h rows of at most w
-// cells: strip, header, rule, then the terminal area with every remaining row.
+// cells: optional title, strip, header, rules, then the terminal area with every
+// remaining row.
 func (m Model) renderAgentsPane(w, h int) string {
-	rows := m.agentsRows(w, h)
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	var content string
+	switch {
+	case m.agents.overlay != nil:
+		content = m.agentOverlayView(w, h)
+	case m.agentPaneModal():
+		content = m.chrome(m.modal.View())
+	default:
+		content = strings.Join(m.agentsRows(w, h), "\n")
+	}
+	rows := strings.Split(content, "\n")
+	for i := range rows {
+		rows[i] = fit(rows[i], w)
+	}
 	for len(rows) < h {
 		rows = append(rows, "")
 	}
 	return strings.Join(rows[:h], "\n")
 }
 
-func (m Model) agentsRows(w, h int) []string {
+// agentsTitleMinArea is the terminal height below which the title and blank
+// rows give way, so the agent keeps the room.
+const agentsTitleMinArea = 20
+
+// agentsLayout is the Agents pane split into its fixed header rows and the
+// rows left for the terminal area.
+type agentsLayout struct {
+	fixed []string
+	tail  []string // rows after the terminal area (terminal mode's hint row)
+	body  int
+	ok    bool // false: nothing to lay out, or the pane is too small
+}
+
+func (m Model) agentsLayout(w, h int) agentsLayout {
 	if !m.agents.active() {
-		return []string{fit(unsupportedNotice, w)}
+		return agentsLayout{}
 	}
 	wt, ok := m.selectedWorktree()
 	if !ok {
-		return []string{fit(dimText("(no worktree selected)"), w)}
+		return agentsLayout{}
 	}
 	path := cleanPath(wt.Path)
 	strip := m.stripSessions(path)
 	sel, selIdx, hasSel := m.selectedSession(path)
 	rule := dimText(strings.Repeat("─", w))
+
+	if hasSel && m.agentTerminalMode() && m.agents.view.sessionID == sel.ID {
+		return m.terminalLayout(w, h, strip, sel, selIdx, rule)
+	}
 
 	var fixed []string
 	switch {
@@ -125,22 +189,42 @@ func (m Model) agentsRows(w, h int) []string {
 	default:
 		fixed = []string{
 			m.sessionStrip(strip, selIdx, w, "Sessions: ", "a: All  n: New"),
+			rule,
 			fit(m.fullHeaderTitle(sel), w),
 			fit(m.usageRow(sel, w), w),
 			rule,
 		}
+		if h-len(fixed)-2 >= agentsTitleMinArea {
+			title := lipgloss.NewStyle().Bold(true).Render("AGENTS") + dimText(" · "+branchOf(wt))
+			fixed = append([]string{fit(title, w), ""}, fixed...)
+		}
 	}
 	if h-len(fixed) < minTerminalRows {
+		return agentsLayout{}
+	}
+	return agentsLayout{fixed: fixed, body: h - len(fixed), ok: true}
+}
+
+func (m Model) agentsRows(w, h int) []string {
+	if !m.agents.active() {
+		return []string{fit(unsupportedNotice, w)}
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return []string{fit(dimText("(no worktree selected)"), w)}
+	}
+	lay := m.agentsLayout(w, h)
+	if !lay.ok {
 		return []string{fit("Pane too small", w)}
 	}
-	body := h - len(fixed)
 	var area []string
-	if hasSel {
-		area = placeholderArea(sel, w, body)
+	if sel, _, hasSel := m.selectedSession(cleanPath(wt.Path)); hasSel {
+		area = m.agentTerminalArea(sel, w, lay.body)
 	} else {
-		area = emptyArea(wt.Branch, w, body)
+		area = m.chromeRows(emptyArea(wt.Branch, w, lay.body))
 	}
-	return append(fixed, area...)
+	rows := append(append(append([]string(nil), m.chromeRows(lay.fixed)...), area...), m.chromeRows(lay.tail)...)
+	return rows
 }
 
 func (m Model) emptyStrip(w int) string {
@@ -235,23 +319,31 @@ func moreLabel(n int) string { return "[+" + itoa(n) + " more]" }
 
 // fullHeaderTitle: provider · profile · model │ state.
 func (m Model) fullHeaderTitle(s agentsapi.Session) string {
-	parts := []string{providerName(s.Provider)}
+	parts := []string{theme.ProviderStyle(s.Provider).Render(providerName(s.Provider))}
 	if s.ProfileName != "" {
 		parts = append(parts, s.ProfileName)
 	}
 	if s.Model != "" {
 		parts = append(parts, s.Model)
 	}
-	return m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(s.State)
+	head := m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(s.State)
+	if v := m.agents.view; v != nil && v.sessionID == s.ID && v.state == attachObservingOther {
+		head += dimText(" · read-only")
+	}
+	return head
 }
 
 // compactHeader is the one-row header for panes under 100 cells.
 func (m Model) compactHeader(s agentsapi.Session, w int) string {
+	return m.compactHeaderHint(s, w, "u: Usage")
+}
+
+func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string {
 	left := m.agentGlyph(s.Provider) + " " + s.ProfileName
 	if u := m.usageText(s, true); u != "" {
 		left += " · " + u
 	}
-	return leftRight(left, dimText("u: Usage"), w)
+	return leftRight(left, dimText(hint), w)
 }
 
 // usageRow is the second header row: usage text plus the usage hint.
@@ -265,29 +357,24 @@ func (m Model) usageText(s agentsapi.Session, compact bool) string {
 	if m.agents.api.Accounts == nil {
 		return ""
 	}
-	e, ok := m.agents.usage[s.AccountID]
-	if !ok || !e.have {
-		if ok && e.err != "" {
+	e := m.agents.usage[s.AccountID]
+	if !e.Have {
+		if e.Err != "" {
 			return dimText("usage unavailable")
 		}
 		return dimText("usage loading…")
 	}
-	var text string
-	if compact {
-		text = usagefmt.Compact(e.usage.Headline)
-	} else {
-		text = usagefmt.Headline(e.usage.Headline, time.Now())
-	}
+	text := accounts.Headline(e.Usage.Headline, agentNow(), m.agentGlyphsASCII(), compact)
 	if text == "" {
 		text = "no usage data"
 	}
-	if e.stale {
-		return dimText(text + " (stale)")
+	if e.Stale() {
+		return dimText(ansi.Strip(text) + " (stale)")
 	}
 	return text
 }
 
-// placeholderArea stands in for the terminal until it is attached.
+// placeholderArea stands in for the terminal when no view is attached to s.
 func placeholderArea(s agentsapi.Session, w, rows int) []string {
 	lines := []string{sessionName(s), dimText(s.State)}
 	return centered(lines, w, rows)
@@ -321,4 +408,9 @@ func centered(lines []string, w, rows int) []string {
 		out = append(out, "")
 	}
 	return out[:rows]
+}
+
+// agentPaneModal distinguishes agent-local pickers from app-wide dialogs.
+func (m Model) agentPaneModal() bool {
+	return m.modal != nil && (m.modal.Kind() == kindAgentStop)
 }

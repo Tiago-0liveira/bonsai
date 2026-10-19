@@ -2,6 +2,7 @@ package agenthost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -28,14 +29,16 @@ const ActiveLimit = 16
 // history. Holders outlive it: closing the manager only disconnects, unless
 // asked to stop them.
 type Manager struct {
-	mu       sync.Mutex
-	sessions agents.SessionStore
-	paths    Paths
-	starter  Starter
-	entries  map[string]*entry
-	closed   bool
-	quit     chan struct{}
-	changed  func(string)
+	mu          sync.Mutex
+	sessions    agents.SessionStore
+	paths       Paths
+	starter     Starter
+	entries     map[string]*entry
+	closed      bool
+	quit        chan struct{}
+	startCtx    context.Context
+	cancelStart context.CancelFunc
+	changed     func(string)
 }
 
 type entry struct {
@@ -58,19 +61,36 @@ func NewManager(accounts agents.AccountStore, sessions agents.SessionStore, regi
 		launch = Launch
 	}
 	starter := Starter{Accounts: accounts, Sessions: sessions, Registry: registry, Paths: paths, Launch: launch, Origin: "web"}
-	return &Manager{sessions: sessions, paths: paths, starter: starter, entries: map[string]*entry{}, quit: make(chan struct{}), changed: changed}
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	return &Manager{sessions: sessions, paths: paths, starter: starter, entries: map[string]*entry{}, quit: make(chan struct{}), startCtx: startCtx, cancelStart: cancelStart, changed: changed}
 }
 
 // InProcess returns a Launcher that serves each session from this process,
 // with deps' stores and providers. Tests use it: their providers exist only
 // in the test process.
 func InProcess(deps Deps) Launcher {
-	return func(p Paths, spec Spec) error {
+	return func(ctx context.Context, p Paths, spec Spec) error {
 		deps := deps
 		deps.Paths = p
 		ready := make(chan error, 1)
-		go func() { _ = Serve(context.Background(), spec, deps, func(err error) { ready <- err }) }()
-		return <-ready
+		serveCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer cancel()
+			_ = Serve(serveCtx, spec, deps, func(err error) { ready <- err })
+		}()
+		select {
+		case err := <-ready:
+			if err != nil {
+				cancel()
+			}
+			return err
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return fmt.Errorf("agent host launch cancelled: %w", ctx.Err())
+		}
 	}
 }
 
@@ -93,17 +113,24 @@ func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, 
 	if len(options) > 0 {
 		launch = options[0]
 	}
-	record, err := m.starter.Start(context.Background(), StartRequest{Project: project, Tree: tree, Name: name, Dir: dir, AccountID: accountID, Cols: cols, Rows: rows, Launch: launch})
+	record, err := m.starter.Start(m.startCtx, StartRequest{Project: project, Tree: tree, Name: name, Dir: dir, AccountID: accountID, Cols: cols, Rows: rows, Launch: launch})
 	if err != nil {
 		return Summary{}, err
 	}
+	return m.trackStarted(record, dir, project)
+}
+
+func (m *Manager) trackStarted(record Record, dir, project string) (Summary, error) {
 	e := &entry{summary: record.Summary, workDir: dir, record: record, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
 	m.mu.Lock()
 	if m.closed {
 		// Close ran while the holder launched and cannot see it: a session
 		// the caller is told failed must not keep running.
 		m.mu.Unlock()
-		_ = StopHolder(m.paths, record, "")
+		stopErr := StopHolder(m.paths, record, "")
+		if !Wait(m.paths, record.ID, 5*time.Second) {
+			return Summary{}, errors.Join(fmt.Errorf("server shutting down: agent holder %s did not exit after stop and may still be running", record.ID), stopErr)
+		}
 		return Summary{}, fmt.Errorf("server shutting down")
 	}
 	if known, ok := m.entries[record.ID]; ok {
@@ -336,6 +363,7 @@ func (m *Manager) Close(keepRunning bool, timeout time.Duration) {
 		return
 	}
 	m.closed = true
+	m.cancelStart()
 	var live, stopping []*entry
 	for _, e := range m.entries {
 		if e.live && e.record.ID != "" {
@@ -423,16 +451,94 @@ func (m *Manager) Restore(summary Summary) {
 	m.evict()
 }
 
+// WatchRecords keeps the manager current with holders other clients start or
+// end (the TUI, the CLI) until ctx ends or the manager closes. Running ones
+// are followed; ended ones that were never seen show as history. It notifies
+// each project whose sessions changed.
+func (m *Manager) WatchRecords(ctx context.Context) {
+	if m.paths.Records == "" {
+		return
+	}
+	// Watch ends with its context, so stopping on quit must cancel it too.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	changes, err := Watch(ctx, m.paths)
+	if err != nil {
+		return
+	}
+	// A record may predate watcher registration; adopt it before waiting for
+	// changes so an ended session is not missed until another record changes.
+	m.syncRecords(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.quit:
+			return
+		case _, ok := <-changes:
+			if !ok {
+				return
+			}
+			m.syncRecords(ctx)
+		}
+	}
+}
+
+func (m *Manager) syncRecords(ctx context.Context) {
+	before := m.states()
+	for _, summary := range m.AdoptContext(ctx) {
+		if !summary.Active() {
+			m.Restore(summary)
+		}
+	}
+	after := m.states()
+	projects := map[string]struct{}{}
+	for id, now := range after {
+		if was, ok := before[id]; !ok || was != now {
+			projects[now.project] = struct{}{}
+		}
+	}
+	for id, was := range before {
+		if _, ok := after[id]; !ok {
+			projects[was.project] = struct{}{}
+		}
+	}
+	for project := range projects {
+		m.notify(project)
+	}
+}
+
+type sessionState struct{ project, state string }
+
+// states maps each known session to its project and state.
+func (m *Manager) states() map[string]sessionState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]sessionState, len(m.entries))
+	for id, e := range m.entries {
+		out[id] = sessionState{e.summary.ProjectID, e.summary.State}
+	}
+	return out
+}
+
 // Adopt follows every running holder this manager does not know yet, such as
 // those an earlier API started, and returns the summaries of all recorded
 // sessions by ID, running or ended.
 func (m *Manager) Adopt() map[string]Summary {
+	return m.AdoptContext(context.Background())
+}
+
+// AdoptContext lets record watching stop during a holder's dial or handshake.
+func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
 	out := map[string]Summary{}
 	if m.paths.Records == "" {
 		return out
 	}
 	records, _ := List(m.paths)
 	for _, r := range records {
+		if ctx.Err() != nil {
+			break
+		}
 		out[r.ID] = r.Summary
 		if !r.Alive {
 			continue
@@ -445,7 +551,13 @@ func (m *Manager) Adopt() map[string]Summary {
 			continue
 		}
 		e := &entry{summary: r.Summary, workDir: r.WorkDir, record: r, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
-		conn, ready, err := Dial(r, Request{Mode: ModeStatus})
+		conn, ready, err := DialContext(ctx, r, Request{Mode: ModeStatus})
+		if ctx.Err() != nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			break
+		}
 		if err != nil {
 			conn = nil
 		} else if ready.Status != nil {

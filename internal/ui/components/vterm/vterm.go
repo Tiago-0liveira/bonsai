@@ -1,13 +1,16 @@
 // Package vterm renders a raw agent PTY byte stream into a fixed rectangle
-// using the charmbracelet/x/vt emulator. It is pure presentation: no sockets,
-// no key routing.
+// using the charmbracelet/x/vt emulator. It also turns keys, pastes, focus
+// changes and the emulator's own replies into bytes on Input(). It owns no
+// sockets and no key routing: the caller decides who may write to the agent.
 package vterm
 
 import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
+	tea "github.com/charmbracelet/bubbletea"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 )
@@ -15,6 +18,7 @@ import (
 const (
 	sgrReset   = "\x1b[0m"
 	maxEmuSize = 1000 // guards against absurd PTY sizes allocating huge screens
+	inputBuf   = 64   // Input() capacity; the oldest chunk is dropped beyond it
 )
 
 // Model hosts one emulator and renders it into a w x h pane. All methods are
@@ -26,12 +30,14 @@ type Model struct {
 
 	w, h      int // pane rectangle
 	focused   bool
-	replaying bool
+	replaying atomic.Bool // read by drain without mu
 	title     string
 	lines     []string
 	dirty     bool
 	closed    bool
 	drainDone chan struct{}
+	input     chan []byte
+	dropped   atomic.Uint64
 	closeOnce sync.Once
 }
 
@@ -44,6 +50,7 @@ func New(cols, rows int) *Model {
 		h:         rows,
 		dirty:     true,
 		drainDone: make(chan struct{}),
+		input:     make(chan []byte, inputBuf),
 	}
 	// No scrollback UI exists; a small ring keeps scrolling cheap (the default
 	// 10k-line buffer made full-screen redraw replays several times slower).
@@ -58,18 +65,49 @@ func New(cols, rows int) *Model {
 
 // drain empties the emulator's input side. It is a synchronous io.Pipe: a
 // query in the output stream (DSR, DA) blocks Write until someone reads the
-// reply, so a reader must always exist even when the reply is discarded.
+// reply, so a reader must always exist. It is the only sender on m.input, never
+// blocks on it and never takes m.mu (Write holds m.mu while waiting on it).
 func (m *Model) drain() {
 	defer close(m.drainDone)
+	defer close(m.input)
 	buf := make([]byte, 4096)
 	for {
-		// B2 routes these bytes (key encodings, replies) to an Input() channel.
-		_, err := m.emu.Read(buf)
+		n, err := m.emu.Read(buf)
 		if err != nil {
 			return
 		}
+		// Replies to queries from replayed history are for long-gone requests.
+		if n == 0 || m.replaying.Load() {
+			continue
+		}
+		m.enqueue(append([]byte(nil), buf[:n]...))
 	}
 }
+
+func (m *Model) enqueue(chunk []byte) {
+	for {
+		select {
+		case m.input <- chunk:
+			return
+		default:
+		}
+		select {
+		case <-m.input:
+			m.dropped.Add(1)
+		default:
+		}
+	}
+}
+
+// Input yields the bytes the terminal wants sent to the agent: encoded keys,
+// pastes, focus reports and replies to emulator queries. The caller (the TUI
+// session layer) forwards each chunk to the holder only when it is the writer,
+// and drops it otherwise. The channel closes after Close. A consumer that
+// stalls loses the oldest chunks (see Dropped), so drain it promptly.
+func (m *Model) Input() <-chan []byte { return m.input }
+
+// Dropped counts chunks discarded because Input() was full.
+func (m *Model) Dropped() uint64 { return m.dropped.Load() }
 
 // Write feeds PTY output to the emulator.
 func (m *Model) Write(p []byte) {
@@ -110,21 +148,96 @@ func (m *Model) ResizeEmulator(cols, rows int) {
 	m.dirty = true
 }
 
-// SetFocused shows the cursor only while focused.
+// SetFocused shows the cursor only while focused and reports focus changes to
+// apps that enabled mode 1004. Mouse is owned by the TUI (cell motion) and is
+// not forwarded.
 func (m *Model) SetFocused(f bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.focused != f {
-		m.focused, m.dirty = f, true
+	if m.focused == f {
+		return
+	}
+	m.focused, m.dirty = f, true
+	if m.closed {
+		return
+	}
+	if f {
+		m.emu.Focus()
+	} else {
+		m.emu.Blur()
 	}
 }
 
-// SetReplaying marks the stream as history replay. B1 only records it; B2 uses
-// it to discard replies to long-gone queries.
+// SetReplaying marks the stream as history replay: everything the emulator
+// would emit meanwhile (query replies, and keys sent during the replay) is
+// discarded instead of reaching Input().
 func (m *Model) SetReplaying(r bool) {
 	m.mu.Lock()
-	m.replaying = r
-	m.mu.Unlock()
+	defer m.mu.Unlock()
+	if !r && m.replaying.Load() && !m.closed {
+		// A Write during replay returns once drain's Read took the reply bytes,
+		// but drain checks the flag afterwards and could see false and queue a
+		// stale reply. A zero-length pipe write is delivered as an empty Read and
+		// returns only when drain has finished the previous iteration.
+		m.emu.SendText("")
+	}
+	m.replaying.Store(r)
+}
+
+// SendKey encodes k for the agent onto Input(). It reports false when the key
+// has no encoding (or is the TUI's prefix key) or the model is closed.
+func (m *Model) SendKey(k tea.KeyMsg) bool {
+	if k.Paste {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.closed {
+			return false
+		}
+		m.emu.Paste(string(k.Runes))
+		return true
+	}
+	ev, raw, ok := toKeyEvent(k)
+	if !ok {
+		return false
+	}
+	// emu.SendKey reads the mode map that Write mutates under mu. Holding mu
+	// cannot deadlock: drain never takes it and always reads the pipe.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return false
+	}
+	if raw != "" {
+		m.emu.SendText(raw)
+	} else {
+		m.emu.SendKey(ev)
+	}
+	return true
+}
+
+// SendPaste sends s, bracketed only if the app enabled mode 2004.
+func (m *Model) SendPaste(s string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.closed {
+		m.emu.Paste(s)
+	}
+}
+
+// SendEvent encodes a decoded terminal key or paste using the agent's current
+// modes. The CLI uses this when hosting the emulator in a real terminal.
+func (m *Model) SendEvent(event uv.Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	switch event := event.(type) {
+	case uv.KeyPressEvent:
+		m.emu.SendKey(event)
+	case uv.PasteEvent:
+		m.emu.Paste(event.Content)
+	}
 }
 
 // Title returns the last OSC 0/2 window title.

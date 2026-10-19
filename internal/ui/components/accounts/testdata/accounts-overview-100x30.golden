@@ -1,0 +1,30 @@
+ Accounts                                                                                5 accounts
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ACCOUNT           PROVIDER     PLAN       CONNECTION
+ ▸ work              Claude       Max        ● Connected
+   personal          Claude       Pro        ● Connected
+   work              Codex        —          ● Connected
+   personal          Codex        —          ● Connected
+   personal          Antigravity  —          ● Connected
+
+ ── ✹ Claude / work ───────────────────────────────────────────────────────────────────────────────
+
+ Overview     Usage     Defaults
+ ━━━━━━━━
+
+ Identity  work@example.com                       Model   Opus
+ Auth      Browser login                          Effort  High
+ Sessions  2 running
+
+ [Sign in again]                                                                     Remove account
+
+
+
+
+
+
+
+
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Account · Tab Section · Enter Details · n Add account · Esc Back

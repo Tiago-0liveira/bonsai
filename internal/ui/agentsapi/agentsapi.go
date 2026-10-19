@@ -5,12 +5,18 @@ package agentsapi
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 )
+
+// ErrVersion means the holder was started by a bonsai build speaking another
+// protocol version. It is re-exported here so the TUI can tell this apart from
+// a dial failure without importing the holder package.
+var ErrVersion = errors.New("agent started by another bonsai version")
 
 // Session is one hosted agent as the TUI sees it: the holder's summary plus
 // the directory it runs in, which is how the TUI matches it to a worktree.
@@ -43,6 +49,10 @@ type Stream interface {
 	Frames() <-chan agentterminal.Frame
 	Writer() bool
 	Size() (cols, rows int) // holder PTY size at attach and after resize frames
+	// Generation identifies the holder run this stream belongs to ("" for a
+	// retained record with no holder). Re-attaching at a stream offset must pass
+	// it back in AttachOptions, or the holder replays everything.
+	Generation() string
 	Input(p []byte) error
 	Resize(cols, rows int) error
 	Take() error
@@ -66,6 +76,8 @@ type Account struct {
 	agents.Account
 	Info    agents.AccountInfo // identity, plan, auth; zero until described
 	Running int                // active sessions on this account
+	// ConcurrentSameAccount: the provider allows several sessions on one account.
+	ConcurrentSameAccount bool
 }
 
 // Usage is an account's usage with its freshness, so a failed refresh can
@@ -82,8 +94,11 @@ type Usage struct {
 // defaults without knowing the provider.
 type Defaults struct {
 	Fields []agents.LaunchField
-	Models []agents.ModelOption // from ModelLister.Models
-	Values map[string]string    // current per-account defaults
+	// LaunchFields are the provider's LaunchFields; the new agent dialog edits
+	// these, not Fields (the profile defaults).
+	LaunchFields []agents.LaunchField
+	Models       []agents.ModelOption // from ModelLister.Models
+	Values       map[string]string    // current per-account defaults
 }
 
 // Accounts reads and edits agent profiles. Adding an account and signing in
@@ -91,7 +106,13 @@ type Defaults struct {
 type Accounts interface {
 	List(ctx context.Context) ([]Account, error) // fast: no DescribeAccount
 	Describe(ctx context.Context, id agents.AccountID) (agents.AccountInfo, error)
+	// Usage is the only call that may reach a provider. refresh=false returns
+	// a stored snapshot no older than agents.UsageMaxAge and fetches otherwise;
+	// refresh=true bypasses the cache. A failed fetch returns the last good
+	// value marked stale.
 	Usage(ctx context.Context, id agents.AccountID, refresh bool) (Usage, error)
+	// UsageStored never calls the provider; ok is false when nothing is stored.
+	UsageStored(ctx context.Context, id agents.AccountID) (Usage, bool, error)
 	Defaults(ctx context.Context, id agents.AccountID) (Defaults, error)
 	UpdateDefaults(ctx context.Context, id agents.AccountID, values map[string]*string) error
 	Remove(ctx context.Context, id agents.AccountID) error

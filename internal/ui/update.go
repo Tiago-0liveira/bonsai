@@ -23,11 +23,23 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 // Update routes messages: layout, data results, the process tick, an active
 // modal, or global keys.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	nm, cmd := m.update(msg)
+	// Every update can change what the Agents tab shows, so the live view is
+	// reconciled here rather than at each place that changes the selection.
+	if next, ok := nm.(Model); ok {
+		cmd = next.syncAgentView(cmd)
+		return next, cmd
+	}
+	return nm, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The right pane's viewport height depends on the active tab (the Processes
 	// footer eats into it), so re-derive it before any message — scroll keys in
 	// particular are computed against the viewport's own height and go nowhere
@@ -49,7 +61,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
-		return m.onResize(msg), nil
+		nm := m.onResize(msg)
+		return nm, nm.agentResizeDebounce()
 
 	case worktreesMsg:
 		return m.onWorktrees(msg)
@@ -62,10 +75,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAgentsChanged(msg)
 	case agentsClosedMsg:
 		return m, nil
-	case agentUsageMsg:
-		return m.onAgentUsage(msg)
+	case agentAttachedMsg:
+		return m.onAgentAttached(msg)
+	case agentRetryMsg:
+		return m.onAgentRetry(msg)
+	case agentFramesMsg:
+		return m.onAgentFrames(msg)
+	case agentInputMsg:
+		return m.onAgentInput(msg)
+	case agentInputSentMsg:
+		return m.onAgentInputSent(msg)
+	case agentTookMsg:
+		return m.onAgentTook(msg)
+	case agentResizeTickMsg:
+		return m.onAgentResizeTick(msg)
+	case usagestore.Result:
+		return m.onUsageResult(msg)
+	case usagestore.Observation:
+		return m.onUsageObserved(msg)
 	case agentUsageTickMsg:
 		return m.onAgentUsageTick(msg)
+	case paneAccountsMsg:
+		return m.onPaneAccounts(msg)
+	case paneTickMsg:
+		return m.onPaneTick(msg)
 
 	case metricsMsg:
 		return m.onMetrics(msg), nil
@@ -206,6 +239,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onMouse(msg)
 
 	case tea.KeyMsg:
+		// Terminal mode comes first: every key but ctrl+] belongs to the agent,
+		// so no global (quit, help, tab, update prompt) may see it.
+		if !m.agentOverlayOpen() && m.agentTerminalMode() {
+			return m.agentTerminalKey(msg)
+		}
+		// An agent overlay owns every key, including the ones the update prompt
+		// would take.
+		if m.agents.overlay != nil {
+			return m.overlayUpdate(msg)
+		}
 		if m.updatePromptVisible() && msg.String() != "ctrl+c" {
 			switch msg.String() {
 			case "u":
@@ -232,8 +275,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onKey(msg)
 	}
 
-	// Forward remaining messages to the focused pane.
-	return m.forwardToPane(msg)
+	if handled, nm, cmd := m.onAgentOverlayMsg(msg); handled {
+		return nm, cmd
+	}
+	// Forward remaining messages to the focused pane; an open agent overlay
+	// also gets them (its backend results arrive here).
+	var ocmd tea.Cmd
+	if m.agents.overlay != nil {
+		m, ocmd = m.overlayUpdate(msg)
+	}
+	nm, cmd := m.forwardToPane(msg)
+	return nm, tea.Batch(ocmd, cmd)
 }
 
 // onMouse scrolls the pane the pointer is over — the log on the right, the
@@ -241,7 +293,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // aiming the wheel is how a mouse says "this one". Only wheel events are acted
 // on: clicks and drags belong to the terminal's own text selection.
 func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.mouseOff || m.prefs != nil || m.modal != nil {
+	if m.mouseOff || m.prefs != nil || m.modal != nil || m.agents.overlay != nil {
+		return m, nil
+	}
+	// The TUI owns the mouse (cell motion) and agents get none in this
+	// project, so in terminal mode the wheel over the agent does nothing
+	// rather than scrolling a pane the user cannot see.
+	if leftW, _, _ := m.dims(); m.agentTerminalMode() && msg.X >= leftW {
 		return m, nil
 	}
 	switch msg.Button {
@@ -263,6 +321,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) Model {
 	if m.prefs != nil {
 		m.prefs.SetSize(msg.Width, msg.Height)
 	}
+	m.sizeAgentOverlay()
 	m.layout()
 	m.ready = true
 	return m
@@ -1875,15 +1934,18 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 
 // onModalSubmit routes a confirmed modal value to the right core operation.
 func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
+	open := m.modal
 	m.modal = nil
 
 	// These kinds do not require an existing selection.
 	switch msg.Kind {
-	case kindAgents:
-		return m.onAgentsPick(msg.Value)
-
 	case modals.KindKeymap:
-		// Any selection in the key reference jumps to the key editor.
+		// The terminal escape key is fixed, so keep the help open.
+		if strings.Contains(ansi.Strip(msg.Value), agentTerminalSection) {
+			m.modal = open
+			return m, nil
+		}
+		// Any other selection in the key reference jumps to the key editor.
 		return m.openPrefs(true)
 
 	case modals.KindProcesses:
@@ -1911,7 +1973,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		}
 		return c.run(m)
 
-	case modals.KindConfirm:
+	case modals.KindConfirm, kindAgentStop:
 		if m.pendingConfirm != nil {
 			action := m.pendingConfirm.action
 			m.pendingConfirm = nil

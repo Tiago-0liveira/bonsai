@@ -171,6 +171,16 @@ func (m Model) openKeymap() (tea.Model, tea.Cmd) {
 		sections = append(sections, kmSection{name: sec.name, entries: entries})
 	}
 
+	// The terminal escape key is fixed: listed so
+	// it is discoverable, but absent from the preferences key editor.
+	var terminalKeys []paletteEntry
+	for _, e := range agentTerminalKeys {
+		plain := fmt.Sprintf("%s %s %s", e.key, e.desc, agentTerminalSection)
+		display := keySt.Render(padRight(e.key, 10)) + padRight(e.desc, 20) + dim.Render("· "+agentTerminalSection)
+		terminalKeys = append(terminalKeys, paletteEntry{display: display, plain: plain})
+	}
+	sections = append(sections, kmSection{name: agentTerminalSection, entries: terminalKeys})
+
 	filter := func(q string) []modals.Section {
 		q = strings.ToLower(strings.TrimSpace(q))
 		out := make([]modals.Section, 0, len(sections))
