@@ -148,7 +148,19 @@ once read, its plan ("Google AI Pro").
   the same API read, so no `agy` is started for them, and listing profiles never
   starts `agy` either; the `/usage` fallback shows neither credits nor a fresh
   plan. The table lists Gemini models only; `--claude-gpt` adds the Claude & GPT
-  model pools.
+  model pools. The production host is asked first and lists the Gemini pool;
+  the daily host sometimes lists only the Claude & GPT pool. An answer without
+  a Gemini pool makes Bonsai ask the other host and start agy's `/usage` beside
+  it (also when the API read is slow), and the first source that lists a Gemini
+  pool wins. A profile no source lists one for shows its Claude & GPT pool in
+  the Gemini table, marked `(Claude & GPT)`, and agy is not started for it again
+  for 10 minutes. The `/usage` run is stopped, with its helper processes, after
+  45 seconds.
+- **Sign-in.** Bonsai saves the login when `agy` exits, whatever its exit
+  status. Interrupting `agy` (Ctrl+C) after signing in keeps the login. Agy's
+  first-run state is kept with the profile, so its welcome and theme screens do
+  not repeat in every session. Interrupting `bonsai agent run` waits for `agy`
+  to end, restores the terminal mode and cleans the session up.
 - **Models.** The start dialog's models come from `agy models`. A model agy
   lists once per effort (`gemini-3.8-flash-high`, `-medium`, `-low`) is one model
   with an effort choice, passed to agy as the full ID. A model listed once has no

@@ -370,15 +370,24 @@ func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now ti
 
 		left := row.primary()
 		right := row.secondary()
+		note := ""
 		if thirdParty {
 			left, right = antigravityThirdParty(row)
+		} else if left == nil && right == nil {
+			// The API reports a Gemini pool only for some profiles. One
+			// without it would show a blank row, so its Claude & GPT pool
+			// stands in, marked.
+			if five, week := antigravityThirdParty(row); five != nil || week != nil {
+				left, right, note = five, week, "  (Claude & GPT)"
+			}
 		}
-		fmt.Fprintf(out, "  %s  %s  %s  %s  %s\n",
+		fmt.Fprintf(out, "  %s  %s  %s  %s  %s%s\n",
 			renderedName,
 			usagePlanCell(row, planWidth),
 			renderUsageLimitCell(left, now, color, usageCellWidth),
 			renderUsageLimitCell(right, now, color, usageCellWidth),
 			usageResetCell(now, left, right),
+			note,
 		)
 	}
 }
