@@ -246,7 +246,7 @@ func (m Model) quit() (tea.Model, tea.Cmd) {
 		}
 	}
 	if len(running) == 0 {
-		return m, tea.Quit
+		return m, m.agents.quit()
 	}
 
 	m.quitRecs = running
@@ -275,5 +275,5 @@ func (m Model) onQuitSubmit(selected []int) (tea.Model, tea.Cmd) {
 			m.procs.Kill(r.ID)
 		}
 	}
-	return m, tea.Quit
+	return m, m.agents.quit()
 }

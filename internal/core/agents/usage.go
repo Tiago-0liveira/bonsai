@@ -61,8 +61,18 @@ type UsageLimit struct {
 	ResetsAt          *time.Time `json:"resets_at,omitempty"`
 }
 
+// UsageMaxAge is the one freshness window every TUI usage view shares: a
+// stored snapshot this young is shown as is instead of calling the provider.
+// It overrides provider TTLs (Claude and Codex use one minute) so the pane,
+// the Agents tab, the profiles modal and the launch dialog never disagree
+// about whether a number is current.
+const UsageMaxAge = 3 * time.Minute
+
 type UsageOptions struct {
 	Refresh bool
+	// MaxAge, when positive, replaces the service and provider TTL for the
+	// cache check: a cached snapshot no older than MaxAge is returned as is.
+	MaxAge time.Duration
 }
 
 type AccountUsageResult struct {

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents/usagefmt"
 	"github.com/mattn/go-isatty"
 )
 
@@ -172,8 +173,8 @@ func usageSummaryValue(value float64, ok, color bool) string {
 	if !ok {
 		return "[" + strings.Repeat("░", usageFleetBarWidth) + "]   - avg"
 	}
-	pct := int(value*100 + 0.5)
-	plain := fmt.Sprintf("[%s] %3d%% avg", usageBar(value, usageFleetBarWidth), pct)
+	pct := usagefmt.Percent(value)
+	plain := fmt.Sprintf("[%s] %3d%% avg", usagefmt.Bar(value, usageFleetBarWidth), pct)
 	return usageRankStyle(plain, value, color)
 }
 
@@ -250,7 +251,7 @@ func usageNextReset(rows []usageDashboardRow, now time.Time, color bool) (string
 	if len(usageProviders(rows)) > 1 {
 		owner = usageProviderTitle(provider) + "/" + account
 	}
-	plain := fmt.Sprintf("Next Reset: %s in %s", owner, usageDuration(reset.Sub(now), true))
+	plain := fmt.Sprintf("Next Reset: %s in %s", owner, usagefmt.Duration(reset.Sub(now), true))
 	return plain, usageStyle(plain, "\x1b[36m", color)
 }
 
@@ -369,15 +370,24 @@ func renderAntigravityUsageTable(out io.Writer, rows []usageDashboardRow, now ti
 
 		left := row.primary()
 		right := row.secondary()
+		note := ""
 		if thirdParty {
 			left, right = antigravityThirdParty(row)
+		} else if left == nil && right == nil {
+			// The API reports a Gemini pool only for some profiles. One
+			// without it would show a blank row, so its Claude & GPT pool
+			// stands in, marked.
+			if five, week := antigravityThirdParty(row); five != nil || week != nil {
+				left, right, note = five, week, "  (Claude & GPT)"
+			}
 		}
-		fmt.Fprintf(out, "  %s  %s  %s  %s  %s\n",
+		fmt.Fprintf(out, "  %s  %s  %s  %s  %s%s\n",
 			renderedName,
 			usagePlanCell(row, planWidth),
 			renderUsageLimitCell(left, now, color, usageCellWidth),
 			renderUsageLimitCell(right, now, color, usageCellWidth),
 			usageResetCell(now, left, right),
+			note,
 		)
 	}
 }
@@ -544,7 +554,7 @@ func usageResetCell(now time.Time, limits ...*agents.UsageLimit) string {
 	if next == nil {
 		return "-"
 	}
-	return "in " + usageDuration(next.Sub(now), false) + " · " + usageClock(*next, now)
+	return "in " + usagefmt.Duration(next.Sub(now), false) + " · " + usageClock(*next, now)
 }
 
 // usageClock formats t in now's time zone, as "Sep 25 17:00".
@@ -648,7 +658,7 @@ func usageResetCreditsLine(credits []agents.ResetCredit, now time.Time) string {
 	}
 	line := fmt.Sprintf("%d rate-limit %s available", count, plural(count, "reset", "resets"))
 	if next != nil {
-		line += fmt.Sprintf(" · next expires in %s (%s)", usageDuration(next.Sub(now), false), usageClock(*next, now))
+		line += fmt.Sprintf(" · next expires in %s (%s)", usagefmt.Duration(next.Sub(now), false), usageClock(*next, now))
 	}
 	return line
 }
@@ -664,7 +674,7 @@ func usageOtherCells(limits []agents.UsageLimit) string {
 			if label == "" {
 				label = limit.ID
 			}
-			parts = append(parts, fmt.Sprintf("%s %d%%", truncateRunes(label, 24), int(fraction*100+0.5)))
+			parts = append(parts, fmt.Sprintf("%s %d%%", truncateRunes(label, 24), usagefmt.Percent(fraction)))
 		}
 	}
 	if len(parts) == 0 {
@@ -680,7 +690,7 @@ func usageModelCells(limits []*agents.UsageLimit) string {
 	parts := make([]string, 0, len(limits))
 	for _, limit := range limits {
 		if fraction, ok := usageFraction(limit); ok {
-			parts = append(parts, fmt.Sprintf("%s %d%%", strings.TrimPrefix(limit.ID, "seven_day_"), int(fraction*100+0.5)))
+			parts = append(parts, fmt.Sprintf("%s %d%%", strings.TrimPrefix(limit.ID, "seven_day_"), usagefmt.Percent(fraction)))
 		}
 	}
 	if len(parts) == 0 {
@@ -704,49 +714,16 @@ func renderUsageLimitCell(limit *agents.UsageLimit, now time.Time, color bool, w
 		return plain
 	}
 
-	pct := int(fraction*100 + 0.5)
+	pct := usagefmt.Percent(fraction)
 	reset := "-"
-	if limit != nil && limit.ResetsAt != nil {
-		if limit.ResetsAt.After(now) {
-			reset = usageDuration(limit.ResetsAt.Sub(now), false)
-		} else {
-			reset = "now"
-		}
+	if limit != nil {
+		reset = usagefmt.ResetsIn(now, limit.ResetsAt, false)
 	}
-	plain := fmt.Sprintf("[%s] %3d%%  %s", usageBar(fraction, usageBarWidth), pct, reset)
+	plain := fmt.Sprintf("[%s] %3d%%  %s", usagefmt.Bar(fraction, usageBarWidth), pct, reset)
 	if width > 0 {
 		plain = padUsage(plain, width)
 	}
 	return usageRankStyle(plain, fraction, color)
-}
-
-func usageDuration(d time.Duration, precise bool) string {
-	if d <= 0 {
-		return "now"
-	}
-	minutes := int(d.Round(time.Minute) / time.Minute)
-	if minutes < 1 {
-		return "<1m"
-	}
-	hours := minutes / 60
-	mins := minutes % 60
-	if precise && hours < 72 {
-		if hours == 0 {
-			return fmt.Sprintf("%dm", mins)
-		}
-		return fmt.Sprintf("%dh%02dm", hours, mins)
-	}
-	if hours < 24 {
-		if mins >= 30 {
-			hours++
-		}
-		return fmt.Sprintf("%dh", hours)
-	}
-	days := hours / 24
-	if hours%24 >= 12 {
-		days++
-	}
-	return fmt.Sprintf("%dd", days)
 }
 
 func usageFleetAverage(rows []usageDashboardRow) (float64, bool) {
@@ -770,27 +747,13 @@ func usageFraction(limit *agents.UsageLimit) (float64, bool) {
 	return agents.RemainingFraction(limit)
 }
 
-func usageBar(value float64, width int) string {
-	if value < 0 {
-		value = 0
-	}
-	if value > 1 {
-		value = 1
-	}
-	filled := int(value*float64(width) + 0.5)
-	if filled > width {
-		filled = width
-	}
-	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
-}
-
 func usageRankStyle(s string, value float64, color bool) string {
-	switch {
-	case value >= 0.75:
+	switch usagefmt.RankOf(value) {
+	case usagefmt.RankGood:
 		return usageStyle(s, "\x1b[92m", color)
-	case value >= 0.50:
+	case usagefmt.RankFair:
 		return usageStyle(s, "\x1b[93m", color)
-	case value >= 0.25:
+	case usagefmt.RankLow:
 		return usageStyle(s, "\x1b[38;5;208m", color)
 	default:
 		return usageStyle(s, "\x1b[91m", color)

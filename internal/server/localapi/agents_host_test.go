@@ -4,6 +4,7 @@ package localapi
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -164,4 +165,86 @@ func TestAgentTerminalTakeControl(t *testing.T) {
 	// The first socket is still open and can take control back.
 	_ = first.WriteJSON(map[string]any{"type": "take"})
 	next(first, &firstOut, func(f agentterminal.Frame) bool { return f.Type == "writer" && *f.Writer })
+}
+
+// A session another client starts is listed, announced and journaled without
+// any API request, and its external end shows in the list.
+func TestWatchRecordsAdoptsSessionsStartedElsewhere(t *testing.T) {
+	s, account, _ := terminalTestServer(t)
+	runtime := s.agents.runtime
+	paths := testAgentHostPaths(t)
+	s.agents.manager.Close(false, 10*time.Second)
+	s.agents.manager = testAgentManager(t, paths, runtime.Accounts, runtime.Sessions, runtime.Registry, s.publishAgents)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.agents.manager.WatchRecords(ctx)
+	subscription, events := s.eventHub.subscribe()
+	defer s.eventHub.unsubscribe(subscription)
+
+	project := s.registry.Default()
+	tui := agenthost.Starter{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Paths: paths, Origin: "tui",
+		Launch: agenthost.InProcess(agenthost.Deps{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Linger: 200 * time.Millisecond})}
+	record, err := tui.Start(context.Background(), agenthost.StartRequest{Project: "repo", Tree: gitlocal.ID(localRepositoryID, project.info.Path), Dir: project.info.Path, AccountID: agents.AccountID(account), Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listed := func(state string) func() bool {
+		return func() bool {
+			w := agentAPIRequest(t, s, "GET", "/api/projects/repo/agents", "", "")
+			return strings.Contains(w.Body.String(), record.ID) && strings.Contains(w.Body.String(), `"state":"`+state+`"`)
+		}
+	}
+	waitFor(t, listed("running"))
+	for seen := false; !seen; {
+		select {
+		case event := <-events:
+			seen = event.Type == "project_update" && event.ProjectID == "repo" && event.Component == "agents"
+		case <-time.After(2 * time.Second):
+			t.Fatal("no agents state-sync event")
+		}
+	}
+	journal := func() agentMutation {
+		var got agentMutation
+		_ = project.state.View(func(data gitstore.Data) error {
+			got, _ = gitstore.Get[agentMutation](data, "api_agent_adoptions", record.ID)
+			return nil
+		})
+		return got
+	}
+	waitFor(t, func() bool { return journal().Summary.ID == record.ID })
+
+	if err := agenthost.StopHolder(paths, record, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, listed("exited"))
+	waitFor(t, func() bool { return journal().Summary.State == "exited" })
+}
+
+func TestAdoptedSessionDoesNotOverwriteRequestKey(t *testing.T) {
+	s, _, _ := terminalTestServer(t)
+	project := s.registry.Default()
+	summary := agentterminal.Summary{ID: "sess_a1", ProjectID: "repo", State: "exited", Origin: "tui", CreatedAt: time.Now().UTC()}
+	key := "adopted-" + summary.ID
+	request := agentMutation{Fingerprint: "client request", Summary: agentterminal.Summary{ID: "sess_b2", ProjectID: "repo", State: "exited"}}
+	if err := project.state.Update(func(data gitstore.Data) error {
+		return gitstore.Put(data, "api_agent_mutations", key, request)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.agents.manager.Restore(summary)
+	s.publishAgents("repo")
+	if err := project.state.View(func(data gitstore.Data) error {
+		got, ok := gitstore.Get[agentMutation](data, "api_agent_mutations", key)
+		if !ok || got.Fingerprint != request.Fingerprint || got.Summary.ID != request.Summary.ID {
+			t.Errorf("client request overwritten: %+v", got)
+		}
+		adopted, ok := gitstore.Get[agentMutation](data, "api_agent_adoptions", summary.ID)
+		if !ok || adopted.Summary.ID != summary.ID {
+			t.Errorf("adopted session missing: %+v", adopted)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

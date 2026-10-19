@@ -41,7 +41,7 @@ type Request struct {
 	Take       bool   `json:"take,omitempty"`
 	// ReadOnly observes only: never the writer, cannot take control.
 	ReadOnly bool `json:"read_only,omitempty"`
-	// Client labels the connection in info: web or cli.
+	// Client labels the connection in info: web, cli or tui.
 	Client string `json:"client,omitempty"`
 	// Input.
 	Data []byte `json:"data,omitempty"`

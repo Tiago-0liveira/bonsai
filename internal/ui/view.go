@@ -13,6 +13,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/usagepane"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -637,8 +638,12 @@ func (m *Model) layout() {
 	if rightInnerW < 1 {
 		rightInnerW = 1
 	}
-	m.list.SetSize(leftInnerW, innerH)
+	m.list.SetSize(leftInnerW, innerH-m.usagePaneRows(innerH))
 	m.term.SetSize(rightInnerW, m.termHeight(innerH))
+	m.sizeAgentOverlay()
+	if m.agentPaneModal() {
+		m.modal.SetSize(m.agentPaneSize())
+	}
 }
 
 // termHeight is the right pane's viewport height: the pane body minus the tab
@@ -686,7 +691,7 @@ func (m Model) View() string {
 	if m.prefs != nil {
 		return clampHeight(m.prefs.View(), m.height)
 	}
-	if m.modal != nil {
+	if m.modal != nil && !m.agentPaneModal() {
 		return clampHeight(m.modal.View(), m.height)
 	}
 
@@ -701,13 +706,21 @@ func (m Model) View() string {
 	}
 	targetPaneH := innerH + 2
 
+	paneRows := m.usagePaneRows(innerH)
+	listH := innerH - paneRows
 	left := m.borderFor(m.focus == focusList).
-		Width(leftInnerW).Height(innerH).
-		Render(clampHeight(m.list.View(), innerH))
+		Width(leftInnerW).Height(listH).
+		Render(clampHeight(m.list.View(), listH))
+	if paneRows > 0 {
+		pane := usagepane.View(m.paneAccounts(), m.paneHeaderAge(), leftW, paneRows, agentNow(), m.agentGlyphsASCII())
+		left = lipgloss.JoinVertical(lipgloss.Left, left, pane)
+	}
 	left = clampHeight(left, targetPaneH)
 
 	var rightBody string
-	if m.rightTab == tabProcs {
+	if m.rightTab == tabAgents {
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.renderAgentsPane(rightInnerW, innerH-1)
+	} else if m.rightTab == tabProcs {
 		// Output scrolls in the term viewport (already sized to leave the footer
 		// room, see layout); the process list + hint sit in a footer pinned to
 		// the bottom.
@@ -741,6 +754,8 @@ func tabLabel(t rightTab, compact bool) string {
 			return " Insp (i) "
 		case tabChecks:
 			return " Checks (b) "
+		case tabAgents:
+			return " Agents (g) "
 		default:
 			return " Log (l) "
 		}
@@ -756,6 +771,8 @@ func tabLabel(t rightTab, compact bool) string {
 		return " Inspect (i) "
 	case tabChecks:
 		return " Checks (b) "
+	case tabAgents:
+		return " Agents (g) "
 	default:
 		return " Git Log "
 	}
@@ -776,6 +793,10 @@ func (m Model) visibleTabs() []rightTab {
 		if _, isPR := m.prForBranch(wt.Branch); isPR {
 			tabs = append(tabs, tabPR)
 		}
+	}
+	if m.agents.enabled() {
+		// Present even with zero agents: it is where the first one is started.
+		tabs = append(tabs, tabAgents)
 	}
 	return tabs
 }
@@ -905,7 +926,9 @@ func (m Model) statusBar() string {
 		msg = "error: " + m.err.Error()
 	}
 	line := help
-	if msg != "" {
+	if help == "" {
+		line = statusStyle.Render(msg)
+	} else if msg != "" {
 		if avail := m.width - lipgloss.Width(help) - 3; avail >= 8 {
 			line = help + "  " + statusStyle.Render(ansi.Truncate(msg, avail, "…"))
 		}
@@ -917,6 +940,44 @@ func (m Model) statusBar() string {
 // the list is focused, tab cycling while the right pane is, plus the always-on
 // palette/preferences/keys/quit.
 func (m Model) contextHelp() string {
+	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
+	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
+	sep := descSt.Render(" · ")
+	if m.agentTerminalMode() {
+		switch v := m.agents.view; {
+		case v.stream == nil:
+			return descSt.Render("connecting…") + sep + pair("Ctrl+]", "unfocus")
+		case v.state == attachObservingOther:
+			return descSt.Render("READ-ONLY") + sep + pair("Ctrl+]", "unfocus")
+		}
+		return descSt.Render("FOCUSED · Input goes to agent") + sep + pair("Ctrl+]", "unfocus")
+	}
+	if m.rightTab == tabAgents && m.agents.active() {
+		if m.agents.overlay != nil {
+			// The accounts, quick and launch overlays carry their own footer in
+			// the pane; a second copy here would only repeat it.
+			return ""
+		}
+		if m.modal != nil {
+			return descSt.Render("Enter select · Esc close")
+		}
+		if m.focus == focusTerminal {
+			parts := append(m.agentNavHints(pair, descSt),
+				pair(m.keys.AgentAll.Help().Key, "all"),
+				pair(m.keys.AgentAccounts.Help().Key, "profiles"),
+				pair(m.keys.AgentUsage.Help().Key, "usage"),
+				pair(m.keys.AgentNew.Help().Key, "new"))
+			if wt, ok := m.selectedWorktree(); ok {
+				if s, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && s.Active() && (m.agents.view == nil || m.agents.view.sessionID != s.ID || m.agents.view.state != attachEnded) {
+					parts = append(parts, pair(m.keys.AgentStop.Help().Key, "stop"))
+				}
+			}
+			parts = append(parts, pair(m.keys.Tab.Help().Key, "focus"), pair(m.keys.Help.Help().Key, "keys"))
+			return strings.Join(parts, sep)
+		}
+		return strings.Join([]string{pair(m.keys.Tab.Help().Key, "focus agents"), pair(m.keys.AgentsTab.Help().Key, "agents"), pair(m.keys.Help.Help().Key, "keys")}, sep)
+	}
 	bindings := []key.Binding{m.keys.Tab}
 	if m.focus == focusList {
 		bindings = append(bindings, m.keys.Enter, m.keys.Create, m.keys.Filter)
@@ -925,8 +986,6 @@ func (m Model) contextHelp() string {
 	}
 	bindings = append(bindings, m.keys.Palette, m.keys.Prefs, m.keys.Help, m.keys.Quit)
 
-	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
-	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
 	parts := make([]string, 0, len(bindings))
 	for _, b := range bindings {
 		h := b.Help()

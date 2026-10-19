@@ -213,13 +213,17 @@ func (i Item) prBadge() string {
 
 // itemDelegate renders a two-line row, coloring a leading "#N" PR badge
 // independently so it survives selection highlighting.
-type itemDelegate struct{}
+type itemDelegate struct {
+	// badges returns the pre-styled agent glyphs for a worktree path; nil
+	// means agents are off and rows render exactly as before.
+	badges func(path string) string
+}
 
 func (itemDelegate) Height() int                         { return 2 }
 func (itemDelegate) Spacing() int                        { return 1 }
 func (itemDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 
-func (itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	it, ok := listItem.(Item)
 	if !ok {
 		return
@@ -234,17 +238,46 @@ func (itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.I
 		nameStyle = selectedTitle
 	}
 
-	title := pointer
+	head := pointer
 	if dot := checkDot(it.Checks); dot != "" {
-		title += dot + " "
+		head += dot + " "
 	}
-	title += it.prBadge()
-	title += nameStyle.Render(it.Title())
+	head += it.prBadge()
+	name := it.Title()
+	var tail string
 	if badge := it.dirtyBadge(); badge != "" {
-		title += " " + badge
+		tail += " " + badge
 	}
 	if it.Running > 0 {
-		title += " " + runningStyle.Render(fmt.Sprintf("▶%d", it.Running))
+		tail += " " + runningStyle.Render(fmt.Sprintf("▶%d", it.Running))
+	}
+
+	var agents string
+	if d.badges != nil {
+		agents = d.badges(it.WT.Path)
+	}
+	agentsW := ansi.StringWidth(agents)
+
+	var title string
+	switch {
+	case agents == "" || width <= 0 || agentsW > width:
+		// Badges are never truncated: with no room at all they are dropped.
+		title = head + nameStyle.Render(name) + tail
+	default:
+		leftW := ansi.StringWidth(head) + ansi.StringWidth(name) + ansi.StringWidth(tail)
+		if leftW+1+agentsW <= width {
+			title = head + nameStyle.Render(name) + tail + " " + agents
+			break
+		}
+		// Too tight: the branch name gives way first, the agents stay next
+		// to the existing badges.
+		avail := width - agentsW - 1 - ansi.StringWidth(head) - ansi.StringWidth(tail)
+		if avail >= 1 {
+			title = head + nameStyle.Render(ansi.Truncate(name, avail, "…")) + tail + " " + agents
+		} else {
+			left := head + nameStyle.Render(name) + tail
+			title = ansi.Truncate(left, max(width-agentsW-1, 0), "…") + " " + agents
+		}
 	}
 
 	desc := "  " + descStyle.Render(it.Description())
@@ -279,6 +312,13 @@ func (m *Model) SetItems(items []Item) {
 		li[i] = it
 	}
 	m.list.SetItems(li)
+}
+
+// SetAgentBadges installs the per-path agent glyph source shown on each row's
+// first line; nil removes it. The component stays data-agnostic: the parent
+// owns the sessions and the styling.
+func (m *Model) SetAgentBadges(fn func(path string) string) {
+	m.list.SetDelegate(itemDelegate{badges: fn})
 }
 
 // SetSize resizes the list.
