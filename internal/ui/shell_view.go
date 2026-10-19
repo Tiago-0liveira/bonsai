@@ -17,7 +17,11 @@ func (m Model) shellView() string {
 	if !m.ready {
 		return "Loading bonsai…"
 	}
-	regions, ok := shellGeometry(m.width, m.height, 0, 0)
+	submenu := 0
+	if m.workspace == wsSettings {
+		submenu = settingsSubmenuRows
+	}
+	regions, ok := shellGeometry(m.width, m.height, submenu, 0)
 	if !ok {
 		return m.shellResizeNotice()
 	}
@@ -28,8 +32,13 @@ func (m Model) shellView() string {
 	p := theme.Current
 	blank := shellRow(regions.width, p.Background, "", "")
 	lines := m.shellHeader(regions)
-	for i := 0; i < regions.submenu+regions.body+regions.detail; i++ {
-		lines = append(lines, blank)
+	if m.workspace == wsSettings {
+		lines = append(lines, m.settingsSubmenu(regions.width)...)
+		lines = append(lines, m.settingsBody(regions.width, regions.body)...)
+	} else {
+		for i := 0; i < regions.submenu+regions.body+regions.detail; i++ {
+			lines = append(lines, blank)
+		}
 	}
 	lines = append(lines, m.shellFooter(regions)...)
 	return strings.Join(lines, "\n")
@@ -121,7 +130,7 @@ func (m Model) shellTabs(width int) string {
 
 func (m Model) shellFooter(r shellRegions) []string {
 	p := theme.Current
-	where := seg(p.Text, p.Surface, true).Render(" " + m.workspace.name())
+	where := seg(p.Text, p.Surface, true).Render(" " + m.shellWhere())
 
 	// Hints are dropped from the end until the line fits.
 	hints := m.shellHints()
@@ -138,15 +147,46 @@ func (m Model) shellFooter(r shellRegions) []string {
 		}
 	}
 
-	focus := seg(p.Warning, p.Surface, true).Render(" FOCUS: " + m.workspace.name() + " / " + m.currentShellFocus().String())
+	focus := seg(p.Warning, p.Surface, true).Render(" FOCUS: " + m.shellFocusLabel())
 	status := "preview · shell only"
+	if m.workspace == wsSettings {
+		status = "Local preferences"
+	}
+	statusStyle := seg(p.Muted, p.Surface, false)
 	if m.status != "" {
 		status = m.status
+		if strings.HasPrefix(status, "Save failed") {
+			statusStyle = seg(p.Danger, p.Surface, true)
+		}
 	}
-	statusSeg := seg(p.Muted, p.Surface, false).Render(m.chrome(status) + " ")
-	return []string{
+	statusSeg := statusStyle.Render(m.chrome(status) + " ")
+	return m.settingsASCII([]string{
 		shellRow(r.width, p.Surface, where, ""),
 		shellRow(r.width, p.Background, hintLine, ""),
 		shellRow(r.width, p.Surface, focus, statusSeg),
+	})
+}
+
+// shellWhere is the footer's location: the workspace, and for Settings the
+// category and section the cursor is in.
+func (m Model) shellWhere() string {
+	if m.workspace != wsSettings {
+		return m.workspace.name()
 	}
+	return "Settings / " + m.curCategory().name + " / " + m.curSection().name
+}
+
+// shellFocusLabel names the focus owner. Inside Settings it names the category
+// and marks a text edit, matching the design's "Settings / Appearance".
+func (m Model) shellFocusLabel() string {
+	f := m.currentShellFocus()
+	if m.workspace == wsSettings {
+		switch f {
+		case shellBody:
+			return "Settings / " + m.curCategory().name
+		case shellInput:
+			return "Settings / " + m.curCategory().name + " / Input"
+		}
+	}
+	return m.workspace.name() + " / " + f.String()
 }

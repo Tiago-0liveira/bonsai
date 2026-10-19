@@ -117,3 +117,15 @@ func Resolve(preset string, overrides map[string]string) Palette {
 	}
 	return p
 }
+
+// ApplyContrast adjusts the neutral surfaces for a contrast mode. "flat"
+// collapses Surface and Raised onto Background so terminals with a poor
+// neutral ramp show no stepped bands; "" and "layered" keep the theme's own
+// shades, which stay theme-defined rather than derived.
+func ApplyContrast(p Palette, mode string) Palette {
+	if mode == "flat" {
+		p.Surface = p.Background
+		p.Raised = p.Background
+	}
+	return p
+}

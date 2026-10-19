@@ -70,3 +70,30 @@ func TestSurfaceRoleOverrides(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyContrastAllPresets(t *testing.T) {
+	for _, name := range Presets() {
+		base := Resolve(name, nil)
+		for _, mode := range []string{"", "layered", "flat", "bogus"} {
+			p := ApplyContrast(base, mode)
+			for role, c := range map[string]lipgloss.Color{
+				"accent": p.Accent, "text": p.Text, "background": p.Background,
+				"surface": p.Surface, "raised": p.Raised, "muted": p.Muted,
+			} {
+				if c == "" {
+					t.Errorf("%s/%q: role %s is empty", name, mode, role)
+				}
+			}
+			if p.Text != base.Text || p.Accent != base.Accent || p.Muted != base.Muted || p.Background != base.Background {
+				t.Errorf("%s/%q: text roles or background changed", name, mode)
+			}
+			flat := mode == "flat"
+			if flat != (p.Surface == p.Background && p.Raised == p.Background) {
+				t.Errorf("%s/%q: flat collapse = %v", name, mode, !flat)
+			}
+			if !flat && (p.Surface != base.Surface || p.Raised != base.Raised) {
+				t.Errorf("%s/%q: layered shades changed", name, mode)
+			}
+		}
+	}
+}

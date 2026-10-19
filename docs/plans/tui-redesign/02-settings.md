@@ -1,6 +1,6 @@
 # Plan 02 — Settings before feature workspaces
 
-Status: not started. Prerequisite: [01 — Base shell](01-base-shell.md).
+Status: implemented. Prerequisite: 01 — Base shell(01-base-shell.md).
 Next: [03 — Accounts](03-accounts.md).
 
 ## Deliverable
@@ -66,15 +66,46 @@ References: [Appearance](../../design/tui-redesign/revision-02/png/s-02-120x35-a
 
 ## Exit criteria and verification
 
-- [ ] Settings is reachable with no agent account and no GitHub connection.
+- [x] Settings is reachable with no agent account and no GitHub connection.
+  (`TestSettingsPrefsKeyRoutesToSettings`, `TestShellInitStartsNothing`.)
 - [ ] Categories and nested sections feel different from the root workspace;
       focus and Escape behavior match the design at all three sizes.
-- [ ] Old state/config loads, unknown unrelated values survive, and failed saves
+  Not proven: level, selected-style and bounded-render tests exist, but no
+  interactive run or visual comparison with the mockups at 80x24, 120x35 and 160x48.
+- [x] Old state/config loads, unknown unrelated values survive, and failed saves
       do not show success or overwrite newer settings.
-- [ ] Last workspace is remembered per repository without forcing Garden open.
-- [ ] Key overrides, ASCII, mono and alternate themes work throughout the shell.
-- [ ] Garden/automation controls make no unsupported behavior promises.
+  (`TestStateOldFileLoadsWithDefaults`, `TestUnknownKeysSurvive`,
+  `TestSettingsSaveFailureRestoresLastPersisted`, `TestSettingsLateSaveResultsNeverReplaceNewerEdits`.)
+- [x] Last workspace is remembered per repository without forcing Garden open.
+  (`TestPersistLastWorkspace`, `TestSettingsRememberWorkspacePerRepo`, `TestSettingsMemoryOffPersistsNothing`.)
+- [x] Key overrides, ASCII, mono and alternate themes work throughout the shell.
+  (`TestShellHonorsKeyOverrides`, `TestShellHelpIsASCIIInASCIIMode`, preset loops in `shell_test.go` and `settings_test.go`.)
+- [x] Garden/automation controls make no unsupported behavior promises.
+  (`TestSettingsUnavailableFieldsChangeNothing`.)
 - [ ] Targeted UI/config tests, relevant race checks and full Go checks pass.
-- [ ] `README.md` and `docs/tui-cli.md` explain scope, precedence and navigation.
+  Not proven for the full suite: `go test ./...` has one pre-existing environment
+  failure (`internal/server/localapi` `TestAgentUsageRealProviders`, which reads the
+  real agent config dir and also fails on the base commit). Targeted and race checks pass.
+- [x] `README.md` and `docs/tui-cli.md` explain scope, precedence and navigation.
 
-Completion record: pending implementation and validation evidence.
+Completion record:
+
+- Entry: `,` (prefs binding), the Settings tab (`enter`/`↓` enters the body), and
+  palette entries "Settings: General|Appearance|Keys|Garden|Agents" and
+  "Settings: Edit key bindings". Settings starts no domain work.
+- Code: `internal/ui/settings.go` (navigation, edits, key capture),
+  `settings_registry.go` (categories, sections, scopes, Unavailable rows),
+  `settings_view.go`, `keyscope.go` (scope rules and rejections), `shell.go` and
+  `shell_view.go` (routing, palette, remembered workspace, hints), `overlays.go`,
+  `configedit.go`, `agents.go`, `model.go`, `theme/theme.go`; `internal/core/config/state.go`
+  and `errors.go` (new `prefs` fields, per-repo `workspaces`, ordered atomic writes).
+- Tests: `internal/ui/settings_test.go`, `settings_keys_test.go`, `keyscope_test.go`,
+  `shell_test.go`, `theme/theme_test.go`, `internal/core/config/state_test.go`.
+- Checks run: gofmt (empty), `go vet ./...`, `go build ./...`, `GOOS=windows go build ./...`,
+  `go test ./internal/ui/... ./internal/core/config/...` (pass), and
+  `go test -race ./internal/ui/... ./internal/core/config/...` (pass).
+  `go test ./...` not clean: pre-existing `TestAgentUsageRealProviders` failure, same on base commit.
+  The failing test passes with `env -u CODEX_HOME go test ./internal/server/localapi -run '^TestAgentUsageRealProviders$' -count=1`.
+- Demo: renders checked by tests only at the three sizes and in the presets; no
+  interactive terminal session was run.
+- Commit: `feat(tui): add redesign settings workspace`.

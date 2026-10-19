@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 )
 
@@ -57,11 +59,64 @@ var workspaceInfo = [workspaceCount]struct{ name, icon, ascii string }{
 
 func (w workspace) name() string { return workspaceInfo[w].name }
 
-// shellFocus says who owns keyboard input in the redesigned shell. Workspaces
-// that hold a terminal or a text field (later plans) take shellBody or
-// shellInput; while they do, the shell's own navigation keys stand down so it
-// can never steal keystrokes from them. Nothing in the empty bodies sets
-// those two yet.
+// key is the lowercase name persisted as a startup or remembered workspace.
+func (w workspace) key() string { return strings.ToLower(workspaceInfo[w].name) }
+
+// workspaceByKey resolves a persisted name; unknown or empty names report false.
+func workspaceByKey(k string) (workspace, bool) {
+	for i := workspace(0); i < workspaceCount; i++ {
+		if i.key() == k {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// startupWorkspace picks where the shell opens: the explicit startup choice,
+// else the one remembered for this repository, else Garden. Stored names that
+// no longer exist fall through to the next rule.
+func (m Model) startupWorkspace() workspace {
+	if ws, ok := workspaceByKey(m.work.StartWorkspace); ok {
+		return ws
+	}
+	if !m.work.NoWorkspaceMemory {
+		if ws, ok := workspaceByKey(m.state.LastWorkspace(m.repoDir)); ok {
+			return ws
+		}
+	}
+	return wsGarden
+}
+
+// workspaceSavedMsg reports a finished last-workspace write.
+type workspaceSavedMsg struct {
+	gen uint64
+	err error
+}
+
+// selectWorkspace switches the tab, hands the keyboard back to the shell's own
+// navigation, and persists the choice through a command when remembering is on.
+func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
+	if ws == m.workspace {
+		return m, nil
+	}
+	m.workspace = ws
+	m.shellFocus = shellNav
+	m.set.editing, m.set.capturing = false, false
+	if m.work.NoWorkspaceMemory {
+		return m, nil
+	}
+	m.wsGen++
+	gen, st, dir, name := m.wsGen, m.state, m.repoDir, ws.key()
+	return m, func() tea.Msg {
+		return workspaceSavedMsg{gen: gen, err: st.PersistLastWorkspace(gen, dir, name)}
+	}
+}
+
+// shellFocus says who owns keyboard input in the redesigned shell. In
+// shellNav the shell's tab keys apply. In shellBody the workspace body gets
+// each key first, but the quit, palette and help bindings still work because
+// they are not text input. In shellInput (a text field, later key capture) the
+// body owns every key except ctrl+c, so the shell can never steal keystrokes.
 type shellFocus int
 
 const (
@@ -129,16 +184,29 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modals.CancelMsg:
 		m.modal = nil
+		m.set.pending = nil
 		return m, nil
 	case modals.SubmitMsg:
 		kind := msg.Kind
 		m.modal = nil
-		if kind == modals.KindPalette {
-			if ws, ok := workspaceForPaletteLabel(msg.Value); ok {
-				m.workspace = ws
+		switch kind {
+		case modals.KindPalette:
+			if t, ok := paletteTargetForLabel(msg.Value); ok {
+				return m.goToPalette(t)
 			}
+		case modals.KindConfigConfirm:
+			return m.confirmRepoWrite()
 		}
 		return m, nil
+	case settingsSavedMsg:
+		return m.onSettingsSaved(msg), nil
+	case workspaceSavedMsg:
+		if msg.err != nil && !errors.Is(msg.err, config.ErrSuperseded) && msg.gen == m.wsGen {
+			m.status = "Could not remember workspace: " + msg.err.Error()
+		}
+		return m, nil
+	case configSavedMsg:
+		return m.onRepoConfigSaved(msg), nil
 	case tea.KeyMsg:
 		if m.modal != nil {
 			nm, cmd := m.modal.Update(msg)
@@ -151,13 +219,19 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// ctrl+c always quits; every other key yields to a body or input that owns
-	// the keyboard, including the letters bound to quit, help and the palette.
+	// ctrl+c quits, except that an open modal owns it first (it cancels the
+	// modal; a second ctrl+c then quits). Every other key yields to a body or
+	// input that owns the keyboard, including the letters bound to quit, help
+	// and the palette.
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
-	if m.currentShellFocus() != shellNav {
+	focus := m.currentShellFocus()
+	if focus == shellDialog {
 		return m, nil
+	}
+	if focus == shellInput {
+		return m.bodyKey(msg)
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -166,32 +240,102 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openShellPalette(), nil
 	case key.Matches(msg, m.keys.Help):
 		return m.openShellHelp(), nil
+	case key.Matches(msg, m.keys.Prefs):
+		return m.selectWorkspace(wsSettings)
 	}
+	if focus == shellBody {
+		return m.bodyKey(msg)
+	}
+	next := m.workspace
 	switch {
+	case m.workspace == wsSettings && (msg.String() == "enter" || msg.String() == "down"):
+		m.shellFocus = shellBody
+		m.set.level = levelCategory
+		return m, nil
 	case key.Matches(msg, m.keys.Tab), msg.String() == "right", msg.String() == "l":
-		m.workspace = (m.workspace + 1) % workspaceCount
+		next = (m.workspace + 1) % workspaceCount
 	case key.Matches(msg, m.keys.ShiftTab), msg.String() == "left", msg.String() == "h":
-		m.workspace = (m.workspace + workspaceCount - 1) % workspaceCount
+		next = (m.workspace + workspaceCount - 1) % workspaceCount
 	default:
-		// alt+digit selects directly; bare digits belong to agent sessions.
-		for i := workspace(0); i < workspaceCount; i++ {
-			if msg.String() == fmt.Sprintf("alt+%d", i+1) {
-				m.workspace = i
-			}
-		}
+		next = altDigitWorkspace(msg, next)
 	}
-	return m, nil
+	return m.selectWorkspace(next)
 }
 
-const paletteGoPrefix = "Go to "
-
-func workspaceForPaletteLabel(label string) (workspace, bool) {
+// altDigitWorkspace maps alt+digit to a workspace; bare digits belong to agent
+// sessions, so they never select.
+func altDigitWorkspace(msg tea.KeyMsg, fallback workspace) workspace {
 	for i := workspace(0); i < workspaceCount; i++ {
-		if label == paletteGoPrefix+i.name() {
-			return i, true
+		if msg.String() == fmt.Sprintf("alt+%d", i+1) {
+			return i
 		}
 	}
-	return 0, false
+	return fallback
+}
+
+// bodyKey routes a key to the focused workspace body. Only Settings has one.
+func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.workspace != wsSettings {
+		return m, nil
+	}
+	if m.shellFocus == shellBody {
+		if ws := altDigitWorkspace(msg, m.workspace); ws != m.workspace {
+			return m.selectWorkspace(ws)
+		}
+	}
+	return m.settingsKey(msg)
+}
+
+const (
+	paletteGoPrefix       = "Go to "
+	paletteSettingsPrefix = "Settings: "
+	paletteEditKeys       = paletteSettingsPrefix + "Edit key bindings"
+)
+
+// paletteTarget is where a palette entry leads: a workspace and, for Settings
+// entries, one of its categories.
+type paletteTarget struct {
+	ws          workspace
+	category    int
+	hasCategory bool
+}
+
+// paletteTargets lists every entry in palette order with its target.
+func paletteTargets() (labels []string, targets map[string]paletteTarget) {
+	targets = map[string]paletteTarget{}
+	add := func(label string, t paletteTarget) {
+		labels = append(labels, label)
+		targets[label] = t
+	}
+	for i := workspace(0); i < workspaceCount; i++ {
+		add(paletteGoPrefix+i.name(), paletteTarget{ws: i})
+	}
+	keys := 0
+	for i, c := range settingCategories {
+		add(paletteSettingsPrefix+c.name, paletteTarget{ws: wsSettings, category: i, hasCategory: true})
+		if c.id == "keys" {
+			keys = i
+		}
+	}
+	add(paletteEditKeys, paletteTarget{ws: wsSettings, category: keys, hasCategory: true})
+	return labels, targets
+}
+
+func paletteTargetForLabel(label string) (paletteTarget, bool) {
+	_, targets := paletteTargets()
+	t, ok := targets[label]
+	return t, ok
+}
+
+// goToPalette selects a palette target. Going through selectWorkspace keeps the
+// last-workspace memory; a Settings category entry lands on its category row.
+func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
+	m, cmd := m.selectWorkspace(t.ws)
+	if t.hasCategory {
+		m.shellFocus = shellBody
+		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr}
+	}
+	return m, cmd
 }
 
 // filterItems is a case-insensitive substring filter over a fixed list.
@@ -210,11 +354,8 @@ func filterItems(items []string) modals.FilterFunc {
 
 // openShellPalette lists the workspaces: selecting one only moves the tab.
 func (m Model) openShellPalette() Model {
-	items := make([]string, workspaceCount)
-	for i := range items {
-		items[i] = paletteGoPrefix + workspace(i).name()
-	}
-	modal := modals.NewFuzzy(modals.KindPalette, "Go to workspace", filterItems(items), items)
+	items, _ := paletteTargets()
+	modal := modals.NewFuzzy(modals.KindPalette, "Go to", filterItems(items), items)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m
@@ -224,9 +365,21 @@ func (m Model) openShellPalette() Model {
 // when the width runs out, most important first. Keys are the effective ones,
 // so scoped overrides show up.
 func (m Model) shellHints() []shellHint {
+	if m.currentShellFocus() == shellInput {
+		if m.set.capturing {
+			return []shellHint{{"new key", "bind"}, {"esc", "cancel"}, {"backspace", "reset"}}
+		}
+		return []shellHint{{"enter", "save"}, {"esc", "cancel"}}
+	}
 	h := []shellHint{}
 	if m.currentShellFocus() == shellNav {
 		h = append(h, shellHint{"←/→", "workspace"})
+		if m.workspace == wsSettings {
+			h = append(h, shellHint{"enter/↓", "open settings"})
+		}
+	}
+	if m.currentShellFocus() == shellBody && m.workspace == wsSettings {
+		h = append(h, m.settingsHints()...)
 	}
 	h = append(h,
 		shellHint{m.keys.Palette.Help().Key, "commands"},

@@ -291,7 +291,7 @@ func hasSession(list []agentsapi.Session, id string) bool {
 }
 
 // agentGlyphsASCII reports the glyph preference.
-func (m Model) agentGlyphsASCII() bool { return m.state.Prefs.AgentGlyphs == "ascii" }
+func (m Model) agentGlyphsASCII() bool { return m.livePrefs().AgentGlyphs == "ascii" }
 
 // refreshAgentBadges rebuilds the per-worktree glyph text and hands it to the
 // list. Called when sessions or the glyph preference change.

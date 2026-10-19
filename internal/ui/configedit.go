@@ -11,8 +11,6 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -463,10 +461,6 @@ func (m Model) onConfigSaved(msg configSavedMsg) (tea.Model, tea.Cmd) {
 // applyConfigLive restyles every component and rebuilds keybindings from the
 // freshly loaded config.
 func (m *Model) applyConfigLive() {
-	theme.Current = theme.Resolve(m.currentThemePreset(), m.cfg.Theme.Overrides)
-	applyTheme()
-	worktreelist.SetTheme(theme.Current)
-	modals.SetTheme(theme.Current)
-	prefs.SetTheme(theme.Current)
+	applyPalette(m.currentThemePreset(), m.cfg.Theme.Overrides, m.contrast())
 	m.keys = newKeyMap(m.mergedKeyOverrides())
 }

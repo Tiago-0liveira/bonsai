@@ -17,12 +17,18 @@ import (
 func shellModel(t *testing.T, prefs config.Prefs, keys map[string]string) Model {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Cleanup(func() {
 		theme.Current = theme.Resolve("bonsai", nil)
 		applyTheme()
 	})
 	cfg := &config.Config{Keys: keys}
-	return New(t.TempDir(), cfg, &config.State{Prefs: prefs}, WithLayout(LayoutRedesign))
+	st, err := config.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Prefs = prefs
+	return New(t.TempDir(), cfg, st, WithLayout(LayoutRedesign))
 }
 
 func sized(t *testing.T, m Model, w, h int) Model {
@@ -180,6 +186,9 @@ func TestShellTabsAllVisibleInOrder(t *testing.T) {
 func TestShellBodyIsEmpty(t *testing.T) {
 	m := sized(t, shellModel(t, config.Prefs{}, nil), 80, 24)
 	for ws := workspace(0); ws < workspaceCount; ws++ {
+		if ws == wsSettings {
+			continue // the only workspace with a body so far
+		}
 		m.workspace = ws
 		lines := strings.Split(ansi.Strip(m.View()), "\n")
 		for i, l := range lines[shellHeaderRows : len(lines)-shellFooterRows] {
@@ -227,8 +236,9 @@ func TestShellKeySelection(t *testing.T) {
 		for _, k := range tc.keys {
 			var cmd tea.Cmd
 			m, cmd = send(t, m, k)
-			if cmd != nil {
-				t.Errorf("%s: selection returned a command", tc.name)
+			// Only a real change is remembered; the command is the persist.
+			if changed := m.workspace != tc.start; (cmd != nil) != changed {
+				t.Errorf("%s: command=%v, workspace changed=%v", tc.name, cmd != nil, changed)
 			}
 		}
 		if m.workspace != tc.want {
@@ -248,6 +258,20 @@ func TestShellNavigationYieldsToInputFocus(t *testing.T) {
 		if !strings.Contains(ansi.Strip(m2.View()), "FOCUS: Garden / "+f.String()) {
 			t.Errorf("footer does not show focus %s", f)
 		}
+	}
+}
+
+func TestShellBodyFocusKeepsGlobalBindings(t *testing.T) {
+	m := sized(t, shellModel(t, config.Prefs{}, nil), 80, 24)
+	m.shellFocus = shellBody
+	if _, cmd := send(t, m, runeKey("q")); cmd == nil || cmd() != tea.Quit() {
+		t.Error("q must still quit while the body has focus")
+	}
+	if m2, _ := send(t, m, tea.KeyMsg{Type: tea.KeyCtrlK}); m2.modal == nil {
+		t.Error("palette must open while the body has focus")
+	}
+	if m2, _ := send(t, m, runeKey("?")); m2.modal == nil {
+		t.Error("help must open while the body has focus")
 	}
 }
 
@@ -272,7 +296,9 @@ func TestShellPaletteSelectsWorkspaceOnly(t *testing.T) {
 		m, _ = send(t, m, tea.KeyMsg{Type: tea.KeyCtrlK})
 		m, cmd = send(t, m, modals.SubmitMsg{Kind: modals.KindPalette, Value: "Go to " + ws.name()})
 		if cmd != nil {
-			t.Errorf("palette selection of %s returned a command", ws.name())
+			if _, ok := cmd().(workspaceSavedMsg); !ok {
+				t.Errorf("palette selection of %s returned domain work", ws.name())
+			}
 		}
 		if m.workspace != ws || m.modal != nil {
 			t.Errorf("after Go to %s: workspace=%s modal open=%v", ws.name(), m.workspace.name(), m.modal != nil)
@@ -291,8 +317,13 @@ func TestShellPaletteTypingAndEnterEndToEnd(t *testing.T) {
 		t.Fatal("enter in the palette produced no submit")
 	}
 	m, cmd = send(t, m, cmd())
-	if m.workspace != wsSettings || cmd != nil {
-		t.Errorf("workspace=%s cmd=%v, want Settings and no command", m.workspace.name(), cmd)
+	if m.workspace != wsSettings {
+		t.Errorf("workspace=%s, want Settings", m.workspace.name())
+	}
+	if cmd != nil {
+		if _, ok := cmd().(workspaceSavedMsg); !ok {
+			t.Errorf("palette selection returned domain work")
+		}
 	}
 }
 

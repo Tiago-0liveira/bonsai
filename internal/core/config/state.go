@@ -2,9 +2,13 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
@@ -33,6 +37,30 @@ type Prefs struct {
 	// Editor is a personal override for the "open editor" command, taking
 	// priority over .bonsai.yaml's editor setting ("" = defer to it).
 	Editor string `json:"editor,omitempty"`
+	// Contrast picks the neutral palette: "" or "layered" keeps distinct
+	// surface layers, "flat" collapses them for low-colour terminals.
+	Contrast string `json:"contrast,omitempty"`
+	// Density is the list spacing: "" or "comfortable", or "compact".
+	Density string `json:"density,omitempty"`
+	// StartWorkspace is the workspace opened on launch (lowercase name such as
+	// "garden" or "settings"); "" reopens the last visited one. Core stores the
+	// string only; the UI owns the valid names.
+	StartWorkspace string `json:"start_workspace,omitempty"`
+	// NoWorkspaceMemory stops remembering the last workspace per repo. Inverted
+	// so that the zero value keeps the default (remember).
+	NoWorkspaceMemory bool `json:"no_workspace_memory,omitempty"`
+}
+
+// Clone returns a copy that shares no map with p.
+func (p Prefs) Clone() Prefs {
+	if p.Keys != nil {
+		keys := make(map[string]string, len(p.Keys))
+		for k, v := range p.Keys {
+			keys[k] = v
+		}
+		p.Keys = keys
+	}
+	return p
 }
 
 // State is persisted mutable data: how often each main-repo file has been copied
@@ -42,9 +70,82 @@ type State struct {
 	CopyCounts map[string]int `json:"copy_counts"`
 	Aliases    []Alias        `json:"aliases"`
 	Prefs      Prefs          `json:"prefs"`
+	// Workspaces maps a canonical repo identity (see RepoIdentity) to the last
+	// workspace name visited there.
+	Workspaces map[string]string `json:"workspaces,omitempty"`
 
 	mu   sync.Mutex `json:"-"`
 	path string     `json:"-"`
+
+	// prefsGen and wsGen order async persists so a late older write never wins.
+	prefsGen uint64 `json:"-"`
+	wsGen    uint64 `json:"-"`
+	// extra* keep keys this version does not know, so a newer or hand-edited
+	// state.json survives a rewrite.
+	extra      map[string]json.RawMessage `json:"-"`
+	extraPrefs map[string]json.RawMessage `json:"-"`
+}
+
+// stateDisk mirrors State's persisted fields without the mutex so snapshots
+// can be built and marshaled without copying a lock.
+type stateDisk struct {
+	CopyCounts map[string]int    `json:"copy_counts"`
+	Aliases    []Alias           `json:"aliases"`
+	Prefs      Prefs             `json:"prefs"`
+	Workspaces map[string]string `json:"workspaces,omitempty"`
+}
+
+// jsonKeys lists the JSON object keys of struct type t, derived from tags so
+// the known set cannot go stale.
+func jsonKeys(t reflect.Type) map[string]bool {
+	keys := map[string]bool{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		keys[name] = true
+	}
+	return keys
+}
+
+// unknownKeys returns the entries of raw whose keys are not in known.
+func unknownKeys(raw map[string]json.RawMessage, known map[string]bool) map[string]json.RawMessage {
+	var out map[string]json.RawMessage
+	for k, v := range raw {
+		if known[k] {
+			continue
+		}
+		if out == nil {
+			out = map[string]json.RawMessage{}
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// RepoIdentity returns a canonical key for a repo directory: absolute,
+// symlink-resolved when possible, cleaned, and case-folded on Windows.
+func RepoIdentity(dir string) string {
+	p, err := filepath.Abs(dir)
+	if err != nil {
+		p = dir
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	p = filepath.Clean(p)
+	if runtime.GOOS == "windows" {
+		p = strings.ToLower(p)
+	}
+	return p
 }
 
 // statePath returns ~/.config/bonsai/state.json (honoring $XDG_CONFIG_HOME).
@@ -79,18 +180,62 @@ func LoadState() (*State, error) {
 		st.CopyCounts = map[string]int{}
 	}
 	st.path = p
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, err
+	}
+	st.extra = unknownKeys(top, jsonKeys(reflect.TypeOf(stateDisk{})))
+	if raw, ok := top["prefs"]; ok {
+		var pm map[string]json.RawMessage
+		if json.Unmarshal(raw, &pm) == nil {
+			st.extraPrefs = unknownKeys(pm, jsonKeys(reflect.TypeOf(Prefs{})))
+		}
+	}
 	return st, nil
 }
 
-// Save writes the state to disk atomically.
-func (s *State) Save() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// marshalDisk encodes d, merging preserved unknown keys; known fields win.
+func (s *State) marshalDisk(d stateDisk) ([]byte, error) {
+	if len(s.extra) == 0 && len(s.extraPrefs) == 0 {
+		return json.MarshalIndent(d, "", "  ")
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return nil, err
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil, err
+	}
+	for k, v := range s.extra {
+		if _, ok := top[k]; !ok {
+			top[k] = v
+		}
+	}
+	if len(s.extraPrefs) > 0 {
+		var pm map[string]json.RawMessage
+		if err := json.Unmarshal(top["prefs"], &pm); err != nil {
+			return nil, err
+		}
+		for k, v := range s.extraPrefs {
+			if _, ok := pm[k]; !ok {
+				pm[k] = v
+			}
+		}
+		if top["prefs"], err = json.Marshal(pm); err != nil {
+			return nil, err
+		}
+	}
+	return json.MarshalIndent(top, "", "  ")
+}
 
+// writeLocked atomically writes d. Caller holds s.mu.
+func (s *State) writeLocked(d stateDisk) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(s, "", "  ")
+	data, err := s.marshalDisk(d)
 	if err != nil {
 		return err
 	}
@@ -99,6 +244,22 @@ func (s *State) Save() error {
 		return err
 	}
 	return gitstore.ReplaceFile(tmp, s.path)
+}
+
+// diskLocked snapshots the in-memory fields. Caller holds s.mu.
+func (s *State) diskLocked() stateDisk {
+	return stateDisk{CopyCounts: s.CopyCounts, Aliases: s.Aliases, Prefs: s.Prefs, Workspaces: s.Workspaces}
+}
+
+// Save writes the state to disk atomically. Save, PersistPrefs and
+// PersistLastWorkspace rewrite this process's in-memory state, so another bonsai
+// process's concurrent alias or copy-count writes can be lost; there is no
+// cross-process lock yet (pre-existing limitation).
+func (s *State) Save() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.writeLocked(s.diskLocked())
 }
 
 // RecordCopy increments the copy frequency for relPath and persists.
@@ -161,4 +322,71 @@ func (s *State) SetPrefs(p Prefs) error {
 	s.Prefs = p
 	s.mu.Unlock()
 	return s.Save()
+}
+
+// PrefsSnapshot returns a copy of the preferences that shares no map with s.
+func (s *State) PrefsSnapshot() Prefs {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Prefs.Clone()
+}
+
+// PersistPrefs (like Save) rewrites the whole in-memory state; see Save for the
+// multi-process caveat. It writes p to disk and, only if that succeeds, adopts it. gen
+// orders concurrent callers: a gen below the last applied one returns
+// ErrSuperseded without touching disk or memory.
+func (s *State) PersistPrefs(gen uint64, p Prefs) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen < s.prefsGen {
+		return ErrSuperseded
+	}
+	p = p.Clone()
+	d := s.diskLocked()
+	d.Prefs = p
+	if err := s.writeLocked(d); err != nil {
+		return fmt.Errorf("persist prefs: %w", err)
+	}
+	s.Prefs = p
+	s.prefsGen = gen
+	return nil
+}
+
+// LastWorkspace returns the remembered workspace for repoDir ("" if none).
+func (s *State) LastWorkspace(repoDir string) string {
+	id := RepoIdentity(repoDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Workspaces[id]
+}
+
+// PersistLastWorkspace has the same multi-process caveat as Save. It records name as repoDir's last workspace (empty name
+// deletes the entry), ordered by gen like PersistPrefs.
+func (s *State) PersistLastWorkspace(gen uint64, repoDir, name string) error {
+	id := RepoIdentity(repoDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen < s.wsGen {
+		return ErrSuperseded
+	}
+	next := make(map[string]string, len(s.Workspaces)+1)
+	for k, v := range s.Workspaces {
+		next[k] = v
+	}
+	if name == "" {
+		delete(next, id)
+	} else {
+		next[id] = name
+	}
+	d := s.diskLocked()
+	d.Workspaces = next
+	if err := s.writeLocked(d); err != nil {
+		return fmt.Errorf("persist workspace: %w", err)
+	}
+	if len(next) == 0 {
+		next = nil
+	}
+	s.Workspaces = next
+	s.wsGen = gen
+	return nil
 }

@@ -239,12 +239,14 @@ It does not touch the agent's terminal output or the status-bar separators.
 
 ### Redesign preview (`--tui-layout redesign`)
 
-An opt-in preview of the redesigned TUI. It is only the outer shell: a header
-with the Garden, Playground, Worktrees, Accounts and Settings tabs, a footer with
-the current workspace, focus, key hints and status, and an **empty body** for
-every workspace. It loads no worktrees, GitHub data, agents or usage, and the
-selected tab is not remembered between runs. The default stays the current TUI
-(`--tui-layout legacy`).
+An opt-in preview of the redesigned TUI. The shell is a header with the Garden,
+Playground, Worktrees, Accounts and Settings tabs and a footer with the current
+workspace, focus, key hints and status. Only **Settings** has a body (see
+[below](#settings-in-the-preview)); the other four bodies are still empty. The
+preview loads no worktrees, GitHub data, agents or usage and starts no domain
+work. The last workspace is remembered per repository (see Settings). The default
+stays the current TUI (`--tui-layout legacy`), which keeps its own preferences
+overlay.
 
 ```sh
 bonsai --tui-layout redesign                  # preview shell
@@ -258,10 +260,12 @@ value exits with an error before the TUI starts. The terminal must be at least
 
 | Key | Action |
 |-----|--------|
-| `←`/`→` or `h`/`l` | Previous / next workspace |
+| `←`/`→` or `h`/`l` | Previous / next workspace (inside Settings, moves between categories or cycles a value; see below) |
 | `tab` / `shift+tab` | Next / previous workspace (the `focus_next` / `focus_prev` bindings) |
 | `alt+1` to `alt+5` | Jump to a workspace (bare digits stay reserved for agent sessions) |
-| `ctrl+k` | Command palette: "Go to <workspace>" only |
+| `,` | Jump to Settings (the `prefs` binding) |
+| `enter` / `↓` | On the Settings tab, enter its body |
+| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>" and "Settings: Edit key bindings" |
 | `?` | Keys that work in the preview |
 | `q` / `ctrl+c` | Quit (outside the palette and help dialogs; inside them `esc` closes the dialog) |
 
@@ -269,6 +273,51 @@ The footer shows the effective keys, so `keys:` overrides for the palette, help,
 quit and tab actions are reflected. The `ascii` glyph preference keeps all tab
 labels and swaps their icons for ASCII. The icons ♧ ▣ ⌘ ◎ ⚙ may render two cells wide in some terminals, which misaligns the header; the ASCII glyph preference is the workaround. Theme presets and `theme.overrides` gain
 four roles for the shell: `background`, `surface`, `raised` and `muted`.
+
+#### Settings in the preview
+
+Settings is reachable with `,`, the Settings tab or the palette, and works without
+an agent account or GitHub connection. Navigation has three levels: category,
+section, field. `←`/`→` (or `h`/`l`) move between categories at category and
+section level and cycle a value at field level. `tab` toggles between sections
+and fields, `enter` chooses or edits, and `esc` goes up exactly one level. During
+a text edit, `esc` cancels only that edit.
+
+- **General**: Startup (startup workspace, remember per repo); Editor & lists
+  (editor, sort, PR status, merge on prune); Repository (confirm destructive
+  actions, notifications).
+- **Appearance**: theme, surface contrast (layered or flat), icons (unicode or
+  ASCII), density.
+- **Keys**: one section per keymap group, plus the fixed Terminal row `ctrl+]`.
+- **Garden** and **Agents**: the existing repository base ref. Other rows show
+  "Unavailable" with the plan that adds them and have no controls.
+
+Scope and precedence: personal preferences live in
+`~/.config/bonsai/state.json` and apply on this machine. They override the
+repository `.bonsai.yaml`, which overrides built-in defaults. An unset value
+inherits; each field shows its effective value and origin. Repository fields ask
+for confirmation, showing the file path, before writing `.bonsai.yaml`; the write
+keeps its comments. Personal changes autosave in order. A failed save restores the
+last saved state and shows the error. Unknown fields in `state.json` are kept.
+
+Settings adds these `state.json` fields: `prefs.contrast`, `prefs.density`,
+`prefs.start_workspace`, `prefs.no_workspace_memory` and a per-repository
+`workspaces` map keyed by the canonical local repository path (symlinks resolved).
+
+The startup workspace is the first of: the explicit startup workspace, the
+workspace remembered for the repository, then Garden. Turn the memory off with
+"Remember per repo" under General.
+
+Key editor: `enter` on a key row captures the next key, `esc` cancels and
+`backspace` resets to the default. Captured keys include `q`, `?`, `ctrl+k` and
+`tab`; `ctrl+c` still quits.
+
+- Navigation actions are global and conflict with every other scope.
+- Worktree, Tabs, Files, Run and Git share one scope. The Agents tab and the
+  Processes tab are separate scopes, so a key may be reused across them.
+- Always rejected: `esc`, `ctrl+c`, `ctrl+]`, `enter`, `tab`, `shift+tab`, `space`,
+  the arrow keys and `alt+1` to `alt+5`. `h`/`j`/`k`/`l` are rejected only for
+  Navigation actions.
 
 ## CLI
 
