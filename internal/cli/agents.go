@@ -15,6 +15,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"golang.org/x/term"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 )
@@ -104,6 +105,22 @@ type agentJSON struct {
 	EndedAt      *time.Time                   `json:"ended_at,omitempty"`
 	LastOutputAt *time.Time                   `json:"last_output_at,omitempty"`
 	Clients      []agentterminal.StreamClient `json:"clients"`
+	// Activity is what the provider reported while the agent runs; absent for
+	// ended sessions and providers or holders that report nothing.
+	Activity *agentactivity.Activity `json:"activity,omitempty"`
+}
+
+func newAgentJSON(row agentRow) agentJSON {
+	s := row.Summary
+	item := agentJSON{ID: row.ID, Name: s.Name, Provider: string(s.Provider), Profile: s.ProfileName, ProjectID: s.ProjectID, WorktreeID: s.WorktreeID, WorkDir: row.WorkDir, State: s.State, Alive: row.Alive, ExitCode: s.ExitCode, Error: s.Error, CreatedAt: s.CreatedAt, StartedAt: s.StartedAt, EndedAt: s.EndedAt, LastOutputAt: row.LastOutputAt, Clients: []agentterminal.StreamClient{}}
+	if row.Alive {
+		item.PID = row.PID
+	}
+	item.Activity = liveActivity(row)
+	if row.info != nil {
+		item.LastOutputAt, item.Clients = row.info.LastOutputAt, row.info.Clients
+	}
+	return item
 }
 
 func (c *agentsCLI) list(args []string) error {
@@ -121,15 +138,7 @@ func (c *agentsCLI) list(args []string) error {
 	if asJSON {
 		out := []agentJSON{}
 		for _, row := range rows {
-			s := row.Summary
-			item := agentJSON{ID: row.ID, Name: s.Name, Provider: string(s.Provider), Profile: s.ProfileName, ProjectID: s.ProjectID, WorktreeID: s.WorktreeID, WorkDir: row.WorkDir, State: s.State, Alive: row.Alive, ExitCode: s.ExitCode, Error: s.Error, CreatedAt: s.CreatedAt, StartedAt: s.StartedAt, EndedAt: s.EndedAt, LastOutputAt: row.LastOutputAt, Clients: []agentterminal.StreamClient{}}
-			if row.Alive {
-				item.PID = row.PID
-			}
-			if row.info != nil {
-				item.LastOutputAt, item.Clients = row.info.LastOutputAt, row.info.Clients
-			}
-			out = append(out, item)
+			out = append(out, newAgentJSON(row))
 		}
 		encoder := json.NewEncoder(c.out)
 		encoder.SetIndent("", "  ")

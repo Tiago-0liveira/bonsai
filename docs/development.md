@@ -290,6 +290,9 @@ Optional interfaces, found by type assertion:
 | `UsageNoter` | `usage_note` in `/api/agents/providers`: a short caveat on where usage is read from |
 | `SetupSchema` | `setup` in `/api/agents/providers`: `auth_modes` (value, label, help, `recommended` per host, `secret` for a pasted key or token, `optional` when the provider can get it another way), `seed.source` for display (home-relative) and `notes` |
 | `AccountAuthenticator` | Sign in again (`bonsai agent account login <account> [--auth <mode>] [--token-stdin]`): runs the provider's own login for an existing account; without `--auth` the account keeps its mode |
+| `ActivityReporter` | Live activity (Working, Waiting, Idle) from the agent's own hooks, see [Activity hooks](#activity-hooks): `ActivityProfile` (also `activity: {native, inferred}` in `/api/agents/providers`: the states the provider reports itself and the ones Bonsai can only guess), `TranslateHook` (raw hook payload to normalized signals) and `HookOutput` |
+| `TerminalClassifier` | Maps a terminal notification the agent wrote to its PTY (OSC 9, 777, 99, BEL) to a signal, for waiting states a provider cannot report through hooks |
+| `TerminalScreenClassifier` | Recognizes fixed input-dialog framing on an in-memory terminal grid; reports inferred kinds and reasons without copying dialog contents |
 
 `/api/agents/providers` always lists `agents.KnownProviders` (Antigravity, Claude
 and Codex; unregistered ones as "Not available yet") plus any other registered
@@ -310,6 +313,57 @@ test for this).
 
 Routes, setup jobs and the web page are described in [Agents tab](#agents-tab).
 
+### Activity hooks
+
+Beyond the lifecycle (`starting`, `running`, `exited`, ...), a running session
+has an activity: `unknown`, `working`, `waiting` (needs the user: permission,
+question, plan, elicitation) or `idle` (turn finished). It is optional and best
+effort: a provider that does not implement `ActivityReporter`, hooks the user
+disabled, or a holder that cannot name a hook command leave it `unknown`, which
+every client shows as plain "Running". Hooks only observe: they print nothing
+that changes the agent's behaviour, never block it, and always exit 0.
+
+- The holder (`internal/core/agenthost`) finds `ActivityReporter` on the provider
+  it got from the registry, creates `<runtime dir>/activity.jsonl` (0600) and
+  starts tailing it before `RunSession`. It passes `PrepareSessionRequest.Activity`
+  (`ActivityRequest`: the hook argv `bonsai __agent-hook <provider>`, the env var
+  name `BONSAI_AGENT_ACTIVITY`, the spool path) so the provider installs hooks
+  for this session only. If the spool or tail cannot start, `Activity` stays nil
+  and the session runs without hooks. `Deps.HookCommand` overrides the
+  `<bonsai binary> __agent-hook` default; a test binary is never used as the
+  default, so tests that want hooks pass their own.
+- The hidden `bonsai __agent-hook <provider> <event>` (`main.go`, implemented by
+  `internal/core/agenthook` through `agentruntime.RunHook`) is what the agent
+  runs per hook. It reads `$BONSAI_AGENT_ACTIVITY` and does nothing unless that is
+  an existing regular file named `activity.jsonl` directly inside a session
+  directory of the agent sessions root (symlinks resolved), at most 4 MiB. It
+  reads at most 1 MiB from stdin, asks the provider's `TranslateHook` for
+  signals, stamps them with the hook's start time and appends them with one
+  `write(2)` on an `O_APPEND` descriptor. It never creates the file, so a hook
+  that outlives its session finds nothing and exits 0. It constructs providers
+  without stores or config: keep `New` of every provider free of disk access.
+- A provider whose CLI runs with another `HOME` (Antigravity) cannot let the hook
+  derive the sessions root, so it appends `--sessions-root=<abs dir>` after the
+  event in the hook command it writes. The argument replaces only the root: the
+  spool must still be exactly `<root>/<id>/activity.jsonl`, a regular file of at
+  most 4 MiB, symlinks resolved. It is read from a config file Bonsai wrote for
+  the session, never from the environment the agent could redirect, and Claude
+  and Codex do not use it.
+- `TranslateHook` must return only kinds, reasons and a short `Detail` (a tool
+  name), never prompts, tool inputs, tool output or file contents. A malformed
+  payload yields no signals. Details are sanitized again on read.
+- `RunHooks.Ending` stops the tail (after one last read) before
+  `SessionStore.Cleanup` removes the runtime directory, so no goroutine reads a
+  vanished file and a signal written after the process ended is ignored.
+- The holder also feeds terminal signals to the same tracker. A provider that
+  implements `TerminalClassifier` turns its terminal notifications into signals;
+  `ActivityProfile.ProgressMeansTurn` lets an OSC 9;4 progress clear end a turn.
+
+Tests: write spool lines directly (see `internal/core/agenthost/spool_test.go`),
+or drive a real hook command through a holder with
+`internal/providers/claude/testdata/fakeclaude.sh`, whose interactive sessions run
+the hook command found in their `--settings` for each `HOOK <Event> <json>` line.
+
 ## Claude provider
 
 `internal/providers/claude` runs Claude Code. Each profile owns
@@ -320,7 +374,21 @@ every inherited `CLAUDE*` and `ANTHROPIC_*` variable is removed
 (`HOME` is untouched). Token profiles also get `CLAUDE_CODE_OAUTH_TOKEN` and
 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. Argv is built in `launch.go` only:
 `[explicit...] --model --permission-mode --effort --name --session-id <uuid> [-- prompt]`;
-the generated UUID is the session's `provider_session_id`.
+the generated UUID is the session's `provider_session_id`. When the holder
+asks for activity (see [Activity hooks](#activity-hooks)) and the explicit args
+carry neither `--settings` nor `--bare`, `--settings '<json>'` is added before the
+prompt, with `async` command hooks (timeout 5 s) running
+`'<bonsai>' '__agent-hook' 'claude' <Event>` for `SessionStart`,
+`UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`,
+`PostToolUseFailure`, `Notification`, `Elicitation`, `ElicitationResult`, `Stop`,
+`StopFailure` and `SessionEnd`, and `BONSAI_AGENT_ACTIVITY` is set to the spool.
+Claude merges hooks across settings layers, so this adds to the profile's own
+hooks and the profile's `settings.json` is never touched.
+Both `PreToolUse` and `PermissionRequest` for `AskUserQuestion` report a question;
+for `ExitPlanMode`, they report plan approval. A later generic
+`Notification:permission_prompt` keeps an already known question, plan or
+elicitation reason. A named tool permission request such as `Bash` still reports
+permission, and a generic notice without an existing input reason does too.
 
 `SetupSpec`: `login` "Browser sign-in" (recommended) and `token` "Setup token",
 whose secret is optional (without one, setup runs `claude setup-token` in the
@@ -415,12 +483,51 @@ never a server message or body, and Bonsai never writes `auth.json`.
   `UsageLayout` headline; `internal/cli/agent_usage.go` (`usageSpec`) only holds
   the table renderer per provider.
 
+Activity (see [Activity hooks](#activity-hooks)): when the holder asks for it,
+`PrepareSession` takes the profile's `hooks.lock` (in the account dir; not
+`login.lock`, which a re-login holds for a long time), upserts Bonsai's handlers
+into `$CODEX_HOME/hooks.json` and trusts them (`activity.go`, `hooktrust.go`).
+The upsert identifies Bonsai's handlers by the command ending in
+`'__agent-hook' 'codex' <Event>`, replaces them in place (keeping Codex's
+position-derived hook keys stable, whatever the binary path), preserves
+every other entry and key (the JSON is re-indented), and refuses to overwrite a file that is
+not valid hooks JSON. Handlers are `async` with `timeout` 5 except `Interrupt`
+and `SessionEnd`, and have no matcher (all occurrences). Trust runs
+`hooks/list` on the app-server, keeps the entries whose `sourcePath` is the
+profile's `hooks.json` and whose command is Bonsai's, and writes
+`hooks.state."<key>".trusted_hash` with `config/batchWrite` (`keyPath`
+`hooks.state`, `upsert`, explicit `filePath` of the profile's `config.toml`).
+`<account dir>/hook-trust.json` remembers the trusted hashes under a fingerprint
+of the hooks file and the Codex binary, so later launches only read files; it is
+re-run when either changes or `config.toml` lost the hashes. Any failure is
+ignored by the launch: the hooks stay untrusted and activity falls back to the
+terminal. Launch adds `-c tui.notifications=["approval-requested","async-question"]
+-c tui.notification_method="osc9" -c tui.notification_condition="always"` (each
+only if the explicit args do not set that key), also in front of subcommands such
+as `resume`. `TranslateHook` maps `request_user_input` to a question and
+`request_user_input_async` to an outstanding async question. Async tool return,
+background tool completions and `Stop` leave that question waiting; submitted
+input, a new prompt, resolution, interrupt or failure clears the pending flag.
+The flag is tracker bookkeeping and is never serialized. It maps
+`SessionStart` with `source: "compact"` to nothing; `ClassifyTerminalNotification`
+matches the prefixes of Codex's OSC 9 texts (`Approval requested`, `Codex wants to
+edit`, `Question:`, `Plan mode prompt`) and never keeps the rest. Hook commands
+get the session's environment, so `BONSAI_AGENT_ACTIVITY` reaches them. Concurrent
+sessions of an account share the file, so a hook finds its session from that
+variable and never from `hooks.json`; a session started before `bonsai update`
+may stop reporting once a newer binary rewrites the file (Codex trusts hooks by
+hash).
+
 Tests never need a Codex login: `testdata/fakecodex.sh` is a POSIX stand-in put
 first on `PATH`; `login` writes an `auth.json` with an unsigned JWT, `app-server`
 replays the `testdata/phase0/` responses (re-numbering their ids; env switches
 make it exit early, hang, flood or fail), `debug models --bundled` prints
 `phase0/bundled-models.json`, and other runs print their argv and environment
-and echo input as `REPLY:`. `testdata/phase0/` holds redacted responses from a
+and echo input as `REPLY:`. The fake app-server also answers `hooks/list` from
+the profile's `hooks.json` and `config/batchWrite` (writing `[hooks.state]`
+sections with a fake hash), and interactive runs fire the trusted hook commands
+for each `HOOK <Event> <json>` line (and send `NOTIFY <text>` as an OSC 9
+notification), as `fakeclaude.sh` does. `testdata/phase0/` holds redacted responses from a
 real Codex 0.162.1 (`auth.json` shape, app-server `initialize`, `account/read`,
 `account/rateLimits/read`, `model/list`, and a trimmed `debug models --bundled`);
 `testdata/rate-limits-multi.json` is hand-written to cover extra limit groups.
@@ -590,6 +697,41 @@ Lines that differ only by an effort suffix in both the ID and the label
 default effort is the first listed; a lone `-medium` model stays whole. A launch
 composes model and effort into one `--model <id>`; agy's `--effort` is never used.
 
+Activity ([Activity hooks](#activity-hooks)) uses agy's `hooks.json`. When the
+holder asks for it, `PrepareSession` writes `<session home>/.gemini/config/hooks.json`
+(0600; agy reads `~/.gemini/config/hooks.json` and the session `HOME` is private)
+with one group, `bonsai-activity`: command hooks (timeout 5 s, run
+synchronously by `sh -c`) for `SessionStart`, `PreInvocation`, `PostInvocation`,
+`PostToolUse` (matcher `*`) and `Stop`, each running
+`'<bonsai>' '__agent-hook' 'antigravity' <Event> '--sessions-root=<dir>'`. A
+group of the same file that is not Bonsai's is kept. `PreToolUse` is never
+registered: agy requires it to answer with a permission decision, so any hook on
+it would change what the agent may do. Every hook prints `{}`, which agy's
+documented contract allows for all five events (every field is optional, and for
+`Stop` only `decision: "continue"` holds the agent). `TranslateHook` maps `PreInvocation` to a working signal,
+`PostInvocation`/`PostToolUse` to tool-finished (the tool name is the only
+detail), `SessionStart` to ready and `Stop` by `terminationReason`:
+`ERROR` to a failed turn (detail `error`, never the error text), `USER_CANCELED`
+to an interrupt, anything else (`NO_TOOL_CALL`, limits, hooks) to a completed
+turn. agy has no permission or question hook, so waiting is inferred: the
+session's `settings.json` gets `"notifications": true` (agy's `/config`
+Notifications, a boolean) so that permission prompts and questions are written
+to the terminal. `ClassifyTerminalNotification` recognizes the observed
+`Antigravity CLI needs tool confirmation` notice along with older permission
+and question notices. `TerminalScreenClassifier` refines this generic hint from
+a bounded in-memory terminal grid: the numbered `Question N/M:` header with its
+selection footer means a question; the command permission heading, confirmation
+question and command-edit footer mean permission. It returns only kinds and
+reasons, never question text, options or commands. Unchanged dialog paints do
+not resurrect a question after the user submits an answer. Resizing rebuilds
+the grid from the provider's next paint. All screen signals remain inferred.
+`ProgressMeansTurn` lets agy's OSC 9;4 clear end a turn. The settings
+key is restored to the profile's value before `Reconcile` copies the session
+settings back (a marker in the runtime directory says it was set), and
+`hooks.json` is never copied: the sign-in/plan home has none. Tests:
+`testdata/fakeagy.sh` runs the hook commands of its `hooks.json` for each
+`HOOK <Event> <json>` line.
+
 Each session runs in its own [agent host](#agent-hosts), independently of
 request contexts, browser connections and the API itself. Closing a terminal or
 refreshing detaches; reconnecting resumes the same process. Explicit Stop
@@ -706,10 +848,18 @@ running holder (`Adopt`). Closing the API only disconnects. Tests use
 providers still apply.
 
 `agents.keep_running` in `web.json` (`GET`/`POST /api/settings/agents` with
-`{keep_running, revision}`, `409` on a stale revision; the answer adds
-`active_sessions`) only changes `bonsai web stop`: off, it stops the live
-holders before `ServeStop` (so the API records their end) and sweeps any
-survivor after it. API shutdown never stops holders, whatever the setting.
+`{keep_running?, notifications?, revision}`, `409` on a stale revision; the
+answer adds `active_sessions` and `notifications`) only changes `bonsai web stop`:
+off, it stops the live holders before `ServeStop` (so the API records their end)
+and sweeps any survivor after it. API shutdown never stops holders, whatever the
+setting.
+
+`agents.notifications` (`enabled` off by default, `needs_input` and
+`turn_complete` on) is read once by `bonsai __agent-host` from `web.json` and
+passed in `agenthost.Deps.Notifications`; any read failure means no
+notifications. The holder subscribes a desktop notifier (`agenthost/notify.go`,
+sender `core/notify`) to its own activity bus; the API never notifies. The
+settings endpoint takes the toggles as optional fields of `notifications`.
 
 Ended records are pruned when a holder starts: the newest 32 are kept, none
 older than a day. After its session ends the holder rewrites its record,

@@ -1,15 +1,18 @@
 import { memo, useMemo } from 'react'
 import { Archive, ChevronDown, ChevronRight, CircleCheck, CircleX, Clock3, GitBranch, LoaderCircle, Plus } from 'lucide-react'
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
+import { AgentStatusDot, NeedsInputChip } from '../../components/ui/AgentStatus'
+import { countNeedsInput } from '../../lib/agentStatus'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { isStale, staleDescription, staleLabel } from '../../lib/freshness'
 import { agentById, branchTreeSelector, worktreeById, type BranchTreeIndex } from '../terminal/branchTree'
-import type { CiStatus } from '../../types'
+import type { CiStatus, Health } from '../../types'
 import { useBranchSelect } from './useBranchSelect'
 
-export function StatusDot({ status }: { status: 'healthy' | 'warning' | 'error' | 'idle' | 'running' | 'finished' }) {
+/** A process's health. Agents use AgentStatusDot. */
+export function StatusDot({ status }: { status: Health }) {
   const className =
-    status === 'healthy' || status === 'running'
+    status === 'healthy'
       ? 'bg-accent-solid'
       : status === 'warning'
         ? 'bg-warn-solid'
@@ -37,6 +40,7 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
   const worktree = useBonsaiStore(state => worktreeById(state.worktrees, worktreeId))
   const selected = useBonsaiStore(state => state.dockWorktreeId === worktreeId)
   const collapsed = useBonsaiStore(state => state.collapsedBranchIds.includes(worktreeId))
+  const needsInput = useBonsaiStore(state => countNeedsInput(state.agents, worktreeId))
   const toggleBranchCollapsed = useBonsaiStore(state => state.toggleBranchCollapsed)
   const select = useBranchSelect()
   const nextVisited = useMemo(() => new Set([...visited, worktreeId]), [visited, worktreeId])
@@ -70,6 +74,7 @@ const BranchTreeItem = memo(function BranchTreeItem({ worktreeId, index, depth, 
           </button>
         </div>
         <span className="flex items-center gap-1.5 pl-1.5 pr-1.5">
+          <NeedsInputChip count={needsInput} />
           <span data-ci-badge={worktree.ciStatus} data-stale={worktree.ciStale || undefined} title={worktree.ciStale ? `CI ${worktree.ciStatus}, not confirmed yet` : undefined} className={'flex' + (worktree.ciStale ? ' opacity-50' : '')}><CiIcon status={worktree.ciStatus} /></span>
           {worktree.prNumber ? <span data-pr-badge={worktree.prNumber} data-stale={worktree.prStale || undefined} title={worktree.prStale ? 'Pull request link not confirmed yet' : undefined} className={'font-mono text-[10px] text-muted-2' + (worktree.prStale ? ' opacity-60' : '')}>#{worktree.prNumber}</span> : null}
         </span>
@@ -99,7 +104,7 @@ const BranchAgentRow = memo(function BranchAgentRow({ id, trail }: { id: string;
     <span aria-hidden className="whitespace-pre text-muted-2/60">{trail}</span>
     <ProviderBadge provider={agent.provider} size={16} />
     <span className="min-w-0 flex-1 truncate">{agent.name}<span className="ml-1.5 text-[9.5px] text-muted-2">{agent.profileName ?? `${agent.model} · ${agent.reasoningEffort}`}</span></span>
-    <StatusDot status={agent.state} />
+    <AgentStatusDot agent={agent} />
   </button>
 })
 

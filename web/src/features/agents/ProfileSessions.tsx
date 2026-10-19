@@ -2,11 +2,11 @@ import { LocateFixed, Square, TerminalSquare } from 'lucide-react'
 import { useState } from 'react'
 import type { LaunchField } from '../../api/agents'
 import { launchDetails } from '../../api/launchDetails'
+import { AgentStatusBadge } from '../../components/ui/AgentStatus'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { formatAge, type ProfileSession } from './agentsModel'
 
 const PAGE = 25
-const STATE_LABEL: Record<string, string> = { starting: 'Starting', running: 'Running', stopping: 'Stopping', exited: 'Exited', failed: 'Failed' }
 
 export function ProfileSessions({ sessions, fields, now, onShowOnCanvas }: {
   sessions: ProfileSession[]
@@ -50,11 +50,10 @@ export function ProfileSessions({ sessions, fields, now, onShowOnCanvas }: {
           const details = launchDetails(fields, agent.model, agent.launchOptions).join(' · ')
           return (
             <li key={agent.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2.5">
-              <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (session.active ? 'bg-accent-solid' : state === 'failed' ? 'bg-danger-solid' : 'bg-muted-2')} aria-hidden="true" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-[12px]">
                   <span className="min-w-0 truncate font-medium text-text">{agent.name}</span>
-                  <span className="shrink-0 rounded-[5px] bg-panel-4 px-1.5 font-mono text-[9.5px] text-muted">{STATE_LABEL[state] ?? state}</span>
+                  <AgentStatusBadge agent={agent} />
                 </div>
                 <div className="truncate font-mono text-[10px] text-muted-2">
                   {[session.project, session.branch].filter(Boolean).join(' · ')}

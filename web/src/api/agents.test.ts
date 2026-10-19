@@ -28,6 +28,20 @@ describe('agent provider mapping', () => {
     expect(plain.launchOptions).toBeUndefined()
   })
 
+  it('keeps the activity of a running session and drops fields it does not know', () => {
+    const activity = { state: 'waiting', reason: 'permission', detail: 'Bash', since: '2099-01-01T00:00:00Z', source: 'hook', stalled: false, extra: 'x' } as never
+    const mapped = mapAgent({ ...summary('claude'), activity })
+    expect(mapped.activity).toMatchObject({ state: 'waiting', reason: 'permission', detail: 'Bash', source: 'hook' })
+    expect(mapped.activity).not.toHaveProperty('extra')
+  })
+
+  it('maps a session without activity, or with an unrecognized state, to no activity and keeps state as alive', () => {
+    expect(mapAgent(summary('claude')).activity).toBeUndefined()
+    expect(mapAgent({ ...summary('claude'), activity: { state: 'dreaming', since: 'now', source: 'hook' } as never }).activity).toBeUndefined()
+    const idle = mapAgent({ ...summary('claude'), activity: { state: 'idle', since: 'now', source: 'hook' } })
+    expect(idle).toMatchObject({ state: 'running', lifecycleState: 'running' })
+  })
+
   it('treats every backend provider as live and mock agents as not', () => {
     expect(isLiveAgent({ providerId: 'claude' })).toBe(true)
     expect(isLiveAgent({ providerId: 'antigravity' })).toBe(true)

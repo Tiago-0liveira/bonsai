@@ -8,6 +8,20 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
 
+// RunHooks lets the caller observe a session without owning its steps. The
+// zero value changes nothing.
+type RunHooks struct {
+	// Activity is forwarded to the provider on PrepareSession; nil installs no
+	// activity hooks.
+	Activity *agents.ActivityRequest
+	// Output is called with each PTY chunk before the stream gets it. It runs on
+	// the read loop, so it must be quick, and must neither keep nor alter the chunk.
+	Output func([]byte)
+	// Ending is called once the process is gone (or never ran), before the
+	// provider finalizes the session and the session store removes its runtime.
+	Ending func()
+}
+
 // RunSession runs one agent session to its end: the provider prepares it, its
 // process runs in stream until it exits or ctx is canceled, then the provider
 // finalizes it and the session store removes its runtime, under a fresh
@@ -16,8 +30,8 @@ import (
 // update applies one change to the session's summary (provider session ID,
 // running, the final state); the caller serializes changes and publishes each
 // result. An error from the change that marks the session running stops it.
-func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Provider, account agents.Account, runtime agents.Session, sessions agents.SessionStore, cols, rows int, launch agents.LaunchOptions, update func(func(*Summary) error) error) {
-	prepared, err := provider.PrepareSession(ctx, agents.PrepareSessionRequest{Account: account, Session: runtime, Launch: launch})
+func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Provider, account agents.Account, runtime agents.Session, sessions agents.SessionStore, cols, rows int, launch agents.LaunchOptions, update func(func(*Summary) error) error, hooks RunHooks) {
+	prepared, err := provider.PrepareSession(ctx, agents.PrepareSessionRequest{Account: account, Session: runtime, Launch: launch, Activity: hooks.Activity})
 	preparedOK := err == nil
 	code := -1
 	if err == nil {
@@ -35,7 +49,10 @@ func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Pr
 				s.StartedAt = &now
 				return nil
 			})
-		})
+		}, hooks.Output)
+	}
+	if hooks.Ending != nil {
+		hooks.Ending()
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

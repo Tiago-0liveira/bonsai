@@ -6,6 +6,9 @@
 #   FAKE_CLAUDE_LOGIN_FAIL  1 = `auth login` exits 1
 #   FAKE_CLAUDE_LOGOUT_FAIL 1 = `auth logout` exits 1
 #   FAKE_CLAUDE_LOG         file the auth subcommands append a call line to
+# Interactive sessions understand `HOOK <Event> <json>`: like Claude Code, they
+# run the hook command found for <Event> in the --settings JSON they were
+# started with, the payload on its stdin. A real SessionStart fires on startup.
 cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 log() {
 	if [ -n "$FAKE_CLAUDE_LOG" ]; then
@@ -67,7 +70,34 @@ printf 'SESSION=%s\n' "$BONSAI_AGENT_SESSION_ID"
 printf 'HAS_API_KEY=%s\n' "$([ -n "${ANTHROPIC_API_KEY+x}" ] && echo 1 || echo 0)"
 printf 'HAS_OAUTH_TOKEN=%s\n' "$([ -n "${CLAUDE_CODE_OAUTH_TOKEN+x}" ] && echo 1 || echo 0)"
 printf 'CLAUDECODE=%s\n' "${CLAUDECODE-unset}"
+settings=""
+prev=""
+for arg in "$@"; do
+	if [ "$prev" = --settings ]; then
+		settings=$arg
+	fi
+	prev=$arg
+done
+fire_hook() {
+	[ -n "$settings" ] || return 0
+	cmd=$(printf '%s' "$settings" | grep -o '"command":"[^"]*"' | grep " $1\"\$" | head -n 1 | sed 's/^"command":"//; s/"$//')
+	[ -n "$cmd" ] || return 0
+	printf '%s' "$2" | sh -c "$cmd"
+}
+printf 'HOOKS=%s\n' "$([ -n "$settings" ] && echo 1 || echo 0)"
 printf 'READY\n'
+fire_hook SessionStart '{"source":"startup"}'
 while IFS= read -r l; do
-	printf 'REPLY:%s\n' "$l"
+	case "$l" in
+	"HOOK "*)
+		rest=${l#HOOK }
+		event=${rest%% *}
+		payload=${rest#"$event"}
+		fire_hook "$event" "${payload# }"
+		printf 'HOOKED:%s\n' "$event"
+		;;
+	*)
+		printf 'REPLY:%s\n' "$l"
+		;;
+	esac
 done

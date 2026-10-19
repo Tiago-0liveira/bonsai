@@ -10,7 +10,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
 
-func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
 	settings, err := ParseSettings(req.Account)
 	if err != nil {
 		return agents.PreparedSession{}, err
@@ -26,11 +26,19 @@ func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRe
 	if info, err := os.Stat(home); err != nil || !info.IsDir() {
 		return agents.PreparedSession{}, fmt.Errorf("codex profile %q has no home directory; remove and add it again", req.Account.Name)
 	}
+	env := p.profileEnvironment(home, req.Account, req.Session)
+	if req.Activity.Usable() {
+		env[req.Activity.SpoolEnv] = req.Activity.SpoolPath
+		// Hooks are an upgrade over the terminal notifications, never a
+		// precondition: when they cannot be installed or trusted the session
+		// starts anyway and reports activity from its terminal only.
+		_ = p.installActivityHooks(ctx, req.Account, req.Activity, executable)
+	}
 	return agents.PreparedSession{
 		Executable:       executable,
-		Args:             launchArgs(settings, req.Args, req.Launch),
+		Args:             launchArgs(settings, req.Args, req.Launch, req.Activity),
 		Dir:              req.Session.WorkDir,
-		EnvSet:           p.profileEnvironment(home, req.Account, req.Session),
+		EnvSet:           env,
 		EnvUnsetPrefixes: scrubPrefixes,
 	}, nil
 }
@@ -109,15 +117,21 @@ func (p *Provider) LaunchFields() []agents.LaunchField {
 // `--` so a leading dash stays literal; when the explicit args carry their own
 // `--`, Bonsai's flags go before it.
 //
+// activity adds the notification settings (see notificationArgs) for the
+// terminal fallback, except those the explicit args already choose.
+//
 // When the explicit args start with something other than a flag, the caller is
 // driving a subcommand (`login`, `resume --last`) or a positional prompt, so
 // only the global options go in front: the credential store override and
 // --no-daemon, which keeps a resumed or forked TUI out of the shared daemon too.
-func launchArgs(settings Settings, explicit []string, launch agents.LaunchOptions) []string {
+func launchArgs(settings Settings, explicit []string, launch agents.LaunchOptions, activity *agents.ActivityRequest) []string {
 	if len(explicit) > 0 && !strings.HasPrefix(explicit[0], "-") {
 		global := []string{"-c", storeOverride}
 		if !hasFlag(explicit, "--no-daemon") {
 			global = append(global, "--no-daemon")
+		}
+		if activity.Usable() {
+			global = append(global, notificationArgs(explicit)...)
 		}
 		return append(global, explicit...)
 	}
@@ -128,6 +142,9 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 	args := append(append([]string(nil), head...), "-c", storeOverride)
 	if !hasFlag(args, "--no-daemon") {
 		args = append(args, "--no-daemon")
+	}
+	if activity.Usable() {
+		args = append(args, notificationArgs(args)...)
 	}
 	if model := first(launch.Model, settings.Model); model != "" && !hasFlag(args, "-m", "--model") {
 		args = append(args, "-m", model)

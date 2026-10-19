@@ -208,4 +208,6 @@ var (
 	_ agents.UsagePolicy          = (*Provider)(nil)
 	_ agents.SetupSchema          = (*Provider)(nil)
 	_ agents.AccountAuthenticator = (*Provider)(nil)
+	_ agents.ActivityReporter     = (*Provider)(nil)
+	_ agents.TerminalClassifier   = (*Provider)(nil)
 )

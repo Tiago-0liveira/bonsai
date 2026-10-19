@@ -24,10 +24,17 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 The Agents tab lists the agents running in the selected worktree and the
 selected account's usage; worktree rows group running agents by provider with a
 glyph and count directly after the branch's other badges, plus `!` for an unseen
-failure. It shows the selected session's
+failure. Each glyph takes the style of its most urgent session: highlighted when
+an agent waits for you, normal while one works, dimmed when all of that
+provider's agents are idle. A single `?` follows the glyphs when any agent in the
+worktree waits for a permission, answer or plan approval (`✹?`; the badge grows by
+one cell). Agents whose provider reports no activity (hooks off or unsupported)
+count as working. It shows the selected session's
 live terminal read-only: you can watch the agent. The title row (`AGENTS · <branch>`)
 appears when the terminal is tall enough. A header shows the session's provider,
-profile, model and state, with `· read-only` when another client is controlling it.
+profile, model and status, with `· read-only` when another client is controlling it.
+The status is `Running`, `Working`, `Stalled`, `Idle` or, when the agent waits for
+you, what it asks for (`Needs permission: Bash`).
 The TUI uses the same agent sessions as the web UI and `bonsai agents`. If it starts
 without that backend, the Agents tab is unavailable and the TUI prints
 `agents unavailable: <err>` to stderr after exit. A session started by another
@@ -67,10 +74,11 @@ hint explains how to leave focus and take it back.
 
 Press `a` on the Agents tab to open the sessions screen. It lists the worktree's
 sessions as one flat list, running ones first, then ended ones, newest first. Each
-item shows the session name and its state (`● Running`, `✓ Exited`, `✗ Failed`) on one
+item shows the session name and its status (`● Working`, `● Waiting`, `● Idle`,
+`✓ Exited`, `✗ Failed`) on one
 line and `Provider · account` below it; sessions that share a name get a short ID
 suffix (`· …b6364576`). The right side is an inspector that follows the selection:
-provider, name, state, account, worktree, model, exit code and the short ID. On a
+provider, name, status (`Needs input (permission)` while waiting), account, worktree, model, exit code and the short ID. On a
 narrow pane the inspector moves below the list. It opens even when there are no
 sessions. `↑`/`↓` select, `/` searches by name, provider or account (`Esc` clears
 the search), `Enter` opens the selected session, `n` starts a new one and `Esc` goes
@@ -221,7 +229,7 @@ Unicode provider icons are ✹ for Claude (orange), ❃ for Codex (light gray), 
 ✦ for Antigravity (blue).
 
 Agent glyphs follow the `agent glyphs` row in preferences (`,`). `ascii` swaps
-bonsai's own drawing to ASCII: provider glyphs (`C X A`), state dots, picker marks
+bonsai's own drawing to ASCII: provider glyphs (`C X A`), the waiting mark (`?`), state dots, picker marks
 (`*` running, `+` exited, `x` failed), rules, hint rows and agent overlay borders.
 It does not touch the agent's terminal output or the status-bar separators.
 

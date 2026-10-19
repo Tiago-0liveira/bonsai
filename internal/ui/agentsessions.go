@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	sessionsStatusW  = 10 // "● Starting" is the widest state label
+	sessionsStatusW  = 10 // "● Starting" is the widest status label
 	sessionsMinList  = 34 // narrowest list column that keeps name and status on one line
 	sessionsMinInsp  = 26 // narrowest inspector column worth drawing beside the list
 	sessionsDivider  = 3  // " │ "
@@ -464,7 +464,7 @@ func (p sessionsPicker) item(s agentsapi.Session, selected bool, width int) []st
 		marker = lipgloss.NewStyle().Foreground(th.Accent).Render("▌") + " "
 		nameSt = accent
 	}
-	status := p.status(s.State)
+	status := p.status(s, true)
 	sub := dimText(providerName(s.Provider) + " · " + s.ProfileName)
 	nameW := width - 2 - 2 - sessionsStatusW
 	if nameW >= 8 {
@@ -475,14 +475,15 @@ func (p sessionsPicker) item(s agentsapi.Session, selected bool, width int) []st
 	return []string{l1, "  " + leftRight(sub, status, max(width-2, 1))}
 }
 
-// status is the state glyph in its color followed by the state label.
-func (p sessionsPicker) status(state string) string {
-	label := state
-	if label == "" {
-		label = "unknown"
+// status is the status mark in its color followed by the status label. The
+// list column is ten cells wide, so a waiting session reads "Waiting" there;
+// the inspector keeps the full Display label with its reason.
+func (p sessionsPicker) status(s agentsapi.Session, short bool) string {
+	key, label := sessionStatus(s)
+	if short && key == "waiting" {
+		label = "Waiting"
 	}
-	label = strings.ToUpper(label[:1]) + label[1:]
-	return stateMarkStyled(state) + " " + lipgloss.NewStyle().Foreground(theme.Current.Text).Render(label)
+	return stateMarkStyled(key) + " " + lipgloss.NewStyle().Foreground(theme.Current.Text).Render(label)
 }
 
 // --- inspector ---
@@ -552,7 +553,7 @@ func (p sessionsPicker) inspector(width, rows int) []string {
 		if blanks {
 			l = append(l, "")
 		}
-		l = append(l, p.status(s.State))
+		l = append(l, p.status(s, false))
 		if blanks {
 			l = append(l, "")
 		}
@@ -596,7 +597,7 @@ func (p sessionsPicker) stackedDetails(width, rows int) []string {
 	}
 	list := []entry{
 		{0, lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render(p.label(s, width))},
-		{1, p.status(s.State)},
+		{1, p.status(s, false)},
 		{2, p.fieldLine(fields[0], width)}, // Account
 		{3, p.fieldLine(fields[1], width)}, // Worktree
 	}

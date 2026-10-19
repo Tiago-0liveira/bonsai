@@ -255,3 +255,56 @@ func TestStreamTakeSendsWriterFrames(t *testing.T) {
 		t.Fatal("the next attachment after a read-only one did not write")
 	}
 }
+
+type hooksProvider struct {
+	agents.Provider
+	events *[]string
+}
+
+func (p hooksProvider) PrepareSession(_ context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", `printf HELLO`}, Dir: r.Session.WorkDir}, nil
+}
+
+func (p hooksProvider) FinalizeSession(context.Context, agents.FinalizeSessionRequest) error {
+	*p.events = append(*p.events, "finalize")
+	return nil
+}
+
+func (p hooksProvider) Label() string { return "Hooks" }
+
+func TestRunSessionHooksSeeOutputAndEndBeforeFinalize(t *testing.T) {
+	accounts, err := agents.NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := agents.NewAccountID()
+	account := agents.Account{ID: id, Provider: "hooks", Name: "fixture"}
+	if err := accounts.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := agents.NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := sessions.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []string
+	var seen strings.Builder
+	stream := NewStream[Summary](80, 24)
+	RunSession(context.Background(), stream, hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{},
+		func(change func(*Summary) error) error { return change(&Summary{}) },
+		RunHooks{
+			Output: func(p []byte) { seen.Write(p) },
+			Ending: func() { events = append(events, "ending") },
+		})
+	if seen.String() != "HELLO" {
+		t.Fatalf("output hook saw %q", seen.String())
+	}
+	if strings.Join(events, ",") != "ending,finalize" {
+		t.Fatalf("order %v", events)
+	}
+	// The zero value is today's behavior.
+	RunSession(context.Background(), NewStream[Summary](80, 24), hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, func(change func(*Summary) error) error { return change(&Summary{}) }, RunHooks{})
+}

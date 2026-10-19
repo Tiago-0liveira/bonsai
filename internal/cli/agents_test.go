@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 )
@@ -319,4 +320,68 @@ func newKeyPipe() (*os.File, func(string)) {
 		panic(err)
 	}
 	return r, func(keys string) { _, _ = w.WriteString(keys) }
+}
+
+func TestAgentsActivityColumnAndJSON(t *testing.T) {
+	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	quiet := now.Add(-3 * time.Minute)
+	started := now.Add(-time.Hour)
+	live := func(id string, a *agentactivity.Activity) agentRow {
+		return agentRow{Record: agenthost.Record{ID: id, PID: 42, Alive: true, LastOutputAt: &quiet, WorkDir: "/w", Summary: agentterminal.Summary{
+			ID: id, Name: id, Provider: "claude", ProfileName: "work", State: "running", CreatedAt: started, Activity: a,
+		}}}
+	}
+	waiting := &agentactivity.Activity{State: agentactivity.Waiting, Reason: agentactivity.ReasonPermission, Detail: "Bash", Since: now}
+	lost := live("lost", waiting)
+	lost.Alive = false
+	ended := live("ended", waiting)
+	ended.Summary.State = "exited"
+
+	rows := []agentRow{
+		live("waits", waiting),
+		live("works", &agentactivity.Activity{State: agentactivity.Working, Since: now}),
+		live("stuck", &agentactivity.Activity{State: agentactivity.Working, Stalled: true, Since: now}),
+		live("rests", &agentactivity.Activity{State: agentactivity.Idle, Reason: agentactivity.ReasonTurnComplete, Since: now}),
+		live("unknown", &agentactivity.Activity{State: agentactivity.Unknown, Since: now}),
+		live("legacy", nil),
+		lost,
+		ended,
+	}
+	want := map[string]string{
+		"waits": "Needs input (permission)", "works": "Working", "stuck": "Stalled", "rests": "Idle",
+		"unknown": "Running", "legacy": "idle 3m", "lost": "idle 3m", "ended": "-",
+	}
+	for _, r := range rows {
+		if got := agentActivity(r, now); got != want[r.ID] {
+			t.Errorf("%s: activity = %q, want %q", r.ID, got, want[r.ID])
+		}
+	}
+
+	var table bytes.Buffer
+	if err := writeAgentTable(&table, rows[:1], now); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(table.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "ACTIVITY") || !strings.Contains(lines[1], "running") || !strings.Contains(lines[1], "Needs input (permission)") {
+		t.Errorf("STATE stays lifecycle and ACTIVITY the label:\n%s", table.String())
+	}
+
+	raw, err := json.Marshal(newAgentJSON(rows[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		State    string
+		Activity *agentactivity.Activity
+	}
+	if err := json.Unmarshal(raw, &got); err != nil || got.State != "running" || got.Activity == nil ||
+		got.Activity.State != agentactivity.Waiting || got.Activity.Reason != agentactivity.ReasonPermission || got.Activity.Detail != "Bash" {
+		t.Errorf("activity json = %v, %s", err, raw)
+	}
+	for _, r := range []agentRow{rows[5], lost, ended} {
+		raw, _ := json.Marshal(newAgentJSON(r))
+		if strings.Contains(string(raw), `"activity"`) {
+			t.Errorf("%s: activity must be omitted: %s", r.ID, raw)
+		}
+	}
 }
