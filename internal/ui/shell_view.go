@@ -35,6 +35,8 @@ func (m Model) shellView() string {
 	if m.workspace == wsSettings {
 		lines = append(lines, m.settingsSubmenu(regions.width)...)
 		lines = append(lines, m.settingsBody(regions.width, regions.body)...)
+	} else if m.workspace == wsAccounts {
+		lines = append(lines, m.accountsBody(regions.width, regions.body)...)
 	} else {
 		for i := 0; i < regions.submenu+regions.body+regions.detail; i++ {
 			lines = append(lines, blank)
@@ -149,8 +151,11 @@ func (m Model) shellFooter(r shellRegions) []string {
 
 	focus := seg(p.Warning, p.Surface, true).Render(" FOCUS: " + m.shellFocusLabel())
 	status := "preview · shell only"
-	if m.workspace == wsSettings {
+	switch m.workspace {
+	case wsSettings:
 		status = "Local preferences"
+	case wsAccounts:
+		status = "Local profiles"
 	}
 	statusStyle := seg(p.Muted, p.Surface, false)
 	if m.status != "" {
@@ -170,6 +175,9 @@ func (m Model) shellFooter(r shellRegions) []string {
 // shellWhere is the footer's location: the workspace, and for Settings the
 // category and section the cursor is in.
 func (m Model) shellWhere() string {
+	if m.workspace == wsAccounts {
+		return m.accountsWhere()
+	}
 	if m.workspace != wsSettings {
 		return m.workspace.name()
 	}
@@ -180,6 +188,9 @@ func (m Model) shellWhere() string {
 // and marks a text edit, matching the design's "Settings / Appearance".
 func (m Model) shellFocusLabel() string {
 	f := m.currentShellFocus()
+	if m.workspace == wsAccounts {
+		return m.accountsFocusLabel(f)
+	}
 	if m.workspace == wsSettings {
 		switch f {
 		case shellBody:

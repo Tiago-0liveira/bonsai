@@ -19,8 +19,25 @@ func (m Model) usageKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.Browser, cmd = m.Browser.RefreshUsage()
 		return m, cmd
+	case "down", "j":
+		m.usageOff = min(m.usageOff+1, m.usageScrollMax())
+	case "up", "k":
+		m.usageOff = max(min(m.usageOff, m.usageScrollMax())-1, 0)
 	}
 	return m, nil
+}
+
+// usageScrollMax is how far the Usage section can scroll in the current size,
+// 0 when everything fits.
+func (m Model) usageScrollMax() int {
+	if _, ok := m.Current(); !ok || m.tab != TabUsage {
+		return 0
+	}
+	w, h := FrameSize(m.w, m.h)
+	iw := ContentWidth(w)
+	_, _, gap, free := m.frame(iw, h)
+	_, insp, avail := m.inspectLayout(iw, free, gap)
+	return insp.scrollMax(max(avail-len(insp.tail), 0))
 }
 
 // meter is the bar colored by how much is left.

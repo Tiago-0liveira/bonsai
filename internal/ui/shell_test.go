@@ -186,8 +186,8 @@ func TestShellTabsAllVisibleInOrder(t *testing.T) {
 func TestShellBodyIsEmpty(t *testing.T) {
 	m := sized(t, shellModel(t, config.Prefs{}, nil), 80, 24)
 	for ws := workspace(0); ws < workspaceCount; ws++ {
-		if ws == wsSettings {
-			continue // the only workspace with a body so far
+		if ws == wsSettings || ws == wsAccounts {
+			continue // the workspaces with a body so far
 		}
 		m.workspace = ws
 		lines := strings.Split(ansi.Strip(m.View()), "\n")

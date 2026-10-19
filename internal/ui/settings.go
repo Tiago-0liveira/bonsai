@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 )
@@ -205,6 +206,8 @@ func (m Model) activateField() (tea.Model, tea.Cmd) {
 		m.set.editErr = ""
 		m.shellFocus = shellInput
 		return m, nil
+	case kindLink:
+		return m.openAccounts(accounts.TabDefaults)
 	case kindReadonly:
 		m.status = "Read-only: " + f.label
 	default:

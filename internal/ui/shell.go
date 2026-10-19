@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 )
 
@@ -102,14 +103,25 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	m.workspace = ws
 	m.shellFocus = shellNav
 	m.set.editing, m.set.capturing = false, false
-	if m.work.NoWorkspaceMemory {
+	var cmds []tea.Cmd
+	if ws == wsAccounts && m.acct.present && !m.acct.started {
+		m.acct.started = true
+		cmds = append(cmds, m.acct.model.Init())
+	}
+	if !m.work.NoWorkspaceMemory {
+		m.wsGen++
+		gen, st, dir, name := m.wsGen, m.state, m.repoDir, ws.key()
+		cmds = append(cmds, func() tea.Msg {
+			return workspaceSavedMsg{gen: gen, err: st.PersistLastWorkspace(gen, dir, name)}
+		})
+	}
+	switch len(cmds) {
+	case 0:
 		return m, nil
+	case 1:
+		return m, cmds[0]
 	}
-	m.wsGen++
-	gen, st, dir, name := m.wsGen, m.state, m.repoDir, ws.key()
-	return m, func() tea.Msg {
-		return workspaceSavedMsg{gen: gen, err: st.PersistLastWorkspace(gen, dir, name)}
-	}
+	return m, tea.Batch(cmds...)
 }
 
 // shellFocus says who owns keyboard input in the redesigned shell. In
@@ -143,6 +155,11 @@ func (f shellFocus) String() string {
 func (m Model) currentShellFocus() shellFocus {
 	if m.modal != nil {
 		return shellDialog
+	}
+	// A text field, dropdown or confirmation inside Accounts takes every key,
+	// so typing a name can never quit or jump workspaces.
+	if m.workspace == wsAccounts && m.shellFocus == shellBody && m.acct.present && m.acct.model.Capturing() {
+		return shellInput
 	}
 	return m.shellFocus
 }
@@ -215,7 +232,8 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.shellKey(msg)
 	}
-	return m, nil
+	_, nm, cmd := m.accountsMsg(msg)
+	return nm, cmd
 }
 
 func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -252,6 +270,12 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.shellFocus = shellBody
 		m.set.level = levelCategory
 		return m, nil
+	case m.workspace == wsAccounts && (msg.String() == "enter" || msg.String() == "down"):
+		m.shellFocus = shellBody
+		return m, nil
+	case key.Matches(msg, m.keys.AgentAccounts):
+		// The Agents tab's profiles shortcut lands on the same workspace.
+		return m.openAccounts(accounts.TabOverview)
 	case key.Matches(msg, m.keys.Tab), msg.String() == "right", msg.String() == "l":
 		next = (m.workspace + 1) % workspaceCount
 	case key.Matches(msg, m.keys.ShiftTab), msg.String() == "left", msg.String() == "h":
@@ -273,15 +297,19 @@ func altDigitWorkspace(msg tea.KeyMsg, fallback workspace) workspace {
 	return fallback
 }
 
-// bodyKey routes a key to the focused workspace body. Only Settings has one.
+// bodyKey routes a key to the focused workspace body. Settings and Accounts
+// have one.
 func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.workspace != wsSettings {
+	if m.workspace != wsSettings && m.workspace != wsAccounts {
 		return m, nil
 	}
-	if m.shellFocus == shellBody {
+	if m.shellFocus == shellBody && m.currentShellFocus() == shellBody {
 		if ws := altDigitWorkspace(msg, m.workspace); ws != m.workspace {
 			return m.selectWorkspace(ws)
 		}
+	}
+	if m.workspace == wsAccounts {
+		return m.accountsKey(msg)
 	}
 	return m.settingsKey(msg)
 }
@@ -289,6 +317,7 @@ func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 const (
 	paletteGoPrefix       = "Go to "
 	paletteSettingsPrefix = "Settings: "
+	paletteAccountsPrefix = "Accounts: "
 	paletteEditKeys       = paletteSettingsPrefix + "Edit key bindings"
 )
 
@@ -298,6 +327,9 @@ type paletteTarget struct {
 	ws          workspace
 	category    int
 	hasCategory bool
+	// section opens an Accounts section instead of the workspace as it was left.
+	section    accounts.Tab
+	hasSection bool
 }
 
 // paletteTargets lists every entry in palette order with its target.
@@ -318,6 +350,8 @@ func paletteTargets() (labels []string, targets map[string]paletteTarget) {
 		}
 	}
 	add(paletteEditKeys, paletteTarget{ws: wsSettings, category: keys, hasCategory: true})
+	add(paletteAccountsPrefix+"Usage", paletteTarget{ws: wsAccounts, section: accounts.TabUsage, hasSection: true})
+	add(paletteAccountsPrefix+"Defaults", paletteTarget{ws: wsAccounts, section: accounts.TabDefaults, hasSection: true})
 	return labels, targets
 }
 
@@ -330,6 +364,9 @@ func paletteTargetForLabel(label string) (paletteTarget, bool) {
 // goToPalette selects a palette target. Going through selectWorkspace keeps the
 // last-workspace memory; a Settings category entry lands on its category row.
 func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
+	if t.hasSection {
+		return m.openAccounts(t.section)
+	}
 	m, cmd := m.selectWorkspace(t.ws)
 	if t.hasCategory {
 		m.shellFocus = shellBody
@@ -365,6 +402,9 @@ func (m Model) openShellPalette() Model {
 // when the width runs out, most important first. Keys are the effective ones,
 // so scoped overrides show up.
 func (m Model) shellHints() []shellHint {
+	if m.currentShellFocus() == shellInput && m.workspace == wsAccounts {
+		return m.accountsHints()
+	}
 	if m.currentShellFocus() == shellInput {
 		if m.set.capturing {
 			return []shellHint{{"new key", "bind"}, {"esc", "cancel"}, {"backspace", "reset"}}
@@ -374,12 +414,18 @@ func (m Model) shellHints() []shellHint {
 	h := []shellHint{}
 	if m.currentShellFocus() == shellNav {
 		h = append(h, shellHint{"←/→", "workspace"})
-		if m.workspace == wsSettings {
+		switch m.workspace {
+		case wsSettings:
 			h = append(h, shellHint{"enter/↓", "open settings"})
+		case wsAccounts:
+			h = append(h, shellHint{"enter/↓", "open accounts"})
 		}
 	}
 	if m.currentShellFocus() == shellBody && m.workspace == wsSettings {
 		h = append(h, m.settingsHints()...)
+	}
+	if m.currentShellFocus() == shellBody && m.workspace == wsAccounts {
+		h = append(h, m.accountsHints()...)
 	}
 	h = append(h,
 		shellHint{m.keys.Palette.Help().Key, "commands"},
@@ -401,7 +447,8 @@ type shellHint struct{ key, desc string }
 // not the legacy worktree bindings.
 func (m Model) openShellHelp() Model {
 	var items []string
-	for _, h := range append(m.shellHints(), shellHint{"h/l", "workspace"}) {
+	extra := []shellHint{{"h/l", "workspace"}, {m.keys.AgentAccounts.Help().Key, "open Accounts"}}
+	for _, h := range append(m.shellHints(), extra...) {
 		items = append(items, m.chrome(fmt.Sprintf("%-10s %s", h.key, h.desc)))
 	}
 	modal := modals.NewFuzzy(modals.KindKeymap, "Keybindings (redesign preview)", filterItems(items), items)

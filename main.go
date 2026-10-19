@@ -269,19 +269,15 @@ func run(cfgPath string, layout ui.Layout) error {
 		return err
 	}
 
-	// The TUI always starts: without a backend it just has no Agents tab.
-	// The redesign preview has no agent features yet, so it skips the backend.
+	// The TUI always starts: without a backend it just has no Agents tab and
+	// the redesign's Accounts workspace says why it is empty.
 	var agentsAPI *agentsapi.Backend
-	var backendErr error
-	if layout != ui.LayoutRedesign {
-		var backend *agentsbackend.Backend
-		backend, backendErr = agentsbackend.New()
-		if backendErr == nil {
-			// Closing only ends the TUI's attachments; holders keep running.
-			defer backend.Close()
-			api := backend.API()
-			agentsAPI = &api
-		}
+	backend, backendErr := agentsbackend.New()
+	if backendErr == nil {
+		// Closing only ends the TUI's attachments; holders keep running.
+		defer backend.Close()
+		api := backend.API()
+		agentsAPI = &api
 	}
 	model := newTUIModel(repoDir, cfg, state, agentsAPI, ui.WithLayout(layout))
 	// Mouse tracking is on so the wheel scrolls the pane under the pointer.

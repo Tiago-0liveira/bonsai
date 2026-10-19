@@ -241,10 +241,11 @@ It does not touch the agent's terminal output or the status-bar separators.
 
 An opt-in preview of the redesigned TUI. The shell is a header with the Garden,
 Playground, Worktrees, Accounts and Settings tabs and a footer with the current
-workspace, focus, key hints and status. Only **Settings** has a body (see
-[below](#settings-in-the-preview)); the other four bodies are still empty. The
-preview loads no worktrees, GitHub data, agents or usage and starts no domain
-work. The last workspace is remembered per repository (see Settings). The default
+workspace, focus, key hints and status. **Settings** and **Accounts** have a body
+(see [Settings](#settings-in-the-preview) and [Accounts](#accounts-in-the-preview));
+the other three bodies are still empty. The preview loads no worktrees, GitHub
+data or agent sessions and starts no domain work; Accounts loads agent profiles
+and usage the first time it opens. The last workspace is remembered per repository (see Settings). The default
 stays the current TUI (`--tui-layout legacy`), which keeps its own preferences
 overlay.
 
@@ -264,8 +265,9 @@ value exits with an error before the TUI starts. The terminal must be at least
 | `tab` / `shift+tab` | Next / previous workspace (the `focus_next` / `focus_prev` bindings) |
 | `alt+1` to `alt+5` | Jump to a workspace (bare digits stay reserved for agent sessions) |
 | `,` | Jump to Settings (the `prefs` binding) |
-| `enter` / `↓` | On the Settings tab, enter its body |
-| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>" and "Settings: Edit key bindings" |
+| `enter` / `↓` | On the Settings or Accounts tab, enter its body |
+| `m` | Open Accounts (the Agents tab's `agent_accounts` binding) |
+| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage" and "Accounts: Defaults" |
 | `?` | Keys that work in the preview |
 | `q` / `ctrl+c` | Quit (outside the palette and help dialogs; inside them `esc` closes the dialog) |
 
@@ -289,8 +291,9 @@ a text edit, `esc` cancels only that edit.
 - **Appearance**: theme, surface contrast (layered or flat), icons (unicode or
   ASCII), density.
 - **Keys**: one section per keymap group, plus the fixed Terminal row `ctrl+]`.
-- **Garden** and **Agents**: the existing repository base ref. Other rows show
-  "Unavailable" with the plan that adds them and have no controls.
+- **Garden** and **Agents**: the existing repository base ref. Agents also has
+  "Account defaults", which opens the Accounts workspace on Defaults. Other rows
+  show "Unavailable" with the plan that adds them and have no controls.
 
 Scope and precedence: personal preferences live in
 `~/.config/bonsai/state.json` and apply on this machine. They override the
@@ -318,6 +321,41 @@ Key editor: `enter` on a key row captures the next key, `esc` cancels and
 - Always rejected: `esc`, `ctrl+c`, `ctrl+]`, `enter`, `tab`, `shift+tab`, `space`,
   the arrow keys and `alt+1` to `alt+5`. `h`/`j`/`k`/`l` are rejected only for
   Navigation actions.
+
+#### Accounts in the preview
+
+Accounts lists the agent profiles (Claude, Codex, Antigravity) of this user. They
+are local and global: the list does not depend on the selected worktree, and the
+workspace works without GitHub or terminal (PTY) support. It reuses the legacy
+profiles view: a table of profiles above the **Overview**, **Usage** and
+**Defaults** sections.
+
+Focus is nested. `enter` or `↓` on the tab opens the profile list; `↑`/`↓` pick a
+profile; `enter` moves into the sections; `tab` / `shift+tab` (or `1`, `2`, `3`)
+switch section; `esc` goes up one level (section to list, list to the tabs). The
+selected profile, section and any unsaved defaults are kept while you visit other
+workspaces or reload. Leaving Accounts or changing profile never stops a running
+session.
+
+- **Overview**: identity, sign-in method, running sessions and the model and
+  effort defaults. `Sign in again` and `Remove account` use the same CLI flows
+  as the Agents tab; sign-in runs in the real terminal (the TUI suspends, then
+  reloads). Bonsai never refreshes a login by itself. Removal asks first and is
+  refused while the profile has running sessions.
+- **Usage**: remaining capacity, labeled `N% left` for every window with its
+  reset time, plus credits and reset grants when the provider reports them. An
+  unavailable window reads "Unavailable", never 0%. A failed refresh keeps the
+  last good numbers, marked stale. `r` refreshes the selected profile; `↑`/`↓` scroll when the content is taller than the pane. Usage is
+  fetched through the same cache as the legacy TUI, only for the selected profile.
+- **Defaults**: the provider-declared launch defaults. "Provider default" means
+  inherited; a stored value the provider no longer offers shows as `(unlisted)`.
+  `ctrl+s` or `Save defaults` sends only the fields you changed. A failed save is
+  shown and the draft stays. Changing profile with unsaved changes asks to
+  discard first.
+
+Empty and failed states give a reason (no backend, loading, no profiles yet,
+sign-in required, sign-in state unknown, usage unavailable, read failed). `n`
+adds a profile.
 
 ## CLI
 

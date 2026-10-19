@@ -21,9 +21,12 @@ import (
 type Option func(*Model)
 
 // WithAgents injects the agent backend. A backend without Sessions, or whose
-// Sessions are unsupported on this host, leaves every agent feature off.
+// Sessions are unsupported on this host, leaves every session feature off.
+// Accounts are kept regardless: profiles are local-user state that needs no
+// terminal support, so the redesign's Accounts workspace stays usable.
 func WithAgents(b agentsapi.Backend) Option {
 	return func(m *Model) {
+		m.agents.api.Accounts = b.Accounts
 		if b.Sessions == nil {
 			return
 		}

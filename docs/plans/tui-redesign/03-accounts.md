@@ -1,6 +1,6 @@
 # Plan 03 — Accounts, usage and launch defaults
 
-Status: not started. Prerequisite: [02 — Settings](02-settings.md).
+Status: implemented, pending commit. Prerequisite: [02 — Settings](02-settings.md).
 Next: [04 — Garden foundations](04-garden-foundations.md).
 
 ## Deliverable
@@ -70,4 +70,25 @@ References: [Accounts](../../design/tui-redesign/revision-02/png/a-01-120x35-cod
 - [ ] Targeted UI/backend/agents tests, affected race tests and full Go checks pass.
 - [ ] `README.md`, `docs/tui-cli.md` and `docs/agents.md` reflect the new destination.
 
-Completion record: pending implementation and validation evidence.
+Completion record: implemented in the redesign shell (uncommitted at the time of writing).
+
+- Accounts is a top-level workspace body (`internal/ui/accountsws.go`) built on the
+  existing `components/accounts` model in embedded mode. Availability depends on
+  `Accounts` only; `WithAgents` keeps it when Sessions is nil or unsupported, and
+  `main.go` builds the backend for `--tui-layout redesign`.
+- Visible metric is remaining capacity ("N% left"); nothing is inverted. The mockup's
+  "% used" labels and per-row meters were not adopted: usage loads for the selected
+  profile through `usagestore` (sequence ordering, limiter, stale last-good).
+- Dirty Defaults drafts survive section switches and leaving the workspace; a profile
+  change, add or jump to another account asks Discard/Keep. Saves send only changed
+  fields; edits made while a save is in flight are carried over the reload.
+- Settings "Account defaults" link and the legacy `m` shortcut open the workspace.
+- Open: no dedicated "missing CLI" signal exists in `agentsapi` (shown as unknown
+  sign-in state); the mockup's separate submenu row is not drawn.
+- Evidence: gofmt, `go vet ./...`, `go build ./...`, `GOOS=windows go build ./...`,
+  `go test -race ./internal/ui/... ./internal/agentsbackend/... ./internal/core/agents/...`
+  pass. `go test ./...` has one failure outside this diff:
+  `internal/server/localapi` `TestAgentUsageRealProviders` expects a `~/.claude` seed
+  source and gets the bonsai account config dir in this environment.
+- Tests were extended and independently reviewed by two Codex runs (gpt-6.1-sol, high);
+  their five failing contract tests and eight findings were fixed.

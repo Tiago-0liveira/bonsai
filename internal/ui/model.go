@@ -229,6 +229,9 @@ type Model struct {
 	prefsGen uint64
 	wsGen    uint64
 	set      settingsState
+	// acct is the Accounts workspace; it lives as long as the TUI so its
+	// selection, section and drafts survive switching workspaces.
+	acct accountsState
 
 	// Layout / status.
 	width, height int
@@ -298,6 +301,9 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 	if m.layoutKind == LayoutRedesign {
 		m.workspace = m.startupWorkspace()
 		applyPalette(preset, cfg.Theme.Overrides, work.Contrast)
+		m.acct = newAccountsState(m.agents.api.Accounts, m.agentGlyphsASCII(), m.agents.usage)
+		// Init starts the load when the shell opens on Accounts.
+		m.acct.started = m.acct.present && m.workspace == wsAccounts
 	}
 	m.list.Focus()
 	m.procSearchInput.Placeholder = "search output…"
@@ -347,9 +353,12 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
-	// The preview shell has empty bodies, so it loads nothing: no worktrees,
-	// GitHub, agents, usage or update checks.
+	// The preview shell loads only what its open workspace shows: no worktrees,
+	// GitHub, sessions or update checks.
 	if m.layoutKind == LayoutRedesign {
+		if m.acct.started {
+			return m.acct.model.Init()
+		}
 		return nil
 	}
 	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs(), m.initAgents())

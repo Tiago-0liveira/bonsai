@@ -32,6 +32,8 @@ const (
 	kindReadonly
 	// kindKey is a key binding edited by pressing the new key.
 	kindKey
+	// kindLink opens another workspace, where the setting really lives.
+	kindLink
 	// kindUnavailable fields render dim with no control. A later plan flips a
 	// field by giving it a real kind, getter and writer.
 	kindUnavailable
@@ -411,7 +413,14 @@ func gardenSections() []settingSection {
 func agentSections() []settingSection {
 	return []settingSection{
 		{id: "accounts", name: "Accounts and launch", fields: []settingField{
-			unavailable("agent_launch", "Default account and launch", "Unavailable — arrives with Accounts (plan 03)"),
+			{
+				// Launch defaults belong to each profile; Bonsai keeps no separate
+				// default account, so this opens the one place they are edited.
+				id: "agent_launch", label: "Account defaults", scope: scopeMachine, kind: kindLink,
+				help:    "Launch defaults are stored per account. Open Accounts to edit them.",
+				display: func(Model) string { return "Open Accounts ›" },
+				origin:  func(Model) string { return "local profiles, shared by every worktree" },
+			},
 		}},
 		{id: "review", name: "Automatic review", fields: []settingField{
 			unavailable("auto_review", "Review pull requests", "Unavailable — arrives with Garden planning (plan 08)"),

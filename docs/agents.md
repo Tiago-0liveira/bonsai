@@ -298,8 +298,9 @@ The status comes from provider hooks, so it is a best-effort signal:
 Each profile keeps its launch defaults: the model plus Codex `permissions` and
 `effort`, Claude `permission_mode` and `effort`, or Antigravity `effort` and
 `full_access`. The web start dialog opens on them and can change them for one
-launch; set them for good on the profile's **Defaults** tab in the Agents tab or
-with `account set`. A launch option still wins over them, and defaults only apply
+launch; set them for good on the profile's **Defaults** tab in the Agents tab (or
+the Accounts workspace of the [redesign preview](tui-cli.md#accounts-in-the-preview))
+or with `account set`. A launch option still wins over them, and defaults only apply
 to sessions started afterwards.
 
 ```sh
