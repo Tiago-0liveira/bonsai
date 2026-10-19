@@ -44,6 +44,17 @@ const (
 	FindingMalformed FindingCode = "malformed-item"
 	// FindingProjectionUnavailable explains why no Project drift conclusion was possible.
 	FindingProjectionUnavailable FindingCode = "projection-unavailable"
+	// FindingRateLimited reports a rate limit and carries a bounded retry hint.
+	FindingRateLimited FindingCode = "rate-limited"
+	// FindingDegraded reports an uncertain refusal (for example a bare 403) that is not proof of revoked access.
+	FindingDegraded FindingCode = "degraded"
+)
+
+const (
+	// defaultRetryAfter is the hint used when a rate limit carries no usable Retry-After value.
+	defaultRetryAfter = time.Minute
+	// maxRetryAfterHint bounds a server-supplied hint so a hostile or buggy value cannot park a caller indefinitely.
+	maxRetryAfterHint = time.Hour
 )
 
 // Severity lets clients order findings without interpreting their messages.
@@ -68,6 +79,8 @@ type Finding struct {
 	IssueID garden.IssueID
 	// Message is safe to show without exposing adapter details.
 	Message string
+	// RetryAfter is a bounded retry hint for rate-limit findings; zero otherwise. It is a value, not a timer.
+	RetryAfter time.Duration
 }
 
 // Problem records an item-local decode or verification issue.
@@ -76,6 +89,10 @@ type Problem struct {
 	Code string
 	// Message is a safe explanation for the user.
 	Message string
+	// IssueID names the Issue the problem belongs to; zero for collection-level problems.
+	IssueID garden.IssueID
+	// RetryAfter is a bounded retry hint, set only on rate-limited problems.
+	RetryAfter time.Duration
 }
 
 // Item is the verified read projection for one GitHub Issue.
@@ -122,8 +139,10 @@ type Snapshot struct {
 	StaleReason string
 	// StaleSince records when the current stale period began.
 	StaleSince time.Time
-	// BackoffHint advises a caller without starting a retry timer here.
+	// BackoffHint advises a caller after a network failure without starting a retry timer here.
 	BackoffHint time.Duration
+	// RetryAfter is the bounded rate-limit hint of the current stale period; zero when not rate limited.
+	RetryAfter time.Duration
 	// AccessRevoked indicates that an authorization failure retained old data.
 	AccessRevoked bool
 }
@@ -168,6 +187,22 @@ type Request struct {
 	Now func() time.Time
 }
 
+func (l Limits) validate() error {
+	switch {
+	case l.PageCap <= 0:
+		return fmt.Errorf("%w: page cap must be positive", ErrInvalidLimits)
+	case l.ItemCap <= 0:
+		return fmt.Errorf("%w: item cap must be positive", ErrInvalidLimits)
+	case l.CallTimeout <= 0:
+		return fmt.Errorf("%w: call timeout must be positive", ErrInvalidLimits)
+	}
+	return nil
+}
+
+// ValidateLimits reports an error satisfying errors.Is(err, ErrInvalidLimits) when a read cannot be bounded.
+// Load applies the same check before any port call and surfaces it as an "invalid-limits" Problem.
+func (r Request) ValidateLimits() error { return r.Limits.validate() }
+
 // Load reads a bounded collection and returns partial data explicitly marked incomplete.
 func Load(ctx context.Context, r Request) Snapshot {
 	now := time.Now
@@ -175,12 +210,28 @@ func Load(ctx context.Context, r Request) Snapshot {
 		now = r.Now
 	}
 	s := Snapshot{GardenID: r.GardenID, LocalRepoID: r.LocalRepoID, Generation: r.Generation, Epoch: r.Epoch, FetchedAt: now().UTC(), Source: SourceLive}
-	if r.GardenID.Repo == 0 || r.Issues == nil || r.Limits.PageCap <= 0 || r.Limits.ItemCap <= 0 || r.Limits.CallTimeout <= 0 {
+	if err := r.Limits.validate(); err != nil {
+		// Rejected before any port call so an unbounded read can never start.
+		s.Problems = append(s.Problems, Problem{Code: "invalid-limits", Message: ErrInvalidLimits.Error()})
+		return s
+	}
+	if r.GardenID.Repo == 0 || r.Issues == nil {
 		s.Problems = append(s.Problems, Problem{Code: "invalid-request", Message: "Garden read limits or identity are invalid"})
 		return s
 	}
 	seen := map[garden.IssueID]bool{}
 	items := []garden.Issue{}
+	rejected := map[garden.IssueID]bool{}
+	// partial records any condition that makes the collection untrustworthy as a whole, so it can never
+	// replace last-good data or mark deletions.
+	partial := false
+	reject := func(it garden.Issue, code, msg string) {
+		partial = true
+		if !rejected[it.ID] {
+			rejected[it.ID] = true
+			s.Problems = append(s.Problems, Problem{Code: code, Message: msg, IssueID: it.ID})
+		}
+	}
 	cursor := ""
 	pages := 0
 	restart := false
@@ -202,6 +253,9 @@ func Load(ctx context.Context, r Request) Snapshot {
 			pages = 0
 			items = nil
 			seen = map[garden.IssueID]bool{}
+			rejected = map[garden.IssueID]bool{}
+			partial = false
+			s.Problems = nil
 			continue
 		}
 		if err != nil {
@@ -209,21 +263,29 @@ func Load(ctx context.Context, r Request) Snapshot {
 				s.Problems = append(s.Problems, Problem{Code: "cancelled", Message: "Garden read was cancelled"})
 				break
 			}
-			s.Problems = append(s.Problems, Problem{Code: safeCode(err), Message: "Garden issues could not be read"})
+			s.Problems = append(s.Problems, problemFor(err, "Garden issues could not be read"))
 			break
 		}
 		pages++
+		truncated := false
 		for _, it := range page.Items {
-			if !seen[it.ID] {
-				seen[it.ID] = true
-				items = append(items, it)
-				if len(items) >= r.Limits.ItemCap {
-					break
-				}
+			if it.Repo != r.GardenID.Repo {
+				reject(it, "foreign-repo", "An Issue from another repository was ignored")
+				continue
 			}
+			if seen[it.ID] {
+				continue
+			}
+			if len(items) >= r.Limits.ItemCap {
+				truncated = true
+				break
+			}
+			seen[it.ID] = true
+			items = append(items, it)
 		}
-		if len(items) >= r.Limits.ItemCap && page.NextCursor != "" {
+		if truncated || (len(items) >= r.Limits.ItemCap && page.NextCursor != "") {
 			s.Problems = append(s.Problems, Problem{Code: "item-cap", Message: "Garden item limit reached"})
+			partial = true
 			break
 		}
 		if page.Complete || page.NextCursor == "" {
@@ -232,24 +294,52 @@ func Load(ctx context.Context, r Request) Snapshot {
 		}
 		cursor = page.NextCursor
 	}
-	if !s.Complete {
-		s.Source = SourceStale
-	}
+	imports := make([]garden.IssueID, 0, len(r.ExplicitImports))
 	for id := range r.ExplicitImports {
-		if seen[id] || len(items) >= r.Limits.ItemCap {
+		imports = append(imports, id)
+	}
+	// Sorted so the cap cuts the same imports on every run.
+	sort.Slice(imports, func(i, j int) bool { return imports[i] < imports[j] })
+	for _, id := range imports {
+		if seen[id] {
 			continue
+		}
+		if len(items) >= r.Limits.ItemCap {
+			s.Problems = append(s.Problems, Problem{Code: "item-cap", Message: "Garden item limit reached"})
+			partial = true
+			break
+		}
+		if ctx.Err() != nil {
+			s.Problems = append(s.Problems, Problem{Code: "cancelled", Message: "Garden read was cancelled"})
+			partial = true
+			break
 		}
 		call, cancel := context.WithTimeout(ctx, r.Limits.CallTimeout)
 		it, err := r.Issues.GetIssue(call, r.GardenID.Repo, id)
 		cancel()
 		if err != nil {
-			s.Complete = false
-			s.Source = SourceStale
-			s.Problems = append(s.Problems, Problem{Code: safeCode(err), Message: "An explicitly imported issue could not be read"})
+			partial = true
+			s.Problems = append(s.Problems, problemFor(err, "An explicitly imported issue could not be read"))
 			continue
 		}
-		seen[id] = true
+		switch {
+		case it.ID != id:
+			reject(garden.Issue{ID: id}, "identity-mismatch", "An imported Issue did not match the requested identity")
+			continue
+		case it.Repo != r.GardenID.Repo:
+			reject(it, "foreign-repo", "An Issue from another repository was ignored")
+			continue
+		case seen[it.ID]:
+			continue
+		}
+		seen[it.ID] = true
 		items = append(items, it)
+	}
+	if partial {
+		s.Complete = false
+	}
+	if !s.Complete {
+		s.Source = SourceStale
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	for _, it := range items {
@@ -259,7 +349,7 @@ func Load(ctx context.Context, r Request) Snapshot {
 			s.Source = SourceStale
 		}
 		for _, problem := range item.Problems {
-			if problem.Code == "permission-denied" || problem.Code == "offline" || problem.Code == "read-failed" || problem.Code == "cancelled" {
+			if collectionCodes[problem.Code] {
 				s.Problems = append(s.Problems, problem)
 			}
 		}
@@ -272,7 +362,55 @@ func Load(ctx context.Context, r Request) Snapshot {
 	if hasProblem(s.Problems, "offline") {
 		s.Findings = append(s.Findings, Finding{Code: FindingOffline, Severity: SeverityWarning, Message: "Garden data may be out of date"})
 	}
+	if d := maxRetryAfter(s.Problems); d > 0 {
+		s.Findings = append(s.Findings, Finding{Code: FindingRateLimited, Severity: SeverityWarning, Message: "GitHub rate limit reached; retry later", RetryAfter: d})
+	}
+	if hasProblem(s.Problems, "forbidden") {
+		s.Findings = append(s.Findings, Finding{Code: FindingDegraded, Severity: SeverityWarning, Message: "GitHub refused part of the request; access could not be confirmed"})
+	}
 	return s
+}
+
+// collectionCodes lists item-level read failures that also make the whole collection incomplete.
+var collectionCodes = map[string]bool{
+	"permission-denied": true, "auth-required": true, "rate-limited": true, "forbidden": true,
+	"not-found": true, "offline": true, "read-failed": true, "cancelled": true,
+}
+
+// maxRetryAfter returns the largest bounded rate-limit hint among problems, or zero when none is rate limited.
+func maxRetryAfter(problems []Problem) time.Duration {
+	var out time.Duration
+	for _, p := range problems {
+		if p.Code == "rate-limited" {
+			if d := boundRetryAfter(p.RetryAfter); d > out {
+				out = d
+			}
+		}
+	}
+	return out
+}
+
+func boundRetryAfter(d time.Duration) time.Duration {
+	switch {
+	case d <= 0:
+		return defaultRetryAfter
+	case d > maxRetryAfterHint:
+		return maxRetryAfterHint
+	}
+	return d
+}
+
+// problemFor reduces an adapter error to a safe problem; error text is never copied.
+func problemFor(err error, msg string) Problem {
+	p := Problem{Code: safeCode(err), Message: msg}
+	if p.Code == "rate-limited" {
+		var rl garden.RateLimitError
+		if errors.As(err, &rl) {
+			p.RetryAfter = rl.RetryAfter
+		}
+		p.RetryAfter = boundRetryAfter(p.RetryAfter)
+	}
+	return p
 }
 
 func loadProjectProjection(ctx context.Context, s *Snapshot, r Request) {
@@ -326,11 +464,24 @@ func hasProblem(problems []Problem, code string) bool {
 func buildItem(ctx context.Context, r Request, it garden.Issue) Item {
 	c := garden.Classify(it.Labels)
 	m, me := garden.DecodeMetadata(it.Metadata)
-	comments := []garden.IssueComment{}
+	if it.ID == 0 {
+		// Without a stable ID the item cannot be verified or acted on; keep it visible instead of dropping it
+		// or letting it reach a workable lane. Verification is marked complete so one bad item cannot make
+		// the whole snapshot partial.
+		v := garden.Verify(garden.IssueIdentity{Repo: r.GardenID.Repo}, nil, r.ApprovalPolicy, garden.VerifyOptions{Complete: true})
+		return Item{
+			Issue: it, Classification: c, Verification: v, Revision: issueRevision(it),
+			Lane:     garden.LaneResult{Lane: garden.LaneAttention, Reason: "issue without stable ID"},
+			Problems: []Problem{{Code: "invalid-id", Message: "Issue without stable ID"}},
+		}
+	}
+	var comments []garden.IssueComment
 	var err error
-	call, cancel := context.WithTimeout(ctx, r.Limits.CallTimeout)
-	comments, err = r.Issues.ListComments(call, r.GardenID.Repo, it.ID)
-	cancel()
+	if err = ctx.Err(); err == nil {
+		call, cancel := context.WithTimeout(ctx, r.Limits.CallTimeout)
+		comments, err = r.Issues.ListComments(call, r.GardenID.Repo, it.ID)
+		cancel()
+	}
 	conv := make([]garden.Comment, 0, len(comments))
 	for _, x := range comments {
 		conv = append(conv, garden.Comment{ID: x.ID, Author: x.Author, AuthorID: x.AuthorID, Body: x.Body, CreatedAt: x.CreatedAt})
@@ -341,15 +492,19 @@ func buildItem(ctx context.Context, r Request, it garden.Issue) Item {
 	for _, p := range c.Problems {
 		out.Problems = append(out.Problems, Problem{Code: string(p), Message: "Issue labels do not match the Garden schema"})
 	}
+	for _, code := range it.Problems {
+		out.Problems = append(out.Problems, Problem{Code: issueProblemCode(code), Message: "Issue was reported with unusable data", IssueID: it.ID})
+	}
 	if me != nil {
 		out.Problems = append(out.Problems, Problem{Code: "metadata", Message: "Issue metadata is invalid or uses an unsupported schema"})
 	}
 	if err != nil {
-		code := safeCode(err)
+		p := problemFor(err, "Issue verification comments could not be read")
 		if ctx.Err() != nil {
-			code = "cancelled"
+			p = Problem{Code: "cancelled", Message: p.Message}
 		}
-		out.Problems = append(out.Problems, Problem{Code: code, Message: "Issue verification comments could not be read"})
+		p.IssueID = it.ID
+		out.Problems = append(out.Problems, p)
 	}
 	for _, p := range v.Problems {
 		out.Problems = append(out.Problems, Problem{Code: p.Code, Message: "Issue revision or approval needs attention"})
@@ -358,6 +513,14 @@ func buildItem(ctx context.Context, r Request, it garden.Issue) Item {
 		out.Lane = garden.LaneResult{Lane: garden.LaneAttention, Reason: "Issue has invalid Garden data"}
 	}
 	return out
+}
+
+// issueProblemCode admits only codes this package knows, so an adapter cannot inject arbitrary text.
+func issueProblemCode(code string) string {
+	if code == garden.IssueProblemAuthor {
+		return code
+	}
+	return "invalid-issue"
 }
 
 func issueRevision(i garden.Issue) string {
@@ -370,11 +533,22 @@ func issueRevision(i garden.Issue) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// safeCode classifies an adapter error. Only a network failure is "offline"; 403 without proof of a rate
+// limit is "forbidden" (uncertain), and only "permission-denied" and "auth-required" mean access was lost.
 func safeCode(err error) string {
-	if errors.Is(err, garden.ErrPermissionDenied) {
+	switch {
+	case errors.Is(err, garden.ErrRateLimited):
+		return "rate-limited"
+	case errors.Is(err, garden.ErrAuthRequired):
+		return "auth-required"
+	case errors.Is(err, garden.ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, garden.ErrPermissionDenied):
 		return "permission-denied"
-	}
-	if errors.Is(err, garden.ErrOffline) {
+	case errors.Is(err, garden.ErrNotFound):
+		return "not-found"
+	case errors.Is(err, garden.ErrOffline):
 		return "offline"
 	}
 	return "read-failed"
@@ -414,12 +588,19 @@ func NewStore(id garden.GardenID, local garden.LocalRepoID) *Store {
 	return &Store{garden: id, local: local, epoch: 1}
 }
 
-// Apply accepts only newer results from the current Garden association.
+// Apply accepts only newer results from the current Garden association and local clone.
+// Generations are ordered within one epoch: Reassociate bumps the epoch and resets the accepted generation,
+// so the first result of a new epoch is generation 1; results carrying an older epoch are dropped.
+// Only a complete live result replaces data. A Complete result whose Source is not SourceLive is
+// contradictory and is treated as incomplete: it never replaces last-good data or marks deletions.
 func (s *Store) Apply(result Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if result.GardenID != s.garden {
 		return ErrForeignGarden
+	}
+	if result.LocalRepoID != s.local {
+		return ErrForeignLocal
 	}
 	if result.Epoch != s.epoch {
 		s.dropped++
@@ -453,19 +634,29 @@ func (s *Store) Apply(result Snapshot) error {
 		last.StaleSince = result.FetchedAt
 	}
 	last.Problems = append([]Problem(nil), result.Problems...)
+	if result.Complete {
+		last.Problems = append(last.Problems, Problem{Code: "inconsistent-result", Message: "Garden result was marked complete without being live"})
+	}
 	last.Findings = append([]Finding(nil), result.Findings...)
 	last.AccessRevoked = false
+	last.BackoffHint = 0
+	last.RetryAfter = 0
 	for _, p := range result.Problems {
-		if p.Code == "permission-denied" {
+		switch p.Code {
+		case "permission-denied", "auth-required":
 			last.AccessRevoked = true
 			last.StaleReason = "Garden access was revoked"
 			last.Findings = append(last.Findings, Finding{Code: FindingAccessRevoked, Severity: SeverityError, Message: "Access to the Garden was revoked"})
-		}
-		if p.Code == "read-failed" || p.Code == "offline" {
+		case "offline":
 			last.BackoffHint = 30 * time.Second
+		case "rate-limited":
+			if d := boundRetryAfter(p.RetryAfter); d > last.RetryAfter {
+				last.RetryAfter = d
+			}
 		}
 	}
-	last.Items = markDeleted(last.Items, result.Items, result.Complete)
+	// Last-good items stay exactly as accepted: a partial result never marks deletions.
+	last.Items = cloneItems(last.Items)
 	for _, item := range last.Items {
 		if item.Deleted {
 			last.Findings = append(last.Findings, Finding{Code: FindingDeleted, Severity: SeverityInfo, IssueID: item.Issue.ID, Message: "Issue was deleted or removed from the Garden"})
@@ -478,11 +669,13 @@ func (s *Store) Apply(result Snapshot) error {
 // Read returns a defensive copy of the accepted snapshot.
 func (s *Store) Read() Snapshot { s.mu.RLock(); defer s.mu.RUnlock(); return clone(s.current) }
 
-// Reassociate bumps the epoch and discards data when the remote Garden changes.
+// Reassociate bumps the epoch, resets the accepted generation so callers restart at 1, and discards data
+// when the remote Garden changes. In-flight reads from the prior epoch are dropped by Apply.
 func (s *Store) Reassociate(id garden.GardenID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.epoch++
+	s.current.Generation = 0
 	if id != s.garden {
 		s.garden = id
 		s.current = Snapshot{}
@@ -520,15 +713,48 @@ func markDeleted(old, next []Item, complete bool) []Item {
 	return out
 }
 func clone(s Snapshot) Snapshot {
-	s.Items = append([]Item(nil), s.Items...)
-	for i := range s.Items {
-		s.Items[i].Issue.Labels = append([]string(nil), s.Items[i].Issue.Labels...)
-		s.Items[i].Issue.Metadata = append([]byte(nil), s.Items[i].Issue.Metadata...)
-		s.Items[i].Problems = append([]Problem(nil), s.Items[i].Problems...)
-	}
-	s.Problems = append([]Problem(nil), s.Problems...)
-	s.Findings = append([]Finding(nil), s.Findings...)
+	s.Items = cloneItems(s.Items)
+	s.Problems = cloneSlice(s.Problems)
+	s.Findings = cloneSlice(s.Findings)
 	return s
+}
+
+func cloneSlice[T any](in []T) []T {
+	if in == nil {
+		return nil
+	}
+	return append(make([]T, 0, len(in)), in...)
+}
+
+// cloneItems copies every slice reachable from an Item so stored snapshots never alias caller memory.
+func cloneItems(in []Item) []Item {
+	out := cloneSlice(in)
+	for i := range out {
+		it := &out[i]
+		it.Issue.Labels = cloneSlice(it.Issue.Labels)
+		it.Issue.Metadata = cloneSlice(it.Issue.Metadata)
+		it.Issue.Problems = cloneSlice(it.Issue.Problems)
+		it.Classification.Problems = cloneSlice(it.Classification.Problems)
+		it.Problems = cloneSlice(it.Problems)
+		v := &it.Verification
+		v.Revisions = cloneRevisions(v.Revisions)
+		v.Heads = cloneRevisions(v.Heads)
+		v.ConflictingHeads = cloneRevisions(v.ConflictingHeads)
+		v.Approvals = cloneSlice(v.Approvals)
+		v.ValidApprovals = cloneSlice(v.ValidApprovals)
+		v.RevokedApprovals = cloneSlice(v.RevokedApprovals)
+		v.SupersededApprovals = cloneSlice(v.SupersededApprovals)
+		v.Problems = cloneSlice(v.Problems)
+	}
+	return out
+}
+
+func cloneRevisions(in []garden.Revision) []garden.Revision {
+	out := cloneSlice(in)
+	for i := range out {
+		out[i].Parents = cloneSlice(out[i].Parents)
+	}
+	return out
 }
 
 // AssociationState is the persisted setup category supplied to status projection.
@@ -577,6 +803,8 @@ type ConnectionStatus struct {
 	OperationDone int
 	// OperationTotal counts all operation steps.
 	OperationTotal int
+	// RetryAfter is the bounded rate-limit hint when State is rate-limited; zero otherwise.
+	RetryAfter time.Duration
 }
 
 // Status derives connection presentation from an association view and current snapshot.
@@ -591,7 +819,11 @@ func Status(a AssociationView, snapshot Snapshot) ConnectionStatus {
 	case snapshot.AccessRevoked:
 		out.State = "access-revoked"
 	case snapshot.Source == SourceStale && snapshot.BackoffHint > 0:
+		// BackoffHint is set only by network failures, so "offline" never describes another error.
 		out.State = "offline"
+	case snapshot.Source == SourceStale && snapshot.RetryAfter > 0:
+		out.State = "rate-limited"
+		out.RetryAfter = snapshot.RetryAfter
 	case a.State == AssociationNone:
 		out.State = "none"
 	case a.State == AssociationSkipped:

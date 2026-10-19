@@ -12,7 +12,15 @@ type Issue struct {
 	Labels    []string
 	Body      string
 	Metadata  []byte
+	// Problems lists stable adapter-detected data defects (IssueProblem*). Readers surface each as an
+	// Attention problem instead of failing the page.
+	Problems []string
 }
+
+// IssueProblemAuthor marks an Issue whose author GitHub reported without a usable numeric ID (for example a
+// deleted account). The Issue stays visible; the author is never trusted.
+const IssueProblemAuthor = "invalid-author"
+
 type IssuePage struct {
 	Items      []Issue
 	NextCursor string

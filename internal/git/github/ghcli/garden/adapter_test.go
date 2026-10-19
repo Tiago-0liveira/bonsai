@@ -75,7 +75,10 @@ func fixture(t *testing.T, fn func(*http.Request) (*http.Response, error)) (*Ada
 		}
 		return fn(r)
 	}
-	a := New(&http.Client{Transport: f}, "https://api.github.test")
+	a, err := New(&http.Client{Transport: f}, "https://api.github.test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	a.rememberRepository(repoJSON{ID: 9, FullName: "acme/repo", NodeID: "R_9", Owner: struct {
 		Login  string `json:"login"`
 		NodeID string `json:"node_id"`
@@ -118,7 +121,7 @@ func TestStatusMapping(t *testing.T) {
 		status int
 		h      http.Header
 		want   error
-	}{{401, nil, connect.ErrAuthRequired}, {403, nil, connect.ErrPermissionDenied}, {403, http.Header{"Retry-After": []string{"30"}}, connect.ErrRateLimited}, {403, http.Header{"X-RateLimit-Remaining": []string{"0"}}, connect.ErrRateLimited}, {429, nil, connect.ErrRateLimited}, {404, nil, core.ErrNotFound}, {422, nil, connect.ErrGitHubValidation}, {500, nil, connect.ErrOffline}} {
+	}{{401, nil, connect.ErrAuthRequired}, {403, nil, core.ErrForbidden}, {403, http.Header{"Retry-After": []string{"30"}}, connect.ErrRateLimited}, {403, http.Header{"X-RateLimit-Remaining": []string{"0"}}, connect.ErrRateLimited}, {429, nil, connect.ErrRateLimited}, {404, nil, core.ErrNotFound}, {422, nil, connect.ErrGitHubValidation}, {500, nil, connect.ErrOffline}} {
 		t.Run(fmt.Sprint(tc.status, tc.want), func(t *testing.T) {
 			a, _ := fixture(t, func(*http.Request) (*http.Response, error) {
 				h := make(http.Header)
@@ -230,7 +233,7 @@ func TestProjectScopeAndPartialGraphQL(t *testing.T) {
 				if !errors.As(e, &scope) || scope.Scope != "read:project" {
 					t.Fatalf("projects=%v err=%v", ps, e)
 				}
-			} else if tc.scope == "project, read:org" && !errors.Is(e, connect.ErrOffline) {
+			} else if tc.scope == "project, read:org" && !errors.Is(e, core.ErrGraphQL) {
 				t.Fatalf("partial result error=%v", e)
 			} else if tc.scope == "" && e != nil {
 				t.Fatalf("absent scopes should remain unknown: %v", e)
@@ -414,7 +417,10 @@ func TestConnectApplyResumeAndSyncLoadEndToEnd(t *testing.T) {
 		}
 		return response(404, `{}`, ""), nil
 	}
-	a := New(&http.Client{Transport: fake}, "https://api.github.test")
+	a, err := New(&http.Client{Transport: fake}, "https://api.github.test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	remotes := staticRemotes{{Name: "origin", URL: "https://github.com/acme/repo"}}
 	resolver := RepositoryResolver{Adapter: a}
 	target, _, err := connect.ResolveTarget(context.Background(), remotes, resolver, nil)
@@ -457,4 +463,33 @@ func mustJSON(t *testing.T, v string) string {
 		t.Fatal(e)
 	}
 	return string(b)
+}
+
+func TestRepositoryPermissionsNeverFabricateWrite(t *testing.T) {
+	for name, perms := range map[string]string{"all false": `{"admin":false,"maintain":false,"push":false,"triage":false,"pull":false}`, "absent": ``} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"id":9,"full_name":"o/r","owner":{"login":"o","node_id":"O"}`
+			if perms != "" {
+				body += `,"permissions":` + perms
+			}
+			a, _ := fixture(t, func(*http.Request) (*http.Response, error) { return response(200, body+`}`, ""), nil })
+			got, err := (RepositoryResolver{Adapter: a}).ResolveRepositoryID(context.Background(), 9, "o/r")
+			if err != nil || got.Access != connect.AccessRead {
+				t.Fatalf("access=%v err=%v", got.Access, err)
+			}
+		})
+	}
+}
+
+func TestInsufficientScopesGraphQLErrorIsScopeMissingWithHeader(t *testing.T) {
+	a, _ := fixture(t, func(*http.Request) (*http.Response, error) {
+		r := response(200, `{"errors":[{"type":"INSUFFICIENT_SCOPES","message":"x"}]}`, "")
+		r.Header.Set("X-OAuth-Scopes", "repo")
+		return r, nil
+	})
+	_, err := a.ListProjects(context.Background(), 42)
+	var miss connect.ErrScopeMissing
+	if !errors.As(err, &miss) {
+		t.Fatalf("err=%v", err)
+	}
 }

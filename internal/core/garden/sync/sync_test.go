@@ -156,40 +156,40 @@ func TestStoreFailuresDeletedAccessOfflineEpochAndClones(t *testing.T) {
 	if LocalKey("clone-a") == LocalKey("clone-b") {
 		t.Fatal("clone local keys collided")
 	}
-	good := Snapshot{GardenID: id, Epoch: 1, Generation: 1, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 1}}}}
+	good := Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 1, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 1}}}}
 	_ = a.Apply(good)
 	if len(b.Read().Items) != 0 {
 		t.Fatal("clones share snapshot state")
 	}
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 2, Complete: false, Source: SourceStale})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 2, Complete: false, Source: SourceStale})
 	if len(a.Read().Items) != 1 || a.Read().Source != SourceStale {
 		t.Fatal("incomplete read cleared last-good")
 	}
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 2, Complete: true, Source: SourceLive})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 2, Complete: true, Source: SourceLive})
 	if a.Dropped() != 1 || len(a.Read().Items) != 1 {
 		t.Fatal("late generation overwrote newer state")
 	}
-	if err := a.Apply(Snapshot{GardenID: garden.GardenID{Repo: 8}, Epoch: 1, Generation: 9, Complete: true}); !errors.Is(err, ErrForeignGarden) {
+	if err := a.Apply(Snapshot{GardenID: garden.GardenID{Repo: 8}, LocalRepoID: "clone-a", Epoch: 1, Generation: 9, Complete: true}); !errors.Is(err, ErrForeignGarden) {
 		t.Fatalf("foreign Garden accepted: %v", err)
 	}
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 3, Complete: true, Source: SourceLive})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 3, Complete: true, Source: SourceLive})
 	if len(a.Read().Items) != 1 || !a.Read().Items[0].Deleted || !hasFinding(a.Read().Findings, FindingDeleted) {
 		t.Fatal("deleted marker/finding missing")
 	}
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 4, Complete: true, Source: SourceLive})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 4, Complete: true, Source: SourceLive})
 	if len(a.Read().Items) != 0 {
 		t.Fatal("deleted marker lasted more than one cycle")
 	}
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 5, Complete: false, Problems: []Problem{{Code: "permission-denied"}}})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 5, Complete: false, Problems: []Problem{{Code: "permission-denied"}}})
 	if !a.Read().AccessRevoked || !hasFinding(a.Read().Findings, FindingAccessRevoked) {
 		t.Fatal("access revocation not retained")
 	}
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 6, Complete: false, Problems: []Problem{{Code: "offline"}}})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 6, Complete: false, Problems: []Problem{{Code: "offline"}}})
 	if a.Read().BackoffHint == 0 {
 		t.Fatal("offline backoff hint missing")
 	}
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 10, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 10}}}})
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 9, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 9}}}})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 10, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 10}}}})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 9, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 9}}}})
 	if a.Read().Generation != 10 || a.Read().Items[0].Issue.ID != 10 {
 		t.Fatal("older late success replaced newer success")
 	}
@@ -202,7 +202,7 @@ func TestStoreFailuresDeletedAccessOfflineEpochAndClones(t *testing.T) {
 		t.Fatal("epoch did not advance")
 	}
 	before := a.Read().Generation
-	_ = a.Apply(Snapshot{GardenID: id, Epoch: epoch, Generation: 100, Complete: true, Source: SourceLive})
+	_ = a.Apply(Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: epoch, Generation: 100, Complete: true, Source: SourceLive})
 	if a.Read().Generation != before {
 		t.Fatal("in-flight old epoch landed")
 	}
@@ -211,12 +211,12 @@ func TestStoreFailuresDeletedAccessOfflineEpochAndClones(t *testing.T) {
 func TestEmptyCompleteClearsAndConcurrentAccess(t *testing.T) {
 	id := garden.GardenID{Repo: 7}
 	s := NewStore(id, "repo")
-	_ = s.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 1, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 1}}}})
-	_ = s.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 2, Complete: true, Source: SourceLive})
+	_ = s.Apply(Snapshot{GardenID: id, LocalRepoID: "repo", Epoch: 1, Generation: 1, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 1}}}})
+	_ = s.Apply(Snapshot{GardenID: id, LocalRepoID: "repo", Epoch: 1, Generation: 2, Complete: true, Source: SourceLive})
 	if len(s.Read().Items) != 1 || !s.Read().Items[0].Deleted {
 		t.Fatal("first empty read must mark deletion")
 	}
-	_ = s.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: 3, Complete: true, Source: SourceLive})
+	_ = s.Apply(Snapshot{GardenID: id, LocalRepoID: "repo", Epoch: 1, Generation: 3, Complete: true, Source: SourceLive})
 	if len(s.Read().Items) != 0 {
 		t.Fatal("second empty read must clear")
 	}
@@ -225,7 +225,7 @@ func TestEmptyCompleteClearsAndConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			_ = s.Apply(Snapshot{GardenID: id, Epoch: 1, Generation: uint64(n + 3), Complete: true, Source: SourceLive})
+			_ = s.Apply(Snapshot{GardenID: id, LocalRepoID: "repo", Epoch: 1, Generation: uint64(n + 3), Complete: true, Source: SourceLive})
 			_ = s.Read()
 		}(n)
 	}
@@ -313,4 +313,34 @@ func hasFinding(fs []Finding, code FindingCode) bool {
 		}
 	}
 	return false
+}
+
+func TestInvalidLimitsRejectedBeforeAnyPortCall(t *testing.T) {
+	for _, l := range []Limits{{0, 1, time.Second}, {1, -1, time.Second}, {1, 1, 0}} {
+		r := &testReader{}
+		req := request(r)
+		req.Limits = l
+		if err := req.ValidateLimits(); !errors.Is(err, ErrInvalidLimits) {
+			t.Fatalf("limits %+v: err=%v", l, err)
+		}
+		s := Load(context.Background(), req)
+		if r.call != 0 || s.Complete || !hasProblem(s.Problems, "invalid-limits") {
+			t.Fatalf("limits %+v: calls=%d snapshot=%+v", l, r.call, s)
+		}
+	}
+}
+
+func TestIssueWithoutStableIDStaysVisibleAndSnapshotComplete(t *testing.T) {
+	r := &testReader{pages: []garden.IssuePage{{Items: []garden.Issue{validIssue(0), validIssue(5)}, Complete: true}}}
+	s := Load(context.Background(), request(r))
+	if !s.Complete || s.Source != SourceLive || len(s.Items) != 2 {
+		t.Fatalf("one bad item must not make the snapshot partial: %+v", s)
+	}
+	bad, good := s.Items[0], s.Items[1]
+	if bad.Issue.ID != 0 || bad.Lane.Lane != garden.LaneAttention || bad.Lane.Reason != "issue without stable ID" || !hasProblem(bad.Problems, "invalid-id") {
+		t.Fatalf("zero-ID item not isolated in attention: %+v", bad)
+	}
+	if len(good.Problems) != 0 || !good.Verification.Complete {
+		t.Fatalf("valid item affected by bad neighbour: %+v", good)
+	}
 }

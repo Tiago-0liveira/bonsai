@@ -2,12 +2,14 @@
 package garden
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,61 +27,114 @@ const maxResponse = 4 << 20
 const maxRequest = 1 << 20
 const maxComment = 64 << 10
 const maxPages = 100
+const maxLinkHeader = 16 << 10
 const graphqlPath = "/graphql"
 const metadataPrefix = "<!-- bonsai:garden-metadata/v1 "
+const defaultBase = "https://api.github.com"
+
+// repoCacheTTL bounds how long a verified repository name is trusted before the numeric ID is re-checked.
+const repoCacheTTL = time.Minute
+
+// maxProjectPages bounds Project pagination; a longer list fails closed instead of being treated as complete.
+const maxProjectPages = 10
 
 // Adapter uses the authenticated ghcli client. Tests inject an HTTP client backed by a fake RoundTripper.
 type Adapter struct {
-	HTTP         *http.Client
-	BaseURL      string
+	client  *http.Client
+	baseURL string
+	// now is a seam for cache expiry and Retry-After computation.
+	now          func() time.Time
 	mu           sync.RWMutex
-	repositories map[core.RepoID]repoJSON
+	repositories map[core.RepoID]cachedRepo
 	issueNumbers map[core.RepoID]map[core.IssueID]int64
 }
 
-// IssueReader and IssueWriter expose separate capabilities over the same authenticated transport.
-type IssueReader struct{ *Adapter }
-type IssueWriter struct{ *Adapter }
-
-func (a *Adapter) Reader() *IssueReader { return &IssueReader{Adapter: a} }
-func (a *Adapter) Writer() *IssueWriter { return &IssueWriter{Adapter: a} }
-
-func New(client *http.Client, baseURL string) *Adapter {
-	return &Adapter{HTTP: client, BaseURL: strings.TrimRight(baseURL, "/")}
+// cachedRepo is a repository observation. verified is zero for a Seed entry whose numeric ID has not been
+// confirmed yet.
+type cachedRepo struct {
+	repoJSON
+	verified time.Time
 }
 
-// FromService reuses ghcli's authenticated, bounded transport and conditional read cache.
-func FromService(service *ghcli.Service) *Adapter {
-	if service == nil || service.Client == nil || service.Client.HTTP == nil || service.Client.BaseURL == "" {
-		return nil
+// IssueReader and IssueWriter expose separate capabilities over the same authenticated transport. They hold
+// the Adapter privately so a reader cannot reach setup or write methods.
+type IssueReader struct{ a *Adapter }
+type IssueWriter struct{ a *Adapter }
+
+func (a *Adapter) Reader() *IssueReader { return &IssueReader{a: a} }
+func (a *Adapter) Writer() *IssueWriter { return &IssueWriter{a: a} }
+
+// New requires a non-nil HTTP client. Only an https origin without a path is supported: GitHub Enterprise
+// API bases such as https://host/api/v3 fail closed in this phase.
+func New(client *http.Client, baseURL string) (*Adapter, error) {
+	if client == nil {
+		return nil, ErrNilHTTPClient
+	}
+	base := strings.TrimRight(baseURL, "/")
+	if base == "" {
+		base = defaultBase
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return nil, ErrUnsupportedBase
+	}
+	return &Adapter{client: client, baseURL: base, now: time.Now}, nil
+}
+
+// FromService reuses ghcli's authenticated, bounded transport. The conditional read cache applies only
+// through that shared transport: this adapter sends no If-None-Match itself.
+func FromService(service *ghcli.Service) (*Adapter, error) {
+	if service == nil || service.Client == nil {
+		return nil, ErrNilHTTPClient
 	}
 	return New(service.Client.HTTP, service.Client.BaseURL)
 }
 
-func (a *Adapter) client() *http.Client {
-	if a.HTTP != nil {
-		return a.HTTP
+// Seed records a previously known repository name so a warm start can read before any resolver ran. The
+// entry is unverified: the first use re-fetches the repository and fails with ErrRepositoryIdentityChanged
+// when the numeric ID differs. An existing observation is never replaced.
+func (a *Adapter) Seed(id core.RepoID, owner, name string) error {
+	if id == 0 {
+		return core.ErrInvalidID
 	}
-	return http.DefaultClient
+	o, n, err := splitFullName(owner + "/" + name)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.repositories[id]; ok {
+		return nil
+	}
+	if a.repositories == nil {
+		a.repositories = map[core.RepoID]cachedRepo{}
+	}
+	a.repositories[id] = cachedRepo{repoJSON: repoJSON{ID: int64(id), FullName: o + "/" + n}}
+	return nil
 }
-func (a *Adapter) base() string {
-	if a.BaseURL != "" {
-		return strings.TrimRight(a.BaseURL, "/")
+
+func (a *Adapter) clock() time.Time {
+	if a.now != nil {
+		return a.now()
 	}
-	return "https://api.github.com"
+	return time.Now()
 }
-func (a *Adapter) endpoint(path string) string {
-	if path == graphqlPath && strings.HasSuffix(a.base(), "/api/v3") {
-		return strings.TrimSuffix(a.base(), "/v3") + "/graphql"
+func (a *Adapter) endpoint(path string) string { return a.baseURL + path }
+
+// splitFullName validates "owner/name". Dot segments are rejected so a name can never rewrite the path.
+func splitFullName(fullName string) (string, string, error) {
+	p := strings.Split(fullName, "/")
+	if len(p) != 2 || p[0] == "" || p[1] == "" || p[0] == "." || p[0] == ".." || p[1] == "." || p[1] == ".." {
+		return "", "", core.ErrInvalidID
 	}
-	return a.base() + path
+	return p[0], p[1], nil
 }
 func repoNamePath(fullName string) (string, error) {
-	p := strings.Split(fullName, "/")
-	if len(p) != 2 || p[0] == "" || p[1] == "" {
-		return "", core.ErrInvalidID
+	owner, name, err := splitFullName(fullName)
+	if err != nil {
+		return "", err
 	}
-	return "/repos/" + url.PathEscape(p[0]) + "/" + url.PathEscape(p[1]), nil
+	return "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name), nil
 }
 func (a *Adapter) rememberRepository(r repoJSON) {
 	if r.ID <= 0 || r.FullName == "" {
@@ -87,15 +142,23 @@ func (a *Adapter) rememberRepository(r repoJSON) {
 	}
 	a.mu.Lock()
 	if a.repositories == nil {
-		a.repositories = map[core.RepoID]repoJSON{}
+		a.repositories = map[core.RepoID]cachedRepo{}
 	}
-	a.repositories[core.RepoID(r.ID)] = r
+	a.repositories[core.RepoID(r.ID)] = cachedRepo{repoJSON: r, verified: a.clock()}
 	a.mu.Unlock()
 }
-func (a *Adapter) repositoryPath(ctx context.Context, id core.RepoID) (string, error) {
+func (a *Adapter) repository(id core.RepoID) (cachedRepo, bool) {
 	a.mu.RLock()
+	defer a.mu.RUnlock()
 	r, ok := a.repositories[id]
-	a.mu.RUnlock()
+	return r, ok
+}
+
+// repositoryPath returns the API path for a repository this adapter has seen or been seeded with. A fresh
+// verified entry is reused; otherwise the repository is re-fetched and its numeric ID must still match.
+// A 404 or 403 on that re-fetch means a previously readable Garden is no longer readable.
+func (a *Adapter) repositoryPath(ctx context.Context, id core.RepoID) (string, error) {
+	r, ok := a.repository(id)
 	if !ok {
 		return "", connect.ErrNoGitHubRemote
 	}
@@ -103,8 +166,14 @@ func (a *Adapter) repositoryPath(ctx context.Context, id core.RepoID) (string, e
 	if err != nil {
 		return "", err
 	}
+	if !r.verified.IsZero() && a.clock().Sub(r.verified) < repoCacheTTL {
+		return path, nil
+	}
 	resp, body, err := a.request(ctx, "GET", path, nil)
 	if err != nil {
+		if errors.Is(err, core.ErrNotFound) || errors.Is(err, core.ErrForbidden) {
+			return "", safe(core.ErrPermissionDenied)
+		}
 		return "", err
 	}
 	var current repoJSON
@@ -129,6 +198,14 @@ func (a *Adapter) rememberIssue(repo core.RepoID, id core.IssueID, n int64) {
 	a.issueNumbers[repo][id] = n
 	a.mu.Unlock()
 }
+func (a *Adapter) forgetIssue(repo core.RepoID, id core.IssueID) {
+	a.mu.Lock()
+	delete(a.issueNumbers[repo], id)
+	a.mu.Unlock()
+}
+
+// issueNumber maps a stable Issue ID to its REST number. Pull requests share the number space and the
+// list endpoint, so they are skipped: a PR ID must never resolve to a number this adapter acts on.
 func (a *Adapter) issueNumber(ctx context.Context, repo core.RepoID, id core.IssueID) (int64, error) {
 	a.mu.RLock()
 	n := a.issueNumbers[repo][id]
@@ -141,7 +218,7 @@ func (a *Adapter) issueNumber(ctx context.Context, repo core.RepoID, id core.Iss
 		return 0, e
 	}
 	path := base + "/issues?state=all&per_page=100"
-	for i := 0; i < maxPages; i++ {
+	for page := 1; page <= maxPages; page++ {
 		resp, b, e := a.request(ctx, "GET", path, nil)
 		if e != nil {
 			return 0, e
@@ -151,6 +228,9 @@ func (a *Adapter) issueNumber(ctx context.Context, repo core.RepoID, id core.Iss
 			return 0, safe(connect.ErrOffline)
 		}
 		for _, v := range rows {
+			if isPullRequest(v.PullRequest) {
+				continue
+			}
 			if v.ID > 0 && v.Number > 0 {
 				a.rememberIssue(repo, core.IssueID(v.ID), v.Number)
 				if core.IssueID(v.ID) == id {
@@ -158,7 +238,7 @@ func (a *Adapter) issueNumber(ctx context.Context, repo core.RepoID, id core.Iss
 				}
 			}
 		}
-		next, e := nextLinkPath(resp.Header.Get("Link"), a.base(), base+"/issues")
+		next, e := nextLinkPath(resp.Header.Get("Link"), a.baseURL, base+"/issues", page)
 		if e != nil {
 			return 0, core.ErrInvalidCursor
 		}
@@ -168,7 +248,7 @@ func (a *Adapter) issueNumber(ctx context.Context, repo core.RepoID, id core.Iss
 		u, _ := url.Parse(next)
 		path = u.RequestURI()
 	}
-	return 0, core.ErrTooManyComments
+	return 0, safe(ErrTruncated)
 }
 
 func (a *Adapter) request(ctx context.Context, method, path string, body any) (*http.Response, []byte, error) {
@@ -189,13 +269,13 @@ func (a *Adapter) request(ctx context.Context, method, path string, body any) (*
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, e := a.client().Do(req)
+	resp, e := a.client.Do(req)
 	if e != nil {
 		if errors.Is(e, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			return nil, nil, ctx.Err()
 		}
 		if gitdomain.Code(e) == "github_auth" || errors.Is(e, gitdomain.ErrAuth) {
-			return nil, nil, safe(connect.ErrAuthRequired)
+			return nil, nil, authRequired()
 		}
 		return nil, nil, safe(connect.ErrOffline)
 	}
@@ -205,34 +285,75 @@ func (a *Adapter) request(ctx context.Context, method, path string, body any) (*
 		return resp, nil, safe(connect.ErrOffline)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp, b, rate(resp)
+		return resp, b, a.statusError(resp)
 	}
 	return resp, b, nil
 }
 func safe(e error) error { return fmt.Errorf("Garden GitHub request failed: %w", e) }
-func statusError(r *http.Response) error {
+
+// kinds is a fixed-text error that matches several sentinels, so callers of either the connect or the
+// garden vocabulary can classify it. Response text is never included.
+type kinds struct {
+	msg  string
+	errs []error
+}
+
+func (k kinds) Error() string   { return k.msg }
+func (k kinds) Unwrap() []error { return k.errs }
+
+func authRequired() error {
+	return safe(kinds{connect.ErrAuthRequired.Error(), []error{connect.ErrAuthRequired, core.ErrAuthRequired}})
+}
+func rateLimited(after time.Duration) error {
+	return safe(kinds{connect.ErrRateLimited.Error(), []error{connect.ErrRateLimited, core.RateLimitError{RetryAfter: after}}})
+}
+
+// statusError maps a non-2xx response. A 403 is a rate limit only when GitHub says so (Retry-After or an
+// exhausted x-ratelimit-remaining); any other 403 is uncertain and must not be read as revoked access.
+func (a *Adapter) statusError(r *http.Response) error {
 	switch r.StatusCode {
 	case 401:
-		return safe(connect.ErrAuthRequired)
-	case 404:
+		return authRequired()
+	case 404, 410:
+		// 410 means the Issue or repository is gone or transferred, not that the network failed.
 		return safe(core.ErrNotFound)
-	case 403, 405:
-		return safe(connect.ErrPermissionDenied)
+	case 403:
+		if r.Header.Get("Retry-After") != "" || r.Header.Get("X-RateLimit-Remaining") == "0" {
+			return rateLimited(retryAfter(r.Header, a.clock()))
+		}
+		return safe(core.ErrForbidden)
+	case 405:
+		return safe(core.ErrForbidden)
 	case 422:
 		return safe(connect.ErrGitHubValidation)
 	case 429:
-		return safe(connect.ErrRateLimited)
-	}
-	if r.StatusCode == 403 && (r.Header.Get("Retry-After") != "" || r.Header.Get("X-RateLimit-Remaining") == "0") {
-		return safe(connect.ErrRateLimited)
+		return rateLimited(retryAfter(r.Header, a.clock()))
 	}
 	return safe(connect.ErrOffline)
 }
-func rate(r *http.Response) error {
-	if r.StatusCode == 403 && (r.Header.Get("Retry-After") != "" || r.Header.Get("X-RateLimit-Remaining") == "0") {
-		return safe(connect.ErrRateLimited)
+
+// retryAfter reads Retry-After (seconds or HTTP date), falling back to x-ratelimit-reset. Zero means unknown;
+// consumers bound the value.
+func retryAfter(h http.Header, now time.Time) time.Duration {
+	if v := strings.TrimSpace(h.Get("Retry-After")); v != "" {
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 {
+			if secs > int64(math.MaxInt64/int64(time.Second)) {
+				return 0
+			}
+			return time.Duration(secs) * time.Second
+		}
+		if t, err := http.ParseTime(v); err == nil && t.After(now) {
+			return t.Sub(now)
+		}
 	}
-	return statusError(r)
+	if v := strings.TrimSpace(h.Get("X-RateLimit-Reset")); v != "" {
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 && secs < math.MaxInt32*4 {
+			if t := time.Unix(secs, 0); t.After(now) {
+				return t.Sub(now)
+			}
+		}
+	}
+	return 0
 }
 
 // RepositoryResolver resolves the standard HTTPS or SCP GitHub remote form.
@@ -263,12 +384,12 @@ func (r RepositoryResolver) ResolveRepository(ctx context.Context, remote connec
 	return connect.Repository{ID: core.RepoID(x.ID), FullName: x.FullName, Fork: x.Fork, ParentID: parent, ParentFullName: parentName, Access: access, ProjectScope: scopePresent(x.Scope), ProjectScopeKnown: x.Scope != ""}, nil
 }
 func (r RepositoryResolver) ResolveRepositoryID(ctx context.Context, id core.RepoID, fullName string) (connect.Repository, error) {
-	owner, name, e := remoteRepo("https://github.com/" + fullName)
+	path, e := repoNamePath(fullName)
 	if e != nil {
 		return connect.Repository{}, connect.ErrNoGitHubRemote
 	}
 	var x repoJSON
-	resp, b, e := r.Adapter.request(ctx, "GET", "/repos/"+owner+"/"+name, nil)
+	resp, b, e := r.Adapter.request(ctx, "GET", path, nil)
 	if e != nil {
 		return connect.Repository{}, e
 	}
@@ -307,10 +428,9 @@ func permission(p map[string]bool) connect.Access {
 	if p["push"] || p["maintain"] {
 		return connect.AccessWrite
 	}
-	if p["pull"] || p["triage"] {
-		return connect.AccessRead
-	}
-	return connect.AccessNone
+	// The repository was fetched successfully, so it is readable. A missing, null or all-false
+	// permissions object never grants more than observation.
+	return connect.AccessRead
 }
 func scopePresent(s string) bool {
 	for _, v := range strings.Split(s, ",") {
@@ -332,30 +452,66 @@ func remoteRepo(raw string) (string, string, error) {
 		s = u.Path
 	}
 	s = strings.TrimSuffix(s, ".git")
-	p := strings.Split(strings.Trim(s, "/"), "/")
-	if len(p) != 2 || p[0] == "" || p[1] == "" {
+	owner, name, err := splitFullName(strings.Trim(s, "/"))
+	if err != nil {
 		return "", "", errors.New("invalid")
 	}
-	return url.PathEscape(p[0]), url.PathEscape(p[1]), nil
+	return url.PathEscape(owner), url.PathEscape(name), nil
+}
+
+// isPullRequest reports whether an issue row is a pull request. The key must be present and not the literal
+// JSON null.
+func isPullRequest(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && !bytes.Equal(t, []byte("null"))
+}
+
+// userID renders a numeric author ID, or "" when GitHub reported no usable user (deleted account). An empty
+// ID is never trusted as an approver.
+func userID(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(id, 10)
+}
+
+// issueFromRow converts a managed, non-PR row. A row without a usable ID or number cannot be addressed, so it
+// is emitted with ID 0 and the reader reports it as an Attention item instead of failing the page. A row
+// without a usable author is emitted with a problem marker.
+func (a *Adapter) issueFromRow(repo core.RepoID, v issueJSON) core.Issue {
+	labels := make([]string, 0, len(v.Labels))
+	for _, l := range v.Labels {
+		labels = append(labels, l.Name)
+	}
+	x := core.Issue{Repo: repo, NodeID: v.NodeID, AuthorID: userID(v.User.ID), CreatedAt: v.CreatedAt, Labels: labels, Body: v.Body, Metadata: issueMetadata(v.Body)}
+	if v.ID > 0 && v.Number > 0 {
+		x.ID = core.IssueID(v.ID)
+		a.rememberIssue(repo, x.ID, v.Number)
+	}
+	if v.User.ID <= 0 {
+		x.Problems = append(x.Problems, core.IssueProblemAuthor)
+	}
+	return x
 }
 
 // ListManagedIssues reads a bounded page and only emits a cursor from a validated next Link.
-func (a *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, cursor string) (core.IssuePage, error) {
+func (r *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, cursor string) (core.IssuePage, error) {
 	if repo <= 0 {
 		return core.IssuePage{}, core.ErrInvalidID
 	}
-	basePath, err := a.repositoryPath(ctx, repo)
+	basePath, err := r.a.repositoryPath(ctx, repo)
 	if err != nil {
 		return core.IssuePage{}, err
 	}
 	path := basePath + "/issues?state=all&per_page=100&labels=bonsai%3Amanaged"
+	current := 1
 	if cursor != "" {
-		path, err = decodeCursor(cursor, a.base(), basePath+"/issues")
+		path, current, err = decodeCursor(cursor, r.a.baseURL, basePath+"/issues")
 		if err != nil {
 			return core.IssuePage{}, core.ErrInvalidCursor
 		}
 	}
-	resp, b, e := a.request(ctx, "GET", path, nil)
+	resp, b, e := r.a.request(ctx, "GET", path, nil)
 	if e != nil {
 		return core.IssuePage{}, e
 	}
@@ -365,7 +521,7 @@ func (a *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, c
 	}
 	out := core.IssuePage{Complete: true}
 	for _, v := range rows {
-		if v.PullRequest != nil {
+		if isPullRequest(v.PullRequest) {
 			continue
 		}
 		managed := false
@@ -378,24 +534,13 @@ func (a *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, c
 		if !managed {
 			continue
 		}
-		if v.Number <= 0 || v.ID <= 0 || v.User.ID <= 0 {
-			return core.IssuePage{}, safe(connect.ErrOffline)
-		}
-		a.rememberIssue(repo, core.IssueID(v.ID), v.Number)
-		labels := make([]string, 0, len(v.Labels))
-		for _, l := range v.Labels {
-			labels = append(labels, l.Name)
-		}
-		out.Items = append(out.Items, core.Issue{Repo: repo, ID: core.IssueID(v.ID), NodeID: v.NodeID, AuthorID: strconv.FormatInt(v.User.ID, 10), CreatedAt: v.CreatedAt, Labels: labels, Body: v.Body, Metadata: issueMetadata(v.Body)})
+		out.Items = append(out.Items, r.a.issueFromRow(repo, v))
 	}
-	next, e := nextLinkPath(resp.Header.Get("Link"), a.base(), basePath+"/issues")
+	next, e := nextLinkPath(resp.Header.Get("Link"), r.a.baseURL, basePath+"/issues", current)
 	if e != nil {
 		return core.IssuePage{}, core.ErrInvalidCursor
 	}
 	if next != "" {
-		if len(cursor) > 0 && next == path {
-			return core.IssuePage{}, core.ErrInvalidCursor
-		}
 		out.NextCursor = encodeCursor(next)
 		out.Complete = false
 	}
@@ -417,20 +562,21 @@ type issueJSON struct {
 	PullRequest json.RawMessage `json:"pull_request"`
 }
 
-func (a *IssueReader) GetIssue(ctx context.Context, r core.RepoID, id core.IssueID) (core.Issue, error) {
+// GetIssue reads one Issue. A pull request, or a response whose identity differs from the request, is never
+// returned: the cached number is evicted so a stale mapping cannot keep addressing the wrong object.
+func (r *IssueReader) GetIssue(ctx context.Context, repo core.RepoID, id core.IssueID) (core.Issue, error) {
 	if id <= 0 {
 		return core.Issue{}, core.ErrInvalidID
 	}
-	number, e := a.issueNumber(ctx, r, id)
+	number, e := r.a.issueNumber(ctx, repo, id)
 	if e != nil {
 		return core.Issue{}, e
 	}
-	base, e := a.repositoryPath(ctx, r)
+	base, e := r.a.repositoryPath(ctx, repo)
 	if e != nil {
 		return core.Issue{}, e
 	}
-	resp, b, e := a.request(ctx, "GET", base+"/issues/"+strconv.FormatInt(number, 10), nil)
-	_ = resp
+	_, b, e := r.a.request(ctx, "GET", base+"/issues/"+strconv.FormatInt(number, 10), nil)
 	if e != nil {
 		return core.Issue{}, e
 	}
@@ -438,12 +584,15 @@ func (a *IssueReader) GetIssue(ctx context.Context, r core.RepoID, id core.Issue
 	if json.Unmarshal(b, &v) != nil || v.ID <= 0 {
 		return core.Issue{}, safe(connect.ErrOffline)
 	}
-	x := core.Issue{Repo: r, ID: core.IssueID(v.ID), NodeID: v.NodeID, AuthorID: strconv.FormatInt(v.User.ID, 10), CreatedAt: v.CreatedAt, Body: v.Body, Metadata: issueMetadata(v.Body)}
-	a.rememberIssue(r, core.IssueID(v.ID), v.Number)
-	for _, l := range v.Labels {
-		x.Labels = append(x.Labels, l.Name)
+	if isPullRequest(v.PullRequest) {
+		r.a.forgetIssue(repo, id)
+		return core.Issue{}, safe(core.ErrNotFound)
 	}
-	return x, nil
+	if core.IssueID(v.ID) != id || v.Number != number {
+		r.a.forgetIssue(repo, id)
+		return core.Issue{}, safe(core.ErrNotFound)
+	}
+	return r.a.issueFromRow(repo, v), nil
 }
 
 // issueMetadata reads only the bounded, first-line canonical projection; arbitrary body text is never decoded as metadata.
@@ -461,19 +610,23 @@ func issueMetadata(body string) []byte {
 	}
 	return b
 }
-func (a *IssueReader) ListComments(ctx context.Context, r core.RepoID, id core.IssueID) ([]core.IssueComment, error) {
+
+// ListComments reads the full comment log. More than core.MaxComments comments fails with
+// core.ErrTooManyComments; the log is never silently truncated into a verifiable one.
+func (r *IssueReader) ListComments(ctx context.Context, repo core.RepoID, id core.IssueID) ([]core.IssueComment, error) {
 	var all []core.IssueComment
-	number, e := a.issueNumber(ctx, r, id)
+	number, e := r.a.issueNumber(ctx, repo, id)
 	if e != nil {
 		return nil, e
 	}
-	base, e := a.repositoryPath(ctx, r)
+	base, e := r.a.repositoryPath(ctx, repo)
 	if e != nil {
 		return nil, e
 	}
-	path := base + "/issues/" + strconv.FormatInt(number, 10) + "/comments?per_page=100"
-	for i := 0; i < maxPages; i++ {
-		resp, b, e := a.request(ctx, "GET", path, nil)
+	commentsPath := base + "/issues/" + strconv.FormatInt(number, 10) + "/comments"
+	path := commentsPath + "?per_page=100"
+	for page := 1; page <= maxPages; page++ {
+		resp, b, e := r.a.request(ctx, "GET", path, nil)
 		if e != nil {
 			return nil, e
 		}
@@ -482,9 +635,12 @@ func (a *IssueReader) ListComments(ctx context.Context, r core.RepoID, id core.I
 			return nil, safe(connect.ErrOffline)
 		}
 		for _, v := range rows {
-			all = append(all, core.IssueComment{ID: v.ID, Author: v.User.Login, AuthorID: strconv.FormatInt(v.User.ID, 10), Body: v.Body, CreatedAt: v.CreatedAt})
+			all = append(all, v.comment())
+			if len(all) > core.MaxComments {
+				return all, core.ErrTooManyComments
+			}
 		}
-		next, e := nextLinkPath(resp.Header.Get("Link"), a.base(), base+"/issues/"+strconv.FormatInt(number, 10)+"/comments")
+		next, e := nextLinkPath(resp.Header.Get("Link"), r.a.baseURL, commentsPath, page)
 		if e != nil {
 			return nil, core.ErrInvalidCursor
 		}
@@ -507,20 +663,23 @@ type commentJSON struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (a *IssueWriter) AppendComment(ctx context.Context, r core.RepoID, id core.IssueID, body string) (core.IssueComment, error) {
+func (c commentJSON) comment() core.IssueComment {
+	return core.IssueComment{ID: c.ID, Author: c.User.Login, AuthorID: userID(c.User.ID), Body: c.Body, CreatedAt: c.CreatedAt}
+}
+
+func (w *IssueWriter) AppendComment(ctx context.Context, repo core.RepoID, id core.IssueID, body string) (core.IssueComment, error) {
 	if len(body) > maxComment {
-		return core.IssueComment{}, errors.New("Garden comment exceeds payload limit")
+		return core.IssueComment{}, core.ErrCommentTooLarge
 	}
-	number, e := a.issueNumber(ctx, r, id)
+	number, e := w.a.issueNumber(ctx, repo, id)
 	if e != nil {
 		return core.IssueComment{}, e
 	}
-	base, e := a.repositoryPath(ctx, r)
+	base, e := w.a.repositoryPath(ctx, repo)
 	if e != nil {
 		return core.IssueComment{}, e
 	}
-	resp, b, e := a.request(ctx, "POST", base+"/issues/"+strconv.FormatInt(number, 10)+"/comments", map[string]string{"body": body})
-	_ = resp
+	_, b, e := w.a.request(ctx, "POST", base+"/issues/"+strconv.FormatInt(number, 10)+"/comments", map[string]string{"body": body})
 	if e != nil {
 		return core.IssueComment{}, e
 	}
@@ -528,9 +687,12 @@ func (a *IssueWriter) AppendComment(ctx context.Context, r core.RepoID, id core.
 	if json.Unmarshal(b, &v) != nil || v.ID <= 0 {
 		return core.IssueComment{}, safe(connect.ErrOffline)
 	}
-	return core.IssueComment{ID: v.ID, Author: v.User.Login, AuthorID: strconv.FormatInt(v.User.ID, 10), Body: v.Body, CreatedAt: v.CreatedAt}, nil
+	return v.comment(), nil
 }
-func (a *IssueWriter) UpdateLabels(ctx context.Context, r core.RepoID, id core.IssueID, labels []string) error {
+
+// UpdateLabels reconciles only bonsai: labels. It reads the Issue first through GetIssue, which rejects
+// pull requests, so no label write can reach a PR.
+func (w *IssueWriter) UpdateLabels(ctx context.Context, repo core.RepoID, id core.IssueID, labels []string) error {
 	desired := map[string]bool{}
 	for _, label := range labels {
 		if !strings.HasPrefix(strings.ToLower(label), "bonsai:") {
@@ -538,21 +700,21 @@ func (a *IssueWriter) UpdateLabels(ctx context.Context, r core.RepoID, id core.I
 		}
 		desired[label] = true
 	}
-	current, err := (&IssueReader{Adapter: a.Adapter}).GetIssue(ctx, r, id)
+	current, err := w.a.Reader().GetIssue(ctx, repo, id)
 	if err != nil {
 		return err
 	}
-	number, err := a.issueNumber(ctx, r, id)
+	number, err := w.a.issueNumber(ctx, repo, id)
 	if err != nil {
 		return err
 	}
-	base, err := a.repositoryPath(ctx, r)
+	base, err := w.a.repositoryPath(ctx, repo)
 	if err != nil {
 		return err
 	}
 	for _, label := range current.Labels {
 		if strings.HasPrefix(strings.ToLower(label), "bonsai:") && !desired[label] {
-			_, _, err = a.request(ctx, "DELETE", base+"/issues/"+strconv.FormatInt(number, 10)+"/labels/"+url.PathEscape(label), nil)
+			_, _, err = w.a.request(ctx, "DELETE", base+"/issues/"+strconv.FormatInt(number, 10)+"/labels/"+url.PathEscape(label), nil)
 			if err != nil {
 				return err
 			}
@@ -567,7 +729,7 @@ func (a *IssueWriter) UpdateLabels(ctx context.Context, r core.RepoID, id core.I
 			}
 		}
 		if !found {
-			_, _, err = a.request(ctx, "POST", base+"/issues/"+strconv.FormatInt(number, 10)+"/labels", map[string][]string{"labels": {label}})
+			_, _, err = w.a.request(ctx, "POST", base+"/issues/"+strconv.FormatInt(number, 10)+"/labels", map[string][]string{"labels": {label}})
 			if err != nil {
 				return err
 			}
@@ -577,20 +739,22 @@ func (a *IssueWriter) UpdateLabels(ctx context.Context, r core.RepoID, id core.I
 }
 
 func encodeCursor(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
-func decodeCursor(c, base, expectedPath string) (string, error) {
+
+// decodeCursor validates a cursor this adapter minted and returns the request path plus its page number.
+func decodeCursor(c, base, expectedPath string) (string, int, error) {
 	b, e := base64.RawURLEncoding.DecodeString(c)
 	if e != nil {
-		return "", e
+		return "", 0, e
 	}
 	u, e := url.Parse(string(b))
 	if e != nil {
-		return "", e
+		return "", 0, e
 	}
 	page, pe := strconv.Atoi(u.Query().Get("page"))
 	if u.Scheme != "https" || !strings.EqualFold(u.Host, mustURL(base).Host) || u.User != nil || u.Path != expectedPath || !validIssueQuery(u.Query(), page) || pe != nil || page < 2 || page > maxPages {
-		return "", errors.New("invalid")
+		return "", 0, errors.New("invalid")
 	}
-	return u.RequestURI(), nil
+	return u.RequestURI(), page, nil
 }
 func mustURL(s string) *url.URL { u, _ := url.Parse(s); return u }
 func validListQuery(q url.Values, page int) bool {
@@ -618,28 +782,120 @@ func validIssueQuery(q url.Values, page int) bool {
 	}
 	return true
 }
-func nextLinkPath(h, base, expectedPath string) (string, error) {
-	for _, part := range strings.Split(h, ",") {
-		bits := strings.Split(part, ";")
-		if len(bits) < 2 || !strings.Contains(bits[1], `rel="next"`) {
-			continue
-		}
-		raw := strings.Trim(strings.TrimSpace(bits[0]), "<>")
-		u, e := url.Parse(raw)
-		if e != nil {
-			return "", e
-		}
-		b := mustURL(base)
-		if !u.IsAbs() {
-			u = b.ResolveReference(u)
-		}
-		page, pe := strconv.Atoi(u.Query().Get("page"))
-		if u.Scheme != "https" || !strings.EqualFold(u.Host, b.Host) || u.User != nil || u.Path != expectedPath || u.RawQuery == "" || pe != nil || page < 2 || page > maxPages || (strings.HasSuffix(expectedPath, "/issues") && !validListQuery(u.Query(), page)) {
-			return "", errors.New("hostile link")
-		}
-		return u.String(), nil
+
+var errBadLink = errors.New("invalid link header")
+
+// link is one parsed Link header entry.
+type link struct {
+	target string
+	rels   []string
+}
+
+// parseLinks parses an RFC 8288 Link header. Commas and semicolons inside <...> or quoted strings do not
+// split entries. Any malformed input fails closed, so a corrupt header can never be read as "no next page".
+func parseLinks(h string) ([]link, error) {
+	if len(h) > maxLinkHeader {
+		return nil, errBadLink
 	}
-	return "", nil
+	var out []link
+	s := strings.TrimSpace(h)
+	for s != "" {
+		if s[0] != '<' {
+			return nil, errBadLink
+		}
+		end := strings.IndexByte(s, '>')
+		if end < 0 {
+			return nil, errBadLink
+		}
+		l := link{target: s[1:end]}
+		s = s[end+1:]
+		for {
+			s = strings.TrimLeft(s, " \t")
+			if s == "" {
+				break
+			}
+			if s[0] == ',' {
+				s = strings.TrimLeft(s[1:], " \t")
+				break
+			}
+			if s[0] != ';' {
+				return nil, errBadLink
+			}
+			s = strings.TrimLeft(s[1:], " \t")
+			var key, val string
+			i := strings.IndexAny(s, "=;,")
+			if i < 0 {
+				key, s = s, ""
+			} else {
+				key, s = s[:i], s[i:]
+			}
+			if strings.HasPrefix(s, "=") {
+				s = s[1:]
+				if strings.HasPrefix(s, `"`) {
+					j := 1
+					for ; j < len(s) && s[j] != '"'; j++ {
+						if s[j] == '\\' {
+							j++
+						}
+					}
+					if j >= len(s) {
+						return nil, errBadLink
+					}
+					val, s = s[1:j], s[j+1:]
+				} else {
+					j := strings.IndexAny(s, ";,")
+					if j < 0 {
+						j = len(s)
+					}
+					val, s = strings.TrimSpace(s[:j]), s[j:]
+				}
+			}
+			if strings.EqualFold(strings.TrimSpace(key), "rel") {
+				for _, rel := range strings.Fields(val) {
+					l.rels = append(l.rels, strings.ToLower(rel))
+				}
+			}
+		}
+		out = append(out, l)
+	}
+	return out, nil
+}
+
+// nextLinkPath returns the validated rel="next" URL, or "" when the header has none. The target must stay on
+// the API origin and expected path, and its page must be exactly current+1, so a server can neither loop
+// the reader nor skip pages. More than one next link fails closed.
+func nextLinkPath(h, base, expectedPath string, current int) (string, error) {
+	links, err := parseLinks(h)
+	if err != nil {
+		return "", err
+	}
+	raw := ""
+	for _, l := range links {
+		for _, rel := range l.rels {
+			if rel == "next" {
+				if raw != "" {
+					return "", errBadLink
+				}
+				raw = l.target
+			}
+		}
+	}
+	if raw == "" {
+		return "", nil
+	}
+	u, e := url.Parse(raw)
+	if e != nil {
+		return "", e
+	}
+	b := mustURL(base)
+	if !u.IsAbs() {
+		u = b.ResolveReference(u)
+	}
+	page, pe := strconv.Atoi(u.Query().Get("page"))
+	if u.Scheme != "https" || !strings.EqualFold(u.Host, b.Host) || u.User != nil || u.Path != expectedPath || u.RawQuery == "" || pe != nil || page != current+1 || page > maxPages || (strings.HasSuffix(expectedPath, "/issues") && !validListQuery(u.Query(), page)) {
+		return "", errors.New("hostile link")
+	}
+	return u.String(), nil
 }
 
 var _ core.IssueReader = (*IssueReader)(nil)
@@ -655,7 +911,7 @@ func (a *Adapter) ListLabels(ctx context.Context, r core.RepoID) ([]connect.Labe
 		return nil, err
 	}
 	path := base + "/labels?per_page=100"
-	for i := 0; i < maxPages; i++ {
+	for page := 1; page <= maxPages; page++ {
 		resp, b, e := a.request(ctx, "GET", path, nil)
 		if e != nil {
 			return nil, e
@@ -667,7 +923,7 @@ func (a *Adapter) ListLabels(ctx context.Context, r core.RepoID) ([]connect.Labe
 		for _, x := range rows {
 			out = append(out, connect.Label{Name: x.Name, Color: x.Color, Description: x.Description})
 		}
-		next, e := nextLinkPath(resp.Header.Get("Link"), a.base(), base+"/labels")
+		next, e := nextLinkPath(resp.Header.Get("Link"), a.baseURL, base+"/labels", page)
 		if e != nil {
 			return nil, core.ErrInvalidCursor
 		}
@@ -677,7 +933,7 @@ func (a *Adapter) ListLabels(ctx context.Context, r core.RepoID) ([]connect.Labe
 		nextURL, _ := url.Parse(next)
 		path = nextURL.RequestURI()
 	}
-	return nil, core.ErrTooManyComments
+	return nil, safe(ErrTruncated)
 }
 
 // CreateLabel creates a label and never modifies or deletes an existing label.
@@ -702,20 +958,31 @@ func (a *Adapter) CreateLabel(ctx context.Context, r core.RepoID, l connect.Labe
 	return e
 }
 
-// ListProjects observes the viewer's Projects V2 with fields and creator identity.
+// projectsQuery pages the viewer's Projects; pageInfo lets the caller refuse a truncated list.
+const projectsQuery = `query GardenProjects($after:String) { viewer { projectsV2(first:100, after:$after) { pageInfo { hasNextPage endCursor } nodes { id title number shortDescription creator { login } fields(first:100) { pageInfo { hasNextPage } nodes { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name options { id name } } } } } } } }`
+
+// ListProjects observes the viewer's Projects V2 with fields and creator identity. It pages up to
+// maxProjectPages and fails closed with ErrTruncated when Projects or a Project's fields remain unread, so
+// an absent same-name Project is never concluded from a partial list. Item values (IssueFields) are not
+// read by this phase.
 func (a *Adapter) ListProjects(ctx context.Context, _ core.RepoID) ([]core.Project, error) {
-	const q = `query GardenProjects { viewer { projectsV2(first:100) { nodes { id title number shortDescription creator { login } fields(first:100) { nodes { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name options { id name } } } } } } } }`
+	type pageInfo struct {
+		HasNextPage bool   `json:"hasNextPage"`
+		EndCursor   string `json:"endCursor"`
+	}
 	var d struct {
 		Viewer struct {
 			Projects struct {
-				Nodes []struct {
+				PageInfo pageInfo `json:"pageInfo"`
+				Nodes    []struct {
 					ID, Title, ShortDescription string
 					Number                      int
 					Creator                     *struct {
 						Login string `json:"login"`
 					} `json:"creator"`
 					Fields struct {
-						Nodes []struct {
+						PageInfo pageInfo `json:"pageInfo"`
+						Nodes    []struct {
 							ID, Name string
 							Options  []struct{ Name string } `json:"options"`
 						} `json:"nodes"`
@@ -724,29 +991,44 @@ func (a *Adapter) ListProjects(ctx context.Context, _ core.RepoID) ([]core.Proje
 			} `json:"projectsV2"`
 		} `json:"viewer"`
 	}
-	h, e := a.graphql(ctx, q, map[string]any{}, &d, "read:project")
-	if e != nil {
-		return nil, e
-	}
-	if known, ok := projectScope(h, "read:project"); known && !ok {
-		return nil, connect.ErrScopeMissing{Scope: "read:project"}
-	}
 	out := []core.Project{}
-	for _, p := range d.Viewer.Projects.Nodes {
-		x := core.Project{ID: p.ID, Name: p.Title, Number: strconv.Itoa(p.Number), Description: p.ShortDescription}
-		if p.Creator != nil {
-			x.CreatorLogin = p.Creator.Login
+	var after any
+	for i := 0; i < maxProjectPages; i++ {
+		d.Viewer.Projects.Nodes = nil
+		d.Viewer.Projects.PageInfo = pageInfo{}
+		h, e := a.graphql(ctx, projectsQuery, map[string]any{"after": after}, &d, "read:project")
+		if e != nil {
+			return nil, e
 		}
-		for _, f := range p.Fields.Nodes {
-			pf := core.ProjectField{ID: f.ID, Name: f.Name}
-			for _, o := range f.Options {
-				pf.Values = append(pf.Values, o.Name)
+		if known, ok := projectScope(h, "read:project"); known && !ok {
+			return nil, connect.ErrScopeMissing{Scope: "read:project"}
+		}
+		for _, p := range d.Viewer.Projects.Nodes {
+			if p.Fields.PageInfo.HasNextPage {
+				return nil, safe(ErrTruncated)
 			}
-			x.Fields = append(x.Fields, pf)
+			x := core.Project{ID: p.ID, Name: p.Title, Number: strconv.Itoa(p.Number), Description: p.ShortDescription}
+			if p.Creator != nil {
+				x.CreatorLogin = p.Creator.Login
+			}
+			for _, f := range p.Fields.Nodes {
+				pf := core.ProjectField{ID: f.ID, Name: f.Name}
+				for _, o := range f.Options {
+					pf.Values = append(pf.Values, o.Name)
+				}
+				x.Fields = append(x.Fields, pf)
+			}
+			out = append(out, x)
 		}
-		out = append(out, x)
+		if !d.Viewer.Projects.PageInfo.HasNextPage {
+			return out, nil
+		}
+		if d.Viewer.Projects.PageInfo.EndCursor == "" {
+			return nil, safe(ErrTruncated)
+		}
+		after = d.Viewer.Projects.PageInfo.EndCursor
 	}
-	return out, nil
+	return nil, safe(ErrTruncated)
 }
 
 // EnsureProject creates a Project V2. Existing projects are only observed by ListProjects.
@@ -754,7 +1036,8 @@ func (a *Adapter) EnsureProject(ctx context.Context, r core.RepoID, name string)
 	return a.ensureProject(ctx, r, name, "")
 }
 
-// EnsureProjectWithMarker creates a Project carrying the local operation marker in its description.
+// EnsureProjectWithMarker creates a Project carrying the local operation marker in its description. It is
+// part of connect's OperationProjects port.
 func (a *Adapter) EnsureProjectWithMarker(ctx context.Context, r core.RepoID, name, marker string) (core.Project, error) {
 	return a.ensureProject(ctx, r, name, marker)
 }
@@ -768,14 +1051,10 @@ func (a *Adapter) ensureProject(ctx context.Context, r core.RepoID, name, marker
 			return p, nil
 		}
 	}
-	base, ownerErr := a.repositoryPath(ctx, r)
-	if ownerErr != nil {
+	if _, ownerErr := a.repositoryPath(ctx, r); ownerErr != nil {
 		return core.Project{}, ownerErr
 	}
-	_ = base
-	a.mu.RLock()
-	ownerData := a.repositories[r]
-	a.mu.RUnlock()
+	ownerData, _ := a.repository(r)
 	if ownerData.Owner.NodeID == "" || ownerData.NodeID == "" {
 		return core.Project{}, safe(connect.ErrOffline)
 	}
@@ -866,8 +1145,8 @@ func (a *Adapter) graphql(ctx context.Context, q string, vars any, out any, requ
 		return nil, e
 	}
 	var env struct {
-		Data   json.RawMessage   `json:"data"`
-		Errors []json.RawMessage `json:"errors"`
+		Data   json.RawMessage `json:"data"`
+		Errors []graphqlErr    `json:"errors"`
 	}
 	if json.Unmarshal(b, &env) != nil {
 		return nil, safe(connect.ErrOffline)
@@ -877,15 +1156,50 @@ func (a *Adapter) graphql(ctx context.Context, q string, vars any, out any, requ
 		if known && !ok {
 			return resp.Header, connect.ErrScopeMissing{Scope: required}
 		}
-		return resp.Header, safe(connect.ErrOffline)
+		return resp.Header, a.graphqlError(resp.Header, env.Errors, required)
 	}
 	if len(env.Data) == 0 || string(env.Data) == "null" {
-		return resp.Header, safe(connect.ErrOffline)
+		return resp.Header, safe(core.ErrGraphQL)
 	}
 	if json.Unmarshal(env.Data, out) != nil {
 		return resp.Header, safe(connect.ErrOffline)
 	}
 	return resp.Header, nil
+}
+
+type graphqlErr struct {
+	Type string `json:"type"`
+}
+
+// graphqlError maps errors[].type to a typed error. Every type string below is UNVERIFIED against primary
+// GitHub documentation (see the contract); mapping is by exact string and unknown or missing types become
+// the generic core.ErrGraphQL, never ErrOffline. An absent scopes header alone never implies a missing scope.
+// When several entries disagree the most specific wins: scope, rate limit, forbidden, not found.
+func (a *Adapter) graphqlError(h http.Header, errs []graphqlErr, required string) error {
+	var scope, rate, forbidden, notFound bool
+	for _, ge := range errs {
+		switch ge.Type {
+		case "INSUFFICIENT_SCOPES":
+			scope = true
+		case "RATE_LIMITED":
+			rate = true
+		case "FORBIDDEN":
+			forbidden = true
+		case "NOT_FOUND":
+			notFound = true
+		}
+	}
+	switch {
+	case scope:
+		return connect.ErrScopeMissing{Scope: required}
+	case rate:
+		return rateLimited(retryAfter(h, a.clock()))
+	case forbidden:
+		return safe(core.ErrForbidden)
+	case notFound:
+		return safe(core.ErrNotFound)
+	}
+	return safe(core.ErrGraphQL)
 }
 func projectScope(h http.Header, required string) (bool, bool) {
 	raw := h.Get("X-OAuth-Scopes")
