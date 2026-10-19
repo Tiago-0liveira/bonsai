@@ -3,7 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -302,9 +302,13 @@ func TestPaneHiddenViewMatchesNoAccounts(t *testing.T) {
 func (e *agentsEnv) leftColumn() string {
 	leftW, _, _ := e.m.dims()
 	var out []string
+	// The symlink-resolved root: os.TempDir() differs from it on macOS
+	// (/var -> /private/var) and Windows (8.3 short names).
+	root := filepath.Dir(e.repo)
 	for _, l := range strings.Split(e.m.View(), "\n") {
 		l = ansi.Strip(ansi.Truncate(l, leftW, ""))
-		if strings.Contains(l, os.TempDir()) {
+		// The pane truncates long paths, so the root may be cut short.
+		if p := strings.Trim(l, "│ …"); len(p) > 3 && (strings.HasPrefix(p, root) || strings.HasPrefix(root, p)) {
 			// Worktree paths are per-run temp dirs.
 			l = "│  <path>" + strings.Repeat(" ", max(leftW-ansi.StringWidth("│  <path>")-1, 0)) + "│"
 		}
