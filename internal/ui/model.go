@@ -218,6 +218,12 @@ type Model struct {
 	// agents is the live agent session index; zero when no backend is injected.
 	agents agentState
 
+	// layoutKind picks the legacy TUI or the redesign preview shell; workspace
+	// and shellFocus only matter for the latter and live in memory only.
+	layoutKind Layout
+	workspace  workspace
+	shellFocus shellFocus
+
 	// Layout / status.
 	width, height int
 	focus         focusArea
@@ -331,6 +337,11 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
+	// The preview shell has empty bodies, so it loads nothing: no worktrees,
+	// GitHub, agents, usage or update checks.
+	if m.layoutKind == LayoutRedesign {
+		return nil
+	}
 	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs(), m.initAgents())
 }
 

@@ -237,6 +237,39 @@ bonsai's own drawing to ASCII: provider glyphs (`C X A`), the waiting mark (`?`)
 (`*` running, `+` exited, `x` failed), rules, hint rows and agent overlay borders.
 It does not touch the agent's terminal output or the status-bar separators.
 
+### Redesign preview (`--tui-layout redesign`)
+
+An opt-in preview of the redesigned TUI. It is only the outer shell: a header
+with the Garden, Playground, Worktrees, Accounts and Settings tabs, a footer with
+the current workspace, focus, key hints and status, and an **empty body** for
+every workspace. It loads no worktrees, GitHub data, agents or usage, and the
+selected tab is not remembered between runs. The default stays the current TUI
+(`--tui-layout legacy`).
+
+```sh
+bonsai --tui-layout redesign                  # preview shell
+bonsai --config ci.yaml --tui-layout=redesign # with the existing --config; either order
+```
+
+The flag takes `legacy` or `redesign` (also as `--tui-layout=<value>`), must come
+before any subcommand, and is rejected with one (like `--config`). Any other
+value exits with an error before the TUI starts. The terminal must be at least
+64x10; below that the preview shows a resize notice.
+
+| Key | Action |
+|-----|--------|
+| `←`/`→` or `h`/`l` | Previous / next workspace |
+| `tab` / `shift+tab` | Next / previous workspace (the `focus_next` / `focus_prev` bindings) |
+| `alt+1` to `alt+5` | Jump to a workspace (bare digits stay reserved for agent sessions) |
+| `ctrl+k` | Command palette: "Go to <workspace>" only |
+| `?` | Keys that work in the preview |
+| `q` / `ctrl+c` | Quit (outside the palette and help dialogs; inside them `esc` closes the dialog) |
+
+The footer shows the effective keys, so `keys:` overrides for the palette, help,
+quit and tab actions are reflected. The `ascii` glyph preference keeps all tab
+labels and swaps their icons for ASCII. The icons ♧ ▣ ⌘ ◎ ⚙ may render two cells wide in some terminals, which misaligns the header; the ASCII glyph preference is the workaround. Theme presets and `theme.overrides` gain
+four roles for the shell: `background`, `surface`, `raised` and `muted`.
+
 ## CLI
 
 Any argument runs a subcommand instead of the TUI. `bonsai help` prints the full

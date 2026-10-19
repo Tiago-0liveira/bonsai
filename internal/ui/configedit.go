@@ -89,7 +89,12 @@ var configSettings = []configSetting{
 var themeRoles = []string{
 	"accent", "border_focus", "border", "dim", "text",
 	"success", "danger", "warning", "pr_badge",
+	"background" + redesignRoleNote, "surface" + redesignRoleNote, "raised" + redesignRoleNote, "muted" + redesignRoleNote,
 }
+
+// redesignRoleNote marks roles only the --tui-layout redesign preview reads;
+// onConfigChoice strips it from the picked value.
+const redesignRoleNote = " (redesign preview)"
 
 // Picker-entry sentinels for map/list settings.
 const (
@@ -285,6 +290,9 @@ func (m Model) onConfigChoice(value string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	s := *m.pendingCfg
+	if s.key == "theme.overrides" {
+		value = strings.TrimSuffix(value, redesignRoleNote)
+	}
 
 	// Removal of an existing entry (map settings).
 	if rest, ok := strings.CutPrefix(value, cfgRemovePrefix); ok {

@@ -119,6 +119,10 @@ bonsai agent account add claude work   # then start an agent from any worktree
 
 For scripts: `bonsai web --no-open --no-setup`.
 
+Preview of the TUI redesign (shell only: tabs and footer, empty workspaces; the
+default stays the current TUI): `bonsai --tui-layout redesign`, see
+[docs/tui-cli.md](docs/tui-cli.md#redesign-preview---tui-layout-redesign).
+
 ## CLI cheat sheet
 
 ```sh

@@ -29,6 +29,9 @@ import (
 // Update routes messages: layout, data results, the process tick, an active
 // modal, or global keys.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.layoutKind == LayoutRedesign {
+		return m.shellUpdate(msg)
+	}
 	nm, cmd := m.update(msg)
 	// Every update can change what the Agents tab shows, so the live view is
 	// reconciled here rather than at each place that changes the selection.

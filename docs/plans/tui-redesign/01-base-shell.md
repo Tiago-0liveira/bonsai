@@ -1,6 +1,6 @@
 # Plan 01 — Base shell only
 
-Status: not started. Prerequisite: [baseline and shared rules](README.md).
+Status: implemented. Prerequisite: [baseline and shared rules](README.md).
 Next: [02 — Settings](02-settings.md).
 
 ## Deliverable
@@ -58,13 +58,23 @@ These are inspected baseline paths, not a mandate to touch every file.
 
 ## Exit criteria and verification
 
-- [ ] The preview contains exactly the requested shell; all five bodies are empty.
-- [ ] All tabs can be selected without triggering domain work.
-- [ ] Resize, ASCII and every installed theme keep chrome inside the viewport.
-- [ ] Focus and key-routing tests cover tab changes and modal precedence.
-- [ ] Legacy startup and existing CLI subcommands still behave as before.
-- [ ] Existing UI tests plus relevant root-entry tests pass; full Go checks pass.
-- [ ] `README.md` and `docs/tui-cli.md` explain the opt-in preview truthfully.
+- [x] The preview contains exactly the requested shell; all five bodies are empty.
+- [x] All tabs can be selected without triggering domain work.
+- [x] Resize, ASCII and every installed theme keep chrome inside the viewport.
+- [x] Focus and key-routing tests cover tab changes and modal precedence.
+- [x] Legacy startup and existing CLI subcommands still behave as before.
+- [x] Existing UI tests plus relevant root-entry tests pass; full Go checks pass.
+- [x] `README.md` and `docs/tui-cli.md` explain the opt-in preview truthfully.
 
-Completion record: implementation commit, focused/full checks and three-size demo
-evidence to be filled in after implementation.
+Completion record:
+
+- Implementation commit: `feat(tui): add opt-in redesign base shell` on `feat/tui-redesign`.
+- Entry: `bonsai --tui-layout <legacy|redesign>` parsed by `parseRootArgs` in
+  `main.go`; `ui.WithLayout`, shell in `internal/ui/shell.go` and
+  `shell_view.go`; palette roles `background`, `surface`, `raised`, `muted`.
+- Keys: left/right and h/l, tab/shift+tab (`focus_next`/`focus_prev`), alt+1..5,
+  ctrl+k (workspace palette), `?`, q/ctrl+c. Bare digits and `g` untouched.
+- Checks run: gofmt, `go vet ./...`, `go build ./...`, `GOOS=windows go build
+  ./...`, `go test ./internal/ui/... ./internal/core/config/... .`.
+- Demo: 80x24, 120x35 and 160x48 renders were produced by a throwaway test, not
+  a real terminal; no interactive terminal session was run.

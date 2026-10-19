@@ -28,7 +28,7 @@ starting the next numbered plan. Do not implement later phases opportunistically
 
 | Order | Plan | Reviewable result | Dependency | Status |
 |---|---|---|---|---|
-| 01 | [Base shell](01-base-shell.md) | Background, five-tab selector, footer, empty body | Baseline | Not started |
+| 01 | [Base shell](01-base-shell.md) | Background, five-tab selector, footer, empty body | Baseline | Implemented |
 | 02 | [Settings](02-settings.md) | Real preferences in clear nested sections | 01 | Not started |
 | 03 | [Accounts](03-accounts.md) | Profiles, usage, defaults and existing account flows | 02 | Not started |
 | 04 | [Garden foundations](04-garden-foundations.md) | Canonical Issue contract, connection/setup and safe reads | 03 | Not started |

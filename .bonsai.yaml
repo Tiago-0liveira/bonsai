@@ -36,7 +36,8 @@ editor: ""
 # ── Color theme ──────────────────────────────────────────────────────────────
 # preset: one of bonsai (default) / sakura / dracula / nord / mono.
 # overrides: per-role color (256-index like "212" or hex like "#ff5555").
-#   roles: accent, border, border_focus, dim, text, success, danger, warning, pr_badge
+#   roles: accent, border, border_focus, dim, text, success, danger, warning, pr_badge,
+#          background, surface, raised, muted (redesign preview shell)
 theme:
   preset: "bonsai"
   #overrides: 

@@ -37,3 +37,36 @@ func TestResolveOverrides(t *testing.T) {
 		t.Errorf("success changed unexpectedly: %v", p.Success)
 	}
 }
+
+func TestPresetsDefineEveryRole(t *testing.T) {
+	for _, name := range Presets() {
+		p := presets[name]
+		roles := map[string]lipgloss.Color{
+			"accent": p.Accent, "border_focus": p.BorderFocus, "border": p.Border, "dim": p.Dim,
+			"text": p.Text, "success": p.Success, "danger": p.Danger, "warning": p.Warning,
+			"pr_badge": p.PRBadge, "background": p.Background, "surface": p.Surface,
+			"raised": p.Raised, "muted": p.Muted,
+		}
+		for role, c := range roles {
+			if c == "" {
+				t.Errorf("preset %s: role %s is empty", name, role)
+			}
+		}
+		if got := Resolve(name, nil); got != p {
+			t.Errorf("Resolve(%s) differs from the preset", name)
+		}
+	}
+}
+
+func TestSurfaceRoleOverrides(t *testing.T) {
+	p := Resolve("nord", map[string]string{
+		"background": "#010203", "surface": "11", "raised": "12", "muted": "13",
+	})
+	got := []lipgloss.Color{p.Background, p.Surface, p.Raised, p.Muted}
+	want := []lipgloss.Color{"#010203", "11", "12", "13"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("override %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
