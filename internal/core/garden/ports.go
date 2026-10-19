@@ -4,12 +4,14 @@ import "context"
 import "time"
 
 type Issue struct {
-	Repo     RepoID
-	ID       IssueID
-	NodeID   string
-	Labels   []string
-	Body     string
-	Metadata []byte
+	Repo      RepoID
+	ID        IssueID
+	NodeID    string
+	AuthorID  string
+	CreatedAt time.Time
+	Labels    []string
+	Body      string
+	Metadata  []byte
 }
 type IssuePage struct {
 	Items      []Issue
@@ -44,9 +46,11 @@ type Project struct {
 	Owner  string
 	// Description carries the operation marker used to adopt remote creates after a crash.
 	Description string
-	// CreatorID is the stable GitHub user ID that created this Project. Verify against GitHub primary docs when the real adapter lands: whether/how a Project exposes its creator.
-	CreatorID string
-	Fields    []ProjectField
+	// CreatorLogin is the display login reported by ProjectV2.creator.
+	CreatorLogin string
+	Fields       []ProjectField
+	// IssueFields is the observed item-value projection keyed by stable Issue ID and field name.
+	IssueFields map[IssueID]map[string]string
 }
 type ProjectField struct {
 	ID     string

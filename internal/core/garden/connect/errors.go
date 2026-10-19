@@ -1,28 +1,35 @@
 // Package connect resolves and persists an opt-in local connection to a remote Garden.
 package connect
 
-import "errors"
+import (
+	"errors"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+)
 
 var (
-	ErrTargetAmbiguous           = errors.New("multiple Garden targets need a choice")
-	ErrNoGitHubRemote            = errors.New("no GitHub remote found")
-	ErrReadOnly                  = errors.New("Garden connection is read-only")
-	ErrAuthRequired              = errors.New("GitHub authentication required")
-	ErrRateLimited               = errors.New("GitHub rate limited")
-	ErrOffline                   = errors.New("GitHub is unavailable offline")
+	ErrTargetAmbiguous = errors.New("multiple Garden targets need a choice")
+	ErrNoGitHubRemote  = errors.New("no GitHub remote found")
+	ErrReadOnly        = errors.New("Garden connection is read-only")
+	ErrAuthRequired    = errors.New("GitHub authentication required")
+	ErrRateLimited     = errors.New("GitHub rate limited")
+	// ErrOffline identifies a source outage without exposing adapter response text.
+	ErrOffline                   = garden.ErrOffline
 	ErrRevision                  = errors.New("Garden associations changed; reload and retry")
 	ErrIdempotency               = errors.New("idempotency key was used for a different request")
 	ErrOperationInProgress       = errors.New("Garden operation already in progress for this local repository")
 	ErrProjectNotFound           = errors.New("selected GitHub Project was not found or is inaccessible")
 	ErrProjectOwner              = errors.New("selected GitHub Project belongs to another owner")
 	ErrProjectConflict           = errors.New("GitHub Project ownership conflict")
-	ErrPermissionDenied          = errors.New("GitHub permission denied")
-	ErrInvalidOperation          = errors.New("invalid or inconsistent Garden operation")
-	ErrUnsupportedSchema   error = compatibleStoreError{"unsupported Garden store schema"}
-	ErrCorruptStore        error = compatibleStoreError{"corrupt Garden store"}
-	ErrOperationNotFound         = errors.New("Garden operation not found")
-	ErrOperationForeign          = errors.New("Garden operation belongs to another local repository")
-	ErrStoreTooLarge             = errors.New("Garden store exceeds size limit")
+	ErrRepositoryIdentityChanged = errors.New("GitHub repository identity changed")
+	ErrGitHubValidation          = errors.New("GitHub rejected the Garden request")
+	// ErrPermissionDenied identifies a repository authorization denial.
+	ErrPermissionDenied        = garden.ErrPermissionDenied
+	ErrInvalidOperation        = errors.New("invalid or inconsistent Garden operation")
+	ErrUnsupportedSchema error = compatibleStoreError{"unsupported Garden store schema"}
+	ErrCorruptStore      error = compatibleStoreError{"corrupt Garden store"}
+	ErrOperationNotFound       = errors.New("Garden operation not found")
+	ErrOperationForeign        = errors.New("Garden operation belongs to another local repository")
+	ErrStoreTooLarge           = errors.New("Garden store exceeds size limit")
 )
 
 // compatibleStoreError retains the early phase-B ErrInvalidOperation classification for callers

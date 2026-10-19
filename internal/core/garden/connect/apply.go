@@ -36,8 +36,8 @@ type SetupPorts struct {
 	Projects          garden.ProjectReader
 	ProjectWrites     garden.ProjectSetupWriter
 	OperationProjects OperationProjectWriter
-	// ViewerID is the authenticated GitHub user's stable ID.
-	ViewerID string
+	// ViewerLogin is the authenticated GitHub login; GitHub exposes no stable creator ID on ProjectV2.
+	ViewerLogin string
 }
 
 // ApplyResult reports durable progress and explicit browser work still required.
@@ -206,14 +206,14 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 				}
 			case CreateProject:
 				for _, pr := range projects {
-					if op.Steps[i].Attempted && verifiedOwnedProject(pr, op, i, repo, ports.ViewerID) {
+					if op.Steps[i].Attempted && verifiedOwnedProject(pr, op, i, repo, ports.ViewerLogin) {
 						op.Steps[i].Status = Done
 					}
 				}
 			case EnsureProjectField:
 				for _, pr := range projects {
 					boundID := s.ProjectID
-					if boundID == "" && opHasCreateAttempt(op) && verifiedOwnedProject(pr, op, createStepIndex(op), repo, ports.ViewerID) {
+					if boundID == "" && opHasCreateAttempt(op) && verifiedOwnedProject(pr, op, createStepIndex(op), repo, ports.ViewerLogin) {
 						boundID = pr.ID
 					}
 					if boundID != "" && pr.ID == boundID && hasField(pr.Fields, s.Field) {
@@ -237,7 +237,7 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 	projectID := ""
 	if resume {
 		for _, pr := range observedProjects {
-			if opHasCreateAttempt(op) && verifiedOwnedProject(pr, op, createStepIndex(op), repo, ports.ViewerID) {
+			if opHasCreateAttempt(op) && verifiedOwnedProject(pr, op, createStepIndex(op), repo, ports.ViewerLogin) {
 				projectID = pr.ID
 				for i, st := range op.Steps {
 					if st.Kind == CreateProject {
@@ -322,7 +322,7 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 				return result, safeError(e)
 			}
 			for _, pr := range projects {
-				if strings.EqualFold(pr.Name, s.ProjectName) && !verifiedOwnedProject(pr, op, i, repo, ports.ViewerID) {
+				if strings.EqualFold(pr.Name, s.ProjectName) && !verifiedOwnedProject(pr, op, i, repo, ports.ViewerLogin) {
 					conflict := Step{Kind: ConflictProject, ProjectName: s.ProjectName, ProjectID: pr.ID, Instructions: "A same-name Project appeared without verifiable ownership. Select it explicitly with ConnectExisting if it is yours."}
 					op.Steps[i].Status = Failed
 					op.Steps[i].ErrorCode = "project-conflict"
@@ -352,7 +352,7 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 				}
 				return failed(ctx, store, op, i, e)
 			}
-			if !verifiedCreatedProject(created, op, i, repo, ports.ViewerID) {
+			if !verifiedCreatedProject(created, op, i, repo, ports.ViewerLogin) {
 				conflict := Step{Kind: ConflictProject, ProjectName: s.ProjectName, ProjectID: created.ID, Instructions: "A same-name Project could not be verified after create. Select it explicitly with ConnectExisting if it is yours."}
 				op.Steps[i].Status = Failed
 				op.Steps[i].ErrorCode = "project-conflict"
@@ -388,7 +388,7 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 			}
 			matched := false
 			for _, pr := range projects {
-				if s.ProjectName != "" && strings.EqualFold(pr.Name, s.ProjectName) && createStepIndex(op) >= 0 && !verifiedOwnedProject(pr, op, createStepIndex(op), repo, ports.ViewerID) {
+				if s.ProjectName != "" && strings.EqualFold(pr.Name, s.ProjectName) && createStepIndex(op) >= 0 && !verifiedOwnedProject(pr, op, createStepIndex(op), repo, ports.ViewerLogin) {
 					op.Steps[i].Status = Failed
 					op.Steps[i].ErrorCode = "project-conflict"
 					conflict := Step{Kind: ConflictProject, ProjectName: s.ProjectName, ProjectID: pr.ID, Instructions: "A same-name Project could not be verified before adding a field. Select it explicitly with ConnectExisting if it is yours."}
@@ -468,14 +468,14 @@ func createStepIndex(op Operation) int {
 	}
 	return -1
 }
-func verifiedOwnedProject(pr garden.Project, op Operation, stepIndex int, repo garden.RepoID, viewerID string) bool {
-	if stepIndex < 0 || stepIndex >= len(op.Steps) || viewerID == "" || op.Steps[stepIndex].Nonce == "" || !op.Steps[stepIndex].Attempted {
+func verifiedOwnedProject(pr garden.Project, op Operation, stepIndex int, repo garden.RepoID, viewerLogin string) bool {
+	if stepIndex < 0 || stepIndex >= len(op.Steps) || viewerLogin == "" || op.Steps[stepIndex].Nonce == "" || !op.Steps[stepIndex].Attempted {
 		return false
 	}
-	return pr.CreatorID == viewerID && pr.Description == projectMarker(op.ID, repo, op.Steps[stepIndex].Nonce)
+	return strings.EqualFold(pr.CreatorLogin, viewerLogin) && pr.Description == projectMarker(op.ID, repo, op.Steps[stepIndex].Nonce)
 }
-func verifiedCreatedProject(pr garden.Project, op Operation, stepIndex int, repo garden.RepoID, viewerID string) bool {
-	return verifiedOwnedProject(pr, op, stepIndex, repo, viewerID) && strings.EqualFold(pr.Name, op.Plan.Steps[stepIndex].ProjectName)
+func verifiedCreatedProject(pr garden.Project, op Operation, stepIndex int, repo garden.RepoID, viewerLogin string) bool {
+	return verifiedOwnedProject(pr, op, stepIndex, repo, viewerLogin) && strings.EqualFold(pr.Name, op.Plan.Steps[stepIndex].ProjectName)
 }
 func opHasCreateAttempt(op Operation) bool {
 	for _, s := range op.Steps {

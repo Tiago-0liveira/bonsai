@@ -18,7 +18,7 @@ type Fake struct {
 	Repositories     map[string]connect.Repository
 	Labels           []connect.Label
 	Projects         []garden.Project
-	ViewerID         string
+	ViewerLogin      string
 	FailAt           int
 	Calls            int
 	Failure          error
@@ -113,7 +113,7 @@ func (f *Fake) EnsureProjectWithMarker(_ context.Context, _ garden.RepoID, name,
 			return p, nil
 		}
 	}
-	p := garden.Project{ID: fmt.Sprintf("project-%d", len(f.Projects)+1), Name: name, Description: marker, CreatorID: f.ViewerID}
+	p := garden.Project{ID: fmt.Sprintf("project-%d", len(f.Projects)+1), Name: name, Description: marker, CreatorLogin: f.ViewerLogin}
 	f.Projects = append(f.Projects, p)
 	if f.FailAfterCreate {
 		return p, errors.New("injected lost local acknowledgement")

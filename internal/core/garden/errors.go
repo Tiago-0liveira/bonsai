@@ -11,5 +11,7 @@ var (
 	ErrNotFound          = errors.New("garden item not found")
 	ErrInvalidCursor     = errors.New("invalid garden cursor")
 	ErrPermissionDenied  = errors.New("garden permission denied")
-	ErrTooManyComments   = errors.New("too many garden comments")
+	// ErrOffline lets read callers distinguish a network outage from malformed data.
+	ErrOffline         = errors.New("garden source unavailable offline")
+	ErrTooManyComments = errors.New("too many garden comments")
 )

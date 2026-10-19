@@ -29,17 +29,19 @@ type RepositoryResolver interface {
 
 // RepositoryByIDResolver supplies display metadata when a fork's parent is a selectable target.
 type RepositoryByIDResolver interface {
-	ResolveRepositoryID(context.Context, garden.RepoID) (Repository, error)
+	ResolveRepositoryID(context.Context, garden.RepoID, string) (Repository, error)
 }
 
 // Repository is the safe subset needed to identify and authorize a Garden.
 type Repository struct {
-	ID           garden.RepoID
-	FullName     string
-	Fork         bool
-	ParentID     garden.RepoID
-	Access       Access
-	ProjectScope bool
+	ID                garden.RepoID
+	FullName          string
+	Fork              bool
+	ParentID          garden.RepoID
+	ParentFullName    string
+	Access            Access
+	ProjectScope      bool
+	ProjectScopeKnown bool
 }
 
 // Candidate couples a local remote with its resolved repository.
@@ -99,9 +101,9 @@ func ResolveTarget(ctx context.Context, remotes RemoteLister, resolver Repositor
 		}
 		addCandidate(Candidate{Remote: r, Repository: c})
 		if c.Fork && c.ParentID != 0 {
-			parent := Repository{ID: c.ParentID, FullName: fmt.Sprintf("parent repository %d", c.ParentID)}
+			parent := Repository{ID: c.ParentID, FullName: c.ParentFullName}
 			if byID, ok := resolver.(RepositoryByIDResolver); ok {
-				resolved, resolveErr := byID.ResolveRepositoryID(ctx, c.ParentID)
+				resolved, resolveErr := byID.ResolveRepositoryID(ctx, c.ParentID, c.ParentFullName)
 				if resolveErr != nil {
 					return Target{}, skipped, safeError(resolveErr)
 				}
@@ -217,12 +219,13 @@ type ProjectRef struct{ ID, Number, Owner string }
 
 // Connection is the local authorization and setup capability for a Garden.
 type Connection struct {
-	Target       Target
-	Access       Access
-	ProjectScope bool
-	Identity     GitHubIdentity
-	// ViewerID is the authenticated GitHub user's stable ID used for Project ownership checks.
-	ViewerID      string
+	Target            Target
+	Access            Access
+	ProjectScope      bool
+	ProjectScopeKnown bool
+	Identity          GitHubIdentity
+	// ViewerLogin is the authenticated GitHub login used for Project ownership checks.
+	ViewerLogin   string
 	ProjectReader garden.ProjectReader
 	ProjectWriter garden.ProjectSetupWriter
 }
@@ -512,6 +515,10 @@ func safeError(err error) error {
 		return ErrOffline
 	case errors.Is(err, ErrPermissionDenied):
 		return ErrPermissionDenied
+	case errors.Is(err, ErrRepositoryIdentityChanged):
+		return ErrRepositoryIdentityChanged
+	case errors.Is(err, ErrGitHubValidation):
+		return ErrGitHubValidation
 	default:
 		var scope ErrScopeMissing
 		if errors.As(err, &scope) {

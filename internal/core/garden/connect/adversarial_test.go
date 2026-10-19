@@ -71,10 +71,13 @@ func (r *testRepoResolver) ResolveRepository(_ context.Context, rem connect.Remo
 	return repo, nil
 }
 
-func (r *testRepoResolver) ResolveRepositoryID(_ context.Context, id garden.RepoID) (connect.Repository, error) {
+func (r *testRepoResolver) ResolveRepositoryID(_ context.Context, id garden.RepoID, fullName string) (connect.Repository, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if repo, ok := r.byID[id]; ok {
+		if !strings.EqualFold(repo.FullName, fullName) {
+			return connect.Repository{}, connect.ErrRepositoryIdentityChanged
+		}
 		return repo, nil
 	}
 	return connect.Repository{}, connect.ErrNoGitHubRemote
@@ -109,7 +112,7 @@ func (p *adversarialPorts) ports() connect.SetupPorts {
 		Projects:          p,
 		ProjectWrites:     p,
 		OperationProjects: p,
-		ViewerID:          "viewer",
+		ViewerLogin:       "viewer",
 	}
 }
 
@@ -182,10 +185,10 @@ func (p *adversarialPorts) EnsureProjectWithMarker(_ context.Context, _ garden.R
 		}
 	}
 	pr := garden.Project{
-		ID:          fmt.Sprintf("proj-%d", len(p.projects)+1),
-		Name:        name,
-		Description: marker,
-		CreatorID:   "viewer",
+		ID:           fmt.Sprintf("proj-%d", len(p.projects)+1),
+		Name:         name,
+		Description:  marker,
+		CreatorLogin: "viewer",
 	}
 	p.projects = append(p.projects, pr)
 	return pr, nil
@@ -312,7 +315,7 @@ func TestTargetResolution_Adversarial(t *testing.T) {
 			{Name: "origin", URL: "https://github.com/user/fork.git"},
 		}
 		resolver := newTestRepoResolver()
-		forkRepo := connect.Repository{ID: 10, FullName: "user/fork", Fork: true, ParentID: 20}
+		forkRepo := connect.Repository{ID: 10, FullName: "user/fork", Fork: true, ParentID: 20, ParentFullName: "upstream/canonical"}
 		resolver.repos["https://github.com/user/fork.git"] = forkRepo
 		resolver.byID[20] = connect.Repository{ID: 20, FullName: "upstream/canonical"}
 
@@ -332,7 +335,7 @@ func TestTargetResolution_Adversarial(t *testing.T) {
 			{Name: "origin", URL: "https://github.com/user/fork.git"},
 		}
 		resolver := newTestRepoResolver()
-		forkRepo := connect.Repository{ID: 10, FullName: "user/fork", Fork: true, ParentID: 20}
+		forkRepo := connect.Repository{ID: 10, FullName: "user/fork", Fork: true, ParentID: 20, ParentFullName: "upstream/canonical"}
 		resolver.repos["https://github.com/user/fork.git"] = forkRepo
 		resolver.byID[20] = connect.Repository{ID: 20, FullName: "upstream/canonical"}
 

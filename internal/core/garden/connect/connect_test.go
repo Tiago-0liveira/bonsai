@@ -174,7 +174,7 @@ func (f *testPorts) EnsureProjectWithMarker(_ context.Context, _ garden.RepoID, 
 		return garden.Project{}, e
 	}
 	if f.raceProject {
-		p := garden.Project{ID: "raced", Name: name, Description: "other writer", CreatorID: "other"}
+		p := garden.Project{ID: "raced", Name: name, Description: "other writer", CreatorLogin: "other"}
 		f.projects = append(f.projects, p)
 		return p, nil
 	}
@@ -183,7 +183,7 @@ func (f *testPorts) EnsureProjectWithMarker(_ context.Context, _ garden.RepoID, 
 			return p, nil
 		}
 	}
-	p := garden.Project{ID: "p1", Name: name, Description: marker, CreatorID: "viewer"}
+	p := garden.Project{ID: "p1", Name: name, Description: marker, CreatorLogin: "viewer"}
 	f.projects = append(f.projects, p)
 	return p, nil
 }
@@ -214,7 +214,7 @@ func (f *testPorts) hit() error {
 	return nil
 }
 func (f *testPorts) ports() SetupPorts {
-	return SetupPorts{Labels: f, LabelWrites: f, Projects: f, ProjectWrites: f, OperationProjects: f, ViewerID: "viewer"}
+	return SetupPorts{Labels: f, LabelWrites: f, Projects: f, ProjectWrites: f, OperationProjects: f, ViewerLogin: "viewer"}
 }
 
 func TestApplyFailureAtEveryStepResumesWithoutDuplicates(t *testing.T) {
@@ -399,7 +399,7 @@ func TestResumeRejectsSpoofedProjectAdoption(t *testing.T) {
 			if err := s.saveOperation(context.Background(), op); err != nil {
 				t.Fatal(err)
 			}
-			f.projects[0].CreatorID = tc.creator
+			f.projects[0].CreatorLogin = tc.creator
 			if tc.marker == "wrong" {
 				f.projects[0].Description = "forged marker"
 			}
@@ -411,6 +411,26 @@ func TestResumeRejectsSpoofedProjectAdoption(t *testing.T) {
 				t.Fatalf("missing explicit selection guidance: %#v", res.Conflicts[0])
 			}
 		})
+	}
+}
+
+func TestResumeAdoptsProjectUsingCaseInsensitiveCreatorLoginAndNonce(t *testing.T) {
+	f := &testPorts{}
+	store := &Store{Path: t.TempDir() + "/store.json"}
+	plan, _ := BuildPlan(Observed{}, Create, Desired{ProjectName: "Garden"})
+	if _, err := Apply(context.Background(), store, "local", 44, AccessWrite, "login-adoption", plan, f.ports()); err != nil {
+		t.Fatal(err)
+	}
+	op, _ := store.Operation(context.Background(), "login-adoption")
+	op.Steps[0].Status = Pending
+	op.Steps[0].Attempted = true
+	if err := store.saveOperation(context.Background(), op); err != nil {
+		t.Fatal(err)
+	}
+	f.projects[0].CreatorLogin = "VIEWER"
+	result, err := Resume(context.Background(), store, "login-adoption", 44, f.ports(), "local", AccessWrite)
+	if err != nil || len(result.Conflicts) != 0 || result.Operation.Steps[0].Status != Done {
+		t.Fatalf("case-insensitive creator login not adopted: %#v %v", result, err)
 	}
 }
 
