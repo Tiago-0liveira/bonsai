@@ -9,6 +9,7 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/git"
+	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
 // FileFor returns the path of the .bonsai.yaml LoadFor would read: the current
@@ -73,7 +74,7 @@ func writeDoc(file string, root *yaml.Node) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
-	if err := os.Rename(tmpName, file); err != nil {
+	if err := gitstore.ReplaceFile(tmpName, file); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil

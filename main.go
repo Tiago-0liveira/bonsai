@@ -12,12 +12,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
@@ -61,6 +64,17 @@ func main() {
 	if len(args) >= 1 && args[0] == "__serve-api" {
 		if err := runServeInternal(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "bonsai:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Hidden: `bonsai __agent-host` holds one agent session (its PTY, terminal
+	// stream and lifecycle) detached from the API that launched it, so the
+	// session survives API restarts and `bonsai web stop`.
+	if len(args) >= 1 && args[0] == "__agent-host" {
+		if err := runAgentHost(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai agent host:", err)
 			os.Exit(1)
 		}
 		return
@@ -236,6 +250,36 @@ func runServeInternal(args []string) error {
 		}
 	}
 	return localapi.Run(cfg)
+}
+
+// runAgentHost serves the session whose spec arrives on stdin. SIGTERM stops
+// the session; the holder exits once it has ended.
+func runAgentHost(args []string) error {
+	fs := flag.NewFlagSet("__agent-host", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	records := fs.String("records", "", "agent host record directory")
+	sockets := fs.String("sockets", "", "agent host socket directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *records == "" || *sockets == "" {
+		return fmt.Errorf("__agent-host requires --records and --sockets")
+	}
+	spec, err := agenthost.ReadSpec(os.Stdin)
+	if err != nil {
+		agenthost.Ready(fmt.Errorf("read agent spec: %w", err))
+		return err
+	}
+	runtime, err := agentruntime.New(nil, nil, nil)
+	if err != nil {
+		agenthost.Ready(err)
+		return err
+	}
+	signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	paths := agenthost.Paths{Records: *records, Sockets: *sockets}
+	return agenthost.Serve(ctx, spec, agenthost.Deps{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Paths: paths}, agenthost.Ready)
 }
 
 func runDevWebhookInternal(args []string) error {

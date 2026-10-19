@@ -37,10 +37,20 @@ type serveStoppedMsg struct {
 	err error
 }
 
+// serveStopGuard lets the stack's owner confirm and carry out X. warning is
+// why X needs a second press, or ""; stop replaces the plain group stop.
+type serveStopGuard struct {
+	warning func() string
+	stop    func() error
+}
+
 type serveTUIModel struct {
 	client  *client.Client
 	groupID string
 	group   *procstore.ServeGroup
+	guard   *serveStopGuard
+	// armed is set after a warned X; the next X stops.
+	armed bool
 
 	cancel context.CancelFunc
 	events <-chan tea.Msg
@@ -56,7 +66,7 @@ type serveTUIModel struct {
 	logClosed bool
 }
 
-func runServeTUI(in io.Reader, out io.Writer, c *client.Client, group *procstore.ServeGroup) error {
+func runServeTUI(in io.Reader, out io.Writer, c *client.Client, group *procstore.ServeGroup, guard *serveStopGuard) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan tea.Msg, 128)
 	go func() {
@@ -78,6 +88,7 @@ func runServeTUI(in io.Reader, out io.Writer, c *client.Client, group *procstore
 		client:   c,
 		groupID:  group.ID,
 		group:    group,
+		guard:    guard,
 		cancel:   cancel,
 		events:   events,
 		selected: -1,
@@ -200,13 +211,27 @@ func (m serveTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		key := msg.String()
+		armed := m.armed
+		m.armed = false
 		switch key {
 		case "q", "ctrl+c":
 			m.cancel()
 			return m, tea.Quit
 		case "X":
+			if m.guard == nil {
+				m.status = "stopping serve group..."
+				return m, serveStopCmd(m.client, m.groupID)
+			}
+			if !armed {
+				if warning := m.guard.warning(); warning != "" {
+					m.armed = true
+					m.status = warning + " Press X again to stop anyway."
+					return m, nil
+				}
+			}
 			m.status = "stopping serve group..."
-			return m, serveStopCmd(m.client, m.groupID)
+			stop := m.guard.stop
+			return m, func() tea.Msg { return serveStoppedMsg{err: stop()} }
 		case "R":
 			m.status = "restarting serve group..."
 			return m, serveRestartCmd(m.client, m.groupID, "")

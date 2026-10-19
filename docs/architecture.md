@@ -26,6 +26,12 @@ Disk warm-start metadata is an explicitly sanitized cache. It creates sequence
 and agent authority is always read afresh. Browser persistence contains approved
 preferences, never credentials, snapshots, terminal output or environment values.
 
+Agent sessions run in one detached holder process per session
+(`bonsai __agent-host`), not inside the API: the holder owns the PTY, terminal
+replay and the session's cleanup, and the API, `bonsai agents` and (through the
+API) the browser are clients of its socket. See
+[development.md](development.md#agent-hosts).
+
 The shell and retained branches remain available while lazy features load.
 Import failures are recoverable with an explicit reload; there is no automatic
 reload loop. Development SSE is an opt-in loopback invalidation path, and product
