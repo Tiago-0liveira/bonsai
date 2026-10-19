@@ -37,9 +37,16 @@ type IssueWriter interface {
 	UpdateLabels(context.Context, RepoID, IssueID, []string) error
 }
 type Project struct {
-	ID     string
-	Name   string
-	Fields []ProjectField
+	ID   string
+	Name string
+	// Number and Owner let setup validate a user-selected Project reference.
+	Number string
+	Owner  string
+	// Description carries the operation marker used to adopt remote creates after a crash.
+	Description string
+	// CreatorID is the stable GitHub user ID that created this Project. Verify against GitHub primary docs when the real adapter lands: whether/how a Project exposes its creator.
+	CreatorID string
+	Fields    []ProjectField
 }
 type ProjectField struct {
 	ID     string

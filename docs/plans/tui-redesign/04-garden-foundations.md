@@ -67,7 +67,14 @@ alone is not a guarantee against concurrent edits.
   bulk-enroll the backlog, or overwrite existing Issue bodies.
 - Persist the remote association via the existing locked/atomic store patterns.
   A partial apply has an operation ID and completed steps; Resume reconciles
-  actual remote state instead of creating duplicate Projects or promising rollback.
+  actual remote state instead of promising rollback. Adoption of a created Project
+  requires its operation marker (including a random nonce persisted only in the
+  local operation), an attempted create, and a creator ID matching the authenticated
+  viewer's stable ID. Verify against GitHub primary docs when the real adapter lands:
+  whether/how a Project exposes its creator. Re-observation immediately before
+  create narrows but cannot eliminate the observe/create race; GitHub has no atomic
+  create-if-absent for Projects or labels (to verify). Duplicates from a lost race
+  are surfaced and never silently deleted.
 - Separate read access from mutation/setup access. A readable connection can be
   read-only. Explain auth/scope failures without logging credentials or triggering
   provider token refresh. Browser-assisted Project view finishing is explicit if

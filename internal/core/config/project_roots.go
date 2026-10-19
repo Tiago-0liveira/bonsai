@@ -43,6 +43,15 @@ func ProjectRootsPath() (string, error) {
 	}
 	return filepath.Join(dir, "bonsai", "project-roots.json"), nil
 }
+
+// GardenAssociationsPath keeps Garden setup state beside other Bonsai config.
+func GardenAssociationsPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-associations.json"), nil
+}
 func CanonicalDirectory(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") || (os.PathSeparator == '\\' && strings.HasPrefix(path, `~\`)) {
 		home, err := os.UserHomeDir()

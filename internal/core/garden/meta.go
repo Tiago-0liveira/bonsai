@@ -149,6 +149,9 @@ func rejectDuplicateKeys(b []byte) error {
 	return nil
 }
 
+// RejectDuplicateJSONKeys exposes the metadata decoder's duplicate-key check for other bounded Garden stores.
+func RejectDuplicateJSONKeys(b []byte) error { return rejectDuplicateKeys(b) }
+
 // DecodeMetadata bounds input and rejects unknown fields and trailing JSON.
 func DecodeMetadata(b []byte) (Metadata, error) {
 	var m Metadata
