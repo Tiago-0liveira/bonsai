@@ -99,6 +99,14 @@ func target(cur Activity, s Signal) (state State, reason Reason, inferred, ok bo
 		}
 		return Working, "", false, true
 	case PermissionRequested:
+		// Generic permission notifications repeat question and plan dialogs
+		// too. Keep their known reason; a named tool request can still replace it.
+		if cur.State == Waiting && s.Detail == "" {
+			switch cur.Reason {
+			case ReasonQuestion, ReasonPlan, ReasonElicitation:
+				return "", "", false, false
+			}
+		}
 		return Waiting, ReasonPermission, false, true
 	case InputRequested, AsyncInputRequested:
 		switch s.Reason {

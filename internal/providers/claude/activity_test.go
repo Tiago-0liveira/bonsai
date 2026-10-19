@@ -37,6 +37,8 @@ func TestTranslateHook(t *testing.T) {
 		{"question answered", "PostToolUse", `{"tool_name":"AskUserQuestion"}`, []sig{{Kind: agentactivity.InputResolved}}},
 		{"plan answered", "PostToolUseFailure", `{"tool_name":"ExitPlanMode"}`, []sig{{Kind: agentactivity.InputResolved}}},
 		{"permission", "PermissionRequest", `{"tool_name":"Bash",` + toolInput + `}`, []sig{{Kind: agentactivity.PermissionRequested, Detail: "Bash"}}},
+		{"question permission hook", "PermissionRequest", `{"tool_name":"AskUserQuestion",` + toolInput + `}`, []sig{{Kind: agentactivity.InputRequested, Reason: agentactivity.ReasonQuestion}}},
+		{"plan permission hook", "PermissionRequest", `{"tool_name":"ExitPlanMode",` + toolInput + `}`, []sig{{Kind: agentactivity.InputRequested, Reason: agentactivity.ReasonPlan}}},
 		{"notification permission", "Notification", `{"notification_type":"permission_prompt","message":"SECRET-MSG"}`, []sig{{Kind: agentactivity.PermissionRequested}}},
 		{"notification idle", "Notification", `{"notification_type":"idle_prompt"}`, []sig{{Kind: agentactivity.TurnCompleted}}},
 		{"notification elicitation", "Notification", `{"notification_type":"elicitation_dialog"}`, []sig{{Kind: agentactivity.InputRequested, Reason: agentactivity.ReasonElicitation}}},

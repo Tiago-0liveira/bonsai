@@ -56,6 +56,11 @@ func TestReduceRules(t *testing.T) {
 		{"permission from working", act(Working, ""), Signal{Kind: PermissionRequested, At: at(20), Source: SourceHook, Detail: "Bash"}, Waiting, ReasonPermission, false, "Bash", true},
 		{"permission from idle", act(Idle, ReasonReady), sig(PermissionRequested, SourceHook, 20), Waiting, ReasonPermission, false, "", true},
 		{"permission classified from terminal", act(Working, ""), sig(PermissionRequested, SourceTerminal, 20), Waiting, ReasonPermission, true, "", true},
+		{"generic permission keeps question", act(Waiting, ReasonQuestion), sig(PermissionRequested, SourceHook, 20), Waiting, ReasonQuestion, false, "", false},
+		{"generic permission keeps plan", act(Waiting, ReasonPlan), sig(PermissionRequested, SourceHook, 20), Waiting, ReasonPlan, false, "", false},
+		{"generic permission keeps elicitation", act(Waiting, ReasonElicitation), sig(PermissionRequested, SourceHook, 20), Waiting, ReasonElicitation, false, "", false},
+		{"generic permission keeps permission", act(Waiting, ReasonPermission), sig(PermissionRequested, SourceHook, 20), Waiting, ReasonPermission, false, "", false},
+		{"named permission replaces question", act(Waiting, ReasonQuestion), Signal{Kind: PermissionRequested, At: at(20), Source: SourceHook, Detail: "Bash"}, Waiting, ReasonPermission, false, "Bash", true},
 
 		{"input requested question", act(Working, ""), Signal{Kind: InputRequested, At: at(20), Source: SourceHook, Reason: ReasonQuestion}, Waiting, ReasonQuestion, false, "", true},
 		{"input requested plan", act(Working, ""), Signal{Kind: InputRequested, At: at(20), Source: SourceHook, Reason: ReasonPlan}, Waiting, ReasonPlan, false, "", true},

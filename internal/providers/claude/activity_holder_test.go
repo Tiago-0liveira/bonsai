@@ -158,9 +158,21 @@ func TestClaudeHooksDriveActivityThroughHolder(t *testing.T) {
 		t.Fatalf("record while waiting: %+v %v", r.Summary.Activity, err)
 	}
 	hookLine("PostToolUse", `{"tool_name":"Bash","tool_response":{"stdout":"SECRET-OUTPUT"}}`, agentactivity.Working)
+	// Claude emits permission hooks and generic permission notifications for
+	// these input dialogs too; neither should replace the question or plan.
+	for _, tool := range []string{"AskUserQuestion", "ExitPlanMode"} {
+		hookLine("PreToolUse", `{"tool_name":"`+tool+`","tool_input":{"prompt":"SECRET-QUESTION"}}`, agentactivity.Waiting)
+		hookLine("PermissionRequest", `{"tool_name":"`+tool+`","tool_input":{"prompt":"SECRET-QUESTION"}}`, agentactivity.Waiting)
+		hookLine("Notification", `{"notification_type":"permission_prompt","message":"SECRET-NOTIFICATION"}`, agentactivity.Waiting)
+		hookLine("PostToolUse", `{"tool_name":"`+tool+`","tool_response":"SECRET-ANSWER"}`, agentactivity.Working)
+	}
+	// A real tool permission prompt still reports permission after a question.
+	hookLine("PermissionRequest", `{"tool_name":"Bash","tool_input":{"command":"SECRET-COMMAND"}}`, agentactivity.Waiting)
+	hookLine("Notification", `{"notification_type":"permission_prompt","message":"SECRET-NOTIFICATION"}`, agentactivity.Waiting)
+	hookLine("PostToolUse", `{"tool_name":"Bash","tool_response":"SECRET-OUTPUT"}`, agentactivity.Working)
 	hookLine("Stop", `{"last_assistant_message":"SECRET-REPLY"}`, agentactivity.Idle)
 
-	if want := []string{"idle/ready", "working", "waiting/permission", "working", "idle/turn_complete"}; !reflect.DeepEqual(trail.trail, want) {
+	if want := []string{"idle/ready", "working", "waiting/permission", "working", "waiting/question", "working", "waiting/plan", "working", "waiting/permission", "working", "idle/turn_complete"}; !reflect.DeepEqual(trail.trail, want) {
 		t.Fatalf("activity trail %v, want %v", trail.trail, want)
 	}
 	rec, err := agenthost.Read(paths, s.ID)

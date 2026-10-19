@@ -94,7 +94,8 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
 - Every session shows **what the agent is doing** (working, needs input, idle) in
   the web UI, the TUI and `bonsai agents`, with optional desktop and browser
   notifications, off by default ([docs/agents.md](docs/agents.md#desktop-notifications)).
-  This includes pending Codex async questions and inferred Antigravity input dialogs.
+  This includes Claude questions and plan approval, pending Codex async questions,
+  and inferred Antigravity input dialogs.
 
 Details: [docs/agents.md](docs/agents.md).
 

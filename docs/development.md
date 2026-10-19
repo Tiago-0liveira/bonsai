@@ -384,6 +384,11 @@ prompt, with `async` command hooks (timeout 5 s) running
 `StopFailure` and `SessionEnd`, and `BONSAI_AGENT_ACTIVITY` is set to the spool.
 Claude merges hooks across settings layers, so this adds to the profile's own
 hooks and the profile's `settings.json` is never touched.
+Both `PreToolUse` and `PermissionRequest` for `AskUserQuestion` report a question;
+for `ExitPlanMode`, they report plan approval. A later generic
+`Notification:permission_prompt` keeps an already known question, plan or
+elicitation reason. A named tool permission request such as `Bash` still reports
+permission, and a generic notice without an existing input reason does too.
 
 `SetupSpec`: `login` "Browser sign-in" (recommended) and `token` "Setup token",
 whose secret is optional (without one, setup runs `claude setup-token` in the

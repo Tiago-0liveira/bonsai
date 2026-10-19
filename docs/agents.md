@@ -88,6 +88,8 @@ bonsai agent account remove work                # logs the profile out, deletes 
   you start Claude with your own `--settings` or `--bare`, or disable hooks, the
   activity stays unknown and the session shows as plain "Running". See
   [Activity hooks](development.md#activity-hooks).
+  Questions and plan approval keep their specific reason even when Claude also
+  emits a permission hook or a generic permission notification for the dialog.
 - Requires Claude Code 2.1.295 or newer.
 
 ## Codex profiles

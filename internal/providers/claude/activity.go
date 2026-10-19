@@ -105,12 +105,17 @@ func (p *Provider) TranslateHook(event string, payload []byte) []agentactivity.S
 		return one(agentactivity.SessionStarted, "", "")
 	case "UserPromptSubmit":
 		return one(agentactivity.PromptSubmitted, "", "")
-	case "PreToolUse":
+	case "PreToolUse", "PermissionRequest":
 		switch in.ToolName {
 		case "AskUserQuestion":
 			return one(agentactivity.InputRequested, agentactivity.ReasonQuestion, "")
 		case "ExitPlanMode":
 			return one(agentactivity.InputRequested, agentactivity.ReasonPlan, "")
+		}
+		// Claude also fires PermissionRequest for its question and plan
+		// dialogs, so their input reason takes precedence over the hook name.
+		if event == "PermissionRequest" {
+			return one(agentactivity.PermissionRequested, "", in.ToolName)
 		}
 		return one(agentactivity.ToolStarted, "", in.ToolName)
 	case "PostToolUse", "PostToolUseFailure":
@@ -119,8 +124,6 @@ func (p *Provider) TranslateHook(event string, payload []byte) []agentactivity.S
 			return one(agentactivity.InputResolved, "", "")
 		}
 		return one(agentactivity.ToolFinished, "", in.ToolName)
-	case "PermissionRequest":
-		return one(agentactivity.PermissionRequested, "", in.ToolName)
 	case "Notification":
 		switch in.NotificationType {
 		case "permission_prompt":
