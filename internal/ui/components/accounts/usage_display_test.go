@@ -66,26 +66,23 @@ func TestAntigravityUsesHeadlineWindows(t *testing.T) {
 	}
 	q := opennedQuick(t, api, "a1", false)
 	out := quickPlain(q)
-	for _, want := range []string{"Antigravity · personal", "5-hour  ███████░░░", "Weekly  41%", "5h ███████░░░ · W 41%"} {
+	for _, want := range []string{"ANTIGRAVITY", ">▌ personal", "5h", "Claude/GPT 5h", "▰▰▰▰▰▰▰▱▱▱", "72% left", "41% left", "30% left", "90% left"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Antigravity headline lacks %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "Limit Remaining") || strings.Contains(out, "72%") {
-		t.Fatalf("raw pool text or 5h percentage in quick usage:\n%s", out)
+	if strings.Contains(out, "Limit Remaining") {
+		t.Fatalf("raw pool text in quick usage:\n%s", out)
 	}
 
 	m := opened(t, api, 120, 40)
 	m = selectByID(t, m, "a1")
 	m, _ = press(m, "2")
 	out = plain(m)
-	for _, want := range []string{"5-hour window", "Weekly window", "███████░░░", "41% remaining", "███░░░░░░░", "90% remaining"} {
+	for _, want := range []string{"5h", "Week", "▰▰▰▰▰▰▰▱▱▱", "41% left", "▰▰▰▱▱▱▱▱▱▱", "90% left"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("profile usage lacks %q:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, "72%") || strings.Contains(out, "30%") {
-		t.Fatalf("five-hour pool reported as a percentage:\n%s", out)
 	}
 }
 
@@ -97,11 +94,13 @@ func TestProfilesAndUsageGroupByProviderWithIdentityColors(t *testing.T) {
 	q.SetSize(120, 30)
 	m := opened(t, quickFake(), 120, 30)
 	for _, provider := range []agents.ProviderID{"claude", "codex", "antigravity"} {
-		heading := theme.ProviderStyle(provider).Bold(true).Render(strings.ToUpper(providerName(provider)))
-		for _, view := range []string{q.View(), m.View()} {
-			if !strings.Contains(view, heading) {
-				t.Fatalf("missing colored provider heading %s", provider)
-			}
+		// Antigravity is the widest provider name, which sizes the column.
+		cellText := theme.ProviderStyle(provider).Render(cell(providerName(provider), len("Antigravity")))
+		if !strings.Contains(m.View(), cellText) {
+			t.Fatalf("missing colored provider cell %s", provider)
+		}
+		if !strings.Contains(q.View(), theme.ProviderStyle(provider).Render("▌")) {
+			t.Fatalf("missing provider rail %s", provider)
 		}
 	}
 	if strings.Contains(plain(m), "+ Add account") || !strings.Contains(plain(m), "n Add") {
@@ -126,14 +125,18 @@ func TestGeminiRefreshKeepsWindowLayout(t *testing.T) {
 	api.Usages["a1"] = agentsapi.Usage{Snapshot: snapshot, Headline: antigravity.New(nil, nil).UsageHeadline(snapshot)}
 	q, _ = quickKey(q, "r")
 	m, _ = press(m, "r")
-	for _, out := range []string{quickPlain(q), plain(m)} {
-		for _, want := range []string{"5-hour", "Weekly", "███░░░░░░░", "60%"} {
-			if !strings.Contains(out, want) {
-				t.Fatalf("refresh lost %q:\n%s", want, out)
-			}
+	for _, want := range []string{"5h", "Week", "30% left", "60% left"} {
+		if !strings.Contains(quickPlain(q), want) {
+			t.Fatalf("refreshed strip lost %q:\n%s", want, quickPlain(q))
 		}
-		if strings.Contains(out, "Limit Remaining") || strings.Contains(out, "30%") {
-			t.Fatalf("refresh restored the pool layout:\n%s", out)
+	}
+	out := plain(m)
+	for _, want := range []string{"5h", "Week", "▰▰▰▱▱▱▱▱▱▱", "60% left"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("refresh lost %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Limit Remaining") {
+		t.Fatalf("refresh restored the pool layout:\n%s", out)
 	}
 }

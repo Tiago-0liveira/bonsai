@@ -94,8 +94,37 @@ func (a *accounts) Describe(ctx context.Context, id agents.AccountID) (agents.Ac
 	return info, nil
 }
 
+// Usage is the only call that may reach a provider. refresh=false serves a
+// stored snapshot no older than agents.UsageMaxAge and fetches otherwise;
+// refresh=true always fetches.
 func (a *accounts) Usage(ctx context.Context, id agents.AccountID, refresh bool) (agentsapi.Usage, error) {
-	snap, err := a.rt.UsageService.Account(ctx, id, agents.UsageOptions{Refresh: refresh})
+	return a.fetchUsage(ctx, id, agents.UsageOptions{Refresh: refresh, MaxAge: agents.UsageMaxAge})
+}
+
+// UsageStored reads the persisted snapshot only; it never calls the provider.
+func (a *accounts) UsageStored(ctx context.Context, id agents.AccountID) (agentsapi.Usage, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return agentsapi.Usage{}, false, err
+	}
+	if a.rt.UsageService.Cache == nil {
+		return agentsapi.Usage{}, false, nil
+	}
+	acct, err := a.rt.Accounts.Get(id)
+	if err != nil {
+		return agentsapi.Usage{}, false, safeAccountError(err)
+	}
+	snap, ok, err := a.rt.UsageService.Cache.Get(acct.Provider, id)
+	if err != nil {
+		return agentsapi.Usage{}, false, errors.New(sanitizeUsageError(err))
+	}
+	if !ok {
+		return agentsapi.Usage{}, false, nil
+	}
+	return a.usage(snap), true, nil
+}
+
+func (a *accounts) fetchUsage(ctx context.Context, id agents.AccountID, opts agents.UsageOptions) (agentsapi.Usage, error) {
+	snap, err := a.rt.UsageService.Account(ctx, id, opts)
 	if err != nil {
 		if errors.Is(err, agents.ErrAccountNotFound) {
 			return agentsapi.Usage{}, agents.ErrAccountNotFound

@@ -465,6 +465,13 @@ func fit(s string, w int) string {
 // the focused one.
 func (f Form) render(w int, st styles) (lines []string, from, to int) {
 	vis := f.visible()
+	// Every value box is as wide as the widest value, not the pane, so the
+	// closing bracket stays next to the text.
+	boxW := 0
+	for _, i := range vis {
+		boxW = max(boxW, f.valueTextWidth(f.fields[i]))
+	}
+
 	headed := false
 	for n, i := range vis {
 		fd := f.fields[i]
@@ -618,4 +625,152 @@ func (f Form) listRow(c choice, picked bool, inner int, st styles) string {
 	}
 	row := st.accent.Render(mark) + ls.Render(label) + st.dim.Render(desc)
 	return fit(row, inner)
+}
+
+// CompactLines lays the fields out as one "label  [ value  v ]" row each, with
+// ">" on the focused one, and returns the line range [from, to) that must stay
+// visible when the caller scrolls. Lines are at most w cells wide.
+func (f Form) CompactLines(w int) (lines []string, from, to int) {
+	st := newStyles()
+	vis := f.visible()
+	labelW := f.CompactLabelWidth(w)
+
+	// Every value box is as wide as the widest value, not the pane, so the
+	// closing bracket stays next to the text.
+	boxW := 0
+	for _, i := range vis {
+		boxW = max(boxW, f.valueTextWidth(f.fields[i]))
+	}
+
+	headed := false
+	for n, i := range vis {
+		fd := f.fields[i]
+		focused := n == f.cursor && !f.blurred
+		start := len(lines)
+		if i >= primaryFields && !headed {
+			headed = true
+			lines = append(lines, st.heading.Render(ansi.Truncate(otherHeading, w, "…")))
+			if focused {
+				start = len(lines) - 1
+			}
+		}
+		lines = append(lines, f.compactField(fd, w, labelW, boxW, st, focused)...)
+		if focused {
+			from, to = start, len(lines)
+		}
+	}
+	return lines, from, to
+}
+
+// CompactLabelWidth is the label column of CompactLines at width w, so a row
+// the caller draws above the fields can line up with them.
+func (f Form) CompactLabelWidth(w int) int {
+	labelW := 0
+	for _, i := range f.visible() {
+		labelW = max(labelW, ansi.StringWidth(f.fields[i].Label))
+	}
+	// Labels yield first when the row is narrow; the value keeps at least a
+	// readable cell.
+	return max(min(labelW, w/3), 4)
+}
+
+func (f Form) compactField(fd agents.LaunchField, w, labelW, boxW int, st styles, focused bool) []string {
+	cur := f.effective(f.values, fd)
+	cs := f.choices(fd)
+	ci := indexOf(cs, cur)
+	tone, help := "", ""
+	text, chevron := cur, " "
+	switch {
+	case fd.Kind == agents.LaunchFieldToggle:
+		text = "Off"
+		if cur == "true" {
+			text = "On"
+		}
+		if ci >= 0 {
+			tone, help = cs[ci].tone, cs[ci].help
+		}
+	case editable(fd):
+		chevron = f.compactArrow()
+		if ci >= 0 {
+			text, tone, help = cs[ci].label, cs[ci].tone, cs[ci].help
+		} else if cur == "" {
+			text = agents.ProviderDefaultLabel
+		}
+	case text == "":
+		text = "-"
+	}
+
+	marker, label := "  ", st.label
+	if focused {
+		marker, label = st.accent.Render("> "), st.focusLabel
+	}
+	name := ansi.Truncate(fd.Label, labelW, "…")
+	head := marker + label.Render(name) + strings.Repeat(" ", labelW-ansi.StringWidth(name)+2)
+
+	// "[ " + value + " " + chevron + " ]" around the value.
+	valueW := min(w-ansi.StringWidth(head)-6, boxW)
+	var control string
+	switch {
+	case !editable(fd):
+		control = st.dim.Render(ansi.Truncate(text, max(w-ansi.StringWidth(head), 1), "…"))
+	case valueW < 3:
+		control = ansi.Truncate(text, max(w-ansi.StringWidth(head), 1), "…")
+	default:
+		body := "[ " + fit(ansi.Truncate(text, valueW, "…"), valueW) + " " + chevron + " ]"
+		switch {
+		case focused:
+			style := lipgloss.NewStyle().Reverse(true)
+			if tone == agents.ToneDanger {
+				style = style.Foreground(theme.Current.Danger)
+			}
+			control = style.Render(body)
+		case tone == agents.ToneDanger:
+			control = st.danger.Render(body)
+		default:
+			control = body
+		}
+	}
+	lines := []string{head + control}
+
+	if focused && f.open {
+		lines = append(lines, f.renderList(cs, w, st)...)
+		if c := cs[min(f.pick, len(cs)-1)]; c.tone == agents.ToneDanger && c.help != "" {
+			lines = append(lines, wrapIndented(c.help, w, st.danger)...)
+		}
+		return lines
+	}
+	if focused {
+		switch {
+		case tone == agents.ToneDanger && help != "":
+			lines = append(lines, wrapIndented(help, w, st.danger)...)
+		case fd.Help != "":
+			lines = append(lines, wrapIndented(fd.Help, w, st.dim)...)
+		}
+	}
+	return lines
+}
+
+// valueTextWidth is the widest text a compact row of fd can show: the current
+// value and every choice of its dropdown.
+func (f Form) valueTextWidth(fd agents.LaunchField) int {
+	cur := f.effective(f.values, fd)
+	w := ansi.StringWidth(cur)
+	switch {
+	case fd.Kind == agents.LaunchFieldToggle:
+		w = 3 // "Off"
+	case cur == "":
+		w = max(w, ansi.StringWidth(agents.ProviderDefaultLabel))
+	}
+	for _, c := range f.choices(fd) {
+		w = max(w, ansi.StringWidth(c.label))
+	}
+	return max(w, 1)
+}
+
+// compactArrow is the quiet dropdown chevron of the compact rows.
+func (f Form) compactArrow() string {
+	if f.ascii {
+		return "v"
+	}
+	return "▾"
 }

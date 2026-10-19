@@ -134,7 +134,7 @@ func (m Model) nameError() string {
 func (m Model) startAdd() (Model, tea.Cmd) {
 	p := groupOrder[m.add.provider]
 	name := strings.TrimSpace(m.add.input.Value())
-	m.pendingAdd = &newAccount{provider: p, name: name}
+	m.Expect(p, name)
 	m.add.active = false
 	return m, emit(ExecMsg{Cmd: m.api.AddCommand(p, name)})
 }

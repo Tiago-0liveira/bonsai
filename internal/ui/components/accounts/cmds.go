@@ -2,14 +2,10 @@ package accounts
 
 import (
 	"context"
-	"errors"
-	"regexp"
-	"strings"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
@@ -42,12 +38,6 @@ type (
 		seq  int
 		info agents.AccountInfo
 		err  error
-	}
-	usageMsg struct {
-		id    agents.AccountID
-		seq   int
-		usage agentsapi.Usage
-		err   error
 	}
 	defaultsMsg struct {
 		id       agents.AccountID
@@ -128,15 +118,6 @@ func sidebarInfoCmd(api agentsapi.Accounts, accounts []agentsapi.Account, select
 	}
 }
 
-func usageCmd(api agentsapi.Accounts, id agents.AccountID, seq int, refresh bool) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := callCtx()
-		defer cancel()
-		u, err := api.Usage(ctx, id, refresh)
-		return usageMsg{id: id, seq: seq, usage: u, err: err}
-	}
-}
-
 func defaultsCmd(api agentsapi.Accounts, id agents.AccountID, seq int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := callCtx()
@@ -168,28 +149,3 @@ func savedClearCmd(id agents.AccountID, seq int) tea.Cmd {
 
 // emit hands a message to the parent through the normal command path.
 func emit(msg tea.Msg) tea.Cmd { return func() tea.Msg { return msg } }
-
-// maxErrLen keeps one error from filling the column.
-const maxErrLen = 120
-
-// pathLike matches absolute paths and URL tails: provider errors often quote
-// the config dir, which the modal must never render.
-var pathLike = regexp.MustCompile(`(?:[A-Za-z]:)?(?:[\\/][^\s\\/:"']+){2,}`)
-
-// sanitize turns a backend error into one short display-safe line. Providers
-// already keep secrets out of their errors; this only strips control bytes,
-// paths and length.
-func sanitize(err error) string {
-	if err == nil {
-		return ""
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timed out"
-	}
-	s := strings.Join(strings.Fields(ansi.Strip(err.Error())), " ")
-	s = pathLike.ReplaceAllString(s, "<path>")
-	if r := []rune(s); len(r) > maxErrLen {
-		s = string(r[:maxErrLen-1]) + "…"
-	}
-	return s
-}

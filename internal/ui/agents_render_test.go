@@ -81,7 +81,7 @@ func goldenLive(t *testing.T, w, h int, makeSessions func(*agentsEnv) []agentsap
 	e.relist(t)
 	e.sizeTo(t, w, h)
 	e.openTab(t)
-	e.apply(t, fetchAgentUsage(e.fb.Accounts, e.m.agents.usageSeq, e.m.agents.usageAccount))
+	e.fetchUsage(t)
 	if len(sessions) > 0 {
 		e.attached(t)
 		e.frames(t, agentterminal.Frame{Type: "output", Data: []byte(agentScreen)}, status("running"))
@@ -206,7 +206,7 @@ func goldenFrom(t *testing.T, e *agentsEnv, w, h int) *agentsEnv {
 	e.relist(t)
 	e.sizeTo(t, w, h)
 	e.openTab(t)
-	e.apply(t, fetchAgentUsage(e.fb.Accounts, e.m.agents.usageSeq, e.m.agents.usageAccount))
+	e.fetchUsage(t)
 	e.attached(t)
 	e.frames(t, agentterminal.Frame{Type: "output", Data: []byte(agentScreen)}, status("running"))
 	return e
@@ -223,23 +223,18 @@ func TestAgentsGoldenPicker(t *testing.T) {
 				e.agent("f1", "claude", "failed", e.wtA, "Broken run", 2),
 			)
 			e.relist(t)
-			e.m.width, e.m.height = size[0], size[1]
-			e.m.layout()
+			e.sizeTo(t, size[0], size[1])
 			e.openTab(t)
 			e.key(t, "a")
-			if e.m.modal == nil {
-				t.Fatal("picker not open")
-			}
-			e.m.modal.SetSize(size[0], size[1])
-			compareGolden(t, fmt.Sprintf("agents-picker-%dx%d", size[0], size[1]), ansi.Strip(e.m.modal.View()))
+			compareGolden(t, fmt.Sprintf("agents-picker-%dx%d", size[0], size[1]), e.pickerView())
 		})
 	}
 	t.Run("empty", func(t *testing.T) {
 		e := newAgentsEnv(t)
 		e.relist(t)
+		e.sizeTo(t, 100, 24)
 		e.openTab(t)
 		e.key(t, "a")
-		e.m.modal.SetSize(100, 24)
-		compareGolden(t, "agents-picker-empty-100x24", ansi.Strip(e.m.modal.View()))
+		compareGolden(t, "agents-picker-empty-100x24", e.pickerView())
 	})
 }

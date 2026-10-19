@@ -24,6 +24,7 @@ type agentOverlay struct {
 	launch   *launchDialog
 	accounts *accounts.Model
 	quick    *accounts.Quick
+	sessions *sessionsPicker
 }
 
 // agentExecDoneMsg reports that a terminal flow (sign in, add account) ended.
@@ -91,13 +92,7 @@ func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
 		workDir:  wt.Path,
 		branch:   branchOf(wt),
 	}
-	seed := map[agents.AccountID]agentsapi.Usage{}
-	for id, e := range m.agents.usage {
-		if e.have {
-			seed[id] = e.usage
-		}
-	}
-	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), seed, m.agentGlyphsASCII())
+	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), m.agents.usage, m.agentGlyphsASCII())
 	d.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{launch: &d})
 	return m, d.Init()
@@ -112,7 +107,7 @@ func (m Model) openAgentAccounts() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) showAccounts(initial agents.AccountID, tab accounts.Tab) (tea.Model, tea.Cmd) {
-	am := accounts.New(m.agents.api.Accounts, accounts.Options{ASCII: m.agentGlyphsASCII(), Initial: initial, Tab: tab})
+	am := accounts.New(m.agents.api.Accounts, accounts.Options{ASCII: m.agentGlyphsASCII(), Initial: initial, Tab: tab, Usage: m.agents.usage})
 	am.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{accounts: &am})
 	return m, am.Init()
@@ -123,7 +118,7 @@ func (m Model) openAgentUsage() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.leaveAgentTerminal()
-	q := accounts.NewQuick(m.agents.api.Accounts, m.selectedAgentAccount(), m.agentGlyphsASCII())
+	q := accounts.NewQuick(m.agents.api.Accounts, m.selectedAgentAccount(), m.agentGlyphsASCII()).WithUsage(m.agents.usage)
 	q.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{quick: &q})
 	return m, q.Init()
@@ -142,6 +137,8 @@ func (m *Model) sizeAgentOverlay() {
 		o.accounts.SetSize(m.agentPaneSize())
 	case o.quick != nil:
 		o.quick.SetSize(m.agentPaneSize())
+	case o.sessions != nil:
+		o.sessions.SetSize(m.agentPaneSize())
 	}
 }
 
@@ -167,6 +164,10 @@ func (m Model) overlayUpdate(msg tea.Msg) (Model, tea.Cmd) {
 		var q accounts.Quick
 		q, cmd = o.quick.Update(msg)
 		m.setAgentOverlay(agentOverlay{quick: &q})
+	case o.sessions != nil:
+		var sp sessionsPicker
+		sp, cmd = o.sessions.Update(msg)
+		m.setAgentOverlay(agentOverlay{sessions: &sp})
 	}
 	return m, cmd
 }
@@ -190,6 +191,8 @@ func (m Model) agentOverlayView(w, h int) string {
 		s = o.accounts.View()
 	case o.quick != nil:
 		s = o.quick.View()
+	case o.sessions != nil:
+		s = o.sessions.View()
 	}
 	return lipgloss.Place(w, h, lipgloss.Left, lipgloss.Top, m.chrome(s))
 }
@@ -221,6 +224,13 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		var ocmd tea.Cmd
 		m, ocmd = m.overlayUpdate(accounts.ReloadMsg{})
 		return true, m, tea.Batch(ocmd, m.relistAgents())
+	case sessionsPickMsg:
+		m.agents.overlay = nil
+		nm, cmd = m.onAgentsPick(msg.path, msg.id)
+		return true, nm, cmd
+	case sessionsNewMsg:
+		nm, cmd = m.openAgentLaunch()
+		return true, nm, cmd
 	case launchSubmitMsg:
 		nm, cmd = m.onLaunchSubmit(msg)
 		return true, nm, cmd

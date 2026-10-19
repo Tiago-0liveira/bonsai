@@ -1,14 +1,9 @@
 package accounts
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
-	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/launchform"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
 // Focus zones of the Defaults tab.
@@ -21,7 +16,6 @@ const (
 type defaultsState struct {
 	loaded bool
 	err    string
-	data   agentsapi.Defaults
 	form   launchform.Form
 	zone   int
 	// cur mirrors the form's cursor: launchform does not expose it and the
@@ -83,35 +77,4 @@ func (m Model) save() (Model, tea.Cmd) {
 	}
 	m.df.saving, m.df.saveErr = true, ""
 	return m, saveCmd(m.api, m.selected, m.next(&m.latest.save), m.df.form.Changes())
-}
-
-func (m Model) defaultsView(rw, rows int) []string {
-	th := theme.Current
-	dim := lipgloss.NewStyle().Foreground(th.Dim)
-	switch {
-	case m.df.err != "" && !m.df.loaded:
-		return []string{dim.Render("Defaults unavailable"), dim.Render(m.df.err)}
-	case !m.df.loaded:
-		return []string{dim.Render("Loading defaults…")}
-	}
-
-	slot := ""
-	switch {
-	case m.df.saveErr != "":
-		slot = lipgloss.NewStyle().Foreground(th.Danger).Render("Couldn't save: " + m.df.saveErr)
-	case m.df.saving:
-		slot = dim.Render("Saving…")
-	}
-	buttons := button("Reset", m.df.zone == zoneReset, false) + "  " + button("Save defaults", m.df.zone == zoneSave, false)
-	tail := []string{
-		dim.Render("These defaults apply to new sessions."),
-		dim.Render("Running agents are not affected."),
-		slot,
-		strings.Repeat(" ", max(rw-lipgloss.Width(buttons), 0)) + buttons,
-	}
-	form := strings.Split(m.df.form.View(rw, max(rows-len(tail), 0)), "\n")
-	if rows <= len(tail) {
-		form = nil
-	}
-	return append(form, tail...)
 }

@@ -8,17 +8,17 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 // Footer hints per tab, as the UX mockups spell them.
 const (
-	footerOverview = "↑↓ Action · Enter Select · Tab Section · Esc Profiles"
-	footerUsage    = "r Refresh · Tab Section · Esc Profiles"
-	footerDefaults = "↑↓ Field · Enter Edit · ^S Save · Tab Section · Esc Profiles"
+	footerOverview = "↑↓ Action · Enter Select · Tab Section · Esc Accounts"
+	footerUsage    = "r Refresh · Tab Section · Esc Accounts"
+	footerDefaults = "↑↓ Field · Enter Edit · Ctrl+S Save · Tab Section · Esc Accounts"
 )
 
 // reload delivers a ReloadMsg, as the parent does after a terminal flow ends.
@@ -43,18 +43,18 @@ func execOf(t *testing.T, msgs []tea.Msg) *exec.Cmd {
 func TestNavigationWalksProviderGroupsAndAddShortcut(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
 	// Display order is claude work, claude personal, codex work.
-	for _, want := range []string{"Claude · personal", "Codex · work"} {
+	for _, want := range []string{"Claude / personal", "Codex / work"} {
 		m, _ = press(m, "j")
 		if out := plain(m); !strings.Contains(out, want) {
 			t.Fatalf("after j, view lacks %q:\n%s", want, out)
 		}
 	}
 	m, _ = press(m, "k")
-	if out := plain(m); !strings.Contains(out, "Claude · personal") {
+	if out := plain(m); !strings.Contains(out, "Claude / personal") {
 		t.Fatalf("k did not step back:\n%s", out)
 	}
 	m, _ = press(m, "k", "k")
-	if out := plain(m); !strings.Contains(out, "Claude · work") {
+	if out := plain(m); !strings.Contains(out, "Claude / work") {
 		t.Fatalf("k past the top must stay on the first account:\n%s", out)
 	}
 
@@ -72,12 +72,12 @@ func TestNavigationWalksProviderGroupsAndAddShortcut(t *testing.T) {
 			t.Fatalf("add view lacks %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "> ✳ work") || strings.Contains(out, "> ◎ work") {
+	if strings.Contains(out, "> ✹ work") || strings.Contains(out, "> ❃ work") {
 		t.Fatalf("an account keeps the selection marker on the add row:\n%s", out)
 	}
 
 	m, _ = press(m, "esc")
-	if out := plain(m); m.add.active || !strings.Contains(out, "Codex · work") {
+	if out := plain(m); m.add.active || !strings.Contains(out, "Codex / work") {
 		t.Fatalf("esc from add must return to the last account:\n%s", out)
 	}
 }
@@ -85,23 +85,20 @@ func TestNavigationWalksProviderGroupsAndAddShortcut(t *testing.T) {
 func TestTabCyclingAndDirectKeys(t *testing.T) {
 	m := opened(t, newFake(), 104, 34)
 	steps := []struct{ key, want string }{
-		{"tab", "[Usage]"},
-		{"tab", "[Defaults]"},
-		{"tab", "[Overview]"},
-		{"shift+tab", "[Defaults]"},
-		{"2", "[Usage]"},
-		{"3", "[Defaults]"},
-		{"1", "[Overview]"},
+		{"tab", "Usage"},
+		{"tab", "Defaults"},
+		{"tab", "Overview"},
+		{"shift+tab", "Defaults"},
+		{"2", "Usage"},
+		{"3", "Defaults"},
+		{"1", "Overview"},
 	}
 	for _, s := range steps {
 		m, _ = press(m, s.key)
 		out := plain(m)
-		if !strings.Contains(out, s.want) {
-			t.Fatalf("after %s, view lacks %q:\n%s", s.key, s.want, out)
-		}
-		// Only the active tab is bracketed.
-		if n := strings.Count(out, "[Overview]") + strings.Count(out, "[Usage]") + strings.Count(out, "[Defaults]"); n != 1 {
-			t.Fatalf("after %s, %d tabs bracketed:\n%s", s.key, n, out)
+		// The underline marks exactly the active tab.
+		if got := activeTab(out); got != s.want {
+			t.Fatalf("after %s, active tab = %q, want %q:\n%s", s.key, got, s.want, out)
 		}
 	}
 }
@@ -146,17 +143,13 @@ func TestProfileListShowsPlansWithoutUsageBars(t *testing.T) {
 	for _, width := range []int{80, 104} {
 		m := opened(t, api, width, 24)
 		out := plain(m)
-		for _, want := range []string{"Max · work", "Plus · work", "Ultra · home"} {
-			if !strings.Contains(out, want) {
-				t.Fatalf("unselected profile plan %q missing:\n%s", want, out)
+		for _, want := range [][2]string{{"work", "Max"}, {"work", "Plus"}, {"home", "Ultra"}} {
+			if !hasRow(out, want[0], want[1]) {
+				t.Fatalf("plan %q missing on a %q row:\n%s", want[1], want[0], out)
 			}
 		}
-		if strings.ContainsAny(out, "█░") || strings.Contains(out, "Google AI") {
-			t.Fatalf("sidebar still shows usage or unshortened Gemini plan:\n%s", out)
-		}
-		m = selectByID(t, m, "a1")
-		if out := plain(m); !strings.Contains(out, "Google AI Ultra") {
-			t.Fatalf("Overview must retain the full plan name:\n%s", out)
+		if strings.ContainsAny(out, "█░▰▱") || strings.Contains(out, "Google AI") {
+			t.Fatalf("table still shows usage or unshortened Gemini plan:\n%s", out)
 		}
 	}
 }
@@ -181,9 +174,9 @@ func TestStaleSequenceResultsIgnored(t *testing.T) {
 	}
 
 	m, _ = press(m, "2")
-	oldUsage := m.latest.usage
+	oldUsage := m.usage["c2"].Seq
 	m, _ = press(m, "r")
-	m, _ = m.Update(usageMsg{id: "c2", seq: oldUsage, usage: usageOf(0.05, false)})
+	m, _ = m.Update(usagestore.Result{Account: "c2", Seq: oldUsage, Usage: usageOf(0.05, false)})
 	if out := plain(m); strings.Contains(out, "5% remaining") {
 		t.Fatalf("stale usage overwrote the refresh:\n%s", out)
 	}
@@ -203,7 +196,7 @@ func TestUsageRefreshErrorKeepsLastGoodNumbers(t *testing.T) {
 	m, _ = press(m, "r")
 
 	out := plain(m)
-	for _, want := range []string{"███████░░░", "Updated 35 seconds ago", "Showing last good data · provider returned 503"} {
+	for _, want := range []string{"▰▰▰▰▰▰▰▱▱▱", "Updated 35 seconds ago", "Showing last good data · provider returned 503"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stale usage lacks %q:\n%s", want, out)
 		}
@@ -229,7 +222,7 @@ func TestAntigravityDoesNotSwitchToLegacyPools(t *testing.T) {
 	m := opened(t, api, 104, 34)
 	m = selectByID(t, m, "a1")
 	m, _ = press(m, "2")
-	if out := plain(m); !strings.Contains(out, "5-hour window") || !strings.Contains(out, "Weekly window") {
+	if out := plain(m); !strings.Contains(out, "5h") || !strings.Contains(out, "Week") {
 		t.Fatalf("missing headline windows:\n%s", out)
 	}
 	// Unfamiliar limits use the same additional-limits layout, preserving the
@@ -239,7 +232,7 @@ func TestAntigravityDoesNotSwitchToLegacyPools(t *testing.T) {
 	}}}
 	m, _ = press(m, "r")
 	out := plain(m)
-	if !strings.Contains(out, "Additional limits") || !strings.Contains(out, "Legacy pool  30% remaining") || strings.Contains(out, "Weekly window") {
+	if !strings.Contains(out, "Legacy pool") || !strings.Contains(out, "30% left") || strings.Contains(out, "Week") {
 		t.Fatalf("refresh hid values or restored the legacy layout:\n%s", out)
 	}
 }
@@ -293,7 +286,7 @@ func TestSwitchingAccountWithUnsavedDefaultsAsks(t *testing.T) {
 		t.Fatalf("switching with unsaved edits must ask:\n%s", out)
 	}
 	m, _ = press(m, "enter") // "Keep editing" is the safe default
-	if out := plain(m); strings.Contains(out, "Discard unsaved defaults?") || !strings.Contains(out, "Claude · work") {
+	if out := plain(m); strings.Contains(out, "Discard unsaved defaults?") || !strings.Contains(out, "Claude / work") {
 		t.Fatalf("keep editing must stay on the account:\n%s", out)
 	}
 }
@@ -316,7 +309,7 @@ func TestRemoveConfirmReloadsAndSelectsNeighbor(t *testing.T) {
 	api := newFake()
 	m := opened(t, api, 104, 34)
 	m, _ = press(m, "1", "down", "enter")
-	if out := plain(m); !strings.Contains(out, "Remove ✳ work? Its Bonsai config dir is deleted.") {
+	if out := plain(m); !strings.Contains(out, "Remove ✹ work? Its Bonsai config dir is deleted.") {
 		t.Fatalf("no confirm dialog:\n%s", out)
 	}
 	m, _ = press(m, "esc")
@@ -329,7 +322,7 @@ func TestRemoveConfirmReloadsAndSelectsNeighbor(t *testing.T) {
 		t.Fatalf("removed = %v", got)
 	}
 	out := plain(m)
-	if strings.Contains(out, "Claude · work") || !strings.Contains(out, "Claude · personal") {
+	if strings.Contains(out, "Claude / work") || !strings.Contains(out, "Claude / personal") {
 		t.Fatalf("after remove the neighbor must be selected:\n%s", out)
 	}
 }
@@ -399,7 +392,7 @@ func TestAddFlowEmitsCommandAndSelectsCreated(t *testing.T) {
 	// The CLI created the account; the reload selects it.
 	api.Items = append(api.Items, acct("a1", "antigravity", "work", "logged_in"))
 	m = reload(m)
-	if out := plain(m); !strings.Contains(out, "Antigravity · work") {
+	if out := plain(m); !strings.Contains(out, "Antigravity / work") {
 		t.Fatalf("created account not selected:\n%s", out)
 	}
 }
@@ -429,7 +422,7 @@ func TestReloadKeepsSelectionByID(t *testing.T) {
 	// still follow the id, not the row index.
 	api.Items = append([]agentsapi.Account{acct("c0", "claude", "new", "logged_in")}, api.Items...)
 	m = reload(m)
-	if out := plain(m); !strings.Contains(out, "Codex · work") {
+	if out := plain(m); !strings.Contains(out, "Codex / work") {
 		t.Fatalf("reload moved the selection:\n%s", out)
 	}
 }
@@ -451,17 +444,17 @@ func TestASCIIVariants(t *testing.T) {
 	m.SetSize(104, 34)
 	m, _ = drain(m, m.Init())
 	out := plain(m)
-	for _, want := range []string{"C Claude · work", "> C Max · work", "  C personal", "  X work", "  * "} {
+	for _, want := range []string{"Claude / work", "> work", "  personal", "* Connected"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("ascii overview lacks %q:\n%s", want, out)
 		}
 	}
-	if strings.ContainsAny(out, "✳◎✦●▼") {
+	if strings.ContainsAny(out, "✹❃✦●▼▸━─▰▱") {
 		t.Fatalf("unicode glyphs in ascii overview:\n%s", out)
 	}
 
 	m, _ = press(m, "3", "enter")
-	if out := plain(m); !strings.Contains(out, "[v]") || strings.Contains(out, "▼") {
+	if out := plain(m); !strings.Contains(out, " v ]") || strings.Contains(out, "▼") {
 		t.Fatalf("ascii defaults arrow:\n%s", out)
 	}
 }
@@ -492,19 +485,6 @@ func TestNoSecretsOrConfigPathsRendered(t *testing.T) {
 		if key == "1" && !strings.Contains(out, "<path>") {
 			t.Fatalf("describe error path not redacted:\n%s", out)
 		}
-	}
-}
-
-func TestSanitizeRedactsPathsAndControls(t *testing.T) {
-	got := sanitize(errors.New("\x1b[31mfailed at /home/u/.claude/x\x1b[0m\n  now"))
-	if strings.Contains(got, "/home") || strings.Contains(got, "\x1b") || strings.Contains(got, "\n") {
-		t.Fatalf("sanitize = %q", got)
-	}
-	if long := sanitize(errors.New(strings.Repeat("word ", 60))); ansi.StringWidth(long) > maxErrLen {
-		t.Fatalf("long error not capped: %d cells", ansi.StringWidth(long))
-	}
-	if sanitize(nil) != "" {
-		t.Fatal("nil error must sanitize to empty")
 	}
 }
 

@@ -13,7 +13,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi/fake"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 )
 
 var t0 = time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -197,7 +196,7 @@ func TestAgentsCompactBreakpoints(t *testing.T) {
 	)
 	e.relist(t)
 	e.openTab(t)
-	e.apply(t, fetchAgentUsage(e.fb.Accounts, e.m.agents.usageSeq, e.m.agents.usageAccount))
+	e.fetchUsage(t)
 
 	tests := []struct {
 		w       int
@@ -205,7 +204,7 @@ func TestAgentsCompactBreakpoints(t *testing.T) {
 		notWant []string
 	}{
 		{120, []string{"Sessions: ", "n: New", "Claude · work", "│ ● Running", "5h ███████░░░ left", "Week 41% left", "u: Usage"}, nil},
-		{70, []string{"[1 ✳ Auth fix]", "a: All", "work · 5h ███████░░░ · W 41%", "u: Usage"}, []string{"Sessions:", "n: New", "left"}},
+		{70, []string{"[1 ✹ Auth fix]", "a: All", "work · 5h ███████░░░ · W 41%", "u: Usage"}, []string{"Sessions:", "n: New", "left"}},
 		{50, []string{"Agents (g) │", "[3/3]", "a: Switch"}, []string{"u: Usage", "5h"}},
 	}
 	for _, tc := range tests {
@@ -315,42 +314,47 @@ func TestAgentsPicker(t *testing.T) {
 		t.Fatalf("setup: failed marker missing: %q", row)
 	}
 
+	e.m.width, e.m.height = 140, 40
+	e.m.layout()
 	e.key(t, "a")
-	if e.m.modal == nil || !strings.Contains(ansi.Strip(e.m.modal.View()), "AGENTS IN feat-a") {
-		t.Fatal("picker not open with the branch title")
+	if e.m.agents.overlay == nil || e.m.agents.overlay.sessions == nil || e.m.modal != nil {
+		t.Fatal("picker not open as an agent overlay")
+	}
+	view := e.pickerView()
+	if !strings.Contains(view, "Sessions") || !strings.Contains(view, "feat-a") || !strings.Contains(view, "4 sessions") {
+		t.Fatalf("picker lacks the title, branch and count:\n%s", view)
 	}
 	// Flat list, no section headers: running newest first, then ended newest
-	// first, with the name column aligned across both groups.
-	items := e.m.agentPickerItems(cleanPath(e.wtA), "")
-	var plain []string
-	for _, it := range items {
-		plain = append(plain, ansi.Strip(it))
+	// first.
+	var order []string
+	for _, s := range e.m.agents.overlay.sessions.visible() {
+		order = append(order, s.ID)
 	}
-	want := []string{
-		"● ◎ Run tests           Codex · work",
-		"● ✳ Fix authentication  Claude · work",
-		"✗ ✳ Broken run          Claude · work",
-		"✓ ◎ Previous attempt    Codex · work",
+	if got := strings.Join(order, ","); got != "r2,r1,f1,x1" {
+		t.Fatalf("order = %s, want r2,r1,f1,x1", got)
 	}
-	if strings.Join(plain, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("items:\n%s\nwant:\n%s", strings.Join(plain, "\n"), strings.Join(want, "\n"))
-	}
-	if got := e.m.agentPickerItems(cleanPath(e.wtA), "previous"); len(got) != 1 {
-		t.Errorf("search should keep only the match: %q", got)
-	}
-	view := ansi.Strip(e.m.modal.View())
-	for _, s := range []string{"/ Search    Enter Open    n New    Esc Close"} {
-		if !strings.Contains(view, s) {
-			t.Errorf("picker view missing %q:\n%s", s, view)
+	for _, want := range []string{"Run tests", "Codex · work", "● Starting", "● Running", "✗ Failed", "✓ Exited"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("picker view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "Running") || strings.Contains(view, "Recent") {
+	if strings.Contains(view, "Recent") {
 		t.Errorf("picker must not show sections:\n%s", view)
 	}
-
-	nm, _ := e.m.Update(modals.SubmitMsg{Kind: kindAgents, Value: items[2]})
-	e.m = nm.(Model)
-	if e.m.modal != nil {
+	e.key(t, "/")
+	e.key(t, "previous")
+	if got := e.m.agents.overlay.sessions.visible(); len(got) != 1 || got[0].ID != "x1" {
+		t.Errorf("search should keep only the match: %+v", got)
+	}
+	e.send(t, tea.KeyMsg{Type: tea.KeyEsc}) // clears the search, keeps the picker
+	if e.m.agents.overlay == nil || len(e.m.agents.overlay.sessions.visible()) != 4 {
+		t.Fatal("esc in search clears the query")
+	}
+	e.send(t, tea.KeyMsg{Type: tea.KeyDown})
+	e.send(t, tea.KeyMsg{Type: tea.KeyDown})
+	e.send(t, tea.KeyMsg{Type: tea.KeyEnter})
+	e.run(t, e.lastCmd)
+	if e.m.agents.overlay != nil {
 		t.Error("picker should close")
 	}
 	if s, _, _ := e.m.selectedSession(cleanPath(e.wtA)); s.ID != "f1" {
@@ -390,8 +394,10 @@ func TestAgentsUsageOrdering(t *testing.T) {
 	lateB := usageMsgOf(t, cmdB) // answer for the account the user already left
 	nm, _ := e.m.Update(lateB)
 	e.m = nm.(Model)
-	if _, ok := e.m.agents.usage["codex:work"]; ok {
-		t.Error("late result for the previous account must be dropped")
+	// The answer lands on its own account's entry and never on the one the
+	// strip is showing.
+	if !e.m.agents.usage["codex:work"].Have || e.m.agents.usage["claude:work"].Have {
+		t.Error("late result must update only the account it was fetched for")
 	}
 	nm, _ = e.m.Update(usageMsgOf(t, cmdA))
 	e.m = nm.(Model)
@@ -426,15 +432,15 @@ func TestAgentsWorktreeMoveAcceptsNewAccountUsage(t *testing.T) {
 	e.relist(t)
 	e.openTab(t)
 	e.key(t, "tab")
-	before := e.m.agents.usageSeq
+	before := e.usageSeq("codex:work")
 
 	nm, cmd := e.m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	e.m = nm.(Model)
 	if got := selectedPath(e.m.list); got != e.wtB {
 		t.Fatalf("selected worktree = %q, want %q", got, e.wtB)
 	}
-	if e.m.agents.usageAccount != "codex:work" || e.m.agents.usageSeq != before+1 {
-		t.Fatalf("usage request state = (%q, %d), want (codex:work, %d)", e.m.agents.usageAccount, e.m.agents.usageSeq, before+1)
+	if e.m.agents.usageAccount != "codex:work" || e.usageSeq("codex:work") == before {
+		t.Fatalf("usage request state = (%q, %d), want a new codex:work request", e.m.agents.usageAccount, e.usageSeq("codex:work"))
 	}
 	nm, _ = e.m.Update(usageMsgOf(t, cmd))
 	e.m = nm.(Model)
@@ -448,17 +454,17 @@ func TestAgentsUsageTickOnlyWhenTabVisible(t *testing.T) {
 	e.fb.Sessions.Add(e.agent("a", "claude", "running", e.wtA, "One", 1))
 	e.relist(t)
 	e.selectWT(e.wtA)
-	before := e.m.agents.usageSeq
+	before := e.usageSeq("claude:work")
 	nm, cmd := e.m.Update(agentUsageTickMsg{gen: e.m.agents.usageTickGen})
 	e.m = nm.(Model)
-	if e.m.agents.usageSeq != before || cmd == nil {
+	if e.usageSeq("claude:work") != before || cmd == nil {
 		t.Error("hidden tab: no request, but the tick must re-arm")
 	}
 	e.openTab(t)
-	before = e.m.agents.usageSeq
+	before = e.usageSeq("claude:work")
 	nm, _ = e.m.Update(agentUsageTickMsg{gen: e.m.agents.usageTickGen})
 	e.m = nm.(Model)
-	if e.m.agents.usageSeq != before+1 {
+	if e.usageSeq("claude:work") == before {
 		t.Error("visible tab: tick must request usage")
 	}
 }
@@ -485,11 +491,11 @@ func TestAgentsUsageTickInitChainIsSingle(t *testing.T) {
 	}
 
 	callsBefore := len(e.fb.Accounts.UsageCalls())
-	before := e.m.agents.usageSeq
+	before := e.usageSeq("claude:work")
 	nm, staleCmd := e.m.Update(agentUsageTickMsg{gen: gen})
 	e.m = nm.(Model)
-	if staleCmd != nil || e.m.agents.usageSeq != before {
-		t.Errorf("old generation re-armed or requested usage: cmd=%v seq=%d want=%d", staleCmd != nil, e.m.agents.usageSeq, before)
+	if staleCmd != nil || e.usageSeq("claude:work") != before {
+		t.Errorf("old generation re-armed or requested usage: cmd=%v seq=%d want=%d", staleCmd != nil, e.usageSeq("claude:work"), before)
 	}
 	nm, currentCmd := e.m.Update(agentUsageTickMsg{gen: e.m.agents.usageTickGen})
 	e.m = nm.(Model)
@@ -634,18 +640,16 @@ func TestAgentsPickerEmptyAndActions(t *testing.T) {
 	e.relist(t)
 	e.openTab(t)
 	e.key(t, "a")
-	if e.m.modal == nil {
+	if e.m.agents.overlay == nil || e.m.agents.overlay.sessions == nil {
 		t.Fatal("the picker opens even with zero sessions")
 	}
-	view := ansi.Strip(e.m.modal.View())
-	if !strings.Contains(view, "No agents in this worktree yet") || !strings.Contains(view, "n New") {
+	view := e.pickerView()
+	if !strings.Contains(view, "No sessions in this worktree yet") || !strings.Contains(view, "n New session") {
 		t.Errorf("empty picker:\n%s", view)
 	}
 	// n inside the picker is an action, not search text.
-	nm, cmd := e.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-	e.m = nm.(Model)
-	nm, _ = e.m.Update(cmd())
-	e.m = nm.(Model)
+	e.key(t, "n")
+	e.run(t, e.lastCmd)
 	if e.m.modal != nil || e.m.agents.overlay == nil || e.m.agents.overlay.launch == nil {
 		t.Errorf("n in the picker must open the launch dialog: modal=%v overlay=%+v", e.m.modal != nil, e.m.agents.overlay)
 	}

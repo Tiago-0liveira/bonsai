@@ -79,8 +79,12 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
   or with `bonsai agent run`.
 - Start, watch, control and stop sessions from the **TUI's Agents tab**, with
   provider-grouped profiles and usage, clear input-focus hints, color-coded
-  capacity bars, and model/effort overrides for each new agent. Compact provider counts sit beside worktree badges
-  ([docs/tui-cli.md](docs/tui-cli.md#agents-tab)).
+  capacity bars, and model/effort overrides for each new agent. Provider icons are ✹ for Claude and ❃ for Codex. Compact provider counts sit beside worktree badges,
+  and a usage pane under the worktree list (30+ rows) shows remaining capacity
+  with provider-colored rails and adaptive meters ([usage pane](docs/tui-cli.md#usage-pane)).
+- The TUI's [Usage page](docs/tui-cli.md#agents-tab) shows compact account strips
+  with aligned default and model usage rows, remaining-capacity meters, colored
+  balances and reset times.
 - Per-profile **launch defaults** (model, effort, permissions) and an **Agents
   tab** in the web app to manage profiles, sign-ins and sessions.
 - `bonsai agent usage` shows **plan limits** (5-hour and weekly windows, credits,

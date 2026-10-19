@@ -97,7 +97,7 @@ func TestDefaultsOverviewValuesFollowSave(t *testing.T) {
 	api := newFake()
 	m := editPermissionsAndFullAccess(t, opened(t, api, 104, 34))
 	m, _ = press(m, "ctrl+s", "1")
-	if out := plain(m); !strings.Contains(out, "Default effort") || !strings.Contains(out, "Provider default") {
+	if out := plain(m); !strings.Contains(out, "Effort") || !strings.Contains(out, "Provider default") {
 		t.Fatalf("overview defaults:\n%s", out)
 	}
 }

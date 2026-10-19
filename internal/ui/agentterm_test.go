@@ -397,7 +397,7 @@ func TestTerminalPrefixAgentsLeavesModeKeepsStream(t *testing.T) {
 	e, st := terminalEnv(t)
 	attaches := len(e.fb.Sessions.Attaches())
 	e.typeKeys(t, ctrlBracket, runes("a"))
-	if e.m.modal == nil || e.m.agentTerminalMode() {
+	if e.m.agents.overlay == nil || e.m.agents.overlay.sessions == nil || e.m.agentTerminalMode() {
 		t.Fatal("ctrl+] a opens the picker and leaves terminal mode")
 	}
 	if st.Closed() || e.m.agents.view.stream != agentsapi.Stream(st) {

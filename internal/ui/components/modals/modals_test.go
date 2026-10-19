@@ -5,10 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 )
-
-const kindAgentsTest Kind = "agents"
 
 func runeKey(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
@@ -147,72 +144,4 @@ func TestPruneForceRendered(t *testing.T) {
 	if out := m.renderPrune(); !strings.Contains(out, "force") {
 		t.Errorf("renderPrune should show the force option:\n%s", out)
 	}
-}
-
-func TestPickerKeys(t *testing.T) {
-	all := []string{"alpha", "beta", "gamma"}
-	filter := func(q string) []string {
-		var out []string
-		for _, s := range all {
-			if strings.Contains(s, q) {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	press := func(m Model, k tea.KeyMsg) (Model, tea.Msg) {
-		m, cmd := m.Update(k)
-		if cmd == nil {
-			return m, nil
-		}
-		return m, cmd()
-	}
-	runes := func(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
-	m := NewPicker(kindAgentsTest, "T", filter, all, "FOOT", "nothing here", "n")
-
-	t.Run("action key fires while search is closed", func(t *testing.T) {
-		_, msg := press(m, runes("n"))
-		if a, ok := msg.(ActionMsg); !ok || a.Key != "n" || a.Kind != kindAgentsTest {
-			t.Errorf("msg = %#v", msg)
-		}
-	})
-	t.Run("slash opens search and keys become text", func(t *testing.T) {
-		// Updates are applied without running the returned commands: the text
-		// field's are cursor blinks, which wait on a timer.
-		m2, _ := m.Update(runes("/"))
-		m2, _ = m2.Update(runes("n"))
-		if m2.input.Value() != "n" {
-			t.Errorf("n while searching must be text, got %q", m2.input.Value())
-		}
-		m2, _ = m2.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-		m2, _ = m2.Update(runes("b"))
-		if got := m2.items; len(got) != 1 || got[0] != "beta" {
-			t.Errorf("items = %v", got)
-		}
-		m2, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEsc})
-		if m2.searching || len(m2.items) != 3 {
-			t.Errorf("esc closes search and clears the query: searching=%v items=%v", m2.searching, m2.items)
-		}
-		if _, msg := press(m2, tea.KeyMsg{Type: tea.KeyEsc}); msg == nil {
-			t.Error("esc with search closed cancels")
-		} else if _, ok := msg.(CancelMsg); !ok {
-			t.Errorf("msg = %#v", msg)
-		}
-	})
-	t.Run("enter submits the cursor row", func(t *testing.T) {
-		m2, _ := press(m, tea.KeyMsg{Type: tea.KeyDown})
-		_, msg := press(m2, tea.KeyMsg{Type: tea.KeyEnter})
-		if s, ok := msg.(SubmitMsg); !ok || s.Value != "beta" {
-			t.Errorf("msg = %#v", msg)
-		}
-	})
-	t.Run("view shows footer and empty text", func(t *testing.T) {
-		if v := ansi.Strip(m.View()); !strings.Contains(v, "FOOT") || strings.Contains(v, "type to filter") {
-			t.Errorf("view:\n%s", v)
-		}
-		e := NewPicker(kindAgentsTest, "T", filter, nil, "FOOT", "nothing here")
-		if v := ansi.Strip(e.View()); !strings.Contains(v, "nothing here") {
-			t.Errorf("empty view:\n%s", v)
-		}
-	})
 }

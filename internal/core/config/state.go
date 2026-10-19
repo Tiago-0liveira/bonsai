@@ -27,7 +27,7 @@ type Prefs struct {
 	// PRStatus is the worktree-list PR status display mode: "full" (glyph
 	// plus label), "compact" (glyph only) or "off" ("" = full).
 	PRStatus string `json:"pr_status,omitempty"`
-	// AgentGlyphs picks how agent providers are drawn: "unicode" (✳ ◎ ✦) or
+	// AgentGlyphs picks how agent providers are drawn: "unicode" (✹ ❃ ✦) or
 	// "ascii" (C X A) for fonts that render the glyphs badly ("" = unicode).
 	AgentGlyphs string `json:"agent_glyphs,omitempty"`
 	// Editor is a personal override for the "open editor" command, taking

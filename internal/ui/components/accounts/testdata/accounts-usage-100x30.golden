@@ -1,30 +1,30 @@
- AGENT PROFILES
+ Accounts                                                                                5 accounts
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
 
- ACCOUNTS                         │ ✳ Claude · work
-                                  │
- CLAUDE                           │ Overview  [Usage]  Defaults
- > ✳ Max · work                 ● │ ───────────────────────────────────────────────────────────────
-   ✳ Pro · personal             ● │
-                                  │ 5-hour window
- CODEX                            │ ███████░░░
-   ◎ work                       ● │ Resets in 2h14m
-   ◎ personal                   ● │
-                                  │ Weekly window
- ANTIGRAVITY                      │ 41% remaining
-   ✦ personal                   ● │ Resets in 3d
-                                  │
-                                  │ Additional limits
-                                  │ Sonnet weekly  82% remaining
-                                  │ Credits        $12.50
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │ Updated 35 seconds ago
-                                  │
-                                  │ [r] Refresh usage
- ↑↓ Profile · Tab Section · Enter Details · n Add · Esc Close
+   ACCOUNT           PROVIDER     PLAN       CONNECTION
+ ▸ work              Claude       Max        ● Connected
+   personal          Claude       Pro        ● Connected
+   work              Codex        —          ● Connected
+   personal          Codex        —          ● Connected
+   personal          Antigravity  —          ● Connected
+
+ ── ✹ Claude / work ───────────────────────────────────────────────────────────────────────────────
+
+ Overview     Usage     Defaults
+              ━━━━━
+
+ REMAINING CAPACITY                                                          Updated 35 seconds ago
+ 5h            ▰▰▰▰▰▰▰▱▱▱  72% left · Reset 2h14m
+ Week          ▰▰▰▰▱▱▱▱▱▱  41% left · Reset 3d
+ Sonnet weekly ▰▰▰▰▰▰▰▰▱▱  82% left
+
+ Credits $12.50 available · Reset date unavailable
+
+
+
+
+
+
+
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Account · Tab Section · Enter Details · n Add account · Esc Back

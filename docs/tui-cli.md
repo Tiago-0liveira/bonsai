@@ -65,19 +65,33 @@ If another client is the writer, the agent is read-only here: the banner reads
 `enter` in navigation to take control. If another client takes control away, the
 hint explains how to leave focus and take it back.
 
-Press `a` on the Agents tab to open the session picker. It lists the worktree's
-sessions as one flat list, running ones first, then ended ones, marked `●` running,
-`✓` exited and `✗` failed. It opens even when there are no sessions. `Enter` opens
-the chosen session. Opening the picker clears the `!` failure markers on that
-worktree's rows, so the failures stay listed here with `✗`.
+Press `a` on the Agents tab to open the sessions screen. It lists the worktree's
+sessions as one flat list, running ones first, then ended ones, newest first. Each
+item shows the session name and its state (`● Running`, `✓ Exited`, `✗ Failed`) on one
+line and `Provider · account` below it; sessions that share a name get a short ID
+suffix (`· …b6364576`). The right side is an inspector that follows the selection:
+provider, name, state, account, worktree, model, exit code and the short ID. On a
+narrow pane the inspector moves below the list. It opens even when there are no
+sessions. `↑`/`↓` select, `/` searches by name, provider or account (`Esc` clears
+the search), `Enter` opens the selected session, `n` starts a new one and `Esc` goes
+back. Opening the screen clears the `!` failure markers on that worktree's rows, so
+the failures stay listed here with `✗`.
 
-The new-agent dialog (`n`) selects a profile with `↑`/`↓` (or `j`/`k`). `Tab`
-and `Shift+Tab` move through the name, model, effort, other launch options and
-buttons. Within the options, `↑`/`↓` moves between fields, `←`/`→` changes a value,
-and `Enter` opens a choice list. `Esc` dismisses that list before closing the
-dialog. `ctrl+s` starts the agent. Model and effort start from the selected
-profile's defaults; edits apply only to this new agent unless **Save profile
-defaults** is checked. Effort choices follow the selected model's capabilities.
+The new-session screen (`n`) is an account table above the launch options. The
+table lists every account with its **5h left** capacity (meter and percentage of
+what remains) and **Resets in** countdown; only the reported five-hour window is
+used, so an account without one shows `Not reported`, and loading, unavailable
+and stale readings are labeled instead of drawn as a zero or full meter. `↑`/`↓`
+(or `j`/`k`) select an account and `Enter` moves to the options. `Tab` and
+`Shift+Tab` move through the name, model, effort, other launch options, the
+**Save as account defaults** box and the buttons. Within the options, `↑`/`↓`
+moves between fields, `←`/`→` changes a value, and `Enter` opens a choice list.
+`Esc` dismisses that list before closing the screen. `ctrl+s` starts the
+session. Model and effort start from the selected account's defaults; edits apply
+only to this session unless **Save as account defaults** is checked. Effort
+choices follow the selected model's capabilities. On short or narrow panes the
+table shows fewer rows (`a-b of N`), then drops the meter, then uses two lines
+per account; extra options scroll while Start and the footer stay in view.
 
 In profiles (`m`), `Tab` and `Shift+Tab` cycle the right-hand Overview, Usage and
 Defaults tabs while `↑`/`↓` keeps selecting profiles. No selection confirmation
@@ -86,28 +100,79 @@ still switches sections there, including while a choice list is open. `1`/`2`/`3
 jump directly to Overview, Usage or Defaults. `Esc` returns focus to profiles;
 press it again to close. Unsaved defaults require confirmation before closing or
 switching profiles or adding a new one. Press `n` to add a profile; the shortcut
-is shown in the footer, and arrow navigation stops at the last profile. A
-vertical divider separates the wider profile list from its details in wide
-panes. The list shows the plan before each profile name instead of usage bars.
-Antigravity's `Google AI` prefix is omitted only in this list; Overview keeps the
-full plan name.
+is shown in the footer, and arrow navigation stops at the last profile. The
+accounts sit in a scrollable table (Account, Provider, Plan, Connection) above a
+divider naming the selected account and the inspector tabs; only the inspector
+body changes with the tab. On narrow panes the Plan column goes first, then
+Connection moves under the account name, and below that a single-account
+selector replaces the table. On short panes the table shows fewer rows (with a
+`1-5 of 9` indicator) before the inspector loses content. Antigravity's
+`Google AI` prefix is omitted from the Plan column. The Usage tab shows
+remaining-capacity meters, credits and reset grants, and `r` refreshes it.
 Usage (`u`) uses `↑`/`↓` to select a profile, `r` to refresh,
 `m` for its profile details and `Esc` to close. The profile list stays in provider
-and name order under colored provider headings, scrolling to keep the selection
-visible. Provider labels use orange for Claude, gray for Codex and blue for
-Antigravity across the TUI. All three providers use the same headline-window
-usage layout before and after a refresh: five-hour bars and weekly percentages.
-Five-hour limits use remaining-capacity bars; weekly and other limits use
-percentages. Both are green with at least half left, yellow below half and red
-below a quarter. Antigravity uses the same 5-hour and weekly summary as Claude
-and Codex, with its other pools available in profile usage details.
-Narrow profile and launch panes use a single column
+and name order under muted provider headings, scrolling to keep the selection
+visible. Compact strips connect each profile's rows with an orange Claude,
+gray Codex or blue Antigravity rail; `>` marks the selected profile. Both
+headline windows show remaining-capacity meters, percentages and their own
+automatic reset countdowns. Wide panes put windows side by side; narrow panes
+stack them and retain metadata on continuation rows. Antigravity uses the same
+plain `5h` and `Week` labels as Claude and Codex for its default usage row, then
+shows Claude/GPT models on one separate paired row. Default windows absent from
+the reported data show `Unavailable`; model quotas never substitute for them or
+appear twice. A blank row separates accounts. Additional limits and
+model-specific pools remain visible. Meters are green with at least half left,
+yellow below half and red below a quarter, with ASCII glyphs in ASCII mode.
+
+Credit pools show their available balance and reported reset date separately.
+Codex reset grants show the usable count and **First expires** deadline, which
+is separate from automatic window resets. Balances, credit states, available
+reset counts and reset times use distinct theme colors to make values easy to
+scan; expiry deadlines use the warning color. Unknown balances and dates stay
+unknown; expired and unavailable grants are excluded. Loading and stale labels
+keep retained values visible. The Agents tab header, profile details and launch
+dialog keep their compact five-hour bars and weekly percentages.
+Narrow profile panes use a single column
 with the selected profile shown above the content.
 
-An account that needs a sign-in shows `[Sign in first]` in place of start.
+An account that needs a sign-in shows `[ Sign in first ]` in place of start.
 Signing in or adding an account suspends the TUI and runs the provider's CLI
 flow in the terminal, then returns to Bonsai. See [agents.md](agents.md) for
 profiles and accounts.
+
+### Usage pane
+
+When the terminal has at least 30 rows and agent accounts exist, a small
+bordered **Usage · left** box sits under the worktree list. Its rails and
+segmented meters show remaining capacity, ordered Claude, Codex, then Antigravity.
+The rails match each provider: orange for Claude, light gray for Codex, and blue
+for Antigravity. Expanded meters grow to fill the available row width.
+Expanded strips use three lines per account: provider and name, then the two
+headline windows with remaining percentages and reset countdowns when available.
+Accounts without shared windows show `No shared windows` once; loading and
+unavailable states never imply a capacity value.
+The pane is display only: it takes no keys, and resizing below 30 rows
+hides it and gives the rows back to the list. On short terminals it shrinks to
+one line per account with the provider glyph, name, primary-window meter and
+percentage, and secondary-window percentage (`W` means Week), then to `+N more`.
+Compact rows give spare width to the primary (usually 5h) meter first, then add
+and grow a secondary (usually Week) meter when there is enough room for both.
+Narrow widths shorten names and meters before sacrificing numeric values;
+compact rows omit reset countdowns. Sizing remains automatic and only takes
+space from the worktree list; the right-hand content keeps its full height.
+
+Every minute the pane checks for accounts whose data is 3 minutes old or more
+and refetches only those. The box title shows the age of the oldest data:
+`refreshing…`, `<30s`, `<1m`, `1m`, `2m`, `3m`, then `4m+`. A trailing `!` on an
+account marks numbers that are overdue or failed to refresh (the last good
+numbers and their capacity warning colors stay visible). Fetched usage is stored
+under the user cache directory (`bonsai/agents/usage/`), so a restart reuses
+anything fetched less than 3 minutes ago without calling the provider.
+
+Every usage view in the TUI (this pane, the Agents tab header, profiles, the
+usage overlay and the new agent dialog) reads the same cache with the same
+3-minute window and shows the same numbers for an account. Only `r` in profiles
+or the usage overlay skips the window and asks the provider again.
 
 ### Keybindings
 
@@ -151,6 +216,9 @@ The navigation status bar follows keyboard focus. With the Agents pane focused,
 it shows agent actions and the selected session's Enter action. With the
 worktree list focused, it shows how to focus the Agents pane. Profile and usage
 views show their own navigation keys.
+
+Unicode provider icons are ✹ for Claude (orange), ❃ for Codex (light gray), and
+✦ for Antigravity (blue).
 
 Agent glyphs follow the `agent glyphs` row in preferences (`,`). `ascii` swaps
 bonsai's own drawing to ASCII: provider glyphs (`C X A`), state dots, picker marks

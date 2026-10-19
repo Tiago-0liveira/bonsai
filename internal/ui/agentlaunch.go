@@ -9,14 +9,13 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/launchform"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 // launchCallTimeout bounds the read-only backend calls of the dialog so a hung
@@ -56,30 +55,6 @@ type launchSubmitMsg struct {
 }
 
 type (
-	launchListMsg struct {
-		dlg      uint64
-		accounts []agentsapi.Account
-		err      error
-	}
-	launchUsageMsg struct {
-		dlg   uint64
-		id    agents.AccountID
-		usage agentsapi.Usage
-		err   error
-	}
-	launchDescribeMsg struct {
-		dlg  uint64
-		id   agents.AccountID
-		info agents.AccountInfo
-		err  error
-	}
-	launchDefaultsMsg struct {
-		dlg uint64
-		seq int
-		id  agents.AccountID
-		d   agentsapi.Defaults
-		err error
-	}
 	// launchStartedMsg is the answer to a start request.
 	launchStartedMsg struct {
 		dlg     uint64
@@ -93,107 +68,53 @@ type (
 )
 
 // launchDialog is the new-agent dialog. It is a value type like the accounts
-// modal; backend calls run as commands and carry the dialog ID and a sequence
-// so an answer for a closed dialog or a left-behind account is dropped.
+// modal and embeds the same accounts.Browser, so the account list, selection,
+// describe info, defaults and usage load exactly as they do there. The start
+// answer carries the dialog ID so one for a closed dialog is dropped.
 type launchDialog struct {
+	accounts.Browser
 	id     uint64
-	api    agentsapi.Accounts
 	ascii  bool
 	target launchTarget
 	now    func() time.Time
 	w, h   int
 
-	accounts []agentsapi.Account
-	listed   bool
-	listErr  string
-	selected agents.AccountID
-	initial  agents.AccountID
-
-	usage     map[agents.AccountID]agentsapi.Usage
-	described map[agents.AccountID]bool
-
 	focus       launchFocus
 	name        textinput.Model
 	nameTouched bool
 
-	defaults   agentsapi.Defaults
 	form       launchform.Form
 	formLoaded bool
 	formErr    string
-	defSeq     int
 	save       bool
 	button     int // 0 Cancel, 1 Start / Sign in
 	starting   bool
 	err        string
 }
 
-func newLaunchDialog(id uint64, api agentsapi.Accounts, target launchTarget, initial agents.AccountID, usage map[agents.AccountID]agentsapi.Usage, ascii bool) launchDialog {
+func newLaunchDialog(id uint64, api agentsapi.Accounts, target launchTarget, initial agents.AccountID, usage usagestore.Store, ascii bool) launchDialog {
 	ti := textinput.New()
 	ti.Prompt = "> "
 	ti.CharLimit = launchNameLen
 	// A steady cursor needs no blink ticks fed back through Update.
 	ti.Cursor.SetMode(cursor.CursorStatic)
-	seeded := make(map[agents.AccountID]agentsapi.Usage, len(usage))
-	for k, v := range usage {
-		seeded[k] = v
-	}
 	return launchDialog{
-		id: id, api: api, ascii: ascii, target: target, initial: initial,
-		now: time.Now, usage: seeded, described: map[agents.AccountID]bool{}, name: ti, button: 1,
+		Browser: accounts.NewBrowser(api, initial, usage, true),
+		id:      id, ascii: ascii, target: target,
+		now: time.Now, name: ti, button: 1,
 	}
 }
 
 func (d *launchDialog) SetSize(w, h int) { d.w, d.h = w, h }
-
-func (d launchDialog) Init() tea.Cmd { return d.listCmd() }
 
 // Capturing reports that a text input or dropdown has the keys.
 func (d launchDialog) Capturing() bool {
 	return d.focus == launchFocusName || (d.focus == launchFocusForm && d.form.Editing())
 }
 
+// launchCtx bounds the dialog's own backend calls (saving defaults).
 func launchCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), launchCallTimeout)
-}
-
-func (d launchDialog) listCmd() tea.Cmd {
-	api, id := d.api, d.id
-	return func() tea.Msg {
-		ctx, cancel := launchCtx()
-		defer cancel()
-		list, err := api.List(ctx)
-		return launchListMsg{dlg: id, accounts: list, err: err}
-	}
-}
-
-func (d launchDialog) usageCmd(acct agents.AccountID) tea.Cmd {
-	api, id := d.api, d.id
-	return func() tea.Msg {
-		ctx, cancel := launchCtx()
-		defer cancel()
-		u, err := api.Usage(ctx, acct, false)
-		return launchUsageMsg{dlg: id, id: acct, usage: u, err: err}
-	}
-}
-
-func (d launchDialog) describeCmd(acct agents.AccountID) tea.Cmd {
-	api, id := d.api, d.id
-	return func() tea.Msg {
-		ctx, cancel := launchCtx()
-		defer cancel()
-		info, err := api.Describe(ctx, acct)
-		return launchDescribeMsg{dlg: id, id: acct, info: info, err: err}
-	}
-}
-
-func (d launchDialog) defaultsCmd(acct agents.AccountID) tea.Cmd {
-	api, id, seq := d.api, d.id, d.defSeq
-	return func() tea.Msg {
-		ctx, cancel := launchCtx()
-		defer cancel()
-		def, err := api.Defaults(ctx, acct)
-		return launchDefaultsMsg{dlg: id, seq: seq, id: acct, d: def, err: err}
-	}
 }
 
 func emitMsg(m tea.Msg) tea.Cmd { return func() tea.Msg { return m } }
@@ -201,139 +122,54 @@ func emitMsg(m tea.Msg) tea.Cmd { return func() tea.Msg { return m } }
 // sidebar renders the shared account list; the same value orders j/k.
 func (d launchDialog) sidebar() accounts.Sidebar {
 	busy := map[agents.AccountID]bool{}
-	for _, a := range d.accounts {
+	for _, a := range d.Accounts() {
 		// Only a hint: admission decides whether the account is really in use.
 		busy[a.ID] = a.Running > 0 && !a.ConcurrentSameAccount
 	}
 	return accounts.Sidebar{
-		Accounts: d.accounts, Selected: d.selected, Usage: d.usage, Busy: busy,
-		ASCII: d.ascii, HideAdd: true, Focused: d.focus == launchFocusAccount,
+		Accounts: d.Accounts(), Selected: d.Selected(), Busy: busy, ASCII: d.ascii,
 	}
-}
-
-func (d launchDialog) current() (agentsapi.Account, bool) {
-	for _, a := range d.accounts {
-		if a.ID == d.selected {
-			return a, true
-		}
-	}
-	return agentsapi.Account{}, false
 }
 
 // Update handles keys and results.
 func (d launchDialog) Update(msg tea.Msg) (launchDialog, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		return d.onKey(msg)
-	case accounts.ReloadMsg:
-		// A sign-in ran in the terminal: re-read the accounts and their status.
-		d.described = map[agents.AccountID]bool{}
-		return d, d.listCmd()
-	case launchListMsg:
-		return d.onList(msg)
-	case launchUsageMsg:
-		if msg.dlg == d.id && msg.err == nil {
-			d.usage[msg.id] = msg.usage
-		}
-	case launchDescribeMsg:
-		if msg.dlg == d.id && msg.err == nil {
-			d.accounts = append([]agentsapi.Account(nil), d.accounts...)
-			for i := range d.accounts {
-				if d.accounts[i].ID == msg.id {
-					d.accounts[i].Info = msg.info
-				}
-			}
-		}
-	case launchDefaultsMsg:
-		return d.onDefaults(msg), nil
+	if k, ok := msg.(tea.KeyMsg); ok {
+		return d.onKey(k)
 	}
-	return d, nil
-}
-
-func (d launchDialog) onList(msg launchListMsg) (launchDialog, tea.Cmd) {
-	if msg.dlg != d.id {
-		return d, nil
-	}
-	d.listed = true
-	if msg.err != nil {
-		d.listErr = sanitizeAgentText(msg.err.Error())
-		return d, nil
-	}
-	d.listErr = ""
-	d.accounts = msg.accounts
-	ordered := d.sidebar().Ordered()
-	pick := agents.AccountID("")
-	has := func(id agents.AccountID) bool {
-		for _, a := range ordered {
-			if a.ID == id {
-				return id != ""
-			}
-		}
-		return false
-	}
-	switch {
-	case has(d.selected):
-		pick = d.selected
-	case has(d.initial):
-		pick = d.initial
-	case len(ordered) > 0:
-		pick = ordered[0].ID
-	}
-	var cmds []tea.Cmd
-	for _, a := range ordered {
-		if _, ok := d.usage[a.ID]; !ok {
-			cmds = append(cmds, d.usageCmd(a.ID))
-		}
-	}
-	if pick == "" {
-		d.selected, d.formLoaded = "", false
-		return d, tea.Batch(cmds...)
-	}
+	prev := d.Selected()
+	var cmd tea.Cmd
+	var ch accounts.Change
+	d.Browser, cmd, ch = d.Browser.Update(msg)
 	// Re-selecting after a reload re-reads the form: a sign-in changes nothing
 	// in it, but a defaults edit made in the accounts modal would.
-	nd, c := d.selectAccount(pick)
-	return nd, tea.Batch(append(cmds, c)...)
+	if d.Selected() != prev || (ch&accounts.ChangedList != 0 && d.ListErr() == "") {
+		d = d.resetForm()
+	}
+	if ch&accounts.ChangedDefaults != 0 {
+		d = d.onDefaults()
+	}
+	return d, cmd
 }
 
-// selectAccount switches the right column to an account and reloads its form.
-func (d launchDialog) selectAccount(id agents.AccountID) (launchDialog, tea.Cmd) {
-	d.selected = id
+// resetForm clears what belongs to the previous account's launch options.
+func (d launchDialog) resetForm() launchDialog {
 	d.formLoaded, d.formErr, d.save, d.err = false, "", false, ""
-	d.defSeq++
-	a, _ := d.current()
-	if !d.nameTouched {
+	if a, ok := d.Current(); ok && !d.nameTouched {
 		d.name.SetValue(a.Name)
 	}
-	cmds := []tea.Cmd{d.defaultsCmd(id)}
-	if !d.described[id] {
-		d.described = copyBoolMap(d.described)
-		d.described[id] = true
-		cmds = append(cmds, d.describeCmd(id))
-	}
-	return d, tea.Batch(cmds...)
+	return d
 }
 
-func copyBoolMap(m map[agents.AccountID]bool) map[agents.AccountID]bool {
-	out := make(map[agents.AccountID]bool, len(m)+1)
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
-}
-
-func (d launchDialog) onDefaults(msg launchDefaultsMsg) launchDialog {
-	if msg.dlg != d.id || msg.seq != d.defSeq || msg.id != d.selected {
-		return d
-	}
-	if msg.err != nil {
-		d.formErr = sanitizeAgentText(msg.err.Error())
+func (d launchDialog) onDefaults() launchDialog {
+	if msg := d.DefaultsErr(); msg != "" {
+		d.formErr = msg
 		return d
 	}
 	d.formErr = ""
-	d.defaults = msg.d
+	def := d.Defaults()
 	// Changes here apply to this launch only: the provider's own launch fields
 	// seeded from the account's defaults.
-	d.form = launchform.New(launchDialogFields(msg.d.LaunchFields), msg.d.Models, msg.d.Values, d.ascii).Focus(d.focus == launchFocusForm)
+	d.form = launchform.New(launchDialogFields(def.LaunchFields), def.Models, def.Values, d.ascii).Focus(d.focus == launchFocusForm)
 	d.formLoaded = true
 	return d
 }
@@ -464,21 +300,23 @@ func (d launchDialog) accountKey(s string) (launchDialog, tea.Cmd) {
 	case "enter":
 		return d.setFocus(launchFocusName), nil
 	}
-	ordered := d.sidebar().Ordered()
+	ordered := d.Ordered()
 	if delta == 0 || len(ordered) == 0 {
 		return d, nil
 	}
 	i := 0
 	for n, a := range ordered {
-		if a.ID == d.selected {
+		if a.ID == d.Selected() {
 			i = n
 		}
 	}
 	next := ordered[min(max(i+delta, 0), len(ordered)-1)].ID
-	if next == d.selected {
+	if next == d.Selected() {
 		return d, nil
 	}
-	return d.selectAccount(next)
+	var cmd tea.Cmd
+	d.Browser, cmd = d.Browser.Select(next)
+	return d.resetForm(), cmd
 }
 
 // submit starts the agent, or opens the sign-in flow for an account that has
@@ -487,13 +325,13 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 	if d.starting {
 		return d, nil
 	}
-	a, ok := d.current()
+	a, ok := d.Current()
 	if !ok {
 		d.err = "Choose an account first."
 		return d, nil
 	}
 	if accounts.NeedsSignIn(a.Info) {
-		if c := d.api.LoginCommand(a.ID); c != nil {
+		if c := d.LoginCommand(a.ID); c != nil {
 			return d, emitMsg(accounts.ExecMsg{Cmd: c})
 		}
 		return d, nil
@@ -512,7 +350,7 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 		WorkDir:    d.target.workDir,
 		AccountID:  a.ID,
 		Name:       name,
-		Launch:     agents.LaunchOptionsFrom(d.defaults.LaunchFields, values["model"], values),
+		Launch:     agents.LaunchOptionsFrom(d.Defaults().LaunchFields, values["model"], values),
 	}
 	sub := launchSubmitMsg{dlg: d.id, req: req, account: a.ID}
 	if d.save {
@@ -544,140 +382,4 @@ func sanitizeAgentText(s string) string {
 		return r
 	}, ansi.Strip(s))
 	return ansi.Truncate(strings.TrimSpace(s), 200, "…")
-}
-
-// --- view ---
-
-func (d launchDialog) View() string {
-	w, h := accounts.FrameSize(d.w, d.h)
-	if w == 0 || h == 0 {
-		return ""
-	}
-	leftW := accounts.LeftWidth(w)
-	rw := accounts.RightWidth(w)
-	rows := accounts.BodyRows(h)
-	title := "New agent · " + d.target.branch
-	if accounts.Compact(w) {
-		body := []string{d.sidebar().Selector(d.focus == launchFocusAccount), ""}
-		body = append(body, d.right(accounts.ContentWidth(w), max(rows-2, 0))...)
-		return accounts.FrameSingle(title, body, d.footer(), w, h)
-	}
-	return accounts.Frame(title, d.sidebar().View(leftW, rows), d.right(rw, rows), d.footer(), w, h)
-}
-
-func (d launchDialog) footer() string {
-	switch d.focus {
-	case launchFocusAccount:
-		return "↑↓ Profile · Tab Options · ^S Start · Esc"
-	case launchFocusForm:
-		return "↑↓ Field · ←→ Value · ^S Start · Esc"
-	default:
-		return "Tab Next · Enter Select · ^S Start · Esc"
-	}
-}
-
-func (d launchDialog) right(rw, rows int) []string {
-	th := theme.Current
-	dim := lipgloss.NewStyle().Foreground(th.Dim)
-	danger := lipgloss.NewStyle().Foreground(th.Danger)
-	switch {
-	case !d.listed:
-		return []string{dim.Render("Loading accounts…")}
-	case d.listErr != "":
-		return []string{danger.Render("Couldn't load accounts"), dim.Render(d.listErr)}
-	}
-	a, ok := d.current()
-	if !ok {
-		return []string{dim.Render("No accounts yet."), dim.Render("Esc, then m to add one.")}
-	}
-
-	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, d.ascii)+" "+providerName(a.Provider)) + " · " + a.Name
-	usage := dim.Render("usage loading…")
-	if u, ok := d.usage[a.ID]; ok {
-		if text := accounts.Headline(u.Headline, d.now(), d.ascii, false); text != "" {
-			usage = text
-			if u.Stale {
-				usage = dim.Render(ansi.Strip(text) + " (stale)")
-			}
-		} else {
-			usage = dim.Render("no usage data")
-		}
-	}
-	label := func(text string, on bool) string {
-		if on {
-			return lipgloss.NewStyle().Bold(true).Foreground(th.Accent).Render(text)
-		}
-		return lipgloss.NewStyle().Foreground(th.Text).Render(text)
-	}
-	d.name.Width = max(rw-4, 1)
-	lines := []string{head, usage, dim.Render(strings.Repeat("─", rw)), "",
-		label("Name", d.focus == launchFocusName), d.name.View(), ""}
-	if accounts.Compact(d.w) {
-		lines = []string{label("Name", d.focus == launchFocusName) + " " + d.name.View()}
-	}
-
-	scope := "This agent only"
-	if d.save {
-		scope = "Also saves profile defaults"
-	}
-	tail := []string{dim.Render(scope), d.saveRow()}
-	if d.err != "" {
-		errLines := strings.Split(ansi.Wrap(d.err, max(rw, 1), ""), "\n")
-		for _, l := range errLines[:min(len(errLines), 2)] {
-			tail = append(tail, danger.Render(l))
-		}
-	}
-	tail = append(tail, "")
-	tail = append(tail, d.buttonsRow(a, rw))
-
-	formRows := max(rows-len(lines)-len(tail), 1)
-	switch {
-	case d.formErr != "":
-		lines = append(lines, danger.Render("Couldn't load options"), dim.Render(d.formErr))
-	case !d.formLoaded:
-		lines = append(lines, dim.Render("Loading options…"))
-	default:
-		lines = append(lines, strings.Split(d.form.View(rw, formRows), "\n")...)
-	}
-	for len(lines) < rows-len(tail) {
-		lines = append(lines, "")
-	}
-	return append(lines[:max(rows-len(tail), 0)], tail...)
-}
-
-func (d launchDialog) saveRow() string {
-	box := "[ ]"
-	if d.save {
-		box = "[x]"
-	}
-	row := box + " Save profile defaults"
-	if d.focus == launchFocusSave {
-		return lipgloss.NewStyle().Bold(true).Foreground(theme.Current.Accent).Render(row)
-	}
-	return row
-}
-
-func (d launchDialog) buttonsRow(a agentsapi.Account, rw int) string {
-	focused := d.focus == launchFocusButtons
-	start := "Start"
-	disabled := false
-	switch {
-	case d.starting:
-		start, disabled = "Starting…", true
-	case accounts.NeedsSignIn(a.Info):
-		start = "Sign in first"
-	}
-	btn := func(label string, on, off bool) string {
-		st := lipgloss.NewStyle()
-		switch {
-		case on:
-			st = st.Reverse(true).Bold(true)
-		case off:
-			st = st.Faint(true)
-		}
-		return st.Render("[" + label + "]")
-	}
-	row := btn("Cancel", focused && d.button == 0, false) + "  " + btn(start, focused && d.button == 1, disabled)
-	pad := max(rw-ansi.StringWidth(row), 0)
-	return strings.Repeat(" ", pad) + row
 }

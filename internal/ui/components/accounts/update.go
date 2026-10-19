@@ -1,13 +1,13 @@
 package accounts
 
 import (
-	"maps"
 	"slices"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/launchform"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 // Update handles keys and backend results.
@@ -15,27 +15,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.onKey(msg)
-	case ReloadMsg:
-		return m, m.relist(m.selected)
-	case listMsg:
-		return m.onList(msg)
-	case describeMsg:
-		return m.onDescribe(msg), nil
-	case sidebarInfoMsg:
-		if msg.seq == m.latest.list {
-			m.accounts = slices.Clone(m.accounts)
-			for i := range m.accounts {
-				id := m.accounts[i].ID
-				if info, ok := msg.infos[id]; ok && id != m.selected && m.describeSeq[id] < msg.seq {
-					m.accounts[i].Info = info
-				}
-			}
-		}
-		return m, nil
-	case usageMsg:
-		return m.onUsage(msg), nil
-	case defaultsMsg:
-		return m.onDefaults(msg), nil
+	case ReloadMsg, listMsg, describeMsg, sidebarInfoMsg, usagestore.Result, defaultsMsg:
+		return m.onBrowser(msg)
 	case savedMsg:
 		return m.onSaved(msg)
 	case removedMsg:
@@ -48,106 +29,30 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) onList(msg listMsg) (Model, tea.Cmd) {
-	if msg.seq != m.latest.list {
-		return m, nil
-	}
-	m.listed = true
-	if msg.err != nil {
-		m.listErr = sanitize(msg.err)
-		return m, nil
-	}
-	m.listErr = ""
-	m.accounts = msg.accounts
-
-	ids := m.orderedIDs()
-	has := func(id agents.AccountID) bool { return id != "" && slices.Contains(ids, id) }
-
-	pick := agents.AccountID("")
-	switch {
-	case m.pendingAdd != nil && m.findNew() != "":
-		pick = m.findNew()
-	case has(msg.want):
-		pick = msg.want
-	case has(m.selected):
-		pick = m.selected
-	case len(ids) > 0:
-		pick = ids[0]
-	}
-	m.pendingAdd = nil
-
-	if pick == "" {
-		// Nothing to show but the add form.
+// onBrowser lets the shared Browser apply a result, then updates what only
+// this modal owns: the per-account view state and the Defaults form.
+func (m Model) onBrowser(msg tea.Msg) (Model, tea.Cmd) {
+	prev := m.selected
+	var cmd tea.Cmd
+	var ch Change
+	m.Browser, cmd, ch = m.Browser.Update(msg)
+	if m.selected != prev {
 		m.resetAccount()
-		m.selected = ""
+	}
+	if ch&ChangedList != 0 && m.listErr == "" && len(m.accounts) == 0 {
+		// Nothing to show but the add form.
 		m.add = newAddState()
 		m.add.active = true
-		return m, nil
 	}
-	if pick != m.selected {
-		m.resetAccount()
+	if ch&ChangedDefaults != 0 {
+		m = m.onDefaults()
 	}
-	m.selected = pick
-	return m, tea.Batch(m.loadSelected(), sidebarInfoCmd(m.api, m.accounts, m.selected, m.latest.list))
+	return m, cmd
 }
 
-// findNew is the account the last terminal add flow created, or "" when it
-// did not get created (the user backed out).
-func (m Model) findNew() agents.AccountID {
-	for _, a := range m.accounts {
-		if m.pendingAdd != nil && a.Provider == m.pendingAdd.provider && a.Name == m.pendingAdd.name {
-			return a.ID
-		}
-	}
-	return ""
-}
-
-func (m Model) onDescribe(msg describeMsg) Model {
-	if msg.id != m.selected || msg.seq != m.latest.describe {
-		return m
-	}
-	m.describing = false
-	if msg.err != nil {
-		m.describeErr = sanitize(msg.err)
-		return m
-	}
-	m.describeErr = ""
-	m.accounts = slices.Clone(m.accounts)
-	for i := range m.accounts {
-		if m.accounts[i].ID == msg.id {
-			m.accounts[i].Info = msg.info
-		}
-	}
-	return m
-}
-
-func (m Model) onUsage(msg usageMsg) Model {
-	if msg.id != m.selected || msg.seq != m.latest.usage {
-		return m
-	}
-	m.usageLoading = false
-	prev, have := m.usage[msg.id]
-	if msg.err != nil {
-		if !have {
-			m.usageErr = sanitize(msg.err)
-			return m
-		}
-		// Keep the last good numbers on screen, marked stale.
-		prev.Stale, prev.Err = true, sanitize(msg.err)
-		msg.usage = prev
-	}
-	m.usageErr = ""
-	m.usage = maps.Clone(m.usage)
-	m.usage[msg.id] = msg.usage
-	return m
-}
-
-func (m Model) onDefaults(msg defaultsMsg) Model {
-	if msg.id != m.selected || msg.seq != m.latest.defaults {
-		return m
-	}
-	if msg.err != nil {
-		m.df.err = sanitize(msg.err)
+func (m Model) onDefaults() Model {
+	if m.defaultsErr != "" {
+		m.df.err = m.defaultsErr
 		return m
 	}
 	m.df.err = ""
@@ -155,8 +60,7 @@ func (m Model) onDefaults(msg defaultsMsg) Model {
 		// Unsaved edits win over a background reload.
 		return m
 	}
-	d := msg.defaults
-	m.df.data = d
+	d := m.defaults
 	m.df.form = launchform.New(d.Fields, d.Models, d.Values, m.ascii)
 	m.df.loaded, m.df.replace = true, false
 	return m.syncFocus()
@@ -168,14 +72,13 @@ func (m Model) onSaved(msg savedMsg) (Model, tea.Cmd) {
 	}
 	m.df.saving = false
 	if msg.err != nil {
-		m.df.saveErr = sanitize(msg.err)
+		m.df.saveErr = usagestore.Sanitize(msg.err)
 		return m, nil
 	}
 	m.df.saveErr, m.df.saved, m.df.replace = "", true, true
-	return m, tea.Batch(
-		defaultsCmd(m.api, msg.id, m.next(&m.latest.defaults)),
-		savedClearCmd(msg.id, msg.seq),
-	)
+	var reload tea.Cmd
+	m.Browser, reload = m.Browser.ReloadDefaults()
+	return m, tea.Batch(reload, savedClearCmd(msg.id, msg.seq))
 }
 
 func (m Model) onRemoved(msg removedMsg) (Model, tea.Cmd) {
@@ -184,10 +87,10 @@ func (m Model) onRemoved(msg removedMsg) (Model, tea.Cmd) {
 	}
 	m.ov.removing = false
 	if msg.err != nil {
-		m.ov.msg = "Couldn't remove: " + sanitize(msg.err)
+		m.ov.msg = "Couldn't remove: " + usagestore.Sanitize(msg.err)
 		return m, nil
 	}
-	return m, m.relist(msg.neighbor)
+	return m, m.Relist(msg.neighbor)
 }
 
 // onKey routes a key by what is active: a dialog, the add form, an open
@@ -287,6 +190,7 @@ func (m Model) selectAccount(id agents.AccountID) (Model, tea.Cmd) {
 	if id != m.selected {
 		m.resetAccount()
 	}
-	m.selected = id
-	return m, m.loadSelected()
+	var cmd tea.Cmd
+	m.Browser, cmd = m.Browser.Select(id)
+	return m, cmd
 }

@@ -109,13 +109,6 @@ type MultiSubmitMsg struct {
 	Selected []int
 }
 
-// ActionMsg is emitted by a picker when an action key is pressed while its
-// search box is idle.
-type ActionMsg struct {
-	Kind Kind
-	Key  string
-}
-
 // FilterFunc maps a query to an ordered candidate list.
 type FilterFunc func(query string) []string
 
@@ -158,14 +151,6 @@ type Model struct {
 	sectionFilter SectionFilterFunc
 	expanded      map[string]bool // section name -> manually expanded (default collapsed)
 
-	// Picker fields: a flat list whose search box opens on "/" so plain keys
-	// stay free for actions.
-	picker    bool
-	searching bool
-	actions   []string
-	footer    string
-	empty     string // shown instead of "(no matches)" while no query is typed
-
 	// Prune-mode fields.
 	canMerge   bool
 	mergeOn    bool
@@ -201,18 +186,6 @@ func NewFuzzy(kind Kind, title string, filter FilterFunc, initial []string) Mode
 	ti.Placeholder = "type to filter…"
 	ti.Focus()
 	return Model{kind: kind, mode: modeFuzzy, title: title, input: ti, items: initial, filter: filter}
-}
-
-// NewPicker builds a flat searchable list. The search box stays hidden until
-// "/" is pressed; while it is hidden, each key in actions emits ActionMsg so the
-// parent can bind letters (such as n for "new") without them being typed into
-// a query. footer replaces the default hint line, and empty is shown when the
-// list has no items and no query is typed.
-func NewPicker(kind Kind, title string, filter FilterFunc, initial []string, footer, empty string, actions ...string) Model {
-	ti := textinput.New()
-	ti.Placeholder = "type to filter…"
-	return Model{kind: kind, mode: modeFuzzy, title: title, input: ti, items: initial, filter: filter,
-		picker: true, actions: actions, footer: footer, empty: empty}
 }
 
 // NewSectionedFuzzy builds a live fuzzy-search modal whose results are grouped
@@ -361,10 +334,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if m.picker {
-		return m.updatePicker(key)
-	}
-
 	switch key.String() {
 	case "esc", "ctrl+c":
 		return m, m.cancel()
@@ -439,54 +408,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 		return m, cmd
-	}
-	return m, nil
-}
-
-// updatePicker drives a picker: browsing keys while the search box is idle,
-// text entry while it is open (esc closes it and clears the query first).
-func (m Model) updatePicker(key tea.KeyMsg) (Model, tea.Cmd) {
-	switch key.String() {
-	case "ctrl+c":
-		return m, m.cancel()
-	case "esc":
-		if !m.searching {
-			return m, m.cancel()
-		}
-		m.searching = false
-		m.input.Blur()
-		m.input.SetValue("")
-		m.items = m.filter("")
-		m.cursor = 0
-		return m, nil
-	case "up", "ctrl+k":
-		m.moveCursor(-1)
-		return m, nil
-	case "down", "ctrl+j":
-		m.moveCursor(1)
-		return m, nil
-	case "enter":
-		if m.cursor >= 0 && m.cursor < len(m.items) {
-			return m, m.submit(m.items[m.cursor])
-		}
-		return m, nil
-	}
-	if m.searching {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(key)
-		m.items = m.filter(m.input.Value())
-		m.cursor = 0
-		return m, cmd
-	}
-	if key.String() == "/" {
-		m.searching = true
-		return m, m.input.Focus()
-	}
-	for _, a := range m.actions {
-		if key.String() == a {
-			k := m.kind
-			return m, func() tea.Msg { return ActionMsg{Kind: k, Key: a} }
-		}
 	}
 	return m, nil
 }
@@ -646,20 +567,6 @@ func (m Model) View() string {
 		b.WriteString(m.input.View())
 		b.WriteString("\n")
 	case modeFuzzy:
-		if m.picker {
-			if m.searching {
-				b.WriteString(m.input.View())
-				b.WriteString("\n")
-			}
-			if len(m.items) == 0 && !m.searching && m.empty != "" {
-				b.WriteString(dimStyle.Render(m.empty))
-			} else {
-				b.WriteString(m.renderList())
-			}
-			b.WriteString("\n\n")
-			b.WriteString(dimStyle.Render(m.footer))
-			break
-		}
 		b.WriteString(m.input.View())
 		b.WriteString("\n")
 		if m.sectioned {

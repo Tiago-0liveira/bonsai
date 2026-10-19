@@ -1,54 +1,32 @@
 package ui
 
 import (
-	"context"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
-// kindAgents is the session picker modal. It lives here, not in the modals
+// kindAgentStop is the stop confirmation. It lives here, not in the modals
 // package, because Kind is only an identifier the parent routes on.
-const (
-	kindAgents    modals.Kind = "agents"
-	kindAgentStop modals.Kind = "agent-stop"
-)
+const kindAgentStop modals.Kind = "agent-stop"
 
 const (
 	usageRefresh      = 60 * time.Second
 	minTerminalRows   = 5
 	stripNameCells    = 12
-	pickerNameCells   = 28
 	unsupportedNotice = "Interactive agents need a Unix host (Linux or macOS)."
 )
-
-// usageEntry is the last usage shown for an account. A failed refresh keeps
-// the last good data and marks it stale instead of clearing it.
-type usageEntry struct {
-	usage agentsapi.Usage
-	have  bool
-	stale bool
-	err   string
-}
-
-type agentUsageMsg struct {
-	seq     uint64
-	account agents.AccountID
-	usage   agentsapi.Usage
-	err     error
-}
 
 type agentUsageTickMsg struct{ gen uint64 }
 
@@ -56,11 +34,12 @@ func tickAgentUsage(gen uint64) tea.Cmd {
 	return tea.Tick(usageRefresh, func(time.Time) tea.Msg { return agentUsageTickMsg{gen: gen} })
 }
 
-func fetchAgentUsage(a agentsapi.Accounts, seq uint64, account agents.AccountID) tea.Cmd {
-	return func() tea.Msg {
-		u, err := a.Usage(context.Background(), account, false)
-		return agentUsageMsg{seq: seq, account: account, usage: u, err: err}
-	}
+// fetchUsage begins a shared-store fetch for the account. lim bounds provider
+// calls in flight for callers that fetch many accounts at once.
+func (m *Model) fetchUsage(id agents.AccountID, lim usagestore.Limiter) tea.Cmd {
+	var seq uint64
+	m.agents.usage, seq = m.agents.usage.Begin(id)
+	return usagestore.Fetch(m.agents.ctx, m.agents.api.Accounts, lim, id, seq, false)
 }
 
 // --- selection ---
@@ -133,9 +112,9 @@ func (m *Model) selectStripIndex(path string, i int) bool {
 
 // --- usage ---
 
-// requestAgentUsage fetches usage for the selected session's account. Each
-// request supersedes the previous one, so a late answer for an account the
-// user already left cannot overwrite what is shown.
+// requestAgentUsage fetches usage for the selected session's account through
+// the shared store; the answer for an account the user already left still
+// lands on that account's own entry.
 func (m *Model) requestAgentUsage() tea.Cmd {
 	if !m.agents.active() || m.agents.api.Accounts == nil {
 		return nil
@@ -148,22 +127,34 @@ func (m *Model) requestAgentUsage() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	m.agents.usageSeq++
 	m.agents.usageAccount = s.AccountID
-	return fetchAgentUsage(m.agents.api.Accounts, m.agents.usageSeq, s.AccountID)
+	return m.fetchUsage(s.AccountID, nil)
 }
 
-func (m Model) onAgentUsage(msg agentUsageMsg) (tea.Model, tea.Cmd) {
-	if msg.seq != m.agents.usageSeq || msg.account != m.agents.usageAccount {
+// onUsageResult applies a fetch or stored read to the shared store and hands
+// fetch results to the open overlay, whose own store ignores answers it did
+// not ask for.
+func (m Model) onUsageResult(r usagestore.Result) (tea.Model, tea.Cmd) {
+	var applied bool
+	m.agents.usage, applied = m.agents.usage.Apply(r)
+	if applied {
+		m.layout()
+	}
+	if r.Stored || m.agents.overlay == nil {
 		return m, nil
 	}
-	e := m.agents.usage[msg.account]
-	if msg.err != nil {
-		e.stale, e.err = true, msg.err.Error()
-	} else {
-		e = usageEntry{usage: msg.usage, have: true, stale: msg.usage.Stale, err: msg.usage.Err}
+	m, cmd := m.overlayUpdate(r)
+	return m, cmd
+}
+
+// onUsageObserved takes in a result an overlay applied, so the strip and the
+// pane show it without fetching again.
+func (m Model) onUsageObserved(o usagestore.Observation) (tea.Model, tea.Cmd) {
+	var applied bool
+	m.agents.usage, applied = m.agents.usage.Apply(usagestore.Result(o))
+	if applied {
+		m.layout()
 	}
-	m.agents.usage[msg.account] = e
 	return m, nil
 }
 
@@ -260,17 +251,14 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	path := cleanPath(wt.Path)
-	m.agents.pickPath = path
-	m.agents.pickIDs = map[string]string{}
 	// Opening the list is seeing it: failed sessions of this worktree list
 	// their ✗ there, so the worktree row's "!" has done its job.
 	m.ackFailedAgents(path)
-	build := func(query string) []string { return m.agentPickerItems(path, query) }
-	modal := modals.NewPicker(kindAgents, "AGENTS IN "+branchOf(wt), build, build(""),
-		"/ Search    Enter Open    n New    Esc Close", "No agents in this worktree yet", "n")
-	modal.SetInline(true)
-	modal.SetSize(m.agentPaneSize())
-	m.modal = &modal
+	m.leaveAgentTerminal()
+	p := newSessionsPicker(branchOf(wt), m.agentGlyphsASCII())
+	p.path = path
+	p.setSessions(m.orderedSessions(path))
+	m.setAgentOverlay(agentOverlay{sessions: &p})
 	return m, nil
 }
 
@@ -289,52 +277,12 @@ func (m *Model) ackFailedAgents(path string) {
 	}
 }
 
-// agentPickerItems lists a worktree's sessions as one flat list: running
-// first, then ended, each newest first, with the name column aligned. It also
-// records which session each item text stands for.
-func (m Model) agentPickerItems(path, query string) []string {
-	q := strings.ToLower(strings.TrimSpace(query))
-	var running, ended []agentsapi.Session
-	for _, i := range m.agents.byTree[path] {
-		if s := m.agents.sessions[i]; s.Active() {
-			running = append(running, s)
-		} else {
-			ended = append(ended, s)
-		}
-	}
-	sort.SliceStable(running, func(a, b int) bool { return running[a].CreatedAt.After(running[b].CreatedAt) })
-	sort.SliceStable(ended, func(a, b int) bool { return ended[a].CreatedAt.After(ended[b].CreatedAt) })
-	all := append(running, ended...)
-
-	nameW := 0
-	for _, s := range all {
-		nameW = max(nameW, min(ansi.StringWidth(sessionName(s)), pickerNameCells))
-	}
-	var items []string
-	for _, s := range all {
-		name := ansi.Truncate(sessionName(s), pickerNameCells, "…")
-		plain := name + " " + providerName(s.Provider) + " " + s.ProfileName
-		if q != "" && !strings.Contains(strings.ToLower(plain), q) {
-			continue
-		}
-		text := m.chrome(stateMarkStyled(s.State) + " " + m.agentGlyph(s.Provider) + " " + fit(name, nameW) + "  " +
-			dimText(providerName(s.Provider)+" · "+s.ProfileName))
-		if prev, dup := m.agents.pickIDs[text]; dup && prev != s.ID {
-			text += " #" + s.ID
-		}
-		m.agents.pickIDs[text] = s.ID
-		items = append(items, text)
-	}
-	return items
-}
-
 // onAgentsPick selects the chosen session and acknowledges its failure mark.
-func (m Model) onAgentsPick(value string) (tea.Model, tea.Cmd) {
-	id, ok := m.agents.pickIDs[value]
-	if !ok {
+func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
+	if path == "" {
 		return m, nil
 	}
-	m.agents.selected[m.agents.pickPath] = id
+	m.agents.selected[cleanPath(path)] = id
 	m.agents.ack[id] = true
 	m.refreshAgentBadges()
 	cmd := m.requestAgentUsage()

@@ -1,30 +1,30 @@
- AGENTS IN feat-a
+ Sessions                                                                                                        feat-a
+ All sessions in this worktree                                                                               4 sessions
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ / Search sessions…
 
- › ● ◎ Run integration tests  Codex · work
-   ● ✳ Fix authentication     Claude · work
-   ✗ ✳ Broken run             Claude · work
-   ✓ ◎ Previous attempt       Codex · work
+   SESSION                                             STATUS     │ ❃ CODEX
+ ▌ Run integration tests                               ● Running  │ Run integration tests
+   Codex · work                                                   │
+                                                                  │ ● Running
+   Fix authentication                                  ● Running  │
+   Claude · work                                                  │ Account  work
+                                                                  │ Worktree feat-a
+   Broken run                                          ✗ Failed   │ ID       r2
+   Claude · work                                                  │
+                                                                  │
+   Previous attempt                                    ✓ Exited   │
+   Codex · work                                                   │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │ [ Enter Open session ]
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Select  / Search  n New session  Esc Back
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- / Search    Enter Open    n New    Esc Close

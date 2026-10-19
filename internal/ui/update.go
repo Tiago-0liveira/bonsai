@@ -23,6 +23,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 // Update routes messages: layout, data results, the process tick, an active
@@ -88,10 +89,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAgentTook(msg)
 	case agentResizeTickMsg:
 		return m.onAgentResizeTick(msg)
-	case agentUsageMsg:
-		return m.onAgentUsage(msg)
+	case usagestore.Result:
+		return m.onUsageResult(msg)
+	case usagestore.Observation:
+		return m.onUsageObserved(msg)
 	case agentUsageTickMsg:
 		return m.onAgentUsageTick(msg)
+	case paneAccountsMsg:
+		return m.onPaneAccounts(msg)
+	case paneTickMsg:
+		return m.onPaneTick(msg)
 
 	case metricsMsg:
 		return m.onMetrics(msg), nil
@@ -202,13 +209,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.onMultiViewSubmit(msg.Selected)
 		}
 		m.modal = nil
-		return m, nil
-
-	case modals.ActionMsg:
-		if msg.Kind == kindAgents && msg.Key == "n" {
-			m.modal = nil
-			return m.openAgentLaunch()
-		}
 		return m, nil
 
 	case modals.CancelMsg:
@@ -1939,9 +1939,6 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	// These kinds do not require an existing selection.
 	switch msg.Kind {
-	case kindAgents:
-		return m.onAgentsPick(msg.Value)
-
 	case modals.KindKeymap:
 		// The terminal escape key is fixed, so keep the help open.
 		if strings.Contains(ansi.Strip(msg.Value), agentTerminalSection) {

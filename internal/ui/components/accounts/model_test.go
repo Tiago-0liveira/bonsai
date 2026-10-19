@@ -123,7 +123,7 @@ func TestInitLoadsSelectedAccount(t *testing.T) {
 	api := newFake()
 	m := opened(t, api, 104, 34)
 	out := plain(m)
-	for _, want := range []string{"AGENT PROFILES", "Claude · work", "[Overview]", "Connected", "work@example.com", "Max", "Browser login", "0 running"} {
+	for _, want := range []string{"Accounts", "3 accounts", "ACCOUNT", "PROVIDER", "PLAN", "CONNECTION", "Claude / work", "Overview", "Connected", "work@example.com", "Max", "Browser login", "0 running"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}
@@ -137,7 +137,7 @@ func TestInitLoadsSelectedAccount(t *testing.T) {
 func TestTabsAndFrameSizes(t *testing.T) {
 	for _, size := range [][2]int{{104, 34}, {80, 24}} {
 		m := opened(t, newFake(), size[0], size[1])
-		for key, want := range map[string]string{"2": "███████░░░", "3": "[Defaults]", "1": "[Overview]"} {
+		for key, want := range map[string]string{"2": "▰▰▰▰▰▰▰▱▱▱", "3": "Applies to new sessions", "1": "Identity"} {
 			m, _ = press(m, key)
 			out := plain(m)
 			if !strings.Contains(out, want) {
@@ -161,7 +161,7 @@ func TestUsageShowsAgeAndRefreshes(t *testing.T) {
 	api := newFake()
 	m := opened(t, api, 104, 34)
 	m, _ = press(m, "2")
-	if out := plain(m); !strings.Contains(out, "Updated 35 seconds ago") || !strings.Contains(out, "Resets in 2h14m") {
+	if out := plain(m); !strings.Contains(out, "Updated 35 seconds ago") || !strings.Contains(out, "Reset 2h14m") {
 		t.Fatalf("usage view:\n%s", out)
 	}
 	m, _ = press(m, "r")

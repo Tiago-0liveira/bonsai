@@ -24,6 +24,7 @@ const secretPath = "/home/someone/.secret-dir/token.json"
 // testProvider implements every optional interface the adapter reads.
 type testProvider struct {
 	usageErr  error
+	calls     int
 	usage     agents.UsageSnapshot
 	modelErr  error
 	updateErr error
@@ -42,6 +43,7 @@ func (*testProvider) FinalizeSession(context.Context, agents.FinalizeSessionRequ
 	return nil
 }
 func (p *testProvider) Usage(context.Context, agents.Account, agents.UsageOptions) (agents.UsageSnapshot, error) {
+	p.calls++
 	if p.usageErr != nil {
 		return agents.UsageSnapshot{}, p.usageErr
 	}

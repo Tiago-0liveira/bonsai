@@ -106,7 +106,13 @@ type Defaults struct {
 type Accounts interface {
 	List(ctx context.Context) ([]Account, error) // fast: no DescribeAccount
 	Describe(ctx context.Context, id agents.AccountID) (agents.AccountInfo, error)
+	// Usage is the only call that may reach a provider. refresh=false returns
+	// a stored snapshot no older than agents.UsageMaxAge and fetches otherwise;
+	// refresh=true bypasses the cache. A failed fetch returns the last good
+	// value marked stale.
 	Usage(ctx context.Context, id agents.AccountID, refresh bool) (Usage, error)
+	// UsageStored never calls the provider; ok is false when nothing is stored.
+	UsageStored(ctx context.Context, id agents.AccountID) (Usage, bool, error)
 	Defaults(ctx context.Context, id agents.AccountID) (Defaults, error)
 	UpdateDefaults(ctx context.Context, id agents.AccountID, values map[string]*string) error
 	Remove(ctx context.Context, id agents.AccountID) error

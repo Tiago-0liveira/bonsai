@@ -44,7 +44,7 @@ func (m Model) agentGlyph(p agents.ProviderID) string {
 // One cell each, so a row laid out before the swap keeps its width.
 var asciiRunes = strings.NewReplacer(
 	"●", "*", "✓", "+", "✗", "x", "│", "|", "─", "-", "·", "-", "→", ">",
-	"…", "~", "⚠", "!", "▼", "v", "↑", "^", "↓", "v", "←", "<",
+	"…", "~", "▌", ">", "⚠", "!", "▼", "v", "↑", "^", "↓", "v", "←", "<",
 	"╭", "+", "╮", "+", "╰", "+", "╯", "+", "├", "+", "┤", "+", "┬", "+", "┴", "+", "┼", "+", "╷", "|",
 )
 
@@ -357,18 +357,18 @@ func (m Model) usageText(s agentsapi.Session, compact bool) string {
 	if m.agents.api.Accounts == nil {
 		return ""
 	}
-	e, ok := m.agents.usage[s.AccountID]
-	if !ok || !e.have {
-		if ok && e.err != "" {
+	e := m.agents.usage[s.AccountID]
+	if !e.Have {
+		if e.Err != "" {
 			return dimText("usage unavailable")
 		}
 		return dimText("usage loading…")
 	}
-	text := accounts.Headline(e.usage.Headline, agentNow(), m.agentGlyphsASCII(), compact)
+	text := accounts.Headline(e.Usage.Headline, agentNow(), m.agentGlyphsASCII(), compact)
 	if text == "" {
 		text = "no usage data"
 	}
-	if e.stale {
+	if e.Stale() {
 		return dimText(ansi.Strip(text) + " (stale)")
 	}
 	return text
@@ -412,5 +412,5 @@ func centered(lines []string, w, rows int) []string {
 
 // agentPaneModal distinguishes agent-local pickers from app-wide dialogs.
 func (m Model) agentPaneModal() bool {
-	return m.modal != nil && (m.modal.Kind() == kindAgents || m.modal.Kind() == kindAgentStop)
+	return m.modal != nil && (m.modal.Kind() == kindAgentStop)
 }

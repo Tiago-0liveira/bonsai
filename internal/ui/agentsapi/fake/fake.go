@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
@@ -416,11 +417,17 @@ type Accounts struct {
 	Infos          map[agents.AccountID]agents.AccountInfo
 	Usages         map[agents.AccountID]agentsapi.Usage
 	LaunchDefaults map[agents.AccountID]agentsapi.Defaults
+	// Stored is the persisted snapshot UsageStored reads and Usage serves
+	// while it is fresh.
+	Stored map[agents.AccountID]agentsapi.Usage
+	// Now is the clock for Usage's freshness check; nil means time.Now.
+	Now func() time.Time
 
 	ListErr, DescribeErr, UsageErr, DefaultsErr, UpdateErr, RemoveErr error
 
 	mu         sync.Mutex
 	usageCalls []UsageCall
+	fetches    []agents.AccountID
 	updates    []DefaultsUpdate
 	removed    []agents.AccountID
 }
@@ -461,10 +468,23 @@ func (a *Accounts) Describe(_ context.Context, id agents.AccountID) (agents.Acco
 	return info, nil
 }
 
+// Usage answers like the real adapter: refresh=false serves Stored when its
+// snapshot is no older than agents.UsageMaxAge on the Now clock, otherwise the
+// fake "calls the provider" (counted in Fetches) and answers from Usages,
+// which then becomes the stored snapshot the next call sees.
 func (a *Accounts) Usage(_ context.Context, id agents.AccountID, refresh bool) (agentsapi.Usage, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.usageCalls = append(a.usageCalls, UsageCall{ID: id, Refresh: refresh})
+	now := time.Now
+	if a.Now != nil {
+		now = a.Now
+	}
+	st, stored := a.Stored[id]
+	if !refresh && stored && !st.FetchedAt.IsZero() && now().Sub(st.FetchedAt) <= agents.UsageMaxAge {
+		return st, nil
+	}
+	a.fetches = append(a.fetches, id)
 	if a.UsageErr != nil {
 		return agentsapi.Usage{}, a.UsageErr
 	}
@@ -472,7 +492,20 @@ func (a *Accounts) Usage(_ context.Context, id agents.AccountID, refresh bool) (
 	if !ok {
 		return agentsapi.Usage{}, ErrNotFound
 	}
+	if !u.FetchedAt.IsZero() {
+		if a.Stored == nil {
+			a.Stored = map[agents.AccountID]agentsapi.Usage{}
+		}
+		a.Stored[id] = u
+	}
 	return u, nil
+}
+
+func (a *Accounts) UsageStored(_ context.Context, id agents.AccountID) (agentsapi.Usage, bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	u, ok := a.Stored[id]
+	return u, ok, nil
 }
 
 func (a *Accounts) Defaults(_ context.Context, id agents.AccountID) (agentsapi.Defaults, error) {
@@ -564,6 +597,14 @@ func (a *Accounts) UsageCalls() []UsageCall {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]UsageCall(nil), a.usageCalls...)
+}
+
+// Fetches returns the accounts Usage had to "fetch from the provider", in
+// order: calls answered from a fresh Stored snapshot are not listed.
+func (a *Accounts) Fetches() []agents.AccountID {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]agents.AccountID(nil), a.fetches...)
 }
 
 // Updates returns the recorded UpdateDefaults requests.

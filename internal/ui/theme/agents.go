@@ -22,9 +22,9 @@ func ProviderGlyph(p agents.ProviderID, ascii bool) string {
 	var u, a string
 	switch p {
 	case providerClaude:
-		u, a = "✳", "C"
+		u, a = "✹", "C"
 	case providerCodex:
-		u, a = "◎", "X"
+		u, a = "❃", "X"
 	case providerAntigravity:
 		u, a = "✦", "A"
 	default:

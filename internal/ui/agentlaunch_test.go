@@ -63,32 +63,23 @@ func (e *agentsEnv) sendKey(t *testing.T, typ tea.KeyType) {
 	e.run(t, e.lastCmd)
 }
 
-func TestLaunchDialogGroupsAccountsAndShowsBusy(t *testing.T) {
+func TestLaunchDialogListsAccountsInATableWithoutBoxes(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		e := accountsEnv(t)
 		e.m.width, e.m.height = size[0], size[1]
 		e.openLaunch(t)
 		view := e.overlayView()
-		claude, codex := strings.Index(view, "CLAUDE"), strings.Index(view, "CODEX")
-		if size[0] >= 160 && (claude < 0 || codex < claude) {
+		claude, codex := strings.Index(view, "Claude"), strings.Index(view, "Codex")
+		if claude < 0 || codex < claude {
 			t.Fatalf("%v: providers must be grouped Claude then Codex:\n%s", size, view)
 		}
-		if !strings.Contains(view, "NEW AGENT · FEAT-A") || strings.Contains(view, "Add account") {
-			t.Errorf("%v: title or add row wrong:\n%s", size, view)
-		}
-		if size[0] < 160 {
-			e.sendKey(t, tea.KeyDown)
-			e.sendKey(t, tea.KeyDown)
-			view = e.overlayView()
-		}
-		var codexRow string
-		for _, l := range strings.Split(view, "\n") {
-			if strings.Contains(l, "work") && strings.Contains(l, "busy") {
-				codexRow = l
+		for _, want := range []string{"New session", "feat-a", "ACCOUNT", "PROVIDER", "Session options", "Save as account defaults", "Start session", "Ctrl+S Start"} {
+			if !strings.Contains(view, want) && !(size[0] < 100 && want == "5H LEFT") {
+				t.Errorf("%v: missing %q:\n%s", size, want, view)
 			}
 		}
-		if codexRow == "" {
-			t.Errorf("%v: the account with a running session must show busy:\n%s", size, view)
+		if strings.Contains(view, "Add account") || strings.Contains(view, "NEW AGENT") {
+			t.Errorf("%v: old sidebar chrome left:\n%s", size, view)
 		}
 		if lines := strings.Split(view, "\n"); len(lines) > size[1] {
 			t.Errorf("%v: %d rows exceed the screen", size, len(lines))
@@ -105,7 +96,7 @@ func TestLaunchDialogStartsWithTheWebIdentities(t *testing.T) {
 	e := accountsEnv(t)
 	e.fb.Accounts.LaunchDefaults["claude:work"] = agentsapi.Defaults{Values: map[string]string{"permissions": "auto"}}
 	e.openLaunch(t)
-	if got := e.dialog().selected; got != "claude:work" {
+	if got := e.dialog().Selected(); got != "claude:work" {
 		t.Fatalf("first claude account expected selected, got %q", got)
 	}
 	// Move to the Name field, replace the default, go on to the form and pick
@@ -254,8 +245,8 @@ func TestLaunchDialogSwitchingAccountReloadsForm(t *testing.T) {
 	e.key(t, "j")
 	e.run(t, e.lastCmd)
 	d := e.dialog()
-	if d.selected != "claude:personal" || d.form.Values()["permissions"] != "read-only" {
-		t.Errorf("selected=%q values=%v", d.selected, d.form.Values())
+	if d.Selected() != "claude:personal" || d.form.Values()["permissions"] != "read-only" {
+		t.Errorf("selected=%q values=%v", d.Selected(), d.form.Values())
 	}
 	if d.name.Value() != "personal" {
 		t.Errorf("untouched name follows the account, got %q", d.name.Value())
@@ -266,7 +257,7 @@ func TestLaunchDialogSignInFirst(t *testing.T) {
 	e := accountsEnv(t)
 	e.fb.Accounts.Infos["claude:work"] = agents.AccountInfo{Options: map[string]any{"auth_status": "logged_out"}}
 	e.openLaunch(t)
-	if view := e.overlayView(); !strings.Contains(view, "[Sign in first]") {
+	if view := e.overlayView(); !strings.Contains(view, "[ Sign in first ]") {
 		t.Fatalf("an account without a login offers sign-in:\n%s", view)
 	}
 	e.send(t, tea.KeyMsg{Type: tea.KeyCtrlS})
@@ -325,7 +316,7 @@ func TestQuickUsageOpensAccountsOnUsageTab(t *testing.T) {
 	if o == nil || o.accounts == nil || o.quick != nil {
 		t.Fatalf("m in the overlay swaps to the accounts modal: %+v", o)
 	}
-	if view := e.overlayView(); !strings.Contains(view, "[Usage]") {
+	if view := e.overlayView(); !strings.Contains(view, "REMAINING CAPACITY") {
 		t.Errorf("the modal opens on the Usage tab:\n%s", view)
 	}
 }
@@ -336,7 +327,7 @@ func TestAccountsOpensOnTheSessionsAccount(t *testing.T) {
 	e.relist(t)
 	e.key(t, "m")
 	e.run(t, e.lastCmd)
-	if view := e.overlayView(); !strings.Contains(view, "Codex · work") {
+	if view := e.overlayView(); !strings.Contains(view, "Codex / work") {
 		t.Errorf("accounts must start on the selected session's account:\n%s", view)
 	}
 }
@@ -625,7 +616,7 @@ func TestLaunchModelAndEffortOverridesStayWithSession(t *testing.T) {
 		},
 	}
 	e.openLaunch(t)
-	if view := e.overlayView(); !strings.Contains(view, "Model") || !strings.Contains(view, "Effort") || !strings.Contains(view, "This agent only") {
+	if view := e.overlayView(); !strings.Contains(view, "Model") || !strings.Contains(view, "Effort") {
 		t.Fatalf("launch overrides must be visible:\n%s", view)
 	}
 	e.sendKey(t, tea.KeyTab) // name

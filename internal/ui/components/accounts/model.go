@@ -2,17 +2,17 @@ package accounts
 
 import (
 	"fmt"
-	"maps"
 	"os/exec"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 // Tab is a section of the right column.
@@ -32,6 +32,8 @@ type Options struct {
 	Tab     Tab
 	// Now is the clock for "Updated .. ago" and reset countdowns; time.Now when nil.
 	Now func() time.Time
+	// Usage seeds the modal with what the root model already knows.
+	Usage usagestore.Store
 }
 
 // CloseMsg asks the parent to close the modal.
@@ -45,43 +47,25 @@ type ExecMsg struct{ Cmd *exec.Cmd }
 type ReloadMsg struct{}
 
 // seqs holds the sequence of the latest request of each kind.
-type seqs struct{ list, describe, usage, defaults, save, remove int }
+type seqs struct{ list, describe, defaults, save, remove int }
 
 // Model is the agent profile view. It is a value type; backend calls run as
 // commands and their results are ordered by sequence number before they are
 // applied.
 type Model struct {
-	api   agentsapi.Accounts
+	// Browser holds the account list, the selection and the details loaded for
+	// it, shared with the new-agent dialog.
+	Browser
 	ascii bool
 	now   func() time.Time
 	w, h  int // screen size; the frame is derived by FrameSize
 	tab   Tab
 	focus accountFocus
 
-	accounts []agentsapi.Account
-	listed   bool
-	listErr  string
-	selected agents.AccountID
-
-	n           int // request counter
-	latest      seqs
-	describeSeq map[agents.AccountID]int
-
-	usage        map[agents.AccountID]agentsapi.Usage
-	usageLoading bool
-	usageErr     string // set only while there is no earlier data to keep showing
-
-	describing  bool
-	describeErr string
-
 	ov  overviewState
 	df  defaultsState
 	add addState
 	dlg *dialog
-
-	// pendingAdd remembers the account the terminal flow is creating so the
-	// next list selects it.
-	pendingAdd *newAccount
 }
 
 type accountFocus int
@@ -102,23 +86,14 @@ func New(api agentsapi.Accounts, opts Options) Model {
 	if now == nil {
 		now = time.Now
 	}
-	m := Model{
-		api:         api,
-		ascii:       opts.ASCII,
-		now:         now,
-		tab:         min(max(opts.Tab, TabOverview), tabCount-1),
-		selected:    opts.Initial,
-		usage:       map[agents.AccountID]agentsapi.Usage{},
-		describeSeq: map[agents.AccountID]int{},
-		add:         newAddState(),
+	return Model{
+		Browser: NewBrowser(api, opts.Initial, opts.Usage, false),
+		ascii:   opts.ASCII,
+		now:     now,
+		tab:     min(max(opts.Tab, TabOverview), tabCount-1),
+		add:     newAddState(),
 	}
-	m.n = 1
-	m.latest.list = 1
-	return m
 }
-
-// Init lists accounts; the selected account's details load once the list is in.
-func (m Model) Init() tea.Cmd { return listCmd(m.api, m.latest.list, m.selected) }
 
 // SetSize gives the view the available pane size.
 func (m *Model) SetSize(w, h int) { m.w, m.h = w, h }
@@ -138,45 +113,39 @@ func (m Model) formEditing() bool {
 	return m.tab == TabDefaults && m.df.loaded && m.df.form.Editing()
 }
 
-// View renders the modal frame, with a dialog over it when one is open.
+// View renders the accounts table over the selected account's inspector, with
+// a dialog over it when one is open. The surrounding Agents pane draws the
+// border, so the view only adds its title and rules.
 func (m Model) View() string {
 	w, h := FrameSize(m.w, m.h)
 	if w == 0 || h == 0 {
 		return ""
 	}
-	leftW := LeftWidth(w)
-	rightW := RightWidth(w)
-	rows := BodyRows(h)
-
-	side := Sidebar{
-		Accounts:    m.accounts,
-		Selected:    m.selected,
-		AddSelected: m.add.active,
-		Usage:       m.usage,
-		ShowPlan:    true,
-		ASCII:       m.ascii,
-		Focused:     m.focus == focusProfiles,
-		HideAdd:     true,
-	}
-	var out string
-	if Compact(w) {
-		body := []string{side.Selector(m.focus == focusProfiles), ""}
-		body = append(body, m.right(ContentWidth(w), max(rows-2, 0))...)
-		out = FrameSingle("Agent profiles", body, m.footer(), w, h)
-	} else {
-		out = Frame("Agent profiles", side.View(leftW, rows), m.right(rightW, rows), m.footer(), w, h)
-	}
 	if m.dlg != nil {
-		a, _ := m.current()
-		out = m.dlg.view(providerName(a.Provider)+" · "+a.Name, w, h)
+		a, _ := m.Current()
+		return m.dlg.view(theme.ProviderGlyph(a.Provider, m.ascii)+" "+providerName(a.Provider)+" · "+a.Name, w, h)
 	}
-	return out
+	iw := ContentWidth(w)
+	lines := m.compose(iw, h)
+	for i := range lines {
+		lines[i] = fit(" "+fit(lines[i], iw), w)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Help describes the keys available in the current profile view.
 func (m Model) Help() string { return m.footer() }
 
 func (m Model) footer() string {
+	text := m.footerText()
+	if m.ascii {
+		text = strings.ReplaceAll(text, "↑↓", "j/k")
+	}
+	return text
+}
+
+// footerText is the single footer: the keys of the area that has focus.
+func (m Model) footerText() string {
 	switch {
 	case m.dlg != nil:
 		return "←→ Choice · Enter Confirm · Esc Cancel"
@@ -187,134 +156,235 @@ func (m Model) footer() string {
 	}
 	switch m.focus {
 	case focusProfiles:
-		return "↑↓ Profile · Tab Section · Enter Details · n Add · Esc Close"
+		return "↑↓ Account · Tab Section · Enter Details · n Add account · Esc Back"
 	default:
 		if m.tab == TabDefaults {
-			return "↑↓ Field · Enter Edit · ^S Save · Tab Section · Esc Profiles"
+			return "↑↓ Field · Enter Edit · Ctrl+S Save · Tab Section · Esc Accounts"
 		}
 		if m.tab == TabUsage {
-			return "r Refresh · Tab Section · Esc Profiles"
+			return "r Refresh · Tab Section · Esc Accounts"
 		}
-		return "↑↓ Action · Enter Select · Tab Section · Esc Profiles"
+		return "↑↓ Action · Enter Select · Tab Section · Esc Accounts"
 	}
 }
 
-// right builds the right column's rows.
-func (m Model) right(rw, rows int) []string {
+// shortenFooter drops the least useful words until the hints fit w, so a narrow
+// pane never cuts a key mid-word.
+func shortenFooter(s string, w int) string {
+	for _, r := range [][2]string{{"n Add account", "n Add"}, {"Tab Section", "Tab"}, {"Enter Details", "Enter"}, {"Esc Accounts", "Esc"}} {
+		if ansi.StringWidth(s) <= w {
+			break
+		}
+		s = strings.Replace(s, r[0], r[1], 1)
+	}
+	return s
+}
+
+// ruleGlyph is the horizontal rule character.
+func (m Model) ruleGlyph() string {
+	if m.ascii {
+		return "-"
+	}
+	return "─"
+}
+
+// compose lays out exactly h lines of iw cells: title, accounts table,
+// divider, tabs, inspector and footer. Spare height goes to the inspector once
+// the table shows every account; when height is short the table gives up rows
+// before the inspector gives up content.
+func (m Model) compose(iw, h int) []string {
 	th := theme.Current
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	rule := dim.Render(strings.Repeat(m.ruleGlyph(), iw))
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render("Accounts")
+	if m.listed && len(m.accounts) > 0 && !m.add.active {
+		title = twoCol(title, dim.Render(plural(len(m.accounts), "account")), iw)
+	}
+	// Blank spacer lines are the first thing to go in a short pane.
+	var gap []string
+	if h >= 20 {
+		gap = []string{""}
+	}
+	top := append([]string{title, rule}, gap...)
+	bottom := []string{rule, dim.Render(shortenFooter(m.footer(), iw))}
+	free := max(h-len(top)-len(bottom), 0)
+
+	var body []string
 	switch {
 	case m.add.active:
-		return m.addView(rw)
+		body = m.addView(iw)
 	case !m.listed:
-		return []string{dim.Render("Loading accounts…")}
-	}
-	a, ok := m.current()
-	if !ok {
-		if m.listErr != "" {
-			return []string{lipgloss.NewStyle().Foreground(th.Danger).Render("Couldn't load accounts"), dim.Render(m.listErr)}
-		}
-		return []string{dim.Render("No accounts yet.")}
-	}
-
-	head := theme.ProviderStyle(a.Provider).Render(theme.ProviderGlyph(a.Provider, m.ascii)+" "+providerName(a.Provider)) + " · " + a.Name
-	lines := []string{head, "", m.tabRow(), dim.Render(strings.Repeat("─", rw)), ""}
-	if Compact(m.w) {
-		lines = []string{m.tabRow(), dim.Render(strings.Repeat("─", rw))}
-	}
-	body := max(rows-len(lines), 0)
-
-	switch m.tab {
-	case TabUsage:
-		lines = append(lines, m.usageView(rw, body)...)
-	case TabDefaults:
-		lines = append(lines, m.defaultsView(rw, body)...)
+		body = []string{dim.Render("Loading accounts…")}
 	default:
-		lines = append(lines, m.overviewView(rw, body)...)
+		if _, ok := m.Current(); ok {
+			body = m.inspect(iw, free, gap)
+			break
+		}
+		if m.listErr != "" {
+			body = []string{lipgloss.NewStyle().Foreground(th.Danger).Render("Couldn't load accounts"), dim.Render(m.listErr)}
+		} else {
+			body = []string{dim.Render("No accounts yet.")}
+		}
+	}
+
+	lines := append(top, padTo(body, free)...)
+	lines = append(lines, bottom...)
+	if len(lines) > h {
+		lines = append(lines[:h-1], lines[len(lines)-1])
 	}
 	return lines
 }
 
-func (m Model) tabRow() string {
+// padTo cuts or extends lines with blanks to exactly n.
+func padTo(lines []string, n int) []string {
+	out := append([]string{}, lines[:min(len(lines), n)]...)
+	for len(out) < n {
+		out = append(out, "")
+	}
+	return out
+}
+
+// twoCol puts right at the far edge of a w-cell line when both fit.
+func twoCol(left, right string, w int) string {
+	gap := w - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if gap < 2 {
+		return left
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// accountTable is the table of every account, columns PLAN and CONNECTION.
+func (m Model) accountTable() Table {
+	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	side := Sidebar{ASCII: m.ascii}
+	none := "—"
+	if m.ascii {
+		none = "-"
+	}
+	return Table{
+		Accounts: m.Ordered(),
+		Selected: m.selected,
+		ASCII:    m.ascii,
+		Focused:  m.focus == focusProfiles,
+		Columns: []Column{
+			{Title: "PLAN", Width: 9, Optional: true, Cell: func(a agentsapi.Account) string {
+				if plan := planOf(a, m.usage); plan != "" {
+					return plan
+				}
+				return dim.Render(none)
+			}},
+			{Title: "CONNECTION", Width: 15, Under: true, Cell: func(a agentsapi.Account) string {
+				return side.dot(a) + " " + connectionLabel(a)
+			}},
+		},
+	}
+}
+
+// connectionLabel is the sign-in state next to the account's dot.
+func connectionLabel(a agentsapi.Account) string {
+	th := theme.Current
+	switch authOf(a.Info) {
+	case authConnected:
+		return lipgloss.NewStyle().Foreground(th.Success).Render("Connected")
+	case authNeedsSignIn:
+		return lipgloss.NewStyle().Foreground(th.Warning).Render("Needs sign-in")
+	}
+	return lipgloss.NewStyle().Foreground(th.Dim).Render("Unknown")
+}
+
+// inspect builds the lines between the title and the footer for the selected
+// account, filling rows lines.
+func (m Model) inspect(iw, rows int, gap []string) []string {
+	a, _ := m.Current()
+	tbl := m.accountTable()
+	useTable := tbl.Fits(iw)
+
+	var mid []string
+	if useTable {
+		mid = append(append(append([]string{}, gap...), m.divider(a, iw)), gap...)
+	} else {
+		// Too narrow for the table: the single-account selector above the same
+		// tabs.
+		side := Sidebar{Accounts: m.accounts, Selected: m.selected, Usage: m.usage, ShowPlan: true, ASCII: m.ascii}
+		mid = []string{side.Selector(m.focus == focusProfiles)}
+	}
+	tabs := append(m.tabRows(iw), gap...)
+	insp := m.inspector(a, iw, !useTable)
+
+	avail := rows - len(mid) - len(tabs)
+	var out []string
+	if useTable {
+		// Table rows yield before inspector content does, but never below the
+		// selected row.
+		tableH := min(max(avail-insp.height(), 1), tbl.Height(iw))
+		out = tbl.View(iw, tableH)
+		avail -= len(out)
+	}
+	out = append(out, mid...)
+	out = append(out, tabs...)
+	return append(out, insp.render(avail)...)
+}
+
+// divider is the single rule between the table and the tabs, naming the
+// account the inspector shows.
+func (m Model) divider(a agentsapi.Account, w int) string {
+	th := theme.Current
+	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	rule := m.ruleGlyph()
+	name := ansi.Truncate(a.Name, max(w-ansi.StringWidth(providerName(a.Provider))-11, 1), "…")
+	label := " " + providerMark(a.Provider, m.ascii) + dim.Render(" / ") +
+		lipgloss.NewStyle().Foreground(th.Text).Render(name) + " "
+	left := dim.Render(strings.Repeat(rule, 2))
+	return left + label + dim.Render(strings.Repeat(rule, max(w-2-ansi.StringWidth(label), 0)))
+}
+
+// tabRows is the tab row and the underline marking the active tab. Save state
+// sits at the right edge of the tab row so the table never shifts.
+func (m Model) tabRows(w int) []string {
 	th := theme.Current
 	names := [tabCount]string{"Overview", "Usage", "Defaults"}
-	parts := make([]string, 0, tabCount)
-	for t := range tabCount {
-		if t == m.tab {
-			parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(th.Accent).Render("["+names[t]+"]"))
-			continue
-		}
-		parts = append(parts, lipgloss.NewStyle().Foreground(th.Dim).Render(names[t]))
+	sep := 5
+	if w < 36 {
+		sep = 2
 	}
-	row := strings.Join(parts, "  ")
+	var row, under string
+	col := 0
+	underline := "━"
+	if m.ascii {
+		underline = "="
+	}
+	for t := range tabCount {
+		if t > 0 {
+			row += strings.Repeat(" ", sep)
+			col += sep
+		}
+		if t == m.tab {
+			row += lipgloss.NewStyle().Bold(true).Foreground(th.Accent).Render(names[t])
+			under = strings.Repeat(" ", col) + lipgloss.NewStyle().Foreground(th.Accent).Render(strings.Repeat(underline, len(names[t])))
+		} else {
+			row += lipgloss.NewStyle().Foreground(th.Dim).Render(names[t])
+		}
+		col += len(names[t])
+	}
 	switch {
 	case m.df.saved:
-		row += "  " + lipgloss.NewStyle().Foreground(th.Success).Render("Saved")
+		row = twoCol(row, lipgloss.NewStyle().Foreground(th.Success).Render("Saved"), w)
 	case m.dirty():
 		dot := "●"
 		if m.ascii {
 			dot = "*"
 		}
-		row += "  " + lipgloss.NewStyle().Foreground(th.Warning).Render(dot+" unsaved")
+		row = twoCol(row, lipgloss.NewStyle().Foreground(th.Warning).Render(dot+" unsaved"), w)
 	}
-	return row
+	return []string{row, under}
 }
 
-// current is the selected account, or false when none is.
-func (m Model) current() (agentsapi.Account, bool) {
-	for _, a := range m.accounts {
-		if a.ID == m.selected {
-			return a, true
-		}
-	}
-	return agentsapi.Account{}, false
-}
-
-func (m Model) orderedIDs() []agents.AccountID {
-	ordered := Sidebar{Accounts: m.accounts}.Ordered()
-	ids := make([]agents.AccountID, len(ordered))
-	for i, a := range ordered {
-		ids[i] = a.ID
-	}
-	return ids
-}
-
-// next advances the request counter and records it as the latest of a kind.
-func (m *Model) next(kind *int) int {
-	m.n++
-	*kind = m.n
-	return m.n
-}
-
-// loadSelected requests everything the right column shows for the selected account.
-func (m *Model) loadSelected() tea.Cmd {
-	id := m.selected
-	if id == "" {
-		return nil
-	}
-	m.describing, m.describeErr = true, ""
-	m.usageLoading = true
-	seq := m.next(&m.latest.describe)
-	m.describeSeq = maps.Clone(m.describeSeq)
-	m.describeSeq[id] = seq
-	return tea.Batch(
-		describeCmd(m.api, id, seq),
-		usageCmd(m.api, id, m.next(&m.latest.usage), false),
-		defaultsCmd(m.api, id, m.next(&m.latest.defaults)),
-	)
-}
-
-// resetAccount drops the per-account view state when the selection moves, so
-// nothing of the previous account shows under the new one.
+// resetAccount drops the view state of the previous account when the
+// selection moves.
 func (m *Model) resetAccount() {
-	m.describing, m.describeErr = false, ""
-	m.usageLoading, m.usageErr = false, ""
 	m.ov = overviewState{}
 	m.df = defaultsState{}
-}
-
-func (m *Model) relist(want agents.AccountID) tea.Cmd {
-	return listCmd(m.api, m.next(&m.latest.list), want)
 }
 
 func plural(n int, unit string) string {

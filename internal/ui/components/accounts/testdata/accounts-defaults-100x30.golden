@@ -1,30 +1,30 @@
- AGENT PROFILES
+ Accounts                                                                                5 accounts
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
 
- ACCOUNTS                         │ ◎ Codex · personal
-                                  │
- CLAUDE                           │ Overview  Usage  [Defaults]
-   ✳ Max · work                 ● │ ───────────────────────────────────────────────────────────────
-   ✳ Pro · personal             ● │
-                                  │ Model
- CODEX                            │ > gpt-5.5                                                   [▼]
-   ◎ work                       ● │
- > ◎ personal                   ● │ Reasoning effort
-                                  │ > High (default)                                            [▼]
- ANTIGRAVITY                      │
-   ✦ personal                   ● │ Permissions
-                                  │ > Auto                                                      [▼]
-                                  │
-                                  │ Other provider-specific options
-                                  │ Web search
-                                  │ > Off                                                   [space]
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │
-                                  │ These defaults apply to new sessions.
-                                  │ Running agents are not affected.
-                                  │
-                                  │                                        [Reset]  [Save defaults]
- ↑↓ Profile · Tab Section · Enter Details · n Add · Esc Close
+   ACCOUNT           PROVIDER     PLAN       CONNECTION
+   work              Claude       Max        ● Connected
+   personal          Claude       Pro        ● Connected
+   work              Codex        —          ● Connected
+ ▸ personal          Codex        —          ● Connected
+   personal          Antigravity  —          ● Connected
+
+ ── ❃ Codex / personal ────────────────────────────────────────────────────────────────────────────
+
+ Overview     Usage     Defaults
+                        ━━━━━━━━
+
+   Model             [ gpt-5.5          ▾ ]
+   Reasoning effort  [ High (default)   ▾ ]
+   Permissions       [ Auto             ▾ ]
+ Other provider-specific options
+   Web search        [ Off                ]
+
+ Applies to new sessions for Codex / personal.
+                                                                            Reset   [Save defaults]
+
+
+
+
+
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Account · Tab Section · Enter Details · n Add account · Esc Back

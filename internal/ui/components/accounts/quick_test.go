@@ -13,6 +13,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi/fake"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
 func quickClock() time.Time { return testNow }
@@ -93,15 +94,16 @@ func order(t *testing.T, out string, parts ...string) {
 func TestQuickLoadsAndOrders(t *testing.T) {
 	api := quickFake()
 	q := opennedQuick(t, api, "c1", false)
+	q.SetSize(120, 30)
 	out := quickPlain(q)
-	for _, want := range []string{"USAGE", "Claude · work", "5-hour", "███████░░░ · Resets in 2h14m", "Weekly", "41% remaining",
-		"Updated 35 seconds ago", "↑↓ Profile · r Refresh · m Profiles · Esc Close", "5h █░░░░░░░░░ · W 80%", "stale"} {
+	for _, want := range []string{"Usage", ">▌ work", "5h", "72% left · Reset 2h14m", "Week", "41% left",
+		"Updated 35 seconds ago", "↑↓ Profile · r Refresh · m Profiles · Esc Close", "12% left", "stale"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}
 	}
 	// The list always contains all profiles in provider/name order.
-	order(t, out, "Claude · work", "personal  5h ███████░░░", "personal  5h ██░░░░░░░░", "work      5h █████████░", "personal  5h █░░░░░░░░░", "work      5h █████████░ · W 70%")
+	order(t, out, "CLAUDE", "personal", ">▌ work", "CODEX", "15% left", "91% left", "ANTIGRAVITY", "12% left", "90% left")
 	if strings.Count(out, "work") < 3 {
 		t.Fatalf("unexpected rows:\n%s", out)
 	}
@@ -178,10 +180,15 @@ func (r *runner) spawn(cmd tea.Cmd) {
 	}()
 }
 
+// next returns the next message, skipping the observations views report to
+// the root model: the tests drive the overlay alone.
 func (r *runner) next(t *testing.T) tea.Msg {
 	t.Helper()
 	select {
 	case m := <-r.out:
+		if _, ok := m.(usagestore.Observation); ok {
+			return r.next(t)
+		}
 		return m
 	case <-time.After(2 * time.Second):
 		t.Fatal("no message arrived")
@@ -213,8 +220,8 @@ func TestQuickConcurrencyCap(t *testing.T) {
 		first = append(first, <-g.started)
 	}
 	// Goroutines start in any order; the sequence numbers show dispatch order.
-	for id, seq := range q.usageSeq {
-		if id != "c1" && seq < q.usageSeq["c1"] {
+	for id, e := range q.usage {
+		if id != "c1" && e.Seq < q.usage["c1"].Seq {
 			t.Errorf("%s dispatched before the focused account c1", id)
 		}
 	}
@@ -279,25 +286,26 @@ func TestQuickConcurrencyCap(t *testing.T) {
 
 func TestQuickLateResultsAreDropped(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "c1", false)
-	cur := q.usageSeq["x2"]
+	q.SetSize(120, 30)
+	cur := q.usage["x2"].Seq
 	if cur == 0 {
 		t.Fatal("no request recorded for x2")
 	}
 	old := agentsapi.Usage{Headline: agents.NewUsageHeadline(&agents.UsageLimit{ID: "5h", Window: "5h", RemainingFraction: ptr(0.01)}, nil, nil), FetchedAt: testNow}
 
 	// An answer older than the latest request for that account changes nothing.
-	q2, _ := q.Update(quickUsageMsg{id: "x2", seq: cur - 1, usage: old})
+	q2, _ := q.Update(usagestore.Result{Account: "x2", Seq: cur - 1, Usage: old})
 	if quickPlain(q2) != quickPlain(q) {
 		t.Errorf("late result changed the view:\n%s", quickPlain(q2))
 	}
 	// A late answer for one account does not touch another.
-	q2, _ = q.Update(quickUsageMsg{id: "x1", seq: q.usageSeq["x1"] - 1, usage: old})
+	q2, _ = q.Update(usagestore.Result{Account: "x1", Seq: q.usage["x1"].Seq - 1, Usage: old})
 	if quickPlain(q2) != quickPlain(q) {
 		t.Errorf("late result for x1 changed the view")
 	}
 	// The current one applies.
-	q2, _ = q.Update(quickUsageMsg{id: "x2", seq: cur, usage: old})
-	if !strings.Contains(quickPlain(q2), "5h ░░░░░░░░░░") {
+	q2, _ = q.Update(usagestore.Result{Account: "x2", Seq: cur, Usage: old})
+	if !strings.Contains(quickPlain(q2), "0% left") {
 		t.Errorf("current result not applied:\n%s", quickPlain(q2))
 	}
 	// A late list is dropped too.
@@ -309,25 +317,26 @@ func TestQuickLateResultsAreDropped(t *testing.T) {
 
 func TestQuickLateResultFreesSlot(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "c1", false)
-	q.inflight = 3
-	q.queue = []usageJob{{id: "c2"}}
-	q, cmd := q.Update(quickUsageMsg{id: "x2", seq: -1}) // dropped, but its slot frees
-	if cmd == nil || q.inflight != 3 {
-		t.Errorf("dropped result must free its slot for the queue: inflight=%d cmd=%v", q.inflight, cmd != nil)
+	q.pending = map[uint64]struct{}{1: {}, 2: {}, 3: {}}
+	q.queue = []usageJob{{id: "c2", seq: 9}}
+	q, cmd := q.Update(usagestore.Result{Account: "x2", Seq: 1}) // dropped, but its slot frees
+	if cmd == nil || len(q.pending) != 3 || len(q.queue) != 0 {
+		t.Errorf("dropped result must free its slot for the queue: pending=%d queue=%d cmd=%v", len(q.pending), len(q.queue), cmd != nil)
 	}
 }
 
 func TestQuickFailureKeepsStaleData(t *testing.T) {
 	api := quickFake()
 	q := opennedQuick(t, api, "c1", false)
+	q.SetSize(120, 30)
 	before := quickPlain(q)
 	api.UsageErr = errString("boom at /home/me/.claude/secret.json")
 	q, _ = quickKey(q, "r")
 	out := quickPlain(q)
-	if !strings.Contains(out, "███████░░░") || !strings.Contains(out, "5h ██░░░░░░░░") {
+	if !strings.Contains(out, "72% left") || !strings.Contains(out, "15% left") {
 		t.Errorf("failed refresh dropped the last good numbers:\n%s", out)
 	}
-	if strings.Count(out, "stale") < 6 { // header marker + 5 rows? every account is stale
+	if strings.Count(out, "stale") != 6 { // Each retained account is marked once.
 		t.Errorf("every account should be stale:\n%s", out)
 	}
 	if strings.Contains(out, "/home/me") || strings.Contains(out, "secret.json") {
@@ -348,14 +357,15 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
-func TestQuickStaleRowsAreDimmedAndLabelled(t *testing.T) {
+func TestQuickStaleRowsAreLabelled(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "c1", false)
+	q.SetSize(120, 30)
 	var staleRow, goodRow string
 	for _, l := range strings.Split(q.View(), "\n") {
 		switch {
-		case strings.Contains(ansi.Strip(l), "work      5h █████████░ · W 70%"):
+		case strings.Contains(ansi.Strip(l), "work · stale"):
 			staleRow = l
-		case strings.Contains(ansi.Strip(l), "personal  5h █░░░░░░░░░"):
+		case strings.Contains(ansi.Strip(l), ">▌ work"):
 			goodRow = l
 		}
 	}
@@ -386,8 +396,8 @@ func TestQuickKeys(t *testing.T) {
 	if q.focus != "x2" {
 		t.Fatalf("focus after j = %s, want x2", q.focus)
 	}
-	if out := quickPlain(q); !strings.Contains(out, "Codex · personal") {
-		t.Errorf("focused account not on top:\n%s", out)
+	if out := quickPlain(q); !strings.Contains(out, ">▌ personal") {
+		t.Errorf("focused account not marked:\n%s", out)
 	}
 	_, msgs = quickKey(q, "m")
 	if len(msgs) != 1 || msgs[0] != (OpenAccountsMsg{Account: "x2"}) {
@@ -440,7 +450,7 @@ func TestQuickListErrorAndEmpty(t *testing.T) {
 	}
 	api.ListErr = nil
 	q, _ = quickKey(q, "r") // retries the list
-	if out := quickPlain(q); !strings.Contains(out, "Claude · work") {
+	if out := quickPlain(q); !strings.Contains(out, ">▌ work") {
 		t.Errorf("r should retry the list:\n%s", out)
 	}
 
@@ -460,7 +470,7 @@ func TestQuickUnknownFocusFallsBack(t *testing.T) {
 func TestQuickFocusedAntigravityShowsWindows(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "a1", false)
 	out := quickPlain(q)
-	if !strings.Contains(out, "Antigravity · personal") || !strings.Contains(out, "5-hour") || !strings.Contains(out, "Weekly") {
+	if !strings.Contains(out, ">▌ personal") || !strings.Contains(out, "5h") || !strings.Contains(out, "Week") {
 		t.Errorf("headline windows missing:\n%s", out)
 	}
 }
@@ -468,7 +478,7 @@ func TestQuickFocusedAntigravityShowsWindows(t *testing.T) {
 func TestQuickASCII(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "c1", true)
 	out := quickPlain(q)
-	for _, r := range []string{"█", "░", "✳", "◎", "✦"} {
+	for _, r := range []string{"█", "░", "▰", "▱", "▌", "✹", "❃", "✦"} {
 		if strings.Contains(out, r) {
 			t.Errorf("ascii view has %q", r)
 		}
@@ -540,29 +550,26 @@ func TestGoldenQuickUsage(t *testing.T) {
 
 func TestQuickNavigationKeepsRowsStableAndSelectionVisible(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "c1", false)
+	q.SetSize(120, 30)
 	before := strings.Split(quickPlain(q), "\n")
 	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyUp, tea.KeyUp, tea.KeyDown} {
 		q, _ = q.Update(tea.KeyMsg{Type: key})
 		after := strings.Split(quickPlain(q), "\n")
-		// The title/spacer and fixed detail block occupy six rows. Every
-		// profile keeps its position; only its selection marker changes.
-		for i := 6; i < 12; i++ {
-			if strings.TrimLeft(before[i], " >") != strings.TrimLeft(after[i], " >") {
+		for i := 1; i < len(after)-1; i++ {
+			if strings.ReplaceAll(before[i], ">", " ") != strings.ReplaceAll(after[i], ">", " ") {
 				t.Fatalf("profile row %d moved on %v:\nbefore: %q\nafter: %q", i, key, before[i], after[i])
 			}
 		}
-		if strings.Count(strings.Join(after, "\n"), "> ") != 1 {
+		if strings.Count(strings.Join(after, "\n"), ">▌") != 1 {
 			t.Fatal("usage list must show exactly one selection marker")
 		}
 		before = after
 	}
-
-	q.SetSize(64, 11) // two profile rows fit between details and footer
+	q.SetSize(64, 11)
 	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyUp} {
 		for range len(q.accounts) {
 			q, _ = q.Update(tea.KeyMsg{Type: key})
-			out := quickPlain(q)
-			if !strings.Contains(out, "> ") {
+			if out := quickPlain(q); !strings.Contains(out, ">▌") {
 				t.Fatalf("selected profile %s scrolled out:\n%s", q.focus, out)
 			}
 		}
@@ -571,11 +578,16 @@ func TestQuickNavigationKeepsRowsStableAndSelectionVisible(t *testing.T) {
 
 func TestQuickScrollingKeepsProviderHeadingWithSelectedProfile(t *testing.T) {
 	q := opennedQuick(t, quickFake(), "c2", false)
-	q.SetSize(64, 11)
+	q.SetSize(50, 20) // Usage content within an 80 x 24 terminal and sidebar.
 	for _, a := range q.ordered() {
-		lines := strings.Split(quickPlain(q), "\n")
-		if strings.TrimSpace(lines[6]) != strings.ToUpper(providerName(a.Provider)) || !strings.Contains(lines[7], "> ") || !strings.Contains(lines[7], a.Name) {
-			t.Fatalf("missing group heading or selected profile %s:\n%s", a.ID, quickPlain(q))
+		out := quickPlain(q)
+		order(t, out, strings.ToUpper(providerName(a.Provider)), ">▌ "+a.Name)
+		// Every selected strip's final extra/metadata row stays above the footer.
+		if a.Provider == "claude" {
+			selected := strings.Index(out, ">▌ "+a.Name)
+			if !strings.Contains(out[selected:], "82% left") {
+				t.Fatalf("selected details clipped:\n%s", out)
+			}
 		}
 		q, _ = quickKey(q, "j")
 	}

@@ -10,41 +10,14 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
-const (
-	wideLeft   = 32
-	narrowLeft = 24
-	wideBreak  = 76
-	// Title, spacer and footer; all other rows belong to the content.
-	chrome = 3
-)
-
-// LeftWidth leaves room for both columns and their spacing.
-func LeftWidth(w int) int {
-	left := narrowLeft
-	if w >= wideBreak {
-		left = wideLeft
-	}
-	return max(min(left, (w-4)/2), 0)
-}
+// Title, spacer and footer; all other rows belong to the content.
+const chrome = 3
 
 // ContentWidth leaves one cell of padding on either side.
 func ContentWidth(w int) int { return max(w-2, 0) }
 
-// RightWidth is the detail column width of a two-column frame.
-func RightWidth(w int) int { return max(w-LeftWidth(w)-5, 0) }
-
-// BodyRows is the available height after the title and footer.
-func BodyRows(h int) int { return max(h-chrome, 0) }
-
-// Frame fills the pane with two columns, without an enclosing border.
-func Frame(title string, left, right []string, footer string, w, h int) string {
-	body := make([]string, BodyRows(h))
-	divider := lipgloss.NewStyle().Foreground(theme.Current.Border).Render(" │ ")
-	for i := range body {
-		body[i] = fit(at(left, i), LeftWidth(w)) + divider + fit(at(right, i), RightWidth(w))
-	}
-	return FrameSingle(title, body, footer, w, h)
-}
+// bodyRows is the available height after the title and footer.
+func bodyRows(h int) int { return max(h-chrome, 0) }
 
 // FrameSingle fills the pane with a title, content and a pinned footer.
 func FrameSingle(title string, body []string, footer string, w, h int) string {
@@ -54,7 +27,7 @@ func FrameSingle(title string, body []string, footer string, w, h int) string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.Current.Accent)
 	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
 	rows := []string{titleStyle.Render(strings.ToUpper(title)), ""}
-	for i := range BodyRows(h) {
+	for i := range bodyRows(h) {
 		rows = append(rows, at(body, i))
 	}
 	rows = append(rows, dim.Render(footer))

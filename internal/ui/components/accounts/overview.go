@@ -38,7 +38,7 @@ func (m Model) overviewKey(k tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) activateOverview() (Model, tea.Cmd) {
-	a, ok := m.current()
+	a, ok := m.Current()
 	if !ok {
 		return m, nil
 	}
@@ -85,63 +85,6 @@ func (m Model) neighbor(id agents.AccountID) agents.AccountID {
 	return ""
 }
 
-func (m Model) overviewView(rw, rows int) []string {
-	th := theme.Current
-	dim := lipgloss.NewStyle().Foreground(th.Dim)
-	a, _ := m.current()
-
-	loading := dim.Render("Loading…")
-	info := func(value string) string {
-		switch {
-		case m.describing:
-			return loading
-		case m.describeErr != "":
-			return dim.Render("Unavailable")
-		case value == "":
-			return dim.Render("-")
-		}
-		return value
-	}
-
-	status := dim.Render("Unknown")
-	switch authOf(a.Info) {
-	case authConnected:
-		status = lipgloss.NewStyle().Foreground(th.Success).Render("Connected")
-	case authNeedsSignIn:
-		status = lipgloss.NewStyle().Foreground(th.Warning).Render("Needs sign-in")
-	}
-	if m.describing {
-		status = loading
-	}
-	identity := info(a.Info.Identity)
-	if m.describeErr != "" && !m.describing {
-		identity = dim.Render("Unavailable · " + m.describeErr)
-	}
-
-	const first, second = 13, 17
-	lines := []string{
-		kv("Status", status, first),
-		kv("Identity", identity, first),
-		kv("Provider", theme.ProviderStyle(a.Provider).Render(providerLabel(a.Provider)), first),
-		kv("Plan", info(a.Info.Plan), first),
-		kv("Auth", info(authLabel(a.Info.AuthMode)), first),
-		"",
-		kv("Default model", m.defaultValue("model"), second),
-		kv("Default effort", m.defaultValue("effort"), second),
-		"",
-		kv("Sessions", fmt.Sprintf("%d running", a.Running), second),
-	}
-
-	slot := ""
-	if m.ov.msg != "" {
-		slot = lipgloss.NewStyle().Foreground(th.Warning).Render(m.ov.msg)
-	}
-	buttons := button("Sign in again", m.ov.focus == btnLogin, false) + "  " +
-		button("Remove account", m.ov.focus == btnRemove, a.Running > 0)
-	lines = append(lines, slot, buttons)
-	return squeeze(lines, rows)
-}
-
 // defaultValue is the label of the account's default for a profile field.
 func (m Model) defaultValue(id string) string {
 	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
@@ -151,19 +94,19 @@ func (m Model) defaultValue(id string) string {
 	case !m.df.loaded:
 		return dim.Render("Loading…")
 	}
-	v := m.df.data.Values[id]
+	v := m.defaults.Values[id]
 	if v == "" {
 		return agents.ProviderDefaultLabel
 	}
 	if id == "model" {
-		for _, mo := range m.df.data.Models {
+		for _, mo := range m.defaults.Models {
 			if mo.ID == v && mo.Label != "" {
 				return mo.Label
 			}
 		}
 		return v
 	}
-	for _, f := range m.df.data.Fields {
+	for _, f := range m.defaults.Fields {
 		if f.ID != id {
 			continue
 		}
@@ -198,6 +141,11 @@ func squeeze(lines []string, rows int) []string {
 	}
 	slices.Reverse(out)
 	return out[:min(len(out), max(rows, 0))]
+}
+
+// providerMark is the provider's glyph and short name in its own color.
+func providerMark(p agents.ProviderID, ascii bool) string {
+	return theme.ProviderStyle(p).Render(theme.ProviderGlyph(p, ascii) + " " + providerName(p))
 }
 
 // providerName is the short provider name of the column header.

@@ -209,7 +209,7 @@ func TestAgentsASCIIPreferenceEndToEnd(t *testing.T) {
 		e.relist(t)
 		e.sizeTo(t, w, h)
 		e.openTab(t)
-		e.apply(t, fetchAgentUsage(e.fb.Accounts, e.m.agents.usageSeq, e.m.agents.usageAccount))
+		e.fetchUsage(t)
 		e.attached(t)
 		e.frames(t, agentterminal.Frame{Type: "output", Data: []byte(asciiScreen)}, status("running"))
 		return e
@@ -261,21 +261,24 @@ func TestAgentsASCIIPreferenceEndToEnd(t *testing.T) {
 		e.openTab(t)
 		check(t, "empty pane", e.m.renderAgentsPane(100, 24))
 	})
-	t.Run("picker marks", func(t *testing.T) {
-		e := setup(t, 120, 30)
-		e.m.agents.pickIDs = map[string]string{}
-		items := e.m.agentPickerItems(cleanPath(e.wtA), "")
-		if len(items) != 4 {
-			t.Fatalf("items = %q", items)
-		}
-		check(t, "picker items", strings.Join(items, "\n"))
-		marks := map[string]string{}
-		for _, it := range items {
-			plain := ansi.Strip(it)
-			marks[plain[:1]] += plain
-		}
-		if !strings.Contains(marks["+"], "Old") || !strings.Contains(marks["x"], "Broke") || !strings.Contains(marks["*"], "Auth fix") {
-			t.Errorf("marks = %v, want * running, + exited, x failed", marks)
+	t.Run("picker", func(t *testing.T) {
+		for _, size := range [][2]int{{120, 30}, {80, 24}, {58, 20}} {
+			e := setup(t, size[0], size[1])
+			e.key(t, "a")
+			if e.m.agents.overlay == nil || e.m.agents.overlay.sessions == nil {
+				t.Fatal("picker not open")
+			}
+			view := e.m.agentOverlayView(e.m.agentPaneSize())
+			check(t, "picker", view)
+			plain := ansi.Strip(view)
+			if size[1] < 24 { // too short to list every state
+				continue
+			}
+			for _, want := range []string{"* Running", "+ Exited", "x Failed"} {
+				if !strings.Contains(plain, want) {
+					t.Errorf("%v: picker lacks %q, want * running, + exited, x failed:\n%s", size, want, plain)
+				}
+			}
 		}
 	})
 	t.Run("launch dialog", func(t *testing.T) {
@@ -340,12 +343,14 @@ func agentSurfaces(t *testing.T, p theme.Palette) map[string]string {
 		e.relist(t)
 		e.sizeTo(t, w, h)
 		e.openTab(t)
-		e.apply(t, fetchAgentUsage(e.fb.Accounts, e.m.agents.usageSeq, e.m.agents.usageAccount))
+		e.fetchUsage(t)
 		e.attached(t)
 		e.frames(t, status("running"))
 		out["navigation "+name] = e.m.renderAgentsPane(w, h)
-		e.m.agents.pickIDs = map[string]string{}
-		out["picker "+name] = strings.Join(e.m.agentPickerItems(cleanPath(e.wtA), ""), "\n")
+		picker := newSessionsPicker("feat-a", false)
+		picker.SetSize(w, h)
+		picker.setSessions(e.m.orderedSessions(cleanPath(e.wtA)))
+		out["picker "+name] = picker.View()
 		for _, id := range []string{"x", "f", "s"} { // every state dot
 			e.m.agents.selected[cleanPath(e.wtA)] = id
 			out["header "+id+" "+name] = e.m.renderAgentsPane(w, h)

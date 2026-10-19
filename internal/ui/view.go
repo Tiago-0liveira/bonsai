@@ -13,6 +13,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/usagepane"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -637,7 +638,7 @@ func (m *Model) layout() {
 	if rightInnerW < 1 {
 		rightInnerW = 1
 	}
-	m.list.SetSize(leftInnerW, innerH)
+	m.list.SetSize(leftInnerW, innerH-m.usagePaneRows(innerH))
 	m.term.SetSize(rightInnerW, m.termHeight(innerH))
 	m.sizeAgentOverlay()
 	if m.agentPaneModal() {
@@ -705,9 +706,15 @@ func (m Model) View() string {
 	}
 	targetPaneH := innerH + 2
 
+	paneRows := m.usagePaneRows(innerH)
+	listH := innerH - paneRows
 	left := m.borderFor(m.focus == focusList).
-		Width(leftInnerW).Height(innerH).
-		Render(clampHeight(m.list.View(), innerH))
+		Width(leftInnerW).Height(listH).
+		Render(clampHeight(m.list.View(), listH))
+	if paneRows > 0 {
+		pane := usagepane.View(m.paneAccounts(), m.paneHeaderAge(), leftW, paneRows, agentNow(), m.agentGlyphsASCII())
+		left = lipgloss.JoinVertical(lipgloss.Left, left, pane)
+	}
 	left = clampHeight(left, targetPaneH)
 
 	var rightBody string
@@ -919,7 +926,9 @@ func (m Model) statusBar() string {
 		msg = "error: " + m.err.Error()
 	}
 	line := help
-	if msg != "" {
+	if help == "" {
+		line = statusStyle.Render(msg)
+	} else if msg != "" {
 		if avail := m.width - lipgloss.Width(help) - 3; avail >= 8 {
 			line = help + "  " + statusStyle.Render(ansi.Truncate(msg, avail, "…"))
 		}
@@ -945,14 +954,10 @@ func (m Model) contextHelp() string {
 		return descSt.Render("FOCUSED · Input goes to agent") + sep + pair("Ctrl+]", "unfocus")
 	}
 	if m.rightTab == tabAgents && m.agents.active() {
-		if o := m.agents.overlay; o != nil {
-			if o.accounts != nil {
-				return descSt.Render(o.accounts.Help())
-			}
-			if o.quick != nil {
-				return descSt.Render("Usage · ↑↓ profile · r refresh · m profiles · Esc close")
-			}
-			return descSt.Render(o.launch.footer())
+		if m.agents.overlay != nil {
+			// The accounts, quick and launch overlays carry their own footer in
+			// the pane; a second copy here would only repeat it.
+			return ""
 		}
 		if m.modal != nil {
 			return descSt.Render("Enter select · Esc close")
