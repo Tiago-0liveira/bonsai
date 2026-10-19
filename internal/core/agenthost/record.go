@@ -133,6 +133,7 @@ func Read(p Paths, id string) (Record, error) {
 // markLost shows the session of a holder that died mid-session as failed.
 func markLost(r *Record) {
 	r.Summary.State = "failed"
+	r.Summary.Activity = nil
 	r.Summary.Error = LostError
 	if r.Summary.EndedAt == nil {
 		ended := r.Summary.CreatedAt

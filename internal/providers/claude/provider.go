@@ -198,4 +198,5 @@ var (
 	_ agents.AccountRemover       = (*Provider)(nil)
 	_ agents.SetupSchema          = (*Provider)(nil)
 	_ agents.AccountAuthenticator = (*Provider)(nil)
+	_ agents.ActivityReporter     = (*Provider)(nil)
 )

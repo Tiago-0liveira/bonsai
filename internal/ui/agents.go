@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
@@ -310,26 +311,69 @@ func (m *Model) refreshAgentBadges() {
 
 var agentProviderOrder = []agents.ProviderID{"claude", "codex", "antigravity"}
 
+// agentUrgency orders what a session needs from the user: a waiting agent
+// beats a working one, which beats an idle one. Sessions without activity
+// (old holders, providers without hooks) count as working so they are never
+// dimmed on a guess.
+type agentUrgency int
+
+const (
+	urgencyIdle agentUrgency = iota
+	urgencyWorking
+	urgencyWaiting
+)
+
+func sessionUrgency(s agentsapi.Session) agentUrgency {
+	if s.State != "running" || s.Activity == nil {
+		return urgencyWorking
+	}
+	switch s.Activity.State {
+	case agentactivity.Waiting:
+		return urgencyWaiting
+	case agentactivity.Idle:
+		return urgencyIdle
+	}
+	return urgencyWorking
+}
+
 // agentBadge renders one worktree's glyphs: active sessions per provider with
-// a count, then "!" for failed sessions the user has not acknowledged.
+// a count, each glyph styled by its most urgent session (waiting is the
+// attention style, working the provider color, all idle dimmed). One "?"
+// ends the glyphs when any session waits for the user, then "!" for failed sessions
+// the user has not acknowledged. Both marks are plain ASCII.
 func (m Model) agentBadge(idx []int, ascii bool) string {
 	counts := map[agents.ProviderID]int{}
-	failed := false
+	urgency := map[agents.ProviderID]agentUrgency{}
+	failed, waiting := false, false
 	for _, i := range idx {
 		s := m.agents.sessions[i]
 		switch {
 		case s.Active():
-			counts[s.Provider]++
+			p := s.Provider
+			u := sessionUrgency(s)
+			if counts[p] == 0 || u > urgency[p] {
+				urgency[p] = u
+			}
+			counts[p]++
+			waiting = waiting || u == urgencyWaiting
 		case s.State == "failed" && !m.agents.ack[s.ID]:
 			failed = true
 		}
 	}
+	attention := lipgloss.NewStyle().Foreground(theme.Current.Warning).Bold(true)
 	var parts []string
 	seen := map[agents.ProviderID]bool{}
 	add := func(p agents.ProviderID) {
 		if n := counts[p]; n > 0 && !seen[p] {
 			seen[p] = true
-			parts = append(parts, theme.ProviderStyle(p).Render(theme.AgentBadge(p, n, ascii)))
+			style := theme.ProviderStyle(p)
+			switch urgency[p] {
+			case urgencyWaiting:
+				style = attention
+			case urgencyIdle:
+				style = lipgloss.NewStyle().Foreground(theme.Current.Dim)
+			}
+			parts = append(parts, style.Render(theme.AgentBadge(p, n, ascii)))
 		}
 	}
 	for _, p := range agentProviderOrder {
@@ -338,6 +382,10 @@ func (m Model) agentBadge(idx []int, ascii bool) string {
 	// Unknown providers still count, after the known ones, in a stable order.
 	for _, i := range idx {
 		add(m.agents.sessions[i].Provider)
+	}
+	if waiting && len(parts) > 0 {
+		// Attached without a separator so the badge grows by one cell, not two.
+		parts[len(parts)-1] += attention.Render("?")
 	}
 	if failed {
 		parts = append(parts, lipgloss.NewStyle().Foreground(theme.Current.Warning).Render("!"))

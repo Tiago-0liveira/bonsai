@@ -1,6 +1,7 @@
 package agenthost
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -8,11 +9,15 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
+	"github.com/Tiago-0liveira/bonsai/internal/core/termscreen"
 	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
@@ -36,10 +41,23 @@ type Deps struct {
 	// Linger is how long an ended holder waits for its clients to read the
 	// final status; zero means ten seconds.
 	Linger time.Duration
+	// HookCommand is the argv prefix of the agent's activity hook command, to
+	// which the provider ID and the hook event are appended. Empty means
+	// `<this binary> __agent-hook`; a process that is not the bonsai binary
+	// (a test) must set it, or the session reports no activity.
+	HookCommand []string
+	// Notifications is the desktop-notification preference, read once by the
+	// caller; Notify sends one (nil means core/notify). Tests set Notify.
+	Notifications NotifyPrefs
+	Notify        func(title, body string)
 }
 
 // replayChunk bounds one replayed output frame.
 const replayChunk = 64 << 10
+
+// detailInterval spaces the broadcasts of Detail-only activity changes, which
+// can follow each tool call; transitions are never delayed.
+const detailInterval = 250 * time.Millisecond
 
 type host struct {
 	deps       Deps
@@ -47,12 +65,35 @@ type host struct {
 	stream     *agentterminal.Stream[agentterminal.Summary]
 	workDir    string
 	cancel     context.CancelFunc
+	// tracker reduces the session's signals to its activity; bus carries the
+	// session's events to consumers inside this holder.
+	tracker *agentactivity.Tracker
+	bus     *agentactivity.Bus
+	now     func() time.Time
+	// classifier turns the provider's terminal notifications into signals; nil
+	// drops them. Set before the session runs.
+	classifier agents.TerminalClassifier
+	// Only providers without complete hook coverage need a rendered screen.
+	// These fields belong to the PTY output reader and are never persisted.
+	screenClassifier       agents.TerminalScreenClassifier
+	activityScreen         *termscreen.Screen
+	screenCols, screenRows int
+	screenKind             agentactivity.Kind
+	screenReason           agentactivity.Reason
 
 	mu       sync.Mutex
 	summary  agentterminal.Summary
 	monitors map[*serverConn]struct{}
 	conns    map[*serverConn]struct{}
 	ended    chan struct{}
+	// detailAt is when a Detail-only change was last broadcast.
+	detailAt time.Time
+}
+
+func newHost(deps Deps, generation string, stream *agentterminal.Stream[agentterminal.Summary], workDir string, cancel context.CancelFunc, summary agentterminal.Summary) *host {
+	h := &host{deps: deps, generation: generation, stream: stream, workDir: workDir, cancel: cancel, bus: &agentactivity.Bus{}, now: time.Now, summary: summary, monitors: map[*serverConn]struct{}{}, conns: map[*serverConn]struct{}{}, ended: make(chan struct{})}
+	h.tracker = agentactivity.NewTracker(agentactivity.TrackerOptions{OnStall: h.stalled})
+	return h
 }
 
 // Serve runs spec's session to its end, serving clients on the session's
@@ -116,7 +157,16 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 	_, _ = rand.Read(b[:])
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := &host{deps: deps, generation: hex.EncodeToString(b[:]), stream: agentterminal.NewStream[agentterminal.Summary](spec.Cols, spec.Rows), workDir: spec.WorkDir, cancel: cancel, summary: spec.Summary, monitors: map[*serverConn]struct{}{}, conns: map[*serverConn]struct{}{}, ended: make(chan struct{})}
+	h := newHost(deps, hex.EncodeToString(b[:]), agentterminal.NewStream[agentterminal.Summary](spec.Cols, spec.Rows), spec.WorkDir, cancel, spec.Summary)
+	reporter, _ := provider.(agents.ActivityReporter)
+	if reporter != nil {
+		h.useActivityProfile(reporter.ActivityProfile())
+	}
+	h.classifier, _ = provider.(agents.TerminalClassifier)
+	h.screenClassifier, _ = provider.(agents.TerminalScreenClassifier)
+	// h.tracker is replaced above, so stop whichever one is current.
+	defer func() { h.tracker.Stop() }()
+	defer h.startNotifier()()
 	if err := h.writeRecord(); err != nil {
 		return err
 	}
@@ -133,11 +183,79 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 		case <-stopped:
 		}
 	}()
-	agentterminal.RunSession(sessionCtx, h.stream, provider, account, runtime, deps.Sessions, spec.Cols, spec.Rows, spec.Launch, h.update)
+	var observer agentactivity.OutputObserver
+	activity, stopSpool := h.startSpool(provider.ID(), reporter != nil, runtime.RuntimeDir)
+	defer stopSpool()
+	hooks := agentterminal.RunHooks{
+		Activity: activity,
+		Output:   func(p []byte) { h.observe(&observer, p) },
+		// The spool lives in the runtime directory that cleanup removes right
+		// after this, so the tail must be done by then.
+		Ending: func() {
+			stopSpool()
+			h.tracker.Stop()
+		},
+	}
+	agentterminal.RunSession(sessionCtx, h.stream, provider, account, runtime, deps.Sessions, spec.Cols, spec.Rows, spec.Launch, h.update, hooks)
 	close(stopped)
 	close(h.ended)
 	h.linger()
 	return nil
+}
+
+// useActivityProfile configures the tracker for a provider. It replaces the
+// tracker, so it runs before any signal can arrive.
+func (h *host) useActivityProfile(profile agents.ActivityProfile) {
+	h.tracker.Stop()
+	h.tracker = agentactivity.NewTracker(agentactivity.TrackerOptions{OnStall: h.stalled, ProgressMeansTurn: profile.ProgressMeansTurn})
+}
+
+// startSpool creates the session's activity spool in runtimeDir and starts
+// following it. It returns the request that makes the provider install its
+// hooks, or nil when the session gets no hook activity (the provider reports
+// none, or any step failed: activity degrades to unknown, the session never
+// fails for it), and the func that ends the tail; both are safe to call again.
+func (h *host) startSpool(provider agents.ProviderID, reports bool, runtimeDir string) (*agents.ActivityRequest, func()) {
+	noop := func() {}
+	if !reports {
+		return nil, noop
+	}
+	command := h.hookCommand()
+	if len(command) == 0 {
+		return nil, noop
+	}
+	path := filepath.Join(runtimeDir, agents.ActivitySpoolName)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, noop
+	}
+	_ = f.Close()
+	stop, err := agentactivity.Tail(context.Background(), path, h.applyActivity)
+	if err != nil {
+		_ = os.Remove(path)
+		return nil, noop
+	}
+	return &agents.ActivityRequest{
+		HookCommand: append(append([]string(nil), command...), string(provider)),
+		SpoolEnv:    agents.ActivityEnv,
+		SpoolPath:   path,
+	}, stop
+}
+
+// hookCommand is the argv prefix hooks run, or nil when there is none.
+func (h *host) hookCommand() []string {
+	if len(h.deps.HookCommand) > 0 {
+		return h.deps.HookCommand
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	// A test binary would run the whole suite as a hook.
+	if base := filepath.Base(bin); strings.HasSuffix(base, ".test") || strings.HasSuffix(base, ".test.exe") {
+		return nil
+	}
+	return []string{bin, "__agent-hook"}
 }
 
 // update applies one summary change and publishes the result to terminal
@@ -145,11 +263,145 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 func (h *host) update(change func(*agentterminal.Summary) error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	prev := h.summary.State
 	if err := change(&h.summary); err != nil {
 		return err
 	}
+	h.lifecycleChanged(prev)
 	h.publish()
 	return nil
+}
+
+// lifecycleChanged keeps the activity in step with a lifecycle change from
+// prev: it exists only while the session runs. Callers hold h.mu and publish
+// the summary afterwards.
+func (h *host) lifecycleChanged(prev string) {
+	state := h.summary.State
+	if state == prev {
+		return
+	}
+	h.summary.Activity = nil
+	if state == "running" {
+		current := h.tracker.Current()
+		h.summary.Activity = &current
+	}
+	if !h.summary.Active() {
+		h.tracker.Stop()
+	}
+	h.bus.Publish(agentactivity.Event{Type: agentactivity.LifecycleChanged, At: h.now(), Session: sessionRef(h.summary), Lifecycle: state})
+}
+
+// sessionRef identifies s on an activity bus.
+func sessionRef(s agentterminal.Summary) agentactivity.SessionRef {
+	return agentactivity.SessionRef{ID: s.ID, ProjectID: s.ProjectID, WorktreeID: s.WorktreeID, Name: s.Name, Origin: s.Origin, Provider: string(s.Provider), AccountID: string(s.AccountID)}
+}
+
+// observe turns the progress sequences in the agent's output into signals.
+func (h *host) observe(o *agentactivity.OutputObserver, p []byte) {
+	if h.screenClassifier != nil {
+		cols, rows := h.stream.Size()
+		if h.activityScreen == nil || h.screenCols != cols || h.screenRows != rows {
+			h.activityScreen = termscreen.New(cols, rows)
+			h.screenCols, h.screenRows = cols, rows
+			h.screenKind, h.screenReason = "", ""
+		}
+		_, _ = h.activityScreen.Write(p)
+	}
+	notified := false
+	for _, obs := range o.Observe(p) {
+		sig, ok := obs.Signal(h.now())
+		if !ok && h.classifier != nil && obs.Kind != agentactivity.ObservedProgress {
+			// Notifications and bells mean something only to the provider that
+			// wrote them; without a classifier they are dropped.
+			if sig, ok = h.classifier.ClassifyTerminalNotification(obs.Title, obs.Body); ok {
+				notified = true
+				if sig.At.IsZero() {
+					sig.At = h.now()
+				}
+				sig.Source = agentactivity.SourceTerminal
+			}
+		}
+		if ok {
+			h.applyActivity(sig)
+		}
+	}
+	if h.screenClassifier != nil {
+		sig, ok := h.screenClassifier.ClassifyTerminalScreen(h.activityScreen.Lines())
+		if !ok {
+			h.screenKind, h.screenReason = "", ""
+			return
+		}
+		// Do not resurrect an answered question from an unchanged screen while
+		// the next paint is still arriving. A new notification can refine its
+		// generic "tool confirmation" hint using the dialog visible now.
+		if notified || sig.Kind != h.screenKind || sig.Reason != h.screenReason {
+			sig.At, sig.Source = h.now(), agentactivity.SourceTerminal
+			h.applyActivity(sig)
+			h.screenKind, h.screenReason = sig.Kind, sig.Reason
+		}
+	}
+}
+
+// applyActivity reduces sig into the session's activity and publishes the
+// result. Signals outside the running state are dropped, except a hook's
+// while starting: the agent runs before the holder marks it running, the spool
+// is read once, and a SessionStart written in that window would be lost for
+// good. The tracker keeps it and lifecycleChanged publishes it on running.
+func (h *host) applyActivity(sig agentactivity.Signal) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.summary.State == "starting" && sig.Source == agentactivity.SourceHook {
+		h.tracker.Apply(sig)
+		return
+	}
+	if h.summary.State != "running" {
+		return
+	}
+	act, _ := h.tracker.Apply(sig)
+	h.setActivity(act)
+}
+
+// stalled is the tracker's stall timer. It re-reads the tracker: a signal may
+// have moved the activity on while this waited for h.mu.
+func (h *host) stalled(agentactivity.Activity) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.summary.State != "running" {
+		return
+	}
+	h.setActivity(h.tracker.Current())
+}
+
+// setActivity publishes act as the session's activity. Callers hold h.mu and
+// have checked the session runs. Everyone learns every change over sockets,
+// but only a transition (state, reason, stalled, inferred) is worth a record
+// rewrite and a bus event; a Detail-only change is also rate limited.
+func (h *host) setActivity(act agentactivity.Activity) {
+	prev := h.summary.Activity
+	if prev != nil && !prev.Changed(act) && prev.Detail == act.Detail && prev.Since.Equal(act.Since) && prev.Source == act.Source {
+		return
+	}
+	transition := prev == nil || prev.Changed(act)
+	h.summary.Activity = &act
+	if !transition {
+		now := h.now()
+		if now.Sub(h.detailAt) < detailInterval {
+			return
+		}
+		h.detailAt = now
+	}
+	if transition {
+		_ = h.writeRecord()
+	}
+	h.stream.Status(h.summary)
+	summary := h.summary
+	frame := Frame{Type: "activity", Offset: h.stream.Offset(), Status: &summary}
+	for c := range h.monitors {
+		c.queue(frame)
+	}
+	if transition {
+		h.bus.Publish(agentactivity.Event{Type: agentactivity.ActivityChanged, At: h.now(), Session: sessionRef(summary), From: prev, To: summary.Activity})
+	}
 }
 
 // publish sends the summary everywhere. Callers hold h.mu.
@@ -183,7 +435,9 @@ func (h *host) stop(reason string) {
 			h.summary.Error = reason
 		}
 		if h.summary.State != "stopping" {
+			prev := h.summary.State
 			h.summary.State = "stopping"
+			h.lifecycleChanged(prev)
 			h.publish()
 		}
 	}
@@ -376,8 +630,12 @@ func (h *host) handle(conn net.Conn) {
 				c.queue(Frame{Type: "error", Error: "terminal input unavailable"})
 				continue
 			}
-			if err := h.stream.Input(subscriber, r.Data); err != nil && !errors.Is(err, agentterminal.ErrNoProcess) {
+			err := h.stream.Input(subscriber, r.Data)
+			if err != nil && !errors.Is(err, agentterminal.ErrNoProcess) {
 				c.queue(Frame{Type: "error", Error: "terminal input unavailable"})
+			}
+			if err == nil && submits(r.Data) {
+				h.applyActivity(agentactivity.Signal{Kind: agentactivity.UserSubmitted, At: h.now(), Source: agentactivity.SourceInput})
 			}
 		case "resize":
 			if subscriber == 0 || h.stream.Resize(subscriber, r.Cols, r.Rows) != nil {
@@ -396,4 +654,10 @@ func (h *host) handle(conn net.Conn) {
 			c.queue(Frame{Type: "error", Error: "unknown request"})
 		}
 	}
+}
+
+// submits reports whether input answers the agent: Enter, or Escape alone
+// (longer escape sequences are keys such as the arrows).
+func submits(data []byte) bool {
+	return bytes.IndexByte(data, '\r') >= 0 || len(data) == 1 && data[0] == 0x1b
 }

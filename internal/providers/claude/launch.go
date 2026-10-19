@@ -34,15 +34,19 @@ func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRe
 		}
 		token = file.Token
 	}
-	args, providerSessionID, err := launchArgs(settings, req.Args, req.Launch)
+	args, providerSessionID, err := launchArgs(settings, req.Args, req.Launch, req.Activity)
 	if err != nil {
 		return agents.PreparedSession{}, err
+	}
+	env := profileEnvironment(dir, req.Account, req.Session, token)
+	if req.Activity.Usable() {
+		env[req.Activity.SpoolEnv] = req.Activity.SpoolPath
 	}
 	return agents.PreparedSession{
 		Executable:        executable,
 		Args:              args,
 		Dir:               req.Session.WorkDir,
-		EnvSet:            profileEnvironment(dir, req.Account, req.Session, token),
+		EnvSet:            env,
 		EnvUnsetPrefixes:  scrubPrefixes,
 		ProviderSessionID: providerSessionID,
 	}, nil
@@ -100,13 +104,17 @@ func (p *Provider) LaunchFields() []agents.LaunchField {
 }
 
 // launchArgs builds argv as
-// [explicit...] --model M --permission-mode P --effort E --name N --session-id U [-- prompt].
+// [explicit...] --model M --permission-mode P --effort E --name N --session-id U [--settings J] [-- prompt].
 // Per-launch options win over profile defaults, explicit args win over both, and
 // the prompt always comes last after `--` so a leading dash stays literal.
 //
 // When the explicit args start with something other than a flag, the caller is
 // driving a subcommand (`mcp list`) or a positional prompt, so nothing is added.
-func launchArgs(settings Settings, explicit []string, launch agents.LaunchOptions) (args []string, providerSessionID string, err error) {
+//
+// activity adds a per-session --settings layer with Bonsai's observe-only hooks.
+// It is skipped when the caller brought --settings (they own that layer) or
+// --bare (which ignores hooks): activity then stays unknown.
+func launchArgs(settings Settings, explicit []string, launch agents.LaunchOptions, activity *agents.ActivityRequest) (args []string, providerSessionID string, err error) {
 	args = append([]string(nil), explicit...)
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		return args, "", nil
@@ -129,6 +137,11 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 			return nil, "", err
 		}
 		args = append(args, "--session-id", providerSessionID)
+	}
+	if activity.Usable() && !hasFlag(args, "--settings", "--bare") {
+		if hooks, err := activitySettings(activity); err == nil {
+			args = append(args, "--settings", hooks)
+		}
 	}
 	if launch.Prompt != "" {
 		args = append(args, "--", launch.Prompt)

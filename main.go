@@ -82,6 +82,13 @@ func main() {
 		return
 	}
 
+	// Hidden: `bonsai __agent-hook <provider> <event>` is what an agent CLI runs
+	// for each lifecycle hook. It must stay fast and never fail, so it comes
+	// before any config or flag handling.
+	if len(args) >= 1 && args[0] == "__agent-hook" {
+		os.Exit(agentruntime.RunHook(args[1:], os.Stdin, os.Stdout))
+	}
+
 	// Hidden: in-process cold sync benchmark.
 	if len(args) >= 1 && args[0] == "__sync-bench" {
 		if err := runSyncBench(args[1:], os.Stdout); err != nil {
@@ -303,7 +310,23 @@ func runAgentHost(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	paths := agenthost.Paths{Records: *records, Sockets: *sockets}
-	return agenthost.Serve(ctx, spec, agenthost.Deps{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Paths: paths}, agenthost.Ready)
+	return agenthost.Serve(ctx, spec, agenthost.Deps{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Paths: paths, Notifications: notifyPrefs()}, agenthost.Ready)
+}
+
+// notifyPrefs reads the agent notification preference from web.json once. Any
+// failure (no config dir, unreadable or invalid file) means no notifications:
+// a session never fails for them.
+func notifyPrefs() agenthost.NotifyPrefs {
+	path, err := config.WebConfigPath()
+	if err != nil {
+		return agenthost.NotifyPrefs{}
+	}
+	cfg, _, err := config.ReadWebConfig(path)
+	if err != nil {
+		return agenthost.NotifyPrefs{}
+	}
+	n := cfg.Agents.Notifications
+	return agenthost.NotifyPrefs{Enabled: n.Enabled, NeedsInput: n.NeedsInput, TurnComplete: n.TurnComplete}
 }
 
 func runDevWebhookInternal(args []string) error {

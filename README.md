@@ -91,6 +91,10 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
   resets) for **every profile of every provider at once**, with live progress.
 - `bonsai agents attach <id>` keeps detach, kill and control shortcuts visible;
   killing requires confirmation ([session controls](docs/agents.md#sessions-shared-with-the-tui-and-cli)).
+- Every session shows **what the agent is doing** (working, needs input, idle) in
+  the web UI, the TUI and `bonsai agents`, with optional desktop and browser
+  notifications, off by default ([docs/agents.md](docs/agents.md#desktop-notifications)).
+  This includes pending Codex async questions and inferred Antigravity input dialogs.
 
 Details: [docs/agents.md](docs/agents.md).
 

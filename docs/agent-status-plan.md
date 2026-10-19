@@ -1,11 +1,14 @@
 # Agent activity status: implementation plan
 
-Status: plan, revised 2026-10-16. Base: `feat/tui-agents` @ `1beaf2b` (agent
-holders, cross-process admission, `Summary.Origin`, TUI agents tab + worktree
-glyphs). First draft was
-based on `ed616b7` and assumed an in-API `agentterminal.Manager`; that no longer
-exists (see §2).
-CLIs checked locally: Claude Code `2.1.296`, `codex-cli 0.162.1`, `agy 1.3.4`.
+Status: plan, revised 2026-10-19. Base: `main` @ `95e1020` (PR #110 merged
+`feat/tui-agents`: agent holders, cross-process admission, `Summary.Origin`,
+records watch, the real TUI backend `internal/agentsbackend`, TUI agents tab,
+worktree glyphs, `bonsai agents` table). Earlier drafts were based on `ed616b7`
+(assumed an in-API `agentterminal.Manager`) and on `feat/tui-agents` @ `1beaf2b`
+(before records watch and the TUI backend landed); see §2 for today's code.
+CLIs checked locally for §3: Claude Code `2.1.296`, `codex-cli 0.162.1`,
+`agy 1.3.4`. Installed on 2026-10-19: Claude Code `2.1.303`, `codex-cli 0.162.1`,
+`agy 1.4.2`; S0 re-confirms §3 against the versions current at that time.
 Sources: the binaries themselves (embedded docs, JSON schemas, `codex app-server
 generate-json-schema`), code.claude.com/docs/en/hooks, learn.chatgpt.com/docs/hooks.
 
@@ -32,14 +35,19 @@ subscribe to with a few lines, without touching providers or the holder.
 Non-goals: deciding permissions for the agent (hooks are observe-only, always
 fail-open), resuming sessions, cost/token tracking.
 
-## 2. What exists today (`feat/tui-agents` @ `1beaf2b`)
+## 2. What exists today (`main` @ `95e1020`)
 
 - **Holders own sessions.** Each session runs in a detached `bonsai
   __agent-host` process (`internal/core/agenthost/host.go`, wired in
-  `main.go:75`). The holder owns the PTY, the bounded `agentterminal.Stream`
-  and the lifecycle (`agentterminal.RunSession`, `run.go`). It serves clients on
-  `<SockDir>/agents/<id>.sock` (NDJSON, `protocol.go`, `Version = 1`):
-  `ModeTerminal` (replay + live + input) and `ModeStatus` (summaries only).
+  `main.go:77`). The holder owns the PTY, the bounded `agentterminal.Stream`
+  and the lifecycle. It serves clients on `<SockDir>/agents/<id>.sock`
+  (NDJSON, `protocol.go`, `Version = 1`): `ModeTerminal` (replay + live +
+  input) and `ModeStatus` (summaries only). The holder already tracks
+  `LastOutputAt` (record and `info` frame).
+- **`agentterminal.RunSession`** (`session.go:19`) does the whole session in
+  one call: `PrepareSession`, `runInStream` (`run.go`), `FinalizeSession`,
+  `SessionStore.Cleanup`. The holder has no seam between those steps today, and
+  the PTY read loop in `runInStream` writes straight to `stream.Write`.
 - **Every summary change** goes through `host.update` → `host.publish`:
   `stream.Status` (terminal clients), a `status` frame to each status monitor,
   and `writeRecord` (rewrites `<web home>/agents/<id>.json`). Fine for rare
@@ -48,34 +56,57 @@ fail-open), resuming sessions, cost/token tracking.
   follows each holder over a status connection; `Manager.apply` calls
   `changed(project)` on **every** `status` frame, which is
   `localapi.publishAgents` (`internal/server/localapi/agents.go:418`): rewrites
-  the `api_agent_mutations` journal of every project and commits a full browser
-  snapshot. `Manager.watch` ignores frame types it does not know.
-- **Cross-process start.** `agenthost.Starter` (`start.go`) admits under
-  `<Records>/admit.lock`; `Summary.Origin` is `web|tui|cli`. Records-dir
-  watching (`agenthost.Watch`, runtime adoption in the API) and the real TUI
-  backend (`internal/agentsbackend`) are planned in TUI track A2/A3, not merged.
-- **TUI.** `internal/ui/agentsapi` is the TUI contract; `Sessions.Changes`
-  fires on record create/update/remove. Worktree rows show per-provider glyphs
-  for active sessions and a failed marker (`internal/ui/agents.go:284`
-  `agentBadge`); the Agents tab has a session strip. Today only the fake
-  backend exists.
-- **CLI.** `bonsai agents ls/attach/stop` read records via `agenthost.List`.
-- **Web.** `mapAgent` (`web/src/api/agents.ts:150`) collapses lifecycle into
-  `state: 'running' | 'finished'`; `idle` exists in `StatusDot`
-  (`BranchesIsland.tsx:10`) but is never produced. Status rendering is spread
-  over `BranchesIsland`/`BottomWorkspace` (`StatusDot`), `AppShell`
-  (`runtimeDot`), `Inspector`, `ProfileSessions`, `BonsaiNode`,
-  `buildCanvasGraph`, `CommandPalette`, `WorktreeCard`, `DeleteWorktreeDialog`.
-  `localClient.ts` only knows `agents_changed` (refetch).
+  the `api_agent_mutations`/`api_agent_adoptions` journal of every project,
+  commits a browser snapshot per project and publishes `agents_changed`.
+  `Manager.watch` ignores frame types it does not know. `Manager.WatchRecords`
+  (started in `server.go:213`) also follows the records dir: on every change
+  `syncRecords` re-lists records, adopts new holders and notifies only projects
+  whose session `(project, state)` changed.
+- **Browser delivery.** `stateSync.commit` publishes a `project_update` event
+  with the full snapshot, ordered by epoch/sequence, and feeds warm start;
+  `snapshotReconciliation.ts` maps `snapshot.agents` through `mapAgent`.
+  `agents_changed` carries only a revision (pages refetch).
+- **Cross-process start and watch.** `agenthost.Starter` (`start.go`) admits
+  under `<Records>/admit.lock`; `Summary.Origin` is `web|tui|cli`.
+  `agenthost.Watch` (`watch.go`) signals record changes: fsnotify on the
+  records dir (any `.json` write) plus a 5 s rescan that compares only a
+  fingerprint of `ID|State|Alive`.
+- **TUI.** `internal/ui/agentsapi` is the TUI contract, implemented by
+  `internal/agentsbackend` (wired from `main.go`); `Sessions.Changes` is
+  `agenthost.Watch`. Worktree rows show per-provider glyphs with a count
+  (`theme.AgentBadge`) and `!` for an unacknowledged failed session
+  (`internal/ui/agents.go:315` `agentBadge`). The Agents tab shows a header
+  with `stateDot(s.State)` (`internal/ui/agentsview.go:75`, used at `:329`), the
+  sessions picker (`agentsessions.go`, `● Running` / `✓ Exited` / `✗ Failed`)
+  and a read-only live terminal attach (which receives `status` frames).
+- **CLI.** `bonsai agents` (`ls`, `--all`, `--json`, `attach`, `stop`) reads
+  records via `agenthost.List`. The table (`internal/cli/agents_table.go`) has
+  `STATE` (lifecycle) and `ACTIVITY` columns; `ACTIVITY` is an output
+  heuristic (`agentActivity`: `working` if output in the last 5 s, else
+  `idle <quiet time>`).
+- **Web.** `Agent` (`web/src/types/index.ts`) has `state: 'running' |
+  'finished'` (set by `mapAgent`, `web/src/api/agents.ts:150`) and
+  `lifecycleState`. `state === 'running'` means "alive" in many places:
+  `DeleteWorktreeDialog` (running-agent warning), `Inspector` (stop button,
+  running metric), `CommandPalette` (stop), `buildCanvasGraph` (counters,
+  dashed edge), `BonsaiNode`, `WorktreeCard`. `idle` exists in `StatusDot`
+  (`BranchesIsland.tsx:10`) and `AppShell` (`runtimeDot`, warn colour) but is
+  never produced. Status rendering is spread over `BranchesIsland`/
+  `BottomWorkspace` (`StatusDot`), `AppShell`, `Inspector`, `ProfileSessions`,
+  `AgentsPage`, `BonsaiNode`, `buildCanvasGraph`, `CommandPalette`,
+  `WorktreeCard`, `DeleteWorktreeDialog`; `AgentTerminal` reads `status` frames
+  of its own terminal socket.
 - Providers inject `BONSAI_AGENT_PROVIDER|ACCOUNT_ID|SESSION_ID` into the
   agent env (`internal/providers/*/environment.go`); each session has a private
-  `RuntimeDir` (0700) removed by `SessionStore.Cleanup` at the end of
-  `RunSession`. Antigravity runs with `HOME = session.HomeDir`.
+  `RuntimeDir` (0700, created by `SessionStore.Create`) removed by
+  `SessionStore.Cleanup` at the end of `RunSession`. Antigravity runs with
+  `HOME = session.HomeDir`.
 - `PrepareSessionRequest` is `{Account, Session, Args, Launch}`
   (`internal/core/agents/provider.go:152`).
 - Codex already talks to `codex app-server` via `withAppServer`
   (`internal/providers/codex/appserver.go:117`).
-- `internal/core/notify` sends desktop notifications (best effort).
+- `internal/core/notify` sends desktop notifications (best effort); the TUI
+  already uses it (`internal/ui/update.go`).
 
 Consequence for this plan: **the holder is the producer.** Hooks, terminal
 scanning, input and lifecycle all meet in the holder process, so the reducer
@@ -126,12 +157,14 @@ third.
   `config/batchWrite`, so Bonsai can trust **exactly its own hooks**
   non-interactively. `--dangerously-bypass-hook-trust` would also run untrusted
   user hooks: not used.
-- `request_user_input` tool = question. MCP elicitations have no hook.
+- `request_user_input` tool = question; `request_user_input_async` queues a
+  question that stays pending after tool return and turn completion until an
+  answer or cancellation. MCP elicitations have no hook.
 - PTY: `tui.notifications` (`agent-turn-complete`, `approval-requested`,
   `async-question`), `tui.notification_method` (osc9/bel),
   `tui.notification_condition` (`unfocused|always`), all `-c`-overridable.
 
-### Antigravity `agy` 1.3.4
+### Antigravity `agy` 1.4.2
 
 - Hooks via `hooks.json` (named groups), global file `~/.gemini/config/hooks.json`.
   Sessions run with `HOME = session.HomeDir`, so the file is per session and
@@ -143,16 +176,18 @@ third.
   Bonsai must not register it (any answer changes permission behaviour).
 - PTY: agy emits OSC `9;4` progress (`9;4;3` busy … `9;4;0` clear) and terminal
   notifications for permission prompts and questions when notifications are on
-  (settings key to confirm in S0). That is our only "needs input" signal for
-  agy, marked *inferred*.
+  (`notifications: true`). The observed notice is `Antigravity CLI needs tool
+  confirmation` for both permission and question dialogs. A bounded in-memory
+  terminal grid distinguishes the fixed question and command permission UI
+  framing. These signals are marked *inferred*.
 
 ### Signal matrix (target)
 
 | Status | Claude | Codex | Antigravity |
 | --- | --- | --- | --- |
 | Working | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `PreInvocation`, `PostToolUse`, OSC 9;4 busy |
-| Needs input: permission | `PermissionRequest`, `Notification:permission_prompt` | `PermissionRequest` | terminal notification (inferred) |
-| Needs input: question | `PreToolUse:AskUserQuestion`, `ExitPlanMode`, `Elicitation`, `Notification:agent_needs_input` | `PreToolUse:request_user_input`, OSC 9 `async-question` | terminal notification (inferred) |
+| Needs input: permission | `PermissionRequest`, `Notification:permission_prompt` | `PermissionRequest` | terminal notification / permission dialog (inferred) |
+| Needs input: question | `PreToolUse:AskUserQuestion`, `ExitPlanMode`, `Elicitation`, `Notification:agent_needs_input` | `PreToolUse:request_user_input` / `request_user_input_async`, OSC 9 `async-question` | numbered question dialog (inferred) |
 | Idle | `Stop`, `StopFailure`, `Notification:idle_prompt`, `SessionStart` | `Stop`, `Interrupt`, `SessionStart` | `Stop`, `SessionStart` |
 | Exited | holder lifecycle | holder lifecycle | holder lifecycle |
 
@@ -280,8 +315,8 @@ reduce to the same state and produce no transition.
                          └────────────────────────────────────────────────────────────────────────┘
         status conn │                                      record watch │
                     ▼                                                   ▼
-   agenthost.Manager (API) ──> API Bus ──> ws agent_activity      TUI (agentsapi.Changes): glyphs,
-                                       └─> debounced snapshot     Agents tab; `bonsai agents ls`
+   agenthost.Manager (API) ──> API Bus ──> debounced snapshot     TUI (agentsapi.Changes): glyphs,
+                                           commit (project_update) Agents tab; `bonsai agents ls`
 ```
 
 ### 5.1 Package `internal/core/agentactivity` (new)
@@ -345,11 +380,12 @@ process that cares: one in each holder (its own session only) and one in the
 API (fed by `Manager`, all sessions). The TUI does not need a bus: it re-reads
 records on `Changes`.
 
-Adding a feature later is one subscription, e.g. browser-side events in the API:
+Adding a feature later is one subscription, e.g. desktop notifications in the
+holder (S7):
 
 ```go
-bus.Subscribe("ws-activity", agentactivity.Became(agentactivity.Waiting, agentactivity.Idle),
-	func(e agentactivity.Event) { s.broadcastActivity(e) })
+bus.Subscribe("desktop-notify", agentactivity.Became(agentactivity.Waiting, agentactivity.Idle),
+	func(e agentactivity.Event) { notify.Send(title(e), body(e)) })
 ```
 
 ### 5.2 Holder integration (`internal/core/agenthost`, `internal/core/agentterminal`)
@@ -358,18 +394,31 @@ bus.Subscribe("ws-activity", agentactivity.Became(agentactivity.Waiting, agentac
   json:"activity,omitempty"`, set only while `State == "running"`, cleared on
   every lifecycle change away from running. Additive JSON: no `RecordVersion`
   or protocol `Version` bump; old clients ignore it.
-- `agentterminal.runInStream` gets an optional output hook (`func([]byte)`)
-  called with each chunk before `stream.Write`; it never alters bytes.
-  `RunSession` passes it through. The holder wires it to its `OutputObserver`.
+- `RunSession` gains a trailing `RunHooks` argument (zero value = today's
+  behaviour) because it owns prepare, run and cleanup:
+
+  ```go
+  type RunHooks struct {
+      Activity *agents.ActivityRequest // forwarded on PrepareSessionRequest
+      Output   func([]byte)            // each PTY chunk, before stream.Write; must not keep or alter it
+      Ending   func()                  // after the process exits, before FinalizeSession/Cleanup
+  }
+  ```
+
+  `runInStream` takes `Output`; `RunInStream` (no hooks) is unchanged. The
+  holder wires `Output` to its `OutputObserver` and `Ending` to stopping the
+  spool tail.
 - `host` gets a `Tracker` and a `Bus`. Signal sources inside the holder:
   - output observer → `TerminalBusy|TerminalClear|TerminalNotification`
     (notification classified by the provider's `TerminalClassifier`, else
     dropped);
-  - `handle` case `"input"`: the data comes from the current writer only (the
-    stream enforces it); `\r` or a lone `\x1b` → `UserSubmitted`. The TUI's
-    `Ctrl+]` prefix never reaches the holder;
-  - spool tail goroutine (§5.4), started after `PrepareSession`, stopped before
-    `SessionStore.Cleanup` removes `RuntimeDir`;
+  - `handle` case `"input"`: only when `stream.Input` returns nil (the stream
+    rejects non-writers), `\r` or a lone `\x1b` → `UserSubmitted`. The TUI's
+    `Ctrl+]` leave-focus key never reaches the holder;
+  - spool tail goroutine (§5.4): the holder creates the spool in `RuntimeDir`
+    (it exists from `SessionStore.Create`) and starts the tail before calling
+    `RunSession`; `RunHooks.Ending` stops it before `SessionStore.Cleanup`
+    removes `RuntimeDir`;
   - lifecycle: `RunSession`'s `update` → `LifecycleChanged` on the holder bus.
 - `host.applyActivity(sig)` under `h.mu`:
   - `Tracker.Apply`; nothing changed → return;
@@ -390,17 +439,24 @@ bus.Subscribe("ws-activity", agentactivity.Became(agentactivity.Waiting, agentac
   today's behaviour. Older holders never send `activity`; newer holders talking
   to an older API are ignored by `watch`'s default branch.
 - **Records (TUI, `bonsai agents`).** The holder writes the record on every
-  transition, so `agentsapi.Sessions.Changes` (TUI track A2 `agenthost.Watch`)
+  transition, so `agenthost.Watch` (and with it `agentsapi.Sessions.Changes`)
   fires and the TUI re-lists. Transitions are at most a few per minute per
-  agent; Detail-only changes stay off disk.
-- **localapi.** One bus subscription:
-  - websocket event `agent_activity {project_id, session_id, activity}` sent
-    immediately (same broadcast path as `agents_changed`, authenticated WS
-    only);
-  - debounced (500 ms per project) `stateSync.commit(…, "agents", …)` with
-    `manager.List(project)` so bootstrap snapshots are right. It does **not**
-    rewrite `api_agent_mutations`: activity is not persisted history.
-  - `snapshotsSemanticallyEqual` keeps dropping no-op commits.
+  agent; Detail-only changes stay off disk. `Watch`'s `fingerprint` gains
+  `Activity.State`, `Reason` and `Stalled` (not `Detail` or `Since`), so the
+  rescan-only fallback (no inotify) still sees transitions.
+- **API records watch.** Each transition also wakes `Manager.WatchRecords`,
+  which re-lists records. `syncRecords` must keep comparing only
+  `(project, state)`: activity-only rewrites never call `notify`, so they never
+  reach `publishAgents`. The live value comes from the `activity` frame.
+- **localapi.** One API-bus subscription: a debounced (250 ms per project)
+  `stateSync.commit(…, "agents", …)` with `manager.List(project)`. It reaches
+  the browser as `project_update`, so epoch/sequence ordering and stale-event
+  rejection already hold, and bootstrap/warm-start snapshots are right. It does
+  **not** rewrite `api_agent_mutations` and does **not** publish
+  `agents_changed` (that makes every page refetch). No separate
+  `agent_activity` WS event: a second channel would need its own ordering.
+  `snapshotsSemanticallyEqual` keeps dropping no-op commits. The open
+  `AgentTerminal` also gets every change at once from its own `status` frames.
 - Warm-start sanitization: `Activity.Detail` is a tool name or a ≤ 120-rune
   control-character-free string, never prompts, tool inputs or output.
 
@@ -483,29 +539,35 @@ say "status inferred" for agy's waiting state.
 
 ### 5.6 Web
 
-- `api/agents.ts`: `AgentSummary.activity`; `mapAgent` keeps `lifecycleState`
-  and stores `activity`; `Agent.state` becomes `'running' | 'waiting' | 'idle'
-  | 'finished'`.
+- `api/agents.ts`: `AgentSummary.activity`; `mapAgent` stores it on
+  `Agent.activity` (`types/index.ts`). `Agent.state` stays `'running' |
+  'finished'` and keeps meaning "alive": the stop buttons, the delete-worktree
+  warning and the live counters (§2) must keep treating an idle or waiting
+  agent as running.
 - `lib/agentStatus.ts`: the single `agentDisplayStatus(agent) → {key, label,
-  tone, pulse, inferred}`; every surface listed in §2 switches to one
+  tone, pulse, inferred}`; every display surface listed in §2 switches to one
   `<AgentStatusBadge>` / `<AgentStatusDot>` (replacing the agent use of
-  `StatusDot`; process dots stay).
-- `api/localClient.ts`: `agent_activity` listener patches one agent in the
-  store (no refetch); stale events (older `since`) are dropped.
+  `StatusDot` and `AppShell`'s agent `runtimeDot`; process dots stay).
+  `AgentTerminal` derives the same status from its `status` frames.
+- No new WS listener: activity arrives in `project_update` snapshots through
+  `snapshotReconciliation.ts` → `mapAgent`, already sequence-ordered.
 - Attention: worktree rows and canvas nodes show "needs input" prominently;
   `document.title` gets a `(n)` prefix while any agent waits.
-- Counters ("running" in `buildCanvasGraph`, Inspector metrics) count
-  working + waiting.
+- Counters stay "live agents"; the Inspector adds a "needs input" count.
 
 ### 5.7 TUI and `bonsai agents`
 
-- `agentBadge`: a session in Waiting renders its provider glyph in the
-  attention style plus `!` (ASCII-safe), ahead of plain active glyphs; Idle
-  sessions render dimmed. Width stays predictable (one extra cell at most).
-- Agents tab session strip: label from `agentactivity.Display`, with the
-  reason (`needs permission: Bash`) for Waiting.
-- `bonsai agents ls`: `STATUS` column uses `Display` instead of the raw
-  lifecycle.
+- `agentBadge`: counts stay per provider. A provider glyph takes the style of
+  its most urgent session (Waiting attention, Working normal, all Idle
+  dimmed); if any session of the worktree waits, one `?` follows the glyphs
+  (ASCII-safe). `!` keeps meaning an unacknowledged failure and stays last.
+  Width grows by one cell at most.
+- Agents tab: the header's `stateDot` and the sessions picker's state use
+  `agentactivity.Display`, with the reason (`needs permission: Bash`) for
+  Waiting in the header.
+- `bonsai agents`: `STATE` stays lifecycle. `ACTIVITY` shows `Display` when
+  the record has `Activity`, else today's output heuristic (old holders,
+  providers without hooks). `--json` gains `activity`.
 
 ## 6. Provider work
 
@@ -546,6 +608,9 @@ say "status inferred" for agy's waiting state.
   -c tui.notification_method="osc9" -c tui.notification_condition="always"`
   for the terminal fallback (unless the explicit args set them).
 - `TranslateHook`: `PreToolUse:request_user_input` → `InputRequested(question)`;
+  `PreToolUse:request_user_input_async` → `AsyncInputRequested(question)`;
+  async `PostToolUse` leaves the question pending, as do background tool
+  completions and `Stop`. Answers and cancellation resolve it.
   `Interrupt` → `Interrupted`; `Stop` → `TurnCompleted`.
 - `ClassifyTerminalNotification`: approval → `PermissionRequested`, question →
   `InputRequested`.
@@ -566,23 +631,23 @@ say "status inferred" for agy's waiting state.
   `Stop` by `terminationReason`: `NO_TOOL_CALL` and friends → `TurnCompleted`,
   `ERROR` → `TurnFailed`, `USER_CANCELED` → `Interrupted`.
 - `ActivityProfile{Inferred: [Waiting], ProgressMeansTurn: true}` +
-  `ClassifyTerminalNotification`.
+  `ClassifyTerminalNotification` and `TerminalScreenClassifier` (only fixed UI
+  framing; never copy question or command contents into signals).
 
 ## 7. Phases
 
-Integration branch `feat/agent-status`, cut from `feat/tui-agents` (the branch
-furthest ahead of `main`; rebase on it as TUI phases merge); phase branches
-`feat/agent-status-<phase>` with stacked PRs into it; the final PR targets
-`feat/tui-agents` (or `main` if the TUI track has merged by then).
+Integration branch `feat/agent-status`, based on `main` (the TUI track is
+merged); phase branches `feat/agent-status-<phase>` with stacked PRs into it;
+the final PR targets `main`.
 One concern per commit, no fixup commits. Each phase ends with `test-runner` on
 the touched packages (`go test -race` for `agentactivity`, `agenthost`,
-`agentterminal`, `localapi`), then `reviewer`.
+`agentterminal`, `localapi`, `agentsbackend`), then `reviewer`.
 
 ```
 S0 ── S1 ── S2 ──┬── S3 (Claude) ──┬── S5 (Codex)
                  │                  └── S6 (Antigravity)
                  ├── S4a (web)        ── needs S3 for real data, not for code
-                 └── S4b (TUI/CLI)    ── needs TUI A2/A3 (record watch, agentsbackend)
+                 └── S4b (TUI/CLI)    ── needs S3 for real data, not for code
                                          S7 (notifications) after S4a
 ```
 
@@ -620,40 +685,46 @@ clean.
 
 ### S2: Holder integration (terminal + input only)
 
-`Summary.Activity`; `runInStream` output hook; holder `Tracker`, observer,
-`UserSubmitted` from `input`, holder bus with `LifecycleChanged`; `activity`
-frame to status monitors; record write on transitions only; `Manager.watch`
+`Summary.Activity`; `RunHooks` (`Output`, `Ending`) on `RunSession`; holder
+`Tracker`, observer, `UserSubmitted` from accepted `input`, holder bus with
+`LifecycleChanged`; `activity` frame to status monitors; record write on
+transitions only; `Watch` fingerprint includes activity; `Manager.watch`
 consumes `activity` frames into an API bus without `notify`. Providers
 untouched, so activity comes only from OSC 9;4 / input (Claude with the
 progress bar on, agy) or stays `unknown`.
 
 Tests: in-process holder (`InProcess`) with a fake provider whose script
 prints OSC 9;4 sequences; assert summary activity over the status connection,
-the record content, that Detail-only changes do not rewrite the record, and
-that `publishAgents` is not called for activity frames.
+the record content, that Detail-only changes do not rewrite the record, that
+`publishAgents` is not called for activity frames nor for activity-only record
+rewrites seen by `WatchRecords`, and that `Watch` signals an activity change in
+rescan-only mode.
 
 ### S3: Hook transport + Claude (first vertical slice)
 
-`ActivityRequest`, `ActivityReporter`, `TerminalClassifier`, holder creates
-and tails the spool, `__agent-hook` in `main.go`, `Deps.HookCommand`; Claude
+`ActivityRequest` (passed via `RunHooks.Activity`), `ActivityReporter`,
+`TerminalClassifier`, holder creates and tails the spool, `__agent-hook` in
+`main.go`, `Deps.HookCommand`; Claude
 hooks via `--settings`; extend `testdata/fakeclaude.sh` to call the hook
 command so tests drive real transitions end to end through a holder. Update
 the provider contract in `docs/development.md` and `docs/agents.md`.
 
 ### S4a: API publication + web
 
-Bus subscriber in localapi (`agent_activity` WS event, debounced snapshot
-commit); providers endpoint `activity` field; web status model,
-`AgentStatusBadge`/`AgentStatusDot` across every surface in §2, store patching,
-title counter; vitest units + one e2e (mock server emitting `agent_activity`).
-Both stacks' checks; `build` + `bundle:check` (new module).
+Bus subscriber in localapi (debounced snapshot commit, no journal, no
+`agents_changed`); providers endpoint `activity` field; web status model
+(`Agent.activity`, `agentDisplayStatus`), `AgentStatusBadge`/`AgentStatusDot`
+across every display surface in §2, title counter; vitest units (including:
+an idle agent still counts as running for stop/delete) + one e2e (fixture
+`project_update` snapshot carrying `activity`). Both stacks' checks; `build` +
+`bundle:check` (new module).
 
 ### S4b: TUI + `bonsai agents`
 
-Requires TUI track A2 (records watch) and A3 (`agentsbackend`) merged.
-`agentBadge` waiting/idle rendering (+ ASCII), Agents tab strip label,
-`bonsai agents ls` STATUS column; update `internal/ui` goldens/tests with the
-fake backend carrying `Activity`; `docs/tui-cli.md`.
+`agentBadge` waiting/idle rendering (+ ASCII), Agents tab header and sessions
+picker labels, `bonsai agents` `ACTIVITY` column and `--json`; update
+`internal/ui` goldens/tests with the fake backend (`agentsapi/fake`) carrying
+`Activity`, `internal/cli` agents tests; `docs/tui-cli.md`, `docs/agents.md`.
 
 ### S5: Codex
 
@@ -694,13 +765,15 @@ per-type toggles in settings. Docs: `docs/agents.md`, `docs/web.md`.
   re-trusts on change; a session started before an update keeps its own path.
 - **Record churn**: only transitions rewrite records; Detail updates travel
   over sockets only, rate-limited.
-- **Snapshot churn**: activity never takes `publishAgents`; the debounced
-  commit is the only snapshot path.
+- **Snapshot churn**: activity never takes `publishAgents` (neither from
+  frames nor from `WatchRecords`); the debounced commit is the only snapshot
+  path. Each commit also feeds warm start, so the sanitization rule below
+  applies to it.
 - **Privacy**: signals carry no prompts, tool inputs or outputs; `Detail` is a
   tool name or a ≤ 120-rune control-character-free string. Same rule for
   records, snapshots and warm-start data.
 - **Spool lifetime**: the tail must stop before `SessionStore.Cleanup`; late
   hooks after cleanup find no file and exit 0.
 - **agy waiting is inferred** until a hook exists; every client marks it.
-- **TUI dependency**: S4b cannot start before TUI tracks A2/A3; S2's record
-  writes make it a pure rendering change once they land.
+- **Web liveness**: `Agent.state` must keep meaning "alive". Widening it to
+  idle/waiting would hide stop buttons and skip the delete-worktree warning.

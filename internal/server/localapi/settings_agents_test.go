@@ -46,3 +46,39 @@ func TestAgentSettingsRevisionsAndConflicts(t *testing.T) {
 		t.Fatal("rejected writes changed the setting")
 	}
 }
+
+func TestAgentSettingsNotifications(t *testing.T) {
+	s := newTestServer(t)
+	s.webConfigPath = filepath.Join(t.TempDir(), "web.json")
+	read := func() agentSettingsResponse {
+		t.Helper()
+		w := authorizedRequest(t, s, "GET", "/api/settings/agents", "", nil)
+		var out agentSettingsResponse
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil {
+			t.Fatalf("read: %d %s", w.Code, w.Body)
+		}
+		return out
+	}
+	initial := read()
+	if initial.Notifications.Enabled || !initial.Notifications.NeedsInput || !initial.Notifications.TurnComplete {
+		t.Fatalf("default %+v", initial.Notifications)
+	}
+	put := authorizedRequest(t, s, "POST", "/api/settings/agents", "n1", map[string]any{"notifications": map[string]any{"enabled": true, "turn_complete": false}, "revision": initial.Revision})
+	var changed agentSettingsResponse
+	if put.Code != 200 || json.Unmarshal(put.Body.Bytes(), &changed) != nil {
+		t.Fatalf("put: %d %s", put.Code, put.Body)
+	}
+	want := config.WebAgentNotifications{Enabled: true, NeedsInput: true, TurnComplete: false}
+	if changed.Notifications != want || changed.KeepRunning {
+		t.Fatalf("changed %+v", changed)
+	}
+	if cfg, _, err := config.ReadWebConfig(s.webConfigPath); err != nil || cfg.Agents.Notifications != want {
+		t.Fatalf("saved %+v %v", cfg.Agents, err)
+	}
+	if empty := authorizedRequest(t, s, "POST", "/api/settings/agents", "n2", map[string]any{"revision": changed.Revision}); empty.Code != 400 {
+		t.Fatalf("no field: %d %s", empty.Code, empty.Body)
+	}
+	if unknown := authorizedRequest(t, s, "POST", "/api/settings/agents", "n3", map[string]any{"notifications": map[string]any{"sound": true}, "revision": changed.Revision}); unknown.Code != 400 {
+		t.Fatalf("unknown key: %d %s", unknown.Code, unknown.Body)
+	}
+}

@@ -144,7 +144,7 @@ func TestLaunchArgsMatrix(t *testing.T) {
 		{name: "help", explicit: []string{"--help"}, want: []string{"--help", "-c", storeOverride, "--no-daemon"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := launchArgs(tc.settings, tc.explicit, tc.launch)
+			got := launchArgs(tc.settings, tc.explicit, tc.launch, nil)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("args = %q\nwant   %q", got, tc.want)
 			}

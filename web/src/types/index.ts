@@ -98,6 +98,22 @@ export type AgentProvider = 'Claude' | 'Codex' | 'Gemini' | 'Antigravity'
 /** Provider IDs the local API can launch; other providers are display-only. */
 export type AgentProviderId = 'antigravity' | 'claude' | 'codex'
 
+/** What a running agent is doing, as reported by the holder. Missing means unknown. */
+export type ActivityState = 'unknown' | 'working' | 'waiting' | 'idle'
+export type ActivityReason = 'permission' | 'question' | 'plan' | 'elicitation' | 'ready' | 'turn_complete' | 'interrupted' | 'error'
+export interface AgentActivity {
+  state: ActivityState
+  reason?: ActivityReason
+  /** A tool name or a short control-character-free string; never a prompt or tool input. */
+  detail?: string
+  since: string
+  source: 'hook' | 'terminal' | 'input' | 'lifecycle'
+  /** Working with no sign of progress for a long while. */
+  stalled?: boolean
+  /** Guessed from the terminal, not reported by the provider. */
+  inferred?: boolean
+}
+
 export interface Agent {
   projectId?: string
   profileName?: string
@@ -108,6 +124,8 @@ export interface Agent {
   /** Accepted launch options of a live session, keyed by start request field (effort, sandbox…). */
   launchOptions?: Record<string, string>
   lifecycleState?: 'starting' | 'running' | 'stopping' | 'exited' | 'failed'
+  /** Present only while the session runs. `state` below still means alive, whatever this says. */
+  activity?: AgentActivity
   id: string
   worktreeId: string
   name: string
