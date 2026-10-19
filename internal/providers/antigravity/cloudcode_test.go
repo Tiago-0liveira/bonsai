@@ -1,6 +1,7 @@
 package antigravity
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,9 @@ type cloudCodeServer struct {
 	// its status.
 	loadBody   string
 	loadStatus int
+	// noGemini makes the quota answer list the Claude & GPT pool only, as the
+	// daily host does.
+	noGemini bool
 }
 
 func newCloudCodeServer(t *testing.T) (*cloudCodeServer, string) {
@@ -30,7 +34,7 @@ func newCloudCodeServer(t *testing.T) (*cloudCodeServer, string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.calls[r.URL.Path]++
-		status, loadBody, loadStatus := s.status, s.loadBody, s.loadStatus
+		status, loadBody, loadStatus, noGemini := s.status, s.loadBody, s.loadStatus, s.noGemini
 		s.mu.Unlock()
 		if r.Header.Get("Authorization") != "Bearer live-token" || r.Header.Get("User-Agent") != cloudCodeUserAgent {
 			t.Errorf("headers = %v", r.Header)
@@ -53,6 +57,12 @@ func newCloudCodeServer(t *testing.T) (*cloudCodeServer, string) {
 			var body map[string]string
 			if json.NewDecoder(r.Body).Decode(&body) != nil || body["project"] != "proj-1" {
 				t.Errorf("summary body = %v", body)
+			}
+			if noGemini {
+				_, _ = w.Write([]byte(`{"groups":[{"displayName":"Claude and GPT models","buckets":[` +
+					`{"bucketId":"3p-weekly","displayName":"Weekly Limit Remaining","window":"weekly","resetTime":"2026-10-22T15:24:57Z","remainingFraction":1},` +
+					`{"bucketId":"3p-5h","displayName":"Five Hour Limit Remaining","window":"5h","resetTime":"2026-10-15T20:24:57Z","remainingFraction":1}]}]}`))
+				return
 			}
 			_, _ = w.Write([]byte(`{"groups":[{"displayName":"Gemini Models","buckets":[` +
 				`{"bucketId":"gemini-weekly","displayName":"Weekly Limit Remaining","window":"weekly","resetTime":"2026-10-22T15:24:57Z","remainingFraction":0.5},` +
@@ -288,5 +298,66 @@ func TestFailedLoadCodeAssistKeepsTheQuotaAndStoredPlan(t *testing.T) {
 	}
 	if e.runs.Load() != 0 {
 		t.Fatalf("agy ran %d times", e.runs.Load())
+	}
+}
+
+// A host that answers without a Gemini pool does not end the read: the next
+// host is asked, and the answer that lists one wins.
+func TestUsagePrefersTheHostThatListsAGeminiPool(t *testing.T) {
+	e := newAccountEnv(t)
+	partial, partialURL := newCloudCodeServer(t)
+	partial.noGemini = true
+	full, fullURL := newCloudCodeServer(t)
+	useCloudCodeHosts(t, partialURL, fullURL)
+	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+
+	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
+	if err != nil || len(snapshot.Limits) != 2 || snapshot.Limits[0].ID != "gemini-weekly" {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+	if full.count("retrieveUserQuotaSummary") != 1 || e.runs.Load() != 0 {
+		t.Fatalf("full=%v agy runs=%d", full.calls, e.runs.Load())
+	}
+}
+
+// When no host lists a Gemini pool, agy's `/usage` is raced and its Gemini
+// pool wins; the plan and credits still come from the API read.
+func TestUsageRacesAgyWhenNoHostListsAGeminiPool(t *testing.T) {
+	e := newAccountEnv(t)
+	server, url := newCloudCodeServer(t)
+	server.noGemini = true
+	useCloudCodeHosts(t, url)
+	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+
+	snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{})
+	if err != nil || !hasGeminiPool(snapshot.Limits) {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+	if e.usageCmds.Load() != 1 || snapshot.Plan != "Google AI Pro" {
+		t.Fatalf("/usage runs=%d plan=%q", e.usageCmds.Load(), snapshot.Plan)
+	}
+}
+
+// A profile neither source gives a Gemini pool shows what it has and does not
+// start agy on every read.
+func TestUsageStopsStartingAgyForAProfileWithoutAGeminiPool(t *testing.T) {
+	e := newAccountEnv(t)
+	server, url := newCloudCodeServer(t)
+	server.noGemini = true
+	useCloudCodeHosts(t, url)
+	e.signInToken(t, "me@example.com", time.Now().Add(time.Hour))
+	e.provider.run = func(context.Context, string, string, map[string]string, ...string) ([]byte, error) {
+		e.usageCmds.Add(1)
+		return []byte(`{"status":"SUCCESS","response":"Claude and GPT models\tWeekly Limit Remaining\t100%\t2026-10-20T17:41:46Z\nClaude and GPT models\tFive Hour Limit Remaining\t100%\t2026-10-13T22:41:46Z\n"}`), nil
+	}
+
+	for i := 0; i < 2; i++ {
+		snapshot, err := e.provider.Usage(t.Context(), e.account, agents.UsageOptions{Refresh: true})
+		if err != nil || len(snapshot.Limits) != 2 || hasGeminiPool(snapshot.Limits) {
+			t.Fatalf("read %d: snapshot=%+v err=%v", i, snapshot, err)
+		}
+	}
+	if got := e.usageCmds.Load(); got != 1 {
+		t.Fatalf("/usage runs = %d, want 1", got)
 	}
 }

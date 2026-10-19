@@ -29,6 +29,8 @@ type credentialVault struct {
 	UpdatedAt        time.Time       `json:"updated_at"`
 	OAuth            json.RawMessage `json:"oauth"`
 	ProviderSettings json.RawMessage `json:"provider_settings,omitempty"`
+	// Onboarding is agy's first-run state, carried into every session home.
+	Onboarding json.RawMessage `json:"onboarding,omitempty"`
 }
 
 type generationMarker struct {
@@ -62,6 +64,19 @@ func (m *fileCredentialManager) Materialize(ctx context.Context, account agents.
 	}
 	if len(vault.ProviderSettings) > 0 {
 		if err := writePrivateFile(providerSettingsPath(session.HomeDir), vault.ProviderSettings); err != nil {
+			return err
+		}
+	}
+	onboarding := vault.Onboarding
+	if len(onboarding) == 0 {
+		// A profile signed in before the vault kept it: the sign-in home has
+		// the state of the wizard the user already went through.
+		if data, err := readOptional(onboardingPath(probeHomeDir(m.accounts, account))); err == nil && json.Valid(data) {
+			onboarding = data
+		}
+	}
+	if len(onboarding) > 0 {
+		if err := writePrivateFile(onboardingPath(session.HomeDir), onboarding); err != nil {
 			return err
 		}
 	}
@@ -169,13 +184,24 @@ func (m *fileCredentialManager) Reconcile(ctx context.Context, account agents.Ac
 	if len(candidate.ProviderSettings) == 0 {
 		candidate.ProviderSettings = append(json.RawMessage(nil), current.ProviderSettings...)
 	}
+	if len(candidate.Onboarding) == 0 {
+		candidate.Onboarding = append(json.RawMessage(nil), current.Onboarding...)
+	}
+	// Sessions of one profile run side by side, each with its own settings
+	// file, so a folder trusted in another session must survive this one's end.
+	candidate.ProviderSettings = mergeTrustedWorkspaces(current.ProviderSettings, candidate.ProviderSettings)
+	if marker.Generation > 0 && current.Generation > marker.Generation {
+		// The vault moved on since this session started: its login and
+		// settings win unless this session's tokens are fresher, and only the
+		// folders this session trusted are added to them.
+		if tokenFreshness(candidate.OAuth).Compare(tokenFreshness(current.OAuth)) <= 0 {
+			candidate.OAuth = append(json.RawMessage(nil), current.OAuth...)
+			candidate.Onboarding = append(json.RawMessage(nil), current.Onboarding...)
+			candidate.ProviderSettings = mergeTrustedWorkspaces(candidate.ProviderSettings, current.ProviderSettings)
+		}
+	}
 	if credentialsEquivalent(current, candidate) {
 		return nil
-	}
-	if marker.Generation > 0 && current.Generation > marker.Generation {
-		if tokenFreshness(candidate.OAuth).Compare(tokenFreshness(current.OAuth)) <= 0 {
-			return nil
-		}
 	}
 	candidate.Version = 1
 	if candidate.Identity == "" {
@@ -184,6 +210,42 @@ func (m *fileCredentialManager) Reconcile(ctx context.Context, account agents.Ac
 	candidate.Generation = current.Generation + 1
 	candidate.UpdatedAt = time.Now().UTC()
 	return m.writeVault(account, candidate)
+}
+
+// mergeTrustedWorkspaces returns candidate settings whose "trustedWorkspaces"
+// also hold every folder of current's. Both are kept as they are when either
+// cannot be read.
+func mergeTrustedWorkspaces(current, candidate json.RawMessage) json.RawMessage {
+	var cur, next map[string]json.RawMessage
+	if json.Unmarshal(current, &cur) != nil || json.Unmarshal(candidate, &next) != nil {
+		return candidate
+	}
+	var have, want []string
+	if json.Unmarshal(cur["trustedWorkspaces"], &have) != nil || len(have) == 0 {
+		return candidate
+	}
+	if raw, ok := next["trustedWorkspaces"]; ok && json.Unmarshal(raw, &want) != nil {
+		return candidate
+	}
+	merged := append([]string(nil), want...)
+	for _, dir := range have {
+		if !slices.Contains(merged, dir) {
+			merged = append(merged, dir)
+		}
+	}
+	if len(merged) == len(want) {
+		return candidate
+	}
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		return candidate
+	}
+	next["trustedWorkspaces"] = raw
+	out, err := json.Marshal(next)
+	if err != nil {
+		return candidate
+	}
+	return out
 }
 
 func fallbackIdentity(account agents.Account) string {
@@ -237,11 +299,20 @@ func readSessionCredentialState(home string) (credentialVault, error) {
 	if len(settings) > 0 && !json.Valid(settings) {
 		return credentialVault{}, fmt.Errorf("malformed antigravity provider settings")
 	}
+	onboarding, err := readOptional(onboardingPath(home))
+	if err != nil {
+		return credentialVault{}, err
+	}
+	// Onboarding is a convenience: a malformed file is dropped, not an error.
+	if len(onboarding) > 0 && !json.Valid(onboarding) {
+		onboarding = nil
+	}
 	return credentialVault{
 		Version:          1,
 		Identity:         identityFromOAuth(oauth),
 		OAuth:            append(json.RawMessage(nil), oauth...),
 		ProviderSettings: append(json.RawMessage(nil), settings...),
+		Onboarding:       append(json.RawMessage(nil), onboarding...),
 	}, nil
 }
 
@@ -434,7 +505,8 @@ func mergeRefreshTokens(current, candidate map[string]any) {
 
 func credentialsEquivalent(a, b credentialVault) bool {
 	return string(a.OAuth) == string(b.OAuth) &&
-		string(a.ProviderSettings) == string(b.ProviderSettings)
+		string(a.ProviderSettings) == string(b.ProviderSettings) &&
+		string(a.Onboarding) == string(b.Onboarding)
 }
 
 func writePrivateFile(path string, data []byte) error {

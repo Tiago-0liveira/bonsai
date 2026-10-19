@@ -90,10 +90,17 @@ func (p *Provider) signIn(ctx context.Context, account agents.Account, runtimeDi
 		Dir:        dir,
 		EnvSet:     buildEnvironment(account, session),
 	}
-	if err := launcher.RunForeground(ctx, prepared); err != nil {
-		return err
+	runErr := launcher.RunForeground(ctx, prepared)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	return p.credentialMgr.CaptureSetup(ctx, account, session)
+	// agy exits nonzero when it is interrupted or its UI is closed right after
+	// the sign-in, with the login already written. The captured credentials,
+	// not the exit code, say whether the sign-in worked.
+	if err := p.credentialMgr.CaptureSetup(ctx, account, session); err != nil {
+		return errors.Join(runErr, err)
+	}
+	return nil
 }
 
 func filepathBaseSessionID(runtimeDir string) agents.SessionID {

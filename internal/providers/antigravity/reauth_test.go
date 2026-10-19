@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -156,5 +157,64 @@ func TestSetupSpecHasOneModeAndNotes(t *testing.T) {
 	spec := New(nil, nil).SetupSpec(context.Background())
 	if len(spec.AuthModes) != 0 || spec.Seed != nil || len(spec.Notes) == 0 || !strings.Contains(spec.Notes[0], "exit agy") {
 		t.Fatalf("spec = %+v", spec)
+	}
+}
+
+// failingSignInLauncher is agy exiting nonzero: after writing the login when
+// write is set (the user interrupted agy once signed in), or without one.
+type failingSignInLauncher struct {
+	signInLauncher
+	write bool
+}
+
+func (l *failingSignInLauncher) RunForeground(ctx context.Context, prepared agents.PreparedSession) error {
+	if l.write {
+		_ = l.signInLauncher.RunForeground(ctx, prepared)
+	}
+	return errors.New("exit status 130")
+}
+
+// agy exits nonzero when it is interrupted: a login it already wrote is kept,
+// and the setup fails only when nothing was captured.
+func TestSetupCapturesLoginWhenAgyExitsNonzero(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		write   bool
+		wantErr bool
+	}{
+		{"login written", true, false},
+		{"no login", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			accounts, err := agents.NewFileAccountStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessions, err := agents.NewFileSessionStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := New(accounts, sessions)
+			provider.binaryResolver = &providerTestBinaryResolver{path: "agy-test"}
+			registry := agents.NewRegistry()
+			if err := registry.Register(provider); err != nil {
+				t.Fatal(err)
+			}
+			service := &agents.AccountService{Store: accounts, Sessions: sessions, Registry: registry, Out: &bytes.Buffer{}}
+			launcher := &failingSignInLauncher{signInLauncher: signInLauncher{t: t, access: "tok", expiry: time.Now().Add(time.Hour)}, write: tc.write}
+			result, err := service.SetupWithIO(context.Background(), ProviderID, "personal", agents.SetupOptions{}, agents.SetupIO{Launcher: launcher})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("setup succeeded without a login")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := readTestVault(t, accounts, result.Account).Generation; got != 1 {
+				t.Fatalf("vault generation = %d", got)
+			}
+		})
 	}
 }
