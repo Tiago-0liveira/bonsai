@@ -61,6 +61,16 @@ func GardenOperationsPath() (string, error) {
 	}
 	return filepath.Join(dir, "bonsai", "garden-operations.json"), nil
 }
+
+// GardenPlannerPath keeps the planner attempt history: which agent planned which approved specification, and how
+// each attempt ended. It holds no prompts, terminal output or credentials.
+func GardenPlannerPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-planner.json"), nil
+}
 func CanonicalDirectory(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") || (os.PathSeparator == '\\' && strings.HasPrefix(path, `~\`)) {
 		home, err := os.UserHomeDir()

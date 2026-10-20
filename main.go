@@ -287,7 +287,12 @@ func run(cfgPath string, layout ui.Layout) error {
 	var gardenErr error
 	if layout == ui.LayoutRedesign {
 		var gardenAPI *gardenbackend.Backend
-		if gardenAPI, gardenErr = gardenbackend.New(repoDir); gardenErr == nil {
+		var gardenOpts []gardenbackend.Option
+		if agentsAPI != nil {
+			// Planner sessions are ordinary agent sessions; without the agent runtime Garden still works but cannot plan.
+			gardenOpts = append(gardenOpts, gardenbackend.WithAgents(*agentsAPI))
+		}
+		if gardenAPI, gardenErr = gardenbackend.New(repoDir, gardenOpts...); gardenErr == nil {
 			extra = append(extra, ui.WithGarden(gardenAPI))
 		}
 	}

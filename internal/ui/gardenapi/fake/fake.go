@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/spec"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
@@ -66,9 +68,37 @@ type Backend struct {
 	// Saved lists the previews Save and Resolve ran, in order.
 	Saved []gardenapi.SavePreviewView
 
+	// PreviewValidateErr and ValidateErr make that call fail.
+	PreviewValidateErr, ValidateErr error
+	// ValidateResult, when set, is what Validate returns instead of recording the approval.
+	ValidateResult *gardenapi.ValidateView
+	// Validated lists the previews Validate ran, in order.
+	Validated []gardenapi.ValidatePreviewView
+
+	// PlannerBase is the checkout PreviewPlanner reports (default: a clean tree at a fixed commit).
+	PlannerBase plan.Base
+	// PreviewPlannerErr, StartPlannerErr, PlannerAttemptsErr and CancelPlannerErr make that call fail.
+	PreviewPlannerErr, StartPlannerErr, PlannerAttemptsErr, CancelPlannerErr error
+	// PlannerStarted lists the requests StartPlanner accepted, in order.
+	PlannerStarted []gardenapi.PlannerStartRequest
+	// OnPlannerStart runs after StartPlanner recorded an attempt, outside any lock, so a test can create the
+	// session the attempt names in the agents fake.
+	OnPlannerStart func(plan.Attempt)
+
+	// PlanReviewErr, PreviewPlanPublishErr, PublishPlanErr and DecidePlanErr make that call fail.
+	PlanReviewErr, PreviewPlanPublishErr, PublishPlanErr, DecidePlanErr error
+	// PlanComments are the Issue comments the scripted log holds besides the verified records, by Issue ID: the
+	// prose a reviewer wrote on GitHub, which PlanReview counts as a hint and never acts on.
+	PlanComments map[uint64][]garden.Comment
+	// PlanPublished and PlanDecided list what PublishPlan and DecidePlan recorded, in order.
+	PlanPublished []gardenapi.PlanPublishPreviewView
+	PlanDecided   []gardenapi.PlanDecisionRequest
+
 	// Captured lists the previews Capture ran, in order, so a test can assert a
 	// retry reused the same operation ID.
 	Captured []gardenapi.CapturePreview
+
+	attempts []plan.Attempt
 
 	mu    sync.Mutex
 	gen   uint64
@@ -89,6 +119,7 @@ func New(state gardenapi.State) *Backend {
 		PlanView:       SamplePlan(),
 		AppliedView:    SampleOperation(gardenapi.StateConnected),
 		ResumedView:    SampleOperation(gardenapi.StateConnected),
+		PlannerBase:    plan.Base{Commit: "c0ffee1234567890c0ffee1234567890c0ffee12", Branch: "main"},
 		epoch:          1,
 	}
 }
@@ -114,7 +145,7 @@ func (b *Backend) Count(method string) int {
 // Writes counts the calls that change GitHub or the association: Apply,
 // Resume, Skip and Unskip. A test that cancels setup asserts it is zero.
 func (b *Backend) Writes() int {
-	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip") + b.Count("Capture") + b.Count("Save") + b.Count("Resolve")
+	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip") + b.Count("Capture") + b.Count("Save") + b.Count("Resolve") + b.Count("Validate") + b.Count("StartPlanner") + b.Count("CancelPlanner") + b.Count("PublishPlan") + b.Count("DecidePlan")
 }
 
 // begin records the call and returns its generation and the current epoch.
@@ -518,4 +549,184 @@ func (b *Backend) write(method string, fail error, ctx context.Context, p garden
 		b.WorkView.Snapshot.Items[i] = it
 	}
 	return v, ctx.Err()
+}
+
+// PreviewValidate implements gardenapi.Backend: the gate is assessed from the scripted Issue exactly as the
+// real backend assesses a verified one.
+func (b *Backend) PreviewValidate(ctx context.Context, issue uint64) (gardenapi.ValidatePreviewView, error) {
+	gen, epoch := b.begin("PreviewValidate")
+	if b.PreviewValidateErr != nil {
+		return gardenapi.ValidatePreviewView{}, b.PreviewValidateErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	it, _, ok := b.item(issue)
+	if !ok {
+		return gardenapi.ValidatePreviewView{}, &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That Issue no longer exists on GitHub."}
+	}
+	b.ops++
+	a := approve.Assess(it.Issue, it.Verification)
+	v := gardenapi.ValidatePreviewView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), OperationID: fmt.Sprintf("validate-fake-%d", b.ops), IssueID: issue,
+		Number: it.Issue.Number, Title: it.Issue.Title, Type: garden.Classify(it.Issue.Labels).Type, Actor: SampleLogin, Gate: a}
+	if a.CanValidate() {
+		v.Steps = []approve.Step{approve.StepApproval, approve.StepLabel}
+	}
+	return v, ctx.Err()
+}
+
+// Validate implements gardenapi.Backend. Recording the approval makes the same Issue an approved one, which
+// is what the next Work read shows.
+func (b *Backend) Validate(ctx context.Context, p gardenapi.ValidatePreviewView) (gardenapi.ValidateView, error) {
+	gen, epoch := b.begin("Validate")
+	if b.ValidateErr != nil {
+		return gardenapi.ValidateView{}, b.ValidateErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.Validated = append(b.Validated, p)
+	v := gardenapi.ValidateView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), OperationID: p.OperationID, IssueID: p.IssueID, State: gardenapi.ValidateDone,
+		ApprovalCommentID: 6000 + int64(len(b.Validated)), Done: p.Steps}
+	if p.Gate.Head != nil {
+		v.RevisionHash = p.Gate.Head.Hash
+	}
+	if b.ValidateResult != nil {
+		r := *b.ValidateResult
+		r.Stamp, r.OperationID, r.IssueID = v.Stamp, p.OperationID, p.IssueID
+		return r, ctx.Err()
+	}
+	it, i, ok := b.item(p.IssueID)
+	if !ok || p.Gate.Head == nil {
+		return gardenapi.ValidateView{}, &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That Issue no longer exists on GitHub."}
+	}
+	head := *p.Gate.Head
+	var labels []string
+	for _, l := range it.Issue.Labels {
+		if l == garden.FormatStageLabel(garden.StageDraft) {
+			l = garden.FormatStageLabel(garden.StageReady)
+		}
+		labels = append(labels, l)
+	}
+	m, _ := garden.DecodeMetadata(it.Issue.Metadata)
+	m.Accepted, m.AcceptedSpecHash, m.SpecFingerprint = true, head.Hash, head.SourceSpecFingerprint
+	it.Issue.Labels = labels
+	it.Issue.Metadata, _ = garden.EncodeMetadata(m)
+	ap := garden.Approval{RevisionCommentID: head.CommentID, RevisionHash: head.Hash, SourceSpecFingerprint: head.SourceSpecFingerprint, CommentID: v.ApprovalCommentID, Author: SampleLogin, AuthorID: "1001",
+		CreatedAt: time.Date(2026, 10, 20, 12, 10, 0, 0, time.UTC)}
+	it.Verification.Approvals = append(it.Verification.Approvals, ap)
+	it.Verification.ValidApprovals = append(it.Verification.ValidApprovals, ap)
+	it.Verification.AcceptedSpecHash, it.Verification.CurrentSpecFingerprint = head.Hash, head.SourceSpecFingerprint
+	it.Classification = garden.Classify(labels)
+	it.Lane = garden.LaneResult{Lane: garden.LaneWork, Reason: "specification acceptance is recorded"}
+	b.WorkView.Snapshot.Items[i] = it
+	return v, ctx.Err()
+}
+
+// SetAttempt scripts an attempt of the planner history, replacing the one with the same ID.
+func (b *Backend) SetAttempt(a plan.Attempt) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.attempts {
+		if b.attempts[i].ID == a.ID {
+			b.attempts[i] = a
+			return
+		}
+	}
+	b.attempts = append(b.attempts, a)
+}
+
+func (b *Backend) issueAttempts(issue uint64) []plan.Attempt {
+	var out []plan.Attempt
+	for _, a := range b.attempts {
+		if uint64(a.Issue) == issue {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// PreviewPlanner implements gardenapi.Backend: the gate is assessed from the scripted Issue, and the planner
+// is offered only for a verified Approved head, as in the real backend.
+func (b *Backend) PreviewPlanner(ctx context.Context, issue uint64) (gardenapi.PlannerPreviewView, error) {
+	gen, epoch := b.begin("PreviewPlanner")
+	if b.PreviewPlannerErr != nil {
+		return gardenapi.PlannerPreviewView{}, b.PreviewPlannerErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	it, _, ok := b.item(issue)
+	if !ok {
+		return gardenapi.PlannerPreviewView{}, &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That Issue no longer exists on GitHub."}
+	}
+	a := approve.Assess(it.Issue, it.Verification)
+	v := gardenapi.PlannerPreviewView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: issue, Number: it.Issue.Number, Title: it.Issue.Title,
+		Actor: SampleLogin, Gate: a, Attempts: b.issueAttempts(issue)}
+	switch {
+	case !a.DownstreamAvailable() || a.Head == nil:
+		v.Unavailable = "The specification is not approved: validate it first. Bonsai never plans from a label or a claim in the Issue."
+	default:
+		v.Spec = plan.SpecRef{RevisionHash: a.Head.Hash, CommentID: a.Head.CommentID, Ordinal: a.Ordinal, Fingerprint: a.Fingerprint}
+		v.Base = b.PlannerBase
+		if _, live := (gardenapi.PlannerAttemptsView{Attempts: v.Attempts}).Live(); live {
+			v.Unavailable = "A planner attempt is still running for this issue. Open it or cancel it first."
+		}
+	}
+	return v, ctx.Err()
+}
+
+// StartPlanner implements gardenapi.Backend. It records a Starting attempt with a scripted session and never
+// touches a worktree; a test drives it forward with SetAttempt.
+func (b *Backend) StartPlanner(ctx context.Context, req gardenapi.PlannerStartRequest) (gardenapi.PlannerAttemptView, error) {
+	gen, epoch := b.begin("StartPlanner")
+	if b.StartPlannerErr != nil {
+		return gardenapi.PlannerAttemptView{}, b.StartPlannerErr
+	}
+	b.mu.Lock()
+	b.PlannerStarted = append(b.PlannerStarted, req)
+	p := req.Preview
+	b.ops++
+	now := time.Date(2026, 10, 20, 13, 0, b.ops, 0, time.UTC)
+	a := plan.Attempt{ID: fmt.Sprintf("plan-fake-%d", b.ops), Local: Clone, Repo: garden.RepoID(b.StatusView.Target.RepoID), Issue: garden.IssueID(p.IssueID), Number: p.Number, Role: plan.RolePlanner,
+		Spec: p.Spec, Base: p.Base, Isolation: plan.Isolation{Mechanism: "fake sandbox", Allows: []string{"read files"}, DirtyAccepted: p.Base.Dirty && req.IncludeDirty, AcceptedAt: now, AcceptedBy: "1001"},
+		Provider: "claude", AccountID: req.AccountID, AccountName: "fake", Model: req.Model, Effort: req.Effort,
+		SessionID: fmt.Sprintf("sess-fake-%d", b.ops), State: plan.StateStarting, RequestedAt: now, UpdatedAt: now}
+	b.attempts = append(b.attempts, a)
+	hook := b.OnPlannerStart
+	b.mu.Unlock()
+	if hook != nil {
+		hook(a)
+	}
+	return gardenapi.PlannerAttemptView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: p.IssueID, Attempt: a}, ctx.Err()
+}
+
+// PlannerAttempts implements gardenapi.Backend with the scripted history.
+func (b *Backend) PlannerAttempts(ctx context.Context, issue uint64) (gardenapi.PlannerAttemptsView, error) {
+	gen, epoch := b.begin("PlannerAttempts")
+	if b.PlannerAttemptsErr != nil {
+		return gardenapi.PlannerAttemptsView{}, b.PlannerAttemptsErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return gardenapi.PlannerAttemptsView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: issue, Attempts: b.issueAttempts(issue)}, ctx.Err()
+}
+
+// CancelPlanner implements gardenapi.Backend: a live attempt becomes cancelled, a final one is left alone.
+func (b *Backend) CancelPlanner(ctx context.Context, id string) (gardenapi.PlannerAttemptView, error) {
+	gen, epoch := b.begin("CancelPlanner")
+	if b.CancelPlannerErr != nil {
+		return gardenapi.PlannerAttemptView{}, b.CancelPlannerErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, a := range b.attempts {
+		if a.ID != id {
+			continue
+		}
+		if a.State.Live() {
+			now := a.UpdatedAt.Add(time.Minute)
+			a.State, a.CancelRequested, a.Reason, a.EndedAt, a.UpdatedAt = plan.StateCancelled, true, "cancelled", &now, now
+			b.attempts[i] = a
+		}
+		return gardenapi.PlannerAttemptView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: uint64(a.Issue), Attempt: a}, ctx.Err()
+	}
+	return gardenapi.PlannerAttemptView{}, &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That planner attempt no longer exists."}
 }

@@ -558,7 +558,7 @@ func TestReaderAndWriterExposeOnlyTheirPorts(t *testing.T) {
 	if n := reflect.TypeOf(&IssueReader{}).NumMethod(); n != 4 {
 		t.Fatalf("reader exposes %d methods", n)
 	}
-	if n := reflect.TypeOf(&IssueWriter{}).NumMethod(); n != 2 {
+	if n := reflect.TypeOf(&IssueWriter{}).NumMethod(); n != 3 {
 		t.Fatalf("writer exposes %d methods", n)
 	}
 }

@@ -19,6 +19,9 @@ var (
 	ErrProviderBusy       = errors.New("provider already has an active session on another account")
 	ErrAccountInUse       = errors.New("account has active sessions")
 	ErrInvalidProfile     = errors.New("invalid profile defaults")
+	// ErrReadOnlyUnsupported means a read-only launch was asked of a provider whose
+	// CLI cannot enforce it. The launch is refused; it never runs unrestricted.
+	ErrReadOnlyUnsupported = errors.New("provider cannot enforce read-only access")
 )
 
 // AccountInUseError lists the active sessions that keep an account from being

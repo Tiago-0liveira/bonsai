@@ -2,8 +2,10 @@
 package fake
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,13 +32,23 @@ type Fake struct {
 	// beforeAppend and afterAppend run once, outside the lock, around the next AppendComment, so a test can
 	// inject a concurrent writer between a read and a write.
 	beforeAppend, afterAppend func()
+	// login and accountID are the authenticated account comments are written as.
+	login, accountID string
 	// log lists every mutation in order, so tests can assert what was and was not written.
 	log []string
 }
 
 // New constructs a fake with an empty store and a 100 item page size.
 func New() *Fake {
-	return &Fake{issues: map[garden.RepoID]map[garden.IssueID]garden.Issue{}, comments: map[garden.RepoID]map[garden.IssueID][]garden.IssueComment{}, projects: map[garden.RepoID][]garden.Project{}, pageSize: 100, next: 0, now: func() time.Time { return time.Unix(0, 0).UTC() }}
+	return &Fake{login: "fake-authenticated", accountID: "fake-authenticated-id", issues: map[garden.RepoID]map[garden.IssueID]garden.Issue{}, comments: map[garden.RepoID]map[garden.IssueID][]garden.IssueComment{}, projects: map[garden.RepoID][]garden.Project{}, pageSize: 100, next: 0, now: func() time.Time { return time.Unix(0, 0).UTC() }}
+}
+
+// SetAccount sets the authenticated account that AppendComment writes as, so a test can make it the
+// approval policy's trusted viewer.
+func (f *Fake) SetAccount(login, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.login, f.accountID = login, id
 }
 
 // SetClock injects the fake server clock; each appended comment advances it by one nanosecond.
@@ -79,7 +91,7 @@ func (f *Fake) AppendCommentAs(r garden.RepoID, id garden.IssueID, author, autho
 	return c
 }
 
-// WriteLog returns the mutations applied so far, oldest first: "create", "comment:<issue>", "labels:<issue>:<labels>".
+// WriteLog returns the mutations applied so far, oldest first: "create", "comment:<issue>", "labels:<issue>:<labels>", "metadata:<issue>".
 func (f *Fake) WriteLog() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -266,7 +278,7 @@ func (f *Fake) appendComment(r garden.RepoID, id garden.IssueID, body string) (g
 	f.next++
 	f.clockStep++
 	f.log = append(f.log, fmt.Sprintf("comment:%d", id))
-	c := garden.IssueComment{ID: f.next, Body: body, Author: "fake-authenticated", AuthorID: "fake-authenticated-id", CreatedAt: f.now().Add(time.Duration(f.clockStep)).UTC()}
+	c := garden.IssueComment{ID: f.next, Body: body, Author: f.login, AuthorID: f.accountID, CreatedAt: f.now().Add(time.Duration(f.clockStep)).UTC()}
 	if f.comments[r] == nil {
 		f.comments[r] = make(map[garden.IssueID][]garden.IssueComment)
 	}
@@ -291,6 +303,34 @@ func (f *Fake) UpdateLabels(ctx context.Context, r garden.RepoID, id garden.Issu
 	i.Labels = append([]string(nil), labels...)
 	f.issues[r][id] = i
 	f.log = append(f.log, fmt.Sprintf("labels:%d:%s", id, strings.Join(labels, ",")))
+	return nil
+}
+
+// ReplaceMetadata rewrites only the metadata line of the body, like the GitHub adapter, and refuses when the
+// stored line is not previous.
+func (f *Fake) ReplaceMetadata(ctx context.Context, r garden.RepoID, id garden.IssueID, previous, next []byte) error {
+	if e := checkContext(ctx); e != nil {
+		return e
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e := f.check(); e != nil {
+		return e
+	}
+	i, ok := f.issues[r][id]
+	if !ok {
+		return garden.ErrNotFound
+	}
+	if !bytes.Equal(garden.BodyMetadata(i.Body), previous) {
+		return garden.ErrMetadataChanged
+	}
+	body, err := garden.ReplaceBodyMetadata(i.Body, next)
+	if err != nil {
+		return err
+	}
+	i.Body, i.Metadata = body, garden.BodyMetadata(body)
+	f.issues[r][id] = i
+	f.log = append(f.log, fmt.Sprintf("metadata:%d", id))
 	return nil
 }
 
@@ -426,4 +466,30 @@ func cloneProjects(in []garden.Project) []garden.Project {
 		out[i] = cloneProject(p)
 	}
 	return out
+}
+
+func (f *Fake) UpdateStage(ctx context.Context, r garden.RepoID, id garden.IssueID, previous []string, from, to garden.Stage) error {
+	if e := checkContext(ctx); e != nil {
+		return e
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e := f.check(); e != nil {
+		return e
+	}
+	i, ok := f.issues[r][id]
+	if !ok {
+		return garden.ErrNotFound
+	}
+	if !slices.Equal(garden.ManagedLabels(i.Labels), garden.ManagedLabels(previous)) {
+		return garden.ErrMetadataChanged
+	}
+	for n, l := range i.Labels {
+		if l == garden.FormatStageLabel(from) {
+			i.Labels[n] = garden.FormatStageLabel(to)
+		}
+	}
+	f.issues[r][id] = i
+	f.log = append(f.log, fmt.Sprintf("labels:%d:%s", id, strings.Join(i.Labels, ",")))
+	return nil
 }

@@ -12,7 +12,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 )
 
@@ -78,6 +82,47 @@ type Backend interface {
 	// Resolve appends the Result as a revision superseding every head the
 	// conflict showed, after re-checking that those are still the heads.
 	Resolve(ctx context.Context, preview SavePreviewView) (SaveView, error)
+
+	// PreviewValidate verifies the revision and approval log now and reports gate one for an Issue: the exact
+	// specification revision and fingerprint, what blocks approval, and the Draft to Approved transition
+	// validating would record. It writes nothing and needs Write access.
+	PreviewValidate(ctx context.Context, issue uint64) (ValidatePreviewView, error)
+	// Validate records approval of exactly the previewed revision: one approval comment, then the acceptance
+	// metadata line and the stage label of the same Issue. It starts no planner, agent, worktree or pull
+	// request. It re-verifies first and refuses with CodeSpecChanged when the head moved; validating the same
+	// preview again finds the recorded approval instead of writing a second one.
+	Validate(ctx context.Context, preview ValidatePreviewView) (ValidateView, error)
+
+	// PreviewPlanner verifies gate one and inspects the checkout now, and reports whether Request AI plan is
+	// offered: only for a verified Approved specification. It also reconciles and returns the Issue's planner
+	// attempts. It reads only and starts nothing, so displaying an Issue that changed elsewhere never runs a planner.
+	PreviewPlanner(ctx context.Context, issue uint64) (PlannerPreviewView, error)
+	// StartPlanner is the explicit Request AI plan. It re-verifies the specification and the checkout against the
+	// preview, refuses a provider that cannot enforce read-only access, records the attempt and starts a
+	// read-only session in the checkout. It creates no worktree. The caller attaches to the returned session
+	// with the agents terminal contract.
+	StartPlanner(ctx context.Context, req PlannerStartRequest) (PlannerAttemptView, error)
+	// PlannerAttempts reconciles the Issue's attempts with their sessions and returns them, oldest first.
+	PlannerAttempts(ctx context.Context, issue uint64) (PlannerAttemptsView, error)
+	// CancelPlanner stops a live attempt; the attempt and its history stay.
+	CancelPlanner(ctx context.Context, attemptID string) (PlannerAttemptView, error)
+
+	// PlanReview verifies the Issue's comment log now and reports its plan revisions: the latest, the one under
+	// review (current) and the approved one, separately, each with its integrity re-verified. It only reads.
+	// IssueLink opens or copies the canonical GitHub Issue URL.
+	IssueLink(ctx context.Context, issue uint64, open bool) error
+
+	PlanReview(ctx context.Context, issue uint64) (PlanReviewView, error)
+	// PreviewPlanPublish reports what publishing Text as a plan revision would append, bound to a planner
+	// attempt's specification and inspected base. Text is what the user chose to publish; Bonsai reads nothing
+	// from the planner's session. It writes nothing and needs Write access.
+	PreviewPlanPublish(ctx context.Context, req PlanPublishRequest) (PlanPublishPreviewView, error)
+	// PublishPlan appends the previewed revision after verifying the log again, and refuses when the
+	// specification or the plan heads moved. It starts no planner and approves nothing.
+	PublishPlan(ctx context.Context, preview PlanPublishPreviewView) (PlanPublishView, error)
+	// DecidePlan records changes requested, rejection, or exact-pair approval through Ready.
+	// It rechecks heads and authority and starts no run.
+	DecidePlan(ctx context.Context, req PlanDecisionRequest) (PlanDecisionView, error)
 }
 
 // Stamp scopes one reply. Generation grows with every request of the clone and
@@ -435,6 +480,20 @@ const (
 	CodeOperationNotFound   Code = "operation-not-found"
 	CodeStalePlan           Code = "stale-plan"
 	CodeConflict            Code = "conflict"
+	// CodeSpecChanged means the specification head moved since the preview, so nothing was approved.
+	CodeSpecChanged Code = "specification-changed"
+	// CodeValidationBlocked means gate one cannot run: the preview lists the blockers.
+	CodeValidationBlocked Code = "validation-blocked"
+	// CodeNotApproved means no planner may start: the specification is not a verified approved one.
+	CodeNotApproved Code = "not-approved"
+	// CodeRepoChanged means the checkout moved since the preview (commit or uncommitted changes).
+	CodeRepoChanged Code = "repository-changed"
+	// CodeDirtyContext means the checkout has uncommitted changes that need an explicit decision.
+	CodeDirtyContext Code = "dirty-context"
+	// CodeReadOnlyUnsupported means the account's provider cannot enforce read-only access, so it cannot plan.
+	CodeReadOnlyUnsupported Code = "read-only-unsupported"
+	// CodeAttemptActive means an earlier planner attempt for the Issue is still running.
+	CodeAttemptActive Code = "attempt-active"
 	// CodeNotFound means the Issue is gone.
 	CodeNotFound Code = "not-found"
 	// CodeNoChange means there is nothing to save; CodeDocumentIncomplete means the
@@ -630,4 +689,195 @@ type SaveView struct {
 	Replayed    bool
 	Conflict    *ConflictView
 	Err         *Error
+}
+
+// ValidatePreviewView is exactly what Validate will record for one Issue, or why it cannot. Hand it back to
+// Validate unchanged.
+type ValidatePreviewView struct {
+	Stamp       Stamp
+	OperationID string // stable trace ID; replay safety comes from the approval record itself
+	IssueID     uint64
+	Number      int64
+	Title       string
+	Type        garden.ItemType // never changed by validation
+	Actor       string          // login of the authenticated account that will approve
+	// Gate is the verified state: the head revision (Gate.Head, numbered Gate.Ordinal), its fingerprint, the
+	// approval records retained for audit, the blockers and the stage the Issue moves from.
+	Gate approve.Assessment
+	// Steps are the writes still needed, in order. Empty means nothing is left to write.
+	Steps  []approve.Step
+	Labels []string
+}
+
+// CanValidate reports whether the Validate action is offered.
+func (v ValidatePreviewView) CanValidate() bool { return v.Gate.CanValidate() }
+
+// ValidateState is how a validation ended.
+type ValidateState string
+
+const (
+	ValidateDone ValidateState = "done"
+	// ValidatePartial means the approval is recorded but the Issue's metadata or label write did not finish.
+	// The Issue stays a draft; validating again finishes it.
+	ValidatePartial ValidateState = "partial"
+	// ValidateUnknown means the approval comment may exist; validating again checks before it appends.
+	ValidateUnknown ValidateState = "unknown"
+)
+
+// ValidateView is the result of Validate.
+type ValidateView struct {
+	Stamp             Stamp
+	OperationID       string
+	IssueID           uint64
+	State             ValidateState
+	ApprovalCommentID int64
+	RevisionHash      string
+	Done              []approve.Step
+	Err               *Error
+}
+
+// PlannerPreviewView is what Request AI plan would bind, or why it is unavailable. Hand it back to StartPlanner
+// unchanged inside the request.
+type PlannerPreviewView struct {
+	Stamp   Stamp
+	IssueID uint64
+	Number  int64
+	Title   string
+	Actor   string // login of the authenticated account that will request the plan
+	// Gate is the verified gate-one state; the planner is offered only for an Approved head.
+	Gate approve.Assessment
+	// Spec is the approved revision the attempt is bound to.
+	Spec plan.SpecRef
+	// Base is the inspected checkout. A Dirty base needs an explicit IncludeDirty decision.
+	Base plan.Base
+	// Attempts is the Issue's planner history, oldest first.
+	Attempts []plan.Attempt
+	// Unavailable says why Request AI plan is not offered; empty when it is.
+	Unavailable string
+}
+
+// CanRequest reports whether the Request AI plan action is offered.
+func (v PlannerPreviewView) CanRequest() bool { return v.Unavailable == "" }
+
+// Live returns the attempt that is still running, if any.
+func (v PlannerPreviewView) Live() (plan.Attempt, bool) { return liveAttempt(v.Attempts) }
+
+// PlannerStartRequest is the user's explicit Request AI plan: the preview they saw plus their choices.
+type PlannerStartRequest struct {
+	Preview PlannerPreviewView
+	// AccountID is the profile that plans. Model and Effort are its launch choices; nothing else about the launch
+	// (permissions, sandbox, approval) can be chosen, because the planner role fixes it read-only.
+	AccountID     agents.AccountID
+	Model, Effort string
+	Name          string
+	// IncludeDirty lets the planner read uncommitted changes. Required when Preview.Base.Dirty.
+	IncludeDirty bool
+	// AcceptReadOnly confirms the read-only permissions shown for the account.
+	AcceptReadOnly bool
+	Cols, Rows     int
+}
+
+// PlannerAttemptView is one attempt after a start, a cancel or a refresh.
+type PlannerAttemptView struct {
+	Stamp   Stamp
+	IssueID uint64
+	Attempt plan.Attempt
+}
+
+// PlannerAttemptsView is an Issue's reconciled planner history.
+type PlannerAttemptsView struct {
+	Stamp    Stamp
+	IssueID  uint64
+	Attempts []plan.Attempt
+}
+
+// Live returns the attempt that is still running, if any.
+func (v PlannerAttemptsView) Live() (plan.Attempt, bool) { return liveAttempt(v.Attempts) }
+
+// PlanReviewView is the verified plan-review state of one Issue.
+type PlanReviewView struct {
+	ActorID string
+	Stamp   Stamp
+	IssueID uint64
+	Actor   string // login of the authenticated account that would publish or decide
+	// Review carries Latest, Current and Approved separately, the full revision history, and why publishing or
+	// deciding is unavailable.
+	Review planrev.Review
+}
+
+// PlanPublishRequest names the planner attempt a plan came from and the plan text the user chose to publish.
+type PlanPublishRequest struct {
+	IssueID   uint64
+	AttemptID string
+	Text      string
+}
+
+// PlanPublishPreviewView is exactly what PublishPlan will append. Hand it back unchanged.
+type PlanPublishPreviewView struct {
+	Stamp       Stamp
+	OperationID string
+	IssueID     uint64
+	Number      int64
+	Title       string
+	Actor       string
+	Preview     planrev.PublishPreview
+}
+
+// CanPublish reports whether PublishPlan is offered.
+func (v PlanPublishPreviewView) CanPublish() bool { return v.Preview.CanPublish() }
+
+// PlanWriteState is how a plan write ended.
+type PlanWriteState string
+
+const (
+	PlanWriteDone PlanWriteState = "done"
+	// PlanWriteUnknown means the comment may exist; repeating the action finds it instead of writing twice.
+	PlanWriteUnknown PlanWriteState = "unknown"
+)
+
+// PlanPublishView is the result of PublishPlan.
+type PlanPublishView struct {
+	Stamp       Stamp
+	OperationID string
+	IssueID     uint64
+	State       PlanWriteState
+	CommentID   int64
+	Hash        string
+	Ordinal     int
+	Replayed    bool
+	Err         *Error
+}
+
+// PlanDecisionRequest is a decision about one exact plan revision.
+type PlanDecisionRequest struct {
+	Stamp        Stamp
+	SpecHash     string
+	ActorID      string
+	IssueID      uint64
+	RevisionHash string
+	// Fingerprint is the specification fingerprint the reviewer saw the revision answer.
+	Fingerprint string
+	Decision    garden.Decision
+	Reason      string
+}
+
+// PlanDecisionView is the result of DecidePlan.
+type PlanDecisionView struct {
+	Stamp     Stamp
+	IssueID   uint64
+	State     PlanWriteState
+	CommentID int64
+	Ordinal   int
+	Decision  garden.Decision
+	Replayed  bool
+	Err       *Error
+}
+
+func liveAttempt(list []plan.Attempt) (plan.Attempt, bool) {
+	for i := len(list) - 1; i >= 0; i-- {
+		if list[i].State.Live() {
+			return list[i], true
+		}
+	}
+	return plan.Attempt{}, false
 }

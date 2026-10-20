@@ -211,6 +211,17 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modal != nil {
 			m.modal.SetSize(msg.Width, msg.Height)
 		}
+		if d := m.garden.planner.dlg; d != nil {
+			d.SetSize(m.width, m.gardenBoardRows())
+		}
+		m.gardenSizePlanEditor()
+		m.planClamp()
+		if m.plannerSessionShown() && m.agents.view.term != nil {
+			// The terminal keeps the body's size: its viewport now, the agent's own size once the resize settles.
+			w, rows := m.agentAreaSize()
+			m.agents.view.term.SetViewport(w, rows)
+			return m, m.agentResizeDebounce()
+		}
 		return m, nil
 	case modals.CancelMsg:
 		m.modal = nil
@@ -238,6 +249,11 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case configSavedMsg:
 		return m.onRepoConfigSaved(msg), nil
 	case tea.KeyMsg:
+		// Typing into the planner comes before everything else: every key but Ctrl+] belongs to the agent, so
+		// quit, help, the palette and workspace keys cannot fire while it is focused.
+		if m.plannerTerminalMode() {
+			return m.agentTerminalKey(msg)
+		}
 		if m.modal != nil {
 			nm, cmd := m.modal.Update(msg)
 			m.modal = &nm
@@ -245,11 +261,12 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.shellKey(msg)
 	}
+	m, forwarded := m.gardenPlannerForward(msg)
 	if handled, nm, cmd := m.gardenMsg(msg); handled {
-		return nm, cmd
+		return nm, tea.Batch(forwarded, cmd)
 	}
 	_, nm, cmd := m.accountsMsg(msg)
-	return nm, cmd
+	return nm, tea.Batch(forwarded, cmd)
 }
 
 func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -480,6 +497,12 @@ func (m Model) shellHints() []shellHint {
 	if m.currentShellFocus() == shellInput && m.workspace == wsGarden {
 		if m.gardenScreen() == scrDrafts {
 			return m.gardenDraftsHints()
+		}
+		if m.planActive() {
+			return m.gardenPlanHints()
+		}
+		if m.plannerActive() {
+			return m.gardenPlannerHints()
 		}
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}

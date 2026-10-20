@@ -9,6 +9,9 @@ import (
 )
 
 func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	if req.Launch.ReadOnly {
+		return agents.PreparedSession{}, agents.RequireReadOnly(p)
+	}
 	settings, err := ParseSettings(req.Account)
 	if err != nil {
 		return agents.PreparedSession{}, err
@@ -56,6 +59,9 @@ func (p *Provider) launchModels(ctx context.Context, account agents.Account, set
 // cached model list says the model lacks, and unreadable profile settings
 // before any session is created. It never starts agy.
 func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOptions) error {
+	if launch.ReadOnly {
+		return agents.RequireReadOnly(p)
+	}
 	if launch.PermissionMode != "" {
 		return fmt.Errorf("antigravity does not support a permission mode; use full access")
 	}
@@ -90,6 +96,16 @@ func (p *Provider) LaunchFields() []agents.LaunchField {
 			{Value: "true", Label: "Full access", Tone: agents.ToneDanger},
 		},
 	}}
+}
+
+// ReadOnly implements agents.ReadOnlyEnforcer, as a refusal. agy 's help shows
+// `--mode plan` (an execution mode the model may leave), `--sandbox` (terminal
+// restrictions only; it says nothing about file edits) and
+// `--dangerously-skip-permissions`, but no tool allowlist and no file-write
+// sandbox. Without enforcement below the model, Antigravity is unavailable for
+// read-only roles and never falls back to unrestricted access.
+func (p *Provider) ReadOnly() agents.ReadOnlySupport {
+	return agents.ReadOnlySupport{Reason: "agy has no tool allowlist or file-write sandbox; its plan mode and --sandbox do not stop edits"}
 }
 
 // profileEffortApplies reports whether the profile's default effort can be

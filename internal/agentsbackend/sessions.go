@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 )
@@ -66,6 +67,13 @@ func (s *sessions) Start(ctx context.Context, req agentsapi.StartRequest) (agent
 	if err != nil {
 		if ctx.Err() != nil {
 			return agentsapi.Session{}, ctx.Err()
+		}
+		// Only these refusals are named: they say what the user can change. Every other
+		// detail stays hidden behind ErrSessionUnavailable.
+		for _, known := range []error{agents.ErrReadOnlyUnsupported, agents.ErrAccountBusy, agents.ErrProviderBusy} {
+			if errors.Is(err, known) {
+				return agentsapi.Session{}, fmt.Errorf("start agent session: %w: %w", known, ErrSessionUnavailable)
+			}
 		}
 		return agentsapi.Session{}, fmt.Errorf("start agent session: %w", ErrSessionUnavailable)
 	}

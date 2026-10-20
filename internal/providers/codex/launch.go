@@ -11,6 +11,9 @@ import (
 )
 
 func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	if req.Launch.ReadOnly {
+		return agents.PreparedSession{}, agents.RequireReadOnly(p)
+	}
 	settings, err := ParseSettings(req.Account)
 	if err != nil {
 		return agents.PreparedSession{}, err
@@ -52,6 +55,9 @@ func (p *Provider) FinalizeSession(context.Context, agents.FinalizeSessionReques
 // ValidateLaunch rejects options Codex has no equivalent for, and bad values,
 // before any session exists.
 func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOptions) error {
+	if launch.ReadOnly {
+		return agents.RequireReadOnly(p)
+	}
 	if launch.FullAccess != nil {
 		return fmt.Errorf("codex does not support full access; use the Full access or Bypass permissions")
 	}
@@ -182,6 +188,12 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 		args = append(args, "--", launch.Prompt)
 	}
 	return args
+}
+
+// ReadOnly refuses the planner role because a shell sandbox does not constrain
+// configured MCP tools, plugins or hooks, and patch denial is unverified.
+func (p *Provider) ReadOnly() agents.ReadOnlySupport {
+	return agents.ReadOnlySupport{Reason: "Codex cannot enforce read-only access across patch tools, MCP, plugins and hooks"}
 }
 
 func first(values ...string) string {

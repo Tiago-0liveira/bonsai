@@ -147,12 +147,18 @@ func SampleDraftItems() []gardensync.Item {
 	var spec strings.Builder
 	for _, s := range sections {
 		spec.WriteString("## " + s + "\n")
+		if s == "Open questions" {
+			// Approvable: an unresolved open question would block validation of the sample.
+			spec.WriteString("None\n")
+			continue
+		}
 		for i := 0; i < 8; i++ {
 			spec.WriteString("Line about " + strings.ToLower(s) + " that keeps the document long enough to scroll.\n")
 		}
 		spec.WriteString("\n")
 	}
-	rev := garden.Revision{Kind: garden.RevisionSpec, CommentID: 77, Content: strings.TrimSpace(spec.String()), Hash: garden.ContentHash(spec.String())}
+	hash := garden.ContentHash(spec.String())
+	rev := garden.Revision{Kind: garden.RevisionSpec, CommentID: 77, Content: strings.TrimSpace(spec.String()), Hash: hash, SourceSpecFingerprint: hash}
 	long.Verification.Revisions = []garden.Revision{rev}
 	long.Verification.Heads = []garden.Revision{rev}
 	bug := SampleDraft(143, 143, "Crash when the config file is empty", garden.TypeBug)

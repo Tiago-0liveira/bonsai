@@ -53,7 +53,7 @@ func (b *Backend) Work(ctx context.Context) (gardenapi.WorkView, error) {
 			err = connect.ErrAuthRequired
 		}
 		if err == nil {
-			request.ApprovalPolicy = garden.ApprovalPolicy{AllowedActorIDs: []string{id.ID}}
+			request.ApprovalPolicy = garden.ApprovalPolicy{AllowedActorIDs: []string{id.ID}, ReadOnly: target.Repository.Access < connect.AccessWrite}
 		}
 	}
 	var snap gardensync.Snapshot

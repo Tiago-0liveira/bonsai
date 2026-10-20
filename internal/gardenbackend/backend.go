@@ -14,16 +14,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/browser"
+	"github.com/Tiago-0liveira/bonsai/internal/core/clipboard"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	ghgarden "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
@@ -34,6 +40,8 @@ const authCheckTimeout = 3 * time.Second
 // Deps are the seams of the backend. New fills them from gh and Git; tests
 // fill them with fakes.
 type Deps struct {
+	OpenURL  func(string) error
+	CopyText func(string) error
 	Issues   garden.IssueReader
 	Remotes  connect.RemoteLister
 	Resolver connect.RepositoryResolver
@@ -49,6 +57,12 @@ type Deps struct {
 	Ops     *ops.Store
 	// Writer appends specification revisions (comments); it never edits an Issue.
 	Writer garden.IssueWriter
+	// Plans, Checkout and Agents enable the planner role (plan 08.2): the attempt history, the checkout a planner
+	// would read and the agent runtime that hosts its read-only session. All three are optional; without them
+	// Request AI plan is unavailable.
+	Plans    *plan.Store
+	Checkout plan.Inspector
+	Agents   plan.Agents
 	// NewID returns a fresh random token for operation IDs and idempotency keys.
 	NewID func() string
 }
@@ -56,6 +70,7 @@ type Deps struct {
 // Backend is the gardenapi.Backend for one local clone.
 type Backend struct {
 	deps  Deps
+	dir   string // the clone a planner session runs in
 	local garden.LocalRepoID
 	gen   atomic.Uint64
 
@@ -66,6 +81,9 @@ type Backend struct {
 	authGeneration uint64
 	captures       *capture.Service // built on first use
 	edits          *edit.Service    // built on first use
+	approvals      *approve.Service // built on first use
+	planner        *plan.Service    // built on first use
+	reviews        *planrev.Service // built on first use
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)
@@ -76,6 +94,7 @@ type Option func(*options)
 type options struct {
 	shared *ghcli.Shared
 	store  *connect.Store
+	agents *agentsapi.Backend
 }
 
 // WithShared supplies the GitHub client state (tests inject a token runner).
@@ -116,7 +135,11 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("garden operations: %w", err)
 	}
-	return newBackend(repoDir, Deps{
+	planStore, err := plan.Open()
+	if err != nil {
+		return nil, fmt.Errorf("garden planner attempts: %w", err)
+	}
+	deps := Deps{
 		Issues:         gh.Reader(),
 		Creator:        gh.Creator(),
 		Writer:         gh.Writer(),
@@ -127,7 +150,13 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 		Viewer:         gh.Viewer,
 		InvalidateAuth: func() { o.shared.InvalidateAuth(ghcli.DefaultHost) },
 		Store:          o.store,
-	})
+		Plans:          planStore,
+		Checkout:       checkoutInspector{coregit.CheckoutInspector{Dir: repoDir}},
+	}
+	if o.agents != nil {
+		deps.Agents = plannerAgents{api: *o.agents, dir: repoDir}
+	}
+	return newBackend(repoDir, deps)
 }
 
 // gitRemotes adapts the Git remote lister to the connect seam. core/git cannot
@@ -154,10 +183,16 @@ func newBackend(repoDir string, d Deps) (*Backend, error) {
 	if d.Remotes == nil || d.Resolver == nil || d.Viewer == nil || d.Store == nil {
 		return nil, errors.New("garden backend needs remotes, resolver, viewer and store")
 	}
+	if d.OpenURL == nil {
+		d.OpenURL = browser.Open
+	}
+	if d.CopyText == nil {
+		d.CopyText = clipboard.Copy
+	}
 	if d.NewID == nil {
 		d.NewID = randomID
 	}
-	return &Backend{deps: d, local: local}, nil
+	return &Backend{deps: d, dir: repoDir, local: local}, nil
 }
 
 func randomID() string {

@@ -293,6 +293,56 @@ The status comes from provider hooks, so it is a best-effort signal:
 - Hook commands are quoted for POSIX shells. On Windows the status may stay
   "Running" if the agent runs hooks through a different shell.
 
+## Garden approval does not start agents
+
+Validating a Garden specification (gate one, in the
+[redesign preview](tui-cli.md#garden-board-in-the-preview)) records an approval on
+GitHub and never launches an agent, planner or worktree, and never touches any
+profile's config directory or login. Agent profiles are used only by the separate,
+explicit local Request AI plan action. Gate-two plan approval ends at **Ready**,
+starts no coding agent, worktree or PR, and keeps launch unavailable. GitHub/mobile
+approvals use the verified comment protocol and never request remote execution.
+See [gate two and the external protocol](garden.md#approve-the-exact-plan-gate-two) and the
+[Garden guide](garden.md#validate-a-specification-gate-one).
+
+## The read-only planner role
+
+Garden's **Request AI plan** ([guide](garden.md#request-an-ai-plan-read-only-planner))
+starts an agent session with the *planner* role: read-only, bound to one approved
+specification revision, in the current checkout and with no worktree. The role is a
+launch option (`LaunchOptions.ReadOnly`), not a prompt: it is available only for a
+provider whose own CLI enforces read-only access below the model, a prompt that
+says "do not edit" or a mode called "plan" does not count, and a provider that cannot
+meet that is unavailable for the role. There is no fallback to unrestricted access.
+Providers declare their verdict with the optional `agents.ReadOnlyEnforcer`
+interface, and the launch path (`agenthost.Starter`, then each provider's
+`PrepareSession`) refuses a read-only launch whose provider says no. A read-only
+launch accepts no permission mode, sandbox, approval or full-access option, no
+explicit CLI arguments, and ignores the profile's own permission defaults, so a
+profile set to bypass permissions cannot widen it. Everything else is unchanged:
+isolated per-account config directories, scrubbed inherited provider variables, no
+`HOME` override, no login refresh and no writes to `~/.claude` or `~/.codex`.
+
+| Provider | Planner role | What enforces it |
+| --- | --- | --- |
+| Claude | Available | `claude --restricted --tools Read,Grep,Glob --strict-mcp-config --permission-mode plan`. `--tools` replaces the built-in tool set, so Edit, Write, Bash and the others do not exist for the model; `--restricted` also drops code-running tools and WebFetch, confines file tools to the working directory, ignores user, project and local settings files and refuses `bypassPermissions`; `--strict-mcp-config` with no MCP config keeps every MCP server out. The `plan` mode is not what enforces anything. A Claude Code that lacks one of these flags exits with an unknown-option error, so it fails closed. |
+| Codex | Unavailable | The shell sandbox does not establish denial of patch writes, configured MCP mutations, plugins or hooks. Bonsai refuses the planner role until the complete tool surface can be constrained and verified. |
+| Antigravity | Unavailable | `agy` offers `--mode plan` (an execution mode the model may leave) and `--sandbox` ("terminal restrictions"), but no tool allowlist and no file-write sandbox, so neither stops an edit. |
+
+Evidence is each CLI's own `--help` (Claude Code 2.1.304, `codex-cli` 0.163.0 and the
+`agy` available when this was written) plus how the repo already launches them; flags
+that are not in a CLI's help are never assumed. Codex's help scopes `--sandbox` to
+"model-generated shell commands"; this is insufficient evidence for the planner
+role, so even profiles configured with a read-only shell sandbox are refused.
+
+A planner session answers as text; it cannot write a plan. The plan becomes an Issue
+record only when you publish text from that attempt in Garden ([Publish and review a
+plan](garden.md#publish-and-review-a-plan)). Bonsai does not read the session's
+terminal output for this: you type or paste the plan, it is kept in memory until you
+publish it, and the attempt record (still free of prompts and terminal output)
+supplies the specification and the inspected base. Reviewing or rejecting a plan never
+starts a session; the next read-only run needs its own **Request AI plan**.
+
 ## Profile defaults
 
 Each profile keeps its launch defaults: the model plus Codex `permissions` and
@@ -331,3 +381,7 @@ line per provider on stderr, a cell per profile and who is still being waited
 on. `--no-progress` or `BONSAI_PROGRESS=0` turns it off, and piped output is
 unchanged. Results are cached for 1 minute per profile; `--refresh` bypasses
 the cache.
+
+The next explicitly requested local planner attempt includes the latest verified
+request-changes reason as sanitized review context. Reading a reason never restarts
+a session, and feedback never changes the enforced read-only permissions.

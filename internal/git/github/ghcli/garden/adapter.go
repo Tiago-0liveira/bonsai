@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 const maxResponse = 4 << 20
 const maxRequest = 1 << 20
 const maxComment = 64 << 10
+
 const maxPages = 100
 const maxLinkHeader = 16 << 10
 const graphqlPath = "/graphql"
@@ -63,9 +65,15 @@ type IssueWriter struct{ a *Adapter }
 // IssueCreator is the one capability that creates Issues; it is kept off IssueWriter so only capture holds it.
 type IssueCreator struct{ a *Adapter }
 
+// MetadataWriter exposes conditional metadata updates; GitHub cannot provide them.
+type MetadataWriter struct{ a *Adapter }
+
 func (a *Adapter) Reader() *IssueReader   { return &IssueReader{a: a} }
 func (a *Adapter) Writer() *IssueWriter   { return &IssueWriter{a: a} }
 func (a *Adapter) Creator() *IssueCreator { return &IssueCreator{a: a} }
+
+// MetadataWriter is separate from Writer and refuses unconditional body writes.
+func (a *Adapter) MetadataWriter() *MetadataWriter { return &MetadataWriter{a: a} }
 
 // New requires a non-nil HTTP client. Only an https origin without a path is supported: GitHub Enterprise
 // API bases such as https://host/api/v3 fail closed in this phase.
@@ -755,6 +763,66 @@ func (w *IssueWriter) UpdateLabels(ctx context.Context, repo core.RepoID, id cor
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// ReplaceMetadata fails closed: GitHub has no conditional body write. Acceptance
+// is recorded by append-only approvals, so existing user text is never PATCHed.
+func (w *MetadataWriter) ReplaceMetadata(ctx context.Context, repo core.RepoID, id core.IssueID, previous, next []byte) error {
+	current, err := w.a.Reader().GetIssue(ctx, repo, id)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current.Metadata, previous) {
+		return core.ErrMetadataChanged
+	}
+	return core.ErrMetadataWriteUnsupported
+}
+
+// UpdateStage never reconciles other managed labels from a stale snapshot. A
+// concurrent stage edit remains visible as a conflict rather than being removed.
+func (w *IssueWriter) UpdateStage(ctx context.Context, repo core.RepoID, id core.IssueID, previous []string, from, to core.Stage) error {
+	current, err := w.a.Reader().GetIssue(ctx, repo, id)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(core.ManagedLabels(current.Labels), core.ManagedLabels(previous)) {
+		return core.ErrMetadataChanged
+	}
+	number, err := w.a.issueNumber(ctx, repo, id)
+	if err != nil {
+		return err
+	}
+	base, err := w.a.repositoryPath(ctx, repo)
+	if err != nil {
+		return err
+	}
+	path := base + "/issues/" + strconv.FormatInt(number, 10) + "/labels"
+	_, _, err = w.a.request(ctx, "DELETE", path+"/"+url.PathEscape(core.FormatStageLabel(from)), nil)
+	if err != nil {
+		return err
+	}
+	// Detect an edit during deletion before adding the new stage.
+	expected := slices.DeleteFunc(slices.Clone(previous), func(l string) bool { return l == core.FormatStageLabel(from) })
+	current, err = w.a.Reader().GetIssue(ctx, repo, id)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(core.ManagedLabels(current.Labels), core.ManagedLabels(expected)) {
+		return core.ErrMetadataChanged
+	}
+	_, _, err = w.a.request(ctx, "POST", path, map[string][]string{"labels": {core.FormatStageLabel(to)}})
+	if err != nil {
+		return err
+	}
+	expected = append(expected, core.FormatStageLabel(to))
+	current, err = w.a.Reader().GetIssue(context.WithoutCancel(ctx), repo, id)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(core.ManagedLabels(current.Labels), core.ManagedLabels(expected)) {
+		return core.ErrMetadataChanged
 	}
 	return nil
 }

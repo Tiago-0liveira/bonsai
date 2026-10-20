@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
@@ -174,6 +175,38 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onGardenSavePreview(msg)
 	case gardenSaveMsg:
 		nm, cmd = m.onGardenSave(msg)
+	case gardenValidatePreviewMsg:
+		nm, cmd = m.onGardenValidatePreview(msg)
+	case gardenValidateMsg:
+		nm, cmd = m.onGardenValidate(msg)
+	case gardenPlanReviewMsg:
+		nm, cmd = m.onGardenPlanReview(msg)
+	case gardenPlanPreviewMsg:
+		nm, cmd = m.onGardenPlanPreview(msg)
+	case gardenPlanPublishMsg:
+		nm, cmd = m.onGardenPlanPublish(msg)
+	case gardenPlanDecisionMsg:
+		nm, cmd = m.onGardenPlanDecision(msg)
+	case gardenPlannerPreviewMsg:
+		nm, cmd = m.onGardenPlannerPreview(msg)
+	case gardenPlannerAttemptsMsg:
+		nm, cmd = m.onGardenPlannerAttempts(msg)
+	case gardenPlannerStartMsg:
+		nm, cmd = m.onGardenPlannerStart(msg)
+	case gardenPlannerCancelMsg:
+		nm, cmd = m.onGardenPlannerCancel(msg)
+	case launchSubmitMsg:
+		if m.garden.planner.dlg == nil {
+			return false, m, nil
+		}
+		nm, cmd = m.onPlannerSubmit(msg)
+	case accounts.CloseMsg:
+		if m.garden.planner.stage != plannerChoose {
+			return false, m, nil
+		}
+		nm = m.gardenPlannerChooseClose()
+	case agentAttachedMsg, agentRetryMsg, agentFramesMsg, agentInputMsg, agentInputSentMsg, agentTookMsg, agentResizeTickMsg:
+		nm, cmd = m.plannerTerminalMsg(msg)
 	case gardenViewSavedMsg:
 		nm = m.gardenBoardSaved(msg)
 	case gardenStatusMsg:
@@ -210,12 +243,19 @@ func (m Model) gardenResetFlow() Model {
 // resets when the association moved under it; otherwise a user who left and
 // came back finds the step where they were.
 func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) {
+	var release tea.Cmd
 	g := &m.garden
 	prev, had := g.status, g.hasStatus
 	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
 		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
 		// An unfinished idea outlives the change; its preview and results belong to the old Garden.
 		g.drafts = gardenDraftsState{form: g.drafts.form, formOpen: g.drafts.formOpen, editors: g.drafts.editors}
+		// A planner belongs to the Issue of the old Garden; its session keeps running, only the view goes.
+		if g.planner.stage != plannerNone {
+			release = m.plannerRelease()
+			g.planner = gardenPlannerState{}
+		}
+		g.planrev = gardenPlanState{}
 	}
 	g.status, g.hasStatus = v, true
 	if force || !had || prev.State != v.State || prev.Stamp.Epoch != v.Stamp.Epoch {
@@ -233,9 +273,9 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 		// Several remotes point at different repositories: the target comes first.
 		m, cmd := m.gardenLoadCandidates()
 		m.garden.pending = ""
-		return m, cmd
+		return m, tea.Batch(release, cmd)
 	}
-	return m, nil
+	return m, release
 }
 
 func (m Model) onGardenStatus(msg gardenStatusMsg) (Model, tea.Cmd) {
@@ -722,6 +762,12 @@ func (m Model) gardenCrumbs() []string {
 			if r, _, ok := b.collection.Find(b.opened); ok {
 				crumbs = append(crumbs, fmt.Sprintf("#%d", r.Item.Issue.Number))
 			}
+			switch {
+			case m.planActive():
+				crumbs = append(crumbs, "Plan review")
+			case m.plannerActive():
+				crumbs = append(crumbs, "Read-only planning")
+			}
 		}
 		return crumbs
 	case scrOff:
@@ -771,6 +817,12 @@ func (m Model) gardenFocusLabel() string {
 	}
 	if m.gardenScreen() == scrBoard && m.garden.board.layout == layoutTable && m.garden.board.opened == 0 {
 		return "Approved table"
+	}
+	if m.gardenScreen() == scrBoard && m.planActive() {
+		return m.gardenPlanFocusLabel()
+	}
+	if m.gardenScreen() == scrBoard && m.plannerActive() {
+		return m.gardenPlannerFocusLabel()
 	}
 	if m.gardenScreen() == scrBoard && m.garden.board.opened != 0 {
 		return "Issue / " + gardenDocumentSections[m.garden.board.section]

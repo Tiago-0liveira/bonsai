@@ -117,6 +117,16 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	g.status.IssueCount = len(snap.Items)
 	g.status.Sync = gardensync.Status(gardensync.AssociationView{State: gardensync.AssociationState(g.status.State)}, snap).State
 	cmd := m.gardenRememberView()
+	if b.opened == 0 && g.planrev.stage != planNone {
+		m = m.planClose()
+		g = &m.garden
+	}
+	if b.opened == 0 && g.planner.stage != plannerNone {
+		// The Issue left this view under its planner screen: the screen goes with it, the session keeps running.
+		var rel tea.Cmd
+		m, rel = m.gardenPlannerClose()
+		cmd = tea.Batch(cmd, rel)
+	}
 	return m, cmd
 }
 func (b *gardenBoardState) reselect() {
@@ -262,11 +272,37 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.gardenBoardVisible()
 		return m, nil
 	}
+	if m.garden.planrev.stage != planNone {
+		if b.opened != 0 {
+			return m.gardenPlanKey(msg)
+		}
+		// The Issue left this view under the plan screen: drop the screen with it.
+		m = m.planClose()
+		b = &m.garden.board
+	}
+	if m.garden.planner.stage != plannerNone {
+		if b.opened != 0 {
+			return m.gardenPlannerKey(msg)
+		}
+		// The Issue left this view under the planner screen: drop the screen with it.
+		var rel tea.Cmd
+		m, rel = m.gardenPlannerClose()
+		b = &m.garden.board
+		if key.Matches(msg, m.keys.Refresh) {
+			nm, cmd := m.gardenLoadWork()
+			return nm, tea.Batch(rel, cmd)
+		}
+		return m, rel
+	}
 	if key.Matches(msg, m.keys.Refresh) {
 		return m.gardenLoadWork()
 	}
 	if b.opened != 0 {
 		switch k {
+		case "p":
+			return m.gardenOpenPlanner()
+		case "r":
+			return m.gardenOpenPlanReview()
 		case "esc", "backspace":
 			b.opened = 0
 			b.docScroll = 0
@@ -375,8 +411,14 @@ func (m *Model) gardenBoardMove(k string) {
 
 func (m Model) gardenBoardHints() []shellHint {
 	b := m.garden.board
+	if m.planActive() {
+		return m.gardenPlanHints()
+	}
+	if m.plannerActive() {
+		return m.gardenPlannerHints()
+	}
 	if b.opened != 0 {
-		return []shellHint{{"esc", b.layoutName()}, {"←/→", "section"}, {"↑/↓", "scroll"}, {"pgup/dn", "page"}, {m.keys.Refresh.Help().Key, "refresh"}}
+		return []shellHint{{"esc", b.layoutName()}, {"p", "request plan"}, {"r", "review plans"}, {"←/→", "section"}, {"↑/↓", "scroll"}, {"pgup/dn", "page"}, {m.keys.Refresh.Help().Key, "refresh"}}
 	}
 	view := m.keys.GardenView.Help().Key
 	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
@@ -100,6 +101,8 @@ func (m Model) gsDrafts(width, rows int) []string {
 		return m.gsEditor(width, rows)
 	case draftsSave:
 		return m.gsSavePreview(width, rows)
+	case draftsValidate:
+		return m.gsValidate(width, rows)
 	case draftsConflict:
 		return m.gsConflict(width, rows)
 	}
@@ -214,8 +217,18 @@ func (m Model) gardenDraftInspector(w, n int, recs []work.Draft, row int) []stri
 		}
 		blank()
 		line(p.Background, p.Muted, true, "NEXT HUMAN GATE")
-		line(p.Background, p.Text, false, "Validate specification")
-		line(p.Background, p.Muted, false, "(arrives with plan 08)")
+		gate := approve.Assess(r.Item.Issue, r.Item.Verification)
+		if gate.CanValidate() {
+			line(p.Background, p.Text, false, "Validate specification")
+			line(p.Background, p.Muted, false, "(Enter to open, then v)")
+		} else {
+			line(p.Background, p.Text, false, "Resolve before validating")
+			for _, b := range gate.Blockers[:min(len(gate.Blockers), 2)] {
+				for _, l := range strings.Split(ansi.Wrap(boardSafe(b.Message), max(1, w-2), ""), "\n") {
+					line(p.Background, p.Muted, false, l)
+				}
+			}
+		}
 		blank()
 		line(p.Raised, p.Warning, true, " Enter open item")
 	}
@@ -266,7 +279,7 @@ func (m Model) gardenDraftDocument(width int) []string {
 			fmt.Fprintf(&text, "\n%s (revision %d, %s)\n%s\n", label, h.CommentID, shortHash(h.Hash), boardSafe(h.Content))
 		}
 	}
-	text.WriteString("\nValidate idea: unavailable until plan 08.")
+	text.WriteString("\n" + gateSummary(approve.Assess(r.Item.Issue, r.Item.Verification)))
 	return m.settingsASCII(gWrap(width, p.Text, false, text.String()))
 }
 
@@ -306,15 +319,41 @@ func (m Model) gsDraftDetail(width, rows int) []string {
 	return m.settingsASCII(out[:rows])
 }
 
-// gardenDraftActions is the action bar of the detail: Edit when Write access allows it, with the
-// reason shown otherwise, and the next gate as a disabled step until plan 08 adds its record.
+// gateSummary is the gate-one section of the Issue document: the verified state, why it needs attention
+// and every approval record retained for audit.
+func gateSummary(a approve.Assessment) string {
+	var b strings.Builder
+	b.WriteString("SPECIFICATION GATE\nState: " + gateLabel(a.State) + "\n")
+	if a.Reason != "" {
+		b.WriteString("Attention: " + boardSafe(a.Reason) + "\n")
+	}
+	if a.Head != nil {
+		fmt.Fprintf(&b, "Revision s%d, fingerprint %s\n", a.Ordinal, shortHash(a.Fingerprint))
+	}
+	for _, r := range a.Records {
+		fmt.Fprintf(&b, "Approval %d by %s on %s for revision %s: %s\n", r.CommentID, boardSafe(orDefault(r.Author, "unknown")), r.At.UTC().Format("2006-01-02 15:04Z"), shortHash(r.RevisionHash), r.State)
+	}
+	if a.CanValidate() {
+		b.WriteString("Press v to validate this specification.\n")
+	}
+	for _, bl := range a.Blockers {
+		b.WriteString("Blocked: " + boardSafe(bl.Message) + "\n")
+	}
+	return b.String()
+}
+
+// gardenDraftActions is the action bar of the detail: Edit and Validate when Write access allows them,
+// with the reason shown otherwise.
 func (m Model) gardenDraftActions(width int) string {
 	p := theme.Current
 	edit := seg(p.Warning, p.Raised, true).Render(" e Edit specification ")
 	if ok, _ := m.canEdit(); !ok {
 		edit = seg(p.Dim, p.Raised, false).Render(" e Edit specification (unavailable) ")
 	}
-	validate := seg(p.Dim, p.Raised, false).Render(" Validate idea (available in plan 08) ")
+	validate := seg(p.Warning, p.Raised, true).Render(" v Validate specification ")
+	if ok, _ := m.canValidate(); !ok {
+		validate = seg(p.Dim, p.Raised, false).Render(" v Validate specification (unavailable) ")
+	}
 	gap := seg("", p.Background, false).Render("  ")
 	line := seg("", p.Background, false).Render(" ") + edit + gap + validate
 	return shellRow(width, p.Background, line, "")

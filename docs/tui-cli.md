@@ -322,8 +322,44 @@ filter semantics, document sections, keys and current limitations.
 Drafts is a separate inbox for unvalidated ideas (`tab` from the Board, `n` to
 capture a new one as a GitHub Issue at Draft, `/` search, `t` type, `r` reconcile,
 `esc` back). Creating needs a preview and confirmation, survives timeouts without
-duplicates, and never approves or starts anything. See the
-[Garden guide](garden.md#drafts).
+duplicates, and never approves or starts anything. In a draft's document, `v`
+validates its specification: a preview of the exact revision and fingerprint, then
+an explicit confirmation records one verified approval and moves the same Issue
+from Drafts to Approved work. It needs Write access and starts no agent, worktree or
+pull request. See the [Garden guide](garden.md#drafts) and
+[gate one](garden.md#validate-a-specification-gate-one).
+
+In an opened Approved Issue, `p` opens its read-only planner. It verifies the
+approved specification and inspects the checkout, and an explicit **Request AI plan**
+(account, model and effort; `x` includes uncommitted changes) starts one read-only
+agent session in the same terminal controller as the Agents tab: `ctrl+]` unfocuses
+it, `enter` focuses it, `c` then `y` cancels the attempt and `esc` returns to the
+attempts. Providers that cannot enforce read-only access (Codex and Antigravity) cannot plan.
+No worktree is created and nothing runs until you request it. See
+[Request an AI plan](garden.md#request-an-ai-plan-read-only-planner) and
+[the read-only planner role](agents.md#the-read-only-planner-role).
+
+On that screen `u` publishes the plan the selected attempt gave (you type or paste the
+text, `ctrl+s` previews it, one confirmation appends it to the Issue), and `r` in an
+opened Issue or on the planner screen opens the plan review: the current, latest and
+approved revisions shown separately, the plan as a document (`←`/`→` section, `/`
+search, `n`/`N` matches, `[`/`]` revision), `d` for a unified comparison with the
+previous revision and `w` for side by side from 100 columns. `c` requests changes
+(with a reason) and `x` rejects the revision under review; both name the exact
+revision, keep the history and start no run. See
+[Publish and review a plan](garden.md#publish-and-review-a-plan).
+
+In plan review `a` opens **Approve plan** with the full plan hash, current source
+spec fingerprint, spec head and GitHub actor; Cancel has initial focus. `tab` then
+`enter` records gate two only after fresh head and authority checks and yields
+**Ready** on the Board/Table. `v` revalidates a changed accepted specification through
+the existing gate-one flow; `p` separately requests a local read-only plan. Launch
+is visibly unavailable (plan 09). New plan/spec revisions show a stale gate and
+retain the old approved snapshot; they never inherit its approval. The review shows
+who approved which revision, declared local/external source and verified time.
+`o` opens the canonical Issue in the local browser and `y` copies its link. The
+[external comment protocol](garden.md#external-approval-protocol-github-or-mobile-browser)
+supports approval in GitHub/mobile browsers, without a phone client or remote runs.
 
 #### Settings in the preview
 

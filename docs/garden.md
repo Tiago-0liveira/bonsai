@@ -45,13 +45,13 @@ below the board. Each column keeps its own cursor and scroll, including empty
 columns. The footer gives the selected issue's identity and board state; open
 the document to read a title too long for the footer.
 
-The current canonical backend has six stage labels and verifies specification
-approvals only. The board conservatively projects accepted `ready` work without
-a plan to Approved, and with a verified plan revision to Plan Review;
-`in-progress` maps to Running, `review` to Human Review, and `done`/`blocked` to
-their matching columns. **Planning, Ready and Reviewing remain explicitly empty**
-until later plans provide active-job evidence and verified exact-plan approvals.
-These presentation columns never add or change GitHub labels.
+The six canonical stage labels remain unchanged. Accepted `ready` work without a
+plan appears as Approved; a verified plan head appears as Plan Review; an exact
+verified approved plan/spec pair appears as **Ready**. A later head change removes
+Ready and shows the stale gate while retaining the accepted work and old approved
+snapshot. `in-progress` maps to Running, `review` to Human Review, and `done`/`blocked`
+to their matching columns. Planning and Reviewing await active-job evidence.
+These presentation columns never change GitHub labels. Launch remains unavailable.
 
 | Key in Board | Action |
 | --- | --- |
@@ -126,7 +126,9 @@ comment revisions, with comment IDs, hashes and source-spec fingerprints. Questi
 reads a `Questions` or `Open questions` Markdown section from the issue body;
 absence is stated explicitly. Execution reports canonical stage and the absence
 of a local execution projection. Specification/plan approval and question
-authoring are unavailable until plan 08; local launch is unavailable until plan 09.
+authoring are unavailable until the planning steps of plan 08; local launch is unavailable until plan 09. Specifications are
+approved from Drafts, not from this document ([gate one](#validate-a-specification-gate-one)). Press `p` in an opened
+Issue for its [read-only planner](#request-an-ai-plan-read-only-planner), a separate explicit local action.
 Selecting, opening, searching and refreshing never mutate workflow or launch work.
 
 ## Freshness and local memory
@@ -161,7 +163,7 @@ concurrent edit never makes it vanish.
 | Key in Drafts | Action |
 | --- | --- |
 | `↑` / `↓` or `k` / `j`, `pgup` / `pgdown`, `home` / `end` | Select a draft (kept by Issue ID across refreshes) |
-| `enter` | Open the read-only draft document: Issue body and current specification |
+| `enter` | Open the draft document: Issue body, current specification and its approval gate. In it, `e` edits the specification and `v` validates it ([gate one](#validate-a-specification-gate-one)) |
 | `/`, `t`, `x` | Search number or title, cycle the type filter, clear filters |
 | `n` | Capture a new idea |
 | `r` | Reconcile a capture whose outcome is unknown |
@@ -198,3 +200,222 @@ created and Retry is safe. The text you typed survives errors, resizing and
 leaving the workspace until you create or explicitly discard it (`esc` on a
 non-empty form asks first). It is kept in memory only.
 
+### Validate a specification (gate one)
+
+Open a draft (`enter`) and press `v` to validate its specification. The preview
+reads and verifies GitHub, writes nothing and names exactly what will happen: the
+specification revision (`s1`, `s2`, ... oldest first), its fingerprint, the
+approver, the transition **Draft → Approved** and the writes in order. Back has the
+first focus, so Enter alone never validates. The primary button records the approval
+of that exact revision:
+
+1. one approval comment (the versioned `bonsai:garden/v1` record: the account GitHub
+   authenticates as the author, the revision hash and comment ID, the source
+   fingerprint, the server timestamp and an explicit statement that it approves
+   the specification only);
+2. the stage label `bonsai:stage/draft` → `bonsai:stage/ready`.
+
+Acceptance is derived from the append-only approval. Existing Issue bodies are never
+rewritten: GitHub has no conditional body update. Stage projection compares managed
+labels before writing, changes only the stage and verifies afterwards; concurrent
+changes require attention.
+
+The same Issue then leaves Drafts and appears in the Board and Table as **Approved**
+(a different column from **Planning**), with its Type unchanged. Validation starts
+no planner, agent, worktree or pull request: a planner is a separate, explicit local
+action ([Request AI plan](#request-an-ai-plan-read-only-planner)).
+
+Validation is unavailable, with the reasons listed, when:
+
+- the Issue has no specification revision yet (edit and save one first), or its
+  Summary, Requirements or Acceptance criteria are empty;
+- the Open questions section still lists an unresolved question (checked `[x]` items,
+  `None` and `n/a` are resolved);
+- revision heads compete, the comment log is incomplete, a record fails
+  verification (edited or deleted comment, approval by an account that is not
+  yours), the metadata line is invalid, the `bonsai:` labels conflict, or the Issue
+  is already past Ready (running, in review, blocked or done).
+
+Bonsai never corrects labels, metadata or records on GitHub for you; it shows the
+attention state and keeps downstream actions unavailable. **Approval is recognized
+only from verified records.** A line in the Issue body such as "approved", a `ready`
+label or `accepted` metadata alone is shown as *approval unverified* (an attention
+row in Drafts) and is never Work. Revoked, deleted, edited or unauthorized approval records never authorize downstream
+actions. A specification edited after acceptance stays visible in Work with a stale
+gate: revalidate its current revision deliberately before accepting a plan for it. Superseded and revoked approval
+records are retained and listed in the draft document with their verified state.
+
+If the head moves between preview and confirmation nothing is approved (the Issue is
+shown again, read afresh). If GitHub does not confirm the approval comment, or the
+label write fails afterwards, the screen says so and the Issue stays a
+draft: *Validate again* finds the recorded approval by the log and finishes the
+remaining writes, and never records a second approval. An approval comment posted
+from GitHub or a phone by the same signed-in account is recognized the same way; the
+next Validate only finishes applying it to the Issue.
+
+### Request an AI plan (read-only planner)
+
+Open an Approved Issue on the Board or Table and press `p`. This only reads: it
+verifies gate one and inspects the checkout, and starts nothing. Looking at an Issue,
+refreshing it, or editing it on GitHub never starts or reruns a planner; only the
+**Request AI plan** button does, and only locally.
+
+The button is offered only for a **verified Approved** specification: the verified approval
+must name the current head revision, and its stage projection must be complete. A draft, a
+stale or revoked approval, an unverified claim (a `ready` label or `accepted`
+metadata without a verified record) or any attention state shows why instead, and the
+request is refused again by the backend if the specification moved after the preview.
+
+The screen shows what the attempt will be bound to: the specification revision and
+fingerprint (s1, s2, ...), the repository base (commit and branch) and whether the
+checkout has uncommitted changes. The planner reads the checkout it was started from;
+**no implementation worktree is created.** Uncommitted changes are read only after
+you press `x` to include them (the decision belongs to that exact set of changes: a
+changed checkout asks again), and the attempt records that they were accepted, with a
+count and a digest but never paths or contents.
+
+Request AI plan opens the account choice, the same Accounts, model and effort form as
+a new agent session without any permission, sandbox, approval or full-access field:
+the role fixes the permissions. Each account shows what its provider enforces, and
+choosing it and pressing the primary action (*Accept read-only and request plan*,
+`ctrl+s`) is what accepts that permission. A provider that cannot enforce read-only
+access below the model (Codex and Antigravity today) is listed with the reason and cannot be
+chosen; nothing falls back to unrestricted access. Which providers qualify, and the
+evidence, is in [docs/agents.md](agents.md#the-read-only-planner-role).
+
+The planner then runs as an ordinary holder-backed agent session, shown in the same
+terminal controller as the Agents tab: it is focused at once so you can answer its
+questions, `ctrl+]` unfocuses it (while it is focused every other key, including `q`,
+`esc` and `?`, belongs to the agent), `enter` focuses it again, `c` then `y` cancels
+the attempt and `esc` returns to the attempts without stopping the session. Closing
+Bonsai leaves it running, like any agent. The planner is read-only, so it gives the
+plan as text in its conversation; [publishing it](#publish-and-review-a-plan) is a
+separate step you take.
+
+Every attempt is kept in a local history (attempt ID, specification revision and
+fingerprint, repository base, provider and profile, accepted permissions, and
+whether it is starting, running, ended, failed or cancelled). A failed or cancelled
+attempt and its retained session stay listed; **Retry is another explicit Request AI
+plan**, never an automatic rerun, and only one attempt per Issue runs at a time. An
+attempt for an older specification stays visible and is marked as such. The history
+holds no prompt, token, environment value or terminal output; the session's own
+retained screen is viewed through the same session record. Attempts follow what the
+agent session reports: a late or repeated report never moves an attempt backwards,
+and a finished attempt never changes.
+
+### Publish and review a plan
+
+A plan becomes part of the Issue only when you publish it, and nothing is published
+for you. On the planner screen select the attempt the plan came from and press `u`:
+a text box opens, you type or paste the plan the planner gave (Bonsai reads nothing
+from the planner's terminal, and the text is kept only in memory until you publish
+it or Bonsai closes), and `ctrl+s` previews exactly what would be published. The plan
+needs the sections **Assumptions, Touched areas, Steps, Tests, Risks and Acceptance
+mapping**; Bonsai adds the **Source specification** (revision and fingerprint) and
+the **Inspected base** (the commit the attempt read) from the attempt record, so a
+pasted section cannot claim another base. Publishing appends one comment to the
+Issue, needs Write access, and refuses when the specification changed since the
+attempt or another plan revision landed since the preview.
+
+A plan revision is content addressed: the comment carries the hash of its normalized
+text, the source specification fingerprint and the revisions it supersedes, as plan 04's
+versioned protocol does for specifications. Every read verifies the schema, the hash
+and the authenticated GitHub author again; editing a published comment afterwards
+makes it an unverifiable record (the Issue shows an attention state and the plan
+screens stay unavailable) instead of silently changing a snapshot. Superseded
+revisions stay in the history. A revision written by an account other than the signed-in
+one is listed but never reviewable.
+
+In an opened Issue, `r` (or `r` on the planner screen) opens the review. It shows three
+different revisions and never merges them: **Current** (the single revision under
+review for the current specification), **Latest** (the newest published, which may be
+by someone else or for an older specification) and **Approved** (the last verified approved snapshot, retained even when stale). The plan is a document: `←`/`→` jump between sections,
+`↑`/`↓`/`pgup`/`pgdn` scroll, `/` searches the text (`n`/`N` step through matches) and
+`[`/`]` choose another revision. `d` compares the revision in view with the one before
+it, unified by default; `w` switches to two columns when the terminal is at least 100
+columns wide (80 columns keep the unified comparison).
+
+`c` requests changes on the revision under review and needs a reason; `x` rejects it
+(the reason is optional) and returns the Issue to Approved with no accepted plan. Both
+append one decision comment naming that exact revision hash and specification
+fingerprint, never "the latest", keep every revision in the history and start nothing:
+the next read-only run is another explicit **Request AI plan** with its own local
+confirmation, even when a comment on GitHub asked for changes. A comment written on
+GitHub or a phone without a Bonsai record only appears as a hint ("newer on GitHub"); it
+neither starts a run nor decides anything. The next explicit local planning attempt
+includes the verified request-changes reason as sanitized review context.
+
+A source fingerprint must match the normalized content hash of the verified
+specification revision named in the plan. Supplied fingerprints cannot redefine
+that identity or carry an old approval onto a different specification.
+
+### Approve the exact plan (gate two)
+
+In plan review (`r` in an opened Issue), press `a` to **Approve plan**. The confirmation
+names the full plan revision hash, current source spec fingerprint, spec head and
+GitHub actor. Cancel has initial focus; `tab` then `enter` approves the named pair.
+Bonsai rereads both heads and rechecks the authenticated account and current Write
+access immediately before appending the decision. A moved head or changed account
+refuses the confirmation; refresh and review again. The decision is read back and
+verified before reporting success. Approval writes no stage label or plan pointer.
+
+**Ready** requires both gates and one exact current verified plan/spec pair. Approval
+starts no agent, implementation worktree or PR. **Launch is unavailable** in this
+preview (plan 09). The actions have separate keys and confirmations: `v` validates a
+specification, `p` requests a local read-only plan, and `a` approves the exact plan.
+In plan review `v` also reuses the gate-one flow to revalidate changed accepted work;
+Escape returns to the review. A new plan or spec revision makes approval stale,
+retains the old approved snapshot and disables downstream actions. A changed spec
+must pass gate one again, and a plan for the current spec must pass gate two.
+
+The review shows each accepted decision's GitHub author, revision, declared source
+(local or external), server-recorded time and the time Bonsai verified it. `o` opens
+the canonical Issue in the local browser; `y` copies its link. Opening, copying,
+refreshing or reading a remote decision never starts a local run.
+
+A versioned `revocation` record may target a gate-one approval or a gate-two
+decision comment ID. It must follow the target in server order, carry a valid
+record hash and come from an authorized account. A revoked plan decision stays in
+history but grants no approval; an earlier superseded decision is not restored.
+Missing or altered revocations listed in the metadata's expected-revocation
+projection block Ready. An unrecorded deletion cannot be detected from a fresh
+GitHub log alone.
+
+### External approval protocol (GitHub or mobile browser)
+
+Use the same GitHub account that Bonsai is signed into, with current repository
+Write access. The default approval policy trusts that account's numeric user ID,
+not its mutable login or a name written in the comment. Other accounts, labels and
+prose claims cannot approve. No phone client or remote execution is provided.
+
+Post this exact comment format on the canonical Issue, replacing the placeholders
+with the numeric `repo_id`, numeric `issue_id`, plan `content_hash`, plan comment's
+numeric server ID and `source_spec_fingerprint` from its versioned revision record.
+Keep the first line on one line and the human text exactly `Approved.`. The fixed
+`record_hash` below is the SHA-256 of that normalized human text (no final newline).
+Do not include the Markdown fences in the posted comment.
+
+```text
+<!-- bonsai:garden/v1 {"schema_version":1,"kind":"decision","repo_id":REPO_ID,"issue_id":ISSUE_ID,"revision_hash":"PLAN_HASH","revision_comment_id":PLAN_COMMENT_ID,"source_spec_fingerprint":"SPEC_FINGERPRINT","record_hash":"7e0019a3769b3e37d8a83d04a70720b100041b63e8000b03eafc85071a7a67bf","decision":"approved","source":"external"} -->
+Approved.
+```
+
+The plan must be the single current head and its source must have verified gate-one
+approval **before** this decision is posted. A later validation cannot authorize an
+earlier plan decision. Bonsai verifies the authenticated comment author, permissions,
+schema, hashes, comment reference and exact source match on refresh. A record that
+fails verification, a `ready` label alone or "I approve" prose cannot yield Ready.
+`source` may be omitted (external) or be `local` for Bonsai-written records; it is
+declared provenance, never evidence of identity or authority.
+
+For external **specification** approval, use the same format with `kind:"approval"`,
+the spec revision hash/comment ID and its fingerprint, and omit `decision` and
+`source`. The human text and fixed `record_hash` stay as above. Then use the local
+Validate flow to finish stage projection before gate two.
+The exact schema and normalization rules are in the
+[Garden contract](design/tui-redesign/garden-contract.md#gate-two-and-external-approval-plan-084).
+
+GitHub comments are append-only by Bonsai convention, not an atomic transaction.
+Concurrent changes after the final read can still happen; Bonsai checks the result
+again and reports an unverified outcome instead of Ready. It never silently retargets
+an approval, overwrites a body or starts a run in response.

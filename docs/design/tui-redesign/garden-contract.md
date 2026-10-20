@@ -24,13 +24,13 @@ The contract uses exact lowercase canonical label spellings. GitHub label-name c
 
 Issue metadata is a JSON envelope with `schema_version: 1`, provenance, owner, acceptance/spec fingerprint, current plan hash, and a bounded `revocations` projection. Each revocation projection entry contains the revoked approval comment ID and revocation comment ID; IDs must be positive and unique and the list is capped at 2,000 entries. Provenance and owner are required. Decoders reject unknown fields for known schemas; unknown future versions return an unsupported-schema problem. Malformed or oversized metadata is reported for that item and never causes the Garden to be erased.
 
-The GitHub adapter reads that envelope only from the first body line `<!-- bonsai:garden-metadata/v1 {json} -->`; the rest of the Issue body is preserved as display content and is never written by this adapter.
+The GitHub adapter reads that envelope only from the first body line `<!-- bonsai:garden-metadata/v1 {json} -->`. Existing Issue bodies are never rewritten: `MetadataWriter.ReplaceMetadata` refuses with `ErrMetadataWriteUnsupported` because GitHub has no conditional body update. Gate-one acceptance is derived from the verified append-only approval; legacy acceptance metadata is optional and cannot override verified current acceptance.
 
-Specs and plans use byte-exact normalization: CRLF and CR become LF, ASCII spaces and tabs at each line end are removed, then leading and trailing LF bytes are removed. No Unicode whitespace is trimmed and no Unicode normalization is performed, so NFC and NFD content hashes differ. Content is SHA-256 addressed.
+Specs and plans use byte-exact normalization: CRLF and CR become LF, ASCII spaces and tabs at each line end are removed, then leading and trailing LF bytes are removed. No Unicode whitespace is trimmed and no Unicode normalization is performed, so NFC and NFD content hashes differ. Content is SHA-256 addressed. Specification fingerprints are always derived from that normalized content hash; a supplied fingerprint that differs is invalid. Decisions retain the exact target revision comment ID, including for duplicate-content revisions.
 
-Revision, approval, and revocation records are append-only GitHub comments. The first line is exactly `<!-- bonsai:garden/v1 {json} -->`; optional human-readable text follows after LF. JSON is bounded by `MaxMetadataBytes`, valid UTF-8, rejects duplicate and unknown fields, and requires `schema_version: 1`; unknown versions are unsupported. Every envelope includes `schema_version`, `kind`, numeric `repo_id`, and numeric `issue_id`. Revision fields are `revision_kind`, `content_hash`, `parents` (hash list), and `source_spec_fingerprint` (required for plans). The normalized comment text after the marker must hash to `content_hash`. Approval fields are `revision_hash`, a required positive `revision_comment_id`, and `source_spec_fingerprint`. Verification accepts an approval only when that exact earlier comment ID is a valid revision envelope for the same issue and its content hash equals `revision_hash`; the ID distinguishes identical-content revisions. Revocation fields are `target_comment_id`. Verification binds every envelope to the requested repo and issue and derives state only from the ordered server comment log, including author IDs and timestamps when supplied. Verification accepts an explicit `Complete` flag; callers must pass false when pagination or retrieval was incomplete. It caps logs at 2,000 comments (`ErrTooManyComments`) and comment bodies at `MaxMetadataBytes + 1 MiB`; overlong bodies are reported per comment.
+Revision, approval, and revocation records are append-only GitHub comments. The first line is exactly `<!-- bonsai:garden/v1 {json} -->`; optional human-readable text follows after LF. JSON is bounded by `MaxMetadataBytes`, valid UTF-8, rejects duplicate and unknown fields, and requires `schema_version: 1`; unknown versions are unsupported. Every envelope includes `schema_version`, `kind`, numeric `repo_id`, and numeric `issue_id`. Revision fields are `revision_kind`, `content_hash`, `parents` (hash list), and `source_spec_fingerprint` (required for plans). The normalized comment text after the marker must hash to `content_hash`. Approval fields are `revision_hash`, a required positive `revision_comment_id`, and `source_spec_fingerprint`. Verification accepts an approval only when that exact earlier comment ID is a valid revision envelope for the same issue and its content hash equals `revision_hash`; the ID distinguishes identical-content revisions. Revocation fields are `target_comment_id`, naming either a gate-one approval or a gate-two decision. Verification binds every envelope to the requested repo and issue and derives state only from the ordered server comment log, including author IDs and timestamps when supplied. Verification accepts an explicit `Complete` flag; callers must pass false when pagination or retrieval was incomplete. It caps logs at 2,000 comments (`ErrTooManyComments`) and comment bodies at `MaxMetadataBytes + 1 MiB`; overlong bodies are reported per comment.
 
-Approval policy allowlists numeric GitHub user IDs; GitHub documents their numeric type but not stability, so stability is an explicit assumption. Login names are display labels only. Approval and revocation records with a missing author ID are rejected with a per-comment problem. Self-approval is allowed by default; policy may explicitly set `ForbidSelfApproval` to reject it. An approval is valid only when its referenced revision comment occurs earlier in verified order (created time, then server comment ID). Verification sorts a private copy of the log by that order, so input slice order has no effect; a revocation encountered before its target approval is ignored because that target has not yet appeared. Byte-identical duplicate comment IDs collapse to one record; conflicting records with one ID produce a per-comment problem and none is trusted. Heads are evaluated independently for spec and plan revisions: forks are competing heads, while a linear older plan revision does not remove an otherwise accepted specification from Work. On writing a revocation, Bonsai records both approval and revocation comment IDs in metadata. Verify checks every projected revocation; a missing or altered expected revocation reports a problem and keeps its approval invalid. Revocation and supersession invalidate approval; they are explicit records and never mutate prior revision content. Plan approval is valid only while its source-spec fingerprint equals the current spec fingerprint. A changed body/revision head, missing referenced comment, altered comment, unexpected label, or competing head is external-edit/conflict state requiring attention. Lane treats any verification problem in the accepted revision/approval/revocation chain, any incomplete log, and an accepted item without a valid spec head as Attention; malformed unrelated comments without a Garden marker are ignored. Once a spec was accepted, a changed spec head without valid approval is Attention regardless of stage; ideas that have never been accepted remain Draft. A user with Issue write access can edit both comments and the body projection; Garden guarantees integrity against non-privileged commenters and detects inconsistent or accidental edits, not malicious edits by such a writer. Plan 09 must re-verify at launch time and require fresh approval whenever state is inconsistent.
+Approval policy allowlists numeric GitHub user IDs; GitHub documents their numeric type but not stability, so stability is an explicit assumption. Login names are display labels only. Approval and revocation records with a missing author ID are rejected with a per-comment problem. Self-approval is allowed by default; policy may explicitly set `ForbidSelfApproval` to reject it. An approval is valid only when its referenced revision comment occurs earlier in verified order (created time, then server comment ID). Verification sorts a private copy of the log by that order, so input slice order has no effect; a revocation encountered before its target approval is ignored because that target has not yet appeared. Byte-identical duplicate comment IDs collapse to one record; conflicting records with one ID produce a per-comment problem and none is trusted. Heads are evaluated independently for spec and plan revisions: forks are competing heads, while a linear older plan revision does not remove an otherwise accepted specification from Work. The optional metadata revocation projection retains target and revocation comment IDs for deletion detection; GitHub body writes are unsupported, so external writers must maintain that projection. Without an expected record, deletion cannot be inferred from a fresh log. Verify checks every projected revocation; a missing or altered expected revocation reports a problem and keeps its approval invalid. Revocation and supersession invalidate approval; they are explicit records and never mutate prior revision content. Plan approval is valid only while its source-spec fingerprint equals the current spec fingerprint. A changed body/revision head, missing referenced comment, altered comment, unexpected label, or competing head is external-edit/conflict state requiring attention. Lane treats any verification problem in the accepted revision/approval/revocation chain, any incomplete log, and an accepted item without a valid spec head as Attention; malformed unrelated comments without a Garden marker are ignored. Once a spec was accepted, a changed spec head without valid approval is Attention regardless of stage; ideas that have never been accepted remain Draft. A user with Issue write access can edit both comments and the body projection; Garden guarantees integrity against non-privileged commenters and detects inconsistent or accidental edits, not malicious edits by such a writer. Plan 09 must re-verify at launch time and require fresh approval whenever state is inconsistent.
 
 ## Lanes and concurrency
 
@@ -107,7 +107,7 @@ flow.
 
 Unvalidated ideas remain in Drafts (`draft` stage). A verified specification acceptance moves that same Issue to Work; it does not create another item. Once accepted, a stale plan leaves the Issue in Work and marks its approval stale. A Ready label without verified acceptance is Attention, never Work. Invalid labels or metadata also require Attention.
 
-Lane classification consumes decoded metadata and a `Verification` result. Missing or inconsistent metadata is Attention. Work requires a valid, non-revoked approval for the current spec head and matching accepted-spec hash; competing heads and projection drift are Attention. A stale plan does not remove an otherwise valid accepted specification from Work.
+Lane classification consumes decoded metadata and a `Verification` result. Missing or inconsistent metadata is Attention. Work requires a valid, non-revoked approval for the current spec head and a non-draft stage; competing heads are Attention; legacy acceptance hashes cannot override verified current acceptance. A stale plan does not remove an otherwise valid accepted specification from Work.
 
 Metadata acceptance requires valid lowercase 64-character SHA-256 `accepted_spec_hash` and `spec_fingerprint`; unaccepted metadata cannot carry an accepted hash. Any present plan hash must have the same format.
 
@@ -174,13 +174,12 @@ stages. `Issue.Number` and `Issue.Title` are display data from the GitHub reader
 `Issue.ID` remains the selection key. Both display fields affect the item revision.
 
 The six canonical stage labels cannot encode all nine approved-design columns.
-The conservative read-only projection is: accepted `ready` without a plan →
-Approved, accepted `ready` with a verified plan head → Plan Review,
-`in-progress` → Running, `review` → Human Review, `done` → Done, `blocked` →
-Blocked. Planning, Ready and Reviewing remain empty until later plans supply
-active-job evidence and exact-plan approval verification. The current verifier
-accepts specification approvals only; plan approval records are not silently
-trusted by Board. No additional labels or canonical mutations are introduced.
+The verified read projection is: accepted `ready` without a plan → Approved,
+with a plan head → Plan Review, and with an exact verified approved plan/spec pair
+→ Ready. `in-progress` → Running, `review` → Human Review, `done` → Done, `blocked`
+→ Blocked. Planning and Reviewing await active-job evidence. A stale spec or plan
+keeps accepted work visible with its stale gate and retained approved snapshot;
+no new labels, stage writes or `current_plan_hash` projection are introduced.
 
 Optional priority filters observe existing `priority:p0`–`priority:p3` labels,
 case-insensitively; missing/conflicting values are unknown. These labels are not
@@ -235,3 +234,65 @@ specification still labelled draft are kept as attention rows; Board and Table a
 `invalid-input`, `not-connected`. The UI keeps the unfinished form in memory only; no file write
 happens from the TUI.
 
+## Specification approval (gate one)
+
+`internal/core/garden/approve` records and assesses gate one. `Assess(issue, verification)` is pure: it classifies an Issue as draft, finishing (verified approval recorded, projection incomplete), approved, stale, revoked, unverified or attention, and lists blockers. Approved means a verified approval exists for the current specification and the stage is non-draft. Only `Approved` offers downstream actions (`DownstreamAvailable`). A label, metadata or body claim without a verified approval record is `unverified`; the policy trusts only the authenticated viewer's numeric ID, so an approval by another account fails verification and blocks the gate until the record is fixed on GitHub. `Service.Preview` verifies and reports the transition without writing; `Service.Validate` re-verifies, refuses a moved head (`ErrStale`), appends one approval envelope (`NewApproval`: revision hash and comment ID, source fingerprint, record hash over the human text) unless a verified one exists, verifies it, projects only the stage label, comparing managed labels before writing and verifying afterwards, and verifies again. Each step is idempotent, so an interrupted validation is finished by repeating it, and an interrupted one stays a draft because Lane requires the stage projection. A head that moves while the approval is written leaves a superseded record and projects nothing (`ErrHeadMoved`). Validation requires Summary, Requirements and Acceptance criteria to be non-empty and no unresolved open question. No code path here reaches a planner, agent, worktree or pull request.
+
+## Plan revisions and decisions (plan 08.3)
+
+A plan revision is a `revision` envelope with `revision_kind: "plan"`, the plan text after the marker (its hash is `content_hash`), `parents` (the plan heads it supersedes) and a required `source_spec_fingerprint`. `garden.NewPlanRevision` renders it. The plan document, built by `planrev.Compose`, always starts with Bonsai-owned `## Source specification` (specification ordinal, revision and fingerprint) and `## Inspected base` (commit, branch) sections taken from the planner attempt record, followed by the required `Assumptions`, `Touched areas`, `Steps`, `Tests`, `Risks` and `Acceptance mapping` sections. Verification does not check authors of revisions; `planrev` trusts a revision only when its authenticated author ID is the viewer's, its source specification ordinal and hash identify an earlier verified spec revision whose content-derived fingerprint equals both the document and envelope fingerprints, it names an inspected commit and has every required section. Anything else is listed and never reviewable. Editing a revision comment changes its hash, so it fails verification (`edited-hash-mismatch`) and the Issue falls to attention; deleting it removes the revision and any decision that referenced it.
+
+A reviewer decision is a `decision` envelope: `revision_hash`, a positive `revision_comment_id`, `source_spec_fingerprint` (which must equal the decided plan revision's), `decision` (`changes_requested`, `rejected` or `approved`) and a `record_hash` over the human text, which carries the reason. Verification accepts it only from an allowed actor ID, for a plan revision that appears earlier in the verified order. `Verification.PlanDecisions` lists every verified decision oldest first; the latest decision on a revision is its state. A revoked decision is retained with `Revoked: true` and grants no authority; it resets the state to awaiting review rather than restoring a superseded decision. Expected revocations protect both gates from deletion or tampering, using the same authorization, hash and server-order checks. `planrev.Service.Decide` also records `approved` after gate-two confirmation and fresh head/actor checks.
+
+`planrev.Derive(log, viewer)` is pure and reports, separately: `Latest` (newest verified plan revision), `Current` (the single trusted, non-stale, non-rejected head for the current specification fingerprint; none when several compete) and `Approved` (the last approved snapshot that still verifies, including stale snapshots). A decision names an exact revision hash and fingerprint, never "the latest". Request changes keeps the revision as current with the reason; reject leaves the Issue Approved with no current or approved plan. Prose comments without a `bonsai:garden/` marker are ignored by verification and counted only as a "newer comments" hint. Nothing in plan review starts a planner, agent, worktree or pull request.
+
+## Planner attempts (plan 08.2)
+
+`internal/core/garden/plan` keeps one local record per planner run, in a local planner-attempts file under Bonsai's config directory (`config.GardenPlannerPath`), outside the Issue: attempt ID (`plan-<id>`), clone, repository and Issue IDs, the role (`planner`), the approved specification it is bound to (revision hash, comment ID, ordinal, fingerprint), the inspected base (commit, branch and, for uncommitted changes the user explicitly accepted, only a count and a digest of the status entries), the isolation the user accepted (mechanism, allowed actions, who and when), the provider and profile, the session ID, the state (`starting`, `running`, `ended`, `failed`, `cancelled`, only moving forward), a fixed reason phrase and timestamps. It holds no prompt, token, environment value or terminal output. Starting one is always an explicit local action; reading, refreshing or a remote edit never does. A plan revision is published from an attempt by ID: the attempt supplies the specification and the inspected base that `planrev` writes into the revision, and `planrev.ErrWrongAttempt` and `ErrSpecChanged` refuse an attempt of another Issue, clone or specification.
+
+## Gate two and external approval (plan 08.4)
+
+`planrev.Review.Ready` / `DownstreamAvailable()` require a complete verified log,
+gate-one acceptance of the current spec head, one plan head with a complete,
+consistent document by the trusted viewer, and a verified `approved` decision for
+that exact plan whose `source_spec_fingerprint` equals the current approved spec's.
+`Approved` is retained when either head moves; `StaleApproval` exposes the mismatch.
+Board/Table consume this same projection. Accepted work with a superseded spec
+approval remains in Work with attention, rather than becoming an unvalidated draft.
+
+`DecisionRequest` binds `RevisionHash`, `Fingerprint`, `SpecHash` and `ActorID` to
+the confirmation. The backend also checks clone/Garden/epoch and refreshes GitHub
+authentication and permissions. Moved heads return `ErrHeadsMoved`; a changed actor
+returns `ErrActorChanged`; neither appends or projects anything. Gate two appends
+only a decision comment and verifies the result; no metadata pointer or label is
+written. A concurrent write after the last read cannot be prevented by GitHub's
+append API: a failed post-write verification returns `ErrUnverified` and grants
+no downstream permission. Launch must independently reverify in plan 09.
+
+The optional decision-envelope `source` is `local` or `external`; absent means
+external. It is declared provenance, not identity evidence. The decision retains
+GitHub's authenticated author ID/login and server timestamp; `Review.VerifiedAt`
+is the time of the verified read, never a timestamp supplied by comment prose.
+Read-only access preserves historical records but blocks current gate-two authority
+(`ApprovalPolicy.ReadOnly` / `Verification.ApprovalReadOnly`). Neither comments nor
+labels request execution. No approval reader owns an agent/worktree launcher.
+
+External approvals use exactly the versioned decision envelope in the
+[Garden guide](../../garden.md#external-approval-protocol-github-or-mobile-browser),
+including a hash of the normalized human text. The verifier requires the policy's
+numeric authenticated author ID, exact Issue/repository identity, supported schema,
+plan hash and comment ID, and source fingerprint. Gate two additionally checks that
+the target was the sole plan head and its matching spec had gate-one approval before
+the decision's server order. Approval before validation, for an older/competing head,
+or for a mismatched source cannot become valid later. Revoked, edited, missing,
+unauthorized and label-only claims never produce Ready. Default actor policy is the
+currently signed-in account with live Write access; adding a wider actor policy is
+not part of this phase. The self-approval restriction, when set, also applies to
+plan approvals.
+
+The UI separates `v` Validate specification, `p` Request AI plan, `a` Approve plan,
+and visibly unavailable Launch. It offers `o` open Issue / `y` copy Issue link via
+backend ports; no filesystem, raw Git or desktop I/O occurs in Update/View.
+Request-changes reasons travel as sanitized quoted context only when the next local
+read-only attempt is explicitly requested. They are not added to the persisted
+attempt record; prompts and terminal contents remain excluded from that store.

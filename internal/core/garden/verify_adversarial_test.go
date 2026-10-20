@@ -563,8 +563,8 @@ func TestVerifyAdversarial_ReplayAndOrdering(t *testing.T) {
 		if len(v.ValidApprovals) != 0 {
 			t.Fatalf("approval with differing source-spec fingerprint accepted: %+v", v)
 		}
-		if len(v.SupersededApprovals) != 1 {
-			t.Fatalf("expected 1 superseded approval, got %d", len(v.SupersededApprovals))
+		if len(v.Approvals) != 0 || len(v.Problems) != 1 || v.Problems[0].Code != "invalid-approval" {
+			t.Fatalf("mismatched fingerprint is not a verified approval: %+v", v)
 		}
 	})
 
@@ -1283,7 +1283,7 @@ func TestVerifyAdversarial_Lane(t *testing.T) {
 		}
 	})
 
-	t.Run("metadata AcceptedSpecHash != verified accepted hash => Attention", func(t *testing.T) {
+	t.Run("legacy metadata does not override verified acceptance", func(t *testing.T) {
 		t.Parallel()
 		driftedMeta := validMetadata
 		driftedMeta.AcceptedSpecHash = garden.ContentHash("different spec")
@@ -1293,8 +1293,8 @@ func TestVerifyAdversarial_Lane(t *testing.T) {
 			garden.FormatStageLabel(garden.StageReady),
 		})
 		res := garden.Lane(labels, driftedMeta, validVerification, nil)
-		if res.Lane != garden.LaneAttention {
-			t.Fatalf("expected LaneAttention on accepted spec metadata drift, got %v (%s)", res.Lane, res.Reason)
+		if res.Lane != garden.LaneWork {
+			t.Fatalf("expected verified acceptance to take precedence over legacy metadata, got %v (%s)", res.Lane, res.Reason)
 		}
 	})
 

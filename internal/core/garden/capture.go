@@ -90,3 +90,22 @@ func BodyMetadata(body string) []byte {
 	}
 	return b
 }
+
+// ReplaceBodyMetadata returns body with only its metadata line replaced; every later byte is kept, so a user's
+// description edited on GitHub survives an acceptance write.
+func ReplaceBodyMetadata(body string, meta []byte) (string, error) {
+	if BodyMetadata(body) == nil {
+		return "", fmt.Errorf("%w: body has no metadata line", ErrInvalidMetadata)
+	}
+	if len(meta) == 0 || len(meta) > MaxMetadataBytes || !json.Valid(meta) {
+		return "", fmt.Errorf("%w: replacement metadata", ErrInvalidMetadata)
+	}
+	tail := ""
+	if i := strings.IndexByte(body, '\n'); i >= 0 {
+		tail = body[i:]
+		if i > 0 && body[i-1] == '\r' {
+			tail = "\r" + tail
+		}
+	}
+	return MetadataPrefix + string(meta) + markerSuffix + tail, nil
+}

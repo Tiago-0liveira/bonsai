@@ -34,6 +34,11 @@ func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRe
 		}
 		token = file.Token
 	}
+	if req.Launch.ReadOnly && len(req.Args) > 0 {
+		// Explicit args could re-add a tool or a permission mode after the
+		// restrictions, so a read-only launch accepts none.
+		return agents.PreparedSession{}, fmt.Errorf("%w: a read-only launch takes no explicit arguments", agents.ErrInvalidLaunch)
+	}
 	args, providerSessionID, err := launchArgs(settings, req.Args, req.Launch, req.Activity)
 	if err != nil {
 		return agents.PreparedSession{}, err
@@ -61,6 +66,9 @@ func (p *Provider) FinalizeSession(context.Context, agents.FinalizeSessionReques
 // ValidateLaunch rejects options Claude Code has no equivalent for, and bad
 // values, before any session exists.
 func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOptions) error {
+	if launch.ReadOnly && launch.PermissionMode != "" {
+		return fmt.Errorf("a read-only launch cannot also set a permission mode")
+	}
 	if launch.FullAccess != nil {
 		return fmt.Errorf("claude does not support full access; use the bypassPermissions permission mode")
 	}
@@ -122,7 +130,11 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 	if model := first(launch.Model, settings.Model); model != "" && !hasFlag(args, "--model") {
 		args = append(args, "--model", model)
 	}
-	if mode := first(launch.PermissionMode, settings.PermissionMode); mode != "" && !hasFlag(args, "--permission-mode", "--dangerously-skip-permissions") {
+	if launch.ReadOnly {
+		// The profile's permission mode is dropped on purpose: a profile that
+		// defaults to bypassPermissions must not widen a read-only run.
+		args = append(args, readOnlyArgs...)
+	} else if mode := first(launch.PermissionMode, settings.PermissionMode); mode != "" && !hasFlag(args, "--permission-mode", "--dangerously-skip-permissions") {
 		args = append(args, "--permission-mode", mode)
 	}
 	if effort := first(launch.Effort, settings.Effort); effort != "" && !hasFlag(args, "--effort") {
@@ -147,6 +159,26 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 		args = append(args, "--", launch.Prompt)
 	}
 	return args, providerSessionID, nil
+}
+
+// readOnlyArgs make Claude Code a reader. --tools replaces the built-in tool set
+// with file reading and searching, so Edit, Write, Bash and the other tools do not
+// exist for the model at all; --restricted additionally drops the code-running tools
+// and WebFetch, confines file tools to the working directory, ignores user, project
+// and local settings (a profile cannot allow more) and refuses bypassPermissions;
+// --strict-mcp-config keeps every MCP server out because none is passed. The
+// plan permission mode is added for its prompt behavior only: it is not what
+// enforces anything. An older Claude Code that lacks one of these flags exits
+// with an unknown-option error, so the launch fails closed.
+var readOnlyArgs = []string{"--restricted", "--tools", "Read,Grep,Glob", "--strict-mcp-config", "--permission-mode", "plan"}
+
+// ReadOnly implements agents.ReadOnlyEnforcer.
+func (p *Provider) ReadOnly() agents.ReadOnlySupport {
+	return agents.ReadOnlySupport{
+		Supported: true,
+		Mechanism: "tool allowlist (claude --restricted --tools Read,Grep,Glob)",
+		Allows:    []string{"Read, search and list files in the repository", "No file edits, shell commands, web access or MCP tools"},
+	}
 }
 
 func first(values ...string) string {

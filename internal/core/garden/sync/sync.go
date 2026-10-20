@@ -743,6 +743,7 @@ func cloneItems(in []Item) []Item {
 		v.Revisions = cloneRevisions(v.Revisions)
 		v.Heads = cloneRevisions(v.Heads)
 		v.ConflictingHeads = cloneRevisions(v.ConflictingHeads)
+		v.PlanDecisions = cloneSlice(v.PlanDecisions)
 		v.Approvals = cloneSlice(v.Approvals)
 		v.ValidApprovals = cloneSlice(v.ValidApprovals)
 		v.RevokedApprovals = cloneSlice(v.RevokedApprovals)

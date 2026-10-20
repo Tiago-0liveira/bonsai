@@ -53,6 +53,14 @@ type RepositoryIssueReader interface {
 type IssueWriter interface {
 	AppendComment(context.Context, RepoID, IssueID, string) (IssueComment, error)
 	UpdateLabels(context.Context, RepoID, IssueID, []string) error
+	UpdateStage(context.Context, RepoID, IssueID, []string, Stage, Stage) error
+}
+
+// MetadataWriter is a conditional metadata update capability. Adapters without
+// an atomic body write refuse with ErrMetadataWriteUnsupported; approval uses
+// append-only records instead.
+type MetadataWriter interface {
+	ReplaceMetadata(ctx context.Context, repo RepoID, id IssueID, previous, next []byte) error
 }
 
 // NewIssue is the only Issue content Garden ever sends to GitHub: capture creates

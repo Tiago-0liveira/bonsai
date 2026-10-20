@@ -34,7 +34,25 @@ const (
 	CommentApproval CommentKind = "approval"
 	// CommentRevocation invalidates an earlier approval comment.
 	CommentRevocation CommentKind = "revocation"
+	// CommentDecision records a reviewer's decision on one plan revision.
+	CommentDecision CommentKind = "decision"
 )
+
+// Decision is what a reviewer decided about a plan revision.
+type Decision string
+
+const (
+	// DecisionChangesRequested asks for a new plan revision and keeps the reviewed one in the history.
+	DecisionChangesRequested Decision = "changes_requested"
+	// DecisionRejected discards the reviewed revision: the Issue stays Approved with no accepted plan.
+	DecisionRejected Decision = "rejected"
+	// DecisionApproved accepts exactly one plan revision for one source specification fingerprint (gate two).
+	DecisionApproved Decision = "approved"
+)
+
+func (d Decision) valid() bool {
+	return d == DecisionChangesRequested || d == DecisionRejected || d == DecisionApproved
+}
 
 // IssueIdentity binds verification to one immutable GitHub Issue.
 type IssueIdentity struct {
@@ -59,13 +77,35 @@ type Revision struct {
 
 // Approval is a verified approval record recovered from the comment log.
 type Approval struct {
+	RevisionCommentID     int64
 	RevisionHash          string
 	SourceSpecFingerprint string
 	CommentID             int64
 	Author                string
 	AuthorID              string
-	Revoked               bool
-	Superseded            bool
+	// CreatedAt is the server time of the approval comment: the recorded approval timestamp.
+	CreatedAt  time.Time
+	Revoked    bool
+	Superseded bool
+}
+
+// PlanDecision is a verified decision on a plan revision, recovered from the comment log. Every decision is
+// kept, including those a later one replaced.
+type PlanDecision struct {
+	Revoked           bool
+	RevisionCommentID int64
+	Decision          Decision
+	RevisionHash      string
+	// SourceSpecFingerprint is the specification the decided revision was written for.
+	SourceSpecFingerprint string
+	CommentID             int64
+	Author                string
+	AuthorID              string
+	CreatedAt             time.Time
+	// Reason is the reviewer's text, covered by the record hash.
+	Reason string
+	// Source is declared provenance, never approval authority. Empty records are external.
+	Source string
 }
 
 // Comment is an ordered server comment snapshot used to derive verification state.
@@ -81,6 +121,8 @@ type Comment struct {
 // ApprovalPolicy contains stable GitHub user IDs; logins are mutable display labels.
 type ApprovalPolicy struct {
 	AllowedActorIDs []string
+	// ReadOnly preserves historical acceptance while denying current gate-two authority.
+	ReadOnly bool
 	// ForbidSelfApproval blocks an approver from approving their own revision when explicitly enabled.
 	ForbidSelfApproval bool
 }
@@ -99,6 +141,8 @@ type CommentEnvelope struct {
 	RevisionCommentID     int64        `json:"revision_comment_id,omitempty"`
 	TargetCommentID       int64        `json:"target_comment_id,omitempty"`
 	RecordHash            string       `json:"record_hash,omitempty"`
+	Decision              Decision     `json:"decision,omitempty"`
+	Source                string       `json:"source,omitempty"`
 }
 
 // VerificationProblem records a comment-log inconsistency without hiding other valid records.
@@ -110,12 +154,15 @@ type VerificationProblem struct {
 
 // Verification is the complete derived approval and revision state for one Issue.
 type Verification struct {
-	Complete               bool
-	Revisions              []Revision
-	Heads                  []Revision
-	ConflictingHeads       []Revision
-	Approvals              []Approval
-	ValidApprovals         []Approval
+	Complete         bool
+	ApprovalReadOnly bool
+	Revisions        []Revision
+	Heads            []Revision
+	ConflictingHeads []Revision
+	Approvals        []Approval
+	ValidApprovals   []Approval
+	// PlanDecisions are the verified decisions on plan revisions, oldest first.
+	PlanDecisions          []PlanDecision
 	RevokedApprovals       []Approval
 	SupersededApprovals    []Approval
 	Problems               []VerificationProblem
@@ -150,7 +197,7 @@ func EncodeCommentEnvelope(e CommentEnvelope, human string) (string, error) {
 	if e.SchemaVersion == 0 {
 		e.SchemaVersion = SchemaVersion
 	}
-	if e.Kind == CommentApproval || e.Kind == CommentRevocation {
+	if e.Kind == CommentApproval || e.Kind == CommentRevocation || e.Kind == CommentDecision {
 		e.RecordHash = ContentHash(human)
 	}
 	b, err := json.Marshal(e)
@@ -175,6 +222,49 @@ func NewSpecRevision(id IssueIdentity, content string, parents []string) (string
 	}
 	return EncodeCommentEnvelope(CommentEnvelope{Kind: CommentRevision, RepoID: id.Repo, IssueID: id.Issue, RevisionKind: RevisionSpec,
 		ContentHash: ContentHash(text), Parents: append([]string(nil), parents...)}, text)
+}
+
+// NewApproval renders the comment body that approves rev, a specification revision read from a verified log. The
+// human text is covered by the envelope's record hash, so editing it afterwards invalidates the approval. The
+// approver is whoever GitHub authenticates as the comment's author; nothing in human is evidence of that.
+func NewApproval(id IssueIdentity, rev Revision, human string) (string, error) {
+	if id.Repo == 0 || id.Issue == 0 || rev.Kind != RevisionSpec || rev.CommentID <= 0 || rev.Hash == "" || rev.SourceSpecFingerprint == "" {
+		return "", fmt.Errorf("%w: approval target", ErrInvalidApproval)
+	}
+	return EncodeCommentEnvelope(CommentEnvelope{Kind: CommentApproval, RepoID: id.Repo, IssueID: id.Issue, RevisionHash: rev.Hash,
+		RevisionCommentID: rev.CommentID, SourceSpecFingerprint: rev.SourceSpecFingerprint}, human)
+}
+
+// NewPlanRevision renders the comment body that appends a plan revision written for the specification whose
+// fingerprint is source, on top of parents (the plan heads it supersedes). The caller posts it; nothing here writes.
+func NewPlanRevision(id IssueIdentity, content string, parents []string, source string) (string, error) {
+	if id.Repo == 0 || id.Issue == 0 || source == "" {
+		return "", fmt.Errorf("%w: identity", ErrInvalidRevision)
+	}
+	text := NormalizeContent(content)
+	if text == "" {
+		return "", fmt.Errorf("%w: empty plan", ErrInvalidRevision)
+	}
+	return EncodeCommentEnvelope(CommentEnvelope{Kind: CommentRevision, RepoID: id.Repo, IssueID: id.Issue, RevisionKind: RevisionPlan,
+		ContentHash: ContentHash(text), Parents: append([]string(nil), parents...), SourceSpecFingerprint: source}, text)
+}
+
+// NewPlanDecision renders the comment body that records decision about rev, a plan revision read from a verified
+// log. The human text (the reviewer's reason) is covered by the envelope's record hash, so editing it afterwards
+// invalidates the decision. The decider is whoever GitHub authenticates as the comment's author.
+func NewPlanDecision(id IssueIdentity, rev Revision, d Decision, human string, source ...string) (string, error) {
+	if id.Repo == 0 || id.Issue == 0 || rev.Kind != RevisionPlan || rev.CommentID <= 0 || rev.Hash == "" || rev.SourceSpecFingerprint == "" || !d.valid() {
+		return "", fmt.Errorf("%w: decision target", ErrInvalidApproval)
+	}
+	origin := ""
+	if len(source) > 0 {
+		origin = source[0]
+	}
+	if origin != "" && origin != "local" && origin != "external" {
+		return "", ErrInvalidApproval
+	}
+	return EncodeCommentEnvelope(CommentEnvelope{Source: origin, Kind: CommentDecision, RepoID: id.Repo, IssueID: id.Issue, RevisionHash: rev.Hash,
+		RevisionCommentID: rev.CommentID, SourceSpecFingerprint: rev.SourceSpecFingerprint, Decision: d}, human)
 }
 
 func decodeEnvelope(body string) (CommentEnvelope, string, error) {
@@ -214,7 +304,7 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 	if len(options) > 0 {
 		opt = options[0]
 	}
-	v := Verification{Complete: opt.Complete}
+	v := Verification{Complete: opt.Complete, ApprovalReadOnly: policy.ReadOnly}
 	if len(comments) > MaxComments {
 		v.Problems = append(v.Problems, VerificationProblem{Code: "too-many-comments", Err: ErrTooManyComments})
 		return v
@@ -287,6 +377,11 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 		commentOrder[c.ID] = i
 	}
 	for _, c := range ordered {
+		// Prose from a human is not a record and cannot be one: it neither counts nor breaks verification. A
+		// comment that mentions the marker anywhere is a record attempt, so it is verified (and flagged) strictly.
+		if !strings.Contains(c.Body, "bonsai:garden/") {
+			continue
+		}
 		e, text, err := decodeEnvelope(c.Body)
 		if err != nil {
 			if strings.Contains(err.Error(), ErrUnsupportedSchema.Error()) {
@@ -329,7 +424,11 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 			continue
 		}
 		fingerprint := e.SourceSpecFingerprint
-		if e.RevisionKind == RevisionSpec && fingerprint == "" {
+		if e.RevisionKind == RevisionSpec {
+			if fingerprint != "" && fingerprint != e.ContentHash {
+				problem(c, "spec-fingerprint-mismatch", ErrInvalidRevision)
+				continue
+			}
 			fingerprint = e.ContentHash
 		}
 		r := Revision{Version: 1, Kind: e.RevisionKind, Content: text, Hash: e.ContentHash, SourceSpecFingerprint: fingerprint, CommentID: c.ID, Parents: append([]string(nil), e.Parents...), Author: c.Author, AuthorID: c.AuthorID, CreatedAt: c.CreatedAt}
@@ -418,6 +517,8 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 		v.CurrentSpecFingerprint = ""
 	}
 	approvalByID := map[int64]int{}
+	decisionByID := map[int64]int{}
+	verifiedRevocations := map[int64]int64{}
 	for _, x := range entries {
 		switch x.e.Kind {
 		case CommentRevision:
@@ -442,36 +543,57 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 				problem(x.c, "wrong-author", ErrInvalidApproval)
 				continue
 			}
-			if r.Kind != RevisionSpec || x.e.SourceSpecFingerprint == "" {
+			if r.Kind != RevisionSpec || x.e.SourceSpecFingerprint != r.SourceSpecFingerprint {
 				problem(x.c, "invalid-approval", ErrInvalidApproval)
 				continue
 			}
-			a := Approval{RevisionHash: x.e.RevisionHash, SourceSpecFingerprint: x.e.SourceSpecFingerprint, CommentID: x.c.ID, Author: x.c.Author, AuthorID: x.c.AuthorID}
+			a := Approval{RevisionCommentID: r.CommentID, RevisionHash: x.e.RevisionHash, SourceSpecFingerprint: x.e.SourceSpecFingerprint, CommentID: x.c.ID, Author: x.c.Author, AuthorID: x.c.AuthorID, CreatedAt: x.c.CreatedAt}
 			approvalByID[x.c.ID] = len(v.Approvals)
 			v.Approvals = append(v.Approvals, a)
+		case CommentDecision:
+			if x.c.AuthorID == "" || !allowed[x.c.AuthorID] {
+				problem(x.c, "wrong-author", ErrInvalidApproval)
+				continue
+			}
+			r, ok := revByID[x.e.RevisionCommentID]
+			if !ok || r.Hash != x.e.RevisionHash {
+				problem(x.c, "deleted-referenced-comment", ErrInvalidApproval)
+				continue
+			}
+			if commentOrder[r.CommentID] >= commentOrder[x.c.ID] {
+				problem(x.c, "approval-before-revision", ErrInvalidApproval)
+				continue
+			}
+			// A decision names the plan and the specification it was written for; any other pairing is not a decision.
+			if r.Kind != RevisionPlan || r.SourceSpecFingerprint != x.e.SourceSpecFingerprint || policy.ForbidSelfApproval && x.e.Decision == DecisionApproved && x.c.AuthorID == r.AuthorID {
+				problem(x.c, "invalid-approval", ErrInvalidApproval)
+				continue
+			}
+			decisionByID[x.c.ID] = len(v.PlanDecisions)
+			v.PlanDecisions = append(v.PlanDecisions, PlanDecision{RevisionCommentID: r.CommentID, Decision: x.e.Decision, RevisionHash: r.Hash, SourceSpecFingerprint: r.SourceSpecFingerprint,
+				CommentID: x.c.ID, Author: x.c.Author, AuthorID: x.c.AuthorID, CreatedAt: x.c.CreatedAt, Reason: x.text, Source: x.e.Source})
 		case CommentRevocation:
 			if x.c.AuthorID == "" || !allowed[x.c.AuthorID] {
 				problem(x.c, "wrong-author", ErrInvalidApproval)
 				continue
 			}
-			idx, ok := approvalByID[x.e.TargetCommentID]
-			if !ok {
+			if idx, ok := approvalByID[x.e.TargetCommentID]; ok {
+				v.Approvals[idx].Revoked = true
+			} else if idx, ok := decisionByID[x.e.TargetCommentID]; ok {
+				v.PlanDecisions[idx].Revoked = true
+			} else {
 				if _, exists := byID[x.e.TargetCommentID]; !exists {
 					problem(x.c, "deleted-referenced-comment", ErrInvalidApproval)
+				} else if commentOrder[x.e.TargetCommentID] < commentOrder[x.c.ID] {
+					problem(x.c, "invalid-revocation-target", ErrInvalidApproval)
 				}
 				continue
 			}
-			v.Approvals[idx].Revoked = true
+			verifiedRevocations[x.c.ID] = x.e.TargetCommentID
 		}
 	}
 	for id, approvalID := range expectedRevocations {
-		found := false
-		for _, x := range entries {
-			if x.c.ID == id && x.e.Kind == CommentRevocation && x.e.TargetCommentID == approvalID {
-				found = true
-				break
-			}
-		}
+		found := verifiedRevocations[id] == approvalID
 		if !found {
 			problem(Comment{ID: id}, "missing-or-altered-revocation", ErrInvalidApproval)
 			for i := range v.Approvals {
@@ -479,9 +601,15 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 					v.Approvals[i].Revoked = true
 				}
 			}
+			for i := range v.PlanDecisions {
+				if v.PlanDecisions[i].CommentID == approvalID {
+					v.PlanDecisions[i].Revoked = true
+				}
+			}
 		}
 	}
 	var headSpec string
+	var headSpecID int64
 	for _, h := range v.Heads {
 		if h.Kind == RevisionSpec {
 			if headSpec != "" && headSpec != h.Hash {
@@ -489,12 +617,13 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 				break
 			}
 			headSpec = h.Hash
+			headSpecID = h.CommentID
 		}
 	}
 	fingerprint := v.CurrentSpecFingerprint
 	for i := range v.Approvals {
 		a := v.Approvals[i]
-		if a.RevisionHash != headSpec || a.SourceSpecFingerprint != fingerprint {
+		if a.RevisionHash != headSpec || a.RevisionCommentID != headSpecID || a.SourceSpecFingerprint != fingerprint {
 			a.Superseded = true
 			v.SupersededApprovals = append(v.SupersededApprovals, a)
 		} else if a.Revoked {
@@ -507,6 +636,12 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 }
 
 func validEnvelopeFields(e CommentEnvelope) bool {
+	if e.Source != "" && (e.Kind != CommentDecision || e.Source != "local" && e.Source != "external") {
+		return false
+	}
+	if e.Kind != CommentDecision && e.Decision != "" {
+		return false
+	}
 	validHash := func(s string) bool {
 		if len(s) != 64 {
 			return false
@@ -529,6 +664,8 @@ func validEnvelopeFields(e CommentEnvelope) bool {
 		return e.RevisionKind == RevisionPlan && e.SourceSpecFingerprint != ""
 	case CommentApproval:
 		return validHash(e.RevisionHash) && e.SourceSpecFingerprint != "" && e.RevisionCommentID > 0 && e.TargetCommentID == 0 && e.RevisionKind == "" && e.ContentHash == "" && e.RecordHash != ""
+	case CommentDecision:
+		return validHash(e.RevisionHash) && e.SourceSpecFingerprint != "" && e.RevisionCommentID > 0 && e.TargetCommentID == 0 && e.RevisionKind == "" && e.ContentHash == "" && e.RecordHash != "" && e.Decision.valid()
 	case CommentRevocation:
 		return e.TargetCommentID > 0 && e.RevisionHash == "" && e.SourceSpecFingerprint == "" && e.RevisionKind == "" && e.ContentHash == "" && e.RecordHash != ""
 	default:

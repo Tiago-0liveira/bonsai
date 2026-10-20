@@ -194,6 +194,7 @@ var (
 	_ agents.Provider             = (*Provider)(nil)
 	_ agents.Describer            = (*Provider)(nil)
 	_ agents.LaunchValidator      = (*Provider)(nil)
+	_ agents.ReadOnlyEnforcer     = (*Provider)(nil)
 	_ agents.AccountDescriber     = (*Provider)(nil)
 	_ agents.AccountRemover       = (*Provider)(nil)
 	_ agents.SetupSchema          = (*Provider)(nil)

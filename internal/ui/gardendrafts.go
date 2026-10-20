@@ -30,6 +30,7 @@ const (
 	draftsEditor   // the structured specification editor
 	draftsSave     // the preview of the revision a save or resolution appends
 	draftsConflict // Base / Yours / Remote / Result
+	draftsValidate // gate one: the preview and result of validating a specification
 )
 
 // captureTypes are the type choices in the order the form offers them.
@@ -127,6 +128,9 @@ type gardenDraftsState struct {
 	savePreview *gardenapi.SavePreviewView
 	saveView    *gardenapi.SaveView
 
+	validate  *gardenapi.ValidatePreviewView
+	validated *gardenapi.ValidateView
+
 	form     captureForm
 	formOpen bool // unfinished text exists, shown or not
 	preview  *gardenapi.CapturePreview
@@ -173,14 +177,14 @@ func (d *gardenDraftsState) reselect(snap gardensync.Snapshot) {
 	left := d.selected != 0
 	d.selected = 0
 	if len(recs) == 0 {
-		if left {
+		if left && d.notice == "" {
 			d.notice = "Selected draft left the inbox; no drafts remain."
 		}
 		return
 	}
 	d.row = max(0, min(d.row, len(recs)-1))
 	d.selected = recs[d.row].Item.Issue.ID
-	if left {
+	if left && d.notice == "" {
 		d.notice = "Selected draft left the inbox; selected the row now in its place."
 	}
 }
@@ -213,6 +217,9 @@ func (d *gardenDraftsState) move(delta, page int, k string) {
 
 // gardenTyping reports that the Drafts body owns the keyboard for text.
 func (m Model) gardenTyping() bool {
+	if m.workspace == wsGarden && m.gardenScreen() == scrBoard && m.plannerActive() && m.garden.planner.stage == plannerChoose {
+		return true // the planner's account choice has a name field
+	}
 	if m.workspace != wsGarden || m.gardenScreen() != scrDrafts {
 		return false
 	}
@@ -396,7 +403,7 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	g := &m.garden
 	d := &g.drafts
 	k := msg.String()
-	if g.busy == busyPreviewCapture || g.busy == busyDocument || g.busy == busyPreviewSave {
+	if g.busy == busyPreviewCapture || g.busy == busyDocument || g.busy == busyPreviewSave || g.busy == busyPreviewValidate {
 		if k == "esc" {
 			g.abandon()
 		}
@@ -420,6 +427,8 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenSaveKey(msg)
 	case draftsConflict:
 		return m.gardenConflictKey(msg)
+	case draftsValidate:
+		return m.gardenValidateKey(msg)
 	}
 	if key.Matches(msg, m.keys.Refresh) {
 		return m.gardenLoadWork()
@@ -665,6 +674,8 @@ func (m Model) gardenDraftDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		d.notice = ""
 		return m.gardenLoadDocument(d.opened, docOpen)
+	case "v":
+		return m.gardenStartValidate()
 	}
 	m.gardenClampDraftDocument()
 	return m, nil
@@ -742,6 +753,10 @@ func (m Model) gardenDraftsCrumbs() []string {
 		}
 	case draftsConflict:
 		return []string{"Garden", "Remote edit conflict"}
+	case draftsValidate:
+		if d.validate != nil {
+			return []string{"Garden", "Drafts", fmt.Sprintf("#%d", d.validate.Number), "Validate specification"}
+		}
 	case draftsForm:
 		return []string{"Garden", "Drafts", "Capture a draft"}
 	case draftsPreview:
@@ -763,6 +778,10 @@ func (m Model) gardenDraftsIdentity() string {
 		}
 	case draftsConflict:
 		return "Remote edit conflict"
+	case draftsValidate:
+		if d.validate != nil {
+			return fmt.Sprintf("#%d  %s", d.validate.Number, boardTitle(d.validate.Title))
+		}
 	}
 	id := d.selected
 	if d.opened != 0 {
@@ -786,6 +805,8 @@ func (m Model) gardenDraftsFocusLabel() string {
 		return "Draft / Review revision"
 	case draftsConflict:
 		return "Submenu / Remote edit conflict"
+	case draftsValidate:
+		return "Submenu / Validate specification"
 	}
 	return "Draft inbox"
 }
@@ -794,7 +815,7 @@ func (m Model) gardenDraftsHints() []shellHint {
 	g := m.garden
 	d := g.drafts
 	refresh := shellHint{m.keys.Refresh.Help().Key, "refresh"}
-	if g.busy == busyPreviewCapture || g.busy == busyDocument || g.busy == busyPreviewSave {
+	if g.busy == busyPreviewCapture || g.busy == busyDocument || g.busy == busyPreviewSave || g.busy == busyPreviewValidate {
 		return []shellHint{{"esc", "cancel"}}
 	}
 	switch d.stage {
@@ -816,6 +837,11 @@ func (m Model) gardenDraftsHints() []shellHint {
 		return append(h, shellHint{"esc", "back"})
 	case draftsSave:
 		return []shellHint{{"←/→", "button"}, {"enter", "choose"}, {"esc", "back"}}
+	case draftsValidate:
+		if d.validate != nil && d.validate.CanValidate() {
+			return []shellHint{{"←/→", "button"}, {"enter", "choose"}, {"esc", "back"}}
+		}
+		return []shellHint{{"enter", "back"}, {"esc", "back"}}
 	case draftsConflict:
 		c := d.conflict
 		if c == nil || c.intro {
@@ -842,7 +868,7 @@ func (m Model) gardenDraftsHints() []shellHint {
 	case draftsResult:
 		return []shellHint{{"←/→", "button"}, {"enter", "choose"}, {"esc", "back"}}
 	case draftsDetail:
-		return []shellHint{{"esc", "Drafts"}, {"↑/↓", "scroll"}, {"pgup/dn", "page"}, refresh}
+		return []shellHint{{"esc", "Drafts"}, {"↑/↓", "scroll"}, {"pgup/dn", "page"}, {"e", "edit"}, {"v", "validate"}, refresh}
 	}
 	if d.searching {
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}

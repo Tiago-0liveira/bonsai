@@ -360,3 +360,31 @@ func TestIssueDisplayEditsChangeRevision(t *testing.T) {
 		t.Fatal("number edit did not change revision")
 	}
 }
+
+func TestPlanDecisionsDoNotAliasOrAcceptLateSnapshots(t *testing.T) {
+	id := garden.GardenID{Repo: 7}
+	store := NewStore(id, "clone-a")
+	input := Snapshot{GardenID: id, LocalRepoID: "clone-a", Epoch: 1, Generation: 1, Complete: true, Source: SourceLive, Items: []Item{{Issue: garden.Issue{ID: 1}, Verification: garden.Verification{PlanDecisions: []garden.PlanDecision{{Decision: garden.DecisionApproved, RevisionHash: "exact-plan"}}}}}}
+	if err := store.Apply(input); err != nil {
+		t.Fatal(err)
+	}
+	input.Items[0].Verification.PlanDecisions[0].Decision = garden.DecisionRejected
+	if got := store.Read().Items[0].Verification.PlanDecisions[0].Decision; got != garden.DecisionApproved {
+		t.Fatal("input aliases stored decision")
+	}
+	read := store.Read()
+	read.Items[0].Verification.PlanDecisions[0].Decision = garden.DecisionChangesRequested
+	if got := store.Read().Items[0].Verification.PlanDecisions[0].Decision; got != garden.DecisionApproved {
+		t.Fatal("read aliases stored decision")
+	}
+	newer := input
+	newer.Generation = 3
+	if err := store.Apply(newer); err != nil {
+		t.Fatal(err)
+	}
+	read.Generation = 2
+	_ = store.Apply(read)
+	if got := store.Read().Items[0].Verification.PlanDecisions[0].Decision; got != garden.DecisionRejected {
+		t.Fatal("late approval overwrote newer decision")
+	}
+}

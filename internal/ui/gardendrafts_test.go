@@ -64,7 +64,7 @@ func TestDraftsInboxShowsEveryTypeSeparatelyFromTheBoard(t *testing.T) {
 		mustNotContain(t, "drafts", out, "Task 1")
 		mustFit(t, "drafts", m)
 		if sz[0] >= 120 {
-			mustContain(t, "inspector", out, "NEXT HUMAN GATE", "Validate specification", "plan 08")
+			mustContain(t, "inspector", out, "NEXT HUMAN GATE", "Validate specification", "Enter to open, then v")
 		}
 		// Board keeps excluding drafts, and the Drafts entry stays amber-separate.
 		b := pressAll(t, m, "v")
@@ -147,7 +147,7 @@ func TestDraftDetailShowsBodySpecAndAttention(t *testing.T) {
 		mustNotContain(t, "detail", out, "bonsai:garden-metadata")
 		mustFit(t, "detail", m)
 		m = pressAll(t, m, "end")
-		mustContain(t, "end", view(m), "Validate idea: unavailable until plan 08")
+		mustContain(t, "end", view(m), "SPECIFICATION GATE", "State: draft, not validated", "Press v to validate this specification.")
 		m = pressAll(t, m, "esc")
 		if m.garden.drafts.stage != draftsList || m.garden.drafts.selected != 142 {
 			t.Fatalf("Esc: stage %d selected %d", m.garden.drafts.stage, m.garden.drafts.selected)

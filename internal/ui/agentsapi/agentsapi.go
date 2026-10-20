@@ -78,6 +78,10 @@ type Account struct {
 	Running int                // active sessions on this account
 	// ConcurrentSameAccount: the provider allows several sessions on one account.
 	ConcurrentSameAccount bool
+	// ReadOnly is the provider's verdict on running a session that cannot change
+	// anything, which the Garden planner role requires. Unsupported accounts stay
+	// listed so the reason can be shown; they are never started read-only.
+	ReadOnly agents.ReadOnlySupport
 }
 
 // Usage is an account's usage with its freshness, so a failed refresh can

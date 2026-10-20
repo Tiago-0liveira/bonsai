@@ -1,6 +1,7 @@
 package garden
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -68,5 +69,59 @@ func TestBodyMetadataOnlyReadsTheFirstLine(t *testing.T) {
 	}
 	if got := BodyMetadata(MetadataPrefix + `{"a":1} -->` + "\r\nrest"); string(got) != `{"a":1}` {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestReplaceBodyMetadataKeepsEverythingElse(t *testing.T) {
+	body, err := CaptureBody("1001", strings.Repeat("b", 32), "line one\r\nline two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := EncodeMetadata(Metadata{Provenance: ProvenanceCapture, Owner: "1001", Accepted: true, AcceptedSpecHash: strings.Repeat("a", 64), SpecFingerprint: strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReplaceBodyMetadata(body, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(BodyMetadata(got)) != string(next) || DisplayBody(got) != DisplayBody(body) || CaptureNonce(got) != CaptureNonce(body) {
+		t.Fatalf("body = %q", got)
+	}
+	crlf := strings.Replace(body, "\n", "\r\n", 1)
+	if got, err := ReplaceBodyMetadata(crlf, next); err != nil || !strings.Contains(got, markerSuffix+"\r\n") {
+		t.Fatalf("CRLF lost: %q %v", got, err)
+	}
+	for name, in := range map[string]string{"no metadata line": "just text", "empty": ""} {
+		if _, err := ReplaceBodyMetadata(in, next); !errors.Is(err, ErrInvalidMetadata) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if _, err := ReplaceBodyMetadata(body, []byte("not json")); !errors.Is(err, ErrInvalidMetadata) {
+		t.Errorf("bad replacement: %v", err)
+	}
+	only := MetadataPrefix + `{"schema_version":1}` + markerSuffix
+	if got, err := ReplaceBodyMetadata(only, next); err != nil || strings.Contains(got, "\n") {
+		t.Errorf("single line body gained a newline: %q %v", got, err)
+	}
+}
+
+func TestNewApprovalBindsRevisionAndRejectsOtherKinds(t *testing.T) {
+	id := IssueIdentity{Repo: 9, Issue: 7}
+	rev := Revision{Kind: RevisionSpec, Hash: strings.Repeat("c", 64), SourceSpecFingerprint: strings.Repeat("c", 64), CommentID: 11}
+	body, err := NewApproval(id, rev, "Approved.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, text, err := decodeEnvelope(body)
+	if err != nil || e.Kind != CommentApproval || e.RevisionHash != rev.Hash || e.RevisionCommentID != 11 || e.RecordHash != ContentHash(text) {
+		t.Fatalf("envelope = %+v %v", e, err)
+	}
+	rev.Kind = RevisionPlan
+	if _, err := NewApproval(id, rev, "x"); !errors.Is(err, ErrInvalidApproval) {
+		t.Fatalf("plan approval: %v", err)
+	}
+	if _, err := NewApproval(IssueIdentity{}, Revision{Kind: RevisionSpec}, "x"); !errors.Is(err, ErrInvalidApproval) {
+		t.Fatalf("empty target: %v", err)
 	}
 }

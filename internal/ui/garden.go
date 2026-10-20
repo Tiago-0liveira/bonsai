@@ -42,6 +42,10 @@ const (
 	busyPreviewCapture
 	busyDocument
 	busyPreviewSave
+	busyPreviewValidate
+	busyPlanner     // PreviewPlanner and PlannerAttempts: reads
+	busyPlanReview  // PlanReview: a read
+	busyPlanPreview // PreviewPlanPublish: a read
 	busyApply
 	busyResume
 	busySkip
@@ -49,6 +53,11 @@ const (
 	busyCapture
 	busyReconcile
 	busySave
+	busyValidate
+	busyPlannerStart
+	busyPlannerCancel
+	busyPlanPublish
+	busyPlanDecide
 )
 
 func (b gardenBusy) writes() bool { return b >= busyApply }
@@ -66,9 +75,11 @@ const (
 // api as a tea.Cmd; Update and View never wait on it. Settings reads status
 // from here too, so the two screens can never disagree.
 type gardenState struct {
-	board  gardenBoardState
-	drafts gardenDraftsState
-	api    gardenapi.Backend // nil when Garden is unavailable
+	board   gardenBoardState
+	drafts  gardenDraftsState
+	planner gardenPlannerState
+	planrev gardenPlanState
+	api     gardenapi.Backend // nil when Garden is unavailable
 
 	// seq numbers requests: a reply carrying any other value was superseded or
 	// abandoned, so it is dropped before it can move focus. gate is the second

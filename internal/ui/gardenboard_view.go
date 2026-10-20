@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
@@ -98,6 +99,12 @@ func (m Model) gardenWorkHead(width int, title, sort string) []string {
 
 func (m Model) gsBoard(width, rows int) []string {
 	b := m.garden.board
+	if b.opened != 0 && m.garden.planrev.stage != planNone {
+		return m.gsPlanRev(width, rows)
+	}
+	if b.opened != 0 && m.garden.planner.stage != plannerNone {
+		return m.gsPlanner(width, rows)
+	}
 	if b.opened != 0 {
 		return m.gardenDetail(width, rows)
 	}
@@ -200,6 +207,13 @@ func (m Model) gsBoard(width, rows int) []string {
 func gardenApprovalIndicator(r work.Record) (string, lipgloss.Color) {
 	p := theme.Current
 	it := r.Item
+	rv := planrev.FromVerification(it.Issue, it.Verification)
+	if rv.StaleApproval || rv.Gate.State == "stale" {
+		return "! approval stale", p.Warning
+	}
+	if rv.Ready {
+		return "✓ Ready: exact pair", p.Success
+	}
 	for _, f := range r.Findings {
 		if f.Code == gardensync.FindingProjectionDrift || f.Code == gardensync.FindingStageConflict {
 			return "! conflict", p.Danger
@@ -237,7 +251,7 @@ func (m Model) gardenDocument(width int) []string {
 			body = "The canonical issue body is empty."
 		}
 		text.WriteString(body)
-		text.WriteString("\n\nApprove specifications, request/approve plans: unavailable until plan 08.\nStart implementation locally: unavailable until plan 09.")
+		text.WriteString("\n\nSpecifications are validated from Drafts. Press p to request a read-only AI plan for an approved specification (a local, explicit action) and r to review its published plan revisions.\nPress a in plan review to approve the exact pair to Ready. Press v there to revalidate a changed specification. Start implementation locally: unavailable until plan 09.")
 	case 1:
 		text.WriteString("SPECIFICATION\n\n")
 		for _, rev := range r.Item.Verification.Revisions {
@@ -290,17 +304,21 @@ func (m Model) gardenDocument(width int) []string {
 		text.WriteString("\n\nQuestion authoring is unavailable until plan 08.")
 	case 3:
 		text.WriteString("PLANS\n\n")
-		count := 0
-		for _, rev := range r.Item.Verification.Revisions {
-			if rev.Kind == garden.RevisionPlan {
-				count++
-				fmt.Fprintf(&text, "Revision %d / %s\nSource specification: %s\n%s\n\n", rev.CommentID, rev.Hash, rev.SourceSpecFingerprint, boardSafe(rev.Content))
+		rv := planrev.FromVerification(r.Item.Issue, r.Item.Verification)
+		fmt.Fprintf(&text, "Current %s / Latest %s / Approved %s\n", revWord(rv.Current), revWord(rv.Latest), revWord(rv.Approved))
+		for _, rev := range rv.Revisions {
+			fmt.Fprintf(&text, "\nr%d / %s / %s\nSource specification: %s\n", rev.Ordinal, shortHash(rev.Hash), stateWords(rev.State), shortHash(rev.SourceSpecFingerprint))
+			if rev.Stale {
+				text.WriteString("Older specification; downstream disabled.\n")
+			}
+			if rev.Superseded {
+				text.WriteString("Superseded; snapshot retained.\n")
 			}
 		}
-		if count == 0 {
+		if len(rv.Revisions) == 0 {
 			text.WriteString("No verified plan revisions.\n")
 		}
-		text.WriteString("\nPlan requests and approvals are unavailable until plan 08.")
+		text.WriteString("\nPress r to review with comparison, search and exact approval. Press p to request a read-only AI plan. Launch unavailable (plan 09).")
 	case 4:
 		fmt.Fprintf(&text, "EXECUTION\n\nCanonical stage: %s\nBoard state: %s\n\nNo local execution context is available in this read projection.\nLocal implementation launch is unavailable until plan 09.", r.Item.Classification.Stage, r.Column)
 	}

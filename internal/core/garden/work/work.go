@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 )
 
@@ -70,12 +71,12 @@ func Select(items []gardensync.Item, q Query, findings ...gardensync.Finding) Co
 		// may only describe display diagnostics, which remain visible as conflicts.
 		// Adapter identity defects still exclude an unusable canonical Issue.
 		lane := garden.Lane(c, meta, it.Verification, err)
-		if it.Issue.ID == 0 || c.Stage == garden.StageDraft || lane.Lane != garden.LaneWork || len(it.Issue.Problems) > 0 {
+		if it.Issue.ID == 0 || c.Stage == garden.StageDraft || (lane.Lane != garden.LaneWork && !retained(it)) || len(it.Issue.Problems) > 0 {
 			out.Excluded++
 			continue
 		}
 		out.Total++
-		r := Record{Item: it, Column: placement(c.Stage, it.Verification), Priority: priority(it.Issue.Labels)}
+		r := Record{Item: it, Column: placement(c.Stage, it.Issue, it.Verification), Priority: priority(it.Issue.Labels)}
 		r.Item.Classification = c
 		for _, f := range findings {
 			if f.IssueID == it.Issue.ID {
@@ -101,10 +102,9 @@ func Select(items []gardensync.Item, q Query, findings ...gardensync.Finding) Co
 	return out
 }
 
-// The six canonical labels do not prove that a local planner/reviewer is
-// running or that an exact plan was approved. Those columns stay empty until
-// plans 08/09 expose verified evidence; reads never invent workflow state.
-func placement(stage garden.Stage, v garden.Verification) Column {
+// Labels do not prove plan approval. Ready is derived from the verified pair;
+// active planner/reviewer columns still require separate local-job evidence.
+func placement(stage garden.Stage, issue garden.Issue, v garden.Verification) Column {
 	switch stage {
 	case garden.StageInProgress:
 		return Running
@@ -115,6 +115,13 @@ func placement(stage garden.Stage, v garden.Verification) Column {
 	case garden.StageBlocked:
 		return Blocked
 	default:
+		rv := planrev.FromVerification(issue, v)
+		if rv.Ready {
+			return Ready
+		}
+		if rv.Latest != nil && rv.Latest.State == planrev.StateRejected {
+			return Approved
+		}
 		for _, h := range v.Heads {
 			if h.Kind == garden.RevisionPlan {
 				return PlanReview
@@ -128,12 +135,14 @@ func placement(stage garden.Stage, v garden.Verification) Column {
 // column: the read projection proves no more than the column itself.
 func NextGate(c Column) string {
 	switch c {
-	case Approved, Planning:
+	case Approved:
+		return "Request an AI plan"
+	case Planning:
 		return "Approve the plan once drafted"
 	case PlanReview:
 		return "Review and approve the plan"
 	case Ready:
-		return "Start implementation locally"
+		return "Launch unavailable (plan 09)"
 	case Running:
 		return "Review the change when the run ends"
 	case Reviewing:
@@ -324,4 +333,19 @@ func (s *Selection) EnsureVisible(c Collection, capacity, columns int) {
 	if int(s.Column) >= s.Window+columns {
 		s.Window = int(s.Column) - columns + 1
 	}
+}
+
+// retained keeps an accepted snapshot in Work when its specification head moves.
+// Gate assessment still blocks every downstream action until it is revalidated.
+func retained(it gardensync.Item) bool {
+	m, err := garden.DecodeMetadata(it.Issue.Metadata)
+	if err != nil || len(garden.Classify(it.Issue.Labels).Problems) > 0 {
+		return false
+	}
+	for _, a := range it.Verification.SupersededApprovals {
+		if !a.Revoked && (!m.Accepted || a.RevisionHash == m.AcceptedSpecHash && a.SourceSpecFingerprint == m.SpecFingerprint) {
+			return true
+		}
+	}
+	return false
 }

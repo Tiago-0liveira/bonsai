@@ -28,6 +28,10 @@ var (
 	ErrGraphQL = errors.New("garden graphql error")
 	// ErrCommentTooLarge reports a comment body over the adapter payload limit.
 	ErrCommentTooLarge = errors.New("garden comment exceeds payload limit")
+	// ErrMetadataWriteUnsupported means the adapter cannot update a body conditionally.
+	ErrMetadataWriteUnsupported = errors.New("garden conditional metadata writes are unsupported")
+	// ErrMetadataChanged reports a concurrent change to managed metadata or labels.
+	ErrMetadataChanged = errors.New("garden metadata changed since it was read")
 )
 
 // RateLimitError is a value error carrying the server's retry hint. It satisfies errors.Is(err, ErrRateLimited).

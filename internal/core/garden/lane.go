@@ -40,23 +40,14 @@ func Lane(c Classification, m Metadata, v Verification, metadataErr error) LaneR
 	if len(v.ConflictingHeads) > 1 {
 		return LaneResult{LaneAttention, "competing revision heads"}
 	}
-	if m.Accepted && v.AcceptedSpecHash != "" && m.AcceptedSpecHash != v.AcceptedSpecHash {
-		return LaneResult{LaneAttention, "accepted specification head changed"}
-	}
-	if m.Accepted && v.AcceptedSpecHash == "" {
-		return LaneResult{LaneAttention, "accepted specification has no valid head"}
-	}
-	if !m.Accepted || len(v.ValidApprovals) == 0 {
-		if m.Accepted {
+	if v.AcceptedSpecHash == "" || len(v.ValidApprovals) == 0 {
+		if m.Accepted || len(v.SupersededApprovals) > 0 || len(v.RevokedApprovals) > 0 || c.Stage == StageReady {
 			return LaneResult{LaneAttention, "accepted specification lacks a valid approval"}
-		}
-		if c.Stage == StageReady {
-			return LaneResult{LaneAttention, "ready label lacks verified specification approval"}
 		}
 		return LaneResult{LaneDraft, "specification has not been accepted"}
 	}
-	if m.AcceptedSpecHash != v.AcceptedSpecHash {
-		return LaneResult{LaneAttention, "accepted specification metadata drift"}
+	if c.Stage == StageDraft && !m.Accepted {
+		return LaneResult{LaneDraft, "approval stage projection is incomplete"}
 	}
 	return LaneResult{LaneWork, "specification acceptance is recorded"}
 }

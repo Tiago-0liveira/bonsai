@@ -63,6 +63,13 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (_ Record, startEr
 	}
 	launch := req.Launch
 	launch.DisplayName = req.Name
+	if launch.ReadOnly {
+		// Checked here as well as in PrepareSession: the holder is another
+		// process, and a refusal should happen before any admission or runtime.
+		if err := agents.RequireReadOnly(provider); err != nil {
+			return Record{}, err
+		}
+	}
 	if validator, ok := provider.(agents.LaunchValidator); ok {
 		if err := validator.ValidateLaunch(account, launch); err != nil {
 			return Record{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)

@@ -149,7 +149,7 @@ func TestLaneProjectionDriftAndDuplicateLabels(t *testing.T) {
 		t.Fatalf("stale plan removed work: %+v verification=%+v", got, v)
 	}
 	m.AcceptedSpecHash = garden.ContentHash("drift")
-	if got := garden.Lane(c, m, v, nil); got.Lane != garden.LaneAttention {
-		t.Fatalf("drift: %+v", got)
+	if got := garden.Lane(c, m, v, nil); got.Lane != garden.LaneWork {
+		t.Fatalf("legacy projection overrode verified acceptance: %+v", got)
 	}
 }

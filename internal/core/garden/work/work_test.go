@@ -290,8 +290,8 @@ func TestSelectionFocusSharesIdentity(t *testing.T) {
 }
 func TestNextGateIsAHumanGateForEveryColumn(t *testing.T) {
 	want := map[Column]string{
-		Approved: "Approve the plan once drafted", Planning: "Approve the plan once drafted", PlanReview: "Review and approve the plan",
-		Ready: "Start implementation locally", Running: "Review the change when the run ends", Reviewing: "Review the change after agent review",
+		Approved: "Request an AI plan", Planning: "Approve the plan once drafted", PlanReview: "Review and approve the plan",
+		Ready: "Launch unavailable (plan 09)", Running: "Review the change when the run ends", Reviewing: "Review the change after agent review",
 		HumanReview: "Review the change", Done: "None", Blocked: "Resolve the blocker",
 	}
 	if len(want) != int(ColumnCount) {

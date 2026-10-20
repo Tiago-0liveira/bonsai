@@ -58,8 +58,15 @@ func (d launchDialog) compose(iw, h int) []string {
 	danger := lipgloss.NewStyle().Foreground(th.Danger)
 	rule := dim.Render(strings.Repeat(d.rule(), iw))
 
-	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render("New session")
-	top := []string{leftRight(title, dim.Render(d.target.branch), iw), rule}
+	heading, scope := "New session", d.target.branch
+	if d.planner {
+		heading, scope = "Request AI plan", "read-only / no worktree"
+	}
+	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render(heading)
+	top := []string{leftRight(title, dim.Render(scope), iw), rule}
+	if cur, ok := d.Current(); d.planner && ok {
+		top = append(top, d.plannerContract(cur, iw))
+	}
 	bottom := []string{rule, dim.Render(d.footerFit(iw))}
 	free := max(h-len(top)-len(bottom), 0)
 
@@ -86,6 +93,20 @@ func (d launchDialog) compose(iw, h int) []string {
 		lines = append(lines[:h-1], lines[len(lines)-1])
 	}
 	return lines
+}
+
+// plannerContract is the permission the chosen account would run with, or why it cannot plan. Choosing the
+// account and pressing the primary action is what accepts it.
+func (d launchDialog) plannerContract(a agentsapi.Account, iw int) string {
+	th := theme.Current
+	if !a.ReadOnly.Supported {
+		return ansi.Truncate(lipgloss.NewStyle().Foreground(th.Danger).Render("✗ "+plannerUnavailableText(a)), iw, "…")
+	}
+	text := "✓ Read-only: " + a.ReadOnly.Mechanism
+	if len(a.ReadOnly.Allows) > 0 {
+		text += " · " + strings.Join(a.ReadOnly.Allows, " · ")
+	}
+	return ansi.Truncate(lipgloss.NewStyle().Foreground(th.Success).Render(text), iw, "…")
 }
 
 // options is the body for a selected account: table, divider, options, save
@@ -273,9 +294,14 @@ func (d launchDialog) buttonsRow(a agentsapi.Account, iw int) string {
 	focused := d.focus == launchFocusButtons
 	start := "Start session"
 	disabled := false
+	if d.planner {
+		start = "Accept read-only and request plan"
+	}
 	switch {
 	case d.starting:
 		start, disabled = "Starting…", true
+	case d.planner && !a.ReadOnly.Supported:
+		start, disabled = "Cannot plan", true
 	case accounts.NeedsSignIn(a.Info):
 		start = "Sign in first"
 	}
@@ -309,6 +335,9 @@ func (d launchDialog) footer() string {
 		s = "←→ Action  Enter Select  Ctrl+S Start  Esc Back"
 	default:
 		s = "Tab Next field  Shift+Tab Previous  Ctrl+S Start  Esc Back"
+	}
+	if d.planner {
+		s = strings.ReplaceAll(s, "Start", "Request")
 	}
 	if d.ascii {
 		s = strings.NewReplacer("↑↓", "j/k", "←→", "h/l").Replace(s)

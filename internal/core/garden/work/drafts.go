@@ -39,7 +39,7 @@ func Drafts(items []gardensync.Item, q Query, findings ...gardensync.Finding) Dr
 		meta, err := garden.DecodeMetadata(it.Issue.Metadata)
 		c := garden.Classify(it.Issue.Labels)
 		lane := garden.Lane(c, meta, it.Verification, err)
-		if lane.Lane == garden.LaneWork && c.Stage != garden.StageDraft && len(it.Issue.Problems) == 0 {
+		if (lane.Lane == garden.LaneWork || retained(it)) && c.Stage != garden.StageDraft && len(it.Issue.Problems) == 0 {
 			out.Excluded++
 			continue
 		}

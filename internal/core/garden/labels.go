@@ -1,6 +1,9 @@
 package garden
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 const ManagedLabel = "bonsai:managed"
 const TypePrefix = "bonsai:type/"
@@ -102,5 +105,17 @@ func Classify(labels []string) Classification {
 	} else {
 		out.Stage = stages[0]
 	}
+	return out
+}
+
+// ManagedLabels returns a sorted copy for comparing concurrent managed-label edits.
+func ManagedLabels(labels []string) []string {
+	var out []string
+	for _, l := range labels {
+		if strings.HasPrefix(strings.ToLower(l), "bonsai:") {
+			out = append(out, l)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
