@@ -154,6 +154,9 @@ type PrepareSessionRequest struct {
 	Session Session
 	Args    []string
 	Launch  LaunchOptions
+	// Activity, when set, asks the provider to report the session's activity
+	// through hooks it installs for this session only.
+	Activity *ActivityRequest
 }
 
 type PreparedSession struct {

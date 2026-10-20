@@ -114,6 +114,16 @@ func (s *Shared) AuthStatus(ctx context.Context, host string) AuthStatus {
 	return s.tokens.Status(ctx, host)
 }
 
+// InvalidateAuth makes the next request reread gh's stored credentials after
+// an explicit user refresh. It never logs in or refreshes credentials itself.
+func (s *Shared) InvalidateAuth(host string) {
+	s.tokens.mu.Lock()
+	defer s.tokens.mu.Unlock()
+	// Detach in-flight reads too: their results may predate an account or scope
+	// change and must not repopulate the new cache entry.
+	delete(s.tokens.entries, host)
+}
+
 // Prewarm reads host's token and opens a connection to its API with
 // GET /rate_limit, which does not count against the rate limit and seeds the
 // rate-limit view. The API server runs it at startup so that the first browser
@@ -251,7 +261,7 @@ func (s *Shared) send(r *http.Request, host, token string) (*http.Response, erro
 		drain(resp)
 		header := cached.header.Clone()
 		header.Set(app.NotModifiedHeader, "1")
-		for _, name := range []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Resource"} {
+		for _, name := range []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Resource", "X-OAuth-Scopes", "X-Accepted-OAuth-Scopes"} {
 			if value := resp.Header.Get(name); value != "" {
 				header.Set(name, value)
 			}

@@ -682,6 +682,9 @@ func (m Model) procFooterHeight() int {
 // View renders two bordered panes filling the screen above a status/help bar,
 // with any active modal drawn centered on top.
 func (m Model) View() string {
+	if m.layoutKind == LayoutRedesign {
+		return m.shellView()
+	}
 	if m.updatePromptVisible() {
 		return clampHeight(m.updatePrompt(), m.height)
 	}

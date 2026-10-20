@@ -62,6 +62,9 @@ serves only a placeholder (no embedded web UI; see [Building](#building-from-sou
 - **Web workspace**: `bonsai web` serves a local app at
   `http://127.0.0.1:7001/app`, embedded in release binaries. No hosted service.
 - **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`) and an Agents tab (`g`, see [docs/agents.md](docs/agents.md)).
+- **Garden board and table** in the redesign preview show verified approved work as state columns or sortable rows (`v` toggles, configurable as `garden_view`) with scoped filters and read-only issue documents ([Garden guide](docs/garden.md)).
+- **Garden Drafts** in the redesign preview keeps unvalidated ideas visible across stage changes, with capture protected against duplicate retries across Bonsai processes ([Drafts](docs/garden.md#drafts)).
+- **Garden setup** in the redesign preview creates Stage and Bonsai Type fields and can resume after granting GitHub Project permissions, without restarting Bonsai ([setup and recovery](docs/tui-cli.md#garden-setup-in-the-preview)).
 - **CLI**: every feature is also a plain, scriptable command.
 
 ### ⚙️ Background supervisor
@@ -91,6 +94,11 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
   resets) for **every profile of every provider at once**, with live progress.
 - `bonsai agents attach <id>` keeps detach, kill and control shortcuts visible;
   killing requires confirmation ([session controls](docs/agents.md#sessions-shared-with-the-tui-and-cli)).
+- Every session shows **what the agent is doing** (working, needs input, idle) in
+  the web UI, the TUI and `bonsai agents`, with optional desktop and browser
+  notifications, off by default ([docs/agents.md](docs/agents.md#desktop-notifications)).
+  This includes Claude questions and plan approval, pending Codex async questions,
+  and inferred Antigravity input dialogs.
 
 Details: [docs/agents.md](docs/agents.md).
 
@@ -113,6 +121,12 @@ bonsai agent account add claude work   # then start an agent from any worktree
 ```
 
 For scripts: `bonsai web --no-open --no-setup`.
+
+Preview of the TUI redesign (shell with tabs and footer, working Settings,
+Accounts and Garden setup/board; Playground and Worktrees remain placeholders;
+the default stays the current TUI):
+`bonsai --tui-layout redesign`, see
+[docs/tui-cli.md](docs/tui-cli.md#redesign-preview---tui-layout-redesign).
 
 ## CLI cheat sheet
 
@@ -166,8 +180,11 @@ variables are listed in [docs/tui-cli.md](docs/tui-cli.md#hook-and-alias-variabl
 | Doc | What is in it |
 | --- | --- |
 | [docs/web.md](docs/web.md) | Running the web app: setup, project folders, settings, updates and tunnels, Agents tab, recovery |
+| [docs/garden.md](docs/garden.md) | Garden connection, approved-work board and table, filters, issue documents and freshness |
 | [docs/agents.md](docs/agents.md) | Claude Code, Codex and Antigravity profiles, seeding, isolation, usage, defaults |
 | [docs/tui-cli.md](docs/tui-cli.md) | TUI keybindings, CLI reference, configuration, hooks, prune, updates |
+| [TUI redesign plans](docs/plans/tui-redesign/README.md) | Planned sequence: shell, Settings, Accounts, Garden, Playground, Worktrees |
+| [Approved TUI mockups](docs/design/tui-redesign/README.md) | Revision 02 reference images and PDF; design artifacts, not implemented features |
 | [docs/architecture.md](docs/architecture.md) | How the local web stack fits together |
 | [docs/git-backend.md](docs/git-backend.md) | Local API security model, webhook receiver, Git backend |
 | [docs/development.md](docs/development.md) | Contributor stack, ports, provider contract, validation |

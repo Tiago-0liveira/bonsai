@@ -98,15 +98,28 @@ export function loadUpdateSettings() {
 }
 
 // GET/POST /api/settings/agents: whether `bonsai web stop` keeps agent
-// sessions running. active_sessions counts the running ones in every project.
+// sessions running, and which desktop notifications the session holders send.
+// active_sessions counts the running sessions in every project. Holders read
+// `notifications` when they start, so a change applies to later sessions.
+export interface AgentNotificationSettings {
+  enabled: boolean
+  needs_input: boolean
+  turn_complete: boolean
+}
 export interface AgentSettings {
   revision: number
   keep_running: boolean
   active_sessions: number
+  notifications: AgentNotificationSettings
+}
+/** At least one field; the server rejects an empty change and unknown keys. */
+export interface AgentSettingsChange {
+  keep_running?: boolean
+  notifications?: Partial<AgentNotificationSettings>
 }
 export function loadAgentSettings() {
   return request<AgentSettings>('/api/settings/agents')
 }
-export function saveAgentSettings(settings: AgentSettings, keepRunning: boolean) {
-  return request<AgentSettings>('/api/settings/agents', { keep_running: keepRunning, revision: settings.revision })
+export function saveAgentSettings(settings: AgentSettings, change: AgentSettingsChange) {
+  return request<AgentSettings>('/api/settings/agents', { ...change, revision: settings.revision })
 }

@@ -21,11 +21,16 @@ func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSession
 	if err := p.credentialMgr.Materialize(ctx, req.Account, req.Session); err != nil {
 		return agents.PreparedSession{}, err
 	}
+	env := buildEnvironment(req.Account, req.Session)
+	// A session whose hooks cannot be installed just reports no activity.
+	if req.Activity.Usable() && installActivity(req.Session, req.Activity) {
+		env[req.Activity.SpoolEnv] = req.Activity.SpoolPath
+	}
 	return agents.PreparedSession{
 		Executable: executable,
 		Args:       launchArgs(settings, req.Args, req.Launch, models),
 		Dir:        req.Session.WorkDir,
-		EnvSet:     buildEnvironment(req.Account, req.Session),
+		EnvSet:     env,
 	}, nil
 }
 

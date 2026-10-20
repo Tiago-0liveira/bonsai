@@ -81,6 +81,15 @@ bonsai agent account remove work                # logs the profile out, deletes 
   session refreshes it. Token profiles are shown as `n/a` because long-lived
   tokens cannot read usage, and so are macOS profiles (the login lives in the
   Keychain). Results are cached for 1 minute; `--refresh` bypasses the cache.
+- **Activity.** Bonsai also learns whether a running session is working, waiting
+  for you (permission prompt, question, plan approval) or idle. It adds
+  observe-only hooks to each session with Claude Code's `--settings` flag, so the
+  profile's `settings.json` is never written and your own hooks keep running. If
+  you start Claude with your own `--settings` or `--bare`, or disable hooks, the
+  activity stays unknown and the session shows as plain "Running". See
+  [Activity hooks](development.md#activity-hooks).
+  Questions and plan approval keep their specific reason even when Claude also
+  emits a permission hook or a generic permission notification for the dialog.
 - Requires Claude Code 2.1.295 or newer.
 
 ## Codex profiles
@@ -127,6 +136,18 @@ bonsai agent account remove work                     # logs the profile out, del
   profiles have no plan limits and are shown as `n/a`. Results are cached for
   1 minute; `--refresh` bypasses the cache. The start dialog's model suggestions
   come from the same place, with the list bundled in Codex as the fallback.
+- **Activity.** Like Claude, Codex sessions report working, waiting and idle.
+  Bonsai adds observe-only hooks for the session's events to the profile's own
+  `$CODEX_HOME/hooks.json` (never `~/.codex`), keeping every other entry in it,
+  and marks exactly those entries trusted in the profile's `config.toml` through
+  Codex's app-server, so Codex runs them without a review prompt. Your other
+  hooks stay as untrusted as you left them, and Bonsai never uses
+  `--dangerously-bypass-hook-trust`. If the trust step fails, the session still
+  starts, and Codex's approval and question notifications (asked for with `-c`
+  overrides, unless your own args set them) show as inferred "waiting". See
+  [Activity hooks](development.md#activity-hooks).
+  Async questions remain "Needs input (question)" after the question tool returns
+  and its turn finishes, until you answer, cancel or interrupt the request.
 - Requires Codex CLI 0.162.1 or newer.
 
 ## Antigravity in the web workspace
@@ -165,6 +186,15 @@ once read, its plan ("Google AI Pro").
   lists once per effort (`gemini-3.8-flash-high`, `-medium`, `-low`) is one model
   with an effort choice, passed to agy as the full ID. A model listed once has no
   effort choice.
+- **Activity.** Sessions write agy's `hooks.json` into their private session home
+  (never the profile or `~/.gemini`), so Bonsai sees working and idle from agy's
+  own hooks. agy has no hook for permission prompts or questions, so "needs
+  input" is inferred from its terminal notifications and rendered input dialogs.
+  Bonsai distinguishes the numbered question chooser from command permission
+  prompts using their fixed UI labels, without recording their contents.
+  Notifications are turned on in
+  the session's settings only (your profile's `notifications` setting is not
+  changed), and is shown as inferred. See [Activity hooks](development.md#activity-hooks).
 
 ### Starting agents in the web app
 
@@ -190,7 +220,13 @@ process with a record, `agents/<id>.json` under the web home. A session record's
 summary has an `origin` field: `web`, `tui` or `cli` (an empty origin counts as
 `web`). The web app watches these records, so a session started in the TUI or
 from the CLI appears live in the browser. `bonsai agents` lists every running
-session.
+session. Its `STATE` column is the lifecycle (`running`, `exited (0)`, `failed`)
+and `ACTIVITY` is what the agent is doing (`Working`, `Idle`, `Needs input
+(permission)`, `Stalled`, `Running` when unknown). Sessions without hook reports
+(older holders, providers without hooks) keep the output-based `working` /
+`idle <duration>` guess. `bonsai agents --json` adds an `activity` object
+(`state`, `reason`, `detail`, `since`, `source`) for running sessions that report
+one and omits it otherwise.
 
 The TUI's Agents tab is another client of these sessions. It watches the selected
 session read-only; `enter` takes control to type, and `ctrl+]` immediately returns
@@ -214,13 +250,57 @@ without asking for confirmation.
 `cli` are left running either way. `--stop-agents` and `--keep-agents` override the
 setting for one stop.
 
+### Desktop notifications
+
+Each session's holder can raise a desktop notification when its agent starts
+waiting for you or finishes a turn. They are **off by default**. The holder sends
+them (best effort: `notify-send` on Linux, `osascript` on macOS, PowerShell on
+Windows), so they work with the TUI and CLI as well as the web app, and one
+session never notifies twice.
+
+Turn them on in `web.json` (`agents.notifications`) or with
+`POST /api/settings/agents` (see [development](development.md#agent-hosts)):
+
+```json
+"agents": { "notifications": { "enabled": true, "needs_input": true, "turn_complete": true } }
+```
+
+`enabled` is the master switch. `needs_input` (default on) notifies when the
+agent waits for a permission, question or plan. `turn_complete` (default on)
+notifies when a turn finishes or fails. The toggles only matter while `enabled`
+is on. A holder reads the setting when it starts, so a change applies to sessions
+started afterwards.
+
+A notification names the session, the provider, the reason and, for a permission
+prompt, the tool (`Bonsai: fix login needs input`, body `claude (permission:
+Bash)`). It never includes prompts, tool input or output. Starting a session,
+interrupting a turn, your own keystrokes and a session ending do not notify, and
+a session sends at most one notification of each type every 2 seconds.
+
+### Activity status limits
+
+The status comes from provider hooks, so it is a best-effort signal:
+
+- A tool that finishes while another tool waits for permission can show the
+  session as working until the next hook arrives. Pressing a key in the terminal
+  corrects it.
+- Hooks are ordered by the time each hook process started. After the system clock
+  steps backwards (common on WSL2 and after a VM resume), a hook from that moment
+  can be ignored, and the status then lags until the next one.
+- Codex sessions use the `-c tui.notification*` overrides described above even
+  when your profile's `config.toml` sets those keys; only your own launch args
+  win.
+- Hook commands are quoted for POSIX shells. On Windows the status may stay
+  "Running" if the agent runs hooks through a different shell.
+
 ## Profile defaults
 
 Each profile keeps its launch defaults: the model plus Codex `permissions` and
 `effort`, Claude `permission_mode` and `effort`, or Antigravity `effort` and
 `full_access`. The web start dialog opens on them and can change them for one
-launch; set them for good on the profile's **Defaults** tab in the Agents tab or
-with `account set`. A launch option still wins over them, and defaults only apply
+launch; set them for good on the profile's **Defaults** tab in the Agents tab (or
+the Accounts workspace of the [redesign preview](tui-cli.md#accounts-in-the-preview))
+or with `account set`. A launch option still wins over them, and defaults only apply
 to sessions started afterwards.
 
 ```sh

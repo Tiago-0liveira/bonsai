@@ -2,6 +2,7 @@ package agenthost
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,6 +17,9 @@ const coalesceDelay = 100 * time.Millisecond
 // rescanInterval is a variable so tests can shorten it.
 var rescanInterval = 5 * time.Second
 
+// newFSWatcher is a variable so tests can make file events unavailable.
+var newFSWatcher = fsnotify.NewWatcher
+
 // Watch signals whenever the records under p may have changed: a session
 // started, changed state or was removed. Signals are coalesced and never
 // block, so a slow reader sees at most one pending signal and must List again.
@@ -23,14 +27,14 @@ var rescanInterval = 5 * time.Second
 //
 // A holder that dies without rewriting its record only releases its lock,
 // which file events cannot see, so a periodic rescan compares each record's
-// state and liveness too. If file events are unavailable (for example the
-// inotify limit is reached) the rescan alone drives the signals.
+// state, activity and liveness too. If file events are unavailable (for
+// example the inotify limit is reached) the rescan alone drives the signals.
 func Watch(ctx context.Context, p Paths) (<-chan struct{}, error) {
 	if err := p.ensure(); err != nil {
 		return nil, err
 	}
 	var events <-chan fsnotify.Event
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := newFSWatcher()
 	if err == nil {
 		if err = watcher.Add(p.Records); err != nil {
 			_ = watcher.Close()
@@ -89,7 +93,8 @@ func Watch(ctx context.Context, p Paths) (<-chan struct{}, error) {
 }
 
 // fingerprint summarizes what a session list shows: which records exist and
-// their state and liveness.
+// their state, activity and liveness. Activity detail and age are left out:
+// they change without a transition and never reach disk.
 func fingerprint(p Paths) string {
 	records, _ := List(p)
 	var b strings.Builder
@@ -97,6 +102,9 @@ func fingerprint(p Paths) string {
 		b.WriteString(r.ID)
 		b.WriteByte('|')
 		b.WriteString(r.Summary.State)
+		if a := r.Summary.Activity; a != nil {
+			fmt.Fprintf(&b, "|%s/%s/%t", a.State, a.Reason, a.Stalled)
+		}
 		if r.Alive {
 			b.WriteString("|1\n")
 		} else {

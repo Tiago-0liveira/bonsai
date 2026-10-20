@@ -18,7 +18,7 @@ test('real API and PTY: profile launch, input, reload, stop and retained output'
   await dialog.getByRole('button', { name: 'Start agent', exact: true }).click()
   const session = await (await startResponse).json()
   await expect(page.locator('.xterm')).toBeVisible()
-  await expect(page.locator('.runtime-tile')).toContainText('running · connected')
+  await expect(page.locator('.runtime-tile')).toContainText('Running · connected')
   await page.locator('.xterm-helper-textarea').pressSequentially('browser-input')
   await page.locator('.xterm-helper-textarea').press('Enter')
   await expect(page.locator('.xterm-screen')).toContainText('REPLY:browser-input')
@@ -26,17 +26,17 @@ test('real API and PTY: profile launch, input, reload, stop and retained output'
   await expect(page.locator('.xterm')).toHaveCount(0)
   await page.getByRole('button', { name: 'Open runtime', exact: true }).click()
   await page.getByRole('option', { name: /Fixture/ }).click()
-  await expect(page.locator('.runtime-tile')).toContainText('running · connected')
+  await expect(page.locator('.runtime-tile')).toContainText('Running · connected')
   await expect(page.locator('.xterm-screen')).toContainText('REPLY:browser-input')
   await page.setViewportSize({ width: 1250, height: 850 })
   await page.reload()
 
   await expect(page.getByTestId(`rf__node-${session.id}`)).toBeVisible()
   await page.getByTestId(`rf__node-${session.id}`).click()
-  await expect(page.locator('.runtime-tile')).toContainText('running · connected')
+  await expect(page.locator('.runtime-tile')).toContainText('Running · connected')
   await expect(page.locator('.xterm-screen')).toContainText('REPLY:browser-input')
   await page.getByRole('button', { name: 'Stop agent', exact: true }).first().click()
-  await expect(page.locator('.runtime-tile')).toContainText('exited')
+  await expect(page.locator('.runtime-tile')).toContainText('Exited')
 })
 
 test('real API and PTY: two concurrent sessions of one Claude profile, reload and stop one', async ({ page }) => {
@@ -91,9 +91,9 @@ test('real API and PTY: two concurrent sessions of one Claude profile, reload an
   await expect(tile('alpha').locator('.xterm-screen')).toContainText('REPLY:to-alpha')
 
   await tile('alpha').getByRole('button', { name: 'Stop agent', exact: true }).click()
-  await expect(tile('alpha')).toContainText('exited')
+  await expect(tile('alpha')).toContainText('Exited')
   await page.getByTestId(`rf__node-${second}`).click()
-  await expect(tile('beta')).toContainText('running · connected')
+  await expect(tile('beta')).toContainText('Running · connected')
   await type('beta', 'still-alive')
   await expect(tile('beta').locator('.xterm-screen')).toContainText('REPLY:still-alive')
 })
@@ -149,7 +149,7 @@ test('real API and PTY: two Codex profiles with two sessions each beside a Claud
   expect(new Set(Object.values(sessions)).size).toBe(names.length)
   for (const name of names) {
     await expect(tile(name).locator('.xterm-screen')).toContainText('READY')
-    await expect(tile(name)).toContainText('running · connected')
+    await expect(tile(name)).toContainText('Running · connected')
   }
   for (const name of names) await type(name, `to-${name}`)
   for (const name of names) {
@@ -164,15 +164,15 @@ test('real API and PTY: two Codex profiles with two sessions each beside a Claud
   for (const id of Object.values(sessions)) await expect(page.getByTestId(`rf__node-${id}`)).toBeVisible()
   for (const [name, id] of Object.entries(sessions)) {
     await page.getByTestId(`rf__node-${id}`).click()
-    await expect(tile(name)).toContainText('running · connected')
+    await expect(tile(name)).toContainText('Running · connected')
     await expect(tile(name).locator('.xterm-screen')).toContainText(`REPLY:to-${name}`)
   }
 
   await tile('cx-personal-1').getByRole('button', { name: 'Stop agent', exact: true }).click()
-  await expect(tile('cx-personal-1')).toContainText('exited')
+  await expect(tile('cx-personal-1')).toContainText('Exited')
   for (const name of names.filter(item => item !== 'cx-personal-1')) {
     await page.getByTestId(`rf__node-${sessions[name as keyof typeof sessions]}`).click()
-    await expect(tile(name)).toContainText('running · connected')
+    await expect(tile(name)).toContainText('Running · connected')
     await type(name, 'still-alive')
     await expect(tile(name).locator('.xterm-screen')).toContainText('REPLY:still-alive')
   }
