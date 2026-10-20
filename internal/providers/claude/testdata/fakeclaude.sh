@@ -6,6 +6,10 @@
 #   FAKE_CLAUDE_LOGIN_FAIL  1 = `auth login` exits 1
 #   FAKE_CLAUDE_LOGOUT_FAIL 1 = `auth logout` exits 1
 #   FAKE_CLAUDE_LOG         file the auth subcommands append a call line to
+#   FAKE_CLAUDE_CAPTURE     directory a structured call (-p) writes argv, env, stdin, cwd to
+#   FAKE_CLAUDE_REPLY       file whose content a structured call prints
+#   FAKE_CLAUDE_EXIT        exit status of a structured call (default 0)
+#   FAKE_CLAUDE_SPAWN_FIFO  a structured call starts a long sleeper and writes its pid here, then waits
 # Interactive sessions understand `HOOK <Event> <json>`: like Claude Code, they
 # run the hook command found for <Event> in the --settings JSON they were
 # started with, the payload on its stdin. A real SessionStart fires on startup.
@@ -54,6 +58,23 @@ auth)
 		exit 0
 		;;
 	esac
+	;;
+-p)
+	if [ -n "$FAKE_CLAUDE_CAPTURE" ]; then
+		for arg in "$@"; do
+			printf '%s\n' "$arg"
+		done >"$FAKE_CLAUDE_CAPTURE/argv"
+		env >"$FAKE_CLAUDE_CAPTURE/env"
+		pwd >"$FAKE_CLAUDE_CAPTURE/cwd"
+		cat >"$FAKE_CLAUDE_CAPTURE/stdin"
+	fi
+	if [ -n "$FAKE_CLAUDE_SPAWN_FIFO" ]; then
+		sleep 300 &
+		echo $! >"$FAKE_CLAUDE_SPAWN_FIFO"
+		wait
+	fi
+	[ -n "$FAKE_CLAUDE_REPLY" ] && cat "$FAKE_CLAUDE_REPLY"
+	exit "${FAKE_CLAUDE_EXIT:-0}"
 	;;
 setup-token)
 	echo "sk-ant-oat01-FAKEFAKEFAKEFAKEFAKEFAKEFAKE"

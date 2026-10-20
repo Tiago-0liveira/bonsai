@@ -66,6 +66,7 @@ func (a *accounts) List(ctx context.Context) ([]agentsapi.Account, error) {
 		if p, err := a.rt.Registry.Get(acct.Provider); err == nil {
 			item.ConcurrentSameAccount = p.Capabilities().ConcurrentSameAccount
 			item.ReadOnly = agents.ReadOnlyOf(p)
+			item.Structured = agents.StructuredOf(p)
 		}
 		out = append(out, item)
 	}

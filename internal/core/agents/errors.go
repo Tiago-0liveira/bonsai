@@ -22,6 +22,12 @@ var (
 	// ErrReadOnlyUnsupported means a read-only launch was asked of a provider whose
 	// CLI cannot enforce it. The launch is refused; it never runs unrestricted.
 	ErrReadOnlyUnsupported = errors.New("provider cannot enforce read-only access")
+	// ErrStructuredUnsupported means a structured call was asked of a provider
+	// that cannot run it tool-free. The call is refused before any process starts.
+	ErrStructuredUnsupported = errors.New("provider cannot run tool-free structured calls")
+	// ErrStructuredOutput means the provider's reply was missing, too large or not
+	// the requested JSON object. The message never carries the reply.
+	ErrStructuredOutput = errors.New("provider returned an unusable structured reply")
 )
 
 // AccountInUseError lists the active sessions that keep an account from being

@@ -26,13 +26,9 @@ func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRe
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return agents.PreparedSession{}, fmt.Errorf("claude profile %q has no config directory; remove and add it again", req.Account.Name)
 	}
-	var token string
-	if settings.AuthMode == AuthToken {
-		file, err := readToken(tokenPath(p.accounts, req.Account))
-		if err != nil {
-			return agents.PreparedSession{}, fmt.Errorf("%w: token for profile %q is missing or unreadable", agents.ErrNotAuthenticated, req.Account.Name)
-		}
-		token = file.Token
+	token, err := p.profileToken(settings, req.Account)
+	if err != nil {
+		return agents.PreparedSession{}, err
 	}
 	if req.Launch.ReadOnly && len(req.Args) > 0 {
 		// Explicit args could re-add a tool or a permission mode after the
@@ -55,6 +51,18 @@ func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRe
 		EnvUnsetPrefixes:  scrubPrefixes,
 		ProviderSessionID: providerSessionID,
 	}, nil
+}
+
+// profileToken is the stored token of a token-mode profile, empty otherwise.
+func (p *Provider) profileToken(settings Settings, account agents.Account) (string, error) {
+	if settings.AuthMode != AuthToken {
+		return "", nil
+	}
+	file, err := readToken(tokenPath(p.accounts, account))
+	if err != nil {
+		return "", fmt.Errorf("%w: token for profile %q is missing or unreadable", agents.ErrNotAuthenticated, account.Name)
+	}
+	return file.Token, nil
 }
 
 // FinalizeSession has nothing to do: sessions share the profile's config dir and

@@ -343,6 +343,32 @@ publish it, and the attempt record (still free of prompts and terminal output)
 supplies the specification and the inspected base. Reviewing or rejecting a plan never
 starts a session; the next read-only run needs its own **Request AI plan**.
 
+## Tool-free structured calls
+
+[AI draft assistance](garden.md#elaborate-a-draft-with-ai) uses the optional
+`agents.StructuredRunner` capability for one-shot JSON responses. Claude Code is
+the only supported provider. Its exact invocation, built in
+[`structured.go`](../internal/providers/claude/structured.go), is:
+
+```text
+claude -p --output-format json --json-schema <schema> --tools "" --restricted --strict-mcp-config --safe-mode --no-session-persistence --permission-prompts none [--model M] [--effort E] --system-prompt <fixed>
+```
+
+Model and effort are included when the request or profile selects them. The call
+uses a fresh, empty temporary working directory under the account's `structured`
+directory, removed on return, with the usual isolated profile environment and
+unchanged `HOME`. No repository files are read. User-derived input goes **only on
+stdin**, as `Input (JSON):` followed by one JSON object; argv contains the fixed
+system prompt, schema and validated options. Tools are disabled, and
+`--no-session-persistence` disables transcript persistence. Bonsai keeps no prompt
+or reply log, discards stderr and returns errors without raw provider output.
+An unsupported flag fails the call; permissions are never widened to retry it.
+
+Codex and Antigravity do not implement this capability: Bonsai has no verified
+tool-free structured mode for either. A Codex read-only shell sandbox still
+permits file reads; Antigravity's plan mode and terminal restrictions do not
+remove its tools. Neither meets this call's no-repository-reading boundary.
+
 ## Profile defaults
 
 Each profile keeps its launch defaults: the model plus Codex `permissions` and

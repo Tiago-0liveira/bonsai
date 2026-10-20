@@ -3,6 +3,7 @@ package claude
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,24 +25,68 @@ const (
 	logoutTimeout    = 10 * time.Second
 )
 
+// RunOptions are the extras of CommandRunner.Run.
+type RunOptions struct {
+	// Stdin is written to the process's standard input. Nil means no input.
+	Stdin []byte
+	// MaxStdout kills the process once it writes more than this many bytes and
+	// fails with errOutputTooLarge. Zero means no cap.
+	MaxStdout int64
+}
+
+// errOutputTooLarge reports a run killed for exceeding RunOptions.MaxStdout.
+var errOutputTooLarge = errors.New("command output exceeded the cap")
+
 // CommandRunner runs a short, non-interactive claude command and returns its
 // standard output. A non-zero exit still returns the output with the error.
+// The whole process group dies when ctx ends.
 type CommandRunner interface {
 	Output(context.Context, agents.PreparedSession) ([]byte, error)
+	Run(context.Context, agents.PreparedSession, RunOptions) ([]byte, error)
 }
 
 type execRunner struct{}
 
-func (execRunner) Output(ctx context.Context, prepared agents.PreparedSession) ([]byte, error) {
+func (r execRunner) Output(ctx context.Context, prepared agents.PreparedSession) ([]byte, error) {
+	return r.Run(ctx, prepared, RunOptions{})
+}
+
+func (execRunner) Run(ctx context.Context, prepared agents.PreparedSession, opts RunOptions) ([]byte, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, prepared.Executable, prepared.Args...)
 	cmd.Dir = prepared.Dir
 	cmd.Env = prepared.Environment(os.Environ())
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
+	stdout := &capWriter{max: opts.MaxStdout, cancel: cancel}
+	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
+	if opts.Stdin != nil {
+		cmd.Stdin = bytes.NewReader(opts.Stdin)
+	}
+	isolate(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
-	return stdout.Bytes(), err
+	if stdout.exceeded {
+		return nil, errOutputTooLarge
+	}
+	return stdout.buf.Bytes(), err
+}
+
+// capWriter buffers output and cancels the run when it passes max.
+type capWriter struct {
+	buf      bytes.Buffer
+	max      int64
+	exceeded bool
+	cancel   context.CancelFunc
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if w.max > 0 && int64(w.buf.Len()+len(p)) > w.max {
+		w.exceeded = true
+		w.cancel()
+		return 0, errOutputTooLarge
+	}
+	return w.buf.Write(p)
 }
 
 // statusTimeout bounds `claude auth status`; a variable so tests can shorten it.
@@ -200,4 +245,5 @@ var (
 	_ agents.SetupSchema          = (*Provider)(nil)
 	_ agents.AccountAuthenticator = (*Provider)(nil)
 	_ agents.ActivityReporter     = (*Provider)(nil)
+	_ agents.StructuredRunner     = (*Provider)(nil)
 )
