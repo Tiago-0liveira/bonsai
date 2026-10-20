@@ -221,6 +221,9 @@ const (
 	docOpen    docThen = iota // open the editor
 	docCompare                // open the comparison against the editor's text
 	docReload                 // replace a clean editor's text
+	docAssist                 // make sure an editor exists, then open AI elaboration
+	docApply                  // make sure an editor exists, then apply the review's decisions
+	docIdea                   // the Issue a new idea just became: re-key its editor and preview the first save
 )
 
 type (
@@ -320,6 +323,15 @@ func (m Model) onGardenDocument(msg gardenDocumentMsg) (Model, tea.Cmd) {
 	doc := msg.view
 	key := m.editKeyFor(garden.IssueID(doc.IssueID))
 	e := d.editors[key]
+	if doc.Conflict != nil && msg.then == docAssist {
+		return m.assistNotice("This specification has competing heads. Resolve them in the editor before asking AI to elaborate it."), nil
+	}
+	if doc.Conflict != nil && msg.then == docApply {
+		if s := m.garden.assist.sessions[key]; s != nil {
+			s.notice = "This specification now has competing heads. Nothing was applied; resolve them in the editor first."
+		}
+		return m, nil
+	}
 	if doc.Conflict != nil {
 		// Several heads already exist: there is nothing to edit until they are resolved.
 		yours := ""
@@ -340,6 +352,30 @@ func (m Model) onGardenDocument(msg gardenDocumentMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.gardenOpenConflict(compareConflict(e, doc), e.content(), doc.Number, doc.Title, ""), nil
+	case docAssist:
+		if e == nil {
+			e = newEditorDoc(key, doc)
+			if d.editors == nil {
+				d.editors = map[editKey]*editorDoc{}
+			}
+			d.editors[key] = e
+		}
+		return m.gardenAssistOpen(key, false, doc.Number, doc.Title, doc.Type)
+	case docApply:
+		s := m.garden.assist.sessions[key]
+		if s == nil {
+			return m, nil
+		}
+		if e == nil {
+			e = newEditorDoc(key, doc)
+			if d.editors == nil {
+				d.editors = map[editKey]*editorDoc{}
+			}
+			d.editors[key] = e
+		}
+		return m.assistContinue(s, e, s.after, s.afterFeedback)
+	case docIdea:
+		return m.gardenIdeaRekey(doc)
 	}
 	if e == nil {
 		e = newEditorDoc(key, doc)
@@ -408,6 +444,11 @@ func (m Model) onGardenSavePreview(msg gardenSavePreviewMsg) (Model, tea.Cmd) {
 		n, t := d.openNumberTitle()
 		return m.gardenOpenConflict(*v.Conflict, yours, n, t, "The remote side changed again. Compare again before publishing."), nil
 	}
+	if d.idea.active && d.idea.issue != 0 && v.IssueID == uint64(d.idea.issue) && !v.BodyChanged && !msg.resolve {
+		// The Issue was created a moment ago and nothing else touched it: the second write needs no second question.
+		d.savePreview, d.saveView = &v, nil
+		return m.gardenRunSave(v, false)
+	}
 	d.savePreview, d.saveView, d.stage, d.btn = &v, nil, draftsSave, 0
 	m.shellFocus = shellBody
 	return m, nil
@@ -456,6 +497,9 @@ func (m Model) onGardenSave(msg gardenSaveMsg) (Model, tea.Cmd) {
 		d.saveView = &v
 		return m, nil
 	}
+	if d.idea.active && d.savePreview != nil && d.edit != nil && !msg.resolve && d.edit.key.issue == d.idea.issue {
+		return m.gardenIdeaDone()
+	}
 	// Done: the editor's base moves to the revision just written and its text stays as typed.
 	d.notice = fmt.Sprintf("Saved revision %s.", shortHash(v.Hash))
 	if d.savePreview != nil && d.edit != nil && !msg.resolve {
@@ -472,6 +516,7 @@ func (m Model) onGardenSave(msg gardenSaveMsg) (Model, tea.Cmd) {
 		e.ta.SetValue(e.secs[e.cur].text)
 		textareaTop(&e.ta)
 		e.remote, e.notice = nil, d.notice
+		m.garden.assist.discard(e.key) // a saved draft ends its assistant session
 		d.stage = draftsEditor
 		m.shellFocus = shellInput
 		d.savePreview, d.saveView = nil, nil
@@ -480,6 +525,11 @@ func (m Model) onGardenSave(msg gardenSaveMsg) (Model, tea.Cmd) {
 	// A resolution replaces whatever was being edited for this Issue.
 	if d.conflict != nil {
 		delete(d.editors, m.editKeyFor(d.conflict.issue))
+		m.garden.assist.discard(m.editKeyFor(d.conflict.issue))
+		if d.idea.active && d.conflict.issue == d.idea.issue {
+			d.selectAfter = d.idea.issue
+			d.idea = ideaSave{}
+		}
 		d.opened = d.conflict.issue
 	}
 	d.edit, d.conflict, d.savePreview, d.saveView = nil, nil, nil, nil
@@ -567,9 +617,19 @@ func (m Model) gardenEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			e.discard = false
 		case "enter":
+			if e.btn == 1 && (e.key.issue == 0 || e.key.issue == d.idea.issue) && d.idea.op != "" {
+				// The Capture may already have created the Issue: discarding now would lose the specification.
+				e.discard = false
+				e.notice = "The Issue is being created. Discard after it finishes."
+				return m, nil
+			}
 			if e.btn == 1 {
 				delete(d.editors, e.key)
+				m.garden.assist.discard(e.key)
 				d.edit, d.stage = nil, draftsDetail
+				if e.key.issue == 0 || e.key.issue == d.idea.issue {
+					d.idea, d.stage = ideaSave{}, draftsList
+				}
 				m.shellFocus = shellBody
 				return m, nil
 			}
@@ -641,6 +701,8 @@ func (m Model) gardenEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		e.gotoMatch(e.mi - 1)
 	case "?":
 		e.help = true
+	case "i":
+		return m.gardenAssistExisting(e.key.issue)
 	case "c":
 		if e.remote != nil {
 			if e.dirty() {
@@ -657,6 +719,9 @@ func (m Model) gardenSaveEditor() (tea.Model, tea.Cmd) {
 	if ok, why := m.canEdit(); !ok {
 		e.notice = why
 		return m, nil
+	}
+	if e.key.issue == 0 {
+		return m.gardenIdeaSave(e)
 	}
 	if !e.dirty() {
 		e.notice = "There is nothing to save: the specification is unchanged."

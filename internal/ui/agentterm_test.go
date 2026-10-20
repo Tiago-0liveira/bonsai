@@ -23,7 +23,7 @@ func runCmds(cmd tea.Cmd) []tea.Msg {
 	if cmd == nil {
 		return nil
 	}
-	if name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name(); strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") {
+	if name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name(); strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") || strings.Contains(name, "assistTickCmd") {
 		return nil
 	}
 	switch msg := cmd().(type) {

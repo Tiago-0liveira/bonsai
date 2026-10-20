@@ -63,6 +63,8 @@ type Deps struct {
 	Plans    *plan.Store
 	Checkout plan.Inspector
 	Agents   plan.Agents
+	// Assist runs tool-free calls without a writer or a persistent session.
+	Assist agentsapi.Assist
 	// NewID returns a fresh random token for operation IDs and idempotency keys.
 	NewID func() string
 }
@@ -84,6 +86,7 @@ type Backend struct {
 	approvals      *approve.Service // built on first use
 	planner        *plan.Service    // built on first use
 	reviews        *planrev.Service // built on first use
+	assistFlights  map[string]struct{}
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)
@@ -155,6 +158,7 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 	}
 	if o.agents != nil {
 		deps.Agents = plannerAgents{api: *o.agents, dir: repoDir}
+		deps.Assist = o.agents.Assist
 	}
 	return newBackend(repoDir, deps)
 }

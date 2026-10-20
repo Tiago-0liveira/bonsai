@@ -98,6 +98,15 @@ type Backend struct {
 	// retry reused the same operation ID.
 	Captured []gardenapi.CapturePreview
 
+	// Assist replies and errors are scripted before use, like the other views.
+	AssistQuestionsView gardenapi.AssistQuestionsView
+	AssistQuestionsErr  error
+	AssistDraftView     gardenapi.AssistDraftView
+	AssistDraftErr      error
+	// AssistQuestionsRequests and AssistDraftRequests record every attempted call.
+	AssistQuestionsRequests []gardenapi.AssistQuestionsRequest
+	AssistDraftRequests     []gardenapi.AssistDraftRequest
+
 	attempts []plan.Attempt
 
 	mu    sync.Mutex

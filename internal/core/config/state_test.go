@@ -62,14 +62,14 @@ func TestStateOldFileLoadsWithDefaults(t *testing.T) {
 		t.Fatalf("lost data: %+v", st)
 	}
 	pr := st.PrefsSnapshot()
-	if pr.Contrast != "" || pr.Density != "" || pr.StartWorkspace != "" || pr.NoWorkspaceMemory || st.Workspaces != nil {
+	if pr.Contrast != "" || pr.Density != "" || pr.StartWorkspace != "" || pr.NoWorkspaceMemory || pr.GardenAssist != nil || st.Workspaces != nil {
 		t.Fatalf("new defaults not zero: %+v", pr)
 	}
 	if err := st.Save(); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(p)
-	for _, k := range []string{"contrast", "density", "start_workspace", "no_workspace_memory", "workspaces"} {
+	for _, k := range []string{"contrast", "density", "start_workspace", "no_workspace_memory", "garden_assist", "workspaces"} {
 		if strings.Contains(string(b), k) {
 			t.Errorf("omitempty violated for %s: %s", k, b)
 		}
@@ -168,7 +168,7 @@ func TestUnknownKeysSurvive(t *testing.T) {
 			t.Errorf("known data dropped: %s", b)
 		}
 	}
-	if err := st.PersistPrefs(1, Prefs{Theme: "new", Density: "compact"}); err != nil {
+	if err := st.PersistPrefs(1, Prefs{Theme: "new", Density: "compact", GardenAssist: &GardenAssistPrefs{Account: "c1", Questions: 7}}); err != nil {
 		t.Fatal(err)
 	}
 	check()
@@ -335,5 +335,44 @@ func TestGardenViewPersistenceScopeOrderingAndSanitization(t *testing.T) {
 		if strings.Contains(string(data), value) {
 			t.Fatal("content persisted")
 		}
+	}
+}
+
+func TestGardenAssistPrefsRoundTripAndClone(t *testing.T) {
+	stateEnv(t)
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := GardenAssistPrefs{Account: "claude-work", Model: "opus", Effort: "high", Questions: 7, Guidance: "focus on UX"}
+	p := Prefs{GardenAssist: &want}
+	clone := p.Clone()
+	clone.GardenAssist.Model = "sonnet"
+	if p.GardenAssist.Model != "opus" {
+		t.Fatal("Clone shared AI defaults")
+	}
+	if err := st.PersistPrefs(1, p); err != nil {
+		t.Fatal(err)
+	}
+	p.GardenAssist.Account = "mutated"
+	snap := st.PrefsSnapshot()
+	snap.GardenAssist.Questions = 2
+	re, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := GardenAssistPrefs{Account: "claude-work", Model: "opus", Effort: "high", Questions: 7, Guidance: "focus on UX"}
+	if got := *re.PrefsSnapshot().GardenAssist; got != expected {
+		t.Fatalf("disk defaults = %+v", got)
+	}
+	if got := *st.PrefsSnapshot().GardenAssist; got != expected {
+		t.Fatalf("snapshot shared defaults: %+v", got)
+	}
+	data, err := json.Marshal(Prefs{GardenAssist: &GardenAssistPrefs{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"garden_assist":{}}` {
+		t.Fatalf("omitempty = %s", data)
 	}
 }

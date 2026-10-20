@@ -79,6 +79,7 @@ type gardenState struct {
 	drafts  gardenDraftsState
 	planner gardenPlannerState
 	planrev gardenPlanState
+	assist  gardenAssistState // AI draft elaboration: its own request track, see gardenassist.go
 	api     gardenapi.Backend // nil when Garden is unavailable
 
 	// seq numbers requests: a reply carrying any other value was superseded or

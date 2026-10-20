@@ -49,10 +49,28 @@ type Prefs struct {
 	// NoWorkspaceMemory stops remembering the last workspace per repo. Inverted
 	// so that the zero value keeps the default (remember).
 	NoWorkspaceMemory bool `json:"no_workspace_memory,omitempty"`
+	// GardenAssist overrides AI drafting options; nil inherits built-in defaults.
+	GardenAssist *GardenAssistPrefs `json:"garden_assist,omitempty"`
 }
 
-// Clone returns a copy that shares no map with p.
+// GardenAssistPrefs holds personal AI drafting defaults.
+// Empty Account asks each time; empty Model and Effort inherit the account
+// profile default, then provider default. Session choices override these defaults.
+// Questions 0 means 5. Guidance is at most 300 runes; empty means none.
+type GardenAssistPrefs struct {
+	Account   string `json:"account,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
+	Questions int    `json:"questions,omitempty"`
+	Guidance  string `json:"guidance,omitempty"`
+}
+
+// Clone returns a copy that shares no mutable data with p.
 func (p Prefs) Clone() Prefs {
+	if p.GardenAssist != nil {
+		assist := *p.GardenAssist
+		p.GardenAssist = &assist
+	}
 	if p.Keys != nil {
 		keys := make(map[string]string, len(p.Keys))
 		for k, v := range p.Keys {

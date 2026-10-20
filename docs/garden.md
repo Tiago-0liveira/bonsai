@@ -125,8 +125,8 @@ Overview reads the canonical issue body. Specification and Plans read verified
 comment revisions, with comment IDs, hashes and source-spec fingerprints. Questions
 reads a `Questions` or `Open questions` Markdown section from the issue body;
 absence is stated explicitly. Execution reports canonical stage and the absence
-of a local execution projection. Specification/plan approval and question
-authoring are unavailable until the planning steps of plan 08; local launch is unavailable until plan 09. Specifications are
+of a local execution projection. Draft question authoring is available through
+[AI draft assistance](#elaborate-a-draft-with-ai); local launch is unavailable until plan 09. Specifications are
 approved from Drafts, not from this document ([gate one](#validate-a-specification-gate-one)). Press `p` in an opened
 Issue for its [read-only planner](#request-an-ai-plan-read-only-planner), a separate explicit local action.
 Selecting, opening, searching and refreshing never mutate workflow or launch work.
@@ -199,6 +199,100 @@ Rejections (validation, permission, rate limit) are definite: nothing was
 created and Retry is safe. The text you typed survives errors, resizing and
 leaving the workspace until you create or explicitly discard it (`esc` on a
 non-empty form asks first). It is kept in memory only.
+
+### Elaborate a draft with AI
+
+AI assistance is optional and currently supports **Claude Code only**. It needs a
+connected Garden with Write access and a signed-in, supported agent account. See
+[tool-free structured calls](agents.md#tool-free-structured-calls) for provider
+isolation and why Codex and Antigravity are unavailable.
+
+For a **new idea**, press `i` on the Drafts list and describe the problem or desired
+outcome in your own words; no title is needed yet. Choose the session options,
+ask questions (`ctrl+s`), answer them, then request a draft (`ctrl+s` from Questions).
+You can also draft directly from Setup with `ctrl+d`. Review the proposal, press
+`e` to apply your choices and open the specification editor, edit as needed, then
+use its normal `ctrl+s` save. The capture form prefills an editable suggested title
+and type and your original description. One **Create and save** confirmation covers
+two writes: create the Draft Issue, then append its first specification revision.
+An unknown capture outcome uses [Reconcile](#capture); a changed remote stops at
+the ordinary save preview or conflict screens. The Issue stays Draft.
+
+For an **existing draft**, press `i` in its detail document or on the specification
+editor's section rail (`esc` leaves the text area for the rail). The assistant
+uses the editor's current specification, including unsaved edits. Applying a
+proposal changes that editor in memory; `ctrl+s` then uses the ordinary save
+preview and conflict handling. The existing Issue's title and type are unchanged.
+
+| Screen / focus | Keys |
+| --- | --- |
+| Setup | `tab` / `shift+tab` cycle description (new ideas), Options and buttons; `enter` / `o` on Options opens them; `ctrl+s` asks questions; `ctrl+d` drafts without questions; `esc` returns, keeping the session |
+| Session options | `tab` / `shift+tab` move between fields; `↑` / `↓` or `k` / `j` select an account; `enter` moves to model/effort; `←` / `→` cycle their values, or `enter` opens a list (`↑` / `↓` select, `enter` / `tab` commit, `esc` cancels); on Questions, `←` / `→` (also `h` / `l`, `-` / `+`) change the count; type Guidance; `esc` outside a list closes options, keeping choices; `ctrl+s` asks, `ctrl+d` drafts |
+| Questions rail | `↑` / `↓` or `k` / `j` select a question; `enter`, `→` or `l` open its answer panel; `m` asks more questions; `ctrl+s` drafts; `esc` returns, keeping the session |
+| Answer panel | Three zones, rail, options and text: `tab` / `shift+tab` cycle them; `pgdown` / `pgup` select the next / previous question from any zone; `ctrl+up` / `ctrl+down` scroll a long question; `ctrl+s` drafts; `esc` steps back one zone |
+| Answer panel options | `↑` / `↓` move; `space` or `enter` select; `1`–`9` select that row. Selecting moves focus to the text field, except for Skip |
+| Answer panel text | Type freely. Digits are text, and `q` never quits |
+| Review | `↑` / `↓` select a section; `a` accepts its proposal; `k` keeps your text; `A` accepts eligible sections; `e` applies choices and opens the editor; `r` opens feedback (`enter` applies choices and requests refinement, `esc` cancels feedback); `m` applies choices and asks more questions; `esc` returns to Questions or Setup without applying choices |
+| Setup outside description / Questions rail | `p` reopens the last proposal, when one exists |
+| Setup outside description / Questions rail / Review outside feedback | `R` retries a failed request with the same inputs and a new request ID |
+
+Text fields own printable keys, including `q`; `ctrl+k` and `ctrl+u` keep their
+textarea editing behavior. The options are the suggestions, then **Write my own
+answer**, **I don't know** and **Skip for now**. A suggestion is a choice and may carry
+optional notes; Write my own is your own answer. Switching between them keeps the
+typed text, so nothing is lost. A question without suggestions opens on the text field.
+Question markers in the rail show a choice `●` (`●+` with notes), your own answer `✎`,
+I don't know `?`, skipped `-` and unanswered `·` (ASCII `o`, `o+`, `w`, `?`, `-`, `.`).
+Other rounds collapse
+to headers, but question navigation still reaches every round. The assistant may
+ask fewer questions or none; a session allows at most 30 questions.
+
+Review shows a collapsed unified comparison per section: `=` means current and
+proposed text match, `~` a proposed change, and `!` a section you edited since the
+request. Unedited, changed sections default to accepting the proposal. Sections
+edited meanwhile, or proposals that would empty a written section, default to
+keeping your text. `A` skips both of those cases; only an explicit `a` accepts
+them. Choosing `a`, `k` or `A` records decisions; `e`, submitting `r` feedback or
+`m` applies them to the in-memory editor. Refinement and further questions send
+that working draft and all earlier answers. Nothing is saved until the normal save.
+
+Review lists draft suggestions in a `? Suggestions N` row. `↑` / `↓` move through
+them and `space` confirms or unconfirms one. Only confirmed suggestions are saved, as
+normal items in their section; unconfirmed ones are discarded when decisions apply.
+Unconfirmed suggestions never block [gate one](#validate-a-specification-gate-one).
+
+Skipped, “I don't know” and unanswered questions are carried into **Open questions**
+and keep gate one blocked. The draft may also add at most 3 new open questions; extras
+are dropped. When it adds any, review shows how many and `o` opens an answer round for
+the unresolved open questions (at most 10, built locally, with no AI call). Answer them
+there, then request a draft; or resolve them deliberately in the editor. Extra
+specification sections are preserved, and assistant notes are shown without being saved.
+
+Before the first request, Setup names the chosen provider/account and discloses
+that your description, answers and draft go to it. Each request includes the
+repository name, existing Issue number/title/type when applicable,
+your new-idea description, working specification (including Extra sections),
+questions and answer states/text, prompt guidance and refinement feedback.
+Existing Issue bodies are not separately sent. **No repository files are read**;
+the provider runs without tools in an empty temporary working directory. Fixed
+instructions and the response schema are separate from your text, which travels
+as JSON on stdin.
+
+Assistant sessions live **only in memory**: navigation, resize and ordinary
+refresh keep them; saving or discarding removes them; quitting Bonsai loses them.
+A changed Garden connection invalidates the old session. While a request runs,
+`esc` on Setup, the Questions rail or Review opens cancellation confirmation:
+`enter` / `y` cancels, `l` leaves the screen with the request running, and `esc`
+keeps waiting. Leave answer editing or feedback first to reach that confirmation.
+Cancellation keeps your text; late replies cannot apply. On Unix it kills the
+process group; Windows currently kills only the direct process. Errors keep
+answers and offer explicit `R` retry; there are no automatic retries. Only one
+AI request runs at a time in the TUI.
+
+Personal defaults are under **Settings → Garden → AI drafting**; session options
+override them without saving preferences. See the
+[settings guide](tui-cli.md#settings-in-the-preview) for account/model/effort,
+question count, guidance and Restore defaults.
 
 ### Validate a specification (gate one)
 

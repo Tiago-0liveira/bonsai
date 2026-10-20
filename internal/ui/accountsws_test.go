@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +76,9 @@ func drainAll(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
 		queue = queue[1:]
 		if c == nil {
 			continue
+		}
+		if strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "assistTickCmd") {
+			continue // the assist elapsed-seconds tick sleeps; tests deliver ticks themselves
 		}
 		done := make(chan tea.Msg, 1)
 		go func() { done <- c() }()

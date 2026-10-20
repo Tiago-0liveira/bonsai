@@ -107,6 +107,7 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	m.workspace = ws
 	m.shellFocus = shellNav
 	m.set.editing, m.set.capturing = false, false
+	m.set.assistOpen = false
 	var cmds []tea.Cmd
 	if ws == wsAccounts && m.acct.present && !m.acct.started {
 		m.acct.started = true
@@ -237,6 +238,8 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case modals.KindConfigConfirm:
 			return m.confirmRepoWrite()
+		case modals.KindGardenAssistRestore:
+			return m.editPrefs(func(p *config.Prefs) { p.GardenAssist = nil })
 		}
 		return m, nil
 	case settingsSavedMsg:
@@ -262,6 +265,8 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.shellKey(msg)
 	}
 	m, forwarded := m.gardenPlannerForward(msg)
+	m, assistFwd := m.gardenAssistForward(msg)
+	forwarded = tea.Batch(forwarded, assistFwd)
 	if handled, nm, cmd := m.gardenMsg(msg); handled {
 		return nm, tea.Batch(forwarded, cmd)
 	}

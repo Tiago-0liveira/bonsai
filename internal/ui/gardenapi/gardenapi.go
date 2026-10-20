@@ -15,6 +15,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/assist"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
@@ -68,6 +69,10 @@ type Backend interface {
 	// verified specification revisions and the base an edit starts from. It
 	// only reads.
 	Document(ctx context.Context, issue uint64) (DocumentView, error)
+	// AssistQuestions reads no GitHub, writes nothing and keeps no record.
+	AssistQuestions(ctx context.Context, req AssistQuestionsRequest) (AssistQuestionsView, error)
+	// AssistDraft reads no GitHub, writes nothing and keeps no record.
+	AssistDraft(ctx context.Context, req AssistDraftRequest) (AssistDraftView, error)
 	// PreviewSave verifies the revision log now and reports what saving would
 	// append, or the Conflict in the way. It writes nothing and needs Write
 	// access.
@@ -506,6 +511,18 @@ const (
 	CodeCaptureUnknown Code = "capture-unknown"
 	// CodeInvalidInput means the request failed validation; nothing was sent.
 	CodeInvalidInput Code = "invalid-input"
+	// CodeAssistUnsupported means tool-free structured assistance is unavailable.
+	CodeAssistUnsupported Code = "assist-unsupported"
+	// CodeAssistTimeout means the assistant did not answer before its deadline.
+	CodeAssistTimeout Code = "assist-timeout"
+	// CodeAssistMalformed means the assistant's reply failed validation.
+	CodeAssistMalformed Code = "assist-malformed"
+	// CodeAssistTooLarge means the proposed draft exceeds the specification limit.
+	CodeAssistTooLarge Code = "assist-too-large"
+	// CodeAssistBusy means this request ID is already in flight.
+	CodeAssistBusy Code = "assist-busy"
+	// CodeAgentAuthRequired means the coding-agent account needs sign-in.
+	CodeAgentAuthRequired Code = "agent-auth-required"
 	// CodeNotConnected means there is no Garden to write to.
 	CodeNotConnected Code = "not-connected"
 	CodeSkipped      Code = "skipped"
@@ -612,6 +629,51 @@ type DocumentView struct {
 	// Conflict is set when several heads already exist: there is nothing to edit
 	// until they are resolved.
 	Conflict *ConflictView
+}
+
+// AssistSettings selects the account and preferences for one tool-free call.
+type AssistSettings struct {
+	AccountID     agents.AccountID
+	Model, Effort string
+	Questions     int
+	Guidance      string
+}
+
+// AssistContext carries the caller's working copy; the backend never loads an Issue.
+type AssistContext struct {
+	Stamp
+	RequestID          string
+	IssueID            uint64
+	Number             int64
+	Title              string
+	Type               garden.ItemType
+	Description, Draft string
+	Answers            []assist.Answer
+	Settings           AssistSettings
+}
+
+type AssistQuestionsRequest struct {
+	AssistContext
+	Round int
+}
+
+type AssistDraftRequest struct {
+	AssistContext
+	Feedback string
+}
+
+type AssistQuestionsView struct {
+	Stamp
+	RequestID       string
+	Round           int
+	Set             assist.QuestionSet
+	Provider, Model string
+}
+
+type AssistDraftView struct {
+	Stamp
+	RequestID, InputHash string
+	Proposal             assist.Proposal
 }
 
 // ConflictView is a divergence the user resolves visibly (Base, Yours, Remote, Result).

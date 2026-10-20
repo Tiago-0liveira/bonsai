@@ -670,7 +670,7 @@ func fieldByID(t *testing.T, id string) (settingField, bool) {
 func TestSettingsScopeChipAndFooter(t *testing.T) {
 	e := newSettingsEnv(t)
 	m := openSettings(t, e.model(t, 120, 35), catGeneral, 0, 0)
-	cases := map[int]string{catGeneral: "Scope: Mixed", catAppearance: "Scope: This machine", catGarden: "Scope: Repository", catAgents: "Scope: This machine"}
+	cases := map[int]string{catGeneral: "Scope: Mixed", catAppearance: "Scope: This machine", catGarden: "Scope: Mixed", catAgents: "Scope: This machine"}
 	for cat, want := range cases {
 		m.set.cat, m.set.sec = cat, 0
 		view := ansi.Strip(m.View())

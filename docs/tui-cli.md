@@ -327,7 +327,9 @@ validates its specification: a preview of the exact revision and fingerprint, th
 an explicit confirmation records one verified approval and moves the same Issue
 from Drafts to Approved work. It needs Write access and starts no agent, worktree or
 pull request. See the [Garden guide](garden.md#drafts) and
-[gate one](garden.md#validate-a-specification-gate-one).
+[gate one](garden.md#validate-a-specification-gate-one). AI-assisted questions are
+answered in a per-question panel (choose, write, don't know or skip); see
+[AI draft assistance](garden.md#elaborate-a-draft-with-ai).
 
 In an opened Approved Issue, `p` opens its read-only planner. It verifies the
 approved specification and inspects the checkout, and an explicit **Request AI plan**
@@ -376,9 +378,17 @@ a text edit, `esc` cancels only that edit.
 - **Appearance**: theme, surface contrast (layered or flat), icons (unicode or
   ASCII), density.
 - **Keys**: one section per keymap group, plus the fixed Terminal row `ctrl+]`.
-- **Garden** and **Agents**: the existing repository base ref. Agents also has
-  "Account defaults", which opens the Accounts workspace on Defaults. Other rows
-  show "Unavailable" with the plan that adds them and have no controls.
+- **Garden**: repository base ref, setup status, and **AI drafting** personal defaults.
+  Assistant opens the account/model/effort dialog; choose **Save defaults** or
+  **Cancel**. Empty model and effort inherit the account profile, then provider
+  defaults. A missing or unsupported saved account shows "missing: choose again"
+  and requires an explicit new choice. Questions per round accepts 1–10 (default
+  5); Prompt guidance accepts up to 300 runes, with empty meaning none. Built-in
+  question quality, evidence and output rules remain fixed. Restore defaults asks
+  for confirmation and clears only AI drafting preferences. Session options
+  override these defaults for that session and never save them.
+- **Agents**: "Account defaults" opens the Accounts workspace on Defaults. Other
+  unavailable Garden and Agents rows explain which feature will add them.
 
 Scope and precedence: personal preferences live in
 `~/.config/bonsai/state.json` and apply on this machine. They override the
@@ -389,7 +399,7 @@ keeps its comments. Personal changes autosave in order. A failed save restores t
 last saved state and shows the error. Unknown fields in `state.json` are kept.
 
 Settings adds these `state.json` fields: `prefs.contrast`, `prefs.density`,
-`prefs.start_workspace`, `prefs.no_workspace_memory` and a per-repository
+`prefs.start_workspace`, `prefs.no_workspace_memory`, `prefs.garden_assist` and a per-repository
 `workspaces` map keyed by the canonical local repository path (symlinks resolved).
 
 The startup workspace is the first of: the explicit startup workspace, the

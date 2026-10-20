@@ -62,6 +62,9 @@ func (m Model) gardenDraftsHead(width int) []string {
 	case d.query.Text != "":
 		feedback = "Search: " + boardSafe(d.query.Text)
 	}
+	if g := m.garden.assist; g.sessions[m.editKeyFor(0)] != nil {
+		feedback, fg = "AI idea in progress. Press i to resume it.", p.Warning
+	}
 	if len(d.pending) > 0 {
 		feedback, fg = fmt.Sprintf("%d capture%s may already exist on GitHub. Press r to reconcile.", len(d.pending), plural(len(d.pending))), p.Warning
 	}
@@ -105,6 +108,8 @@ func (m Model) gsDrafts(width, rows int) []string {
 		return m.gsValidate(width, rows)
 	case draftsConflict:
 		return m.gsConflict(width, rows)
+	case draftsAssist:
+		return m.gsAssist(width, rows)
 	}
 	return m.gsDraftList(width, rows)
 }
@@ -350,12 +355,16 @@ func (m Model) gardenDraftActions(width int) string {
 	if ok, _ := m.canEdit(); !ok {
 		edit = seg(p.Dim, p.Raised, false).Render(" e Edit specification (unavailable) ")
 	}
+	ai := seg(p.Warning, p.Raised, true).Render(" i Elaborate with AI ")
+	if ok, _ := m.canEdit(); !ok {
+		ai = seg(p.Dim, p.Raised, false).Render(" i Elaborate with AI (unavailable) ")
+	}
 	validate := seg(p.Warning, p.Raised, true).Render(" v Validate specification ")
 	if ok, _ := m.canValidate(); !ok {
 		validate = seg(p.Dim, p.Raised, false).Render(" v Validate specification (unavailable) ")
 	}
 	gap := seg("", p.Background, false).Render("  ")
-	line := seg("", p.Background, false).Render(" ") + edit + gap + validate
+	line := seg("", p.Background, false).Render(" ") + edit + gap + ai + gap + validate
 	return shellRow(width, p.Background, line, "")
 }
 
@@ -462,15 +471,22 @@ func (m Model) gsCapturePreview(width, rows int) []string {
 		gField(width, 14, "Labels", grun{strings.Join(pv.Labels, "  "), p.Muted, false}),
 	}
 	var action string
+	create := "Create Draft Issue"
+	if d.idea.active {
+		create = "Create and save"
+		if n := ideaSections(d, m); n > 0 {
+			facts = append(facts, gField(width, 14, "Then", grun{fmt.Sprintf("append the first specification revision (%d section%s with text)", n, plural(n)), p.Text, false}))
+		}
+	}
 	switch g.busy {
 	case busyCapture:
 		action = gText(width, p.Warning, true, "Creating the Issue… keys are ignored until GitHub answers.")
 	default:
-		action = gButtons(width, "                    ", gButton("Back to edit", d.btn == 0), gButton("Create Draft Issue", d.btn == 1))
+		action = gButtons(width, "                    ", gButton("Back to edit", d.btn == 0), gButton(create, d.btn == 1))
 	}
 	blocks := blocksWithNotices(m, width,
 		gblock{lines: []string{gText(width, p.Warning, true, "✎ REVIEW BEFORE CREATING")}},
-		gblock{prio: 1, lines: gWrap(width, p.Text, false, "Creates one GitHub Issue in "+orDefault(pv.Target.FullName, "the repository")+" at Draft.\nNothing is approved, planned or started.")},
+		gblock{prio: 1, lines: gWrap(width, p.Text, false, "Creates one GitHub Issue in "+orDefault(pv.Target.FullName, "the repository")+" at Draft"+map[bool]string{true: ", then saves your specification as its first revision (two writes, one confirmation)", false: ""}[d.idea.active]+".\nNothing is approved, planned or started.")},
 		gSpaced(2, width, facts),
 		gblock{lines: []string{action}},
 		gblock{prio: 3, lines: []string{gText(width, p.Muted, false, "If GitHub does not answer, Bonsai checks before it ever creates this again.")}},

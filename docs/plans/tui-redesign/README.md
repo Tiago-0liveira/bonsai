@@ -37,6 +37,8 @@ starting the next numbered plan. Do not implement later phases opportunistically
 | 06 | [Garden table](06-garden-table.md) | Selectable rows over the same approved-work collection | 05 | Implemented (06.1/06.2) |
 | 07 | [Garden drafts](07-garden-drafts.md) | Separate idea inbox, capture, edits and explicit import | 06 | Not started |
 | 08 | [Specifications and plans](08-garden-approval-and-planning.md) | Both revision-bound approvals and local read-only planning | 07 | Not started |
+| 08b | [AI draft elaboration](08b-garden-draft-assist.md) | Questions, answers and a reviewed AI-proposed draft before gate one | 08 | Implemented (pending manual provider fixture) |
+| 08c | [Assist answer UX](08c-garden-assist-answers.md) | Choose-or-write answers with notes; suggestions and AI open questions stop blocking falsely | 08b | Not started |
 | 09 | [Local implementation launch](09-garden-local-launch.md) | Explicit, isolated, recoverable task execution | 08 | Not started |
 | 10 | [Playground](10-playground.md) | Repository session cockpit, terminal, changes and review | 09 | Not started |
 | 11 | [Worktrees](11-worktrees.md) | Existing Git/process functionality in the redesigned workspace | 10 | Not started |

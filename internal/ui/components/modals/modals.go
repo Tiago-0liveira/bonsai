@@ -74,6 +74,8 @@ const (
 	KindConfigValue   Kind = "config_value"   // final value for a config setting
 	KindConfigConfirm Kind = "config_confirm" // confirm removal of a config entry
 
+	KindGardenAssistRestore Kind = "garden_assist_restore"
+
 	KindPrefEditor Kind = "pref_editor" // personal "open editor" override (state.json)
 
 	// Scrollable read-only diff of a single file.

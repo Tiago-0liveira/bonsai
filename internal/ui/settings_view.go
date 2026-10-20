@@ -72,6 +72,9 @@ func (m Model) settingsSubmenu(width int) []string {
 
 // settingsBody renders exactly rows lines of exactly width cells.
 func (m Model) settingsBody(width, rows int) []string {
+	if m.set.assistOpen {
+		return m.gsAssistOptions(&assistSession{opts: m.set.assist}, width, rows)
+	}
 	p := theme.Current
 	cat := m.curCategory()
 	title := seg(p.Text, p.Background, true).Render(" ⚙ " + strings.ToUpper(cat.name))

@@ -62,8 +62,10 @@ func (b *Backend) target(ctx context.Context, write bool) (connect.Target, conne
 	if t.GardenID != a.GardenID {
 		return connect.Target{}, connect.GitHubIdentity{}, apiError(ErrRemoteChanged)
 	}
-	if write && t.Repository.Access < connect.AccessWrite {
-		return connect.Target{}, connect.GitHubIdentity{}, &gardenapi.Error{Code: gardenapi.CodeReadOnly, Message: "Changing ideas needs Write access to " + t.FullName + ".", Next: "Ask a maintainer for Write access."}
+	if write {
+		if err := requireWriteAccess(t.Repository.Access, t.FullName); err != nil {
+			return connect.Target{}, connect.GitHubIdentity{}, err
+		}
 	}
 	if t.Repository.Access < connect.AccessRead {
 		return connect.Target{}, connect.GitHubIdentity{}, apiError(connect.ErrPermissionDenied)
@@ -76,6 +78,13 @@ func (b *Backend) target(ctx context.Context, write bool) (connect.Target, conne
 		return connect.Target{}, connect.GitHubIdentity{}, apiError(connect.ErrAuthRequired)
 	}
 	return t, id, nil
+}
+
+func requireWriteAccess(access connect.Access, fullName string) error {
+	if access < connect.AccessWrite {
+		return &gardenapi.Error{Code: gardenapi.CodeReadOnly, Message: "Changing ideas needs Write access to " + fullName + ".", Next: "Ask a maintainer for Write access."}
+	}
+	return nil
 }
 
 // PreviewCapture implements gardenapi.Backend.

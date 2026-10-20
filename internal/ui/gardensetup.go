@@ -149,14 +149,16 @@ func (m Model) openGarden() (Model, tea.Cmd) {
 // gardenWarm reads the state for Settings when nothing has been read yet, so
 // the Garden category never has to guess. It reuses the one status flow.
 func (m Model) gardenWarm() (Model, tea.Cmd) {
+	m, assistCmd := m.settingsAssistWarm()
 	g := m.garden
 	if g.api == nil || g.hasStatus || g.busy != busyNone || g.err != nil {
-		return m, nil
+		return m, assistCmd
 	}
 	if m.workspace != wsSettings || m.curCategory().id != "garden" {
-		return m, nil
+		return m, assistCmd
 	}
-	return m.gardenLoadStatus()
+	m, cmd := m.gardenLoadStatus()
+	return m, tea.Batch(assistCmd, cmd)
 }
 
 // gardenMsg handles the replies of the Garden calls. handled is false for any
@@ -165,6 +167,8 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 	switch msg := msg.(type) {
 	case gardenWorkMsg:
 		nm, cmd = m.onGardenWork(msg)
+	case assistQuestionsMsg, assistDraftMsg, assistTickMsg:
+		return m.gardenAssistMsg(msg)
 	case gardenCapturePreviewMsg:
 		nm, cmd = m.onGardenCapturePreview(msg)
 	case gardenCaptureMsg:
@@ -248,6 +252,8 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 	prev, had := g.status, g.hasStatus
 	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
 		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
+		// A flight and an open assistant belong to the old connection; its sessions stay in memory, inactive.
+		g.assist.release()
 		// An unfinished idea outlives the change; its preview and results belong to the old Garden.
 		g.drafts = gardenDraftsState{form: g.drafts.form, formOpen: g.drafts.formOpen, editors: g.drafts.editors}
 		// A planner belongs to the Issue of the old Garden; its session keeps running, only the view goes.

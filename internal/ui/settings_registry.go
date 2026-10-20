@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/assist"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
@@ -477,6 +479,7 @@ func gardenSections() []settingSection {
 					return v.LastSync.Local().Format("2006-01-02 15:04")
 				}),
 		}},
+		gardenAssistSection(),
 	}
 }
 
@@ -500,4 +503,70 @@ func agentSections() []settingSection {
 			unavailable("issue_setup", "Prepare agents from issues", "Unavailable — Garden issues (plan 07)"),
 		}},
 	}
+}
+
+func gardenAssistSection() settingSection {
+	var choices []settingChoice
+	for n := 1; n <= assist.MaxQuestions; n++ {
+		v := strconv.Itoa(n)
+		choices = append(choices, settingChoice{v, v})
+	}
+	return settingSection{id: "assist", name: "AI drafting", fields: []settingField{
+		{
+			id: "assist_account", label: "Assistant", scope: scopeMachine, kind: kindLink,
+			help:    "Default account, model and effort for new AI drafting sessions. Empty model and effort inherit the account profile defaults.",
+			display: func(m Model) string { return m.assistDefaultsSummary() },
+			origin: func(m Model) string {
+				p := m.work.GardenAssist
+				return personalOrDefault(p != nil && (p.Account != "" || p.Model != "" || p.Effort != ""))
+			},
+			open: func(m Model) (Model, tea.Cmd) { return m.openAssistDefaults() },
+		},
+		{
+			id: "assist_questions", label: "Questions per round", scope: scopeMachine, kind: kindChoice,
+			help: "How many questions to ask per round (1–10). Default: 5.", choices: choices,
+			get: func(m Model) string { return strconv.Itoa(m.assistDefaults().Questions) },
+			set: func(p *config.Prefs, v string) { gardenAssistPrefs(p).Questions, _ = strconv.Atoi(v) },
+			origin: func(m Model) string {
+				return personalOrDefault(m.work.GardenAssist != nil && m.work.GardenAssist.Questions != 0)
+			},
+		},
+		{
+			id: "assist_guidance", label: "Prompt guidance", scope: scopeMachine, kind: kindText,
+			help: "Small preferences such as 'focus on UX' or 'challenge scope'. Built-in rules and output format cannot be changed here.",
+			get: func(m Model) string {
+				if p := m.work.GardenAssist; p != nil {
+					return p.Guidance
+				}
+				return ""
+			},
+			display: func(m Model) string {
+				if p := m.work.GardenAssist; p != nil && p.Guidance != "" {
+					return p.Guidance
+				}
+				return "none"
+			},
+			set: func(p *config.Prefs, v string) { gardenAssistPrefs(p).Guidance = assist.SanitizeGuidance(v) },
+			validate: func(v string) error {
+				if utf8.RuneCountInString(v) > assist.MaxGuidanceRunes {
+					return errors.New("prompt guidance must be at most 300 runes")
+				}
+				return nil
+			},
+			origin: func(m Model) string {
+				return personalOrDefault(m.work.GardenAssist != nil && m.work.GardenAssist.Guidance != "")
+			},
+		},
+		{
+			id: "assist_rules", label: "Built-in rules", scope: scopeNone, kind: kindReadonly,
+			display: func(Model) string { return "Question quality, evidence and output rules are fixed in Bonsai." },
+			origin:  func(Model) string { return "fixed" },
+		},
+		{
+			id: "assist_restore", label: "Restore defaults", scope: scopeMachine, kind: kindLink,
+			help:    "Clear all personal AI drafting defaults after confirmation.",
+			display: func(Model) string { return "Restore defaults ›" },
+			open:    func(m Model) (Model, tea.Cmd) { return m.confirmAssistRestore() },
+		},
+	}}
 }

@@ -31,6 +31,7 @@ const (
 	draftsSave     // the preview of the revision a save or resolution appends
 	draftsConflict // Base / Yours / Remote / Result
 	draftsValidate // gate one: the preview and result of validating a specification
+	draftsAssist   // AI elaboration: setup, questions and the proposal (gardenassist.go)
 )
 
 // captureTypes are the type choices in the order the form offers them.
@@ -131,6 +132,9 @@ type gardenDraftsState struct {
 	validate  *gardenapi.ValidatePreviewView
 	validated *gardenapi.ValidateView
 
+	// idea is the save of an AI-drafted new idea in progress: Capture, then the first specification revision.
+	idea ideaSave
+
 	form     captureForm
 	formOpen bool // unfinished text exists, shown or not
 	preview  *gardenapi.CapturePreview
@@ -224,7 +228,7 @@ func (m Model) gardenTyping() bool {
 		return false
 	}
 	d := m.garden.drafts
-	return d.searching || d.stage == draftsForm || d.stage == draftsEditor || (d.stage == draftsConflict && d.conflict != nil && d.conflict.editing)
+	return d.searching || d.stage == draftsForm || d.stage == draftsEditor || d.stage == draftsAssist || (d.stage == draftsConflict && d.conflict != nil && d.conflict.editing)
 }
 
 func (m Model) gardenDraftsCapacity() int { return gardenTableCapacity(m.gardenBoardRows()) }
@@ -279,6 +283,9 @@ func (m Model) gardenPreviewCapture(req gardenapi.CaptureRequest) (Model, tea.Cm
 // gardenRunCapture creates the previewed Issue. It is never cancelled: the
 // backend's operation record decides what a retry may do.
 func (m Model) gardenRunCapture(p gardenapi.CapturePreview) (Model, tea.Cmd) {
+	if m.garden.drafts.idea.active {
+		m.garden.drafts.idea.op = p.OperationID
+	}
 	_, seq := m.garden.begin(busyCapture)
 	api := m.garden.api
 	return m, func() tea.Msg {
@@ -364,6 +371,9 @@ func (m Model) onGardenCapture(msg gardenCaptureMsg) (Model, tea.Cmd) {
 	switch v.State {
 	case gardenapi.CaptureDone:
 		d.untrackPending(v.OperationID)
+		if d.idea.active && d.idea.issue == 0 && d.idea.op == v.OperationID && v.Issue != nil {
+			return m.gardenIdeaCaptured(v)
+		}
 		if v.Issue != nil {
 			d.selectAfter = garden.IssueID(v.Issue.ID)
 			d.notice = fmt.Sprintf("Created #%d as a Draft.", v.Issue.Number)
@@ -429,6 +439,8 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenConflictKey(msg)
 	case draftsValidate:
 		return m.gardenValidateKey(msg)
+	case draftsAssist:
+		return m.gardenAssistKey(msg)
 	}
 	if key.Matches(msg, m.keys.Refresh) {
 		return m.gardenLoadWork()
@@ -463,6 +475,8 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.reselect(g.board.snapshot)
 	case "n":
 		return m.gardenNewCapture()
+	case "i":
+		return m.gardenAssistNew()
 	case "r":
 		if len(d.pending) > 0 {
 			return m.gardenReconcile(d.pending[0].OperationID)
@@ -530,6 +544,9 @@ func (m Model) gardenFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k {
 	case "esc":
 		g.err = nil
+		if d.idea.active {
+			return m.gardenIdeaBack(), nil
+		}
 		if !f.dirty() {
 			d.closeCapture()
 			m.shellFocus = shellBody
@@ -676,6 +693,8 @@ func (m Model) gardenDraftDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenLoadDocument(d.opened, docOpen)
 	case "v":
 		return m.gardenStartValidate()
+	case "i":
+		return m.gardenAssistExisting(d.opened)
 	}
 	m.gardenClampDraftDocument()
 	return m, nil
@@ -745,6 +764,9 @@ func (m Model) gardenDraftsCrumbs() []string {
 			if d.savePreview != nil {
 				n = d.savePreview.Number
 			}
+			if n == 0 {
+				return []string{"Garden", "Drafts", "New idea", "Specification"}
+			}
 			last := "Specification"
 			if d.stage == draftsSave {
 				last = "Review revision"
@@ -757,6 +779,8 @@ func (m Model) gardenDraftsCrumbs() []string {
 		if d.validate != nil {
 			return []string{"Garden", "Drafts", fmt.Sprintf("#%d", d.validate.Number), "Validate specification"}
 		}
+	case draftsAssist:
+		return m.gardenAssistCrumbs()
 	case draftsForm:
 		return []string{"Garden", "Drafts", "Capture a draft"}
 	case draftsPreview:
@@ -775,7 +799,11 @@ func (m Model) gardenDraftsIdentity() string {
 	case draftsEditor, draftsSave:
 		if n, t := d.openNumberTitle(); n != 0 {
 			return fmt.Sprintf("#%d  %s", n, boardTitle(t))
+		} else if d.edit != nil && d.edit.key.issue == 0 {
+			return "New idea  " + boardTitle(t)
 		}
+	case draftsAssist:
+		return m.gardenAssistIdentity()
 	case draftsConflict:
 		return "Remote edit conflict"
 	case draftsValidate:
@@ -807,6 +835,8 @@ func (m Model) gardenDraftsFocusLabel() string {
 		return "Submenu / Remote edit conflict"
 	case draftsValidate:
 		return "Submenu / Validate specification"
+	case draftsAssist:
+		return m.gardenAssistFocusLabel()
 	}
 	return "Draft inbox"
 }
@@ -819,6 +849,8 @@ func (m Model) gardenDraftsHints() []shellHint {
 		return []shellHint{{"esc", "cancel"}}
 	}
 	switch d.stage {
+	case draftsAssist:
+		return m.gardenAssistHints()
 	case draftsEditor:
 		e := d.edit
 		switch {
@@ -830,7 +862,7 @@ func (m Model) gardenDraftsHints() []shellHint {
 		case e.text:
 			return []shellHint{{"ctrl+s", "save"}, {"tab", "sections"}, {"esc", "sections"}}
 		}
-		h := []shellHint{{"↑/↓", "section"}, {"enter", "edit"}, {"/", "search"}, {"n/N", "next/prev"}, {"ctrl+s", "save"}, {"?", "keys"}}
+		h := []shellHint{{"↑/↓", "section"}, {"enter", "edit"}, {"/", "search"}, {"n/N", "next/prev"}, {"ctrl+s", "save"}, {"i", "AI"}, {"?", "keys"}}
 		if e != nil && e.remote != nil {
 			h = append(h, shellHint{"c", "compare"})
 		}
@@ -868,12 +900,12 @@ func (m Model) gardenDraftsHints() []shellHint {
 	case draftsResult:
 		return []shellHint{{"←/→", "button"}, {"enter", "choose"}, {"esc", "back"}}
 	case draftsDetail:
-		return []shellHint{{"esc", "Drafts"}, {"↑/↓", "scroll"}, {"pgup/dn", "page"}, {"e", "edit"}, {"v", "validate"}, refresh}
+		return []shellHint{{"esc", "Drafts"}, {"↑/↓", "scroll"}, {"pgup/dn", "page"}, {"e", "edit"}, {"i", "AI draft"}, {"v", "validate"}, refresh}
 	}
 	if d.searching {
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}
-	h := []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"n", "new draft"}, {"/", "search"}, {"t", "type"}, {"x", "clear"}}
+	h := []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"n", "new draft"}, {"i", "new with AI"}, {"/", "search"}, {"t", "type"}, {"x", "clear"}}
 	if len(d.pending) > 0 {
 		h = append(h, shellHint{"r", "reconcile"})
 	}

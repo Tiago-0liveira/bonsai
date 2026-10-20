@@ -49,6 +49,7 @@ var editorHelp = []string{
 	"  enter or right   type in the section",
 	"  /                search the whole document",
 	"  n / N            next / previous match",
+	"  i                elaborate with AI",
 	"  c                compare or reload after a remote edit",
 	"  ctrl+s           review and save a revision",
 	"  esc              leave (asks first when there are changes)",
@@ -73,7 +74,11 @@ func (m Model) gsEditor(width, rows int) []string {
 	blank := blankRow(width, p.Background)
 
 	out := make([]string, 0, rows)
-	out = append(out, gText(width, p.Warning, true, fmt.Sprintf("‹ #%d %s · Specification (Esc)", e.number, boardTitle(e.title))))
+	head := fmt.Sprintf("#%d %s", e.number, boardTitle(e.title))
+	if e.key.issue == 0 {
+		head = "New idea " + boardTitle(e.title)
+	}
+	out = append(out, gText(width, p.Warning, true, "‹ "+head+" · Specification (Esc)"))
 	state := "saved"
 	if e.dirty() {
 		state = "modified"
@@ -154,7 +159,11 @@ func (m Model) gsEditor(width, rows int) []string {
 	case e.notice != "":
 		out = append(out, gText(width, p.Warning, false, e.notice))
 	default:
-		out = append(out, gText(width, p.Muted, false, "Saving appends a revision comment. Body, title and labels are never changed."))
+		note := "Saving appends a revision comment. Body, title and labels are never changed."
+		if e.key.issue == 0 {
+			note = "Ctrl+S creates the Issue at Draft, then saves this as its first specification revision."
+		}
+		out = append(out, gText(width, p.Muted, false, note))
 	}
 	for len(out) < rows {
 		out = append(out, blank)

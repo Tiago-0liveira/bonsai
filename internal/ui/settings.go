@@ -36,6 +36,8 @@ type settingsState struct {
 	input            textinput.Model
 	editErr, saveErr string
 	pending          *repoWrite
+	assist           *assistOptions
+	assistOpen       bool
 	// inflight counts persists not yet answered; pendingRollback means the
 	// newest one failed and the rollback waits for the older ones to land, so
 	// disk and UI cannot end up disagreeing.
@@ -68,6 +70,9 @@ func (m Model) curField() (settingField, bool) {
 
 // settingsHints are the keys that work at the current level.
 func (m Model) settingsHints() []shellHint {
+	if m.set.assistOpen {
+		return []shellHint{{"tab", "next"}, {"ctrl+s", "save defaults"}, {"esc", "cancel"}}
+	}
 	tab := m.keys.Tab.Help().Key
 	switch m.set.level {
 	case levelCategory:
@@ -91,6 +96,9 @@ func (m Model) settingsHints() []shellHint {
 
 // settingsKey handles a key while the Settings body owns the keyboard.
 func (m Model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.set.assistOpen {
+		return m.settingsAssistKey(msg)
+	}
 	if m.set.capturing {
 		return m.captureKey(msg)
 	}
@@ -224,6 +232,10 @@ func (m Model) beginEdit(f settingField) Model {
 	in := textinput.New()
 	in.Prompt = ""
 	in.CharLimit = 200
+	if f.id == "assist_guidance" {
+		// Let validation explain overlong pasted guidance instead of silently truncating it.
+		in.CharLimit = 0
+	}
 	in.SetValue(f.get(m))
 	in.CursorEnd()
 	// The shell routes no blink ticks to the field, so a static cursor is the
@@ -466,4 +478,98 @@ func (m Model) mergedKeyOverridesWithout(action string) map[string]string {
 		delete(out, action)
 	}
 	return out
+}
+
+// gardenAssistPrefs allocates the optional defaults only when a preference is edited.
+func gardenAssistPrefs(p *config.Prefs) *config.GardenAssistPrefs {
+	if p.GardenAssist == nil {
+		p.GardenAssist = &config.GardenAssistPrefs{}
+	}
+	return p.GardenAssist
+}
+
+// settingsAssistWarm reads accounts through commands so the Assistant row can name its saved account.
+func (m Model) settingsAssistWarm() (Model, tea.Cmd) {
+	if m.workspace != wsSettings || m.curCategory().id != "garden" || m.set.assist != nil ||
+		m.work.GardenAssist == nil || m.work.GardenAssist.Account == "" || m.agents.api.Accounts == nil {
+		return m, nil
+	}
+	m.set.assist = newAssistOptions(m.agents.api.Accounts, m.agents.usage, m.agentGlyphsASCII(), m.assistDefaults())
+	m.set.assist.defaultsMode = true
+	return m, m.set.assist.Init()
+}
+
+func (m Model) openAssistDefaults() (Model, tea.Cmd) {
+	if m.agents.api.Accounts == nil {
+		m.status = "Agent accounts are unavailable here"
+		return m, nil
+	}
+	m.set.assist = newAssistOptions(m.agents.api.Accounts, m.agents.usage, m.agentGlyphsASCII(), m.assistDefaults())
+	m.set.assist.defaultsMode = true
+	m.set.assistOpen = true
+	m.shellFocus = shellInput
+	return m, m.set.assist.Init()
+}
+
+func (m Model) settingsAssistKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	o := m.set.assist
+	cmd, done := o.key(msg)
+	if !done {
+		return m, cmd
+	}
+	if o.submit {
+		o.submit = false
+		a, ok := o.Current()
+		switch {
+		case !ok:
+			o.notice = "Choose an account first."
+		case !assistSupported(a):
+			o.notice = "Choose a signed-in account that supports structured calls."
+		case !o.formLoaded:
+			o.notice = "Model and effort options must load before saving."
+		default:
+			values := o.settings()
+			m.set.assistOpen = false
+			m.shellFocus = shellBody
+			return m.editPrefs(func(p *config.Prefs) {
+				def := gardenAssistPrefs(p)
+				def.Account, def.Model, def.Effort = string(values.AccountID), values.Model, values.Effort
+			})
+		}
+		return m, nil
+	}
+	m.set.assistOpen = false
+	m.shellFocus = shellBody
+	return m, cmd
+}
+
+func (m Model) assistDefaultsSummary() string {
+	p := m.work.GardenAssist
+	if p == nil || p.Account == "" {
+		return "ask each time"
+	}
+	o := m.set.assist
+	if m.agents.api.Accounts == nil {
+		return "missing: choose again"
+	}
+	if o == nil || !o.Listed() {
+		return "reading accounts…"
+	}
+	if o.ListErr() != "" {
+		return "accounts unavailable: choose again"
+	}
+	for _, a := range o.Accounts() {
+		if string(a.ID) == p.Account && assistSupported(a) {
+			return boardTitle(a.Name) + " · " + orDefault(p.Model, "profile default") + " · " + orDefault(p.Effort, "profile default")
+		}
+	}
+	return "missing: choose again"
+}
+
+func (m Model) confirmAssistRestore() (Model, tea.Cmd) {
+	modal := modals.NewConfirm(modals.KindGardenAssistRestore, "Restore AI drafting defaults?")
+	modal.SetBody("Clear the saved assistant, questions per round and prompt guidance.")
+	modal.SetSize(m.width, m.height)
+	m.modal = &modal
+	return m, nil
 }
