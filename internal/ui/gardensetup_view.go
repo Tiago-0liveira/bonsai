@@ -1170,30 +1170,6 @@ func (m Model) gsOff(width, rows int) []string {
 	return gCompose(width, rows, blocks, actions)
 }
 
-func (m Model) gsBoard(width, rows int) []string {
-	p := theme.Current
-	st := m.garden.status
-	last := "never"
-	if !st.LastSync.IsZero() {
-		last = st.LastSync.Local().Format("2006-01-02 15:04")
-	}
-	lead := "Setup is finished for this repository."
-	if st.State != gardenapi.StateConnected {
-		lead = "You can read this Garden."
-	}
-	facts := []string{
-		gField(width, 20, "Repository", m.repoRuns(m.gardenTarget())...),
-		gField(width, 20, "Issues", grun{strconv.Itoa(st.IssueCount), p.Text, false}),
-		gField(width, 20, "Last sync", grun{last, p.Muted, false}),
-	}
-	blocks := blocksWithNotices(m, width,
-		gblock{lines: []string{gHead(width, "♧ GARDEN BOARD", "")}},
-		gblock{prio: 2, lines: gWrap(width, p.Text, false, lead+" The Board arrives with plan 05.")},
-		gSpaced(1, width, facts),
-	)
-	return gCompose(width, rows, blocks, nil)
-}
-
 // chrome around the body ------------------------------------------------------
 
 // gardenSubmenu is the breadcrumb, the submenu and a rule. Board, Table and

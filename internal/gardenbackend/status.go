@@ -172,6 +172,9 @@ func (b *Backend) fillSync(v *gardenapi.StatusView, d derived, repo garden.Garde
 	}
 	cs := gardensync.Status(d.view, snap)
 	v.Sync, v.IssueCount, v.LastSync = cs.State, cs.IssueCount, cs.LastSync
+	if snap.Generation > 0 {
+		v.LastSync = snap.SuccessfulAt
+	}
 }
 
 func capabilities(v gardenapi.StatusView, refreshed bool) gardenapi.Capabilities {

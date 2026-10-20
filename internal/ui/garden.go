@@ -35,6 +35,7 @@ type gardenBusy int
 const (
 	busyNone gardenBusy = iota
 	busyStatus
+	busyWork
 	busyCandidates
 	busyProjects
 	busyPlan
@@ -59,7 +60,8 @@ const (
 // api as a tea.Cmd; Update and View never wait on it. Settings reads status
 // from here too, so the two screens can never disagree.
 type gardenState struct {
-	api gardenapi.Backend // nil when Garden is unavailable
+	board gardenBoardState
+	api   gardenapi.Backend // nil when Garden is unavailable
 
 	// seq numbers requests: a reply carrying any other value was superseded or
 	// abandoned, so it is dropped before it can move focus. gate is the second
@@ -161,9 +163,10 @@ var staleReply = &gardenapi.Error{Code: gardenapi.CodeFailed, Message: "Ignored 
 // Replies. Each carries the sequence number of its request.
 type (
 	gardenStatusMsg struct {
-		seq  uint64
-		view gardenapi.StatusView
-		err  error
+		seq        uint64
+		view       gardenapi.StatusView
+		remembered string
+		err        error
 	}
 	gardenCandidatesMsg struct {
 		seq  uint64
@@ -205,9 +208,14 @@ func (m Model) gardenLoadStatus() (Model, tea.Cmd) {
 	}
 	ctx, seq := g.begin(busyStatus)
 	api := g.api
+	st, dir := m.state, m.repoDir
 	return m, func() tea.Msg {
 		v, err := api.Status(ctx)
-		return gardenStatusMsg{seq: seq, view: v, err: err}
+		remembered := ""
+		if st != nil {
+			remembered = st.GardenView(dir)
+		}
+		return gardenStatusMsg{seq: seq, view: v, remembered: remembered, err: err}
 	}
 }
 

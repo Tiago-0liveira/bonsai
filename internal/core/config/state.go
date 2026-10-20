@@ -73,13 +73,16 @@ type State struct {
 	// Workspaces maps a canonical repo identity (see RepoIdentity) to the last
 	// workspace name visited there.
 	Workspaces map[string]string `json:"workspaces,omitempty"`
+	// GardenViews stores only the last Garden subview, scoped like Workspaces.
+	GardenViews map[string]string `json:"garden_views,omitempty"`
 
 	mu   sync.Mutex `json:"-"`
 	path string     `json:"-"`
 
-	// prefsGen and wsGen order async persists so a late older write never wins.
-	prefsGen uint64 `json:"-"`
-	wsGen    uint64 `json:"-"`
+	// Generations keep late async writes from replacing newer preferences or views.
+	prefsGen  uint64 `json:"-"`
+	wsGen     uint64 `json:"-"`
+	gardenGen uint64 `json:"-"`
 	// extra* keep keys this version does not know, so a newer or hand-edited
 	// state.json survives a rewrite.
 	extra      map[string]json.RawMessage `json:"-"`
@@ -89,10 +92,11 @@ type State struct {
 // stateDisk mirrors State's persisted fields without the mutex so snapshots
 // can be built and marshaled without copying a lock.
 type stateDisk struct {
-	CopyCounts map[string]int    `json:"copy_counts"`
-	Aliases    []Alias           `json:"aliases"`
-	Prefs      Prefs             `json:"prefs"`
-	Workspaces map[string]string `json:"workspaces,omitempty"`
+	CopyCounts  map[string]int    `json:"copy_counts"`
+	Aliases     []Alias           `json:"aliases"`
+	Prefs       Prefs             `json:"prefs"`
+	Workspaces  map[string]string `json:"workspaces,omitempty"`
+	GardenViews map[string]string `json:"garden_views,omitempty"`
 }
 
 // jsonKeys lists the JSON object keys of struct type t, derived from tags so
@@ -248,11 +252,11 @@ func (s *State) writeLocked(d stateDisk) error {
 
 // diskLocked snapshots the in-memory fields. Caller holds s.mu.
 func (s *State) diskLocked() stateDisk {
-	return stateDisk{CopyCounts: s.CopyCounts, Aliases: s.Aliases, Prefs: s.Prefs, Workspaces: s.Workspaces}
+	return stateDisk{CopyCounts: s.CopyCounts, Aliases: s.Aliases, Prefs: s.Prefs, Workspaces: s.Workspaces, GardenViews: s.GardenViews}
 }
 
 // Save writes the state to disk atomically. Save, PersistPrefs and
-// PersistLastWorkspace rewrite this process's in-memory state, so another bonsai
+// PersistLastWorkspace/PersistGardenView rewrite this process's in-memory state, so another bonsai
 // process's concurrent alias or copy-count writes can be lost; there is no
 // cross-process lock yet (pre-existing limitation).
 func (s *State) Save() error {
@@ -388,5 +392,38 @@ func (s *State) PersistLastWorkspace(gen uint64, repoDir, name string) error {
 	}
 	s.Workspaces = next
 	s.wsGen = gen
+	return nil
+}
+
+// GardenView remembers presentation only, never issue content or search text.
+func (s *State) GardenView(repoDir string) string {
+	id := RepoIdentity(repoDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.GardenViews[id]
+}
+
+// PersistGardenView follows the same ordered atomic state writes as workspace memory.
+func (s *State) PersistGardenView(gen uint64, repoDir, view string) error {
+	if view != "board" && view != "setup" {
+		return ErrInvalidGardenView
+	}
+	id := RepoIdentity(repoDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen < s.gardenGen {
+		return ErrSuperseded
+	}
+	next := make(map[string]string, len(s.GardenViews)+1)
+	for k, v := range s.GardenViews {
+		next[k] = v
+	}
+	next[id] = view
+	d := s.diskLocked()
+	d.GardenViews = next
+	if err := s.writeLocked(d); err != nil {
+		return fmt.Errorf("persist Garden view: %w", err)
+	}
+	s.GardenViews, s.gardenGen = next, gen
 	return nil
 }

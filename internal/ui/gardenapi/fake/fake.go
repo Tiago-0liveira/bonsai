@@ -7,7 +7,10 @@ package fake
 import (
 	"context"
 	"sync"
+	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
@@ -17,6 +20,8 @@ const Clone = "project-v1-fake-clone"
 // Backend replays scripted views. Fill the exported fields before use; set an
 // error field to make that call fail. Call New to get a usable value.
 type Backend struct {
+	WorkView       gardenapi.WorkView
+	WorkErr        error
 	StatusView     gardenapi.StatusView
 	StatusErr      error
 	CandidatesView gardenapi.CandidatesView
@@ -245,4 +250,25 @@ func (b *Backend) nextGen() uint64 {
 	defer b.mu.Unlock()
 	b.gen++
 	return b.gen
+}
+
+func (b *Backend) Work(ctx context.Context) (gardenapi.WorkView, error) {
+	gen, epoch := b.begin("Work")
+	b.mu.Lock()
+	v, err := b.WorkView, b.WorkErr
+	repo := b.StatusView.Target.RepoID
+	b.mu.Unlock()
+	v.Stamp = stamp(gen, epoch, repo)
+	v.Snapshot.GardenID = garden.GardenID{Repo: garden.RepoID(repo)}
+	v.Snapshot.LocalRepoID = garden.LocalRepoID(Clone)
+	v.Snapshot.Generation, v.Snapshot.Epoch = gen, epoch
+	if v.Snapshot.Source == "" {
+		v.Snapshot.Source = gardensync.SourceLive
+		v.Snapshot.Complete = true
+		v.Snapshot.SuccessfulAt = time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	}
+	if err != nil {
+		return gardenapi.WorkView{}, err
+	}
+	return v, ctx.Err()
 }

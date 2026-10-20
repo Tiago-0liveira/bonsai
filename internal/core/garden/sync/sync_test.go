@@ -344,3 +344,19 @@ func TestIssueWithoutStableIDStaysVisibleAndSnapshotComplete(t *testing.T) {
 		t.Fatalf("valid item affected by bad neighbour: %+v", good)
 	}
 }
+
+func TestIssueDisplayEditsChangeRevision(t *testing.T) {
+	issue := validIssue(10)
+	issue.Number = 161
+	issue.Title = "Before"
+	initial := issueRevision(issue)
+	issue.Title = "After 界 é"
+	if issueRevision(issue) == initial {
+		t.Fatal("title edit did not change revision")
+	}
+	titleRev := issueRevision(issue)
+	issue.Number = 162
+	if issueRevision(issue) == titleRev {
+		t.Fatal("number edit did not change revision")
+	}
+}

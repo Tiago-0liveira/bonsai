@@ -33,7 +33,7 @@ starting the next numbered plan. Do not implement later phases opportunistically
 | 03 | [Accounts](03-accounts.md) | Profiles, usage, defaults and existing account flows | 02 | Not started |
 | 04 | [Garden foundations](04-garden-foundations.md) | Canonical Issue contract, connection/setup and safe reads | 03 | Not started |
 | 04b | [Garden setup wiring](04b-garden-wiring.md) | Backend composition and Garden → Setup ([mockups](../../design/tui-redesign/garden-setup/README.md)) | 04 | Not started |
-| 05 | [Garden board](05-garden-board.md) | Selectable state columns for approved work | 04b | Not started |
+| 05 | [Garden board](05-garden-board.md) | Selectable state columns for approved work | 04b | Partial; three state populations await backend evidence |
 | 06 | [Garden table](06-garden-table.md) | Selectable rows over the same approved-work collection | 05 | Not started |
 | 07 | [Garden drafts](07-garden-drafts.md) | Separate idea inbox, capture, edits and explicit import | 06 | Not started |
 | 08 | [Specifications and plans](08-garden-approval-and-planning.md) | Both revision-bound approvals and local read-only planning | 07 | Not started |

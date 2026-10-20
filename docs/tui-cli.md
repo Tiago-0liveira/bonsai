@@ -242,10 +242,10 @@ It does not touch the agent's terminal output or the status-bar separators.
 An opt-in preview of the redesigned TUI. The shell is a header with the Garden,
 Playground, Worktrees, Accounts and Settings tabs and a footer with the current
 workspace, focus, key hints and status. **Settings**, **Accounts** and **Garden
-setup** have bodies (see [Settings](#settings-in-the-preview),
+setup/board** have bodies (see [Settings](#settings-in-the-preview),
 [Accounts](#accounts-in-the-preview) and [Garden setup](#garden-setup-in-the-preview));
 Playground and Worktrees remain placeholders. Garden reads the GitHub login and
-repository setup state; Accounts loads agent profiles and usage the first time
+repository setup state and verified approved work; Accounts loads agent profiles and usage the first time
 it opens. The last workspace is remembered per repository (see Settings). The default
 stays the current TUI (`--tui-layout legacy`), which keeps its own preferences
 overlay.
@@ -266,9 +266,9 @@ value exits with an error before the TUI starts. The terminal must be at least
 | `tab` / `shift+tab` | Next / previous workspace (the `focus_next` / `focus_prev` bindings) |
 | `alt+1` to `alt+5` | Jump to a workspace (bare digits stay reserved for agent sessions) |
 | `,` | Jump to Settings (the `prefs` binding) |
-| `enter` / `↓` | On the Settings or Accounts tab, enter its body |
+| `enter` / `↓` | On the Garden, Settings or Accounts tab, enter its body |
 | `m` | Open Accounts (the Agents tab's `agent_accounts` binding) |
-| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage" and "Accounts: Defaults" |
+| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage", "Accounts: Defaults", and Garden Board/Search/Refresh entries |
 | `?` | Keys that work in the preview |
 | `q` / `ctrl+c` | Quit (outside the palette and help dialogs; inside them `esc` closes the dialog) |
 
@@ -299,6 +299,21 @@ A `github-graphql` failure means GitHub rejected Bonsai's GraphQL request.
 Update Bonsai and resume; if it persists, report the failing step and error
 code. Raw GitHub error responses and credentials are never displayed or saved.
 Resume rechecks GitHub and keeps completed labels, Projects and fields.
+
+#### Garden board in the preview
+
+A connected Garden opens the approved-work board. Arrow keys select columns and
+cards, Enter opens the read-only issue document, and Escape restores the same card
+and scroll. All nine columns fit at 120/160 columns; at 80 columns the selected
+column stays inside a moving four-column window. Empty columns remain navigable.
+
+Use `/` for scoped title/number search, `t` for type, `p` for priority, `x` to clear
+filters, and `R` to refresh. Failed reads preserve the last good board and show
+stale/offline state plus the last successful sync time. Drafts and unverified
+acceptance never enter the board. Garden remembers its subview per repository.
+Some columns await backend evidence from plans 08/09; selecting or opening never
+changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
+filter semantics, document sections, keys and current limitations.
 
 #### Settings in the preview
 

@@ -500,7 +500,7 @@ func (a *Adapter) issueFromRow(repo core.RepoID, v issueJSON) core.Issue {
 	for _, l := range v.Labels {
 		labels = append(labels, l.Name)
 	}
-	x := core.Issue{Repo: repo, NodeID: v.NodeID, AuthorID: userID(v.User.ID), CreatedAt: v.CreatedAt, Labels: labels, Body: v.Body, Metadata: issueMetadata(v.Body)}
+	x := core.Issue{Repo: repo, Number: v.Number, Title: v.Title, NodeID: v.NodeID, AuthorID: userID(v.User.ID), CreatedAt: v.CreatedAt, Labels: labels, Body: v.Body, Metadata: issueMetadata(v.Body)}
 	if v.ID > 0 && v.Number > 0 {
 		x.ID = core.IssueID(v.ID)
 		a.rememberIssue(repo, x.ID, v.Number)
@@ -567,6 +567,7 @@ func (r *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, c
 type issueJSON struct {
 	ID        int64     `json:"id"`
 	Number    int64     `json:"number"`
+	Title     string    `json:"title"`
 	CreatedAt time.Time `json:"created_at"`
 	NodeID    string    `json:"node_id"`
 	Body      string    `json:"body"`

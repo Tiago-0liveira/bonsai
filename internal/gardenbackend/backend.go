@@ -31,6 +31,7 @@ const authCheckTimeout = 3 * time.Second
 // Deps are the seams of the backend. New fills them from gh and Git; tests
 // fill them with fakes.
 type Deps struct {
+	Issues   garden.IssueReader
 	Remotes  connect.RemoteLister
 	Resolver connect.RepositoryResolver
 	// Ports are the label and Project reads and writes. ViewerLogin is set per call.
@@ -101,6 +102,7 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 		}
 	}
 	return newBackend(repoDir, Deps{
+		Issues:         gh.Reader(),
 		Remotes:        gitRemotes{coregit.RemoteLister{Dir: repoDir}},
 		Resolver:       ghgarden.RepositoryResolver{Adapter: gh},
 		Ports:          connect.SetupPorts{Labels: gh, LabelWrites: gh, Projects: gh, ProjectWrites: gh, OperationProjects: gh},

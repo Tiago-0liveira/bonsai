@@ -27,7 +27,7 @@ const (
 	scrIncomplete                      // GS-06
 	scrReadOnly                        // GS-07
 	scrOff                             // GS-08
-	scrBoard                           // placeholder until plan 05
+	scrBoard                           // accepted-work board and read-only document
 )
 
 func (m Model) gardenScreen() gardenScreen {
@@ -155,6 +155,10 @@ func (m Model) gardenWarm() (Model, tea.Cmd) {
 // other message.
 func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 	switch msg := msg.(type) {
+	case gardenWorkMsg:
+		nm, cmd = m.onGardenWork(msg)
+	case gardenViewSavedMsg:
+		nm = m.gardenBoardSaved(msg)
 	case gardenStatusMsg:
 		nm, cmd = m.onGardenStatus(msg)
 	case gardenCandidatesMsg:
@@ -191,6 +195,9 @@ func (m Model) gardenResetFlow() Model {
 func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) {
 	g := &m.garden
 	prev, had := g.status, g.hasStatus
+	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
+		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
+	}
 	g.status, g.hasStatus = v, true
 	if force || !had || prev.State != v.State || prev.Stamp.Epoch != v.Stamp.Epoch {
 		m = m.gardenResetFlow()
@@ -221,11 +228,30 @@ func (m Model) onGardenStatus(msg gardenStatusMsg) (Model, tea.Cmd) {
 		m.garden.err = fail
 		return m, nil
 	}
+	prior := m.garden.gate.Last()
+	if prior.GardenID != 0 && msg.view.Stamp.GardenID != prior.GardenID && msg.view.Stamp.Epoch == prior.Epoch {
+		m.garden.err = staleReply
+		return m, nil
+	}
 	if !m.garden.gate.Accept(msg.view.Stamp) {
 		m.garden.err = staleReply
 		return m, nil
 	}
-	return m.gardenAdopt(msg.view, false)
+	first := !m.garden.board.memoryLoaded
+	m, cmd := m.gardenAdopt(msg.view, false)
+	if first {
+		m.garden.board.memoryLoaded = true
+		m.garden.board.rememberedView = msg.remembered
+		if msg.remembered == "board" && m.garden.status.Caps.Read {
+			m.garden.sub = subBoard
+		}
+	}
+	if m.gardenScreen() == scrBoard {
+		var load tea.Cmd
+		m, load = m.gardenLoadWork()
+		return m, tea.Batch(cmd, load)
+	}
+	return m, cmd
 }
 
 func (m Model) onGardenCandidates(msg gardenCandidatesMsg) (Model, tea.Cmd) {
@@ -429,6 +455,9 @@ func (m Model) gardenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // a write answers first; a second Enter must not repeat it
 	}
 	scr := m.gardenScreen()
+	if scr == scrBoard {
+		return m.gardenBoardKey(msg)
+	}
 	if g.busy != busyNone {
 		if k == "esc" {
 			g.abandon()
@@ -444,7 +473,12 @@ func (m Model) gardenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Refresh) && gardenRefreshable(scr):
 		return m.gardenLoadStatus()
 	case key.Matches(msg, m.keys.Tab):
-		return m.gardenToggleSub(), nil
+		m = m.gardenToggleSub()
+		if m.gardenScreen() == scrBoard {
+			return m.gardenLoadWork()
+		}
+		cmd := m.gardenRememberView()
+		return m, cmd
 	}
 	up, down := k == "up" || k == "k", k == "down" || k == "j"
 	left, right := k == "left" || k == "h", k == "right" || k == "l"
@@ -512,6 +546,7 @@ func (m Model) gardenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case scrReadOnly:
 		if enter && g.status.Caps.Read {
 			g.sub = subBoard
+			return m.gardenLoadWork()
 		}
 	case scrOff:
 		if enter && g.status.Caps.Unskip {
@@ -637,7 +672,14 @@ func (m Model) gardenCrumbs() []string {
 	case scrUnavailable:
 		return []string{"Garden"}
 	case scrBoard:
-		return []string{"Garden", "Board"}
+		b := m.garden.board
+		crumbs := []string{"Garden", "Board", b.selection.Column.String()}
+		if b.opened != 0 {
+			if r, _, ok := b.collection.Find(b.opened); ok {
+				crumbs = append(crumbs, fmt.Sprintf("#%d", r.Item.Issue.Number))
+			}
+		}
+		return crumbs
 	case scrOff:
 		return []string{"Garden", "Off"}
 	case scrStart:
@@ -668,12 +710,18 @@ func (m Model) gardenCrumbs() []string {
 
 // gardenWhere is the footer location.
 func (m Model) gardenWhere() string {
+	if m.gardenScreen() == scrBoard {
+		return m.gardenBoardIdentity()
+	}
 	return strings.Join(m.gardenCrumbs(), " / ")
 }
 
 // gardenFocusLabel names the focus owner inside the body, as the mockups do:
 // "Setup / Create Garden", "Garden / Off".
 func (m Model) gardenFocusLabel() string {
+	if m.gardenScreen() == scrBoard && m.garden.board.opened != 0 {
+		return "Issue / " + gardenDocumentSections[m.garden.board.section]
+	}
 	c := m.gardenCrumbs()
 	if len(c) > 2 {
 		c = c[1:]
@@ -684,6 +732,9 @@ func (m Model) gardenFocusLabel() string {
 // gardenHints are the footer hints for the screen in view, limited to keys that
 // do something there.
 func (m Model) gardenHints() []shellHint {
+	if m.gardenScreen() == scrBoard {
+		return m.gardenBoardHints()
+	}
 	g := m.garden
 	if g.api == nil {
 		return []shellHint{{"esc", "workspaces"}}
@@ -809,10 +860,7 @@ func (m Model) gardenStatusLine() string {
 	case scrOff:
 		return "Garden off for this clone"
 	case scrBoard:
-		if g.status.State == gardenapi.StateConnected {
-			return "Board arrives in plan 05"
-		}
-		return "Read-only · board arrives in plan 05"
+		return m.gardenBoardStatus()
 	}
 	return ""
 }

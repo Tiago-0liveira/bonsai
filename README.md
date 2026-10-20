@@ -62,6 +62,7 @@ serves only a placeholder (no embedded web UI; see [Building](#building-from-sou
 - **Web workspace**: `bonsai web` serves a local app at
   `http://127.0.0.1:7001/app`, embedded in release binaries. No hosted service.
 - **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`) and an Agents tab (`g`, see [docs/agents.md](docs/agents.md)).
+- **Garden board** in the redesign preview shows verified approved work with keyboard navigation, scoped filters and read-only issue documents ([Garden guide](docs/garden.md)).
 - **Garden setup** in the redesign preview creates Stage and Bonsai Type fields and can resume after granting GitHub Project permissions, without restarting Bonsai ([setup and recovery](docs/tui-cli.md#garden-setup-in-the-preview)).
 - **CLI**: every feature is also a plain, scriptable command.
 
@@ -120,9 +121,9 @@ bonsai agent account add claude work   # then start an agent from any worktree
 
 For scripts: `bonsai web --no-open --no-setup`.
 
-Preview of the TUI redesign (shell with tabs and footer, and working Settings and
-Accounts workspaces; the other workspaces are empty; the default stays the current
-TUI):
+Preview of the TUI redesign (shell with tabs and footer, working Settings,
+Accounts and Garden setup/board; Playground and Worktrees remain placeholders;
+the default stays the current TUI):
 `bonsai --tui-layout redesign`, see
 [docs/tui-cli.md](docs/tui-cli.md#redesign-preview---tui-layout-redesign).
 
@@ -178,6 +179,7 @@ variables are listed in [docs/tui-cli.md](docs/tui-cli.md#hook-and-alias-variabl
 | Doc | What is in it |
 | --- | --- |
 | [docs/web.md](docs/web.md) | Running the web app: setup, project folders, settings, updates and tunnels, Agents tab, recovery |
+| [docs/garden.md](docs/garden.md) | Garden connection, approved-work board, filters, issue documents and freshness |
 | [docs/agents.md](docs/agents.md) | Claude Code, Codex and Antigravity profiles, seeding, isolation, usage, defaults |
 | [docs/tui-cli.md](docs/tui-cli.md) | TUI keybindings, CLI reference, configuration, hooks, prune, updates |
 | [TUI redesign plans](docs/plans/tui-redesign/README.md) | Planned sequence: shell, Settings, Accounts, Garden, Playground, Worktrees |

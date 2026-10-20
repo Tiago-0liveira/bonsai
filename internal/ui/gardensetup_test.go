@@ -99,7 +99,7 @@ func TestGardenStateRoutesToScreen(t *testing.T) {
 		{"skipped is GS-08", nil, scrOff,
 			[]string{"Garden › Off", "GARDEN IS OFF FOR THIS REPOSITORY", "Set up Garden…", "FOCUS: Garden / Off"}, nil},
 		{"connected leaves Setup", nil, scrBoard,
-			[]string{"Garden › Board", "GARDEN BOARD", "plan 05", "connected"}, []string{"Preview setup plan", "Create Garden"}},
+			[]string{"Garden › Board", "APPROVED WORK", "synced"}, []string{"Preview setup plan", "Create Garden"}},
 	}
 	states := []gardenapi.State{gardenapi.StateNone, gardenapi.StateNone, gardenapi.StatePartialSetup, gardenapi.StateAwaitingManual,
 		gardenapi.StateOperationInProgress, gardenapi.StateReadOnly, gardenapi.StateSkipped, gardenapi.StateConnected}
@@ -250,7 +250,7 @@ func TestGardenApplySuccessConnects(t *testing.T) {
 	if m.gardenScreen() != scrBoard || m.garden.status.State != gardenapi.StateConnected {
 		t.Fatalf("after Apply: screen %d state %s\n%s", m.gardenScreen(), m.garden.status.State, view(m))
 	}
-	mustContain(t, "connected", view(m), "Garden › Board", "plan 05", "connected")
+	mustContain(t, "connected", view(m), "Garden › Board", "APPROVED WORK", "synced")
 	if m.garden.step != stepStart || len(m.garden.plan.Rows) != 0 {
 		t.Error("the finished flow was not reset")
 	}
@@ -555,7 +555,7 @@ func TestGardenReadOnlyOffersNoSetupAction(t *testing.T) {
 	if m.gardenScreen() != scrBoard {
 		t.Fatalf("screen %d", m.gardenScreen())
 	}
-	mustContain(t, "board placeholder", view(m), "plan 05", "GARDEN BOARD")
+	mustContain(t, "read-only board", view(m), "APPROVED WORK", "synced")
 	m = pressAll(t, m, "esc")
 	if m.gardenScreen() != scrReadOnly {
 		t.Errorf("Esc from the Board went to screen %d", m.gardenScreen())

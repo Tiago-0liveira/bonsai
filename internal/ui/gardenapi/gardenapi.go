@@ -11,10 +11,12 @@ package gardenapi
 import (
 	"context"
 	"time"
+
+	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 )
 
 // Backend is everything the Garden screens and Settings need. Status,
-// Candidates, Projects and PreviewPlan only read; Apply, Resume, Skip and
+// Work, Candidates, Projects and PreviewPlan only read; Apply, Resume, Skip and
 // Unskip are the only calls that change anything, and Apply only runs the plan
 // the user previewed.
 //
@@ -22,6 +24,8 @@ import (
 // context cancellation). Apply and Resume instead report an operation that
 // started but did not finish in OperationView.Err.
 type Backend interface {
+	// Work reads the canonical managed collection; it never writes or launches.
+	Work(context.Context) (WorkView, error)
 	// Status is the one place the Garden shell, Setup and Settings read state.
 	Status(ctx context.Context) (StatusView, error)
 	// Candidates lists the repositories the local remotes point at.
@@ -414,3 +418,9 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// WorkView carries the same ordered, last-good read model to every Garden view.
+type WorkView struct {
+	Stamp    Stamp
+	Snapshot gardensync.Snapshot
+}

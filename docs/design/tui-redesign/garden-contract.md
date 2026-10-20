@@ -161,3 +161,31 @@ Conditional-request caching holds only through the shared `ghcli` transport: thi
 - Projects: `ListProjects` does not populate `IssueFields`.
 - Projects owner: `ListProjects(ctx, repoID)` keeps its port signature. The adapter resolves the verified repository from `repoID` (cached, re-verified by numeric ID) and lists the Projects of that repository's owner (user or organization) via `repositoryOwner(login:)`, not the viewer's own Projects. Every listed Project (and a newly created one) carries `Project.Owner` = the owner login; `creator.login` stays the adoption check. The owner never comes from caller input. A null owner returns `ErrNotFound`; a response login that differs (case-insensitively) from the requested owner fails closed with `ErrGraphQL`. Create, Resume and adoption therefore observe the same owner Create writes under, and `gardenbackend` passes the repository owner as `Desired.Owner` for ConnectExisting so connect's owner plus ID verification is real; `ProjectsView.Owner` is the repository owner.
 - `Adapter.Viewer` (`GET /user`) returns the numeric ID (stable identity) and login (mutable label used for creator/adoption checks), not the owner.
+
+
+## Board presentation (05)
+
+`internal/core/garden/work` is the UI-free approved-work selector shared by Board
+and the forthcoming Table. It recomputes canonical Work acceptance and excludes
+unusable Issue identities, deleted items and all Draft-stage items. Accepted
+display diagnostics remain visible as conflict feedback. Query, grouping and
+identity selection stay independent of the TUI. Types never imply
+stages. `Issue.Number` and `Issue.Title` are display data from the GitHub reader;
+`Issue.ID` remains the selection key. Both display fields affect the item revision.
+
+The six canonical stage labels cannot encode all nine approved-design columns.
+The conservative read-only projection is: accepted `ready` without a plan →
+Approved, accepted `ready` with a verified plan head → Plan Review,
+`in-progress` → Running, `review` → Human Review, `done` → Done, `blocked` →
+Blocked. Planning, Ready and Reviewing remain empty until later plans supply
+active-job evidence and exact-plan approval verification. The current verifier
+accepts specification approvals only; plan approval records are not silently
+trusted by Board. No additional labels or canonical mutations are introduced.
+
+Optional priority filters observe existing `priority:p0`–`priority:p3` labels,
+case-insensitively; missing/conflicting values are unknown. These labels are not
+part of the owned setup scheme. Only the presentation name Board/Setup is saved
+in the existing per-repository UI state; issue data and queries remain in memory.
+`Snapshot.SuccessfulAt` retains the last complete-live sync time independently
+of `FetchedAt` (latest attempt). The backend's bounded Work read uses the same
+store, generation, scope and epoch as setup/status, with no writer capability.

@@ -205,6 +205,8 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height, m.ready = msg.Width, msg.Height, true
+		m.gardenBoardVisible()
+		m.gardenClampDocument()
 		if m.modal != nil {
 			m.modal.SetSize(msg.Width, msg.Height)
 		}
@@ -349,8 +351,9 @@ type paletteTarget struct {
 	category    int
 	hasCategory bool
 	// section opens an Accounts section instead of the workspace as it was left.
-	section    accounts.Tab
-	hasSection bool
+	section      accounts.Tab
+	hasSection   bool
+	gardenAction string
 }
 
 // paletteTargets lists every entry in palette order with its target.
@@ -373,6 +376,9 @@ func paletteTargets() (labels []string, targets map[string]paletteTarget) {
 	add(paletteEditKeys, paletteTarget{ws: wsSettings, category: keys, hasCategory: true})
 	add(paletteAccountsPrefix+"Usage", paletteTarget{ws: wsAccounts, section: accounts.TabUsage, hasSection: true})
 	add(paletteAccountsPrefix+"Defaults", paletteTarget{ws: wsAccounts, section: accounts.TabDefaults, hasSection: true})
+	add("Garden: Board", paletteTarget{ws: wsGarden, gardenAction: "board"})
+	add("Garden: Search approved work", paletteTarget{ws: wsGarden, gardenAction: "search"})
+	add("Garden: Refresh", paletteTarget{ws: wsGarden, gardenAction: "refresh"})
 	return labels, targets
 }
 
@@ -389,6 +395,29 @@ func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
 		return m.openAccounts(t.section)
 	}
 	m, cmd := m.selectWorkspace(t.ws)
+	if t.gardenAction != "" {
+		m.shellFocus = shellBody
+		if m.garden.hasStatus && m.garden.status.Caps.Read {
+			m.garden.sub = subBoard
+			if t.gardenAction == "search" {
+				var read tea.Cmd
+				if !m.garden.board.loaded {
+					m, read = m.gardenLoadWork()
+				}
+				nm, extra := m.gardenStartSearch()
+				return nm, tea.Batch(cmd, read, extra)
+			}
+			if t.gardenAction == "refresh" || !m.garden.board.loaded {
+				return m.gardenLoadWork()
+			}
+		} else {
+			m.garden.notice = "Connect a readable Garden before opening approved work."
+			if t.gardenAction == "refresh" {
+				return m.gardenLoadStatus()
+			}
+		}
+		return m, cmd
+	}
 	if t.hasCategory {
 		m.shellFocus = shellBody
 		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr}
@@ -427,6 +456,9 @@ func (m Model) openShellPalette() Model {
 func (m Model) shellHints() []shellHint {
 	if m.currentShellFocus() == shellInput && m.workspace == wsAccounts {
 		return m.accountsHints()
+	}
+	if m.currentShellFocus() == shellInput && m.workspace == wsGarden {
+		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}
 	if m.currentShellFocus() == shellInput {
 		if m.set.capturing {

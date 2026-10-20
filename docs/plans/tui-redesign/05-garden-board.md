@@ -1,6 +1,6 @@
 # Plan 05 — Garden board
 
-Status: not started. Prerequisite: [04b — Garden wiring](04b-garden-wiring.md).
+Status: partially implemented: board interactions implemented; Planning, Ready and Reviewing population awaits backend evidence; full verification has environmental failures. Prerequisite: [04b — Garden wiring](04b-garden-wiring.md).
 Next: [06 — Garden table](06-garden-table.md).
 
 ## Deliverable
@@ -61,14 +61,129 @@ needed; keep filtering/grouping pure and reusable by plan 06.
 
 ## Exit criteria and verification
 
-- [ ] All nine columns and every visible card are keyboard-selectable.
-- [ ] Empty columns and the 80-column moving window preserve selection correctly.
-- [ ] Drafts are excluded; type/stage are not conflated.
-- [ ] Enter/Escape round-trip to the exact item and board location.
-- [ ] Refresh, reorder, filtering-out and deletion of the selected item have
+- [x] All nine columns and every visible card are keyboard-selectable.
+      Limitation: Planning, Ready and Reviewing support navigation only and remain
+      empty; evidence-based population of those three states is not implemented
+      because the prerequisite backend does not expose it.
+- [x] Empty columns and the 80-column moving window preserve selection correctly.
+- [x] Drafts are excluded; type/stage are not conflated.
+- [x] Enter/Escape round-trip to the exact item and board location.
+- [x] Refresh, reorder, filtering-out and deletion of the selected item have
       deterministic fallbacks; unrelated updates do not steal focus.
-- [ ] All sizes/themes/ASCII and long Unicode titles fit measured regions.
+- [x] All sizes/themes/ASCII and long Unicode titles fit measured regions.
+      Review regressions now check actual Board, document and detail renders
+      with ASCII-only source content, in addition to Unicode title bounds.
 - [ ] State/focus/render tests and full Go checks pass.
-- [ ] Update `README.md`, `docs/tui-cli.md` and the new Garden guide.
+- [x] Update `README.md`, `docs/tui-cli.md` and the new Garden guide.
 
-Completion record: pending implementation and validation evidence.
+## Completion record
+
+Implemented on `feat/tui-redesign`, 2026-10-20, as uncommitted working-tree
+changes. No commit or push was made. Prerequisite source was inspected, including
+commit `c918e13` and the five most recent commit stats; all six G-01/G-04 reference
+PNGs were opened at their three sizes.
+
+Files and decisions:
+
+- `internal/core/garden/work/{work.go,work_test.go}`: one UI-free selector,
+  deterministic grouping/filtering, stable-ID reconciliation, per-column cursors,
+  scroll and moving-window selection for reuse by plan 06.
+- `internal/ui/gardenboard{.go,_view.go,_test.go}`, Garden setup/shell routing and
+  `gardenapi`/fake: real read commands, board and five-section read-only document,
+  scoped search/type/priority controls, palette/help, focus and view persistence.
+- `internal/gardenbackend/work{.go,_test.go}` and backend composition/status:
+  bounded read-only Issue loading through the existing sync store and epochs;
+  reader-only GitHub adapter injection, same status source for Settings.
+- Canonical Issue/adapter add display number/title; the item revision includes
+  those edits. `Snapshot.SuccessfulAt` tracks successful sync independently of
+  the latest failed attempt. Config state remembers only Board/Setup per repo
+  through its existing ordered atomic write mechanism; its validation and
+  persistence have temporary-home tests.
+- `README.md`, `docs/tui-cli.md`, new `docs/garden.md`, and the canonical contract
+  document the shipped behavior, keys, mapping and safe limitations.
+
+Prerequisite limitations, kept explicit rather than inventing backend data:
+
+- The foundation has six canonical stage labels, no active planning/review job
+  projection, and specification-only approval verification. Planning, Ready and
+  Reviewing are navigable but empty until plans 08/09 supply that evidence.
+  Accepted ready-stage work projects to Approved or Plan Review according to the
+  verified presence of a plan head; review-stage work projects to Human Review.
+  No new stage labels, approval semantics, writes or launch behavior were added.
+- Priority is optional display data from existing `priority:p0`–`priority:p3`
+  labels; missing/conflicting values are unknown. Questions come from a canonical
+  Markdown Questions/Open questions section. The read model has no local
+  execution context, which the document states with the plan 09 reason.
+
+Validation:
+
+- `gofmt -l $(git ls-files '*.go')`: passed, no output; all new untracked Go files
+  checked separately with `gofmt -l`, also no output. `git diff --check` passed.
+- `go vet ./...`: passed.
+- `go build ./...`: passed without Node.
+- `go test ./internal/ui/... ./internal/core/garden/...`: Garden/core/component
+  tests passed; the command fails on existing
+  `TestAgentsIntegrationLiveReadOnlyView` and `TestAgentsIntegrationTerminalMode`
+  because their agent holders cannot create Unix sockets in this sandbox.
+- `go test -race ./internal/ui/...`: same two existing integration failures;
+  no race report. The UI race suite passed with only those two tests excluded
+  using `-skip '^TestAgentsIntegration(LiveReadOnlyView|TerminalMode)$'`.
+- `go test ./...`: fails on existing socket-dependent tests across agenthost,
+  agentsbackend, CLI/HTTP fixtures, daemon, providers, localapi and UI. The
+  concrete restrictions are `socket: operation not permitted` and
+  `setsockopt: operation not permitted`. Three unchanged `core/pkgmgr` tests also
+  fail because this environment has a read-only `/tmp/.git`; temporary fixtures
+  are therefore detected as part of `/tmp` instead of outside a repository.
+  The full-suite checkbox remains open; tests, unrelated source and security
+  boundaries were not weakened to manufacture a pass.
+- Additional changed-package tests passed for `internal/gardenbackend/...`,
+  `internal/core/config/...`, `internal/core/garden/...`, and
+  `internal/git/github/ghcli/garden/...`; race checks passed for the first three.
+- Focused Garden state/render/keyboard tests passed. Fake-backed interaction
+  coverage includes every column/card, empty columns, all three window sizes,
+  per-column scrolling, exact Enter/Escape restoration, stage moves, reorder,
+  filtering/deletion fallbacks, stale/empty/unknown reads, unrelated/foreign/late
+  events, every theme and ASCII mode, long CJK/combining titles and terminal
+  control sanitization. No real account, network or home directory was used by
+  the new tests. No live GitHub demo was attempted in the restricted sandbox.
+
+Go checks used `GOCACHE=/tmp/bonsai-garden-go-cache` because the default cache
+outside the writable roots is read-only. Full validation still needs a runner
+that permits the repository's local TCP and Unix socket test fixtures.
+
+## Review follow-up
+
+All findings 1–17 addressed in the working tree with focused regression tests:
+status adoption commands are batched with Work, nil UI state is allowed,
+view writes happen only on change (failed writes can retry), paging and scroll
+use shared geometry plus collection bounds, and initial empty reads do not
+consume first-item selection. Canonical acceptance is recomputed once; accepted
+records with display diagnostics stay visible with conflict feedback. Adapter
+identity defects and invalid acceptance remain excluded and exclusion text says
+so. Remote format controls are stripped while combining marks and emoji ZWJ
+sequences survive. ASCII conversion covers actual component renders. Search
+clears old notices and uses a static cursor. Questions respects fenced code.
+Missing repository identity returns an explicit error, sync state reuses
+`gardensync.Status`, and fake imports use standard grouping.
+
+Reviewer validation outside this sandbox: `go test ./...` passes except
+`internal/server/localapi.TestAgentUsageRealProviders`, whose failure is caused
+by `CLAUDE_CONFIG_DIR` inherited from the host session and is unrelated to this
+change. This is reviewer-provided evidence, not a local unrestricted rerun; the
+full-check criterion remains open for a clean environment. The three unavailable
+board-state populations remain a separate implementation limitation.
+
+Review rerun results in this sandbox:
+
+- Formatting (tracked and new Go files), `git diff --check`, `go vet ./...`
+  and `go build ./...` passed.
+- The requested combined UI/Garden/config/backend/`ghcli/...` test command
+  failed on the two known agent integration tests and the existing
+  `ghcli.TestServiceSendsTheGhTokenAndRevalidatesWithETags` HTTP fixture
+  (`socket: operation not permitted`). The additional ghcli failure is reported,
+  not ignored. Garden, config, backend and Garden adapter packages passed.
+- Focused regression tests passed. The UI/Garden/config/backend race suite
+  passed with only the two known agent integration tests excluded.
+- The unrestricted full-suite result above remains reviewer-provided evidence;
+  this sandbox's full rerun still encounters its existing socket restrictions
+  and `/tmp/.git` fixture contamination.

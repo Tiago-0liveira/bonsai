@@ -579,3 +579,22 @@ func TestViewerFailsClosedOnUnusableIdentity(t *testing.T) {
 		t.Fatalf("401 err = %v, want ErrAuthRequired", err)
 	}
 }
+
+func TestIssueDisplayIdentityPreservedByReadAdapter(t *testing.T) {
+	a, f := fixture(t, func(r *http.Request) (*http.Response, error) {
+		return response(200, `[{"id":901,"number":161,"title":"Improve 界 é rendering","body":"Canonical document","user":{"id":7},"labels":[{"name":"bonsai:managed"}]}]`, ""), nil
+	})
+	page, err := a.Reader().ListManagedIssues(context.Background(), 9, "")
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("%+v %v", page, err)
+	}
+	it := page.Items[0]
+	if it.ID != 901 || it.Number != 161 || it.Title != "Improve 界 é rendering" || it.Body != "Canonical document" {
+		t.Fatalf("display identity lost: %+v", it)
+	}
+	for _, r := range f.requests {
+		if r.Method != http.MethodGet {
+			t.Fatal("read issued mutation", r.Method)
+		}
+	}
+}

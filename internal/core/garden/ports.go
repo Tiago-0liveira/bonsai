@@ -6,6 +6,8 @@ import "time"
 type Issue struct {
 	Repo      RepoID
 	ID        IssueID
+	Number    int64
+	Title     string
 	NodeID    string
 	AuthorID  string
 	CreatedAt time.Time

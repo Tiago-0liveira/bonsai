@@ -125,6 +125,8 @@ type Snapshot struct {
 	Epoch uint64
 	// FetchedAt records when this read completed or failed.
 	FetchedAt time.Time
+	// SuccessfulAt is the last complete live read, retained across failures.
+	SuccessfulAt time.Time
 	// Complete distinguishes the whole collection from a partial read.
 	Complete bool
 	// Source marks live results or retained stale data.
@@ -525,7 +527,7 @@ func issueProblemCode(code string) string {
 
 func issueRevision(i garden.Issue) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%d:%s:%s:%x", i.ID, i.NodeID, i.Body, i.Metadata)
+	fmt.Fprintf(h, "%d:%d:%s:%s:%s:%x", i.ID, i.Number, i.Title, i.NodeID, i.Body, i.Metadata)
 	labels := append([]string(nil), i.Labels...)
 	sort.Strings(labels)
 	for _, l := range labels {
@@ -612,6 +614,7 @@ func (s *Store) Apply(result Snapshot) error {
 	}
 	if result.Complete && result.Source == SourceLive {
 		next := clone(result)
+		next.SuccessfulAt = result.FetchedAt
 		next.Items = markDeleted(s.current.Items, next.Items, true)
 		for _, item := range next.Items {
 			if item.Deleted {

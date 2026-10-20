@@ -292,3 +292,48 @@ func TestStateConcurrentPersist(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestGardenViewPersistenceScopeOrderingAndSanitization(t *testing.T) {
+	p := stateEnv(t)
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := t.TempDir(), t.TempDir()
+	if err = st.PersistGardenView(2, a, "board"); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.PersistGardenView(1, a, "setup"); !errors.Is(err, ErrSuperseded) {
+		t.Fatalf("stale write: %v", err)
+	}
+	if err = st.PersistGardenView(3, b, "setup"); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"token=secret", "Task title", "/search text", "table", ""} {
+		if err = st.PersistGardenView(4, a, value); !errors.Is(err, ErrInvalidGardenView) {
+			t.Fatalf("invalid view accepted: %q", value)
+		}
+	}
+	if err = st.PersistPrefs(1, Prefs{Theme: "mono"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.PersistLastWorkspace(1, a, "garden"); err != nil {
+		t.Fatal(err)
+	}
+	next, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.GardenView(a) != "board" || next.GardenView(b) != "setup" || next.GardenView(t.TempDir()) != "" {
+		t.Fatal("view state lost or crossed repos")
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"secret", "Task title", "/search text"} {
+		if strings.Contains(string(data), value) {
+			t.Fatal("content persisted")
+		}
+	}
+}
