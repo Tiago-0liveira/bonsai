@@ -1202,8 +1202,8 @@ func (m Model) gardenSubmenu(width int) []string {
 		on, active bool
 	}{
 		{"✚", "Setup", setupOn, active == subSetup},
-		{"▦", "Board", boardOn, active == subBoard},
-		{"▤", "Table", false, false},
+		{"▦", "Board", boardOn, active == subBoard && g.board.layout == layoutBoard},
+		{"▤", "Table", boardOn, active == subBoard && g.board.layout == layoutTable},
 		{"✎", "Drafts", false, false},
 	}
 	var tabs strings.Builder

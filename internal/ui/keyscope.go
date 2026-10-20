@@ -11,6 +11,7 @@ const (
 	ksWorktree                  // the worktree list and its tabs
 	ksAgents                    // the Agents tab
 	ksProcesses                 // the Processes tab
+	ksGarden                    // the Garden work views
 )
 
 // sectionScopes maps every keymapSections name to its scope. A section missing
@@ -25,6 +26,7 @@ var sectionScopes = map[string]keyScope{
 	"Git":               ksWorktree,
 	"Agents tab":        ksAgents,
 	"Processes tab":     ksProcesses,
+	"Garden":            ksGarden,
 }
 
 // fixedKeys can never be bound: they drive modals, quit and the terminal
@@ -40,6 +42,13 @@ var fixedKeys = map[string]bool{
 // scoped actions only act inside their own tab and may use these letters (the
 // default log_tab already uses l).
 var shellNavKeys = map[string]bool{"h": true, "j": true, "k": true, "l": true}
+
+// gardenReservedKeys are read by the Garden views themselves, so a garden_view
+// override on one would silently shadow search, filters, sort or movement.
+var gardenReservedKeys = map[string]bool{
+	"/": true, "t": true, "p": true, "x": true, "o": true, "h": true, "j": true, "k": true, "l": true,
+	"home": true, "end": true, "pgup": true, "pgdown": true, "backspace": true,
+}
 
 // scopeOfAction finds the scope and section of an action.
 func scopeOfAction(action string) (keyScope, string, bool) {
@@ -80,6 +89,9 @@ func validateKeyBinding(action, candidate string, overrides map[string]string) e
 	scope, _, ok := scopeOfAction(action)
 	if ok && scope == ksGlobal && shellNavKeys[candidate] {
 		return fmt.Errorf("%s is used for navigation in Settings and the tabs", candidate)
+	}
+	if ok && scope == ksGarden && gardenReservedKeys[candidate] {
+		return fmt.Errorf("%s is a Garden key", candidate)
 	}
 	return validateKeyScope(action, candidate, overrides)
 }

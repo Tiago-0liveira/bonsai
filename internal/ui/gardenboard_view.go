@@ -50,16 +50,11 @@ func boardColumnColor(c work.Column) lipgloss.Color {
 	}
 }
 
-func (m Model) gsBoard(width, rows int) []string {
-	if m.garden.board.opened != 0 {
-		return m.gardenDetail(width, rows)
-	}
+// gardenWorkHead is the count row and feedback row both layouts share, so a
+// filter, notice or stale read reads the same on Board and Table.
+func (m Model) gardenWorkHead(width int, title, sort string) []string {
 	p := theme.Current
 	b := m.garden.board
-	s := b.selection
-	columns := gardenBoardColumns(width)
-	capacity := gardenBoardCapacity(rows)
-	s.EnsureVisible(b.collection, capacity, columns)
 	typeName, priority := "Any", "Any"
 	if b.query.Type != "" {
 		typeName = string(b.query.Type)
@@ -67,11 +62,14 @@ func (m Model) gsBoard(width, rows int) []string {
 	if b.query.Priority != "" {
 		priority = b.query.Priority
 	}
-	count := fmt.Sprintf("APPROVED WORK  %d", len(b.collection.Records))
+	count := fmt.Sprintf("%s  %d", title, len(b.collection.Records))
 	if b.query.Active() {
 		count += fmt.Sprintf(" filtered / %d", b.collection.Total)
 	}
-	out := []string{gHead(width, count, "Type: "+typeName+" / Priority: "+priority)}
+	chip := "Type: " + typeName + " / Priority: " + priority
+	if sort != "" {
+		chip += " / Sort: " + sort
+	}
 	feedback := "Drafts and unverified acceptance stay off this board."
 	if b.collection.Excluded > 0 {
 		feedback = fmt.Sprintf("%d draft, unverified or invalid items excluded. ", b.collection.Excluded) + feedback
@@ -95,7 +93,23 @@ func (m Model) gsBoard(width, rows int) []string {
 		b.search.Width = max(1, width-12)
 		feedback = "Search: " + b.search.View() + "  Enter apply / Esc cancel"
 	}
-	out = append(out, boardLine(width, p.Background, p.Muted, false, " "+feedback))
+	return []string{gHead(width, count, chip), boardLine(width, p.Background, p.Muted, false, " "+feedback)}
+}
+
+func (m Model) gsBoard(width, rows int) []string {
+	b := m.garden.board
+	if b.opened != 0 {
+		return m.gardenDetail(width, rows)
+	}
+	if b.layout == layoutTable {
+		return m.gsTable(width, rows)
+	}
+	p := theme.Current
+	s := b.selection
+	columns := gardenBoardColumns(width)
+	capacity := gardenBoardCapacity(rows)
+	s.EnsureVisible(b.collection, capacity, columns)
+	out := m.gardenWorkHead(width, "APPROVED WORK", "")
 	gridRows := max(0, rows-3)
 	grid := make([][]string, columns)
 	usable := max(1, width-2-(columns-1))
@@ -299,7 +313,7 @@ func (m Model) gardenDocument(width int) []string {
 func (m Model) gardenDetail(width, rows int) []string {
 	b := m.garden.board
 	p := theme.Current
-	out := []string{gText(width, p.Success, true, "‹ Board (Esc)   Issue document"), gText(width, p.Muted, false, m.gardenBoardStatus())}
+	out := []string{gText(width, p.Success, true, "‹ "+b.layoutName()+" (Esc)   Issue document"), gText(width, p.Muted, false, m.gardenBoardStatus())}
 	contentWidth := width
 	if width >= 120 {
 		contentWidth -= 26

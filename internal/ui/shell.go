@@ -377,6 +377,7 @@ func paletteTargets() (labels []string, targets map[string]paletteTarget) {
 	add(paletteAccountsPrefix+"Usage", paletteTarget{ws: wsAccounts, section: accounts.TabUsage, hasSection: true})
 	add(paletteAccountsPrefix+"Defaults", paletteTarget{ws: wsAccounts, section: accounts.TabDefaults, hasSection: true})
 	add("Garden: Board", paletteTarget{ws: wsGarden, gardenAction: "board"})
+	add("Garden: Table", paletteTarget{ws: wsGarden, gardenAction: "table"})
 	add("Garden: Search approved work", paletteTarget{ws: wsGarden, gardenAction: "search"})
 	add("Garden: Refresh", paletteTarget{ws: wsGarden, gardenAction: "refresh"})
 	return labels, targets
@@ -399,6 +400,24 @@ func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
 		m.shellFocus = shellBody
 		if m.garden.hasStatus && m.garden.status.Caps.Read {
 			m.garden.sub = subBoard
+			if b := &m.garden.board; b.opened != 0 && (t.gardenAction == "board" || t.gardenAction == "table") {
+				b.opened, b.docScroll = 0, 0 // the detail belongs to the old layout's parent
+			}
+			switch t.gardenAction {
+			case "board":
+				m.garden.board.setLayout(layoutBoard)
+			case "table":
+				m.garden.board.setLayout(layoutTable)
+			}
+			if t.gardenAction == "board" || t.gardenAction == "table" {
+				m.gardenBoardVisible()
+				remember := m.gardenRememberView()
+				var read tea.Cmd
+				if !m.garden.board.loaded {
+					m, read = m.gardenLoadWork()
+				}
+				return m, tea.Batch(cmd, remember, read)
+			}
 			if t.gardenAction == "search" {
 				var read tea.Cmd
 				if !m.garden.board.loaded {

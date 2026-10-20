@@ -242,8 +242,11 @@ func (m Model) onGardenStatus(msg gardenStatusMsg) (Model, tea.Cmd) {
 	if first {
 		m.garden.board.memoryLoaded = true
 		m.garden.board.rememberedView = msg.remembered
-		if msg.remembered == "board" && m.garden.status.Caps.Read {
+		if (msg.remembered == "board" || msg.remembered == "table") && m.garden.status.Caps.Read {
 			m.garden.sub = subBoard
+			if msg.remembered == "table" {
+				m.garden.board.layout = layoutTable
+			}
 		}
 	}
 	if m.gardenScreen() == scrBoard {
@@ -639,8 +642,8 @@ func (m Model) gardenBack(scr gardenScreen) Model {
 	return m
 }
 
-// gardenToggleSub switches between Setup and Board where both exist. Table and
-// Drafts are not selectable until their plans land.
+// gardenToggleSub switches between Setup and the work view (Board or Table,
+// whichever is current) where both exist. Drafts is not selectable until its plan lands.
 func (m Model) gardenToggleSub() Model {
 	g := &m.garden
 	if g.hasStatus && g.status.State != gardenapi.StateConnected && g.status.Caps.Read {
@@ -674,6 +677,9 @@ func (m Model) gardenCrumbs() []string {
 	case scrBoard:
 		b := m.garden.board
 		crumbs := []string{"Garden", "Board", b.selection.Column.String()}
+		if b.layout == layoutTable {
+			crumbs = []string{"Garden", "Table"}
+		}
 		if b.opened != 0 {
 			if r, _, ok := b.collection.Find(b.opened); ok {
 				crumbs = append(crumbs, fmt.Sprintf("#%d", r.Item.Issue.Number))
@@ -719,6 +725,9 @@ func (m Model) gardenWhere() string {
 // gardenFocusLabel names the focus owner inside the body, as the mockups do:
 // "Setup / Create Garden", "Garden / Off".
 func (m Model) gardenFocusLabel() string {
+	if m.gardenScreen() == scrBoard && m.garden.board.layout == layoutTable && m.garden.board.opened == 0 {
+		return "Approved table"
+	}
 	if m.gardenScreen() == scrBoard && m.garden.board.opened != 0 {
 		return "Issue / " + gardenDocumentSections[m.garden.board.section]
 	}

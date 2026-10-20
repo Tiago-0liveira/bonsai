@@ -59,7 +59,7 @@ func TestKeysCategoryLayout(t *testing.T) {
 	for _, s := range settingCategories[catKeys].sections {
 		names = append(names, s.name)
 	}
-	want := []string{"Navigation", "Worktree", "Tabs", "Files & clipboard", "Run", "Git", "Agents tab", "Processes tab", "Terminal"}
+	want := []string{"Navigation", "Worktree", "Tabs", "Files & clipboard", "Run", "Git", "Agents tab", "Processes tab", "Garden", "Terminal"}
 	if strings.Join(names, "|") != strings.Join(want, "|") {
 		t.Errorf("sections = %v", names)
 	}
