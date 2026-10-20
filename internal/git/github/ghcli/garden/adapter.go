@@ -29,7 +29,6 @@ const maxComment = 64 << 10
 const maxPages = 100
 const maxLinkHeader = 16 << 10
 const graphqlPath = "/graphql"
-const metadataPrefix = "<!-- bonsai:garden-metadata/v1 "
 const defaultBase = "https://api.github.com"
 
 // repoCacheTTL bounds how long a verified repository name is trusted before the numeric ID is re-checked.
@@ -61,8 +60,12 @@ type cachedRepo struct {
 type IssueReader struct{ a *Adapter }
 type IssueWriter struct{ a *Adapter }
 
-func (a *Adapter) Reader() *IssueReader { return &IssueReader{a: a} }
-func (a *Adapter) Writer() *IssueWriter { return &IssueWriter{a: a} }
+// IssueCreator is the one capability that creates Issues; it is kept off IssueWriter so only capture holds it.
+type IssueCreator struct{ a *Adapter }
+
+func (a *Adapter) Reader() *IssueReader   { return &IssueReader{a: a} }
+func (a *Adapter) Writer() *IssueWriter   { return &IssueWriter{a: a} }
+func (a *Adapter) Creator() *IssueCreator { return &IssueCreator{a: a} }
 
 // New requires a non-nil HTTP client. Only an https origin without a path is supported: GitHub Enterprise
 // API bases such as https://host/api/v3 fail closed in this phase.
@@ -500,7 +503,7 @@ func (a *Adapter) issueFromRow(repo core.RepoID, v issueJSON) core.Issue {
 	for _, l := range v.Labels {
 		labels = append(labels, l.Name)
 	}
-	x := core.Issue{Repo: repo, Number: v.Number, Title: v.Title, NodeID: v.NodeID, AuthorID: userID(v.User.ID), CreatedAt: v.CreatedAt, Labels: labels, Body: v.Body, Metadata: issueMetadata(v.Body)}
+	x := core.Issue{Repo: repo, Number: v.Number, Title: v.Title, NodeID: v.NodeID, AuthorID: userID(v.User.ID), CreatedAt: v.CreatedAt, Labels: labels, Body: v.Body, Metadata: core.BodyMetadata(v.Body)}
 	if v.ID > 0 && v.Number > 0 {
 		x.ID = core.IssueID(v.ID)
 		a.rememberIssue(repo, x.ID, v.Number)
@@ -577,7 +580,8 @@ type issueJSON struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
-	PullRequest json.RawMessage `json:"pull_request"`
+	PullRequest   json.RawMessage `json:"pull_request"`
+	RepositoryURL string          `json:"repository_url"`
 }
 
 // GetIssue reads one Issue. A pull request, or a response whose identity differs from the request, is never
@@ -611,22 +615,6 @@ func (r *IssueReader) GetIssue(ctx context.Context, repo core.RepoID, id core.Is
 		return core.Issue{}, safe(core.ErrNotFound)
 	}
 	return r.a.issueFromRow(repo, v), nil
-}
-
-// issueMetadata reads only the bounded, first-line canonical projection; arbitrary body text is never decoded as metadata.
-func issueMetadata(body string) []byte {
-	line := body
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = strings.TrimSuffix(line[:i], "\r")
-	}
-	if !strings.HasPrefix(line, metadataPrefix) || !strings.HasSuffix(line, " -->") || len(line) > core.MaxMetadataBytes+len(metadataPrefix)+len(" -->") {
-		return nil
-	}
-	b := []byte(strings.TrimSuffix(strings.TrimPrefix(line, metadataPrefix), " -->"))
-	if len(b) == 0 || len(b) > core.MaxMetadataBytes || !json.Valid(b) {
-		return nil
-	}
-	return b
 }
 
 // ListComments reads the full comment log. More than core.MaxComments comments fails with
@@ -754,6 +742,47 @@ func (w *IssueWriter) UpdateLabels(ctx context.Context, repo core.RepoID, id cor
 		}
 	}
 	return nil
+}
+
+// CreateIssue is the single place a title or body is sent to GitHub: capture creates an Issue once, and every
+// later mutation is a comment or a bonsai: label change. A 4xx answer is a definitive refusal (core.ErrRejected);
+// anything else, including a 5xx or an unreadable success body, may have created the Issue and is reported as
+// an ordinary error so the caller reconciles before retrying.
+func (c *IssueCreator) CreateIssue(ctx context.Context, repo core.RepoID, n core.NewIssue) (core.Issue, error) {
+	if repo == 0 {
+		return core.Issue{}, core.ErrInvalidID
+	}
+	if strings.TrimSpace(n.Title) == "" || len(n.Body) > maxComment {
+		return core.Issue{}, core.ErrInvalidMetadata
+	}
+	for _, label := range n.Labels {
+		if !strings.HasPrefix(strings.ToLower(label), "bonsai:") {
+			return core.Issue{}, core.ErrInvalidMetadata
+		}
+	}
+	base, err := c.a.repositoryPath(ctx, repo)
+	if err != nil {
+		return core.Issue{}, err
+	}
+	labels := n.Labels
+	if labels == nil {
+		labels = []string{}
+	}
+	resp, b, err := c.a.request(ctx, "POST", base+"/issues", map[string]any{"title": n.Title, "body": n.Body, "labels": labels})
+	if err != nil {
+		if resp != nil && resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
+			return core.Issue{}, fmt.Errorf("%w: %w", core.ErrRejected, err)
+		}
+		return core.Issue{}, err
+	}
+	var v issueJSON
+	if json.Unmarshal(b, &v) != nil || v.ID <= 0 || v.Number <= 0 || isPullRequest(v.PullRequest) {
+		return core.Issue{}, safe(connect.ErrOffline)
+	}
+	if v.RepositoryURL != "" && !strings.HasSuffix(strings.ToLower(v.RepositoryURL), strings.ToLower(base)) {
+		return core.Issue{}, safe(connect.ErrOffline)
+	}
+	return c.a.issueFromRow(repo, v), nil
 }
 
 func encodeCursor(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }

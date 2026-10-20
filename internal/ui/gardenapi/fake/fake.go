@@ -6,6 +6,8 @@ package fake
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,15 +41,29 @@ type Backend struct {
 	ResumeErr   error
 	SkipErr     error
 	UnskipErr   error
+	// PreviewCaptureErr, CaptureErr and ReconcileErr make that call fail with an error.
+	PreviewCaptureErr error
+	CaptureErr        error
+	ReconcileErr      error
+	// CapturedView is what Capture returns (default: done, Issue #150). When it
+	// is done the new draft is added to WorkView so the next Work read shows it.
+	CapturedView *gardenapi.CaptureView
+	// ReconciledView is what ReconcileCapture returns (default: done, Issue #150).
+	ReconciledView *gardenapi.CaptureView
 
 	// Hook runs at the start of every call, outside any lock, with the method
 	// name. A test blocks in it to make a reply late.
 	Hook func(method string)
 
+	// Captured lists the previews Capture ran, in order, so a test can assert a
+	// retry reused the same operation ID.
+	Captured []gardenapi.CapturePreview
+
 	mu    sync.Mutex
 	gen   uint64
 	epoch uint64
 	calls []string
+	ops   int
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)
@@ -87,7 +103,7 @@ func (b *Backend) Count(method string) int {
 // Writes counts the calls that change GitHub or the association: Apply,
 // Resume, Skip and Unskip. A test that cancels setup asserts it is zero.
 func (b *Backend) Writes() int {
-	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip")
+	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip") + b.Count("Capture")
 }
 
 // begin records the call and returns its generation and the current epoch.
@@ -269,6 +285,72 @@ func (b *Backend) Work(ctx context.Context) (gardenapi.WorkView, error) {
 	}
 	if err != nil {
 		return gardenapi.WorkView{}, err
+	}
+	return v, ctx.Err()
+}
+
+// PreviewCapture implements gardenapi.Backend. Like the real one it validates
+// the title and writes nothing.
+func (b *Backend) PreviewCapture(ctx context.Context, req gardenapi.CaptureRequest) (gardenapi.CapturePreview, error) {
+	gen, epoch := b.begin("PreviewCapture")
+	if b.PreviewCaptureErr != nil {
+		return gardenapi.CapturePreview{}, b.PreviewCaptureErr
+	}
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" {
+		return gardenapi.CapturePreview{}, &gardenapi.Error{Code: gardenapi.CodeInvalidInput, Message: "a title is required"}
+	}
+	b.mu.Lock()
+	b.ops++
+	op := fmt.Sprintf("cap-fake-%d", b.ops)
+	target := b.StatusView.Target
+	b.mu.Unlock()
+	return gardenapi.CapturePreview{
+		Stamp: stamp(gen, epoch, target.RepoID), OperationID: op, Request: req, Target: target,
+		Labels: []string{garden.ManagedLabel, garden.FormatTypeLabel(req.Type), garden.FormatStageLabel(garden.StageDraft)},
+	}, ctx.Err()
+}
+
+// Capture implements gardenapi.Backend.
+func (b *Backend) Capture(ctx context.Context, p gardenapi.CapturePreview) (gardenapi.CaptureView, error) {
+	gen, epoch := b.begin("Capture")
+	if b.CaptureErr != nil {
+		return gardenapi.CaptureView{}, b.CaptureErr
+	}
+	b.mu.Lock()
+	b.Captured = append(b.Captured, p)
+	b.mu.Unlock()
+	v := gardenapi.CaptureView{State: gardenapi.CaptureDone, Issue: &gardenapi.IssueRef{ID: 9001, Number: 150}}
+	if b.CapturedView != nil {
+		v = *b.CapturedView
+	}
+	v.OperationID, v.Title = p.OperationID, p.Request.Title
+	v.Stamp = stamp(gen, epoch, p.Target.RepoID)
+	if v.State == gardenapi.CaptureDone && v.Issue != nil {
+		b.mu.Lock()
+		b.WorkView.Snapshot.Items = append(b.WorkView.Snapshot.Items, SampleDraft(garden.IssueID(v.Issue.ID), v.Issue.Number, p.Request.Title, p.Request.Type))
+		b.mu.Unlock()
+	}
+	return v, ctx.Err()
+}
+
+// ReconcileCapture implements gardenapi.Backend.
+func (b *Backend) ReconcileCapture(ctx context.Context, opID string) (gardenapi.CaptureView, error) {
+	gen, epoch := b.begin("ReconcileCapture")
+	if b.ReconcileErr != nil {
+		return gardenapi.CaptureView{}, b.ReconcileErr
+	}
+	v := gardenapi.CaptureView{State: gardenapi.CaptureDone, Issue: &gardenapi.IssueRef{ID: 9001, Number: 150}}
+	if b.ReconciledView != nil {
+		v = *b.ReconciledView
+	}
+	v.OperationID = opID
+	v.Stamp = stamp(gen, epoch, b.StatusView.Target.RepoID)
+	if v.State == gardenapi.CaptureDone && v.Issue != nil {
+		b.mu.Lock()
+		b.WorkView.Snapshot.Items = append(b.WorkView.Snapshot.Items, SampleDraft(garden.IssueID(v.Issue.ID), v.Issue.Number, v.Title, garden.TypeFeature))
+		b.WorkView.PendingCaptures = nil
+		b.mu.Unlock()
 	}
 	return v, ctx.Err()
 }

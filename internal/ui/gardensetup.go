@@ -28,6 +28,7 @@ const (
 	scrReadOnly                        // GS-07
 	scrOff                             // GS-08
 	scrBoard                           // accepted-work board and read-only document
+	scrDrafts                          // the Drafts inbox, its detail and the capture flow
 )
 
 func (m Model) gardenScreen() gardenScreen {
@@ -41,6 +42,9 @@ func (m Model) gardenScreen() gardenScreen {
 		return scrLoading
 	}
 	st := g.status
+	if g.sub == subDrafts && st.Caps.Read {
+		return scrDrafts
+	}
 	if st.State == gardenapi.StateConnected || (g.sub == subBoard && st.Caps.Read) {
 		return scrBoard
 	}
@@ -124,6 +128,9 @@ func (m Model) gardenOperation() (gardenapi.OperationView, bool) {
 // ever loaded, for instance after the first read was abandoned.
 func (m Model) gardenEnterBody() (Model, tea.Cmd) {
 	m.shellFocus = shellBody
+	if m.gardenTyping() {
+		m.shellFocus = shellInput // an unfinished idea keeps the keyboard it had
+	}
 	if m.garden.api != nil && !m.garden.hasStatus && m.garden.busy == busyNone {
 		return m.gardenLoadStatus()
 	}
@@ -157,6 +164,10 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 	switch msg := msg.(type) {
 	case gardenWorkMsg:
 		nm, cmd = m.onGardenWork(msg)
+	case gardenCapturePreviewMsg:
+		nm, cmd = m.onGardenCapturePreview(msg)
+	case gardenCaptureMsg:
+		nm, cmd = m.onGardenCapture(msg)
 	case gardenViewSavedMsg:
 		nm = m.gardenBoardSaved(msg)
 	case gardenStatusMsg:
@@ -197,6 +208,8 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 	prev, had := g.status, g.hasStatus
 	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
 		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
+		// An unfinished idea outlives the change; its preview and results belong to the old Garden.
+		g.drafts = gardenDraftsState{form: g.drafts.form, formOpen: g.drafts.formOpen}
 	}
 	g.status, g.hasStatus = v, true
 	if force || !had || prev.State != v.State || prev.Stamp.Epoch != v.Stamp.Epoch {
@@ -249,7 +262,7 @@ func (m Model) onGardenStatus(msg gardenStatusMsg) (Model, tea.Cmd) {
 			}
 		}
 	}
-	if m.gardenScreen() == scrBoard {
+	if scr := m.gardenScreen(); scr == scrBoard || scr == scrDrafts {
 		var load tea.Cmd
 		m, load = m.gardenLoadWork()
 		return m, tea.Batch(cmd, load)
@@ -437,7 +450,7 @@ func (m Model) gardenStartMode(mode gardenapi.Mode) (Model, tea.Cmd) {
 // keep their own state until the user leaves them.
 func gardenRefreshable(s gardenScreen) bool {
 	switch s {
-	case scrLoading, scrError, scrStart, scrIncomplete, scrReadOnly, scrOff, scrBoard:
+	case scrLoading, scrError, scrStart, scrIncomplete, scrReadOnly, scrOff, scrBoard, scrDrafts:
 		return true
 	}
 	return false
@@ -461,6 +474,9 @@ func (m Model) gardenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if scr == scrBoard {
 		return m.gardenBoardKey(msg)
 	}
+	if scr == scrDrafts {
+		return m.gardenDraftsKey(msg)
+	}
 	if g.busy != busyNone {
 		if k == "esc" {
 			g.abandon()
@@ -477,7 +493,7 @@ func (m Model) gardenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenLoadStatus()
 	case key.Matches(msg, m.keys.Tab):
 		m = m.gardenToggleSub()
-		if m.gardenScreen() == scrBoard {
+		if scr := m.gardenScreen(); scr == scrBoard || scr == scrDrafts {
 			return m.gardenLoadWork()
 		}
 		cmd := m.gardenRememberView()
@@ -642,24 +658,38 @@ func (m Model) gardenBack(scr gardenScreen) Model {
 	return m
 }
 
-// gardenToggleSub switches between Setup and the work view (Board or Table,
-// whichever is current) where both exist. Drafts is not selectable until its plan lands.
+// gardenToggleSub cycles the submenu entries that exist: Setup (until the
+// Garden is connected), the work view (Board or Table, whichever is current)
+// and Drafts. Drafts is its own inbox: it is never mixed into the work view.
 func (m Model) gardenToggleSub() Model {
 	g := &m.garden
-	if g.hasStatus && g.status.State != gardenapi.StateConnected && g.status.Caps.Read {
-		if g.sub == subSetup {
-			g.sub = subBoard
-		} else {
-			g.sub = subSetup
+	if !m.canToggleSub() {
+		return m
+	}
+	var order []gardenSub
+	if g.status.State != gardenapi.StateConnected {
+		order = append(order, subSetup)
+	}
+	order = append(order, subBoard, subDrafts)
+	cur := g.sub
+	if cur == subSetup && g.status.State == gardenapi.StateConnected {
+		cur = subBoard
+	}
+	for i, s := range order {
+		if s == cur {
+			g.sub = order[(i+1)%len(order)]
+			return m
 		}
 	}
+	g.sub = order[0]
 	return m
 }
 
-// canToggleSub reports whether Tab does anything.
+// canToggleSub reports whether Tab does anything: a readable Garden has the
+// Board and Drafts to move between.
 func (m Model) canToggleSub() bool {
 	g := m.garden
-	return g.hasStatus && g.status.State != gardenapi.StateConnected && g.status.Caps.Read
+	return g.hasStatus && g.status.Caps.Read
 }
 
 var gardenRailNames = map[gardenapi.Mode]string{
@@ -674,6 +704,8 @@ func (m Model) gardenCrumbs() []string {
 	switch m.gardenScreen() {
 	case scrUnavailable:
 		return []string{"Garden"}
+	case scrDrafts:
+		return m.gardenDraftsCrumbs()
 	case scrBoard:
 		b := m.garden.board
 		crumbs := []string{"Garden", "Board", b.selection.Column.String()}
@@ -719,12 +751,18 @@ func (m Model) gardenWhere() string {
 	if m.gardenScreen() == scrBoard {
 		return m.gardenBoardIdentity()
 	}
+	if m.gardenScreen() == scrDrafts {
+		return m.gardenDraftsIdentity()
+	}
 	return strings.Join(m.gardenCrumbs(), " / ")
 }
 
 // gardenFocusLabel names the focus owner inside the body, as the mockups do:
 // "Setup / Create Garden", "Garden / Off".
 func (m Model) gardenFocusLabel() string {
+	if m.gardenScreen() == scrDrafts {
+		return m.gardenDraftsFocusLabel()
+	}
 	if m.gardenScreen() == scrBoard && m.garden.board.layout == layoutTable && m.garden.board.opened == 0 {
 		return "Approved table"
 	}
@@ -743,6 +781,9 @@ func (m Model) gardenFocusLabel() string {
 func (m Model) gardenHints() []shellHint {
 	if m.gardenScreen() == scrBoard {
 		return m.gardenBoardHints()
+	}
+	if m.gardenScreen() == scrDrafts {
+		return m.gardenDraftsHints()
 	}
 	g := m.garden
 	if g.api == nil {
@@ -869,6 +910,8 @@ func (m Model) gardenStatusLine() string {
 	case scrOff:
 		return "Garden off for this clone"
 	case scrBoard:
+		return m.gardenBoardStatus()
+	case scrDrafts:
 		return m.gardenBoardStatus()
 	}
 	return ""

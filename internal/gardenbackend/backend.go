@@ -16,7 +16,9 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
@@ -40,6 +42,10 @@ type Deps struct {
 	// InvalidateAuth forgets cached credentials; the next read uses gh's stored login.
 	InvalidateAuth func()
 	Store          *connect.Store
+	// Creator and Ops enable capture: the only Issue-creating seam and the durable
+	// record of each create. Both are optional; without them capture is unavailable.
+	Creator garden.IssueCreator
+	Ops     *ops.Store
 	// NewID returns a fresh random token for operation IDs and idempotency keys.
 	NewID func() string
 }
@@ -55,6 +61,7 @@ type Backend struct {
 	viewer         connect.GitHubIdentity
 	haveViewer     bool
 	authGeneration uint64
+	captures       *capture.Service // built on first use
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)
@@ -101,8 +108,14 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 			return nil, fmt.Errorf("garden store: %w", err)
 		}
 	}
+	opStore, err := ops.Open()
+	if err != nil {
+		return nil, fmt.Errorf("garden operations: %w", err)
+	}
 	return newBackend(repoDir, Deps{
 		Issues:         gh.Reader(),
+		Creator:        gh.Creator(),
+		Ops:            opStore,
 		Remotes:        gitRemotes{coregit.RemoteLister{Dir: repoDir}},
 		Resolver:       ghgarden.RepositoryResolver{Adapter: gh},
 		Ports:          connect.SetupPorts{Labels: gh, LabelWrites: gh, Projects: gh, ProjectWrites: gh, OperationProjects: gh},

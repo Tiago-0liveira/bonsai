@@ -48,6 +48,21 @@ type IssueWriter interface {
 	AppendComment(context.Context, RepoID, IssueID, string) (IssueComment, error)
 	UpdateLabels(context.Context, RepoID, IssueID, []string) error
 }
+
+// NewIssue is the only Issue content Garden ever sends to GitHub: capture creates
+// an Issue once. Every later mutation is a comment or a bonsai: label change.
+type NewIssue struct {
+	Title string
+	Body  string
+	// Labels must all be in the bonsai: namespace.
+	Labels []string
+}
+
+// IssueCreator is separate from IssueWriter so that only capture holds the
+// capability to create Issues.
+type IssueCreator interface {
+	CreateIssue(context.Context, RepoID, NewIssue) (Issue, error)
+}
 type Project struct {
 	ID   string
 	Name string

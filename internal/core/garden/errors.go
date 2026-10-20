@@ -35,3 +35,7 @@ type RateLimitError struct{ RetryAfter time.Duration }
 
 func (e RateLimitError) Error() string        { return ErrRateLimited.Error() }
 func (e RateLimitError) Is(target error) bool { return target == ErrRateLimited }
+
+// ErrRejected reports a definitive refusal (a 4xx answer): the request was understood and nothing was changed.
+// Other write failures are ambiguous and must be reconciled before they are repeated.
+var ErrRejected = errors.New("garden request rejected")

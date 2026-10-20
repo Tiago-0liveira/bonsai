@@ -39,29 +39,33 @@ const (
 	busyCandidates
 	busyProjects
 	busyPlan
+	busyPreviewCapture
 	busyApply
 	busyResume
 	busySkip
 	busyUnskip
+	busyCapture
+	busyReconcile
 )
 
 func (b gardenBusy) writes() bool { return b >= busyApply }
 
-// gardenSub is the Garden submenu entry in view. Table and Drafts arrive with
-// later plans and are never selectable.
+// gardenSub is the Garden submenu entry in view. Table is a layout of the Board.
 type gardenSub int
 
 const (
 	subSetup gardenSub = iota
 	subBoard
+	subDrafts
 )
 
 // gardenState is the TUI's side of the Garden backend. Every call goes through
 // api as a tea.Cmd; Update and View never wait on it. Settings reads status
 // from here too, so the two screens can never disagree.
 type gardenState struct {
-	board gardenBoardState
-	api   gardenapi.Backend // nil when Garden is unavailable
+	board  gardenBoardState
+	drafts gardenDraftsState
+	api    gardenapi.Backend // nil when Garden is unavailable
 
 	// seq numbers requests: a reply carrying any other value was superseded or
 	// abandoned, so it is dropped before it can move focus. gate is the second

@@ -189,3 +189,49 @@ in the existing per-repository UI state; issue data and queries remain in memory
 `Snapshot.SuccessfulAt` retains the last complete-live sync time independently
 of `FetchedAt` (latest attempt). The backend's bounded Work read uses the same
 store, generation, scope and epoch as setup/status, with no writer capability.
+
+## Drafts (07)
+
+### Issue creation exception
+
+The adapter never sends a title or body in a mutation except once: `IssueCreator.CreateIssue`
+(`POST /repos/{owner}/{repo}/issues` with `title`, `body` and `labels`). It is a separate port from
+`IssueWriter` so only capture holds it. Only `bonsai:` labels are accepted. A 4xx answer other than
+408 is a definitive refusal and wraps `garden.ErrRejected`; any other failure (5xx, transport error,
+408, unreadable success, a response for another repository or a pull request) is ambiguous. Every
+later mutation stays a comment or a `bonsai:` label change.
+
+### Capture body
+
+Line 1 is the metadata envelope with provenance `bonsai-capture`, the viewer's numeric ID as owner
+and `accepted: false`. Line 2 is `<!-- bonsai:garden-capture/v1 <nonce> -->` with a random 128-bit
+lowercase hex nonce. The user's optional description follows. Labels are `bonsai:managed`,
+`bonsai:type/<type>` and `bonsai:stage/draft`. A Project-only draft card is never created.
+
+### Operation record and reconcile
+
+`internal/core/garden/ops` is a locked, atomically replaced JSON store (size and record caps, strict
+decode, duplicate-key rejection, schema version) at `garden-operations.json`. `capture.Service`
+writes the record (`pending`, with the nonce) before `CreateIssue`. Definitive failures become
+`failed` and may retry the same operation; ambiguous ones become `unknown` and retry is refused.
+A pending record found without a running call (crash) is treated as `unknown`. A finished operation
+returns its Issue and never creates again; the same operation ID with other content is refused.
+`Reconcile` pages through the managed Issues and matches the nonce **and** the viewer as author.
+Found: `done`. A complete read that finds nothing is accepted as "not created" only once 15 seconds
+passed since the attempt, because the listing is not documented as read-after-write consistent
+(decision: a wrong "not created" would allow a duplicate). An incomplete or failed read changes
+nothing. Unfinished records are never trimmed from the store.
+
+### Drafts selector
+
+`work.Drafts` includes items carrying the literal `bonsai:stage/draft` label that are not deleted
+and have a stable ID, of any type. Conflicting labels, bad metadata, competing heads and an accepted
+specification still labelled draft are kept as attention rows; Board and Table are unchanged.
+
+### Backend and UI contract
+
+`gardenapi.Backend` gains `PreviewCapture` (pure, needs Write), `Capture` and `ReconcileCapture`;
+`WorkView.PendingCaptures` lists unsettled captures after a restart. New codes: `capture-unknown`,
+`invalid-input`, `not-connected`. The UI keeps the unfinished form in memory only; no file write
+happens from the TUI.
+

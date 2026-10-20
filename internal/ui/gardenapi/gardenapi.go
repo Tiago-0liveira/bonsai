@@ -12,6 +12,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 )
 
@@ -44,6 +45,20 @@ type Backend interface {
 	Skip(ctx context.Context, target TargetRef) (StatusView, error)
 	// Unskip reverses Skip.
 	Unskip(ctx context.Context) (StatusView, error)
+
+	// PreviewCapture validates a new idea and returns exactly what Capture would
+	// create, with a fresh operation ID. It writes nothing and needs Write access
+	// (CodeReadOnly otherwise).
+	PreviewCapture(ctx context.Context, req CaptureRequest) (CapturePreview, error)
+	// Capture creates the previewed Issue at Draft, once. It is the only call that
+	// creates an Issue. Calling it again with the same preview never creates a
+	// second Issue: a finished operation returns its Issue, and one that may have
+	// reached GitHub reports CaptureUnknown until ReconcileCapture settles it.
+	Capture(ctx context.Context, preview CapturePreview) (CaptureView, error)
+	// ReconcileCapture looks for the Issue of a capture whose outcome is unknown.
+	// It only reads, except that it records what it found in the local operation
+	// record. A complete read that finds nothing makes the capture retryable.
+	ReconcileCapture(ctx context.Context, operationID string) (CaptureView, error)
 }
 
 // Stamp scopes one reply. Generation grows with every request of the clone and
@@ -401,9 +416,15 @@ const (
 	CodeOperationNotFound   Code = "operation-not-found"
 	CodeStalePlan           Code = "stale-plan"
 	CodeConflict            Code = "conflict"
-	CodeSkipped             Code = "skipped"
-	CodeStore               Code = "store-unavailable"
-	CodeFailed              Code = "failed"
+	// CodeCaptureUnknown means an Issue may have been created; reconcile before retrying.
+	CodeCaptureUnknown Code = "capture-unknown"
+	// CodeInvalidInput means the request failed validation; nothing was sent.
+	CodeInvalidInput Code = "invalid-input"
+	// CodeNotConnected means there is no Garden to write to.
+	CodeNotConnected Code = "not-connected"
+	CodeSkipped      Code = "skipped"
+	CodeStore        Code = "store-unavailable"
+	CodeFailed       Code = "failed"
 )
 
 // Error is the only error the backend returns. Message and Next are written
@@ -423,4 +444,50 @@ func (e *Error) Error() string { return e.Message }
 type WorkView struct {
 	Stamp    Stamp
 	Snapshot gardensync.Snapshot
+	// PendingCaptures are this clone's captures that still need a decision after a
+	// restart or timeout (state pending or unknown), so Drafts can offer Reconcile.
+	PendingCaptures []CaptureView
+}
+
+// CaptureRequest is what the user typed for a new idea.
+type CaptureRequest struct {
+	Title       string
+	Description string // optional
+	Type        garden.ItemType
+}
+
+// CapturePreview is the exact creation Capture will run. Hand it back unchanged.
+type CapturePreview struct {
+	Stamp       Stamp
+	OperationID string // stable across retries of this one capture
+	Request     CaptureRequest
+	Target      Target
+	Labels      []string // the bonsai: labels the Issue is created with
+}
+
+// CaptureState is where a capture stands.
+type CaptureState string
+
+const (
+	CapturePending CaptureState = "pending"
+	CaptureUnknown CaptureState = "unknown" // may exist on GitHub: reconcile, do not retry
+	CaptureDone    CaptureState = "done"
+	CaptureFailed  CaptureState = "failed" // nothing was created; retry is safe
+)
+
+// IssueRef names a created Issue.
+type IssueRef struct {
+	ID     uint64
+	Number int64
+}
+
+// CaptureView is the durable state of one capture. A capture that started but
+// did not finish arrives here with Err set rather than as an error.
+type CaptureView struct {
+	Stamp       Stamp
+	OperationID string
+	State       CaptureState
+	Title       string
+	Issue       *IssueRef
+	Err         *Error
 }

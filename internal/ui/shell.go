@@ -477,6 +477,9 @@ func (m Model) shellHints() []shellHint {
 		return m.accountsHints()
 	}
 	if m.currentShellFocus() == shellInput && m.workspace == wsGarden {
+		if m.gardenScreen() == scrDrafts {
+			return m.gardenDraftsHints()
+		}
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}
 	if m.currentShellFocus() == shellInput {

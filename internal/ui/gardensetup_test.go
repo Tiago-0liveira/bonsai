@@ -869,8 +869,12 @@ func TestGardenTabTogglesBoardOnlyWhenReadable(t *testing.T) {
 		t.Fatalf("Tab on read-only: screen %d", m.gardenScreen())
 	}
 	m = pressAll(t, m, "tab")
-	if m.gardenScreen() != scrReadOnly {
+	if m.gardenScreen() != scrDrafts {
 		t.Fatalf("Tab again: screen %d", m.gardenScreen())
+	}
+	m = pressAll(t, m, "tab")
+	if m.gardenScreen() != scrReadOnly {
+		t.Fatalf("Tab a third time: screen %d", m.gardenScreen())
 	}
 	m = gardenEnv(t, gardenFake(gardenapi.StateNone), config.Prefs{}, 120, 35)
 	m = pressAll(t, m, "tab")

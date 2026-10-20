@@ -74,5 +74,5 @@ func (b *Backend) Work(ctx context.Context) (gardenapi.WorkView, error) {
 	if err := store.Apply(snap); err != nil {
 		return gardenapi.WorkView{}, apiError(err)
 	}
-	return gardenapi.WorkView{Stamp: stamp, Snapshot: store.Read()}, nil
+	return gardenapi.WorkView{Stamp: stamp, Snapshot: store.Read(), PendingCaptures: b.pendingCaptures(ctx, gen, repo.Repo)}, nil
 }

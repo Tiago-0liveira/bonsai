@@ -66,7 +66,7 @@ These presentation columns never add or change GitHub labels.
 | `R` (refresh binding) | Refresh the collection |
 | `esc` | Return to setup when available, otherwise workspace navigation |
 | `v` (`garden_view` binding) | Switch Board/Table, keeping the selected issue |
-| `tab` (focus-next binding) | Switch Setup/work view when both are available |
+| `tab` (focus-next binding) | Cycle Setup (until connected), the work view and Drafts |
 | `ctrl+k` / `?` | Command palette / help |
 
 Filters combine and apply to the same collection. An active filter labels the
@@ -75,7 +75,7 @@ data from existing `priority:p0` through `priority:p3` labels (case-insensitive)
 not a new managed label or a setup change. Missing or conflicting priority is `?`.
 Search captures typed shortcuts; Enter applies it and Escape restores the previous
 query and selection. The palette includes Garden: Board, Garden: Table, Search
-approved work, and Refresh. Drafts remains unavailable until its own plan lands.
+approved work, and Refresh.
 
 Refresh keeps the selected stable ID even if its row or column changes. On the
 Board, if an issue is deleted or filtered out, selection falls back to the nearest row of the
@@ -145,3 +145,46 @@ disk. Another Bonsai process has the existing UI-state last-writer limitation.
 
 For the canonical schema and verification boundaries, see the
 [Garden contract](design/tui-redesign/garden-contract.md).
+
+## Drafts
+
+Drafts is a separate, amber inbox for ideas that have not been validated. Reach it
+with `tab` from the Board or Table; `v` or `esc` returns to the Board. It lists
+every managed Issue at the `draft` stage, of any type, with the type written as a
+word. Drafts never appear on the Board or Table, and a type or a `ready` label
+never makes an idea approved. An item whose revision heads compete, whose labels
+or metadata are inconsistent, or whose specification is accepted but still
+labelled draft stays in the inbox as `! attention` with the reason, so a
+concurrent edit never makes it vanish.
+
+| Key in Drafts | Action |
+| --- | --- |
+| `↑` / `↓` or `k` / `j`, `pgup` / `pgdown`, `home` / `end` | Select a draft (kept by Issue ID across refreshes) |
+| `enter` | Open the read-only draft document: Issue body and current specification |
+| `/`, `t`, `x` | Search number or title, cycle the type filter, clear filters |
+| `n` | Capture a new idea |
+| `r` | Reconcile a capture whose outcome is unknown |
+| `R` (refresh binding) | Refresh |
+| `v` / `esc` | Back to the Board |
+
+### Capture
+
+`n` asks for a title, an optional description and a type, then shows a preview:
+the repository, the exact `bonsai:` labels and "Nothing is approved, planned or
+started". Creating always makes a real repository Issue at Draft, never a Project
+card, and needs Write access (read-only users see the reason instead of the
+action). While GitHub answers, keys are ignored and the call is never cancelled.
+
+The Issue body starts with the metadata line and a second marker line holding a
+random nonce, then your description. Bonsai records the operation in
+`garden-operations.json` (beside `garden-associations.json`) before it calls
+GitHub. If GitHub does not confirm the creation (timeout, offline, 5xx), the
+capture is **unknown**: it may exist. Retry is refused; **Reconcile** looks for
+the nonce among your Garden's Issues and either finds the Issue or, after a short
+settle time and a complete read that finds nothing, allows a retry of the same
+operation. A restart shows `N capture may already exist` and `r` reconciles it.
+Rejections (validation, permission, rate limit) are definite: nothing was
+created and Retry is safe. The text you typed survives errors, resizing and
+leaving the workspace until you create or explicitly discard it (`esc` on a
+non-empty form asks first). It is kept in memory only.
+

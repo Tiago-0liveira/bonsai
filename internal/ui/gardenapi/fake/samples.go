@@ -1,6 +1,12 @@
 package fake
 
-import "github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
+import (
+	"strings"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
+)
 
 // Sample identifiers, matching the Garden setup mockups.
 const (
@@ -120,4 +126,40 @@ func SampleOperation(state gardenapi.State) gardenapi.OperationView {
 		v.Steps[3].Status, v.Steps[4].Status = gardenapi.StepPending, gardenapi.StepPending
 	}
 	return v
+}
+
+// SampleDraft is a plain, valid Draft: managed, typed, at the draft stage, not accepted.
+func SampleDraft(id garden.IssueID, number int64, title string, typ garden.ItemType) gardensync.Item {
+	labels := []string{garden.ManagedLabel, garden.FormatTypeLabel(typ), garden.FormatStageLabel(garden.StageDraft)}
+	meta, _ := garden.EncodeMetadata(garden.Metadata{Provenance: garden.ProvenanceCapture, Owner: "1001"})
+	issue := garden.Issue{Repo: SampleRepoID, ID: id, Number: number, Title: title, Labels: labels, Metadata: meta, AuthorID: "1001"}
+	v := garden.Verify(garden.IssueIdentity{Repo: SampleRepoID, Issue: id}, nil, garden.ApprovalPolicy{AllowedActorIDs: []string{"1001"}})
+	return gardensync.Item{Issue: issue, Classification: garden.Classify(labels), Verification: v,
+		Lane: garden.LaneResult{Lane: garden.LaneDraft, Reason: "specification has not been accepted"}}
+}
+
+// SampleDraftItems are the Drafts of the mockups: #142 with a long specification,
+// #143 a bug with only a title, and #144 whose revision heads compete (Attention).
+func SampleDraftItems() []gardensync.Item {
+	long := SampleDraft(142, 142, "Per-repository agent budget limits", garden.TypeFeature)
+	long.Issue.Body = garden.MetadataPrefix + "{} -->\nTeams want a ceiling on agent spend per repository."
+	sections := []string{"Summary", "Current behavior", "Desired behavior", "Requirements", "Acceptance criteria", "Constraints", "Open questions"}
+	var spec strings.Builder
+	for _, s := range sections {
+		spec.WriteString("## " + s + "\n")
+		for i := 0; i < 8; i++ {
+			spec.WriteString("Line about " + strings.ToLower(s) + " that keeps the document long enough to scroll.\n")
+		}
+		spec.WriteString("\n")
+	}
+	rev := garden.Revision{Kind: garden.RevisionSpec, CommentID: 77, Content: strings.TrimSpace(spec.String()), Hash: garden.ContentHash(spec.String())}
+	long.Verification.Revisions = []garden.Revision{rev}
+	long.Verification.Heads = []garden.Revision{rev}
+	bug := SampleDraft(143, 143, "Crash when the config file is empty", garden.TypeBug)
+	attention := SampleDraft(144, 144, "Rework the onboarding flow", garden.TypeChore)
+	a, b := garden.Revision{Kind: garden.RevisionSpec, CommentID: 90, Hash: "a"}, garden.Revision{Kind: garden.RevisionSpec, CommentID: 91, Hash: "b"}
+	attention.Verification.Heads = []garden.Revision{a, b}
+	attention.Verification.ConflictingHeads = []garden.Revision{a, b}
+	attention.Lane = garden.LaneResult{Lane: garden.LaneAttention, Reason: "competing revision heads"}
+	return []gardensync.Item{long, bug, attention}
 }

@@ -352,6 +352,8 @@ func (m Model) gardenBody(width, rows int) []string {
 		lines = m.gsOff(width, rows)
 	case scrBoard:
 		lines = m.gsBoard(width, rows)
+	case scrDrafts:
+		lines = m.gsDrafts(width, rows)
 	}
 	for len(lines) < rows {
 		lines = append(lines, blankRow(width, theme.Current.Background))
@@ -1191,8 +1193,11 @@ func (m Model) gardenSubmenu(width int) []string {
 		}
 	}
 	active := subSetup
-	if m.gardenScreen() == scrBoard {
+	switch m.gardenScreen() {
+	case scrBoard:
 		active = subBoard
+	case scrDrafts:
+		active = subDrafts
 	}
 	g := m.garden
 	boardOn := g.hasStatus && (g.status.State == gardenapi.StateConnected || g.status.Caps.Read)
@@ -1204,13 +1209,19 @@ func (m Model) gardenSubmenu(width int) []string {
 		{"✚", "Setup", setupOn, active == subSetup},
 		{"▦", "Board", boardOn, active == subBoard && g.board.layout == layoutBoard},
 		{"▤", "Table", boardOn, active == subBoard && g.board.layout == layoutTable},
-		{"✎", "Drafts", false, false},
+		{"✎", "Drafts", boardOn, active == subDrafts},
 	}
 	var tabs strings.Builder
 	tabs.WriteString(seg("", p.Surface, false).Render(" "))
 	for _, it := range items {
 		label := " " + it.icon + " " + it.name + " "
+		if it.name == "Drafts" && it.on && len(g.drafts.collection.Records) > 0 {
+			label = " " + it.icon + " " + it.name + " " + fmt.Sprint(g.drafts.collection.Total) + " "
+		}
 		switch {
+		case it.active && it.name == "Drafts":
+			// Amber marks the inbox as separate from approved work.
+			tabs.WriteString(seg(p.Background, p.Warning, true).Render(label))
 		case it.active:
 			tabs.WriteString(seg(p.Background, p.Accent, true).Render(label))
 		case it.on:

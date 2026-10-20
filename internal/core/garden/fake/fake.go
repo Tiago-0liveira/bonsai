@@ -25,6 +25,10 @@ type Fake struct {
 	next      int64
 	now       func() time.Time
 	clockStep int64
+	// failAfter makes the next CreateIssue apply and then fail, modelling a timeout after the server created.
+	failAfter error
+	// log lists every mutation in order, so tests can assert what was and was not written.
+	log []string
 }
 
 // New constructs a fake with an empty store and a 100 item page size.
@@ -42,6 +46,20 @@ func (f *Fake) SetClock(now func() time.Time) {
 		f.now = now
 	}
 	f.clockStep = 0
+}
+
+// WriteLog returns the mutations applied so far, oldest first: "create", "comment:<issue>", "labels:<issue>:<labels>".
+func (f *Fake) WriteLog() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.log...)
+}
+
+// FailNextCreateAfterApply makes the next CreateIssue store the Issue and still return err.
+func (f *Fake) FailNextCreateAfterApply(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failAfter = err
 }
 
 // SeedIssue inserts an issue for deterministic contract tests.
@@ -192,6 +210,7 @@ func (f *Fake) AppendComment(ctx context.Context, r garden.RepoID, id garden.Iss
 	}
 	f.next++
 	f.clockStep++
+	f.log = append(f.log, fmt.Sprintf("comment:%d", id))
 	c := garden.IssueComment{ID: f.next, Body: body, Author: "fake-authenticated", AuthorID: "fake-authenticated-id", CreatedAt: f.now().Add(time.Duration(f.clockStep)).UTC()}
 	if f.comments[r] == nil {
 		f.comments[r] = make(map[garden.IssueID][]garden.IssueComment)
@@ -216,7 +235,37 @@ func (f *Fake) UpdateLabels(ctx context.Context, r garden.RepoID, id garden.Issu
 	}
 	i.Labels = append([]string(nil), labels...)
 	f.issues[r][id] = i
+	f.log = append(f.log, fmt.Sprintf("labels:%d:%s", id, strings.Join(labels, ",")))
 	return nil
+}
+
+// CreateIssue stores a new Issue authored by the fake account, with the next free ID and number.
+func (f *Fake) CreateIssue(ctx context.Context, r garden.RepoID, n garden.NewIssue) (garden.Issue, error) {
+	if e := checkContext(ctx); e != nil {
+		return garden.Issue{}, e
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e := f.check(); e != nil {
+		return garden.Issue{}, e
+	}
+	var id garden.IssueID
+	var number int64
+	for _, i := range f.issues[r] {
+		id, number = max(id, i.ID), max(number, i.Number)
+	}
+	i := garden.Issue{Repo: r, ID: id + 1, Number: number + 1, Title: n.Title, AuthorID: "fake-authenticated-id", CreatedAt: f.now().UTC(),
+		Labels: append([]string(nil), n.Labels...), Body: n.Body, Metadata: garden.BodyMetadata(n.Body)}
+	if f.issues[r] == nil {
+		f.issues[r] = map[garden.IssueID]garden.Issue{}
+	}
+	f.issues[r][i.ID] = cloneIssue(i)
+	f.log = append(f.log, "create")
+	if err := f.failAfter; err != nil {
+		f.failAfter = nil
+		return garden.Issue{}, err
+	}
+	return cloneIssue(i), nil
 }
 
 // ListProjects returns a repository's project view.

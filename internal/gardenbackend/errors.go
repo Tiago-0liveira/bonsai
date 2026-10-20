@@ -3,9 +3,12 @@ package gardenbackend
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
@@ -63,7 +66,19 @@ func safeAPIError(err error) *gardenapi.Error {
 		return e(gardenapi.CodeNoGitHubRemote, "No remote of this repository points at GitHub.")
 	case errors.Is(err, connect.ErrAuthRequired), errors.Is(err, garden.ErrAuthRequired), errors.Is(err, ErrAuthUnavailable):
 		return &gardenapi.Error{Code: gardenapi.CodeAuthRequired, Message: "GitHub sign-in is required.", Next: "Sign in with the GitHub CLI yourself, then retry.", Fix: fixLogin}
-	case errors.Is(err, connect.ErrRateLimited):
+	case errors.Is(err, capture.ErrInvalid):
+		return &gardenapi.Error{Code: gardenapi.CodeInvalidInput, Message: strings.TrimPrefix(err.Error(), capture.ErrInvalid.Error()+": ")}
+	case errors.Is(err, capture.ErrInFlight):
+		return e(gardenapi.CodeOperationInProgress, "That capture is already running.")
+	case errors.Is(err, capture.ErrMismatch):
+		return e(gardenapi.CodeConflict, "That capture belongs to different content or another clone.")
+	case errors.Is(err, ops.ErrCorrupt), errors.Is(err, ops.ErrUnsupportedSchema), errors.Is(err, ops.ErrTooLarge):
+		return e(gardenapi.CodeStore, "Garden operation records could not be read.")
+	case errors.Is(err, garden.ErrRejected), errors.Is(err, connect.ErrGitHubValidation):
+		return e(gardenapi.CodeValidation, "GitHub rejected the request.")
+	case errors.Is(err, garden.ErrForbidden):
+		return e(gardenapi.CodePermissionDenied, "GitHub refused the request.")
+	case errors.Is(err, connect.ErrRateLimited), errors.Is(err, garden.ErrRateLimited):
 		return e(gardenapi.CodeRateLimited, "GitHub rate limit reached.")
 	case errors.Is(err, connect.ErrOffline):
 		return e(gardenapi.CodeOffline, "GitHub could not be reached.")

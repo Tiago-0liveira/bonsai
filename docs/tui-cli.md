@@ -319,6 +319,12 @@ Some columns await backend evidence from plans 08/09; selecting or opening never
 changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
 filter semantics, document sections, keys and current limitations.
 
+Drafts is a separate inbox for unvalidated ideas (`tab` from the Board, `n` to
+capture a new one as a GitHub Issue at Draft, `/` search, `t` type, `r` reconcile,
+`esc` back). Creating needs a preview and confirmation, survives timeouts without
+duplicates, and never approves or starts anything. See the
+[Garden guide](garden.md#drafts).
+
 #### Settings in the preview
 
 Settings is reachable with `,`, the Settings tab or the palette, and works without

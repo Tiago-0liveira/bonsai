@@ -1,6 +1,6 @@
 # Plan 07 — Separate Drafts, capture and import
 
-Status: not started. Prerequisite: [06 — Garden table](06-garden-table.md).
+Status: in progress (07.1 implemented; 07.2 and 07.3 pending). Prerequisite: [06 — Garden table](06-garden-table.md).
 Next: [08 — Specifications, approvals and planning](08-garden-approval-and-planning.md).
 
 ## Deliverable
