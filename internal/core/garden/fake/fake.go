@@ -27,6 +27,9 @@ type Fake struct {
 	clockStep int64
 	// failAfter makes the next CreateIssue apply and then fail, modelling a timeout after the server created.
 	failAfter error
+	// beforeAppend and afterAppend run once, outside the lock, around the next AppendComment, so a test can
+	// inject a concurrent writer between a read and a write.
+	beforeAppend, afterAppend func()
 	// log lists every mutation in order, so tests can assert what was and was not written.
 	log []string
 }
@@ -46,6 +49,34 @@ func (f *Fake) SetClock(now func() time.Time) {
 		f.now = now
 	}
 	f.clockStep = 0
+}
+
+// BeforeNextAppend registers a function that runs once just before the next AppendComment is applied.
+func (f *Fake) BeforeNextAppend(fn func()) { f.mu.Lock(); defer f.mu.Unlock(); f.beforeAppend = fn }
+
+// AfterNextAppend registers a function that runs once just after the next AppendComment is applied.
+func (f *Fake) AfterNextAppend(fn func()) { f.mu.Lock(); defer f.mu.Unlock(); f.afterAppend = fn }
+
+func (f *Fake) takeHook(h *func()) func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn := *h
+	*h = nil
+	return fn
+}
+
+// AppendCommentAs appends a comment written by another account, to model a collaborator or a phone edit.
+func (f *Fake) AppendCommentAs(r garden.RepoID, id garden.IssueID, author, authorID, body string) garden.IssueComment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	f.clockStep++
+	c := garden.IssueComment{ID: f.next, Body: body, Author: author, AuthorID: authorID, CreatedAt: f.now().Add(time.Duration(f.clockStep)).UTC()}
+	if f.comments[r] == nil {
+		f.comments[r] = make(map[garden.IssueID][]garden.IssueComment)
+	}
+	f.comments[r][id] = append(f.comments[r][id], c)
+	return c
 }
 
 // WriteLog returns the mutations applied so far, oldest first: "create", "comment:<issue>", "labels:<issue>:<labels>".
@@ -117,6 +148,15 @@ func (f *Fake) PutIssue(i garden.Issue) {
 
 // ListManagedIssues returns one page of managed issue snapshots.
 func (f *Fake) ListManagedIssues(ctx context.Context, r garden.RepoID, cursor string) (garden.IssuePage, error) {
+	return f.listIssues(ctx, r, cursor, true)
+}
+
+// ListRepositoryIssues includes Issues whose managed label was removed.
+func (f *Fake) ListRepositoryIssues(ctx context.Context, r garden.RepoID, cursor string) (garden.IssuePage, error) {
+	return f.listIssues(ctx, r, cursor, false)
+}
+
+func (f *Fake) listIssues(ctx context.Context, r garden.RepoID, cursor string, managedOnly bool) (garden.IssuePage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := checkContext(ctx); err != nil {
@@ -127,6 +167,10 @@ func (f *Fake) ListManagedIssues(ctx context.Context, r garden.RepoID, cursor st
 	}
 	ids := make([]garden.IssueID, 0)
 	for id, i := range f.issues[r] {
+		if !managedOnly {
+			ids = append(ids, id)
+			continue
+		}
 		for _, l := range i.Labels {
 			if l == garden.ManagedLabel {
 				ids = append(ids, id)
@@ -203,6 +247,17 @@ func (f *Fake) AppendComment(ctx context.Context, r garden.RepoID, id garden.Iss
 	if e := checkContext(ctx); e != nil {
 		return garden.IssueComment{}, e
 	}
+	if fn := f.takeHook(&f.beforeAppend); fn != nil {
+		fn()
+	}
+	c, err := f.appendComment(r, id, body)
+	if fn := f.takeHook(&f.afterAppend); fn != nil {
+		fn()
+	}
+	return c, err
+}
+
+func (f *Fake) appendComment(r garden.RepoID, id garden.IssueID, body string) (garden.IssueComment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e := f.check(); e != nil {

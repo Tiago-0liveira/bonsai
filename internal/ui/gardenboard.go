@@ -103,10 +103,15 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 		}
 	}
 	b.reselect()
-	g.drafts.pending = msg.view.PendingCaptures
+	g.drafts.pendingErr = msg.view.PendingCapturesErr
+	if g.drafts.pendingErr == nil {
+		g.drafts.pending = msg.view.PendingCaptures
+	}
 	g.drafts.reselect(snap)
+	g.drafts.checkRemote(snap)
 	m.gardenBoardVisible()
 	m.gardenDraftsVisible()
+	m.gardenClampDraftDocument()
 	m.gardenClampDocument()
 	g.status.LastSync = snap.SuccessfulAt
 	g.status.IssueCount = len(snap.Items)

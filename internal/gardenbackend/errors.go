@@ -8,6 +8,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
@@ -54,6 +55,7 @@ func safeAPIError(err error) *gardenapi.Error {
 	}
 	var scope connect.ErrScopeMissing
 	var amb *connect.AmbiguousError
+	var earlier edit.MatchesEarlierError
 	e := func(code gardenapi.Code, msg string) *gardenapi.Error {
 		return &gardenapi.Error{Code: code, Message: msg, Next: connect.UserMessage(err)}
 	}
@@ -66,6 +68,24 @@ func safeAPIError(err error) *gardenapi.Error {
 		return e(gardenapi.CodeNoGitHubRemote, "No remote of this repository points at GitHub.")
 	case errors.Is(err, connect.ErrAuthRequired), errors.Is(err, garden.ErrAuthRequired), errors.Is(err, ErrAuthUnavailable):
 		return &gardenapi.Error{Code: gardenapi.CodeAuthRequired, Message: "GitHub sign-in is required.", Next: "Sign in with the GitHub CLI yourself, then retry.", Fix: fixLogin}
+	case errors.Is(err, edit.ErrNoChange):
+		return &gardenapi.Error{Code: gardenapi.CodeNoChange, Message: "There is nothing to save: the specification already says this."}
+	case errors.As(err, &earlier):
+		return &gardenapi.Error{Code: gardenapi.CodeNoChange, Message: "This text matches an earlier revision of the specification.", Next: "Reverting to an earlier revision is not supported yet. Change the text a little to save it as new."}
+	case errors.Is(err, edit.ErrIncomplete):
+		return &gardenapi.Error{Code: gardenapi.CodeDocumentIncomplete, Message: "GitHub's revision log could not be read completely, so nothing was saved.", Next: "Refresh and try again."}
+	case errors.Is(err, edit.ErrIntegrity):
+		return &gardenapi.Error{Code: gardenapi.CodeDocumentIncomplete, Message: "The revision log holds records that fail verification, so nothing was saved.", Next: "Fix or remove the broken comment on GitHub, then refresh."}
+	case errors.Is(err, edit.ErrEmpty):
+		return &gardenapi.Error{Code: gardenapi.CodeInvalidInput, Message: "The specification is empty."}
+	case errors.Is(err, edit.ErrTooLarge), errors.Is(err, garden.ErrCommentTooLarge):
+		return &gardenapi.Error{Code: gardenapi.CodeInvalidInput, Message: "The specification is too large to save as one revision."}
+	case errors.Is(err, edit.ErrUnverified):
+		return &gardenapi.Error{Code: gardenapi.CodeSaveUnknown, Message: "The revision was saved but could not be found again.", Next: "Refresh to read the current state."}
+	case errors.Is(err, edit.ErrWrongIssue):
+		return e(gardenapi.CodeConflict, "GitHub returned another Issue than the one asked for.")
+	case errors.Is(err, garden.ErrNotFound):
+		return &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That Issue no longer exists on GitHub.", Next: "Refresh the Garden."}
 	case errors.Is(err, capture.ErrInvalid):
 		return &gardenapi.Error{Code: gardenapi.CodeInvalidInput, Message: strings.TrimPrefix(err.Error(), capture.ErrInvalid.Error()+": ")}
 	case errors.Is(err, capture.ErrInFlight):

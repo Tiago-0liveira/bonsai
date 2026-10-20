@@ -150,8 +150,9 @@ For the canonical schema and verification boundaries, see the
 
 Drafts is a separate, amber inbox for ideas that have not been validated. Reach it
 with `tab` from the Board or Table; `v` or `esc` returns to the Board. It lists
-every managed Issue at the `draft` stage, of any type, with the type written as a
-word. Drafts never appear on the Board or Table, and a type or a `ready` label
+every managed Issue without verified specification acceptance, of any type, with
+the type written as a word. An unvalidated Issue relabelled `ready` or another
+stage stays in Drafts as an attention row. Drafts never appear on the Board or Table, and a type or a `ready` label
 never makes an idea approved. An item whose revision heads compete, whose labels
 or metadata are inconsistent, or whose specification is accepted but still
 labelled draft stays in the inbox as `! attention` with the reason, so a
@@ -167,6 +168,10 @@ concurrent edit never makes it vanish.
 | `R` (refresh binding) | Refresh |
 | `v` / `esc` | Back to the Board |
 
+In the draft document, Up/Down, Page Up/Down, Home and End scroll within the
+document's bounds. Resizing or refreshing a shorter document keeps the stored
+position within those bounds, so scrolling back works immediately.
+
 ### Capture
 
 `n` asks for a title, an optional description and a type, then shows a preview:
@@ -180,9 +185,14 @@ random nonce, then your description. Bonsai records the operation in
 `garden-operations.json` (beside `garden-associations.json`) before it calls
 GitHub. If GitHub does not confirm the creation (timeout, offline, 5xx), the
 capture is **unknown**: it may exist. Retry is refused; **Reconcile** looks for
-the nonce among your Garden's Issues and either finds the Issue or, after a short
+the nonce among all repository Issues, including closed Issues and those whose
+managed label was removed, and either finds the Issue or, after a short
 settle time and a complete read that finds nothing, allows a retry of the same
 operation. A restart shows `N capture may already exist` and `r` reconciles it.
+Create and Reconcile hold the same operation lock across Bonsai processes until
+the remote call and local outcome are recorded. An incomplete reconcile never
+permits a retry. If the local operations store cannot be read, the inbox retains
+known unresolved captures and blocks new capture until a successful refresh.
 Rejections (validation, permission, rate limit) are definite: nothing was
 created and Retry is safe. The text you typed survives errors, resizing and
 leaving the workspace until you create or explicitly discard it (`esc` on a

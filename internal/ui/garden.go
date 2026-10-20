@@ -40,12 +40,15 @@ const (
 	busyProjects
 	busyPlan
 	busyPreviewCapture
+	busyDocument
+	busyPreviewSave
 	busyApply
 	busyResume
 	busySkip
 	busyUnskip
 	busyCapture
 	busyReconcile
+	busySave
 )
 
 func (b gardenBusy) writes() bool { return b >= busyApply }

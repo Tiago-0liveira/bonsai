@@ -516,6 +516,15 @@ func (a *Adapter) issueFromRow(repo core.RepoID, v issueJSON) core.Issue {
 
 // ListManagedIssues reads a bounded page and only emits a cursor from a validated next Link.
 func (r *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, cursor string) (core.IssuePage, error) {
+	return r.listIssues(ctx, repo, cursor, true)
+}
+
+// ListRepositoryIssues scans independently of mutable labels for capture reconciliation.
+func (r *IssueReader) ListRepositoryIssues(ctx context.Context, repo core.RepoID, cursor string) (core.IssuePage, error) {
+	return r.listIssues(ctx, repo, cursor, false)
+}
+
+func (r *IssueReader) listIssues(ctx context.Context, repo core.RepoID, cursor string, managedOnly bool) (core.IssuePage, error) {
 	if repo <= 0 {
 		return core.IssuePage{}, core.ErrInvalidID
 	}
@@ -523,10 +532,13 @@ func (r *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, c
 	if err != nil {
 		return core.IssuePage{}, err
 	}
-	path := basePath + "/issues?state=all&per_page=100&labels=bonsai%3Amanaged"
+	path := basePath + "/issues?state=all&per_page=100"
+	if managedOnly {
+		path += "&labels=bonsai%3Amanaged"
+	}
 	current := 1
 	if cursor != "" {
-		path, current, err = decodeCursor(cursor, r.a.baseURL, basePath+"/issues")
+		path, current, err = decodeIssuesCursor(cursor, r.a.baseURL, basePath+"/issues", managedOnly)
 		if err != nil {
 			return core.IssuePage{}, core.ErrInvalidCursor
 		}
@@ -551,7 +563,7 @@ func (r *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, c
 				break
 			}
 		}
-		if !managed {
+		if managedOnly && !managed {
 			continue
 		}
 		out.Items = append(out.Items, r.a.issueFromRow(repo, v))
@@ -562,6 +574,9 @@ func (r *IssueReader) ListManagedIssues(ctx context.Context, repo core.RepoID, c
 	}
 	if next != "" {
 		out.NextCursor = encodeCursor(next)
+		if _, _, err := decodeIssuesCursor(out.NextCursor, r.a.baseURL, basePath+"/issues", managedOnly); err != nil {
+			return core.IssuePage{}, core.ErrInvalidCursor
+		}
 		out.Complete = false
 	}
 	return out, nil
@@ -787,8 +802,8 @@ func (c *IssueCreator) CreateIssue(ctx context.Context, repo core.RepoID, n core
 
 func encodeCursor(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 
-// decodeCursor validates a cursor this adapter minted and returns the request path plus its page number.
-func decodeCursor(c, base, expectedPath string) (string, int, error) {
+// decodeIssuesCursor also checks the listing scope: a filtered page cannot prove repository-wide absence.
+func decodeIssuesCursor(c, base, expectedPath string, managedOnly bool) (string, int, error) {
 	b, e := base64.RawURLEncoding.DecodeString(c)
 	if e != nil {
 		return "", 0, e
@@ -798,7 +813,11 @@ func decodeCursor(c, base, expectedPath string) (string, int, error) {
 		return "", 0, e
 	}
 	page, pe := strconv.Atoi(u.Query().Get("page"))
-	if u.Scheme != "https" || !strings.EqualFold(u.Host, mustURL(base).Host) || u.User != nil || u.Path != expectedPath || !validIssueQuery(u.Query(), page) || pe != nil || page < 2 || page > maxPages {
+	validQuery := validIssueQuery(u.Query(), page)
+	if !managedOnly {
+		validQuery = validListQuery(u.Query(), page) && u.Query().Get("labels") == ""
+	}
+	if u.Scheme != "https" || !strings.EqualFold(u.Host, mustURL(base).Host) || u.User != nil || u.Path != expectedPath || !validQuery || pe != nil || page < 2 || page > maxPages {
 		return "", 0, errors.New("invalid")
 	}
 	return u.RequestURI(), page, nil

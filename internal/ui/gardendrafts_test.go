@@ -302,6 +302,78 @@ func TestPendingCaptureFromARestartCanBeReconciled(t *testing.T) {
 	mustContain(t, "found", view(m), "#150")
 }
 
+func TestPendingCaptureReadFailureKeepsRetryBlockedUntilSuccessfulRead(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		fb := draftsFake(t)
+		if known {
+			fb.WorkView.PendingCaptures = []gardenapi.CaptureView{{OperationID: "cap-old", State: gardenapi.CaptureUnknown}}
+		}
+		m := draftsEnv(t, fb, 120, 35)
+		before := len(m.garden.drafts.pending)
+		fb.WorkView.PendingCaptures = nil
+		fb.WorkView.PendingCapturesErr = &gardenapi.Error{Code: gardenapi.CodeFailed, Message: "Unresolved captures could not be checked.", Next: "Refresh before capturing another idea."}
+		m = pressAll(t, m, "R", "n")
+		if len(m.garden.drafts.pending) != before || m.garden.drafts.stage != draftsList || fb.Count("PreviewCapture") != 0 {
+			t.Fatalf("known=%v: failed pending read cleared the block: %+v", known, m.garden.drafts)
+		}
+		if ok, _ := m.canCapture(); ok {
+			t.Fatalf("known=%v: failed pending read allows capture", known)
+		}
+		mustContain(t, "failed pending read", view(m), "Unresolved captures could not be checked", "Refresh before capturing")
+		// A successful empty list is the evidence that clears both the old list and error.
+		fb.WorkView.PendingCapturesErr = nil
+		m = pressAll(t, m, "R", "n")
+		if len(m.garden.drafts.pending) != 0 || m.garden.drafts.pendingErr != nil || m.garden.drafts.stage != draftsForm {
+			t.Fatalf("known=%v: successful empty read did not unblock capture", known)
+		}
+	}
+}
+
+func TestDraftDocumentScrollClampsAfterNavigationResizeAndRefresh(t *testing.T) {
+	for _, sz := range draftSizes {
+		fb := draftsFake(t)
+		fb.WorkView.Snapshot.Items[1].Issue.Body = strings.Repeat("A long draft description that wraps differently when the terminal is resized. ", 120)
+		m := draftsEnv(t, fb, sz[0], sz[1])
+		m = tpress(t, m, "enter", "end")
+		last := max(0, len(m.gardenDraftDocument(m.width))-(m.gardenBoardRows()-4))
+		if last == 0 || m.garden.drafts.docScroll != last {
+			t.Fatalf("End stored %d, want %d", m.garden.drafts.docScroll, last)
+		}
+		m = tpress(t, m, "up")
+		if m.garden.drafts.docScroll != last-1 {
+			t.Fatalf("Up after End stored %d, want %d", m.garden.drafts.docScroll, last-1)
+		}
+		m = tpress(t, m, "end", "pgup")
+		if m.garden.drafts.docScroll != max(0, last-(m.gardenBoardRows()-4)) {
+			t.Fatal("PageUp after End did not move by a visible page")
+		}
+		m = tpress(t, m, "end", "down", "pgdown")
+		if m.garden.drafts.docScroll != last {
+			t.Fatalf("navigation past the end stored %d, want %d", m.garden.drafts.docScroll, last)
+		}
+		m, _ = send(t, m, tea.WindowSizeMsg{Width: 200, Height: 60})
+		resized := max(0, len(m.gardenDraftDocument(m.width))-(m.gardenBoardRows()-4))
+		if m.garden.drafts.docScroll != resized || resized >= last {
+			t.Fatalf("resize stored %d, want %d (previously %d)", m.garden.drafts.docScroll, resized, last)
+		}
+		m = tpress(t, m, "up")
+		if m.garden.drafts.docScroll != max(0, resized-1) {
+			t.Fatal("Up after resize did not move")
+		}
+		fb.WorkView.Snapshot.Items[1].Issue.Body = "Shortened remotely."
+		m = tpress(t, m, "R")
+		shortened := max(0, len(m.gardenDraftDocument(m.width))-(m.gardenBoardRows()-4))
+		if m.garden.drafts.docScroll != shortened || shortened >= resized-1 {
+			t.Fatalf("refresh of shorter document stored %d, want %d", m.garden.drafts.docScroll, shortened)
+		}
+		m = tpress(t, m, "home", "up", "pgup")
+		if m.garden.drafts.docScroll != 0 {
+			t.Fatal("navigation before the start changed the scroll")
+		}
+		mustFit(t, "draft document", m)
+	}
+}
+
 func TestCaptureFailureKeepsTextAndRetryReusesTheOperation(t *testing.T) {
 	fb := draftsFake(t)
 	fb.CapturedView = &gardenapi.CaptureView{State: gardenapi.CaptureFailed, Err: &gardenapi.Error{Code: gardenapi.CodeValidation, Message: "GitHub rejected the request."}}

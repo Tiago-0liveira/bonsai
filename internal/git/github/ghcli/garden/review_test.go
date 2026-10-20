@@ -555,7 +555,7 @@ func TestConstructorsFailClosed(t *testing.T) {
 }
 
 func TestReaderAndWriterExposeOnlyTheirPorts(t *testing.T) {
-	if n := reflect.TypeOf(&IssueReader{}).NumMethod(); n != 3 {
+	if n := reflect.TypeOf(&IssueReader{}).NumMethod(); n != 4 {
 		t.Fatalf("reader exposes %d methods", n)
 	}
 	if n := reflect.TypeOf(&IssueWriter{}).NumMethod(); n != 2 {

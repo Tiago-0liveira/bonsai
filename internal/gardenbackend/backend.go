@@ -18,6 +18,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
@@ -46,6 +47,8 @@ type Deps struct {
 	// record of each create. Both are optional; without them capture is unavailable.
 	Creator garden.IssueCreator
 	Ops     *ops.Store
+	// Writer appends specification revisions (comments); it never edits an Issue.
+	Writer garden.IssueWriter
 	// NewID returns a fresh random token for operation IDs and idempotency keys.
 	NewID func() string
 }
@@ -62,6 +65,7 @@ type Backend struct {
 	haveViewer     bool
 	authGeneration uint64
 	captures       *capture.Service // built on first use
+	edits          *edit.Service    // built on first use
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)
@@ -115,6 +119,7 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 	return newBackend(repoDir, Deps{
 		Issues:         gh.Reader(),
 		Creator:        gh.Creator(),
+		Writer:         gh.Writer(),
 		Ops:            opStore,
 		Remotes:        gitRemotes{coregit.RemoteLister{Dir: repoDir}},
 		Resolver:       ghgarden.RepositoryResolver{Adapter: gh},

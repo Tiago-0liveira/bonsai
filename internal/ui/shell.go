@@ -207,6 +207,7 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height, m.ready = msg.Width, msg.Height, true
 		m.gardenBoardVisible()
 		m.gardenClampDocument()
+		m.gardenClampDraftDocument()
 		if m.modal != nil {
 			m.modal.SetSize(msg.Width, msg.Height)
 		}

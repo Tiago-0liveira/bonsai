@@ -63,7 +63,7 @@ serves only a placeholder (no embedded web UI; see [Building](#building-from-sou
   `http://127.0.0.1:7001/app`, embedded in release binaries. No hosted service.
 - **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`) and an Agents tab (`g`, see [docs/agents.md](docs/agents.md)).
 - **Garden board and table** in the redesign preview show verified approved work as state columns or sortable rows (`v` toggles, configurable as `garden_view`) with scoped filters and read-only issue documents ([Garden guide](docs/garden.md)).
-- **Garden Drafts** in the redesign preview is a separate inbox for unvalidated ideas with duplicate-safe capture as GitHub Issues ([Drafts](docs/garden.md#drafts)).
+- **Garden Drafts** in the redesign preview keeps unvalidated ideas visible across stage changes, with capture protected against duplicate retries across Bonsai processes ([Drafts](docs/garden.md#drafts)).
 - **Garden setup** in the redesign preview creates Stage and Bonsai Type fields and can resume after granting GitHub Project permissions, without restarting Bonsai ([setup and recovery](docs/tui-cli.md#garden-setup-in-the-preview)).
 - **CLI**: every feature is also a plain, scriptable command.
 

@@ -3,6 +3,7 @@ package ops
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,6 +82,18 @@ func Open() (*Store, error) {
 		return nil, err
 	}
 	return &Store{Path: p}, nil
+}
+
+// TryOperationLock serializes a remote operation across processes without holding
+// the JSON store lock during network calls. The OS releases it after a crash.
+func (s *Store) TryOperationLock(ctx context.Context, id string) (*procstore.FileLock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.Path), 0700); err != nil {
+		return nil, err
+	}
+	return procstore.TryLock(fmt.Sprintf("%s.operation-%x.lock", s.Path, sha256.Sum256([]byte(id))))
 }
 
 func (r Record) valid() bool {

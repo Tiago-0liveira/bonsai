@@ -168,6 +168,12 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onGardenCapturePreview(msg)
 	case gardenCaptureMsg:
 		nm, cmd = m.onGardenCapture(msg)
+	case gardenDocumentMsg:
+		nm, cmd = m.onGardenDocument(msg)
+	case gardenSavePreviewMsg:
+		nm, cmd = m.onGardenSavePreview(msg)
+	case gardenSaveMsg:
+		nm, cmd = m.onGardenSave(msg)
 	case gardenViewSavedMsg:
 		nm = m.gardenBoardSaved(msg)
 	case gardenStatusMsg:
@@ -209,7 +215,7 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
 		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
 		// An unfinished idea outlives the change; its preview and results belong to the old Garden.
-		g.drafts = gardenDraftsState{form: g.drafts.form, formOpen: g.drafts.formOpen}
+		g.drafts = gardenDraftsState{form: g.drafts.form, formOpen: g.drafts.formOpen, editors: g.drafts.editors}
 	}
 	g.status, g.hasStatus = v, true
 	if force || !had || prev.State != v.State || prev.Stamp.Epoch != v.Stamp.Epoch {

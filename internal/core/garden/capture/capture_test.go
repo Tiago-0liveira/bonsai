@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -37,7 +39,7 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-func (h *harness) service(c garden.IssueCreator, r garden.IssueReader) *Service {
+func (h *harness) service(c garden.IssueCreator, r garden.RepositoryIssueReader) *Service {
 	svc, err := New(Deps{Creator: c, Reader: r, Store: h.store, Now: func() time.Time { return h.now }, NewNonce: func() string {
 		h.n++
 		return fmt.Sprintf("%032x", h.n)
@@ -188,17 +190,21 @@ func TestReconcileIgnoresOtherAuthorsAndNonces(t *testing.T) {
 }
 
 type pagedReader struct {
-	garden.IssueReader
-	failAt int
-	calls  int
+	garden.RepositoryIssueReader
+	failAt     int
+	calls      int
+	incomplete bool
 }
 
-func (p *pagedReader) ListManagedIssues(ctx context.Context, r garden.RepoID, cursor string) (garden.IssuePage, error) {
+func (p *pagedReader) ListRepositoryIssues(ctx context.Context, r garden.RepoID, cursor string) (garden.IssuePage, error) {
 	p.calls++
 	if p.calls == p.failAt {
 		return garden.IssuePage{}, garden.ErrOffline
 	}
-	return p.IssueReader.ListManagedIssues(ctx, r, cursor)
+	if p.incomplete {
+		return garden.IssuePage{Complete: false}, nil
+	}
+	return p.RepositoryIssueReader.ListRepositoryIssues(ctx, r, cursor)
 }
 
 func TestIncompleteReconcileReadChangesNothing(t *testing.T) {
@@ -212,7 +218,7 @@ func TestIncompleteReconcileReadChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(time.Minute)
-	svc := h.service(h.fake, &pagedReader{IssueReader: h.fake, failAt: 2})
+	svc := h.service(h.fake, &pagedReader{RepositoryIssueReader: h.fake, failAt: 2})
 	if _, err := svc.Reconcile(context.Background(), "op1", viewer); !errors.Is(err, garden.ErrOffline) {
 		t.Fatalf("err = %v", err)
 	}
@@ -368,5 +374,116 @@ func TestCorruptStoreStopsBeforeAnyCreate(t *testing.T) {
 	}
 	if _, err := h.svc.Create(context.Background(), h.req("op1")); !errors.Is(err, ops.ErrCorrupt) || h.creates() != 0 {
 		t.Fatalf("err = %v, creates %d", err, h.creates())
+	}
+}
+
+func TestReconcileFindsCreatedIssueAfterManagedLabelRemoved(t *testing.T) {
+	h := newHarness(t)
+	h.fake.FailNextCreateAfterApply(garden.ErrOffline)
+	_, _ = h.svc.Create(t.Context(), h.req("op1"))
+	page, err := h.fake.ListRepositoryIssues(t.Context(), repo, "")
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("issues = %+v, %v", page, err)
+	}
+	it := page.Items[0]
+	it.Labels = nil
+	h.fake.PutIssue(it)
+	h.now = h.now.Add(time.Minute)
+	res, err := h.svc.Reconcile(t.Context(), "op1", viewer)
+	if err != nil || res.Record.State != ops.StateDone || res.Issue.ID != it.ID {
+		t.Fatalf("reconcile = %+v, %v", res, err)
+	}
+	if _, err := h.svc.Create(t.Context(), h.req("op1")); err != nil || h.creates() != 1 {
+		t.Fatalf("replay = %v, creates %d", err, h.creates())
+	}
+}
+
+func TestReconcileIncompletePageWithoutCursorNeverAllowsRetry(t *testing.T) {
+	h := newHarness(t)
+	h.fake.FailNext(garden.ErrOffline)
+	_, _ = h.svc.Create(t.Context(), h.req("op1"))
+	h.now = h.now.Add(time.Minute)
+	svc := h.service(h.fake, &pagedReader{RepositoryIssueReader: h.fake, incomplete: true})
+	res, err := svc.Reconcile(t.Context(), "op1", viewer)
+	if !errors.Is(err, ErrIncomplete) || res.Record.State != ops.StateUnknown {
+		t.Fatalf("reconcile = %+v, %v", res, err)
+	}
+	if _, err := h.svc.Create(t.Context(), h.req("op1")); !errors.Is(err, ErrNeedsReconcile) {
+		t.Fatalf("retry after incomplete page = %v", err)
+	}
+}
+
+type blockingReader struct {
+	garden.RepositoryIssueReader
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b blockingReader) ListRepositoryIssues(ctx context.Context, r garden.RepoID, cursor string) (garden.IssuePage, error) {
+	close(b.started)
+	<-b.release
+	return b.RepositoryIssueReader.ListRepositoryIssues(ctx, r, cursor)
+}
+
+func TestOperationLockAcrossProcesses(t *testing.T) {
+	if path := os.Getenv("BONSAI_CAPTURE_LOCK_TEST_STORE"); path != "" {
+		f := gardenfake.New()
+		svc, err := New(Deps{Creator: f, Reader: f, Store: &ops.Store{Path: path}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The parent's operation is deliberately older than the settle window.
+		// Neither entry point may reinterpret its pending record as abandoned.
+		r := Request{OpID: "op1", Local: "local", Repo: repo, Viewer: viewer, Title: "Add dark mode", Description: "Because night.", Type: garden.TypeFeature}
+		if _, err := svc.Create(t.Context(), r); !errors.Is(err, ErrInFlight) {
+			t.Fatalf("create during another process's operation = %v", err)
+		}
+		if _, err := svc.Reconcile(t.Context(), "op1", viewer); !errors.Is(err, ErrInFlight) {
+			t.Fatalf("reconcile during another process's operation = %v", err)
+		}
+		return
+	}
+	for _, action := range []string{"create", "reconcile"} {
+		t.Run(action, func(t *testing.T) {
+			h := newHarness(t)
+			started, release := make(chan struct{}, 1), make(chan struct{})
+			var run func() error
+			if action == "create" {
+				svc := h.service(&blockingCreator{IssueCreator: h.fake, started: started, release: release}, h.fake)
+				run = func() error { _, err := svc.Create(t.Context(), h.req("op1")); return err }
+			} else {
+				h.fake.FailNext(garden.ErrOffline)
+				_, _ = h.svc.Create(t.Context(), h.req("op1"))
+				h.now = h.now.Add(time.Minute)
+				svc := h.service(h.fake, blockingReader{h.fake, started, release})
+				run = func() error { _, err := svc.Reconcile(t.Context(), "op1", viewer); return err }
+			}
+			finished := make(chan error, 1)
+			go func() { finished <- run() }()
+			<-started
+			bin, err := os.Executable()
+			if err != nil {
+				close(release)
+				<-finished
+				t.Fatal(err)
+			}
+			cmd := exec.CommandContext(t.Context(), bin, "-test.run=^TestOperationLockAcrossProcesses$")
+			cmd.Env = append(os.Environ(), "BONSAI_CAPTURE_LOCK_TEST_STORE="+h.store.Path)
+			out, childErr := cmd.CombinedOutput()
+			close(release)
+			if err := <-finished; err != nil {
+				t.Fatal(err)
+			}
+			if childErr != nil {
+				t.Fatalf("second process: %v\n%s", childErr, out)
+			}
+			if action == "create" {
+				if _, err := h.svc.Create(t.Context(), h.req("op1")); err != nil || h.creates() != 1 {
+					t.Fatalf("completed replay = %v, creates %d", err, h.creates())
+				}
+			} else if _, err := h.svc.Create(t.Context(), h.req("op1")); err != nil {
+				t.Fatalf("retry after confirmed absence = %v", err)
+			}
+		})
 	}
 }

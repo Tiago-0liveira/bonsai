@@ -105,6 +105,53 @@ func TestPaginationAndPullRequestFiltering(t *testing.T) {
 		t.Fatalf("page=%+v err=%v", p, e)
 	}
 }
+
+func TestRepositoryIssuePaginationIncludesUnmanagedIssuesAndExcludesPRs(t *testing.T) {
+	a, _ := fixture(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Has("labels") || r.URL.Query().Get("state") != "all" {
+			t.Fatalf("reconcile listing was filtered: %s", r.URL)
+		}
+		if r.URL.Query().Get("page") == "" {
+			return response(200, `[{"id":11,"number":1,"user":{"id":7},"labels":[]},{"id":12,"number":2,"pull_request":{},"user":{"id":8}}]`, `<https://api.github.test/repos/acme/repo/issues?state=all&per_page=100&page=2>; rel="next"`), nil
+		}
+		return response(200, `[{"id":13,"number":3,"user":{"id":7},"body":"nonce marker","labels":[]}]`, ""), nil
+	})
+	p, err := a.Reader().ListRepositoryIssues(t.Context(), 9, "")
+	if err != nil || p.Complete || len(p.Items) != 1 || p.Items[0].ID != 11 {
+		t.Fatalf("first page = %+v, %v", p, err)
+	}
+	p, err = a.Reader().ListRepositoryIssues(t.Context(), 9, p.NextCursor)
+	if err != nil || !p.Complete || len(p.Items) != 1 || p.Items[0].ID != 13 || p.Items[0].Body != "nonce marker" {
+		t.Fatalf("last page = %+v, %v", p, err)
+	}
+}
+
+func TestIssuePaginationRejectsChangedLabelScope(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		a, _ := fixture(t, func(r *http.Request) (*http.Response, error) {
+			labels := ""
+			if !managed {
+				labels = "&labels=bonsai%3Amanaged"
+			}
+			return response(200, `[]`, `<https://api.github.test/repos/acme/repo/issues?state=all&per_page=100&page=2`+labels+`>; rel="next"`), nil
+		})
+		list := a.Reader().ListRepositoryIssues
+		if managed {
+			list = a.Reader().ListManagedIssues
+		}
+		if _, err := list(t.Context(), 9, ""); !errors.Is(err, core.ErrInvalidCursor) {
+			t.Fatalf("managed=%v: scope change accepted: %v", managed, err)
+		}
+		labels := "&labels=bonsai%3Amanaged"
+		if managed {
+			labels = ""
+		}
+		cursor := encodeCursor("https://api.github.test/repos/acme/repo/issues?state=all&per_page=100&page=2" + labels)
+		if _, err := list(t.Context(), 9, cursor); !errors.Is(err, core.ErrInvalidCursor) {
+			t.Fatalf("managed=%v: cursor scope change accepted: %v", managed, err)
+		}
+	}
+}
 func TestRejectHostileCursorLinks(t *testing.T) {
 	for _, link := range []string{`<https://evil.test/repos/acme/repo/issues?state=all&per_page=100&labels=bonsai%3Amanaged&page=2>; rel="next"`, `<https://api.github.test/users/9/issues?state=all&per_page=100&labels=bonsai%3Amanaged&page=2>; rel="next"`, `<file:///etc/passwd>; rel="next"`} {
 		t.Run(link, func(t *testing.T) {

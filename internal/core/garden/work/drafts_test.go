@@ -14,7 +14,7 @@ func draftItem(id garden.IssueID, number int64, title string, typ garden.ItemTyp
 	return gardensync.Item{Issue: issue, Classification: garden.Classify(labels), Verification: garden.Verify(garden.IssueIdentity{Repo: 9, Issue: id}, nil, garden.ApprovalPolicy{})}
 }
 
-func TestDraftsIncludeEveryTypeAndExcludeOtherStagesAndUnusableItems(t *testing.T) {
+func TestDraftsIncludeEveryTypeAndUnvalidatedStagesButExcludeUnusableItems(t *testing.T) {
 	ready := draftItem(5, 5, "Ready one", garden.TypeBug)
 	ready.Issue.Labels = []string{garden.ManagedLabel, garden.FormatTypeLabel(garden.TypeBug), garden.FormatStageLabel(garden.StageReady)}
 	noID := draftItem(0, 6, "No id", garden.TypeBug)
@@ -28,8 +28,11 @@ func TestDraftsIncludeEveryTypeAndExcludeOtherStagesAndUnusableItems(t *testing.
 		ready, noID, deleted,
 	}
 	c := Drafts(items, Query{})
-	if c.Total != 4 || len(c.Records) != 4 || c.Excluded != 3 {
+	if c.Total != 5 || len(c.Records) != 5 || c.Excluded != 2 {
 		t.Fatalf("total %d, records %d, excluded %d", c.Total, len(c.Records), c.Excluded)
+	}
+	if c.Records[4].Item.Issue.ID != 5 || c.Records[4].Attention == "" {
+		t.Fatalf("unvalidated ready item disappeared or lacks attention: %+v", c.Records[4])
 	}
 	for i, want := range []garden.IssueID{1, 2, 3, 4} {
 		if c.Records[i].Item.Issue.ID != want || c.Records[i].Attention != "" {
@@ -85,5 +88,23 @@ func TestDraftsKeepConflictedItemsVisibleAsAttention(t *testing.T) {
 	}
 	if _, _, ok := c.Find(99); ok {
 		t.Fatal("found a missing draft")
+	}
+}
+
+func TestDraftsSelectByVerifiedAcceptanceAcrossStages(t *testing.T) {
+	for _, stage := range []garden.Stage{garden.StageReady, garden.StageInProgress, garden.StageReview, garden.StageDone, garden.StageBlocked} {
+		t.Run(string(stage), func(t *testing.T) {
+			unvalidated := draftItem(1, 1, "Relabelled idea", garden.TypeFeature)
+			unvalidated.Issue.Labels[2] = garden.FormatStageLabel(stage)
+			approved := accepted(t, 2, stage, false)
+			items := []gardensync.Item{unvalidated, approved}
+			drafts, board := Drafts(items, Query{}), Select(items, Query{})
+			if len(drafts.Records) != 1 || drafts.Records[0].Item.Issue.ID != 1 || drafts.Records[0].Attention == "" {
+				t.Fatalf("unvalidated idea missing from Drafts: %+v", drafts)
+			}
+			if len(board.Records) != 1 || board.Records[0].Item.Issue.ID != 2 {
+				t.Fatalf("Board eligibility changed: %+v", board)
+			}
+		})
 	}
 }

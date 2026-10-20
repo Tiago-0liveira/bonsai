@@ -27,6 +27,9 @@ const (
 	draftsForm
 	draftsPreview
 	draftsResult
+	draftsEditor   // the structured specification editor
+	draftsSave     // the preview of the revision a save or resolution appends
+	draftsConflict // Base / Yours / Remote / Result
 )
 
 // captureTypes are the type choices in the order the form offers them.
@@ -109,11 +112,20 @@ type gardenDraftsState struct {
 	beforeSearch   work.Query
 	beforeSelected garden.IssueID
 
-	notice  string
-	pending []gardenapi.CaptureView // captures that may exist on GitHub, from the last read
+	notice     string
+	pending    []gardenapi.CaptureView // captures that may exist on GitHub, from the last read
+	pendingErr *gardenapi.Error
 
 	// selectAfter is the Issue a finished capture created; the next read selects it.
 	selectAfter garden.IssueID
+
+	// editors holds every unsaved specification by (Garden, Issue), in memory only. Text survives errors,
+	// resizes, workspace switches, profile changes and refreshes until it is saved or explicitly discarded.
+	editors     map[editKey]*editorDoc
+	edit        *editorDoc
+	conflict    *conflictState
+	savePreview *gardenapi.SavePreviewView
+	saveView    *gardenapi.SaveView
 
 	form     captureForm
 	formOpen bool // unfinished text exists, shown or not
@@ -204,7 +216,8 @@ func (m Model) gardenTyping() bool {
 	if m.workspace != wsGarden || m.gardenScreen() != scrDrafts {
 		return false
 	}
-	return m.garden.drafts.searching || m.garden.drafts.stage == draftsForm
+	d := m.garden.drafts
+	return d.searching || d.stage == draftsForm || d.stage == draftsEditor || (d.stage == draftsConflict && d.conflict != nil && d.conflict.editing)
 }
 
 func (m Model) gardenDraftsCapacity() int { return gardenTableCapacity(m.gardenBoardRows()) }
@@ -224,6 +237,8 @@ func (m Model) canCapture() (bool, string) {
 		return false, "Garden is not loaded yet."
 	case g.status.Access < gardenapi.AccessWrite:
 		return false, "Capturing an idea needs Write access to " + g.status.Target.FullName + "."
+	case g.drafts.pendingErr != nil:
+		return false, g.drafts.pendingErr.Message + " " + g.drafts.pendingErr.Next
 	case len(g.drafts.pending) > 0 || (g.drafts.result != nil && g.drafts.result.State == gardenapi.CaptureUnknown):
 		return false, "A capture may already exist on GitHub. Reconcile it first (r)."
 	}
@@ -381,7 +396,7 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	g := &m.garden
 	d := &g.drafts
 	k := msg.String()
-	if g.busy == busyPreviewCapture {
+	if g.busy == busyPreviewCapture || g.busy == busyDocument || g.busy == busyPreviewSave {
 		if k == "esc" {
 			g.abandon()
 		}
@@ -399,6 +414,12 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenResultKey(msg)
 	case draftsDetail:
 		return m.gardenDraftDetailKey(msg)
+	case draftsEditor:
+		return m.gardenEditorKey(msg)
+	case draftsSave:
+		return m.gardenSaveKey(msg)
+	case draftsConflict:
+		return m.gardenConflictKey(msg)
 	}
 	if key.Matches(msg, m.keys.Refresh) {
 		return m.gardenLoadWork()
@@ -616,6 +637,7 @@ func (m Model) gardenResultKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) gardenDraftDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.gardenClampDraftDocument()
 	d := &m.garden.drafts
 	k := msg.String()
 	if key.Matches(msg, m.keys.Refresh) {
@@ -629,15 +651,33 @@ func (m Model) gardenDraftDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		d.docScroll = max(0, d.docScroll-1)
 	case "pgdown":
-		d.docScroll += max(1, m.height-12)
+		d.docScroll += max(1, m.gardenBoardRows()-4)
 	case "pgup":
-		d.docScroll = max(0, d.docScroll-max(1, m.height-12))
+		d.docScroll = max(0, d.docScroll-max(1, m.gardenBoardRows()-4))
 	case "home":
 		d.docScroll = 0
 	case "end":
-		d.docScroll = 1 << 20
+		d.docScroll = m.gardenDraftDocumentMaxScroll()
+	case "e":
+		if ok, why := m.canEdit(); !ok {
+			d.notice = why
+			return m, nil
+		}
+		d.notice = ""
+		return m.gardenLoadDocument(d.opened, docOpen)
 	}
+	m.gardenClampDraftDocument()
 	return m, nil
+}
+
+func (m Model) gardenDraftDocumentMaxScroll() int {
+	return max(0, len(m.gardenDraftDocument(m.width))-max(0, m.gardenBoardRows()-4))
+}
+
+func (m *Model) gardenClampDraftDocument() {
+	if m.garden.drafts.stage == draftsDetail {
+		m.garden.drafts.docScroll = max(0, min(m.garden.drafts.docScroll, m.gardenDraftDocumentMaxScroll()))
+	}
 }
 
 func (m Model) gardenDraftsStartSearch() (tea.Model, tea.Cmd) {
@@ -688,6 +728,20 @@ func (m Model) gardenDraftsCrumbs() []string {
 		if r, _, ok := d.collection.Find(d.opened); ok {
 			return []string{"Garden", "Drafts", fmt.Sprintf("#%d", r.Item.Issue.Number)}
 		}
+	case draftsEditor, draftsSave:
+		if d.edit != nil || d.savePreview != nil {
+			n, _ := d.openNumberTitle()
+			if d.savePreview != nil {
+				n = d.savePreview.Number
+			}
+			last := "Specification"
+			if d.stage == draftsSave {
+				last = "Review revision"
+			}
+			return []string{"Garden", "Drafts", fmt.Sprintf("#%d", n), last}
+		}
+	case draftsConflict:
+		return []string{"Garden", "Remote edit conflict"}
 	case draftsForm:
 		return []string{"Garden", "Drafts", "Capture a draft"}
 	case draftsPreview:
@@ -703,6 +757,12 @@ func (m Model) gardenDraftsIdentity() string {
 	switch d.stage {
 	case draftsForm, draftsPreview, draftsResult:
 		return "Capture a draft"
+	case draftsEditor, draftsSave:
+		if n, t := d.openNumberTitle(); n != 0 {
+			return fmt.Sprintf("#%d  %s", n, boardTitle(t))
+		}
+	case draftsConflict:
+		return "Remote edit conflict"
 	}
 	id := d.selected
 	if d.opened != 0 {
@@ -720,6 +780,12 @@ func (m Model) gardenDraftsFocusLabel() string {
 		return "Draft / Issue"
 	case draftsForm, draftsPreview, draftsResult:
 		return "Submenu / Capture a draft"
+	case draftsEditor:
+		return "Draft / Specification editor"
+	case draftsSave:
+		return "Draft / Review revision"
+	case draftsConflict:
+		return "Submenu / Remote edit conflict"
 	}
 	return "Draft inbox"
 }
@@ -728,10 +794,37 @@ func (m Model) gardenDraftsHints() []shellHint {
 	g := m.garden
 	d := g.drafts
 	refresh := shellHint{m.keys.Refresh.Help().Key, "refresh"}
-	if g.busy == busyPreviewCapture {
+	if g.busy == busyPreviewCapture || g.busy == busyDocument || g.busy == busyPreviewSave {
 		return []shellHint{{"esc", "cancel"}}
 	}
 	switch d.stage {
+	case draftsEditor:
+		e := d.edit
+		switch {
+		case e == nil:
+		case e.discard:
+			return []shellHint{{"←/→", "button"}, {"enter", "choose"}, {"esc", "keep editing"}}
+		case e.searching:
+			return []shellHint{{"enter", "find"}, {"esc", "cancel"}}
+		case e.text:
+			return []shellHint{{"ctrl+s", "save"}, {"tab", "sections"}, {"esc", "sections"}}
+		}
+		h := []shellHint{{"↑/↓", "section"}, {"enter", "edit"}, {"/", "search"}, {"n/N", "next/prev"}, {"ctrl+s", "save"}, {"?", "keys"}}
+		if e != nil && e.remote != nil {
+			h = append(h, shellHint{"c", "compare"})
+		}
+		return append(h, shellHint{"esc", "back"})
+	case draftsSave:
+		return []shellHint{{"←/→", "button"}, {"enter", "choose"}, {"esc", "back"}}
+	case draftsConflict:
+		c := d.conflict
+		if c == nil || c.intro {
+			return []shellHint{{"enter", "inspect"}, {"esc", "back"}}
+		}
+		if c.editing {
+			return []shellHint{{"esc", "keep result"}}
+		}
+		return []shellHint{{"↑/↓", "section"}, {"←/→", "pane"}, {"y/m/b", "take"}, {"e", "edit result"}, {"p", "publish"}, {"esc", "back"}}
 	case draftsForm:
 		if d.form.discard {
 			return []shellHint{{"←/→", "button"}, {"enter", "choose"}, {"esc", "keep editing"}}

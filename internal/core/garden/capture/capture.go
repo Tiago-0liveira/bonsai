@@ -19,6 +19,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 )
 
 // MaxTitleRunes is GitHub's Issue title limit.
@@ -51,7 +52,7 @@ type Result struct {
 // Deps are the seams of Service.
 type Deps struct {
 	Creator garden.IssueCreator
-	Reader  garden.IssueReader
+	Reader  garden.RepositoryIssueReader
 	Store   *ops.Store
 	Now     func() time.Time
 	// NewNonce returns 128 random bits as lowercase hex; nil uses crypto/rand.
@@ -148,6 +149,11 @@ func (s *Service) Create(ctx context.Context, r Request) (Result, error) {
 		return Result{}, ErrInFlight
 	}
 	defer s.release(r.OpID)
+	lock, err := s.operationLock(ctx, r.OpID)
+	if err != nil {
+		return Result{}, err
+	}
+	defer lock.Unlock()
 	hash := ContentHash(r)
 	now := s.d.Now().UTC()
 	nonce := s.d.NewNonce()
@@ -165,7 +171,7 @@ func (s *Service) Create(ctx context.Context, r Request) (Result, error) {
 		case ops.StateDone, ops.StateUnknown:
 			return cur, nil
 		case ops.StatePending:
-			// Nobody in this process runs it (claim succeeded), so an earlier process died mid-call.
+			// The operation lock proves an earlier process died mid-call.
 			interrupted = true
 			cur.State, cur.UpdatedAt = ops.StateUnknown, now
 			return cur, nil
@@ -234,7 +240,7 @@ func (s *Service) fail(ctx context.Context, rec ops.Record, state ops.State, cau
 	return cause
 }
 
-// Reconcile settles a pending or unknown operation by looking for its nonce among the Garden's Issues,
+// Reconcile settles a pending or unknown operation by looking for its nonce among all repository Issues,
 // authored by the same account. Found: done. A complete read without it, after the settle window:
 // failed, which allows a retry of the same operation. An incomplete read changes nothing.
 func (s *Service) Reconcile(ctx context.Context, opID, viewer string) (Result, error) {
@@ -242,6 +248,11 @@ func (s *Service) Reconcile(ctx context.Context, opID, viewer string) (Result, e
 		return Result{}, ErrInFlight
 	}
 	defer s.release(opID)
+	lock, err := s.operationLock(ctx, opID)
+	if err != nil {
+		return Result{}, err
+	}
+	defer lock.Unlock()
 	rec, err := s.d.Store.Get(ctx, opID)
 	if err != nil {
 		return Result{}, err
@@ -254,16 +265,16 @@ func (s *Service) Reconcile(ctx context.Context, opID, viewer string) (Result, e
 	}
 	cursor := ""
 	for page := 0; page < maxReconcilePages; page++ {
-		p, err := s.d.Reader.ListManagedIssues(ctx, rec.Repo, cursor)
+		p, err := s.d.Reader.ListRepositoryIssues(ctx, rec.Repo, cursor)
 		if err != nil {
 			return Result{Record: rec}, err
 		}
 		for _, it := range p.Items {
-			if it.ID != 0 && it.AuthorID == viewer && garden.CaptureNonce(it.Body) == rec.Nonce {
+			if it.ID != 0 && it.Repo == rec.Repo && it.AuthorID == viewer && garden.CaptureNonce(it.Body) == rec.Nonce {
 				return s.complete(ctx, rec, it), nil
 			}
 		}
-		if p.Complete || p.NextCursor == "" {
+		if p.Complete {
 			if s.d.Now().Sub(rec.UpdatedAt) < reconcileSettle {
 				return Result{Record: rec}, ErrTooSoon
 			}
@@ -276,9 +287,20 @@ func (s *Service) Reconcile(ctx context.Context, opID, viewer string) (Result, e
 			})
 			return Result{Record: out}, err
 		}
+		if p.NextCursor == "" || p.NextCursor == cursor {
+			return Result{Record: rec}, ErrIncomplete
+		}
 		cursor = p.NextCursor
 	}
 	return Result{Record: rec}, ErrIncomplete
+}
+
+func (s *Service) operationLock(ctx context.Context, id string) (*procstore.FileLock, error) {
+	lock, err := s.d.Store.TryOperationLock(ctx, id)
+	if errors.Is(err, procstore.ErrLocked) {
+		return nil, ErrInFlight
+	}
+	return lock, err
 }
 
 // Unsettled lists this clone's captures that still need a decision: pending or unknown. A pending

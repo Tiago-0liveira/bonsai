@@ -51,6 +51,10 @@ type Revision struct {
 	SourceSpecFingerprint string
 	CommentID             int64
 	Parents               []string
+	// Author, AuthorID and CreatedAt come from the revision's comment: display data for "updated by".
+	Author    string
+	AuthorID  string
+	CreatedAt time.Time
 }
 
 // Approval is a verified approval record recovered from the comment log.
@@ -157,6 +161,20 @@ func EncodeCommentEnvelope(e CommentEnvelope, human string) (string, error) {
 		return "", fmt.Errorf("%w: envelope too large", ErrInvalidRevision)
 	}
 	return "<!-- bonsai:garden/v1 " + string(b) + " -->\n" + human, nil
+}
+
+// NewSpecRevision renders the comment body that appends a specification revision on top of parents (the hashes of
+// the heads it supersedes, none for the first revision). The caller posts it; nothing here writes.
+func NewSpecRevision(id IssueIdentity, content string, parents []string) (string, error) {
+	if id.Repo == 0 || id.Issue == 0 {
+		return "", fmt.Errorf("%w: identity", ErrInvalidRevision)
+	}
+	text := NormalizeContent(content)
+	if text == "" {
+		return "", fmt.Errorf("%w: empty specification", ErrInvalidRevision)
+	}
+	return EncodeCommentEnvelope(CommentEnvelope{Kind: CommentRevision, RepoID: id.Repo, IssueID: id.Issue, RevisionKind: RevisionSpec,
+		ContentHash: ContentHash(text), Parents: append([]string(nil), parents...)}, text)
 }
 
 func decodeEnvelope(body string) (CommentEnvelope, string, error) {
@@ -314,7 +332,7 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 		if e.RevisionKind == RevisionSpec && fingerprint == "" {
 			fingerprint = e.ContentHash
 		}
-		r := Revision{Version: 1, Kind: e.RevisionKind, Content: text, Hash: e.ContentHash, SourceSpecFingerprint: fingerprint, CommentID: c.ID, Parents: append([]string(nil), e.Parents...)}
+		r := Revision{Version: 1, Kind: e.RevisionKind, Content: text, Hash: e.ContentHash, SourceSpecFingerprint: fingerprint, CommentID: c.ID, Parents: append([]string(nil), e.Parents...), Author: c.Author, AuthorID: c.AuthorID, CreatedAt: c.CreatedAt}
 		v.Revisions = append(v.Revisions, r)
 		revByHash[r.Hash] = r
 		revByID[r.CommentID] = r

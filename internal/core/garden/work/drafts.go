@@ -26,12 +26,6 @@ type DraftCollection struct {
 	Total, Excluded int
 }
 
-// draftLabel is the literal stage label rather than Classify's verdict, which
-// is empty when two stage labels conflict. A conflicting label set must keep
-// the item in the inbox as an attention row instead of dropping it from both
-// Drafts and Board.
-var draftLabel = garden.FormatStageLabel(garden.StageDraft)
-
 // Drafts selects unvalidated ideas of any type. It never trusts a cached lane
 // to include or exclude; acceptance is recomputed like Select does, so type
 // and stage labels alone can never turn an idea into Work or hide it.
@@ -42,20 +36,13 @@ func Drafts(items []gardensync.Item, q Query, findings ...gardensync.Finding) Dr
 			out.Excluded++
 			continue
 		}
-		hasDraftLabel := false
-		for _, l := range it.Issue.Labels {
-			if l == draftLabel {
-				hasDraftLabel = true
-				break
-			}
-		}
-		if !hasDraftLabel {
-			out.Excluded++
-			continue
-		}
 		meta, err := garden.DecodeMetadata(it.Issue.Metadata)
 		c := garden.Classify(it.Issue.Labels)
 		lane := garden.Lane(c, meta, it.Verification, err)
+		if lane.Lane == garden.LaneWork && c.Stage != garden.StageDraft && len(it.Issue.Problems) == 0 {
+			out.Excluded++
+			continue
+		}
 		d := Draft{Item: it}
 		d.Item.Classification = c
 		switch {
@@ -69,6 +56,8 @@ func Drafts(items []gardensync.Item, q Query, findings ...gardensync.Finding) Dr
 			d.Attention = "Issue was reported with unusable data"
 		case len(it.Problems) > 0:
 			d.Attention = it.Problems[0].Message
+		case c.Stage != garden.StageDraft:
+			d.Attention = "unvalidated idea is not labelled draft"
 		}
 		out.Total++
 		for _, f := range findings {

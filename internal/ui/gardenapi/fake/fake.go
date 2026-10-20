@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/spec"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
@@ -54,6 +56,15 @@ type Backend struct {
 	// Hook runs at the start of every call, outside any lock, with the method
 	// name. A test blocks in it to make a reply late.
 	Hook func(method string)
+
+	// DocumentErr, PreviewSaveErr, SaveErr, PreviewResolveErr and ResolveErr make that call fail.
+	DocumentErr, PreviewSaveErr, SaveErr, PreviewResolveErr, ResolveErr error
+	// PreviewConflict, when set, is what PreviewSave and PreviewResolve report as the Conflict in the way.
+	PreviewConflict *gardenapi.ConflictView
+	// SaveResult, when set, is what Save and Resolve return instead of a successful save.
+	SaveResult *gardenapi.SaveView
+	// Saved lists the previews Save and Resolve ran, in order.
+	Saved []gardenapi.SavePreviewView
 
 	// Captured lists the previews Capture ran, in order, so a test can assert a
 	// retry reused the same operation ID.
@@ -103,7 +114,7 @@ func (b *Backend) Count(method string) int {
 // Writes counts the calls that change GitHub or the association: Apply,
 // Resume, Skip and Unskip. A test that cancels setup asserts it is zero.
 func (b *Backend) Writes() int {
-	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip") + b.Count("Capture")
+	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip") + b.Count("Capture") + b.Count("Save") + b.Count("Resolve")
 }
 
 // begin records the call and returns its generation and the current epoch.
@@ -351,6 +362,160 @@ func (b *Backend) ReconcileCapture(ctx context.Context, opID string) (gardenapi.
 		b.WorkView.Snapshot.Items = append(b.WorkView.Snapshot.Items, SampleDraft(garden.IssueID(v.Issue.ID), v.Issue.Number, v.Title, garden.TypeFeature))
 		b.WorkView.PendingCaptures = nil
 		b.mu.Unlock()
+	}
+	return v, ctx.Err()
+}
+
+func (b *Backend) item(issue uint64) (gardensync.Item, int, bool) {
+	for i, it := range b.WorkView.Snapshot.Items {
+		if uint64(it.Issue.ID) == issue {
+			return it, i, true
+		}
+	}
+	return gardensync.Item{}, 0, false
+}
+
+// Document implements gardenapi.Backend from the scripted WorkView: the seed is the
+// head revision, or the body when there is none.
+func (b *Backend) Document(ctx context.Context, issue uint64) (gardenapi.DocumentView, error) {
+	gen, epoch := b.begin("Document")
+	if b.DocumentErr != nil {
+		return gardenapi.DocumentView{}, b.DocumentErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	it, _, ok := b.item(issue)
+	if !ok {
+		return gardenapi.DocumentView{}, &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That Issue no longer exists on GitHub."}
+	}
+	body := garden.DisplayBody(it.Issue.Body)
+	v := gardenapi.DocumentView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: issue, Number: it.Issue.Number, Title: it.Issue.Title,
+		Type: it.Classification.Type, Body: body, Base: gardenapi.DocumentBase{BodyHash: garden.ContentHash(body)}}
+	var heads []gardenapi.RemoteRevision
+	for _, r := range it.Verification.Revisions {
+		if r.Kind == garden.RevisionSpec {
+			v.Revisions = append(v.Revisions, remoteOf(r))
+		}
+	}
+	for _, h := range it.Verification.Heads {
+		if h.Kind == garden.RevisionSpec {
+			heads = append(heads, remoteOf(h))
+		}
+	}
+	switch len(heads) {
+	case 0:
+		v.Seed = spec.Render(spec.Parse(body))
+	case 1:
+		v.Base.HeadHash, v.Base.HeadCommentID = heads[0].Hash, heads[0].CommentID
+		v.Seed = spec.Render(spec.Parse(heads[0].Content))
+	default:
+		v.Conflict = &gardenapi.ConflictView{IssueID: issue, Base: v.Base, Remote: heads, BodyHash: v.Base.BodyHash}
+	}
+	v.Base.Content = v.Seed
+	return v, ctx.Err()
+}
+
+func remoteOf(r garden.Revision) gardenapi.RemoteRevision {
+	return gardenapi.RemoteRevision{Hash: r.Hash, CommentID: r.CommentID, Author: r.Author, At: r.CreatedAt, Content: r.Content, Source: edit.Source}
+}
+
+func (b *Backend) savePreview(method string, issue uint64, base gardenapi.DocumentBase, content string, res *gardenapi.ConflictView) (gardenapi.SavePreviewView, error) {
+	gen, epoch := b.begin(method)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.ops++
+	v := gardenapi.SavePreviewView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), OperationID: fmt.Sprintf("save-fake-%d", b.ops), IssueID: issue}
+	if b.PreviewConflict != nil {
+		c := *b.PreviewConflict
+		v.Conflict = &c
+		return v, nil
+	}
+	canonical := spec.Render(spec.Parse(content))
+	v.Base, v.Content, v.NewHash, v.Resolution = base, canonical, garden.ContentHash(canonical), res
+	if base.HeadHash != "" {
+		v.Parents = []string{base.HeadHash}
+	}
+	for _, d := range edit.Diff(spec.Parse(base.Content), spec.Parse(canonical)) {
+		v.Diff = append(v.Diff, gardenapi.SectionDiff{Section: d.Section, Added: d.Added, Removed: d.Removed})
+	}
+	if it, _, ok := b.item(issue); ok {
+		v.Number = it.Issue.Number
+	}
+	return v, nil
+}
+
+// PreviewSave implements gardenapi.Backend.
+func (b *Backend) PreviewSave(ctx context.Context, req gardenapi.SaveRequest) (gardenapi.SavePreviewView, error) {
+	if b.PreviewSaveErr != nil {
+		b.begin("PreviewSave")
+		return gardenapi.SavePreviewView{}, b.PreviewSaveErr
+	}
+	v, err := b.savePreview("PreviewSave", req.IssueID, req.Base, req.Content, nil)
+	if err == nil && v.Conflict == nil && v.NewHash == garden.ContentHash(req.Base.Content) {
+		return gardenapi.SavePreviewView{}, &gardenapi.Error{Code: gardenapi.CodeNoChange, Message: "There is nothing to save: the specification already says this."}
+	}
+	return v, errOr(err, ctx)
+}
+
+// PreviewResolve implements gardenapi.Backend.
+func (b *Backend) PreviewResolve(ctx context.Context, req gardenapi.ResolveRequest) (gardenapi.SavePreviewView, error) {
+	if b.PreviewResolveErr != nil {
+		b.begin("PreviewResolve")
+		return gardenapi.SavePreviewView{}, b.PreviewResolveErr
+	}
+	c := req.Conflict
+	base := c.Base
+	if len(c.Remote) > 0 {
+		base.Content = c.Remote[len(c.Remote)-1].Content
+	}
+	v, err := b.savePreview("PreviewResolve", req.IssueID, base, req.Result, &c)
+	v.Parents = nil
+	for _, r := range c.Remote {
+		if r.Hash != "" {
+			v.Parents = append(v.Parents, r.Hash)
+		}
+	}
+	return v, errOr(err, ctx)
+}
+
+func errOr(err error, ctx context.Context) error {
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+// Save implements gardenapi.Backend.
+func (b *Backend) Save(ctx context.Context, p gardenapi.SavePreviewView) (gardenapi.SaveView, error) {
+	return b.write("Save", b.SaveErr, ctx, p)
+}
+
+// Resolve implements gardenapi.Backend.
+func (b *Backend) Resolve(ctx context.Context, p gardenapi.SavePreviewView) (gardenapi.SaveView, error) {
+	return b.write("Resolve", b.ResolveErr, ctx, p)
+}
+
+func (b *Backend) write(method string, fail error, ctx context.Context, p gardenapi.SavePreviewView) (gardenapi.SaveView, error) {
+	gen, epoch := b.begin(method)
+	if fail != nil {
+		return gardenapi.SaveView{}, fail
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.Saved = append(b.Saved, p)
+	v := gardenapi.SaveView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), OperationID: p.OperationID, IssueID: p.IssueID, State: gardenapi.SaveDone, CommentID: 5000 + int64(len(b.Saved)), Hash: p.NewHash}
+	if b.SaveResult != nil {
+		r := *b.SaveResult
+		r.Stamp, r.OperationID, r.IssueID = v.Stamp, p.OperationID, p.IssueID
+		return r, ctx.Err()
+	}
+	if it, i, ok := b.item(p.IssueID); ok {
+		rev := garden.Revision{Kind: garden.RevisionSpec, CommentID: v.CommentID, Hash: p.NewHash, Content: p.Content, Parents: p.Parents, Author: SampleLogin, AuthorID: "1001", CreatedAt: time.Date(2026, 10, 20, 12, 5, 0, 0, time.UTC)}
+		it.Verification.Revisions = append(it.Verification.Revisions, rev)
+		it.Verification.Heads = []garden.Revision{rev}
+		it.Verification.ConflictingHeads = nil
+		it.Lane = garden.LaneResult{Lane: garden.LaneDraft, Reason: "specification has not been accepted"}
+		b.WorkView.Snapshot.Items[i] = it
 	}
 	return v, ctx.Err()
 }

@@ -67,6 +67,9 @@ func (m Model) gardenDraftsHead(width int) []string {
 	if d.notice != "" {
 		feedback, fg = d.notice, p.Warning
 	}
+	if d.pendingErr != nil {
+		feedback, fg = d.pendingErr.Message+" "+d.pendingErr.Next, p.Danger
+	}
 	if e := m.garden.err; e != nil {
 		feedback, fg = e.Message+" Last good read retained.", p.Danger
 	}
@@ -93,6 +96,12 @@ func (m Model) gsDrafts(width, rows int) []string {
 		return m.gsCapturePreview(width, rows)
 	case draftsResult:
 		return m.gsCaptureResult(width, rows)
+	case draftsEditor:
+		return m.gsEditor(width, rows)
+	case draftsSave:
+		return m.gsSavePreview(width, rows)
+	case draftsConflict:
+		return m.gsConflict(width, rows)
 	}
 	return m.gsDraftList(width, rows)
 }
@@ -271,9 +280,15 @@ func shortHash(h string) string {
 func (m Model) gsDraftDetail(width, rows int) []string {
 	p := theme.Current
 	d := m.garden.drafts
-	out := []string{gText(width, p.Warning, true, "‹ Drafts (Esc)   Draft document"), gText(width, p.Muted, false, m.gardenBoardStatus())}
+	second := gText(width, p.Muted, false, m.gardenBoardStatus())
+	if d.notice != "" {
+		second = gText(width, p.Warning, false, d.notice)
+	} else if ok, why := m.canEdit(); !ok {
+		second = gText(width, p.Warning, false, why)
+	}
+	out := []string{gText(width, p.Warning, true, "‹ Drafts (Esc)   Draft document"), second}
 	doc := m.gardenDraftDocument(width)
-	avail := max(0, rows-3)
+	avail := max(0, rows-4)
 	start := max(0, min(d.docScroll, max(0, len(doc)-avail)))
 	for i := 0; i < avail; i++ {
 		if start+i < len(doc) {
@@ -287,7 +302,22 @@ func (m Model) gsDraftDetail(width, rows int) []string {
 		pos = fmt.Sprintf("Lines %d–%d of %d", start+1, min(start+avail, len(doc)), len(doc))
 	}
 	out = append(out, gText(width, p.Muted, false, pos))
+	out = append(out, m.gardenDraftActions(width))
 	return m.settingsASCII(out[:rows])
+}
+
+// gardenDraftActions is the action bar of the detail: Edit when Write access allows it, with the
+// reason shown otherwise, and the next gate as a disabled step until plan 08 adds its record.
+func (m Model) gardenDraftActions(width int) string {
+	p := theme.Current
+	edit := seg(p.Warning, p.Raised, true).Render(" e Edit specification ")
+	if ok, _ := m.canEdit(); !ok {
+		edit = seg(p.Dim, p.Raised, false).Render(" e Edit specification (unavailable) ")
+	}
+	validate := seg(p.Dim, p.Raised, false).Render(" Validate idea (available in plan 08) ")
+	gap := seg("", p.Background, false).Render("  ")
+	line := seg("", p.Background, false).Render(" ") + edit + gap + validate
+	return shellRow(width, p.Background, line, "")
 }
 
 // Capture ----------------------------------------------------------------------

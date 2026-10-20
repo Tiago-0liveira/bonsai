@@ -25,10 +25,11 @@ func (b *Backend) captureService() (*capture.Service, error) {
 	if b.captures != nil {
 		return b.captures, nil
 	}
-	if b.deps.Creator == nil || b.deps.Issues == nil || b.deps.Ops == nil {
+	reader, ok := b.deps.Issues.(garden.RepositoryIssueReader)
+	if b.deps.Creator == nil || !ok || b.deps.Ops == nil {
 		return nil, &gardenapi.Error{Code: gardenapi.CodeFailed, Message: "Capturing ideas is unavailable in this build."}
 	}
-	svc, err := capture.New(capture.Deps{Creator: b.deps.Creator, Reader: b.deps.Issues, Store: b.deps.Ops})
+	svc, err := capture.New(capture.Deps{Creator: b.deps.Creator, Reader: reader, Store: b.deps.Ops})
 	if err != nil {
 		return nil, err
 	}
@@ -39,6 +40,11 @@ func (b *Backend) captureService() (*capture.Service, error) {
 // writeTarget resolves the recorded Garden, requires live Write access and the
 // authenticated account. Nothing is written.
 func (b *Backend) writeTarget(ctx context.Context) (connect.Target, connect.GitHubIdentity, error) {
+	return b.target(ctx, true)
+}
+
+// target is writeTarget with the access level chosen: reads need Read access only.
+func (b *Backend) target(ctx context.Context, write bool) (connect.Target, connect.GitHubIdentity, error) {
 	_, a, err := b.association(ctx)
 	if err != nil {
 		return connect.Target{}, connect.GitHubIdentity{}, apiError(err)
@@ -56,8 +62,11 @@ func (b *Backend) writeTarget(ctx context.Context) (connect.Target, connect.GitH
 	if t.GardenID != a.GardenID {
 		return connect.Target{}, connect.GitHubIdentity{}, apiError(ErrRemoteChanged)
 	}
-	if t.Repository.Access < connect.AccessWrite {
-		return connect.Target{}, connect.GitHubIdentity{}, &gardenapi.Error{Code: gardenapi.CodeReadOnly, Message: "Capturing an idea needs Write access to " + t.FullName + ".", Next: "Ask a maintainer for Write access."}
+	if write && t.Repository.Access < connect.AccessWrite {
+		return connect.Target{}, connect.GitHubIdentity{}, &gardenapi.Error{Code: gardenapi.CodeReadOnly, Message: "Changing ideas needs Write access to " + t.FullName + ".", Next: "Ask a maintainer for Write access."}
+	}
+	if t.Repository.Access < connect.AccessRead {
+		return connect.Target{}, connect.GitHubIdentity{}, apiError(connect.ErrPermissionDenied)
 	}
 	id, err := b.identity(ctx)
 	if err != nil {
@@ -182,24 +191,23 @@ func (b *Backend) captureView(gen uint64, repo garden.RepoID, opID, title string
 	return v, nil
 }
 
-// pendingCaptures lists this clone's unsettled captures for the Drafts read. A
-// store failure hides them rather than failing the read of the Garden.
-func (b *Backend) pendingCaptures(ctx context.Context, gen uint64, repo garden.RepoID) []gardenapi.CaptureView {
-	svc, err := b.captureService()
-	if err != nil {
-		return nil
+// pendingCaptures keeps a failed store read distinct from a successful empty
+// result, so the UI can retain unresolved captures and block new operations.
+func (b *Backend) pendingCaptures(ctx context.Context, gen uint64, repo garden.RepoID) ([]gardenapi.CaptureView, error) {
+	if b.deps.Ops == nil {
+		return nil, nil
 	}
-	recs, err := svc.Unsettled(ctx, b.local)
+	recs, err := b.deps.Ops.List(ctx, b.local)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []gardenapi.CaptureView
 	for _, r := range recs {
-		if r.Repo != repo {
+		if r.Repo != repo || r.Kind != ops.KindCapture || (r.State != ops.StatePending && r.State != ops.StateUnknown) {
 			continue
 		}
 		out = append(out, gardenapi.CaptureView{Stamp: b.stamp(gen, repo), OperationID: r.ID, State: gardenapi.CaptureState(r.State), Title: r.Title,
 			Err: &gardenapi.Error{Code: gardenapi.CodeCaptureUnknown, Message: "The idea may already exist on GitHub.", Next: "Reconcile to check GitHub."}})
 	}
-	return out
+	return out, nil
 }

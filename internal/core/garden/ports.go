@@ -43,6 +43,12 @@ type IssueReader interface {
 	ListComments(context.Context, RepoID, IssueID) ([]IssueComment, error)
 }
 
+// RepositoryIssueReader observes all repository Issues, including closed Issues
+// and those whose managed label was removed, so capture can reconcile by nonce.
+type RepositoryIssueReader interface {
+	ListRepositoryIssues(context.Context, RepoID, string) (IssuePage, error)
+}
+
 // IssueWriter contains only the mutations needed by the canonical contract.
 type IssueWriter interface {
 	AppendComment(context.Context, RepoID, IssueID, string) (IssueComment, error)

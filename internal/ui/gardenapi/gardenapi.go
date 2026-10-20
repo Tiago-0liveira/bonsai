@@ -59,6 +59,25 @@ type Backend interface {
 	// It only reads, except that it records what it found in the local operation
 	// record. A complete read that finds nothing makes the capture retryable.
 	ReconcileCapture(ctx context.Context, operationID string) (CaptureView, error)
+
+	// Document reads one Issue afresh for editing: the user-owned body, the
+	// verified specification revisions and the base an edit starts from. It
+	// only reads.
+	Document(ctx context.Context, issue uint64) (DocumentView, error)
+	// PreviewSave verifies the revision log now and reports what saving would
+	// append, or the Conflict in the way. It writes nothing and needs Write
+	// access.
+	PreviewSave(ctx context.Context, req SaveRequest) (SavePreviewView, error)
+	// Save appends the previewed specification revision after verifying the log
+	// again. It is the only call that writes a revision: it never writes the
+	// Issue body, title or labels, and saving the same preview twice returns the
+	// first result.
+	Save(ctx context.Context, preview SavePreviewView) (SaveView, error)
+	// PreviewResolve reports what publishing a conflict's Result would append.
+	PreviewResolve(ctx context.Context, req ResolveRequest) (SavePreviewView, error)
+	// Resolve appends the Result as a revision superseding every head the
+	// conflict showed, after re-checking that those are still the heads.
+	Resolve(ctx context.Context, preview SavePreviewView) (SaveView, error)
 }
 
 // Stamp scopes one reply. Generation grows with every request of the clone and
@@ -416,6 +435,14 @@ const (
 	CodeOperationNotFound   Code = "operation-not-found"
 	CodeStalePlan           Code = "stale-plan"
 	CodeConflict            Code = "conflict"
+	// CodeNotFound means the Issue is gone.
+	CodeNotFound Code = "not-found"
+	// CodeNoChange means there is nothing to save; CodeDocumentIncomplete means the
+	// revision log could not be verified, so nothing was written.
+	CodeNoChange           Code = "no-change"
+	CodeDocumentIncomplete Code = "document-incomplete"
+	// CodeSaveUnknown means a revision may have been appended; saving again checks first.
+	CodeSaveUnknown Code = "save-unknown"
 	// CodeCaptureUnknown means an Issue may have been created; reconcile before retrying.
 	CodeCaptureUnknown Code = "capture-unknown"
 	// CodeInvalidInput means the request failed validation; nothing was sent.
@@ -447,6 +474,8 @@ type WorkView struct {
 	// PendingCaptures are this clone's captures that still need a decision after a
 	// restart or timeout (state pending or unknown), so Drafts can offer Reconcile.
 	PendingCaptures []CaptureView
+	// PendingCapturesErr means the list is unknown; retain the last good list and block capture.
+	PendingCapturesErr *Error
 }
 
 // CaptureRequest is what the user typed for a new idea.
@@ -489,5 +518,116 @@ type CaptureView struct {
 	State       CaptureState
 	Title       string
 	Issue       *IssueRef
+	Err         *Error
+}
+
+// DocumentBase is what an edit started from. Hand it back to PreviewSave unchanged.
+type DocumentBase struct {
+	HeadHash      string // empty while the Issue has no specification revision
+	HeadCommentID int64
+	BodyHash      string
+	Content       string // the text the editor was seeded with
+}
+
+// RemoteRevision is a revision, or an edited body, written by someone else.
+type RemoteRevision struct {
+	Hash      string // empty for an edited body
+	CommentID int64
+	Author    string // login, a display label
+	At        time.Time
+	Content   string
+	Source    string // "Bonsai/GitHub comment" or the body notice
+}
+
+// DocumentView is the fresh read of one Issue for editing.
+type DocumentView struct {
+	Stamp     Stamp
+	IssueID   uint64
+	Number    int64
+	Title     string
+	Type      garden.ItemType
+	Body      string // user-owned text, without Bonsai's marker lines
+	Revisions []RemoteRevision
+	Base      DocumentBase
+	Seed      string // canonical editor text; empty while the heads conflict
+	// Conflict is set when several heads already exist: there is nothing to edit
+	// until they are resolved.
+	Conflict *ConflictView
+}
+
+// ConflictView is a divergence the user resolves visibly (Base, Yours, Remote, Result).
+type ConflictView struct {
+	IssueID uint64
+	Base    DocumentBase
+	Yours   string
+	// Remote are the current heads, or the edited body when no revision exists.
+	// After a lost race it includes our own saved head (see SavedCommentID).
+	Remote         []RemoteRevision
+	BodyHash       string
+	Saved          bool
+	SavedCommentID int64
+}
+
+// SaveRequest asks for a save preview of Content on top of Base.
+type SaveRequest struct {
+	IssueID uint64
+	Base    DocumentBase
+	Content string
+}
+
+// ResolveRequest asks to preview publishing Result for a conflict.
+type ResolveRequest struct {
+	IssueID  uint64
+	Conflict ConflictView
+	Result   string
+}
+
+// SectionDiff counts the lines one section gained and lost.
+type SectionDiff struct {
+	Section        string
+	Added, Removed int
+}
+
+// SavePreviewView is exactly what Save or Resolve will append, or the Conflict
+// that stands in the way (then nothing else is set).
+type SavePreviewView struct {
+	Stamp       Stamp
+	OperationID string // stable trace ID; replay safety comes from the revision itself
+	IssueID     uint64
+	Number      int64
+	Base        DocumentBase
+	Content     string
+	NewHash     string
+	Parents     []string
+	Diff        []SectionDiff
+	// BodyChanged says the Issue body was edited on GitHub since the base. It is
+	// not part of the specification and does not block the save.
+	BodyChanged    bool
+	AlreadySaved   bool
+	SavedCommentID int64
+	// Resolution is set for a Resolve preview, which carries the conflict it answers.
+	Resolution *ConflictView
+	Conflict   *ConflictView
+}
+
+// SaveState is how a save ended.
+type SaveState string
+
+const (
+	SaveDone     SaveState = "done"
+	SaveConflict SaveState = "conflict" // nothing written, or both heads exist after a lost race
+	SaveUnknown  SaveState = "unknown"  // the revision may exist; saving again checks first
+)
+
+// SaveView is the result of Save or Resolve.
+type SaveView struct {
+	Stamp       Stamp
+	OperationID string
+	IssueID     uint64
+	State       SaveState
+	CommentID   int64
+	Hash        string
+	Replayed    bool
+	Conflict    *ConflictView
 	Err         *Error
 }

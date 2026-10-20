@@ -2,6 +2,7 @@ package gardenbackend
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -194,5 +195,40 @@ func TestCaptureRefusesForeignPreviewAndMissingSeams(t *testing.T) {
 	mustErrCode(t, err, gardenapi.CodeFailed)
 	if len(newWrites(f)) != 0 {
 		t.Fatalf("wrote: %v", newWrites(f))
+	}
+}
+
+func TestWorkReportsPendingStoreFailureWithoutDiscardingIssueRead(t *testing.T) {
+	h, f := captureHarness(t)
+	p, err := h.b.PreviewCapture(t.Context(), idea())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.FailNextCreateAfterApply(garden.ErrOffline)
+	if v, err := h.b.Capture(t.Context(), p); err != nil || v.State != gardenapi.CaptureUnknown {
+		t.Fatalf("capture = %+v, %v", v, err)
+	}
+	w, err := h.b.Work(t.Context())
+	if err != nil || len(w.PendingCaptures) != 1 || w.PendingCapturesErr != nil {
+		t.Fatalf("initial read = %+v, %v", w, err)
+	}
+	path := h.b.deps.Ops.Path
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w, err = h.b.Work(t.Context())
+	if err != nil || w.PendingCapturesErr == nil || !w.Snapshot.Complete || len(w.Snapshot.Items) != 2 {
+		t.Fatalf("store failure should preserve the Issue read with an explicit pending error: %+v, %v", w, err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	w, err = h.b.Work(t.Context())
+	if err != nil || w.PendingCapturesErr != nil || len(w.PendingCaptures) != 1 || w.PendingCaptures[0].OperationID != p.OperationID {
+		t.Fatalf("recovery = %+v, %v", w, err)
 	}
 }
