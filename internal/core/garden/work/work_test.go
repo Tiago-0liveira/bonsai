@@ -238,3 +238,68 @@ func TestScrollClampsAfterCollectionShrinks(t *testing.T) {
 		})
 	}
 }
+
+func tableRecord(id garden.IssueID, number int64, col Column, prio string) Record {
+	return Record{Column: col, Priority: prio, Item: gardensync.Item{Issue: garden.Issue{ID: id, Number: number}}}
+}
+func TestRowsOrderingIsDeterministicAndReadOnly(t *testing.T) {
+	c := Collection{Records: []Record{
+		tableRecord(1, 10, Done, "P1"), tableRecord(2, 20, Approved, "?"), tableRecord(3, 30, Approved, "P0"),
+		tableRecord(4, 30, Running, "P1"), tableRecord(5, 40, Approved, "P3"), tableRecord(6, 30, Approved, "P0"),
+	}}
+	for _, tc := range []struct {
+		sort Sort
+		want []garden.IssueID
+	}{
+		{SortState, []garden.IssueID{2, 3, 6, 5, 4, 1}},
+		{SortNumber, []garden.IssueID{1, 2, 3, 4, 6, 5}},
+		{SortPriority, []garden.IssueID{3, 6, 1, 4, 5, 2}},
+	} {
+		var got []garden.IssueID
+		for _, r := range c.Rows(tc.sort) {
+			got = append(got, r.Item.Issue.ID)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%v: %v want %v", tc.sort, got, tc.want)
+		}
+	}
+	if c.Records[0].Item.Issue.ID != 1 || c.Records[5].Item.Issue.ID != 6 {
+		t.Fatal("Rows reordered Records")
+	}
+	if SortState.Next() != SortNumber || SortNumber.Next() != SortPriority || SortPriority.Next() != SortState {
+		t.Fatal("sort cycle")
+	}
+}
+func TestRowsCarryColumnFromSelect(t *testing.T) {
+	c := Select([]gardensync.Item{accepted(t, 1, garden.StageDone, false), accepted(t, 2, garden.StageReady, false)}, Query{})
+	rows := c.Rows(SortState)
+	if rows[0].Column != Approved || rows[1].Column != Done {
+		t.Fatalf("%+v", rows)
+	}
+}
+func TestSelectionFocusSharesIdentity(t *testing.T) {
+	c := Select([]gardensync.Item{accepted(t, 1, garden.StageDone, false), accepted(t, 2, garden.StageDone, false), accepted(t, 3, garden.StageReady, false)}, Query{})
+	var s Selection
+	if !s.Focus(c, 2) || s.ID != 2 || s.Column != Done || s.Rows[Done] != 1 || !s.Initialized {
+		t.Fatalf("%+v", s)
+	}
+	before := s
+	if s.Focus(c, 99) || s != before {
+		t.Fatal("missing id changed selection")
+	}
+}
+func TestNextGateIsAHumanGateForEveryColumn(t *testing.T) {
+	want := map[Column]string{
+		Approved: "Approve the plan once drafted", Planning: "Approve the plan once drafted", PlanReview: "Review and approve the plan",
+		Ready: "Start implementation locally", Running: "Review the change when the run ends", Reviewing: "Review the change after agent review",
+		HumanReview: "Review the change", Done: "None", Blocked: "Resolve the blocker",
+	}
+	if len(want) != int(ColumnCount) {
+		t.Fatal("table misses a column")
+	}
+	for c, g := range want {
+		if NextGate(c) != g {
+			t.Errorf("%v: %q want %q", c, NextGate(c), g)
+		}
+	}
+}

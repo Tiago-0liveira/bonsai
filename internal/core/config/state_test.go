@@ -306,10 +306,10 @@ func TestGardenViewPersistenceScopeOrderingAndSanitization(t *testing.T) {
 	if err = st.PersistGardenView(1, a, "setup"); !errors.Is(err, ErrSuperseded) {
 		t.Fatalf("stale write: %v", err)
 	}
-	if err = st.PersistGardenView(3, b, "setup"); err != nil {
+	if err = st.PersistGardenView(3, b, "table"); err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{"token=secret", "Task title", "/search text", "table", ""} {
+	for _, value := range []string{"token=secret", "Task title", "/search text", "tables", ""} {
 		if err = st.PersistGardenView(4, a, value); !errors.Is(err, ErrInvalidGardenView) {
 			t.Fatalf("invalid view accepted: %q", value)
 		}
@@ -324,7 +324,7 @@ func TestGardenViewPersistenceScopeOrderingAndSanitization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.GardenView(a) != "board" || next.GardenView(b) != "setup" || next.GardenView(t.TempDir()) != "" {
+	if next.GardenView(a) != "board" || next.GardenView(b) != "table" || next.GardenView(t.TempDir()) != "" {
 		t.Fatal("view state lost or crossed repos")
 	}
 	data, err := os.ReadFile(p)

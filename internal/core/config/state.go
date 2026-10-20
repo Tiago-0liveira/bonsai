@@ -405,7 +405,7 @@ func (s *State) GardenView(repoDir string) string {
 
 // PersistGardenView follows the same ordered atomic state writes as workspace memory.
 func (s *State) PersistGardenView(gen uint64, repoDir, view string) error {
-	if view != "board" && view != "setup" {
+	if view != "board" && view != "table" && view != "setup" {
 		return ErrInvalidGardenView
 	}
 	id := RepoIdentity(repoDir)

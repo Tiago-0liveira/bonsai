@@ -124,6 +124,28 @@ func placement(stage garden.Stage, v garden.Verification) Column {
 	}
 }
 
+// NextGate names the next human decision for a state. It is fixed text per
+// column: the read projection proves no more than the column itself.
+func NextGate(c Column) string {
+	switch c {
+	case Approved, Planning:
+		return "Approve the plan once drafted"
+	case PlanReview:
+		return "Review and approve the plan"
+	case Ready:
+		return "Start implementation locally"
+	case Running:
+		return "Review the change when the run ends"
+	case Reviewing:
+		return "Review the change after agent review"
+	case HumanReview:
+		return "Review the change"
+	case Blocked:
+		return "Resolve the blocker"
+	}
+	return "None"
+}
+
 // Priority labels are optional display data outside the managed namespace.
 // Conflicting values are unknown rather than silently choosing one.
 func priority(labels []string) string {
@@ -157,6 +179,60 @@ func (c Collection) Find(id garden.IssueID) (Record, int, bool) {
 	return Record{}, 0, false
 }
 
+// Sort orders Table rows. Every order ends in Issue number then ID, so rows
+// never swap between renders.
+type Sort int
+
+const (
+	SortState Sort = iota
+	SortNumber
+	SortPriority
+	sortCount
+)
+
+func (s Sort) String() string {
+	switch s {
+	case SortNumber:
+		return "Number"
+	case SortPriority:
+		return "Priority"
+	}
+	return "State"
+}
+
+// Next cycles State, Number, Priority.
+func (s Sort) Next() Sort { return (s + 1) % sortCount }
+
+// Rows returns a sorted copy of the filtered records; Records stays untouched.
+func (c Collection) Rows(s Sort) []Record {
+	out := make([]Record, len(c.Records))
+	copy(out, c.Records)
+	rank := func(p string) int {
+		if len(p) == 2 && p[0] == 'P' && p[1] >= '0' && p[1] <= '3' {
+			return int(p[1] - '0')
+		}
+		return 4
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		switch s {
+		case SortState:
+			if a.Column != b.Column {
+				return a.Column < b.Column
+			}
+		case SortPriority:
+			if ra, rb := rank(a.Priority), rank(b.Priority); ra != rb {
+				return ra < rb
+			}
+		}
+		if a.Item.Issue.Number != b.Item.Issue.Number {
+			return a.Item.Issue.Number < b.Item.Issue.Number
+		}
+		return a.Item.Issue.ID < b.Item.Issue.ID
+	})
+	return out
+}
+
 // Selection keeps identity separate from position and remembers each column's
 // cursor and scroll. Empty columns retain focus without inventing an item.
 type Selection struct {
@@ -176,6 +252,17 @@ func (s *Selection) choose(c Collection) {
 		s.ID = rows[s.Rows[s.Column]].Item.Issue.ID
 		s.Initialized = true
 	}
+}
+
+// Focus points the Board cursor at id so Table and Board share one identity.
+func (s *Selection) Focus(c Collection, id garden.IssueID) bool {
+	r, i, ok := c.Find(id)
+	if !ok {
+		return false
+	}
+	s.ID, s.Column, s.Initialized = id, r.Column, true
+	s.Rows[r.Column] = i
+	return true
 }
 func (s *Selection) Move(c Collection, horizontal, vertical int) {
 	s.Column = Column(max(0, min(int(s.Column)+horizontal, int(ColumnCount)-1)))
