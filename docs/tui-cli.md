@@ -268,7 +268,7 @@ value exits with an error before the TUI starts. The terminal must be at least
 | `,` | Jump to Settings (the `prefs` binding) |
 | `enter` / `↓` | On the Garden, Settings or Accounts tab, enter its body |
 | `m` | Open Accounts (the Agents tab's `agent_accounts` binding) |
-| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage", "Accounts: Defaults", and Garden Board/Search/Refresh entries |
+| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage", "Accounts: Defaults", and Garden Board/Table/Search/Refresh entries |
 | `?` | Keys that work in the preview |
 | `q` / `ctrl+c` | Quit (outside the palette and help dialogs; inside them `esc` closes the dialog) |
 
@@ -311,6 +311,10 @@ Use `/` for scoped title/number search, `t` for type, `p` for priority, `x` to c
 filters, and `R` to refresh. Failed reads preserve the last good board and show
 stale/offline state plus the last successful sync time. Drafts and unverified
 acceptance never enter the board. Garden remembers its subview per repository.
+`v` (the Garden-scoped `garden_view` key) switches the same approved work to a
+Table: rows with a selected-item inspector at 120/160 columns, `o` to cycle
+State/Number/Priority order, and the same selection, filters, document and
+Escape behavior. Garden remembers Board or Table per repository.
 Some columns await backend evidence from plans 08/09; selecting or opening never
 changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
 filter semantics, document sections, keys and current limitations.
@@ -355,8 +359,9 @@ Key editor: `enter` on a key row captures the next key, `esc` cancels and
 `tab`; `ctrl+c` still quits.
 
 - Navigation actions are global and conflict with every other scope.
-- Worktree, Tabs, Files, Run and Git share one scope. The Agents tab and the
-  Processes tab are separate scopes, so a key may be reused across them.
+- Worktree, Tabs, Files, Run and Git share one scope. The Agents tab, the
+  Processes tab and the Garden views (`garden_view`) are separate scopes, so a key
+  may be reused across them.
 - Always rejected: `esc`, `ctrl+c`, `ctrl+]`, `enter`, `tab`, `shift+tab`, `space`,
   the arrow keys and `alt+1` to `alt+5`. `h`/`j`/`k`/`l` are rejected only for
   Navigation actions.

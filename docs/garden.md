@@ -65,7 +65,8 @@ These presentation columns never add or change GitHub labels.
 | `x` | Clear all filters |
 | `R` (refresh binding) | Refresh the collection |
 | `esc` | Return to setup when available, otherwise workspace navigation |
-| `tab` (focus-next binding) | Switch Setup/Board when both are available |
+| `v` (`garden_view` binding) | Switch Board/Table, keeping the selected issue |
+| `tab` (focus-next binding) | Switch Setup/work view when both are available |
 | `ctrl+k` / `?` | Command palette / help |
 
 Filters combine and apply to the same collection. An active filter labels the
@@ -73,14 +74,44 @@ count as filtered and shows the total eligible count. Priority is optional displ
 data from existing `priority:p0` through `priority:p3` labels (case-insensitive),
 not a new managed label or a setup change. Missing or conflicting priority is `?`.
 Search captures typed shortcuts; Enter applies it and Escape restores the previous
-query and selection. The palette includes Garden: Board, Search approved work,
-and Refresh. Table and Drafts remain unavailable until their own plans land.
+query and selection. The palette includes Garden: Board, Garden: Table, Search
+approved work, and Refresh. Drafts remains unavailable until its own plan lands.
 
-Refresh keeps the selected stable ID even if its row or column changes. If an
-issue is deleted or filtered out, selection falls back to the nearest row of the
+Refresh keeps the selected stable ID even if its row or column changes. On the
+Board, if an issue is deleted or filtered out, selection falls back to the nearest row of the
 same column, then the nearest populated column (right wins a distance tie).
 If no match remains, the current column stays focused and explicitly empty.
 New attention items never take keyboard focus.
+
+## Table
+
+The Table is a second view of the same approved work, not a second store: Board
+and Table share one collection, query, selected issue, notices, freshness and
+issue document; switching views issues no extra read. `v` (the Garden-scoped
+`garden_view` binding; it cannot be rebound to a key Garden itself reads, such as
+`/`, `t`, `p`, `x`, `o`, `h`/`j`/`k`/`l` or the page keys) toggles Board/Table and keeps the exact selected issue
+even though ordering differs; filters stay. The `v` key only applies inside
+Garden: Worktrees keeps `v` for Processes, and overriding `garden_view` in
+`keys:` changes both the key and every on-screen hint.
+
+Rows show issue number, title, type, state (full names, never clipped), priority
+and approval/conflict status. Columns drop by available width, not by clipping
+the title or state: 80 columns show ISSUE, TITLE, TYPE and STATE; 120 adds a
+selected-item inspector (type, state, approval, next human gate) in place of TYPE
+and keeps P; 160 shows every column. The selected row always carries a marker.
+
+| Key in Table | Action |
+| --- | --- |
+| `↑` / `↓` or `k` / `j` | Select previous / next row |
+| `pgup` / `pgdown`, `home` / `end` | Move by a page / to the first or last row |
+| `o` | Cycle sort: State, Number, Priority (view order only, never a GitHub change) |
+| `enter` | Open the same issue document as Board |
+| `/`, `t`, `p`, `x`, `R`, `esc`, `tab` | As on Board |
+
+Rows are ordered by state then issue number by default. If the selected issue
+disappears, the row now in its place is selected (the previous row if it was the
+last), with a notice saying which; if nothing remains, no row is selected. Escape from the
+document returns to the same row and scroll position in the Table.
 
 ## Read-only issue document
 
@@ -106,7 +137,7 @@ Only a successful complete read can clear the collection. Before any successful
 read, a failure says that approved work is unknown rather than calling it empty.
 Per-item conflict and stale-approval indicators remain separate from selection.
 
-The last Garden subview (Board or Setup) is remembered per local repository in
+The last Garden subview (Board, Table or Setup) is remembered per local repository in
 Bonsai's existing atomic UI state store. No query text, issue content, credentials,
 commands or terminal output are persisted for this feature. Filters and issue
 selection survive view navigation in the current process; they are not saved to

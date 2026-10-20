@@ -1,6 +1,6 @@
 # Plan 06 — Garden table
 
-Status: not started. Prerequisite: [05 — Garden board](05-garden-board.md).
+Status: implemented; one environmental full-suite failure noted below. Prerequisite: [05 — Garden board](05-garden-board.md).
 Next: [07 — Garden drafts](07-garden-drafts.md).
 
 ## Deliverable
@@ -39,12 +39,41 @@ References: [table](../../design/tui-redesign/revision-02/png/g-02-120x35-161.pn
 
 ## Exit criteria and verification
 
-- [ ] Board and Table show identical eligible Issue sets for the same query.
-- [ ] Switching views retains the exact Issue even when ordering differs.
-- [ ] Every row opens the shared detail and returns to its original parent view.
-- [ ] Large lists, empty filters, offline data and selection deletion are bounded.
-- [ ] Drafts remain excluded, including remotely relabeled/unverified ideas.
-- [ ] Focus/selection/sizing tests and full Go checks pass.
-- [ ] Update `README.md`, `docs/tui-cli.md` and the Garden guide with both views.
+- [x] Board and Table show identical eligible Issue sets for the same query.
+- [x] Switching views retains the exact Issue even when ordering differs.
+- [x] Every row opens the shared detail and returns to its original parent view.
+- [x] Large lists, empty filters, offline data and selection deletion are bounded.
+- [x] Drafts remain excluded, including remotely relabeled/unverified ideas.
+- [ ] Focus/selection/sizing tests and full Go checks pass (see the one environmental failure below).
+- [x] Update `README.md`, `docs/tui-cli.md` and the Garden guide with both views.
 
-Completion record: pending implementation and validation evidence.
+## Completion record
+
+Implemented 06.1 and 06.2 on `feat/tui-redesign`.
+
+Files and decisions:
+
+- `internal/core/garden/work/work.go`: `Sort` (State, Number, Priority; stable,
+  ties by number then ID), `Collection.Rows`, `Selection.Focus` and `NextGate`.
+- `internal/ui/gardentable{.go,_view.go,_test.go}`: row keys, scroll anchor, width-
+  driven columns and the inspector. `gardenboard*.go` gain `layout`, `sort`,
+  `tableScroll`, `tableRow` on the one `gardenBoardState`; `gardenWorkHead` is the
+  header/feedback both layouts share. Toggling never calls `gardenLoadWork`.
+- `keys.go`/`keyscope.go`: new `ksGarden` scope, "Garden" section, `garden_view`
+  (default `v`). It cannot collide with Worktree `processes` (`v`); an override
+  changes behavior and every hint. Settings Keys lists the new section.
+- `internal/core/config/state.go`: view memory accepts `table`.
+- Selection deletion in Table picks the row now at the same index (previous row
+  after the last), with a notice saying which. Optional columns are tried P, TYPE, STATUS with
+  inspector (TYPE, P, STATUS without) and join only while TITLE keeps 44 cells.
+- Docs: `README.md`, `docs/tui-cli.md`, `docs/garden.md`.
+
+Validation: `gofmt -l` clean, `go vet` and `go build ./...` pass;
+`go test ./internal/core/garden/... ./internal/core/config/... ./internal/ui/...`
+and `go test -race ./internal/ui/` pass. `go test ./...` passes except
+`TestAgentUsageRealProviders` (`internal/server/localapi/agents_usage_test.go:397`),
+which inherits the session's `CLAUDE_CONFIG_DIR` so its seed source is not
+`~/.claude`; this is environmental and unrelated to this change.
+
+Limitation: Drafts remains disabled; the design's "Types v" saved-filter tab is
+not built.
