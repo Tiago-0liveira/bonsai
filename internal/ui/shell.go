@@ -100,6 +100,10 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	if ws == m.workspace {
 		return m, nil
 	}
+	if m.workspace == wsGarden {
+		// A read that lands after the user left must not reopen a step for them.
+		m.garden.abandon()
+	}
 	m.workspace = ws
 	m.shellFocus = shellNav
 	m.set.editing, m.set.capturing = false, false
@@ -107,6 +111,12 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	if ws == wsAccounts && m.acct.present && !m.acct.started {
 		m.acct.started = true
 		cmds = append(cmds, m.acct.model.Init())
+	}
+	if ws == wsGarden {
+		// The one network read of the Garden workspace: entering it, never a key.
+		var load tea.Cmd
+		m, load = m.gardenLoadStatus()
+		cmds = append(cmds, load)
 	}
 	if !m.work.NoWorkspaceMemory {
 		m.wsGen++
@@ -232,6 +242,9 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.shellKey(msg)
 	}
+	if handled, nm, cmd := m.gardenMsg(msg); handled {
+		return nm, cmd
+	}
 	_, nm, cmd := m.accountsMsg(msg)
 	return nm, cmd
 }
@@ -266,6 +279,8 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	next := m.workspace
 	switch {
+	case m.workspace == wsGarden && (msg.String() == "enter" || msg.String() == "down"):
+		return m.gardenEnterBody()
 	case m.workspace == wsSettings && (msg.String() == "enter" || msg.String() == "down"):
 		m.shellFocus = shellBody
 		m.set.level = levelCategory
@@ -297,10 +312,10 @@ func altDigitWorkspace(msg tea.KeyMsg, fallback workspace) workspace {
 	return fallback
 }
 
-// bodyKey routes a key to the focused workspace body. Settings and Accounts
-// have one.
+// bodyKey routes a key to the focused workspace body. Settings, Accounts and
+// Garden have one.
 func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.workspace != wsSettings && m.workspace != wsAccounts {
+	if m.workspace != wsSettings && m.workspace != wsAccounts && m.workspace != wsGarden {
 		return m, nil
 	}
 	if m.shellFocus == shellBody && m.currentShellFocus() == shellBody {
@@ -308,10 +323,16 @@ func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.selectWorkspace(ws)
 		}
 	}
-	if m.workspace == wsAccounts {
+	switch m.workspace {
+	case wsAccounts:
 		return m.accountsKey(msg)
+	case wsGarden:
+		return m.gardenKey(msg)
 	}
-	return m.settingsKey(msg)
+	nm, cmd := m.settingsKey(msg)
+	// Moving onto the Garden category is when Settings first needs its status.
+	wm, load := nm.(Model).gardenWarm()
+	return wm, tea.Batch(cmd, load)
 }
 
 const (
@@ -371,6 +392,8 @@ func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
 	if t.hasCategory {
 		m.shellFocus = shellBody
 		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr}
+		m, load := m.gardenWarm()
+		return m, tea.Batch(cmd, load)
 	}
 	return m, cmd
 }
@@ -426,6 +449,9 @@ func (m Model) shellHints() []shellHint {
 	}
 	if m.currentShellFocus() == shellBody && m.workspace == wsAccounts {
 		h = append(h, m.accountsHints()...)
+	}
+	if m.currentShellFocus() == shellBody && m.workspace == wsGarden {
+		h = append(h, m.gardenHints()...)
 	}
 	h = append(h,
 		shellHint{m.keys.Palette.Help().Key, "commands"},

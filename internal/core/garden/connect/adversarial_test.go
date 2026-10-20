@@ -849,7 +849,9 @@ func TestApplyResume_Adversarial(t *testing.T) {
 		wantCode string
 	}{
 		{"permission", connect.ErrPermissionDenied, "remote-failure"},
-		{"scope", connect.ErrScopeMissing{Scope: "project"}, "remote-failure"},
+		{"scope", connect.ErrScopeMissing{Scope: "project"}, "scope-missing"},
+		{"graphql", garden.ErrGraphQL, "github-graphql"},
+		{"validation", connect.ErrGitHubValidation, "github-validation"},
 		{"offline", connect.ErrOffline, "offline"},
 		{"rate_limited", connect.ErrRateLimited, "rate-limited"},
 		{"generic", errors.New("network socket hangup"), "remote-failure"},

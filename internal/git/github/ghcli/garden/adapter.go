@@ -404,6 +404,23 @@ func (r RepositoryResolver) ResolveRepositoryID(ctx context.Context, id core.Rep
 	return connect.Repository{ID: core.RepoID(x.ID), FullName: x.FullName, Fork: x.Fork, Access: permission(x.Permissions), ProjectScope: scopePresent(x.Scope), ProjectScopeKnown: x.Scope != ""}, nil
 }
 
+// Viewer reads the authenticated account. The numeric ID is the stable identity (approval policy);
+// the login is a mutable display label that also anchors Project ownership checks.
+func (a *Adapter) Viewer(ctx context.Context) (connect.GitHubIdentity, error) {
+	_, b, e := a.request(ctx, "GET", "/user", nil)
+	if e != nil {
+		return connect.GitHubIdentity{}, e
+	}
+	var u struct {
+		ID    int64  `json:"id"`
+		Login string `json:"login"`
+	}
+	if json.Unmarshal(b, &u) != nil || u.ID <= 0 || u.Login == "" {
+		return connect.GitHubIdentity{}, safe(connect.ErrOffline)
+	}
+	return connect.GitHubIdentity{ID: userID(u.ID), Login: u.Login}, nil
+}
+
 type repoJSON struct {
 	ID       int64  `json:"id"`
 	FullName string `json:"full_name"`
@@ -958,20 +975,40 @@ func (a *Adapter) CreateLabel(ctx context.Context, r core.RepoID, l connect.Labe
 	return e
 }
 
-// projectsQuery pages the viewer's Projects; pageInfo lets the caller refuse a truncated list.
-const projectsQuery = `query GardenProjects($after:String) { viewer { projectsV2(first:100, after:$after) { pageInfo { hasNextPage endCursor } nodes { id title number shortDescription creator { login } fields(first:100) { pageInfo { hasNextPage } nodes { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name options { id name } } } } } } } }`
+// projectsQuery pages the repository owner's Projects (user or organization); pageInfo lets the caller
+// refuse a truncated list. Field names are UNVERIFIED against primary GitHub documentation (see the contract).
+const projectsQuery = `query GardenProjects($owner:String!,$after:String) { repositoryOwner(login:$owner) { login ... on ProjectV2Owner { projectsV2(first:100, after:$after) { pageInfo { hasNextPage endCursor } nodes { id title number shortDescription creator { login } fields(first:100) { pageInfo { hasNextPage } nodes { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name options { id name } } } } } } } } }`
 
-// ListProjects observes the viewer's Projects V2 with fields and creator identity. It pages up to
-// maxProjectPages and fails closed with ErrTruncated when Projects or a Project's fields remain unread, so
-// an absent same-name Project is never concluded from a partial list. Item values (IssueFields) are not
-// read by this phase.
-func (a *Adapter) ListProjects(ctx context.Context, _ core.RepoID) ([]core.Project, error) {
+// projectOwnerLogin returns the verified repository owner whose Projects are observed. The owner always
+// comes from the resolved repository, never from caller input.
+func (a *Adapter) projectOwnerLogin(ctx context.Context, id core.RepoID) (string, error) {
+	if _, err := a.repositoryPath(ctx, id); err != nil {
+		return "", err
+	}
+	r, _ := a.repository(id)
+	if r.Owner.Login != "" {
+		return r.Owner.Login, nil
+	}
+	owner, _, err := splitFullName(r.FullName)
+	return owner, err
+}
+
+// ListProjects observes the Projects V2 of the repository's owner with fields and creator identity, setting
+// Project.Owner to that owner login. It pages up to maxProjectPages and fails closed with ErrTruncated when
+// Projects or a Project's fields remain unread, so an absent same-name Project is never concluded from a
+// partial list. Item values (IssueFields) are not read by this phase.
+func (a *Adapter) ListProjects(ctx context.Context, repo core.RepoID) ([]core.Project, error) {
+	owner, err := a.projectOwnerLogin(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
 	type pageInfo struct {
 		HasNextPage bool   `json:"hasNextPage"`
 		EndCursor   string `json:"endCursor"`
 	}
 	var d struct {
-		Viewer struct {
+		Owner *struct {
+			Login    string `json:"login"`
 			Projects struct {
 				PageInfo pageInfo `json:"pageInfo"`
 				Nodes    []struct {
@@ -989,25 +1026,31 @@ func (a *Adapter) ListProjects(ctx context.Context, _ core.RepoID) ([]core.Proje
 					} `json:"fields"`
 				} `json:"nodes"`
 			} `json:"projectsV2"`
-		} `json:"viewer"`
+		} `json:"repositoryOwner"`
 	}
 	out := []core.Project{}
 	var after any
 	for i := 0; i < maxProjectPages; i++ {
-		d.Viewer.Projects.Nodes = nil
-		d.Viewer.Projects.PageInfo = pageInfo{}
-		h, e := a.graphql(ctx, projectsQuery, map[string]any{"after": after}, &d, "read:project")
+		d.Owner = nil
+		h, e := a.graphql(ctx, projectsQuery, map[string]any{"owner": owner, "after": after}, &d, "read:project")
 		if e != nil {
 			return nil, e
 		}
 		if known, ok := projectScope(h, "read:project"); known && !ok {
 			return nil, connect.ErrScopeMissing{Scope: "read:project"}
 		}
-		for _, p := range d.Viewer.Projects.Nodes {
+		if d.Owner == nil {
+			return nil, safe(core.ErrNotFound)
+		}
+		// A different login would attribute foreign Projects to this repository's owner.
+		if !strings.EqualFold(d.Owner.Login, owner) {
+			return nil, safe(core.ErrGraphQL)
+		}
+		for _, p := range d.Owner.Projects.Nodes {
 			if p.Fields.PageInfo.HasNextPage {
 				return nil, safe(ErrTruncated)
 			}
-			x := core.Project{ID: p.ID, Name: p.Title, Number: strconv.Itoa(p.Number), Description: p.ShortDescription}
+			x := core.Project{ID: p.ID, Name: p.Title, Number: strconv.Itoa(p.Number), Owner: owner, Description: p.ShortDescription}
 			if p.Creator != nil {
 				x.CreatorLogin = p.Creator.Login
 			}
@@ -1020,13 +1063,13 @@ func (a *Adapter) ListProjects(ctx context.Context, _ core.RepoID) ([]core.Proje
 			}
 			out = append(out, x)
 		}
-		if !d.Viewer.Projects.PageInfo.HasNextPage {
+		if !d.Owner.Projects.PageInfo.HasNextPage {
 			return out, nil
 		}
-		if d.Viewer.Projects.PageInfo.EndCursor == "" {
+		if d.Owner.Projects.PageInfo.EndCursor == "" {
 			return nil, safe(ErrTruncated)
 		}
-		after = d.Viewer.Projects.PageInfo.EndCursor
+		after = d.Owner.Projects.PageInfo.EndCursor
 	}
 	return nil, safe(ErrTruncated)
 }
@@ -1093,7 +1136,7 @@ func (a *Adapter) ensureProject(ctx context.Context, r core.RepoID, name, marker
 		}
 		p.ShortDescription = updated.Update.Project.ShortDescription
 	}
-	out := core.Project{ID: p.ID, Name: p.Title, Number: strconv.Itoa(p.Number), Description: p.ShortDescription}
+	out := core.Project{ID: p.ID, Name: p.Title, Number: strconv.Itoa(p.Number), Owner: ownerData.Owner.Login, Description: p.ShortDescription}
 	if p.Creator != nil {
 		out.CreatorLogin = p.Creator.Login
 	}
@@ -1104,7 +1147,8 @@ const createProjectQuery = `mutation GardenCreateProject($ownerId:ID!,$title:Str
 
 // EnsureField creates only a missing single-select field; it does not change existing fields.
 func (a *Adapter) EnsureField(ctx context.Context, projectID string, w core.ProjectField) (core.ProjectField, error) {
-	const q = `mutation GardenCreateField($project:ID!,$name:String!,$type:ProjectV2FieldDataType!,$options:[ProjectV2SingleSelectFieldOptionInput!]){createProjectV2Field(input:{projectId:$project,name:$name,dataType:$type,singleSelectOptions:$options}){projectV2Field{... on ProjectV2Field{id name} ... on ProjectV2SingleSelectField{id name options{name}}}}}`
+	w = core.CanonicalSetupField(w)
+	const q = `mutation GardenCreateField($project:ID!,$name:String!,$type:ProjectV2CustomFieldType!,$options:[ProjectV2SingleSelectFieldOptionInput!]){createProjectV2Field(input:{projectId:$project,name:$name,dataType:$type,singleSelectOptions:$options}){projectV2Field{... on ProjectV2Field{id name} ... on ProjectV2SingleSelectField{id name options{name}}}}}`
 	opts := []map[string]string{}
 	for _, v := range w.Values {
 		opts = append(opts, map[string]string{"name": v, "color": "GRAY", "description": ""})
@@ -1171,12 +1215,11 @@ type graphqlErr struct {
 	Type string `json:"type"`
 }
 
-// graphqlError maps errors[].type to a typed error. Every type string below is UNVERIFIED against primary
-// GitHub documentation (see the contract); mapping is by exact string and unknown or missing types become
+// graphqlError maps errors[].type by exact string; unknown or missing types become
 // the generic core.ErrGraphQL, never ErrOffline. An absent scopes header alone never implies a missing scope.
-// When several entries disagree the most specific wins: scope, rate limit, forbidden, not found.
+// When entries disagree, scope, rate limit, forbidden and not found take precedence over validation.
 func (a *Adapter) graphqlError(h http.Header, errs []graphqlErr, required string) error {
-	var scope, rate, forbidden, notFound bool
+	var scope, rate, forbidden, notFound, validation bool
 	for _, ge := range errs {
 		switch ge.Type {
 		case "INSUFFICIENT_SCOPES":
@@ -1187,6 +1230,8 @@ func (a *Adapter) graphqlError(h http.Header, errs []graphqlErr, required string
 			forbidden = true
 		case "NOT_FOUND":
 			notFound = true
+		case "UNPROCESSABLE":
+			validation = true
 		}
 	}
 	switch {
@@ -1198,6 +1243,8 @@ func (a *Adapter) graphqlError(h http.Header, errs []graphqlErr, required string
 		return safe(core.ErrForbidden)
 	case notFound:
 		return safe(core.ErrNotFound)
+	case validation:
+		return safe(connect.ErrGitHubValidation)
 	}
 	return safe(core.ErrGraphQL)
 }

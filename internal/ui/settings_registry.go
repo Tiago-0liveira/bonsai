@@ -7,9 +7,13 @@ import (
 	"strconv"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -58,7 +62,8 @@ type settingField struct {
 	origin          func(Model) string // where the effective value comes from
 	show            func(Model) bool   // nil means always
 	validate        func(string) error
-	note            string // unavailable: what will deliver it
+	open            func(Model) (Model, tea.Cmd) // kindLink: switches to where the setting lives
+	note            string                       // unavailable: what will deliver it
 }
 
 type settingSection struct {
@@ -370,6 +375,30 @@ func keysCategory() settingCategory {
 	return settingCategory{id: "keys", name: "Keys", sections: secs}
 }
 
+// gardenStatusField is a read-only row drawn from the status the Garden
+// workspace reads. Settings never calls the backend a second time: until a
+// status exists the row says why instead.
+func gardenStatusField(id, label, help string, text func(gardenapi.StatusView) string) settingField {
+	return settingField{
+		id: id, label: label, scope: scopeNone, kind: kindReadonly, help: help,
+		display: func(m Model) string {
+			g := m.garden
+			switch {
+			case g.api == nil:
+				return "unavailable: no Garden backend in this session"
+			case g.hasStatus:
+				return text(g.status)
+			case g.err != nil:
+				return g.err.Message
+			case g.busy != busyNone:
+				return "reading…"
+			}
+			return "not read yet: open Garden setup"
+		},
+		origin: func(Model) string { return "GitHub, read by Garden setup" },
+	}
+}
+
 func gardenSections() []settingSection {
 	return []settingSection{
 		{id: "repository", name: "Repository", fields: []settingField{
@@ -397,6 +426,32 @@ func gardenSections() []settingSection {
 				display: func(m Model) string { return config.RemoteOf(m.cfg.Upstream) },
 				origin:  func(Model) string { return "derived from base ref" },
 			},
+			gardenStatusField("garden_repo", "GitHub repository", "The repository Garden tracks, found through your remotes.",
+				func(v gardenapi.StatusView) string {
+					switch {
+					case v.Ambiguous:
+						return "several repositories: choose in Garden setup"
+					case v.Target.RepoID == 0:
+						return "not detected"
+					case len(v.Target.Aliases) > 0:
+						return v.Target.FullName + " · " + strings.Join(v.Target.Aliases, ", ")
+					}
+					return v.Target.FullName
+				}),
+			gardenStatusField("garden_identity", "GitHub identity", "The GitHub account Garden uses. It is not a coding-agent account; those live in Accounts.",
+				func(v gardenapi.StatusView) string {
+					login := orDefault(v.Identity.Login, "unknown")
+					return login + " · " + accessWord(v.Access)
+				}),
+			gardenStatusField("garden_state", "Garden", "Whether this clone has a Garden, and in which state.",
+				func(v gardenapi.StatusView) string { return gardenStateLabel(v.State) }),
+			{
+				id: "garden_link", label: "Garden setup", scope: scopeNone, kind: kindLink,
+				help:    "Set up, resume or turn off Garden for this repository. Open the Garden workspace.",
+				display: func(Model) string { return "Open Garden setup ›" },
+				origin:  func(Model) string { return "shared with the Garden workspace" },
+				open:    func(m Model) (Model, tea.Cmd) { return m.openGarden() },
+			},
 		}},
 		{id: "approval", name: "Approval gates", fields: []settingField{
 			unavailable("approval_gates", "Approval before runs", "Unavailable — arrives with Garden planning (plan 08)"),
@@ -405,7 +460,22 @@ func gardenSections() []settingSection {
 			unavailable("issue_import", "Import issues", "Unavailable — Garden issues (plan 07)"),
 		}},
 		{id: "sync", name: "Sync", fields: []settingField{
-			unavailable("sync", "Sync with remote", "Unavailable — Garden foundations (plan 04)"),
+			gardenStatusField("sync_state", "Sync state", "Connection state of this clone's Garden, as Garden setup reads it.",
+				func(v gardenapi.StatusView) string { return orDefault(v.Sync, string(v.State)) }),
+			gardenStatusField("sync_operation", "Operation", "Progress of the active or last interrupted setup.",
+				func(v gardenapi.StatusView) string {
+					if v.Operation == nil {
+						return "none"
+					}
+					return fmt.Sprintf("%d of %d steps · %s", v.Operation.Done, v.Operation.Total, v.Operation.ID)
+				}),
+			gardenStatusField("sync_last", "Last sync", "When the Garden was last read from GitHub.",
+				func(v gardenapi.StatusView) string {
+					if v.LastSync.IsZero() {
+						return "never"
+					}
+					return v.LastSync.Local().Format("2006-01-02 15:04")
+				}),
 		}},
 	}
 }
@@ -420,6 +490,7 @@ func agentSections() []settingSection {
 				help:    "Launch defaults are stored per account. Open Accounts to edit them.",
 				display: func(Model) string { return "Open Accounts ›" },
 				origin:  func(Model) string { return "local profiles, shared by every worktree" },
+				open:    func(m Model) (Model, tea.Cmd) { return m.openAccounts(accounts.TabDefaults) },
 			},
 		}},
 		{id: "review", name: "Automatic review", fields: []settingField{

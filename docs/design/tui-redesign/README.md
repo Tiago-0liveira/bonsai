@@ -10,6 +10,7 @@ the application has not been redesigned by this documentation change.
 - [Image manifest](revision-02/manifest.json)
 - [Sequential implementation plans](../../plans/tui-redesign/README.md)
 - [Original design brief](original-design-brief.md)
+- [Garden setup mockups](garden-setup/README.md) (added after revision 02)
 
 ## What is approved
 

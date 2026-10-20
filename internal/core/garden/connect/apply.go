@@ -118,6 +118,21 @@ func reserveLocal(store *Store, local garden.LocalRepoID) (func(), bool) {
 	return func() { activeLocalOperations.Delete(key) }, true
 }
 
+// OperationActive reports whether a setup operation is running for local, here or in another Bonsai
+// process, so status can tell "in progress" from "interrupted". The cross-process probe holds the lock
+// for an instant; a start racing that instant fails with ErrOperationInProgress and can be retried.
+func OperationActive(store *Store, local garden.LocalRepoID) bool {
+	if _, busy := activeLocalOperations.Load(store.Path + "\x00" + local.String()); busy {
+		return true
+	}
+	lock, err := procstore.TryLock(localOperationLockPath(store.Path, local))
+	if err != nil {
+		return errors.Is(err, procstore.ErrLocked)
+	}
+	lock.Unlock()
+	return false
+}
+
 func validateOperation(op Operation) error {
 	if len(op.Steps) != len(op.Plan.Steps) {
 		return ErrInvalidOperation
@@ -343,7 +358,7 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 				var scope ErrScopeMissing
 				if errors.As(e, &scope) {
 					op.Steps[i].Status = Failed
-					op.Steps[i].ErrorCode = "remote-failure"
+					op.Steps[i].ErrorCode = errorCode(e)
 					deferredProjectErr = safeError(e)
 					if se := store.saveOperation(ctx, op); se != nil {
 						return result, se
@@ -367,6 +382,7 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 			if ports.ProjectWrites == nil {
 				return result, fmt.Errorf("project setup port required")
 			}
+			s.Field = garden.CanonicalSetupField(s.Field)
 			fieldProject := s.ProjectID
 			if fieldProject == "" {
 				fieldProject = op.Steps[i].ProjectID
@@ -416,7 +432,7 @@ func run(ctx context.Context, store *Store, local garden.LocalRepoID, repo garde
 				var scope ErrScopeMissing
 				if errors.As(e, &scope) {
 					op.Steps[i].Status = Failed
-					op.Steps[i].ErrorCode = "remote-failure"
+					op.Steps[i].ErrorCode = errorCode(e)
 					deferredProjectErr = safeError(e)
 					if se := store.saveOperation(ctx, op); se != nil {
 						return result, se
@@ -506,7 +522,14 @@ func failed(ctx context.Context, s *Store, op Operation, i int, e error) (ApplyR
 	return ApplyResult{Operation: op}, safeError(e)
 }
 func errorCode(e error) string {
+	var scope ErrScopeMissing
 	switch {
+	case errors.As(e, &scope):
+		return "scope-missing"
+	case errors.Is(e, garden.ErrGraphQL):
+		return "github-graphql"
+	case errors.Is(e, ErrGitHubValidation):
+		return "github-validation"
 	case errors.Is(e, ErrAuthRequired):
 		return "auth-required"
 	case errors.Is(e, ErrRateLimited):

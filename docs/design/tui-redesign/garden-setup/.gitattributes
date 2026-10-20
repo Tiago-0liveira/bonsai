@@ -1,0 +1,2 @@
+# Exported design assets must not be normalized as source text.
+*.png binary

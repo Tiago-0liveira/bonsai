@@ -11,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 )
@@ -207,13 +206,18 @@ func (m Model) activateField() (tea.Model, tea.Cmd) {
 		m.shellFocus = shellInput
 		return m, nil
 	case kindLink:
-		return m.openAccounts(accounts.TabDefaults)
+		return m.openLink(f)
 	case kindReadonly:
 		m.status = "Read-only: " + f.label
 	default:
 		m.status = "Not available yet"
 	}
 	return m, nil
+}
+
+// openLink follows a link field to the workspace where its setting lives.
+func (m Model) openLink(f settingField) (tea.Model, tea.Cmd) {
+	return f.open(m)
 }
 
 func (m Model) beginEdit(f settingField) Model {

@@ -245,6 +245,52 @@ func TestApplyFailureAtEveryStepResumesWithoutDuplicates(t *testing.T) {
 	}
 }
 
+func TestResumeLegacyTypeFieldKeepsPlanAndCompletedWrites(t *testing.T) {
+	for _, alreadyCreated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote-created-%v", alreadyCreated), func(t *testing.T) {
+			f := &testPorts{failAt: 4, fail: ErrGitHubValidation}
+			s := &Store{Path: filepath.Join(t.TempDir(), "store.json")}
+			legacy := garden.ProjectField{Name: "Type", Values: []string{"feature", "bug", "chore", "research"}}
+			p, err := BuildPlan(Observed{}, Create, Desired{
+				Labels: []Label{{Name: "bonsai:managed"}}, ProjectName: "Garden",
+				Fields: []garden.ProjectField{{Name: "Stage", Values: []string{"draft", "done"}}, legacy},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := Apply(context.Background(), s, "local", 7, AccessWrite, "op", p, f.ports())
+			if !errors.Is(err, ErrGitHubValidation) || res.Operation.Steps[3].Status != Failed {
+				t.Fatalf("Apply = %+v, %v", res, err)
+			}
+			hash := res.Operation.PlanHash
+			// GitHub's built-in Type must never satisfy the Garden custom field.
+			f.projects[0].Fields = append(f.projects[0].Fields, garden.ProjectField{Name: "Type"})
+			if alreadyCreated {
+				f.projects[0].Fields = append(f.projects[0].Fields, garden.CanonicalSetupField(legacy))
+			}
+			f.failAt = 0
+			res, err = Resume(context.Background(), s, "op", 7, f.ports(), "local", AccessWrite)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCalls := 5
+			if alreadyCreated {
+				wantCalls = 4
+			}
+			if f.calls != wantCalls || len(f.labels) != 1 || len(f.projects) != 1 || len(f.projects[0].Fields) != 3 {
+				t.Fatalf("Resume repeated writes or reused built-in Type: calls %d, projects %+v", f.calls, f.projects)
+			}
+			stored, err := s.Operation(context.Background(), "op")
+			if err != nil || stored.PlanHash != hash || stored.Plan.Steps[3].Field.Name != "Type" || stored.Steps[3].Status != Done {
+				t.Fatalf("stored plan was changed or left incomplete: %+v, %v", stored, err)
+			}
+			if got := f.projects[0].Fields[2].Name; got != garden.ProjectTypeField {
+				t.Fatalf("created field = %q", got)
+			}
+		})
+	}
+}
+
 func TestRemoteCreateThenLocalWriteFailureAdoptsMarker(t *testing.T) {
 	f := &testPorts{}
 	s := &Store{Path: t.TempDir() + "/store.json"}
@@ -613,4 +659,33 @@ func FuzzBuildPlan(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestOperationActiveSeesInProcessAndCrossProcessLocks(t *testing.T) {
+	store := &Store{Path: filepath.Join(t.TempDir(), "garden.json")}
+	if e := ensureStoreDir(store.Path); e != nil {
+		t.Fatal(e)
+	}
+	if OperationActive(store, "clone-a") {
+		t.Fatal("idle clone reported active")
+	}
+	release, ok := reserveLocal(store, "clone-a")
+	if !ok {
+		t.Fatal("reserve failed")
+	}
+	if !OperationActive(store, "clone-a") || OperationActive(store, "clone-b") {
+		t.Fatal("in-process reservation must mark only its own clone active")
+	}
+	release()
+	lock, e := procstore.TryLock(localOperationLockPath(store.Path, "clone-a"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !OperationActive(store, "clone-a") {
+		t.Fatal("held cross-process lock not reported active")
+	}
+	lock.Unlock()
+	if OperationActive(store, "clone-a") {
+		t.Fatal("released clone still active")
+	}
 }

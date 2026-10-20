@@ -397,6 +397,7 @@ func BuildConnectionPlan(ctx context.Context, reader garden.ProjectReader, repo 
 }
 
 func hasField(fields []garden.ProjectField, want garden.ProjectField) bool {
+	want = garden.CanonicalSetupField(want)
 	for _, f := range fields {
 		if strings.EqualFold(f.Name, want.Name) {
 			return true
@@ -519,6 +520,8 @@ func safeError(err error) error {
 		return ErrRepositoryIdentityChanged
 	case errors.Is(err, ErrGitHubValidation):
 		return ErrGitHubValidation
+	case errors.Is(err, garden.ErrGraphQL):
+		return garden.ErrGraphQL
 	default:
 		var scope ErrScopeMissing
 		if errors.As(err, &scope) {

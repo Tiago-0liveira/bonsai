@@ -345,7 +345,7 @@ func TestWriteSafetyAdversarial(t *testing.T) {
 			return &http.Response{
 				StatusCode: 200,
 				Header:     h,
-				Body:       io.NopCloser(strings.NewReader(`{"data":{"viewer":{"projectsV2":{"nodes":[]}},"createProjectV2":{"projectV2":{"id":"P_1","title":"Test","number":1}},"updateProjectV2":{"projectV2":{"id":"P_1","shortDescription":"marker"}},"createProjectV2Field":{"projectV2Field":{"id":"F_1","name":"Status"}}}}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"nodes":[]}},"createProjectV2":{"projectV2":{"id":"P_1","title":"Test","number":1}},"updateProjectV2":{"projectV2":{"id":"P_1","shortDescription":"marker"}},"createProjectV2Field":{"projectV2Field":{"id":"F_1","name":"Status"}}}}`)),
 			}, nil
 		}
 		return response(200, `{}`, ""), nil
@@ -528,7 +528,7 @@ func TestGraphQLScenariosAdversarial(t *testing.T) {
 		t.Parallel()
 		adapter, _ := adversarialFixture(t, func(r *http.Request) (*http.Response, error) {
 			if r.URL.Path == "/graphql" {
-				return response(200, `{"data":{"viewer":{"projectsV2":{"nodes":[{"id":"P_1"}]}}},"errors":[{"message":"partial failure"}]}`, ""), nil
+				return response(200, `{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"nodes":[{"id":"P_1"}]}}},"errors":[{"message":"partial failure"}]}`, ""), nil
 			}
 			return response(404, `{}`, ""), nil
 		})
@@ -595,7 +595,7 @@ func TestGraphQLScenariosAdversarial(t *testing.T) {
 				return &http.Response{
 					StatusCode: 200,
 					Header:     h,
-					Body:       io.NopCloser(strings.NewReader(`{"data":{"viewer":{"projectsV2":{"nodes":[]}},"createProjectV2":{"projectV2":{"id":"P_NEW","title":"safe","number":1}}}}`)),
+					Body:       io.NopCloser(strings.NewReader(`{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"nodes":[]}},"createProjectV2":{"projectV2":{"id":"P_NEW","title":"safe","number":1}}}}`)),
 				}, nil
 			}
 			return response(404, `{}`, ""), nil
@@ -703,7 +703,7 @@ func TestConcurrencyUnderRaceAdversarial(t *testing.T) {
 			return &http.Response{
 				StatusCode: 200,
 				Header:     h,
-				Body:       io.NopCloser(strings.NewReader(`{"data":{"viewer":{"projectsV2":{"nodes":[]}}}}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"nodes":[]}}}}`)),
 			}, nil
 		}
 		return response(200, `[]`, ""), nil

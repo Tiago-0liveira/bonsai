@@ -1,6 +1,6 @@
 # Plan 05 — Garden board
 
-Status: not started. Prerequisite: [04 — Garden foundations](04-garden-foundations.md).
+Status: not started. Prerequisite: [04b — Garden wiring](04b-garden-wiring.md).
 Next: [06 — Garden table](06-garden-table.md).
 
 ## Deliverable

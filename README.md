@@ -62,6 +62,7 @@ serves only a placeholder (no embedded web UI; see [Building](#building-from-sou
 - **Web workspace**: `bonsai web` serves a local app at
   `http://127.0.0.1:7001/app`, embedded in release binaries. No hosted service.
 - **TUI**: `bonsai` inside a repo, with a searchable keymap (`?`) and an Agents tab (`g`, see [docs/agents.md](docs/agents.md)).
+- **Garden setup** in the redesign preview creates Stage and Bonsai Type fields and can resume after granting GitHub Project permissions, without restarting Bonsai ([setup and recovery](docs/tui-cli.md#garden-setup-in-the-preview)).
 - **CLI**: every feature is also a plain, scriptable command.
 
 ### ⚙️ Background supervisor

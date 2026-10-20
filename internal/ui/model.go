@@ -217,6 +217,9 @@ type Model struct {
 	// agents is the live agent session index; zero when no backend is injected.
 	agents agentState
 
+	// garden holds the Garden backend; zero when none is injected.
+	garden gardenState
+
 	// layoutKind picks the legacy TUI or the redesign preview shell; workspace
 	// and shellFocus only matter for the latter and live in memory only.
 	layoutKind Layout
@@ -304,6 +307,11 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 		m.acct = newAccountsState(m.agents.api.Accounts, m.agentGlyphsASCII(), m.agents.usage)
 		// Init starts the load when the shell opens on Accounts.
 		m.acct.started = m.acct.present && m.workspace == wsAccounts
+		if m.workspace == wsGarden {
+			var load tea.Cmd
+			m, load = m.gardenLoadStatus()
+			m.garden.initCmd = load
+		}
 	}
 	m.list.Focus()
 	m.procSearchInput.Placeholder = "search output…"
@@ -357,9 +365,9 @@ func (m Model) Init() tea.Cmd {
 	// GitHub, sessions or update checks.
 	if m.layoutKind == LayoutRedesign {
 		if m.acct.started {
-			return m.acct.model.Init()
+			return tea.Batch(m.acct.model.Init(), m.garden.initCmd)
 		}
-		return nil
+		return m.garden.initCmd
 	}
 	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs(), m.initAgents())
 }

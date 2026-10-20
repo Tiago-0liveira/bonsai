@@ -229,7 +229,7 @@ func TestListProjectsPaginatesAndFailsClosed(t *testing.T) {
 		return fmt.Sprintf(`{"id":%q,"title":%q,"number":1,"fields":{"pageInfo":{"hasNextPage":%v},"nodes":[]}}`, id, title, fieldsMore)
 	}
 	envelope := func(more bool, cursor string, nodes ...string) string {
-		return fmt.Sprintf(`{"data":{"viewer":{"projectsV2":{"pageInfo":{"hasNextPage":%v,"endCursor":%q},"nodes":[%s]}}}}`, more, cursor, strings.Join(nodes, ","))
+		return fmt.Sprintf(`{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"pageInfo":{"hasNextPage":%v,"endCursor":%q},"nodes":[%s]}}}}`, more, cursor, strings.Join(nodes, ","))
 	}
 	t.Run("two pages", func(t *testing.T) {
 		var afters []any
@@ -581,6 +581,7 @@ func TestGraphQLErrorTypesMapToTypedErrors(t *testing.T) {
 		{"rate", `{"errors":[{"type":"RATE_LIMITED"}]}`, nil, core.ErrRateLimited, true},
 		{"not found", `{"errors":[{"type":"NOT_FOUND"}]}`, nil, core.ErrNotFound, true},
 		{"forbidden", `{"errors":[{"type":"FORBIDDEN"}]}`, nil, core.ErrForbidden, true},
+		{"reserved field", `{"errors":[{"type":"UNPROCESSABLE","message":"Name cannot have a reserved value, Name has already been taken"}]}`, nil, connect.ErrGitHubValidation, true},
 		{"scopes", `{"errors":[{"type":"INSUFFICIENT_SCOPES"}]}`, nil, nil, true},
 		{"unknown", `{"errors":[{"type":"SOMETHING_NEW"}]}`, nil, core.ErrGraphQL, true},
 		{"untyped", `{"errors":[{"message":"x"}]}`, nil, core.ErrGraphQL, true},
@@ -610,4 +611,34 @@ func TestGraphQLErrorTypesMapToTypedErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListProjectsReadsRepositoryOwnerNotViewer(t *testing.T) {
+	node := `{"id":"P1","title":"Garden","number":3,"creator":{"login":"viewer-user"},"fields":{"pageInfo":{"hasNextPage":false},"nodes":[]}}`
+	list := func(t *testing.T, body string) ([]core.Project, error, map[string]any) {
+		var vars map[string]any
+		a, _ := fixture(t, func(r *http.Request) (*http.Response, error) {
+			_, vars = graphqlBody(t, r)
+			return response(200, body, ""), nil
+		})
+		ps, err := a.ListProjects(context.Background(), 9)
+		return ps, err, vars
+	}
+	t.Run("owner login comes from the repository", func(t *testing.T) {
+		ps, err, vars := list(t, `{"data":{"repositoryOwner":{"login":"ACME","projectsV2":{"pageInfo":{"hasNextPage":false},"nodes":[`+node+`]}}}}`)
+		if err != nil || len(ps) != 1 || ps[0].Owner != "acme" || ps[0].CreatorLogin != "viewer-user" || vars["owner"] != "acme" {
+			t.Fatalf("ps=%+v vars=%v err=%v", ps, vars, err)
+		}
+	})
+	t.Run("foreign owner in response fails closed", func(t *testing.T) {
+		ps, err, _ := list(t, `{"data":{"repositoryOwner":{"login":"someone-else","projectsV2":{"pageInfo":{"hasNextPage":false},"nodes":[`+node+`]}}}}`)
+		if !errors.Is(err, core.ErrGraphQL) || ps != nil {
+			t.Fatalf("ps=%+v err=%v", ps, err)
+		}
+	})
+	t.Run("missing owner is not found", func(t *testing.T) {
+		if _, err, _ := list(t, `{"data":{"repositoryOwner":null}}`); !errors.Is(err, core.ErrNotFound) {
+			t.Fatalf("err=%v", err)
+		}
+	})
 }

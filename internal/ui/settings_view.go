@@ -21,7 +21,8 @@ const (
 
 // settingsGlyphs extends the shared ASCII map with the glyphs only Settings
 // draws. Every replacement is one cell, like the original, so widths hold.
-var settingsGlyphs = strings.NewReplacer("›", ">", "▸", ">", "▌", "|", "⚙", "=", "—", "-")
+var settingsGlyphs = strings.NewReplacer("›", ">", "▸", ">", "▌", "|", "⚙", "=", "—", "-",
+	"♧", "*", "○", "o", "◎", "@", "◇", "~", "✚", "+", "▦", "#", "▤", "=", "✎", "/", "█", "#", "░", ".")
 
 // settingsASCII maps a finished line when the ASCII fallback is on.
 func (m Model) settingsASCII(lines []string) []string {

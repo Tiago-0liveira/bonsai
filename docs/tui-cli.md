@@ -241,11 +241,12 @@ It does not touch the agent's terminal output or the status-bar separators.
 
 An opt-in preview of the redesigned TUI. The shell is a header with the Garden,
 Playground, Worktrees, Accounts and Settings tabs and a footer with the current
-workspace, focus, key hints and status. **Settings** and **Accounts** have a body
-(see [Settings](#settings-in-the-preview) and [Accounts](#accounts-in-the-preview));
-the other three bodies are still empty. The preview loads no worktrees, GitHub
-data or agent sessions and starts no domain work; Accounts loads agent profiles
-and usage the first time it opens. The last workspace is remembered per repository (see Settings). The default
+workspace, focus, key hints and status. **Settings**, **Accounts** and **Garden
+setup** have bodies (see [Settings](#settings-in-the-preview),
+[Accounts](#accounts-in-the-preview) and [Garden setup](#garden-setup-in-the-preview));
+Playground and Worktrees remain placeholders. Garden reads the GitHub login and
+repository setup state; Accounts loads agent profiles and usage the first time
+it opens. The last workspace is remembered per repository (see Settings). The default
 stays the current TUI (`--tui-layout legacy`), which keeps its own preferences
 overlay.
 
@@ -275,6 +276,29 @@ The footer shows the effective keys, so `keys:` overrides for the palette, help,
 quit and tab actions are reflected. The `ascii` glyph preference keeps all tab
 labels and swaps their icons for ASCII. The icons ♧ ▣ ⌘ ◎ ⚙ may render two cells wide in some terminals, which misaligns the header; the ASCII glyph preference is the workaround. Theme presets and `theme.overrides` gain
 four roles for the shell: `background`, `surface`, `raised` and `muted`.
+
+#### Garden setup in the preview
+
+Open Garden with `bonsai --tui-layout redesign` to preview and apply a setup
+plan. Setup creates the managed labels, a GitHub Project named **Bonsai Garden**,
+and the **Stage** and **Bonsai Type** single-select fields, or adds missing fields to a
+Project you select. Completed steps are saved if setup stops.
+
+GitHub reserves **Type** for its built-in issue type field. Garden uses
+**Bonsai Type** for its `feature`, `bug`, `chore` and `research` options. Saved
+setup plans that stopped at **Add field Type** can resume with the corrected
+name; completed steps and the original saved plan are preserved.
+
+GitHub Project access needs the `project` scope even when label creation already
+works. When setup reports `scope-missing`, run `gh auth refresh -s project`
+yourself, then choose **Resume setup**. The refresh key (`R` by default) and
+Resume both reread the stored GitHub credentials and identity, so you do not
+need to quit Bonsai. Bonsai never runs login or authorization refresh commands.
+
+A `github-graphql` failure means GitHub rejected Bonsai's GraphQL request.
+Update Bonsai and resume; if it persists, report the failing step and error
+code. Raw GitHub error responses and credentials are never displayed or saved.
+Resume rechecks GitHub and keeps completed labels, Projects and fields.
 
 #### Settings in the preview
 

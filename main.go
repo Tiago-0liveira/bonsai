@@ -24,6 +24,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
+	"github.com/Tiago-0liveira/bonsai/internal/gardenbackend"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
@@ -279,7 +280,18 @@ func run(cfgPath string, layout ui.Layout) error {
 		api := backend.API()
 		agentsAPI = &api
 	}
-	model := newTUIModel(repoDir, cfg, state, agentsAPI, ui.WithLayout(layout))
+	// Garden is part of the redesign shell only, and optional like agents: the
+	// legacy layout never reaches GitHub, and a missing gh login just leaves the
+	// Garden workspace without a backend.
+	extra := []ui.Option{ui.WithLayout(layout)}
+	var gardenErr error
+	if layout == ui.LayoutRedesign {
+		var gardenAPI *gardenbackend.Backend
+		if gardenAPI, gardenErr = gardenbackend.New(repoDir); gardenErr == nil {
+			extra = append(extra, ui.WithGarden(gardenAPI))
+		}
+	}
+	model := newTUIModel(repoDir, cfg, state, agentsAPI, extra...)
 	// Mouse tracking is on so the wheel scrolls the pane under the pointer.
 	// Without it, terminals translate the wheel into arrow keys, which the panes
 	// read as "move the selection". The cost is that dragging to select text now
@@ -289,6 +301,9 @@ func run(cfgPath string, layout ui.Layout) error {
 	if backendErr != nil {
 		// After the TUI has left the alternate screen, so the line stays visible.
 		fmt.Fprintln(os.Stderr, "agents unavailable:", backendErr)
+	}
+	if gardenErr != nil {
+		fmt.Fprintln(os.Stderr, "garden unavailable:", gardenErr)
 	}
 	return err
 }

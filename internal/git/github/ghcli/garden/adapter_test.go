@@ -218,9 +218,9 @@ func TestProjectScopeAndPartialGraphQL(t *testing.T) {
 				if tc.scope != "" {
 					h.Set("X-OAuth-Scopes", tc.scope)
 				}
-				body := `{"data":{"viewer":{"projectsV2":{"nodes":[]}}}}`
+				body := `{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"nodes":[]}}}}`
 				if tc.scope == "project, read:org" {
-					body = `{"data":{"viewer":{"projectsV2":{"nodes":[]}}},"errors":[{"message":"partial"}]}`
+					body = `{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"nodes":[]}}},"errors":[{"message":"partial"}]}`
 				}
 				return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
@@ -358,8 +358,9 @@ func TestConnectApplyResumeAndSyncLoadEndToEnd(t *testing.T) {
 		}
 	})
 	fake.fn = func(r *http.Request) (*http.Response, error) {
+		// org-owned: the viewer (alice) is the Project creator, not the owner.
 		if r.URL.Path == "/repos/acme/repo" {
-			return response(200, `{"id":9,"full_name":"acme/repo","node_id":"R_9","owner":{"login":"alice","node_id":"O_9"},"permissions":{"push":true}}`, ""), nil
+			return response(200, `{"id":9,"full_name":"acme/repo","node_id":"R_9","owner":{"login":"acme","node_id":"O_9"},"permissions":{"push":true}}`, ""), nil
 		}
 		if r.URL.Path == "/repos/acme/repo/labels" {
 			mu.Lock()
@@ -392,13 +393,13 @@ func TestConnectApplyResumeAndSyncLoadEndToEnd(t *testing.T) {
 			h.Set("X-OAuth-Scopes", "project, read:project")
 			if strings.Contains(req.Query, "GardenProjects") {
 				if !projectExists {
-					return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(`{"data":{"viewer":{"projectsV2":{"nodes":[]}}}}`))}, nil
+					return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(`{"data":{"repositoryOwner":{"login":"acme","projectsV2":{"nodes":[]}}}}`))}, nil
 				}
 				p := map[string]any{"id": "P_1", "title": "Garden", "number": 1, "shortDescription": projectDescription, "creator": map[string]string{"login": "alice"}, "fields": map[string]any{"nodes": []any{}}}
 				if fieldExists {
 					p["fields"] = map[string]any{"nodes": []any{map[string]string{"id": "F_1", "name": "Status"}}}
 				}
-				bb, _ := json.Marshal(map[string]any{"data": map[string]any{"viewer": map[string]any{"projectsV2": map[string]any{"nodes": []any{p}}}}})
+				bb, _ := json.Marshal(map[string]any{"data": map[string]any{"repositoryOwner": map[string]any{"login": "acme", "projectsV2": map[string]any{"nodes": []any{p}}}}})
 				return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(bytes.NewReader(bb))}, nil
 			}
 			if strings.Contains(req.Query, "GardenCreateProject") {
@@ -487,9 +488,94 @@ func TestInsufficientScopesGraphQLErrorIsScopeMissingWithHeader(t *testing.T) {
 		r.Header.Set("X-OAuth-Scopes", "repo")
 		return r, nil
 	})
-	_, err := a.ListProjects(context.Background(), 42)
+	_, err := a.ListProjects(context.Background(), 9)
 	var miss connect.ErrScopeMissing
 	if !errors.As(err, &miss) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestEnsureFieldMatchesGitHubCreateFieldSchema(t *testing.T) {
+	for _, field := range []core.ProjectField{
+		{Name: "Stage", Values: []string{"draft", "ready", "in-progress", "review", "blocked", "done"}},
+		{Name: core.ProjectTypeField, Values: []string{"feature", "bug", "chore", "research"}},
+		{Name: "Type", Values: []string{"feature", "bug", "chore", "research"}},
+		{Name: "Notes"},
+	} {
+		t.Run(field.Name, func(t *testing.T) {
+			wantField := core.CanonicalSetupField(field)
+			a, _ := fixture(t, func(r *http.Request) (*http.Response, error) {
+				var req struct {
+					Query     string `json:"query"`
+					Variables struct {
+						Project string                                      `json:"project"`
+						Name    string                                      `json:"name"`
+						Type    string                                      `json:"type"`
+						Options []struct{ Name, Color, Description string } `json:"options"`
+					} `json:"variables"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Fatal(err)
+				}
+				if req.Variables.Name == "Type" {
+					return response(200, `{"data":{"createProjectV2Field":null},"errors":[{"type":"UNPROCESSABLE","message":"Name cannot have a reserved value, Name has already been taken"}]}`, ""), nil
+				}
+				// CreateProjectV2FieldInput.dataType uses the custom-field enum,
+				// not the output-field enum. GitHub validates this before execution.
+				if !strings.Contains(req.Query, "$type:ProjectV2CustomFieldType!") {
+					t.Error("field mutation does not declare GitHub's custom-field enum")
+					return response(200, `{"errors":[{"message":"unknown type"}]}`, ""), nil
+				}
+				wantType := "TEXT"
+				if len(field.Values) > 0 {
+					wantType = "SINGLE_SELECT"
+				}
+				if req.Variables.Project != "P_1" || req.Variables.Name != wantField.Name || req.Variables.Type != wantType || len(req.Variables.Options) != len(field.Values) {
+					t.Fatalf("unexpected field input: %+v", req.Variables)
+				}
+				options := []map[string]string{}
+				for i, opt := range req.Variables.Options {
+					if opt.Name != field.Values[i] || opt.Color != "GRAY" || opt.Description != "" {
+						t.Fatalf("option input = %+v", opt)
+					}
+					options = append(options, map[string]string{"name": opt.Name})
+				}
+				body, err := json.Marshal(map[string]any{"data": map[string]any{"createProjectV2Field": map[string]any{"projectV2Field": map[string]any{"id": "F_1", "name": wantField.Name, "options": options}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return response(200, string(body), ""), nil
+			})
+			got, err := a.EnsureField(context.Background(), "P_1", field)
+			if err != nil || got.ID != "F_1" || got.Name != wantField.Name || strings.Join(got.Values, ",") != strings.Join(field.Values, ",") {
+				t.Fatalf("EnsureField = %+v, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestViewerReadsNumericIdentity(t *testing.T) {
+	a, _ := fixture(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.Path != "/user" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		return response(200, `{"id":42,"login":"octo-dev","email":"private@example.com"}`, ""), nil
+	})
+	got, err := a.Viewer(context.Background())
+	if err != nil || got != (connect.GitHubIdentity{ID: "42", Login: "octo-dev"}) {
+		t.Fatalf("Viewer = %+v, %v", got, err)
+	}
+}
+
+func TestViewerFailsClosedOnUnusableIdentity(t *testing.T) {
+	for name, body := range map[string]string{"no id": `{"login":"x"}`, "no login": `{"id":1}`, "garbage": `nope`} {
+		a, _ := fixture(t, func(*http.Request) (*http.Response, error) { return response(200, body, ""), nil })
+		if _, err := a.Viewer(context.Background()); !errors.Is(err, connect.ErrOffline) {
+			t.Fatalf("%s: err = %v, want ErrOffline", name, err)
+		}
+	}
+	a, _ := fixture(t, func(*http.Request) (*http.Response, error) { return response(401, `{}`, ""), nil })
+	if _, err := a.Viewer(context.Background()); !errors.Is(err, connect.ErrAuthRequired) {
+		t.Fatalf("401 err = %v, want ErrAuthRequired", err)
 	}
 }
