@@ -132,7 +132,11 @@ func TestRequestingAPlanBindsTheAttemptAndShowsTheSameTerminalController(t *test
 		m, rig := plannerEnv(t, sz[0], sz[1])
 		m = requestPlan(t, openPlanner(t, m))
 		out := view(m)
-		mustContain(t, "choice", out, "Request AI plan", "read-only / no worktree", "Read-only: tool allowlist", "Accept read-only and request plan")
+		mustContain(t, "choice", out, "read-only / no worktree", "Read-only", "tool allowlist", "Accept read-only and request plan")
+		// The wide layout titles the screen with the Issue; the narrow one keeps the heading.
+		if !strings.Contains(out, "Request AI plan") && !strings.Contains(out, "#101") {
+			t.Fatalf("choice shows neither the heading nor the Issue:\n%s", out)
+		}
 		mustFit(t, "choice", m)
 		if rig.garden.Count("StartPlanner") != 0 {
 			t.Fatal("opening the account choice started a planner")

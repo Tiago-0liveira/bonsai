@@ -87,7 +87,7 @@ func (b *Backend) PreviewPlanner(ctx context.Context, issue uint64) (gardenapi.P
 		return gardenapi.PlannerPreviewView{}, apiError(err)
 	}
 	return gardenapi.PlannerPreviewView{Stamp: b.stamp(gen, repo), IssueID: issue, Number: p.Number, Title: p.Title, Actor: t.Login,
-		Gate: p.Gate, Spec: p.Spec(), Base: p.Base, Attempts: p.Attempts, Unavailable: p.Unavailable}, nil
+		Gate: p.Gate, Spec: p.Spec(), Base: p.Base, Attempts: p.Attempts, Overlay: liveViews(p.Observed), Unavailable: p.Unavailable}, nil
 }
 
 // StartPlanner implements gardenapi.Backend.
@@ -131,11 +131,15 @@ func (b *Backend) PlannerAttempts(ctx context.Context, issue uint64) (gardenapi.
 	if err != nil {
 		return gardenapi.PlannerAttemptsView{}, err
 	}
-	list, err := svc.Reconcile(ctx, t.Issue)
+	obs, err := svc.Observations(ctx, t.Issue)
 	if err != nil {
 		return gardenapi.PlannerAttemptsView{}, apiError(err)
 	}
-	return gardenapi.PlannerAttemptsView{Stamp: b.stamp(gen, repo), IssueID: issue, Attempts: list}, nil
+	list := make([]plan.Attempt, len(obs))
+	for i, o := range obs {
+		list[i] = o.Attempt
+	}
+	return gardenapi.PlannerAttemptsView{Stamp: b.stamp(gen, repo), IssueID: issue, Attempts: list, Overlay: liveViews(obs)}, nil
 }
 
 // CancelPlanner implements gardenapi.Backend.
@@ -151,7 +155,78 @@ func (b *Backend) CancelPlanner(ctx context.Context, attemptID string) (gardenap
 	if err != nil {
 		return gardenapi.PlannerAttemptView{}, apiError(err)
 	}
-	return gardenapi.PlannerAttemptView{Stamp: b.stamp(gen, a.Repo), IssueID: uint64(a.Issue), Attempt: a}, nil
+	return gardenapi.PlannerAttemptView{Stamp: b.stamp(gen, a.Repo), IssueID: uint64(a.Issue), Attempt: a, Overlay: gardenapi.PlannerLiveView{PlanFile: svc.InspectPlanFile(a, nil)}}, nil
+}
+
+// liveViews keys the live overlay of observed attempts by attempt ID.
+func liveViews(obs []plan.Observation) map[string]gardenapi.PlannerLiveView {
+	if len(obs) == 0 {
+		return nil
+	}
+	out := make(map[string]gardenapi.PlannerLiveView, len(obs))
+	for _, o := range obs {
+		out[o.Attempt.ID] = gardenapi.PlannerLiveView{Activity: o.Activity, PlanFile: o.File}
+	}
+	return out
+}
+
+// PlannerPlan implements gardenapi.Backend.
+func (b *Backend) PlannerPlan(ctx context.Context, attemptID string) (gardenapi.PlannerPlanView, error) {
+	gen := b.gen.Add(1)
+	svc, err := b.planService()
+	if err != nil {
+		return gardenapi.PlannerPlanView{}, apiError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, editTimeout)
+	defer cancel()
+	text, info, err := svc.Plan(ctx, attemptID)
+	if err != nil {
+		return gardenapi.PlannerPlanView{}, apiError(err)
+	}
+	// Plan already proved the attempt belongs to this clone; the store read below only supplies its Issue.
+	a, err := b.deps.Plans.Get(ctx, attemptID)
+	if err != nil {
+		return gardenapi.PlannerPlanView{}, apiError(err)
+	}
+	return gardenapi.PlannerPlanView{Stamp: b.stamp(gen, a.Repo), IssueID: uint64(a.Issue), AttemptID: a.ID, Text: text, File: info}, nil
+}
+
+// LocalWork implements gardenapi.Backend.
+func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error) {
+	gen := b.gen.Add(1)
+	svc, err := b.planService()
+	if err != nil {
+		return gardenapi.LocalWorkView{}, apiError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, editTimeout)
+	defer cancel()
+	// The stamp names the repository even when nothing is flagged, so an empty answer can clear old badges.
+	t, _, err := b.target(ctx, false)
+	if err != nil {
+		return gardenapi.LocalWorkView{}, err
+	}
+	obs, err := svc.Overview(ctx)
+	if err != nil {
+		return gardenapi.LocalWorkView{}, apiError(err)
+	}
+	view := gardenapi.LocalWorkView{Issues: map[uint64]gardenapi.IssueLocalWork{}}
+	// Newest request first, so the first qualifying attempt of an Issue is the one to show; a live one always wins.
+	for _, o := range obs {
+		a := o.Attempt
+		live := a.State.Live()
+		unpublished := a.State == plan.StateEnded && o.File.State == plan.PlanFileReady && a.PlanPublishedAt == nil
+		if !live && !unpublished {
+			continue
+		}
+		cur, seen := view.Issues[uint64(a.Issue)]
+		if seen && (cur.Planner.Live || !live) {
+			continue
+		}
+		view.Issues[uint64(a.Issue)] = gardenapi.IssueLocalWork{Planner: &gardenapi.LocalRunSummary{AttemptID: a.ID, State: string(a.State), Live: live,
+			Activity: o.Activity, PlanFile: o.File.State, Updated: a.UpdatedAt}}
+	}
+	view.Stamp = b.stamp(gen, t.Repository.ID)
+	return view, nil
 }
 
 // checkoutInspector adapts the Git checkout reader to the planner seam.
@@ -218,10 +293,35 @@ func (p plannerAgents) Status(ctx context.Context, id string) (plan.SessionStatu
 	}
 	for _, s := range list {
 		if s.ID == id {
-			return plan.SessionStatus{State: s.State, ExitCode: s.ExitCode}, nil
+			return sessionStatus(s), nil
 		}
 	}
 	return plan.SessionStatus{}, plan.ErrSessionGone
+}
+
+func (p plannerAgents) Statuses(ctx context.Context) (map[string]plan.SessionStatus, error) {
+	if p.api.Sessions == nil || !p.api.Sessions.Supported() {
+		return nil, unavailablePlanner
+	}
+	list, err := p.api.Sessions.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list agent sessions: %w", err)
+	}
+	out := make(map[string]plan.SessionStatus, len(list))
+	for _, s := range list {
+		out[s.ID] = sessionStatus(s)
+	}
+	return out, nil
+}
+
+// sessionStatus copies the activity so the overlay never aliases the session summary.
+func sessionStatus(s agentsapi.Session) plan.SessionStatus {
+	st := plan.SessionStatus{State: s.State, ExitCode: s.ExitCode}
+	if s.Activity != nil {
+		a := *s.Activity
+		st.Activity = &a
+	}
+	return st
 }
 
 // WithAgents lets Garden start planner sessions through the agent runtime the TUI already uses. Without it the

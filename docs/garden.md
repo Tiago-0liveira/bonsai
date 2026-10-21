@@ -99,6 +99,34 @@ and approval/conflict status. Columns drop by available width, not by clipping
 the title or state: 80 columns show ISSUE, TITLE, TYPE and STATE; 120 adds a
 selected-item inspector (type, state, approval, next human gate) in place of TYPE
 and keeps P; 160 shows every column. The selected row always carries a marker.
+An Issue with [local planner work](#local-planner-badges) also gets a LOCAL column
+after STATE (a short form when the title needs the room, dropped before the title is
+squeezed below 28 columns).
+
+### Local planner badges
+
+Board cards and Table rows flag an Issue whose read-only planner is still running on this
+machine, or whose plan file is ready and not yet published from here. The flag is a local
+overlay next to the state: it never moves the Issue between states, and a card shows it on
+its own row under the number (a table row in the LOCAL column; narrow cells use the short
+form, `P:working` on a card). It uses the Agents tab's status words:
+
+| Badge | Meaning | Color |
+| --- | --- | --- |
+| `planner working` | the planner session is working (or reports nothing yet) | warning |
+| `planner needs you` | it waits for your input (the Issue document adds the reason) | warning |
+| `planner idle` | it finished its turn and waits for a prompt | muted |
+| `plan ready` | its plan file is ready; press `p`, then `u` | success |
+| `plan file invalid` | the plan file is not acceptable | danger |
+| `planner ended` | the attempt ended with nothing to publish | muted |
+
+A trailing `?` means the last local read failed and the badge is the last known one. The
+footer adds a total when any exist, for example `1 planner working · 1 plan ready` (without
+the sync time below 120 columns). Bonsai reads this with the board data, again while the
+Garden is in view (every 4 seconds while a planner is live or its screen is open, every 15
+seconds otherwise) and after starting, cancelling or leaving a planner; a failed read keeps
+the last good badges and only a successful empty read clears them. Implementation attempts
+are not flagged here: they stay under `i` on the Issue.
 
 | Key in Table | Action |
 | --- | --- |
@@ -128,7 +156,9 @@ absence is stated explicitly. Execution reports canonical stage and the absence
 of a local execution projection. Draft question authoring is available through
 [AI draft assistance](#elaborate-a-draft-with-ai); local launch is explicit ([guide](#start-implementation-locally)). Specifications are
 approved from Drafts, not from this document ([gate one](#validate-a-specification-gate-one)). Press `p` in an opened
-Issue for its [read-only planner](#request-an-ai-plan-read-only-planner), a separate explicit local action.
+Issue for its [read-only planner](#request-an-ai-plan-read-only-planner), a separate explicit local action. An Issue with
+[local planner work](#local-planner-badges) adds a **Local planner** line to Overview (attempt state, agent status,
+plan file state, when it was last updated, and `p` to open it).
 Selecting, opening, searching and refreshing never mutate workflow or launch work.
 
 ## Freshness and local memory
@@ -385,9 +415,36 @@ terminal controller as the Agents tab: it is focused at once so you can answer i
 questions, `ctrl+]` unfocuses it (while it is focused every other key, including `q`,
 `esc` and `?`, belongs to the agent), `enter` focuses it again, `c` then `y` cancels
 the attempt and `esc` returns to the attempts without stopping the session. Closing
-Bonsai leaves it running, like any agent. The planner is read-only, so it gives the
-plan as text in its conversation; [publishing it](#publish-and-review-a-plan) is a
-separate step you take.
+Bonsai leaves it running, like any agent. The planner is read-only except for one
+file: before the session starts, Bonsai creates a private directory for the attempt
+under `~/.bonsai/garden/plans/<local repo key>/<issue>/<attempt>/` and the prompt gives
+the planner the exact path of `plan.md` inside it. When the plan is complete the
+planner writes it there as Markdown and says so in the conversation, then keeps
+discussing; if the plan changes it rewrites the whole file. That file is the only
+thing the planner can write: Claude Code is started so every other write, including
+repository files, `..` paths and symlinks, is denied
+([how](agents.md#the-read-only-planner-role)). [Publishing the plan](#publish-and-review-a-plan)
+is still a separate step you take.
+
+Leaving the session with `esc` or leaving the planner screen does not stop the planner.
+The attempts list shows each attempt's agent status and plan file state (the selected one
+adds the plan file size and when it last changed), keeps refreshing while it is open, and
+says so while one is live: *Planner keeps running in the background. Find it again: the
+badge on this Issue, or p.* When a plan file is ready the list says *Plan ready: press u to
+review and publish.* The [badges](#local-planner-badges) on the Board and Table are the way
+back from anywhere in Garden.
+
+Bonsai only looks at the plan file, never at the terminal. It reports it as **none**
+(nothing written), **writing** (the agent is working or the file changed in the last
+two seconds), **ready** (non-empty, at most 1 MiB, and the agent is idle or the attempt
+ended) or **invalid** (a symlink, not a regular file, too large, or not the attempt's
+own path). The file is not copied into any Bonsai record. Only the attempt's path is
+recorded, and the file stays on disk until you delete the directory. Bonsai reads at
+most 1 MiB of it and refuses a larger file, but it does not cap what the planner
+writes. Bonsai also refuses plan directories that another user owns or that group or
+others can write (Unix), and never follows a symlink to the file. The attempt records
+now carry `plan_path` and `plan_published_at`; downgrading Bonsai below this version is
+unsupported for `garden-planner.json`, because older versions reject the new fields.
 
 Every attempt is kept in a local history (attempt ID, specification revision and
 fingerprint, repository base, provider and profile, accepted permissions, and
@@ -404,9 +461,14 @@ and a finished attempt never changes.
 
 A plan becomes part of the Issue only when you publish it, and nothing is published
 for you. On the planner screen select the attempt the plan came from and press `u`:
-a text box opens, you type or paste the plan the planner gave (Bonsai reads nothing
-from the planner's terminal, and the text is kept only in memory until you publish
-it or Bonsai closes), and `ctrl+s` previews exactly what would be published. The plan
+the text box opens at once. When the attempt's plan file is **ready** and you have no kept
+draft for that attempt, Bonsai reads the file and fills the box with it (the note under
+the box says so); otherwise, or if the file cannot be read (the reason is shown), the box
+is empty for you to type or paste a plan. You review and edit the text either way: Bonsai
+reads nothing from the planner's terminal, the text is kept only in memory until you
+publish it or Bonsai closes, and a late read never overwrites what you typed.
+`ctrl+s` previews exactly what would be published, and only the confirmation after the
+preview publishes. The plan
 needs the sections **Assumptions, Touched areas, Steps, Tests, Risks and Acceptance
 mapping**; Bonsai adds the **Source specification** (revision and fingerprint) and
 the **Inspected base** (the commit the attempt read) from the attempt record, so a

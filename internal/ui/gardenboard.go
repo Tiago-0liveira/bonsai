@@ -117,6 +117,9 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	g.status.IssueCount = len(snap.Items)
 	g.status.Sync = gardensync.Status(gardensync.AssociationView{State: gardensync.AssociationState(g.status.State)}, snap).State
 	cmd := m.gardenRememberView()
+	var local tea.Cmd
+	m, local = m.gardenLoadLocal()
+	cmd = tea.Batch(cmd, local, m.gardenLocalStart())
 	if b.opened == 0 && g.planrev.stage != planNone {
 		m = m.planClose()
 		g = &m.garden

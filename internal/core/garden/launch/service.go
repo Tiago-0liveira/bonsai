@@ -129,7 +129,7 @@ func validateRequest(req Request) error {
 		return fmt.Errorf("%w: name", ErrInvalid)
 	case req.Cols < 1 || req.Cols > 500 || req.Rows < 1 || req.Rows > 500:
 		return fmt.Errorf("%w: dimensions", ErrInvalid)
-	case req.Launch.Prompt != "" || req.Launch.DisplayName != "" || req.Launch.ReadOnly:
+	case req.Launch.Prompt != "" || req.Launch.DisplayName != "" || req.Launch.ReadOnly || req.Launch.PlanFile != "":
 		return fmt.Errorf("%w: the prompt, display name and read-only flag are not overridable", ErrInvalid)
 	}
 	return nil
@@ -385,7 +385,7 @@ func (s *Service) resolve(ctx context.Context, req Request) (agents.LaunchResolu
 	if res.AccountID != req.AccountID || res.Provider == "" {
 		return agents.LaunchResolution{}, fmt.Errorf("%w: resolution names another account", ErrAccountUnavailable)
 	}
-	if res.Launch.Prompt != "" || res.Launch.DisplayName != "" || res.Launch.ReadOnly {
+	if res.Launch.Prompt != "" || res.Launch.DisplayName != "" || res.Launch.ReadOnly || res.Launch.PlanFile != "" {
 		return agents.LaunchResolution{}, fmt.Errorf("%w: resolution carries a prompt", ErrInvalid)
 	}
 	if err := validateNative(res.Provider, res.Launch); err != nil {

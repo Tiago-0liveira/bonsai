@@ -487,7 +487,7 @@ func (m Model) gsPlanCompose(width, rows int) []string {
 		n = pv.Number
 	}
 	out := []string{gHead(width, fmt.Sprintf("▣ PUBLISH PLAN FOR #%d / attempt %s", n, strings.TrimPrefix(st.attempt, "plan-")), "text you chose")}
-	out = append(out, gWrap(width, p.Muted, false, "Bonsai adds the source specification and the inspected base from the attempt. It reads nothing from the planner's terminal.")...)
+	out = append(out, gWrap(width, p.Muted, false, "Bonsai adds the source specification and the inspected base from the attempt. It reads nothing from the planner's terminal. A ready plan file can fill this box; you review and edit it before anything is published.")...)
 	lines := strings.Split(st.ta.View(), "\n")
 	room := max(rows-len(out)-1, 0)
 	for i := 0; i < room; i++ {
@@ -498,6 +498,9 @@ func (m Model) gsPlanCompose(width, rows int) []string {
 		out = append(out, shellRow(width, p.Background, ansi.Truncate(" "+l, width, ""), ""))
 	}
 	note := fmt.Sprintf("%d lines · ctrl+s previews exactly what would be published · esc keeps this draft in memory", max(st.ta.LineCount(), 1))
+	if st.prefilled != "" && st.prefilled == st.attempt {
+		note = fmt.Sprintf("%d lines from the plan file · review and edit · ctrl+s previews, nothing is published yet · esc keeps this draft in memory", max(st.ta.LineCount(), 1))
+	}
 	if m.garden.err != nil {
 		note = "! " + m.garden.err.Message + " " + m.garden.err.Next
 	} else if m.garden.notice != "" {

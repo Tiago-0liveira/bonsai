@@ -50,6 +50,9 @@ type gardenPlannerState struct {
 
 	attempt       string // the attempt whose session the body shows
 	confirmCancel bool
+
+	// seen is the newest stamp of any attempts reply taken in, so a slow background poll cannot overwrite a newer read.
+	seen gardenapi.Stamp
 }
 
 type (
@@ -193,6 +196,7 @@ func (m Model) onGardenPlannerPreview(msg gardenPlannerPreviewMsg) (Model, tea.C
 	if p.stage == plannerNone {
 		p.stage = plannerHub
 	}
+	p.seen = msg.view.Stamp
 	p.preview = &v
 	if !p.dirtyDecision() {
 		p.includeDirty = false
@@ -221,7 +225,11 @@ func (m Model) onGardenPlannerAttempts(msg gardenPlannerAttemptsMsg) (Model, tea
 		g.err = staleReply
 		return m, nil
 	}
+	if !g.planner.fresh(msg.view.Stamp) {
+		return m, nil // a background poll already showed something newer
+	}
 	g.planner.replaceAttempts(msg.view.Attempts)
+	g.planner.preview.Overlay = msg.view.Overlay
 	return m, nil
 }
 
@@ -314,11 +322,14 @@ func (m Model) onGardenPlannerStart(msg gardenPlannerStartMsg) (Model, tea.Cmd) 
 	p.save, p.dlg = nil, nil
 	if p.preview != nil {
 		p.replaceAttempts(append(append([]plan.Attempt(nil), p.preview.Attempts...), a))
+		p.setOverlay(a.ID, msg.view.Overlay)
 		p.preview.Unavailable = "A planner attempt is still running for this issue. Open it or cancel it first."
 	}
 	p.stage, p.attempt, p.confirmCancel = plannerSession, a.ID, false
 	m.shellFocus = shellBody
 	cmds = append(cmds, m.plannerAttach(a.SessionID, true))
+	m, local := m.gardenLoadLocal()
+	cmds = append(cmds, local)
 	return m, tea.Batch(cmds...)
 }
 
@@ -373,7 +384,10 @@ func (m Model) onGardenPlannerCancel(msg gardenPlannerCancelMsg) (Model, tea.Cmd
 		}
 	}
 	g.planner.replaceAttempts(list)
-	return m.gardenPlannerRefresh()
+	g.planner.setOverlay(msg.view.Attempt.ID, msg.view.Overlay)
+	m, local := m.gardenLoadLocal()
+	m, refresh := m.gardenPlannerRefresh()
+	return m, tea.Batch(local, refresh)
 }
 
 // --- the session body: the Agents terminal controller, attached to the planner's session ---
@@ -502,11 +516,28 @@ func (m Model) gardenPlannerForward(msg tea.Msg) (Model, tea.Cmd) {
 // gardenPlannerClose leaves the planner screen for the Issue document. The session, if any, keeps running.
 func (m Model) gardenPlannerClose() (Model, tea.Cmd) {
 	rel := m.plannerRelease()
+	if m.garden.planner.liveAttempt() {
+		m.garden.notice = keepsRunning
+	}
 	m.garden.planner = gardenPlannerState{}
 	if m.shellFocus == shellInput {
 		m.shellFocus = shellBody
 	}
-	return m, rel
+	m, local := m.gardenLoadLocal() // the badge reflects what was just seen, not the last tick
+	return m, tea.Batch(rel, local)
+}
+
+// setOverlay records the live view of one attempt.
+func (p *gardenPlannerState) setOverlay(id string, v gardenapi.PlannerLiveView) {
+	if p.preview == nil {
+		return
+	}
+	next := make(map[string]gardenapi.PlannerLiveView, len(p.preview.Overlay)+1)
+	for k, o := range p.preview.Overlay {
+		next[k] = o
+	}
+	next[id] = v
+	p.preview.Overlay = next
 }
 
 // --- keys ---
@@ -578,7 +609,7 @@ func (m Model) gardenPlannerHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			p.dirtyFor = v.Base.DirtyDigest
 		}
 	case "u":
-		return m.gardenPlanOpenCompose()
+		return m.gardenPlannerPublish()
 	case "r":
 		return m.gardenOpenPlanReview()
 	case "o":

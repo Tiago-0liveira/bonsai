@@ -132,6 +132,11 @@ type LaunchOptions struct {
 	// It cannot be combined with PermissionMode, Sandbox, Approval or FullAccess,
 	// and a provider that cannot enforce it refuses the launch.
 	ReadOnly bool
+	// PlanFile is the one absolute file a ReadOnly session may still write: the plan a Garden planner leaves for
+	// Bonsai to read. It is only meaningful with ReadOnly, only a provider whose ReadOnlySupport.PlanFile is
+	// true accepts it, and that provider confines the write to exactly this path below the model. It is never
+	// recorded in session options.
+	PlanFile string
 }
 
 // Values returns the accepted launch choices other than the model, keyed by

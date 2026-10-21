@@ -61,6 +61,7 @@ type fakeAgents struct {
 	status   map[string]SessionStatus
 	gone     map[string]bool
 	startErr error
+	listErr  error
 	next     int
 }
 
@@ -101,6 +102,16 @@ func (a *fakeAgents) Status(_ context.Context, id string) (SessionStatus, error)
 	return a.status[id], nil
 }
 
+func (a *fakeAgents) Statuses(context.Context) (map[string]SessionStatus, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := map[string]SessionStatus{}
+	for id, st := range a.status {
+		out[id] = st
+	}
+	return out, a.listErr
+}
+
 type fixture struct {
 	t      *testing.T
 	svc    *Service
@@ -128,12 +139,15 @@ func approvedPreview() approve.Preview {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	// The plan directory lives under the home directory; never the real one.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	f := &fixture{
 		t: t, gate: &fakeGate{p: approvedPreview()},
 		repo: &fakeRepo{base: Base{Commit: "c0ffee", Branch: "main"}},
 		agents: &fakeAgents{
 			accounts: map[agents.AccountID]Account{
-				claudeID: {ID: claudeID, Name: "work", Provider: "claude", ReadOnly: agents.ReadOnlySupport{Supported: true, Mechanism: "tool allowlist", Allows: []string{"read files"}}},
+				claudeID: {ID: claudeID, Name: "work", Provider: "claude", ReadOnly: agents.ReadOnlySupport{Supported: true, PlanFile: true, Mechanism: "tool allowlist", Allows: []string{"read files"}}},
 				agyID:    {ID: agyID, Name: "agy", Provider: "antigravity", ReadOnly: agents.ReadOnlySupport{Reason: "no sandbox"}},
 			},
 			status: map[string]SessionStatus{}, gone: map[string]bool{},

@@ -58,6 +58,10 @@ func TestPublishReviewAndDecideThroughTheBackend(t *testing.T) {
 	if err != nil || res.State != gardenapi.PlanWriteDone || res.Hash != pv.Preview.Hash || res.Ordinal != 1 || commentWrites(f) != before+1 {
 		t.Fatalf("publish = %+v, %v", res, err)
 	}
+	// The board stops flagging a plan once it was published from here.
+	if got, err := h.b.deps.Plans.Get(ctx, attempt); err != nil || got.PlanPublishedAt == nil {
+		t.Fatalf("attempt not marked published: %+v, %v", got.PlanPublishedAt, err)
+	}
 	// Publishing the same preview again finds the recorded revision.
 	if again, err := h.b.PublishPlan(ctx, pv); err != nil || !again.Replayed || again.CommentID != res.CommentID || commentWrites(f) != before+1 {
 		t.Fatalf("replay = %+v, %v", again, err)

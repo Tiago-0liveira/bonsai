@@ -31,7 +31,7 @@ func (a *accounts) ResolveLaunch(ctx context.Context, id agents.AccountID, overr
 	if err := ctx.Err(); err != nil {
 		return agents.LaunchResolution{}, err
 	}
-	if overrides.Prompt != "" || overrides.DisplayName != "" || overrides.ReadOnly {
+	if overrides.Prompt != "" || overrides.DisplayName != "" || overrides.ReadOnly || overrides.PlanFile != "" {
 		return agents.LaunchResolution{}, fmt.Errorf("%w: the prompt, display name and read-only flag cannot be overridden", agents.ErrInvalidLaunch)
 	}
 	acct, err := a.rt.Accounts.Get(id)
@@ -80,7 +80,7 @@ func (a *accounts) ResolveLaunch(ctx context.Context, id agents.AccountID, overr
 		}
 		return agents.LaunchResolution{}, fmt.Errorf("%w: launch options could not be resolved", ErrAccountUnavailable)
 	}
-	effective.Prompt, effective.DisplayName, effective.ReadOnly = "", "", false
+	effective.Prompt, effective.DisplayName, effective.ReadOnly, effective.PlanFile = "", "", false, ""
 	if effective.FullAccess != nil {
 		v := *effective.FullAccess
 		effective.FullAccess = &v

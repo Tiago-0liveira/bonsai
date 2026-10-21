@@ -190,6 +190,26 @@ func (s *Store) List(ctx context.Context, local garden.LocalRepoID, issue garden
 	return out, err
 }
 
+// ListLocal returns every attempt of one local clone, newest request first.
+func (s *Store) ListLocal(ctx context.Context, local garden.LocalRepoID) ([]Attempt, error) {
+	var out []Attempt
+	err := s.withLock(ctx, func(d *disk) (bool, error) {
+		for _, a := range d.Attempts {
+			if a.Local == local {
+				out = append(out, a)
+			}
+		}
+		return false, nil
+	})
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].RequestedAt.Equal(out[j].RequestedAt) {
+			return out[i].RequestedAt.After(out[j].RequestedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	return out, err
+}
+
 // Create stores a new attempt unless a live one already exists for the Issue, which the check and the write
 // share one lock for, so two processes cannot both start.
 func (s *Store) Create(ctx context.Context, a Attempt) error {

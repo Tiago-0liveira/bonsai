@@ -133,6 +133,10 @@ func safeAPIError(err error) *gardenapi.Error {
 		return &gardenapi.Error{Code: gardenapi.CodeReadOnlyUnsupported, Message: "That account's provider cannot enforce read-only access, so it cannot plan.", Next: "Choose an account whose provider can run read-only. Bonsai never runs a planner unrestricted."}
 	case errors.Is(err, plan.ErrAttemptActive):
 		return &gardenapi.Error{Code: gardenapi.CodeAttemptActive, Message: "A planner attempt is already running for this Issue.", Next: "Open it, or cancel it before requesting another."}
+	case errors.Is(err, plan.ErrPlanNotReady):
+		return &gardenapi.Error{Code: gardenapi.CodePlanNotReady, Message: "The planner has not finished writing a plan yet.", Next: "Wait until the plan file is ready, or ask the planner to write it."}
+	case errors.Is(err, plan.ErrPlanFileInvalid):
+		return &gardenapi.Error{Code: gardenapi.CodePlanFileInvalid, Message: "The plan file is not acceptable: it is not a plain file of a reasonable size in the attempt's own directory.", Next: "Ask the planner to write it again, or paste the plan yourself."}
 	case errors.Is(err, plan.ErrSpecTooLarge):
 		return &gardenapi.Error{Code: gardenapi.CodeInvalidInput, Message: "The specification is too large to hand to a planner."}
 	case errors.Is(err, planrev.ErrNotApproved):

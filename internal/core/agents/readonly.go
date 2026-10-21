@@ -15,6 +15,9 @@ type ReadOnlySupport struct {
 	// Allows lists what the session may still do, in the words a person accepts
 	// before a read-only run starts. Empty when unsupported.
 	Allows []string
+	// PlanFile is true when the provider can additionally let a read-only session write one named file
+	// (LaunchOptions.PlanFile) and nothing else. A provider that cannot confine the write must leave it false.
+	PlanFile bool
 	// Reason says why the provider cannot be read-only; empty when supported.
 	Reason string
 }

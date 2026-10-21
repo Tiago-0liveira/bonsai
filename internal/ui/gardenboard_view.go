@@ -37,6 +37,26 @@ func boardTitle(s string) string { return strings.Join(strings.Fields(boardSafe(
 func boardLine(width int, bg, fg lipgloss.Color, bold bool, s string) string {
 	return shellRow(width, bg, seg(fg, bg, bold).Render(ansi.Truncate(s, width, "…")), "")
 }
+
+// boardBadgeLine is the local run flag of a card, on a row of its own under the number so neither the number nor
+// the title give way to it. The row exists only for an Issue with local work: the grid pads and clips by rows, so
+// an extra row never moves a column. The long form is tried first, then the short one with a "P:" prefix, which
+// keeps it visibly a planner flag.
+func (m Model) boardBadgeLine(w int, bg lipgloss.Color, issue garden.IssueID) (string, bool) {
+	b, ok := m.localBadgeFor(issue)
+	if !ok {
+		return "", false
+	}
+	label := b.long
+	for _, c := range []string{b.long, "P:" + b.short, b.short} {
+		label = c
+		if ansi.StringWidth(c) <= w-1 {
+			break
+		}
+	}
+	return boardLine(w, bg, b.fg, false, " "+label), true
+}
+
 func boardColumnColor(c work.Column) lipgloss.Color {
 	p := theme.Current
 	switch c {
@@ -168,6 +188,9 @@ func (m Model) gsBoard(width, rows int) []string {
 				mark = ">"
 			}
 			grid[j] = append(grid[j], boardLine(w, bg, fg, true, fmt.Sprintf("%s#%d", mark, r.Item.Issue.Number)))
+			if line, ok := m.boardBadgeLine(w, bg, r.Item.Issue.ID); ok {
+				grid[j] = append(grid[j], line)
+			}
 			title := boardTitle(r.Item.Issue.Title)
 			wrapped := strings.Split(ansi.Wrap(title, max(1, w-2), ""), "\n")
 			for line := 0; line < 2; line++ {
@@ -249,6 +272,9 @@ func (m Model) gardenDocument(width int) []string {
 		fmt.Fprintf(&text, "#%d %s\n\n%s / %s / %s\n\n", r.Item.Issue.Number, boardSafe(r.Item.Issue.Title), r.Column, r.Item.Classification.Type, r.Priority)
 		status, _ := gardenApprovalIndicator(r)
 		text.WriteString(status + "\n" + m.launchOverview(r.Item.Classification.Stage == garden.StageReady) + "\n\n")
+		if fact := m.localFact(r.Item.Issue.ID); fact != "" {
+			text.WriteString(fact + "\n\n")
+		}
 		body := gardenIssueBody(r.Item.Issue.Body)
 		if body == "" {
 			body = "The canonical issue body is empty."

@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 )
@@ -47,6 +50,9 @@ type Account struct {
 type SessionStatus struct {
 	State    string
 	ExitCode *int
+	// Activity is what the live agent is doing right now. It is a live overlay: never stored in an attempt,
+	// nil when the session has none (not running, or the provider reports nothing).
+	Activity *agentactivity.Activity
 }
 
 // StartSession asks the agent runtime for one holder-backed session.
@@ -66,6 +72,8 @@ type Agents interface {
 	Stop(context.Context, string) error
 	// Status returns ErrSessionGone when the session record no longer exists.
 	Status(context.Context, string) (SessionStatus, error)
+	// Statuses lists every known session by ID in one call, for callers that look at many attempts at once.
+	Statuses(context.Context) (map[string]SessionStatus, error)
 }
 
 // Deps are the seams of Service; every one is required except Now and NewID.
@@ -112,6 +120,8 @@ type Preview struct {
 	Gate     approve.Assessment
 	Base     Base
 	Attempts []Attempt
+	// Observed is the same attempts with their live activity and plan file state, in the same order.
+	Observed []Observation
 	// Unavailable says why Request AI plan is not offered; empty when it is.
 	Unavailable string
 }
@@ -145,11 +155,15 @@ func (s *Service) Preview(ctx context.Context, t approve.Target) (Preview, error
 	if err != nil {
 		return Preview{}, err
 	}
-	attempts, err := s.Reconcile(ctx, t.Issue)
+	observed, err := s.Observations(ctx, t.Issue)
 	if err != nil {
 		return Preview{}, err
 	}
-	p := Preview{Target: t, Number: g.Number, Title: g.Title, Gate: g.Assessment, Attempts: attempts}
+	attempts := make([]Attempt, len(observed))
+	for i, o := range observed {
+		attempts[i] = o.Attempt
+	}
+	p := Preview{Target: t, Number: g.Number, Title: g.Title, Gate: g.Assessment, Attempts: attempts, Observed: observed}
 	if p.Unavailable = downstream(g.Assessment); p.Unavailable != "" {
 		return p, nil
 	}
@@ -200,7 +214,13 @@ func (s *Service) Start(ctx context.Context, r StartRequest) (Attempt, error) {
 	if pv.Spec() != r.Spec {
 		return Attempt{}, ErrSpecChanged
 	}
-	prompt, err := buildPrompt(g.Number, g.Title, *g.Assessment.Head)
+	id := "plan-" + s.d.NewID()
+	dir, err := s.planLocation(r.Target.Issue, id)
+	if err != nil {
+		return Attempt{}, fmt.Errorf("prepare plan directory: %w", err)
+	}
+	planPath := filepath.Join(dir, config.GardenPlanFileName)
+	prompt, err := buildPrompt(g.Number, g.Title, *g.Assessment.Head, planPath)
 	if err != nil {
 		return Attempt{}, err
 	}
@@ -238,9 +258,17 @@ func (s *Service) Start(ctx context.Context, r StartRequest) (Attempt, error) {
 		}
 		return Attempt{}, fmt.Errorf("%w: %s: %s", ErrReadOnlyUnsupported, acct.Provider, reason)
 	}
+	if !acct.ReadOnly.PlanFile {
+		// The prompt tells the planner to leave its plan in a file; a provider that cannot confine that one write
+		// would either break the prompt or be given a wider write, so it is refused.
+		return Attempt{}, fmt.Errorf("%w: %s: it cannot limit writes to a single plan file", ErrReadOnlyUnsupported, acct.Provider)
+	}
+	if err := createPlanDir(dir); err != nil {
+		return Attempt{}, fmt.Errorf("prepare plan directory: %w", err)
+	}
 	now := s.d.Now().UTC()
 	a := Attempt{
-		ID: "plan-" + s.d.NewID(), Local: s.d.Local, Repo: r.Target.Repo, Issue: r.Target.Issue, Number: g.Number, Role: RolePlanner,
+		ID: id, PlanPath: planPath, Local: s.d.Local, Repo: r.Target.Repo, Issue: r.Target.Issue, Number: g.Number, Role: RolePlanner,
 		Spec: r.Spec, Base: base,
 		Isolation: Isolation{Mechanism: acct.ReadOnly.Mechanism, Allows: append([]string(nil), acct.ReadOnly.Allows...),
 			DirtyAccepted: base.Dirty && r.IncludeDirty, AcceptedAt: now, AcceptedBy: r.Target.Viewer},
@@ -254,7 +282,7 @@ func (s *Service) Start(ctx context.Context, r StartRequest) (Attempt, error) {
 	if name == "" {
 		name = fmt.Sprintf("Plan #%d", g.Number)
 	}
-	launch := agents.LaunchOptions{Model: r.Model, Effort: r.Effort, ReadOnly: true, Prompt: prompt}
+	launch := agents.LaunchOptions{Model: r.Model, Effort: r.Effort, ReadOnly: true, PlanFile: planPath, Prompt: prompt}
 	// The write below must outlive a cancelled caller: the record has to say how the start ended.
 	settle := context.WithoutCancel(ctx)
 	sid, err := s.d.Agents.Start(ctx, StartSession{AccountID: acct.ID, Dir: s.d.Dir, Name: name, Cols: r.Cols, Rows: r.Rows, Launch: launch})
@@ -341,36 +369,110 @@ func (s *Service) Observe(ctx context.Context, id string, st SessionStatus) (Att
 // first. A session that cannot be read leaves its attempt as it was: only a record that is gone, or a start
 // that never produced a session, ends an attempt without the session saying so.
 func (s *Service) Reconcile(ctx context.Context, issue garden.IssueID) ([]Attempt, error) {
+	obs, err := s.Observations(ctx, issue)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Attempt, len(obs))
+	for i, o := range obs {
+		out[i] = o.Attempt
+	}
+	return out, nil
+}
+
+// Observation is an attempt with what Bonsai sees of it right now. Activity and File are live overlays: they are
+// read from the session and the file system on every call and are never stored in the attempt.
+type Observation struct {
+	Attempt Attempt
+	// Activity is nil when the attempt is not live or its session reports none.
+	Activity *agentactivity.Activity
+	File     PlanFileInfo
+}
+
+// Observations reconciles an Issue's attempts like Reconcile and adds the live view of each.
+func (s *Service) Observations(ctx context.Context, issue garden.IssueID) ([]Observation, error) {
 	list, err := s.d.Store.List(ctx, s.d.Local, issue)
 	if err != nil {
 		return nil, err
 	}
+	out := make([]Observation, len(list))
 	for i, a := range list {
-		if !a.State.Live() {
-			continue
+		var st SessionStatus
+		var serr error
+		if a.State.Live() && a.SessionID != "" {
+			st, serr = s.d.Agents.Status(ctx, a.SessionID)
 		}
+		if out[i], err = s.settle(ctx, a, st, serr); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// Overview is Observations for every Issue of the clone at once, newest request first, reading the sessions with
+// one Statuses call. It is for a summary across Issues; an unreadable session list leaves the attempts as they
+// were, with no activity.
+func (s *Service) Overview(ctx context.Context) ([]Observation, error) {
+	list, err := s.d.Store.ListLocal(ctx, s.d.Local)
+	if err != nil {
+		return nil, err
+	}
+	var statuses map[string]SessionStatus
+	listed := false
+	for _, a := range list {
+		if a.State.Live() && a.SessionID != "" {
+			statuses, err = s.d.Agents.Statuses(ctx)
+			listed = err == nil
+			break
+		}
+	}
+	out := make([]Observation, len(list))
+	for i, a := range list {
+		var st SessionStatus
+		var serr error
+		switch known, ok := statuses[a.SessionID]; {
+		case !a.State.Live() || a.SessionID == "":
+		case ok:
+			st = known
+		case listed:
+			serr = ErrSessionGone
+		default:
+			serr = errors.New("sessions could not be listed")
+		}
+		if out[i], err = s.settle(ctx, a, st, serr); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// settle applies one session read to a live attempt (see Reconcile for the rules) and observes the plan file.
+func (s *Service) settle(ctx context.Context, a Attempt, st SessionStatus, serr error) (Observation, error) {
+	var err error
+	if a.State.Live() {
 		switch {
 		case a.SessionID == "":
 			if s.d.Now().Sub(a.RequestedAt) > startGrace {
-				if list[i], err = s.finish(ctx, a.ID, StateFailed, "start did not complete", nil); err != nil {
-					return nil, err
+				if a, err = s.finish(ctx, a.ID, StateFailed, "start did not complete", nil); err != nil {
+					return Observation{}, err
 				}
 			}
-		default:
-			st, serr := s.d.Agents.Status(ctx, a.SessionID)
-			switch {
-			case errors.Is(serr, ErrSessionGone):
-				if list[i], err = s.finish(ctx, a.ID, StateFailed, "session record is gone", nil); err != nil {
-					return nil, err
-				}
-			case serr == nil:
-				if list[i], err = s.Observe(ctx, a.ID, st); err != nil {
-					return nil, err
-				}
+		case errors.Is(serr, ErrSessionGone):
+			if a, err = s.finish(ctx, a.ID, StateFailed, "session record is gone", nil); err != nil {
+				return Observation{}, err
+			}
+		case serr == nil:
+			if a, err = s.Observe(ctx, a.ID, st); err != nil {
+				return Observation{}, err
 			}
 		}
 	}
-	return list, nil
+	o := Observation{Attempt: a}
+	if a.State.Live() && serr == nil {
+		o.Activity = st.Activity
+	}
+	o.File = s.InspectPlanFile(a, o.Activity)
+	return o, nil
 }
 
 // Cancel stops a live attempt. The request is recorded first, so a session that exits for any reason after it
@@ -398,15 +500,18 @@ func (s *Service) Cancel(ctx context.Context, id string) (Attempt, error) {
 	return a, nil
 }
 
-// buildPrompt hands the approved specification to the planner. The prompt asks for a plan and says the run is
-// read-only, but only the provider's enforced restriction keeps it so; the words are for the planner's
-// benefit, not a safeguard.
-func buildPrompt(number int64, title string, rev garden.Revision) (string, error) {
+// buildPrompt hands the approved specification to the planner. The prompt names the one file the planner may
+// write and says the rest of the run is read-only, but only the provider's enforced restriction keeps it so;
+// the words are for the planner's benefit, not a safeguard. planPath is Bonsai's own path, so quoting it adds no
+// untrusted text.
+func buildPrompt(number int64, title string, rev garden.Revision, planPath string) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the planner for Garden Issue #%d: %s\n\n", number, cleanLine(title))
 	b.WriteString("Read the repository, then write an implementation plan for the approved specification below. ")
 	b.WriteString("Cover assumptions, the areas you would touch, ordered steps, tests, risks, and how each acceptance criterion is met. ")
-	b.WriteString("Ask me when something is ambiguous. This session is read-only: you cannot edit files or run commands that change anything, so give the plan as text in this conversation.\n\n")
+	b.WriteString("Ask me when something is ambiguous. This session is read-only except for one file: you cannot edit repository files or run commands.\n\n")
+	fmt.Fprintf(&b, "Write the final plan, as Markdown, to this exact absolute path (file name %s): %s\n", config.GardenPlanFileName, planPath)
+	b.WriteString("It is the only file you can write. When the plan is complete, write the whole plan to that file, then say in this conversation that it is written. Keep discussing in the conversation; if the plan changes, rewrite the whole file.\n\n")
 	fmt.Fprintf(&b, "Specification revision %s:\n\n%s\n", shortHash(rev.Hash), rev.Content)
 	if b.Len() > MaxPromptBytes {
 		return "", ErrSpecTooLarge

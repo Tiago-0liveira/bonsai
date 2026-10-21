@@ -343,7 +343,7 @@ isolated per-account config directories, scrubbed inherited provider variables, 
 
 | Provider | Planner role | What enforces it |
 | --- | --- | --- |
-| Claude | Available | `claude --restricted --tools Read,Grep,Glob --strict-mcp-config --permission-mode plan`. `--tools` replaces the built-in tool set, so Edit, Write, Bash and the others do not exist for the model; `--restricted` also drops code-running tools and WebFetch, confines file tools to the working directory, ignores user, project and local settings files and refuses `bypassPermissions`; `--strict-mcp-config` with no MCP config keeps every MCP server out. The `plan` mode is not what enforces anything. A Claude Code that lacks one of these flags exits with an unknown-option error, so it fails closed. |
+| Claude | Available | Without a plan file: `claude --restricted --tools Read,Grep,Glob --strict-mcp-config --permission-mode plan`. `--tools` replaces the built-in tool set, so Edit, Write, Bash and the others do not exist for the model; `--restricted` also drops code-running tools and WebFetch, confines file tools to the working directory, ignores user, project and local settings files and refuses `bypassPermissions`; `--strict-mcp-config` with no MCP config keeps every MCP server out. The `plan` mode is not what enforces anything. With the plan file Garden always passes: `--tools Read,Grep,Glob,Write --permission-mode dontAsk --add-dir <attempt plan dir>` and one merged `--settings` JSON whose `permissions.allow` is the single rule `Edit(//<absolute plan.md>)` (Claude Code matches `Write` against `Edit` path rules) and `deny` repeats `Bash`, `WebFetch`, `WebSearch`; under `dontAsk` everything no rule allows is denied. `--setting-sources ""` (an empty list; the 2.1.306 parser accepts it) is passed as well, so on top of `--restricted` no user, profile, project or local `settings.json` can add an allow rule; administrator-managed policy settings still apply and are outside Bonsai's control. A Claude Code that lacks one of these flags exits with an unknown-option error, so it fails closed. |
 | Codex | Unavailable | The shell sandbox does not establish denial of patch writes, configured MCP mutations, plugins or hooks. Bonsai refuses the planner role until the complete tool surface can be constrained and verified. |
 | Antigravity | Unavailable | `agy` offers `--mode plan` (an execution mode the model may leave) and `--sandbox` ("terminal restrictions"), but no tool allowlist and no file-write sandbox, so neither stops an edit. |
 
@@ -353,13 +353,24 @@ that are not in a CLI's help are never assumed. Codex's help scopes `--sandbox` 
 "model-generated shell commands"; this is insufficient evidence for the planner
 role, so even profiles configured with a read-only shell sandbox are refused.
 
-A planner session answers as text; it cannot write a plan. The plan becomes an Issue
-record only when you publish text from that attempt in Garden ([Publish and review a
-plan](garden.md#publish-and-review-a-plan)). Bonsai does not read the session's
-terminal output for this: you type or paste the plan, it is kept in memory until you
-publish it, and the attempt record (still free of prompts and terminal output)
-supplies the specification and the inspected base. Reviewing or rejecting a plan never
-starts a session; the next read-only run needs its own **Request AI plan**.
+The one write a planner has is its plan file. A provider declares it can confine that
+write with `ReadOnlySupport.PlanFile`; the launch option is `LaunchOptions.PlanFile`
+(an absolute `plan.md` path), which is only valid together with `ReadOnly` and is
+refused for a provider that does not declare it. Garden creates the attempt's private
+directory (`~/.bonsai/garden/plans/<local repo key>/<issue>/<attempt>/`, mode 0700,
+never a symlink) before the session starts and refuses a plan path containing glob or
+rule characters rather than escaping it. The planner is told the path in its prompt
+(a courtesy; the enforcement is the provider's permission policy). Bonsai reads that
+file only after it validates the path is the attempt's own regular, non-symlink file
+of at most 1 MiB.
+
+The plan becomes an Issue record only when you publish text from that attempt in
+Garden ([Publish and review a plan](garden.md#publish-and-review-a-plan)). Bonsai
+does not read the session's terminal output for this. The text, taken from the plan
+file or typed or pasted, is kept in memory until you publish it, and the attempt record
+(still free of prompts, terminal output and plan text) supplies the specification and
+the inspected base. Reviewing or rejecting a plan never starts a session; the next
+read-only run needs its own **Request AI plan**.
 
 ## Tool-free structured calls
 

@@ -12,6 +12,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
@@ -111,6 +112,15 @@ type Backend interface {
 	PlannerAttempts(ctx context.Context, issue uint64) (PlannerAttemptsView, error)
 	// CancelPlanner stops a live attempt; the attempt and its history stay.
 	CancelPlanner(ctx context.Context, attemptID string) (PlannerAttemptView, error)
+	// PlannerPlan returns the text of the attempt's plan file once it is ready (PlanFileReady), for prefilling the
+	// plan to publish. It re-checks that the file is the attempt's own plain file within the size cap; the
+	// content is never logged. CodePlanNotReady while the planner is still writing or has written nothing,
+	// CodePlanFileInvalid when the file is not acceptable.
+	PlannerPlan(ctx context.Context, attemptID string) (PlannerPlanView, error)
+	// LocalWork summarizes, per Issue, the local agent work the board should flag: a planner attempt that is live,
+	// or ended with a ready plan file that was not published from here. It reconciles with one agent session list
+	// and one store read, never one call per Issue, and starts nothing.
+	LocalWork(ctx context.Context) (LocalWorkView, error)
 
 	// PlanReview verifies the Issue's comment log now and reports its plan revisions: the latest, the one under
 	// review (current) and the approved one, separately, each with its integrity re-verified. It only reads.
@@ -497,6 +507,10 @@ const (
 	CodeDirtyContext Code = "dirty-context"
 	// CodeReadOnlyUnsupported means the account's provider cannot enforce read-only access, so it cannot plan.
 	CodeReadOnlyUnsupported Code = "read-only-unsupported"
+	// CodePlanNotReady means the planner has not finished writing a plan file yet.
+	CodePlanNotReady Code = "plan-not-ready"
+	// CodePlanFileInvalid means the plan file is not a plain file of an acceptable size in the attempt's directory.
+	CodePlanFileInvalid Code = "plan-file-invalid"
 	// CodeAttemptActive means an earlier planner attempt for the Issue is still running.
 	CodeAttemptActive Code = "attempt-active"
 	// CodeNotFound means the Issue is gone.
@@ -814,6 +828,8 @@ type PlannerPreviewView struct {
 	Base plan.Base
 	// Attempts is the Issue's planner history, oldest first.
 	Attempts []plan.Attempt
+	// Overlay is the live view of those attempts by attempt ID: session activity and plan file state.
+	Overlay map[string]PlannerLiveView
 	// Unavailable says why Request AI plan is not offered; empty when it is.
 	Unavailable string
 }
@@ -839,11 +855,22 @@ type PlannerStartRequest struct {
 	Cols, Rows     int
 }
 
+// PlannerLiveView is what Bonsai sees of one attempt right now. It is read on every call and never stored: not
+// part of the attempt record, no terminal output.
+type PlannerLiveView struct {
+	// Activity is the session's live activity (waiting, working or idle, with a reason); nil when the attempt is
+	// not live or the session reports none.
+	Activity *agentactivity.Activity
+	// PlanFile is the state of the attempt's plan file: none, writing, ready or invalid.
+	PlanFile plan.PlanFileInfo
+}
+
 // PlannerAttemptView is one attempt after a start, a cancel or a refresh.
 type PlannerAttemptView struct {
 	Stamp   Stamp
 	IssueID uint64
 	Attempt plan.Attempt
+	Overlay PlannerLiveView
 }
 
 // PlannerAttemptsView is an Issue's reconciled planner history.
@@ -851,6 +878,46 @@ type PlannerAttemptsView struct {
 	Stamp    Stamp
 	IssueID  uint64
 	Attempts []plan.Attempt
+	// Overlay is the live view by attempt ID; an attempt missing from it has no activity and no plan file.
+	Overlay map[string]PlannerLiveView
+}
+
+// PlannerPlanView is the text of a ready plan file.
+type PlannerPlanView struct {
+	Stamp     Stamp
+	IssueID   uint64
+	AttemptID string
+	// Text is the plan exactly as the planner wrote it, at most plan.MaxPlanBytes.
+	Text string
+	File plan.PlanFileInfo
+}
+
+// LocalRunSummary is one local agent run of an Issue in the compact form the board shows.
+type LocalRunSummary struct {
+	AttemptID string
+	// State is the attempt state: starting, running, ended, failed or cancelled.
+	State string
+	// Live is true while the attempt can still change.
+	Live bool
+	// Activity is the live session activity; nil when not live or unreported.
+	Activity *agentactivity.Activity
+	PlanFile plan.PlanFileState
+	Updated  time.Time
+}
+
+// IssueLocalWork is the local work to flag on one Issue.
+type IssueLocalWork struct {
+	// Planner is the live planner attempt, else the newest ended one whose plan is ready and not published from
+	// here.
+	Planner *LocalRunSummary
+}
+
+// LocalWorkView maps an Issue ID (the one PlannerAttempts takes) to its local work. Issues with nothing to
+// flag are absent. Implementation attempts are not included: they live in a separate store the board reads
+// per Issue through LaunchAttempts.
+type LocalWorkView struct {
+	Stamp  Stamp
+	Issues map[uint64]IssueLocalWork
 }
 
 // Live returns the attempt that is still running, if any.

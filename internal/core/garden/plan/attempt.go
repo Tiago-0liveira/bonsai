@@ -1,20 +1,25 @@
 // Package plan is the local planner attempt of the Garden workflow (plan 08.2). An attempt is one explicit,
 // user-started, read-only agent session bound to an approved specification revision and the inspected
-// repository base. It records who ran what under which permissions, and how it ended; it creates no
-// worktree and publishes nothing. Plan revisions and gate two build on the attempt ID (plan 08.3, 08.4).
+// repository base. Its one write is a plan file in a directory Bonsai made for the attempt. It records who ran
+// what under which permissions, and how it ended; it creates no worktree and publishes nothing.
+// Plan revisions and gate two build on the attempt ID (plan 08.3, 08.4).
 package plan
 
 import (
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 )
 
 // Role is what an attempt's agent was asked to be.
 type Role string
 
-// RolePlanner is the only role plan 08.2 starts: it reads the repository and talks; it changes nothing.
+// RolePlanner is the only role plan 08.2 starts: it reads the repository and talks; the only thing it may write
+// is its own plan file inside a Bonsai-owned directory.
 const RolePlanner Role = "planner"
 
 // State is where an attempt stands. Starting and Running are live; the rest are final and never change.
@@ -108,6 +113,9 @@ type Attempt struct {
 	Model       string            `json:"model,omitempty"`
 	Effort      string            `json:"effort,omitempty"`
 
+	// PlanPath is the one file the planner may write: plan.md inside this attempt's Bonsai-owned directory under
+	// the plans root. Empty for an attempt recorded before plan files existed. It names a path, never content.
+	PlanPath string `json:"plan_path,omitempty"`
 	// SessionID names the holder-backed session; the transcript stays with that record, not here.
 	SessionID string `json:"session_id,omitempty"`
 	State     State  `json:"state"`
@@ -116,6 +124,10 @@ type Attempt struct {
 	ExitCode        *int   `json:"exit_code,omitempty"`
 	CancelRequested bool   `json:"cancel_requested,omitempty"`
 
+	// PlanPublishedAt is when this attempt's plan was published as a plan revision from here. It is a local
+	// convenience for "plan not yet published"; GitHub stays the record of what was published.
+	PlanPublishedAt *time.Time `json:"plan_published_at,omitempty"`
+
 	RequestedAt time.Time  `json:"requested_at"`
 	EndedAt     *time.Time `json:"ended_at,omitempty"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -123,5 +135,11 @@ type Attempt struct {
 
 func (a Attempt) valid() bool {
 	return a.ID != "" && a.Local != "" && a.Repo != 0 && a.Issue != 0 && a.Role == RolePlanner && a.State.valid() &&
-		a.Spec.RevisionHash != "" && a.Spec.Fingerprint != "" && a.Base.Commit != "" && a.Provider != "" && a.AccountID != ""
+		a.Spec.RevisionHash != "" && a.Spec.Fingerprint != "" && a.Base.Commit != "" && a.Provider != "" && a.AccountID != "" &&
+		(a.PlanPath == "" || validPlanPath(a.PlanPath))
+}
+
+// validPlanPath is a shape check only; whether the path is the attempt's own is Service.ownedPlanDir's job.
+func validPlanPath(p string) bool {
+	return len(p) <= 4096 && filepath.IsAbs(p) && filepath.Base(p) == config.GardenPlanFileName && !strings.ContainsRune(p, 0)
 }

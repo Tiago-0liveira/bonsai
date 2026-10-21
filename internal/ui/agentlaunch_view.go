@@ -73,6 +73,8 @@ func (d launchDialog) compose(iw, h int) []string {
 	var body []string
 	a, ok := d.Current()
 	switch {
+	case ok && d.plannerWide():
+		return d.composeChoose(a, iw, h)
 	case !d.Listed():
 		body = []string{dim.Render("Loading accounts…")}
 	case d.ListErr() != "":
@@ -292,19 +294,7 @@ func (d launchDialog) saveRow() string {
 // shows in place.
 func (d launchDialog) buttonsRow(a agentsapi.Account, iw int) string {
 	focused := d.focus == launchFocusButtons
-	start := "Start session"
-	disabled := false
-	if d.planner {
-		start = "Accept read-only and request plan"
-	}
-	switch {
-	case d.starting:
-		start, disabled = "Starting…", true
-	case d.planner && !a.ReadOnly.Supported:
-		start, disabled = "Cannot plan", true
-	case accounts.NeedsSignIn(a.Info):
-		start = "Sign in first"
-	}
+	start, disabled := d.primaryLabel(a)
 	btn := func(label string, on, off bool) string {
 		st := lipgloss.NewStyle()
 		switch {
@@ -317,6 +307,23 @@ func (d launchDialog) buttonsRow(a agentsapi.Account, iw int) string {
 	}
 	row := btn("Cancel", focused && d.button == 0, false) + "     " + btn("[ "+start+" ]", focused && d.button == 1, disabled)
 	return leftRight("", row, iw)
+}
+
+// primaryLabel is the primary action's wording and whether it is unavailable.
+func (d launchDialog) primaryLabel(a agentsapi.Account) (label string, disabled bool) {
+	label = "Start session"
+	if d.planner {
+		label = "Accept read-only and request plan"
+	}
+	switch {
+	case d.starting:
+		return "Starting…", true
+	case d.planner && !a.ReadOnly.Supported:
+		return "Cannot plan", true
+	case accounts.NeedsSignIn(a.Info):
+		return "Sign in first", false
+	}
+	return label, false
 }
 
 // footer is the one hint line, for the area that has focus.

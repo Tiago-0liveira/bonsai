@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
@@ -157,7 +158,8 @@ func (m Model) plannerAttemptsBlock(width int, st gardenPlannerState, v *gardena
 		if a.Model != "" {
 			who += " · " + boardTitle(a.Model)
 		}
-		row := fmt.Sprintf("%s#%d  %s  %s  for %s  %s", marker, len(list)-i, attemptStateText(a), who, spec, a.RequestedAt.Local().Format("Jan 2 15:04"))
+		ov := st.attemptOverlay(a.ID)
+		row := fmt.Sprintf("%s#%d  %s%s  %s  for %s  %s", marker, len(list)-i, attemptStateText(a), attemptLiveText(a, ov), who, spec, a.RequestedAt.Local().Format("Jan 2 15:04"))
 		fg := p.Muted
 		switch {
 		case a.State.Live():
@@ -180,9 +182,79 @@ func (m Model) plannerAttemptsBlock(width int, st gardenPlannerState, v *gardena
 				}
 			}
 			lines = append(lines, gText(width, p.Muted, false, "    "+detail))
+			if f := planFileDetail(ov); f != "" {
+				lines = append(lines, gText(width, p.Muted, false, "    "+f))
+			}
 		}
 	}
+	lines = append(lines, m.plannerHubNotes(width, st)...)
 	return gblock{prio: 1, lines: lines}
+}
+
+// attemptLiveText is the agent status and plan file state appended to an attempt's state, in the Agents tab's
+// words. A finished attempt has no agent status.
+func attemptLiveText(a plan.Attempt, ov gardenapi.PlannerLiveView) string {
+	var parts []string
+	if a.State.Live() {
+		_, label := agentactivity.Display("running", ov.Activity)
+		parts = append(parts, strings.ToLower(label))
+	}
+	switch ov.PlanFile.State {
+	case plan.PlanFileWriting:
+		parts = append(parts, "plan writing")
+	case plan.PlanFileReady:
+		parts = append(parts, "plan ready")
+	case plan.PlanFileInvalid:
+		parts = append(parts, "plan file invalid")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " · " + strings.Join(parts, " · ")
+}
+
+// planFileDetail is the selected attempt's plan file line: state, size and when it last changed.
+func planFileDetail(ov gardenapi.PlannerLiveView) string {
+	f := ov.PlanFile
+	if f.State == "" || f.State == plan.PlanFileNone {
+		return ""
+	}
+	text := "plan file " + planFileText(f.State)
+	if f.State == plan.PlanFileInvalid && f.Reason != "" {
+		text += " (" + boardTitle(f.Reason) + ")"
+	}
+	if f.Size > 0 {
+		text += fmt.Sprintf(" · %s", byteSize(f.Size))
+	}
+	if !f.ModTime.IsZero() {
+		text += " · changed " + f.ModTime.Local().Format("Jan 2 15:04:05")
+	}
+	return text
+}
+
+func byteSize(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	return fmt.Sprintf("%.1f KB", float64(n)/1024)
+}
+
+// plannerHubNotes are the lines under the attempts that say what to do next: review a ready plan, or that a live
+// planner outlives this screen.
+func (m Model) plannerHubNotes(width int, st gardenPlannerState) []string {
+	p := theme.Current
+	var out []string
+	if idx, _, ok := st.readyAttempt(); ok {
+		text := "Plan ready: press u to review and publish."
+		if idx != st.sel {
+			text = fmt.Sprintf("Plan ready in attempt #%d: select it, then press u to review and publish.", len(st.display())-idx)
+		}
+		out = append(out, gText(width, p.Success, true, text))
+	}
+	if st.liveAttempt() {
+		out = append(out, gWrap(width, p.Warning, false, keepsRunning)...)
+	}
+	return out
 }
 
 func (m Model) gsPlannerChoose(width, rows int) []string {
@@ -193,6 +265,9 @@ func (m Model) gsPlannerChoose(width, rows int) []string {
 	}
 	d2 := *d
 	d2.SetSize(width, rows)
+	if v := m.garden.planner.preview; v != nil {
+		d2.issue = fmt.Sprintf("#%d %s", v.Number, boardTitle(v.Title))
+	}
 	lines := strings.Split(d2.View(), "\n")
 	out := make([]string, 0, rows)
 	for _, l := range lines {

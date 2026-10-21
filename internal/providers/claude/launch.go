@@ -77,6 +77,14 @@ func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOp
 	if launch.ReadOnly && launch.PermissionMode != "" {
 		return fmt.Errorf("a read-only launch cannot also set a permission mode")
 	}
+	if launch.PlanFile != "" {
+		if !launch.ReadOnly {
+			return fmt.Errorf("a plan file needs a read-only launch")
+		}
+		if err := validatePlanFile(launch.PlanFile); err != nil {
+			return err
+		}
+	}
 	if launch.FullAccess != nil {
 		return fmt.Errorf("claude does not support full access; use the bypassPermissions permission mode")
 	}
@@ -138,7 +146,22 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 	if model := first(launch.Model, settings.Model); model != "" && !hasFlag(args, "--model") {
 		args = append(args, "--model", model)
 	}
-	if launch.ReadOnly {
+	planSettings := ""
+	if launch.PlanFile != "" && hasFlag(args, "--permission-mode", "--dangerously-skip-permissions", "--settings", "--add-dir", "--tools", "--allowedTools", "--allowed-tools", "--setting-sources") {
+		// Explicit args could widen or replace the policy that confines the one write.
+		return nil, "", fmt.Errorf("%w: a plan file launch takes no permission, tool, settings or directory arguments", agents.ErrInvalidLaunch)
+	}
+	if launch.PlanFile != "" && !launch.ReadOnly {
+		return nil, "", fmt.Errorf("%w: a plan file needs a read-only launch", agents.ErrInvalidLaunch)
+	}
+	if launch.ReadOnly && launch.PlanFile != "" {
+		scoped, settingsJSON, err := planFileLaunch(launch.PlanFile, activity)
+		if err != nil {
+			return nil, "", err
+		}
+		args = append(args, scoped...)
+		planSettings = settingsJSON
+	} else if launch.ReadOnly {
 		// The profile's permission mode is dropped on purpose: a profile that
 		// defaults to bypassPermissions must not widen a read-only run.
 		args = append(args, readOnlyArgs...)
@@ -158,7 +181,10 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 		}
 		args = append(args, "--session-id", providerSessionID)
 	}
-	if activity.Usable() && !hasFlag(args, "--settings", "--bare") {
+	if planSettings != "" {
+		// One --settings value carries the permission policy and, when asked for, the activity hooks.
+		args = append(args, "--settings", planSettings)
+	} else if activity.Usable() && !hasFlag(args, "--settings", "--bare") {
 		if hooks, err := activitySettings(activity); err == nil {
 			args = append(args, "--settings", hooks)
 		}
@@ -184,8 +210,13 @@ var readOnlyArgs = []string{"--restricted", "--tools", "Read,Grep,Glob", "--stri
 func (p *Provider) ReadOnly() agents.ReadOnlySupport {
 	return agents.ReadOnlySupport{
 		Supported: true,
-		Mechanism: "tool allowlist (claude --restricted --tools Read,Grep,Glob)",
-		Allows:    []string{"Read, search and list files in the repository", "No file edits, shell commands, web access or MCP tools"},
+		PlanFile:  true,
+		Mechanism: "tool allowlist (claude --restricted --tools Read,Grep,Glob) with deny-by-default permissions (dontAsk)",
+		Allows: []string{
+			"Read, search and list files in the repository",
+			"Write the plan file only: one file in a Bonsai-owned directory under ~/.bonsai/garden/plans",
+			"No other file edits, shell commands, web access or MCP tools",
+		},
 	}
 }
 
@@ -213,7 +244,7 @@ func newUUID() (string, error) {
 // result mode means the profile pins none. It starts nothing and the prompt and
 // display name stay unset.
 func (p *Provider) ResolveLaunch(account agents.Account, launch agents.LaunchOptions) (agents.LaunchOptions, error) {
-	if launch.ReadOnly || launch.Prompt != "" || launch.DisplayName != "" {
+	if launch.ReadOnly || launch.PlanFile != "" || launch.Prompt != "" || launch.DisplayName != "" {
 		return agents.LaunchOptions{}, fmt.Errorf("%w: only model, effort and permission mode can be resolved", agents.ErrInvalidLaunch)
 	}
 	if err := p.ValidateLaunch(account, launch); err != nil {

@@ -38,6 +38,13 @@ type commandHook struct {
 // observed event. Claude merges hooks across settings layers, so this adds to
 // the profile's own hooks instead of replacing them.
 func activitySettings(request *agents.ActivityRequest) (string, error) {
+	out, err := json.Marshal(map[string]any{"hooks": activityHooks(request)})
+	return string(out), err
+}
+
+// activityHooks is the hooks object of activitySettings, so a launch that also
+// needs a permissions policy can send both in one --settings value.
+func activityHooks(request *agents.ActivityRequest) map[string][]settingsEntry {
 	hooks := make(map[string][]settingsEntry, len(hookEvents))
 	for _, event := range hookEvents {
 		entry := settingsEntry{Hooks: []commandHook{{
@@ -48,8 +55,7 @@ func activitySettings(request *agents.ActivityRequest) (string, error) {
 		}
 		hooks[event] = []settingsEntry{entry}
 	}
-	out, err := json.Marshal(map[string]any{"hooks": hooks})
-	return string(out), err
+	return hooks
 }
 
 // hookCommandLine is the shell command Claude Code runs: every argument is

@@ -169,6 +169,12 @@ func (s Starter) prepare(req StartRequest) (prepared, error) {
 			return prepared{}, err
 		}
 	}
+	if launch.PlanFile != "" {
+		// A writable plan file only exists inside a read-only launch whose provider can confine the write to it.
+		if !launch.ReadOnly || !agents.ReadOnlyOf(provider).PlanFile {
+			return prepared{}, fmt.Errorf("%w: %s cannot confine a read-only session to a plan file", agents.ErrInvalidLaunch, provider.ID())
+		}
+	}
 	if validator, ok := provider.(agents.LaunchValidator); ok {
 		if err := validator.ValidateLaunch(account, launch); err != nil {
 			return prepared{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)

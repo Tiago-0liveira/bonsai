@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
@@ -61,8 +62,11 @@ type gardenPlanState struct {
 	drafts  map[string]string
 	attempt string
 	ta      textarea.Model
-	preview *gardenapi.PlanPublishPreviewView
-	btn     int // confirm focus: 0 Back to edit, 1 Publish
+	// prefilled is the attempt whose plan file filled the text box; prefillSeq numbers the plan read in flight.
+	prefilled  string
+	prefillSeq uint64
+	preview    *gardenapi.PlanPublishPreviewView
+	btn        int // confirm focus: 0 Back to edit, 1 Publish
 
 	decision garden.Decision
 	target   *gardenapi.PlanDecisionRequest
@@ -218,13 +222,64 @@ func (m Model) gardenPlanOpenCompose() (Model, tea.Cmd) {
 		return m, nil
 	}
 	p := &g.planrev
-	p.stage, p.attempt, p.preview = planCompose, a.ID, nil
+	p.stage, p.attempt, p.preview, p.prefilled = planCompose, a.ID, nil, ""
+	p.prefillSeq++ // a plan read still in flight belongs to a box that was closed
 	p.ta = newTextarea()
-	p.ta.Placeholder = "Paste or type the plan from the planner session. Required sections: " + strings.Join(planrev.Required, ", ") + "."
+	p.ta.Placeholder = "Type or paste the plan to publish (a ready plan file fills this box for you). Required sections: " + strings.Join(planrev.Required, ", ") + "."
 	p.ta.SetValue(p.drafts[a.ID])
 	p.ta.Focus()
 	m.gardenSizePlanEditor()
 	m.shellFocus = shellInput
+	return m, nil
+}
+
+// gardenPlannerPublish is u on the planner screen. It opens the publish text box at once; when the selected attempt's
+// plan file is ready and nothing was typed for it yet, the plan text is read in the background and fills the box.
+// The user still reviews, edits and previews it, and nothing is published without the existing confirmation.
+func (m Model) gardenPlannerPublish() (Model, tea.Cmd) {
+	g := &m.garden
+	pl := &g.planner
+	a, ok := pl.selected()
+	m, _ = m.gardenPlanOpenCompose()
+	p := &m.garden.planrev
+	if !ok || p.stage != planCompose || p.attempt != a.ID || p.ta.Value() != "" {
+		return m, nil
+	}
+	if pl.attemptOverlay(a.ID).PlanFile.State != plan.PlanFileReady {
+		return m, nil
+	}
+	p.prefillSeq++
+	seq, id, api := p.prefillSeq, a.ID, g.api
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), localTimeout)
+		defer cancel()
+		v, err := api.PlannerPlan(ctx, id)
+		return gardenPlannerPlanMsg{seq: seq, attempt: id, view: v, err: err}
+	}
+}
+
+func (m Model) onGardenPlannerPlan(msg gardenPlannerPlanMsg) (Model, tea.Cmd) {
+	g := &m.garden
+	p := &g.planrev
+	if p.stage != planCompose || p.attempt != msg.attempt || p.prefillSeq != msg.seq {
+		return m, nil // the box was closed or reopened: this answer is for an older one
+	}
+	if msg.err != nil {
+		// The empty box stays as it was; say why it was not filled.
+		f := safeGardenError(msg.err)
+		g.notice = strings.TrimSpace(f.Message + " " + f.Next)
+		return m, nil
+	}
+	if msg.view.AttemptID != msg.attempt || msg.view.Stamp.GardenID != g.status.Target.RepoID {
+		g.notice = "Ignored an out-of-date plan read; the box stays empty."
+		return m, nil
+	}
+	if p.ta.Value() != "" {
+		return m, nil // the user typed meanwhile: never overwrite their text
+	}
+	p.ta.SetValue(cleanPlanText(msg.view.Text))
+	p.prefilled = msg.attempt
+	g.notice = ""
 	return m, nil
 }
 
@@ -328,7 +383,10 @@ func (m Model) onGardenPlanPublish(msg gardenPlanPublishMsg) (Model, tea.Cmd) {
 	}
 	p.stage, p.preview, p.shown = planReview, nil, msg.view.Hash
 	m.shellFocus = shellBody
-	return m.gardenLoadPlanReview(note, true)
+	// Published plans no longer count as ready to publish: read the badges again.
+	m, local := m.gardenLoadLocal()
+	m, review := m.gardenLoadPlanReview(note, true)
+	return m, tea.Batch(local, review)
 }
 
 // gardenPlanStartDecide opens the reason prompt for deciding the revision in view.

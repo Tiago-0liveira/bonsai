@@ -72,6 +72,51 @@ func GardenPlannerPath() (string, error) {
 	return filepath.Join(dir, "bonsai", "garden-planner.json"), nil
 }
 
+// GardenPlanFileName is the one file a planner attempt may write, inside its own plan directory.
+const GardenPlanFileName = "plan.md"
+
+// GardenPlansRoot is the Bonsai-owned directory under which every planner attempt gets a directory of its own. It is
+// the only place a planner session is allowed to write. It follows the user's home so tests can redirect it.
+func GardenPlansRoot() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".bonsai", "garden", "plans"), nil
+}
+
+// GardenPlanDir is the directory of one planner attempt: <plans root>/<local repo key>/<issue>/<attempt>. Identifiers
+// are never trusted as path elements: each is used only when it is a plain name and is hashed otherwise, and the
+// result is checked to stay under the root. The directory is not created.
+func GardenPlanDir(localRepo string, issue uint64, attemptID string) (string, error) {
+	root, err := GardenPlansRoot()
+	if err != nil {
+		return "", err
+	}
+	if localRepo == "" || attemptID == "" || issue == 0 {
+		return "", fmt.Errorf("plan directory needs a repository, an issue and an attempt")
+	}
+	dir := filepath.Join(root, planPathElement(localRepo), fmt.Sprintf("%d", issue), planPathElement(attemptID))
+	if !ContainsPath(root, dir) || dir == root {
+		return "", fmt.Errorf("plan directory escapes %s", root)
+	}
+	return dir, nil
+}
+
+// planPathElement keeps a short plain name and replaces anything else (separators, dots, odd bytes, length) with
+// its digest, so no identifier can climb out of its parent or collide with another through sanitizing.
+func planPathElement(id string) string {
+	plain := id != "" && len(id) <= 64 && id[0] != '.' && id[0] != '-' && !strings.HasPrefix(id, "h-")
+	for i := 0; plain && i < len(id); i++ {
+		c := id[i]
+		plain = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.'
+	}
+	if plain {
+		return id
+	}
+	return fmt.Sprintf("h-%x", sha256.Sum256([]byte(id)))[:34]
+}
+
 // GardenLaunchPath keeps the local implementation attempts: which approved inputs started which isolated worktree and
 // agent session, and how each attempt ended. It holds no prompts, terminal output, commands or credentials.
 func GardenLaunchPath() (string, error) {

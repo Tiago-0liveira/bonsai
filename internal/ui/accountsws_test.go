@@ -77,7 +77,7 @@ func drainAll(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
 		if c == nil {
 			continue
 		}
-		if strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "assistTickCmd") {
+		if strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "assistTickCmd") || strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "gardenLocalTickCmd") {
 			continue // the assist elapsed-seconds tick sleeps; tests deliver ticks themselves
 		}
 		done := make(chan tea.Msg, 1)

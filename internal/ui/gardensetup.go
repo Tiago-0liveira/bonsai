@@ -167,6 +167,14 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 	switch msg := msg.(type) {
 	case gardenWorkMsg:
 		nm, cmd = m.onGardenWork(msg)
+	case gardenLocalMsg:
+		nm, cmd = m.onGardenLocal(msg)
+	case gardenLocalTickMsg:
+		nm, cmd = m.onGardenLocalTick(msg)
+	case gardenPlannerPollMsg:
+		nm, cmd = m.onGardenPlannerPoll(msg)
+	case gardenPlannerPlanMsg:
+		nm, cmd = m.onGardenPlannerPlan(msg)
 	case assistQuestionsMsg, assistDraftMsg, assistTickMsg:
 		return m.gardenAssistMsg(msg)
 	case gardenCapturePreviewMsg:
@@ -1015,7 +1023,7 @@ func (m Model) gardenStatusLine() string {
 	case scrOff:
 		return "Garden off for this clone"
 	case scrBoard:
-		return m.gardenBoardStatus()
+		return m.withLocalSummary(m.gardenBoardStatus())
 	case scrDrafts:
 		return m.gardenBoardStatus()
 	}

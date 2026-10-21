@@ -40,6 +40,8 @@ References: [validation](../../design/tui-redesign/revision-02/png/g-07-120x35-1
   edit” or a mode named “plan” is not sufficient enforcement. A provider that
   cannot meet the contract is unavailable for this role; never fall back to
   unrestricted access. Any necessary isolation belongs in core/runtime adapters.
+  The only write a planner has is its own `plan.md` in a Bonsai-owned directory
+  under `~/.bonsai/garden/plans/`, confined by the provider below the model.
 - Reuse existing holder-backed sessions/terminal contracts for interaction,
   progress, input questions and cancellation. Until Playground lands, provide a
   focused planner-session body using that same terminal controller, not another

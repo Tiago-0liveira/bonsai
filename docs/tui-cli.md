@@ -343,8 +343,12 @@ No worktree is created and nothing runs until you request it. See
 [Request an AI plan](garden.md#request-an-ai-plan-read-only-planner) and
 [the read-only planner role](agents.md#the-read-only-planner-role).
 
-On that screen `u` publishes the plan the selected attempt gave (you type or paste the
-text, `ctrl+s` previews it, one confirmation appends it to the Issue), and `r` in an
+Issues with a local planner running, or a ready plan file, carry a badge on the Board and
+Table ([local planner badges](garden.md#local-planner-badges)) and a total in the footer;
+`p` on the Issue opens the planner again after leaving it, and `esc` from the session never
+stops it. On the planner screen `u` publishes the plan the selected attempt gave (a ready
+plan file fills the text box; otherwise you type or paste it; you edit it, `ctrl+s` previews
+it, one confirmation appends it to the Issue), and `r` in an
 opened Issue or on the planner screen opens the plan review: the current, latest and
 approved revisions shown separately, the plan as a document (`←`/`→` section, `/`
 search, `n`/`N` matches, `[`/`]` revision), `d` for a unified comparison with the

@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -139,4 +140,25 @@ func LaunchColumns(usage usagestore.Store, now func() time.Time, ascii bool) []C
 		},
 		{Title: "RESETS IN", Width: 9, Under: true, UnderCell: resetOf("Resets in "), Cell: resetOf("")},
 	}
+}
+
+// UsedMeter is the five-hour capacity an account has used, as a meter of the
+// given cells and its percentage. It reports false when no value is known, so
+// callers skip the line rather than draw a zero or full meter.
+func UsedMeter(usage usagestore.Store, a agentsapi.Account, now time.Time, cells int, ascii bool) (meter string, usedPct int, ok bool) {
+	s := fiveHourOf(usage[a.ID], now, "-")
+	if !s.hasValue || cells < 1 {
+		return "", 0, false
+	}
+	filled, empty := "▰", "▱"
+	if ascii {
+		filled, empty = "#", "."
+	}
+	n := strings.Count(usagefmt.Bar(1-s.fraction, cells), "█")
+	fill := rankStyle(usagefmt.RankOf(s.fraction))
+	if s.stale {
+		fill = lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	}
+	meter = fill.Render(strings.Repeat(filled, n)) + lipgloss.NewStyle().Foreground(theme.Current.Border).Render(strings.Repeat(empty, cells-n))
+	return meter, 100 - usagefmt.Percent(s.fraction), true
 }

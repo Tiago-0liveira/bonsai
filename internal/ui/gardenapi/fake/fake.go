@@ -79,6 +79,15 @@ type Backend struct {
 	PlannerBase plan.Base
 	// PreviewPlannerErr, StartPlannerErr, PlannerAttemptsErr and CancelPlannerErr make that call fail.
 	PreviewPlannerErr, StartPlannerErr, PlannerAttemptsErr, CancelPlannerErr error
+	// PlannerOverlay scripts the live view (activity, plan file) PreviewPlanner, PlannerAttempts and the attempt
+	// replies report, by attempt ID. Absent means no activity and no plan file.
+	PlannerOverlay map[string]gardenapi.PlannerLiveView
+	// PlannerPlans scripts the plan text PlannerPlan returns by attempt ID; PlannerPlanErr makes it fail.
+	PlannerPlans   map[string]string
+	PlannerPlanErr error
+	// LocalWorkIssues is what LocalWork reports; LocalWorkErr makes it fail.
+	LocalWorkIssues map[uint64]gardenapi.IssueLocalWork
+	LocalWorkErr    error
 	// PlannerStarted lists the requests StartPlanner accepted, in order.
 	PlannerStarted []gardenapi.PlannerStartRequest
 	// OnPlannerStart runs after StartPlanner recorded an attempt, outside any lock, so a test can create the
@@ -669,6 +678,7 @@ func (b *Backend) PreviewPlanner(ctx context.Context, issue uint64) (gardenapi.P
 	a := approve.Assess(it.Issue, it.Verification)
 	v := gardenapi.PlannerPreviewView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: issue, Number: it.Issue.Number, Title: it.Issue.Title,
 		Actor: SampleLogin, Gate: a, Attempts: b.issueAttempts(issue)}
+	v.Overlay = b.overlayOf(v.Attempts)
 	switch {
 	case !a.DownstreamAvailable() || a.Head == nil:
 		v.Unavailable = "The specification is not approved: validate it first. Bonsai never plans from a label or a claim in the Issue."
@@ -715,7 +725,55 @@ func (b *Backend) PlannerAttempts(ctx context.Context, issue uint64) (gardenapi.
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return gardenapi.PlannerAttemptsView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: issue, Attempts: b.issueAttempts(issue)}, ctx.Err()
+	list := b.issueAttempts(issue)
+	return gardenapi.PlannerAttemptsView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: issue, Attempts: list, Overlay: b.overlayOf(list)}, ctx.Err()
+}
+
+func (b *Backend) overlayOf(list []plan.Attempt) map[string]gardenapi.PlannerLiveView {
+	out := map[string]gardenapi.PlannerLiveView{}
+	for _, a := range list {
+		if v, ok := b.PlannerOverlay[a.ID]; ok {
+			out[a.ID] = v
+		}
+	}
+	return out
+}
+
+// PlannerPlan implements gardenapi.Backend with the scripted text.
+func (b *Backend) PlannerPlan(ctx context.Context, id string) (gardenapi.PlannerPlanView, error) {
+	gen, epoch := b.begin("PlannerPlan")
+	if b.PlannerPlanErr != nil {
+		return gardenapi.PlannerPlanView{}, b.PlannerPlanErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, a := range b.attempts {
+		if a.ID != id {
+			continue
+		}
+		text, ok := b.PlannerPlans[id]
+		if !ok {
+			return gardenapi.PlannerPlanView{}, &gardenapi.Error{Code: gardenapi.CodePlanNotReady, Message: "The planner has not finished writing a plan yet."}
+		}
+		return gardenapi.PlannerPlanView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), IssueID: uint64(a.Issue), AttemptID: id, Text: text,
+			File: plan.PlanFileInfo{State: plan.PlanFileReady, Size: int64(len(text))}}, ctx.Err()
+	}
+	return gardenapi.PlannerPlanView{}, &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That planner attempt no longer exists."}
+}
+
+// LocalWork implements gardenapi.Backend with the scripted summaries.
+func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error) {
+	gen, epoch := b.begin("LocalWork")
+	if b.LocalWorkErr != nil {
+		return gardenapi.LocalWorkView{}, b.LocalWorkErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	issues := make(map[uint64]gardenapi.IssueLocalWork, len(b.LocalWorkIssues))
+	for k, v := range b.LocalWorkIssues {
+		issues[k] = v
+	}
+	return gardenapi.LocalWorkView{Stamp: stamp(gen, epoch, b.StatusView.Target.RepoID), Issues: issues}, ctx.Err()
 }
 
 // CancelPlanner implements gardenapi.Backend: a live attempt becomes cancelled, a final one is left alone.

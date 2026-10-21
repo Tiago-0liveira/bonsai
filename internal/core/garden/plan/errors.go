@@ -30,4 +30,9 @@ var (
 	ErrUnsupportedSchema = errors.New("unsupported planner attempt store schema")
 	// ErrTooLarge reports a store past its size or record cap.
 	ErrTooLarge = errors.New("planner attempt store exceeds its limit")
+	// ErrPlanNotReady means the attempt has no finished plan file yet: none, or the planner is still writing.
+	ErrPlanNotReady = errors.New("planner has not finished writing a plan file")
+	// ErrPlanFileInvalid means the plan file is not a plain file of an acceptable size inside the attempt's own
+	// directory, so Bonsai will not read it.
+	ErrPlanFileInvalid = errors.New("planner plan file is not acceptable")
 )

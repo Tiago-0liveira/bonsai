@@ -79,8 +79,10 @@ type launchDialog struct {
 	// planner turns the dialog into the Garden planner's account choice: only model and effort can be set,
 	// the launch is read-only, and an account whose provider cannot enforce that cannot be chosen.
 	planner bool
-	now     func() time.Time
-	w, h    int
+	// issue is the opened Issue's "#n title" the planner's choice is headed with; empty keeps the plain heading.
+	issue string
+	now   func() time.Time
+	w, h  int
 
 	focus       launchFocus
 	name        textinput.Model

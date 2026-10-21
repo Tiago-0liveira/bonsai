@@ -110,6 +110,7 @@ func (b *Backend) PublishPlan(ctx context.Context, p gardenapi.PlanPublishPrevie
 	switch {
 	case err == nil:
 		v.State = gardenapi.PlanWriteDone
+		b.markPlanPublished(ctx, pv.AttemptID)
 		return v, nil
 	case errors.Is(err, planrev.ErrUnverified):
 		v.State = gardenapi.PlanWriteUnknown
@@ -122,6 +123,17 @@ func (b *Backend) PublishPlan(ctx context.Context, p gardenapi.PlanPublishPrevie
 		return v, nil
 	}
 	return gardenapi.PlanPublishView{}, apiError(err)
+}
+
+// markPlanPublished lets the board stop flagging a plan that was published. It is a convenience: GitHub is the
+// record, so a failure here changes nothing the user did and is not reported.
+func (b *Backend) markPlanPublished(ctx context.Context, attemptID string) {
+	if b.deps.Plans == nil || attemptID == "" {
+		return
+	}
+	if svc, err := b.planService(); err == nil {
+		_ = svc.MarkPublished(context.WithoutCancel(ctx), attemptID)
+	}
 }
 
 // DecidePlan implements gardenapi.Backend.

@@ -8,8 +8,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	gardenfake "github.com/Tiago-0liveira/bonsai/internal/core/garden/fake"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
@@ -26,12 +29,14 @@ type stubAgents struct {
 	started []plan.StartSession
 	stopped []string
 	status  map[string]plan.SessionStatus
+	// statusCalls counts Statuses calls, so a test can prove LocalWork lists sessions once.
+	statusCalls int
 }
 
 func (a *stubAgents) Account(_ context.Context, id agents.AccountID) (plan.Account, error) {
 	switch id {
 	case "claude-acct":
-		return plan.Account{ID: id, Name: "work", Provider: "claude", ReadOnly: agents.ReadOnlySupport{Supported: true, Mechanism: "tool allowlist", Allows: []string{"read files"}}}, nil
+		return plan.Account{ID: id, Name: "work", Provider: "claude", ReadOnly: agents.ReadOnlySupport{Supported: true, PlanFile: true, Mechanism: "tool allowlist", Allows: []string{"read files"}}}, nil
 	case "agy-acct":
 		return plan.Account{ID: id, Name: "agy", Provider: "antigravity", ReadOnly: agents.ReadOnlySupport{Reason: "no sandbox"}}, nil
 	}
@@ -61,8 +66,22 @@ func (a *stubAgents) Status(_ context.Context, id string) (plan.SessionStatus, e
 	return plan.SessionStatus{}, plan.ErrSessionGone
 }
 
+func (a *stubAgents) Statuses(context.Context) (map[string]plan.SessionStatus, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.statusCalls++
+	out := map[string]plan.SessionStatus{}
+	for id, st := range a.status {
+		out[id] = st
+	}
+	return out, nil
+}
+
 func plannerHarness(t *testing.T) (*harness, *gardenfake.Fake, uint64, *stubAgents, *stubCheckout) {
 	t.Helper()
+	// Plan directories live under the home directory; never the real one.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	h, f, id := validateHarness(t)
 	ag := &stubAgents{status: map[string]plan.SessionStatus{}}
 	co := &stubCheckout{base: plan.Base{Commit: "c0ffee"}}
@@ -287,6 +306,20 @@ func TestPlannerAgentsAdapterStartsNoWorktreeAndMapsStatus(t *testing.T) {
 	if err != nil || st.State != "running" {
 		t.Fatalf("status = %+v, %v", st, err)
 	}
+	if st.Activity != nil {
+		t.Fatalf("activity = %+v, want none for a session that reports none", st.Activity)
+	}
+	since := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	fb.Sessions.Set(agentsapi.Session{Summary: agentterminal.Summary{ID: id, State: "running", Activity: &agentactivity.Activity{State: agentactivity.Waiting, Reason: agentactivity.ReasonQuestion, Since: since}}})
+	st, err = pa.Status(ctx, id)
+	if err != nil || st.Activity == nil || st.Activity.State != agentactivity.Waiting || st.Activity.Reason != agentactivity.ReasonQuestion {
+		t.Fatalf("activity status = %+v, %v", st, err)
+	}
+	all, err := pa.Statuses(ctx)
+	if err != nil || all[id].Activity == nil || all[id].Activity.State != agentactivity.Waiting {
+		t.Fatalf("statuses = %+v, %v", all, err)
+	}
+	fb.Sessions.Set(agentsapi.Session{Summary: agentterminal.Summary{ID: id, State: "running"}})
 	if err := pa.Stop(ctx, id); err != nil {
 		t.Fatal(err)
 	}
