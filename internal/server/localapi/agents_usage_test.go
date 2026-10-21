@@ -320,6 +320,8 @@ func TestAgentUsageRealProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("FAKE_CODEX_FIXTURES", filepath.Join(codexTestdata, "phase0"))
 	t.Setenv("FAKE_CLAUDE_FIXTURES", claudeTestdata)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
