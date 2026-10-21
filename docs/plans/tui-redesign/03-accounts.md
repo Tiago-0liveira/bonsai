@@ -1,7 +1,7 @@
 # Plan 03 — Accounts, usage and launch defaults
 
-Status: implemented, pending commit. Prerequisite: [02 — Settings](02-settings.md).
-Next: [04 — Garden foundations](04-garden-foundations.md).
+Status: implemented, pending commit. Prerequisite: 02 — Settings.
+Next: 04 — Garden foundations.
 
 ## Deliverable
 

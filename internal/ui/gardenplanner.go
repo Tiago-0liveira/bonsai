@@ -382,7 +382,7 @@ func (m Model) onGardenPlannerCancel(msg gardenPlannerCancelMsg) (Model, tea.Cmd
 // focuses the terminal, as a fresh start does; otherwise the session is only observed until the user focuses it.
 func (m *Model) plannerAttach(sessionID string, write bool) tea.Cmd {
 	if !m.agents.active() || sessionID == "" {
-		m.garden.notice = "Terminal sessions are unavailable here, so the planner cannot be shown."
+		m.garden.notice = "Terminal sessions are unavailable here, so the session cannot be shown."
 		return nil
 	}
 	var release tea.Cmd
@@ -405,8 +405,12 @@ func (m *Model) plannerRelease() tea.Cmd {
 	return releaseCmd(v.stream, v.term)
 }
 
-// plannerSessionShown reports whether the planner's terminal is the body in view.
+// plannerSessionShown reports whether the Garden terminal is the body in view: the planner's, or an
+// implementation attempt's. Both are the one Agents controller attached to one session.
 func (m Model) plannerSessionShown() bool {
+	if m.launchSessionShown() {
+		return true
+	}
 	return m.layoutKind == LayoutRedesign && m.workspace == wsGarden && m.plannerActive() && m.garden.planner.stage == plannerSession &&
 		m.garden.hasStatus && m.garden.sub != subDrafts && m.agents.view != nil
 }
@@ -443,7 +447,11 @@ func (m Model) plannerTerminalMsg(msg tea.Msg) (Model, tea.Cmd) {
 		m = nm.(Model)
 		if v := m.agents.view; v != nil && v.state == attachEnded {
 			// The legacy banner points at keys the planner does not have.
-			v.banner = strings.TrimSuffix(v.banner, " · n: new · a: all") + " · esc: attempts"
+			back := " · esc: attempts"
+			if m.garden.launch.stage == launchStageSession {
+				back = " · esc: attempt"
+			}
+			v.banner = strings.TrimSuffix(v.banner, " · n: new · a: all") + back
 			changed = !was
 		}
 	case agentInputMsg:
@@ -462,6 +470,11 @@ func (m Model) plannerTerminalMsg(msg tea.Msg) (Model, tea.Cmd) {
 	if changed && m.garden.planner.stage == plannerSession && m.garden.busy == busyNone {
 		var refresh tea.Cmd
 		m, refresh = m.gardenPlannerRefresh()
+		cmd = tea.Batch(cmd, refresh)
+	}
+	if changed {
+		var refresh tea.Cmd
+		m, refresh = m.launchTerminalChanged()
 		cmd = tea.Batch(cmd, refresh)
 	}
 	return m, cmd

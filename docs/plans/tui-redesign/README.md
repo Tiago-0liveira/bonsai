@@ -28,21 +28,21 @@ starting the next numbered plan. Do not implement later phases opportunistically
 
 | Order | Plan | Reviewable result | Dependency | Status |
 |---|---|---|---|---|
-| 01 | [Base shell](01-base-shell.md) | Background, five-tab selector, footer, empty body | Baseline | Implemented |
-| 02 | [Settings](02-settings.md) | Real preferences in clear nested sections | 01 | Implemented |
-| 03 | [Accounts](03-accounts.md) | Profiles, usage, defaults and existing account flows | 02 | Not started |
-| 04 | [Garden foundations](04-garden-foundations.md) | Canonical Issue contract, connection/setup and safe reads | 03 | Not started |
-| 04b | [Garden setup wiring](04b-garden-wiring.md) | Backend composition and Garden → Setup ([mockups](../../design/tui-redesign/garden-setup/README.md)) | 04 | Not started |
-| 05 | [Garden board](05-garden-board.md) | Selectable state columns for approved work | 04b | Partial; three state populations await backend evidence |
-| 06 | [Garden table](06-garden-table.md) | Selectable rows over the same approved-work collection | 05 | Implemented (06.1/06.2) |
-| 07 | [Garden drafts](07-garden-drafts.md) | Separate idea inbox, capture, edits and explicit import | 06 | Not started |
-| 08 | [Specifications and plans](08-garden-approval-and-planning.md) | Both revision-bound approvals and local read-only planning | 07 | Not started |
-| 08b | [AI draft elaboration](08b-garden-draft-assist.md) | Questions, answers and a reviewed AI-proposed draft before gate one | 08 | Implemented (pending manual provider fixture) |
-| 08c | [Assist answer UX](08c-garden-assist-answers.md) | Choose-or-write answers with notes; suggestions and AI open questions stop blocking falsely | 08b | Not started |
-| 09 | [Local implementation launch](09-garden-local-launch.md) | Explicit, isolated, recoverable task execution | 08 | Not started |
-| 10 | [Playground](10-playground.md) | Repository session cockpit, terminal, changes and review | 09 | Not started |
-| 11 | [Worktrees](11-worktrees.md) | Existing Git/process functionality in the redesigned workspace | 10 | Not started |
-| 12 | [Cutover and hardening](12-cutover-and-hardening.md) | Default new UI with parity, migration and operational checks | 11 | Not started |
+| 01 | Base shell | Background, five-tab selector, footer, empty body | Baseline | Implemented |
+| 02 | Settings | Real preferences in clear nested sections | 01 | Implemented |
+| 03 | Accounts | Profiles, usage, defaults and existing account flows | 02 | Implemented |
+| 04 | Garden foundations | Canonical Issue contract, connection/setup and safe reads | 03 | Implemented |
+| 04b | Garden setup wiring | Backend composition and Garden → Setup ([mockups](../../design/tui-redesign/garden-setup/README.md)) | 04 | Implemented |
+| 05 | Garden board | Selectable state columns for approved work | 04b | Partial; three state populations await backend evidence |
+| 06 | Garden table | Selectable rows over the same approved-work collection | 05 | Implemented (06.1/06.2) |
+| 07 | Garden drafts | Separate idea inbox, capture, edits and explicit import | 06 | Implemented |
+| 08 | Specifications and plans | Both revision-bound approvals and local read-only planning | 07 | Implemented |
+| 08b | AI draft elaboration | Questions, answers and a reviewed AI-proposed draft before gate one | 08 | Implemented (pending manual provider fixture) |
+| 08c | Assist answer UX | Choose-or-write answers with notes; suggestions and AI open questions stop blocking falsely | 08b | Not started |
+| 09 | Local implementation launch | Explicit, isolated, recoverable task execution | 08 | Not started |
+| 10 | Playground | Repository session cockpit, terminal, changes and review | 09 | Not started |
+| 11 | Worktrees | Existing Git/process functionality in the redesigned workspace | 10 | Not started |
+| 12 | Cutover and hardening | Default new UI with parity, migration and operational checks | 11 | Not started |
 
 Each plan has smaller phases that are also sequential. A phase can be a focused
 commit or review unit; a plan is not a requirement to land a giant PR. Follow the

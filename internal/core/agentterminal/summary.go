@@ -37,6 +37,10 @@ type Summary struct {
 	// sessions; empty means a holder from before the field existed, which
 	// the web started.
 	Origin string `json:"origin,omitempty"`
+	// OperationID and Task identify the durable operation that asked for the
+	// session, so a restarted client can match a holder to its request.
+	OperationID string          `json:"operation_id,omitempty"`
+	Task        *agents.TaskRef `json:"task,omitempty"`
 	// Activity is what the agent is doing. It is set only while State is
 	// running and cleared on every lifecycle change away from it.
 	Activity *agentactivity.Activity `json:"activity,omitempty"`

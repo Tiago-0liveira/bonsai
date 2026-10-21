@@ -1,6 +1,6 @@
 # Plan 12 — Cutover, compatibility and hardening
 
-Status: not started. Prerequisite: [11 — Worktrees](11-worktrees.md).
+Status: not started. Prerequisite: 11 — Worktrees.
 This is the final integration plan, not a substitute for checks in earlier plans.
 
 ## Deliverable

@@ -79,8 +79,11 @@ type gardenState struct {
 	drafts  gardenDraftsState
 	planner gardenPlannerState
 	planrev gardenPlanState
-	assist  gardenAssistState // AI draft elaboration: its own request track, see gardenassist.go
-	api     gardenapi.Backend // nil when Garden is unavailable
+	// launchSub is the shared Sessions.Changes subscription, opened once the first launch screen shows.
+	launchSub bool
+	launch    gardenLaunchState // local implementation launch: its own request tracks, see gardenlaunch.go
+	assist    gardenAssistState // AI draft elaboration: its own request track, see gardenassist.go
+	api       gardenapi.Backend // nil when Garden is unavailable
 
 	// seq numbers requests: a reply carrying any other value was superseded or
 	// abandoned, so it is dropped before it can move focus. gate is the second

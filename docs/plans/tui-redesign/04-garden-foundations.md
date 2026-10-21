@@ -1,7 +1,7 @@
 # Plan 04 — Garden identity, contracts and connection
 
-Status: not started. Prerequisite: [03 — Accounts](03-accounts.md).
-Next: [04b — Garden wiring](04b-garden-wiring.md).
+Status: not started. Prerequisite: 03 — Accounts.
+Next: 04b — Garden wiring.
 
 ## Deliverable
 

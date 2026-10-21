@@ -348,7 +348,7 @@ func (m Model) planStrip(width int, rv planrev.Review, shown planrev.Revision, h
 func (m Model) planNotices(width int, rv planrev.Review, r planrev.Revision, have bool) []string {
 	p := theme.Current
 	g := m.garden
-	parts := []string{"Launch unavailable (plan 09)."}
+	parts := []string{m.launchPlanNote(rv.Ready)}
 	fg := p.Warning
 	if g.err != nil {
 		parts = append(parts, "! "+g.err.Message+" "+g.err.Next)
@@ -469,7 +469,7 @@ func (m Model) planTail(width int, r planrev.Revision, have bool) string {
 	}
 	if !st.searching {
 		if st.query == "" && width >= 100 {
-			text += " · launch unavailable (plan 09)"
+			text += " · " + m.launchTailNote()
 		}
 	}
 	return gText(width, p.Muted, false, text)
@@ -584,7 +584,7 @@ func (m Model) gsPlanDecide(width, rows int) []string {
 	if st.decision == garden.DecisionApproved {
 		blocks := []gblock{{lines: []string{gHeadChip(width, fmt.Sprintf("◇ APPROVE PLAN r%d?", r.Ordinal), p.Warning)}}}
 		facts := fmt.Sprintf("Plan revision: %s\nSource spec fingerprint: %s\nSpecification head: %s\nActor: %s (GitHub ID %s)", r.Hash, st.view.Review.Gate.Fingerprint, st.view.Review.Gate.Head.Hash, boardTitle(st.view.Actor), st.view.ActorID)
-		blocks = append(blocks, gblock{lines: gWrap(width, p.Text, false, facts)}, gblock{prio: 1, lines: gWrap(width, p.Muted, false, "Records approval of this exact pair → Ready. No agent, worktree or PR starts. Both heads and your authority are verified again before writing. Launch unavailable (plan 09).")})
+		blocks = append(blocks, gblock{lines: gWrap(width, p.Text, false, facts)}, gblock{prio: 1, lines: gWrap(width, p.Muted, false, "Records approval of this exact pair → Ready. No agent, worktree or PR starts. Both heads and your authority are verified again before writing. "+m.launchApprovalNote())})
 		blocks = blocksWithNotices(m, width, blocks...)
 		actions := []string{gButtons(width, "  ", gButton("Cancel", st.btn == 0), gButton(fmt.Sprintf("Approve plan r%d", r.Ordinal), st.btn == 1))}
 		return m.settingsASCII(gCompose(width, rows, blocks, actions))
@@ -611,4 +611,32 @@ func (m Model) gsPlanDecide(width, rows int) []string {
 		actions[0] = gText(width, p.Warning, true, "Recording… keys are ignored until GitHub answers.")
 	}
 	return m.settingsASCII(gCompose(width, rows, blocks, actions))
+}
+
+// launchPlanNote says what a plan review offers about launching. Approval never starts anything.
+func (m Model) launchPlanNote(ready bool) string {
+	switch {
+	case !m.launchSupported():
+		return "Launch unavailable (no host)."
+	case ready:
+		return "Ready: s starts locally."
+	}
+	return "No local start until Ready."
+}
+
+func (m Model) launchTailNote() string {
+	if !m.launchSupported() {
+		return "launch unavailable"
+	}
+	if v := m.garden.planrev.view; v != nil && v.Review.Ready {
+		return "s starts locally"
+	}
+	return "no local start until Ready"
+}
+
+func (m Model) launchApprovalNote() string {
+	if !m.launchSupported() {
+		return "Launch unavailable here."
+	}
+	return "A local start is a separate action (s) once the Issue is Ready."
 }

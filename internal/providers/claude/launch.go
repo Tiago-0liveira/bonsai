@@ -207,3 +207,61 @@ func newUUID() (string, error) {
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
+
+// ResolveLaunch returns the options a launch with these overrides runs with:
+// the model, effort and permission mode, profile defaults filled in. An empty
+// result mode means the profile pins none. It starts nothing and the prompt and
+// display name stay unset.
+func (p *Provider) ResolveLaunch(account agents.Account, launch agents.LaunchOptions) (agents.LaunchOptions, error) {
+	if launch.ReadOnly || launch.Prompt != "" || launch.DisplayName != "" {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: only model, effort and permission mode can be resolved", agents.ErrInvalidLaunch)
+	}
+	if err := p.ValidateLaunch(account, launch); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	if launch.PermissionMode != "" && !p.declaresPermissionMode(launch.PermissionMode) {
+		// The parser accepts modes the launch form never offers; a caller may
+		// only choose one the form declares, though a stored profile may keep one.
+		return agents.LaunchOptions{}, fmt.Errorf("%w: permission mode %q is not offered", agents.ErrInvalidLaunch, launch.PermissionMode)
+	}
+	settings, err := ParseSettings(account)
+	if err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: invalid profile settings", agents.ErrInvalidLaunch)
+	}
+	effective := agents.LaunchOptions{
+		Model:          first(launch.Model, settings.Model),
+		Effort:         first(launch.Effort, settings.Effort),
+		PermissionMode: first(launch.PermissionMode, settings.PermissionMode),
+	}
+	if err := p.ValidateLaunch(account, effective); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	return effective, nil
+}
+
+func (p *Provider) declaresPermissionMode(mode string) bool {
+	for _, field := range p.LaunchFields() {
+		if field.ID != "permission_mode" {
+			continue
+		}
+		for _, option := range field.Options {
+			if option.Value == mode {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var _ agents.LaunchResolver = (*Provider)(nil)
+
+// CachedModels returns the aliases and models already learned for the profile,
+// however old, and never calls the API.
+func (p *Provider) CachedModels(account agents.Account) []agents.ModelOption {
+	p.modelsMu.Lock()
+	defer p.modelsMu.Unlock()
+	entry := p.modelsCache[account.ID]
+	return append(append([]agents.ModelOption(nil), entry.aliases...), entry.models...)
+}
+
+var _ agents.CachedModelLister = (*Provider)(nil)

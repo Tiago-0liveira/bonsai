@@ -1,7 +1,7 @@
 # Plan 01 — Base shell only
 
-Status: implemented. Prerequisite: [baseline and shared rules](README.md).
-Next: [02 — Settings](02-settings.md).
+Status: implemented. Prerequisite: baseline and shared rules.
+Next: 02 — Settings.
 
 ## Deliverable
 

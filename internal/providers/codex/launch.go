@@ -247,3 +247,49 @@ func hasConfig(args []string, key string) bool {
 	}
 	return false
 }
+
+// ResolveLaunch returns the options a launch with these overrides runs with:
+// the model, effort and the sandbox and approval pair, profile defaults filled
+// in. Like launchArgs, an override of either sandbox or approval replaces both
+// profile values. A stored pair that matches no preset is kept as it is. It
+// starts nothing and the prompt and display name stay unset.
+func (p *Provider) ResolveLaunch(account agents.Account, launch agents.LaunchOptions) (agents.LaunchOptions, error) {
+	if launch.ReadOnly || launch.Prompt != "" || launch.DisplayName != "" {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: only model, effort, sandbox and approval can be resolved", agents.ErrInvalidLaunch)
+	}
+	if err := p.ValidateLaunch(account, launch); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	settings, err := ParseSettings(account)
+	if err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: invalid profile settings", agents.ErrInvalidLaunch)
+	}
+	effective := agents.LaunchOptions{
+		Model:    first(launch.Model, settings.Model),
+		Effort:   first(launch.Effort, settings.Effort),
+		Sandbox:  settings.Sandbox,
+		Approval: settings.Approval,
+	}
+	if launch.Sandbox != "" || launch.Approval != "" {
+		effective.Sandbox, effective.Approval = launch.Sandbox, launch.Approval
+	}
+	if err := validatePermissions(effective.Model, effective.Effort, effective.Sandbox, effective.Approval); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	if err := p.validateEffort(account, settings, effective); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	return effective, nil
+}
+
+var _ agents.LaunchResolver = (*Provider)(nil)
+
+// CachedModels returns the model list already learned for the profile, however
+// old, and never starts Codex.
+func (p *Provider) CachedModels(account agents.Account) []agents.ModelOption {
+	p.modelsMu.Lock()
+	defer p.modelsMu.Unlock()
+	return append([]agents.ModelOption(nil), p.modelCache[account.ID].models...)
+}
+
+var _ agents.CachedModelLister = (*Provider)(nil)

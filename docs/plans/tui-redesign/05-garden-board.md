@@ -1,7 +1,7 @@
 # Plan 05 — Garden board
 
-Status: partially implemented: board interactions implemented; Planning, Ready and Reviewing population awaits backend evidence; full verification has environmental failures. Prerequisite: [04b — Garden wiring](04b-garden-wiring.md).
-Next: [06 — Garden table](06-garden-table.md).
+Status: partially implemented: board interactions implemented; Planning, Ready and Reviewing population awaits backend evidence; full verification has environmental failures. Prerequisite: 04b — Garden wiring.
+Next: 06 — Garden table.
 
 ## Deliverable
 

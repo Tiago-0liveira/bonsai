@@ -71,6 +71,27 @@ func GardenPlannerPath() (string, error) {
 	}
 	return filepath.Join(dir, "bonsai", "garden-planner.json"), nil
 }
+
+// GardenLaunchPath keeps the local implementation attempts: which approved inputs started which isolated worktree and
+// agent session, and how each attempt ended. It holds no prompts, terminal output, commands or credentials.
+func GardenLaunchPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-launch.json"), nil
+}
+
+// GardenLaunchGitPath keeps the replay metadata of the daemon Git commands a launch sends, so a restarted client
+// resends the same envelope instead of a new one. It is transport state, not the record of what happened.
+func GardenLaunchGitPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-launch-git.json"), nil
+}
+
 func CanonicalDirectory(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") || (os.PathSeparator == '\\' && strings.HasPrefix(path, `~\`)) {
 		home, err := os.UserHomeDir()

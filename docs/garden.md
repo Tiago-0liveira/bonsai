@@ -51,7 +51,7 @@ verified approved plan/spec pair appears as **Ready**. A later head change remov
 Ready and shows the stale gate while retaining the accepted work and old approved
 snapshot. `in-progress` maps to Running, `review` to Human Review, and `done`/`blocked`
 to their matching columns. Planning and Reviewing await active-job evidence.
-These presentation columns never change GitHub labels. Launch remains unavailable.
+These presentation columns never change GitHub labels. Starting work is a separate explicit action ([local implementation launch](#start-implementation-locally)).
 
 | Key in Board | Action |
 | --- | --- |
@@ -126,7 +126,7 @@ comment revisions, with comment IDs, hashes and source-spec fingerprints. Questi
 reads a `Questions` or `Open questions` Markdown section from the issue body;
 absence is stated explicitly. Execution reports canonical stage and the absence
 of a local execution projection. Draft question authoring is available through
-[AI draft assistance](#elaborate-a-draft-with-ai); local launch is unavailable until plan 09. Specifications are
+[AI draft assistance](#elaborate-a-draft-with-ai); local launch is explicit ([guide](#start-implementation-locally)). Specifications are
 approved from Drafts, not from this document ([gate one](#validate-a-specification-gate-one)). Press `p` in an opened
 Issue for its [read-only planner](#request-an-ai-plan-read-only-planner), a separate explicit local action.
 Selecting, opening, searching and refreshing never mutate workflow or launch work.
@@ -457,8 +457,8 @@ refuses the confirmation; refresh and review again. The decision is read back an
 verified before reporting success. Approval writes no stage label or plan pointer.
 
 **Ready** requires both gates and one exact current verified plan/spec pair. Approval
-starts no agent, implementation worktree or PR. **Launch is unavailable** in this
-preview (plan 09). The actions have separate keys and confirmations: `v` validates a
+starts no agent, implementation worktree or PR on its own. Launch is a separate,
+explicit action ([below](#start-implementation-locally)). The actions have separate keys and confirmations: `v` validates a
 specification, `p` requests a local read-only plan, and `a` approves the exact plan.
 In plan review `v` also reuses the gate-one flow to revalidate changed accepted work;
 Escape returns to the review. A new plan or spec revision makes approval stale,
@@ -516,3 +516,83 @@ GitHub comments are append-only by Bonsai convention, not an atomic transaction.
 Concurrent changes after the final read can still happen; Bonsai checks the result
 again and reports an unverified outcome instead of Ready. It never silently retargets
 an approval, overwrites a body or starts a run in response.
+
+## Start implementation locally
+
+Only a **Ready** Issue (both gates, one verified plan/spec pair) can start coding, and
+only through an explicit action: `s` (**start implementation locally…**) in the Ready
+Issue's detail or in plan review. `i` opens **implementation attempts**, even when
+launch is blocked. Approving, refreshing,
+selecting, opening or navigating never starts anything. The action shows what will
+run before it asks:
+
+- exact repository, Issue, spec and plan revision hashes and comment IDs, both
+  approval IDs, actor, and the approved base commit (uncommitted changes in your
+  checkout are excluded: the worktree starts from the committed base);
+- the proposed branch (`bonsai/<number>-<first 8 chars of the approved hash>`), base ref, remote, resolved
+  worktree path and the number of configured create hooks. `ctrl+e` edits branch, base
+  and remote; any edit discards the preview and asks for a fresh one;
+- the agent account, provider, model, effort and the provider's **native permission
+  fields**, shown as inherited from the profile or overridden. Launch is stricter than
+  a manual session: Codex needs an explicit sandbox and approval, Claude an explicit
+  permission mode, Antigravity an explicit full-access value. Unresolved permissions
+  block Confirm. Dangerous choices (Codex full access or bypass, Claude
+  `bypassPermissions`/`auto`/`dontAsk`, Antigravity full access) need a separate,
+  initially unchecked acknowledgment each time. Defaults are edited in Accounts, not
+  here.
+
+On the form `ctrl+s` requests the preview and never launches. In the confirmation
+Cancel has initial focus; `x` acknowledges a permission escalation, `y` acknowledges
+retry hooks and `e` edits branch and base. Confirm (**Confirm: start locally**) creates the worktree in the daemon (placement and
+hooks follow your `.bonsai.yaml` `worktree.root` and `worktree.path_template`), then starts one
+agent holder with the full approved spec and plan as its prompt. The holder is the
+same detached process as any [agent session](agents.md#garden-implementation-launch):
+leaving the screen or quitting Bonsai only closes the view, never stops the agent.
+
+**Blockers** refuse before any effect, with a safe reason: approval stale or changed
+(spec or plan moved, approval revoked, competing heads), account unavailable, native
+permissions unresolved or unsupported, base moved off the approved commit, branch or
+path collision, no current Write access or stale GitHub data, or another attempt
+already active for the Issue. Nothing is silently repaired or downgraded.
+
+### Attempts, retry, stop
+
+Each launch is a retained **attempt** (`[`/`]` switch run): Runs and session IDs, approved inputs, branch,
+path, accepted native options, steps, remote status and PR state. History survives
+every failure and is stored locally in `garden-launch.json` under the user config
+directory (`bonsai/`); it holds no prompts, terminal output, commands or credentials.
+A double submit, timeout or crash never starts a second holder: Bonsai reconciles the
+exact operation on reopening and while open, and shows `start unknown` or
+`recoverable` until it can tell. Reconcile never starts, pushes or opens anything.
+
+- **Open session terminal** (`o`) attaches to the attempt's run without selecting a
+  worktree; observing is default, taking control is explicit.
+- **Retry** (`r`) is separately confirmed, repeats the retained-work and permission facts,
+  reuses the owned worktree (your edits are kept) and starts a new numbered Run only
+  once the old one is positively closed.
+- **Stop** (`x`) is separately confirmed; the run shows `stopping` until closure is proven.
+
+On start, Bonsai mirrors **In progress** to GitHub using the existing label check; a
+clean exit mirrors **Review**, a failed or stopped run mirrors **Blocked**, never
+Done. If GitHub is unreachable the local state stays true and shows
+`remote status pending`. A failure before the agent started leaves the Issue Ready.
+Success means **awaiting human review**, even with no commits. There is no automatic
+merge, commit or branch deletion; reviewers and verification arrive in plan 10.
+
+### Push and Draft PR
+
+Nothing is pushed or opened at launch. Once the holder has ended, **Push branch and
+open/link Draft PR** (`p`) has its own confirmation (remote, head, base, Draft). It is
+available only for meaningful committed changes that are not dirty; Bonsai never
+commits for you. It pushes the exact head, checks both Git and GitHub, looks for an
+existing PR first and links it instead of creating a second. PR state is one of
+`not-created`, `pending`, `unknown` (a create may have happened: inspect, never
+re-created), `unavailable` or `linked`.
+
+### Clean up
+
+**Cleanup retained worktree** (`w`) first shows a read-only preview (exact path, branch,
+HEAD) and needs its own confirmation with Cancel focused. It refuses live or unknown
+holders, uncommitted, ignored or untracked files, extra commits, symlinks and a
+changed preview, and removes the worktree without force. The branch and the attempt
+history remain. Cleanup is never automatic and never erases your changes.

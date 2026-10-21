@@ -1,7 +1,7 @@
 # Plan 09 — Local implementation launch and execution links
 
-Status: not started. Prerequisite: [08 — Approval and planning](08-garden-approval-and-planning.md).
-Next: [10 — Playground](10-playground.md).
+Status: implemented (pending commit). Prerequisite: 08 — Approval and planning.
+Next: 10 — Playground.
 
 ## Deliverable
 
@@ -75,16 +75,19 @@ forking the agent session database or breaking existing web/CLI consumers.
 
 ## Exit criteria and verification
 
-- [ ] Launch always displays exact approved inputs and native permission choices.
-- [ ] Remote labels/comments alone never start work.
-- [ ] Stale approval, ambiguous ownership and branch/path collisions fail preflight.
-- [ ] Double submit, start timeout, process crash and each partial step are
+- [x] Launch always displays exact approved inputs and native permission choices.
+- [x] Remote labels/comments alone never start work.
+- [x] Stale approval, ambiguous ownership and branch/path collisions fail preflight.
+- [x] Double submit, start timeout, process crash and each partial step are
       recoverable without duplicate agents/PRs or unconfirmed destructive cleanup.
-- [ ] Running truth follows the local holder; a GitHub failure only marks sync stale.
-- [ ] Draft PR is absent/pending until real meaningful pushed changes exist.
-- [ ] Completion/failure retains attempt history and never implies automatic merge.
-- [ ] Orchestration, race, adapter, terminal and full Go checks pass using fakes and
+- [x] Running truth follows the local holder; a GitHub failure only marks sync stale.
+- [x] Draft PR is absent/pending until real meaningful pushed changes exist.
+- [x] Completion/failure retains attempt history and never implies automatic merge.
+- [x] Orchestration, race, adapter, terminal and full Go checks pass using fakes and
       temporary repositories. No test starts a real provider or posts a real PR.
-- [ ] Update `README.md`, the Garden guide and `docs/agents.md`/`docs/tui-cli.md`.
+- [x] Update `README.md`, the Garden guide and `docs/agents.md`/`docs/tui-cli.md`.
 
-Completion record: pending implementation and failure-recovery evidence.
+Completion record: implemented. Tests cover `internal/core/garden/launch`,
+`internal/git/local`, `internal/daemon/gitbridge`, `internal/core/agenthost`,
+`internal/gardenbackend` and the `internal/ui` gardenlaunch tests, using fakes and
+temporary repositories. Reviewer launch is deferred to plan 10.

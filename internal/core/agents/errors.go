@@ -19,6 +19,9 @@ var (
 	ErrProviderBusy       = errors.New("provider already has an active session on another account")
 	ErrAccountInUse       = errors.New("account has active sessions")
 	ErrInvalidProfile     = errors.New("invalid profile defaults")
+	// ErrSessionConflict means a reserved session ID already names a session
+	// with a different provider, account or working directory.
+	ErrSessionConflict = errors.New("session id reserved for a different identity")
 	// ErrReadOnlyUnsupported means a read-only launch was asked of a provider whose
 	// CLI cannot enforce it. The launch is refused; it never runs unrestricted.
 	ErrReadOnlyUnsupported = errors.New("provider cannot enforce read-only access")

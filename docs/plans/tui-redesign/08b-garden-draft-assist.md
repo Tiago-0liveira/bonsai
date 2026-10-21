@@ -1,6 +1,6 @@
 # Plan 08b — AI-assisted draft elaboration
 
-Status: implemented; pending one manual claude run to confirm the structured_output envelope. Prerequisites: [07](07-garden-drafts.md), [08](08-garden-approval-and-planning.md) (`b3597d0`). Next: [09](09-garden-local-launch.md).
+Status: implemented; pending one manual claude run to confirm the structured_output envelope.
 
 ## Deliverable
 

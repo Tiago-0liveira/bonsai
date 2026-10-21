@@ -357,13 +357,31 @@ In plan review `a` opens **Approve plan** with the full plan hash, current sourc
 spec fingerprint, spec head and GitHub actor; Cancel has initial focus. `tab` then
 `enter` records gate two only after fresh head and authority checks and yields
 **Ready** on the Board/Table. `v` revalidates a changed accepted specification through
-the existing gate-one flow; `p` separately requests a local read-only plan. Launch
-is visibly unavailable (plan 09). New plan/spec revisions show a stale gate and
+the existing gate-one flow; `p` separately requests a local read-only plan. Coding starts only
+from a Ready Issue through a separate confirmation ([local launch](#local-implementation-launch-in-the-preview)). New plan/spec revisions show a stale gate and
 retain the old approved snapshot; they never inherit its approval. The review shows
 who approved which revision, declared local/external source and verified time.
 `o` opens the canonical Issue in the local browser and `y` copies its link. The
 [external comment protocol](garden.md#external-approval-protocol-github-or-mobile-browser)
 supports approval in GitHub/mobile browsers, without a phone client or remote runs.
+
+#### Local implementation launch in the preview
+
+From a Ready Garden Issue (detail or plan review) press `s` (**start implementation
+locally…**); `i` opens **implementation attempts**, available even when launch is
+blocked. The form selects account, model, effort and native permissions. `ctrl+s`
+requests a preview and never launches; `ctrl+e` edits branch, base and remote. The
+confirmation repeats the exact approved inputs, worktree and permissions. Cancel is
+focused first, so a first `enter` cancels and **Confirm: start locally** must be
+chosen explicitly. `x` acknowledges a permission escalation, `y` retry hooks, `e`
+edits branch/base. Unresolved or unsupported permissions disable Confirm. `esc` or
+leaving Garden detaches without stopping the agent; pushing a Draft PR is separate.
+
+In an attempt: `o` opens the session terminal (observe by default, explicit
+take-control, `esc` leaves without stopping), `x` stop, `r` retry, `w` cleanup,
+`p` push branch / Draft PR, `[`/`]` switch run. Each has its own confirmation;
+cleanup previews first. Reviewers are not available yet (plan 10). Details, blockers
+and recovery: [Garden guide](garden.md#start-implementation-locally).
 
 #### Settings in the preview
 

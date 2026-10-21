@@ -22,6 +22,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
@@ -67,6 +68,17 @@ type Deps struct {
 	Assist agentsapi.Assist
 	// NewID returns a fresh random token for operation IDs and idempotency keys.
 	NewID func() string
+	// The Launch* seams enable the local implementation launch (plan 09). All are optional: without the
+	// store, accounts, worktrees, holder and sessions the launch is unavailable and Garden is not. The clock
+	// and ID source default to the real ones; PRs only enables publishing a Draft pull request.
+	LaunchStore     launch.Store
+	LaunchAccounts  launch.Accounts
+	LaunchWorktrees launch.Worktrees
+	LaunchHolder    launch.Holder
+	LaunchSessions  launch.Sessions
+	LaunchPRs       launch.PullRequests
+	LaunchClock     launch.Clock
+	LaunchIDs       launch.IDs
 }
 
 // Backend is the gardenapi.Backend for one local clone.
@@ -87,6 +99,7 @@ type Backend struct {
 	planner        *plan.Service    // built on first use
 	reviews        *planrev.Service // built on first use
 	assistFlights  map[string]struct{}
+	launches       *launch.Service // built on first use
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)
@@ -160,6 +173,7 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 		deps.Agents = plannerAgents{api: *o.agents, dir: repoDir}
 		deps.Assist = o.agents.Assist
 	}
+	wireLaunch(&deps, repoDir, o.shared, o.agents)
 	return newBackend(repoDir, deps)
 }
 

@@ -1,8 +1,8 @@
 # Plan 04b — Garden setup wiring
 
-Status: not started. Prerequisite: [04 — Garden foundations](04-garden-foundations.md)
+Status: not started. Prerequisite: 04 — Garden foundations
 (backend packages landed; UI/composition wiring outstanding).
-Next: [05 — Garden board](05-garden-board.md).
+Next: 05 — Garden board.
 
 ## Deliverable
 

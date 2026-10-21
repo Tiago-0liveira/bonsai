@@ -1,7 +1,7 @@
 # Plan 08 — Specifications, approval gates and local planning
 
-Status: not started. Prerequisite: [07 — Garden drafts](07-garden-drafts.md).
-Next: [09 — Local implementation launch](09-garden-local-launch.md).
+Status: not started. Prerequisite: 07 — Garden drafts.
+Next: 09 — Local implementation launch.
 
 ## Deliverable
 

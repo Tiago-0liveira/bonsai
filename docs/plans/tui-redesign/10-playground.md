@@ -1,7 +1,7 @@
 # Plan 10 — Playground session cockpit
 
-Status: not started. Prerequisite: [09 — Local launch](09-garden-local-launch.md).
-Next: [11 — Worktrees](11-worktrees.md).
+Status: not started. Prerequisite: 09 — Local launch.
+Next: 11 — Worktrees.
 
 ## Deliverable
 

@@ -127,6 +127,12 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 		m, rel = m.gardenPlannerClose()
 		cmd = tea.Batch(cmd, rel)
 	}
+	if b.opened == 0 && g.launch.stage != launchStageNone {
+		// The Issue left this view under its launch screen: the screen goes with it, the holder keeps running.
+		var rel tea.Cmd
+		m, rel = m.launchClose()
+		cmd = tea.Batch(cmd, rel)
+	}
 	return m, cmd
 }
 func (b *gardenBoardState) reselect() {
@@ -280,6 +286,20 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m = m.planClose()
 		b = &m.garden.board
 	}
+	if m.garden.launch.stage != launchStageNone {
+		if b.opened != 0 {
+			return m.gardenLaunchKey(msg)
+		}
+		// The Issue left this view under the launch screen: drop the screen with it, never the holder.
+		var rel tea.Cmd
+		m, rel = m.launchClose()
+		b = &m.garden.board
+		if key.Matches(msg, m.keys.Refresh) {
+			nm, cmd := m.gardenLoadWork()
+			return nm, tea.Batch(rel, cmd)
+		}
+		return m, rel
+	}
 	if m.garden.planner.stage != plannerNone {
 		if b.opened != 0 {
 			return m.gardenPlannerKey(msg)
@@ -298,11 +318,16 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenLoadWork()
 	}
 	if b.opened != 0 {
+		m.garden.notice = "" // a notice explains the last action; the next key moves on
 		switch k {
 		case "p":
 			return m.gardenOpenPlanner()
 		case "r":
 			return m.gardenOpenPlanReview()
+		case "s":
+			return m.gardenLaunchOpen()
+		case "i":
+			return m.gardenLaunchHub()
 		case "esc", "backspace":
 			b.opened = 0
 			b.docScroll = 0
@@ -414,11 +439,18 @@ func (m Model) gardenBoardHints() []shellHint {
 	if m.planActive() {
 		return m.gardenPlanHints()
 	}
+	if m.launchActive() {
+		return m.gardenLaunchHints()
+	}
 	if m.plannerActive() {
 		return m.gardenPlannerHints()
 	}
 	if b.opened != 0 {
-		return []shellHint{{"esc", b.layoutName()}, {"p", "request plan"}, {"r", "review plans"}, {"←/→", "section"}, {"↑/↓", "scroll"}, {"pgup/dn", "page"}, {m.keys.Refresh.Help().Key, "refresh"}}
+		h := []shellHint{{"esc", b.layoutName()}, {"p", "request plan"}, {"r", "review plans"}}
+		if m.launchOffered() {
+			h = append(h, shellHint{"s", "start implementation locally…"})
+		}
+		return append(h, shellHint{"i", "implementation attempts"}, shellHint{"←/→", "section"}, shellHint{"↑/↓", "scroll"}, shellHint{"pgup/dn", "page"}, shellHint{m.keys.Refresh.Help().Key, "refresh"})
 	}
 	view := m.keys.GardenView.Help().Key
 	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}

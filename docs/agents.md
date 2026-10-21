@@ -300,10 +300,28 @@ Validating a Garden specification (gate one, in the
 GitHub and never launches an agent, planner or worktree, and never touches any
 profile's config directory or login. Agent profiles are used only by the separate,
 explicit local Request AI plan action. Gate-two plan approval ends at **Ready**,
-starts no coding agent, worktree or PR, and keeps launch unavailable. GitHub/mobile
+starts no coding agent, worktree or PR; launching is a separate explicit action (below). GitHub/mobile
 approvals use the verified comment protocol and never request remote execution.
 See [gate two and the external protocol](garden.md#approve-the-exact-plan-gate-two) and the
 [Garden guide](garden.md#validate-a-specification-gate-one).
+
+## Garden implementation launch
+
+Garden's explicit **Start implementation locally** ([guide](garden.md#start-implementation-locally))
+reuses the agent host: an isolated worktree created by the daemon, then one holder
+for the chosen profile with `Origin` `tui`. The start carries an operation identity,
+a reserved session ID and additive task metadata (repository, Issue, attempt, role
+`implementation`) on the existing record; there is no new profile or session
+database. Retrying the same operation returns the same session, and a start that
+never began is fenced closed so it cannot launch late. Success is the provider's
+actual start, not socket readiness.
+
+Native permissions are explicit and frozen at confirmation (Codex sandbox and
+approval, Claude permission mode, Antigravity full access); inherited profile
+values are shown but later default changes never widen a running attempt. The usual
+isolation applies: per-account config dirs, scrubbed env, `HOME` untouched, no login
+or token refresh. Closing the TUI only detaches; the holder keeps running. Attempt
+history lives in `garden-launch.json` under the user config dir.
 
 ## The read-only planner role
 

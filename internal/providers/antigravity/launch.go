@@ -164,3 +164,42 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 	}
 	return args
 }
+
+// ResolveLaunch returns the options a launch with these overrides runs with:
+// the model, effort and the full-access choice. Full access is always decided,
+// because false is agy's known default and not a missing value. It starts
+// nothing and the prompt and display name stay unset.
+func (p *Provider) ResolveLaunch(account agents.Account, launch agents.LaunchOptions) (agents.LaunchOptions, error) {
+	if launch.ReadOnly || launch.Prompt != "" || launch.DisplayName != "" {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: only model, effort and full access can be resolved", agents.ErrInvalidLaunch)
+	}
+	if err := validateModel(launch.Model); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	if err := p.ValidateLaunch(account, launch); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	settings, err := ParseSettings(account)
+	if err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: invalid profile settings", agents.ErrInvalidLaunch)
+	}
+	model := first(launch.Model, settings.Model)
+	effort := launch.Effort
+	if effort == "" && profileEffortApplies(model, settings.Effort, p.knownModels(account.ID)) {
+		effort = settings.Effort
+	}
+	full := settings.DangerouslySkipPermissions
+	if launch.FullAccess != nil {
+		full = *launch.FullAccess
+	}
+	return agents.LaunchOptions{Model: model, Effort: effort, FullAccess: &full}, nil
+}
+
+var _ agents.LaunchResolver = (*Provider)(nil)
+
+// CachedModels returns the last successful model list and never starts agy.
+func (p *Provider) CachedModels(account agents.Account) []agents.ModelOption {
+	return append([]agents.ModelOption(nil), p.knownModels(account.ID)...)
+}
+
+var _ agents.CachedModelLister = (*Provider)(nil)

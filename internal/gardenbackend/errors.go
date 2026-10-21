@@ -11,9 +11,11 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
+	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
@@ -68,6 +70,27 @@ func safeAPIError(err error) *gardenapi.Error {
 		return &gardenapi.Error{Code: gardenapi.CodeScopeMissing, Message: "The GitHub token lacks the project scope.", Next: "Grant the scope yourself, then resume. Bonsai never refreshes or changes your login.", Fix: fixScope}
 	case errors.As(err, &amb):
 		return e(gardenapi.CodeTargetAmbiguous, "Your remotes point at several GitHub repositories.")
+	case errors.Is(err, launch.ErrOutcomeUnknown):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchUnknown, Message: "An effect of this launch may have happened.", Next: "Open the attempt: Bonsai reads what exists and never repeats an effect blindly."}
+	case errors.Is(err, launch.ErrAttemptActive):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchActive, Message: "An implementation attempt is already active for this Issue.", Next: "Open it, or stop it before starting another."}
+	case errors.Is(err, launch.ErrCleanupUnsafe), errors.Is(err, launch.ErrCleanupChanged):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchCleanupUnsafe, Message: "The retained worktree cannot be removed safely, or changed since the preview.", Next: "Review the worktree, then preview the cleanup again."}
+	case errors.Is(err, launch.ErrSpecChanged), errors.Is(err, launch.ErrPlanChanged), errors.Is(err, launch.ErrInputsChanged), errors.Is(err, launch.ErrBaseChanged),
+		errors.Is(err, launch.ErrOwnership), errors.Is(err, launch.ErrBranchCollision), errors.Is(err, launch.ErrPathCollision), errors.Is(err, launch.ErrIdempotency):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchChanged, Message: "What was confirmed no longer matches the approved records, the base, the account or the worktree placement.", Next: "Read the current state and preview the launch again. Nothing was started."}
+	case errors.Is(err, launch.ErrNotFound):
+		return &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That implementation attempt does not exist on this machine."}
+	case errors.Is(err, launch.ErrCorrupt), errors.Is(err, launch.ErrUnsupportedSchema):
+		return e(gardenapi.CodeStore, "Implementation attempt records could not be read.")
+	case errors.Is(err, launch.ErrAccountUnavailable):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "That agent account cannot run an implementation now: it is missing, busy, signed out or its provider is not installed.", Next: "Choose another account or fix this one in Accounts."}
+	case errors.Is(err, launch.ErrPermissionsUnresolved), errors.Is(err, launch.ErrPermissionsUnsupported), errors.Is(err, launch.ErrEscalationNotAccepted):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "The agent's native permissions are not fully decided, are not valid for this provider, or a dangerous mode was not acknowledged.", Next: "Choose the permissions explicitly and acknowledge any dangerous mode."}
+	case errors.Is(err, launch.ErrApprovalMissing):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "Both approvals must verify for the current records before an implementation can start.", Next: "Review the approvals, then try again."}
+	case errors.Is(err, launch.ErrNotAccepted), errors.Is(err, launch.ErrNotRetryable), errors.Is(err, launch.ErrInvalid), errors.Is(err, launch.ErrTooLarge), errors.Is(err, domain.ErrHooksFailed):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "This launch action was not confirmed, is not possible in the attempt's state, or its inputs are invalid.", Next: "Check the attempt's state and confirm exactly what is shown."}
 	case errors.Is(err, connect.ErrNoGitHubRemote):
 		return e(gardenapi.CodeNoGitHubRemote, "No remote of this repository points at GitHub.")
 	case errors.Is(err, connect.ErrAuthRequired), errors.Is(err, garden.ErrAuthRequired), errors.Is(err, ErrAuthUnavailable):
@@ -190,6 +213,10 @@ func safeAPIError(err error) *gardenapi.Error {
 		return e(gardenapi.CodeConflict, "Garden setup changed elsewhere.")
 	case errors.Is(err, ErrSkipped):
 		return e(gardenapi.CodeSkipped, "Garden is off for this clone.")
+	case errors.Is(err, launch.ErrAccess):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "Starting an implementation needs current Write access to the repository.", Next: "Ask a maintainer for Write access, then try again."}
+	case errors.Is(err, launch.ErrRemoteStale):
+		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "GitHub could not be read completely right now, so the approvals could not be verified.", Next: "Check your connection and try again. Nothing was started."}
 	}
 	return e(gardenapi.CodeFailed, "Garden could not complete the request.")
 }

@@ -100,15 +100,21 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	if ws == m.workspace {
 		return m, nil
 	}
+	var detach tea.Cmd
 	if m.workspace == wsGarden {
 		// A read that lands after the user left must not reopen a step for them.
 		m.garden.abandon()
+		// Leaving closes the attachment to an attempt's terminal; the holder keeps running.
+		detach = m.launchDetach()
 	}
 	m.workspace = ws
 	m.shellFocus = shellNav
 	m.set.editing, m.set.capturing = false, false
 	m.set.assistOpen = false
 	var cmds []tea.Cmd
+	if detach != nil {
+		cmds = append(cmds, detach)
+	}
 	if ws == wsAccounts && m.acct.present && !m.acct.started {
 		m.acct.started = true
 		cmds = append(cmds, m.acct.model.Init())
@@ -217,13 +223,15 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.gardenSizePlanEditor()
 		m.planClamp()
+		// A confirmation that froze other terminal dimensions is read again, so it never starts under old ones.
+		m, launchCmd := m.gardenLaunchResize()
 		if m.plannerSessionShown() && m.agents.view.term != nil {
 			// The terminal keeps the body's size: its viewport now, the agent's own size once the resize settles.
 			w, rows := m.agentAreaSize()
 			m.agents.view.term.SetViewport(w, rows)
-			return m, m.agentResizeDebounce()
+			return m, tea.Batch(launchCmd, m.agentResizeDebounce())
 		}
-		return m, nil
+		return m, launchCmd
 	case modals.CancelMsg:
 		m.modal = nil
 		m.set.pending = nil
@@ -265,8 +273,9 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.shellKey(msg)
 	}
 	m, forwarded := m.gardenPlannerForward(msg)
+	m, launchFwd := m.gardenLaunchForward(msg)
 	m, assistFwd := m.gardenAssistForward(msg)
-	forwarded = tea.Batch(forwarded, assistFwd)
+	forwarded = tea.Batch(forwarded, launchFwd, assistFwd)
 	if handled, nm, cmd := m.gardenMsg(msg); handled {
 		return nm, tea.Batch(forwarded, cmd)
 	}
@@ -280,7 +289,7 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// input that owns the keyboard, including the letters bound to quit, help
 	// and the palette.
 	if msg.String() == "ctrl+c" {
-		return m, tea.Quit
+		return m, m.agents.quit() // releases an attached terminal first; the holders keep running
 	}
 	focus := m.currentShellFocus()
 	if focus == shellDialog {
@@ -291,7 +300,7 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return m, tea.Quit
+		return m, m.agents.quit()
 	case key.Matches(msg, m.keys.Palette):
 		return m.openShellPalette(), nil
 	case key.Matches(msg, m.keys.Help):
@@ -415,6 +424,21 @@ func paletteTargetForLabel(label string) (paletteTarget, bool) {
 // goToPalette selects a palette target. Going through selectWorkspace keeps the
 // last-workspace memory; a Settings category entry lands on its category row.
 func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
+	// Leaving the opened Issue's screens closes their terminal attachment; the holder is never stopped.
+	var rel tea.Cmd
+	if (t.gardenAction == "board" || t.gardenAction == "table") && m.garden.board.opened != 0 {
+		var r1, r2 tea.Cmd
+		m, r1 = m.launchClose()
+		if m.plannerActive() {
+			m, r2 = m.gardenPlannerClose()
+		}
+		rel = tea.Batch(r1, r2)
+	}
+	nm, cmd := m.goToPaletteTarget(t)
+	return nm, tea.Batch(rel, cmd)
+}
+
+func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 	if t.hasSection {
 		return m.openAccounts(t.section)
 	}
@@ -505,6 +529,9 @@ func (m Model) shellHints() []shellHint {
 		}
 		if m.planActive() {
 			return m.gardenPlanHints()
+		}
+		if m.launchActive() {
+			return m.gardenLaunchHints()
 		}
 		if m.plannerActive() {
 			return m.gardenPlannerHints()

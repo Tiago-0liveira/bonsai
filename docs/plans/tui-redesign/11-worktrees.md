@@ -1,7 +1,7 @@
 # Plan 11 — Worktrees in the redesigned application
 
-Status: not started. Prerequisite: [10 — Playground](10-playground.md).
-Next: [12 — Cutover and hardening](12-cutover-and-hardening.md).
+Status: not started. Prerequisite: 10 — Playground.
+Next: 12 — Cutover and hardening.
 
 ## Deliverable
 

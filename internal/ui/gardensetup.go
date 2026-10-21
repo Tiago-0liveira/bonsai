@@ -199,12 +199,42 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onGardenPlannerStart(msg)
 	case gardenPlannerCancelMsg:
 		nm, cmd = m.onGardenPlannerCancel(msg)
+	case agentsSubscribedMsg:
+		if !m.garden.launchSub {
+			return false, m, nil
+		}
+		nm, cmd = m.onShellAgentsSubscribed(msg)
+	case agentsChangedMsg:
+		if !m.garden.launchSub {
+			return false, m, nil
+		}
+		nm, cmd = m.onShellAgentsChanged(msg)
+	case gardenLaunchResolvedMsg:
+		nm, cmd = m.onGardenLaunchResolved(msg)
+	case gardenLaunchPreviewMsg:
+		nm, cmd = m.onGardenLaunchPreview(msg)
+	case gardenLaunchStartMsg:
+		nm, cmd = m.onGardenLaunchStart(msg)
+	case gardenLaunchAttemptsMsg:
+		nm, cmd = m.onGardenLaunchAttempts(msg)
+	case gardenLaunchActionMsg:
+		nm, cmd = m.onGardenLaunchAction(msg)
+	case gardenLaunchCleanupMsg:
+		nm, cmd = m.onGardenLaunchCleanup(msg)
 	case launchSubmitMsg:
+		if l := m.garden.launch; l.dlg != nil && l.dlg.id == msg.dlg {
+			nm, cmd = m.onGardenLaunchSubmit(msg)
+			break
+		}
 		if m.garden.planner.dlg == nil {
 			return false, m, nil
 		}
 		nm, cmd = m.onPlannerSubmit(msg)
 	case accounts.CloseMsg:
+		if m.garden.launch.stage == launchStageChoose {
+			nm, cmd = m.gardenLaunchChooseClose()
+			break
+		}
 		if m.garden.planner.stage != plannerChoose {
 			return false, m, nil
 		}
@@ -260,6 +290,12 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 		if g.planner.stage != plannerNone {
 			release = m.plannerRelease()
 			g.planner = gardenPlannerState{}
+		}
+		// Launch screens belong to the old Garden's Issue too. Its attempts and any write in flight stay recorded
+		// locally and are read again for the new one.
+		if g.launch.stage != launchStageNone {
+			release = tea.Batch(release, m.launchDetach())
+			g.launch = gardenLaunchState{inflight: g.launch.inflight, previewSeq: g.launch.previewSeq + 1, readSeq: g.launch.readSeq, run: -1}
 		}
 		g.planrev = gardenPlanState{}
 	}
@@ -771,6 +807,8 @@ func (m Model) gardenCrumbs() []string {
 			switch {
 			case m.planActive():
 				crumbs = append(crumbs, "Plan review")
+			case m.launchActive():
+				crumbs = append(crumbs, m.gardenLaunchCrumb())
 			case m.plannerActive():
 				crumbs = append(crumbs, "Read-only planning")
 			}
@@ -826,6 +864,9 @@ func (m Model) gardenFocusLabel() string {
 	}
 	if m.gardenScreen() == scrBoard && m.planActive() {
 		return m.gardenPlanFocusLabel()
+	}
+	if m.gardenScreen() == scrBoard && m.launchActive() {
+		return m.gardenLaunchFocusLabel()
 	}
 	if m.gardenScreen() == scrBoard && m.plannerActive() {
 		return m.gardenPlannerFocusLabel()

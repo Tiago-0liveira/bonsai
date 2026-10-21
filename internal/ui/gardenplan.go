@@ -589,6 +589,18 @@ func (m Model) gardenPlanReviewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The planner screen is where a run is requested, with its own local confirmation.
 		m = m.planClose()
 		return m.gardenOpenPlanner()
+	case "s":
+		// A separate local action after Ready: approving started nothing, and this only opens the form.
+		switch {
+		case !m.launchSupported():
+			g.notice = launchUnavailableText
+		case p.view == nil || !p.view.Review.Ready:
+			g.notice = "A local start needs the exact approved pair: approve a plan first."
+		default:
+			m = m.planClose()
+			return m.gardenLaunchOpen()
+		}
+		return m, nil
 	case "/":
 		p.si = textinput.New()
 		p.si.Cursor.SetMode(cursor.CursorStatic)
@@ -748,7 +760,11 @@ func (m Model) gardenPlanHints() []shellHint {
 	if p.searching {
 		return []shellHint{{"enter", "apply search"}, {"esc", "clear"}}
 	}
-	h := []shellHint{{"a", "approve plan"}, {"p", "request plan"}, {"v", "validate spec"}, {"o/y", "Issue link"}, {"[/]", "revision"}, {"d", "compare"}, {"w", "side by side"}, {"/", "search"}, {"←/→", "section"}, {"↑/↓", "scroll"}}
+	h := []shellHint{{"a", "approve plan"}, {"p", "request plan"}}
+	if p.view != nil && p.view.Review.Ready && m.launchSupported() {
+		h = append(h, shellHint{"s", "start implementation locally…"})
+	}
+	h = append(h, []shellHint{{"v", "validate spec"}, {"o/y", "Issue link"}, {"[/]", "revision"}, {"d", "compare"}, {"w", "side by side"}, {"/", "search"}, {"←/→", "section"}, {"↑/↓", "scroll"}}...)
 	h = append(h, shellHint{"c", "request changes"}, shellHint{"x", "reject"}, refresh, shellHint{"esc", "back"})
 	return h
 }

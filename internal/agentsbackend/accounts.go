@@ -182,6 +182,17 @@ func sanitizeUsageError(err error) string {
 }
 
 func (a *accounts) Defaults(ctx context.Context, id agents.AccountID) (agentsapi.Defaults, error) {
+	return a.defaults(ctx, id, true)
+}
+
+// CachedDefaults is Defaults for a form that opens before a confirmation: model
+// choices come only from what the provider already knows. It never starts a
+// provider, opens a credential session or writes anything.
+func (a *accounts) CachedDefaults(ctx context.Context, id agents.AccountID) (agentsapi.Defaults, error) {
+	return a.defaults(ctx, id, false)
+}
+
+func (a *accounts) defaults(ctx context.Context, id agents.AccountID, live bool) (agentsapi.Defaults, error) {
 	if err := ctx.Err(); err != nil {
 		return agentsapi.Defaults{}, err
 	}
@@ -202,6 +213,12 @@ func (a *accounts) Defaults(ctx context.Context, id agents.AccountID) (agentsapi
 	}
 	if schema, ok := provider.(agents.LaunchSchema); ok {
 		d.LaunchFields = schema.LaunchFields()
+	}
+	if !live {
+		if lister, ok := provider.(agents.CachedModelLister); ok {
+			d.Models = lister.CachedModels(acct)
+		}
+		return d, nil
 	}
 	if lister, ok := provider.(agents.ModelLister); ok {
 		// Providers return their static list alongside an error; the form

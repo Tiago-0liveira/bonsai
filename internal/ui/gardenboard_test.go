@@ -282,7 +282,7 @@ func TestGardenBoardDocumentAllSectionsAndLongText(t *testing.T) {
 	fb := boardFake(t)
 	m := gardenEnv(t, fb, config.Prefs{}, 80, 24)
 	m = pressAll(t, m, "right", "right", "enter")
-	for n, want := range []string{"Readable issue body", "Keep 界 and é safe.", "What should happen next?", "Latest", "Local implementation launch is unavailable until plan 09."} {
+	for n, want := range []string{"Readable issue body", "Keep 界 and é safe.", "What should happen next?", "Latest", "Local implementation launch is unavailable in this runtime."} {
 		m.garden.board.section = n
 		lines := strings.Join(m.gardenDocument(80), "\n")
 		mustContain(t, "document section", flat(ansi.Strip(lines)), want)

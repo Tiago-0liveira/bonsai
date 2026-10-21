@@ -30,6 +30,9 @@ type Spec struct {
 	Cols    int                   `json:"cols"`
 	Rows    int                   `json:"rows"`
 	Launch  agents.LaunchOptions  `json:"launch"`
+	// StartHash is the receipt hash of an operation-bound start. The holder
+	// refuses to run unless the reserved record on disk carries it.
+	StartHash string `json:"start_hash,omitempty"`
 }
 
 // Deps are the stores and providers a holder runs its session with.
@@ -81,6 +84,9 @@ type host struct {
 	screenKind             agentactivity.Kind
 	screenReason           agentactivity.Reason
 
+	// startHash is the operation receipt the record keeps through every write.
+	startHash string
+
 	mu       sync.Mutex
 	summary  agentterminal.Summary
 	monitors map[*serverConn]struct{}
@@ -128,6 +134,13 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 		return fmt.Errorf("agent session %s already has a host", id)
 	}
 	defer lock.Close()
+	if spec.StartHash != "" {
+		// Before any provider work: a fenced, replaced or missing reservation
+		// means the starter gave up on this holder.
+		if err := claimReservation(deps.Paths, spec); err != nil {
+			return err
+		}
+	}
 	_ = Prune(deps.Paths)
 	account, err := deps.Accounts.Get(spec.Summary.AccountID)
 	if err != nil {
@@ -158,6 +171,7 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h := newHost(deps, hex.EncodeToString(b[:]), agentterminal.NewStream[agentterminal.Summary](spec.Cols, spec.Rows), spec.WorkDir, cancel, spec.Summary)
+	h.startHash = spec.StartHash
 	reporter, _ := provider.(agents.ActivityReporter)
 	if reporter != nil {
 		h.useActivityProfile(reporter.ActivityProfile())
@@ -420,10 +434,27 @@ func (h *host) publish() {
 // writeRecord saves the holder's record. Callers hold h.mu, or own h alone.
 func (h *host) writeRecord() error {
 	r := Record{Version: RecordVersion, ID: h.summary.ID, PID: os.Getpid(), Socket: h.deps.Paths.socket(h.summary.ID), Generation: h.generation, BinaryVersion: version.String(), Protocol: Version, WorkDir: h.workDir, Summary: h.summary}
+	if h.startHash != "" {
+		r.StartHash, r.StartPhase = h.startHash, h.startPhase()
+	}
 	if at := h.stream.LastOutput(); !at.IsZero() {
 		r.LastOutputAt = &at
 	}
 	return writeRecord(h.deps.Paths, r)
+}
+
+// startPhase is the receipt phase the session's state implies. Only the
+// provider's own start (running, StartedAt) acknowledges; a ready socket does
+// not. Callers hold h.mu, or own h alone.
+func (h *host) startPhase() string {
+	switch {
+	case !h.summary.Active():
+		return phaseClosed
+	case h.summary.StartedAt != nil:
+		return phaseAcknowledged
+	default:
+		return phaseClaimed
+	}
 }
 
 // stop ends the session: SIGTERM to its process group, SIGKILL two seconds

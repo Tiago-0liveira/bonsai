@@ -1,7 +1,7 @@
 # Plan 02 — Settings before feature workspaces
 
-Status: implemented. Prerequisite: 01 — Base shell(01-base-shell.md).
-Next: [03 — Accounts](03-accounts.md).
+Status: implemented. Prerequisite: 01 — Base shell.
+Next: 03 — Accounts.
 
 ## Deliverable
 

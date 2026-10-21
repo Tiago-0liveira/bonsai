@@ -102,6 +102,9 @@ func (m Model) gsBoard(width, rows int) []string {
 	if b.opened != 0 && m.garden.planrev.stage != planNone {
 		return m.gsPlanRev(width, rows)
 	}
+	if b.opened != 0 && m.garden.launch.stage != launchStageNone {
+		return m.gsLaunch(width, rows)
+	}
 	if b.opened != 0 && m.garden.planner.stage != plannerNone {
 		return m.gsPlanner(width, rows)
 	}
@@ -245,13 +248,13 @@ func (m Model) gardenDocument(width int) []string {
 	case 0:
 		fmt.Fprintf(&text, "#%d %s\n\n%s / %s / %s\n\n", r.Item.Issue.Number, boardSafe(r.Item.Issue.Title), r.Column, r.Item.Classification.Type, r.Priority)
 		status, _ := gardenApprovalIndicator(r)
-		text.WriteString(status + "\n\n")
+		text.WriteString(status + "\n" + m.launchOverview(r.Item.Classification.Stage == garden.StageReady) + "\n\n")
 		body := gardenIssueBody(r.Item.Issue.Body)
 		if body == "" {
 			body = "The canonical issue body is empty."
 		}
 		text.WriteString(body)
-		text.WriteString("\n\nSpecifications are validated from Drafts. Press p to request a read-only AI plan for an approved specification (a local, explicit action) and r to review its published plan revisions.\nPress a in plan review to approve the exact pair to Ready. Press v there to revalidate a changed specification. Start implementation locally: unavailable until plan 09.")
+		text.WriteString("\n\nSpecifications are validated from Drafts. Press p to request a read-only AI plan for an approved specification (a local, explicit action) and r to review its published plan revisions.\nPress a in plan review to approve the exact pair to Ready. Press v there to revalidate a changed specification. Approving starts nothing: a Ready Issue starts locally only with s and its own confirmation.")
 	case 1:
 		text.WriteString("SPECIFICATION\n\n")
 		for _, rev := range r.Item.Verification.Revisions {
@@ -318,9 +321,9 @@ func (m Model) gardenDocument(width int) []string {
 		if len(rv.Revisions) == 0 {
 			text.WriteString("No verified plan revisions.\n")
 		}
-		text.WriteString("\nPress r to review with comparison, search and exact approval. Press p to request a read-only AI plan. Launch unavailable (plan 09).")
+		text.WriteString("\nPress r to review with comparison, search and exact approval. Press p to request a read-only AI plan. " + m.launchPlansLine())
 	case 4:
-		fmt.Fprintf(&text, "EXECUTION\n\nCanonical stage: %s\nBoard state: %s\n\nNo local execution context is available in this read projection.\nLocal implementation launch is unavailable until plan 09.", r.Item.Classification.Stage, r.Column)
+		fmt.Fprintf(&text, "EXECUTION\n\nCanonical stage: %s\nBoard state: %s\n\nThis read projection holds no local execution.\n%s", r.Item.Classification.Stage, r.Column, m.launchExecutionLine())
 	}
 	for _, problem := range r.Item.Problems {
 		fmt.Fprintf(&text, "\n\nAttention: %s", boardSafe(problem.Message))
@@ -331,7 +334,11 @@ func (m Model) gardenDocument(width int) []string {
 func (m Model) gardenDetail(width, rows int) []string {
 	b := m.garden.board
 	p := theme.Current
-	out := []string{gText(width, p.Success, true, "‹ "+b.layoutName()+" (Esc)   Issue document"), gText(width, p.Muted, false, m.gardenBoardStatus())}
+	status := m.gardenBoardStatus()
+	if n := m.garden.notice; n != "" {
+		status = "! " + n
+	}
+	out := []string{gText(width, p.Success, true, "‹ "+b.layoutName()+" (Esc)   Issue document"), gText(width, p.Muted, false, status)}
 	contentWidth := width
 	if width >= 120 {
 		contentWidth -= 26
@@ -371,4 +378,32 @@ func (m Model) gardenDetail(width, rows int) []string {
 	}
 	out = append(out, gText(width, p.Success, false, strings.Join(tabs, " / ")))
 	return m.settingsASCII(out[:rows])
+}
+
+// launchOverview is the launch actions of an opened Issue. Local execution is its own fact: it supplements the
+// canonical stage and never rewrites the read projection.
+func (m Model) launchOverview(ready bool) string {
+	switch {
+	case !m.launchSupported() && ready:
+		return "Start implementation locally… is unavailable here: this Garden runtime has no local launch."
+	case !m.launchSupported():
+		return "Implementation attempts (i) are unavailable here: this Garden runtime has no local launch."
+	case ready:
+		return "Start implementation locally… (s)  ·  Implementation attempts (i)\nNothing starts until you confirm the exact approved pair, branch and permissions."
+	}
+	return "Implementation attempts (i): the local execution history of this Issue. A local start is offered once it is Ready."
+}
+
+func (m Model) launchPlansLine() string {
+	if !m.launchSupported() {
+		return "Launch unavailable in this runtime."
+	}
+	return "A Ready Issue starts locally with s, after its own confirmation."
+}
+
+func (m Model) launchExecutionLine() string {
+	if !m.launchSupported() {
+		return "Local implementation launch is unavailable in this runtime."
+	}
+	return "Press i for the local implementation attempts of this Issue. They are shown separately and never rewrite the canonical stage."
 }

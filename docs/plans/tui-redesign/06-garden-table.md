@@ -1,7 +1,7 @@
 # Plan 06 — Garden table
 
-Status: implemented; one environmental full-suite failure noted below. Prerequisite: [05 — Garden board](05-garden-board.md).
-Next: [07 — Garden drafts](07-garden-drafts.md).
+Status: implemented; one environmental full-suite failure noted below. Prerequisite: 05 — Garden board.
+Next: 07 — Garden drafts.
 
 ## Deliverable
 
