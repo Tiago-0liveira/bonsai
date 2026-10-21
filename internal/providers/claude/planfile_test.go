@@ -144,3 +144,38 @@ func TestPlanFileArgsIgnoreEverySettingsFileLayer(t *testing.T) {
 		t.Fatalf("settings = %q, %v", args[i+1], err)
 	}
 }
+
+func TestReviewReportIsTheOnlyWritableFile(t *testing.T) {
+	const report = "/home/u/.bonsai/garden/reviews/clone/attempt/r1/report.json"
+	e := newTestEnv(t)
+	account := e.addLogin("reviewer")
+	opts := agents.LaunchOptions{ReadOnly: true, PlanFile: report, Prompt: "review committed changes"}
+	if err := e.provider.ValidateLaunch(account, opts); err != nil {
+		t.Fatal(err)
+	}
+	prepared, _ := e.prepare(account, opts)
+	if !containsRun(prepared.Args, []string{"--tools", "Read,Grep,Glob,Write"}) || !containsRun(prepared.Args, []string{"--permission-mode", "dontAsk"}) || !containsRun(prepared.Args, []string{"--setting-sources", ""}) {
+		t.Fatalf("args=%q", prepared.Args)
+	}
+	i := slices.Index(prepared.Args, "--settings")
+	var policy planFileSettings
+	if i < 0 || json.Unmarshal([]byte(prepared.Args[i+1]), &policy) != nil {
+		t.Fatal("missing permissions")
+	}
+	if !slices.Equal(policy.Permissions.Allow, []string{"Edit(/" + report + ")"}) || !slices.Equal(policy.Permissions.Deny, []string{"Bash", "WebFetch", "WebSearch"}) {
+		t.Fatalf("permissions=%+v", policy.Permissions)
+	}
+	for _, bad := range []string{"/tmp/*/report.json", "/tmp/[a]/report.json", "/tmp/a\n/report.json", "/tmp/../report.json", "/tmp/report.json.bak"} {
+		if err := e.provider.ValidateLaunch(account, agents.LaunchOptions{ReadOnly: true, PlanFile: bad}); err == nil {
+			t.Fatalf("accepted %q", bad)
+		}
+	}
+	for _, flag := range []string{"--tools", "--settings", "--add-dir", "--permission-mode", "--setting-sources"} {
+		if _, _, err := launchArgs(Settings{}, []string{flag, "x"}, opts, nil); !errors.Is(err, agents.ErrInvalidLaunch) {
+			t.Fatalf("%s widened report permissions: %v", flag, err)
+		}
+	}
+	if err := e.provider.ValidateLaunch(account, agents.LaunchOptions{PlanFile: report}); err == nil {
+		t.Fatal("accepted report without enforced read-only role")
+	}
+}

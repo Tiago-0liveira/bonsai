@@ -220,6 +220,9 @@ type Model struct {
 	// garden holds the Garden backend; zero when none is injected.
 	garden gardenState
 
+	// pg is the Playground workspace's session list.
+	pg pgState
+
 	// layoutKind picks the legacy TUI or the redesign preview shell; workspace
 	// and shellFocus only matter for the latter and live in memory only.
 	layoutKind Layout
@@ -312,6 +315,12 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 			m, load = m.gardenLoadStatus()
 			m.garden.initCmd = load
 		}
+		pgAPI := m.pg.api // set by WithPlayground before the state is rebuilt
+		m.pg = newPgState()
+		m.pg.api = pgAPI
+		if m.workspace == wsPlayground {
+			m, m.pg.initCmd = m.playgroundEnter()
+		}
 	}
 	m.list.Focus()
 	m.procSearchInput.Placeholder = "search output…"
@@ -361,13 +370,13 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
-	// The preview shell loads only what its open workspace shows: no worktrees,
-	// GitHub, sessions or update checks.
+	// Workspace reads stay lazy. Review reconciliation separately checks local
+	// consent and settles previously authorized reviewer runs.
 	if m.layoutKind == LayoutRedesign {
 		if m.acct.started {
-			return tea.Batch(m.acct.model.Init(), m.garden.initCmd)
+			return tea.Batch(m.acct.model.Init(), m.garden.initCmd, m.pg.initCmd, m.pgReviewInit())
 		}
-		return m.garden.initCmd
+		return tea.Batch(m.garden.initCmd, m.pg.initCmd, m.pgReviewInit())
 	}
 	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs(), m.initAgents())
 }

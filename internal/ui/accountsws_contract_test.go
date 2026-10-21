@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,9 @@ func accountShellDrain(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
 		queue = queue[1:]
 		if c == nil {
 			continue
+		}
+		if strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "pgWaitCmd") {
+			continue // the Playground's change watch blocks until a session changes
 		}
 		msg := c()
 		if batch, ok := msg.(tea.BatchMsg); ok {

@@ -440,3 +440,24 @@ the cache.
 The next explicitly requested local planner attempt includes the latest verified
 request-changes reason as sanitized review context. Reading a reason never restarts
 a session, and feedback never changes the enforced read-only permissions.
+
+## The read-only reviewer role
+
+Garden reviewers use the same provider-enforced read-only role and single-file
+write capability as the [planner](#the-read-only-planner-role). The one writable
+file is a bounded JSON review report outside the worktree, rather than a plan.
+Bonsai supplies the diff between the recorded merge base and reviewed commit;
+the reviewer has file-reading tools and no shell. Diff context is limited to
+48 KiB and any truncation instructs the reviewer to report incomplete coverage.
+The runtime rechecks support on launch; a prompt or account permission default
+cannot widen this role. Claude currently supports it; Codex and Antigravity stay
+unavailable with their capability reason.
+
+Optional automatic runs require local consent under Settings → Agents and apply
+only to verified Bonsai implementation attempts in this clone. Reports are bound
+to one revision and commit and preserve finding evidence and prior decisions.
+CI remains independent. Manual retries, dismissal reasons and human acceptance
+are explicit local actions. Request fixes opens the existing confirmed
+implementation form; remote comments never rerun code. See the
+[Garden review guide](garden.md#read-only-verification-and-human-review) for
+triggers, limits, stale provenance and acceptance conditions.

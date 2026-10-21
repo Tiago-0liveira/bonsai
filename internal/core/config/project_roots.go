@@ -137,6 +137,16 @@ func GardenLaunchGitPath() (string, error) {
 	return filepath.Join(dir, "bonsai", "garden-launch-git.json"), nil
 }
 
+// GardenReviewPath keeps the append-only reviewer reports, dismissals and human acceptance decisions of Garden
+// attempts, per local clone. It holds no prompts, terminal output, commands, environment or credentials.
+func GardenReviewPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-review.json"), nil
+}
+
 func CanonicalDirectory(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") || (os.PathSeparator == '\\' && strings.HasPrefix(path, `~\`)) {
 		home, err := os.UserHomeDir()

@@ -51,6 +51,8 @@ type Prefs struct {
 	NoWorkspaceMemory bool `json:"no_workspace_memory,omitempty"`
 	// GardenAssist overrides AI drafting options; nil inherits built-in defaults.
 	GardenAssist *GardenAssistPrefs `json:"garden_assist,omitempty"`
+	// GardenReview is the local review policy; nil means automatic reviews are off.
+	GardenReview *GardenReviewPrefs `json:"garden_review,omitempty"`
 }
 
 // GardenAssistPrefs holds personal AI drafting defaults.
@@ -70,6 +72,10 @@ func (p Prefs) Clone() Prefs {
 	if p.GardenAssist != nil {
 		assist := *p.GardenAssist
 		p.GardenAssist = &assist
+	}
+	if p.GardenReview != nil {
+		review := *p.GardenReview
+		p.GardenReview = &review
 	}
 	if p.Keys != nil {
 		keys := make(map[string]string, len(p.Keys))
@@ -202,6 +208,10 @@ func LoadState() (*State, error) {
 		st.CopyCounts = map[string]int{}
 	}
 	st.path = p
+	// A hand-edited invalid policy must not keep authorizing automatic runs: fail closed to "off".
+	if st.Prefs.GardenReview != nil && st.Prefs.GardenReview.Validate() != nil {
+		st.Prefs.GardenReview = nil
+	}
 
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err != nil {
@@ -340,6 +350,9 @@ func (s *State) SortedAliases() []Alias {
 
 // SetPrefs replaces the stored UI preferences and persists them.
 func (s *State) SetPrefs(p Prefs) error {
+	if err := p.GardenReview.validateIfSet(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.Prefs = p
 	s.mu.Unlock()
@@ -358,6 +371,9 @@ func (s *State) PrefsSnapshot() Prefs {
 // orders concurrent callers: a gen below the last applied one returns
 // ErrSuperseded without touching disk or memory.
 func (s *State) PersistPrefs(gen uint64, p Prefs) error {
+	if err := p.GardenReview.validateIfSet(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if gen < s.prefsGen {

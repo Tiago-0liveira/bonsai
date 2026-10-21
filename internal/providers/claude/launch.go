@@ -214,7 +214,7 @@ func (p *Provider) ReadOnly() agents.ReadOnlySupport {
 		Mechanism: "tool allowlist (claude --restricted --tools Read,Grep,Glob) with deny-by-default permissions (dontAsk)",
 		Allows: []string{
 			"Read, search and list files in the repository",
-			"Write the plan file only: one file in a Bonsai-owned directory under ~/.bonsai/garden/plans",
+			"Write only the scoped plan or review report: one file in a Bonsai-owned directory",
 			"No other file edits, shell commands, web access or MCP tools",
 		},
 	}

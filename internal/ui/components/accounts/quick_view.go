@@ -396,10 +396,7 @@ func (q Quick) windowLine(l *agents.UsageLimit, i, labelW, cells int) string {
 	if !ok {
 		return line + dim.Render("Unavailable")
 	}
-	if cells > 0 {
-		line += stripMeter(f, cells, q.ascii) + " "
-	}
-	line += rankStyle(usagefmt.RankOf(f)).Bold(true).Render(fmt.Sprintf("%3d%% left", usagefmt.Percent(f)))
+	line += RemainingCapacity(f, cells, q.ascii)
 	if l.ResetsAt != nil {
 		line += dim.Render(" · Reset ") + usageValue(usagefmt.ResetsIn(q.now(), l.ResetsAt, true), theme.Current.Accent)
 	}

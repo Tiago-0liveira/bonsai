@@ -25,7 +25,9 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	"github.com/Tiago-0liveira/bonsai/internal/gardenbackend"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/playgroundbackend"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
@@ -284,16 +286,30 @@ func run(cfgPath string, layout ui.Layout) error {
 	// legacy layout never reaches GitHub, and a missing gh login just leaves the
 	// Garden workspace without a backend.
 	extra := []ui.Option{ui.WithLayout(layout)}
-	var gardenErr error
+	var gardenErr, playgroundErr error
 	if layout == ui.LayoutRedesign {
+		// One GitHub client state for Garden and the Playground: one token cache and rate-limit view.
+		shared := ghcli.NewShared()
 		var gardenAPI *gardenbackend.Backend
-		var gardenOpts []gardenbackend.Option
+		gardenOpts := []gardenbackend.Option{gardenbackend.WithShared(shared)}
 		if agentsAPI != nil {
 			// Planner sessions are ordinary agent sessions; without the agent runtime Garden still works but cannot plan.
 			gardenOpts = append(gardenOpts, gardenbackend.WithAgents(*agentsAPI))
 		}
 		if gardenAPI, gardenErr = gardenbackend.New(repoDir, gardenOpts...); gardenErr == nil {
 			extra = append(extra, ui.WithGarden(gardenAPI))
+		}
+		// The Playground reads sessions, so it needs the agent runtime; Garden only
+		// verifies manual task links and may be missing.
+		if agentsAPI != nil {
+			pgOpts := []playgroundbackend.Option{playgroundbackend.WithAgents(*agentsAPI), playgroundbackend.WithShared(shared)}
+			if gardenErr == nil {
+				pgOpts = append(pgOpts, playgroundbackend.WithGarden(gardenAPI))
+			}
+			var pg *playgroundbackend.Backend
+			if pg, playgroundErr = playgroundbackend.New(repoDir, pgOpts...); playgroundErr == nil {
+				extra = append(extra, ui.WithPlayground(pg))
+			}
 		}
 	}
 	model := newTUIModel(repoDir, cfg, state, agentsAPI, extra...)
@@ -309,6 +325,9 @@ func run(cfgPath string, layout ui.Layout) error {
 	}
 	if gardenErr != nil {
 		fmt.Fprintln(os.Stderr, "garden unavailable:", gardenErr)
+	}
+	if playgroundErr != nil {
+		fmt.Fprintln(os.Stderr, "playground changes unavailable:", playgroundErr)
 	}
 	return err
 }

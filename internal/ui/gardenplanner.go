@@ -410,14 +410,7 @@ func (m *Model) plannerAttach(sessionID string, write bool) tea.Cmd {
 }
 
 // plannerRelease drops the attachment. The holder, and the planner in it, keep running.
-func (m *Model) plannerRelease() tea.Cmd {
-	v := m.agents.view
-	if v == nil {
-		return nil
-	}
-	m.agents.view = nil
-	return releaseCmd(v.stream, v.term)
-}
+func (m *Model) plannerRelease() tea.Cmd { return m.terminalRelease() }
 
 // plannerSessionShown reports whether the Garden terminal is the body in view: the planner's, or an
 // implementation attempt's. Both are the one Agents controller attached to one session.

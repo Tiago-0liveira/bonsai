@@ -1,6 +1,6 @@
 # Plan 10 — Playground session cockpit
 
-Status: not started. Prerequisite: 09 — Local launch.
+Status: 10.4 implemented; verification recorded below. Prerequisite: 09 — Local launch.
 Next: 11 — Worktrees.
 
 ## Deliverable
@@ -68,6 +68,10 @@ References: [sessions](../../design/tui-redesign/revision-02/png/p-01-120x35-151
 
 ## 10.4 — Read-only verification and human review
 
+Implemented: local policy and consent, durable bounded reviewer runs, a Playground
+review screen with independent freshness, revision-bound dismissals, scrollable
+acceptance previews and the existing local implementation-form handoff.
+
 - Implement optional local review policy in Settings → Agents only now. Default
   off; enabling names account, enforced read-only role, trigger and scope. The
   local consent authorizes bounded automatic reviewer runs; a remote Issue edit
@@ -101,9 +105,27 @@ existing Git/PR/check/diff bodies and Garden attempt/review contracts.
       reconnect and resize tests preserve the existing safety behavior.
 - [ ] Usage never starts independent account refresh storms or exposes secrets.
 - [ ] Branch/PR/CI/diff failures preserve independent last-good information.
-- [ ] Review triggers are locally authorized/idempotent and reviewer writes are
+- [x] Review triggers are locally authorized/idempotent and reviewer writes are
       prevented; acceptance, merge and cleanup are distinct.
-- [ ] Focus, terminal integration, concurrency/race and full Go checks pass.
-- [ ] Update `README.md`, `docs/tui-cli.md`, `docs/agents.md` and the Garden guide.
+- [x] Focus, terminal integration, concurrency/race and full Go checks pass.
+- [x] Update `README.md`, `docs/tui-cli.md`, `docs/agents.md` and the Garden guide.
 
-Completion record: pending implementation, terminal regression and review evidence.
+Completion record for 10.4: `internal/core/garden/review` stores reports,
+dismissals and human decisions; `internal/playgroundbackend/review*.go` implements
+bounded provider-enforced runs and restart-idempotent reconciliation.
+`internal/ui/playground_review*.go` and `settings_review*.go` provide the local
+consent and human review flows. UI tests cover independent stale reads, history,
+80/120/160-column rendering, cancel-first actions, acceptance acknowledgments,
+late replies, manual-session restrictions and the existing implementation form.
+Backend tests cover run identity, scope, limits, read-only launch options,
+invalid/missing reports, CI states and acceptance without merge/cleanup effects.
+Verification passed (2026-10-21):
+
+- `gofmt -l $(git ls-files '*.go')` (empty) and `git diff --check`.
+- `go vet ./...`, `go build ./...`, `go test ./...`.
+- `go test -race ./internal/ui/... ./internal/playgroundbackend/... ./internal/core/garden/review/... ./internal/core/garden/sessionlink/... ./internal/core/config/... ./internal/core/agents/... ./internal/core/agentterminal/... ./internal/providers/claude/...`.
+- Final budget/context regressions: `go test -race ./internal/core/garden/review/... ./internal/playgroundbackend/...`.
+- `GOOS=windows go vet ./internal/core/garden/review/... ./internal/playgroundbackend/...` and `GOOS=windows go build ./...`.
+
+Provider tests verify the actual launch arguments and exact single-report
+permission rule using fake CLIs; no live provider account was started.

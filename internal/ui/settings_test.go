@@ -489,7 +489,7 @@ func settleSubmit(t *testing.T, m Model) Model {
 }
 
 func TestSettingsUnavailableFieldsChangeNothing(t *testing.T) {
-	cases := []struct{ cat, sec int }{{catGarden, 1}, {catGarden, 2}, {catAgents, 1}, {catAgents, 2}}
+	cases := []struct{ cat, sec int }{{catGarden, 1}, {catGarden, 2}, {catAgents, 2}}
 	for _, c := range cases {
 		e := newSettingsEnv(t)
 		m := openSettings(t, e.model(t, 120, 35), c.cat, c.sec, 0)

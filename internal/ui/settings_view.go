@@ -369,6 +369,9 @@ func (m Model) fieldDetail(width, n int, fields []settingField, cursor int) []st
 	}
 	f := fields[cursor]
 	help := f.help
+	if f.helpFn != nil {
+		help = f.helpFn(m)
+	}
 	if f.kind == kindUnavailable {
 		help = f.note
 	}

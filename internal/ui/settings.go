@@ -38,6 +38,10 @@ type settingsState struct {
 	pending          *repoWrite
 	assist           *assistOptions
 	assistOpen       bool
+	// rev is what the Garden review policy section knows about accounts; revPending is the policy a consent
+	// dialog is asking about. Nothing is saved until the user confirms it.
+	rev        settingsReview
+	revPending *config.GardenReviewPrefs
 	// inflight counts persists not yet answered; pendingRollback means the
 	// newest one failed and the rollback waits for the older ones to land, so
 	// disk and UI cannot end up disagreeing.
@@ -106,6 +110,7 @@ func (m Model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.editKey(msg)
 	}
 	m.status = ""
+	m.set.editErr = ""
 	k := msg.String()
 	if k == "esc" {
 		return m.settingsUp(), nil
@@ -184,13 +189,40 @@ func (m Model) cycleField(d int) (tea.Model, tea.Cmd) {
 	if !ok || (f.kind != kindChoice && f.kind != kindToggle) {
 		return m, nil
 	}
-	cur, n := 0, len(f.choices)
-	for i, c := range f.choices {
+	choices := f.choices
+	if f.dyn != nil {
+		choices = f.dyn(m)
+	}
+	cur, n := -1, len(choices)
+	if n == 0 {
+		if f.apply != nil {
+			return f.apply(m, "")
+		}
+		return m, nil
+	}
+	for i, c := range choices {
 		if c.value == f.get(m) {
 			cur = i
 		}
 	}
-	next := f.choices[(cur+d+n)%n].value
+	if cur < 0 && d < 0 {
+		cur = 0
+	}
+	idx := cur
+	for step := 0; step < n; step++ {
+		idx = (idx + d + n) % n
+		if choices[idx].off == "" {
+			break
+		}
+		m.status = choices[idx].label + " cannot be chosen: " + choices[idx].off
+	}
+	if choices[idx].off != "" {
+		return m, nil // every choice is disabled: the reason stays in the status
+	}
+	next := choices[idx].value
+	if f.apply != nil {
+		return f.apply(m, next)
+	}
 	if f.scope == scopeRepo {
 		return m.openRepoConfirm(f.repoKey, next), nil
 	}

@@ -9,8 +9,12 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
 
-// planFileName is the only name a planner may write; Bonsai reads it back by that name.
-const planFileName = "plan.md"
+// These are the two scoped outputs Bonsai reads back. Each launch permits
+// exactly its one absolute path, never both filenames or their directory.
+const (
+	planFileName   = "plan.md"
+	reviewFileName = "report.json"
+)
 
 // planFileArgs replace readOnlyArgs for a planner that may leave one plan file.
 // Write joins the tool set (the other file tools stay absent) and the plan
@@ -77,8 +81,8 @@ func validatePlanFile(planFile string) error {
 		return fmt.Errorf("the plan file must be an absolute path")
 	case filepath.Clean(planFile) != planFile:
 		return fmt.Errorf("the plan file path must be clean")
-	case filepath.Base(planFile) != planFileName:
-		return fmt.Errorf("the plan file must be named %s", planFileName)
+	case filepath.Base(planFile) != planFileName && filepath.Base(planFile) != reviewFileName:
+		return fmt.Errorf("the output file must be named %s or %s", planFileName, reviewFileName)
 	case strings.ContainsAny(planFile, "*?[]{}()!\\\"'`$,;:"):
 		return fmt.Errorf("the plan file path contains a character a permission rule cannot match exactly")
 	}

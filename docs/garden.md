@@ -658,3 +658,61 @@ HEAD) and needs its own confirmation with Cancel focused. It refuses live or unk
 holders, uncommitted, ignored or untracked files, extra commits, symlinks and a
 changed preview, and removes the worktree without force. The branch and the attempt
 history remain. Cleanup is never automatic and never erases your changes.
+
+## Read-only verification and human review
+
+In the redesign Playground, select an implementation session and press `r` for
+Human review. This applies to a verified Garden attempt launched by Bonsai in
+this clone. A manual or unlinked session is still a valid session; linking it to
+an Issue does not invent an approved plan or authorize automatic review.
+
+Automatic review is **off by default**. Settings → Agents → Garden review policy
+stores consent only in the local personal preferences. Enabling it names the
+account, enforced read-only role, trigger and scope. Changing an enabled account
+or trigger asks again. The account must support enforced read-only access plus a
+single writable report file; unsupported accounts remain visible with a reason.
+A remote Issue, PR edit or request-changes comment cannot enable reviews or start
+an implementation.
+
+The scope is Bonsai-launched Garden attempts on this machine. Triggers are Manual,
+When awaiting review, or On each new commit. The new-commit trigger also follows
+running attempts after their first review. Automatic runs are limited per attempt
+(default 3, configurable 1–10), with one reviewer in flight per attempt and at most
+two automatic starts per reconciliation. While the redesign TUI is running, it
+reconciles on startup and every 15 seconds after the preceding reconciliation
+finishes, including from other workspaces. Durable run identities prevent repeats
+across restarts; failed and blocked runs need an explicit retry. Each reviewer run
+is bounded to 30 minutes and a size-limited report; changing or disabling consent
+is read from disk before subsequent reconciliation. Closing the TUI does not stop
+an existing holder; the next reconciliation settles its result.
+
+Reports retain every revision, commit, base and reviewer outcome. A finding has
+severity, file/line evidence and a recommendation. `n`/`p` selects findings and
+`[`/`]` selects report revisions; scroll to read the evidence and decision history.
+CI has its own pending/passed/failed/unavailable state, commit and freshness. A
+failed lookup keeps the last good data visibly stale and cannot count as a pass.
+
+- **Dismiss** (`d`) requires a reason and confirmation, bound to the exact finding,
+  report revision and commit. A repeated finding in a later report remains open
+  with its earlier dismissal visible.
+- **Retry review** (`t`) confirms one local read-only run using the configured
+  account, even when automatic review is off. It adds a report revision and does
+  not count against the automatic run limit.
+- **Request fixes** (`f`) opens the linked canonical Issue's existing account and
+  implementation form. The Issue must still be Ready with the verified approved
+  specification/plan pair; the normal isolation and final local confirmation
+  follow. Nothing starts from reading remote feedback.
+- **Accept changes** (`a`) previews the exact HEAD, report, all unresolved findings
+  and independent CI snapshot. Depending on policy, open high findings and CI
+  that has not passed need separate acknowledgments. Missing or older-commit
+  reports also need acknowledgment; required CI older than five minutes or for a
+  different commit is stale. A final confirmation records the local human
+  decision and its evidence. Moved commits, report revisions or findings require
+  a fresh preview.
+
+Acceptance, merging a PR and cleaning up a worktree are separate actions. Accept
+neither merges nor closes an Issue, stops a session, or deletes a worktree.
+New commits mark earlier reports and acceptance as covering older code; they do
+not inherit a reviewed or accepted claim. Prior attempts, findings, dismissal
+reasons and decisions remain available. See [Playground keys](tui-cli.md#playground-in-the-preview)
+and [provider enforcement](agents.md#the-read-only-reviewer-role).

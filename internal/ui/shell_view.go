@@ -18,7 +18,7 @@ func (m Model) shellView() string {
 		return "Loading bonsai…"
 	}
 	submenu := 0
-	if m.workspace == wsSettings || m.workspace == wsGarden {
+	if m.workspace == wsSettings || m.workspace == wsGarden || m.workspace == wsPlayground {
 		submenu = settingsSubmenuRows
 	}
 	regions, ok := shellGeometry(m.width, m.height, submenu, 0)
@@ -40,6 +40,9 @@ func (m Model) shellView() string {
 	} else if m.workspace == wsGarden {
 		lines = append(lines, m.gardenSubmenu(regions.width)...)
 		lines = append(lines, m.gardenBody(regions.width, regions.body)...)
+	} else if m.workspace == wsPlayground {
+		lines = append(lines, m.playgroundSubmenu(regions.width)...)
+		lines = append(lines, m.playgroundBody(regions.width, regions.body)...)
 	} else {
 		for i := 0; i < regions.submenu+regions.body+regions.detail; i++ {
 			lines = append(lines, blank)
@@ -164,6 +167,8 @@ func (m Model) shellFooter(r shellRegions) []string {
 		status = "Local profiles"
 	case wsGarden:
 		status = m.gardenStatusLine()
+	case wsPlayground:
+		status = m.playgroundStatusLine()
 	}
 	statusStyle := seg(p.Muted, p.Surface, false)
 	if m.status != "" {
@@ -189,6 +194,9 @@ func (m Model) shellWhere() string {
 	if m.workspace == wsGarden {
 		return m.gardenWhere()
 	}
+	if m.workspace == wsPlayground {
+		return m.playgroundWhere()
+	}
 	if m.workspace != wsSettings {
 		return m.workspace.name()
 	}
@@ -204,6 +212,9 @@ func (m Model) shellFocusLabel() string {
 	}
 	if m.workspace == wsGarden && m.garden.api != nil && f == shellBody {
 		return m.gardenFocusLabel()
+	}
+	if m.workspace == wsPlayground && f != shellNav {
+		return m.playgroundFocusLabel()
 	}
 	if m.workspace == wsSettings {
 		switch f {

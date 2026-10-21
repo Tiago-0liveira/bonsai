@@ -46,7 +46,11 @@ const (
 )
 
 // settingChoice is one selectable value: label is shown, value is stored.
-type settingChoice struct{ label, value string }
+type settingChoice struct {
+	label, value string
+	// off is why the choice cannot be picked; it stays listed so the reason can be shown.
+	off string
+}
 
 // settingField is one row of a section. Machine fields write through set;
 // repository fields name the .bonsai.yaml key in repoKey and are written only
@@ -66,6 +70,11 @@ type settingField struct {
 	validate        func(string) error
 	open            func(Model) (Model, tea.Cmd) // kindLink: switches to where the setting lives
 	note            string                       // unavailable: what will deliver it
+	// apply replaces the plain write for a choice or toggle that needs more than a store: a consent, a refusal.
+	apply func(Model, string) (tea.Model, tea.Cmd)
+	// dyn lists the choices when they depend on state read at run time; helpFn is help that does too.
+	dyn    func(Model) []settingChoice
+	helpFn func(Model) string
 }
 
 type settingSection struct {
@@ -140,7 +149,7 @@ func configSettingByKey(key string) configSetting {
 }
 
 func boolChoices() []settingChoice {
-	return []settingChoice{{"On", "true"}, {"Off", "false"}}
+	return []settingChoice{{label: "On", value: "true"}, {label: "Off", value: "false"}}
 }
 
 func orDefault(v, def string) string {
@@ -160,7 +169,7 @@ func titleCase(s string) string {
 func choicesOf(values []string) []settingChoice {
 	out := make([]settingChoice, len(values))
 	for i, v := range values {
-		out[i] = settingChoice{titleCase(v), v}
+		out[i] = settingChoice{label: titleCase(v), value: v}
 	}
 	return out
 }
@@ -182,9 +191,9 @@ func repoToggle(id, label, key string, get func(*config.Config) bool) settingFie
 }
 
 func generalStartup() settingSection {
-	startup := []settingChoice{{"Last visited", ""}}
+	startup := []settingChoice{{label: "Last visited", value: ""}}
 	for ws := workspace(0); ws < workspaceCount; ws++ {
-		startup = append(startup, settingChoice{ws.name(), ws.key()})
+		startup = append(startup, settingChoice{label: ws.name(), value: ws.key()})
 	}
 	return settingSection{id: "startup", name: "Startup", fields: []settingField{
 		{
@@ -275,7 +284,7 @@ func generalRepository() settingSection {
 }
 
 func appearanceSections() []settingSection {
-	themeChoices := append([]settingChoice{{"Inherit", ""}}, choicesOf(theme.Presets())...)
+	themeChoices := append([]settingChoice{{label: "Inherit", value: ""}}, choicesOf(theme.Presets())...)
 	return []settingSection{
 		{id: "theme", name: "Theme", fields: []settingField{
 			{
@@ -313,7 +322,7 @@ func appearanceSections() []settingSection {
 		{id: "surface", name: "Surface shades", extra: swatchStrip, fields: []settingField{{
 			id: "contrast", label: "Surface contrast", scope: scopeMachine, kind: kindChoice,
 			help:    "Layered keeps the theme's stepped neutrals; Flat draws every surface in the base color.",
-			choices: []settingChoice{{"Layered neutrals", "layered"}, {"Flat", "flat"}},
+			choices: []settingChoice{{label: "Layered neutrals", value: "layered"}, {label: "Flat", value: "flat"}},
 			get:     func(m Model) string { return orDefault(m.work.Contrast, "layered") },
 			set:     func(p *config.Prefs, v string) { p.Contrast = v },
 			origin:  func(m Model) string { return personalOrDefault(m.work.Contrast != "") },
@@ -321,7 +330,7 @@ func appearanceSections() []settingSection {
 		{id: "icons", name: "Icons and glyphs", fields: []settingField{{
 			id: "icons", label: "Icons", scope: scopeMachine, kind: kindChoice,
 			help:    "ASCII fallback replaces box-drawing and symbol glyphs for fonts or terminals that lack them.",
-			choices: []settingChoice{{"Unicode", ""}, {"ASCII fallback", "ascii"}},
+			choices: []settingChoice{{label: "Unicode", value: ""}, {label: "ASCII fallback", value: "ascii"}},
 			get:     func(m Model) string { return m.work.AgentGlyphs },
 			set:     func(p *config.Prefs, v string) { p.AgentGlyphs = v },
 			origin:  func(m Model) string { return personalOrDefault(m.work.AgentGlyphs != "") },
@@ -329,7 +338,7 @@ func appearanceSections() []settingSection {
 		{id: "density", name: "Density", fields: []settingField{{
 			id: "density", label: "Density", scope: scopeMachine, kind: kindChoice,
 			help:    "Compact removes the blank row between settings rows.",
-			choices: []settingChoice{{"Comfortable", "comfortable"}, {"Compact", "compact"}},
+			choices: []settingChoice{{label: "Comfortable", value: "comfortable"}, {label: "Compact", value: "compact"}},
 			get:     func(m Model) string { return orDefault(m.work.Density, "comfortable") },
 			set:     func(p *config.Prefs, v string) { p.Density = v },
 			origin:  func(m Model) string { return personalOrDefault(m.work.Density != "") },
@@ -496,9 +505,7 @@ func agentSections() []settingSection {
 				open:    func(m Model) (Model, tea.Cmd) { return m.openAccounts(accounts.TabDefaults) },
 			},
 		}},
-		{id: "review", name: "Automatic review", fields: []settingField{
-			unavailable("auto_review", "Review pull requests", "Unavailable — arrives with Garden planning (plan 08)"),
-		}},
+		gardenReviewSection(),
 		{id: "issue_setup", name: "Issue setup", fields: []settingField{
 			unavailable("issue_setup", "Prepare agents from issues", "Unavailable — Garden issues (plan 07)"),
 		}},
@@ -509,7 +516,7 @@ func gardenAssistSection() settingSection {
 	var choices []settingChoice
 	for n := 1; n <= assist.MaxQuestions; n++ {
 		v := strconv.Itoa(n)
-		choices = append(choices, settingChoice{v, v})
+		choices = append(choices, settingChoice{label: v, value: v})
 	}
 	return settingSection{id: "assist", name: "AI drafting", fields: []settingField{
 		{

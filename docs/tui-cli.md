@@ -241,10 +241,10 @@ It does not touch the agent's terminal output or the status-bar separators.
 
 An opt-in preview of the redesigned TUI. The shell is a header with the Garden,
 Playground, Worktrees, Accounts and Settings tabs and a footer with the current
-workspace, focus, key hints and status. **Settings**, **Accounts** and **Garden
-setup/board** have bodies (see [Settings](#settings-in-the-preview),
-[Accounts](#accounts-in-the-preview) and [Garden setup](#garden-setup-in-the-preview));
-Playground and Worktrees remain placeholders. Garden reads the GitHub login and
+workspace, focus, key hints and status. **Settings**, **Accounts**, **Garden
+setup/board** and **Playground** have bodies (see [Settings](#settings-in-the-preview),
+[Accounts](#accounts-in-the-preview), [Garden setup](#garden-setup-in-the-preview)
+and [Playground](#playground-in-the-preview)); Worktrees remains a placeholder. Garden reads the GitHub login and
 repository setup state and verified approved work; Accounts loads agent profiles and usage the first time
 it opens. The last workspace is remembered per repository (see Settings). The default
 stays the current TUI (`--tui-layout legacy`), which keeps its own preferences
@@ -411,7 +411,13 @@ a text edit, `esc` cancels only that edit.
   question quality, evidence and output rules remain fixed. Restore defaults asks
   for confirmation and clears only AI drafting preferences. Session options
   override these defaults for that session and never save them.
-- **Agents**: "Account defaults" opens the Accounts workspace on Defaults. Other
+- **Agents**: "Account defaults" opens the Accounts workspace on Defaults.
+  **Garden review policy** configures the local review account, fixed enforced
+  read-only role, trigger, attempt scope and automatic run limit. Review defaults
+  off; enabling or changing its active account/trigger asks for local consent.
+  Unsupported accounts show a reason and cannot be selected. CI and high-finding
+  acceptance conditions are separate policy toggles. See the
+  [review guide](garden.md#read-only-verification-and-human-review). Other
   unavailable Garden and Agents rows explain which feature will add them.
 
 Scope and precedence: personal preferences live in
@@ -423,7 +429,8 @@ keeps its comments. Personal changes autosave in order. A failed save restores t
 last saved state and shows the error. Unknown fields in `state.json` are kept.
 
 Settings adds these `state.json` fields: `prefs.contrast`, `prefs.density`,
-`prefs.start_workspace`, `prefs.no_workspace_memory`, `prefs.garden_assist` and a per-repository
+`prefs.start_workspace`, `prefs.no_workspace_memory`, `prefs.garden_assist`,
+`prefs.garden_review` and a per-repository
 `workspaces` map keyed by the canonical local repository path (symlinks resolved).
 
 The startup workspace is the first of: the explicit startup workspace, the
@@ -636,3 +643,40 @@ at runtime. `go install github.com/Tiago-0liveira/bonsai@latest` and untagged
 `go build` keep the TUI/CLI but serve an explanatory placeholder at `/app`; to
 build the web app from source see [CONTRIBUTING.md](../CONTRIBUTING.md) and
 [development.md](development.md).
+
+#### Playground in the preview
+
+Playground lists sessions across verified worktrees of the current repository,
+including manual sessions and retained ended sessions. Enter its body, then use
+`enter` to request terminal control or `v` to observe. `ctrl+]` returns keyboard
+control to Bonsai. In Control, every other key belongs to the agent. See the
+[terminal behavior](agents.md) and the footer for the current input owner.
+
+Session details and Playground → Usage show **remaining account capacity** with
+Accounts → Usage's segmented meters, percentage left and capacity colors.
+ASCII mode uses `#`/`.` segments. These views use stored snapshots; refresh usage
+from Accounts.
+
+Select a session and press `c` for changes or `r` for **Human review**. The review
+screen shows the independent CI status and freshness, report revision, reviewed
+commit/base, findings and prior acceptance decisions. Manual sessions without a
+verified implementation attempt explain why review actions are unavailable.
+
+| Key in Human review | Action |
+|---|---|
+| `↑`/`↓`, `pgup`/`pgdown` | Scroll evidence and history |
+| `n` / `p` | Next / previous finding |
+| `[` / `]` | Newer / older report revision |
+| `r` | Refresh reports, policy and CI independently |
+| `t` | Confirm one local read-only reviewer run |
+| `d` | Enter and confirm a dismissal reason for this finding/revision |
+| `f` | Open the linked Issue's existing local implementation attempt form |
+| `a` | Preview acceptance, unresolved findings, CI and policy conditions |
+| `esc` | Return to sessions |
+
+Acceptance first shows a scrollable preview; `enter` continues through each
+required acknowledgment and a final cancel-first confirmation. `esc` cancels.
+Acceptance records a human decision; it does not merge, close an Issue or remove
+a worktree. New commits leave earlier reviews and acceptance visible as older
+provenance. Full behavior and automatic trigger limits are in the
+[Garden review guide](garden.md#read-only-verification-and-human-review).

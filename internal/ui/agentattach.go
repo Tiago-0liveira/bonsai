@@ -213,8 +213,8 @@ func (m *Model) syncAgentView(cmd tea.Cmd) tea.Cmd {
 // after the header rows.
 func (m Model) agentAreaSize() (w, rows int) {
 	if m.layoutKind == LayoutRedesign {
-		// The redesign has no Agents tab: the one terminal is the Garden planner's.
-		return m.plannerAreaSize()
+		// The redesign has no Agents tab: the one terminal belongs to the workspace in view.
+		return m.terminalAreaSize()
 	}
 	pw, ph := m.agentPaneSize()
 	lay := m.agentsLayout(pw, ph)

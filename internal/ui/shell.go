@@ -101,6 +101,16 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 		return m, nil
 	}
 	var detach tea.Cmd
+	if m.workspace == wsPlayground && m.pg.searching {
+		m.pg.searching = false // a half-typed search never outlives the focus that owned it
+	}
+	var release tea.Cmd
+	if m.workspace == wsPlayground {
+		// Leaving closes the observed or controlled attachment; the holder keeps running.
+		release = m.pgRelease()
+		m.pgReviewClose()
+		m.pgChangesClose() // the last good data stays for the next visit
+	}
 	if m.workspace == wsGarden {
 		// A read that lands after the user left must not reopen a step for them.
 		m.garden.abandon()
@@ -115,6 +125,15 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	if detach != nil {
 		cmds = append(cmds, detach)
 	}
+	if release != nil {
+		cmds = append(cmds, release)
+	}
+	if ws == wsPlayground {
+		// One workspace owns the live attachment: a Garden terminal left over is released first.
+		if rel := m.pgTakeOver(); rel != nil {
+			cmds = append(cmds, rel)
+		}
+	}
 	if ws == wsAccounts && m.acct.present && !m.acct.started {
 		m.acct.started = true
 		cmds = append(cmds, m.acct.model.Init())
@@ -124,6 +143,11 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 		var load tea.Cmd
 		m, load = m.gardenLoadStatus()
 		cmds = append(cmds, load)
+	}
+	if ws == wsPlayground {
+		var read tea.Cmd
+		m, read = m.playgroundEnter()
+		cmds = append(cmds, read)
 	}
 	if !m.work.NoWorkspaceMemory {
 		m.wsGen++
@@ -173,6 +197,10 @@ func (m Model) currentShellFocus() shellFocus {
 	if m.modal != nil {
 		return shellDialog
 	}
+	// Typing into the Playground's agent: the shell never steals a key.
+	if m.pgTerminalMode() {
+		return shellInput
+	}
 	// A text field, dropdown or confirmation inside Accounts takes every key,
 	// so typing a name can never quit or jump workspaces.
 	if m.workspace == wsAccounts && m.shellFocus == shellBody && m.acct.present && m.acct.model.Capturing() {
@@ -209,10 +237,22 @@ func shellGeometry(width, height, submenu, detail int) (shellRegions, bool) {
 // shellUpdate is the redesigned shell's Update: it owns only sizing, the
 // palette/help dialogs and workspace selection, and starts no domain work.
 func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+	nm, cmd := m.shellUpdateMsg(msg)
+	// Like the legacy Agents tab, the Playground reconciles its observed session after every update, so
+	// selection, list refresh and focus changes need no per-key attach code.
+	if mm, ok := nm.(Model); ok && (mm.workspace == wsPlayground || mm.pg.own) {
+		sync := mm.pgSync()
+		return mm, tea.Batch(cmd, sync)
+	}
+	return nm, cmd
+}
+
+func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height, m.ready = msg.Width, msg.Height, true
 		m.gardenBoardVisible()
+		m.playgroundReconcile()
 		m.gardenClampDocument()
 		m.gardenClampDraftDocument()
 		if m.modal != nil {
@@ -225,7 +265,7 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planClamp()
 		// A confirmation that froze other terminal dimensions is read again, so it never starts under old ones.
 		m, launchCmd := m.gardenLaunchResize()
-		if m.plannerSessionShown() && m.agents.view.term != nil {
+		if m.terminalShown() && m.agents.view.term != nil {
 			// The terminal keeps the body's size: its viewport now, the agent's own size once the resize settles.
 			w, rows := m.agentAreaSize()
 			m.agents.view.term.SetViewport(w, rows)
@@ -235,6 +275,12 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modals.CancelMsg:
 		m.modal = nil
 		m.set.pending = nil
+		m.set.revPending = nil
+		m.pg.rev.action = pgReviewAction{}
+		m.pg.takeFor = ""
+		if msg.Kind == modals.KindPlaygroundLinkIssue || msg.Kind == modals.KindPlaygroundLinkConfirm || msg.Kind == modals.KindPlaygroundLinkReplace {
+			m.pg.link = pgLinkFlow{} // nothing was written; the screen stays as it was
+		}
 		return m, nil
 	case modals.SubmitMsg:
 		kind := msg.Kind
@@ -248,8 +294,22 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.confirmRepoWrite()
 		case modals.KindGardenAssistRestore:
 			return m.editPrefs(func(p *config.Prefs) { p.GardenAssist = nil })
+		case modals.KindGardenReviewEnable:
+			return m.reviewConsentConfirmed()
+		case modals.KindPlaygroundReviewRetry, modals.KindPlaygroundReviewDismiss, modals.KindPlaygroundReviewDismissAsk, modals.KindPlaygroundReviewAcceptAsk:
+			return m.pgReviewSubmit(kind, msg.Value)
+		case modals.KindPlaygroundTakeover:
+			return m.pgTakeConfirmed()
+		case modals.KindPlaygroundLinkIssue:
+			return m.pgLinkIssueEntered(msg.Value), nil
+		case modals.KindPlaygroundLinkConfirm:
+			return m.pgLinkConfirmed(false)
+		case modals.KindPlaygroundLinkReplace:
+			return m.pgLinkConfirmed(true)
 		}
 		return m, nil
+	case settingsReviewAccountsMsg:
+		return m.onSettingsReviewAccounts(msg), nil
 	case settingsSavedMsg:
 		return m.onSettingsSaved(msg), nil
 	case workspaceSavedMsg:
@@ -260,9 +320,9 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case configSavedMsg:
 		return m.onRepoConfigSaved(msg), nil
 	case tea.KeyMsg:
-		// Typing into the planner comes before everything else: every key but Ctrl+] belongs to the agent, so
-		// quit, help, the palette and workspace keys cannot fire while it is focused.
-		if m.plannerTerminalMode() {
+		// Typing into an agent terminal (the planner's or the Playground's) comes before everything else: every
+		// key but Ctrl+] belongs to the agent, so quit, help, the palette and workspace keys cannot fire.
+		if m.terminalTypingMode() {
 			return m.agentTerminalKey(msg)
 		}
 		if m.modal != nil {
@@ -271,6 +331,9 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m.shellKey(msg)
+	}
+	if handled, nm, cmd := m.playgroundMsg(msg); handled {
+		return nm, cmd
 	}
 	m, forwarded := m.gardenPlannerForward(msg)
 	m, launchFwd := m.gardenLaunchForward(msg)
@@ -322,6 +385,8 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.workspace == wsAccounts && (msg.String() == "enter" || msg.String() == "down"):
 		m.shellFocus = shellBody
 		return m, nil
+	case m.workspace == wsPlayground && (msg.String() == "enter" || msg.String() == "down"):
+		return m.playgroundEnterBody()
 	case key.Matches(msg, m.keys.AgentAccounts):
 		// The Agents tab's profiles shortcut lands on the same workspace.
 		return m.openAccounts(accounts.TabOverview)
@@ -346,10 +411,10 @@ func altDigitWorkspace(msg tea.KeyMsg, fallback workspace) workspace {
 	return fallback
 }
 
-// bodyKey routes a key to the focused workspace body. Settings, Accounts and
-// Garden have one.
+// bodyKey routes a key to the focused workspace body. Settings, Accounts,
+// Garden and Playground have one.
 func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.workspace != wsSettings && m.workspace != wsAccounts && m.workspace != wsGarden {
+	if m.workspace != wsSettings && m.workspace != wsAccounts && m.workspace != wsGarden && m.workspace != wsPlayground {
 		return m, nil
 	}
 	if m.shellFocus == shellBody && m.currentShellFocus() == shellBody {
@@ -362,18 +427,21 @@ func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.accountsKey(msg)
 	case wsGarden:
 		return m.gardenKey(msg)
+	case wsPlayground:
+		return m.playgroundKey(msg)
 	}
 	nm, cmd := m.settingsKey(msg)
 	// Moving onto the Garden category is when Settings first needs its status.
-	wm, load := nm.(Model).gardenWarm()
+	wm, load := nm.(Model).settingsWarm()
 	return wm, tea.Batch(cmd, load)
 }
 
 const (
-	paletteGoPrefix       = "Go to "
-	paletteSettingsPrefix = "Settings: "
-	paletteAccountsPrefix = "Accounts: "
-	paletteEditKeys       = paletteSettingsPrefix + "Edit key bindings"
+	paletteGoPrefix         = "Go to "
+	paletteSettingsPrefix   = "Settings: "
+	paletteAccountsPrefix   = "Accounts: "
+	palettePlaygroundPrefix = "Playground: "
+	paletteEditKeys         = paletteSettingsPrefix + "Edit key bindings"
 )
 
 // paletteTarget is where a palette entry leads: a workspace and, for Settings
@@ -386,6 +454,9 @@ type paletteTarget struct {
 	section      accounts.Tab
 	hasSection   bool
 	gardenAction string
+	// playground opens a Playground submenu entry.
+	playground    pgSub
+	hasPlayground bool
 }
 
 // paletteTargets lists every entry in palette order with its target.
@@ -408,6 +479,9 @@ func paletteTargets() (labels []string, targets map[string]paletteTarget) {
 	add(paletteEditKeys, paletteTarget{ws: wsSettings, category: keys, hasCategory: true})
 	add(paletteAccountsPrefix+"Usage", paletteTarget{ws: wsAccounts, section: accounts.TabUsage, hasSection: true})
 	add(paletteAccountsPrefix+"Defaults", paletteTarget{ws: wsAccounts, section: accounts.TabDefaults, hasSection: true})
+	for sub := pgSub(0); sub < pgSubCount; sub++ {
+		add(palettePlaygroundPrefix+pgSubNames[sub], paletteTarget{ws: wsPlayground, playground: sub, hasPlayground: true})
+	}
 	add("Garden: Board", paletteTarget{ws: wsGarden, gardenAction: "board"})
 	add("Garden: Table", paletteTarget{ws: wsGarden, gardenAction: "table"})
 	add("Garden: Search approved work", paletteTarget{ws: wsGarden, gardenAction: "search"})
@@ -443,6 +517,10 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 		return m.openAccounts(t.section)
 	}
 	m, cmd := m.selectWorkspace(t.ws)
+	if t.hasPlayground {
+		m.shellFocus = shellBody
+		return m.playgroundSetSub(t.playground), cmd
+	}
 	if t.gardenAction != "" {
 		m.shellFocus = shellBody
 		if m.garden.hasStatus && m.garden.status.Caps.Read {
@@ -487,7 +565,7 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 	if t.hasCategory {
 		m.shellFocus = shellBody
 		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr}
-		m, load := m.gardenWarm()
+		m, load := m.settingsWarm()
 		return m, tea.Batch(cmd, load)
 	}
 	return m, cmd
@@ -523,6 +601,9 @@ func (m Model) shellHints() []shellHint {
 	if m.currentShellFocus() == shellInput && m.workspace == wsAccounts {
 		return m.accountsHints()
 	}
+	if m.currentShellFocus() == shellInput && m.workspace == wsPlayground {
+		return m.playgroundHints()
+	}
 	if m.currentShellFocus() == shellInput && m.workspace == wsGarden {
 		if m.gardenScreen() == scrDrafts {
 			return m.gardenDraftsHints()
@@ -552,6 +633,8 @@ func (m Model) shellHints() []shellHint {
 			h = append(h, shellHint{"enter/↓", "open settings"})
 		case wsAccounts:
 			h = append(h, shellHint{"enter/↓", "open accounts"})
+		case wsPlayground:
+			h = append(h, shellHint{"enter/↓", "open sessions"})
 		}
 	}
 	if m.currentShellFocus() == shellBody && m.workspace == wsSettings {
@@ -562,6 +645,9 @@ func (m Model) shellHints() []shellHint {
 	}
 	if m.currentShellFocus() == shellBody && m.workspace == wsGarden {
 		h = append(h, m.gardenHints()...)
+	}
+	if m.currentShellFocus() == shellBody && m.workspace == wsPlayground {
+		h = append(h, m.playgroundHints()...)
 	}
 	h = append(h,
 		shellHint{m.keys.Palette.Help().Key, "commands"},
