@@ -49,7 +49,7 @@ func TestAssistReviewDefaultsAcceptUntouchedAndNothingAppliesBeforeE(t *testing.
 	before := e.content()
 	out := view(m)
 	mustContain(t, "review", out, "~ Summary", "= Constraints", "~ Requirements", "+ Exports finish within ten seconds.", "Note: Check the CSV size.",
-		"2 open questions added for unanswered questions", "1 suggestion dropped", "Decision: accept the proposal")
+		"2 open questions added for unanswered questions", "1 item dropped", "Decision: accept the proposal")
 	mustFit(t, "review", m)
 	// Moving and deciding changes no text.
 	m = apress(t, m, "down", "down", "k", "up", "a")
@@ -408,7 +408,9 @@ func TestAssistReviewOpenRoundIsLocalAndFeedsTheNextDraft(t *testing.T) {
 	if len(rig.garden.AssistQuestionsRequests) != asked {
 		t.Fatal("o made an AI call")
 	}
-	m = apress(t, m, "enter")
+	if s.zone != zoneText || !s.ta.Focused() {
+		t.Fatalf("open round is not ready to type: zone %d", s.zone)
+	}
 	m = typed(t, m, "The requester")
 	m = apress(t, m, "pgdown")
 	m = typed(t, m, "March")

@@ -203,8 +203,12 @@ func DecodeDraft(raw []byte, in Input) (Proposal, error) {
 		return Proposal{}, err
 	}
 	answers := map[string]Answer{}
+	latestAnswers := map[string]string{}
 	for _, a := range in.Answers {
 		answers[a.QuestionID] = a
+		if key := normalized(cleanItem(a.Question)); key != "" {
+			latestAnswers[key] = a.QuestionID
+		}
 	}
 	answered := func(id string) bool {
 		a, ok := answers[id]
@@ -273,7 +277,10 @@ func DecodeDraft(raw []byte, in Input) (Proposal, error) {
 		p.Open = append(p.Open, t)
 	}
 	for _, a := range in.Answers {
-		if answered(a.QuestionID) {
+		// Local open-question rounds repeat the draft's lines under new IDs. Once
+		// answered, an earlier skip must not recreate the resolved blocker on every
+		// refinement. Existing lines still require the resolved mapping above.
+		if answered(a.QuestionID) || answered(latestAnswers[normalized(cleanItem(a.Question))]) {
 			continue
 		}
 		t := cleanItem(a.Question)

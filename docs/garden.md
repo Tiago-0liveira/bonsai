@@ -232,7 +232,7 @@ preview and conflict handling. The existing Issue's title and type are unchanged
 | Answer panel | Three zones, rail, options and text: `tab` / `shift+tab` cycle them; `pgdown` / `pgup` select the next / previous question from any zone; `ctrl+up` / `ctrl+down` scroll a long question; `ctrl+s` drafts; `esc` steps back one zone |
 | Answer panel options | `↑` / `↓` move; `space` or `enter` select; `1`–`9` select that row. Selecting moves focus to the text field, except for Skip |
 | Answer panel text | Type freely. Digits are text, and `q` never quits |
-| Review | `↑` / `↓` select a section; `a` accepts its proposal; `k` keeps your text; `A` accepts eligible sections; `e` applies choices and opens the editor; `r` opens feedback (`enter` applies choices and requests refinement, `esc` cancels feedback); `m` applies choices and asks more questions; `esc` returns to Questions or Setup without applying choices |
+| Review | `↑` / `↓` select a section; `a` accepts its proposal; `k` keeps your text; `A` accepts eligible sections; `e` applies choices and opens the editor; `r` opens feedback (`enter` applies choices and requests refinement, `esc` cancels feedback); `m` applies choices and asks more questions; `o` applies choices and opens a local answer round; `esc` returns to Questions or Setup without applying choices |
 | Setup outside description / Questions rail | `p` reopens the last proposal, when one exists |
 | Setup outside description / Questions rail / Review outside feedback | `R` retries a failed request with the same inputs and a new request ID |
 
@@ -253,7 +253,7 @@ request. Unedited, changed sections default to accepting the proposal. Sections
 edited meanwhile, or proposals that would empty a written section, default to
 keeping your text. `A` skips both of those cases; only an explicit `a` accepts
 them. Choosing `a`, `k` or `A` records decisions; `e`, submitting `r` feedback or
-`m` applies them to the in-memory editor. Refinement and further questions send
+`m` or `o` applies them to the in-memory editor. Refinement and further questions send
 that working draft and all earlier answers. Nothing is saved until the normal save.
 
 Review lists draft suggestions in a `? Suggestions N` row. `↑` / `↓` move through
@@ -265,7 +265,10 @@ Skipped, “I don't know” and unanswered questions are carried into **Open que
 and keep gate one blocked. The draft may also add at most 3 new open questions; extras
 are dropped. When it adds any, review shows how many and `o` opens an answer round for
 the unresolved open questions (at most 10, built locally, with no AI call). Answer them
-there, then request a draft; or resolve them deliberately in the editor. Extra
+there, then request a draft; or resolve them deliberately in the editor. These rounds
+open with the text field focused. An answer to a repeated open question supersedes
+its earlier skipped or unknown state; once the draft resolves that question, later
+refinement keeps it resolved. Extra
 specification sections are preserved, and assistant notes are shown without being saved.
 
 Before the first request, Setup names the chosen provider/account and discloses

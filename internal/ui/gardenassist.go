@@ -1163,14 +1163,18 @@ func (m Model) onAssistQuestions(msg assistQuestionsMsg) (Model, tea.Cmd) {
 	return m.assistReplyBackground(s), nil
 }
 
-// resetPanel shows the selected question's answer panel from the rail, after the questions or the selection changed.
+// resetPanel starts a round on the rail unless its first question is ready for free text.
 func (s *assistSession) resetPanel() {
 	s.taFor = ""
+	s.qScroll = 0
 	s.setZone(zoneRail)
 	s.loadEditor()
 	s.optCur = 0
 	if q, ok := s.current(); ok {
 		s.optCur = selectedRow(q, s.answer(q))
+		if len(q.Suggestions) == 0 {
+			s.setZone(zoneText)
+		}
 	}
 }
 

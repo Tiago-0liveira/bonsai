@@ -142,6 +142,20 @@ func TestAssistQuestionWithoutSuggestionsOpensOnTheTextField(t *testing.T) {
 	}
 }
 
+func TestAssistFirstQuestionWithoutSuggestionsIsReadyToType(t *testing.T) {
+	m, rig := assistEnv(t, config.Prefs{}, 80, 24, true)
+	rig.garden.AssistQuestionsView.Set.Questions[0].Suggestions = nil
+	m = askQuestions(t, newIdea(t, m, "Slow export"))
+	s := assistSession0(m)
+	if s.zone != zoneText || !s.ta.Focused() {
+		t.Fatalf("question without suggestions opened in zone %d", s.zone)
+	}
+	m = typed(t, m, "The requester")
+	if got := s.answerList()[0]; got.State != assist.Answered || got.Text != "The requester" {
+		t.Fatalf("answer %+v", got)
+	}
+}
+
 func TestAssistPageKeysMoveQuestionFromAnyZone(t *testing.T) {
 	m, s := answerEnv(t, config.Prefs{}, 120, 35)
 	m = apress(t, m, "pgdown")

@@ -312,6 +312,52 @@ func TestSkippedOpenLineIsNotDuplicated(t *testing.T) {
 	}
 }
 
+func TestOpenRoundAnswerSettlesEarlierUnansweredQuestion(t *testing.T) {
+	for _, state := range []AnswerState{Skipped, Unknown, Open} {
+		t.Run(string(state), func(t *testing.T) {
+			in := Input{
+				Draft: spec.Render(spec.Spec{OpenQuestions: "- Which platform?"}),
+				Answers: []Answer{
+					{QuestionID: "r1q1", Question: "Which platform?", State: state},
+					{QuestionID: "o2q1", Question: "Which platform?", State: Answered, Text: "Desktop"},
+				},
+			}
+			doc := minimalDraft()
+			// A later answer alone cannot silently remove an existing draft line.
+			got, err := DecodeDraft(encoded(t, doc), in)
+			if err != nil || len(approve.OpenQuestions(got.Spec(nil).OpenQuestions)) != 1 {
+				t.Fatalf("unresolved existing question lost: %+v, %v", got, err)
+			}
+			doc["resolved"] = []any{map[string]any{"existing_id": "e1", "by_question_id": "o2q1"}}
+			got, err = DecodeDraft(encoded(t, doc), in)
+			if err != nil || got.Carried != 0 || len(approve.OpenQuestions(got.Spec(nil).OpenQuestions)) != 0 {
+				t.Fatalf("answered open question came back: %+v, %v", got, err)
+			}
+			// Refining once more must not resurrect the historical skip either.
+			in.Draft = spec.Render(got.Spec(nil))
+			got, err = DecodeDraft(encoded(t, minimalDraft()), in)
+			if err != nil || got.Carried != 0 || len(approve.OpenQuestions(got.Spec(nil).OpenQuestions)) != 0 {
+				t.Fatalf("refinement resurrected the question: %+v, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestOpenRoundWithoutAnswerKeepsEarlierBlocker(t *testing.T) {
+	for _, state := range []AnswerState{Skipped, Unknown, Open, Answered} {
+		t.Run(string(state), func(t *testing.T) {
+			in := Input{Answers: []Answer{
+				{QuestionID: "r1q1", Question: "Which platform?", State: Skipped},
+				{QuestionID: "o2q1", Question: "Which platform?", State: state},
+			}}
+			got, err := DecodeDraft(encoded(t, minimalDraft()), in)
+			if err != nil || got.Carried != 1 || !reflect.DeepEqual(approve.OpenQuestions(got.Spec(nil).OpenQuestions), []string{"Which platform?"}) {
+				t.Fatalf("unanswered open round lost its blocker: %+v, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestChoiceAloneIsAnswered(t *testing.T) {
 	doc := minimalDraft()
 	doc["requirements"] = []any{item("Support desktop export.", "answered", "r1q1")}

@@ -328,7 +328,9 @@ an explicit confirmation records one verified approval and moves the same Issue
 from Drafts to Approved work. It needs Write access and starts no agent, worktree or
 pull request. See the [Garden guide](garden.md#drafts) and
 [gate one](garden.md#validate-a-specification-gate-one). AI-assisted questions are
-answered in a per-question panel (choose, write, don't know or skip); see
+answered in a per-question panel (choose, write, don't know or skip). Questions
+without suggestions focus the answer field immediately. In review, `o` applies
+decisions and opens a local round to answer unresolved questions; see
 [AI draft assistance](garden.md#elaborate-a-draft-with-ai).
 
 In an opened Approved Issue, `p` opens its read-only planner. It verifies the

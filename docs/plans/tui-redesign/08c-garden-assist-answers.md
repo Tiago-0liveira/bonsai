@@ -1,6 +1,6 @@
 # Plan 08c — Assist answer UX and blocker fixes
 
-Status: implemented (C1–C4). Prerequisite: [08b](08b-garden-draft-assist.md) (implemented).
+Status: implemented (C1–C4).
 Trigger: Issue #115. After answering every question, validation still listed 9 open
 questions, and nobody had skipped any.
 
@@ -140,6 +140,9 @@ Notes:
   - unconfirmed suggestions never render, and confirmed ones render in their section;
   - `approve.OpenQuestions` on the rendered output of the #115 shape lists only real
     blockers.
+  - an `o` answer round can resolve an earlier skipped, unknown or open question;
+    subsequent refinement does not recreate the old blocker, and an unanswered
+    repeat still blocks.
 - **C2:**
   - digits in the text zone are typed as text;
   - `1`–`9` and `space` in options select a row;
@@ -147,6 +150,7 @@ Notes:
   - Write my own with an empty answer stays open;
   - `pgdown` and `pgup` work from the text zone;
   - `q` never quits from text;
+  - the first question of a round without suggestions accepts text immediately;
   - rendering at 80×24 and 120×35 in Unicode and ASCII.
 - **C3:**
   - toggling a suggestion changes the applied section;
@@ -174,10 +178,8 @@ go build ./...
 - [x] At most 3 new open questions come from the AI, and they are answerable with `o`.
 - [x] Skipped and unknown answers still block gate one; no gate rule changed.
 
-## Decisions (recommended first)
+## Decisions
 
-- **D1 Unconfirmed suggestions:** discard them, or keep them as a non-blocking
-  "Suggestions" extra section.
-- **D2 AI open questions cap:** 3, or let it be set in Settings.
-- **D3 `o` round:** local and free (no suggestions), or an AI call that also proposes
-  suggestions.
+- **D1 Unconfirmed suggestions:** discard them.
+- **D2 AI open questions cap:** fixed at 3.
+- **D3 `o` round:** local and free, without suggestions or an AI call.

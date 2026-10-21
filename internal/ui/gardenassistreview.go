@@ -385,7 +385,7 @@ func (m Model) gsAssistReview(s *assistSession, width, rows int) []string {
 		counts = append(counts, fmt.Sprintf("%d open question%s added for unanswered questions", pr.Carried, plural(pr.Carried)))
 	}
 	if pr.Dropped > 0 {
-		counts = append(counts, fmt.Sprintf("%d suggestion%s dropped", pr.Dropped, plural(pr.Dropped)))
+		counts = append(counts, fmt.Sprintf("%d item%s dropped", pr.Dropped, plural(pr.Dropped)))
 	}
 	if len(counts) > 0 {
 		status = strings.Join(counts, " · ") + " · " + status
