@@ -455,7 +455,8 @@ func (m Model) onConfigSaved(msg configSavedMsg) (tea.Model, tea.Cmd) {
 		m.status += " (key conflict ignored: " + cols[0] + ")"
 	}
 	// Recompute metrics/status cheaply (gh results come from cache when fresh).
-	return m, loadWorktrees(m.repoDir, false)
+	cmd := m.readWorktrees(false)
+	return m, cmd
 }
 
 // applyConfigLive restyles every component and rebuilds keybindings from the

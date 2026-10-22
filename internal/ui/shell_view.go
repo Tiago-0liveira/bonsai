@@ -18,14 +18,14 @@ func (m Model) shellView() string {
 		return "Loading bonsai…"
 	}
 	submenu := 0
-	if m.workspace == wsSettings || m.workspace == wsGarden || m.workspace == wsPlayground {
+	if m.workspace == wsSettings || m.workspace == wsGarden || m.workspace == wsPlayground || m.workspace == wsWorktrees {
 		submenu = settingsSubmenuRows
 	}
 	regions, ok := shellGeometry(m.width, m.height, submenu, 0)
 	if !ok {
 		return m.shellResizeNotice()
 	}
-	if m.modal != nil {
+	if m.modal != nil && !(m.workspace == wsWorktrees && m.agentPaneModal()) {
 		return clampHeight(truncateToWidth(m.modal.View(), m.width), m.height)
 	}
 
@@ -43,6 +43,9 @@ func (m Model) shellView() string {
 	} else if m.workspace == wsPlayground {
 		lines = append(lines, m.playgroundSubmenu(regions.width)...)
 		lines = append(lines, m.playgroundBody(regions.width, regions.body)...)
+	} else if m.workspace == wsWorktrees {
+		lines = append(lines, m.worktreesSubmenu(regions.width)...)
+		lines = append(lines, m.worktreesBody(regions.width, regions.body)...)
 	} else {
 		for i := 0; i < regions.submenu+regions.body+regions.detail; i++ {
 			lines = append(lines, blank)
@@ -161,6 +164,8 @@ func (m Model) shellFooter(r shellRegions) []string {
 	focus := seg(p.Warning, p.Surface, true).Render(" FOCUS: " + m.shellFocusLabel())
 	status := "preview · shell only"
 	switch m.workspace {
+	case wsWorktrees:
+		status = m.worktreesStatusLine()
 	case wsSettings:
 		status = "Local preferences"
 	case wsAccounts:
@@ -188,6 +193,9 @@ func (m Model) shellFooter(r shellRegions) []string {
 // shellWhere is the footer's location: the workspace, and for Settings the
 // category and section the cursor is in.
 func (m Model) shellWhere() string {
+	if m.workspace == wsWorktrees {
+		return m.worktreesWhere()
+	}
 	if m.workspace == wsAccounts {
 		return m.accountsWhere()
 	}
@@ -207,6 +215,19 @@ func (m Model) shellWhere() string {
 // and marks a text edit, matching the design's "Settings / Appearance".
 func (m Model) shellFocusLabel() string {
 	f := m.currentShellFocus()
+	if m.workspace == wsWorktrees && f != shellNav {
+		if m.worktreesTerminalShown() && !m.agentOverlayOpen() && m.agentTerminalMode() {
+			return "Agent input"
+		}
+		if m.wt.menu {
+			return "Worktrees / Submenu"
+		}
+		label := "Worktrees / " + wtSubNames[m.wt.sub]
+		if m.focus == focusTerminal {
+			label += " / " + strings.TrimSpace(tabLabel(m.rightTab, true))
+		}
+		return label
+	}
 	if m.workspace == wsAccounts {
 		return m.accountsFocusLabel(f)
 	}

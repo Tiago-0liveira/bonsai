@@ -183,18 +183,12 @@ func TestShellTabsAllVisibleInOrder(t *testing.T) {
 	}
 }
 
-func TestShellBodyIsEmpty(t *testing.T) {
+func TestShellWorktreesHasSubmenus(t *testing.T) {
 	m := sized(t, shellModel(t, config.Prefs{}, nil), 80, 24)
-	for ws := workspace(0); ws < workspaceCount; ws++ {
-		if ws == wsSettings || ws == wsAccounts || ws == wsGarden || ws == wsPlayground {
-			continue // the workspaces with a body so far
-		}
-		m.workspace = ws
-		lines := strings.Split(ansi.Strip(m.View()), "\n")
-		for i, l := range lines[shellHeaderRows : len(lines)-shellFooterRows] {
-			if strings.TrimSpace(l) != "" {
-				t.Errorf("%s body line %d not empty: %q", ws.name(), i, l)
-			}
+	m.workspace = wsWorktrees
+	for _, name := range wtSubNames {
+		if !strings.Contains(ansi.Strip(m.View()), name) {
+			t.Errorf("missing submenu %s", name)
 		}
 	}
 }

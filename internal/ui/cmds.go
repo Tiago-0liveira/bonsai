@@ -36,6 +36,7 @@ type metricsMsg struct {
 }
 
 type logMsg struct {
+	path    string
 	content string
 	err     error
 }
@@ -91,6 +92,7 @@ type prMapMsg struct {
 
 // prDetailMsg carries a fully-loaded PR for the PR detail tab.
 type prDetailMsg struct {
+	number int
 	detail gh.PRDetail
 	err    error
 }
@@ -98,6 +100,7 @@ type prDetailMsg struct {
 // checksMsg carries a worktree's PR CI checks + rollup for the row badge and the
 // PR tab checks section.
 type checksMsg struct {
+	err    error
 	path   string
 	number int
 	checks []gh.Check
@@ -106,12 +109,14 @@ type checksMsg struct {
 
 // statusMsg carries a worktree's working-tree change counts for row badges.
 type statusMsg struct {
+	err     error
 	path    string
 	summary git.StatusSummary
 }
 
 // activityMsg carries a worktree's HEAD commit time (for sort-by-activity).
 type activityMsg struct {
+	err  error
 	path string
 	unix int64
 }
@@ -161,7 +166,7 @@ func loadMetrics(path, branch, upstream string) tea.Cmd {
 func loadLog(path string) tea.Cmd {
 	return func() tea.Msg {
 		out, err := git.Log(path)
-		return logMsg{content: out, err: err}
+		return logMsg{path: path, content: out, err: err}
 	}
 }
 
@@ -387,7 +392,7 @@ func fetchPRs(repoDir string, cache *gh.Cache, force bool) tea.Cmd {
 func loadPRDetail(repoDir string, number int) tea.Cmd {
 	return func() tea.Msg {
 		d, err := gh.ViewPR(repoDir, number)
-		return prDetailMsg{detail: d, err: err}
+		return prDetailMsg{number: number, detail: d, err: err}
 	}
 }
 
@@ -397,7 +402,7 @@ func loadChecks(repoDir string, cache *gh.Cache, path string, number int, force 
 	return func() tea.Msg {
 		checks, err := cache.Checks(repoDir, number, force)
 		if err != nil {
-			return checksMsg{path: path, number: number}
+			return checksMsg{path: path, number: number, err: err}
 		}
 		return checksMsg{path: path, number: number, checks: checks, rollup: gh.Rollup(checks)}
 	}
@@ -423,16 +428,16 @@ func loadRuns(repoDir, path, branch string) tea.Cmd {
 // loadStatus reports a worktree's working-tree change counts.
 func loadStatus(path string) tea.Cmd {
 	return func() tea.Msg {
-		s, _ := git.StatusSummaryOf(path)
-		return statusMsg{path: path, summary: s}
+		s, err := git.StatusSummaryOf(path)
+		return statusMsg{path: path, summary: s, err: err}
 	}
 }
 
 // loadActivity fetches a worktree's HEAD commit time for sort-by-activity.
 func loadActivity(path string) tea.Cmd {
 	return func() tea.Msg {
-		u, _ := git.LastCommitUnix(path)
-		return activityMsg{path: path, unix: u}
+		u, err := git.LastCommitUnix(path)
+		return activityMsg{path: path, unix: u, err: err}
 	}
 }
 
@@ -600,14 +605,16 @@ func loadCommitPreview(path string) tea.Cmd {
 // Each section carries an OK flag so a single failure (e.g. no commits yet)
 // doesn't blank the rest.
 type inspectorData struct {
-	status   git.StatusSummary
-	commit   git.HeadCommit
-	commitOK bool
-	diskKB   int64
-	diskOK   bool
-	stashes  int
-	files    []git.DiffFile // diff vs base (empty for the main worktree)
-	base     string
+	status      git.StatusSummary
+	statusKnown bool
+	statusErr   string
+	commit      git.HeadCommit
+	commitOK    bool
+	diskKB      int64
+	diskOK      bool
+	stashes     int
+	files       []git.DiffFile // diff vs base (empty for the main worktree)
+	base        string
 }
 
 // inspectorMsg carries the loaded inspector data for a worktree path, used to
@@ -630,6 +637,9 @@ func loadInspector(path, base string) tea.Cmd {
 			defer wg.Done()
 			if s, err := git.StatusSummaryOf(path); err == nil {
 				d.status = s
+				d.statusKnown = true
+			} else {
+				d.statusErr = err.Error()
 			}
 		}()
 		go func() {
@@ -667,12 +677,14 @@ func loadInspector(path, base string) tea.Cmd {
 
 // tickProc schedules the next process-output refresh.
 func tickProc() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return procTickMsg{} })
+	return func() tea.Msg {
+		return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return procTickMsg{} })()
+	}
 }
 
 // tickPRs schedules the next pull-request state re-check.
 func tickPRs() tea.Cmd {
-	return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })
+	return func() tea.Msg { return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })() }
 }
 
 func commandScopeLabel(root, dir string) string {

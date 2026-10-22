@@ -69,6 +69,10 @@ func (m Model) accountsMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 	switch msg := msg.(type) {
 	case accounts.CloseMsg:
 		if m.workspace == wsAccounts {
+			if m.wt.returning && m.wt.returnWS == wsAccounts {
+				nm, c := m.worktreesReturn()
+				return true, nm, c
+			}
 			m.shellFocus = shellNav
 		}
 		return true, m, nil

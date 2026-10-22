@@ -6,8 +6,9 @@ updates. For the browser workspace see [web.md](web.md); for AI agents see
 [agents.md](agents.md).
 
 The full terminal redesign has [approved mockups](design/tui-redesign/README.md)
-and [sequential implementation plans](plans/tui-redesign/README.md). It is planning
-work; the reference below describes the currently implemented TUI.
+and [sequential implementation plans](plans/tui-redesign/README.md). The current
+TUI remains the default; the [redesign preview](#redesign-preview---tui-layout-redesign)
+contains the five working workspaces.
 
 ## TUI
 
@@ -242,9 +243,9 @@ It does not touch the agent's terminal output or the status-bar separators.
 An opt-in preview of the redesigned TUI. The shell is a header with the Garden,
 Playground, Worktrees, Accounts and Settings tabs and a footer with the current
 workspace, focus, key hints and status. **Settings**, **Accounts**, **Garden
-setup/board** and **Playground** have bodies (see [Settings](#settings-in-the-preview),
-[Accounts](#accounts-in-the-preview), [Garden setup](#garden-setup-in-the-preview)
-and [Playground](#playground-in-the-preview)); Worktrees remains a placeholder. Garden reads the GitHub login and
+setup/board**, **Playground** and **Worktrees** have bodies (see [Settings](#settings-in-the-preview),
+[Accounts](#accounts-in-the-preview), [Garden setup](#garden-setup-in-the-preview),
+[Playground](#playground-in-the-preview) and [Worktrees](#worktrees-in-the-preview)). Garden reads the GitHub login and
 repository setup state and verified approved work; Accounts loads agent profiles and usage the first time
 it opens. The last workspace is remembered per repository (see Settings). The default
 stays the current TUI (`--tui-layout legacy`), which keeps its own preferences
@@ -266,9 +267,9 @@ value exits with an error before the TUI starts. The terminal must be at least
 | `tab` / `shift+tab` | Next / previous workspace (the `focus_next` / `focus_prev` bindings) |
 | `alt+1` to `alt+5` | Jump to a workspace (bare digits stay reserved for agent sessions) |
 | `,` | Jump to Settings (the `prefs` binding) |
-| `enter` / `↓` | On the Garden, Settings or Accounts tab, enter its body |
+| `enter` / `↓` | On any workspace tab, enter its body |
 | `m` | Open Accounts (the Agents tab's `agent_accounts` binding) |
-| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage", "Accounts: Defaults", and Garden Board/Table/Search/Refresh entries |
+| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage", "Accounts: Defaults", Garden Board/Table/Search/Refresh, Playground sections, Worktrees submenus and the existing Git/process/config actions |
 | `?` | Keys that work in the preview |
 | `q` / `ctrl+c` | Quit (outside the palette and help dialogs; inside them `esc` closes the dialog) |
 
@@ -680,3 +681,61 @@ Acceptance records a human decision; it does not merge, close an Issue or remove
 a worktree. New commits leave earlier reviews and acceptance visible as older
 provenance. Full behavior and automatic trigger limits are in the
 [Garden review guide](garden.md#read-only-verification-and-human-review).
+
+
+#### Worktrees in the preview
+
+Worktrees reuses the existing Git and process commands in four selectable
+submenus: **Checkouts**, **Processes**, **Branches** and **Pull requests**. It
+works without Garden or a provider account. Reads start on the first visit;
+returning keeps the selected checkout, process, output filter and document scroll.
+The process and PR refresh timers continue across workspace changes.
+
+At 100 columns and wider, the list and detail share the body. At 80 columns,
+Enter replaces the list with the inspector or selected process/PR detail;
+Escape returns to the list. From the list, Escape selects the submenu, then
+Escape returns to the workspace tabs. Tab/Shift+Tab cycle submenus while the
+list or submenu has focus. In detail, Tab returns to the list and Shift+Tab
+cycles the available detail tabs. The footer names the current focus. Mouse-wheel
+scrolling follows the hovered list or detail; the palette can disable it for
+terminal text selection. Agent holders receive no wheel input.
+
+Checkouts keeps the existing filter (`/`), six sort orders (`o`), metrics,
+dirty/PR/check badges and running-process/agent badges. Branches includes local
+branches with no checkout, and Pull requests includes the provider's bounded
+PR list. Rows use branch names, PR numbers and process IDs rather than display
+labels as identities. An unchecked branch or PR cannot act on another checkout;
+Enter explicitly previews creation using the configured destination and hooks.
+
+The existing bindings still open Git Log (`l`), Inspector (`i`), Diff (`d`),
+Checks (`b`), connected PR (`P`), Processes (`v`) and worktree Agents (`g`).
+Enter on a list row now means inspect; **Open shell** remains in the command
+palette (Enter in an ordinary detail also retains the shell binding). Editor
+(`e`), file copy (`c`), clipboard (`y`), scripts (`s`), aliases (`a`), create (`n`),
+fetch/pull/push/commit/rebase/update-base and prune retain their existing flows.
+The command palette also contains the repository config editors and all PR and
+process actions. Existing prune options, merge strategies, confirmations and
+backend ownership/active-session checks still apply.
+
+Process detail keeps its own controls: arrows select a process in the checkout,
+`j`/`k` scroll, `g`/`G` go to the beginning/live end, `/` searches output, `K`
+kills, `r` restarts, `p` selects restart policy, `m` selects multiple processes,
+`L` sets a tag, `y` copies output, `n` runs a command and `x` removes a finished
+record. Live versus paused output and discovered URLs remain visible. These
+keys never become agent terminal input. Quitting offers the existing keep/stop
+choices for known active processes, with keeping them selected by default.
+
+Inside Agents, `a` still opens all sessions of that checkout, `n` opens the
+existing launch form, and digits/brackets select sessions. `m` opens the same
+account in Accounts; `u` opens that account's Usage section. `O`
+(`agent_playground`) opens the **exact selected session** in Playground in
+**Observe**, with no writer request. Escape through the destination's parents
+returns to the original Worktrees location. Enter in Agents explicitly requests
+terminal control; Ctrl+] returns the keyboard. While typing, every other key
+belongs to the holder, including quit, palette and workspace shortcuts.
+
+For a Garden-created session, the Inspector shows its Issue and attempt identity;
+**Garden: open linked Issue** in the palette opens the already loaded Issue and
+its specification/plan sections. A manual checkout needs no task link. Human
+acceptance, PR merge and worktree prune remain separate actions. Leaving a
+workspace releases only its terminal attachment and never stops its holders.

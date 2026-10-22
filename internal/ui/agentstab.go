@@ -187,6 +187,9 @@ func (m Model) openAgentsTab() (tea.Model, tea.Cmd) {
 func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	s := msg.String()
 	switch {
+	case m.layoutKind == LayoutRedesign && key.Matches(msg, m.keys.AgentPlayground):
+		nm, cmd := m.worktreesPlayground()
+		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentAll):
 		if !m.agents.active() {
 			m.status = unsupportedNotice

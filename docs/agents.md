@@ -461,3 +461,21 @@ are explicit local actions. Request fixes opens the existing confirmed
 implementation form; remote comments never rerun code. See the
 [Garden review guide](garden.md#read-only-verification-and-human-review) for
 triggers, limits, stale provenance and acceptance conditions.
+
+
+## Worktrees workspace links
+
+In the [redesign preview](tui-cli.md#worktrees-in-the-preview), Worktrees → Agents
+(`g`) uses the same repository session index and holder client as Playground.
+Its scoped `a` (all sessions) and `n` (new agent) keep their meanings. `m` and `u`
+open the selected session's account in Accounts Overview or Usage; they reuse
+the shared usage store. `O` (`agent_playground`) carries that exact session ID
+to Playground in Observe. Escape through the destination's parents returns to
+the original checkout/detail and its document position.
+
+Only explicit terminal control sends keys to a holder; Ctrl+] returns focus.
+Process logs keep separate controls and never write to an agent. Switching
+workspaces releases the UI attachment while the holder continues. Garden task
+and attempt references are shown when present; manual sessions require neither
+Garden setup nor a fabricated approved plan. Existing account/session/worktree
+locks still govern launch, stop and prune operations.

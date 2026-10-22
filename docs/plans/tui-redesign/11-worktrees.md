@@ -1,6 +1,6 @@
 # Plan 11 — Worktrees in the redesigned application
 
-Status: not started. Prerequisite: 10 — Playground.
+Status: implemented (validation record below). Prerequisite: 10 — Playground.
 Next: 12 — Cutover and hardening.
 
 ## Deliverable
@@ -66,14 +66,75 @@ and `internal/core/procstore/`.
 
 ## Exit criteria and verification
 
-- [ ] The parity checklist maps every legacy feature/binding to its replacement.
-- [ ] Checkouts, Processes, Branches and PR submenus are selectable and scoped.
-- [ ] Existing Git/process commands retain options, ownership checks and previews.
-- [ ] Garden/Accounts/Playground links preserve identity and return location.
-- [ ] Manual repositories/worktrees work with no Garden and no provider account.
-- [ ] Process and agent terminal focus remain distinct; leaving either workspace
+- [x] The parity checklist maps every legacy feature/binding to its replacement.
+- [x] Checkouts, Processes, Branches and PR submenus are selectable and scoped.
+- [x] Existing Git/process commands retain options, ownership checks and previews.
+- [x] Garden/Accounts/Playground links preserve identity and return location.
+- [x] Manual repositories/worktrees work with no Garden and no provider account.
+- [x] Process and agent terminal focus remain distinct; leaving either workspace
       does not stop a process or accidentally send keys to a holder.
-- [ ] Affected UI/Git/process/daemon tests, race tests and full Go checks pass.
-- [ ] Update `README.md`, `docs/tui-cli.md`, `docs/agents.md` and relevant core docs.
+- [x] Affected UI/Git/process/daemon tests, race tests and full Go checks pass.
+- [x] Update `README.md`, `docs/tui-cli.md`, `docs/agents.md` and relevant core docs.
 
-Completion record: pending implementation, parity checklist and validation evidence.
+## Legacy parity checklist
+
+Default keys below retain configured overrides, except the intentional list
+navigation changes described explicitly. The existing root handlers remain the
+compatibility route until plan 12; there is no nested legacy model/event loop.
+
+| Legacy feature / binding | Redesigned replacement |
+|---|---|
+| Worktree selection, `/` filter, `o` six sorts | Checkouts; selection retained by path through sorts/refreshes |
+| Metrics, dirty, PR/check, process and agent badges | Existing decorated Checkouts rows, shaded with installed theme roles |
+| Inspector `i`, Git Log `l`, Diff `d`, Checks `b`, PR `P` | Same handlers in detail; list/detail above 100 columns, replace-list navigation at 80 |
+| Processes `v`, all processes `V` | Processes submenu, checkout process detail and existing global process picker |
+| Process arrows, `j/k`, `g/G`, `/`, `K`, `r`, `p`, `m`, `L`, `y`, `n`, `x` | Same output viewport, search/follow, controls, policy, multi-view, tags, copy, scripts and removal handlers |
+| Process names, policies and discovered URLs | Cached process rows and detail footer; bounded footer keeps selected process visible |
+| Worktree Agents `g`; `a`, `n`, digits, brackets, Enter, `s` | Same scoped session picker, launch dialog, selection, terminal and stop confirmation |
+| Agent account `m`, usage `u` | Select exact account in top-level Accounts Overview/Usage; return to Worktrees |
+| Open session in Playground | New scoped `O` / `agent_playground`, exact session ID, Observe first |
+| Garden task/plan context | Inspector Issue/attempt references and palette link to loaded Issue document/plan sections; manual worktrees remain independent |
+| Palette `ctrl+k`, help `?`, preferences `,`, glyph legend | Unified navigation/action palette, worktree key reference, top-level Settings and existing legend |
+| Mouse wheel / palette toggle | Scroll hovered list/detail using shell geometry; disabled mode returns text selection to the terminal; agent terminals receive no wheel input |
+| Self-update prompt | Intentional legacy-route compatibility until cutover; `bonsai update` remains available from either layout |
+| Repository config editors | Existing palette settings and modal write flows; Settings remains available |
+| Scripts `s`, aliases `a`, ad hoc command/new alias | Existing discovery, script/alias/submission handlers and daemon-owned processes |
+| File copy `c`, yank `y` | Same file picker, recent-file flow and clipboard target menu |
+| Shell Enter, editor `e` | List Enter intentionally inspects; Open shell stays in palette and ordinary detail Enter; editor binding unchanged |
+| Create `n`: new branch / existing / PR | Existing three-way create flow; unchecked Branch/PR rows preview configured checkout destination and creation hooks |
+| Fetch `f`, pull `ctrl+p`, push `ctrl+u`, commit `C`, rebase `r`, update-base `u` | Same core commands, commit preview and rebase/merge choices |
+| PR approve/request changes/comment, merge/close/reopen/ready | Same PR detail and palette actions, strategies and confirmations |
+| Prune `x`, merged prune `X`, force/merge/hooks options | Existing prune dialogs and core/daemon ownership/lock checks |
+| Tab focus, Shift+Tab detail tabs | List/submenu Tab/Shift+Tab selects submenu; detail Tab returns to list, Shift+Tab cycles details; Escape walks parents |
+| Quit `q`/`ctrl+c` and keep/stop processes | Existing cached active-process choices, keep selected by default; agent input capture takes precedence |
+
+## Completion record
+
+Implemented on 2026-10-22. New `internal/ui/worktrees.go`, `worktrees_view.go` and
+`worktrees_test.go` provide presentation/routing, ordering and integration tests.
+Shared shell/session/terminal/component handlers and documentation were updated;
+Git, daemon and process backend commands were retained.
+
+Automated UI demos cover Checkouts, Processes, Branches and PRs at 80×24,
+120×35, 160×48 and the minimum shell size; compact inspect/parent navigation,
+manual worktrees without accounts/Garden, unchecked-row action isolation,
+stable selection, stale/failed reads, process search/scroll, cancellation and
+exact Accounts/Playground return identity. Fake holders verify Observe handoff
+without input; existing terminal suites exercise control, replay and ownership.
+No real provider account or remote backlog was changed.
+
+Verification passed (2026-10-22):
+
+- `gofmt -l $(git ls-files '*.go')`, formatting of new `worktrees*.go` files,
+  and `git diff --check` (all empty).
+- `go vet ./...`, `go build ./...`, `go test ./...`.
+- `go test -race ./internal/ui/... ./internal/git/... ./internal/daemon/... ./internal/core/procstore/...`.
+- After the final session-index scope/IO corrections:
+  `go test ./internal/ui -run '^(TestWorktrees.*|TestPlayground.*|TestPg.*)$'`
+  and the same UI/session selection under `-race`.
+- Final filter, wheel, focus and handoff regressions:
+  `go test -race ./internal/ui/... -run '^(TestWorktrees.*|TestRefreshPreservesFilterAndSelectedPath)$'`.
+
+Legacy remains the default; plan 12 cutover was not performed. The updater's
+legacy notification is intentionally retained on that route; `bonsai update`
+continues to work independently of the selected TUI layout.

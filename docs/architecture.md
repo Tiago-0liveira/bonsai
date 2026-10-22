@@ -56,3 +56,21 @@ verification before implementation.
 Persisted ETag representations, optional cold-load GraphQL and moving layout
 to a worker remain deferred until measurements justify them. They are not
 required for current warm-start or bundle gates.
+
+
+## TUI Worktrees migration
+
+The opt-in redesign's Worktrees workspace is a presentation and routing layer
+on the existing root Git/process handlers (`internal/ui/worktrees*.go`). Its
+state owns submenu selection, filters, read generations and document anchors;
+it does not create another root model or event loop. Legacy routing remains
+available until the separate cutover plan. See the [user guide](tui-cli.md#worktrees-in-the-preview).
+
+Worktrees starts its existing process and PR timers once on first entry.
+Playground and Worktrees share one session list, change subscription, usage
+store and live terminal attachment. Cross-workspace links carry backend IDs,
+release attachments and retain local navigation; they never stop holders.
+Independent Git read generations discard late replies, and failed reads keep
+last successful lists. Mutations continue through the existing core/daemon
+commands and retain their ownership checks and previews. No API, daemon wire
+contract or Git backend changes are involved.

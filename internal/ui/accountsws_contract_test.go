@@ -36,6 +36,9 @@ func accountShellDrain(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
 		if c == nil {
 			continue
 		}
+		if name := runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(); strings.Contains(name, "worktreeRead") || strings.Contains(name, "indexFiles") || strings.Contains(name, "tickProc") || strings.Contains(name, "tickPRs") {
+			continue
+		}
 		if strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "pgWaitCmd") {
 			continue // the Playground's change watch blocks until a session changes
 		}

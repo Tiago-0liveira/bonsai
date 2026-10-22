@@ -223,6 +223,8 @@ type Model struct {
 	// pg is the Playground workspace's session list.
 	pg pgState
 
+	wt worktreesState
+
 	// layoutKind picks the legacy TUI or the redesign preview shell; workspace
 	// and shellFocus only matter for the latter and live in memory only.
 	layoutKind Layout
@@ -321,6 +323,9 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 		if m.workspace == wsPlayground {
 			m, m.pg.initCmd = m.playgroundEnter()
 		}
+		if m.workspace == wsWorktrees {
+			m, m.wt.initCmd = m.worktreesEnter()
+		}
 	}
 	m.list.Focus()
 	m.procSearchInput.Placeholder = "search output…"
@@ -374,15 +379,27 @@ func (m Model) Init() tea.Cmd {
 	// consent and settles previously authorized reviewer runs.
 	if m.layoutKind == LayoutRedesign {
 		if m.acct.started {
-			return tea.Batch(m.acct.model.Init(), m.garden.initCmd, m.pg.initCmd, m.pgReviewInit())
+			return tea.Batch(m.acct.model.Init(), m.garden.initCmd, m.pg.initCmd, m.wt.initCmd, m.pgReviewInit())
 		}
-		return tea.Batch(m.garden.initCmd, m.pg.initCmd, m.pgReviewInit())
+		return tea.Batch(m.garden.initCmd, m.pg.initCmd, m.wt.initCmd, m.pgReviewInit())
 	}
 	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs(), m.initAgents())
 }
 
 // selectedWorktree returns the highlighted worktree, if any.
 func (m Model) selectedWorktree() (git.Worktree, bool) {
+	if m.layoutKind == LayoutRedesign && m.wt.sub != wtCheckouts {
+		r, ok := m.worktreesRow()
+		if !ok || r.path == "" {
+			return git.Worktree{}, false
+		}
+		for _, w := range m.worktrees {
+			if w.Path == r.path {
+				return w, true
+			}
+		}
+		return git.Worktree{}, false
+	}
 	it, ok := m.list.Selected()
 	if !ok {
 		return git.Worktree{}, false

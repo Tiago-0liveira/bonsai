@@ -103,6 +103,13 @@ func prefsActions(repoOverrides map[string]string) []prefs.Action {
 // openPrefs opens the preferences overlay. startOnKeys places the cursor on
 // the keybindings editor (used when arriving from the keymap modal).
 func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
+	if m.layoutKind == LayoutRedesign {
+		if startOnKeys {
+			t, _ := paletteTargetForLabel(paletteEditKeys)
+			return m.goToPalette(t)
+		}
+		return m.selectWorkspace(wsSettings)
+	}
 	pm := prefs.New(
 		m.currentThemePreset(),
 		m.sort.name(),

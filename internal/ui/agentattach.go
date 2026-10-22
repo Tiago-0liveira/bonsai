@@ -149,6 +149,10 @@ func (a agentState) quit() tea.Cmd {
 // agentPaneSize is the Agents tab's pane rectangle (inside the border, below
 // the tab strip), as View passes it to renderAgentsPane.
 func (m Model) agentPaneSize() (w, h int) {
+	if m.layoutKind == LayoutRedesign && m.workspace == wsWorktrees {
+		w, h := m.worktreesPaneSize()
+		return w, max(1, h-1)
+	}
 	_, rightW, innerH := m.dims()
 	return max(rightW-2, 1), max(innerH-1, 1)
 }
@@ -156,6 +160,9 @@ func (m Model) agentPaneSize() (w, h int) {
 // wantedSession is the session the live view should show: the selected one of
 // the selected worktree, while the Agents tab is visible.
 func (m Model) wantedSession() string {
+	if m.layoutKind == LayoutRedesign && (m.workspace != wsWorktrees || m.shellFocus == shellNav || m.focus != focusTerminal || m.wt.menu) {
+		return ""
+	}
 	if !m.ready || !m.agents.active() || m.rightTab != tabAgents {
 		return ""
 	}
@@ -213,7 +220,7 @@ func (m *Model) syncAgentView(cmd tea.Cmd) tea.Cmd {
 // after the header rows.
 func (m Model) agentAreaSize() (w, rows int) {
 	if m.layoutKind == LayoutRedesign {
-		// The redesign has no Agents tab: the one terminal belongs to the workspace in view.
+		// The one terminal belongs to the workspace in view.
 		return m.terminalAreaSize()
 	}
 	pw, ph := m.agentPaneSize()

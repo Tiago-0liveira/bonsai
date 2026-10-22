@@ -573,7 +573,7 @@ func TestSettingsStartupWorkspaceRules(t *testing.T) {
 		if m.workspace != tc.want {
 			t.Errorf("%s: opened %s, want %s", tc.name, m.workspace.name(), tc.want.name())
 		}
-		if m.Init() != nil {
+		if m.Init() != nil && tc.want != wsWorktrees {
 			t.Errorf("%s: restoring a workspace started work", tc.name)
 		}
 	}

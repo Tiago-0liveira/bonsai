@@ -101,6 +101,11 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 		return m, nil
 	}
 	var detach tea.Cmd
+	if m.workspace == wsWorktrees {
+		m.worktreesRememberDocument()
+		detach = m.terminalRelease()
+		m.agents.overlay = nil
+	}
 	if m.workspace == wsPlayground && m.pg.searching {
 		m.pg.searching = false // a half-typed search never outlives the focus that owned it
 	}
@@ -116,6 +121,9 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 		m.garden.abandon()
 		// Leaving closes the attachment to an attempt's terminal; the holder keeps running.
 		detach = m.launchDetach()
+	}
+	if m.wt.returning && ws != m.wt.returnWS && ws != wsWorktrees {
+		m.wt.returning = false
 	}
 	m.workspace = ws
 	m.shellFocus = shellNav
@@ -143,6 +151,11 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 		var load tea.Cmd
 		m, load = m.gardenLoadStatus()
 		cmds = append(cmds, load)
+	}
+	if ws == wsWorktrees {
+		var read tea.Cmd
+		m, read = m.worktreesEnter()
+		cmds = append(cmds, read)
 	}
 	if ws == wsPlayground {
 		var read tea.Cmd
@@ -197,8 +210,8 @@ func (m Model) currentShellFocus() shellFocus {
 	if m.modal != nil {
 		return shellDialog
 	}
-	// Typing into the Playground's agent: the shell never steals a key.
-	if m.pgTerminalMode() {
+	// Terminal input and workspace text fields own their keys before shell navigation.
+	if m.pgTerminalMode() || (m.worktreesTerminalShown() && !m.agentOverlayOpen() && m.agentTerminalMode()) || m.worktreesCapturing() {
 		return shellInput
 	}
 	// A text field, dropdown or confirmation inside Accounts takes every key,
@@ -234,12 +247,16 @@ func shellGeometry(width, height, submenu, detail int) (shellRegions, bool) {
 	return r, width >= shellMinWidth && height >= shellMinHeight && r.body >= 1
 }
 
-// shellUpdate is the redesigned shell's Update: it owns only sizing, the
-// palette/help dialogs and workspace selection, and starts no domain work.
+// shellUpdate routes the shell and workspace results, then reconciles the one
+// live terminal attachment with the workspace that owns it.
 func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	nm, cmd := m.shellUpdateMsg(msg)
 	// Like the legacy Agents tab, the Playground reconciles its observed session after every update, so
 	// selection, list refresh and focus changes need no per-key attach code.
+	if mm, ok := nm.(Model); ok && mm.workspace == wsWorktrees {
+		cmd = mm.syncAgentView(cmd)
+		return mm, cmd
+	}
 	if mm, ok := nm.(Model); ok && (mm.workspace == wsPlayground || mm.pg.own) {
 		sync := mm.pgSync()
 		return mm, tea.Batch(cmd, sync)
@@ -248,9 +265,18 @@ func (m Model) shellUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if read, ok := msg.(wtReadMsg); ok {
+		if (read.prompt && (m.workspace != wsWorktrees || m.currentPath() != read.path)) || m.wt.generations[read.key] != read.gen {
+			return m, nil
+		}
+		msg = read.msg
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height, m.ready = msg.Width, msg.Height, true
+		if m.wt.started {
+			m.layout()
+		}
 		m.gardenBoardVisible()
 		m.playgroundReconcile()
 		m.gardenClampDocument()
@@ -273,6 +299,8 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, launchCmd
 	case modals.CancelMsg:
+		m.pendingConfirm, m.pendingCfg = nil, nil
+		m.pendingCfgSub = ""
 		m.modal = nil
 		m.set.pending = nil
 		m.set.revPending = nil
@@ -284,6 +312,14 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modals.SubmitMsg:
 		kind := msg.Kind
+		if kind == modals.KindPalette {
+			if _, ok := paletteTargetForLabel(msg.Value); !ok {
+				return m.worktreesModalSubmit(msg)
+			}
+		}
+		if m.worktreesModalKind(kind) {
+			return m.worktreesModalSubmit(msg)
+		}
 		m.modal = nil
 		switch kind {
 		case modals.KindPalette:
@@ -318,12 +354,22 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case configSavedMsg:
+		if m.pendingCfg != nil {
+			return m.onConfigSaved(msg)
+		}
 		return m.onRepoConfigSaved(msg), nil
+	case tea.MouseMsg:
+		if m.workspace == wsWorktrees {
+			return m.worktreesMouse(msg)
+		}
 	case tea.KeyMsg:
 		// Typing into an agent terminal (the planner's or the Playground's) comes before everything else: every
 		// key but Ctrl+] belongs to the agent, so quit, help, the palette and workspace keys cannot fire.
 		if m.terminalTypingMode() {
 			return m.agentTerminalKey(msg)
+		}
+		if m.agents.overlay != nil && m.workspace == wsWorktrees && m.modal == nil {
+			return m.overlayUpdate(msg)
 		}
 		if m.modal != nil {
 			nm, cmd := m.modal.Update(msg)
@@ -342,6 +388,9 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, nm, cmd := m.gardenMsg(msg); handled {
 		return nm, tea.Batch(forwarded, cmd)
 	}
+	if handled, nm, cmd := m.worktreesMsg(msg); handled {
+		return nm, tea.Batch(forwarded, cmd)
+	}
 	_, nm, cmd := m.accountsMsg(msg)
 	return nm, tea.Batch(forwarded, cmd)
 }
@@ -352,7 +401,7 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// input that owns the keyboard, including the letters bound to quit, help
 	// and the palette.
 	if msg.String() == "ctrl+c" {
-		return m, m.agents.quit() // releases an attached terminal first; the holders keep running
+		return m.quit() // defaults to keeping processes and holders running
 	}
 	focus := m.currentShellFocus()
 	if focus == shellDialog {
@@ -363,10 +412,13 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return m, m.agents.quit()
+		return m.quit()
 	case key.Matches(msg, m.keys.Palette):
 		return m.openShellPalette(), nil
 	case key.Matches(msg, m.keys.Help):
+		if m.workspace == wsWorktrees && m.shellFocus == shellBody {
+			return m.openKeymap()
+		}
 		return m.openShellHelp(), nil
 	case key.Matches(msg, m.keys.Prefs):
 		return m.selectWorkspace(wsSettings)
@@ -374,8 +426,14 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if focus == shellBody {
 		return m.bodyKey(msg)
 	}
+	if msg.String() == "esc" && m.wt.returning && m.workspace == m.wt.returnWS {
+		return m.worktreesReturn()
+	}
 	next := m.workspace
 	switch {
+	case m.workspace == wsWorktrees && (msg.String() == "enter" || msg.String() == "down"):
+		m.shellFocus = shellBody
+		return m, nil
 	case m.workspace == wsGarden && (msg.String() == "enter" || msg.String() == "down"):
 		return m.gardenEnterBody()
 	case m.workspace == wsSettings && (msg.String() == "enter" || msg.String() == "down"):
@@ -411,10 +469,9 @@ func altDigitWorkspace(msg tea.KeyMsg, fallback workspace) workspace {
 	return fallback
 }
 
-// bodyKey routes a key to the focused workspace body. Settings, Accounts,
-// Garden and Playground have one.
+// bodyKey routes a key to the focused workspace body.
 func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.workspace != wsSettings && m.workspace != wsAccounts && m.workspace != wsGarden && m.workspace != wsPlayground {
+	if m.workspace != wsSettings && m.workspace != wsAccounts && m.workspace != wsGarden && m.workspace != wsPlayground && m.workspace != wsWorktrees {
 		return m, nil
 	}
 	if m.shellFocus == shellBody && m.currentShellFocus() == shellBody {
@@ -423,6 +480,8 @@ func (m Model) bodyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch m.workspace {
+	case wsWorktrees:
+		return m.worktreesKey(msg)
 	case wsAccounts:
 		return m.accountsKey(msg)
 	case wsGarden:
@@ -457,6 +516,8 @@ type paletteTarget struct {
 	// playground opens a Playground submenu entry.
 	playground    pgSub
 	hasPlayground bool
+	worktrees     wtSub
+	hasWorktrees  bool
 }
 
 // paletteTargets lists every entry in palette order with its target.
@@ -481,6 +542,9 @@ func paletteTargets() (labels []string, targets map[string]paletteTarget) {
 	add(paletteAccountsPrefix+"Defaults", paletteTarget{ws: wsAccounts, section: accounts.TabDefaults, hasSection: true})
 	for sub := pgSub(0); sub < pgSubCount; sub++ {
 		add(palettePlaygroundPrefix+pgSubNames[sub], paletteTarget{ws: wsPlayground, playground: sub, hasPlayground: true})
+	}
+	for sub := wtSub(0); sub < wtSubCount; sub++ {
+		add("Worktrees: "+wtSubNames[sub], paletteTarget{ws: wsWorktrees, worktrees: sub, hasWorktrees: true})
 	}
 	add("Garden: Board", paletteTarget{ws: wsGarden, gardenAction: "board"})
 	add("Garden: Table", paletteTarget{ws: wsGarden, gardenAction: "table"})
@@ -517,6 +581,11 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 		return m.openAccounts(t.section)
 	}
 	m, cmd := m.selectWorkspace(t.ws)
+	if t.hasWorktrees {
+		m.shellFocus = shellBody
+		nm, read := m.worktreesSetSub(t.worktrees)
+		return nm, tea.Batch(cmd, read)
+	}
 	if t.hasPlayground {
 		m.shellFocus = shellBody
 		return m.playgroundSetSub(t.playground), cmd
@@ -585,19 +654,22 @@ func filterItems(items []string) modals.FilterFunc {
 	}
 }
 
-// openShellPalette lists the workspaces: selecting one only moves the tab.
+// openShellPalette combines workspace navigation with the existing scoped actions.
 func (m Model) openShellPalette() Model {
-	items, _ := paletteTargets()
-	modal := modals.NewFuzzy(modals.KindPalette, "Go to", filterItems(items), items)
-	modal.SetSize(m.width, m.height)
-	m.modal = &modal
-	return m
+	nm, _ := m.openPalette()
+	return nm.(Model)
 }
 
 // shellHints are the navigation hints in the order the footer drops them
 // when the width runs out, most important first. Keys are the effective ones,
 // so scoped overrides show up.
 func (m Model) shellHints() []shellHint {
+	if m.worktreesTerminalShown() && !m.agentOverlayOpen() && m.agentTerminalMode() {
+		return []shellHint{{"Ctrl+]", "unfocus"}}
+	}
+	if m.workspace == wsWorktrees && m.shellFocus != shellNav {
+		return append(m.worktreesHints(), shellHint{m.keys.Palette.Help().Key, "commands"}, shellHint{m.keys.Help.Help().Key, "keys"})
+	}
 	if m.currentShellFocus() == shellInput && m.workspace == wsAccounts {
 		return m.accountsHints()
 	}

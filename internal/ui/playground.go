@@ -72,8 +72,9 @@ type pgState struct {
 
 type (
 	pgListMsg struct {
-		seq  uint64
-		recs []pgRec
+		seq    uint64
+		recs   []pgRec
+		byTree map[string][]int // resolved in the command; Update performs no filesystem reads
 		// degraded: the worktrees could not be listed, so only project-ID matches are present.
 		degraded bool
 		err      error
@@ -114,7 +115,18 @@ func listPlaygroundCmd(ctx context.Context, s agentsapi.Sessions, trees func(con
 			}
 			pt = append(pt, pgTree{ID: git.ID(webRepositoryID, w.Path), Path: w.Path, Resolved: resolve(w.Path), Branch: w.Branch})
 		}
-		return pgListMsg{seq: seq, recs: pgScope(all, config.ProjectID(repoDir), pt, resolve), degraded: terr != nil}
+		recs := pgScope(all, config.ProjectID(repoDir), pt, resolve)
+		sessions := make([]agentsapi.Session, 0, len(recs))
+		paths := make([]string, 0, len(list))
+		for _, rec := range recs {
+			sessions = append(sessions, rec.Session)
+		}
+		for _, tree := range list {
+			if !tree.Bare {
+				paths = append(paths, tree.Path)
+			}
+		}
+		return pgListMsg{seq: seq, recs: recs, byTree: indexSessions(paths, sessions), degraded: terr != nil}
 	}
 }
 
@@ -210,6 +222,7 @@ func (m Model) onPlaygroundList(msg pgListMsg) (Model, tea.Cmd) {
 	if msg.err != nil || (msg.degraded && p.loaded) {
 		// Keep the last good list; a failure never empties it.
 		p.stale = true
+		m.agents.err = "Session list stale"
 		if msg.err != nil {
 			p.errMsg = pgClean(msg.err.Error(), 100)
 		} else {
@@ -220,6 +233,19 @@ func (m Model) onPlaygroundList(msg pgListMsg) (Model, tea.Cmd) {
 	p.recs, p.loaded, p.stale, p.errMsg = msg.recs, true, msg.degraded, ""
 	if msg.degraded {
 		p.errMsg = "worktrees could not be verified"
+	}
+	m.agents.err = ""
+	m.agents.sessions = nil
+	for _, r := range msg.recs {
+		m.agents.sessions = append(m.agents.sessions, r.Session)
+	}
+	if m.agents.enterAfter != "" && msg.seq >= m.agents.enterSeq && !hasSession(m.agents.sessions, m.agents.enterAfter) {
+		m.agents.enterAfter = ""
+	}
+	m.agents.byTree = msg.byTree
+	m.refreshAgentBadges()
+	if o := m.agents.overlay; o != nil && o.sessions != nil {
+		o.sessions.setSessions(m.orderedSessions(o.sessions.path))
 	}
 	m.playgroundReconcile()
 	if m.pg.chg.open && m.pg.sel != m.pg.chg.session {

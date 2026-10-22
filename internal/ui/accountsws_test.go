@@ -77,6 +77,9 @@ func drainAll(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
 		if c == nil {
 			continue
 		}
+		if name := runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(); strings.Contains(name, "worktreeRead") || strings.Contains(name, "indexFiles") || strings.Contains(name, "tickProc") || strings.Contains(name, "tickPRs") {
+			continue
+		}
 		if strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "assistTickCmd") || strings.Contains(runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(), "gardenLocalTickCmd") {
 			continue // the assist elapsed-seconds tick sleeps; tests deliver ticks themselves
 		}

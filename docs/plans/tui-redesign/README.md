@@ -41,7 +41,7 @@ starting the next numbered plan. Do not implement later phases opportunistically
 | 08c | Assist answer UX | Choose-or-write answers with notes; suggestions and AI open questions stop blocking falsely | 08b | Not started |
 | 09 | Local implementation launch | Explicit, isolated, recoverable task execution | 08 | Not started |
 | 10 | Playground | Repository session cockpit, terminal, changes and review | 09 | Not started |
-| 11 | Worktrees | Existing Git/process functionality in the redesigned workspace | 10 | Not started |
+| 11 | Worktrees | Existing Git/process functionality in the redesigned workspace | 10 | Implemented |
 | 12 | Cutover and hardening | Default new UI with parity, migration and operational checks | 11 | Not started |
 
 Each plan has smaller phases that are also sequential. A phase can be a focused

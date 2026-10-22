@@ -209,6 +209,9 @@ func (m *Model) relistAgents() tea.Cmd {
 	if !m.agents.active() {
 		return nil
 	}
+	if m.layoutKind == LayoutRedesign {
+		return m.playgroundRelist()
+	}
 	m.agents.seq++
 	return listAgentsCmd(m.agents.ctx, m.agents.api.Sessions, m.repoDir, m.worktreePaths(), m.agents.seq)
 }
@@ -228,6 +231,13 @@ func (m Model) initAgents() tea.Cmd {
 
 // resubscribeAgents retries a failed Changes subscription.
 func (m *Model) resubscribeAgents() tea.Cmd {
+	if m.layoutKind == LayoutRedesign {
+		if !m.agents.active() || m.pg.subscribed {
+			return nil
+		}
+		m.pg.subscribed = true
+		return pgSubscribeCmd(m.agents.ctx, m.agents.api.Sessions)
+	}
 	if !m.agents.active() || m.agents.subscribed {
 		return nil
 	}
