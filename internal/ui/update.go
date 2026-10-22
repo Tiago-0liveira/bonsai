@@ -26,24 +26,10 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
-// issueSummaryMsg supplies the overlay fixture with an already loaded Issue.
-type issueSummaryMsg struct {
-	number         int64
-	title, summary string
-}
-
 // Update routes messages: layout, data results, the process tick, an active
 // modal, or global keys.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.layoutKind == LayoutRedesign {
-		if summary, ok := msg.(issueSummaryMsg); ok {
-			if m.workspace == wsGarden && m.modal == nil {
-				panel := modals.NewIssueSummary(summary.number, summary.title, summary.summary)
-				panel.SetSize(m.width, m.height)
-				m.modal = &panel
-			}
-			return m, nil
-		}
 		return m.shellUpdate(msg)
 	}
 	nm, cmd := m.update(msg)

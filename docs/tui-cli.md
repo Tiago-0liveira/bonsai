@@ -304,7 +304,7 @@ Resume rechecks GitHub and keeps completed labels, Projects and fields.
 #### Garden board in the preview
 
 A connected Garden opens the approved-work board. Arrow keys select columns and
-cards, Enter opens the read-only issue document, and Escape restores the same card
+cards, Enter (or a click) opens the issue panel, and Escape restores the same card
 and scroll. All nine columns fit at 120/160 columns; at 80 columns the selected
 column stays inside a moving four-column window. Empty columns remain navigable.
 
@@ -370,25 +370,28 @@ who approved which revision, declared local/external source and verified time.
 [external comment protocol](garden.md#external-approval-protocol-github-or-mobile-browser)
 supports approval in GitHub/mobile browsers, without a phone client or remote runs.
 
-#### Garden overlay renderer fixture
+#### Garden issue overlay
 
-The overlay renderer has a separate terminal fixture using the loaded summary of
-Issue #172 from the reference design. It keeps the board visible around an opaque,
-centered panel, uses a near-full sheet at 80×24, and pins the header and close hint
-while the summary scrolls. Existing issue documents and other dialogs keep their
-current behavior. This fixture performs no backend operations or workflow writes.
+Enter or a left click on a Board card or Table row opens one issue panel over the
+dimmed layout it came from: a near-full sheet at 80×24, a bounded centered panel
+at 120×35 and wider, with a side summary rail from about 100 columns. The header
+(number, title, column, type, priority, approval) and the pinned action bar stay
+visible while the body scrolls. Tabs: Overview, Specification, Questions, Plan,
+Activity (`←`/`→` or click); `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End` or the wheel scroll.
 
-Run it from the repository root in a terminal:
+Actions are `p` request plan, `r` review plans, `s` start locally and `i` attempts;
+`Tab`/`Shift+Tab` cycle the enabled ones, `Enter` runs the focused one and a click
+runs the one under the pointer, all through the same existing screens and
+confirmations. `s` and `i` appear only when the Garden runtime has local launch;
+`s` stays visible but disabled, with its reason, until the issue is Ready. Reading a
+tab never starts anything, and opening an agent terminal stays a separate action
+whose input mode still ends with `Ctrl+]`.
 
-```sh
-go test -c -o /tmp/bonsai-overlay-ui.test ./internal/ui
-BONSAI_OVERLAY_DEMO=1 /tmp/bonsai-overlay-ui.test -test.run '^TestIssueOverlayTerminalDemo$' -test.v
-```
-
-Press `o` to open the summary, arrows to scroll, `esc` to restore the board and its
-selection, and `q` to quit after closing. Resize between 80×24, 120×35 and 160×48
-to inspect the panel bounds. The test binary runs directly so Bubble Tea can
-detect the terminal size; `go test` redirects its output.
+While the panel is open it consumes every key and click, so `q`, `?`, the palette,
+workspace keys and `v` wait. `Esc`, `Backspace` or **Back** close it and restore the
+exact card or row and scroll. If a refresh removes the issue, or the repository
+changes, the panel closes with a notice on the board rather than showing another
+issue. Closing it never stops a planner or implementation session.
 
 #### Local implementation launch in the preview
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
@@ -127,7 +128,9 @@ func TestLocalFactOnTheOpenedIssue(t *testing.T) {
 			m, rig := plannerEnv(t, sz[0], sz[1])
 			m = withLocal(t, m, rig, &c.sum)
 			m = plannerPress(t, m, "enter")
-			out := flat(view(m))
+			// The panel wraps the document beside its summary rail, so read the document itself.
+			bodyW, _ := m.gardenOverlayBody()
+			out := flat(ansi.Strip(strings.Join(m.gardenDocument(bodyW), "\n")))
 			mustContain(t, c.name, out, "Local planner: "+c.sum.State, c.agent, c.plan, "updated Oct 20", "Press p to open it")
 			if c.sum.Live {
 				mustContain(t, c.name, out, "Planner keeps running in the background")

@@ -129,6 +129,8 @@ type (
 	}
 )
 
+const launchNotReadyText = "Only a Ready Issue, with its exact approved specification and plan, can start an implementation."
+
 const launchUnavailableText = "Starting an implementation locally is unavailable here: this Garden runtime has no local launch."
 
 // launchBackend is the optional local launch of the Garden backend.
@@ -425,7 +427,7 @@ func (m Model) gardenLaunchOpen() (Model, tea.Cmd) {
 		return m, nil
 	}
 	if !m.launchOffered() {
-		g.notice = "Only a Ready Issue, with its exact approved specification and plan, can start an implementation."
+		g.notice = launchNotReadyText
 		return m, nil
 	}
 	if m.agents.api.Accounts == nil {

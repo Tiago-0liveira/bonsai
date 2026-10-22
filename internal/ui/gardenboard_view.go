@@ -128,9 +128,6 @@ func (m Model) gsBoard(width, rows int) []string {
 	if b.opened != 0 && m.garden.planner.stage != plannerNone {
 		return m.gsPlanner(width, rows)
 	}
-	if b.opened != 0 {
-		return m.gardenDetail(width, rows)
-	}
 	if b.layout == layoutTable {
 		return m.gsTable(width, rows)
 	}
@@ -142,15 +139,10 @@ func (m Model) gsBoard(width, rows int) []string {
 	out := m.gardenWorkHead(width, "APPROVED WORK", "")
 	gridRows := max(0, rows-3)
 	grid := make([][]string, columns)
-	usable := max(1, width-2-(columns-1))
-	base := usable / columns
-	remainder := usable % columns
+	widths := boardColumnWidths(width, columns)
 	for j := 0; j < columns; j++ {
 		c := work.Column(s.Window + j)
-		w := base
-		if j < remainder {
-			w++
-		}
+		w := widths[j]
 		fg := boardColumnColor(c)
 		marker := " "
 		if c == s.Column && m.shellFocus != shellNav {
@@ -230,6 +222,27 @@ func (m Model) gsBoard(width, rows int) []string {
 	return m.settingsASCII(out[:rows])
 }
 
+// boardColumnWidths splits the width left after the margin and the column rules.
+func boardColumnWidths(width, columns int) []int {
+	usable := max(1, width-2-(columns-1))
+	out := make([]int, columns)
+	for j := range out {
+		out[j] = usable / columns
+		if j < usable%columns {
+			out[j]++
+		}
+	}
+	return out
+}
+
+// boardCardRows is the height of one card: number, optional local badge, two title lines, type, status, gap.
+func (m Model) boardCardRows(id garden.IssueID) int {
+	if _, ok := m.localBadgeFor(id); ok {
+		return 7
+	}
+	return 6
+}
+
 func gardenApprovalIndicator(r work.Record) (string, lipgloss.Color) {
 	p := theme.Current
 	it := r.Item
@@ -269,7 +282,6 @@ func (m Model) gardenDocument(width int) []string {
 	var text strings.Builder
 	switch b.section {
 	case 0:
-		fmt.Fprintf(&text, "#%d %s\n\n%s / %s / %s\n\n", r.Item.Issue.Number, boardSafe(r.Item.Issue.Title), r.Column, r.Item.Classification.Type, r.Priority)
 		status, _ := gardenApprovalIndicator(r)
 		text.WriteString(status + "\n" + m.launchOverview(r.Item.Classification.Stage == garden.StageReady) + "\n\n")
 		if fact := m.localFact(r.Item.Issue.ID); fact != "" {
@@ -354,56 +366,13 @@ func (m Model) gardenDocument(width int) []string {
 	for _, problem := range r.Item.Problems {
 		fmt.Fprintf(&text, "\n\nAttention: %s", boardSafe(problem.Message))
 	}
-	return m.settingsASCII(gWrap(width, p.Text, false, text.String()))
-}
-
-func (m Model) gardenDetail(width, rows int) []string {
-	b := m.garden.board
-	p := theme.Current
-	status := m.gardenBoardStatus()
-	if n := m.garden.notice; n != "" {
-		status = "! " + n
-	}
-	out := []string{gText(width, p.Success, true, "‹ "+b.layoutName()+" (Esc)   Issue document"), gText(width, p.Muted, false, status)}
-	contentWidth := width
-	if width >= 120 {
-		contentWidth -= 26
-	}
-	doc := m.gardenDocument(contentWidth)
-	avail := max(0, rows-3)
-	start := max(0, min(b.docScroll, max(0, len(doc)-avail)))
-	for i := 0; i < avail; i++ {
-		line := blankRow(contentWidth, p.Background)
-		if start+i < len(doc) {
-			line = doc[start+i]
+	var out []string
+	for _, para := range strings.Split(text.String(), "\n") {
+		for _, l := range strings.Split(ansi.Wrap(para, max(width, 1), ""), "\n") {
+			out = append(out, shellRow(width, p.Surface, seg(p.Text, p.Surface, false).Render(l), ""))
 		}
-		if width >= 120 {
-			rail := ""
-			fg, bg := p.Muted, p.Surface
-			if i == 0 {
-				rail = "IN THIS ISSUE"
-			}
-			if i >= 2 && i < 2+len(gardenDocumentSections)*2 && i%2 == 0 {
-				n := (i - 2) / 2
-				rail = "  " + gardenDocumentSections[n]
-				if n == b.section {
-					rail = "> " + gardenDocumentSections[n]
-					fg, bg = p.Success, p.Raised
-				}
-			}
-			line = boardLine(24, bg, fg, i == 2+b.section*2, rail) + "  " + line
-		}
-		out = append(out, shellRow(width, p.Background, line, ""))
 	}
-	tabs := []string{}
-	for i, s := range gardenDocumentSections {
-		if i == b.section {
-			s = "[" + s + "]"
-		}
-		tabs = append(tabs, s)
-	}
-	out = append(out, gText(width, p.Success, false, strings.Join(tabs, " / ")))
-	return m.settingsASCII(out[:rows])
+	return m.settingsASCII(out)
 }
 
 // launchOverview is the launch actions of an opened Issue. Local execution is its own fact: it supplements the

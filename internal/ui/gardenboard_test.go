@@ -108,7 +108,7 @@ func TestGardenBoardKeyboardEveryColumnEveryCardAndRoundTrip(t *testing.T) {
 					if m.garden.board.opened != s.ID {
 						t.Fatal("Enter opened another issue")
 					}
-					mustContain(t, "detail", view(m), "Garden › Board", fmt.Sprintf("#%d", r.Item.Issue.Number), "Board (Esc)", "Issue / Overview")
+					mustContain(t, "detail", view(m), fmt.Sprintf("Issue #%d", r.Item.Issue.Number), "esc Back to Board", "Issue / Overview")
 					m = pressAll(t, m, "esc")
 					if m.garden.board.opened != 0 || m.garden.board.selection != before {
 						t.Fatal("Escape did not restore exact card and scroll")
@@ -598,7 +598,6 @@ func TestGardenBoardASCIIComponentsContainOnlyASCIIChrome(t *testing.T) {
 		for section := range gardenDocumentSections {
 			m.garden.board.section = section
 			check(m.gardenDocument(width))
-			check(m.gardenDetail(width, m.gardenBoardRows()))
 			check(strings.Split(m.View(), "\n"))
 		}
 	}

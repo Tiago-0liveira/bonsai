@@ -143,11 +143,18 @@ document returns to the same row and scroll position in the Table.
 
 ## Read-only issue document
 
-Enter replaces the board with the document at every terminal size. The breadcrumb
-includes the issue number, and the visible Board parent action uses Escape or
-Backspace. Escape returns to the same card and board scroll. Left/Right switches
-Overview, Specification, Questions, Plans and Execution; Up/Down, Page Up/Down,
-Home and End scroll the current section. Wide layouts add a section rail.
+Enter, or a click on a card or row, opens the document as an opaque panel over the dimmed
+Board or Table, at every terminal size. A fixed header names the issue, its state and its
+approval; the pinned bar below the body holds the actions. Escape, Backspace or the
+**Back** control close it and return to the same card, row and scroll in the layout it
+came from. While it is open the panel owns every key and click: quit, help, the palette,
+workspace and view keys wait until it is closed, and clicks outside it do nothing.
+Left/Right (or a click) switches Overview, Specification, Questions, Plan and Activity;
+Up/Down, Page Up/Down, Home, End and the wheel scroll the current tab. Tab and Shift+Tab
+move through the enabled actions and Enter runs the focused one, exactly like its
+shortcut or a click. Wide layouts add a summary rail. If a refresh removes the issue, or
+it belongs to another repository, the panel closes with a notice on the board instead of
+showing another issue.
 
 Overview reads the canonical issue body. Specification and Plans read verified
 comment revisions, with comment IDs, hashes and source-spec fingerprints. Questions

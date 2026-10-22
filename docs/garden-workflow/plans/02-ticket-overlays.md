@@ -1,6 +1,8 @@
 # 02 / A focused Garden ticket overlay
 
-Status: planned.
+Status: done.
+
+Demo: `go test -c -o ui.test ./internal/ui`, then per size `( sleep 6; printf '\r'; sleep 1; printf '\177'; sleep 1; printf 'v'; sleep 1; printf '\r'; sleep 1; printf '\177'; sleep 1; printf 'q' ) | BONSAI_OVERLAY_DEMO_LOG=frames.log script -qec "stty cols 80 rows 24; ./ui.test -test.run '^TestGardenIssueOverlayTerminalDemo$'" /dev/null` (and `cols 120 rows 35`). Issue #101 opened from Board and from Table drew identical panels at both sizes, apart from the origin label, and Backspace restored each layout.
 
 ## Deliverable
 

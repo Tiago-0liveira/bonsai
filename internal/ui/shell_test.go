@@ -2,20 +2,15 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/vt"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
-	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/overlay"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -443,190 +438,5 @@ func TestShellHelpIsASCIIInASCIIMode(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-func issueOverlayFixture(t *testing.T) (Model, issueSummaryMsg) {
-	t.Helper()
-	m := shellModel(t, config.Prefs{}, nil)
-	rec := work.Record{}
-	rec.Item.Issue.ID, rec.Item.Issue.Number = 172, 172
-	rec.Item.Issue.Title = "Reduce test setup time"
-	rec.Item.Issue.Body = "Read-only planning.\nInspect test fixtures and compare setup helpers."
-	m.garden.board.collection.Records = []work.Record{rec}
-	m.garden.board.collection.Columns[0] = []work.Record{rec}
-	m.garden.board.collection.Total = 1
-	m.garden.api = struct{ gardenapi.Backend }{}
-	m.garden.hasStatus = true
-	m.garden.status.State = "connected"
-	m.garden.sub = 1
-	m.garden.board.loaded = true
-	m.garden.board.selection.ID = rec.Item.Issue.ID
-	m.garden.board.selection.Initialized = true
-	issue := m.garden.board.collection.Records[0].Item.Issue
-	return m, issueSummaryMsg{number: issue.Number, title: issue.Title, summary: issue.Body}
-}
-
-func assertOverlayFrame(t *testing.T, frame string, w, h int) {
-	t.Helper()
-	if h == 0 {
-		if frame != "" {
-			t.Fatal("nonempty zero-height overlay")
-		}
-		return
-	}
-	lines := strings.Split(frame, "\n")
-	if len(lines) != h {
-		t.Fatalf("overlay height %d, want %d", len(lines), h)
-	}
-	for _, line := range lines {
-		if ansi.StringWidth(line) != w {
-			t.Fatalf("overlay width %d, want %d: %q", ansi.StringWidth(line), w, line)
-		}
-	}
-}
-
-func TestIssueOverlayResizeAndClose(t *testing.T) {
-	m, issue := issueOverlayFixture(t)
-	for _, size := range [][2]int{{80, 24}, {120, 35}, {160, 48}, {20, 8}, {1, 1}, {0, 0}, {0, 3}, {80, 24}} {
-		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
-			m = sized(t, m, size[0], size[1])
-			board := m.View()
-			opened, cmd := send(t, m, issue)
-			if cmd != nil || opened.modal == nil {
-				t.Fatal("opening a summary must only install the fixture")
-			}
-			palette := theme.Current
-			view := opened.View()
-			assertOverlayFrame(t, view, size[0], size[1])
-			if theme.Current != palette {
-				t.Fatal("overlay mutated the shared palette")
-			}
-			if size[0] >= 80 {
-				x, y, w, h := overlay.Center(size[0], size[1])
-				lines := strings.Split(ansi.Strip(view), "\n")
-				if !strings.Contains(lines[y+1], issue.title) || !strings.Contains(lines[y+h-2], "esc close") {
-					t.Fatal("header or close action lost during resize")
-				}
-				if lines[0] != strings.Split(ansi.Strip(board), "\n")[0] {
-					t.Fatal("parent header disappeared")
-				}
-				screen := vt.NewEmulator(size[0]+1, size[1]+1)
-				_, _ = screen.Write([]byte(strings.ReplaceAll(view, "\n", "\r\n")))
-				fg := screen.CellAt(0, 0).Style.Fg
-				if fg == nil {
-					t.Fatal("parent has no explicit dim foreground")
-				}
-				r, g, b, _ := fg.RGBA()
-				if r != 156*257 || g != 130*257 || b != 101*257 {
-					t.Fatal("parent does not use the dim palette")
-				}
-				for row := y; row < y+h; row++ {
-					for col := x; col < x+w; col++ {
-						bg := screen.CellAt(col, row).Style.Bg
-						if bg == nil {
-							t.Fatalf("transparent panel cell at %d,%d", col, row)
-						}
-						r, g, b, _ := bg.RGBA()
-						wr, wg, wb, _ := ansi.HexColor("#1a211a").RGBA()
-						if r != wr || g != wg || b != wb {
-							t.Fatalf("wrong panel background at %d,%d", col, row)
-						}
-					}
-				}
-			}
-			closed, cmd := send(t, opened, tea.KeyMsg{Type: tea.KeyEsc})
-			if cmd == nil {
-				t.Fatal("Escape did not emit cancel")
-			}
-			closed, cmd = send(t, closed, cmd())
-			if cmd != nil || closed.modal != nil || closed.View() != board {
-				t.Fatal("closing did not restore the exact parent and selection")
-			}
-		})
-	}
-}
-
-func TestIssueOverlayPaletteColors(t *testing.T) {
-	for _, tc := range []struct {
-		value   string
-		r, g, b uint32
-	}{
-		{"#1a211a", 26, 33, 26},
-		{"235", 38, 38, 38},
-		{"205", 255, 95, 175},
-	} {
-		t.Run(tc.value, func(t *testing.T) {
-			r, g, b, _ := theme.ANSIColor(lipgloss.Color(tc.value)).RGBA()
-			if r != tc.r*257 || g != tc.g*257 || b != tc.b*257 {
-				t.Fatalf("palette conversion = %d,%d,%d", r, g, b)
-			}
-		})
-	}
-}
-
-func TestIssueOverlayScrollAcrossResize(t *testing.T) {
-	m, issue := issueOverlayFixture(t)
-	m = sized(t, m, 120, 35)
-	issue.summary = "FIRST\n" + strings.Repeat("Read-only summary line.\n", 60) + "LAST"
-	m, _ = send(t, m, issue)
-	for range 80 {
-		m, _ = send(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	}
-	for _, size := range [][2]int{{80, 24}, {120, 35}, {160, 48}} {
-		m = sized(t, m, size[0], size[1])
-		view := ansi.Strip(m.View())
-		if !strings.Contains(view, "LAST") || !strings.Contains(view, issue.title) || !strings.Contains(view, "esc close") {
-			t.Fatalf("scroll position or pinned chrome lost at %dx%d", size[0], size[1])
-		}
-		if strings.Contains(view, "FIRST") {
-			t.Fatal("resize reset scrolling")
-		}
-	}
-}
-
-func TestIssueOverlayKeepsExistingModals(t *testing.T) {
-	m := sized(t, shellModel(t, config.Prefs{}, nil), 80, 24).openShellPalette()
-	if got, want := m.View(), clampHeight(truncateToWidth(m.modal.View(), m.width), m.height); got != want {
-		t.Fatal("existing modal path changed")
-	}
-	m2, cmd := send(t, m, issueSummaryMsg{number: 172, title: "ignored"})
-	if cmd != nil || m2.modal != m.modal {
-		t.Fatal("fixture displaced an existing modal")
-	}
-}
-
-type issueOverlayDemo struct {
-	model Model
-	issue issueSummaryMsg
-}
-
-func (d issueOverlayDemo) Init() tea.Cmd { return nil }
-func (d issueOverlayDemo) View() string  { return d.model.View() }
-func (d issueOverlayDemo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
-		if key.String() == "ctrl+c" || (d.model.modal == nil && key.String() == "q") {
-			return d, tea.Quit
-		}
-		if d.model.modal == nil {
-			if key.String() != "o" {
-				return d, nil
-			}
-			msg = d.issue
-		}
-	}
-	next, cmd := d.model.Update(msg)
-	d.model = next.(Model)
-	return d, cmd
-}
-
-func TestIssueOverlayTerminalDemo(t *testing.T) {
-	if os.Getenv("BONSAI_OVERLAY_DEMO") != "1" {
-		t.Skip("interactive terminal fixture; set BONSAI_OVERLAY_DEMO=1")
-	}
-	m, issue := issueOverlayFixture(t)
-	m.status = "o summary · esc close · q quit"
-	if _, err := tea.NewProgram(issueOverlayDemo{model: m, issue: issue}, tea.WithAltScreen()).Run(); err != nil {
-		t.Fatal(err)
 	}
 }

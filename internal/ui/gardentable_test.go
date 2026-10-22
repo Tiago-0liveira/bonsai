@@ -159,7 +159,7 @@ func TestGardenTableEnterOpensSharedDetailAndEscRestoresRowAndScroll(t *testing.
 			if m.garden.board.opened != id {
 				t.Fatalf("row %d opened %d", row, m.garden.board.opened)
 			}
-			mustContain(t, "detail", view(m), "Garden › Table", fmt.Sprintf("#%d", rows[row].Item.Issue.Number), "Table (Esc)", "Issue / Overview")
+			mustContain(t, "detail", view(m), fmt.Sprintf("Issue #%d", rows[row].Item.Issue.Number), "esc Back to Table", "Issue / Overview")
 			m = pressAll(t, m, "esc")
 			if m.garden.board.opened != 0 || m.garden.board.layout != layoutTable || m.garden.board.selection.ID != id || m.garden.board.tableScroll != scroll || m.garden.board.tableRow != tr {
 				t.Fatalf("row %d: Esc did not restore row/scroll", row)

@@ -434,6 +434,6 @@ func (m Model) playgroundOpenIssue() (Model, tea.Cmd) {
 	g = &m.garden
 	g.sub = subBoard
 	g.board.selection.Focus(g.board.collection, rec.Item.Issue.ID)
-	g.board.opened, g.board.section, g.board.docScroll = rec.Item.Issue.ID, 0, 0
+	g.board.open(rec.Item.Issue.ID, g.status.Target.RepoID)
 	return m, cmd
 }

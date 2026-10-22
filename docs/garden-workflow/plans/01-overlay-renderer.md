@@ -2,8 +2,8 @@
 
 Status: done.
 
-Demo: `TestIssueOverlayTerminalDemo` under `script` at 80×24 and 120×35 (command in
-`docs/tui-cli.md`, "Garden overlay renderer fixture"). Board stayed visible around
+Demo: `TestIssueOverlayTerminalDemo` (fixture removed in plan 02) under `script`
+at 80×24 and 120×35, with `BONSAI_OVERLAY_DEMO=1`. Board stayed visible around
 the panel and Escape restored every cell exactly.
 
 ## Deliverable
