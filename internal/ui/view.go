@@ -376,7 +376,9 @@ func (m Model) renderInspect() string {
 
 	// ── Working tree ───────────────────────────────────────────────────────
 	b.WriteString(prSection.Render("Working tree") + "\n")
-	if !d.status.Dirty() {
+	if m.layoutKind == LayoutRedesign && !d.statusKnown {
+		b.WriteString("  Working tree status unavailable\n")
+	} else if !d.status.Dirty() {
 		b.WriteString("  " + procRunning.Render("✓ clean") + "\n")
 	} else {
 		var parts []string
@@ -393,6 +395,9 @@ func (m Model) renderInspect() string {
 	}
 	b.WriteString(rule(w) + "\n")
 
+	if m.layoutKind == LayoutRedesign && d.statusErr != "" {
+		b.WriteString("  Status stale: " + pgClean(d.statusErr, 100) + "\n")
+	}
 	// ── Last commit ────────────────────────────────────────────────────────
 	b.WriteString(prSection.Render("Last commit") + "\n")
 	if d.commitOK {
@@ -444,6 +449,17 @@ func (m Model) renderInspect() string {
 		b.WriteString("  " + prMeta.Render(strings.Join(stats, " · ")) + "\n")
 	}
 
+	if m.layoutKind == LayoutRedesign {
+		if s, _, found := m.selectedSession(cleanPath(wt.Path)); found && s.Task != nil {
+			b.WriteString("\n" + prSection.Render("Garden context") + "\n")
+			if rec, ok := pgTask(m.garden.board.collection, s.Task); ok {
+				b.WriteString(fmt.Sprintf("  #%d %s\n", rec.Item.Issue.Number, pgClean(rec.Item.Issue.Title, 100)))
+			} else {
+				b.WriteString(fmt.Sprintf("  Issue ID %d (details not loaded)\n", s.Task.IssueID))
+			}
+			b.WriteString("  Attempt: " + pgClean(s.Task.AttemptID, 100) + "\n  Open linked Issue from the command palette.\n")
+		}
+	}
 	b.WriteString("\n" + prMeta.Render(inspectPaneHint) + "\n")
 	return b.String()
 }
@@ -483,7 +499,8 @@ func (m Model) renderChecks() string {
 
 	if m.ciErr != "" {
 		b.WriteString(prMeta.Render("(gh unavailable: "+m.ciErr+")") + "\n")
-	} else if len(m.ciRuns) == 0 {
+	}
+	if len(m.ciRuns) == 0 && m.ciErr == "" {
 		b.WriteString(prMeta.Render("no workflow runs for branch "+wt.Branch) + "\n")
 	} else {
 		for _, r := range m.ciRuns {
@@ -541,6 +558,10 @@ func mergeableBadge(m string) string {
 
 // termInnerWidth returns a safe render width for the right pane body.
 func (m Model) termInnerWidth() int {
+	if m.layoutKind == LayoutRedesign {
+		w, _ := m.worktreesPaneSize()
+		return w
+	}
 	_, rightW, _ := m.dims()
 	w := rightW - 4
 	if w < 10 {
@@ -626,6 +647,10 @@ func (m Model) dims() (leftW, rightW, innerH int) {
 
 // layout recomputes child component sizes from the current terminal size.
 func (m *Model) layout() {
+	if m.layoutKind == LayoutRedesign {
+		m.worktreesLayout()
+		return
+	}
 	if m.width == 0 || m.height == 0 {
 		return
 	}
@@ -682,6 +707,9 @@ func (m Model) procFooterHeight() int {
 // View renders two bordered panes filling the screen above a status/help bar,
 // with any active modal drawn centered on top.
 func (m Model) View() string {
+	if m.layoutKind == LayoutRedesign {
+		return m.shellView()
+	}
 	if m.updatePromptVisible() {
 		return clampHeight(m.updatePrompt(), m.height)
 	}

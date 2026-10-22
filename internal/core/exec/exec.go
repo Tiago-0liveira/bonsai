@@ -5,6 +5,7 @@ package exec
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -289,16 +290,29 @@ func (m *Manager) KillAll() {
 // vars (see config.HookVars) and each var is also exported as $BONSAI_<NAME>.
 // Empty command strings are skipped.
 func RunHooks(dir string, commands []string, vars map[string]string) error {
+	return RunHooksContext(context.Background(), dir, commands, vars)
+}
+
+// RunHooksContext is RunHooks that stops, killing the running command, when ctx
+// ends. A canceled hook is a failed one: the caller decides whether it may have
+// partly run.
+func RunHooksContext(ctx context.Context, dir string, commands []string, vars map[string]string) error {
 	env := hookEnv(vars)
 	for _, c := range commands {
 		c = ExpandVars(c, vars)
 		if strings.TrimSpace(c) == "" {
 			continue
 		}
-		cmd := shellCommand(c)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		cmd := shellCommandContext(ctx, c)
 		cmd.Dir = dir
 		cmd.Env = env
 		if err := cmd.Run(); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 	}
@@ -324,17 +338,21 @@ func hookEnv(vars map[string]string) []string {
 
 // shellCommand builds an *exec.Cmd using the appropriate shell for the platform.
 func shellCommand(command string) *exec.Cmd {
+	return shellCommandContext(context.Background(), command)
+}
+
+func shellCommandContext(ctx context.Context, command string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		if s := envShell(); s != "" {
-			return exec.Command(s, "-c", command)
+			return exec.CommandContext(ctx, s, "-c", command)
 		}
 		comspec := os.Getenv("COMSPEC")
 		if comspec == "" {
 			comspec = "cmd.exe"
 		}
-		return exec.Command(comspec, "/c", command)
+		return exec.CommandContext(ctx, comspec, "/c", command)
 	}
-	return exec.Command("sh", "-c", command)
+	return exec.CommandContext(ctx, "sh", "-c", command)
 }
 
 // Command builds a shell *exec.Cmd rooted at dir. The caller wires up

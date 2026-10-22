@@ -81,6 +81,15 @@ bonsai agent account remove work                # logs the profile out, deletes 
   session refreshes it. Token profiles are shown as `n/a` because long-lived
   tokens cannot read usage, and so are macOS profiles (the login lives in the
   Keychain). Results are cached for 1 minute; `--refresh` bypasses the cache.
+- **Activity.** Bonsai also learns whether a running session is working, waiting
+  for you (permission prompt, question, plan approval) or idle. It adds
+  observe-only hooks to each session with Claude Code's `--settings` flag, so the
+  profile's `settings.json` is never written and your own hooks keep running. If
+  you start Claude with your own `--settings` or `--bare`, or disable hooks, the
+  activity stays unknown and the session shows as plain "Running". See
+  [Activity hooks](development.md#activity-hooks).
+  Questions and plan approval keep their specific reason even when Claude also
+  emits a permission hook or a generic permission notification for the dialog.
 - Requires Claude Code 2.1.295 or newer.
 
 ## Codex profiles
@@ -127,6 +136,18 @@ bonsai agent account remove work                     # logs the profile out, del
   profiles have no plan limits and are shown as `n/a`. Results are cached for
   1 minute; `--refresh` bypasses the cache. The start dialog's model suggestions
   come from the same place, with the list bundled in Codex as the fallback.
+- **Activity.** Like Claude, Codex sessions report working, waiting and idle.
+  Bonsai adds observe-only hooks for the session's events to the profile's own
+  `$CODEX_HOME/hooks.json` (never `~/.codex`), keeping every other entry in it,
+  and marks exactly those entries trusted in the profile's `config.toml` through
+  Codex's app-server, so Codex runs them without a review prompt. Your other
+  hooks stay as untrusted as you left them, and Bonsai never uses
+  `--dangerously-bypass-hook-trust`. If the trust step fails, the session still
+  starts, and Codex's approval and question notifications (asked for with `-c`
+  overrides, unless your own args set them) show as inferred "waiting". See
+  [Activity hooks](development.md#activity-hooks).
+  Async questions remain "Needs input (question)" after the question tool returns
+  and its turn finishes, until you answer, cancel or interrupt the request.
 - Requires Codex CLI 0.162.1 or newer.
 
 ## Antigravity in the web workspace
@@ -165,6 +186,15 @@ once read, its plan ("Google AI Pro").
   lists once per effort (`gemini-3.8-flash-high`, `-medium`, `-low`) is one model
   with an effort choice, passed to agy as the full ID. A model listed once has no
   effort choice.
+- **Activity.** Sessions write agy's `hooks.json` into their private session home
+  (never the profile or `~/.gemini`), so Bonsai sees working and idle from agy's
+  own hooks. agy has no hook for permission prompts or questions, so "needs
+  input" is inferred from its terminal notifications and rendered input dialogs.
+  Bonsai distinguishes the numbered question chooser from command permission
+  prompts using their fixed UI labels, without recording their contents.
+  Notifications are turned on in
+  the session's settings only (your profile's `notifications` setting is not
+  changed), and is shown as inferred. See [Activity hooks](development.md#activity-hooks).
 
 ### Starting agents in the web app
 
@@ -190,7 +220,13 @@ process with a record, `agents/<id>.json` under the web home. A session record's
 summary has an `origin` field: `web`, `tui` or `cli` (an empty origin counts as
 `web`). The web app watches these records, so a session started in the TUI or
 from the CLI appears live in the browser. `bonsai agents` lists every running
-session.
+session. Its `STATE` column is the lifecycle (`running`, `exited (0)`, `failed`)
+and `ACTIVITY` is what the agent is doing (`Working`, `Idle`, `Needs input
+(permission)`, `Stalled`, `Running` when unknown). Sessions without hook reports
+(older holders, providers without hooks) keep the output-based `working` /
+`idle <duration>` guess. `bonsai agents --json` adds an `activity` object
+(`state`, `reason`, `detail`, `since`, `source`) for running sessions that report
+one and omits it otherwise.
 
 The TUI's Agents tab is another client of these sessions. It watches the selected
 session read-only; `enter` takes control to type, and `ctrl+]` immediately returns
@@ -214,13 +250,162 @@ without asking for confirmation.
 `cli` are left running either way. `--stop-agents` and `--keep-agents` override the
 setting for one stop.
 
+### Desktop notifications
+
+Each session's holder can raise a desktop notification when its agent starts
+waiting for you or finishes a turn. They are **off by default**. The holder sends
+them (best effort: `notify-send` on Linux, `osascript` on macOS, PowerShell on
+Windows), so they work with the TUI and CLI as well as the web app, and one
+session never notifies twice.
+
+Turn them on in `web.json` (`agents.notifications`) or with
+`POST /api/settings/agents` (see [development](development.md#agent-hosts)):
+
+```json
+"agents": { "notifications": { "enabled": true, "needs_input": true, "turn_complete": true } }
+```
+
+`enabled` is the master switch. `needs_input` (default on) notifies when the
+agent waits for a permission, question or plan. `turn_complete` (default on)
+notifies when a turn finishes or fails. The toggles only matter while `enabled`
+is on. A holder reads the setting when it starts, so a change applies to sessions
+started afterwards.
+
+A notification names the session, the provider, the reason and, for a permission
+prompt, the tool (`Bonsai: fix login needs input`, body `claude (permission:
+Bash)`). It never includes prompts, tool input or output. Starting a session,
+interrupting a turn, your own keystrokes and a session ending do not notify, and
+a session sends at most one notification of each type every 2 seconds.
+
+### Activity status limits
+
+The status comes from provider hooks, so it is a best-effort signal:
+
+- A tool that finishes while another tool waits for permission can show the
+  session as working until the next hook arrives. Pressing a key in the terminal
+  corrects it.
+- Hooks are ordered by the time each hook process started. After the system clock
+  steps backwards (common on WSL2 and after a VM resume), a hook from that moment
+  can be ignored, and the status then lags until the next one.
+- Codex sessions use the `-c tui.notification*` overrides described above even
+  when your profile's `config.toml` sets those keys; only your own launch args
+  win.
+- Hook commands are quoted for POSIX shells. On Windows the status may stay
+  "Running" if the agent runs hooks through a different shell.
+
+## Garden approval does not start agents
+
+Validating a Garden specification (gate one, in the
+[redesign preview](tui-cli.md#garden-board-in-the-preview)) records an approval on
+GitHub and never launches an agent, planner or worktree, and never touches any
+profile's config directory or login. Agent profiles are used only by the separate,
+explicit local Request AI plan action. Gate-two plan approval ends at **Ready**,
+starts no coding agent, worktree or PR; launching is a separate explicit action (below). GitHub/mobile
+approvals use the verified comment protocol and never request remote execution.
+See [gate two and the external protocol](garden.md#approve-the-exact-plan-gate-two) and the
+[Garden guide](garden.md#validate-a-specification-gate-one).
+
+## Garden implementation launch
+
+Garden's explicit **Start implementation locally** ([guide](garden.md#start-implementation-locally))
+reuses the agent host: an isolated worktree created by the daemon, then one holder
+for the chosen profile with `Origin` `tui`. The start carries an operation identity,
+a reserved session ID and additive task metadata (repository, Issue, attempt, role
+`implementation`) on the existing record; there is no new profile or session
+database. Retrying the same operation returns the same session, and a start that
+never began is fenced closed so it cannot launch late. Success is the provider's
+actual start, not socket readiness.
+
+Native permissions are explicit and frozen at confirmation (Codex sandbox and
+approval, Claude permission mode, Antigravity full access); inherited profile
+values are shown but later default changes never widen a running attempt. The usual
+isolation applies: per-account config dirs, scrubbed env, `HOME` untouched, no login
+or token refresh. Closing the TUI only detaches; the holder keeps running. Attempt
+history lives in `garden-launch.json` under the user config dir.
+
+## The read-only planner role
+
+Garden's **Request AI plan** ([guide](garden.md#request-an-ai-plan-read-only-planner))
+starts an agent session with the *planner* role: read-only, bound to one approved
+specification revision, in the current checkout and with no worktree. The role is a
+launch option (`LaunchOptions.ReadOnly`), not a prompt: it is available only for a
+provider whose own CLI enforces read-only access below the model, a prompt that
+says "do not edit" or a mode called "plan" does not count, and a provider that cannot
+meet that is unavailable for the role. There is no fallback to unrestricted access.
+Providers declare their verdict with the optional `agents.ReadOnlyEnforcer`
+interface, and the launch path (`agenthost.Starter`, then each provider's
+`PrepareSession`) refuses a read-only launch whose provider says no. A read-only
+launch accepts no permission mode, sandbox, approval or full-access option, no
+explicit CLI arguments, and ignores the profile's own permission defaults, so a
+profile set to bypass permissions cannot widen it. Everything else is unchanged:
+isolated per-account config directories, scrubbed inherited provider variables, no
+`HOME` override, no login refresh and no writes to `~/.claude` or `~/.codex`.
+
+| Provider | Planner role | What enforces it |
+| --- | --- | --- |
+| Claude | Available | Without a plan file: `claude --restricted --tools Read,Grep,Glob --strict-mcp-config --permission-mode plan`. `--tools` replaces the built-in tool set, so Edit, Write, Bash and the others do not exist for the model; `--restricted` also drops code-running tools and WebFetch, confines file tools to the working directory, ignores user, project and local settings files and refuses `bypassPermissions`; `--strict-mcp-config` with no MCP config keeps every MCP server out. The `plan` mode is not what enforces anything. With the plan file Garden always passes: `--tools Read,Grep,Glob,Write --permission-mode dontAsk --add-dir <attempt plan dir>` and one merged `--settings` JSON whose `permissions.allow` is the single rule `Edit(//<absolute plan.md>)` (Claude Code matches `Write` against `Edit` path rules) and `deny` repeats `Bash`, `WebFetch`, `WebSearch`; under `dontAsk` everything no rule allows is denied. `--setting-sources ""` (an empty list; the 2.1.306 parser accepts it) is passed as well, so on top of `--restricted` no user, profile, project or local `settings.json` can add an allow rule; administrator-managed policy settings still apply and are outside Bonsai's control. A Claude Code that lacks one of these flags exits with an unknown-option error, so it fails closed. |
+| Codex | Unavailable | The shell sandbox does not establish denial of patch writes, configured MCP mutations, plugins or hooks. Bonsai refuses the planner role until the complete tool surface can be constrained and verified. |
+| Antigravity | Unavailable | `agy` offers `--mode plan` (an execution mode the model may leave) and `--sandbox` ("terminal restrictions"), but no tool allowlist and no file-write sandbox, so neither stops an edit. |
+
+Evidence is each CLI's own `--help` (Claude Code 2.1.304, `codex-cli` 0.163.0 and the
+`agy` available when this was written) plus how the repo already launches them; flags
+that are not in a CLI's help are never assumed. Codex's help scopes `--sandbox` to
+"model-generated shell commands"; this is insufficient evidence for the planner
+role, so even profiles configured with a read-only shell sandbox are refused.
+
+The one write a planner has is its plan file. A provider declares it can confine that
+write with `ReadOnlySupport.PlanFile`; the launch option is `LaunchOptions.PlanFile`
+(an absolute `plan.md` path), which is only valid together with `ReadOnly` and is
+refused for a provider that does not declare it. Garden creates the attempt's private
+directory (`~/.bonsai/garden/plans/<local repo key>/<issue>/<attempt>/`, mode 0700,
+never a symlink) before the session starts and refuses a plan path containing glob or
+rule characters rather than escaping it. The planner is told the path in its prompt
+(a courtesy; the enforcement is the provider's permission policy). Bonsai reads that
+file only after it validates the path is the attempt's own regular, non-symlink file
+of at most 1 MiB.
+
+The plan becomes an Issue record only when you publish text from that attempt in
+Garden ([Publish and review a plan](garden.md#publish-and-review-a-plan)). Bonsai
+does not read the session's terminal output for this. The text, taken from the plan
+file or typed or pasted, is kept in memory until you publish it, and the attempt record
+(still free of prompts, terminal output and plan text) supplies the specification and
+the inspected base. Reviewing or rejecting a plan never starts a session; the next
+read-only run needs its own **Request AI plan**.
+
+## Tool-free structured calls
+
+[AI draft assistance](garden.md#elaborate-a-draft-with-ai) uses the optional
+`agents.StructuredRunner` capability for one-shot JSON responses. Claude Code is
+the only supported provider. Its exact invocation, built in
+[`structured.go`](../internal/providers/claude/structured.go), is:
+
+```text
+claude -p --output-format json --json-schema <schema> --tools "" --restricted --strict-mcp-config --safe-mode --no-session-persistence --permission-prompts none [--model M] [--effort E] --system-prompt <fixed>
+```
+
+Model and effort are included when the request or profile selects them. The call
+uses a fresh, empty temporary working directory under the account's `structured`
+directory, removed on return, with the usual isolated profile environment and
+unchanged `HOME`. No repository files are read. User-derived input goes **only on
+stdin**, as `Input (JSON):` followed by one JSON object; argv contains the fixed
+system prompt, schema and validated options. Tools are disabled, and
+`--no-session-persistence` disables transcript persistence. Bonsai keeps no prompt
+or reply log, discards stderr and returns errors without raw provider output.
+An unsupported flag fails the call; permissions are never widened to retry it.
+
+Codex and Antigravity do not implement this capability: Bonsai has no verified
+tool-free structured mode for either. A Codex read-only shell sandbox still
+permits file reads; Antigravity's plan mode and terminal restrictions do not
+remove its tools. Neither meets this call's no-repository-reading boundary.
+
 ## Profile defaults
 
 Each profile keeps its launch defaults: the model plus Codex `permissions` and
 `effort`, Claude `permission_mode` and `effort`, or Antigravity `effort` and
 `full_access`. The web start dialog opens on them and can change them for one
-launch; set them for good on the profile's **Defaults** tab in the Agents tab or
-with `account set`. A launch option still wins over them, and defaults only apply
+launch; set them for good on the profile's **Defaults** tab in the Agents tab (or
+the Accounts workspace of the [redesign preview](tui-cli.md#accounts-in-the-preview))
+or with `account set`. A launch option still wins over them, and defaults only apply
 to sessions started afterwards.
 
 ```sh
@@ -251,3 +436,46 @@ line per provider on stderr, a cell per profile and who is still being waited
 on. `--no-progress` or `BONSAI_PROGRESS=0` turns it off, and piped output is
 unchanged. Results are cached for 1 minute per profile; `--refresh` bypasses
 the cache.
+
+The next explicitly requested local planner attempt includes the latest verified
+request-changes reason as sanitized review context. Reading a reason never restarts
+a session, and feedback never changes the enforced read-only permissions.
+
+## The read-only reviewer role
+
+Garden reviewers use the same provider-enforced read-only role and single-file
+write capability as the [planner](#the-read-only-planner-role). The one writable
+file is a bounded JSON review report outside the worktree, rather than a plan.
+Bonsai supplies the diff between the recorded merge base and reviewed commit;
+the reviewer has file-reading tools and no shell. Diff context is limited to
+48 KiB and any truncation instructs the reviewer to report incomplete coverage.
+The runtime rechecks support on launch; a prompt or account permission default
+cannot widen this role. Claude currently supports it; Codex and Antigravity stay
+unavailable with their capability reason.
+
+Optional automatic runs require local consent under Settings → Agents and apply
+only to verified Bonsai implementation attempts in this clone. Reports are bound
+to one revision and commit and preserve finding evidence and prior decisions.
+CI remains independent. Manual retries, dismissal reasons and human acceptance
+are explicit local actions. Request fixes opens the existing confirmed
+implementation form; remote comments never rerun code. See the
+[Garden review guide](garden.md#read-only-verification-and-human-review) for
+triggers, limits, stale provenance and acceptance conditions.
+
+
+## Worktrees workspace links
+
+In the [redesign preview](tui-cli.md#worktrees-in-the-preview), Worktrees → Agents
+(`g`) uses the same repository session index and holder client as Playground.
+Its scoped `a` (all sessions) and `n` (new agent) keep their meanings. `m` and `u`
+open the selected session's account in Accounts Overview or Usage; they reuse
+the shared usage store. `O` (`agent_playground`) carries that exact session ID
+to Playground in Observe. Escape through the destination's parents returns to
+the original checkout/detail and its document position.
+
+Only explicit terminal control sends keys to a holder; Ctrl+] returns focus.
+Process logs keep separate controls and never write to an agent. Switching
+workspaces releases the UI attachment while the holder continues. Garden task
+and attempt references are shown when present; manual sessions require neither
+Garden setup nor a fabricated approved plan. Existing account/session/worktree
+locks still govern launch, stop and prune operations.

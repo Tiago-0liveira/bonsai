@@ -44,6 +44,13 @@ type terminal struct {
 // newManager serves holders in the test process, whose providers exist only
 // here; sockets go under a short temp dir for the Unix socket path limit.
 func newManager(t *testing.T, accounts agents.AccountStore, sessions agents.SessionStore, registry *agents.Registry) *agenthost.Manager {
+	m, _ := newManagerWithHook(t, accounts, sessions, registry, nil)
+	return m
+}
+
+// newManagerWithHook also sets the holders' hook command and returns the
+// paths of their records.
+func newManagerWithHook(t *testing.T, accounts agents.AccountStore, sessions agents.SessionStore, registry *agents.Registry, hook []string) (*agenthost.Manager, agenthost.Paths) {
 	t.Helper()
 	// macOS's default temp directory can exceed the Unix socket path limit.
 	sockets, err := os.MkdirTemp("/tmp", "bah")
@@ -52,9 +59,9 @@ func newManager(t *testing.T, accounts agents.AccountStore, sessions agents.Sess
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockets) })
 	paths := agenthost.Paths{Records: filepath.Join(t.TempDir(), "agents"), Sockets: sockets}
-	m := agenthost.NewManager(accounts, sessions, registry, paths, agenthost.InProcess(agenthost.Deps{Accounts: accounts, Sessions: sessions, Registry: registry, Linger: 200 * time.Millisecond}), nil)
+	m := agenthost.NewManager(accounts, sessions, registry, paths, agenthost.InProcess(agenthost.Deps{Accounts: accounts, Sessions: sessions, Registry: registry, Linger: 200 * time.Millisecond, HookCommand: hook}), nil)
 	t.Cleanup(func() { m.Close(false, 10*time.Second) })
-	return m
+	return m, paths
 }
 
 func attach(t *testing.T, m *agenthost.Manager, id string) *terminal {

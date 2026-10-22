@@ -17,20 +17,52 @@ import (
 // mergedKeyOverrides returns the effective key overrides: repo-level
 // (.bonsai.yaml) with personal (state.json) overrides layered on top.
 func (m Model) mergedKeyOverrides() map[string]string {
-	out := make(map[string]string, len(m.cfg.Keys)+len(m.state.Prefs.Keys))
+	live := m.livePrefs()
+	out := make(map[string]string, len(m.cfg.Keys)+len(live.Keys))
 	for k, v := range m.cfg.Keys {
 		out[k] = v
 	}
-	for k, v := range m.state.Prefs.Keys {
+	for k, v := range live.Keys {
 		out[k] = v
 	}
 	return out
 }
 
+// livePrefs is the preference set the UI renders from. The redesign shell
+// edits a working copy (persisted by commands) and never touches state.Prefs
+// from Update; legacy keeps reading state directly, on the Update goroutine
+// that is its only writer.
+func (m Model) livePrefs() config.Prefs {
+	if m.layoutKind == LayoutRedesign {
+		return m.work
+	}
+	return m.state.Prefs
+}
+
+// contrast is the contrast mode in effect: only the redesign reads it, so the
+// legacy palette path is structurally unchanged.
+func (m Model) contrast() string {
+	if m.layoutKind == LayoutRedesign {
+		return m.work.Contrast
+	}
+	return ""
+}
+
+// applyPalette resolves the palette, always applying the contrast mode, and
+// restyles every themed component. Legacy views ignore the surface roles the
+// contrast mode changes, so they are unaffected.
+func applyPalette(preset string, overrides map[string]string, contrast string) {
+	theme.Current = theme.ApplyContrast(theme.Resolve(preset, overrides), contrast)
+	applyTheme()
+	worktreelist.SetTheme(theme.Current)
+	modals.SetTheme(theme.Current)
+	prefs.SetTheme(theme.Current)
+}
+
 // currentThemePreset is the palette preset in effect (personal pick over repo
 // config, falling back to bonsai).
 func (m Model) currentThemePreset() string {
-	cur := m.state.Prefs.Theme
+	cur := m.livePrefs().Theme
 	if cur == "" {
 		cur = m.cfg.Theme.Preset
 	}
@@ -44,8 +76,8 @@ func (m Model) currentThemePreset() string {
 // override (state.json) wins over the repo's .bonsai.yaml editor setting;
 // "" defers to $VISUAL/$EDITOR/vi (see coreexec.EditorCmd).
 func (m Model) effectiveEditor() string {
-	if m.state.Prefs.Editor != "" {
-		return m.state.Prefs.Editor
+	if ed := m.livePrefs().Editor; ed != "" {
+		return ed
 	}
 	return m.cfg.Editor
 }
@@ -71,6 +103,13 @@ func prefsActions(repoOverrides map[string]string) []prefs.Action {
 // openPrefs opens the preferences overlay. startOnKeys places the cursor on
 // the keybindings editor (used when arriving from the keymap modal).
 func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
+	if m.layoutKind == LayoutRedesign {
+		if startOnKeys {
+			t, _ := paletteTargetForLabel(paletteEditKeys)
+			return m.goToPalette(t)
+		}
+		return m.selectWorkspace(wsSettings)
+	}
 	pm := prefs.New(
 		m.currentThemePreset(),
 		m.sort.name(),
@@ -92,6 +131,7 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 // persists it, and restyles every component — this is what makes theme picks
 // preview live while the overlay is open.
 func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
+	old := m.state.Prefs
 	m.state.Prefs = config.Prefs{
 		Theme:       p.Theme,
 		Sort:        p.Sort,
@@ -100,18 +140,19 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		AgentGlyphs: p.AgentGlyphs,
 		Editor:      p.Editor,
 		Keys:        p.Keys,
+		// The overlay does not edit the redesign's fields; keep them.
+		Contrast:          old.Contrast,
+		Density:           old.Density,
+		StartWorkspace:    old.StartWorkspace,
+		NoWorkspaceMemory: old.NoWorkspaceMemory,
 	}
 	if err := m.state.Save(); err != nil {
 		m.err = err
 		return m, nil
 	}
 
-	theme.Current = theme.Resolve(p.Theme, m.cfg.Theme.Overrides)
-	applyTheme()
-	worktreelist.SetTheme(theme.Current)
+	applyPalette(p.Theme, m.cfg.Theme.Overrides, "")
 	worktreelist.SetPRStatusMode(p.PRStatus)
-	modals.SetTheme(theme.Current)
-	prefs.SetTheme(theme.Current)
 
 	m.refreshAgentBadges()
 

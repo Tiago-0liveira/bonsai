@@ -179,7 +179,8 @@ func (m Model) paletteCommands() []paletteCmd {
 		global("New worktree", m.keys.Create, Model.openCreateSourceModal),
 		global("Prune merged worktrees", m.keys.BulkPrune, Model.openBulkPruneModal),
 		global("Refresh", m.keys.Refresh, func(m Model) (tea.Model, tea.Cmd) {
-			return m, loadWorktrees(m.repoDir, true)
+			cmd := m.readWorktrees(true)
+			return m, cmd
 		}),
 		wt("Open shell", m.keys.Enter, Model.openShell),
 		wt("Open editor", m.keys.Editor, Model.openEditor),
@@ -215,7 +216,8 @@ func (m Model) paletteCommands() []paletteCmd {
 
 	cmds = append(cmds, tag("Tools", []paletteCmd{
 		wt("Run project command", m.keys.Scripts, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
-			return m, loadScripts(path, m.cfg.PkgMgr.SearchDepth)
+			cmd := m.worktreePromptRead("scripts", loadScripts(path, m.cfg.PkgMgr.SearchDepth))
+			return m, cmd
 		})),
 		wt("Run alias", m.keys.Aliases, Model.openAliasModal),
 		global("Filter worktree list", m.keys.Filter, func(m Model) (tea.Model, tea.Cmd) {
@@ -364,6 +366,62 @@ func (m Model) paletteCommands() []paletteCmd {
 				return m.spawn(wt.Path, name, coreexec.ExpandVars(cmd, vars)), nil
 			},
 		})
+	}
+	if m.layoutKind == LayoutRedesign {
+		for i := range cmds {
+			switch cmds[i].label {
+			case "Preferences (theme, keys, defaults)":
+				cmds[i].run = func(m Model) (tea.Model, tea.Cmd) { return m.selectWorkspace(wsSettings) }
+			case "Keybindings reference":
+				cmds[i].run = Model.openKeymap
+			}
+		}
+		labels, targets := paletteTargets()
+		for _, label := range labels {
+			target := targets[label]
+			cmds = append(cmds, paletteCmd{label: label, section: "Workspaces", run: func(m Model) (tea.Model, tea.Cmd) { return m.goToPalette(target) }})
+		}
+		// Git actions from any workspace enter the one Worktrees body first.
+		for i := range cmds {
+			if cmds[i].section == "Workspaces" {
+				continue
+			}
+			run := cmds[i].run
+			if run == nil {
+				continue
+			}
+			cmds[i].run = func(m Model) (tea.Model, tea.Cmd) {
+				m, enter := m.selectWorkspace(wsWorktrees)
+				m.shellFocus = shellBody
+				m.wt.menu = false
+				nm, cmd := run(m)
+				next := nm.(Model)
+				next.layout()
+				return next, tea.Batch(enter, cmd)
+			}
+		}
+		if m.agents.enabled() {
+			cmds = append(cmds, paletteCmd{label: "Agents: open in Playground (observe)", section: "Agents", binding: m.keys.AgentPlayground, available: needWorktree, run: Model.worktreesPlayground})
+		}
+	}
+	if m.layoutKind == LayoutRedesign {
+		cmds = append(cmds, paletteCmd{label: "Garden: open linked Issue", section: "Garden context", available: func(m Model) (bool, string) {
+			if id := m.selectedAgentAccount(); id == "" {
+				return false, "no session selected"
+			}
+			wt, ok := m.selectedWorktree()
+			if !ok {
+				return false, "no checkout selected"
+			}
+			session, _, ok := m.selectedSession(cleanPath(wt.Path))
+			if !ok || session.Task == nil {
+				return false, "manual worktree"
+			}
+			if _, ok := pgTask(m.garden.board.collection, session.Task); !ok || m.garden.api == nil {
+				return false, "Issue not loaded in Garden"
+			}
+			return true, ""
+		}, run: Model.worktreesGarden})
 	}
 	return cmds
 }

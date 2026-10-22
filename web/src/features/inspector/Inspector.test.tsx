@@ -123,3 +123,19 @@ it('opens the selected worktree folder in the editor from the inspector header',
   screen.getByRole('button', { name: 'Open worktree in editor' }).click()
   expect(requestOpenFolder).toHaveBeenCalledWith('wt-web')
 })
+
+it.each(['idle', 'waiting'] as const)('keeps stop enabled and counts a %s session as running, and shows who needs input', (state) => {
+  const live = { ...agents[0], id: 'claude-live', provider: 'Claude' as const, providerId: 'claude' as const, profileName: 'Work', state: 'running' as const, lifecycleState: 'running' as const,
+    activity: { state, reason: state === 'waiting' ? 'permission' as const : 'turn_complete' as const, detail: state === 'waiting' ? 'Bash' : undefined, since: '2099-01-01T00:00:00Z', source: 'hook' as const },
+    projectId: 'bonsai', worktreeId: 'wt-web' }
+  useBonsaiStore.setState({ ...useBonsaiStore.getInitialState(), projects, worktrees, agents: [live], activeProjectId: 'bonsai', selection: { type: 'agent', id: live.id } }, true)
+  render(<Inspector />)
+  expect(screen.getByRole('button', { name: 'Stop agent' })).toBeEnabled()
+  expect(screen.getByRole('img', { name: state === 'waiting' ? 'Needs permission: Bash' : 'Idle' })).toBeInTheDocument()
+  cleanup()
+  useBonsaiStore.setState({ selection: { type: 'project', id: 'bonsai' } })
+  render(<Inspector />)
+  expect(screen.getByText('Running').previousElementSibling).toHaveTextContent('1')
+  if (state === 'waiting') expect(screen.getByRole('img', { name: '1 agent needs input' })).toBeInTheDocument()
+  else expect(screen.queryByRole('img', { name: /needs? input/ })).toBeNull()
+})

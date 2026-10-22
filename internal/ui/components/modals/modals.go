@@ -74,6 +74,24 @@ const (
 	KindConfigValue   Kind = "config_value"   // final value for a config setting
 	KindConfigConfirm Kind = "config_confirm" // confirm removal of a config entry
 
+	KindGardenAssistRestore Kind = "garden_assist_restore"
+
+	// Confirm taking the writer role of an agent terminal from another client.
+	KindPlaygroundTakeover Kind = "playground_takeover"
+
+	// Link a Playground session to an Issue: the number, the confirmation and the replace confirmation.
+	KindPlaygroundLinkIssue   Kind = "playground_link_issue"
+	KindPlaygroundLinkConfirm Kind = "playground_link_confirm"
+	KindPlaygroundLinkReplace Kind = "playground_link_replace"
+
+	// Garden review (plan 10.4). Enabling the local policy, and each explicit review action, has its own
+	// confirmation; none of them starts anything before the user says yes.
+	KindGardenReviewEnable         Kind = "garden_review_enable"
+	KindPlaygroundReviewRetry      Kind = "playground_review_retry"
+	KindPlaygroundReviewDismiss    Kind = "playground_review_dismiss"     // the reason, typed
+	KindPlaygroundReviewDismissAsk Kind = "playground_review_dismiss_ask" // its confirmation
+	KindPlaygroundReviewAcceptAsk  Kind = "playground_review_accept_ask"
+
 	KindPrefEditor Kind = "pref_editor" // personal "open editor" override (state.json)
 
 	// Scrollable read-only diff of a single file.

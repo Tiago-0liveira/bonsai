@@ -40,47 +40,17 @@ type StartRequest struct {
 // holder's record, whose session is starting until the holder reports it
 // running.
 func (s Starter) Start(ctx context.Context, req StartRequest) (_ Record, startErr error) {
-	if !agentterminal.Supported {
-		return Record{}, fmt.Errorf("interactive terminals unsupported on this platform")
-	}
-	if s.Paths.Records == "" {
-		return Record{}, fmt.Errorf("agent hosts unavailable")
-	}
-	if !agentterminal.Dimensions(req.Cols, req.Rows) {
-		return Record{}, fmt.Errorf("terminal dimensions must be between 1 and 500")
-	}
-	account, err := s.Accounts.Get(req.AccountID)
+	prep, err := s.prepare(req)
 	if err != nil {
-		return Record{}, fmt.Errorf("profile unavailable")
+		return Record{}, err
 	}
-	provider, err := s.Registry.Get(account.Provider)
-	if err != nil {
-		return Record{}, fmt.Errorf("provider not available")
-	}
-	capabilities := provider.Capabilities()
-	if !capabilities.Interactive {
-		return Record{}, fmt.Errorf("provider not available")
-	}
-	launch := req.Launch
-	launch.DisplayName = req.Name
-	if validator, ok := provider.(agents.LaunchValidator); ok {
-		if err := validator.ValidateLaunch(account, launch); err != nil {
-			return Record{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
-		}
-	}
+	account, launch, capabilities := prep.account, prep.launch, prep.capabilities
 
 	// The lock is held until the record exists, so the next starter, in this
 	// process or another, counts this session.
-	lockCtx, cancel := context.WithTimeout(ctx, admitTimeout)
-	defer cancel()
-	lock, err := agents.LockFileContext(lockCtx, filepath.Join(s.Paths.Records, "admit.lock"))
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return Record{}, fmt.Errorf("%w: %w", ErrAdmissionBusy, err)
-	case errors.Is(err, context.Canceled):
-		return Record{}, fmt.Errorf("agent start cancelled: %w", err)
-	case err != nil:
-		return Record{}, fmt.Errorf("cannot lock agent admission: %w", err)
+	lock, err := s.admit(ctx)
+	if err != nil {
+		return Record{}, err
 	}
 	defer func() {
 		if lock != nil {
@@ -92,24 +62,8 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (_ Record, startEr
 	if err != nil {
 		return Record{}, fmt.Errorf("cannot list agent sessions")
 	}
-	active := 0
-	for _, r := range records {
-		if !r.Alive || !r.Summary.Active() {
-			continue
-		}
-		active++
-		if r.Summary.Provider != account.Provider {
-			continue
-		}
-		if r.Summary.AccountID == req.AccountID && !capabilities.ConcurrentSameAccount {
-			return Record{}, agents.ErrAccountBusy
-		}
-		if r.Summary.AccountID != req.AccountID && !capabilities.ConcurrentCrossAccount {
-			return Record{}, agents.ErrProviderBusy
-		}
-	}
-	if active >= ActiveLimit {
-		return Record{}, fmt.Errorf("%d active session limit reached", ActiveLimit)
+	if err := checkAdmission(records, account, req.AccountID, capabilities); err != nil {
+		return Record{}, err
 	}
 	runtime, err := s.Sessions.Create(account, req.Dir)
 	if err != nil {
@@ -172,4 +126,101 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (_ Record, startEr
 	}
 	ok = true
 	return record, nil
+}
+
+// prepared is a start request resolved against its profile and provider.
+type prepared struct {
+	account      agents.Account
+	provider     agents.Provider
+	capabilities agents.Capabilities
+	launch       agents.LaunchOptions
+}
+
+// prepare checks the request and resolves its profile and provider, before any
+// admission or runtime exists.
+func (s Starter) prepare(req StartRequest) (prepared, error) {
+	if !agentterminal.Supported {
+		return prepared{}, fmt.Errorf("interactive terminals unsupported on this platform")
+	}
+	if s.Paths.Records == "" {
+		return prepared{}, fmt.Errorf("agent hosts unavailable")
+	}
+	if !agentterminal.Dimensions(req.Cols, req.Rows) {
+		return prepared{}, fmt.Errorf("terminal dimensions must be between 1 and 500")
+	}
+	account, err := s.Accounts.Get(req.AccountID)
+	if err != nil {
+		return prepared{}, fmt.Errorf("profile unavailable")
+	}
+	provider, err := s.Registry.Get(account.Provider)
+	if err != nil {
+		return prepared{}, fmt.Errorf("provider not available")
+	}
+	capabilities := provider.Capabilities()
+	if !capabilities.Interactive {
+		return prepared{}, fmt.Errorf("provider not available")
+	}
+	launch := req.Launch
+	launch.DisplayName = req.Name
+	if launch.ReadOnly {
+		// Checked here as well as in PrepareSession: the holder is another
+		// process, and a refusal should happen before any admission or runtime.
+		if err := agents.RequireReadOnly(provider); err != nil {
+			return prepared{}, err
+		}
+	}
+	if launch.PlanFile != "" {
+		// A writable plan file only exists inside a read-only launch whose provider can confine the write to it.
+		if !launch.ReadOnly || !agents.ReadOnlyOf(provider).PlanFile {
+			return prepared{}, fmt.Errorf("%w: %s cannot confine a read-only session to a plan file", agents.ErrInvalidLaunch, provider.ID())
+		}
+	}
+	if validator, ok := provider.(agents.LaunchValidator); ok {
+		if err := validator.ValidateLaunch(account, launch); err != nil {
+			return prepared{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+		}
+	}
+	return prepared{account: account, provider: provider, capabilities: capabilities, launch: launch}, nil
+}
+
+// admit takes the cross-process admission lock.
+func (s Starter) admit(ctx context.Context) (*agents.FileLock, error) {
+	lockCtx, cancel := context.WithTimeout(ctx, admitTimeout)
+	defer cancel()
+	lock, err := agents.LockFileContext(lockCtx, filepath.Join(s.Paths.Records, "admit.lock"))
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return nil, fmt.Errorf("%w: %w", ErrAdmissionBusy, err)
+	case errors.Is(err, context.Canceled):
+		return nil, fmt.Errorf("agent start cancelled: %w", err)
+	case err != nil:
+		return nil, fmt.Errorf("cannot lock agent admission: %w", err)
+	}
+	return lock, nil
+}
+
+// checkAdmission refuses a start the running sessions in records rule out. A
+// reservation no holder has claimed yet still counts: its holder may be
+// forking, and another account must not slip in beside it.
+func checkAdmission(records []Record, account agents.Account, id agents.AccountID, capabilities agents.Capabilities) error {
+	active := 0
+	for _, r := range records {
+		if !r.Summary.Active() || !r.Alive && r.StartPhase != phaseReserved {
+			continue
+		}
+		active++
+		if r.Summary.Provider != account.Provider {
+			continue
+		}
+		if r.Summary.AccountID == id && !capabilities.ConcurrentSameAccount {
+			return agents.ErrAccountBusy
+		}
+		if r.Summary.AccountID != id && !capabilities.ConcurrentCrossAccount {
+			return agents.ErrProviderBusy
+		}
+	}
+	if active >= ActiveLimit {
+		return fmt.Errorf("%d active session limit reached", ActiveLimit)
+	}
+	return nil
 }

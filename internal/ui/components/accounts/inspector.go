@@ -22,6 +22,29 @@ type inspector struct {
 	// from and to are the body lines that must stay visible when it scrolls
 	// (the focused field); zero for bodies that scroll from the top.
 	from, to int
+	// scroll marks a body that scrolls from offset when it overflows, with a
+	// line saying how much is hidden, instead of being cut.
+	scroll bool
+	offset int
+}
+
+// scrollMax is how far a scrolling body can move in rows lines.
+func (in inspector) scrollMax(rows int) int {
+	if !in.scroll || len(in.body) <= rows || squeezes(in.body, rows) {
+		return 0
+	}
+	return len(in.body) - (rows - 1)
+}
+
+// squeezes reports that dropping blank lines alone makes lines fit.
+func squeezes(lines []string, rows int) bool {
+	n := 0
+	for _, l := range lines {
+		if l != "" {
+			n++
+		}
+	}
+	return n <= rows
 }
 
 func (in inspector) height() int { return len(in.body) + len(in.tail) }
@@ -38,6 +61,22 @@ func (in inspector) render(rows int) []string {
 	}
 	room := rows - len(tail)
 	body, from, to := in.body, in.from, in.to
+	if in.scrollMax(room) > 0 {
+		window := max(room-1, 0)
+		start := min(max(in.offset, 0), len(body)-window)
+		dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+		var note string
+		switch below := len(body) - start - window; {
+		case start > 0 && below > 0:
+			note = fmt.Sprintf("%d above · %d more below · up/down scrolls", start, below)
+		case start > 0:
+			note = fmt.Sprintf("%d above · up/down scrolls", start)
+		default:
+			note = fmt.Sprintf("%d more below · up/down scrolls", below)
+		}
+		out := append([]string{}, body[start:start+window]...)
+		return append(append(out, dim.Render(note)), tail...)
+	}
 	if len(body) > room {
 		if from == to {
 			body = squeeze(body, room)
@@ -114,6 +153,10 @@ func (m Model) overviewInspector(a agentsapi.Account, w int, showStatus bool) in
 		body = append(left, right...)
 	}
 
+	if m.embedded {
+		body = append(body, m.overviewReasons(a, w)...)
+	}
+
 	focused := m.focus == focusContent
 	login := button("Sign in again", focused && m.ov.focus == btnLogin, false)
 	remove := plainAction("Remove account", focused && m.ov.focus == btnRemove, a.Running > 0)
@@ -126,6 +169,36 @@ func (m Model) overviewInspector(a agentsapi.Account, w int, showStatus bool) in
 		tail = append(tail, lipgloss.NewStyle().Foreground(th.Warning).Render(m.ov.msg))
 	}
 	return inspector{body: body, tail: append(tail, actions)}
+}
+
+// overviewReasons says why an account is not fully usable, from what the
+// provider reported: nothing is guessed beyond "unknown" when it stayed silent.
+func (m Model) overviewReasons(a agentsapi.Account, w int) []string {
+	th := theme.Current
+	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	if m.describing || m.describeErr != "" {
+		return nil
+	}
+	var lines []string
+	switch authOf(a.Info) {
+	case authNeedsSignIn:
+		lines = append(lines, lipgloss.NewStyle().Foreground(th.Warning).Render("Sign-in required: choose Sign in again."))
+	case authUnknown:
+		lines = append(lines, dim.Render("Sign-in state unknown: the provider CLI reported none (missing or not responding)."))
+	}
+	for _, warn := range a.Info.Warnings {
+		lines = append(lines, dim.Render(warn))
+	}
+	var out []string
+	for _, l := range lines {
+		for _, wrapped := range strings.Split(ansi.Wrap(l, w, ""), "\n") {
+			out = append(out, wrapped)
+		}
+	}
+	if len(out) > 0 {
+		out = append([]string{""}, out...)
+	}
+	return out
 }
 
 // plainAction is a secondary action: unbracketed until it has focus.
@@ -162,6 +235,9 @@ func (m Model) usageInspector(a agentsapi.Account, w int) inspector {
 		body = append(body, dim.Render("Usage unavailable"))
 		for _, l := range wrapUsageFields([]string{e.Err}, w) {
 			body = append(body, dim.Render(l))
+		}
+		if m.embedded && NeedsSignIn(a.Info) {
+			body = append(body, dim.Render("Sign in again from Overview, then refresh."))
 		}
 		return inspector{body: body}
 	}
@@ -229,7 +305,7 @@ func (m Model) usageInspector(a agentsapi.Account, w int) inspector {
 		body = append(body, "")
 		body = append(body, meta...)
 	}
-	return inspector{body: body}
+	return inspector{body: body, scroll: true, offset: m.usageOff}
 }
 
 func (m Model) defaultsInspector(a agentsapi.Account, w int) inspector {
@@ -242,8 +318,15 @@ func (m Model) defaultsInspector(a agentsapi.Account, w int) inspector {
 		return inspector{body: []string{dim.Render("Loading defaults…")}}
 	}
 
+	if m.embedded && len(m.defaults.Fields) == 0 {
+		return inspector{body: []string{dim.Render("No editable defaults"), dim.Render(providerName(a.Provider) + " declares no launch defaults to edit here.")}}
+	}
 	fields, from, to := m.df.form.CompactLines(w)
-	note := dim.Render(ansi.Truncate("Applies to new sessions for "+providerName(a.Provider)+" / "+a.Name+".", w, "…"))
+	noteText := "Applies to new sessions for " + providerName(a.Provider) + " / " + a.Name + "."
+	if m.embedded {
+		noteText = "Provider default = inherited; a value applies to new sessions only."
+	}
+	note := dim.Render(ansi.Truncate(noteText, w, "…"))
 	switch {
 	case m.df.saveErr != "":
 		note = lipgloss.NewStyle().Foreground(th.Danger).Render(ansi.Truncate("Couldn't save: "+m.df.saveErr, w, "…"))

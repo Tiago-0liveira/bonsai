@@ -39,7 +39,7 @@ func (m Model) onBrowser(msg tea.Msg) (Model, tea.Cmd) {
 	if m.selected != prev {
 		m.resetAccount()
 	}
-	if ch&ChangedList != 0 && m.listErr == "" && len(m.accounts) == 0 {
+	if ch&ChangedList != 0 && m.listErr == "" && len(m.accounts) == 0 && !m.embedded {
 		// Nothing to show but the add form.
 		m.add = newAddState()
 		m.add.active = true
@@ -61,8 +61,12 @@ func (m Model) onDefaults() Model {
 		return m
 	}
 	d := m.defaults
-	m.df.form = launchform.New(d.Fields, d.Models, d.Values, m.ascii)
-	m.df.loaded, m.df.replace = true, false
+	form := launchform.New(d.Fields, d.Models, d.Values, m.ascii)
+	if m.df.replace && m.df.hasSent {
+		form = form.Carry(m.df.form, m.df.sent)
+	}
+	m.df.form = form
+	m.df.loaded, m.df.replace, m.df.hasSent = true, false, false
 	return m.syncFocus()
 }
 
@@ -115,6 +119,11 @@ func (m Model) onKey(k tea.KeyMsg) (Model, tea.Cmd) {
 			m.focus = focusProfiles
 			return m.syncFocus(), nil
 		}
+		if m.embedded {
+			// Leaving the workspace keeps the draft on this model, so there is
+			// nothing to discard.
+			return m, emit(CloseMsg{})
+		}
 		return m.guard(func(m Model) (Model, tea.Cmd) { return m, emit(CloseMsg{}) })
 	case "tab", "shift+tab":
 		delta := Tab(1)
@@ -133,6 +142,9 @@ func (m Model) onKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case "r":
+		if m.listErr != "" {
+			return m, m.Relist(m.selected)
+		}
 		if m.tab == TabUsage {
 			return m.usageKey(k)
 		}

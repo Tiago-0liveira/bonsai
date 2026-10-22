@@ -391,6 +391,14 @@ func TestWebPortConflictLeavesNothingRunning(t *testing.T) {
 
 func TestWebAPICrashIsReportedAndCleanedUp(t *testing.T) {
 	e := newWebEnv(t)
+	if err := os.MkdirAll(e.home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Failed processes must not launch real desktop notification tools. On
+	// Windows their PowerShell child can outlive the daemon and pin its cwd.
+	if err := os.WriteFile(filepath.Join(e.home, ".bonsai.yaml"), []byte("notifications:\n  process: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	roots, err := config.ProjectRootsPath()
 	if err != nil {
 		t.Fatal(err)

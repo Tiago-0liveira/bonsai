@@ -9,6 +9,9 @@ import (
 )
 
 func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	if req.Launch.ReadOnly {
+		return agents.PreparedSession{}, agents.RequireReadOnly(p)
+	}
 	settings, err := ParseSettings(req.Account)
 	if err != nil {
 		return agents.PreparedSession{}, err
@@ -21,11 +24,16 @@ func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSession
 	if err := p.credentialMgr.Materialize(ctx, req.Account, req.Session); err != nil {
 		return agents.PreparedSession{}, err
 	}
+	env := buildEnvironment(req.Account, req.Session)
+	// A session whose hooks cannot be installed just reports no activity.
+	if req.Activity.Usable() && installActivity(req.Session, req.Activity) {
+		env[req.Activity.SpoolEnv] = req.Activity.SpoolPath
+	}
 	return agents.PreparedSession{
 		Executable: executable,
 		Args:       launchArgs(settings, req.Args, req.Launch, models),
 		Dir:        req.Session.WorkDir,
-		EnvSet:     buildEnvironment(req.Account, req.Session),
+		EnvSet:     env,
 	}, nil
 }
 
@@ -51,6 +59,9 @@ func (p *Provider) launchModels(ctx context.Context, account agents.Account, set
 // cached model list says the model lacks, and unreadable profile settings
 // before any session is created. It never starts agy.
 func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOptions) error {
+	if launch.ReadOnly {
+		return agents.RequireReadOnly(p)
+	}
 	if launch.PermissionMode != "" {
 		return fmt.Errorf("antigravity does not support a permission mode; use full access")
 	}
@@ -85,6 +96,16 @@ func (p *Provider) LaunchFields() []agents.LaunchField {
 			{Value: "true", Label: "Full access", Tone: agents.ToneDanger},
 		},
 	}}
+}
+
+// ReadOnly implements agents.ReadOnlyEnforcer, as a refusal. agy 's help shows
+// `--mode plan` (an execution mode the model may leave), `--sandbox` (terminal
+// restrictions only; it says nothing about file edits) and
+// `--dangerously-skip-permissions`, but no tool allowlist and no file-write
+// sandbox. Without enforcement below the model, Antigravity is unavailable for
+// read-only roles and never falls back to unrestricted access.
+func (p *Provider) ReadOnly() agents.ReadOnlySupport {
+	return agents.ReadOnlySupport{Reason: "agy has no tool allowlist or file-write sandbox; its plan mode and --sandbox do not stop edits"}
 }
 
 // profileEffortApplies reports whether the profile's default effort can be
@@ -143,3 +164,42 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 	}
 	return args
 }
+
+// ResolveLaunch returns the options a launch with these overrides runs with:
+// the model, effort and the full-access choice. Full access is always decided,
+// because false is agy's known default and not a missing value. It starts
+// nothing and the prompt and display name stay unset.
+func (p *Provider) ResolveLaunch(account agents.Account, launch agents.LaunchOptions) (agents.LaunchOptions, error) {
+	if launch.ReadOnly || launch.Prompt != "" || launch.DisplayName != "" {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: only model, effort and full access can be resolved", agents.ErrInvalidLaunch)
+	}
+	if err := validateModel(launch.Model); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	if err := p.ValidateLaunch(account, launch); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	settings, err := ParseSettings(account)
+	if err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: invalid profile settings", agents.ErrInvalidLaunch)
+	}
+	model := first(launch.Model, settings.Model)
+	effort := launch.Effort
+	if effort == "" && profileEffortApplies(model, settings.Effort, p.knownModels(account.ID)) {
+		effort = settings.Effort
+	}
+	full := settings.DangerouslySkipPermissions
+	if launch.FullAccess != nil {
+		full = *launch.FullAccess
+	}
+	return agents.LaunchOptions{Model: model, Effort: effort, FullAccess: &full}, nil
+}
+
+var _ agents.LaunchResolver = (*Provider)(nil)
+
+// CachedModels returns the last successful model list and never starts agy.
+func (p *Provider) CachedModels(account agents.Account) []agents.ModelOption {
+	return append([]agents.ModelOption(nil), p.knownModels(account.ID)...)
+}
+
+var _ agents.CachedModelLister = (*Provider)(nil)

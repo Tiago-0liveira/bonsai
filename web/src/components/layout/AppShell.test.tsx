@@ -132,4 +132,15 @@ describe('canvas layer', () => {
     render(<AppShell canvasRoute={null}><span>Settings page</span></AppShell>)
     expect(screen.queryByTestId('canvas-layer')).toBeNull()
   })
+
+  it('shows how many agents wait in the tab title and restores it', () => {
+    document.title = 'Bonsai'
+    const waiting = { id: 'w', worktreeId: 'x', state: 'running', lifecycleState: 'running', activity: { state: 'waiting', since: '2099-01-01T00:00:00Z', source: 'hook' } }
+    useBonsaiStore.setState({ agents: [waiting as never] })
+    const { unmount } = render(<AppShell><MainProbe /></AppShell>)
+    expect(document.title).toBe('(1) Bonsai')
+    unmount()
+    expect(document.title).toBe('Bonsai')
+    useBonsaiStore.setState({ agents: [] })
+  })
 })

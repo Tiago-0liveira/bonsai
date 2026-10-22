@@ -175,7 +175,7 @@ func TestLaunchArgsMatrix(t *testing.T) {
 		{name: "help", explicit: []string{"--help"}, want: []string{"--help"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args, id, err := launchArgs(tc.settings, tc.explicit, tc.launch)
+			args, id, err := launchArgs(tc.settings, tc.explicit, tc.launch, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

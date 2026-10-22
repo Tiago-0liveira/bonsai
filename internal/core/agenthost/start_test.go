@@ -151,6 +151,41 @@ func TestStarterValidationErrors(t *testing.T) {
 	}
 }
 
+// A provider without an enforced read-only mode is refused before any session
+// or holder exists: there is no unrestricted fallback.
+func TestStarterRefusesReadOnlyWithoutEnforcement(t *testing.T) {
+	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
+	req := startRequest(t, account)
+	req.Launch.ReadOnly = true
+	_, err := s.Start(context.Background(), req)
+	if !errors.Is(err, agents.ErrReadOnlyUnsupported) {
+		t.Fatalf("err = %v, want ErrReadOnlyUnsupported", err)
+	}
+	if records, _ := List(s.Paths); len(records) != 0 {
+		t.Fatal("refused launch left a record")
+	}
+	if entries, _ := os.ReadDir(s.Sessions.(*agents.FileSessionStore).Root()); len(entries) != 0 {
+		t.Fatal("refused launch created a runtime directory")
+	}
+}
+
+// A plan file only exists inside a read-only launch of a provider that can confine the write to it.
+func TestStarterRefusesPlanFileWithoutReadOnlyConfinement(t *testing.T) {
+	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
+	req := startRequest(t, account)
+	req.Launch.PlanFile = "/tmp/plan.md"
+	if _, err := s.Start(context.Background(), req); !errors.Is(err, agents.ErrInvalidLaunch) {
+		t.Fatalf("plan file without read-only: err = %v, want ErrInvalidLaunch", err)
+	}
+	req.Launch.ReadOnly = true
+	if _, err := s.Start(context.Background(), req); !errors.Is(err, agents.ErrReadOnlyUnsupported) {
+		t.Fatalf("plan file on a provider without enforcement: err = %v, want ErrReadOnlyUnsupported", err)
+	}
+	if records, _ := List(s.Paths); len(records) != 0 {
+		t.Fatal("refused launch left a record")
+	}
+}
+
 func TestStarterLaunchFailureCleansUpRuntime(t *testing.T) {
 	s, _, account := testStarter(t, `exit 0`, agents.Capabilities{Interactive: true})
 	s.Launch = func(context.Context, Paths, Spec) error { return errors.New("boom") }

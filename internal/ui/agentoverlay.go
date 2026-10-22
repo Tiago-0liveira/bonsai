@@ -107,6 +107,9 @@ func (m Model) openAgentAccounts() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) showAccounts(initial agents.AccountID, tab accounts.Tab) (tea.Model, tea.Cmd) {
+	if m.layoutKind == LayoutRedesign && m.workspace == wsWorktrees {
+		return m.worktreesAccounts(initial, tab)
+	}
 	am := accounts.New(m.agents.api.Accounts, accounts.Options{ASCII: m.agentGlyphsASCII(), Initial: initial, Tab: tab, Usage: m.agents.usage})
 	am.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{accounts: &am})
@@ -118,6 +121,9 @@ func (m Model) openAgentUsage() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.leaveAgentTerminal()
+	if m.layoutKind == LayoutRedesign && m.workspace == wsWorktrees {
+		return m.worktreesAccounts(m.selectedAgentAccount(), accounts.TabUsage)
+	}
 	q := accounts.NewQuick(m.agents.api.Accounts, m.selectedAgentAccount(), m.agentGlyphsASCII()).WithUsage(m.agents.usage)
 	q.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{quick: &q})
