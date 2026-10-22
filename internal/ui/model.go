@@ -226,6 +226,9 @@ type Model struct {
 	status        string
 	err           error
 	ready         bool
+	// depth is how many bonsai shells this bonsai already runs inside (0 at
+	// top level); the caller reads it, the UI never touches the environment.
+	depth int
 }
 
 // New constructs the root model with its core-layer dependencies injected.

@@ -10,9 +10,13 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
+	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
 // Process is a single running (or finished) subprocess with captured output.
@@ -375,12 +379,59 @@ func TerminatePIDTree(pid int, grace time.Duration) {
 	terminatePIDTree(pid, grace)
 }
 
+// ShellOptions configures the nested-shell marker set by ShellCmd.
+type ShellOptions struct {
+	// Glyph prefixes the depth in the prompt ("" = shellinit.DefaultGlyph).
+	Glyph string
+	// Prompt controls prompt injection: "" = auto, "off" = disabled.
+	Prompt string
+}
+
 // ShellCmd builds an interactive shell *exec.Cmd rooted at path, suitable for
-// tea.ExecProcess (the caller wires up stdio).
-func ShellCmd(path string) *exec.Cmd {
-	cmd := exec.Command(shell())
+// tea.ExecProcess (the caller wires up stdio). The child gets an incremented
+// BONSAI_DEPTH and a matching BONSAI_PROMPT_PREFIX; bonsai's own environment
+// is never modified.
+func ShellCmd(path string, o ShellOptions) *exec.Cmd {
+	sh := shell()
+	cmd := exec.Command(sh)
 	cmd.Dir = path
+	depth := shellinit.Depth() + 1
+	if depth > shellinit.MaxDepth {
+		depth = shellinit.MaxDepth
+	}
+	env := childEnv(os.Environ(), depth, shellinit.Prefix(o.Glyph, depth))
+	if o.Prompt != "off" {
+		// Opening a shell must never fail over prompt integration: on any
+		// error the user just gets a plain shell with the env vars.
+		if cache, err := userCacheDir(); err == nil {
+			if dir, err := shellinit.EnsureShims(cache, version.Current()); err == nil {
+				plan := shellinit.BuildPlan(sh, dir, env)
+				cmd.Args = append(cmd.Args, plan.Args...)
+				env = append(env, plan.Env...)
+			}
+		}
+	}
+	cmd.Env = env
 	return cmd
+}
+
+// userCacheDir is a seam so tests never write to the real cache directory.
+var userCacheDir = os.UserCacheDir
+
+// childEnv drops any inherited depth variables and appends the new ones, so a
+// stale value can never win over ours.
+func childEnv(base []string, depth int, prefix string) []string {
+	env := make([]string, 0, len(base)+2)
+	for _, kv := range base {
+		if strings.HasPrefix(kv, shellinit.EnvDepth+"=") || strings.HasPrefix(kv, shellinit.EnvPromptPrefix+"=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env,
+		shellinit.EnvDepth+"="+strconv.Itoa(depth),
+		shellinit.EnvPromptPrefix+"="+prefix,
+	)
 }
 
 // EditorCmd builds an interactive editor *exec.Cmd rooted at path, suitable

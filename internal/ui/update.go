@@ -553,6 +553,9 @@ func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.status = msg.label + ": " + msg.err.Error()
+	} else if msg.label == "shell" {
+		// The shell cannot print this: resuming redraws the alt screen over it.
+		m.status = "back in bonsai " + m.depthMarker(m.depth+1)
 	} else {
 		m.status = msg.label + ": ok"
 	}
@@ -1015,7 +1018,7 @@ func (m Model) openShell() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	c := coreexec.ShellCmd(wt.Path)
+	c := coreexec.ShellCmd(wt.Path, coreexec.ShellOptions{Glyph: m.state.Prefs.DepthGlyph, Prompt: m.state.Prefs.ShellPrompt})
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
 		return opDoneMsg{label: "shell", err: err}
 	})
