@@ -1,6 +1,6 @@
 # 03 / Durable private drafts
 
-Status: planned.
+Status: done.
 
 ## Deliverable
 
