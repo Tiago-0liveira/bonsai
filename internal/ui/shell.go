@@ -362,6 +362,9 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.workspace == wsWorktrees {
 			return m.worktreesMouse(msg)
 		}
+		if m.workspace == wsGarden {
+			return m.gardenMouse(msg)
+		}
 	case tea.KeyMsg:
 		// Typing into an agent terminal (the planner's or the Playground's) comes before everything else: every
 		// key but Ctrl+] belongs to the agent, so quit, help, the palette and workspace keys cannot fire.
@@ -409,6 +412,10 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if focus == shellInput {
 		return m.bodyKey(msg)
+	}
+	// The Issue overlay is modal: quit, help, the palette and workspace keys wait until it is closed.
+	if m.gardenOverlayOpen() {
+		return m.gardenKey(msg)
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -595,7 +602,7 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 		if m.garden.hasStatus && m.garden.status.Caps.Read {
 			m.garden.sub = subBoard
 			if b := &m.garden.board; b.opened != 0 && (t.gardenAction == "board" || t.gardenAction == "table") {
-				b.opened, b.docScroll = 0, 0 // the detail belongs to the old layout's parent
+				b.close() // the detail belongs to the old layout's parent
 			}
 			switch t.gardenAction {
 			case "board":

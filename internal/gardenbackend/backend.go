@@ -52,6 +52,7 @@ type Deps struct {
 	// InvalidateAuth forgets cached credentials; the next read uses gh's stored login.
 	InvalidateAuth func()
 	Store          *connect.Store
+	PrivateDrafts  PrivateDraftStore
 	// Creator and Ops enable capture: the only Issue-creating seam and the durable
 	// record of each create. Both are optional; without them capture is unavailable.
 	Creator garden.IssueCreator
@@ -111,6 +112,7 @@ type options struct {
 	shared *ghcli.Shared
 	store  *connect.Store
 	agents *agentsapi.Backend
+	drafts PrivateDraftStore
 }
 
 // WithShared supplies the GitHub client state (tests inject a token runner).
@@ -166,6 +168,7 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 		Viewer:         gh.Viewer,
 		InvalidateAuth: func() { o.shared.InvalidateAuth(ghcli.DefaultHost) },
 		Store:          o.store,
+		PrivateDrafts:  o.drafts,
 		Plans:          planStore,
 		Checkout:       checkoutInspector{coregit.CheckoutInspector{Dir: repoDir}},
 	}

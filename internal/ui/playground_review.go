@@ -411,7 +411,7 @@ func (m Model) pgReviewRequestFixes() (tea.Model, tea.Cmd) {
 	if m.workspace != wsGarden {
 		return m, nav
 	}
-	m.garden.board.opened = rec.Item.Issue.ID
+	m.garden.board.open(rec.Item.Issue.ID, m.garden.status.Target.RepoID)
 	m, form := m.gardenLaunchOpen()
 	return m, tea.Batch(nav, form)
 }

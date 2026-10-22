@@ -616,8 +616,7 @@ func (m Model) worktreesGarden() (tea.Model, tea.Cmd) {
 	m, cmd := m.selectWorkspace(wsGarden)
 	m.shellFocus = shellBody
 	m.garden.sub = subBoard
-	m.garden.board.opened = rec.Item.Issue.ID
-	m.garden.board.docScroll = 0
+	m.garden.board.open(rec.Item.Issue.ID, m.garden.status.Target.RepoID)
 	return m, cmd
 }
 

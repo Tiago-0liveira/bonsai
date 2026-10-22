@@ -40,7 +40,9 @@ type gardenBoardState struct {
 	rows               []work.Record // Rows(sort), rebuilt only when the collection or sort changes
 	tableRow           int           // deletion anchor: the selection's last index in rows
 	opened             garden.IssueID
+	openedRepo         uint64 // the Garden the opened Issue was read from; another repository never keeps its overlay
 	section, docScroll int
+	overlayFocus       string // the focused action of the opened Issue; empty while the body owns the keys
 	searching          bool
 	search             textinput.Model
 	beforeSearch       work.Query
@@ -103,6 +105,10 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 		}
 	}
 	b.reselect()
+	if b.opened != 0 && b.openedRepo != 0 && b.openedRepo != g.status.Target.RepoID {
+		b.close()
+		b.notice = "Opened issue belongs to another repository; returned to " + b.layoutName() + "."
+	}
 	g.drafts.pendingErr = msg.view.PendingCapturesErr
 	if g.drafts.pendingErr == nil {
 		g.drafts.pending = msg.view.PendingCaptures
@@ -150,12 +156,24 @@ func (b *gardenBoardState) reselect() {
 	}
 	if b.opened != 0 {
 		if _, _, ok := b.collection.Find(b.opened); !ok {
-			b.opened = 0
-			b.docScroll = 0
+			b.close()
 			b.notice = "Opened issue left this view; returned to " + b.layoutName() + "."
 		}
 	}
 }
+
+// open shows the Issue overlay over the layout it came from. Board and Table keep
+// their selection and scroll underneath, so closing needs nothing restored.
+func (b *gardenBoardState) open(id garden.IssueID, repo uint64) {
+	b.opened, b.openedRepo = id, repo
+	b.section, b.docScroll, b.overlayFocus = 0, 0, ""
+}
+
+func (b *gardenBoardState) close() {
+	b.opened, b.openedRepo = 0, 0
+	b.docScroll, b.overlayFocus = 0, ""
+}
+
 func (b *gardenBoardState) layoutName() string {
 	if b.layout == layoutTable {
 		return "Table"
@@ -321,40 +339,7 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenLoadWork()
 	}
 	if b.opened != 0 {
-		m.garden.notice = "" // a notice explains the last action; the next key moves on
-		switch k {
-		case "p":
-			return m.gardenOpenPlanner()
-		case "r":
-			return m.gardenOpenPlanReview()
-		case "s":
-			return m.gardenLaunchOpen()
-		case "i":
-			return m.gardenLaunchHub()
-		case "esc", "backspace":
-			b.opened = 0
-			b.docScroll = 0
-		case "left", "h":
-			b.section = max(0, b.section-1)
-			b.docScroll = 0
-		case "right", "l":
-			b.section = min(len(gardenDocumentSections)-1, b.section+1)
-			b.docScroll = 0
-		case "down", "j":
-			b.docScroll++
-		case "up", "k":
-			b.docScroll = max(0, b.docScroll-1)
-		case "pgdown":
-			b.docScroll += max(1, m.height-12)
-		case "pgup":
-			b.docScroll = max(0, b.docScroll-max(1, m.height-12))
-		case "home":
-			b.docScroll = 0
-		case "end":
-			b.docScroll = 1 << 20
-		}
-		m.gardenClampDocument()
-		return m, nil
+		return m.gardenIssueKey(msg)
 	}
 	if key.Matches(msg, m.keys.GardenView) {
 		if b.layout == layoutBoard {
@@ -372,10 +357,7 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.gardenRememberView()
 		return m, cmd
 	case "enter":
-		if b.selection.ID != 0 {
-			b.opened = b.selection.ID
-			b.section, b.docScroll = 0, 0
-		}
+		m.gardenOpenIssue(b.selection.ID)
 	case "/":
 		return m.gardenStartSearch()
 	case "t":
@@ -449,11 +431,11 @@ func (m Model) gardenBoardHints() []shellHint {
 		return m.gardenPlannerHints()
 	}
 	if b.opened != 0 {
-		h := []shellHint{{"esc", b.layoutName()}, {"p", "request plan"}, {"r", "review plans"}}
+		h := []shellHint{{"esc", b.layoutName()}, {m.keys.Tab.Help().Key, "actions"}, {"p", "request plan"}, {"r", "review plans"}}
 		if m.launchOffered() {
 			h = append(h, shellHint{"s", "start implementation locally…"})
 		}
-		return append(h, shellHint{"i", "implementation attempts"}, shellHint{"←/→", "section"}, shellHint{"↑/↓", "scroll"}, shellHint{"pgup/dn", "page"}, shellHint{m.keys.Refresh.Help().Key, "refresh"})
+		return append(h, shellHint{"i", "implementation attempts"}, shellHint{"←/→", "tab"}, shellHint{"↑/↓", "scroll"}, shellHint{"pgup/dn", "page"}, shellHint{m.keys.Refresh.Help().Key, "refresh"})
 	}
 	view := m.keys.GardenView.Help().Key
 	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
@@ -516,15 +498,13 @@ func (m Model) gardenBoardSaved(msg gardenViewSavedMsg) Model {
 	return m
 }
 
-var gardenDocumentSections = []string{"Overview", "Specification", "Questions", "Plans", "Execution"}
+var gardenDocumentSections = []string{"Overview", "Specification", "Questions", "Plan", "Activity"}
 
+// gardenClampDocument keeps the overlay body's scroll inside its document at the current size.
 func (m *Model) gardenClampDocument() {
-	width := m.width
-	if width >= 120 {
-		width -= 26
-	}
+	width, rows := m.gardenOverlayBody()
 	lines := m.gardenDocument(width)
-	m.garden.board.docScroll = max(0, min(m.garden.board.docScroll, max(0, len(lines)-max(1, m.height-12))))
+	m.garden.board.docScroll = max(0, min(m.garden.board.docScroll, max(0, len(lines)-max(1, rows))))
 }
 func gardenIssueBody(body string) string {
 	if strings.HasPrefix(body, "<!-- bonsai:garden-metadata/v1 ") {
