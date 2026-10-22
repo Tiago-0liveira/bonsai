@@ -16,6 +16,10 @@ func TestReservedSessionConcurrentReplayAndCanonicalDirectory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root, dir := t.TempDir(), t.TempDir()
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := Account{ID: "acct_reserved", Provider: "fake", Name: "personal"}
 	store, err := NewFileSessionStore(root)
 	if err != nil {

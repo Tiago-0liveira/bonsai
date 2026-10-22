@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -110,7 +111,11 @@ func TestGardenLaunchOperationSessionsPreserveTaskOriginAndConflicts(t *testing.
 	if !ok {
 		t.Fatal("sessions lacks operation interface")
 	}
-	req := agentsapi.OperationStartRequest{StartRequest: agentsapi.StartRequest{ProjectID: "project", WorktreeID: "tree", WorkDir: t.TempDir(), AccountID: e.account, Name: "Implement #9", Cols: 80, Rows: 24}, OperationID: "impl-backend/start/1", SessionID: "sess_123abc", Task: agents.TaskRef{RepositoryID: 7, IssueID: 101, AttemptID: "impl-backend", Role: "implementation"}}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := agentsapi.OperationStartRequest{StartRequest: agentsapi.StartRequest{ProjectID: "project", WorktreeID: "tree", WorkDir: dir, AccountID: e.account, Name: "Implement #9", Cols: 80, Rows: 24}, OperationID: "impl-backend/start/1", SessionID: "sess_123abc", Task: agents.TaskRef{RepositoryID: 7, IssueID: 101, AttemptID: "impl-backend", Role: "implementation"}}
 	result, err := ops.StartOperation(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)

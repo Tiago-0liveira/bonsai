@@ -55,10 +55,8 @@ func TestPrefsCloneCopiesGardenReview(t *testing.T) {
 }
 
 func TestGardenReviewLoadedOnlyFromLocalState(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	p := stateEnv(t)
 	write := func(body string) {
-		p := filepath.Join(dir, "bonsai", "state.json")
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}

@@ -20,7 +20,11 @@ import (
 
 func fakeLaunchOperationRequest(t *testing.T, id agents.AccountID) OperationStartRequest {
 	t.Helper()
-	return OperationStartRequest{StartRequest: StartRequest{Project: "project", Tree: "tree", Dir: t.TempDir(), AccountID: id, Name: "Implement #9", Cols: 80, Rows: 24, Launch: agents.LaunchOptions{Prompt: "private exact approved task"}}, OperationID: "impl-contract/start/1", SessionID: "sess_aabbcc", Task: agents.TaskRef{RepositoryID: 7, IssueID: 101, AttemptID: "impl-contract", Role: "implementation"}}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return OperationStartRequest{StartRequest: StartRequest{Project: "project", Tree: "tree", Dir: dir, AccountID: id, Name: "Implement #9", Cols: 80, Rows: 24, Launch: agents.LaunchOptions{Prompt: "private exact approved task"}}, OperationID: "impl-contract/start/1", SessionID: "sess_aabbcc", Task: agents.TaskRef{RepositoryID: 7, IssueID: 101, AttemptID: "impl-contract", Role: "implementation"}}
 }
 func TestOperationReservationPrecedesLauncherAndFailureRetainsReceipt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

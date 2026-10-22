@@ -99,6 +99,8 @@ test('real API and PTY: two concurrent sessions of one Claude profile, reload an
 })
 
 test('real API and PTY: two Codex profiles with two sessions each beside a Claude session', async ({ page }) => {
+  // Launching and reconnecting five PTYs takes longer on shared CI runners.
+  test.setTimeout(60_000)
   // Five tiles share the dock; a tall window keeps each terminal readable.
   await page.setViewportSize({ width: 1800, height: 1700 })
   await openConnectedApp(page)

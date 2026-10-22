@@ -13,6 +13,9 @@ import (
 func TestAgentHolderGuardSeesUnsettledReservationInWorktree(t *testing.T) {
 	paths := agenthost.Paths{Records: t.TempDir(), Sockets: t.TempDir()}
 	worktree := t.TempDir()
+	if err := os.Mkdir(filepath.Join(worktree, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	// An unheld reserved operation may belong to a holder that is still forking,
 	// so it counts as active.
 	rec := agenthost.Record{Version: agenthost.RecordVersion, ID: "sess_ab12", WorkDir: filepath.Join(worktree, "sub"), StartHash: "h", StartPhase: "reserved",

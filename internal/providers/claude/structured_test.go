@@ -179,7 +179,11 @@ func TestStructuredWorkDirRemoved(t *testing.T) {
 			if (err != nil) != tc.fail {
 				t.Fatalf("err = %v", err)
 			}
-			if cwd := strings.TrimSpace(f.read(t, "cwd")); !strings.HasPrefix(cwd, f.e.accounts.AccountDir(f.account.ID)) {
+			accountDir, err := filepath.EvalSymlinks(f.e.accounts.AccountDir(f.account.ID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cwd := strings.TrimSpace(f.read(t, "cwd")); !strings.HasPrefix(cwd, accountDir+string(filepath.Separator)) {
 				t.Errorf("cwd %q outside the profile data", cwd)
 			}
 			if dirs := f.runDirs(t); len(dirs) != 0 {

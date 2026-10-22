@@ -30,6 +30,11 @@ func newSettingsEnv(t *testing.T) settingsEnv {
 	t.Setenv("HOME", t.TempDir())
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("AppData", xdg)
+	xdg, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(t.TempDir())
 	t.Cleanup(func() {
 		theme.Current = theme.Resolve("bonsai", nil)

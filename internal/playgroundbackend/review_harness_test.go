@@ -135,7 +135,11 @@ func newReviewRig(t *testing.T) *reviewRig {
 		accts: &fakeAccounts{list: []agentsapi.Account{account("acct", enforced)}}, lister: &fakeLister{}}
 	rr.storeAt = filepath.Join(t.TempDir(), "review.json")
 	rr.store = &review.FileStore{Path: rr.storeAt, Now: func() time.Time { return r.tick }}
-	rr.reports = review.ReportDir{Root: filepath.Join(t.TempDir(), "reviews")}
+	reportBase, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr.reports = review.ReportDir{Root: filepath.Join(reportBase, "reviews")}
 	rr.prefs = &config.GardenReviewPrefs{Enabled: true, AccountID: "acct", Trigger: config.GardenReviewTriggerAwaitingReview}
 	rr.wire(r.b)
 	return rr

@@ -38,7 +38,11 @@ func stateEnv(t *testing.T) string {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
 	t.Setenv("AppData", dir)
-	return filepath.Join(dir, "bonsai", "state.json")
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(configDir, "bonsai", "state.json")
 }
 
 func writeState(t *testing.T, p, body string) {

@@ -10,7 +10,10 @@ import (
 )
 
 func TestReportDirPrepareReadAndSafety(t *testing.T) {
-	base := t.TempDir()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	d := ReportDir{Root: filepath.Join(base, "reviews")}
 	path, err := d.Prepare("local-1", "att-1", 2)
 	if err != nil {

@@ -1032,39 +1032,34 @@ func TestApplyResume_Adversarial(t *testing.T) {
 		store, _ := newTestStore(t)
 		ports := newAdversarialPorts()
 
-		var startWg sync.WaitGroup
-		startWg.Add(1)
-		var doneWg sync.WaitGroup
-
-		errs := make(chan error, 2)
-		for i := 0; i < 2; i++ {
-			doneWg.Add(1)
-			go func(id int) {
-				defer doneWg.Done()
-				startWg.Wait()
-				_, e := connect.Apply(context.Background(), store, "local-same", 55, connect.AccessWrite, fmt.Sprintf("op-same-%d", id), plan, ports.ports())
-				errs <- e
-			}(i)
-		}
-
-		startWg.Done()
-		doneWg.Wait()
-		close(errs)
-
-		success := 0
-		inProgress := 0
-		for e := range errs {
-			if e == nil {
-				success++
-			} else if errors.Is(e, connect.ErrOperationInProgress) {
-				inProgress++
-			} else {
-				t.Fatalf("unexpected error from concurrent Apply: %v", e)
+		entered, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		unblock := func() { once.Do(func() { close(release) }) }
+		t.Cleanup(unblock)
+		ports.beforeHook = func(step string) {
+			if step == "label" {
+				close(entered)
+				<-release
 			}
 		}
-
-		if success != 1 || inProgress != 1 {
-			t.Fatalf("expected exactly 1 success and 1 ErrOperationInProgress, got %d success, %d in-progress", success, inProgress)
+		done := make(chan error, 1)
+		go func() {
+			_, err := connect.Apply(t.Context(), store, "local-same", 55, connect.AccessWrite, "op-same-0", plan, ports.ports())
+			done <- err
+		}()
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("first Apply did not reach the remote write")
+		}
+		// Keep the first call active until the competing call checks ownership.
+		_, err := connect.Apply(t.Context(), store, "local-same", 55, connect.AccessWrite, "op-same-1", plan, ports.ports())
+		if !errors.Is(err, connect.ErrOperationInProgress) {
+			t.Fatalf("concurrent Apply: %v", err)
+		}
+		unblock()
+		if err := <-done; err != nil {
+			t.Fatalf("first Apply: %v", err)
 		}
 		if len(ports.labels) != 1 || len(ports.projects) != 1 {
 			t.Fatalf("concurrent apply created duplicate remote objects: %#v", ports)
@@ -1582,7 +1577,11 @@ func TestOpenStore_UsesUserConfigDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStore failed: %v", err)
 	}
-	expected := filepath.Join(dir, "bonsai", "garden-associations.json")
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join(configDir, "bonsai", "garden-associations.json")
 	if s.Path != expected {
 		t.Fatalf("expected OpenStore path %s, got %s", expected, s.Path)
 	}

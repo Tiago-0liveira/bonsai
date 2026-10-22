@@ -18,7 +18,10 @@ func fakeLaunchPlacementRepo(t *testing.T) (string, string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	repo := filepath.Join(root, "project")
 	if err := os.Mkdir(repo, 0700); err != nil {
 		t.Fatal(err)

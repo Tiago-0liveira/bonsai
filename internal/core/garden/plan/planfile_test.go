@@ -21,6 +21,10 @@ func TestStartPreparesPrivatePlanDirAndTellsThePlannerOnlyThatPath(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !filepath.IsAbs(a.PlanPath) || filepath.Base(a.PlanPath) != "plan.md" || !config.ContainsPath(root, a.PlanPath) {
 		t.Fatalf("PlanPath = %q (root %q)", a.PlanPath, root)
 	}
