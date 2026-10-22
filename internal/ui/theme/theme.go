@@ -2,7 +2,18 @@
 // restyled from one place, driven by config (a preset plus per-role overrides).
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+)
+
+// ANSIColor resolves palette values independently of Lip Gloss's output profile.
+// Color.RGBA otherwise collapses colors to black on a redirected or dumb output.
+func ANSIColor(c lipgloss.Color) color.Color {
+	return termenv.ConvertToRGB(termenv.TrueColor.Color(string(c)))
+}
 
 // Palette is the set of semantic color roles the UI styles are built from.
 type Palette struct {

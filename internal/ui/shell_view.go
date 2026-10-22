@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/overlay"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -16,6 +18,21 @@ import (
 func (m Model) shellView() string {
 	if !m.ready {
 		return "Loading bonsai…"
+	}
+	if m.modal != nil && m.modal.Kind() == modals.KindIssueSummary && m.workspace == wsGarden {
+		panel := *m.modal
+		panel.SetSize(m.width, m.height)
+		m.modal = nil
+		p := theme.Current
+		// A local, explicit palette keeps dimming independent of shared styles.
+		dim := theme.Palette{Text: p.Dim, Background: p.Background}
+		parent := ansi.NewStyle().ForegroundColor(theme.ANSIColor(dim.Text)).BackgroundColor(theme.ANSIColor(dim.Background)).Styled(ansi.Strip(m.shellView()))
+		x, y, w, h := overlay.Center(m.width, m.height)
+		return overlay.Compose(
+			overlay.Frame{Content: parent, Width: m.width, Height: m.height},
+			overlay.Frame{Content: panel.View(), Width: w, Height: h},
+			x, y, ansi.NewStyle().BackgroundColor(theme.ANSIColor(p.Surface)),
+		)
 	}
 	submenu := 0
 	if m.workspace == wsSettings || m.workspace == wsGarden || m.workspace == wsPlayground || m.workspace == wsWorktrees {

@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/overlay"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -49,8 +50,9 @@ const (
 	KindBulkPrune Kind = "bulk_prune"
 
 	// Reference overlays.
-	KindKeymap Kind = "keymap" // searchable list of every keybinding
-	KindLegend Kind = "legend" // status-glyph legend
+	KindKeymap       Kind = "keymap" // searchable list of every keybinding
+	KindLegend       Kind = "legend" // status-glyph legend
+	KindIssueSummary Kind = "issue_summary"
 
 	// Worktree creation flow.
 	KindCreateSource   Kind = "create_source"   // pick new/existing/PR
@@ -240,6 +242,13 @@ func NewScroll(kind Kind, title, content string) Model {
 	return Model{kind: kind, mode: modeScroll, title: title, content: content}
 }
 
+// NewIssueSummary takes an already loaded snapshot; opening it starts no work.
+func NewIssueSummary(number int64, title, summary string) Model {
+	m := NewScroll(KindIssueSummary, fmt.Sprintf("#%d  %s", number, title), summary)
+	m.vp = viewport.New(1, 0)
+	return m
+}
+
 // NewConfirm builds a yes/no modal.
 func NewConfirm(kind Kind, title string) Model {
 	return Model{kind: kind, mode: modeConfirm, title: title, items: []string{"Yes", "No"}, cursor: 1}
@@ -280,6 +289,19 @@ func (m *Model) SetInline(inline bool) { m.inline = inline }
 // sizes the inner viewport to most of the screen and (re)wraps the content.
 func (m *Model) SetSize(w, h int) {
 	m.width, m.height = w, h
+	if m.kind == KindIssueSummary {
+		_, _, pw, ph := overlay.Center(w, h)
+		atBottom := m.vp.Height > 0 && m.vp.TotalLineCount() > m.vp.Height && m.vp.AtBottom()
+		m.vp.Width, m.vp.Height = max(pw-4, 1), max(ph-6, 0)
+		offset := m.vp.YOffset
+		m.vp.SetContent(ansi.Wrap(m.content, m.vp.Width, ""))
+		if atBottom {
+			m.vp.GotoBottom()
+		} else {
+			m.vp.SetYOffset(offset)
+		}
+		return
+	}
 	if m.mode == modeScroll {
 		vw := w * 3 / 4
 		if vw < 20 {
@@ -562,6 +584,9 @@ func SetTheme(p theme.Palette) {
 
 // View renders the centered overlay.
 func (m Model) View() string {
+	if m.kind == KindIssueSummary {
+		return m.issueSummaryView()
+	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(m.title))
 	b.WriteString("\n\n")
@@ -634,6 +659,40 @@ func (m Model) View() string {
 		return box
 	}
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m Model) issueSummaryView() string {
+	_, _, w, h := overlay.Center(m.width, m.height)
+	if w == 0 || h == 0 {
+		return ""
+	}
+	p := theme.Current
+	style := ansi.NewStyle().ForegroundColor(theme.ANSIColor(p.Text))
+	border := ansi.NewStyle().ForegroundColor(theme.ANSIColor(p.BorderFocus))
+	row := func(text string) string {
+		text = ansi.Truncate(text, max(w-4, 0), "")
+		return border.Styled("│") + style.Styled(" "+text+strings.Repeat(" ", max(w-4-ansi.StringWidth(text), 0))+" ") + border.Styled("│")
+	}
+	// At tiny sizes the close action takes precedence over the document body.
+	if w < 4 || h < 6 {
+		return ansi.Truncate("esc close", w, "")
+	}
+	rule := border.Styled("├" + strings.Repeat("─", w-2) + "┤")
+	lines := []string{
+		border.Styled("┌" + strings.Repeat("─", w-2) + "┐"),
+		row(m.title),
+		rule,
+	}
+	body := strings.Split(m.vp.View(), "\n")
+	for i := 0; i < h-6; i++ {
+		text := ""
+		if i < len(body) {
+			text = body[i]
+		}
+		lines = append(lines, row(text))
+	}
+	lines = append(lines, rule, row("↑/↓ scroll · esc close"), border.Styled("└"+strings.Repeat("─", w-2)+"┘"))
+	return strings.Join(lines, "\n")
 }
 
 // renderPrune draws the merge/force toggles and the ordered pipeline as an

@@ -370,6 +370,26 @@ who approved which revision, declared local/external source and verified time.
 [external comment protocol](garden.md#external-approval-protocol-github-or-mobile-browser)
 supports approval in GitHub/mobile browsers, without a phone client or remote runs.
 
+#### Garden overlay renderer fixture
+
+The overlay renderer has a separate terminal fixture using the loaded summary of
+Issue #172 from the reference design. It keeps the board visible around an opaque,
+centered panel, uses a near-full sheet at 80×24, and pins the header and close hint
+while the summary scrolls. Existing issue documents and other dialogs keep their
+current behavior. This fixture performs no backend operations or workflow writes.
+
+Run it from the repository root in a terminal:
+
+```sh
+go test -c -o /tmp/bonsai-overlay-ui.test ./internal/ui
+BONSAI_OVERLAY_DEMO=1 /tmp/bonsai-overlay-ui.test -test.run '^TestIssueOverlayTerminalDemo$' -test.v
+```
+
+Press `o` to open the summary, arrows to scroll, `esc` to restore the board and its
+selection, and `q` to quit after closing. Resize between 80×24, 120×35 and 160×48
+to inspect the panel bounds. The test binary runs directly so Bubble Tea can
+detect the terminal size; `go test` redirects its output.
+
 #### Local implementation launch in the preview
 
 From a Ready Garden Issue (detail or plan review) press `s` (**start implementation
