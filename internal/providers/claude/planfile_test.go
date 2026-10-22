@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"errors"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -33,6 +34,9 @@ func TestReadOnlyArgsWithoutPlanFileAreUnchanged(t *testing.T) {
 }
 
 func TestPlanFileLaunchArgsAndSettingsExactly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("scoped plan-file permission rules require Unix absolute paths")
+	}
 	hooks := &agents.ActivityRequest{HookCommand: []string{"/bin/bonsai", "__agent-hook", "claude"}, SpoolEnv: "SPOOL", SpoolPath: "/run/x/activity.jsonl"}
 	policy := `"permissions":{"allow":["Edit(//home/u/.bonsai/garden/plans/local-1/7/plan-a/plan.md)"],"deny":["Bash","WebFetch","WebSearch"]}`
 	cases := []struct {
@@ -129,6 +133,9 @@ func TestPlanFileRefusesExplicitArgsThatWidenIt(t *testing.T) {
 }
 
 func TestPlanFileArgsIgnoreEverySettingsFileLayer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("scoped plan-file permission rules require Unix absolute paths")
+	}
 	args, _, err := launchArgs(Settings{}, nil, agents.LaunchOptions{ReadOnly: true, PlanFile: testPlanFile}, nil)
 	if err != nil {
 		t.Fatal(err)

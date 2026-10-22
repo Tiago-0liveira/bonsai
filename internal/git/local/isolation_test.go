@@ -36,8 +36,11 @@ func newFakeLaunchIsolationRig(t *testing.T) *fakeLaunchIsolationRig {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	home, configHome := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("APPDATA", configHome)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	_, root, _ := setup(t)
 	git(t, root, "remote", "add", "origin", "https://github.com/owner/repo.git")

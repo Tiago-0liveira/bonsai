@@ -661,7 +661,9 @@ func (r *recordingResolver) ResolveRepository(c context.Context, remote connect.
 func TestConstructorFailsWithoutLoginInsteadOfPanicking(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("HOME", cfg)
+	t.Setenv("USERPROFILE", cfg)
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("APPDATA", cfg)
 	cases := map[string]ghcli.TokenRunner{
 		"gh missing": func(context.Context, string) ([]byte, []byte, error) { return nil, nil, exec.ErrNotFound },
 		"logged out": func(context.Context, string) ([]byte, []byte, error) {
@@ -682,7 +684,9 @@ func TestConstructorFailsWithoutLoginInsteadOfPanicking(t *testing.T) {
 func TestConstructorSucceedsWithStoredToken(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("HOME", cfg)
+	t.Setenv("USERPROFILE", cfg)
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("APPDATA", cfg)
 	shared := ghcli.NewShared()
 	shared.SetTokenRunner(func(context.Context, string) ([]byte, []byte, error) { return []byte("ghp_TOPSECRET\n"), nil, nil })
 	b, err := New(t.TempDir(), WithShared(shared))

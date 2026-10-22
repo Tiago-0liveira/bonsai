@@ -1,6 +1,7 @@
 package agentsbackend
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 func TestSessionCarriesActivity(t *testing.T) {
 	a := &agentactivity.Activity{State: agentactivity.Waiting, Reason: agentactivity.ReasonPermission, Detail: "Bash", Since: time.Unix(1, 0)}
 	got := session(agenthost.Record{WorkDir: "/w/", Summary: agentterminal.Summary{ID: "s", State: "running", Activity: a}})
-	if got.Activity == nil || *got.Activity != *a || got.WorkDir != "/w" {
+	if got.Activity == nil || *got.Activity != *a || got.WorkDir != filepath.Clean("/w/") {
 		t.Fatalf("session = %+v", got)
 	}
 	if session(agenthost.Record{}).Activity != nil {
