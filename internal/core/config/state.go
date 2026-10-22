@@ -33,6 +33,12 @@ type Prefs struct {
 	// Editor is a personal override for the "open editor" command, taking
 	// priority over .bonsai.yaml's editor setting ("" = defer to it).
 	Editor string `json:"editor,omitempty"`
+	// DepthGlyph is the marker shown before the nesting depth in bonsai-
+	// spawned shell prompts and the TUI header ("" = 🪴).
+	DepthGlyph string `json:"depth_glyph,omitempty"`
+	// ShellPrompt controls prompt injection into spawned shells: "" = auto,
+	// "off" = never touch the prompt (the env vars are still exported).
+	ShellPrompt string `json:"shell_prompt,omitempty"`
 }
 
 // State is persisted mutable data: how often each main-repo file has been copied

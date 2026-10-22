@@ -3,6 +3,7 @@ package exec
 import (
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,5 +254,57 @@ func TestExecCommandPreservesArgvAndDir(t *testing.T) {
 		if cmd.Args[i] != want[i] {
 			t.Fatalf("ExecCommand argv[%d] = %q, want %q", i, cmd.Args[i], want[i])
 		}
+	}
+}
+
+func TestShellCmdEnv(t *testing.T) {
+	cache := t.TempDir()
+	prev := userCacheDir
+	userCacheDir = func() (string, error) { return cache, nil }
+	t.Cleanup(func() { userCacheDir = prev })
+	t.Setenv("BONSAI_DEPTH", "2")
+	t.Setenv("BONSAI_PROMPT_PREFIX", "stale")
+	cmd := ShellCmd(t.TempDir(), ShellOptions{Glyph: "B"})
+	var depth, prefix []string
+	for _, kv := range cmd.Env {
+		switch {
+		case strings.HasPrefix(kv, "BONSAI_DEPTH="):
+			depth = append(depth, kv)
+		case strings.HasPrefix(kv, "BONSAI_PROMPT_PREFIX="):
+			prefix = append(prefix, kv)
+		}
+	}
+	if len(depth) != 1 || depth[0] != "BONSAI_DEPTH=3" {
+		t.Errorf("depth env = %v", depth)
+	}
+	if len(prefix) != 1 || prefix[0] != "BONSAI_PROMPT_PREFIX=B3 " {
+		t.Errorf("prefix env = %v", prefix)
+	}
+	if got := os.Getenv("BONSAI_DEPTH"); got != "2" {
+		t.Errorf("own env mutated: %q", got)
+	}
+}
+
+func TestShellCmdPrompt(t *testing.T) {
+	cache := t.TempDir()
+	prev := userCacheDir
+	userCacheDir = func() (string, error) { return cache, nil }
+	t.Cleanup(func() { userCacheDir = prev })
+	t.Setenv("SHELL", "/bin/bash")
+
+	auto := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(auto.Args) != 3 || auto.Args[1] != "--rcfile" {
+		t.Errorf("auto args = %v", auto.Args)
+	}
+	off := ShellCmd(t.TempDir(), ShellOptions{Prompt: "off"})
+	if len(off.Args) != 1 {
+		t.Errorf("off args = %v", off.Args)
+	}
+
+	// Cache failure must still give a usable plain shell.
+	userCacheDir = func() (string, error) { return "", os.ErrNotExist }
+	bad := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(bad.Args) != 1 || len(bad.Env) == 0 {
+		t.Errorf("fallback args=%v env=%d", bad.Args, len(bad.Env))
 	}
 }

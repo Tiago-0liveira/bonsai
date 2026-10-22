@@ -23,6 +23,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
@@ -221,7 +222,7 @@ func run(cfgPath string) error {
 
 // newTUIModel builds the TUI, with agent support when a backend is given.
 func newTUIModel(repoDir string, cfg *config.Config, state *config.State, agents *agentsapi.Backend) ui.Model {
-	var opts []ui.Option
+	opts := []ui.Option{ui.WithDepth(shellinit.Depth())}
 	if agents != nil {
 		opts = append(opts, ui.WithAgents(*agents))
 	}
