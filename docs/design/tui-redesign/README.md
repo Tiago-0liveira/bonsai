@@ -11,6 +11,8 @@ the application has not been redesigned by this documentation change.
 - [Sequential implementation plans](../../plans/tui-redesign/README.md)
 - [Original design brief](original-design-brief.md)
 - [Garden setup mockups](garden-setup/README.md) (added after revision 02)
+- [Garden workflow sketches](../../garden-workflow/design/index.html) (exploratory: simpler
+  drafting, richer boards/tables and ticket overlays; not yet approved)
 
 ## What is approved
 
