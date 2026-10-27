@@ -312,6 +312,37 @@ func TestShellCmdPrompt(t *testing.T) {
 	}
 }
 
+func TestShellCmdMemoizesShims(t *testing.T) {
+	cache := t.TempDir()
+	prev := userCacheDir
+	userCacheDir = func() (string, error) { return cache, nil }
+	t.Cleanup(func() { userCacheDir = prev })
+	t.Setenv("SHELL", "/bin/bash")
+
+	first := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(first.Args) != 3 {
+		t.Fatalf("args = %v", first.Args)
+	}
+	rc := first.Args[2]
+	if err := os.Remove(rc); err != nil {
+		t.Fatal(err)
+	}
+	ShellCmd(t.TempDir(), ShellOptions{})
+	if _, err := os.Stat(rc); !os.IsNotExist(err) {
+		t.Errorf("shims rewritten for the same cache dir: %v", err)
+	}
+
+	other := t.TempDir()
+	userCacheDir = func() (string, error) { return other, nil }
+	second := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(second.Args) != 3 {
+		t.Fatalf("args = %v", second.Args)
+	}
+	if _, err := os.Stat(second.Args[2]); err != nil {
+		t.Errorf("new cache dir not set up: %v", err)
+	}
+}
+
 func TestShellExitErr(t *testing.T) {
 	plain := errors.New("start failed")
 	tests := []struct {

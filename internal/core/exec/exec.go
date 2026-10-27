@@ -404,12 +404,10 @@ func ShellCmd(path string, o ShellOptions) *exec.Cmd {
 	if o.Prompt != "off" {
 		// Opening a shell must never fail over prompt integration: on any
 		// error the user just gets a plain shell with the env vars.
-		if cache, err := userCacheDir(); err == nil {
-			if dir, err := shellinit.EnsureShims(cache, version.Current()); err == nil {
-				plan := shellinit.BuildPlan(sh, dir, env)
-				cmd.Args = append(cmd.Args, plan.Args...)
-				env = append(env, plan.Env...)
-			}
+		if dir, err := shimDir(); err == nil {
+			plan := shellinit.BuildPlan(sh, dir, env)
+			cmd.Args = append(cmd.Args, plan.Args...)
+			env = append(env, plan.Env...)
 		}
 	}
 	cmd.Env = env
@@ -425,6 +423,40 @@ func ShellExitErr(err error) error {
 		return nil
 	}
 	return err
+}
+
+// PrepareShellIntegration warms the shim cache so the first ShellCmd, which
+// runs on the TUI update loop, does not pay for the file IO.
+func PrepareShellIntegration() { _, _ = shimDir() }
+
+var shims struct {
+	mu       sync.Mutex
+	cacheDir string
+	dir      string
+}
+
+// shimDir installs the shell shims once per cache dir. Errors are not
+// remembered, so a transient failure is retried on the next shell open.
+func shimDir() (string, error) {
+	cache, err := userCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("shell shim cache dir: %w", err)
+	}
+	shims.mu.Lock()
+	defer shims.mu.Unlock()
+	// One stat guards against a cache cleaner removing the dir mid-session:
+	// bash --rcfile or ZDOTDIR pointing at nothing would skip the user's rc.
+	if shims.dir != "" && shims.cacheDir == cache {
+		if _, err := os.Stat(shims.dir); err == nil {
+			return shims.dir, nil
+		}
+	}
+	dir, err := shellinit.EnsureShims(cache, version.Current())
+	if err != nil {
+		return "", fmt.Errorf("ensure shell shims: %w", err)
+	}
+	shims.cacheDir, shims.dir = cache, dir
+	return dir, nil
 }
 
 // userCacheDir is a seam so tests never write to the real cache directory.
