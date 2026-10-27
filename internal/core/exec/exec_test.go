@@ -1,8 +1,13 @@
 package exec
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	osexec "os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,5 +258,138 @@ func TestExecCommandPreservesArgvAndDir(t *testing.T) {
 		if cmd.Args[i] != want[i] {
 			t.Fatalf("ExecCommand argv[%d] = %q, want %q", i, cmd.Args[i], want[i])
 		}
+	}
+}
+
+func TestShellCmdEnv(t *testing.T) {
+	cache := t.TempDir()
+	prev := userCacheDir
+	userCacheDir = func() (string, error) { return cache, nil }
+	t.Cleanup(func() { userCacheDir = prev })
+	t.Setenv("BONSAI_DEPTH", "2")
+	t.Setenv("BONSAI_PROMPT_PREFIX", "stale")
+	cmd := ShellCmd(t.TempDir(), ShellOptions{Glyph: "B"})
+	var depth, prefix []string
+	for _, kv := range cmd.Env {
+		switch {
+		case strings.HasPrefix(kv, "BONSAI_DEPTH="):
+			depth = append(depth, kv)
+		case strings.HasPrefix(kv, "BONSAI_PROMPT_PREFIX="):
+			prefix = append(prefix, kv)
+		}
+	}
+	if len(depth) != 1 || depth[0] != "BONSAI_DEPTH=3" {
+		t.Errorf("depth env = %v", depth)
+	}
+	if len(prefix) != 1 || prefix[0] != "BONSAI_PROMPT_PREFIX=B:3 " {
+		t.Errorf("prefix env = %v", prefix)
+	}
+	if got := os.Getenv("BONSAI_DEPTH"); got != "2" {
+		t.Errorf("own env mutated: %q", got)
+	}
+}
+
+func TestShellCmdPrompt(t *testing.T) {
+	cache := t.TempDir()
+	prev := userCacheDir
+	userCacheDir = func() (string, error) { return cache, nil }
+	t.Cleanup(func() { userCacheDir = prev })
+	t.Setenv("SHELL", "/bin/bash")
+
+	auto := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(auto.Args) != 3 || auto.Args[1] != "--rcfile" {
+		t.Errorf("auto args = %v", auto.Args)
+	}
+	off := ShellCmd(t.TempDir(), ShellOptions{Prompt: "off"})
+	if len(off.Args) != 1 {
+		t.Errorf("off args = %v", off.Args)
+	}
+
+	// Cache failure must still give a usable plain shell.
+	userCacheDir = func() (string, error) { return "", os.ErrNotExist }
+	bad := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(bad.Args) != 1 || len(bad.Env) == 0 {
+		t.Errorf("fallback args=%v env=%d", bad.Args, len(bad.Env))
+	}
+}
+
+func TestShellCmdMemoizesShims(t *testing.T) {
+	cache := t.TempDir()
+	prev := userCacheDir
+	userCacheDir = func() (string, error) { return cache, nil }
+	t.Cleanup(func() { userCacheDir = prev })
+	t.Setenv("SHELL", "/bin/bash")
+
+	first := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(first.Args) != 3 {
+		t.Fatalf("args = %v", first.Args)
+	}
+	rc := first.Args[2]
+	if err := os.Remove(rc); err != nil {
+		t.Fatal(err)
+	}
+	ShellCmd(t.TempDir(), ShellOptions{})
+	if _, err := os.Stat(rc); !os.IsNotExist(err) {
+		t.Errorf("shims rewritten for the same cache dir: %v", err)
+	}
+
+	// A stale mtime is refreshed on a memo hit so pruning never takes a live dir.
+	dir := filepath.Dir(rc)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	ShellCmd(t.TempDir(), ShellOptions{})
+	if fi, err := os.Stat(dir); err != nil || time.Since(fi.ModTime()) > time.Hour {
+		t.Errorf("shim dir mtime not refreshed: %v %v", fi, err)
+	}
+
+	other := t.TempDir()
+	userCacheDir = func() (string, error) { return other, nil }
+	second := ShellCmd(t.TempDir(), ShellOptions{})
+	if len(second.Args) != 3 {
+		t.Fatalf("args = %v", second.Args)
+	}
+	if _, err := os.Stat(second.Args[2]); err != nil {
+		t.Errorf("new cache dir not set up: %v", err)
+	}
+}
+
+func TestShellExitErr(t *testing.T) {
+	plain := errors.New("start failed")
+	tests := []struct {
+		name string
+		in   error
+		want error
+	}{
+		{"nil", nil, nil},
+		{"plain error unchanged", plain, plain},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ShellExitErr(tc.in); got != tc.want {
+				t.Fatalf("ShellExitErr(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	wrapped := fmt.Errorf("launch: %w", plain)
+	if got := ShellExitErr(wrapped); got != wrapped {
+		t.Fatalf("wrapped non-exit error changed: %v", got)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	err := osexec.Command("sh", "-c", "exit 3").Run()
+	var ee *osexec.ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("setup: want ExitError, got %v", err)
+	}
+	if got := ShellExitErr(err); got != nil {
+		t.Fatalf("ShellExitErr(exit 3) = %v, want nil", got)
+	}
+	if got := ShellExitErr(fmt.Errorf("shell: %w", err)); got != nil {
+		t.Fatalf("wrapped exit error = %v, want nil", got)
 	}
 }

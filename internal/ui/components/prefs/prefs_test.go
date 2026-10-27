@@ -1,9 +1,11 @@
 package prefs
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func testActions() []Action {
@@ -16,7 +18,7 @@ func testActions() []Action {
 }
 
 func testModel() Model {
-	return New("bonsai", "name", false, "", "", "", []string{"bonsai", "sakura"}, testActions(), false)
+	return New("bonsai", "name", false, "", "", "", "", "", []string{"bonsai", "sakura"}, testActions(), false)
 }
 
 // keyMsg simulates pressing a rune key.
@@ -88,7 +90,7 @@ func TestKeybindingsCollapsedByDefault(t *testing.T) {
 }
 
 func TestStartOnKeysExpandsKeybindings(t *testing.T) {
-	m := New("bonsai", "name", false, "", "", "", []string{"bonsai"}, testActions(), true)
+	m := New("bonsai", "name", false, "", "", "", "", "", []string{"bonsai"}, testActions(), true)
 	if m.rows[m.cursor].kind != rowKey {
 		t.Fatal("startOnKeys should land the cursor on a key row")
 	}
@@ -277,5 +279,44 @@ func TestAgentGlyphsToggle(t *testing.T) {
 		if snap == nil || snap.AgentGlyphs != want {
 			t.Fatalf("right on agent glyphs: want %q, got %+v", want, snap)
 		}
+	}
+}
+
+func TestDepthGlyphAndShellPromptRows(t *testing.T) {
+	m := testModel()
+	m.SetSize(100, 60)
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"depth glyph", "🪴", "shell prompt marker", "auto"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q", want)
+		}
+	}
+	for i, r := range m.rows {
+		if r.kind == rowDepthGlyph {
+			m.cursor = i
+		}
+	}
+	m.collapsed = map[int]bool{}
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	sm := saveFrom(t, cmd)
+	if sm == nil || sm.DepthGlyph != "🌳" {
+		t.Fatalf("glyph save = %+v", sm)
+	}
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if sm = saveFrom(t, cmd); sm == nil || sm.DepthGlyph != "" {
+		t.Fatalf("default glyph must save as empty, got %+v", sm)
+	}
+	for i, r := range m.rows {
+		if r.kind == rowShellPrompt {
+			m.cursor = i
+		}
+	}
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if sm = saveFrom(t, cmd); sm == nil || sm.ShellPrompt != "off" {
+		t.Fatalf("prompt save = %+v", sm)
+	}
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if sm = saveFrom(t, cmd); sm == nil || sm.ShellPrompt != "" {
+		t.Fatalf("auto must save as empty, got %+v", sm)
 	}
 }

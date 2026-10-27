@@ -23,6 +23,8 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
@@ -206,6 +208,8 @@ func run(cfgPath string) error {
 		agentsAPI = &api
 	}
 	model := newTUIModel(repoDir, cfg, state, agentsAPI)
+	// Here, not in newTUIModel, so tests do not write shims to the real cache dir.
+	go coreexec.PrepareShellIntegration()
 	// Mouse tracking is on so the wheel scrolls the pane under the pointer.
 	// Without it, terminals translate the wheel into arrow keys, which the panes
 	// read as "move the selection". The cost is that dragging to select text now
@@ -221,7 +225,7 @@ func run(cfgPath string) error {
 
 // newTUIModel builds the TUI, with agent support when a backend is given.
 func newTUIModel(repoDir string, cfg *config.Config, state *config.State, agents *agentsapi.Backend) ui.Model {
-	var opts []ui.Option
+	opts := []ui.Option{ui.WithDepth(shellinit.Depth())}
 	if agents != nil {
 		opts = append(opts, ui.WithAgents(*agents))
 	}

@@ -92,11 +92,16 @@ func TestRecoveryAdoptsRunningHolders(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { current, _ := s.agents.manager.Get("repo", summary.ID); return current.State == "exited" })
-	_ = project.state.View(func(data gitstore.Data) error {
-		if record, _ := gitstore.Get[agentMutation](data, "api_agent_mutations", "kept"); record.Summary.State != "exited" {
-			t.Errorf("journal after stop %+v", record.Summary)
-		}
-		return nil
+	// The journal is written after the manager publishes the exit, so poll it
+	// too instead of reading it once.
+	waitFor(t, func() bool {
+		var state string
+		_ = project.state.View(func(data gitstore.Data) error {
+			record, _ := gitstore.Get[agentMutation](data, "api_agent_mutations", "kept")
+			state = record.Summary.State
+			return nil
+		})
+		return state == "exited"
 	})
 }
 
