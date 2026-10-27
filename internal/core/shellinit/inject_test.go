@@ -227,6 +227,51 @@ func TestZshInjection(t *testing.T) {
 	}
 }
 
+// Async themes rebuild PROMPT after precmd and call reset-prompt; plugins may
+// register precmd hooks after ours. Both must still end up prefixed.
+func TestZshAsyncPromptKeepsPrefix(t *testing.T) {
+	shims, err := EnsureShims(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, _ := exec.LookPath("zsh")
+	run := func(t *testing.T, rc, script string) string {
+		home := t.TempDir()
+		writeFile(t, filepath.Join(home, ".zshrc"), rc)
+		plan := BuildPlan(bin, shims, nil)
+		return runShell(t, "zsh", []string{"-i", "-c"}, append(shellEnv(home), plan.Env...), script)
+	}
+
+	t.Run("reset-prompt", func(t *testing.T) {
+		got := run(t, "PROMPT='user%# '\n", `PROMPT='async%# '; zle .reset-prompt 2>/dev/null; print -rn -- "<<$PROMPT>>"`)
+		if got != "🪴1 async%# " {
+			t.Errorf("got %q", got)
+		}
+	})
+	t.Run("status passthrough", func(t *testing.T) {
+		got := run(t, "", `zle 2>/dev/null; s=$?; print -rn -- "<<$((s != 0))>>"`)
+		if got != "1" {
+			t.Errorf("zle status not passed through: %q", got)
+		}
+	})
+	t.Run("late precmd", func(t *testing.T) {
+		script := `late() { PROMPT='late%# ' }; precmd_functions+=(late)
+for f in $precmd_functions; do $f; done; for f in $precmd_functions; do $f; done
+print -rn -- "<<$PROMPT|${precmd_functions[-1]}>>"`
+		got := run(t, "PROMPT='user%# '\n", script)
+		if got != "🪴1 late%# |__bonsai_prompt" {
+			t.Errorf("got %q", got)
+		}
+	})
+	t.Run("chains existing zle", func(t *testing.T) {
+		rc := "ZLE_CALLED=0\nzle() { ZLE_CALLED=1; builtin zle \"$@\" }\nPROMPT='user%# '\n"
+		got := run(t, rc, `zle .reset-prompt 2>/dev/null; print -rn -- "<<$ZLE_CALLED>>"`)
+		if got != "1" {
+			t.Errorf("existing zle not chained: %q", got)
+		}
+	})
+}
+
 // A .zshrc that declares variables (typeset -U path) must keep them: the shim
 // sources it at top level, not inside a function that would scope them away.
 func TestZshRcDeclarationsSurvive(t *testing.T) {
