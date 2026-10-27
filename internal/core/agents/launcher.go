@@ -5,9 +5,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"sort"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 type Launcher interface {
@@ -42,6 +45,19 @@ func (l *ForegroundLauncher) RunForeground(ctx context.Context, prepared Prepare
 		cmd.Stderr = l.Err
 	} else {
 		cmd.Stderr = os.Stderr
+	}
+	// Ctrl+C reaches the child through the terminal's foreground group, and the
+	// child decides what to do with it. Bonsai has to outlive it: dying here
+	// would skip the session cleanup and the credential reconcile that follow.
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+	// A child that is killed or crashes leaves the terminal in the raw mode
+	// its UI set; a shell would reset it, so restore it here.
+	if file, ok := cmd.Stdin.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		if state, err := term.GetState(int(file.Fd())); err == nil {
+			defer func() { _ = term.Restore(int(file.Fd()), state) }()
+		}
 	}
 	return cmd.Run()
 }

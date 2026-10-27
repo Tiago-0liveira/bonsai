@@ -182,6 +182,7 @@ func (m *Manager) Spawn(path, label, command string) (*Process, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	attachProcessTree(cmd)
 
 	m.mu.Lock()
 	m.proc[path] = append(m.proc[path], p)
@@ -189,6 +190,7 @@ func (m *Manager) Spawn(path, label, command string) (*Process, error) {
 
 	go func() {
 		err := cmd.Wait()
+		releaseProcessTree(cmd)
 		p.mu.Lock()
 		p.done = true
 		p.err = err
