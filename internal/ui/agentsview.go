@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
@@ -70,23 +71,55 @@ func (m Model) chromeRows(rows []string) []string {
 
 func dimText(s string) string { return lipgloss.NewStyle().Foreground(theme.Current.Dim).Render(s) }
 
-// stateDot colors the lifecycle state: transitions warn, running is green,
-// failures red, finished dim.
-func stateDot(state string) string {
-	c := theme.Current.Dim
-	switch state {
-	case "starting", "stopping":
-		c = theme.Current.Warning
-	case "running":
-		c = theme.Current.Success
+// sessionStatus is the one status clients show for a session: the lifecycle
+// state, or the activity while the agent runs. key styles it, label is text.
+func sessionStatus(s agentsapi.Session) (key, label string) {
+	if s.State == "" {
+		return "unknown", "Unknown"
+	}
+	return agentactivity.Display(s.State, s.Activity)
+}
+
+// statusColor maps a Display key to its theme color: waiting and stalled ask
+// for attention, working and running are green, idle and exited are dim.
+func statusColor(key string) lipgloss.Color {
+	switch key {
+	case "starting", "stopping", "waiting", "stalled":
+		return theme.Current.Warning
+	case "working", "running":
+		return theme.Current.Success
 	case "failed":
-		c = theme.Current.Danger
+		return theme.Current.Danger
 	}
-	label := state
-	if label != "" {
-		label = strings.ToUpper(label[:1]) + label[1:]
+	return theme.Current.Dim
+}
+
+// headerStatus is the Agents tab header's state text. Waiting names what the
+// agent asks for, with the tool or short detail when the provider sent one
+// ("Needs permission: Bash"); every other state is its Display label.
+func headerStatus(s agentsapi.Session) (key, label string) {
+	key, label = sessionStatus(s)
+	if key != "waiting" || s.Activity == nil {
+		return key, label
 	}
-	return lipgloss.NewStyle().Foreground(c).Render("● " + label)
+	label = "Needs input"
+	switch s.Activity.Reason {
+	case agentactivity.ReasonPermission:
+		label = "Needs permission"
+	case agentactivity.ReasonQuestion:
+		label = "Asks a question"
+	case agentactivity.ReasonPlan:
+		label = "Plan ready for review"
+	}
+	if d := s.Activity.Detail; d != "" {
+		label += ": " + d
+	}
+	return key, label
+}
+
+// stateDot is the colored dot followed by label.
+func stateDot(key, label string) string {
+	return lipgloss.NewStyle().Foreground(statusColor(key)).Render("● " + label)
 }
 
 // fit truncates to width and pads with spaces to exactly width.
@@ -326,7 +359,7 @@ func (m Model) fullHeaderTitle(s agentsapi.Session) string {
 	if s.Model != "" {
 		parts = append(parts, s.Model)
 	}
-	head := m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(s.State)
+	head := m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(headerStatus(s))
 	if v := m.agents.view; v != nil && v.sessionID == s.ID && v.state == attachObservingOther {
 		head += dimText(" · read-only")
 	}

@@ -55,6 +55,17 @@ type WebAgents struct {
 	// KeepRunning keeps agent sessions running when `bonsai web stop` stops
 	// the web stack. Off, the stop ends them (after a warning on a terminal).
 	KeepRunning bool `json:"keep_running"`
+	// Notifications are desktop notifications raised by each session's holder.
+	Notifications WebAgentNotifications `json:"notifications"`
+}
+
+// WebAgentNotifications chooses which agent activity raises a desktop
+// notification. Enabled is off by default; the per-type toggles apply only
+// while it is on, and a web.json that omits them keeps them on.
+type WebAgentNotifications struct {
+	Enabled      bool `json:"enabled"`
+	NeedsInput   bool `json:"needs_input"`   // the agent waits for the user
+	TurnComplete bool `json:"turn_complete"` // the agent finished (or failed) a turn
 }
 
 type WebUpdates struct {
@@ -156,6 +167,7 @@ func DefaultWebConfig() WebConfig {
 		SetupVersion: 0, // defaults written; the guided setup has not run
 		APIPort:      DefaultWebAPIPort,
 		OpenBrowser:  true,
+		Agents:       WebAgents{Notifications: WebAgentNotifications{NeedsInput: true, TurnComplete: true}},
 		Updates: WebUpdates{
 			Mode: WebUpdatesStandard,
 			Live: WebLiveUpdates{

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { APIError, deleteWorktree, refreshProject, stopWorktreeProcesses } from '../../api/git'
 import { useBonsaiStore } from '../../stores/bonsai'
+import { AgentStatusBadge } from '../../components/ui/AgentStatus'
 
 const activeProcessStates = new Set(['starting', 'running', 'backoff', 'stopping', 'orphan'])
 
@@ -54,7 +55,10 @@ function DeleteWorktreeDialogBody() {
         {worktree.missing && <p className="text-xs text-warn">The worktree directory is missing. Only its stale Git registration will be removed.</p>}
         {worktree.main && <p role="alert" className="text-xs text-danger">The main working copy cannot be deleted.</p>}
         {busy && <p role="alert" className="text-xs text-warn">Finish the active Git operation before deleting this worktree.</p>}
-        {!!runningAgents.length && <p role="alert" className="text-xs text-warn">Stop active agents before deleting this worktree.</p>}
+        {!!runningAgents.length && <div role="alert" className="text-xs text-warn">
+          <p>Stop active agents before deleting this worktree.</p>
+          <ul aria-label="Active agents" className="mt-1.5 space-y-1">{runningAgents.map(agent => <li key={agent.id} className="flex items-center gap-2 text-text"><span className="min-w-0 truncate">{agent.name}</span><AgentStatusBadge agent={agent} /></li>)}</ul>
+        </div>}
         {!!running.length && <p className="text-xs text-warn">{running.length} running process(es) will be stopped before removal.</p>}
         {!worktree.missing && <label className="flex items-start gap-2 text-xs" title="An untracked folder counts as one entry."><input type="checkbox" checked={discard} disabled={pending} onChange={event => { setDiscard(event.target.checked); key.current = crypto.randomUUID() }} />Discard uncommitted changes, including untracked files{worktree.dirtyFiles ? ` (${worktree.dirtyFiles} changed files)` : ''}</label>}
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}

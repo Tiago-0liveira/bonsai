@@ -26,6 +26,7 @@ import {
 import { BonsaiSelect } from '../../components/ui/BonsaiSelect'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { StatusDot } from '../branches/BranchesIsland'
+import { AgentStatusDot } from '../../components/ui/AgentStatus'
 import { useOpenRuntimeEntries, type RuntimeEntry } from './openRuntimeEntries'
 
 const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })))
@@ -70,7 +71,7 @@ function SortableRuntimeTile({ runtime }: { runtime: RuntimeEntry }) {
           </span>
         </div>
         {runtime.type === 'agent' && <div ref={setTerminalActions} className="flex shrink-0 items-center gap-2" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} />}
-        <StatusDot status={runtime.type === 'agent' ? runtime.agent.state : runtime.process.status} />
+        {runtime.type === 'agent' ? <AgentStatusDot agent={runtime.agent} /> : <StatusDot status={runtime.process.status} />}
         <button
           type="button"
           onPointerDown={(event) => event.stopPropagation()}

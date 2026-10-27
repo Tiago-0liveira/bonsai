@@ -100,7 +100,7 @@ func TestPublishedStatusHasPersistedRecord(t *testing.T) {
 	}
 	defer lock.Close()
 	summary := Summary{ID: "sess_a1", State: "starting", CreatedAt: time.Now().UTC()}
-	h := &host{deps: Deps{Paths: p}, stream: agentterminal.NewStream[Summary](80, 24), summary: summary, monitors: map[*serverConn]struct{}{}}
+	h := newHost(Deps{Paths: p}, "", agentterminal.NewStream[Summary](80, 24), "", nil, summary)
 	_, _, _, frames := h.stream.Attach(0, summary)
 	if err := h.update(func(s *Summary) error { s.State = "running"; return nil }); err != nil {
 		t.Fatal(err)

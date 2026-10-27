@@ -387,7 +387,7 @@ const AGENTS_TAB_USAGE: Record<string, Record<string, unknown>> = {
 }
 
 export async function mockGitBackend(page: Page, emptyRoots = false, delayedProvider = false, management = false, apiOrigin = DEFAULT_API_ORIGIN, agentsTab: AgentsTabFixture = { enabled: false }) {
-  let agentSettings = { revision: 1, keep_running: false, active_sessions: 0 }
+  let agentSettings = { revision: 1, keep_running: false, active_sessions: 0, notifications: { enabled: false, needs_input: true, turn_complete: true } }
   const rootSettings: {
     version: number
     revision: number
@@ -799,12 +799,12 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     }
     if (path === '/api/settings/agents') {
       if (request.method() === 'POST') {
-        const body = request.postDataJSON() as { keep_running: boolean; revision: number }
+        const body = request.postDataJSON() as { keep_running?: boolean; notifications?: Partial<typeof agentSettings.notifications>; revision: number }
         if (body.revision !== agentSettings.revision) {
           await route.fulfill({ status: 409, json: { error: { code: 'settings_update_failed', message: 'web settings changed; reload and try again' } } })
           return
         }
-        agentSettings = { ...agentSettings, keep_running: body.keep_running, revision: agentSettings.revision + 1 }
+        agentSettings = { ...agentSettings, keep_running: body.keep_running ?? agentSettings.keep_running, notifications: { ...agentSettings.notifications, ...body.notifications }, revision: agentSettings.revision + 1 }
       }
       await route.fulfill({ json: agentSettings })
       return
@@ -912,6 +912,13 @@ export async function mockGitBackend(page: Page, emptyRoots = false, delayedProv
     addAccount: (account: Record<string, unknown>) => { accountList.push(account); accountsETag++ },
     /** Profiles as the API would list them now. */
     accounts: () => structuredClone(accountList),
+    /** Sets (or clears) the activity of a fixture session and sends the project snapshot that carries it, as the API does. */
+    setAgentActivity: (id: string, activity?: AgentSummary['activity']) => {
+      const session = agentSessions.find(item => item.id === id)
+      if (!session) throw new Error(`No fixture session ${id}`)
+      session.activity = activity
+      socket.publishUpdate(projectSnapshot(session.project_id, true))
+    },
     /** The global event the API sends after an account, setup or session change. */
     publishAgentsChanged: () => socket.publishEvent({ type: 'agents_changed', revision: ++agentsRevision }),
   }

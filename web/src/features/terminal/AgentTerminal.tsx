@@ -6,7 +6,8 @@ import { Square, Wifi, WifiOff } from 'lucide-react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import { agentTerminalPath, connectTerminal, type TerminalConnection } from '../../api/agentTerminal'
-import { stopAgent } from '../../api/agents'
+import { mapActivity, stopAgent } from '../../api/agents'
+import { agentDisplayStatus } from '../../lib/agentStatus'
 import type { Agent } from '../../types'
 import { TERMINAL_FONT, bindTerminalAppearance, terminalTheme } from '../../theme/terminal'
 import { getActiveTheme } from '../../theme/themeStore'
@@ -18,6 +19,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
   const [error, setError] = useState('')
   const [loadFailed, setLoadFailed] = useState(false)
   const [lifecycle, setLifecycle] = useState(agent.lifecycleState ?? 'starting')
+  const [activity, setActivity] = useState(agent.activity)
   const control = useRef<{ take(): void } | undefined>(undefined)
   useEffect(() => {
     const element = host.current
@@ -49,7 +51,7 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
           output: bytes => terminal?.write(bytes),
           reset: gap => { terminal?.reset(); if (gap) terminal?.writeln('[Recent output was truncated; terminal display may be incomplete.]') },
           ready: resize,
-          status: summary => { setLifecycle(summary.state); if (summary.state === 'running') resize(); if (summary.error) setError(summary.error) },
+          status: summary => { setLifecycle(summary.state); setActivity(mapActivity(summary.activity)); if (summary.state === 'running') resize(); if (summary.error) setError(summary.error) },
           error: setError,
         })
         control.current = controller
@@ -68,11 +70,13 @@ export function AgentTerminal({ agent, actionsHost }: { agent: Agent; actionsHos
     }
   }, [agent.id, agent.projectId])
   if (loadFailed) return <ChunkRecovery />
+  // The same status every other surface shows, from the frames of this socket.
+  const status = agentDisplayStatus({ state: agent.state, lifecycleState: lifecycle, activity })
   return <div className="flex h-full min-h-0 flex-col">
     {actionsHost && createPortal(<>
-      <span title={`Session ${lifecycle}; terminal ${connection}`} className={'chip inline-flex items-center gap-1 border ' + (connection === 'connected' ? 'border-accent/35 bg-accent/[.12] text-accent' : 'border-transparent bg-panel-4 text-muted')}>
+      <span title={`Session ${status.description}; terminal ${connection}`} data-agent-status={status.key} className={'chip inline-flex items-center gap-1 border ' + (connection === 'connected' ? 'border-accent/35 bg-accent/[.12] text-accent' : 'border-transparent bg-panel-4 text-muted')}>
         {connection === 'connected' ? <Wifi size={9} /> : <WifiOff size={9} />}
-        {lifecycle} · {connection}
+        {status.label} · {connection}
       </span>
       <button type="button" aria-label="Stop agent" title={stopping || lifecycle === 'stopping' ? 'Stopping…' : 'Stop agent'} className="bonsai-focus icon-btn-20 !text-danger transition-colors hover:!border-danger/40 disabled:cursor-not-allowed disabled:opacity-40" disabled={stopping || lifecycle === 'exited' || lifecycle === 'failed' || lifecycle === 'stopping'} onClick={() => {
         if (!agent.projectId || stopping) return
