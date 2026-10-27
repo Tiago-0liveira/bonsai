@@ -302,6 +302,9 @@ func TestAgentUsageProviderPanicSingleAccountGet(t *testing.T) {
 }
 
 func TestAgentUsageRealProviders(t *testing.T) {
+	// The setup seed hint shows the default source only when these are unset.
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	s, _, _ := terminalTestServer(t)
 	codexTestdata, err := filepath.Abs(filepath.Join("..", "..", "providers", "codex", "testdata"))
 	if err != nil {
