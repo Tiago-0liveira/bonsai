@@ -405,3 +405,38 @@ func (s *Store) Archive(ctx context.Context, scope Scope, id ID, expected uint64
 	})
 	return clone(out), err
 }
+
+// Unarchive reverses Archive with the same revision check. It bumps the
+// revision so another window's stale view of the archived draft conflicts.
+func (s *Store) Unarchive(ctx context.Context, scope Scope, id ID, expected uint64) (Draft, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !scope.valid() || id == "" {
+		return Draft{}, ErrInvalid
+	}
+	var out Draft
+	err := s.transaction(ctx, func(d *disk) (bool, error) {
+		cur, ok := d.Drafts[id]
+		if !ok || cur.Scope != scope {
+			return false, ErrNotFound
+		}
+		if cur.Revision != expected {
+			return false, &ConflictError{Current: clone(cur)}
+		}
+		if cur.ArchivedAt.IsZero() || cur.Revision == math.MaxUint64 {
+			return false, ErrInvalid
+		}
+		now := s.now().UTC()
+		if now.IsZero() {
+			return false, ErrInvalid
+		}
+		if now.Before(cur.UpdatedAt) {
+			now = cur.UpdatedAt
+		}
+		cur.Revision++
+		cur.UpdatedAt, cur.ArchivedAt = now, time.Time{}
+		d.Drafts[id], out = cur, cur
+		return true, nil
+	})
+	return clone(out), err
+}

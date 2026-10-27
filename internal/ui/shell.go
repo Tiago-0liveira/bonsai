@@ -328,6 +328,8 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case modals.KindConfigConfirm:
 			return m.confirmRepoWrite()
+		case modals.KindGardenDraftQuit:
+			return m.privQuitChoice(msg.Value)
 		case modals.KindGardenAssistRestore:
 			return m.editPrefs(func(p *config.Prefs) { p.GardenAssist = nil })
 		case modals.KindGardenReviewEnable:
@@ -373,6 +375,10 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.agents.overlay != nil && m.workspace == wsWorktrees && m.modal == nil {
 			return m.overlayUpdate(msg)
+		}
+		if m.modal != nil && m.modal.Kind() == modals.KindGardenDraftQuit && msg.String() == "ctrl+c" {
+			m.modal = nil // a second ctrl+c while the unwritten-edits dialog is open quits without saving
+			return m.privQuitChoice("Quit without saving")
 		}
 		if m.modal != nil {
 			nm, cmd := m.modal.Update(msg)

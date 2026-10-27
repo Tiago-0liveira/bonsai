@@ -674,3 +674,63 @@ func TestSeparateProcessesPreserveEdits(t *testing.T) {
 		t.Fatalf("lost edit: %+v", list)
 	}
 }
+
+func TestUnarchiveRestoresWithRevisionCheck(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t, filepath.Join(t.TempDir(), "drafts.json"))
+	d := seed(t, s)
+	if _, err := s.Unarchive(ctx, testScope, d.ID, d.Revision); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unarchive of an active draft: %v", err)
+	}
+	archived, err := s.Archive(ctx, testScope, d.ID, d.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ce *ConflictError
+	if _, err := s.Unarchive(ctx, testScope, d.ID, archived.Revision-1); !errors.As(err, &ce) || ce.Current.Revision != archived.Revision {
+		t.Fatalf("stale unarchive: %v", err)
+	}
+	back, err := s.Unarchive(ctx, testScope, d.ID, archived.Revision)
+	if err != nil || !back.ArchivedAt.IsZero() || back.Revision != archived.Revision+1 || back.Title != d.Title {
+		t.Fatalf("unarchive: %+v %v", back, err)
+	}
+	list, err := s.List(ctx, testScope, false)
+	if err != nil || len(list) != 1 || list[0].ID != d.ID {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+	if _, err := s.Unarchive(ctx, testScope, "missing", 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+}
+
+// Unarchive is scoped like Archive (a foreign scope sees ErrNotFound), refuses a draft that is not
+// archived, and on an archived published draft only clears ArchivedAt: the verified publication stays.
+func TestUnarchiveScopeActiveAndPublished(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t, filepath.Join(t.TempDir(), "drafts.json"))
+	d := seed(t, s)
+	other := Scope{Local: testScope.Local, Repo: testScope.Repo + 1}
+	if _, err := s.Unarchive(ctx, other, d.ID, d.Revision); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong scope: %v", err)
+	}
+	if _, err := s.Unarchive(ctx, testScope, d.ID, d.Revision); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("not archived: %v", err)
+	}
+	issue := IssueIdentity{ID: 909, Number: 42, URL: "https://github.com/example/repo/issues/42"}
+	d.Publication = Publication{State: Publishing, OperationID: "op"}
+	d, err := s.Save(ctx, testScope, d, d.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Publication = Publication{State: Published, OperationID: "op", Issue: &issue, VerifiedAt: testTime}
+	if d, err = s.Save(ctx, testScope, d, d.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if d, err = s.Archive(ctx, testScope, d.ID, d.Revision); err != nil {
+		t.Fatal(err)
+	}
+	back, err := s.Unarchive(ctx, testScope, d.ID, d.Revision)
+	if err != nil || !back.ArchivedAt.IsZero() || back.Publication.State != Published {
+		t.Fatalf("published unarchive: %+v %v", back, err)
+	}
+}

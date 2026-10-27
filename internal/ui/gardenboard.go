@@ -69,7 +69,10 @@ func (m Model) gardenLoadWork() (Model, tea.Cmd) {
 	}
 	ctx, seq := g.begin(busyWork)
 	api := g.api
-	return m, func() tea.Msg { v, err := api.Work(ctx); return gardenWorkMsg{seq, v, err} }
+	read := func() tea.Msg { v, err := api.Work(ctx); return gardenWorkMsg{seq, v, err} }
+	// The private drafts load beside the Work read, on their own sequence: neither can supersede the other.
+	list := m.privListCmd() // before the return: it advances the list sequence the reply must match
+	return m, tea.Batch(read, list)
 }
 func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	g := &m.garden
@@ -389,7 +392,8 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, m.keys.Tab) && m.canToggleSub() {
 			m = m.gardenToggleSub()
 			cmd := m.gardenRememberView()
-			return m, cmd
+			list := m.privListCmd() // entering Drafts reads the private drafts; the Work read is shared with the Board
+			return m, tea.Batch(cmd, list)
 		}
 		if b.layout == layoutTable {
 			m.gardenTableKey(k)

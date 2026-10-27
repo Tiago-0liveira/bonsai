@@ -23,6 +23,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	"github.com/Tiago-0liveira/bonsai/internal/gardenbackend"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
@@ -295,6 +296,11 @@ func run(cfgPath string, layout ui.Layout) error {
 		if agentsAPI != nil {
 			// Planner sessions are ordinary agent sessions; without the agent runtime Garden still works but cannot plan.
 			gardenOpts = append(gardenOpts, gardenbackend.WithAgents(*agentsAPI))
+		}
+		// Private drafts are optional: without the store the backend answers ErrUnavailable and
+		// the TUI keeps the GitHub capture form, so a bad config dir never blocks Garden.
+		if store, err := drafts.Open(); err == nil {
+			gardenOpts = append(gardenOpts, gardenbackend.WithPrivateDrafts(store))
 		}
 		if gardenAPI, gardenErr = gardenbackend.New(repoDir, gardenOpts...); gardenErr == nil {
 			extra = append(extra, ui.WithGarden(gardenAPI))

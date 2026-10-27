@@ -202,7 +202,8 @@ concurrent edit never makes it vanish.
 | `↑` / `↓` or `k` / `j`, `pgup` / `pgdown`, `home` / `end` | Select a draft (kept by Issue ID across refreshes) |
 | `enter` | Open the draft document: Issue body, current specification and its approval gate. In it, `e` edits the specification and `v` validates it ([gate one](#validate-a-specification-gate-one)) |
 | `/`, `t`, `x` | Search number or title, cycle the type filter, clear filters |
-| `n` | Capture a new idea |
+| `n` | Start a new local draft ([Local drafts](#local-drafts)); without the private store, capture a new idea as a GitHub Issue |
+| `a` / `u` / `A` | Archive the selected local draft, undo (restore) it, show or hide archived local drafts |
 | `r` | Reconcile a capture whose outcome is unknown |
 | `R` (refresh binding) | Refresh |
 | `v` / `esc` | Back to the Board |
@@ -210,6 +211,31 @@ concurrent edit never makes it vanish.
 In the draft document, Up/Down, Page Up/Down, Home and End scroll within the
 document's bounds. Resizing or refreshing a shorter document keeps the stored
 position within those bounds, so scrolling back works immediately.
+
+### Local drafts
+
+Local drafts are private to this machine and need no GitHub Issue, assistant or
+provider. Press `n` in Drafts and write what is on your mind. The first text
+creates the draft (shown as `D-1A2B3C`, with the full ID only in the inspector);
+**Continue writing** opens the same draft's specification: Problem, Outcome,
+Requirements, Criteria and Questions, with Summary, Constraints and any other
+section you already have under *More*. `Ctrl+T` edits the title and `Ctrl+Y`
+cycles the type. **Discuss with AI…** and **Invite assistant…** only explain that
+the assistant is not available for local drafts yet.
+
+Text is saved by itself shortly after you stop typing (`Ctrl+S` saves now). The
+status reads `Saving…`, `✓ Saved locally`, `Unsaved changes`, `Save failed — text
+kept` or `Conflict — choose a version`, and never says saved while edits are
+unwritten. If another Bonsai window changed the draft, your text is kept as a
+recovery draft (`recovery of D-…` in the inbox) and you choose `k` to keep yours
+or `o` to open theirs. Quitting with unwritten edits asks first. Bonsai remembers
+which draft and section were open (never the text) and reopens them from the
+inbox after a restart. Archive is reversible (`a`, then `u`).
+
+`Ctrl+Enter` (or `Ctrl+R`) opens **Review & create issue** as a read-only
+preview with the concrete reasons a draft is not ready. Creating the GitHub issue
+is not available yet, so the confirmation is disabled and the draft stays saved
+locally.
 
 ### Capture
 

@@ -4,6 +4,7 @@ package drafts
 
 import (
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -138,4 +139,15 @@ func sameContent(a, b Draft) bool {
 		a.Spec.AcceptanceCriteria == b.Spec.AcceptanceCriteria && a.Spec.Constraints == b.Spec.Constraints &&
 		a.Spec.OpenQuestions == b.Spec.OpenQuestions && slices.Equal(a.Spec.Extra, b.Spec.Extra) &&
 		slices.Equal(a.ConfirmedAnswers, b.ConfirmedAnswers)
+}
+
+// DraftLabel is the short name people see for a draft, such as D-1A2B3C. The
+// full ID only belongs in a detail line.
+func DraftLabel(id ID) string {
+	hex := strings.TrimPrefix(string(id), "draft-")
+	r := []rune(hex)
+	if len(r) > 6 {
+		r = r[:6]
+	}
+	return "D-" + strings.ToUpper(string(r))
 }

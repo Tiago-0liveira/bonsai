@@ -321,8 +321,11 @@ changes stage labels. See the [Garden guide](garden.md) for exact column mapping
 filter semantics, document sections, keys and current limitations.
 
 Drafts is a separate inbox for unvalidated ideas (`tab` from the Board, `n` to
-capture a new one as a GitHub Issue at Draft, `/` search, `t` type, `r` reconcile,
-`esc` back). Creating needs a preview and confirmation, survives timeouts without
+start a private local draft saved on this machine without GitHub, an assistant or a
+provider, with `Ctrl+S` to save now, `a`/`u`/`A` to archive, undo and show archived,
+`/` search, `t` type, `r` reconcile, `esc` back; see
+[local drafts](garden.md#local-drafts)). Without the private store, `n` captures a
+new idea as a GitHub Issue at Draft instead. GitHub capture needs a preview and confirmation, survives timeouts without
 duplicates, and never approves or starts anything. In a draft's document, `v`
 validates its specification: a preview of the exact revision and fingerprint, then
 an explicit confirmation records one verified approval and moves the same Issue

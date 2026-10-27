@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
@@ -32,6 +33,7 @@ const (
 	draftsConflict // Base / Yours / Remote / Result
 	draftsValidate // gate one: the preview and result of validating a specification
 	draftsAssist   // AI elaboration: setup, questions and the proposal (gardenassist.go)
+	draftsPrivate  // a private local draft: capture, editor or review (gardenprivate.go)
 )
 
 // captureTypes are the type choices in the order the form offers them.
@@ -104,10 +106,13 @@ type gardenDraftsState struct {
 	collection work.DraftCollection
 	query      work.Query
 	selected   garden.IssueID
-	row        int // deletion anchor: the selection's last index
-	scroll     int
-	docScroll  int
-	opened     garden.IssueID
+	// selectedLocal is the selected private draft. Exactly one of selected and selectedLocal is set
+	// once anything is selected.
+	selectedLocal drafts.ID
+	row           int // deletion anchor: the selection's last index
+	scroll        int
+	docScroll     int
+	opened        garden.IssueID
 
 	searching      bool
 	search         textinput.Model
@@ -135,6 +140,26 @@ type gardenDraftsState struct {
 	// idea is the save of an AI-drafted new idea in progress: Capture, then the first specification revision.
 	idea ideaSave
 
+	// Private drafts (gardenprivate.go). private is the draft open or parked in memory; privList is the
+	// last good read of the store, kept when a later read fails.
+	private         *privateDraft
+	privList        []drafts.Draft
+	privLoaded      bool
+	privErr         *gardenapi.Error
+	privUnavailable bool
+	privSeq         uint64 // list reads
+	openSeq         uint64 // single-draft reads
+	privToken       uint64
+	showArchived    bool
+	lastArchived    *drafts.Draft
+	// Remembered selection: which draft and section were open, never text.
+	restoreRead, restoreDone, sectionUsed bool
+	restoreID                             string
+	restoreSection                        int
+	rememberedID                          string
+	rememberedSection                     int
+	saveGen                               uint64
+
 	form     captureForm
 	formOpen bool // unfinished text exists, shown or not
 	preview  *gardenapi.CapturePreview
@@ -153,6 +178,59 @@ func (d *gardenDraftsState) rowIndex() int {
 	return i
 }
 
+// locals are the private drafts the inbox shows: active ones, plus archived ones while A is on,
+// narrowed by the same search and type filter as the GitHub rows.
+func (d *gardenDraftsState) locals() []drafts.Draft {
+	var out []drafts.Draft
+	text := strings.ToLower(strings.TrimSpace(d.query.Text))
+	for _, l := range d.privList {
+		archived := !l.ArchivedAt.IsZero()
+		if (archived && !d.showArchived) || l.Publication.State == drafts.Published {
+			continue
+		}
+		if d.query.Type != "" && l.Type != d.query.Type {
+			continue
+		}
+		if text != "" && !strings.Contains(strings.ToLower(l.Title+"\n"+l.Description+"\n"+drafts.DraftLabel(l.ID)), text) {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+func (d *gardenDraftsState) localIndex(id drafts.ID) int {
+	for i, l := range d.locals() {
+		if l.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// combinedIndex is the selection among the local rows followed by the GitHub rows, -1 when none.
+func (d *gardenDraftsState) combinedIndex() int {
+	if d.selectedLocal != "" {
+		return d.localIndex(d.selectedLocal)
+	}
+	if i := d.rowIndex(); i >= 0 {
+		return len(d.locals()) + i
+	}
+	return -1
+}
+
+// selectCombined selects row i of the combined list, keeping exactly one of the two selections set.
+func (d *gardenDraftsState) selectCombined(i int) {
+	locals := d.locals()
+	if i < len(locals) {
+		d.selectedLocal, d.selected = locals[i].ID, 0
+		return
+	}
+	d.selectedLocal = ""
+	d.row = i - len(locals)
+	d.selected = d.collection.Records[d.row].Item.Issue.ID
+}
+
 // reselect rebuilds the inbox from a read. The selection is the Issue ID; when
 // that Issue left, the row now at its index takes over and a notice says so.
 func (d *gardenDraftsState) reselect(snap gardensync.Snapshot) {
@@ -160,7 +238,7 @@ func (d *gardenDraftsState) reselect(snap gardensync.Snapshot) {
 	recs := d.collection.Records
 	if d.selectAfter != 0 {
 		if _, i, ok := d.collection.Find(d.selectAfter); ok {
-			d.selected, d.row = d.selectAfter, i
+			d.selected, d.selectedLocal, d.row = d.selectAfter, "", i
 			d.selectAfter = 0
 			return
 		}
@@ -174,6 +252,19 @@ func (d *gardenDraftsState) reselect(snap gardensync.Snapshot) {
 			d.notice = "Opened draft left the inbox; returned to Drafts."
 		}
 	}
+	if d.selectedLocal != "" {
+		if d.localIndex(d.selectedLocal) >= 0 {
+			d.selected = 0
+			return
+		}
+		d.selectedLocal = ""
+	}
+	if d.selected == 0 && d.selectedLocal == "" {
+		if locals := d.locals(); len(locals) > 0 {
+			d.selectedLocal = locals[0].ID
+			return
+		}
+	}
 	if i := d.rowIndex(); i >= 0 {
 		d.row = i
 		return
@@ -183,6 +274,9 @@ func (d *gardenDraftsState) reselect(snap gardensync.Snapshot) {
 	if len(recs) == 0 {
 		if left && d.notice == "" {
 			d.notice = "Selected draft left the inbox; no drafts remain."
+		}
+		if locals := d.locals(); len(locals) > 0 {
+			d.selectedLocal = locals[0].ID
 		}
 		return
 	}
@@ -194,11 +288,11 @@ func (d *gardenDraftsState) reselect(snap gardensync.Snapshot) {
 }
 
 func (d *gardenDraftsState) move(delta, page int, k string) {
-	n := len(d.collection.Records)
+	n := len(d.locals()) + len(d.collection.Records)
 	if n == 0 {
 		return
 	}
-	i := max(0, d.rowIndex())
+	i := max(0, d.combinedIndex())
 	switch k {
 	case "up", "k":
 		i--
@@ -215,8 +309,7 @@ func (d *gardenDraftsState) move(delta, page int, k string) {
 	default:
 		return
 	}
-	i = max(0, min(i, n-1))
-	d.row, d.selected = i, d.collection.Records[i].Item.Issue.ID
+	d.selectCombined(max(0, min(i, n-1)))
 }
 
 // gardenTyping reports that the Drafts body owns the keyboard for text.
@@ -228,6 +321,9 @@ func (m Model) gardenTyping() bool {
 		return false
 	}
 	d := m.garden.drafts
+	if d.stage == draftsPrivate && d.private != nil && d.private.typing() {
+		return true
+	}
 	return d.searching || d.stage == draftsForm || d.stage == draftsEditor || d.stage == draftsAssist || (d.stage == draftsConflict && d.conflict != nil && d.conflict.editing)
 }
 
@@ -236,7 +332,7 @@ func (m Model) gardenDraftsCapacity() int { return gardenTableCapacity(m.gardenB
 // gardenDraftsVisible keeps the selected row inside the window.
 func (m *Model) gardenDraftsVisible() {
 	d := &m.garden.drafts
-	d.scroll = tableScrollFor(d.scroll, d.rowIndex(), m.gardenDraftsCapacity(), len(d.collection.Records))
+	d.scroll = tableScrollFor(d.scroll, m.gardenInboxFlatIndex(), m.gardenDraftsCapacity(), len(m.gardenInboxRows()))
 }
 
 // canCapture says whether n may start: it needs Write access and no capture
@@ -441,6 +537,8 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gardenValidateKey(msg)
 	case draftsAssist:
 		return m.gardenAssistKey(msg)
+	case draftsPrivate:
+		return m.privKey(msg)
 	}
 	if key.Matches(msg, m.keys.Refresh) {
 		return m.gardenLoadWork()
@@ -456,8 +554,29 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		g.sub = subBoard
 		return m, nil
 	case "enter":
+		if d.selectedLocal != "" {
+			return m.privOpen(d.selectedLocal)
+		}
 		if d.selected != 0 {
 			d.opened, d.stage, d.docScroll = d.selected, draftsDetail, 0
+		}
+	case "a":
+		if l, ok := d.selectedLocalDraft(); ok && l.ArchivedAt.IsZero() {
+			return m.privArchive(l, false)
+		}
+	case "u":
+		if l, ok := d.selectedLocalDraft(); ok && !l.ArchivedAt.IsZero() {
+			return m.privArchive(l, true)
+		}
+		if d.lastArchived != nil {
+			return m.privArchive(*d.lastArchived, true)
+		}
+	case "A":
+		if _, ok := m.privateDrafts(); ok {
+			d.showArchived = !d.showArchived
+			d.reselect(g.board.snapshot)
+			cmd := m.privListCmd()
+			return m, cmd
 		}
 	case "/":
 		return m.gardenDraftsStartSearch()
@@ -474,6 +593,9 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.query = work.Query{}
 		d.reselect(g.board.snapshot)
 	case "n":
+		if _, ok := m.privateDrafts(); ok {
+			return m.privNew()
+		}
 		return m.gardenNewCapture()
 	case "i":
 		return m.gardenAssistNew()
@@ -490,6 +612,16 @@ func (m Model) gardenDraftsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.gardenDraftsVisible()
 	return m, nil
+}
+
+// selectedLocalDraft is the private draft the selection is on.
+func (d *gardenDraftsState) selectedLocalDraft() (drafts.Draft, bool) {
+	for _, l := range d.locals() {
+		if l.ID == d.selectedLocal {
+			return l, true
+		}
+	}
+	return drafts.Draft{}, false
 }
 
 func (m Model) gardenNewCapture() (tea.Model, tea.Cmd) {
@@ -781,6 +913,10 @@ func (m Model) gardenDraftsCrumbs() []string {
 		}
 	case draftsAssist:
 		return m.gardenAssistCrumbs()
+	case draftsPrivate:
+		if p := d.private; p != nil {
+			return []string{"Garden", "Drafts", p.label()}
+		}
 	case draftsForm:
 		return []string{"Garden", "Drafts", "Capture a draft"}
 	case draftsPreview:
@@ -794,6 +930,16 @@ func (m Model) gardenDraftsCrumbs() []string {
 func (m Model) gardenDraftsIdentity() string {
 	d := m.garden.drafts
 	switch d.stage {
+	case draftsPrivate:
+		if p := d.private; p != nil {
+			switch p.stage {
+			case privCapture:
+				return "Draft / Description"
+			case privReview:
+				return "Draft / " + p.label() + " / Review"
+			}
+			return "Draft / " + p.label() + " / Specification"
+		}
 	case draftsForm, draftsPreview, draftsResult:
 		return "Capture a draft"
 	case draftsEditor, draftsSave:
@@ -823,6 +969,8 @@ func (m Model) gardenDraftsIdentity() string {
 
 func (m Model) gardenDraftsFocusLabel() string {
 	switch m.garden.drafts.stage {
+	case draftsPrivate:
+		return "Draft"
 	case draftsDetail:
 		return "Draft / Issue"
 	case draftsForm, draftsPreview, draftsResult:
@@ -851,6 +999,8 @@ func (m Model) gardenDraftsHints() []shellHint {
 	switch d.stage {
 	case draftsAssist:
 		return m.gardenAssistHints()
+	case draftsPrivate:
+		return m.privHints()
 	case draftsEditor:
 		e := d.edit
 		switch {
@@ -905,7 +1055,11 @@ func (m Model) gardenDraftsHints() []shellHint {
 	if d.searching {
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}
-	h := []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"n", "new draft"}, {"i", "new with AI"}, {"/", "search"}, {"t", "type"}, {"x", "clear"}}
+	h := []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"n", "new draft"}, {"i", "new with AI"}}
+	if len(d.privList) > 0 {
+		h = append(h, shellHint{"a", "archive"}, shellHint{"u", "undo"}, shellHint{"A", "archived"})
+	}
+	h = append(h, shellHint{"/", "search"}, shellHint{"t", "type"}, shellHint{"x", "clear"})
 	if len(d.pending) > 0 {
 		h = append(h, shellHint{"r", "reconcile"})
 	}

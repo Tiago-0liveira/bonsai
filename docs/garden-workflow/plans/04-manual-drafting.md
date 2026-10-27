@@ -1,6 +1,16 @@
 # 04 / Complete drafting without AI
 
-Status: planned.
+Status: done.
+
+Completion note: `n` in Drafts opens a private local draft (capture, structured editor,
+read-only review) backed by the plan 03 store, wired in `main.go` and the optional
+`gardenapi.PrivateDrafts` interface; files: `internal/ui/gardenprivate*.go`,
+`gardendrafts*.go`, `core/garden/drafts/{readiness.go,store.go (Unarchive)}`,
+`core/config/state.go` (selection memory), `gardenbackend/private_drafts.go`. Checks:
+`go test ./internal/ui/... ./internal/gardenbackend/... ./internal/core/garden/...`,
+race on drafts. Limitations: Review & create issue is a disabled preview (no
+publication service); the assistant is unavailable for local drafts; GitHub drafts are
+not migrated.
 
 ## Deliverable
 

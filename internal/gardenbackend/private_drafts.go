@@ -5,6 +5,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
 // PrivateDraftStore is optional and independent of managed GitHub drafts.
@@ -13,6 +14,7 @@ type PrivateDraftStore interface {
 	Read(context.Context, drafts.Scope, drafts.ID) (drafts.Draft, error)
 	Save(context.Context, drafts.Scope, drafts.Draft, uint64) (drafts.Draft, error)
 	Archive(context.Context, drafts.Scope, drafts.ID, uint64) (drafts.Draft, error)
+	Unarchive(context.Context, drafts.Scope, drafts.ID, uint64) (drafts.Draft, error)
 }
 
 // PrivateDraftBackend can be adopted without expanding the existing UI contract.
@@ -22,10 +24,12 @@ type PrivateDraftBackend interface {
 	ReadPrivateDraft(context.Context, garden.RepoID, drafts.ID) (drafts.Draft, error)
 	SavePrivateDraft(context.Context, garden.RepoID, drafts.Draft, uint64) (drafts.Draft, error)
 	ArchivePrivateDraft(context.Context, garden.RepoID, drafts.ID, uint64) (drafts.Draft, error)
+	UnarchivePrivateDraft(context.Context, garden.RepoID, drafts.ID, uint64) (drafts.Draft, error)
 }
 
 var _ PrivateDraftStore = (*drafts.Store)(nil)
 var _ PrivateDraftBackend = (*Backend)(nil)
+var _ gardenapi.PrivateDrafts = (*Backend)(nil)
 
 func WithPrivateDrafts(s PrivateDraftStore) Option {
 	return func(o *options) { o.drafts = s }
@@ -57,4 +61,11 @@ func (b *Backend) ArchivePrivateDraft(ctx context.Context, repo garden.RepoID, i
 		return drafts.Draft{}, drafts.ErrUnavailable
 	}
 	return b.deps.PrivateDrafts.Archive(ctx, drafts.Scope{Local: b.local, Repo: repo}, id, expected)
+}
+
+func (b *Backend) UnarchivePrivateDraft(ctx context.Context, repo garden.RepoID, id drafts.ID, expected uint64) (drafts.Draft, error) {
+	if b.deps.PrivateDrafts == nil {
+		return drafts.Draft{}, drafts.ErrUnavailable
+	}
+	return b.deps.PrivateDrafts.Unarchive(ctx, drafts.Scope{Local: b.local, Repo: repo}, id, expected)
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
@@ -42,12 +43,13 @@ func (m Model) gardenDraftsHead(width int) []string {
 	if d.query.Type != "" {
 		typeName = typeWord(d.query.Type)
 	}
-	count := fmt.Sprintf("✎ DRAFT IDEAS / NOT YET VALIDATED  %d", len(d.collection.Records))
+	nLocal := len(d.locals())
+	count := fmt.Sprintf("✎ DRAFT IDEAS / NOT YET VALIDATED  %d", len(d.collection.Records)+nLocal)
 	if d.query.Active() {
-		count += fmt.Sprintf(" filtered / %d", d.collection.Total)
+		count += fmt.Sprintf(" filtered / %d", d.collection.Total+nLocal)
 	}
 	if width < 80 {
-		count = fmt.Sprintf("✎ DRAFT IDEAS  %d", len(d.collection.Records))
+		count = fmt.Sprintf("✎ DRAFT IDEAS  %d", len(d.collection.Records)+nLocal)
 	}
 	chip := "Type: " + typeName
 	left := seg(p.Warning, p.Background, true).Render(" " + count)
@@ -67,6 +69,9 @@ func (m Model) gardenDraftsHead(width int) []string {
 	}
 	if len(d.pending) > 0 {
 		feedback, fg = fmt.Sprintf("%d capture%s may already exist on GitHub. Press r to reconcile.", len(d.pending), plural(len(d.pending))), p.Warning
+	}
+	if d.privErr != nil {
+		feedback, fg = "Private drafts could not be read; showing the last good list.", p.Warning
 	}
 	if d.notice != "" {
 		feedback, fg = d.notice, p.Warning
@@ -110,6 +115,8 @@ func (m Model) gsDrafts(width, rows int) []string {
 		return m.gsConflict(width, rows)
 	case draftsAssist:
 		return m.gsAssist(width, rows)
+	case draftsPrivate:
+		return m.gsPrivate(width, rows)
 	}
 	return m.gsDraftList(width, rows)
 }
@@ -119,6 +126,8 @@ func (m Model) gsDraftList(width, rows int) []string {
 	d := m.garden.drafts
 	b := m.garden.board
 	recs := d.collection.Records
+	flat := m.gardenInboxRows()
+	hasLocal := len(d.locals()) > 0
 	inspector := width >= 120
 	listW, inspW := width, 0
 	if inspector {
@@ -129,36 +138,49 @@ func (m Model) gsDraftList(width, rows int) []string {
 	for _, r := range recs {
 		issueW = max(issueW, len(fmt.Sprint(r.Item.Issue.Number))+1)
 	}
+	if hasLocal {
+		issueW = max(issueW, len("D-1A2B3C"))
+	}
 	cols := tableCols{issue: issueW, typ: 9, status: 12}
+	if hasLocal && listW >= 90 {
+		cols.status = 22
+	}
 	if listW < 64 {
 		cols.status = 0
 	}
 	cols.title = max(12, listW-(2+cols.issue+tableGap*2+cols.typ+cols.status+tableGap*btoi(cols.status > 0)))
 	capacity := gardenTableCapacity(rows)
-	row := d.rowIndex()
-	scroll := tableScrollFor(d.scroll, row, capacity, len(recs))
+	row := m.gardenInboxFlatIndex()
+	scroll := tableScrollFor(d.scroll, row, capacity, len(flat))
 
 	out := m.gardenDraftsHead(width)
 	body := max(0, rows-3)
 	region := make([]string, 0, body)
 	head := [6]string{"ISSUE", "TITLE", "TYPE", "", "", "STATE"}
+	if hasLocal {
+		head[0] = "DRAFT"
+	}
 	muted := [6]lipgloss.Color{p.Muted, p.Muted, p.Muted, p.Muted, p.Muted, p.Muted}
 	region = append(region, m.gardenTableLine(listW, p.Raised, cols, " ", p.Muted, head, muted, true))
 	empty := ""
 	switch {
-	case !b.loaded || b.snapshot.SuccessfulAt.IsZero():
+	case (!b.loaded || b.snapshot.SuccessfulAt.IsZero()) && !hasLocal:
 		empty = "(unknown until a successful read)"
-	case len(recs) == 0 && d.query.Active():
+	case len(flat) == 0 && d.query.Active():
 		empty = "(no drafts match this filter)"
-	case len(recs) == 0:
+	case len(flat) == 0:
 		empty = "(no draft ideas yet; press n to capture one)"
 	}
 	if empty != "" {
 		region = append(region, boardLine(listW, p.Background, p.Muted, false, " "+empty))
 	}
-	for n := scroll; n < len(recs) && n < scroll+capacity; n++ {
-		r := recs[n]
-		selected := r.Item.Issue.ID == d.selected
+	for n := scroll; n < len(flat) && n < scroll+capacity; n++ {
+		fr := flat[n]
+		if fr.head != "" {
+			region = append(region, boardLine(listW, p.Background, p.Warning, true, " "+fr.head))
+			continue
+		}
+		selected := n == row
 		bg, fg, marker := p.Surface, p.Text, " "
 		if selected {
 			bg, fg, marker = p.Raised, p.Warning, "▌"
@@ -166,6 +188,17 @@ func (m Model) gsDraftList(width, rows int) []string {
 				marker = ">"
 			}
 		}
+		if l := fr.local; l != nil {
+			state, statusFg := localState(*l)
+			if cols.status >= 22 {
+				state += " · " + ago(l.UpdatedAt)
+			}
+			texts := [6]string{drafts.DraftLabel(l.ID), localTitle(*l), typeWord(l.Type), "", "", state}
+			fgs := [6]lipgloss.Color{fg, fg, p.Warning, p.Muted, p.Muted, statusFg}
+			region = append(region, m.gardenTableLine(listW, bg, cols, marker, p.Warning, texts, fgs, selected))
+			continue
+		}
+		r := *fr.gh
 		status, statusFg := draftStatus(r)
 		texts := [6]string{fmt.Sprintf("#%d", r.Item.Issue.Number), boardTitle(r.Item.Issue.Title), typeWord(r.Item.Classification.Type), "", "", status}
 		fgs := [6]lipgloss.Color{fg, fg, p.Warning, p.Muted, p.Muted, statusFg}
@@ -176,7 +209,12 @@ func (m Model) gsDraftList(width, rows int) []string {
 	}
 	region = region[:body]
 	if inspector {
-		side := m.gardenDraftInspector(inspW, len(region), recs, row)
+		var side []string
+		if l, ok := d.selectedLocalDraft(); ok {
+			side = m.gardenLocalInspector(inspW, len(region), l)
+		} else {
+			side = m.gardenDraftInspector(inspW, len(region), recs, d.rowIndex())
+		}
 		sep := seg(p.Border, p.Background, false).Render(" " + m.chrome("│") + " ")
 		for i := range region {
 			region[i] += sep + side[i]
@@ -184,8 +222,12 @@ func (m Model) gsDraftList(width, rows int) []string {
 	}
 	out = append(out, region...)
 	footer := "No rows"
-	if len(recs) > 0 {
-		footer = fmt.Sprintf("Rows %d–%d of %d", scroll+1, min(scroll+capacity, len(recs)), len(recs))
+	if n := len(d.locals()) + len(recs); n > 0 {
+		first := scroll + 1
+		footer = fmt.Sprintf("Rows %d–%d of %d", first, min(scroll+capacity, len(flat)), len(flat))
+		if len(flat) != n {
+			footer += fmt.Sprintf(" (%d drafts)", n)
+		}
 	}
 	out = append(out, gText(width, p.Muted, false, footer))
 	return m.settingsASCII(out[:rows])

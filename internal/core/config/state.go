@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -99,6 +100,8 @@ type State struct {
 	Workspaces map[string]string `json:"workspaces,omitempty"`
 	// GardenViews stores only the last Garden subview, scoped like Workspaces.
 	GardenViews map[string]string `json:"garden_views,omitempty"`
+	// GardenDrafts stores which private draft was open and at which section ("id|n"), never its text.
+	GardenDrafts map[string]string `json:"garden_drafts,omitempty"`
 
 	mu   sync.Mutex `json:"-"`
 	path string     `json:"-"`
@@ -107,6 +110,7 @@ type State struct {
 	prefsGen  uint64 `json:"-"`
 	wsGen     uint64 `json:"-"`
 	gardenGen uint64 `json:"-"`
+	draftGen  uint64 `json:"-"`
 	// extra* keep keys this version does not know, so a newer or hand-edited
 	// state.json survives a rewrite.
 	extra      map[string]json.RawMessage `json:"-"`
@@ -116,11 +120,12 @@ type State struct {
 // stateDisk mirrors State's persisted fields without the mutex so snapshots
 // can be built and marshaled without copying a lock.
 type stateDisk struct {
-	CopyCounts  map[string]int    `json:"copy_counts"`
-	Aliases     []Alias           `json:"aliases"`
-	Prefs       Prefs             `json:"prefs"`
-	Workspaces  map[string]string `json:"workspaces,omitempty"`
-	GardenViews map[string]string `json:"garden_views,omitempty"`
+	CopyCounts   map[string]int    `json:"copy_counts"`
+	Aliases      []Alias           `json:"aliases"`
+	Prefs        Prefs             `json:"prefs"`
+	Workspaces   map[string]string `json:"workspaces,omitempty"`
+	GardenViews  map[string]string `json:"garden_views,omitempty"`
+	GardenDrafts map[string]string `json:"garden_drafts,omitempty"`
 }
 
 // jsonKeys lists the JSON object keys of struct type t, derived from tags so
@@ -280,7 +285,7 @@ func (s *State) writeLocked(d stateDisk) error {
 
 // diskLocked snapshots the in-memory fields. Caller holds s.mu.
 func (s *State) diskLocked() stateDisk {
-	return stateDisk{CopyCounts: s.CopyCounts, Aliases: s.Aliases, Prefs: s.Prefs, Workspaces: s.Workspaces, GardenViews: s.GardenViews}
+	return stateDisk{CopyCounts: s.CopyCounts, Aliases: s.Aliases, Prefs: s.Prefs, Workspaces: s.Workspaces, GardenViews: s.GardenViews, GardenDrafts: s.GardenDrafts}
 }
 
 // Save writes the state to disk atomically. Save, PersistPrefs and
@@ -459,5 +464,67 @@ func (s *State) PersistGardenView(gen uint64, repoDir, view string) error {
 		return fmt.Errorf("persist Garden view: %w", err)
 	}
 	s.GardenViews, s.gardenGen = next, gen
+	return nil
+}
+
+// GardenDraft returns the private draft remembered for repoDir and its section index.
+func (s *State) GardenDraft(repoDir string) (id string, section int) {
+	s.mu.Lock()
+	raw := s.GardenDrafts[RepoIdentity(repoDir)]
+	s.mu.Unlock()
+	id, n, ok := strings.Cut(raw, "|")
+	if !ok || !validDraftRef(id) {
+		return "", 0
+	}
+	section, err := strconv.Atoi(n)
+	if err != nil || section < 0 || section > 1000 {
+		return "", 0
+	}
+	return id, section
+}
+
+// validDraftRef accepts only an opaque ID, so the file can never carry authored text.
+func validDraftRef(id string) bool {
+	if id == "" || len(id) > 80 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// PersistGardenDraft remembers the open private draft and section; an empty id forgets it.
+// Writes are ordered like the other view memory.
+func (s *State) PersistGardenDraft(gen uint64, repoDir, id string, section int) error {
+	if id != "" && (!validDraftRef(id) || section < 0 || section > 1000) {
+		return ErrInvalidGardenDraft
+	}
+	ident := RepoIdentity(repoDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen < s.draftGen {
+		return ErrSuperseded
+	}
+	next := make(map[string]string, len(s.GardenDrafts)+1)
+	for k, v := range s.GardenDrafts {
+		next[k] = v
+	}
+	if id == "" {
+		delete(next, ident)
+	} else {
+		next[ident] = id + "|" + strconv.Itoa(section)
+	}
+	d := s.diskLocked()
+	d.GardenDrafts = next
+	if err := s.writeLocked(d); err != nil {
+		return fmt.Errorf("persist Garden draft: %w", err)
+	}
+	if len(next) == 0 {
+		next = nil
+	}
+	s.GardenDrafts, s.draftGen = next, gen
 	return nil
 }

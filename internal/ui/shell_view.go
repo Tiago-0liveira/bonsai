@@ -250,6 +250,9 @@ func (m Model) shellFocusLabel() string {
 	if m.workspace == wsAccounts {
 		return m.accountsFocusLabel(f)
 	}
+	if m.workspace == wsGarden && f == shellInput && m.gardenScreen() == scrDrafts && m.garden.drafts.stage == draftsPrivate {
+		return "Draft" // writing in a private draft: the text owns the keys
+	}
 	if m.workspace == wsGarden && m.garden.api != nil && f == shellBody {
 		return m.gardenFocusLabel()
 	}

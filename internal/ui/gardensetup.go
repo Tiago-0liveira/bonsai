@@ -164,6 +164,9 @@ func (m Model) gardenWarm() (Model, tea.Cmd) {
 // gardenMsg handles the replies of the Garden calls. handled is false for any
 // other message.
 func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
+	if handled, nm, cmd := m.privMsg(msg); handled {
+		return true, nm, cmd
+	}
 	switch msg := msg.(type) {
 	case gardenWorkMsg:
 		nm, cmd = m.onGardenWork(msg)
@@ -293,7 +296,13 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 		// A flight and an open assistant belong to the old connection; its sessions stay in memory, inactive.
 		g.assist.release()
 		// An unfinished idea outlives the change; its preview and results belong to the old Garden.
-		g.drafts = gardenDraftsState{form: g.drafts.form, formOpen: g.drafts.formOpen, editors: g.drafts.editors}
+		old := g.drafts
+		g.drafts = gardenDraftsState{form: old.form, formOpen: old.formOpen, editors: old.editors,
+			// Counters never restart: a reply from before the change must not match a later request.
+			privToken: old.privToken, privSeq: old.privSeq, openSeq: old.openSeq, saveGen: old.saveGen}
+		if p := old.private; p != nil && p.unwritten() {
+			g.drafts.private = p // parked: unwritten text survives and the quit guard still sees it
+		}
 		// A planner belongs to the Issue of the old Garden; its session keeps running, only the view goes.
 		if g.planner.stage != plannerNone {
 			release = m.plannerRelease()
