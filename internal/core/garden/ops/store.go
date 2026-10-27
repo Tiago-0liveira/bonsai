@@ -32,6 +32,8 @@ type Kind string
 const (
 	KindCapture Kind = "capture"
 	KindImport  Kind = "import"
+	// KindPublish tracks publishing one private draft: create, spec revision, approval, projection.
+	KindPublish Kind = "publish"
 )
 
 // State is where a write stands. Unknown means GitHub may have applied it: it must be
@@ -63,6 +65,16 @@ type Record struct {
 	Number      int64           `json:"number,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+	// The fields below belong to KindPublish. Draft and DraftRevision bind the operation to the exact
+	// private draft; the rest are the verified results of each step, kept so a resume reuses them.
+	Draft             string `json:"draft,omitempty"`
+	DraftRevision     uint64 `json:"draft_revision,omitempty"`
+	IssueURL          string `json:"issue_url,omitempty"`
+	SpecHash          string `json:"spec_hash,omitempty"`
+	SpecCommentID     int64  `json:"spec_comment_id,omitempty"`
+	ApprovalCommentID int64  `json:"approval_comment_id,omitempty"`
+	// Step is the step a publish stopped at: issue, spec, approval or verify.
+	Step string `json:"step,omitempty"`
 }
 
 type disk struct {
@@ -99,6 +111,10 @@ func (s *Store) TryOperationLock(ctx context.Context, id string) (*procstore.Fil
 func (r Record) valid() bool {
 	switch r.Kind {
 	case KindCapture, KindImport:
+	case KindPublish:
+		if r.Draft == "" || r.DraftRevision == 0 {
+			return false
+		}
 	default:
 		return false
 	}

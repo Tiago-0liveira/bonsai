@@ -157,3 +157,34 @@ func TestStoreHonoursCancelledContext(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestPublishRecordValidityAndOldFilesLoad(t *testing.T) {
+	s := &Store{Path: filepath.Join(t.TempDir(), "ops.json")}
+	pub := rec("publish-a")
+	pub.Kind, pub.Draft, pub.DraftRevision = KindPublish, "draft-1", 3
+	pub.IssueURL, pub.SpecHash, pub.SpecCommentID, pub.ApprovalCommentID, pub.Step = "https://github.com/a/b/issues/1", "h", 7, 8, "verify"
+	put(t, s, pub)
+	got, err := s.Get(context.Background(), "publish-a")
+	if err != nil || got != pub {
+		t.Fatalf("round trip = %+v, %v", got, err)
+	}
+	for name, mut := range map[string]func(*Record){
+		"no draft":    func(r *Record) { r.Draft = "" },
+		"no revision": func(r *Record) { r.DraftRevision = 0 },
+	} {
+		bad := pub
+		mut(&bad)
+		_, err := s.Update(context.Background(), "publish-b", func(Record, bool) (Record, error) { return bad, nil })
+		if !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("%s: err = %v, want ErrCorrupt", name, err)
+		}
+	}
+	old := filepath.Join(t.TempDir(), "old.json")
+	legacy := `{"schema_version":1,"records":{"c":{"id":"c","kind":"capture","local_repo_id":"local","repo_id":9,"state":"done","owner":"1","content_hash":"h","created_at":"1970-01-01T00:00:01Z","updated_at":"1970-01-01T00:00:01Z"}}}`
+	if err := os.WriteFile(old, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := (&Store{Path: old}).Get(context.Background(), "c"); err != nil || r.Kind != KindCapture {
+		t.Fatalf("old file = %+v, %v", r, err)
+	}
+}
