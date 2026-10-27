@@ -421,14 +421,7 @@ var userCacheDir = os.UserCacheDir
 // childEnv drops any inherited depth variables and appends the new ones, so a
 // stale value can never win over ours.
 func childEnv(base []string, depth int, prefix string) []string {
-	env := make([]string, 0, len(base)+2)
-	for _, kv := range base {
-		if strings.HasPrefix(kv, shellinit.EnvDepth+"=") || strings.HasPrefix(kv, shellinit.EnvPromptPrefix+"=") {
-			continue
-		}
-		env = append(env, kv)
-	}
-	return append(env,
+	return append(shellinit.ScrubEnv(base),
 		shellinit.EnvDepth+"="+strconv.Itoa(depth),
 		shellinit.EnvPromptPrefix+"="+prefix,
 	)

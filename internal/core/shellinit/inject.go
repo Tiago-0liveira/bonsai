@@ -75,14 +75,14 @@ func BuildPlan(shellPath, shimDir string, baseEnv []string) Plan {
 			// zsh finds its startup files through ZDOTDIR; the shims put the
 			// real value back, and keep the original here until they do.
 			"ZDOTDIR=" + filepath.Join(shimDir, "zsh"),
-			"BONSAI_ORIG_ZDOTDIR=" + lookupEnv(baseEnv, "ZDOTDIR"),
+			envOrigZdotdir + "=" + lookupEnv(baseEnv, "ZDOTDIR"),
 		}}
 	case ShellFish:
 		return Plan{Args: []string{"-C", "source " + fishQuote(filepath.Join(shimDir, "hook.fish"))}}
 	case ShellSh:
 		return Plan{Env: []string{
 			"ENV=" + filepath.Join(shimDir, "env.sh"),
-			"BONSAI_ORIG_ENV=" + lookupEnv(baseEnv, "ENV"),
+			envOrigEnv + "=" + lookupEnv(baseEnv, "ENV"),
 		}}
 	case ShellNu:
 		return Plan{Args: []string{"-e", "source " + nuQuote(filepath.Join(shimDir, "hook.nu"))}}

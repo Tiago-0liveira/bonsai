@@ -39,3 +39,37 @@ func TestPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestScrubEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"nil", nil, []string{}},
+		{
+			"removes every listed key",
+			[]string{"BONSAI_DEPTH=2", "BONSAI_PROMPT_PREFIX=x ", "BONSAI_ORIG_ZDOTDIR=/z", "BONSAI_ORIG_ENV=/e", "__BONSAI_PROMPT_INSTALLED=1"},
+			[]string{},
+		},
+		{
+			// Lookalikes must survive: only exact keys are ours.
+			"keeps lookalikes and order",
+			[]string{"A=1", "BONSAI_DEPTHX=1", "BONSAI_DEPTH=3", "BONSAI_REPO=x", "PATH=/bin"},
+			[]string{"A=1", "BONSAI_DEPTHX=1", "BONSAI_REPO=x", "PATH=/bin"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ScrubEnv(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("ScrubEnv(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("ScrubEnv(%q) = %q, want %q", tc.in, got, tc.want)
+				}
+			}
+		})
+	}
+}
