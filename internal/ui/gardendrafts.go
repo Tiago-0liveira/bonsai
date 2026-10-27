@@ -937,6 +937,8 @@ func (m Model) gardenDraftsIdentity() string {
 				return "Draft / Description"
 			case privReview:
 				return "Draft / " + p.label() + " / Review"
+			case privPublish:
+				return "Draft / " + p.label() + " / Publish"
 			}
 			return "Draft / " + p.label() + " / Specification"
 		}

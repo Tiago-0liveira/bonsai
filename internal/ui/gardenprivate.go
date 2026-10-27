@@ -30,6 +30,7 @@ const (
 	privCapture privStage = iota // one description field and two ways forward
 	privEditor                   // the structured specification
 	privReview                   // read-only preview of what an Issue would contain
+	privPublish                  // confirm, then publish; also the screen of a draft that is publishing (gardenpublish.go)
 )
 
 type saveState int
@@ -119,6 +120,11 @@ type privateDraft struct {
 	paGen     uint64 // the last request generation issued for this draft; it only grows
 	pane      bool   // the discussion pane has the keyboard
 
+	pub          *privPub
+	pubGen       uint64 // the last publish request counter; like paGen it only grows
+	previewing   bool   // a publish preview is being requested
+	publishAfter bool   // publish once the text on screen is stored
+
 	gen, savedGen uint64
 	inflight      bool
 	state         saveState
@@ -152,13 +158,19 @@ func newPrivateDraft(repo garden.RepoID, token uint64, d drafts.Draft, stage pri
 	if stage == privCapture {
 		p.desc.Focus()
 	}
+	if d.Publication.State != drafts.Unpublished && stage != privCapture {
+		// Content is frozen while publishing and after: the draft opens on its publication, not the editor.
+		p.stage, p.pub = privPublish, &privPub{}
+	} else if p.stage == privPublish {
+		p.stage = privReview // the publication was undone elsewhere: nothing to confirm yet
+	}
 	return p
 }
 
 // adopt carries the discussion over to a draft re-read from the store: the same conversation, the newer text.
 func (p *privateDraft) adopt(old *privateDraft) {
 	// The counter never goes back, so no later request can share an identity with an earlier reply.
-	p.paGen = old.paGen
+	p.paGen, p.pubGen = old.paGen, old.pubGen
 	p.pa, p.pane = old.pa, old.pane
 	if p.pa != nil {
 		p.pa.s.private = p
@@ -396,18 +408,24 @@ func (m Model) onPrivList(msg privListMsg) (Model, tea.Cmd) {
 func (m Model) privCheckRemote() (Model, tea.Cmd) {
 	d := &m.garden.drafts
 	p := d.private
-	if p == nil || p.draft.ID == "" || p.inflight || p.state == saveConflict {
+	if p == nil || p.draft.ID == "" || p.inflight || p.state == saveConflict || (p.pub != nil && p.pub.running) {
 		return m, nil
 	}
 	for _, cur := range d.privList {
 		if cur.ID != p.draft.ID || cur.Revision <= p.draft.Revision {
 			continue
 		}
+		if p.stage == privPublish && p.pub != nil && p.pub.result != nil {
+			// What the publication reported stays on screen; only the stored copy moves on.
+			p.draft = cur
+			return m, nil
+		}
+		p.dropPreview("The draft changed; review it again.")
 		if !p.unwritten() {
 			sec := p.cur
 			np := newPrivateDraft(p.repo, p.token, cur, p.stage)
 			np.load(sec)
-			np.foc, np.text = p.foc, p.text
+			np.foc, np.text, np.notice = p.foc, p.text, p.notice
 			np.adopt(p)
 			d.private = np
 			return m.privFocusSync(), nil
@@ -464,7 +482,7 @@ func (m Model) onPrivOpen(msg privOpenMsg) (Model, tea.Cmd) {
 	cur := msg.draft
 	if p := d.private; p != nil && p.draft.ID == cur.ID {
 		d.stage = draftsPrivate
-		if cur.Revision > p.draft.Revision && !p.inflight {
+		if cur.Revision > p.draft.Revision && !p.inflight && !(p.pub != nil && p.pub.running) {
 			if p.unwritten() {
 				m, cmd := m.privStartSave(p)
 				return m.privFocusSync(), cmd
@@ -564,6 +582,7 @@ func (m Model) privSize() {
 // privEdited records an edit: the text is dirty until a save of this generation lands.
 func (m Model) privEdited(p *privateDraft) (Model, tea.Cmd) {
 	p.gen++
+	p.dropPreview("The draft changed; review it again.")
 	p.err = nil
 	if p.draft.ID == "" && !p.inflight && p.blank() {
 		// Nothing worth keeping yet: the first non-empty edit creates the draft.
@@ -611,7 +630,7 @@ func (m Model) onPrivSaved(msg privSavedMsg) (Model, tea.Cmd) {
 	}
 	p.inflight = false
 	if msg.err != nil {
-		p.leaveAfter = false
+		p.leaveAfter, p.publishAfter = false, false
 		var ce *drafts.ConflictError
 		switch {
 		case errors.As(msg.err, &ce):
@@ -650,6 +669,10 @@ func (m Model) onPrivSaved(msg privSavedMsg) (Model, tea.Cmd) {
 		return m, tea.Batch(cmd, start)
 	}
 	switch {
+	case p.publishAfter:
+		p.publishAfter = false
+		m, pcmd := m.privPublishStart(p)
+		return m, tea.Batch(cmd, pcmd)
 	case p.quitAfter:
 		p.quitAfter = false
 		nm, qcmd := m.quit()
@@ -759,6 +782,8 @@ func (m Model) privKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		nm, cmd = m.privCaptureKey(p, msg)
 	case p.stage == privReview:
 		nm, cmd = m.privReviewKey(p, k)
+	case p.stage == privPublish:
+		nm, cmd = m.privPublishKey(p, k)
 	default:
 		nm, cmd = m.privEditorKey(p, msg)
 	}
@@ -1017,7 +1042,7 @@ func (m Model) privReviewKey(p *privateDraft, k string) (Model, tea.Cmd) {
 	case "end":
 		p.scroll = 1 << 20
 	case "enter":
-		p.notice = privPublishUnavailable
+		return m.privPublishStart(p)
 	}
 	return m, nil
 }
@@ -1143,6 +1168,10 @@ func (m Model) privMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onPrivAssist(msg)
 	case privAssistTickMsg:
 		nm, cmd = m.onPrivAssistTick(msg)
+	case privPubPreviewMsg:
+		nm, cmd = m.onPrivPubPreview(msg)
+	case privPubDoneMsg:
+		nm, cmd = m.onPrivPubDone(msg)
 	case privRememberedMsg:
 		return true, m, nil
 	default:

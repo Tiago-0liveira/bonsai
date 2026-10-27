@@ -10,6 +10,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/spec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -104,6 +105,8 @@ func (m Model) gsPrivate(width, rows int) []string {
 		out = m.privCaptureView(p, width, rows)
 	case p.stage == privReview:
 		out = m.privReviewView(p, width, rows)
+	case p.stage == privPublish:
+		out = m.privPublishView(p, width, rows)
 	case p.pa != nil && p.pa.stage == paInvite:
 		out = m.privInviteView(p, width, rows)
 	default:
@@ -189,6 +192,28 @@ func (m Model) privCaptureView(p *privateDraft, width, rows int) []string {
 
 // Editor ---------------------------------------------------------------------------
 
+// chipText names where the draft lives: private until publication starts.
+func (p *privateDraft) chipText() string {
+	if r := p.pub; r != nil && r.result != nil {
+		switch r.result.State {
+		case gardenapi.PublishIncomplete:
+			return "Publishing incomplete"
+		case gardenapi.PublishUnknown:
+			return "Publishing"
+		}
+	}
+	switch p.draft.Publication.State {
+	case drafts.Publishing:
+		if p.draft.Publication.Issue != nil {
+			return "Publishing incomplete"
+		}
+		return "Publishing"
+	case drafts.Published:
+		return "Published"
+	}
+	return "Private draft"
+}
+
 func (m Model) privHeader(p *privateDraft, width int) []string {
 	c := theme.Current
 	title := strings.TrimSpace(p.title.Value())
@@ -212,7 +237,7 @@ func (m Model) privHeader(p *privateDraft, width int) []string {
 		tmark = "›"
 	}
 	chips := seg(c.Warning, c.Background, true).Render(" ") + seg(c.Accent, c.Raised, false).Render(tmark+typ+" ") +
-		seg("", c.Background, false).Render(" ") + seg(c.Warning, c.Raised, false).Render(" Private draft ")
+		seg("", c.Background, false).Render(" ") + seg(c.Warning, c.Raised, false).Render(" "+p.chipText()+" ")
 	status := seg(p.statusColor(), c.Background, false).Render(p.status() + " ")
 	row1 := shellRow(width, c.Background, chips, status)
 	msg, fg := p.message()
@@ -513,9 +538,16 @@ func (m Model) privReviewView(p *privateDraft, width, rows int) []string {
 		}
 	}
 	out = append(out, gText(width, c.Muted, false, fmt.Sprintf("Lines %d–%d of %d", min(start+1, len(body)), min(start+avail, len(body)), len(body))))
-	out = append(out, gText(width, c.Warning, false, privPublishUnavailable))
-	disabled := seg(c.Dim, c.Raised, false).Render(" Create GitHub issue (unavailable) ")
-	out = append(out, shellRow(width, c.Background, seg("", c.Background, false).Render(" ")+privButton("Back to editor (Esc)", true, false)+seg("", c.Background, false).Render("  ")+disabled, ""))
+	create := privButton("Review & create issue (Enter)", true, true)
+	if _, ok := m.privPublisher(); !ok {
+		create = seg(c.Dim, c.Raised, false).Render(" Create GitHub issue (unavailable) ")
+		if p.notice == "" {
+			out = append(out, gText(width, c.Warning, false, privPublishUnavailable))
+		}
+	} else if p.previewing {
+		create = seg(c.Dim, c.Raised, false).Render(" Checking GitHub… ")
+	}
+	out = append(out, shellRow(width, c.Background, seg("", c.Background, false).Render(" ")+privButton("Back to editor (Esc)", true, false)+seg("", c.Background, false).Render("  ")+create, ""))
 	return out
 }
 
@@ -531,7 +563,15 @@ func (m Model) privHints() []shellHint {
 	case p.stage == privCapture:
 		return []shellHint{{"Ctrl+S", "save draft"}, {"Tab", "action"}, {"Enter", "activate"}, {"Esc", "drafts"}}
 	case p.stage == privReview:
-		return []shellHint{{"↑/↓", "scroll"}, {"Esc", "editor"}}
+		return []shellHint{{"↑/↓", "scroll"}, {"Enter", "review & create issue"}, {"Esc", "editor"}}
+	case p.stage == privPublish:
+		switch {
+		case p.pub == nil || p.pub.running:
+			return []shellHint{{"Esc", "wait"}}
+		case p.pub.view != nil && p.pub.result == nil:
+			return []shellHint{{"Enter", "approve & create issue"}, {"↑/↓", "scroll"}, {"Esc", "back to draft"}}
+		}
+		return []shellHint{{"Enter", "resume"}, {"Esc", "drafts"}}
 	}
 	if pa := p.pa; pa != nil {
 		switch {
@@ -611,6 +651,12 @@ func localState(l drafts.Draft) (string, lipgloss.Color) {
 	if !l.ArchivedAt.IsZero() {
 		return "archived", c.Muted
 	}
+	switch {
+	case l.Publication.State == drafts.Publishing && l.Publication.Issue != nil:
+		return "Publishing incomplete", c.Warning
+	case l.Publication.State == drafts.Publishing:
+		return "Publishing", c.Warning
+	}
 	r := drafts.Assess(l)
 	switch {
 	case r.Ready():
@@ -636,12 +682,23 @@ func (m Model) gardenLocalInspector(w, n int, l drafts.Draft) []string {
 	blank()
 	state, fg := localState(l)
 	line(fg, true, state)
-	for _, reason := range privReasons(drafts.Assess(l), 0) {
-		line(c.Muted, false, "○ "+reason)
+	if l.Publication.State == drafts.Unpublished {
+		for _, reason := range privReasons(drafts.Assess(l), 0) {
+			line(c.Muted, false, "○ "+reason)
+		}
 	}
 	blank()
-	line(c.Muted, false, "Private to this machine")
-	line(c.Muted, false, "No GitHub issue yet")
+	switch {
+	case l.Publication.State == drafts.Publishing && l.Publication.Issue != nil:
+		line(c.Muted, false, fmt.Sprintf("Issue #%d exists, not approved", l.Publication.Issue.Number))
+		line(c.Muted, false, "Open it to resume")
+	case l.Publication.State == drafts.Publishing:
+		line(c.Muted, false, "GitHub may hold the issue")
+		line(c.Muted, false, "Open it to resume")
+	default:
+		line(c.Muted, false, "Private to this machine")
+		line(c.Muted, false, "No GitHub issue yet")
+	}
 	line(c.Muted, false, "Updated "+ago(l.UpdatedAt))
 	line(c.Dim, false, string(l.ID))
 	blank()
