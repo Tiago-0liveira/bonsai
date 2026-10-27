@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -90,10 +91,24 @@ func BuildPlan(shellPath, shimDir string, baseEnv []string) Plan {
 		// The profile already loads before -Command runs, so only wrap prompt.
 		return Plan{Args: []string{"-NoExit", "-Command", ". " + psQuote(filepath.Join(shimDir, "hook.ps1"))}}
 	case ShellCmd:
-		// cmd has no prompt hook; set a static prompt (best effort). "$" is
-		// the escape character in cmd prompt strings.
+		// cmd has no prompt hook; set a static prompt (best effort) on top of
+		// the user's PROMPT. "$" is the escape character in cmd prompt
+		// strings, so only our prefix is escaped; PROMPT is already prompt
+		// syntax and must stay verbatim.
 		p := strings.ReplaceAll(lookupEnv(baseEnv, EnvPromptPrefix), "$", "$$")
-		return Plan{Args: []string{"/K", "prompt " + p + "$P$G"}}
+		base := lookupEnv(baseEnv, "PROMPT")
+		if base == "" {
+			base = "$P$G"
+		}
+		// `prompt` sets PROMPT in the cmd process, so a nested bonsai inherits
+		// the parent's prefix; drop it (one token: glyphs hold no whitespace)
+		// instead of stacking "B2 B1 ".
+		if n := DepthFrom(lookupEnv(baseEnv, EnvDepth)); n > 1 {
+			if tok, rest, ok := strings.Cut(base, " "); ok && strings.HasSuffix(tok, strconv.Itoa(n-1)) {
+				base = rest
+			}
+		}
+		return Plan{Args: []string{"/K", "prompt " + p + base}}
 	}
 	return Plan{}
 }
@@ -118,7 +133,7 @@ func nuQuote(s string) string {
 func lookupEnv(env []string, key string) string {
 	v := ""
 	for _, kv := range env {
-		if k, val, ok := strings.Cut(kv, "="); ok && k == key {
+		if k, val, ok := strings.Cut(kv, "="); ok && envKeyEqual(k, key) {
 			v = val // last entry wins, matching os/exec
 		}
 	}

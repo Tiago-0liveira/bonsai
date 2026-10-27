@@ -41,6 +41,11 @@ func TestBuildPlan(t *testing.T) {
 		{"nu", nil, Plan{Args: []string{"-e", `source "` + strings.ReplaceAll(filepath.Join(d, "hook.nu"), `\`, `\\`) + `"`}}},
 		{"pwsh", nil, Plan{Args: []string{"-NoExit", "-Command", ". '" + filepath.Join(d, "hook.ps1") + "'"}}},
 		{"cmd.exe", env, Plan{Args: []string{"/K", "prompt B1 $$$P$G"}}},
+		{"cmd.exe", []string{"BONSAI_PROMPT_PREFIX=B1 ", "PROMPT=$E[1m$P$G"}, Plan{Args: []string{"/K", "prompt B1 $E[1m$P$G"}}},
+		{"cmd.exe", []string{"BONSAI_PROMPT_PREFIX=B1 "}, Plan{Args: []string{"/K", "prompt B1 $P$G"}}},
+		{"cmd.exe", []string{"BONSAI_DEPTH=2", "BONSAI_PROMPT_PREFIX=B2 ", "PROMPT=B1 $P$G"}, Plan{Args: []string{"/K", "prompt B2 $P$G"}}},
+		{"cmd.exe", []string{"BONSAI_DEPTH=1", "BONSAI_PROMPT_PREFIX=B1 ", "PROMPT=B0 $P$G"}, Plan{Args: []string{"/K", "prompt B1 B0 $P$G"}}},
+		{"cmd.exe", []string{"BONSAI_DEPTH=2", "BONSAI_PROMPT_PREFIX=B2 ", "PROMPT=my $P$G"}, Plan{Args: []string{"/K", "prompt B2 my $P$G"}}},
 		{"tcsh", env, Plan{}},
 	}
 	for _, tc := range tests {
