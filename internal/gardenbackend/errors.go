@@ -10,11 +10,13 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/publish"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
@@ -91,6 +93,18 @@ func safeAPIError(err error) *gardenapi.Error {
 		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "Both approvals must verify for the current records before an implementation can start.", Next: "Review the approvals, then try again."}
 	case errors.Is(err, launch.ErrNotAccepted), errors.Is(err, launch.ErrNotRetryable), errors.Is(err, launch.ErrInvalid), errors.Is(err, launch.ErrTooLarge), errors.Is(err, domain.ErrHooksFailed):
 		return &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "This launch action was not confirmed, is not possible in the attempt's state, or its inputs are invalid.", Next: "Check the attempt's state and confirm exactly what is shown."}
+	case errors.Is(err, publish.ErrStale), errors.Is(err, publish.ErrMismatch), errors.Is(err, publish.ErrAlreadyPublished):
+		return &gardenapi.Error{Code: gardenapi.CodePublishStale, Message: "The draft or the connection changed since the preview, so nothing was published.", Next: "Review the draft again."}
+	case errors.Is(err, publish.ErrNotReady):
+		return &gardenapi.Error{Code: gardenapi.CodePublishNotReady, Message: "This draft is not ready to publish.", Next: "Fill the missing parts and settle the open questions, then review again."}
+	case errors.Is(err, publish.ErrPublishing):
+		return &gardenapi.Error{Code: gardenapi.CodePublishResume, Message: "This draft is already being published.", Next: "Resume the publication."}
+	case errors.Is(err, publish.ErrInFlight):
+		return &gardenapi.Error{Code: gardenapi.CodePublishInFlight, Message: "This draft is being published right now.", Next: "Wait for it to finish."}
+	case errors.Is(err, drafts.ErrNotFound):
+		return &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That private draft no longer exists."}
+	case errors.Is(err, drafts.ErrUnavailable):
+		return &gardenapi.Error{Code: gardenapi.CodeStore, Message: "Private drafts are unavailable on this machine."}
 	case errors.Is(err, connect.ErrNoGitHubRemote):
 		return e(gardenapi.CodeNoGitHubRemote, "No remote of this repository points at GitHub.")
 	case errors.Is(err, connect.ErrAuthRequired), errors.Is(err, garden.ErrAuthRequired), errors.Is(err, ErrAuthUnavailable):

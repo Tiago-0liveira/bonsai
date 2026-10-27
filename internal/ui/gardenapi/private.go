@@ -17,3 +17,52 @@ type PrivateDrafts interface {
 	ArchivePrivateDraft(context.Context, garden.RepoID, drafts.ID, uint64) (drafts.Draft, error)
 	UnarchivePrivateDraft(context.Context, garden.RepoID, drafts.ID, uint64) (drafts.Draft, error)
 }
+
+// PrivatePublisher is optional on top of PrivateDrafts: a Backend without it keeps the review screen
+// read-only. Publishing creates one Issue and records the draft's specification approval; see
+// core/garden/publish.
+type PrivatePublisher interface {
+	// PreviewPublish rechecks the connection and Write access and reports exactly what would be published.
+	PreviewPublish(context.Context, garden.RepoID, drafts.ID) (PublishPreviewView, error)
+	// Publish confirms a preview, which must be handed back unchanged.
+	Publish(context.Context, garden.RepoID, PublishPreviewView) (PublishView, error)
+	// ResumePublish continues a publication the draft is stuck in. It never starts a new one.
+	ResumePublish(context.Context, garden.RepoID, drafts.ID) (PublishView, error)
+}
+
+// PublishPreviewView is what the confirmation shows. The identity fields only travel back to Publish.
+type PublishPreviewView struct {
+	RepoID        uint64
+	RepoFullName  string
+	ActorID       string
+	ActorLogin    string
+	DraftID       drafts.ID
+	DraftLabel    string
+	DraftRevision uint64
+	Title         string
+	Type          garden.ItemType
+	Description   string
+	SpecText      string
+	Labels        []string
+	ContentHash   string
+	OperationID   string
+}
+
+// PublishState is how a started publication ended.
+type PublishState string
+
+const (
+	PublishDone       PublishState = "published"
+	PublishIncomplete PublishState = "incomplete"
+	PublishUnknown    PublishState = "unknown"
+	PublishFailed     PublishState = "failed"
+)
+
+// PublishView is the outcome of a started publication. A failed one created nothing.
+type PublishView struct {
+	State       PublishState
+	Step        string
+	IssueNumber int64
+	IssueURL    string
+	Err         *Error
+}

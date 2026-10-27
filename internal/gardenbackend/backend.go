@@ -26,6 +26,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/publish"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
@@ -97,6 +98,7 @@ type Backend struct {
 	captures       *capture.Service // built on first use
 	edits          *edit.Service    // built on first use
 	approvals      *approve.Service // built on first use
+	publishes      *publish.Service // built on first use
 	planner        *plan.Service    // built on first use
 	reviews        *planrev.Service // built on first use
 	assistFlights  map[string]struct{}

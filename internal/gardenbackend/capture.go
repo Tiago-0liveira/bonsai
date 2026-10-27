@@ -215,6 +215,10 @@ func (b *Backend) pendingCaptures(ctx context.Context, gen uint64, repo garden.R
 		if r.Repo != repo || r.Kind != ops.KindCapture || (r.State != ops.StatePending && r.State != ops.StateUnknown) {
 			continue
 		}
+		// The Issue create of a publication is recovered by publishing the draft again, never as an idea.
+		if strings.HasPrefix(r.ID, publishOpPrefix) {
+			continue
+		}
 		out = append(out, gardenapi.CaptureView{Stamp: b.stamp(gen, repo), OperationID: r.ID, State: gardenapi.CaptureState(r.State), Title: r.Title,
 			Err: &gardenapi.Error{Code: gardenapi.CodeCaptureUnknown, Message: "The idea may already exist on GitHub.", Next: "Reconcile to check GitHub."}})
 	}

@@ -524,6 +524,18 @@ const (
 	CodeSaveUnknown Code = "save-unknown"
 	// CodeCaptureUnknown means an Issue may have been created; reconcile before retrying.
 	CodeCaptureUnknown Code = "capture-unknown"
+	// CodePublishStale means the draft, the repository or the account changed since the preview: nothing was written.
+	CodePublishStale Code = "publish-stale"
+	// CodePublishNotReady means the draft cannot be approved yet.
+	CodePublishNotReady Code = "publish-not-ready"
+	// CodePublishResume means the draft is already being published: resume it instead of starting again.
+	CodePublishResume Code = "publish-resume"
+	// CodePublishInFlight means this publication is already running.
+	CodePublishInFlight Code = "publish-in-flight"
+	// CodePublishIncomplete means the Issue exists but a later step is not verified; resuming continues it.
+	CodePublishIncomplete Code = "publish-incomplete"
+	// CodePublishUnknown means the Issue may exist on GitHub but was not found yet; resuming looks again.
+	CodePublishUnknown Code = "publish-unknown"
 	// CodeInvalidInput means the request failed validation; nothing was sent.
 	CodeInvalidInput Code = "invalid-input"
 	// CodeAssistUnsupported means tool-free structured assistance is unavailable.
