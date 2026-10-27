@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
@@ -142,6 +143,7 @@ type Model struct {
 	filter FilterFunc
 	width  int
 	height int
+	inline bool
 
 	// Sectioned fuzzy fields.
 	sectioned     bool
@@ -252,6 +254,9 @@ func (m Model) ForceEnabled() bool { return m.forceOn }
 
 // Kind returns the modal kind.
 func (m Model) Kind() Kind { return m.kind }
+
+// SetInline renders a picker or confirmation as the full pane content.
+func (m *Model) SetInline(inline bool) { m.inline = inline }
 
 // SetSize records the available screen size for centering. In scroll mode it also
 // sizes the inner viewport to most of the screen and (re)wraps the content.
@@ -583,7 +588,30 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("↑/↓ move · enter select · esc cancel"))
 	}
 
-	box := boxStyle.Render(b.String())
+	body := b.String()
+	if m.inline && m.width > 0 && m.height > 0 {
+		lines := strings.Split(body, "\n")
+		footer := lines[len(lines)-1]
+		lines = lines[:len(lines)-1]
+		lines = lines[:min(len(lines), max(m.height-1, 0))]
+		for len(lines) < m.height-1 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, footer)
+		for i, line := range lines {
+			line = ansi.Truncate(line, max(m.width-2, 0), "")
+			lines[i] = " " + line + strings.Repeat(" ", max(m.width-1-ansi.StringWidth(line), 0))
+		}
+		return strings.Join(lines, "\n")
+	}
+	if m.width > 0 {
+		lines := strings.Split(body, "\n")
+		for i := range lines {
+			lines[i] = ansi.Truncate(lines[i], max(m.width-6, 1), "…")
+		}
+		body = strings.Join(lines, "\n")
+	}
+	box := boxStyle.Render(body)
 	if m.width == 0 || m.height == 0 {
 		return box
 	}
@@ -702,7 +730,14 @@ func (m Model) renderList() string {
 	if len(m.items) == 0 {
 		return dimStyle.Render("(no matches)")
 	}
-	const maxRows = 12
+	maxRows := 12
+	if m.height > 0 {
+		if m.inline {
+			maxRows = max(m.height-7, 1)
+		} else {
+			maxRows = min(maxRows, max(m.height-10, 1))
+		}
+	}
 	start := 0
 	if m.cursor >= maxRows {
 		start = m.cursor - maxRows + 1

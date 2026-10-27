@@ -1,0 +1,30 @@
+ Sessions                                                                                                        feat-a
+ All sessions in this worktree                                                                               4 sessions
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ / Search sessions…
+
+   SESSION                                             STATUS     │ ❃ CODEX
+ ▌ Run integration tests                               ● Running  │ Run integration tests
+   Codex · work                                                   │
+                                                                  │ ● Running
+   Fix authentication                                  ● Running  │
+   Claude · work                                                  │ Account  work
+                                                                  │ Worktree feat-a
+   Broken run                                          ✗ Failed   │ ID       r2
+   Claude · work                                                  │
+                                                                  │
+   Previous attempt                                    ✓ Exited   │
+   Codex · work                                                   │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │ [ Enter Open session ]
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Select  / Search  n New session  Esc Back
+

@@ -34,6 +34,12 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
+func (b *syncBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
 func (b *syncBuffer) await(t *testing.T, want string) {
 	t.Helper()
 	if !waitUntil(5*time.Second, func() bool { return strings.Contains(b.String(), want) }) {
@@ -143,7 +149,7 @@ func TestAgentsAttachTakeControlAndDetach(t *testing.T) {
 	size := func() (int, int, bool) { return 100, 30, true }
 	done := make(chan error, 1)
 	go func() { done <- attachTerminal(r, "worker", attachOptions{}, keys, out, status, size, nil, nil) }()
-	status.await(t, "attached to worker (Ctrl-] d to detach)")
+	out.await(t, "Ctrl+] d: detach (keep running)")
 	out.await(t, "FAKE-READY")
 	typing("hello\n")
 	out.await(t, "ECHO:hello")
@@ -154,15 +160,15 @@ func TestAgentsAttachTakeControlAndDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer web.Close()
-	status.await(t, "control taken by web")
+	out.await(t, "control taken by web")
 	typing("ignored\n")
-	status.await(t, "read-only — Ctrl-] t to take control")
+	out.await(t, "read-only — Ctrl-] t to take control")
 	// Ctrl-] t takes it back; the size follows the new writer.
 	typing("\x1dt")
-	status.await(t, "you have control of worker")
+	out.await(t, "you have control of worker")
 	if !waitUntil(5*time.Second, func() bool {
 		info, err := agenthost.Query(r)
-		return err == nil && info.Cols == 100 && info.Rows == 30 && len(info.Clients) == 2 && info.Clients[0].Client == "cli" && info.Clients[0].Writer
+		return err == nil && info.Cols == 100 && info.Rows == 28 && len(info.Clients) == 2 && info.Clients[0].Client == "cli" && info.Clients[0].Writer
 	}) {
 		t.Fatal("control and size did not move to the CLI")
 	}
@@ -195,7 +201,7 @@ func TestAgentsAttachReadOnlyAndStop(t *testing.T) {
 	go func() {
 		done <- attachTerminal(r, "watched", attachOptions{readOnly: true}, keys, out, status, func() (int, int, bool) { return 0, 0, false }, nil, nil)
 	}()
-	status.await(t, "watching watched (read-only; Ctrl-] d to detach)")
+	status.await(t, "watching watched (read-only; Ctrl-] d to detach, Ctrl-] k to kill)")
 	out.await(t, "FAKE-READY")
 	typing("\x1dt")
 	status.await(t, "started with --read-only")
@@ -220,6 +226,90 @@ func TestAgentsAttachReadOnlyAndStop(t *testing.T) {
 		t.Fatal("attach did not end with the session")
 	}
 	status.await(t, "agent exited (code")
+}
+
+func TestAgentsAttachKillRequiresConfirmation(t *testing.T) {
+	for _, mode := range []string{"read-only", "observer", "take"} {
+		t.Run(mode, func(t *testing.T) {
+			p := testAgentPaths(t)
+			r := startFakeAgentAt(t, p, "worker")
+			other, _, err := agenthost.Dial(r, agenthost.Request{Mode: agenthost.ModeTerminal, Client: "web"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer other.Close()
+			keys, typing := newKeyPipe()
+			out, status := &syncBuffer{}, &syncBuffer{}
+			done := make(chan error, 1)
+			go func() {
+				done <- attachTerminal(r, "worker", attachOptions{take: mode == "take", readOnly: mode == "read-only"}, keys, out, status, func() (int, int, bool) { return 80, 24, true }, nil, nil)
+			}()
+			out.await(t, "Ctrl+] k: kill (confirm)")
+			for _, cancel := range []string{"n", "\r", "\x1b"} {
+				out.Reset()
+				typing("\x1dk")
+				out.await(t, "Kill agent? [y/N]")
+				if info, err := agenthost.Query(r); err != nil || !info.Summary.Active() {
+					t.Fatalf("opening confirmation stopped the agent: %+v %v", info, err)
+				}
+				// A pasted "y" is data, never confirmation of a destructive action.
+				typing("\x1b[200~y\x1b[201~")
+				typing(cancel)
+				out.await(t, "kill cancelled; worker keeps running")
+				if current, err := agenthost.Read(p, r.ID); err != nil || !current.Alive || !current.Summary.Active() {
+					t.Fatalf("cancel stopped the agent: %+v %v", current.Summary, err)
+				}
+			}
+			info, err := agenthost.Query(r)
+			if err != nil || len(info.Clients) != 2 || info.Clients[1].Writer != (mode == "take") {
+				t.Fatalf("unexpected control: %+v %v", info, err)
+			}
+			if mode == "take" {
+				typing("probe\n")
+				out.await(t, "ECHO:probe")
+			}
+			typing("\x1dk")
+			typing("y")
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("confirmed kill did not end attach")
+			}
+			status.await(t, "agent exited (code")
+			if info, err := agenthost.Query(r); err == nil && info.Summary.Active() {
+				t.Fatal("confirmed kill left the session active")
+			}
+		})
+	}
+}
+
+func TestAgentsAttachDetachPreservesSessionInEveryMode(t *testing.T) {
+	p := testAgentPaths(t)
+	r := startFakeAgentAt(t, p, "worker")
+	for _, opts := range []attachOptions{{readOnly: true}, {}, {take: true}} {
+		keys, typing := newKeyPipe()
+		out, status := &syncBuffer{}, &syncBuffer{}
+		done := make(chan error, 1)
+		go func() {
+			done <- attachTerminal(r, "worker", opts, keys, out, status, func() (int, int, bool) { return 80, 24, true }, nil, nil)
+		}()
+		out.await(t, "Ctrl+] d: detach (keep running)")
+		typing("\x1dd")
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("detach did not return")
+		}
+		if current, err := agenthost.Read(p, r.ID); err != nil || !current.Alive || !current.Summary.Active() {
+			t.Fatalf("detach stopped session: %+v %v", current.Summary, err)
+		}
+	}
 }
 
 // newKeyPipe is an attach's keyboard: typing writes keys to it.

@@ -89,6 +89,36 @@ func (f fixture) start(t *testing.T) (Record, <-chan error) {
 	return r, done
 }
 
+func TestPublishedStatusHasPersistedRecord(t *testing.T) {
+	p := testPaths(t)
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockFile(p.lock("sess_a1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	summary := Summary{ID: "sess_a1", State: "starting", CreatedAt: time.Now().UTC()}
+	h := &host{deps: Deps{Paths: p}, stream: agentterminal.NewStream[Summary](80, 24), summary: summary, monitors: map[*serverConn]struct{}{}}
+	_, _, _, frames := h.stream.Attach(0, summary)
+	if err := h.update(func(s *Summary) error { s.State = "running"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case frame := <-frames:
+		if frame.Status == nil || frame.Status.State != "running" {
+			t.Fatalf("status frame: %+v", frame)
+		}
+		r, err := Read(p, summary.ID)
+		if err != nil || r.Summary.State != frame.Status.State {
+			t.Fatalf("record after status: %+v, %v", r, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no status frame")
+	}
+}
+
 // readUntil reads frames until match accepts one, collecting output.
 func readUntil(t *testing.T, c *Conn, match func(Frame, string) bool) (Frame, string) {
 	t.Helper()
@@ -297,7 +327,7 @@ func TestLaunchReportsHolderStartFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	p := testPaths(t)
 	spec := Spec{Summary: agentterminal.Summary{ID: "sess_0123", AccountID: "acct_missing", State: "starting"}, Cols: 80, Rows: 24}
-	err := Launch(p, spec)
+	err := Launch(context.Background(), p, spec)
 	if err == nil || !strings.Contains(err.Error(), "profile unavailable") {
 		t.Fatalf("launch: %v", err)
 	}

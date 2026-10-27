@@ -19,14 +19,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/agentsbackend"
 	"github.com/Tiago-0liveira/bonsai/internal/cli"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 )
 
 func main() {
@@ -194,14 +198,38 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	model := ui.New(repoDir, cfg, state)
+	// The TUI always starts: without a backend it just has no Agents tab.
+	var agentsAPI *agentsapi.Backend
+	backend, backendErr := agentsbackend.New()
+	if backendErr == nil {
+		// Closing only ends the TUI's attachments; holders keep running.
+		defer backend.Close()
+		api := backend.API()
+		agentsAPI = &api
+	}
+	model := newTUIModel(repoDir, cfg, state, agentsAPI)
+	// Here, not in newTUIModel, so tests do not write shims to the real cache dir.
+	go coreexec.PrepareShellIntegration()
 	// Mouse tracking is on so the wheel scrolls the pane under the pointer.
 	// Without it, terminals translate the wheel into arrow keys, which the panes
 	// read as "move the selection". The cost is that dragging to select text now
 	// needs shift held (or the mouse turned off from the command palette).
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
+	if backendErr != nil {
+		// After the TUI has left the alternate screen, so the line stays visible.
+		fmt.Fprintln(os.Stderr, "agents unavailable:", backendErr)
+	}
 	return err
+}
+
+// newTUIModel builds the TUI, with agent support when a backend is given.
+func newTUIModel(repoDir string, cfg *config.Config, state *config.State, agents *agentsapi.Backend) ui.Model {
+	opts := []ui.Option{ui.WithDepth(shellinit.Depth())}
+	if agents != nil {
+		opts = append(opts, ui.WithAgents(*agents))
+	}
+	return ui.New(repoDir, cfg, state, opts...)
 }
 
 func runServeInternal(args []string) error {

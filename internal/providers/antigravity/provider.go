@@ -24,7 +24,9 @@ type Provider struct {
 	modelsCache map[agents.AccountID]modelsEntry
 
 	projects projectCache // Cloud Code project per profile
-
+	// noGemini remembers profiles for which neither the API nor agy listed a
+	// Gemini pool, so the next reads do not start agy to look again.
+	noGemini geminiMissCache
 }
 
 func (p *Provider) clock() time.Time {

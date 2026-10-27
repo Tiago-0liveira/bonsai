@@ -618,3 +618,58 @@ func TestUsageServiceAllObservedSurvivesPanickingObserver(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageServiceMaxAgeOverridesTTL(t *testing.T) {
+	for name, tc := range map[string]struct {
+		maxAge    time.Duration
+		refresh   bool
+		age       time.Duration
+		wantCalls int
+	}{
+		"cached under max age skips provider ttl": {maxAge: 3 * time.Minute, age: 2 * time.Minute, wantCalls: 1},
+		"cached past max age refetches":           {maxAge: 3 * time.Minute, age: 4 * time.Minute, wantCalls: 2},
+		"refresh ignores max age":                 {maxAge: 3 * time.Minute, refresh: true, age: time.Minute, wantCalls: 2},
+		"zero max age keeps provider ttl":         {maxAge: 0, age: 2 * time.Minute, wantCalls: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, _ := NewFileAccountStore(t.TempDir())
+			cache, _ := NewFileUsageCache(t.TempDir())
+			account := testAccount("acct_maxage", "usage-fake", "personal")
+			if err := store.Create(account); err != nil {
+				t.Fatal(err)
+			}
+			provider := &policyUsageProvider{usageTestProvider: usageTestProvider{fail: map[AccountID]error{}}, ttl: time.Minute}
+			registry := NewRegistry()
+			_ = registry.Register(provider)
+			service := &UsageService{Accounts: store, Registry: registry, Cache: cache, TTL: time.Minute}
+			if _, err := service.Account(context.Background(), account.ID, UsageOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			cached, ok, err := cache.Get("usage-fake", account.ID)
+			if err != nil || !ok {
+				t.Fatalf("cache: ok=%v err=%v", ok, err)
+			}
+			aged := time.Now().Add(-tc.age)
+			cached.FetchedAt = aged
+			if err := cache.Put(cached); err != nil {
+				t.Fatal(err)
+			}
+			got, err := service.Account(context.Background(), account.ID, UsageOptions{MaxAge: tc.maxAge, Refresh: tc.refresh})
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			if provider.calls != tc.wantCalls {
+				t.Fatalf("calls = %d, want %d", provider.calls, tc.wantCalls)
+			}
+			stored, _, _ := cache.Get("usage-fake", account.ID)
+			if tc.wantCalls == 2 && !stored.FetchedAt.After(aged) {
+				t.Fatalf("cache not rewritten: %v", stored.FetchedAt)
+			}
+			if tc.wantCalls == 1 && !got.FetchedAt.Equal(aged) {
+				t.Fatalf("cache hit changed FetchedAt: %v", got.FetchedAt)
+			}
+		})
+	}
+}

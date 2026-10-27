@@ -74,10 +74,29 @@ func TestClassifyUsageLimitAntigravityNames(t *testing.T) {
 		{agents.UsageLimit{ID: "3p-5h", Group: "Claude and GPT models", Window: "5h"}, "third-5h"},
 		{agents.UsageLimit{ID: "3p-weekly", Group: "Claude and GPT models", Window: "weekly"}, "third-weekly"},
 		{agents.UsageLimit{ID: "daily", Group: "Other"}, ""},
+		{agents.UsageLimit{Group: "Gemini Models", Label: "Five Hour Limit Remaining"}, "gemini-5h"},
+		{agents.UsageLimit{Group: "Gemini Models", Window: "five_hour"}, "gemini-5h"},
+		{agents.UsageLimit{Group: "Gemini Models", Window: "5-hour session"}, "gemini-5h"},
+		{agents.UsageLimit{Group: "Gemini Models", Window: "7_day"}, "gemini-weekly"},
+		{agents.UsageLimit{Group: "Claude and GPT models", Label: "5 Hour Limit"}, "third-5h"},
 	}
 	for _, tt := range tests {
 		if got := classifyUsageLimit(tt.limit); got != tt.want {
 			t.Fatalf("classify %#v = %q, want %q", tt.limit, got, tt.want)
 		}
+	}
+}
+
+func TestUsageHeadlineNormalizesWindowLabelsWithoutChangingSnapshot(t *testing.T) {
+	snapshot := agents.UsageSnapshot{Limits: []agents.UsageLimit{
+		{ID: "gemini-5h", Group: "Gemini Models", Window: "5h session limit"},
+		{ID: "gemini-weekly", Group: "Gemini Models", Window: "weekly limit"},
+	}}
+	h := New(nil, nil).UsageHeadline(snapshot)
+	if h.Primary == nil || h.Primary.Window != "5h" || h.Secondary == nil || h.Secondary.Window != "weekly" {
+		t.Fatalf("headline windows: %+v", h)
+	}
+	if snapshot.Limits[0].Window != "5h session limit" || snapshot.Limits[1].Window != "weekly limit" {
+		t.Fatal("headline changed snapshot")
 	}
 }

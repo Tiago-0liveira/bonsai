@@ -2,6 +2,7 @@ package agenthost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -28,16 +29,16 @@ const ActiveLimit = 16
 // history. Holders outlive it: closing the manager only disconnects, unless
 // asked to stop them.
 type Manager struct {
-	mu       sync.Mutex
-	accounts agents.AccountStore
-	sessions agents.SessionStore
-	registry *agents.Registry
-	paths    Paths
-	launch   Launcher
-	entries  map[string]*entry
-	closed   bool
-	quit     chan struct{}
-	changed  func(string)
+	mu          sync.Mutex
+	sessions    agents.SessionStore
+	paths       Paths
+	starter     Starter
+	entries     map[string]*entry
+	closed      bool
+	quit        chan struct{}
+	startCtx    context.Context
+	cancelStart context.CancelFunc
+	changed     func(string)
 }
 
 type entry struct {
@@ -59,19 +60,37 @@ func NewManager(accounts agents.AccountStore, sessions agents.SessionStore, regi
 	if launch == nil {
 		launch = Launch
 	}
-	return &Manager{accounts: accounts, sessions: sessions, registry: registry, paths: paths, launch: launch, entries: map[string]*entry{}, quit: make(chan struct{}), changed: changed}
+	starter := Starter{Accounts: accounts, Sessions: sessions, Registry: registry, Paths: paths, Launch: launch, Origin: "web"}
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	return &Manager{sessions: sessions, paths: paths, starter: starter, entries: map[string]*entry{}, quit: make(chan struct{}), startCtx: startCtx, cancelStart: cancelStart, changed: changed}
 }
 
 // InProcess returns a Launcher that serves each session from this process,
 // with deps' stores and providers. Tests use it: their providers exist only
 // in the test process.
 func InProcess(deps Deps) Launcher {
-	return func(p Paths, spec Spec) error {
+	return func(ctx context.Context, p Paths, spec Spec) error {
 		deps := deps
 		deps.Paths = p
 		ready := make(chan error, 1)
-		go func() { _ = Serve(context.Background(), spec, deps, func(err error) { ready <- err }) }()
-		return <-ready
+		serveCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer cancel()
+			_ = Serve(serveCtx, spec, deps, func(err error) { ready <- err })
+		}()
+		select {
+		case err := <-ready:
+			if err != nil {
+				cancel()
+			}
+			return err
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return fmt.Errorf("agent host launch cancelled: %w", ctx.Err())
+		}
 	}
 }
 
@@ -84,95 +103,47 @@ func (m *Manager) notify(project string) {
 // Start validates the launch, creates the session's runtime and starts its
 // holder. The session is starting until the holder reports it running.
 func (m *Manager) Start(project, tree string, accountID agents.AccountID, name, dir string, cols, rows int, options ...StartOptions) (Summary, error) {
-	if !agentterminal.Supported {
-		return Summary{}, fmt.Errorf("interactive terminals unsupported on this platform")
-	}
-	if m.paths.Records == "" {
-		return Summary{}, fmt.Errorf("agent hosts unavailable")
-	}
-	if !agentterminal.Dimensions(cols, rows) {
-		return Summary{}, fmt.Errorf("terminal dimensions must be between 1 and 500")
-	}
-	account, err := m.accounts.Get(accountID)
-	if err != nil {
-		return Summary{}, fmt.Errorf("profile unavailable")
-	}
-	provider, err := m.registry.Get(account.Provider)
-	if err != nil {
-		return Summary{}, fmt.Errorf("provider not available")
-	}
-	capabilities := provider.Capabilities()
-	if !capabilities.Interactive {
-		return Summary{}, fmt.Errorf("provider not available")
+	m.mu.Lock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
+		return Summary{}, fmt.Errorf("server shutting down")
 	}
 	var launch agents.LaunchOptions
 	if len(options) > 0 {
 		launch = options[0]
 	}
-	launch.DisplayName = name
-	if validator, ok := provider.(agents.LaunchValidator); ok {
-		if err := validator.ValidateLaunch(account, launch); err != nil {
-			return Summary{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
-		}
-	}
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		return Summary{}, fmt.Errorf("server shutting down")
-	}
-	active := 0
-	for _, e := range m.entries {
-		if !e.summary.Active() {
-			continue
-		}
-		active++
-		if e.summary.Provider != account.Provider {
-			continue
-		}
-		if e.summary.AccountID == accountID && !capabilities.ConcurrentSameAccount {
-			m.mu.Unlock()
-			return Summary{}, agents.ErrAccountBusy
-		}
-		if e.summary.AccountID != accountID && !capabilities.ConcurrentCrossAccount {
-			m.mu.Unlock()
-			return Summary{}, agents.ErrProviderBusy
-		}
-	}
-	if active >= ActiveLimit {
-		m.mu.Unlock()
-		return Summary{}, fmt.Errorf("%d active session limit reached", ActiveLimit)
-	}
-	runtime, err := m.sessions.Create(account, dir)
+	record, err := m.starter.Start(m.startCtx, StartRequest{Project: project, Tree: tree, Name: name, Dir: dir, AccountID: accountID, Cols: cols, Rows: rows, Launch: launch})
 	if err != nil {
-		m.mu.Unlock()
-		return Summary{}, fmt.Errorf("cannot create session")
-	}
-	if name == "" {
-		name = account.Name
-	}
-	summary := Summary{ID: string(runtime.ID), ProjectID: project, WorktreeID: tree, AccountID: accountID, Provider: account.Provider, ProfileName: account.Name, Name: name, State: "starting", CreatedAt: time.Now().UTC(), Model: launch.Model, Options: launch.Values()}
-	// Registered before the launch, so concurrent starts count it.
-	e := &entry{summary: summary, workDir: dir, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
-	m.entries[summary.ID] = e
-	m.mu.Unlock()
-	fail := func(err error) (Summary, error) {
-		m.mu.Lock()
-		delete(m.entries, summary.ID)
-		m.mu.Unlock()
-		close(e.done)
-		_ = m.sessions.Cleanup(runtime)
 		return Summary{}, err
 	}
-	if err := m.launch(m.paths, Spec{Summary: summary, WorkDir: dir, Cols: cols, Rows: rows, Launch: launch}); err != nil {
-		return fail(fmt.Errorf("cannot start agent host: %v", err))
+	return m.trackStarted(record, dir, project)
+}
+
+func (m *Manager) trackStarted(record Record, dir, project string) (Summary, error) {
+	e := &entry{summary: record.Summary, workDir: dir, record: record, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
+	m.mu.Lock()
+	if m.closed {
+		// Close ran while the holder launched and cannot see it: a session
+		// the caller is told failed must not keep running.
+		m.mu.Unlock()
+		stopErr := StopHolder(m.paths, record, "")
+		if !Wait(m.paths, record.ID, 5*time.Second) {
+			return Summary{}, errors.Join(fmt.Errorf("server shutting down: agent holder %s did not exit after stop and may still be running", record.ID), stopErr)
+		}
+		return Summary{}, fmt.Errorf("server shutting down")
 	}
-	record, err := Read(m.paths, summary.ID)
-	if err != nil {
-		return fail(fmt.Errorf("cannot start agent host: %v", err))
+	if known, ok := m.entries[record.ID]; ok {
+		// Adopt saw the record first and already follows the holder.
+		result := known.summary
+		m.mu.Unlock()
+		m.notify(project)
+		return result, nil
 	}
+	m.entries[record.ID] = e
+	m.mu.Unlock()
 	conn, ready, err := Dial(record, Request{Mode: ModeStatus})
 	m.mu.Lock()
-	e.record = record
 	if err == nil && ready.Status != nil {
 		e.summary = *ready.Status
 	}
@@ -392,28 +363,34 @@ func (m *Manager) Close(keepRunning bool, timeout time.Duration) {
 		return
 	}
 	m.closed = true
-	var live []*entry
+	m.cancelStart()
+	var live, stopping []*entry
 	for _, e := range m.entries {
 		if e.live && e.record.ID != "" {
 			live = append(live, e)
+			// Sessions another client started stay: only the web's own are
+			// its to stop.
+			if e.summary.Origin == "web" || e.summary.Origin == "" {
+				stopping = append(stopping, e)
+			}
 		}
 	}
 	m.mu.Unlock()
 	if !keepRunning {
 		deadline := time.Now().Add(timeout)
-		for _, e := range live {
+		for _, e := range stopping {
 			_ = StopHolder(m.paths, e.record, "")
 		}
 		expired := time.After(timeout)
 	wait:
-		for _, e := range live {
+		for _, e := range stopping {
 			select {
 			case <-e.done:
 			case <-expired:
 				break wait
 			}
 		}
-		for _, e := range live {
+		for _, e := range stopping {
 			Wait(m.paths, e.record.ID, time.Until(deadline))
 		}
 	}
@@ -474,16 +451,94 @@ func (m *Manager) Restore(summary Summary) {
 	m.evict()
 }
 
+// WatchRecords keeps the manager current with holders other clients start or
+// end (the TUI, the CLI) until ctx ends or the manager closes. Running ones
+// are followed; ended ones that were never seen show as history. It notifies
+// each project whose sessions changed.
+func (m *Manager) WatchRecords(ctx context.Context) {
+	if m.paths.Records == "" {
+		return
+	}
+	// Watch ends with its context, so stopping on quit must cancel it too.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	changes, err := Watch(ctx, m.paths)
+	if err != nil {
+		return
+	}
+	// A record may predate watcher registration; adopt it before waiting for
+	// changes so an ended session is not missed until another record changes.
+	m.syncRecords(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.quit:
+			return
+		case _, ok := <-changes:
+			if !ok {
+				return
+			}
+			m.syncRecords(ctx)
+		}
+	}
+}
+
+func (m *Manager) syncRecords(ctx context.Context) {
+	before := m.states()
+	for _, summary := range m.AdoptContext(ctx) {
+		if !summary.Active() {
+			m.Restore(summary)
+		}
+	}
+	after := m.states()
+	projects := map[string]struct{}{}
+	for id, now := range after {
+		if was, ok := before[id]; !ok || was != now {
+			projects[now.project] = struct{}{}
+		}
+	}
+	for id, was := range before {
+		if _, ok := after[id]; !ok {
+			projects[was.project] = struct{}{}
+		}
+	}
+	for project := range projects {
+		m.notify(project)
+	}
+}
+
+type sessionState struct{ project, state string }
+
+// states maps each known session to its project and state.
+func (m *Manager) states() map[string]sessionState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]sessionState, len(m.entries))
+	for id, e := range m.entries {
+		out[id] = sessionState{e.summary.ProjectID, e.summary.State}
+	}
+	return out
+}
+
 // Adopt follows every running holder this manager does not know yet, such as
 // those an earlier API started, and returns the summaries of all recorded
 // sessions by ID, running or ended.
 func (m *Manager) Adopt() map[string]Summary {
+	return m.AdoptContext(context.Background())
+}
+
+// AdoptContext lets record watching stop during a holder's dial or handshake.
+func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
 	out := map[string]Summary{}
 	if m.paths.Records == "" {
 		return out
 	}
 	records, _ := List(m.paths)
 	for _, r := range records {
+		if ctx.Err() != nil {
+			break
+		}
 		out[r.ID] = r.Summary
 		if !r.Alive {
 			continue
@@ -496,7 +551,13 @@ func (m *Manager) Adopt() map[string]Summary {
 			continue
 		}
 		e := &entry{summary: r.Summary, workDir: r.WorkDir, record: r, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
-		conn, ready, err := Dial(r, Request{Mode: ModeStatus})
+		conn, ready, err := DialContext(ctx, r, Request{Mode: ModeStatus})
+		if ctx.Err() != nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			break
+		}
 		if err != nil {
 			conn = nil
 		} else if ready.Status != nil {
@@ -504,6 +565,14 @@ func (m *Manager) Adopt() map[string]Summary {
 			out[r.ID] = e.summary
 		}
 		m.mu.Lock()
+		if _, raced := m.entries[r.ID]; raced || m.closed {
+			// Start registered it while this dialed.
+			m.mu.Unlock()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			continue
+		}
 		m.entries[r.ID] = e
 		m.mu.Unlock()
 		go m.follow(e, conn)

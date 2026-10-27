@@ -76,7 +76,10 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 		m.sort.name(),
 		m.state.Prefs.PruneMerge,
 		m.state.Prefs.PRStatus,
+		m.state.Prefs.AgentGlyphs,
 		m.state.Prefs.Editor,
+		m.state.Prefs.DepthGlyph,
+		m.state.Prefs.ShellPrompt,
 		theme.Presets(),
 		prefsActions(m.cfg.Keys),
 		startOnKeys,
@@ -92,12 +95,15 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 // preview live while the overlay is open.
 func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 	m.state.Prefs = config.Prefs{
-		Theme:      p.Theme,
-		Sort:       p.Sort,
-		PruneMerge: p.PruneMerge,
-		PRStatus:   p.PRStatus,
-		Editor:     p.Editor,
-		Keys:       p.Keys,
+		Theme:       p.Theme,
+		Sort:        p.Sort,
+		PruneMerge:  p.PruneMerge,
+		PRStatus:    p.PRStatus,
+		AgentGlyphs: p.AgentGlyphs,
+		Editor:      p.Editor,
+		DepthGlyph:  p.DepthGlyph,
+		ShellPrompt: p.ShellPrompt,
+		Keys:        p.Keys,
 	}
 	if err := m.state.Save(); err != nil {
 		m.err = err
@@ -110,6 +116,8 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 	worktreelist.SetPRStatusMode(p.PRStatus)
 	modals.SetTheme(theme.Current)
 	prefs.SetTheme(theme.Current)
+
+	m.refreshAgentBadges()
 
 	m.keys = newKeyMap(m.mergedKeyOverrides())
 	if cols := keyCollisions(m.mergedKeyOverrides()); len(cols) > 0 {
@@ -166,6 +174,16 @@ func (m Model) openKeymap() (tea.Model, tea.Cmd) {
 		}
 		sections = append(sections, kmSection{name: sec.name, entries: entries})
 	}
+
+	// The terminal escape key is fixed: listed so
+	// it is discoverable, but absent from the preferences key editor.
+	var terminalKeys []paletteEntry
+	for _, e := range agentTerminalKeys {
+		plain := fmt.Sprintf("%s %s %s", e.key, e.desc, agentTerminalSection)
+		display := keySt.Render(padRight(e.key, 10)) + padRight(e.desc, 20) + dim.Render("· "+agentTerminalSection)
+		terminalKeys = append(terminalKeys, paletteEntry{display: display, plain: plain})
+	}
+	sections = append(sections, kmSection{name: agentTerminalSection, entries: terminalKeys})
 
 	filter := func(q string) []modals.Section {
 		q = strings.ToLower(strings.TrimSpace(q))

@@ -1,6 +1,7 @@
 package agenthost
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -25,13 +26,21 @@ type Conn struct {
 // Dial connects to the holder of r and sends hello (its version is filled in).
 // It returns the holder's ready frame.
 func Dial(r Record, hello Request) (*Conn, Frame, error) {
+	return DialContext(context.Background(), r, hello)
+}
+
+// DialContext bounds both connecting and the initial holder handshake by ctx.
+func DialContext(ctx context.Context, r Record, hello Request) (*Conn, Frame, error) {
 	if r.Protocol != Version {
 		return nil, Frame{}, ErrVersion
 	}
-	conn, err := net.DialTimeout("unix", r.Socket, 2*time.Second)
+	dialer := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.DialContext(ctx, "unix", r.Socket)
 	if err != nil {
 		return nil, Frame{}, err
 	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 	c := &Conn{conn: conn, dec: newDecoder(conn)}
 	hello.Type, hello.Version = "hello", Version
 	if err := c.Send(hello); err != nil {
@@ -43,6 +52,9 @@ func Dial(r Record, hello Request) (*Conn, Frame, error) {
 	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		_ = conn.Close()
+		if ctx.Err() != nil {
+			return nil, Frame{}, ctx.Err()
+		}
 		return nil, Frame{}, err
 	}
 	if ready.Type != "ready" {
@@ -51,6 +63,10 @@ func Dial(r Record, hello Request) (*Conn, Frame, error) {
 			return nil, Frame{}, ErrVersion
 		}
 		return nil, Frame{}, fmt.Errorf("agent host refused: %s", ready.Error)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		return nil, Frame{}, err
 	}
 	return c, ready, nil
 }
@@ -78,18 +94,38 @@ func (c *Conn) SetDeadline(t time.Time) error { return c.conn.SetDeadline(t) }
 
 // Query asks a running holder for its info.
 func Query(r Record) (Info, error) {
-	c, _, err := Dial(r, Request{Mode: ModeStatus})
+	return QueryContext(context.Background(), r)
+}
+
+// QueryContext lets a caller abandon an in-flight status request.
+func QueryContext(ctx context.Context, r Record) (Info, error) {
+	c, _, err := DialContext(ctx, r, Request{Mode: ModeStatus})
 	if err != nil {
 		return Info{}, err
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
-	if err := c.Send(Request{Type: "info"}); err != nil {
+	stop := context.AfterFunc(ctx, func() { _ = c.SetDeadline(time.Now()) })
+	defer stop()
+	deadline := time.Now().Add(3 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = c.SetDeadline(deadline)
+	if err := ctx.Err(); err != nil {
+		return Info{}, err
+	}
+	if err := encode(c.conn, Request{Type: "info"}); err != nil {
+		if ctx.Err() != nil {
+			return Info{}, ctx.Err()
+		}
 		return Info{}, err
 	}
 	for {
 		f, err := c.Recv()
 		if err != nil {
+			if ctx.Err() != nil {
+				return Info{}, ctx.Err()
+			}
 			return Info{}, err
 		}
 		if f.Type == "info" && f.Info != nil {

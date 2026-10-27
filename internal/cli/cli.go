@@ -49,7 +49,7 @@ func RunWithIO(args []string, in io.Reader, out, errOut io.Writer) error {
 		printUsage(out)
 		return nil
 	case "shell-init":
-		return cmdShellInit(out)
+		return cmdShellInit(args[1:], out)
 	case "agent":
 		return cmdAgent(args[1:], in, out, errOut)
 	case "agents":
@@ -400,7 +400,10 @@ func printAliases(repoDir string, out io.Writer) error {
 }
 
 // cmdShellInit prints shell integration helpers enabling `bcd <branch>` to change dirs.
-func cmdShellInit(out io.Writer) error {
+func cmdShellInit(args []string, out io.Writer) error {
+	if len(args) > 0 {
+		return cmdShellInitPrompt(args, out)
+	}
 	fmt.Fprint(out, `# bonsai shell integration
 #
 # Bash / Zsh — add to ~/.zshrc or ~/.bashrc:
@@ -473,9 +476,10 @@ Usage:
   bonsai alias add <name> <cmd…>  add a user alias
   bonsai alias rm <name>          remove a user alias
   bonsai shell-init               print a shell 'bcd' cd helper
+  bonsai shell-init <shell>       print the 🪴N prompt hook (bash|zsh|fish|nu|pwsh)
   bonsai agent ...                manage provider accounts and sessions
   bonsai agents [--all] [--json]  list running agent sessions (any directory)
-  bonsai agents attach <id|name> [--take] [--read-only]  attach this terminal (Ctrl-] d detaches)
+  bonsai agents attach <id|name> [--take] [--read-only]  attach (Ctrl-] d detaches; Ctrl-] k confirms kill)
   bonsai agents stop <id|name>    stop an agent session
   bonsai version (-v, --version)  print the installed version
   bonsai update (-u, --update)    check or install updates

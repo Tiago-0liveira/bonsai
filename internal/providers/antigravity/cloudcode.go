@@ -26,11 +26,14 @@ import (
 // token close to expiry is left to agy, which refreshes it on the fallback run
 // and saves it back to the vault.
 
-// cloudCodeHosts are tried in order: the daily host agy itself talks to, then
-// production. Tests point them at a local server so no test reaches the network.
+// cloudCodeHosts are tried in order: production, then the daily host agy
+// itself talks to. Production answers with every pool (Gemini and Claude &
+// GPT); the daily host has been seen answering with the Claude & GPT pool
+// alone, so a read that has no Gemini pool waits for the other host. Tests
+// point them at a local server so no test reaches the network.
 var cloudCodeHosts = []string{
-	"https://daily-cloudcode-pa.googleapis.com",
 	"https://cloudcode-pa.googleapis.com",
+	"https://daily-cloudcode-pa.googleapis.com",
 }
 
 const (
@@ -115,9 +118,21 @@ type cloudCodeRead struct {
 	credits []agents.UsageCredit
 }
 
+// hasGeminiPool reports whether limits include a Gemini 5h or weekly pool.
+func hasGeminiPool(limits []agents.UsageLimit) bool {
+	for _, limit := range limits {
+		if strings.HasPrefix(classifyUsageLimit(limit), "gemini") {
+			return true
+		}
+	}
+	return false
+}
+
 // cloudCodeUsage reads the quota buckets and the plan from the Cloud Code API.
-// The first host is asked first; the next is asked when it fails or has not
-// answered within cloudCodeHedge, and the first answer wins.
+// The first host is asked first; the next is asked when it fails, answers
+// without a Gemini pool, or has not answered within cloudCodeHedge. The first
+// answer with a Gemini pool wins. When no host has one, the first answer
+// without it is returned, so a profile that has none still shows its numbers.
 func (p *Provider) cloudCodeUsage(ctx context.Context, account agents.Account) (cloudCodeRead, error) {
 	token, err := p.accessToken(account)
 	if err != nil {
@@ -130,59 +145,56 @@ func (p *Provider) cloudCodeUsage(ctx context.Context, account agents.Account) (
 		err  error
 	}
 	answers := make(chan answer, len(cloudCodeHosts))
-	ask := func(host string) {
-		hostCtx, cancelHost := context.WithTimeout(ctx, cloudCodeTimeout)
-		defer cancelHost()
-		read, err := p.quotaSummary(hostCtx, host, token, account.ID)
-		answers <- answer{read, err}
+	started, pending := 0, 0
+	askNext := func() {
+		host := cloudCodeHosts[started]
+		started++
+		pending++
+		go func() {
+			hostCtx, cancelHost := context.WithTimeout(ctx, cloudCodeTimeout)
+			defer cancelHost()
+			read, err := p.quotaSummary(hostCtx, host, token, account.ID)
+			answers <- answer{read, err}
+		}()
 	}
+	askNext()
+	hedge := time.NewTimer(cloudCodeHedge)
+	defer hedge.Stop()
 	var errs []error
-	next, pending := 0, 0
-	for {
-		if next < len(cloudCodeHosts) {
-			go ask(cloudCodeHosts[next])
-			next++
-			pending++
-		}
-		hedge := time.NewTimer(cloudCodeHedge)
+	var best *cloudCodeRead
+	for pending > 0 {
 		select {
 		case a := <-answers:
-			hedge.Stop()
 			pending--
-			if a.err == nil {
+			switch {
+			case a.err != nil:
+				errs = append(errs, a.err)
+			case hasGeminiPool(a.read.limits):
 				return a.read, nil
+			case best == nil:
+				read := a.read
+				best = &read
 			}
-			errs = append(errs, a.err)
-			if ctx.Err() != nil || (next >= len(cloudCodeHosts) && pending == 0) {
-				return cloudCodeRead{}, errors.Join(errs...)
-			}
-			if next >= len(cloudCodeHosts) {
-				// Only a hedged host is left: wait for it.
-				a := <-answers
-				pending--
-				if a.err == nil {
-					return a.read, nil
-				}
-				return cloudCodeRead{}, errors.Join(append(errs, a.err)...)
+			if started < len(cloudCodeHosts) {
+				askNext()
+				hedge.Reset(cloudCodeHedge)
 			}
 		case <-hedge.C:
-			if next >= len(cloudCodeHosts) {
-				// Nothing left to hedge with: wait for the pending hosts.
-				for pending > 0 {
-					a := <-answers
-					pending--
-					if a.err == nil {
-						return a.read, nil
-					}
-					errs = append(errs, a.err)
-				}
-				return cloudCodeRead{}, errors.Join(errs...)
+			if started < len(cloudCodeHosts) {
+				askNext()
+				hedge.Reset(cloudCodeHedge)
 			}
 		case <-ctx.Done():
-			hedge.Stop()
+			if best != nil {
+				return *best, nil
+			}
 			return cloudCodeRead{}, errors.Join(append(errs, ctx.Err())...)
 		}
 	}
+	if best != nil {
+		return *best, nil
+	}
+	return cloudCodeRead{}, errors.Join(errs...)
 }
 
 // codeAssist is what loadCodeAssist answers that Bonsai uses.

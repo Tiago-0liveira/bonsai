@@ -148,7 +148,19 @@ once read, its plan ("Google AI Pro").
   the same API read, so no `agy` is started for them, and listing profiles never
   starts `agy` either; the `/usage` fallback shows neither credits nor a fresh
   plan. The table lists Gemini models only; `--claude-gpt` adds the Claude & GPT
-  model pools.
+  model pools. The production host is asked first and lists the Gemini pool;
+  the daily host sometimes lists only the Claude & GPT pool. An answer without
+  a Gemini pool makes Bonsai ask the other host and start agy's `/usage` beside
+  it (also when the API read is slow), and the first source that lists a Gemini
+  pool wins. A profile no source lists one for shows its Claude & GPT pool in
+  the Gemini table, marked `(Claude & GPT)`, and agy is not started for it again
+  for 10 minutes. The `/usage` run is stopped, with its helper processes, after
+  45 seconds.
+- **Sign-in.** Bonsai saves the login when `agy` exits, whatever its exit
+  status. Interrupting `agy` (Ctrl+C) after signing in keeps the login. Agy's
+  first-run state is kept with the profile, so its welcome and theme screens do
+  not repeat in every session. Interrupting `bonsai agent run` waits for `agy`
+  to end, restores the terminal mode and cleans the session up.
 - **Models.** The start dialog's models come from `agy models`. A model agy
   lists once per effort (`gemini-3.8-flash-high`, `-medium`, `-low`) is one model
   with an effort choice, passed to agy as the full ID. A model listed once has no
@@ -170,6 +182,37 @@ Recent output is bounded to 2 MiB and may show a replay-gap notice after a long
 session. Interactive PTYs require a supported Unix platform; Windows support is
 not yet available. See
 [development details](development.md#antigravity-web-terminals).
+
+### Sessions shared with the TUI and CLI
+
+The web app and the TUI use the same agent holders: each session is its own
+process with a record, `agents/<id>.json` under the web home. A session record's
+summary has an `origin` field: `web`, `tui` or `cli` (an empty origin counts as
+`web`). The web app watches these records, so a session started in the TUI or
+from the CLI appears live in the browser. `bonsai agents` lists every running
+session.
+
+The TUI's Agents tab is another client of these sessions. It watches the selected
+session read-only; `enter` takes control to type, and `ctrl+]` immediately returns
+input to Bonsai. Press `enter` again to take control back when another client is
+writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
+
+`bonsai agents attach <id|name>` opens a terminal with pinned controls below the
+agent output. Press `Ctrl+]`, release it, then `d` to detach and leave the agent
+running, or `k` to request a kill. The kill prompt defaults to cancel: press `y`
+to stop the agent, or `n`, `Enter` or `Esc` to cancel. These controls also work
+with `--read-only` and when another client holds control. Press `Ctrl+]` then `t`
+to take control, or attach with `--take` to take it immediately. An explicit
+`--read-only` attachment cannot take control; detach and attach again without
+that flag. `Ctrl+C` reaches the agent while controlling it. When output is piped,
+`--read-only` streams output with control hints on stderr instead of a pinned
+display. The separate `bonsai agents stop <id|name>` command stops a session
+without asking for confirmation.
+
+`bonsai web stop` stops the agents the web started (origin `web`) unless
+`agents.keep_running` is on (see [web app](web.md)). Sessions with origin `tui` or
+`cli` are left running either way. `--stop-agents` and `--keep-agents` override the
+setting for one stop.
 
 ## Profile defaults
 

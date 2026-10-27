@@ -19,6 +19,161 @@ stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 (`http://localhost:…`) detected in process output are shown next to each process.
 
+### Agents tab
+
+The Agents tab lists the agents running in the selected worktree and the
+selected account's usage; worktree rows group running agents by provider with a
+glyph and count directly after the branch's other badges, plus `!` for an unseen
+failure. It shows the selected session's
+live terminal read-only: you can watch the agent. The title row (`AGENTS · <branch>`)
+appears when the terminal is tall enough. A header shows the session's provider,
+profile, model and state, with `· read-only` when another client is controlling it.
+The TUI uses the same agent sessions as the web UI and `bonsai agents`. If it starts
+without that backend, the Agents tab is unavailable and the TUI prints
+`agents unavailable: <err>` to stderr after exit. A session started by another
+bonsai version cannot be opened here; the tab says to run
+`bonsai agents attach <name>` instead.
+
+The TUI is a client of the same sessions as the web app; see
+[agents.md](agents.md#sessions-shared-with-the-tui-and-cli). It is read-only by
+default: the terminal only watches until you press `enter`. On the focused Agents
+tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops the
+selected running agent after a confirmation. The command palette (`ctrl+k`) has
+**Agents: open tab**, **new agent**, **accounts** and **usage** under **Agents**;
+stop is available on the focused tab. Profiles, usage, the session
+picker and launch/stop views fill the available Agents tab without modal borders
+or size caps; the worktree list and right-pane tab bar remain visible.
+
+Press `enter` on a session to enter terminal mode and type into it. The client
+attaches as the writer and every key goes to the agent, including `esc`, `tab`,
+`ctrl+c` and `q`. The PTY is resized to the pane when you enter, and window
+resizes are debounced so the agent gets one redraw for the final size. Mouse
+wheel events over the terminal area are ignored in terminal mode. Press `enter`
+on a session that failed or dropped its attach to retry first. The binding is
+`agent_attach` and can be rebound.
+
+The terminal has a two-row header, the agent output, and a hint row at the bottom.
+The bottom status bar shows **FOCUSED · Input goes to agent** while you are
+controlling the agent. Press `ctrl+]` to leave focus immediately and return to
+Bonsai navigation. The agent keeps running and its output continues to update.
+The navigation footer shows the available actions: `a` all agents, `m` profiles,
+`u` usage, `n` new agent, `s` stop, and `enter` focus the selected agent. Enter is
+shown as retry while an attach has failed, and is hidden for an ended session.
+
+If another client is the writer, the agent is read-only here: the banner reads
+`Controlled by another client` and keys are swallowed. Press `ctrl+]`, then
+`enter` in navigation to take control. If another client takes control away, the
+hint explains how to leave focus and take it back.
+
+Press `a` on the Agents tab to open the sessions screen. It lists the worktree's
+sessions as one flat list, running ones first, then ended ones, newest first. Each
+item shows the session name and its state (`● Running`, `✓ Exited`, `✗ Failed`) on one
+line and `Provider · account` below it; sessions that share a name get a short ID
+suffix (`· …b6364576`). The right side is an inspector that follows the selection:
+provider, name, state, account, worktree, model, exit code and the short ID. On a
+narrow pane the inspector moves below the list. It opens even when there are no
+sessions. `↑`/`↓` select, `/` searches by name, provider or account (`Esc` clears
+the search), `Enter` opens the selected session, `n` starts a new one and `Esc` goes
+back. Opening the screen clears the `!` failure markers on that worktree's rows, so
+the failures stay listed here with `✗`.
+
+The new-session screen (`n`) is an account table above the launch options. The
+table lists every account with its **5h left** capacity (meter and percentage of
+what remains) and **Resets in** countdown; only the reported five-hour window is
+used, so an account without one shows `Not reported`, and loading, unavailable
+and stale readings are labeled instead of drawn as a zero or full meter. `↑`/`↓`
+(or `j`/`k`) select an account and `Enter` moves to the options. `Tab` and
+`Shift+Tab` move through the name, model, effort, other launch options, the
+**Save as account defaults** box and the buttons. Within the options, `↑`/`↓`
+moves between fields, `←`/`→` changes a value, and `Enter` opens a choice list.
+`Esc` dismisses that list before closing the screen. `ctrl+s` starts the
+session. Model and effort start from the selected account's defaults; edits apply
+only to this session unless **Save as account defaults** is checked. Effort
+choices follow the selected model's capabilities. On short or narrow panes the
+table shows fewer rows (`a-b of N`), then drops the meter, then uses two lines
+per account; extra options scroll while Start and the footer stay in view.
+
+In profiles (`m`), `Tab` and `Shift+Tab` cycle the right-hand Overview, Usage and
+Defaults tabs while `↑`/`↓` keeps selecting profiles. No selection confirmation
+is needed to browse. Press `Enter` to focus the details or edit a field; Tab
+still switches sections there, including while a choice list is open. `1`/`2`/`3`
+jump directly to Overview, Usage or Defaults. `Esc` returns focus to profiles;
+press it again to close. Unsaved defaults require confirmation before closing or
+switching profiles or adding a new one. Press `n` to add a profile; the shortcut
+is shown in the footer, and arrow navigation stops at the last profile. The
+accounts sit in a scrollable table (Account, Provider, Plan, Connection) above a
+divider naming the selected account and the inspector tabs; only the inspector
+body changes with the tab. On narrow panes the Plan column goes first, then
+Connection moves under the account name, and below that a single-account
+selector replaces the table. On short panes the table shows fewer rows (with a
+`1-5 of 9` indicator) before the inspector loses content. Antigravity's
+`Google AI` prefix is omitted from the Plan column. The Usage tab shows
+remaining-capacity meters, credits and reset grants, and `r` refreshes it.
+Usage (`u`) uses `↑`/`↓` to select a profile, `r` to refresh,
+`m` for its profile details and `Esc` to close. The profile list stays in provider
+and name order under muted provider headings, scrolling to keep the selection
+visible. Compact strips connect each profile's rows with an orange Claude,
+gray Codex or blue Antigravity rail; `>` marks the selected profile. Both
+headline windows show remaining-capacity meters, percentages and their own
+automatic reset countdowns. Wide panes put windows side by side; narrow panes
+stack them and retain metadata on continuation rows. Antigravity uses the same
+plain `5h` and `Week` labels as Claude and Codex for its default usage row, then
+shows Claude/GPT models on one separate paired row. Default windows absent from
+the reported data show `Unavailable`; model quotas never substitute for them or
+appear twice. A blank row separates accounts. Additional limits and
+model-specific pools remain visible. Meters are green with at least half left,
+yellow below half and red below a quarter, with ASCII glyphs in ASCII mode.
+
+Credit pools show their available balance and reported reset date separately.
+Codex reset grants show the usable count and **First expires** deadline, which
+is separate from automatic window resets. Balances, credit states, available
+reset counts and reset times use distinct theme colors to make values easy to
+scan; expiry deadlines use the warning color. Unknown balances and dates stay
+unknown; expired and unavailable grants are excluded. Loading and stale labels
+keep retained values visible. The Agents tab header, profile details and launch
+dialog keep their compact five-hour bars and weekly percentages.
+Narrow profile panes use a single column
+with the selected profile shown above the content.
+
+An account that needs a sign-in shows `[ Sign in first ]` in place of start.
+Signing in or adding an account suspends the TUI and runs the provider's CLI
+flow in the terminal, then returns to Bonsai. See [agents.md](agents.md) for
+profiles and accounts.
+
+### Usage pane
+
+When the terminal has at least 30 rows and agent accounts exist, a small
+bordered **Usage · left** box sits under the worktree list. Its rails and
+segmented meters show remaining capacity, ordered Claude, Codex, then Antigravity.
+The rails match each provider: orange for Claude, light gray for Codex, and blue
+for Antigravity. Expanded meters grow to fill the available row width.
+Expanded strips use three lines per account: provider and name, then the two
+headline windows with remaining percentages and reset countdowns when available.
+Accounts without shared windows show `No shared windows` once; loading and
+unavailable states never imply a capacity value.
+The pane is display only: it takes no keys, and resizing below 30 rows
+hides it and gives the rows back to the list. On short terminals it shrinks to
+one line per account with the provider glyph, name, primary-window meter and
+percentage, and secondary-window percentage (`W` means Week), then to `+N more`.
+Compact rows give spare width to the primary (usually 5h) meter first, then add
+and grow a secondary (usually Week) meter when there is enough room for both.
+Narrow widths shorten names and meters before sacrificing numeric values;
+compact rows omit reset countdowns. Sizing remains automatic and only takes
+space from the worktree list; the right-hand content keeps its full height.
+
+Every minute the pane checks for accounts whose data is 3 minutes old or more
+and refetches only those. The box title shows the age of the oldest data:
+`refreshing…`, `<30s`, `<1m`, `1m`, `2m`, `3m`, then `4m+`. A trailing `!` on an
+account marks numbers that are overdue or failed to refresh (the last good
+numbers and their capacity warning colors stay visible). Fetched usage is stored
+under the user cache directory (`bonsai/agents/usage/`), so a restart reuses
+anything fetched less than 3 minutes ago without calling the provider.
+
+Every usage view in the TUI (this pane, the Agents tab header, profiles, the
+usage overlay and the new agent dialog) reads the same cache with the same
+3-minute window and shows the same numbers for an account. Only `r` in profiles
+or the usage overlay skips the window and asks the provider again.
+
 ### Keybindings
 
 | Key | Action |
@@ -30,6 +185,7 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 | `n` | New worktree (new branch / existing branch / PR) |
 | `ctrl+n` | Create a PR from the selected worktree |
 | `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
+| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session, `enter` terminal mode (every key goes to the agent except `ctrl+]`, press `ctrl+]` to leave focus). On the focused Agents tab, `n` (new agent), `m` (accounts), `u` (usage) and `s` (stop agent) take precedence over the globals with the same letters |
 | `i` | Inspector tab (status, last commit, diff, disk, stashes) |
 | `b` | Checks tab (GitHub Actions runs for the branch) |
 | `o` | Cycle list sort (name / ahead / behind / PR / activity / dirty) |
@@ -47,12 +203,27 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 | `x` | Prune the worktree (with optional PR merge) |
 | `X` | Prune all merged worktrees |
 | `R` | Refresh worktrees, metrics, and PRs |
-| `,` | Preferences (theme, keybindings, defaults) |
+| `,` | Preferences (theme, keybindings, defaults, shell depth marker) |
 | `?` | Keybindings reference (searchable) |
 | `q` / `ctrl+c` | Quit |
 
 Every key can be rebound under `keybindings` in `.bonsai.yaml`; the
-[annotated example](../.bonsai.yaml) lists the action names.
+[annotated example](../.bonsai.yaml) lists the action names. The terminal escape
+key `ctrl+]` is fixed; `?` lists it in a separate **Agent terminal (fixed key)**
+section.
+
+The navigation status bar follows keyboard focus. With the Agents pane focused,
+it shows agent actions and the selected session's Enter action. With the
+worktree list focused, it shows how to focus the Agents pane. Profile and usage
+views show their own navigation keys.
+
+Unicode provider icons are ✹ for Claude (orange), ❃ for Codex (light gray), and
+✦ for Antigravity (blue).
+
+Agent glyphs follow the `agent glyphs` row in preferences (`,`). `ascii` swaps
+bonsai's own drawing to ASCII: provider glyphs (`C X A`), state dots, picker marks
+(`*` running, `+` exited, `x` failed), rules, hint rows and agent overlay borders.
+It does not touch the agent's terminal output or the status-bar separators.
 
 ## CLI
 
@@ -80,6 +251,7 @@ bonsai restart <id>             # restart a process
 bonsai attach <id>              # stream a process log (Ctrl-C detaches)
 bonsai daemon status|stop       # control the background daemon
 bonsai shell-init               # print a shell 'bcd' cd helper
+bonsai shell-init <shell>       # print the prompt depth hook (bash|zsh|fish|nu|pwsh)
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install the latest release
 ```
@@ -116,6 +288,66 @@ bcd                             # cd back to main
 ```
 
 On Windows the installer adds a `bcd.bat` helper next to `bonsai.exe`.
+
+### Shell depth indicator
+
+A shell opened from the TUI (`enter`) is one level deeper than the bonsai that
+opened it. bonsai exports `BONSAI_DEPTH` and `BONSAI_PROMPT_PREFIX` to that
+shell only, so the prompt shows the level, e.g. `🪴2 ~/repo $`. Background
+processes, agent sessions and the daemon do not increment the depth. Like
+other child processes, they can inherit these variables when bonsai itself
+runs inside a nested shell.
+
+- The status bar shows `🪴N` only when bonsai is nested (N ≥ 2).
+- After a nested shell exits, the status line reads `back in bonsai 🪴N`, where
+  N is this TUI's own level (top level = 1). Status messages take priority over
+  key hints when the terminal is too narrow to show both.
+
+**Automatic prompt** (`shell_prompt: auto`, the default). The prefix is added
+for bash, zsh and fish, and best effort for sh, dash, ksh, mksh, nu, pwsh and
+cmd. cmd has no prompt hook, so it gets a static `prompt` and ignores a custom
+`PROMPT`. Other shells get the env vars only. Shell files live under
+`<user cache dir>/bonsai/shell-integration/<version>/`. Your rc files load first
+and are never modified.
+
+**Preferences** (`,`, saved in `state.json`):
+
+| Row | Values | Effect |
+|-----|--------|--------|
+| `depth glyph (prompt, status bar)` | 🪴 (default), 🌳, 🌱, `bonsai` | Marker before the level (`bonsai` shows as `bonsai:2`). Pick a text marker if your font draws 🪴 at the wrong width. Hand-edited glyphs with shell-special characters fall back to 🪴. |
+| `shell prompt marker` | `auto`, `off` | `off` stops prompt injection. The env vars are still exported. |
+
+**Your own prompt.** If your theme redraws the prompt and fights the automatic
+hook, set `shell prompt marker` to `off` and print the prefix from the theme.
+`bonsai shell-init <bash|zsh|fish|nu|pwsh>` prints the same hook as a snippet
+for your rc file. Starship and Powerlevel10k recipes:
+
+```toml
+# ~/.config/starship.toml
+format = "${custom.bonsai}$all"
+
+[custom.bonsai]
+when = '[ -n "$BONSAI_DEPTH" ]'
+command = 'printf "%s" "$BONSAI_PROMPT_PREFIX"'
+format = "$output"
+```
+
+```zsh
+# ~/.p10k.zsh: add `bonsai` to POWERLEVEL9K_LEFT_PROMPT_ELEMENTS
+function prompt_bonsai() {
+  [[ -n $BONSAI_DEPTH ]] || return
+  p10k segment -f 208 -t "$BONSAI_PROMPT_PREFIX"
+}
+```
+
+**Known limits**
+
+- `exec zsh` inside a bonsai shell drops the hook, because the real `ZDOTDIR`
+  is restored. The env vars stay, so the snippet path still works.
+- p10k instant prompt can show the prompt without the prefix until the first
+  hook runs.
+- fish, nu, pwsh, ksh and mksh are lightly tested. The nu guard is keyed to
+  `BONSAI_DEPTH`, so a nested shell re-installs it.
 
 ## Configuration
 
