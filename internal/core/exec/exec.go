@@ -5,6 +5,7 @@ package exec
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -413,6 +414,17 @@ func ShellCmd(path string, o ShellOptions) *exec.Cmd {
 	}
 	cmd.Env = env
 	return cmd
+}
+
+// ShellExitErr filters the error returned when an interactive shell ends. A
+// shell exits with its last command's status, so a non-zero exit after a
+// failed command is a normal return, not a failure to report.
+func ShellExitErr(err error) error {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nil
+	}
+	return err
 }
 
 // userCacheDir is a seam so tests never write to the real cache directory.

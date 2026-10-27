@@ -1,7 +1,10 @@
 package exec
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	osexec "os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -306,5 +309,44 @@ func TestShellCmdPrompt(t *testing.T) {
 	bad := ShellCmd(t.TempDir(), ShellOptions{})
 	if len(bad.Args) != 1 || len(bad.Env) == 0 {
 		t.Errorf("fallback args=%v env=%d", bad.Args, len(bad.Env))
+	}
+}
+
+func TestShellExitErr(t *testing.T) {
+	plain := errors.New("start failed")
+	tests := []struct {
+		name string
+		in   error
+		want error
+	}{
+		{"nil", nil, nil},
+		{"plain error unchanged", plain, plain},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ShellExitErr(tc.in); got != tc.want {
+				t.Fatalf("ShellExitErr(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	wrapped := fmt.Errorf("launch: %w", plain)
+	if got := ShellExitErr(wrapped); got != wrapped {
+		t.Fatalf("wrapped non-exit error changed: %v", got)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	err := osexec.Command("sh", "-c", "exit 3").Run()
+	var ee *osexec.ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("setup: want ExitError, got %v", err)
+	}
+	if got := ShellExitErr(err); got != nil {
+		t.Fatalf("ShellExitErr(exit 3) = %v, want nil", got)
+	}
+	if got := ShellExitErr(fmt.Errorf("shell: %w", err)); got != nil {
+		t.Fatalf("wrapped exit error = %v, want nil", got)
 	}
 }

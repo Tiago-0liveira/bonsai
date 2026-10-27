@@ -1020,7 +1020,7 @@ func (m Model) openShell() (tea.Model, tea.Cmd) {
 	}
 	c := coreexec.ShellCmd(wt.Path, coreexec.ShellOptions{Glyph: m.state.Prefs.DepthGlyph, Prompt: m.state.Prefs.ShellPrompt})
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
-		return opDoneMsg{label: "shell", err: err}
+		return opDoneMsg{label: "shell", err: coreexec.ShellExitErr(err)}
 	})
 }
 
