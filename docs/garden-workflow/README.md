@@ -1,8 +1,10 @@
 # Garden workflow implementation
 
 Branch: `feat/garden-workflow`, created from `feat/tui-redesign` at
-`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Status: planned; implementation
-has not started. Existing Garden services and the opt-in redesign are the baseline.
+`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Phases 01–03 are complete;
+phases 04–13 are planned. Existing Garden services and the opt-in redesign are
+the baseline. Earlier Garden features provide capabilities for later phases, but
+do not by themselves satisfy those phases' deliverables and exit criteria.
 
 [Image gallery](design/index.html) · [Overview](design/overview.png) ·
 [Design notes](design/README.md). The design folder contains all **44 PNG/SVG
@@ -46,21 +48,21 @@ pairs**, the manifest, offline gallery and generators. Mock data is illustrative
 The index is the only place that links plans. Individual plans contain no sibling
 plan references; their entry contracts describe code, not reading dependencies.
 
-| Order | Plan | Bounded result |
-|---|---|---|
-| 01 | [Overlay renderer](plans/01-overlay-renderer.md) | Actual board + modal composition in a terminal |
-| 02 | [Ticket overlay host](plans/02-ticket-overlays.md) | One item shell, focus and action routing |
-| 03 | [Private draft storage](plans/03-private-draft-storage.md) | Durable local drafts with stable IDs and conflict protection |
-| 04 | [Manual drafting](plans/04-manual-drafting.md) | Complete no-AI capture/editor/inbox |
-| 05 | [AI drafting](plans/05-ai-drafting.md) | Optional discussion beside the same specification |
-| 06 | [Approve and publish](plans/06-approve-and-publish.md) | Exact, recoverable GitHub creation and spec acceptance |
-| 07 | [Board and live state](plans/07-board-and-live-state.md) | Six phases plus detailed stages and truthful activity |
-| 08 | [Tables and attention](plans/08-tables-and-attention.md) | Shared row/grouped views and Needs you |
-| 09 | [Planning and revisions](plans/09-planning-and-revisions.md) | Focused plan reading, comparisons and feedback |
-| 10 | [Review policy](plans/10-review-policy.md) | Explicit account/effort/permission policy and durable review identity |
-| 11 | [Launch and supervision](plans/11-launch-and-supervision.md) | Previewed implementation + review intent and real run controls |
-| 12 | [Bounded review execution](plans/12-bounded-review-execution.md) | Detached one-pass review, fixes and verification |
-| 13 | [Human handoff and completion](plans/13-human-handoff.md) | Evidence, explicit rework and verified completion |
+| Order | Plan | Status | Bounded result |
+|---|---|---|---|
+| 01 | [Overlay renderer](plans/01-overlay-renderer.md) | Done (`1e45960`) | Actual board + modal composition in a terminal |
+| 02 | [Ticket overlay host](plans/02-ticket-overlays.md) | Done (`426c0e8`) | One item shell, focus and action routing |
+| 03 | [Private draft storage](plans/03-private-draft-storage.md) | Done (`1e8b722`) | Durable local drafts with stable IDs and conflict protection |
+| 04 | [Manual drafting](plans/04-manual-drafting.md) | Done (`8189081`) | Complete no-AI capture/editor/inbox |
+| 05 | [AI drafting](plans/05-ai-drafting.md) | Planned | Optional discussion beside the same specification |
+| 06 | [Approve and publish](plans/06-approve-and-publish.md) | Planned | Exact, recoverable GitHub creation and spec acceptance |
+| 07 | [Board and live state](plans/07-board-and-live-state.md) | Planned | Six phases plus detailed stages and truthful activity |
+| 08 | [Tables and attention](plans/08-tables-and-attention.md) | Planned | Shared row/grouped views and Needs you |
+| 09 | [Planning and revisions](plans/09-planning-and-revisions.md) | Planned | Focused plan reading, comparisons and feedback |
+| 10 | [Review policy](plans/10-review-policy.md) | Planned | Explicit account/effort/permission policy and durable review identity |
+| 11 | [Launch and supervision](plans/11-launch-and-supervision.md) | Planned | Previewed implementation + review intent and real run controls |
+| 12 | [Bounded review execution](plans/12-bounded-review-execution.md) | Planned | Detached one-pass review, fixes and verification |
+| 13 | [Human handoff and completion](plans/13-human-handoff.md) | Planned | Evidence, explicit rework and verified completion |
 
 ## Verification
 
