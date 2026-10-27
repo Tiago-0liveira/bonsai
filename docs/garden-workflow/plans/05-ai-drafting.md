@@ -1,6 +1,23 @@
 # 05 / Optional assistance beside the draft
 
-Status: planned.
+Status: done.
+
+Completion note: **Invite assistant…** / **Discuss with AI…** / `Ctrl+G` open an
+invitation (the shared account/model/effort dialog, at most three questions per round,
+exact disclosure) and then a discussion pane beside the draft (a tab on compact screens)
+in `internal/ui/gardenprivateassist{,_view}.go`; it reuses the Issue assistant's options,
+answer panel and review state. Requests for a private draft carry
+`gardenapi.PrivateDraftRef` (draft ID, base revision, request generation) through the same
+`AssistQuestions`/`AssistDraft` path (`gardenbackend/assist.go`: stored, unarchived,
+unpublished draft; read access suffices; no GitHub call). `drafts.Draft.Decisions`
+(`deferred`/`assumed`, advisory only) is persisted beside `ConfirmedAnswers`, and
+`drafts.Assess` counts a deferral only when the spec carries its exact recorded line.
+`assist.AdvisoryArea` decides which questions may be deferred. Checks:
+`go test ./internal/ui/... ./internal/core/garden/... ./internal/gardenbackend/...`, race on
+drafts and gardenbackend, and a tmux session at 80×24, 120×35 and 160×48 against fake
+providers. Limitations: one section is editable at a time beside the pane (others are
+previews); pending questions and proposals are memory only (skipped/unknown answers become open Questions lines when applied); Review & create issue is still
+a read-only preview; no new provider integration or publication logic.
 
 ## Deliverable
 

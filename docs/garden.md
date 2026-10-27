@@ -220,8 +220,9 @@ creates the draft (shown as `D-1A2B3C`, with the full ID only in the inspector);
 **Continue writing** opens the same draft's specification: Problem, Outcome,
 Requirements, Criteria and Questions, with Summary, Constraints and any other
 section you already have under *More*. `Ctrl+T` edits the title and `Ctrl+Y`
-cycles the type. **Discuss with AI…** and **Invite assistant…** only explain that
-the assistant is not available for local drafts yet.
+cycles the type. **Discuss with AI…** and **Invite assistant…** are optional: see
+[Discuss a local draft with an assistant](#discuss-a-local-draft-with-an-assistant).
+Without an agent account the editor says so and everything else works unchanged.
 
 Text is saved by itself shortly after you stop typing (`Ctrl+S` saves now). The
 status reads `Saving…`, `✓ Saved locally`, `Unsaved changes`, `Save failed — text
@@ -236,6 +237,46 @@ inbox after a restart. Archive is reversible (`a`, then `u`).
 preview with the concrete reasons a draft is not ready. Creating the GitHub issue
 is not available yet, so the confirmation is disabled and the draft stays saved
 locally.
+
+### Discuss a local draft with an assistant
+
+An assistant is an invitation, never a step. Focus **Invite assistant…** (or press
+`Ctrl+G`; on a compact screen it is the last tab) and choose an account that supports
+tool-free structured calls, a model and an effort, plus how many questions a round may
+ask (at most three) and optional guidance. The dialog lists exactly what would be sent:
+the title and type, the description, the specification text, your confirmed answers,
+your guidance and the repository name. No repository files are read and nothing is
+sent until **Start discussion**; **Keep writing myself** (`Esc`) leaves the draft
+exactly as it was. Bonsai never substitutes another account or model.
+
+The discussion sits beside the specification (a tab on compact screens), so you can keep
+writing while a request runs. It shows what the assistant understood and one focused
+question at a time, with suggested choices, *Write my own answer*, notes, *I don't know*
+and *Skip*; `w` or **Why?** shows why a question matters. `PgUp`/`PgDn` move between the
+questions, `Tab` moves between the options, the text and the buttons, `Esc` steps back
+and `Ctrl+G` returns to the text. While a request runs, `Esc` in the discussion cancels it.
+
+**Apply answers** asks for a proposal. A proposal is drawn apart from your draft and
+changes nothing until **Apply**. Each section is taken or left with `Enter`; a section
+you edited after the request began is kept as yours and is replaced only if you choose
+it, and suggestions nobody asked for join only when you confirm them. Applied sections
+are marked `●`. Applying also records the answers you gave as confirmed answers, saved
+with the draft and restored after a restart; the questions and proposals themselves are
+never saved. A question you already answered or settled is not asked again.
+
+A skipped or *I don't know* answer decides nothing: when you apply, its question is
+written into the Questions section as an open item (unless a line already asks it), so it
+blocks approval in the saved draft and after a restart, whatever you did with the
+proposal's own Questions text. While a round is showing, its scope and acceptance
+questions also count as open decisions in the readiness row; questions you never applied
+are not part of the draft. Only an advisory question
+(constraint or context) can be settled without an answer: **Defer** or **Assume** (of
+your chosen suggestion or your own words) records a decision with the draft and writes
+its line (`Deferred: …` or `Assumed: … (…)`, always one line) into Questions. That exact line then counts
+as deferred (`✓ Questions resolved · 1 deferred`); a hand-typed or edited line does not.
+A failed or cancelled request keeps all your text and offers **Retry** (`R`); a reply
+that arrives after you cancelled, left the draft or asked again is ignored. Review &
+create issue is still a read-only preview.
 
 ### Capture
 

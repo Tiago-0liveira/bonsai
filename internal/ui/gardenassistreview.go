@@ -106,20 +106,30 @@ type reviewSection struct {
 
 // assistSections derives every fixed section's state and decision from the editor as it is now.
 func (m Model) assistSections(s *assistSession) []reviewSection {
-	r := s.review
 	e := m.garden.drafts.editors[s.key]
 	if e != nil {
 		e.flush()
 	}
+	return reviewSectionsOf(s.review, func(i int) (string, bool) {
+		if e != nil && i < len(e.secs) {
+			return e.secs[i].text, true
+		}
+		return "", false
+	})
+}
+
+// reviewSectionsOf compares what the request sent, what the working text holds now and the proposal.
+// cur reports the working text of fixed section i, or false when the sent text is still current.
+func reviewSectionsOf(r *reviewState, cur func(int) (string, bool)) []reviewSection {
 	out := make([]reviewSection, spec.FixedCount)
 	for i := range out {
-		cur := r.input[i]
-		if e != nil && i < len(e.secs) {
-			cur = e.secs[i].text
+		text := r.input[i]
+		if now, ok := cur(i); ok {
+			text = now
 		}
-		same := garden.NormalizeContent(cur) == garden.NormalizeContent(r.proposed[i])
-		edited := garden.NormalizeContent(cur) != garden.NormalizeContent(r.input[i])
-		sec := reviewSection{cur: cur, edited: edited}
+		same := garden.NormalizeContent(text) == garden.NormalizeContent(r.proposed[i])
+		edited := garden.NormalizeContent(text) != garden.NormalizeContent(r.input[i])
+		sec := reviewSection{cur: text, edited: edited}
 		switch {
 		case same:
 			sec.state = '='
@@ -130,7 +140,7 @@ func (m Model) assistSections(s *assistSession) []reviewSection {
 		}
 		// A proposal that empties a section the person wrote is never the default:
 		// accepting it would delete their text, so only an explicit a does that.
-		clears := strings.TrimSpace(r.proposed[i]) == "" && strings.TrimSpace(cur) != ""
+		clears := strings.TrimSpace(r.proposed[i]) == "" && strings.TrimSpace(text) != ""
 		sec.clears = clears
 		switch r.choice[i] {
 		case 1:
@@ -408,7 +418,7 @@ func (m Model) gsAssistReview(s *assistSession, width, rows int) []string {
 	// The pane of the selected section.
 	var pane []assistInfoLine
 	if r.onSuggestions() {
-		pane = m.assistSuggestionPane(r, th)
+		pane = m.assistSuggestionPane(r, th, func(i int) string { return spec.Names[i] })
 	} else {
 		pane = m.assistSectionPane(s, secs, pr, tw)
 	}
@@ -445,7 +455,7 @@ func (m Model) gsAssistReview(s *assistSession, width, rows int) []string {
 }
 
 // assistSuggestionPane lists the suggestions with their confirmation; only confirmed ones are ever saved.
-func (m Model) assistSuggestionPane(r *reviewState, th int) []assistInfoLine {
+func (m Model) assistSuggestionPane(r *reviewState, th int, label func(int) string) []assistInfoLine {
 	p := theme.Current
 	pane := []assistInfoLine{
 		{"? Suggestions · the assistant's ideas, nobody asked for them", p.Warning, true},
@@ -466,7 +476,7 @@ func (m Model) assistSuggestionPane(r *reviewState, th int) []assistInfoLine {
 		if i == r.sugCur {
 			cur = "› "
 		}
-		pane = append(pane, assistInfoLine{cur + box + " " + spec.Names[sg.section] + ": " + boardTitle(sg.item.Text), fg, i == r.sugCur})
+		pane = append(pane, assistInfoLine{cur + box + " " + label(sg.section) + ": " + boardTitle(sg.item.Text), fg, i == r.sugCur})
 	}
 	return pane
 }
@@ -477,6 +487,9 @@ func (m Model) assistSectionPane(s *assistSession, secs []reviewSection, pr *ass
 	r := s.review
 	sec := secs[r.sel]
 	title := spec.Names[r.sel]
+	if s.private != nil {
+		title = privFieldLabel(r.sel)
+	}
 	var pane []assistInfoLine
 	word := map[byte]string{'=': "no change proposed", '~': "proposed change", '!': "you edited this section"}[sec.state]
 	pane = append(pane, assistInfoLine{"§ " + title + " · " + word, p.Warning, true})

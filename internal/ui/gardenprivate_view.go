@@ -63,6 +63,9 @@ func (m Model) privEditorLayout() (th, pv int) {
 		return max(3, rows-3-1-1), 0
 	}
 	avail := max(3, rows-3-2-1)
+	if m.privSideAssist(m.garden.drafts.private) {
+		avail = max(3, rows-5-2) // the tabs and the section title take two rows of the column
+	}
 	if p := m.garden.drafts.private; p != nil && avail >= 14 {
 		others := 0
 		for i, e := range p.secs {
@@ -83,6 +86,9 @@ func (m Model) privEditorText() (w, h int) {
 	if m.privCompact() {
 		return max(10, m.width-4), h
 	}
+	if m.privSideAssist(m.garden.drafts.private) {
+		return max(10, m.width-privPaneWidth(m.width)-5), h
+	}
 	return max(10, min(100, m.width-gardenEditorRail(m.width)-4)), h
 }
 
@@ -98,6 +104,8 @@ func (m Model) gsPrivate(width, rows int) []string {
 		out = m.privCaptureView(p, width, rows)
 	case p.stage == privReview:
 		out = m.privReviewView(p, width, rows)
+	case p.pa != nil && p.pa.stage == paInvite:
+		out = m.privInviteView(p, width, rows)
 	default:
 		out = m.privEditorView(p, width, rows)
 	}
@@ -217,7 +225,9 @@ type privCheck struct {
 	text string
 }
 
-func privChecks(r drafts.Readiness) []privCheck {
+// privChecks lists the readiness checks. pending counts assistant questions about scope or acceptance that are
+// still waiting in the discussion: they are not stored, but they hold the draft back until applied or left open.
+func privChecks(r drafts.Readiness, pending int) []privCheck {
 	missing := map[string]bool{}
 	for _, name := range r.Missing {
 		missing[name] = true
@@ -236,15 +246,22 @@ func privChecks(r drafts.Readiness) []privCheck {
 	if r.Unresolved > 0 {
 		out = append(out, privCheck{false, fmt.Sprintf("%d open question%s", r.Unresolved, plural(r.Unresolved))})
 	} else {
-		out = append(out, privCheck{true, "Questions resolved"})
+		text := "Questions resolved"
+		if r.Deferred > 0 {
+			text += fmt.Sprintf(" · %d deferred", r.Deferred)
+		}
+		out = append(out, privCheck{true, text})
+	}
+	if pending > 0 {
+		out = append(out, privCheck{false, paPendingText(pending)})
 	}
 	return out
 }
 
 // privReasons are the concrete things that stop the draft from being ready.
-func privReasons(r drafts.Readiness) []string {
+func privReasons(r drafts.Readiness, pending int) []string {
 	var out []string
-	for _, c := range privChecks(r) {
+	for _, c := range privChecks(r, pending) {
 		if !c.ok {
 			out = append(out, c.text)
 		}
@@ -266,7 +283,7 @@ func (m Model) privReadinessRow(p *privateDraft, width int) string {
 			}
 		}
 		text, fg := fmt.Sprintf("%d/3 ready", done), c.Warning
-		if reasons := privReasons(r); len(reasons) > 0 {
+		if reasons := privReasons(r, p.paPending()); len(reasons) > 0 {
 			text += " · " + reasons[0]
 		} else {
 			fg = c.Accent
@@ -274,7 +291,7 @@ func (m Model) privReadinessRow(p *privateDraft, width int) string {
 		return seg(fg, c.Background, false).Render(" " + text)
 	}
 	var runs []grun
-	for _, ck := range privChecks(r) {
+	for _, ck := range privChecks(r, p.paPending()) {
 		if ck.ok {
 			runs = append(runs, grun{"✓ " + ck.text + "   ", c.Accent, false})
 		} else {
@@ -286,13 +303,20 @@ func (m Model) privReadinessRow(p *privateDraft, width int) string {
 
 func (m Model) privEditorView(p *privateDraft, width, rows int) []string {
 	c := theme.Current
+	if m.privSideAssist(p) {
+		return m.privAssistView(p, width)
+	}
 	out := m.privHeader(p, width)
 	th, pv := m.privEditorLayout()
 	tw, _ := m.privEditorText()
 	review := privButton("Review & create issue →", p.foc == p.focReview() && !p.text, true)
 	if m.privCompact() {
-		out = append(out, m.privTabs(p, width))
-		out = append(out, m.privTextRows(p, width, tw, th, 0)...)
+		out = append(out, m.privTabs(p, width, true))
+		if m.privPageAssist(p) {
+			out = append(out, m.privAssistPage(p, width)...)
+		} else {
+			out = append(out, m.privTextRows(p, width, tw, th, 0)...)
+		}
 		left := m.privReadinessRow(p, width)
 		out = append(out, shellRow(width, c.Background, ansi.Truncate(left, max(0, width-lipgloss.Width(review)-2), ""), review+" "))
 		return out
@@ -309,13 +333,7 @@ func (m Model) privEditorView(p *privateDraft, width, rows int) []string {
 	pane = append(pane, m.privTextLines(p, tw, th)...)
 	if pv > 0 {
 		pane = append(pane, privCell("", tw, c.Muted, c.Background, false))
-		for i, e := range p.secs {
-			if i == p.cur || strings.TrimSpace(e.text) == "" || len(pane) >= len(rail)-1 {
-				continue
-			}
-			first := strings.TrimSpace(strings.SplitN(strings.TrimSpace(e.text), "\n", 2)[0])
-			pane = append(pane, privCell(strings.ToUpper(e.title), tw, c.Muted, c.Background, true), privCell(first, tw, c.Muted, c.Background, false))
-		}
+		pane = append(pane, m.privPreviews(p, tw, len(rail)-1-len(pane))...)
 	}
 	for len(pane) < len(rail) {
 		pane = append(pane, privCell("", tw, c.Muted, c.Background, false))
@@ -326,6 +344,20 @@ func (m Model) privEditorView(p *privateDraft, width, rows int) []string {
 	}
 	out = append(out, m.privReadinessRow(p, width))
 	out = append(out, shellRow(width, c.Background, "", review+" "))
+	return out
+}
+
+// privPreviews is a title and a first line for every other written section, up to limit lines.
+func (m Model) privPreviews(p *privateDraft, tw, limit int) []string {
+	c := theme.Current
+	var out []string
+	for i, e := range p.secs {
+		if i == p.cur || strings.TrimSpace(e.text) == "" || len(out)+2 > limit {
+			continue
+		}
+		first := strings.TrimSpace(strings.SplitN(strings.TrimSpace(e.text), "\n", 2)[0])
+		out = append(out, privCell(strings.ToUpper(e.title), tw, c.Muted, c.Background, true), privCell(first, tw, c.Muted, c.Background, false))
+	}
 	return out
 }
 
@@ -363,12 +395,15 @@ func (m Model) privTextRows(p *privateDraft, width, tw, th, _ int) []string {
 }
 
 // privTabs is the compact section row: five tabs, plus the open one when it is a More section.
-func (m Model) privTabs(p *privateDraft, width int) string {
+func (m Model) privTabs(p *privateDraft, width int, discuss bool) string {
 	c := theme.Current
 	short := []string{"Problem", "Outcome", "Req", "Criteria", "Questions"}
 	var b strings.Builder
 	b.WriteString(seg("", c.Background, false).Render(" "))
 	add := func(i int, label string) {
+		if p.changed[i] {
+			label += " ●" // an apply just rewrote it
+		}
 		if i == p.cur {
 			style := seg(c.Warning, c.Raised, true)
 			if p.text {
@@ -391,7 +426,18 @@ func (m Model) privTabs(p *privateDraft, width int) string {
 	if p.cur >= len(short) {
 		add(p.cur, p.secs[p.cur].title)
 	}
-	return shellRow(width, c.Background, b.String(), "")
+	if discuss {
+		label := paTabLabel(p)
+		switch {
+		case p.foc == p.focInvite() && p.pane:
+			b.WriteString(seg(c.Warning, c.Raised, true).Render(" ▌" + label + " "))
+		case p.foc == p.focInvite():
+			b.WriteString(seg(c.Warning, c.Raised, true).Render(" ▸" + label + " "))
+		default:
+			b.WriteString(seg(c.Accent, c.Background, false).Render(" " + label + " "))
+		}
+	}
+	return shellRow(width, c.Background, ansi.Truncate(b.String(), width, ""), "")
 }
 
 // privRail is the SECTIONS column, exactly h rows of w cells.
@@ -442,7 +488,7 @@ func (m Model) privReviewView(p *privateDraft, width, rows int) []string {
 	d := p.build()
 	r := drafts.Assess(d)
 	out = append(out, gHeadChip(width, "REVIEW & CREATE ISSUE", c.Warning))
-	if reasons := privReasons(r); len(reasons) > 0 {
+	if reasons := privReasons(r, p.paPending()); len(reasons) > 0 {
 		out = append(out, gText(width, c.Warning, false, "Not ready: "+strings.Join(reasons, " · ")))
 	} else {
 		out = append(out, gText(width, c.Accent, false, "✓ Every required section is written."))
@@ -486,6 +532,23 @@ func (m Model) privHints() []shellHint {
 		return []shellHint{{"Ctrl+S", "save draft"}, {"Tab", "action"}, {"Enter", "activate"}, {"Esc", "drafts"}}
 	case p.stage == privReview:
 		return []shellHint{{"↑/↓", "scroll"}, {"Esc", "editor"}}
+	}
+	if pa := p.pa; pa != nil {
+		switch {
+		case pa.stage == paInvite:
+			return []shellHint{{"Tab", "next"}, {"Enter", "choose"}, {"Esc", "keep writing"}, {"Ctrl+S", "save draft"}}
+		case p.pane && pa.flight != nil:
+			return []shellHint{{"Esc", "cancel request"}, {"Ctrl+G", "back to text"}}
+		case p.pane && pa.stage == paQuestions:
+			return []shellHint{{"Tab", "zone"}, {"PgUp/PgDn", "question"}, {"Enter", "select"}, {"Esc", "back"}, {"Ctrl+G", "text"}}
+		case p.pane && pa.stage == paProposal:
+			return []shellHint{{"↑/↓", "section"}, {"Enter", "take/keep"}, {"Tab", "buttons"}, {"Esc", "back"}}
+		case p.pane && (pa.err != nil || pa.cancelled):
+			return []shellHint{{"R", "retry"}, {"←/→", "button"}, {"Enter", "choose"}, {"Esc", "back"}}
+		case p.pane:
+			return []shellHint{{"←/→", "button"}, {"Enter", "choose"}, {"Esc", "back"}, {"Ctrl+G", "text"}}
+		}
+		return []shellHint{{"Tab", "section"}, {"Ctrl+G", "discussion"}, {"Ctrl+S", "save draft"}, {"Ctrl+Enter", "review"}, {"Esc", "drafts"}}
 	}
 	return []shellHint{{"Tab", "section"}, {"Ctrl+S", "save draft"}, {"Ctrl+Enter", "review"}, {"Esc", "drafts"}}
 }
@@ -573,7 +636,7 @@ func (m Model) gardenLocalInspector(w, n int, l drafts.Draft) []string {
 	blank()
 	state, fg := localState(l)
 	line(fg, true, state)
-	for _, reason := range privReasons(drafts.Assess(l)) {
+	for _, reason := range privReasons(drafts.Assess(l), 0) {
 		line(c.Muted, false, "○ "+reason)
 	}
 	blank()

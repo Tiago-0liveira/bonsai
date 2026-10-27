@@ -292,6 +292,9 @@ func (m Model) assistAccountSummary(s *assistSession) string {
 
 // assistDisclosure is said before the first call: what leaves the machine, and where to.
 func (m Model) assistDisclosure(s *assistSession) string {
+	if s.private != nil {
+		return m.privDisclosure(s.private)
+	}
 	who := "the chosen account"
 	if a, ok := s.opts.Current(); ok {
 		who = fmt.Sprintf("%s (account %s)", assistProviderName(a.Provider), boardTitle(a.Name))
@@ -405,6 +408,9 @@ func (m Model) gsAssistOptions(s *assistSession, width, rows int) []string {
 	row := func(fg lipgloss.Color, bold bool, text string) string { return gText(width, fg, bold, text) }
 
 	title := "✎ AI OPTIONS / THIS SESSION ONLY"
+	if s.private != nil {
+		title = "✎ INVITE AN ASSISTANT / THIS DRAFT"
+	}
 	if o.defaultsMode {
 		title = "✎ AI DRAFTING / DEFAULTS"
 	}
@@ -471,7 +477,7 @@ func (m Model) gsAssistOptions(s *assistSession, width, rows int) []string {
 	}
 	o.guidance.Width = max(8, min(iw-16, 60))
 	tail := []string{
-		gRuns(width, p.Background, grun{marker(qFocus) + "Questions  ", qfg, qFocus}, grun{fmt.Sprintf("‹ %d ›  per round, 1 to %d", o.questions, assist.MaxQuestions), p.Text, false}),
+		gRuns(width, p.Background, grun{marker(qFocus) + "Questions  ", qfg, qFocus}, grun{fmt.Sprintf("‹ %d ›  per round, 1 to %d", o.questions, o.maxQuestions), p.Text, false}),
 		shellRow(width, p.Background, seg(gfg, p.Background, gFocus).Render(" "+marker(gFocus)+"Guidance   ")+seg(p.Text, p.Background, false).Render("[ ")+o.guidance.View()+seg(p.Text, p.Background, false).Render(" ]"), ""),
 	}
 	if o.defaultsMode {
@@ -563,7 +569,7 @@ func (s *assistSession) panelGeometry(tw, th int) assistGeometry {
 	for _, l := range wrapLines(boardTitle(q.Text), tw) {
 		block = append(block, assistInfoLine{l, p.Text, true})
 	}
-	if t := boardTitle(q.Why); t != "" {
+	if t := boardTitle(q.Why); t != "" && !s.hideWhy {
 		for _, l := range wrapLines("Why: "+t, tw) {
 			block = append(block, assistInfoLine{l, p.Muted, false})
 		}

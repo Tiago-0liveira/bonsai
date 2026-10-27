@@ -17,6 +17,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/assist"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
@@ -653,10 +654,21 @@ type AssistSettings struct {
 	Guidance      string
 }
 
+// PrivateDraftRef scopes one assistance request to a private local draft. Revision is the
+// durable revision the working copy started from and Generation the caller's request counter;
+// both come back unchanged so a late reply can be matched to the request that asked for it.
+type PrivateDraftRef struct {
+	ID         drafts.ID
+	Revision   uint64
+	Generation uint64
+}
+
 // AssistContext carries the caller's working copy; the backend never loads an Issue.
+// A request for a private draft sets PrivateDraft and leaves IssueID and Number zero.
 type AssistContext struct {
 	Stamp
 	RequestID          string
+	PrivateDraft       *PrivateDraftRef
 	IssueID            uint64
 	Number             int64
 	Title              string
@@ -678,6 +690,7 @@ type AssistDraftRequest struct {
 
 type AssistQuestionsView struct {
 	Stamp
+	PrivateDraft    *PrivateDraftRef
 	RequestID       string
 	Round           int
 	Set             assist.QuestionSet
@@ -686,6 +699,7 @@ type AssistQuestionsView struct {
 
 type AssistDraftView struct {
 	Stamp
+	PrivateDraft         *PrivateDraftRef
 	RequestID, InputHash string
 	Proposal             assist.Proposal
 }

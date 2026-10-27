@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/assist"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
@@ -411,4 +413,153 @@ func TestAssistExpiredContextBeforeRunner(t *testing.T) {
 			})
 		}
 	}
+}
+
+// privateAssistHarness is a connected clone whose private store holds one draft, and a request for it.
+func privateAssistHarness(t *testing.T) (*harness, drafts.Draft, gardenapi.AssistContext) {
+	t.Helper()
+	h, _ := workHarness(t)
+	store, err := drafts.New(filepath.Join(t.TempDir(), "private", "drafts.json"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.b.deps.PrivateDrafts = store
+	d, err := store.Save(context.Background(), drafts.Scope{Local: h.b.local, Repo: acmeID}, drafts.Draft{Title: "Local idea", Type: garden.TypeFeature, Description: "Faster export"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := gardenapi.AssistContext{
+		Stamp: h.b.stamp(0, acmeID), RequestID: "priv-1", PrivateDraft: &gardenapi.PrivateDraftRef{ID: d.ID, Revision: d.Revision, Generation: 4},
+		Title: d.Title, Type: d.Type, Description: d.Description, Draft: "## Summary\nFaster export\n",
+		Settings: gardenapi.AssistSettings{AccountID: "claude-acct", Model: "opus", Effort: "high"},
+	}
+	return h, d, req
+}
+
+func TestAssistPrivateDraftReusesStructuredPathWithoutGitHub(t *testing.T) {
+	for _, draft := range []bool{false, true} {
+		t.Run(fmt.Sprint("draft=", draft), func(t *testing.T) {
+			h, d, req := privateAssistHarness(t)
+			// Read access is enough: nothing is written to GitHub for a local draft.
+			changeAssistAssociation(t, h, func(a *connect.Association) { a.Access = connect.AccessRead })
+			req.Stamp = h.b.stamp(0, acmeID)
+			req.Answers = []assist.Answer{{QuestionID: "c1", Question: "Who?", State: assist.Answered, Text: "Admins"}}
+			before := h.calls()
+			var got agentsapi.AssistRequest
+			h.b.deps.Assist = assistRunner(func(_ context.Context, r agentsapi.AssistRequest) (json.RawMessage, error) {
+				got = r
+				if draft {
+					return []byte(draftReply), nil
+				}
+				return []byte(questionsReply), nil
+			})
+			var echoed *gardenapi.PrivateDraftRef
+			if draft {
+				v, err := h.b.AssistDraft(context.Background(), gardenapi.AssistDraftRequest{AssistContext: req})
+				if err != nil {
+					t.Fatal(err)
+				}
+				echoed = v.PrivateDraft
+			} else {
+				v, err := h.b.AssistQuestions(context.Background(), gardenapi.AssistQuestionsRequest{AssistContext: req, Round: 1})
+				if err != nil {
+					t.Fatal(err)
+				}
+				echoed = v.PrivateDraft
+			}
+			if echoed == nil || *echoed != (gardenapi.PrivateDraftRef{ID: d.ID, Revision: d.Revision, Generation: 4}) {
+				t.Fatalf("reply lost its scope: %+v", echoed)
+			}
+			if got.AccountID != "claude-acct" || got.Model != "opus" || got.Effort != "high" {
+				t.Fatalf("provider choice was changed: %+v", got)
+			}
+			for _, want := range []string{"Faster export", "Local idea", "Admins", "acme/my-app"} {
+				if !strings.Contains(string(got.Input), want) {
+					t.Errorf("input lacks %q: %s", want, got.Input)
+				}
+			}
+			if h.calls() != before {
+				t.Fatal("a private-draft request read or wrote GitHub")
+			}
+		})
+	}
+}
+
+func TestAssistPrivateDraftRefusalsBeforeRunner(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*testing.T, *harness, *drafts.Draft, *gardenapi.AssistContext)
+		want   gardenapi.Code
+	}{
+		{"also an Issue", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) { r.IssueID = 20 }, gardenapi.CodeInvalidInput},
+		{"also an Issue number", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) { r.Number = 7 }, gardenapi.CodeInvalidInput},
+		{"no ID", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) { r.PrivateDraft.ID = "" }, gardenapi.CodeInvalidInput},
+		{"no revision", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) {
+			r.PrivateDraft.Revision = 0
+		}, gardenapi.CodeInvalidInput},
+		{"no generation", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) {
+			r.PrivateDraft.Generation = 0
+		}, gardenapi.CodeInvalidInput},
+		{"revision from the future", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) {
+			r.PrivateDraft.Revision += 5
+		}, gardenapi.CodeInvalidInput},
+		{"unknown draft", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) {
+			r.PrivateDraft.ID = "draft-missing"
+		}, gardenapi.CodeNotFound},
+		{"archived", func(t *testing.T, h *harness, d *drafts.Draft, r *gardenapi.AssistContext) {
+			if _, err := h.b.deps.PrivateDrafts.Archive(context.Background(), drafts.Scope{Local: h.b.local, Repo: acmeID}, d.ID, d.Revision); err != nil {
+				t.Fatal(err)
+			}
+		}, gardenapi.CodeInvalidInput},
+		{"store missing", func(_ *testing.T, h *harness, _ *drafts.Draft, _ *gardenapi.AssistContext) {
+			h.b.deps.PrivateDrafts = nil
+		}, gardenapi.CodeStore},
+		{"not connected", func(t *testing.T, h *harness, _ *drafts.Draft, _ *gardenapi.AssistContext) {
+			changeAssistAssociation(t, h, func(a *connect.Association) { a.Access = connect.AccessNone })
+		}, gardenapi.CodeNotConnected},
+		{"epoch", func(_ *testing.T, h *harness, _ *drafts.Draft, _ *gardenapi.AssistContext) {
+			h.b.reassociate(garden.GardenID{Repo: acmeID})
+		}, gardenapi.CodeIdentityChanged},
+		{"unsupported role", func(_ *testing.T, h *harness, _ *drafts.Draft, _ *gardenapi.AssistContext) { h.b.deps.Assist = nil }, gardenapi.CodeAssistUnsupported},
+		{"description cap", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) {
+			r.Description = strings.Repeat("x", garden.MaxDescriptionBytes+1)
+		}, gardenapi.CodeInvalidInput},
+		{"UTF-8", func(_ *testing.T, _ *harness, _ *drafts.Draft, r *gardenapi.AssistContext) {
+			r.Draft = string([]byte{0xff})
+		}, gardenapi.CodeInvalidInput},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, d, req := privateAssistHarness(t)
+			var calls atomic.Int32
+			h.b.deps.Assist = assistRunner(func(context.Context, agentsapi.AssistRequest) (json.RawMessage, error) { calls.Add(1); return nil, nil })
+			tc.change(t, h, &d, &req)
+			mustErrCode(t, invokeAssist(context.Background(), h.b, req, false), tc.want)
+			if calls.Load() != 0 {
+				t.Fatal("refusal called runner")
+			}
+		})
+	}
+}
+
+func TestAssistPrivateDraftBusyAndCancelKeepNothing(t *testing.T) {
+	h, _, req := privateAssistHarness(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	h.b.deps.Assist = assistRunner(func(ctx context.Context, _ agentsapi.AssistRequest) (json.RawMessage, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil, ctx.Err()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- invokeAssist(ctx, h.b, req, false) }()
+	<-started
+	mustErrCode(t, invokeAssist(context.Background(), h.b, req, false), gardenapi.CodeAssistBusy)
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Fatalf("cancel: %v", err)
+	}
+	close(release)
 }

@@ -322,7 +322,8 @@ filter semantics, document sections, keys and current limitations.
 
 Drafts is a separate inbox for unvalidated ideas (`tab` from the Board, `n` to
 start a private local draft saved on this machine without GitHub, an assistant or a
-provider, with `Ctrl+S` to save now, `a`/`u`/`A` to archive, undo and show archived,
+provider (an assistant can be invited beside the draft with `Ctrl+G`; see
+[discuss a local draft](garden.md#discuss-a-local-draft-with-an-assistant)), with `Ctrl+S` to save now, `a`/`u`/`A` to archive, undo and show archived,
 `/` search, `t` type, `r` reconcile, `esc` back; see
 [local drafts](garden.md#local-drafts)). Without the private store, `n` captures a
 new idea as a GitHub Issue at Draft instead. GitHub capture needs a preview and confirmation, survives timeouts without

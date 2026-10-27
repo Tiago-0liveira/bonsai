@@ -44,3 +44,34 @@ func TestDraftLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestAssessDecisions(t *testing.T) {
+	deferred := Decision{Question: "Which platforms?", State: Deferred}
+	assumed := Decision{Question: "Which locale?", State: Assumed, Assumption: "English only"}
+	base := Draft{Title: "T", Spec: spec.Spec{CurrentBehavior: "p", DesiredBehavior: "o", AcceptanceCriteria: "c"}}
+	with := func(open string, decs ...Decision) Draft {
+		d := base
+		d.Spec.OpenQuestions, d.Decisions = open, decs
+		return d
+	}
+	for _, tc := range []struct {
+		name               string
+		d                  Draft
+		unresolved, parked int
+	}{
+		{"deferred line with a decision", with("- "+deferred.Line(), deferred), 0, 1},
+		{"assumed line with a decision", with("- "+assumed.Line(), assumed), 0, 1},
+		{"marker and case do not matter", with("1. deferred: WHICH platforms?", deferred), 0, 1},
+		{"hand-typed deferral is still open", with("- " + deferred.Line()), 1, 0},
+		{"edited line is open again", with("- Deferred: Which platforms? maybe", deferred), 1, 0},
+		{"decision without its line changes nothing", with("- Which platforms?", deferred), 1, 0},
+		{"unrelated question stays open", with("- "+deferred.Line()+"\n- Who owns it?", deferred), 1, 1},
+		{"a multi-line decision never matches", with("- Assumed: Linux\nmacOS (Which platforms?)", Decision{Question: "Which platforms?", State: Assumed, Assumption: "Linux\nmacOS"}), 2, 0},
+		{"a decision with no assumption is invalid", with("- Assumed:  (Q?)", Decision{Question: "Q?", State: Assumed}), 1, 0},
+	} {
+		r := Assess(tc.d)
+		if r.Unresolved != tc.unresolved || r.Deferred != tc.parked || r.Ready() != (tc.unresolved == 0) {
+			t.Errorf("%s: %+v", tc.name, r)
+		}
+	}
+}

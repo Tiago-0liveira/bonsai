@@ -1,8 +1,8 @@
 # Garden workflow implementation
 
 Branch: `feat/garden-workflow`, created from `feat/tui-redesign` at
-`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Phases 01–03 are complete;
-phases 04–13 are planned. Existing Garden services and the opt-in redesign are
+`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Phases 01–05 are complete;
+phases 06–13 are planned. Existing Garden services and the opt-in redesign are
 the baseline. Earlier Garden features provide capabilities for later phases, but
 do not by themselves satisfy those phases' deliverables and exit criteria.
 
@@ -54,7 +54,7 @@ plan references; their entry contracts describe code, not reading dependencies.
 | 02 | [Ticket overlay host](plans/02-ticket-overlays.md) | Done (`426c0e8`) | One item shell, focus and action routing |
 | 03 | [Private draft storage](plans/03-private-draft-storage.md) | Done (`1e8b722`) | Durable local drafts with stable IDs and conflict protection |
 | 04 | [Manual drafting](plans/04-manual-drafting.md) | Done (`8189081`) | Complete no-AI capture/editor/inbox |
-| 05 | [AI drafting](plans/05-ai-drafting.md) | Planned | Optional discussion beside the same specification |
+| 05 | [AI drafting](plans/05-ai-drafting.md) | Done | Optional discussion beside the same specification |
 | 06 | [Approve and publish](plans/06-approve-and-publish.md) | Planned | Exact, recoverable GitHub creation and spec acceptance |
 | 07 | [Board and live state](plans/07-board-and-live-state.md) | Planned | Six phases plus detailed stages and truthful activity |
 | 08 | [Tables and attention](plans/08-tables-and-attention.md) | Planned | Shared row/grouped views and Needs you |

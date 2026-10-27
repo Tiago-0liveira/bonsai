@@ -11,6 +11,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/assist"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
@@ -30,7 +31,7 @@ func (b *Backend) AssistQuestions(ctx context.Context, req gardenapi.AssistQuest
 		return gardenapi.AssistQuestionsView{}, assistError(err)
 	}
 	// The Assist port returns only JSON, so it cannot identify the provider.
-	return gardenapi.AssistQuestionsView{Stamp: stamp, RequestID: req.RequestID, Round: req.Round, Set: set, Model: req.Settings.Model}, nil
+	return gardenapi.AssistQuestionsView{Stamp: stamp, RequestID: req.RequestID, PrivateDraft: req.PrivateDraft, Round: req.Round, Set: set, Model: req.Settings.Model}, nil
 }
 
 // AssistDraft reads no GitHub, writes nothing and keeps no record.
@@ -43,7 +44,7 @@ func (b *Backend) AssistDraft(ctx context.Context, req gardenapi.AssistDraftRequ
 	if err != nil {
 		return gardenapi.AssistDraftView{}, assistError(err)
 	}
-	return gardenapi.AssistDraftView{Stamp: stamp, RequestID: req.RequestID, InputHash: garden.ContentHash(req.Draft), Proposal: proposal}, nil
+	return gardenapi.AssistDraftView{Stamp: stamp, RequestID: req.RequestID, PrivateDraft: req.PrivateDraft, InputHash: garden.ContentHash(req.Draft), Proposal: proposal}, nil
 }
 
 func (b *Backend) runAssist(ctx context.Context, req gardenapi.AssistContext, feedback string, build func(assist.Input) (assist.Call, error)) (json.RawMessage, assist.Input, gardenapi.Stamp, error) {
@@ -62,6 +63,10 @@ func (b *Backend) runAssist(ctx context.Context, req gardenapi.AssistContext, fe
 	if req.RequestID == "" || !utf8.ValidString(req.RequestID) {
 		return nil, in, gardenapi.Stamp{}, assistError(assist.ErrInvalidInput)
 	}
+	// A private draft has no Issue: a request cannot name both.
+	if ref := req.PrivateDraft; ref != nil && (req.IssueID != 0 || req.Number != 0 || ref.ID == "" || !utf8.ValidString(string(ref.ID)) || ref.Revision == 0 || ref.Generation == 0) {
+		return nil, in, gardenapi.Stamp{}, assistError(assist.ErrInvalidInput)
+	}
 	_, a, err := b.association(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -74,8 +79,12 @@ func (b *Backend) runAssist(ctx context.Context, req gardenapi.AssistContext, fe
 	if a == nil || a.Mode == connect.Skip || a.Access == connect.AccessNone {
 		return nil, in, gardenapi.Stamp{}, &gardenapi.Error{Code: gardenapi.CodeNotConnected, Message: "Garden is not set up for this clone."}
 	}
-	if err := requireWriteAccess(a.Access, a.RemoteFullName); err != nil {
-		return nil, in, gardenapi.Stamp{}, err
+	// Assisting a private draft writes nothing to GitHub, so read access suffices; it still needs
+	// the recorded association, which names the repository and scopes the draft inbox.
+	if req.PrivateDraft == nil {
+		if err := requireWriteAccess(a.Access, a.RemoteFullName); err != nil {
+			return nil, in, gardenapi.Stamp{}, err
+		}
 	}
 	stamp := b.stamp(0, a.GardenID.Repo)
 	if req.LocalRepoID != stamp.LocalRepoID || req.GardenID != stamp.GardenID || req.Epoch != stamp.Epoch {
@@ -83,6 +92,11 @@ func (b *Backend) runAssist(ctx context.Context, req gardenapi.AssistContext, fe
 	}
 	if b.deps.Assist == nil {
 		return nil, in, gardenapi.Stamp{}, assistError(agents.ErrStructuredUnsupported)
+	}
+	if req.PrivateDraft != nil {
+		if err := b.checkPrivateDraft(ctx, a.GardenID.Repo, *req.PrivateDraft); err != nil {
+			return nil, in, gardenapi.Stamp{}, err
+		}
 	}
 	b.mu.Lock()
 	if _, busy := b.assistFlights[req.RequestID]; busy {
@@ -121,6 +135,26 @@ func (b *Backend) runAssist(ctx context.Context, req gardenapi.AssistContext, fe
 	// the epoch of an association that changed while the provider was running.
 	stamp.Generation = b.gen.Add(1)
 	return raw, in, stamp, nil
+}
+
+// checkPrivateDraft proves the request names a live, unpublished draft of this clone and repository. It reads
+// only the local store, never GitHub, and never the draft's text: the caller sends its working copy.
+func (b *Backend) checkPrivateDraft(ctx context.Context, repo garden.RepoID, ref gardenapi.PrivateDraftRef) error {
+	if b.deps.PrivateDrafts == nil {
+		return &gardenapi.Error{Code: gardenapi.CodeStore, Message: "Private drafts are unavailable, so the assistant cannot work from a local draft."}
+	}
+	cur, err := b.deps.PrivateDrafts.Read(ctx, drafts.Scope{Local: b.local, Repo: repo}, ref.ID)
+	switch {
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return assistError(err)
+	case errors.Is(err, drafts.ErrNotFound):
+		return &gardenapi.Error{Code: gardenapi.CodeNotFound, Message: "That private draft no longer exists on this machine."}
+	case err != nil:
+		return &gardenapi.Error{Code: gardenapi.CodeStore, Message: "The private draft could not be read."}
+	case !cur.ArchivedAt.IsZero() || cur.Publication.State != drafts.Unpublished || cur.Revision < ref.Revision:
+		return assistError(assist.ErrInvalidInput)
+	}
+	return nil
 }
 
 func assistError(err error) error {

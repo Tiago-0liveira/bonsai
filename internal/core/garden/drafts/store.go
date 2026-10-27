@@ -217,6 +217,7 @@ func (s *Store) transaction(ctx context.Context, fn func(*disk) (bool, error)) e
 
 func clone(d Draft) Draft {
 	d.ConfirmedAnswers = append([]Answer(nil), d.ConfirmedAnswers...)
+	d.Decisions = append([]Decision(nil), d.Decisions...)
 	d.Spec.Extra = append(d.Spec.Extra[:0:0], d.Spec.Extra...)
 	if d.Publication.Issue != nil {
 		issue := *d.Publication.Issue

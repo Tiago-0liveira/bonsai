@@ -734,3 +734,50 @@ func TestUnarchiveScopeActiveAndPublished(t *testing.T) {
 		t.Fatalf("published unarchive: %+v %v", back, err)
 	}
 }
+
+func TestDecisionsPersistAndInvalidOnesAreRejected(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "drafts.json")
+	st := testStore(t, path)
+	d, err := st.Save(ctx, testScope, Draft{Title: "T", Decisions: []Decision{
+		{Question: "Which platforms?", State: Deferred},
+		{Question: "Which locale?", State: Assumed, Assumption: "English only"},
+	}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := testStore(t, path).Read(ctx, testScope, d.ID)
+	if err != nil || !reflect.DeepEqual(got.Decisions, d.Decisions) || len(got.Decisions) != 2 {
+		t.Fatalf("restart: %+v, %v", got.Decisions, err)
+	}
+	got.Decisions[0].Question = "Changed"
+	if again, _ := st.Read(ctx, testScope, d.ID); again.Decisions[0].Question != "Which platforms?" {
+		t.Fatal("returned decisions alias stored ones")
+	}
+	for name, dec := range map[string]Decision{
+		"unknown state":      {Question: "Q?", State: "resolved"},
+		"assumption missing": {Question: "Q?", State: Assumed},
+		"deferral with text": {Question: "Q?", State: Deferred, Assumption: "x"},
+		"empty question":     {State: Deferred},
+		"invalid UTF-8":      {Question: string([]byte{0xff}), State: Deferred},
+	} {
+		if _, err := st.Save(ctx, testScope, Draft{Title: "T", Decisions: []Decision{dec}}, 0); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestDraftsWithoutDecisionsStillLoad(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "drafts.json")
+	d, err := testStore(t, path).Save(ctx, testScope, Draft{Title: "Old", ConfirmedAnswers: []Answer{{Question: "Q?", Answer: "A"}}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(fileBytes(t, path)), "decisions") {
+		t.Fatal("an empty decision list must not be written")
+	}
+	if got, err := testStore(t, path).Read(ctx, testScope, d.ID); err != nil || got.Decisions != nil || len(got.ConfirmedAnswers) != 1 {
+		t.Fatalf("%+v, %v", got, err)
+	}
+}

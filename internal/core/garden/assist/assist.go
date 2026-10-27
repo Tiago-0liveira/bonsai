@@ -33,6 +33,10 @@ const (
 	Open     AnswerState = "open"
 )
 
+// AdvisoryArea says a question's answer cannot change what is built or how it is accepted, so a person may
+// defer it or accept an assumption. Scope, behavior and acceptance questions are never advisory.
+func AdvisoryArea(area string) bool { return area == "constraint" || area == "context" }
+
 type Question struct {
 	ID          string
 	Round       int

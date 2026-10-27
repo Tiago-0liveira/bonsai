@@ -157,6 +157,11 @@ type assistSession struct {
 	err     *gardenapi.Error
 	notice  string
 	confirm bool // the cancel question is showing
+
+	// private is set when the session belongs to a private draft's side pane: it owns the dialog's wording.
+	private *privateDraft
+	// hideWhy shows a question's reason only on request, as the side pane does.
+	hideWhy bool
 }
 
 type gardenAssistState struct {
@@ -513,6 +518,8 @@ type assistOptions struct {
 	defaultsMode bool
 	submit       bool
 	initial      gardenapi.AssistSettings
+	// maxQuestions bounds the per-round count: the side pane asks for three at most.
+	maxQuestions int
 }
 
 func newAssistOptions(api agentsapi.Accounts, usage usagestore.Store, ascii bool, def gardenapi.AssistSettings) *assistOptions {
@@ -526,7 +533,7 @@ func newAssistOptions(api agentsapi.Accounts, usage usagestore.Store, ascii bool
 	if q < 1 || q > assist.MaxQuestions {
 		q = assist.DefaultQuestions
 	}
-	return &assistOptions{Browser: accounts.NewBrowser(api, def.AccountID, usage, true), ascii: ascii, questions: q, guidance: g, initial: def}
+	return &assistOptions{Browser: accounts.NewBrowser(api, def.AccountID, usage, true), ascii: ascii, questions: q, guidance: g, initial: def, maxQuestions: assist.MaxQuestions}
 }
 
 func (o *assistOptions) setFocus(f assistOptFocus) {
@@ -670,7 +677,7 @@ func (o *assistOptions) key(msg tea.KeyMsg) (cmd tea.Cmd, done bool) {
 		case "left", "h", "-":
 			o.questions = max(1, o.questions-1)
 		case "right", "l", "+":
-			o.questions = min(assist.MaxQuestions, o.questions+1)
+			o.questions = min(o.maxQuestions, o.questions+1)
 		case "up":
 			o.setFocus(optForm)
 		case "down", "enter":
@@ -892,6 +899,7 @@ func (m Model) gardenAssistForward(msg tea.Msg) (Model, tea.Cmd) {
 			cmds = append(cmds, s.opts.update(msg))
 		}
 	}
+	cmds = append(cmds, m.privAssistForward(msg))
 	return m, tea.Batch(cmds...)
 }
 

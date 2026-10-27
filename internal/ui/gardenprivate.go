@@ -45,9 +45,6 @@ const (
 // privDebounce is how long edits settle before an autosave starts.
 const privDebounce = 600 * time.Millisecond
 
-// privNoAssistant is the answer to every assistant invitation on a local draft.
-const privNoAssistant = "The assistant is not available for local drafts yet. Keep writing; nothing is lost."
-
 // Capture focus.
 const (
 	capDesc = iota
@@ -113,6 +110,15 @@ type privateDraft struct {
 	titleEditing bool
 	scroll       int // review
 
+	// confirmed and decisions are the working copies of what the person settled with the assistant; they
+	// are written with every save so a restart brings them back. pa is never persisted.
+	confirmed []drafts.Answer
+	decisions []drafts.Decision
+	changed   map[int]bool // sections an apply just rewrote, until the person edits them or asks again
+	pa        *privAssistant
+	paGen     uint64 // the last request generation issued for this draft; it only grows
+	pane      bool   // the discussion pane has the keyboard
+
 	gen, savedGen uint64
 	inflight      bool
 	state         saveState
@@ -139,12 +145,24 @@ func newPrivateDraft(repo garden.RepoID, token uint64, d drafts.Draft, stage pri
 		}
 	}
 	p.secs = privSectionsOf(d.Spec)
+	p.confirmed = append([]drafts.Answer(nil), d.ConfirmedAnswers...)
+	p.decisions = append([]drafts.Decision(nil), d.Decisions...)
 	p.ta = newTextarea()
 	p.load(0)
 	if stage == privCapture {
 		p.desc.Focus()
 	}
 	return p
+}
+
+// adopt carries the discussion over to a draft re-read from the store: the same conversation, the newer text.
+func (p *privateDraft) adopt(old *privateDraft) {
+	// The counter never goes back, so no later request can share an identity with an earlier reply.
+	p.paGen = old.paGen
+	p.pa, p.pane = old.pa, old.pane
+	if p.pa != nil {
+		p.pa.s.private = p
+	}
 }
 
 // load shows section i in the text area.
@@ -179,6 +197,8 @@ func (p *privateDraft) build() drafts.Draft {
 	d.Title = strings.TrimSpace(p.title.Value())
 	d.Type = captureTypes[p.typ]
 	d.Spec = privSpecOf(p.secs)
+	d.ConfirmedAnswers = append([]drafts.Answer(nil), p.confirmed...)
+	d.Decisions = append([]drafts.Decision(nil), p.decisions...)
 	return d
 }
 
@@ -221,7 +241,8 @@ func (p *privateDraft) typing() bool {
 	case privCapture:
 		return p.foc == capDesc
 	case privEditor:
-		return p.text || p.titleEditing
+		// The invitation and the discussion pane own every key while they are in front.
+		return p.text || p.titleEditing || (p.pa != nil && (p.pa.stage == paInvite || p.pane))
 	}
 	return false
 }
@@ -387,6 +408,7 @@ func (m Model) privCheckRemote() (Model, tea.Cmd) {
 			np := newPrivateDraft(p.repo, p.token, cur, p.stage)
 			np.load(sec)
 			np.foc, np.text = p.foc, p.text
+			np.adopt(p)
 			d.private = np
 			return m.privFocusSync(), nil
 		}
@@ -447,7 +469,12 @@ func (m Model) onPrivOpen(msg privOpenMsg) (Model, tea.Cmd) {
 				m, cmd := m.privStartSave(p)
 				return m.privFocusSync(), cmd
 			}
-			p = newPrivateDraft(p.repo, p.token, cur, privEditor)
+			// A clean editor reloads in place, keeping the section and focus the person was on.
+			old := p
+			p = newPrivateDraft(p.repo, p.token, cur, old.stage)
+			p.load(old.cur)
+			p.foc, p.text = old.foc, old.text
+			p.adopt(old)
 			d.private = p
 		}
 		return m.privFocusSync(), nil
@@ -515,6 +542,21 @@ func (m Model) privSize() {
 	p.ta.SetWidth(tw)
 	p.ta.SetHeight(th)
 	p.title.Width = max(8, min(m.width-30, 80))
+	if p.paActive() {
+		// The answer field takes the height the pane's fixed parts leave.
+		pw, ph := m.paDims()
+		l := m.paLayoutOf(p, pw-2, ph)
+		g := p.pa.s.panelGeometry(pw-2, l.panelRows)
+		p.pa.s.qScroll = g.scroll
+		p.pa.s.ta.SetWidth(max(4, pw-4))
+		p.pa.s.ta.SetHeight(max(1, g.taH))
+		p.pa.s.ta.Placeholder = "Your answer"
+		if q, ok := p.pa.s.current(); ok {
+			if sel := p.pa.s.answer(q).sel; sel == selChoice || sel == selUnknown {
+				p.pa.s.ta.Placeholder = "Add notes"
+			}
+		}
+	}
 }
 
 // Saving -----------------------------------------------------------------------
@@ -585,6 +627,9 @@ func (m Model) onPrivSaved(msg privSavedMsg) (Model, tea.Cmd) {
 			m.privUnavailable()
 		}
 		p.state, p.err = saveFailed, privSaveError(msg.err)
+		if p.pa != nil {
+			p.pa.startNext = false
+		}
 		if p.quitAfter {
 			p.quitAfter = false
 			p.notice = "Could not save, so Bonsai did not quit. Your text is kept."
@@ -598,6 +643,12 @@ func (m Model) onPrivSaved(msg privSavedMsg) (Model, tea.Cmd) {
 	}
 	p.state, p.err = saveClean, nil
 	cmd := m.privRemember()
+	if pa := p.pa; pa != nil && pa.startNext {
+		// The invitation was waiting for a stored draft to scope its request to.
+		pa.startNext = false
+		m, start := m.paStart(p)
+		return m, tea.Batch(cmd, start)
+	}
 	switch {
 	case p.quitAfter:
 		p.quitAfter = false
@@ -668,6 +719,7 @@ func (m Model) privLeave() (Model, tea.Cmd) {
 		return m.privStartSave(p)
 	}
 	d.stage = draftsList
+	m = m.paClose(p) // leaving ends any request: its reply would have nowhere to land
 	if p.draft.ID != "" {
 		d.selectedLocal, d.selected = p.draft.ID, 0 // the inbox opens on the draft just left
 	}
@@ -725,7 +777,9 @@ func (m Model) privConflictKey(p *privateDraft, k string) (Model, tea.Cmd) {
 		return m.privStartSave(p)
 	case "o":
 		cur := p.conflict.Current
+		m = m.paClose(p) // a discussion about the text that was set aside has nothing to say about theirs
 		np := newPrivateDraft(p.repo, p.token, cur, privEditor)
+		np.adopt(p) // the discussion is closed above; only the request counter carries over
 		np.load(p.cur)
 		np.foc = np.cur
 		np.notice = "Opened the other version. Your text stays in the inbox as " + drafts.DraftLabel(p.conflict.Incoming.ID) + "."
@@ -761,7 +815,10 @@ func (m Model) privCaptureKey(p *privateDraft, msg tea.KeyMsg) (Model, tea.Cmd) 
 			if p.foc == capContinue {
 				return m.privContinue(p)
 			}
-			p.notice = privNoAssistant
+			// Discuss with AI: the same draft in the editor, with the invitation in front.
+			m, cmd := m.privContinue(p)
+			m, inv := m.privInvite(p)
+			return m, tea.Batch(cmd, inv)
 		}
 		return m, nil
 	}
@@ -802,7 +859,8 @@ func (p *privateDraft) focReview() int { return len(p.secs) + 3 }
 func (m Model) privCompact() bool { return m.width < 100 }
 
 // privNext is the focus after tab (dir 1) or shift+tab (dir -1). While text is being written the
-// walk stays inside the sections; on the rail it also visits Title, Type, Invite and Review.
+// walk stays inside the sections; on the rail it also visits Title, Type, the assistant and Review. The
+// compact layout shows the assistant as a tab, so it is a stop there too.
 func (m Model) privNext(p *privateDraft, dir int) int {
 	n := p.focReview() + 1
 	if p.text {
@@ -810,9 +868,6 @@ func (m Model) privNext(p *privateDraft, dir int) int {
 	}
 	for i := 1; i <= n; i++ {
 		f := ((p.foc+dir*i)%n + n) % n
-		if f == p.focInvite() && m.privCompact() {
-			continue // the compact layout has no assistant column
-		}
 		return f
 	}
 	return p.foc
@@ -823,6 +878,10 @@ func (m Model) privEditorKey(p *privateDraft, msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch {
 	case isReviewKey(k):
 		return m.privOpenReview(p), nil
+	case k == "ctrl+g":
+		return m.privTogglePane(p)
+	case p.pa != nil && (p.pa.stage == paInvite || p.pane):
+		return m.paKey(p, msg)
 	case k == "ctrl+t":
 		p.titleEditing, p.text = true, false
 		p.title.Focus()
@@ -856,6 +915,9 @@ func (m Model) privEditorKey(p *privateDraft, msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		f := m.privNext(p, dir)
 		p.foc = f
+		if f == p.focInvite() && p.pa != nil {
+			p.pa.unseen = false // the discussion is now in front (compact) or marked as the stop (side by side)
+		}
 		if f < len(p.secs) {
 			p.selectSection(f)
 		}
@@ -875,6 +937,7 @@ func (m Model) privEditorKey(p *privateDraft, msg tea.KeyMsg) (Model, tea.Cmd) {
 		if p.ta.Value() == before {
 			return m, cmd
 		}
+		delete(p.changed, p.cur) // the person's own edit: no longer "just changed by the assistant"
 		m, tick := m.privEdited(p)
 		return m, tea.Batch(cmd, tick)
 	}
@@ -901,11 +964,31 @@ func (m Model) privEditorKey(p *privateDraft, msg tea.KeyMsg) (Model, tea.Cmd) {
 			p.typ = (p.typ + 1) % len(captureTypes)
 			return m.privEdited(p)
 		case p.foc == p.focInvite():
-			p.notice = privNoAssistant
+			return m.privInvite(p)
 		default:
 			return m.privOpenReview(p), nil
 		}
 	}
+	return m, nil
+}
+
+// privTogglePane is Ctrl+G: from the text, the rail or the pane itself it moves the keyboard to the discussion
+// and back. Without a discussion it opens the invitation.
+func (m Model) privTogglePane(p *privateDraft) (Model, tea.Cmd) {
+	if p.pa == nil {
+		return m.privInvite(p)
+	}
+	if p.pa.stage == paInvite {
+		return m, nil
+	}
+	if p.pane {
+		p.pane = false
+		return m, nil
+	}
+	p.text, p.titleEditing = false, false
+	p.ta.Blur()
+	p.pane, p.pa.unseen = true, false
+	p.foc = p.focInvite()
 	return m, nil
 }
 
@@ -1056,6 +1139,10 @@ func (m Model) privMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onPrivOpen(msg)
 	case privArchiveMsg:
 		nm, cmd = m.onPrivArchive(msg)
+	case privAssistMsg:
+		nm, cmd = m.onPrivAssist(msg)
+	case privAssistTickMsg:
+		nm, cmd = m.onPrivAssistTick(msg)
 	case privRememberedMsg:
 		return true, m, nil
 	default:

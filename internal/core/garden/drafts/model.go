@@ -25,6 +25,34 @@ type Answer struct {
 	Answer   string `json:"answer"`
 }
 
+// DecisionState records how the user settled an advisory question without answering it.
+type DecisionState string
+
+const (
+	// Deferred leaves the detail for later; the draft may still be approved.
+	Deferred DecisionState = "deferred"
+	// Assumed accepts Assumption as true for now, in the user's own words.
+	Assumed DecisionState = "assumed"
+)
+
+// Decision is a user-recorded settlement of an advisory question. Only advisory
+// questions can be settled this way: scope and acceptance questions are never
+// stored here, so skipped or unknown answers cannot resolve themselves.
+type Decision struct {
+	Question   string        `json:"question"`
+	State      DecisionState `json:"state"`
+	Assumption string        `json:"assumption,omitempty"`
+}
+
+// Line is how the decision reads in the specification's Open questions section.
+// Readiness accepts a line only when it matches a recorded decision exactly.
+func (d Decision) Line() string {
+	if d.State == Assumed {
+		return "Assumed: " + d.Assumption + " (" + d.Question + ")"
+	}
+	return "Deferred: " + d.Question
+}
+
 type PublicationState string
 
 const (
@@ -57,6 +85,7 @@ type Draft struct {
 	Type             garden.ItemType `json:"type"`
 	Spec             spec.Spec       `json:"spec"`
 	ConfirmedAnswers []Answer        `json:"confirmed_answers,omitempty"`
+	Decisions        []Decision      `json:"decisions,omitempty"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 	ArchivedAt       time.Time       `json:"archived_at,omitempty"`
@@ -93,6 +122,12 @@ func (d Draft) valid() bool {
 	for _, answer := range d.ConfirmedAnswers {
 		texts = append(texts, answer.Question, answer.Answer)
 	}
+	for _, dec := range d.Decisions {
+		if strings.TrimSpace(dec.Question) == "" || !validDecision(dec) {
+			return false
+		}
+		texts = append(texts, dec.Question, dec.Assumption)
+	}
 	if d.Publication.Issue != nil {
 		texts = append(texts, d.Publication.Issue.URL)
 	}
@@ -104,6 +139,20 @@ func (d Draft) valid() bool {
 	return d.ID != "" && d.Scope.valid() && d.Revision > 0 &&
 		!d.CreatedAt.IsZero() && !d.UpdatedAt.Before(d.CreatedAt) &&
 		d.Publication.valid() && (d.ArchivedAt.IsZero() || d.Publication.State != Publishing)
+}
+
+func validDecision(d Decision) bool {
+	// A decision is one line of the specification: a line break could never match it again.
+	if strings.ContainsAny(d.Question+d.Assumption, "\r\n") {
+		return false
+	}
+	switch d.State {
+	case Deferred:
+		return d.Assumption == ""
+	case Assumed:
+		return strings.TrimSpace(d.Assumption) != ""
+	}
+	return false
 }
 
 func transition(cur, next Publication) bool {
@@ -138,7 +187,7 @@ func sameContent(a, b Draft) bool {
 		a.Spec.DesiredBehavior == b.Spec.DesiredBehavior && a.Spec.Requirements == b.Spec.Requirements &&
 		a.Spec.AcceptanceCriteria == b.Spec.AcceptanceCriteria && a.Spec.Constraints == b.Spec.Constraints &&
 		a.Spec.OpenQuestions == b.Spec.OpenQuestions && slices.Equal(a.Spec.Extra, b.Spec.Extra) &&
-		slices.Equal(a.ConfirmedAnswers, b.ConfirmedAnswers)
+		slices.Equal(a.ConfirmedAnswers, b.ConfirmedAnswers) && slices.Equal(a.Decisions, b.Decisions)
 }
 
 // DraftLabel is the short name people see for a draft, such as D-1A2B3C. The

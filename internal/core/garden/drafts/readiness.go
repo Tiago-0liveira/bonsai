@@ -9,6 +9,9 @@ type Readiness struct {
 	Missing []string
 	// Unresolved counts open questions nobody has answered yet.
 	Unresolved int
+	// Deferred counts advisory questions the user settled by a recorded decision.
+	// They stay visible in the specification but do not block approval.
+	Deferred int
 }
 
 func (r Readiness) Ready() bool { return len(r.Missing) == 0 && r.Unresolved == 0 }
@@ -28,12 +31,37 @@ func Assess(d Draft) Readiness {
 			r.Missing = append(r.Missing, req.name)
 		}
 	}
+	recorded := map[string]bool{}
+	for _, dec := range d.Decisions {
+		if validDecision(dec) {
+			recorded[normalLine(dec.Line())] = true
+		}
+	}
 	for _, line := range strings.Split(d.Spec.OpenQuestions, "\n") {
-		if openQuestion(line) {
+		switch {
+		case !openQuestion(line):
+		case recorded[normalLine(line)]:
+			// Only the exact line a recorded decision produces counts. A hand-typed
+			// "Deferred:" line, or one edited afterwards, is still an open question.
+			r.Deferred++
+		default:
 			r.Unresolved++
 		}
 	}
 	return r
+}
+
+// normalLine compares lines without list markers, case or spacing differences.
+func normalLine(line string) string {
+	line = strings.TrimSpace(line)
+	for {
+		trimmed := stripMarker(line)
+		if trimmed == line {
+			break
+		}
+		line = trimmed
+	}
+	return strings.Join(strings.Fields(strings.ToLower(line)), " ")
 }
 
 // openQuestion reports whether a line of the Open questions section is a
