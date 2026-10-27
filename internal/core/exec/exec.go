@@ -6,14 +6,19 @@ package exec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
+	"github.com/Tiago-0liveira/bonsai/internal/version"
 )
 
 // Process is a single running (or finished) subprocess with captured output.
@@ -393,12 +398,103 @@ func TerminatePIDTree(pid int, grace time.Duration) {
 	terminatePIDTree(pid, grace)
 }
 
+// ShellOptions configures the nested-shell marker set by ShellCmd.
+type ShellOptions struct {
+	// Glyph prefixes the depth in the prompt ("" = shellinit.DefaultGlyph).
+	Glyph string
+	// Prompt controls prompt injection: "" = auto, "off" = disabled.
+	Prompt string
+}
+
 // ShellCmd builds an interactive shell *exec.Cmd rooted at path, suitable for
-// tea.ExecProcess (the caller wires up stdio).
-func ShellCmd(path string) *exec.Cmd {
-	cmd := exec.Command(shell())
+// tea.ExecProcess (the caller wires up stdio). The child gets an incremented
+// BONSAI_DEPTH and a matching BONSAI_PROMPT_PREFIX; bonsai's own environment
+// is never modified.
+func ShellCmd(path string, o ShellOptions) *exec.Cmd {
+	sh := shell()
+	cmd := exec.Command(sh)
 	cmd.Dir = path
+	depth := shellinit.Depth() + 1
+	if depth > shellinit.MaxDepth {
+		depth = shellinit.MaxDepth
+	}
+	env := childEnv(os.Environ(), depth, shellinit.Prefix(o.Glyph, depth))
+	if o.Prompt != "off" {
+		// Opening a shell must never fail over prompt integration: on any
+		// error the user just gets a plain shell with the env vars.
+		if dir, err := shimDir(); err == nil {
+			plan := shellinit.BuildPlan(sh, dir, env)
+			cmd.Args = append(cmd.Args, plan.Args...)
+			env = append(env, plan.Env...)
+		}
+	}
+	cmd.Env = env
 	return cmd
+}
+
+// ShellExitErr filters the error returned when an interactive shell ends. A
+// shell exits with its last command's status, so a non-zero exit after a
+// failed command is a normal return, not a failure to report.
+func ShellExitErr(err error) error {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nil
+	}
+	return err
+}
+
+// PrepareShellIntegration warms the shim cache so the first ShellCmd, which
+// runs on the TUI update loop, does not pay for the file IO.
+func PrepareShellIntegration() { _, _ = shimDir() }
+
+// shimTouchAfter is how stale the shim dir's mtime may get before a memo hit
+// refreshes it. shellinit prunes dirs unused for 30 days, and only EnsureShims
+// otherwise touches it, so a long-running bonsai would lose its live dir.
+const shimTouchAfter = 24 * time.Hour
+
+var shims struct {
+	mu       sync.Mutex
+	cacheDir string
+	dir      string
+}
+
+// shimDir installs the shell shims once per cache dir. Errors are not
+// remembered, so a transient failure is retried on the next shell open.
+func shimDir() (string, error) {
+	cache, err := userCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("shell shim cache dir: %w", err)
+	}
+	shims.mu.Lock()
+	defer shims.mu.Unlock()
+	// One stat guards against a cache cleaner removing the dir mid-session:
+	// bash --rcfile or ZDOTDIR pointing at nothing would skip the user's rc.
+	if shims.dir != "" && shims.cacheDir == cache {
+		if fi, err := os.Stat(shims.dir); err == nil {
+			if now := time.Now(); now.Sub(fi.ModTime()) > shimTouchAfter {
+				_ = os.Chtimes(shims.dir, now, now)
+			}
+			return shims.dir, nil
+		}
+	}
+	dir, err := shellinit.EnsureShims(cache, version.Current())
+	if err != nil {
+		return "", fmt.Errorf("ensure shell shims: %w", err)
+	}
+	shims.cacheDir, shims.dir = cache, dir
+	return dir, nil
+}
+
+// userCacheDir is a seam so tests never write to the real cache directory.
+var userCacheDir = os.UserCacheDir
+
+// childEnv drops any inherited depth variables and appends the new ones, so a
+// stale value can never win over ours.
+func childEnv(base []string, depth int, prefix string) []string {
+	return append(shellinit.ScrubEnv(base),
+		shellinit.EnvDepth+"="+strconv.Itoa(depth),
+		shellinit.EnvPromptPrefix+"="+prefix,
+	)
 }
 
 // EditorCmd builds an interactive editor *exec.Cmd rooted at path, suitable

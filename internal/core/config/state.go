@@ -53,6 +53,12 @@ type Prefs struct {
 	GardenAssist *GardenAssistPrefs `json:"garden_assist,omitempty"`
 	// GardenReview is the local review policy; nil means automatic reviews are off.
 	GardenReview *GardenReviewPrefs `json:"garden_review,omitempty"`
+	// DepthGlyph is the marker shown before the nesting depth in bonsai-
+	// spawned shell prompts and the TUI header ("" = 🪴).
+	DepthGlyph string `json:"depth_glyph,omitempty"`
+	// ShellPrompt controls prompt injection into spawned shells: "" = auto,
+	// "off" = never touch the prompt (the env vars are still exported).
+	ShellPrompt string `json:"shell_prompt,omitempty"`
 }
 
 // GardenAssistPrefs holds personal AI drafting defaults.

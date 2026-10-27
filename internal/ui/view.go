@@ -947,6 +947,14 @@ func (m Model) borderFor(focused bool) lipgloss.Style {
 // statusBar renders a context-aware key hint line plus any status/error
 // message, truncated to the terminal width so the bar never overflows.
 func (m Model) statusBar() string {
+	if m.depth >= 1 {
+		// Nested inside a bonsai shell: mark the level (N >= 2) at the left.
+		tag := statusStyle.Render(m.depthMarker(m.depth+1)) + " "
+		inner := m
+		inner.depth = 0
+		inner.width = m.width - lipgloss.Width(tag)
+		return truncateToWidth(tag+inner.statusBar(), m.width)
+	}
 	help := m.contextHelp()
 
 	msg := m.status
@@ -959,6 +967,14 @@ func (m Model) statusBar() string {
 	} else if msg != "" {
 		if avail := m.width - lipgloss.Width(help) - 3; avail >= 8 {
 			line = help + "  " + statusStyle.Render(ansi.Truncate(msg, avail, "…"))
+		} else {
+			// Hints would crowd the message out: give the message its full
+			// width and squeeze the hints into whatever is left.
+			rendered := statusStyle.Render(ansi.Truncate(msg, m.width, "…"))
+			line = rendered
+			if room := m.width - lipgloss.Width(rendered) - 2; room >= 4 {
+				line = ansi.Truncate(help, room, "…") + "  " + rendered
+			}
 		}
 	}
 	return truncateToWidth(line, m.width)

@@ -26,6 +26,10 @@ type SaveMsg struct {
 	// Editor is a personal override for the "open editor" command ("" = defer
 	// to .bonsai.yaml, then $VISUAL/$EDITOR/vi).
 	Editor string
+	// DepthGlyph marks the nesting depth in shell prompts ("" = default 🪴).
+	DepthGlyph string
+	// ShellPrompt is "auto" or "off" ("auto" is saved as "").
+	ShellPrompt string
 	// Keys holds personal keybinding overrides (action -> key).
 	Keys map[string]string
 }
@@ -55,6 +59,13 @@ var PRStatusModes = []string{"full", "compact", "off"}
 // exists for terminals or fonts that draw the unicode glyphs badly.
 var AgentGlyphModes = []string{"unicode", "ascii"}
 
+// DepthGlyphs are the selectable depth markers, in cycle order. The first is
+// the default and is stored as "".
+var DepthGlyphs = []string{"🪴", "🌳", "🌱", "bonsai"}
+
+// ShellPromptModes are the shell prompt injection modes, in cycle order.
+var ShellPromptModes = []string{"auto", "off"}
+
 // reservedKeys can never be bound: they drive navigation and quit semantics
 // inside bonsai (and its modals).
 var reservedKeys = map[string]bool{
@@ -72,6 +83,8 @@ const (
 	rowPruneMerge
 	rowPRStatus
 	rowAgentGlyphs
+	rowDepthGlyph
+	rowShellPrompt
 	rowEditor
 	rowAliases
 	rowKey
@@ -93,6 +106,8 @@ type Model struct {
 	prStatus    string
 	agentGlyphs string
 	editor      string
+	depthGlyph  string
+	shellPrompt string
 	actions     []Action
 	defaults    map[string]string // action -> default key
 	overrides   map[string]string // action -> personal key (working copy)
@@ -108,7 +123,7 @@ type Model struct {
 // New builds the overlay. actions must be ordered by section; a section header
 // is inserted wherever the section changes. startOnKeys places the cursor on
 // the first keybinding row (used when arriving from the keymap modal).
-func New(themePreset, sort string, pruneMerge bool, prStatus, agentGlyphs, editor string, presets []string, actions []Action, startOnKeys bool) Model {
+func New(themePreset, sort string, pruneMerge bool, prStatus, agentGlyphs, editor, depthGlyph, shellPrompt string, presets []string, actions []Action, startOnKeys bool) Model {
 	if sort == "" {
 		sort = SortModes[0]
 	}
@@ -118,6 +133,12 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, agentGlyphs, edito
 	if agentGlyphs == "" {
 		agentGlyphs = AgentGlyphModes[0]
 	}
+	if depthGlyph == "" {
+		depthGlyph = DepthGlyphs[0]
+	}
+	if shellPrompt != "off" {
+		shellPrompt = ShellPromptModes[0]
+	}
 	m := Model{
 		presets:     presets,
 		theme:       themePreset,
@@ -126,6 +147,8 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, agentGlyphs, edito
 		prStatus:    prStatus,
 		agentGlyphs: agentGlyphs,
 		editor:      editor,
+		depthGlyph:  depthGlyph,
+		shellPrompt: shellPrompt,
 		actions:     actions,
 		defaults:    map[string]string{},
 		overrides:   map[string]string{},
@@ -141,6 +164,8 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, agentGlyphs, edito
 		row{kind: rowPruneMerge},
 		row{kind: rowPRStatus},
 		row{kind: rowAgentGlyphs},
+		row{kind: rowDepthGlyph},
+		row{kind: rowShellPrompt},
 		row{kind: rowEditor},
 		row{kind: rowAliases},
 		row{kind: rowHeader, header: "Keybindings"},
@@ -264,7 +289,14 @@ func (m Model) save() tea.Cmd {
 	for k, v := range m.overrides {
 		keys[k] = v
 	}
-	snap := SaveMsg{Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, PRStatus: m.prStatus, AgentGlyphs: m.agentGlyphs, Editor: m.editor, Keys: keys}
+	glyph, prompt := m.depthGlyph, m.shellPrompt
+	if glyph == DepthGlyphs[0] {
+		glyph = ""
+	}
+	if prompt == ShellPromptModes[0] {
+		prompt = ""
+	}
+	snap := SaveMsg{DepthGlyph: glyph, ShellPrompt: prompt, Theme: m.theme, Sort: m.sort, PruneMerge: m.pruneMerge, PRStatus: m.prStatus, AgentGlyphs: m.agentGlyphs, Editor: m.editor, Keys: keys}
 	return func() tea.Msg { return snap }
 }
 
@@ -422,6 +454,16 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		// Two modes: any direction toggles.
 		m.agentGlyphs = AgentGlyphModes[(idx+1)%len(AgentGlyphModes)]
 		m.msg = "agent glyphs: " + m.agentGlyphs
+		return m, m.save()
+
+	case rowDepthGlyph:
+		m.depthGlyph = cycle(DepthGlyphs, m.depthGlyph, dir)
+		m.msg = "depth glyph: " + m.depthGlyph
+		return m, m.save()
+
+	case rowShellPrompt:
+		m.shellPrompt = cycle(ShellPromptModes, m.shellPrompt, dir)
+		m.msg = "shell prompt: " + m.shellPrompt
 		return m, m.save()
 
 	case rowEditor:
@@ -602,6 +644,20 @@ func (m Model) renderRow(i int) string {
 		}
 		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.agentGlyphs+" ▸")
 
+	case rowDepthGlyph:
+		label := "depth glyph (prompt, status bar)"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.depthGlyph+" ▸")
+
+	case rowShellPrompt:
+		label := "shell prompt marker"
+		if sel {
+			label = cursorStyle.Render(label)
+		}
+		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.shellPrompt+" ▸")
+
 	case rowEditor:
 		label := "editor command"
 		if sel {
@@ -636,6 +692,21 @@ func (m Model) renderRow(i int) string {
 		return cursor + pad(label, labelCol) + keyCol
 	}
 	return ""
+}
+
+// cycle returns the entry after (dir >= 0) or before (dir < 0) cur in list.
+func cycle(list []string, cur string, dir int) string {
+	idx := 0
+	for i, s := range list {
+		if s == cur {
+			idx = i
+		}
+	}
+	d := 1
+	if dir < 0 {
+		d = -1
+	}
+	return list[(idx+d+len(list))%len(list)]
 }
 
 // pad pads s with spaces to width w (ANSI-aware via lipgloss.Width).

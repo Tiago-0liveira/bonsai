@@ -216,7 +216,7 @@ or the usage overlay skips the window and asks the provider again.
 | `x` | Prune the worktree (with optional PR merge) |
 | `X` | Prune all merged worktrees |
 | `R` | Refresh worktrees, metrics, and PRs |
-| `,` | Preferences (theme, keybindings, defaults) |
+| `,` | Preferences (theme, keybindings, defaults, shell depth marker) |
 | `?` | Keybindings reference (searchable) |
 | `q` / `ctrl+c` | Quit |
 
@@ -511,6 +511,7 @@ bonsai restart <id>             # restart a process
 bonsai attach <id>              # stream a process log (Ctrl-C detaches)
 bonsai daemon status|stop       # control the background daemon
 bonsai shell-init               # print a shell 'bcd' cd helper
+bonsai shell-init <shell>       # print the prompt depth hook (bash|zsh|fish|nu|pwsh)
 bonsai version (-v)             # print version and build info
 bonsai update (-u)              # check or install the latest release
 ```
@@ -547,6 +548,66 @@ bcd                             # cd back to main
 ```
 
 On Windows the installer adds a `bcd.bat` helper next to `bonsai.exe`.
+
+### Shell depth indicator
+
+A shell opened from the TUI (`enter`) is one level deeper than the bonsai that
+opened it. bonsai exports `BONSAI_DEPTH` and `BONSAI_PROMPT_PREFIX` to that
+shell only, so the prompt shows the level, e.g. `🪴2 ~/repo $`. Background
+processes, agent sessions and the daemon do not increment the depth. Like
+other child processes, they can inherit these variables when bonsai itself
+runs inside a nested shell.
+
+- The status bar shows `🪴N` only when bonsai is nested (N ≥ 2).
+- After a nested shell exits, the status line reads `back in bonsai 🪴N`, where
+  N is this TUI's own level (top level = 1). Status messages take priority over
+  key hints when the terminal is too narrow to show both.
+
+**Automatic prompt** (`shell_prompt: auto`, the default). The prefix is added
+for bash, zsh and fish, and best effort for sh, dash, ksh, mksh, nu, pwsh and
+cmd. cmd has no prompt hook, so it gets a static `prompt` and ignores a custom
+`PROMPT`. Other shells get the env vars only. Shell files live under
+`<user cache dir>/bonsai/shell-integration/<version>/`. Your rc files load first
+and are never modified.
+
+**Preferences** (`,`, saved in `state.json`):
+
+| Row | Values | Effect |
+|-----|--------|--------|
+| `depth glyph (prompt, status bar)` | 🪴 (default), 🌳, 🌱, `bonsai` | Marker before the level (`bonsai` shows as `bonsai:2`). Pick a text marker if your font draws 🪴 at the wrong width. Hand-edited glyphs with shell-special characters fall back to 🪴. |
+| `shell prompt marker` | `auto`, `off` | `off` stops prompt injection. The env vars are still exported. |
+
+**Your own prompt.** If your theme redraws the prompt and fights the automatic
+hook, set `shell prompt marker` to `off` and print the prefix from the theme.
+`bonsai shell-init <bash|zsh|fish|nu|pwsh>` prints the same hook as a snippet
+for your rc file. Starship and Powerlevel10k recipes:
+
+```toml
+# ~/.config/starship.toml
+format = "${custom.bonsai}$all"
+
+[custom.bonsai]
+when = '[ -n "$BONSAI_DEPTH" ]'
+command = 'printf "%s" "$BONSAI_PROMPT_PREFIX"'
+format = "$output"
+```
+
+```zsh
+# ~/.p10k.zsh: add `bonsai` to POWERLEVEL9K_LEFT_PROMPT_ELEMENTS
+function prompt_bonsai() {
+  [[ -n $BONSAI_DEPTH ]] || return
+  p10k segment -f 208 -t "$BONSAI_PROMPT_PREFIX"
+}
+```
+
+**Known limits**
+
+- `exec zsh` inside a bonsai shell drops the hook, because the real `ZDOTDIR`
+  is restored. The env vars stay, so the snippet path still works.
+- p10k instant prompt can show the prompt without the prefix until the first
+  hook runs.
+- fish, nu, pwsh, ksh and mksh are lightly tested. The nu guard is keyed to
+  `BONSAI_DEPTH`, so a nested shell re-installs it.
 
 ## Configuration
 

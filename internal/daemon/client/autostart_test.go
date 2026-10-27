@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -52,5 +53,27 @@ func TestDaemonCommand(t *testing.T) {
 				t.Fatalf("Args = %q, want %q", cmd.Args, wantArgs)
 			}
 		})
+	}
+}
+
+func TestDaemonCommandScrubsShellDepth(t *testing.T) {
+	t.Setenv("BONSAI_DEPTH", "2")
+	t.Setenv("BONSAI_PROMPT_PREFIX", "🪴2 ")
+	t.Setenv("PATH", "/usr/bin")
+	cmd := daemonCommand(filepath.Join(t.TempDir(), "bonsai"), false, t.TempDir())
+	if cmd.Env == nil {
+		t.Fatal("Env is nil: the daemon would inherit the full environment")
+	}
+	hasPath := false
+	for _, kv := range cmd.Env {
+		if strings.HasPrefix(kv, "BONSAI_DEPTH=") || strings.HasPrefix(kv, "BONSAI_PROMPT_PREFIX=") {
+			t.Fatalf("daemon env leaks %q", kv)
+		}
+		if strings.HasPrefix(kv, "PATH=") {
+			hasPath = true
+		}
+	}
+	if !hasPath {
+		t.Fatal("daemon env lost PATH")
 	}
 }

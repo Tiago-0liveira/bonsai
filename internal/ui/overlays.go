@@ -117,6 +117,8 @@ func (m Model) openPrefs(startOnKeys bool) (tea.Model, tea.Cmd) {
 		m.state.Prefs.PRStatus,
 		m.state.Prefs.AgentGlyphs,
 		m.state.Prefs.Editor,
+		m.state.Prefs.DepthGlyph,
+		m.state.Prefs.ShellPrompt,
 		theme.Presets(),
 		prefsActions(m.cfg.Keys),
 		startOnKeys,
@@ -139,6 +141,8 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 		PRStatus:    p.PRStatus,
 		AgentGlyphs: p.AgentGlyphs,
 		Editor:      p.Editor,
+		DepthGlyph:  p.DepthGlyph,
+		ShellPrompt: p.ShellPrompt,
 		Keys:        p.Keys,
 		// The overlay does not edit the redesign's fields; keep them.
 		Contrast:          old.Contrast,

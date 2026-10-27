@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/gitbridge"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/protocol"
 )
@@ -193,6 +194,9 @@ func daemonCommand(bin string, userHome bool, root string) *exec.Cmd {
 		flag = "--home"
 	}
 	cmd := exec.Command(bin, "__daemon", flag, root)
+	// The daemon outlives this process and serves every later caller, so it
+	// must not inherit a bonsai shell's nesting depth.
+	cmd.Env = shellinit.ScrubEnv(os.Environ())
 	// A detached daemon must not pin the caller's working directory on Windows.
 	cmd.Dir = root
 	return cmd
