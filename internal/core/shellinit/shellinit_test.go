@@ -73,3 +73,20 @@ func TestScrubEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestPrefixUnsafeGlyphFallsBack(t *testing.T) {
+	unsafe := []string{"\\u", "$(id)", "%F{red}", "`id`", `"`, "'", "!", "a\x1b[0m", "a\n", "a b", "​", "abcdefghijklmnopqrstuvwxyz"}
+	for _, g := range unsafe {
+		if got, want := Prefix(g, 2), "🪴2 "; got != want {
+			t.Errorf("Prefix(%q) = %q, want %q", g, got, want)
+		}
+	}
+	for _, g := range []string{"🪴", "🌳", "🌱", "bonsai", ">"} {
+		if got, want := Prefix(g, 1), g+"1 "; got != want {
+			t.Errorf("Prefix(%q) = %q, want %q", g, got, want)
+		}
+	}
+	if got := Prefix("", 3); got != "🪴3 " {
+		t.Errorf("empty = %q", got)
+	}
+}

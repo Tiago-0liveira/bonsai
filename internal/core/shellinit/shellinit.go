@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -65,10 +66,31 @@ func DepthFrom(v string) int {
 	return min(n, MaxDepth)
 }
 
-// Prefix returns the prompt prefix "<glyph><depth> ". An empty glyph uses
-// DefaultGlyph.
+// maxGlyphBytes caps the glyph length; the longest legitimate choice is an
+// emoji (up to ~4 bytes) or a short word.
+const maxGlyphBytes = 16
+
+// safeGlyph reports whether glyph can be embedded verbatim in every shell's
+// prompt. state.json is hand-editable, and the prefix reaches bash PS1
+// (backslash escapes, $(...), backticks, history "!"), zsh PROMPT ("%" and
+// PROMPT_SUBST), and cmd's prompt ("$" codes); quotes and control characters
+// would also break the hooks' quoting and "already prefixed?" check.
+func safeGlyph(glyph string) bool {
+	if glyph == "" || len(glyph) > maxGlyphBytes {
+		return false
+	}
+	for _, r := range glyph {
+		if strings.ContainsRune("\\$%`\"'!", r) || unicode.IsSpace(r) || unicode.IsControl(r) || !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// Prefix returns the prompt prefix "<glyph><depth> ". An empty or unsafe glyph
+// uses DefaultGlyph.
 func Prefix(glyph string, depth int) string {
-	if glyph == "" {
+	if !safeGlyph(glyph) {
 		glyph = DefaultGlyph
 	}
 	return glyph + strconv.Itoa(depth) + " "
