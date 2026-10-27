@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetect(t *testing.T) {
@@ -337,5 +338,49 @@ func TestShInjection(t *testing.T) {
 				t.Errorf("got %q", got)
 			}
 		})
+	}
+}
+
+func TestEnsureShimsPrunesStaleVersions(t *testing.T) {
+	cache := t.TempDir()
+	parent := filepath.Join(cache, "bonsai", "shell-integration")
+	old, recent := filepath.Join(parent, "v0.1.0"), filepath.Join(parent, "v0.9.0")
+	for _, d := range []string{old, recent} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := filepath.Join(parent, "notes.txt")
+	if err := os.WriteFile(other, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-60 * 24 * time.Hour)
+	if err := os.Chtimes(old, past, past); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(other, past, past); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := EnsureShims(cache, "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Age the current dir, then confirm the next call refreshes it.
+	if err := os.Chtimes(cur, past, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureShims(cache, "v1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("stale dir not removed: %v", err)
+	}
+	for _, p := range []string{recent, cur, other} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s should be kept: %v", p, err)
+		}
+	}
+	if info, _ := os.Stat(cur); time.Since(info.ModTime()) > time.Hour {
+		t.Error("current dir mtime not refreshed")
 	}
 }

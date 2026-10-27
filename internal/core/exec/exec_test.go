@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -330,6 +331,17 @@ func TestShellCmdMemoizesShims(t *testing.T) {
 	ShellCmd(t.TempDir(), ShellOptions{})
 	if _, err := os.Stat(rc); !os.IsNotExist(err) {
 		t.Errorf("shims rewritten for the same cache dir: %v", err)
+	}
+
+	// A stale mtime is refreshed on a memo hit so pruning never takes a live dir.
+	dir := filepath.Dir(rc)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	ShellCmd(t.TempDir(), ShellOptions{})
+	if fi, err := os.Stat(dir); err != nil || time.Since(fi.ModTime()) > time.Hour {
+		t.Errorf("shim dir mtime not refreshed: %v %v", fi, err)
 	}
 
 	other := t.TempDir()

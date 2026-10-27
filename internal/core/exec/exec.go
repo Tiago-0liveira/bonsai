@@ -429,6 +429,11 @@ func ShellExitErr(err error) error {
 // runs on the TUI update loop, does not pay for the file IO.
 func PrepareShellIntegration() { _, _ = shimDir() }
 
+// shimTouchAfter is how stale the shim dir's mtime may get before a memo hit
+// refreshes it. shellinit prunes dirs unused for 30 days, and only EnsureShims
+// otherwise touches it, so a long-running bonsai would lose its live dir.
+const shimTouchAfter = 24 * time.Hour
+
 var shims struct {
 	mu       sync.Mutex
 	cacheDir string
@@ -447,7 +452,10 @@ func shimDir() (string, error) {
 	// One stat guards against a cache cleaner removing the dir mid-session:
 	// bash --rcfile or ZDOTDIR pointing at nothing would skip the user's rc.
 	if shims.dir != "" && shims.cacheDir == cache {
-		if _, err := os.Stat(shims.dir); err == nil {
+		if fi, err := os.Stat(shims.dir); err == nil {
+			if now := time.Now(); now.Sub(fi.ModTime()) > shimTouchAfter {
+				_ = os.Chtimes(shims.dir, now, now)
+			}
 			return shims.dir, nil
 		}
 	}

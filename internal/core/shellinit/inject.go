@@ -9,7 +9,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// staleShimAge is how long a sibling version dir must go unused before it is
+// pruned. Another bonsai version may still be running shells that point at its
+// dir (zsh would lose the user's startup files if it vanished), so only dirs
+// untouched for a long time are removed.
+const staleShimAge = 30 * 24 * time.Hour
 
 // all: keeps the dotfiles (zsh/.zshenv) in the embedded tree.
 //
@@ -173,7 +180,26 @@ func EnsureShims(cacheDir, version string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("write shell integration: %w", err)
 	}
+	// Best effort: pruning must never fail a launch.
+	now := time.Now()
+	_ = os.Chtimes(root, now, now)
+	pruneShims(filepath.Dir(root), version, now)
 	return root, nil
+}
+
+func pruneShims(parent, keep string, now time.Time) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == keep {
+			continue
+		}
+		if info, err := e.Info(); err == nil && now.Sub(info.ModTime()) > staleShimAge {
+			_ = os.RemoveAll(filepath.Join(parent, e.Name()))
+		}
+	}
 }
 
 func writeAtomic(dst string, data []byte) error {
