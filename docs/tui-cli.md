@@ -338,6 +338,19 @@ without suggestions focus the answer field immediately. In review, `o` applies
 decisions and opens a local round to answer unresolved questions; see
 [AI draft assistance](garden.md#elaborate-a-draft-with-ai).
 
+A ready local draft is published from its review (`Ctrl+Enter`, then `enter`): the
+confirmation shows the repository, account, draft revision, title, type, managed
+labels and the exact specification, and `enter` runs **Approve & create issue**
+(`esc` goes back to editing). One operation creates the Issue at Draft, appends the
+specification, records its approval, moves it to Ready and reads everything back
+before the draft is marked published. Any edit, or a changed connection or account,
+invalidates the preview. If a step stops, the draft shows **Publishing incomplete**
+with the Issue link (or **Publishing** while GitHub is still being checked) and
+opens on a resume screen instead of the editor: `enter` or `r` resumes by reusing
+what exists, never a second Issue, revision or approval. Nothing starts a planner,
+worktree, agent or pull request. See
+[publishing a draft](garden-workflow/plans/06-approve-and-publish.md).
+
 In an opened Approved Issue, `p` opens its read-only planner. It verifies the
 approved specification and inspects the checkout, and an explicit **Request AI plan**
 (account, model and effort; `x` includes uncommitted changes) starts one read-only

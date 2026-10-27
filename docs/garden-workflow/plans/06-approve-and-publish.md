@@ -1,6 +1,6 @@
 # 06 / Approve a draft and create its Issue
 
-Status: planned.
+Status: Done.
 
 ## Deliverable
 
