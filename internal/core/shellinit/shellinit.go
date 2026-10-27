@@ -74,13 +74,15 @@ const maxGlyphBytes = 16
 // prompt. state.json is hand-editable, and the prefix reaches bash PS1
 // (backslash escapes, $(...), backticks, history "!"), zsh PROMPT ("%" and
 // PROMPT_SUBST), and cmd's prompt ("$" codes); quotes and control characters
-// would also break the hooks' quoting and "already prefixed?" check.
+// would also break the hooks' quoting and "already prefixed?" check. cmd runs
+// `cmd /K "prompt <prefix>..."`, strips the outer quotes and still splits on
+// "& | < > ^ ( )", so those would run a hand-edited glyph as a command.
 func safeGlyph(glyph string) bool {
 	if glyph == "" || len(glyph) > maxGlyphBytes {
 		return false
 	}
 	for _, r := range glyph {
-		if strings.ContainsRune("\\$%`\"'!", r) || unicode.IsSpace(r) || unicode.IsControl(r) || !unicode.IsPrint(r) {
+		if strings.ContainsRune("\\$%`\"'!&|<>^()", r) || unicode.IsSpace(r) || unicode.IsControl(r) || !unicode.IsPrint(r) {
 			return false
 		}
 	}

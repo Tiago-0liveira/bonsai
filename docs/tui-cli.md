@@ -314,7 +314,7 @@ and are never modified.
 
 | Row | Values | Effect |
 |-----|--------|--------|
-| `depth glyph (prompt, status bar)` | 🪴 (default), 🌳, 🌱, `bonsai` | Marker before the level (`bonsai` shows as `bonsai:2`). Pick a text marker if your font draws 🪴 at the wrong width. |
+| `depth glyph (prompt, status bar)` | 🪴 (default), 🌳, 🌱, `bonsai` | Marker before the level (`bonsai` shows as `bonsai:2`). Pick a text marker if your font draws 🪴 at the wrong width. Hand-edited glyphs with shell-special characters fall back to 🪴. |
 | `shell prompt marker` | `auto`, `off` | `off` stops prompt injection. The env vars are still exported. |
 
 **Your own prompt.** If your theme redraws the prompt and fights the automatic
