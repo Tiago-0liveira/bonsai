@@ -940,8 +940,13 @@ func (m Model) statusBar() string {
 		if avail := m.width - lipgloss.Width(help) - 3; avail >= 8 {
 			line = help + "  " + statusStyle.Render(ansi.Truncate(msg, avail, "…"))
 		} else {
-			// Keep operation feedback visible when hints fill the terminal.
-			line = statusStyle.Render(msg)
+			// Hints would crowd the message out: give the message its full
+			// width and squeeze the hints into whatever is left.
+			rendered := statusStyle.Render(ansi.Truncate(msg, m.width, "…"))
+			line = rendered
+			if room := m.width - lipgloss.Width(rendered) - 2; room >= 4 {
+				line = ansi.Truncate(help, room, "…") + "  " + rendered
+			}
 		}
 	}
 	return truncateToWidth(line, m.width)

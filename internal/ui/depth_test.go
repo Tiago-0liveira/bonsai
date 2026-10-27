@@ -72,3 +72,25 @@ func TestShellExitBannerVisible(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusBarKeepsHintsAndMessage(t *testing.T) {
+	for _, width := range []int{40, 60, 80} {
+		m := depthModel(0, "")
+		m.width = width
+		m.status = "pruned 3 worktrees"
+		help := ansi.Strip(m.contextHelp())
+		bar := ansi.Strip(m.statusBar())
+		if !strings.Contains(bar, m.status) {
+			t.Errorf("width=%d message missing from %q", width, bar)
+		}
+		if w := ansi.StringWidth(m.statusBar()); w > width {
+			t.Errorf("width=%d bar width %d overflows", width, w)
+		}
+		if ansi.StringWidth(help)+3+len(m.status) > width {
+			prefix := strings.TrimSuffix(strings.SplitN(bar, "  ", 2)[0], "…")
+			if prefix == "" || !strings.HasPrefix(help, prefix) {
+				t.Errorf("width=%d hints not a prefix of help: %q", width, bar)
+			}
+		}
+	}
+}
