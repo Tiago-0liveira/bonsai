@@ -31,7 +31,11 @@ func TestPrefix(t *testing.T) {
 		want  string
 	}{
 		{"", 1, DefaultGlyph + "1 "},
-		{"B", 12, "B12 "},
+		{"B", 12, "B:12 "},
+		{"bonsai", 2, "bonsai:2 "},
+		{"x9", 3, "x9:3 "},
+		{"🪴", 2, "🪴2 "},
+		{"🌳", 2, "🌳2 "},
 	}
 	for _, tc := range tests {
 		if got := Prefix(tc.glyph, tc.depth); got != tc.want {
@@ -81,7 +85,7 @@ func TestPrefixUnsafeGlyphFallsBack(t *testing.T) {
 			t.Errorf("Prefix(%q) = %q, want %q", g, got, want)
 		}
 	}
-	for _, g := range []string{"🪴", "🌳", "🌱", "bonsai", ">"} {
+	for _, g := range []string{"🪴", "🌳", "🌱", ">"} {
 		if got, want := Prefix(g, 1), g+"1 "; got != want {
 			t.Errorf("Prefix(%q) = %q, want %q", g, got, want)
 		}

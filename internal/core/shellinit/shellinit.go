@@ -87,11 +87,17 @@ func safeGlyph(glyph string) bool {
 	return true
 }
 
-// Prefix returns the prompt prefix "<glyph><depth> ". An empty or unsafe glyph
+// Prefix returns the prompt prefix "<glyph><depth> ", or "<glyph>:<depth> "
+// when the glyph ends in an ASCII letter or digit. An empty or unsafe glyph
 // uses DefaultGlyph.
 func Prefix(glyph string, depth int) string {
 	if !safeGlyph(glyph) {
 		glyph = DefaultGlyph
 	}
-	return glyph + strconv.Itoa(depth) + " "
+	// Without a separator a text glyph runs into the number ("bonsai2").
+	sep := ""
+	if last := glyph[len(glyph)-1]; last >= '0' && last <= '9' || last >= 'a' && last <= 'z' || last >= 'A' && last <= 'Z' {
+		sep = ":"
+	}
+	return glyph + sep + strconv.Itoa(depth) + " "
 }

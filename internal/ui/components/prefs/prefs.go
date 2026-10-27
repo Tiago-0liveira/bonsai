@@ -645,7 +645,7 @@ func (m Model) renderRow(i int) string {
 		return cursor + pad(label, labelCol) + accentStyle.Render("◂ "+m.agentGlyphs+" ▸")
 
 	case rowDepthGlyph:
-		label := "depth glyph (shell prompt, header)"
+		label := "depth glyph (prompt, status bar)"
 		if sel {
 			label = cursorStyle.Render(label)
 		}

@@ -281,7 +281,7 @@ func TestShellCmdEnv(t *testing.T) {
 	if len(depth) != 1 || depth[0] != "BONSAI_DEPTH=3" {
 		t.Errorf("depth env = %v", depth)
 	}
-	if len(prefix) != 1 || prefix[0] != "BONSAI_PROMPT_PREFIX=B3 " {
+	if len(prefix) != 1 || prefix[0] != "BONSAI_PROMPT_PREFIX=B:3 " {
 		t.Errorf("prefix env = %v", prefix)
 	}
 	if got := os.Getenv("BONSAI_DEPTH"); got != "2" {
