@@ -325,9 +325,20 @@ filters, and `R` to refresh. Failed reads preserve the last good board and show
 stale/offline state plus the last successful sync time. Drafts and unverified
 acceptance never enter the board. Garden remembers its subview per repository.
 `v` (the Garden-scoped `garden_view` key) switches the same approved work to a
-Table: rows with a selected-item inspector at 120/160 columns, `o` to cycle
-State/Number/Priority order, and the same selection, filters, document and
-Escape behavior. Garden remembers Board or Table per repository.
+Table with ISSUE, TITLE, exact STATE, SIGNAL and NEXT; optional columns follow
+the available width, with a bottom detail strip on taller screens. `o` cycles
+State/Number/Priority order. `g` toggles phase grouping; Space or Enter on a group
+header collapses/expands it while keeping the selected issue. Enter or a click
+on an item opens the same overlay; Escape restores the line and scroll.
+
+`a` (`garden_attention`, configurable) toggles Needs you and returns to the work
+layout you came from; `v` from Needs you goes to Table. Needs you includes blockers,
+explicit live input requests, human review, pending published-plan approval,
+finished local plans to publish, and explicitly startable Ready work. Idle or
+unknown activity alone and stale local requests are excluded. Counts use the same
+filtered records as the view. Garden remembers Board, Table or Needs you per
+repository, without persisting grouping, collapse or filters. See
+[Table and Needs you](garden.md#table) for the predicates and selection behavior.
 Selecting or opening never changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
 filter semantics, document sections, keys and current limitations.
 

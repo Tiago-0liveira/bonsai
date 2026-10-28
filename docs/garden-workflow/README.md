@@ -1,8 +1,8 @@
 # Garden workflow implementation
 
 Branch: `feat/garden-workflow`, created from `feat/tui-redesign` at
-`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Phases 01–07 are complete;
-phases 08–13 are planned. Existing Garden services and the opt-in redesign are
+`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Phases 01–08 are complete;
+phases 09–13 are planned. Existing Garden services and the opt-in redesign are
 the baseline. Earlier Garden features provide capabilities for later phases, but
 do not by themselves satisfy those phases' deliverables and exit criteria.
 
@@ -57,7 +57,7 @@ plan references; their entry contracts describe code, not reading dependencies.
 | 05 | [AI drafting](plans/05-ai-drafting.md) | Done | Optional discussion beside the same specification |
 | 06 | [Approve and publish](plans/06-approve-and-publish.md) | Done | Exact, recoverable GitHub creation and spec acceptance |
 | 07 | [Board and live state](plans/07-board-and-live-state.md) | Done | Six phases plus detailed stages and truthful activity |
-| 08 | [Tables and attention](plans/08-tables-and-attention.md) | Planned | Shared row/grouped views and Needs you |
+| 08 | [Tables and attention](plans/08-tables-and-attention.md) | Done | Shared row/grouped views and Needs you |
 | 09 | [Planning and revisions](plans/09-planning-and-revisions.md) | Planned | Focused plan reading, comparisons and feedback |
 | 10 | [Review policy](plans/10-review-policy.md) | Planned | Explicit account/effort/permission policy and durable review identity |
 | 11 | [Launch and supervision](plans/11-launch-and-supervision.md) | Planned | Previewed implementation + review intent and real run controls |

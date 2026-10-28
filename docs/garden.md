@@ -80,6 +80,7 @@ These presentation columns never change GitHub labels. Starting work is a separa
 | `esc` | Return to setup when available, otherwise workspace navigation |
 | `v` (`garden_view` binding) | Switch Board/Table, keeping the selected issue |
 | `d` (`garden_stages` binding, Board only) | Toggle phases/detailed stages |
+| `a` (`garden_attention` binding) | Toggle Needs you; return to the previous work layout |
 | `tab` (focus-next binding) | Cycle Setup (until connected), the work view and Drafts |
 | `ctrl+k` / `?` | Command palette / help |
 
@@ -88,7 +89,7 @@ count as filtered and shows the total eligible count. Priority is optional displ
 data from existing `priority:p0` through `priority:p3` labels (case-insensitive),
 not a new managed label or a setup change. Missing or conflicting priority is `?`.
 Search captures typed shortcuts; Enter applies it and Escape restores the previous
-query and selection. The palette includes Garden: Board, Garden: Table, Search
+query and selection. The palette includes Garden: Board, Garden: Table, Garden: Needs you, Search
 approved work, and Refresh.
 
 Refresh keeps the selected stable ID even if its row or column changes. On the
@@ -99,23 +100,61 @@ New attention items never take keyboard focus.
 
 ## Table
 
-The Table is a second view of the same approved work, not a second store: Board
-and Table share one collection, query, selected issue, notices, freshness and
-issue document; switching views issues no extra read. `v` (the Garden-scoped
-`garden_view` binding; it cannot be rebound to a key Garden itself reads, such as
-`/`, `t`, `p`, `x`, `o`, `h`/`j`/`k`/`l` or the page keys) toggles Board/Table and keeps the exact selected issue
-even though ordering differs; filters stay. The `v` key only applies inside
-Garden: Worktrees keeps `v` for Processes, and overriding `garden_view` in
-`keys:` changes both the key and every on-screen hint.
+Table and Needs you present the same approved-work projection as Board. All three
+share the query, selected issue, notices, freshness and issue overlay; switching
+layouts performs no backend read. `v` (`garden_view`) cycles Board/Table; from
+Needs you it goes to Table. `a` (`garden_attention`) toggles Needs you and returns
+to the Board or Table you came from. These bindings are scoped to Garden and can
+be changed in Settings → Keys → Garden. Garden remembers Board, Table or Needs
+you per repository; grouping, collapse and filters last only for this session.
 
-Rows show issue number, title, type, state (full names, never clipped), priority
-and approval/conflict status. Columns drop by available width, not by clipping
-the title or state: 80 columns show ISSUE, TITLE, TYPE and STATE; 120 adds a
-selected-item inspector (type, state, approval, next human gate) in place of TYPE
-and keeps P; 160 shows every column. The selected row always carries a marker.
-An Issue with [local planner work](#local-planner-badges) also gets a LOCAL column
-after STATE (a short form when the title needs the room, dropped before the title is
-squeezed below 28 columns).
+Rows show ISSUE, TITLE, exact STATE, SIGNAL and NEXT. At 80 columns SIGNAL is
+omitted and NEXT is shortened. At 120 SIGNAL and longer actions fit; 160 also
+adds TYPE and P. Local activity and approval warnings appear in SIGNAL. State
+names remain complete; long titles and signals end with an ellipsis, and the
+overlay shows full text. Every row has a phase rail; the selected row has a
+thicker marker. When at least 18 body rows are available, a three-line bottom
+strip shows the selected issue's signal, title and “Enter open · next: …”. On a
+group header it shows the group and “Enter expand” or “Enter collapse” instead.
+The Rows footer counts visible items and reports how many items collapsed groups
+hide.
+
+`o` cycles State/Number/Priority sorting. `g` toggles Group: None/Phase separately
+in Table and Needs you. Groups follow Backlog through Done, then Unplaced;
+blockers remain in their proven phase exactly once. Arrow/page/home/end keys
+move through item rows and group headers. Space collapses or expands the current
+group; Enter on a header does the same. Collapsing the selected issue's group
+keeps its identity, focuses the header and explains that it is hidden. Expanding
+that group returns to the issue. Enter or clicking an item opens the shared
+overlay; Escape returns to the same line, grouping and scroll. Clicking a group
+header toggles its collapse.
+
+### Needs you
+
+Needs you uses the current text/type/priority filters and sorted rows. Its count,
+submenu and footer describe the same filtered set. The first matching request
+wins, in this order:
+
+- A blocker, with its proven phase reason or “no proven phase”.
+- A live local implementation or planner explicitly waiting for input.
+- Human review of a change, proven by stage or fresh implementation handoff.
+- A published plan revision awaiting approval on currently accepted work.
+- A finished local plan awaiting review/publication on accepted Approved/Planning work.
+- Explicitly startable Ready work with current acceptance and no implementation attempt.
+
+Idle, working, failed, exited and unknown activity alone are not requests. Stale
+local evidence cannot establish an input request, handoff or plan publication.
+The Table summary counts active fresh local runs, needs and blockers from the
+same filtered collection; the summary chip leaves search and exclusion feedback
+visible. Entering Needs you from an issue without a request selects the first
+need and names both issues. Leaving restores the previous issue if that automatic
+choice is unchanged and the previous issue still matches the collection. Moving
+to another need keeps that explicit selection on return. A refresh that removes
+the selected need chooses the item at its previous position and names the
+replacement. Empty Needs you keeps
+the shared selection for Board and says nothing needs you. Failed reads retain
+last good rows and show the stale notice. Reading, filtering and grouping never
+start work or change GitHub state.
 
 ### Local planner badges
 
@@ -130,20 +169,9 @@ Update times use an absolute date/time; a failed local read retains evidence and
 marks it stale. Narrow cards truncate these lines to their available cells.
 None of this evidence grants acceptance, Ready or completion.
 
-Table rows retain the planner LOCAL badge. A live planner or ready unpublished
-plan is flagged there using the existing words:
-
-| Badge | Meaning | Color |
-| --- | --- | --- |
-| `planner working` | the planner session is working (or reports nothing yet) | warning |
-| `planner needs you` | it waits for your input (the Issue document adds the reason) | warning |
-| `planner idle` | it finished its turn and waits for a prompt | muted |
-| `plan ready` | its plan file is ready; press `p`, then `u` | success |
-| `plan file invalid` | the plan file is not acceptable | danger |
-| `planner ended` | the attempt ended with nothing to publish | muted |
-
-A trailing `?` means the last local read failed and the badge is the last known one. The
-footer adds a total when any exist, for example `1 planner working · 1 plan ready` (without
+Table SIGNAL cells use the same activity text as Board cards; Needs you uses the
+specific request text. Approval warnings precede the signal. The footer also
+shows local planner totals, for example `1 planner working · 1 plan ready` (without
 the sync time below 120 columns). Bonsai reads this with the board data, again while the
 Garden is in view (every 4 seconds while a planner is live or its screen is open, every 15
 seconds otherwise) and after starting, cancelling or leaving a planner; a failed read keeps
