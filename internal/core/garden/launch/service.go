@@ -166,65 +166,22 @@ func sameOptions(a, b Options) bool {
 // permission values must be fully decided and belong to that provider, with no
 // fallback to omitted flags or to another provider's field.
 func validateNative(provider agents.ProviderID, l agents.LaunchOptions) error {
-	unsupported := func(why string) error {
+	err := agents.NativePermissions(provider, l)
+	if errors.Is(err, agents.ErrNativeUnsupported) {
+		why := strings.TrimSuffix(strings.TrimPrefix(err.Error(), agents.ErrNativeUnsupported.Error()+": "), ": "+agents.ErrInvalidLaunch.Error())
 		return fmt.Errorf("%w: %s: %w", ErrPermissionsUnsupported, why, agents.ErrInvalidLaunch)
 	}
-	switch provider {
-	case "codex":
-		if l.PermissionMode != "" || l.FullAccess != nil {
-			return unsupported("codex uses sandbox and approval")
-		}
-		switch l.Sandbox {
-		case "":
-			return fmt.Errorf("%w: sandbox", ErrPermissionsUnresolved)
-		case "bypass":
-			if l.Approval != "" {
-				return unsupported("bypass takes no approval policy")
-			}
-			return nil
-		case "read-only", "workspace-write", "danger-full-access":
-		default:
-			return unsupported("unknown sandbox")
-		}
-		switch l.Approval {
-		case "":
-			return fmt.Errorf("%w: approval policy", ErrPermissionsUnresolved)
-		case "untrusted", "on-request", "never":
-		default:
-			return unsupported("unknown approval policy")
-		}
-	case "claude":
-		if l.Sandbox != "" || l.Approval != "" || l.FullAccess != nil {
-			return unsupported("claude uses a permission mode")
-		}
-		if l.PermissionMode == "" {
-			return fmt.Errorf("%w: permission mode", ErrPermissionsUnresolved)
-		}
-	case "antigravity":
-		if l.Sandbox != "" || l.Approval != "" || l.PermissionMode != "" {
-			return unsupported("antigravity uses full access")
-		}
-		if l.FullAccess == nil {
-			return fmt.Errorf("%w: full access", ErrPermissionsUnresolved)
-		}
-	default:
-		return unsupported("unknown provider")
+	if errors.Is(err, agents.ErrNativeUnresolved) {
+		field := strings.TrimPrefix(err.Error(), agents.ErrNativeUnresolved.Error()+": ")
+		return fmt.Errorf("%w: %s", ErrPermissionsUnresolved, field)
 	}
-	return nil
+	return err
 }
 
 // escalated reports a mode that lets the agent act without asking. Inherited
 // values count: the acknowledgment covers what will run, not what was typed.
 func escalated(provider agents.ProviderID, l agents.LaunchOptions) bool {
-	switch provider {
-	case "codex":
-		return l.Sandbox == "danger-full-access" || l.Sandbox == "bypass"
-	case "claude":
-		return l.PermissionMode == "bypassPermissions" || l.PermissionMode == "auto" || l.PermissionMode == "dontAsk"
-	case "antigravity":
-		return l.FullAccess != nil && *l.FullAccess
-	}
-	return false
+	return agents.EscalatedLaunch(provider, l)
 }
 
 func isContext(err error) bool {

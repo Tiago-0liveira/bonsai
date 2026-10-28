@@ -125,6 +125,9 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	if m.wt.returning && ws != m.wt.returnWS && ws != wsWorktrees {
 		m.wt.returning = false
 	}
+	if m.workspace == wsSettings {
+		m = m.settingsAutoReviewLeave()
+	}
 	m.workspace = ws
 	m.shellFocus = shellNav
 	m.set.editing, m.set.capturing = false, false
@@ -330,6 +333,8 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.confirmRepoWrite()
 		case modals.KindGardenDraftQuit:
 			return m.privQuitChoice(msg.Value)
+		case modals.KindGardenAutoReviewRestore:
+			return m.autoReviewRestore()
 		case modals.KindGardenAssistRestore:
 			return m.editPrefs(func(p *config.Prefs) { p.GardenAssist = nil })
 		case modals.KindGardenReviewEnable:
@@ -346,10 +351,23 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.pgLinkConfirmed(true)
 		}
 		return m, nil
+	case settingsAutoReviewAccountsMsg:
+		return m.onSettingsAutoReviewAccounts(msg), nil
+	case settingsAutoReviewDefaultsMsg:
+		return m.onSettingsAutoReviewDefaults(msg), nil
+	case settingsAutoReviewResolvedMsg:
+		return m.onSettingsAutoReviewResolved(msg), nil
 	case settingsReviewAccountsMsg:
 		return m.onSettingsReviewAccounts(msg), nil
 	case settingsSavedMsg:
-		return m.onSettingsSaved(msg), nil
+		rollback := m.set.pendingRollback || msg.gen == m.prefsGen && msg.err != nil
+		m = m.onSettingsSaved(msg)
+		if rollback && !m.set.pendingRollback && m.set.autoReview.accounts.asked {
+			m, defaults := m.autoReviewLoadDefaults()
+			m, resolve := m.autoReviewResolve()
+			return m, tea.Batch(defaults, resolve)
+		}
+		return m, nil
 	case workspaceSavedMsg:
 		if msg.err != nil && !errors.Is(msg.err, config.ErrSuperseded) && msg.gen == m.wsGen {
 			m.status = "Could not remember workspace: " + msg.err.Error()
@@ -649,7 +667,8 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 	}
 	if t.hasCategory {
 		m.shellFocus = shellBody
-		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr}
+		m = m.settingsAutoReviewLeave()
+		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr, autoReview: m.set.autoReview}
 		m, load := m.settingsWarm()
 		return m, tea.Batch(cmd, load)
 	}

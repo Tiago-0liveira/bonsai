@@ -385,3 +385,13 @@ func WithProjectRootsContext(ctx context.Context, path string, fn func(ProjectRo
 		}
 	}
 }
+
+// GardenReviewPassPath keeps bounded local review passes and sanitized evidence references.
+// It holds no prompts, terminal output, environment values or credentials.
+func GardenReviewPassPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-review-passes.json"), nil
+}

@@ -14,6 +14,8 @@ var (
 	ErrSessionNotFound    = errors.New("session not found")
 	ErrNotAuthenticated   = errors.New("account is not authenticated")
 	ErrUsageUnsupported   = errors.New("provider does not support usage")
+	ErrNativeUnresolved   = errors.New("native permissions are not decided")
+	ErrNativeUnsupported  = errors.New("native permissions are not supported")
 	ErrInvalidLaunch      = errors.New("invalid launch options")
 	ErrAccountBusy        = errors.New("account already has an active session")
 	ErrProviderBusy       = errors.New("provider already has an active session on another account")

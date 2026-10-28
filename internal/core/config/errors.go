@@ -13,3 +13,9 @@ var ErrInvalidGardenDraft = errors.New("invalid Garden draft reference")
 
 // ErrInvalidGardenReview rejects a local review policy that could not be applied safely.
 var ErrInvalidGardenReview = errors.New("invalid Garden review policy")
+
+// ErrInvalidGardenAutoReview rejects an unsafe bounded review policy.
+var ErrInvalidGardenAutoReview = errors.New("invalid Garden automatic review policy")
+
+// ErrGardenAutoReviewNewer protects a preserved policy from being overwritten.
+var ErrGardenAutoReviewNewer = errors.New("Garden automatic review policy is preserved; use a compatible Bonsai version")

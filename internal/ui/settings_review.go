@@ -54,12 +54,12 @@ var reviewTriggerHelp = map[string]string{
 	config.GardenReviewTriggerNewCommit:      "New commit: one run for each new commit of an attempt, up to the run limit.",
 }
 
-// settingsWarm is what moving around Settings reads: the Garden status and, on the Agents category, the accounts
-// the review policy can choose from.
+// settingsWarm reads Garden status and the personal review options for the current category.
 func (m Model) settingsWarm() (Model, tea.Cmd) {
 	m, g := m.gardenWarm()
 	m, r := m.settingsReviewWarm()
-	return m, tea.Batch(g, r)
+	m, ar := m.settingsAutoReviewWarm()
+	return m, tea.Batch(g, r, ar)
 }
 
 // settingsReviewWarm reads the accounts once per visit to the Agents category. Without an account backend there is

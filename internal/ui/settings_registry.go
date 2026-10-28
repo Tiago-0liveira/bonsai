@@ -489,6 +489,7 @@ func gardenSections() []settingSection {
 				}),
 		}},
 		gardenAssistSection(),
+		gardenAutoReviewSection(),
 	}
 }
 

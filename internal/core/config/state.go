@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -53,7 +54,8 @@ type Prefs struct {
 	// GardenAssist overrides AI drafting options; nil inherits built-in defaults.
 	GardenAssist *GardenAssistPrefs `json:"garden_assist,omitempty"`
 	// GardenReview is the local review policy; nil means automatic reviews are off.
-	GardenReview *GardenReviewPrefs `json:"garden_review,omitempty"`
+	GardenReview     *GardenReviewPrefs     `json:"garden_review,omitempty"`
+	GardenAutoReview *GardenAutoReviewPrefs `json:"garden_auto_review,omitempty"`
 	// DepthGlyph is the marker shown before the nesting depth in bonsai-
 	// spawned shell prompts and the TUI header ("" = 🪴).
 	DepthGlyph string `json:"depth_glyph,omitempty"`
@@ -76,6 +78,7 @@ type GardenAssistPrefs struct {
 
 // Clone returns a copy that shares no mutable data with p.
 func (p Prefs) Clone() Prefs {
+	p.GardenAutoReview = p.GardenAutoReview.Clone()
 	if p.GardenAssist != nil {
 		assist := *p.GardenAssist
 		p.GardenAssist = &assist
@@ -119,8 +122,9 @@ type State struct {
 	draftGen  uint64 `json:"-"`
 	// extra* keep keys this version does not know, so a newer or hand-edited
 	// state.json survives a rewrite.
-	extra      map[string]json.RawMessage `json:"-"`
-	extraPrefs map[string]json.RawMessage `json:"-"`
+	extra               map[string]json.RawMessage `json:"-"`
+	extraPrefs          map[string]json.RawMessage `json:"-"`
+	autoReviewPreserved bool                       `json:"-"`
 }
 
 // stateDisk mirrors State's persisted fields without the mutex so snapshots
@@ -212,7 +216,19 @@ func LoadState() (*State, error) {
 		}
 		return nil, err
 	}
-	if err := json.Unmarshal(data, st); err != nil {
+	// Decode the original bytes in order, retaining encoding/json's merge and
+	// case-folding semantics for unrelated preferences. Only the optional policy
+	// is captured raw so a malformed shape cannot prevent those from loading.
+	var decoded struct {
+		*State
+		Prefs struct {
+			*Prefs
+			GardenAutoReview json.RawMessage `json:"garden_auto_review"`
+		} `json:"prefs"`
+	}
+	decoded.State = st
+	decoded.Prefs.Prefs = &st.Prefs
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, err
 	}
 	if st.CopyCounts == nil {
@@ -235,7 +251,85 @@ func LoadState() (*State, error) {
 			st.extraPrefs = unknownKeys(pm, jsonKeys(reflect.TypeOf(Prefs{})))
 		}
 	}
+	var autoRaw json.RawMessage
+	autoEntries := map[string]json.RawMessage{}
+	prefsCount, policyCount := 0, 0
+	prefsExact, policyExact := false, false
+	walkJSONObject(data, func(key string, raw json.RawMessage) {
+		if !strings.EqualFold(key, "prefs") {
+			return
+		}
+		prefsCount++
+		prefsExact = key == "prefs"
+		walkJSONObject(raw, func(prefKey string, prefRaw json.RawMessage) {
+			if !strings.EqualFold(prefKey, "garden_auto_review") {
+				return
+			}
+			policyCount++
+			policyExact = prefKey == "garden_auto_review"
+			if key == "prefs" {
+				// Maps can retain only the last occurrence of an exact duplicate.
+				autoEntries[prefKey] = prefRaw
+				if policyExact {
+					autoRaw = prefRaw
+				}
+			}
+		})
+	})
+	if policyCount > 0 {
+		var policy GardenAutoReviewPrefs
+		if prefsCount == 1 && prefsExact && policyCount == 1 && policyExact && canonical(autoRaw, &policy) && policy.Version <= GardenAutoReviewVersion && policy.Validate() == nil {
+			st.Prefs.GardenAutoReview = &policy
+		} else {
+			st.Prefs.GardenAutoReview = nil
+			st.autoReviewPreserved = true
+			if st.extraPrefs == nil {
+				st.extraPrefs = map[string]json.RawMessage{}
+			}
+			// Non-exact top-level prefs objects remain intact in extra.
+			for key, raw := range autoEntries {
+				st.extraPrefs[key] = raw
+			}
+		}
+	}
 	return st, nil
+}
+
+// walkJSONObject visits occurrences rather than map entries so duplicates still
+// count when deciding whether a local policy has an unambiguous canonical key.
+// The caller has already checked JSON syntax with the general state decoder.
+func walkJSONObject(raw []byte, visit func(string, json.RawMessage)) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
+		return
+	}
+	for dec.More() {
+		token, err := dec.Token()
+		if err != nil {
+			return
+		}
+		key, ok := token.(string)
+		if !ok {
+			return
+		}
+		var value json.RawMessage
+		if dec.Decode(&value) != nil {
+			return
+		}
+		visit(key, value)
+	}
+}
+
+// GardenAutoReviewPreserved reports whether a rejected raw policy is protected
+// from overwrites while unrelated preferences remain editable.
+func (s *State) GardenAutoReviewPreserved() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gardenAutoReviewPreservedLocked()
+}
+
+func (s *State) gardenAutoReviewPreservedLocked() bool {
+	return s.autoReviewPreserved
 }
 
 // marshalDisk encodes d, merging preserved unknown keys; known fields win.
@@ -365,7 +459,17 @@ func (s *State) SetPrefs(p Prefs) error {
 		return err
 	}
 	s.mu.Lock()
-	s.Prefs = p
+	if s.gardenAutoReviewPreservedLocked() && p.GardenAutoReview != nil {
+		s.mu.Unlock()
+		return ErrGardenAutoReviewNewer
+	}
+	if p.GardenAutoReview != nil {
+		if err := p.GardenAutoReview.Validate(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
+	s.Prefs = p.Clone()
 	s.mu.Unlock()
 	return s.Save()
 }
@@ -387,6 +491,14 @@ func (s *State) PersistPrefs(gen uint64, p Prefs) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.gardenAutoReviewPreservedLocked() && p.GardenAutoReview != nil {
+		return ErrGardenAutoReviewNewer
+	}
+	if p.GardenAutoReview != nil {
+		if err := p.GardenAutoReview.Validate(); err != nil {
+			return err
+		}
+	}
 	if gen < s.prefsGen {
 		return ErrSuperseded
 	}
