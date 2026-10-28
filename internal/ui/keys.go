@@ -54,6 +54,7 @@ type keyMap struct {
 	AgentPlayground key.Binding
 	GardenView      key.Binding
 	GardenStages    key.Binding
+	GardenAttention key.Binding
 	Prefs           key.Binding
 	Help            key.Binding
 	Quit            key.Binding
@@ -114,6 +115,7 @@ var defaultBindings = map[string]bindingSpec{
 	"agent_stop":       {[]string{"s"}, "stop agent"},
 	"garden_view":      {[]string{"v"}, "board/table"},
 	"garden_stages":    {[]string{"d"}, "phases/stages"},
+	"garden_attention": {[]string{"a"}, "needs you"},
 	"prefs":            {[]string{","}, "preferences"},
 	"help":             {[]string{"?"}, "keys"},
 	"quit":             {[]string{"q", "ctrl+c"}, "quit"},
@@ -125,7 +127,10 @@ func binding(action string, overrides map[string]string) key.Binding {
 	spec := defaultBindings[action]
 	keys := spec.keys
 	if ov, ok := overrides[action]; ok && ov != "" {
-		keys = []string{ov}
+		// Saved Garden overrides obey the same rules as Settings capture.
+		if scope, _, _ := scopeOfAction(action); scope != ksGarden || validateKeyBinding(action, ov, overrides) == nil {
+			keys = []string{ov}
+		}
 	}
 	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(keys[0], spec.desc))
 }
@@ -219,6 +224,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		AgentPlayground: b("agent_playground"),
 		GardenView:      b("garden_view"),
 		GardenStages:    b("garden_stages"),
+		GardenAttention: b("garden_attention"),
 		Prefs:           b("prefs"),
 		Help:            b("help"),
 		Quit:            b("quit"),
@@ -241,7 +247,7 @@ var keymapSections = []keymapSection{
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
 	{"Agents tab", []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}},
 	{"Processes tab", []string{"kill_proc", "restart_proc", "set_policy", "proc_modal", "multi_view", "rename_proc", "proc_search"}},
-	{"Garden", []string{"garden_view", "garden_stages"}},
+	{"Garden", []string{"garden_view", "garden_stages", "garden_attention"}},
 }
 
 // effectiveKey returns the key in effect for an action given user overrides.

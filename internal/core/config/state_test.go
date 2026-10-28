@@ -429,3 +429,25 @@ func TestPrefsShellInitJSON(t *testing.T) {
 		t.Errorf("empty fields should be omitted: %s", b)
 	}
 }
+
+func TestGardenAttentionViewPersistence(t *testing.T) {
+	stateEnv(t)
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := st.PersistGardenView(1, dir, "attention"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PersistGardenView(2, dir, "attention-other"); !errors.Is(err, ErrInvalidGardenView) {
+		t.Fatalf("unknown view: %v", err)
+	}
+	next, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.GardenView(dir) != "attention" {
+		t.Fatal("attention view lost")
+	}
+}

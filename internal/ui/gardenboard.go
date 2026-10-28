@@ -3,7 +3,6 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -19,13 +18,14 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
-// gardenLayout is how the one approved-work selection is drawn; Board and Table
+// gardenLayout is how the one approved-work selection is drawn. All layouts
 // share the snapshot, query, selection and detail, never a second store.
 type gardenLayout int
 
 const (
 	layoutBoard gardenLayout = iota
 	layoutTable
+	layoutAttention
 )
 
 type gardenBoardState struct {
@@ -38,9 +38,11 @@ type gardenBoardState struct {
 	evidence           map[garden.IssueID]work.Evidence
 	layout             gardenLayout
 	sort               work.Sort
-	tableScroll        int
+	table, attn        tableView
+	attentionFrom      gardenLayout
+	attentionID        garden.IssueID
+	attentionPicked    garden.IssueID
 	rows               []work.Record // Rows(sort), rebuilt only when the collection or sort changes
-	tableRow           int           // deletion anchor: the selection's last index in rows
 	opened             garden.IssueID
 	openedRepo         uint64 // the Garden the opened Issue was read from; another repository never keeps its overlay
 	section, docScroll int
@@ -151,11 +153,21 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 func (b *gardenBoardState) reselect() {
+	var header work.Phase = -1
+	if b.layout != layoutBoard {
+		v := b.tableView()
+		if v.line < len(v.lines) && v.lines[v.line].header {
+			header = v.lines[v.line].phase
+		}
+	}
 	b.collection = work.Select(b.snapshot.Items, b.query, b.evidence, b.snapshot.Findings...)
 	b.rows = b.collection.Rows(b.sort)
-	if b.layout == layoutTable {
+	b.rebuildTables()
+	if b.layout != layoutBoard {
 		if notice := b.tableFocus(); notice != "" {
 			b.notice = notice
+		} else if i := b.tableView().headerIndex(header); i >= 0 {
+			b.tableView().line = i
 		}
 		b.selection.Clamp(b.collection)
 	} else if reason := b.selection.Reconcile(b.collection); reason != "" {
@@ -182,55 +194,48 @@ func (b *gardenBoardState) close() {
 }
 
 func (b *gardenBoardState) layoutName() string {
+	if b.layout == layoutAttention {
+		return "Needs you"
+	}
 	if b.layout == layoutTable {
 		return "Table"
 	}
 	return "Board"
 }
 
-// rowIndex is where the shared selection sits in the cached Table order, or -1.
-// The selection ID is the only identity; tableRow just anchors a deletion.
-func (b *gardenBoardState) rowIndex() int {
-	if b.selection.ID == 0 {
-		return -1
+func (b *gardenBoardState) setLayout(l gardenLayout) {
+	entering := l == layoutAttention && b.layout != layoutAttention
+	if entering {
+		b.attentionFrom, b.attentionID = b.layout, b.selection.ID
+		// Entry starts at the first need; refresh fallback still uses its anchor.
+		b.attn.anchor = 0
+	} else if b.layout == layoutAttention && l != layoutAttention {
+		if b.selection.ID == b.attentionPicked {
+			b.selection.Focus(b.collection, b.attentionID)
+		}
+		b.attentionID, b.attentionPicked = 0, 0
 	}
-	return slices.IndexFunc(b.rows, func(r work.Record) bool { return r.Item.Issue.ID == b.selection.ID })
+	b.layout = l
+	if l != layoutBoard {
+		if notice := b.tableFocus(); notice != "" {
+			b.notice = notice
+		}
+	} else {
+		if notice := b.selection.Reconcile(b.collection); notice != "" {
+			b.notice = notice
+		}
+	}
+	if entering {
+		b.attentionPicked = b.selection.ID
+		if b.attentionID != b.attentionPicked {
+			if from, _, ok := b.collection.Find(b.attentionID); ok {
+				to, _, _ := b.collection.Find(b.attentionPicked)
+				b.notice = fmt.Sprintf("Selected #%d does not need you; showing #%d.", from.Item.Issue.Number, to.Item.Issue.Number)
+			}
+		}
+	}
 }
 
-// tableFocus makes the Table cursor follow the shared selection. When the
-// selected Issue vanished it lands on the row now at its old index (the previous
-// row if it was last) and returns a notice saying which.
-func (b *gardenBoardState) tableFocus() string {
-	if i := b.rowIndex(); i >= 0 {
-		b.selection.Focus(b.collection, b.selection.ID)
-		b.tableRow = i
-		return ""
-	}
-	left := b.selection.ID != 0
-	was := b.tableRow
-	b.selection.ID = 0
-	b.tableRow = max(0, min(was, len(b.rows)-1))
-	if len(b.rows) == 0 {
-		if left {
-			return "Selected issue left this view; no matching work remains."
-		}
-		return ""
-	}
-	b.selection.Focus(b.collection, b.rows[b.tableRow].Item.Issue.ID)
-	switch {
-	case !left:
-		return ""
-	case was >= len(b.rows):
-		return "Selected issue left this view; selected the previous row."
-	}
-	return "Selected issue left this view; selected the row now in its place."
-}
-func (b *gardenBoardState) setLayout(l gardenLayout) {
-	b.layout = l
-	if l == layoutTable {
-		b.tableFocus()
-	}
-}
 func (m *Model) gardenRememberView() tea.Cmd {
 	if m.state == nil {
 		return nil
@@ -240,6 +245,9 @@ func (m *Model) gardenRememberView() tea.Cmd {
 		view = "board"
 		if m.garden.board.layout == layoutTable {
 			view = "table"
+		}
+		if m.garden.board.layout == layoutAttention {
+			view = "attention"
 		}
 	}
 	if m.garden.board.rememberedView == view {
@@ -284,7 +292,10 @@ func (m Model) gardenBoardRows() int {
 func (m *Model) gardenBoardVisible() {
 	b := &m.garden.board
 	b.selection.EnsureVisible(b.collection, gardenBoardCapacity(m.gardenBoardRows()), gardenBoardColumns(m.width, b.selection.Mode))
-	b.tableScroll = tableScrollFor(b.tableScroll, b.rowIndex(), gardenTableCapacity(m.gardenBoardRows()), len(b.collection.Records))
+	if b.layout != layoutBoard {
+		v := b.tableView()
+		v.scroll = tableScrollFor(v.scroll, v.line, gardenTableCapacity(m.gardenBoardRows()), len(v.lines))
+	}
 }
 func (m Model) gardenStartSearch() (Model, tea.Cmd) {
 	b := &m.garden.board
@@ -368,8 +379,18 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if b.opened != 0 {
 		return m.gardenIssueKey(msg)
 	}
+	if key.Matches(msg, m.keys.GardenAttention) {
+		if b.layout == layoutAttention {
+			b.setLayout(b.attentionFrom)
+		} else {
+			b.setLayout(layoutAttention)
+		}
+		m.gardenBoardVisible()
+		cmd := m.gardenRememberView()
+		return m, cmd
+	}
 	if key.Matches(msg, m.keys.GardenView) {
-		if b.layout == layoutBoard {
+		if b.layout != layoutTable {
 			b.setLayout(layoutTable)
 		} else {
 			b.setLayout(layoutBoard)
@@ -390,6 +411,16 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.gardenRememberView()
 		return m, cmd
 	case "enter":
+		if b.layout != layoutBoard {
+			v := b.tableView()
+			if len(v.lines) == 0 {
+				break
+			}
+			if v.lines[v.line].header {
+				b.toggleGroup()
+				break
+			}
+		}
 		m.gardenOpenIssue(b.selection.ID)
 	case "/":
 		return m.gardenStartSearch()
@@ -425,7 +456,7 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			list := m.privListCmd() // entering Drafts reads the private drafts; the Work read is shared with the Board
 			return m, tea.Batch(cmd, list)
 		}
-		if b.layout == layoutTable {
+		if b.layout != layoutBoard {
 			m.gardenTableKey(k)
 		} else {
 			m.gardenBoardMove(k)
@@ -473,9 +504,18 @@ func (m Model) gardenBoardHints() []shellHint {
 	}
 	view := m.keys.GardenView.Help().Key
 	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {m.keys.GardenStages.Help().Key, "phases/stages"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
-	if b.layout == layoutTable {
-		h = []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"o", "sort"}, {"x", "clear"}, {view, "board"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
+	if b.layout != layoutBoard {
+		target := "board"
+		if b.layout == layoutAttention {
+			target = "table"
+		}
+		h = []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"space", "collapse"}, {"g", "group"}, {"/", "search"}, {"t/p", "type/priority"}, {"o", "sort"}, {"x", "clear"}, {view, target}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
 	}
+	attention := "needs you"
+	if b.layout == layoutAttention {
+		attention = "all work"
+	}
+	h = append(h[:len(h)-2], shellHint{m.keys.GardenAttention.Help().Key, attention}, h[len(h)-2], h[len(h)-1])
 	if m.canToggleSub() {
 		h = append(h, shellHint{m.keys.Tab.Help().Key, "submenu"})
 	}
@@ -516,7 +556,13 @@ func (m Model) gardenBoardIdentity() string {
 	if b.opened != 0 {
 		id = b.opened
 	}
+	if b.layout == layoutAttention && b.opened == 0 && len(b.attn.records) == 0 {
+		return "Needs you / empty"
+	}
 	if r, _, ok := b.collection.Find(id); ok {
+		if b.layout == layoutAttention {
+			return fmt.Sprintf("Needs you / #%d / %s", r.Item.Issue.Number, r.Column)
+		}
 		return fmt.Sprintf("#%d  %s / %s", r.Item.Issue.Number, boardTitle(r.Item.Issue.Title), r.Column)
 	}
 	if b.layout == layoutTable {

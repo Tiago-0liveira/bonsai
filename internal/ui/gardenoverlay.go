@@ -203,14 +203,23 @@ func (m Model) gardenMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.currentShellFocus() == shellInput || m.planActive() || m.launchActive() || m.plannerActive() {
 		return m, nil
 	}
+	if b.layout != layoutBoard {
+		if i, ok := m.gardenTableHit(msg.X, msg.Y); ok && b.tableView().lines[i].header {
+			m.shellFocus = shellBody
+			b.tableView().line = i
+			b.toggleGroup()
+			m.gardenBoardVisible()
+			return m, nil
+		}
+	}
 	id, ok := m.gardenListHit(msg.X, msg.Y)
 	if !ok {
 		return m, nil
 	}
 	m.shellFocus = shellBody
 	b.selection.Focus(b.collection, id)
-	if b.layout == layoutTable {
-		b.tableRow = max(0, b.rowIndex())
+	if b.layout != layoutBoard {
+		b.tableFocus()
 	}
 	m.gardenBoardVisible()
 	m.gardenOpenIssue(id)
@@ -244,25 +253,31 @@ func (m Model) issueMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// gardenTableHit shares the renderer's body offset and line capacity, including groups.
+func (m Model) gardenTableHit(x, y int) (int, bool) {
+	b := m.garden.board
+	v := b.tableView()
+	line := y - shellHeaderRows - settingsSubmenuRows - 3
+	capacity := gardenTableCapacity(m.gardenBoardRows())
+	scroll := tableScrollFor(v.scroll, v.line, capacity, len(v.lines))
+	i := scroll + line
+	return i, x >= 1 && x < m.width && line >= 0 && line < capacity && i < len(v.lines)
+}
+
 // gardenListHit maps a cell to the card or row drawn there, mirroring the layout of gsBoard and gsTable.
 func (m Model) gardenListHit(x, y int) (garden.IssueID, bool) {
 	b := m.garden.board
+	if b.layout != layoutBoard {
+		i, ok := m.gardenTableHit(x, y)
+		if !ok || b.tableView().lines[i].header {
+			return 0, false
+		}
+		return b.tableView().lines[i].rec.Item.Issue.ID, true
+	}
 	rows := m.gardenBoardRows()
 	line := y - shellHeaderRows - settingsSubmenuRows - 2 // under the two rows of the shared work head
 	if x < 1 || line < 0 || line >= max(0, rows-3) {
 		return 0, false
-	}
-	if b.layout == layoutTable {
-		tableW := m.width
-		if m.width >= 120 {
-			tableW = m.width - max(tableInspectorMin, m.width/3) - 3
-		}
-		scroll := tableScrollFor(b.tableScroll, b.rowIndex(), gardenTableCapacity(rows), len(b.rows))
-		n := scroll + line - 1 // line 0 is the column header
-		if x >= tableW || line < 1 || n >= len(b.rows) || n >= scroll+gardenTableCapacity(rows) {
-			return 0, false
-		}
-		return b.rows[n].Item.Issue.ID, true
 	}
 	columns := min(gardenBoardColumns(m.width, b.selection.Mode), len(b.collection.Lanes(b.selection.Mode)))
 	s := b.selection

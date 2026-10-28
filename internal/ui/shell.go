@@ -561,6 +561,7 @@ func paletteTargets() (labels []string, targets map[string]paletteTarget) {
 	}
 	add("Garden: Board", paletteTarget{ws: wsGarden, gardenAction: "board"})
 	add("Garden: Table", paletteTarget{ws: wsGarden, gardenAction: "table"})
+	add("Garden: Needs you", paletteTarget{ws: wsGarden, gardenAction: "attention"})
 	add("Garden: Search approved work", paletteTarget{ws: wsGarden, gardenAction: "search"})
 	add("Garden: Refresh", paletteTarget{ws: wsGarden, gardenAction: "refresh"})
 	return labels, targets
@@ -577,7 +578,7 @@ func paletteTargetForLabel(label string) (paletteTarget, bool) {
 func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
 	// Leaving the opened Issue's screens closes their terminal attachment; the holder is never stopped.
 	var rel tea.Cmd
-	if (t.gardenAction == "board" || t.gardenAction == "table") && m.garden.board.opened != 0 {
+	if (t.gardenAction == "board" || t.gardenAction == "table" || t.gardenAction == "attention") && m.garden.board.opened != 0 {
 		var r1, r2 tea.Cmd
 		m, r1 = m.launchClose()
 		if m.plannerActive() {
@@ -607,7 +608,7 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 		m.shellFocus = shellBody
 		if m.garden.hasStatus && m.garden.status.Caps.Read {
 			m.garden.sub = subBoard
-			if b := &m.garden.board; b.opened != 0 && (t.gardenAction == "board" || t.gardenAction == "table") {
+			if b := &m.garden.board; b.opened != 0 && (t.gardenAction == "board" || t.gardenAction == "table" || t.gardenAction == "attention") {
 				b.close() // the detail belongs to the old layout's parent
 			}
 			switch t.gardenAction {
@@ -615,8 +616,10 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 				m.garden.board.setLayout(layoutBoard)
 			case "table":
 				m.garden.board.setLayout(layoutTable)
+			case "attention":
+				m.garden.board.setLayout(layoutAttention)
 			}
-			if t.gardenAction == "board" || t.gardenAction == "table" {
+			if t.gardenAction == "board" || t.gardenAction == "table" || t.gardenAction == "attention" {
 				m.gardenBoardVisible()
 				remember := m.gardenRememberView()
 				var read tea.Cmd

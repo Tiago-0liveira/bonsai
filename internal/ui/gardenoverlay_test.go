@@ -296,7 +296,7 @@ func TestIssueOverlayReturnsToExactOriginAfterNavigationAndResize(t *testing.T) 
 			m = sized(t, m, 80, 24)
 			m = pressAll(t, m, "esc")
 			b, c := m.garden.board, control.garden.board
-			if b.opened != 0 || !reflect.DeepEqual(b.selection, c.selection) || b.tableScroll != c.tableScroll || b.tableRow != c.tableRow || b.layout != c.layout {
+			if b.opened != 0 || !reflect.DeepEqual(b.selection, c.selection) || b.table.scroll != c.table.scroll || b.table.anchor != c.table.anchor || b.layout != c.layout {
 				t.Fatalf("returned to %+v, want %+v", b.selection, c.selection)
 			}
 			if m.View() != control.View() {

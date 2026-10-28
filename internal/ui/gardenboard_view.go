@@ -69,9 +69,17 @@ func (m Model) gardenWorkHead(width int, title, sort, view string) []string {
 	if b.query.Priority != "" {
 		priority = b.query.Priority
 	}
-	count := fmt.Sprintf("%s  %d", title, len(b.collection.Records))
+	n := len(b.collection.Records)
+	if b.layout == layoutAttention {
+		n = b.collection.Summarize().NeedsYou
+	}
+	count := fmt.Sprintf("%s  %d", title, n)
 	if b.query.Active() {
-		count += fmt.Sprintf(" filtered / %d", b.collection.Total)
+		if b.layout == layoutAttention {
+			count += " · filtered"
+		} else {
+			count += fmt.Sprintf(" filtered / %d", b.collection.Total)
+		}
 	}
 	chip := "Type: " + typeName + " / Priority: " + priority
 	if sort != "" {
@@ -80,12 +88,23 @@ func (m Model) gardenWorkHead(width int, title, sort, view string) []string {
 	if view != "" {
 		chip += " · " + view
 	}
-	feedback := "Drafts and unverified acceptance stay off this board."
-	if b.collection.Excluded > 0 {
-		feedback = fmt.Sprintf("%d draft, unverified or invalid items excluded. ", b.collection.Excluded) + feedback
+	if b.layout != layoutBoard && ansi.StringWidth(count+chip)+5 > width {
+		chip = "Type: " + typeName + " / Priority: " + priority + " · " + view
+		if ansi.StringWidth(count+chip)+5 > width {
+			chip = view
+		}
 	}
+	feedback := "Drafts and unverified acceptance stay off this board."
 	if b.query.Text != "" {
 		feedback = "Search: " + boardSafe(b.query.Text)
+	}
+	if b.collection.Excluded > 0 {
+		excluded := fmt.Sprintf("%d draft, unverified or invalid items excluded.", b.collection.Excluded)
+		if b.query.Text != "" {
+			feedback += " · " + excluded
+		} else {
+			feedback = excluded + " " + feedback
+		}
 	}
 	if b.notice != "" {
 		feedback = b.notice
@@ -117,7 +136,7 @@ func (m Model) gsBoard(width, rows int) []string {
 	if b.opened != 0 && m.garden.planner.stage != plannerNone {
 		return m.gsPlanner(width, rows)
 	}
-	if b.layout == layoutTable {
+	if b.layout != layoutBoard {
 		return m.gsTable(width, rows)
 	}
 

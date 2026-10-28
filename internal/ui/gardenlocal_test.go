@@ -102,12 +102,10 @@ func TestLocalBadgeOnBoardAndTableForEveryState(t *testing.T) {
 					t.Fatalf("v did not open the table (layout %d)", m.garden.board.layout)
 				}
 				out = view(m)
-				mustContain(t, "table "+label, out, "LOCAL", "#101")
-				if !strings.Contains(out, c.badge) && !strings.Contains(out, strings.TrimPrefix(strings.TrimPrefix(c.badge, "planner "), "plan ")) {
-					t.Errorf("table %s: no badge:\n%s", label, out)
-				}
+				mustContain(t, "table "+label, out, "#101")
+				// Compact tables omit SIGNAL and the strip; wider tables retain activity.
 				if sz[0] >= 120 {
-					mustContain(t, "table "+label, out, c.badge)
+					mustContain(t, "table "+label, out, "SIGNAL", strings.Split(text, " · ")[0])
 				}
 				mustFit(t, "table "+label, m)
 				if ascii {

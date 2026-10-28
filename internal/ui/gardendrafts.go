@@ -327,7 +327,7 @@ func (m Model) gardenTyping() bool {
 	return d.searching || d.stage == draftsForm || d.stage == draftsEditor || d.stage == draftsAssist || (d.stage == draftsConflict && d.conflict != nil && d.conflict.editing)
 }
 
-func (m Model) gardenDraftsCapacity() int { return gardenTableCapacity(m.gardenBoardRows()) }
+func (m Model) gardenDraftsCapacity() int { return gardenDraftTableCapacity(m.gardenBoardRows()) }
 
 // gardenDraftsVisible keeps the selected row inside the window.
 func (m *Model) gardenDraftsVisible() {

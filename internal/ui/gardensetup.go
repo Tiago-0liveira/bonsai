@@ -362,10 +362,13 @@ func (m Model) onGardenStatus(msg gardenStatusMsg) (Model, tea.Cmd) {
 	if first {
 		m.garden.board.memoryLoaded = true
 		m.garden.board.rememberedView = msg.remembered
-		if (msg.remembered == "board" || msg.remembered == "table") && m.garden.status.Caps.Read {
+		if (msg.remembered == "board" || msg.remembered == "table" || msg.remembered == "attention") && m.garden.status.Caps.Read {
 			m.garden.sub = subBoard
 			if msg.remembered == "table" {
 				m.garden.board.layout = layoutTable
+			}
+			if msg.remembered == "attention" {
+				m.garden.board.layout = layoutAttention
 			}
 		}
 	}
@@ -815,8 +818,8 @@ func (m Model) gardenCrumbs() []string {
 		return m.gardenDraftsCrumbs()
 	case scrBoard:
 		b := m.garden.board
-		crumbs := []string{"Garden", "Table"}
-		if b.layout != layoutTable {
+		crumbs := []string{"Garden", b.layoutName()}
+		if b.layout == layoutBoard {
 			crumbs = []string{"Garden", "Board", b.collection.LaneTitle(b.selection.Mode, b.selection.Column)}
 		}
 		if b.opened != 0 {
@@ -877,6 +880,9 @@ func (m Model) gardenWhere() string {
 func (m Model) gardenFocusLabel() string {
 	if m.gardenScreen() == scrDrafts {
 		return m.gardenDraftsFocusLabel()
+	}
+	if m.gardenScreen() == scrBoard && m.garden.board.layout == layoutAttention && m.garden.board.opened == 0 {
+		return "Needs you"
 	}
 	if m.gardenScreen() == scrBoard && m.garden.board.layout == layoutTable && m.garden.board.opened == 0 {
 		return "Approved table"

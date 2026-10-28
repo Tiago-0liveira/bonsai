@@ -1210,6 +1210,7 @@ func (m Model) gardenSubmenu(width int) []string {
 		{"▦", "Board", boardOn, active == subBoard && g.board.layout == layoutBoard},
 		{"▤", "Table", boardOn, active == subBoard && g.board.layout == layoutTable},
 		{"✎", "Drafts", boardOn, active == subDrafts},
+		{"◇", "Needs you", boardOn, active == subBoard && g.board.layout == layoutAttention},
 	}
 	var tabs strings.Builder
 	tabs.WriteString(seg("", p.Surface, false).Render(" "))
@@ -1218,12 +1219,17 @@ func (m Model) gardenSubmenu(width int) []string {
 		if it.name == "Drafts" && it.on && len(g.drafts.collection.Records) > 0 {
 			label = " " + it.icon + " " + it.name + " " + fmt.Sprint(g.drafts.collection.Total) + " "
 		}
+		if it.name == "Needs you" {
+			label = " " + it.icon + " " + it.name + " " + fmt.Sprint(g.board.collection.Summarize().NeedsYou) + " "
+		}
 		switch {
-		case it.active && it.name == "Drafts":
-			// Amber marks the inbox as separate from approved work.
+		case it.active && (it.name == "Drafts" || it.name == "Needs you"):
+			// Amber marks inboxes and decisions needing attention.
 			tabs.WriteString(seg(p.Background, p.Warning, true).Render(label))
 		case it.active:
 			tabs.WriteString(seg(p.Background, p.Accent, true).Render(label))
+		case it.on && it.name == "Needs you":
+			tabs.WriteString(seg(p.Warning, p.Surface, false).Render(label))
 		case it.on:
 			tabs.WriteString(seg(p.Muted, p.Surface, false).Render(label))
 		default:
