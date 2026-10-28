@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 )
 
 // Launcher starts a holder for spec and returns once it serves its socket.
@@ -40,6 +42,9 @@ func Launch(ctx context.Context, p Paths, spec Spec) error {
 		}
 	}
 	cmd := exec.Command(bin, "__agent-host", "--records", p.Records, "--sockets", p.Sockets)
+	// Agent PTYs live in this host long after the caller exits; a bonsai
+	// shell's nesting depth must not leak into them.
+	cmd.Env = shellinit.ScrubEnv(os.Environ())
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		return err

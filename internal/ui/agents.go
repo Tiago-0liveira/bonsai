@@ -11,6 +11,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
@@ -19,6 +20,16 @@ import (
 
 // Option customizes a Model at construction.
 type Option func(*Model)
+
+// WithDepth sets how many bonsai shells this bonsai is nested inside.
+func WithDepth(n int) Option {
+	return func(m *Model) { m.depth = max(n, 0) }
+}
+
+// depthMarker renders "<glyph>N" for a shell level, e.g. "🪴2".
+func (m Model) depthMarker(level int) string {
+	return strings.TrimSpace(shellinit.Prefix(m.state.Prefs.DepthGlyph, level))
+}
 
 // WithAgents injects the agent backend. A backend without Sessions, or whose
 // Sessions are unsupported on this host, leaves every session feature off.

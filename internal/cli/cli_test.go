@@ -126,3 +126,17 @@ func TestHelpAndShellInitOutsideRepo(t *testing.T) {
 		t.Errorf("shell-init output looks wrong: %q", out)
 	}
 }
+
+func TestShellInitPrompt(t *testing.T) {
+	noRepo := t.TempDir()
+	for _, sh := range []string{"bash", "zsh", "fish", "nu", "pwsh"} {
+		out, err := runIn(t, noRepo, "shell-init", sh)
+		if err != nil || !strings.Contains(out, "BONSAI_PROMPT_PREFIX") {
+			t.Errorf("shell-init %s: %v (%q)", sh, err, out)
+		}
+	}
+	_, err := runIn(t, noRepo, "shell-init", "tcsh")
+	if err == nil || !strings.Contains(err.Error(), "bash|zsh|fish|nu|pwsh") {
+		t.Errorf("unknown shell error = %v", err)
+	}
+}

@@ -113,6 +113,8 @@ Details: [docs/agents.md](docs/agents.md).
   Tailscale tunnel replaces polling. Only the webhook receiver is ever exposed
   ([docs/web.md](docs/web.md#updates-and-exposure)).
 - **Self-update**: `bonsai update` verifies and installs the latest release.
+- **Shell depth**: shells opened from the TUI show a `🪴N` prompt marker, so
+  nested bonsai shells stay visible ([docs/tui-cli.md](docs/tui-cli.md#shell-depth-indicator)).
 
 ## Quick start
 
