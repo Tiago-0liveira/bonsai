@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -732,14 +733,17 @@ func TestFailedRevertLeavesAResumablePublication(t *testing.T) {
 		t.Fatalf("draft = %+v", cur.Publication)
 	}
 	// A later step that cannot be recorded is resumable too, and still creates nothing.
-	dir := filepath.Dir(h.ops.Path)
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Skip("cannot make the store read-only")
-	}
-	stuck, err := h.svc.Resume(context.Background(), h.req(d))
-	_ = os.Chmod(dir, 0o700)
-	if os.Geteuid() != 0 && (err != nil || stuck.State != Unknown || stuck.Err == nil) {
-		t.Fatalf("resume with an unwritable store = %+v, %v", stuck, err)
+	// Directory modes do not restrict writes on Windows, and root ignores them.
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		dir := filepath.Dir(h.ops.Path)
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		stuck, err := h.svc.Resume(context.Background(), h.req(d))
+		_ = os.Chmod(dir, 0o700)
+		if err != nil || stuck.State != Unknown || stuck.Err == nil {
+			t.Fatalf("resume with an unwritable store = %+v, %v", stuck, err)
+		}
 	}
 	if h.count("create") != 0 {
 		t.Fatal("created while stuck")
