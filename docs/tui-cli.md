@@ -478,7 +478,7 @@ a text edit, `esc` cancels only that edit.
 - **Appearance**: theme, surface contrast (layered or flat), icons (unicode or
   ASCII), density.
 - **Keys**: one section per keymap group, plus the fixed Terminal row `ctrl+]`.
-- **Garden**: repository base ref, setup status, and **AI drafting** personal defaults.
+- **Garden**: repository base ref, setup status, **AI drafting** and **Automatic review** personal defaults.
   Assistant opens the account/model/effort dialog; choose **Save defaults** or
   **Cancel**. Empty model and effort inherit the account profile, then provider
   defaults. A missing or unsupported saved account shows "missing: choose again"
@@ -487,6 +487,13 @@ a text edit, `esc` cancels only that edit.
   question quality, evidence and output rules remain fixed. Restore defaults asks
   for confirmation and clears only AI drafting preferences. Session options
   override these defaults for that session and never save them.
+  **Automatic review** stores an off-by-default policy: reviewer account, model,
+  effort, native permissions, a fixed one-pass limit and typed checks, plus
+  availability and Restore defaults. It grants no permission and starts nothing;
+  each implementation start will need separate authorization when that flow arrives.
+  It is separate from the Playground reviewer under Agents. See
+  [Automatic review defaults](garden.md#automatic-review-defaults) for fields,
+  check syntax and downgrade limits.
 - **Agents**: "Account defaults" opens the Accounts workspace on Defaults.
   **Garden review policy** configures the local review account, fixed enforced
   read-only role, trigger, attempt scope and automatic run limit. Review defaults
@@ -506,7 +513,7 @@ last saved state and shows the error. Unknown fields in `state.json` are kept.
 
 Settings adds these `state.json` fields: `prefs.contrast`, `prefs.density`,
 `prefs.start_workspace`, `prefs.no_workspace_memory`, `prefs.garden_assist`,
-`prefs.garden_review` and a per-repository
+`prefs.garden_review`, `prefs.garden_auto_review` and a per-repository
 `workspaces` map keyed by the canonical local repository path (symlinks resolved).
 
 The startup workspace is the first of: the explicit startup workspace, the

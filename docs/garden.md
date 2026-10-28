@@ -833,6 +833,56 @@ holders, uncommitted, ignored or untracked files, extra commits, symlinks and a
 changed preview, and removes the worktree without force. The branch and the attempt
 history remain. Cleanup is never automatic and never erases your changes.
 
+## Automatic review defaults
+
+Settings → Garden → **Automatic review** saves personal defaults for a future
+bounded review after implementation. It is off by default. This setting grants no
+permission: each start must explicitly authorize one review, permitted fixes and
+checks. That start flow arrives later; these fields currently start no reviewer,
+run no checks and change no implementation lifecycle.
+
+- **Review after implementation** enables the default for new implementation starts.
+- **Reviewer account**, **Reviewer model**, **Reviewer effort** and **Reviewer
+  permissions** choose the reviewer and its provider-native options. Empty options
+  inherit the account profile. Changing account clears model, effort and permission
+  overrides; it never changes the account profile itself. Effort and permission
+  choices use cached launch options only. Without a cache, only **Profile default**
+  is offered, with “Launch options are not cached for this account yet.”
+- **Review limit** is fixed at **One review + fixes + checks**. **Checks** names the
+  verification commands. **Implementer** explains that the implementation account's
+  launch defaults are chosen separately at each start.
+- **Availability** explains whether the saved reviewer can launch. Reasons include
+  automatic review being off, missing local accounts or account services, an account
+  that cannot launch, and unresolved or unsupported native permissions. Inherited
+  full access is unavailable until permissions are chosen explicitly; an explicit
+  escalation still needs acknowledgment at start. No permission is silently widened.
+- **Restore defaults** asks for confirmation, then clears only these personal
+  defaults and turns automatic review off.
+
+The checks text form accepts at most eight commands, separated by `;`, for example
+`go test ./...; go vet ./...`. Each command is a typed executable plus arguments,
+with whitespace separating words: no shell, quoting, pipes or variable expansion.
+Shell executables, shell scripts (`.cmd`, `.bat`, `.ps1`) and wrappers such as `env`
+and `sudo` are refused. An executable is a simple name or a clean absolute path.
+Checks run relative to the worktree root by default; a typed `dir` must be a clean
+relative folder with no parent segments, colons or backslashes. Checks stored with
+a folder, custom display name or argument containing spaces cannot be edited in
+the text form without loss. Edit those typed records in `state.json`, or restore
+defaults.
+
+The separate Settings → Agents → **Garden review policy** controls the
+[Playground read-only reviewer](#read-only-verification-and-human-review).
+Its triggers and review limits do not enable this bounded review/fix/check policy.
+
+These defaults use `prefs.garden_auto_review` with `version: 1` in the personal
+`state.json` (normally `~/.config/bonsai/state.json`, honoring the platform user
+config directory). Invalid or newer-version values load as off, preserve their raw
+JSON during unrelated saves, and cannot be overwritten until restored by the newer
+Bonsai. Case variants of `garden_auto_review` are also quarantined and preserved.
+The separate review pass store, `garden-review-passes.json` in the same Bonsai
+config directory, refuses a newer schema and is never rewritten by an older
+Bonsai. These protections preserve future data when downgrading.
+
 ## Read-only verification and human review
 
 In the redesign Playground, select an implementation session and press `r` for
