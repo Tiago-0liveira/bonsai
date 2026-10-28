@@ -148,6 +148,7 @@ func (q Query) Active() bool {
 }
 
 type Record struct {
+	Accepted bool
 	Phase    Phase
 	Placed   bool
 	Reason   string
@@ -184,7 +185,7 @@ func Select(items []gardensync.Item, q Query, evidence map[garden.IssueID]Eviden
 			continue
 		}
 		out.Total++
-		r := Record{Item: it, Column: placement(c.Stage, it.Issue, it.Verification), Priority: priority(it.Issue.Labels)}
+		r := Record{Accepted: lane.Lane == garden.LaneWork, Item: it, Column: placement(c.Stage, it.Issue, it.Verification), Priority: priority(it.Issue.Labels)}
 		r.Item.Classification = c
 		r.Evidence = evidence[it.Issue.ID]
 		if r.Column == Approved && lane.Lane == garden.LaneWork && r.Evidence.Planner != nil && (r.Evidence.Planner.Live || r.Evidence.Planner.PlanReady) {

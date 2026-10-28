@@ -99,6 +99,9 @@ func TestBlockerProof(t *testing.T) {
 				t.Fatalf("excluded retained blocker: %+v", c)
 			}
 			r := c.Records[0]
+			if r.Accepted == tc.retained {
+				t.Fatalf("acceptance %t, retained %t", r.Accepted, tc.retained)
+			}
 			if r.Column != Blocked || r.Phase != tc.phase || r.Reason != tc.reason || r.Placed != (tc.phase != PhaseCount) {
 				t.Fatalf("%+v", r)
 			}
