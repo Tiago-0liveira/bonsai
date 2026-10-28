@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -162,18 +163,18 @@ func TestIssueOverlayTrapsKeysAndClicks(t *testing.T) {
 				if cmd != nil {
 					t.Fatalf("%q reached a global: %T", k.String(), cmd())
 				}
-				if m.modal != nil || m.workspace != ws || m.garden.board.opened != opened || m.garden.board.selection != sel || m.garden.board.layout != layoutBoard || m.garden.board.searching {
+				if m.modal != nil || m.workspace != ws || m.garden.board.opened != opened || !reflect.DeepEqual(m.garden.board.selection, sel) || m.garden.board.layout != layoutBoard || m.garden.board.searching {
 					t.Fatalf("%q leaked out of the overlay", k.String())
 				}
 			}
 			// Down and up scroll the body; they never move the dimmed board's selection.
 			m = pressAll(t, m, "down", "up", "tab", "shift+tab")
-			if m.garden.board.selection != sel {
+			if !reflect.DeepEqual(m.garden.board.selection, sel) {
 				t.Fatal("navigation moved the board selection")
 			}
 			x, y, w, h := overlay.Center(sz[0], sz[1])
 			for _, p := range [][2]int{{0, 0}, {sz[0] - 1, sz[1] - 1}, {x - 1, y + 2}, {x + w, y + 2}, {x + 2, y + h}} {
-				if next, cmd := send(t, m, click(p[0], p[1])); cmd != nil || next.garden.board.opened != opened || next.garden.board.selection != sel || next.workspace != ws {
+				if next, cmd := send(t, m, click(p[0], p[1])); cmd != nil || next.garden.board.opened != opened || !reflect.DeepEqual(next.garden.board.selection, sel) || next.workspace != ws {
 					t.Fatalf("click outside the panel at %v leaked", p)
 				}
 			}
@@ -295,7 +296,7 @@ func TestIssueOverlayReturnsToExactOriginAfterNavigationAndResize(t *testing.T) 
 			m = sized(t, m, 80, 24)
 			m = pressAll(t, m, "esc")
 			b, c := m.garden.board, control.garden.board
-			if b.opened != 0 || b.selection != c.selection || b.tableScroll != c.tableScroll || b.tableRow != c.tableRow || b.layout != c.layout {
+			if b.opened != 0 || !reflect.DeepEqual(b.selection, c.selection) || b.tableScroll != c.tableScroll || b.tableRow != c.tableRow || b.layout != c.layout {
 				t.Fatalf("returned to %+v, want %+v", b.selection, c.selection)
 			}
 			if m.View() != control.View() {

@@ -53,7 +53,7 @@ func TestGateTwoThroughBackendAndBoard(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows := work.Select(w.Snapshot.Items, work.Query{})
+			rows := work.Select(w.Snapshot.Items, work.Query{}, nil)
 			r, _, ok := rows.Find(garden.IssueID(id))
 			if !ok || r.Column != work.Ready {
 				t.Fatalf("Board=%+v", rows)
@@ -80,7 +80,7 @@ func TestGateTwoThroughBackendAndBoard(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows = work.Select(w.Snapshot.Items, work.Query{})
+			rows = work.Select(w.Snapshot.Items, work.Query{}, nil)
 			if _, _, ok = rows.Find(garden.IssueID(id)); !ok || len(rows.Columns[work.Ready]) != 0 || work.Drafts(w.Snapshot.Items, work.Query{}).Total != 0 {
 				t.Fatal("stale accepted work left Board or stayed Ready")
 			}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func tpress(t *testing.T, m Model, keys ...string) Model {
 }
 func tableEnv(t *testing.T, fb *gardenfake.Backend, prefs config.Prefs, w, h int) Model {
 	t.Helper()
-	return pressAll(t, gardenEnv(t, fb, prefs, w, h), "v")
+	return tpress(t, pressAll(t, gardenEnv(t, fb, prefs, w, h), "v"), "home")
 }
 func rowIDs(rows []work.Record) []garden.IssueID {
 	var ids []garden.IssueID
@@ -131,7 +132,7 @@ func TestGardenTableToggleKeepsIdentityAndIssuesNoRead(t *testing.T) {
 		}
 	}
 	s := m.garden.board.selection
-	if m.garden.board.layout != layoutBoard || s.ID != id || s.Column != r.Column {
+	if m.garden.board.layout != layoutBoard || s.ID != id || s.Column != work.Column(r.Phase) {
 		t.Fatalf("board landed on %+v, want %d in %v", s, id, r.Column)
 	}
 	if fb.Count("Work") != reads || fb.Writes() != 0 {
@@ -139,7 +140,7 @@ func TestGardenTableToggleKeepsIdentityAndIssuesNoRead(t *testing.T) {
 	}
 	mustContain(t, "board card", view(m), fmt.Sprintf("#%d", r.Item.Issue.Number), "Board")
 	m = pressAll(t, m, "enter", "esc")
-	if m.garden.board.layout != layoutBoard || m.garden.board.opened != 0 || m.garden.board.selection != s {
+	if m.garden.board.layout != layoutBoard || m.garden.board.opened != 0 || !reflect.DeepEqual(m.garden.board.selection, s) {
 		t.Fatal("Board round trip lost its card")
 	}
 }

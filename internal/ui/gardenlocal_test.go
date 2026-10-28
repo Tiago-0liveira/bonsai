@@ -50,6 +50,18 @@ func withLocal(t *testing.T, m Model, rig plannerRig, sum *gardenapi.LocalRunSum
 }
 
 func TestLocalBadgeOnBoardAndTableForEveryState(t *testing.T) {
+	// Literal expectations; the timestamp is formatted in the local zone.
+	prev := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = prev })
+	activity := map[string]string{
+		"working": "Planner working · updated Oct 20 13:04",
+		"waiting": "Planner needs you · updated Oct 20 13:04",
+		"idle":    "Planner idle · updated Oct 20 13:04",
+		"ready":   "Plan ready to publish · updated Oct 20 13:04",
+		"invalid": "Planner exited · updated Oct 20 13:04",
+		"ended":   "Planner exited · updated Oct 20 13:04",
+	}
 	sizes := [][2]int{{120, 35}, {165, 45}, {80, 24}}
 	for _, c := range localCases {
 		for _, sz := range sizes {
@@ -61,11 +73,23 @@ func TestLocalBadgeOnBoardAndTableForEveryState(t *testing.T) {
 				m = withLocal(t, m, rig, &c.sum)
 				label := c.name + " " + string(rune('0'+sz[0]/100)) + "xx"
 				out := view(m)
-				short := strings.TrimPrefix(strings.TrimPrefix(c.badge, "planner "), "plan ")
-				short = strings.TrimPrefix(short, "file ")
-				if !strings.Contains(out, c.badge) && !strings.Contains(out, "P:"+short) {
-					t.Errorf("board %s: neither the badge nor its short form:\n%s", label, out)
+				r, _, ok := m.garden.board.collection.Find(1)
+				if !ok {
+					t.Fatal("local update lost Issue")
 				}
+				text := activity[c.name]
+				if got := boardActivity(r, false); got != text {
+					t.Errorf("activity %s = %q, want %q", c.name, got, text)
+				}
+				b := m.garden.board
+				cols := min(gardenBoardColumns(sz[0], b.selection.Mode), len(b.collection.Lanes(b.selection.Mode)))
+				w := boardColumnWidths(sz[0], cols)[int(b.selection.Column)-b.selection.Window]
+				want := ansi.Truncate(" "+text, w, "…")
+				want = m.settingsASCII([]string{want})[0]
+				if !strings.Contains(out, strings.TrimSpace(want)) {
+					t.Errorf("board %s missing activity %q:\n%s", label, want, out)
+				}
+
 				mustContain(t, "board "+label, out, "#101", "Task 1")
 				mustFit(t, "board "+label, m)
 				if ascii {
@@ -168,7 +192,7 @@ func TestLocalFailedReadKeepsLastGoodMarkedStale(t *testing.T) {
 	m, cmd := m.gardenLoadLocal()
 	m = plannerRun(t, m, cmd)
 	out := view(m)
-	mustContain(t, "stale", out, "working?", "1 planner working (stale)")
+	mustContain(t, "stale", out, "1 planner working (stale)")
 	if !m.garden.local.stale {
 		t.Fatal("not marked stale")
 	}

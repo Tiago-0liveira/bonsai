@@ -10,6 +10,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
@@ -194,9 +195,10 @@ func (b *Backend) PlannerPlan(ctx context.Context, attemptID string) (gardenapi.
 // LocalWork implements gardenapi.Backend.
 func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error) {
 	gen := b.gen.Add(1)
-	svc, err := b.planService()
-	if err != nil {
-		return gardenapi.LocalWorkView{}, apiError(err)
+	plannerReady := b.deps.Plans != nil && b.deps.Checkout != nil && b.deps.Agents != nil
+	// With neither source there is nothing to show; failing keeps the last good view instead of clearing it.
+	if !plannerReady && b.deps.LaunchStore == nil {
+		return gardenapi.LocalWorkView{}, unavailablePlanner
 	}
 	ctx, cancel := context.WithTimeout(ctx, editTimeout)
 	defer cancel()
@@ -205,9 +207,17 @@ func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error
 	if err != nil {
 		return gardenapi.LocalWorkView{}, err
 	}
-	obs, err := svc.Overview(ctx)
-	if err != nil {
-		return gardenapi.LocalWorkView{}, apiError(err)
+	var obs []plan.Observation
+	// Implementation history remains readable even when the planner runtime is unavailable.
+	if plannerReady {
+		svc, err := b.planService()
+		if err != nil {
+			return gardenapi.LocalWorkView{}, apiError(err)
+		}
+		obs, err = svc.Overview(ctx)
+		if err != nil {
+			return gardenapi.LocalWorkView{}, apiError(err)
+		}
 	}
 	view := gardenapi.LocalWorkView{Issues: map[uint64]gardenapi.IssueLocalWork{}}
 	// Newest request first, so the first qualifying attempt of an Issue is the one to show; a live one always wins.
@@ -224,6 +234,26 @@ func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error
 		}
 		view.Issues[uint64(a.Issue)] = gardenapi.IssueLocalWork{Planner: &gardenapi.LocalRunSummary{AttemptID: a.ID, State: string(a.State), Live: live,
 			Activity: o.Activity, PlanFile: o.File.State, Updated: a.UpdatedAt}}
+	}
+	if b.deps.LaunchStore != nil {
+		attempts, err := b.deps.LaunchStore.List(ctx, b.local, 0)
+		if err != nil {
+			return gardenapi.LocalWorkView{}, apiError(err)
+		}
+		// FileStore orders by request time ascending, then ID.
+		for i := len(attempts) - 1; i >= 0; i-- {
+			a := attempts[i]
+			if a.State == launch.StateCleaned {
+				continue
+			}
+			cur := view.Issues[uint64(a.Issue)]
+			if cur.Implementation != nil {
+				continue
+			}
+			// Active includes unresolved starts and recoverable work; it never implies observed activity.
+			cur.Implementation = &gardenapi.LocalRunSummary{AttemptID: a.ID, State: string(a.State), Live: a.State.Active(), Updated: a.UpdatedAt}
+			view.Issues[uint64(a.Issue)] = cur
+		}
 	}
 	view.Stamp = b.stamp(gen, t.Repository.ID)
 	return view, nil

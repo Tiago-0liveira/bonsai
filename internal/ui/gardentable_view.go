@@ -122,7 +122,7 @@ func (m Model) gsTable(width, rows int) []string {
 	if width < 100 {
 		title = "APPROVED WORK" // the count and filter chip need the room
 	}
-	out := m.gardenWorkHead(width, title, b.sort.String())
+	out := m.gardenWorkHead(width, title, b.sort.String(), "")
 	body := max(0, rows-3)
 	region := make([]string, 0, body)
 	head := [7]string{"ISSUE", "TITLE", "TYPE", "STATE", "LOCAL", "P", "STATUS"}
@@ -152,7 +152,7 @@ func (m Model) gsTable(width, rows int) []string {
 		}
 		status, statusFg := gardenApprovalIndicator(r)
 		texts := [7]string{fmt.Sprintf("#%d", r.Item.Issue.Number), boardTitle(r.Item.Issue.Title), string(r.Item.Classification.Type), r.Column.String(), "", r.Priority, status}
-		fgs := [7]lipgloss.Color{fg, fg, p.Muted, boardColumnColor(r.Column), p.Muted, p.Muted, statusFg}
+		fgs := [7]lipgloss.Color{fg, fg, p.Muted, boardPhaseColor(r.Column.Phase()), p.Muted, p.Muted, statusFg}
 		if lb, ok := m.localBadgeFor(r.Item.Issue.ID); ok {
 			texts[4], fgs[4] = lb.long, lb.fg
 			if ansi.StringWidth(lb.long) > cols.local {
@@ -205,7 +205,7 @@ func (m Model) gardenInspector(w, n int, records []work.Record, row int) []strin
 			line(p.Background, p.Text, false, text)
 		}
 		blank()
-		line(p.Raised, boardColumnColor(r.Column), true, " "+r.Column.String())
+		line(p.Raised, boardPhaseColor(r.Column.Phase()), true, " "+r.Column.String())
 		status, fg := gardenApprovalIndicator(r)
 		line(p.Background, fg, false, status)
 		if lb, ok := m.localBadgeFor(r.Item.Issue.ID); ok {

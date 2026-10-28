@@ -13,13 +13,13 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
-// Local work. The board flags the Issues that have a planner running on this machine, or one whose plan file is
-// ready and not published. It is a local overlay: it never moves an Issue between the canonical stages, and a
-// failed read keeps the last good summaries, marked stale.
+// Local observations supplement verified workflow state. Only an Approved Issue can
+// enter local Planning; a failed read keeps the last good summaries, marked stale.
 
 const (
 	// localFastEvery applies while a planner is live or its screen is open; localSlowEvery otherwise, so a planner
@@ -93,11 +93,13 @@ func (m Model) onGardenLocal(msg gardenLocalMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
 		if msg.seq == l.seq && l.loaded {
 			l.stale = true
+			m.garden.board.evidence = l.evidence()
+			m.garden.board.reselect()
 		}
 		return m, nil
 	}
 	s := msg.view.Stamp
-	if s.GardenID != m.garden.status.Target.RepoID || !l.gate.Accept(s) {
+	if s.GardenID != m.garden.status.Target.RepoID || s.Epoch != m.garden.status.Stamp.Epoch || s.LocalRepoID != m.garden.status.Stamp.LocalRepoID || !l.gate.Accept(s) {
 		return m, nil
 	}
 	// A successful read, including an empty one, replaces the list.
@@ -105,6 +107,9 @@ func (m Model) onGardenLocal(msg gardenLocalMsg) (Model, tea.Cmd) {
 	if msg.seq == l.seq {
 		l.stale = false
 	}
+	m.garden.board.evidence = l.evidence()
+	m.garden.board.reselect()
+	m.gardenBoardVisible()
 	return m, nil
 }
 
@@ -128,7 +133,7 @@ func (m Model) localEvery() time.Duration {
 
 func (l gardenLocalState) anyLive() bool {
 	for _, w := range l.issues {
-		if w.Planner != nil && w.Planner.Live {
+		if w.Planner != nil && w.Planner.Live || w.Implementation != nil && w.Implementation.Live {
 			return true
 		}
 	}
@@ -421,4 +426,37 @@ func cleanPlanText(s string) string {
 		}
 		return r
 	}, ansi.Strip(s))
+}
+
+// evidence translates API observations at the UI boundary; missing activity stays unknown.
+func (l gardenLocalState) evidence() map[garden.IssueID]work.Evidence {
+	out := make(map[garden.IssueID]work.Evidence, len(l.issues))
+	run := func(kind string, s *gardenapi.LocalRunSummary) *work.RunEvidence {
+		if s == nil {
+			return nil
+		}
+		r := &work.RunEvidence{Kind: kind, State: s.State, Live: s.Live, Updated: s.Updated,
+			AwaitingReview: kind == "implementation" && s.State == "awaiting-human-review",
+			PlanReady:      kind == "planner" && !s.Live && s.PlanFile == plan.PlanFileReady}
+		switch {
+		case s.State == "failed":
+			r.Activity = work.ActivityFailed
+		case !s.Live && (s.State == "ended" || s.State == "stopped" || s.State == "cancelled" || r.AwaitingReview):
+			r.Activity = work.ActivityExited
+		case s.Live && s.Activity != nil:
+			switch s.Activity.State {
+			case agentactivity.Working:
+				r.Activity = work.ActivityWorking
+			case agentactivity.Waiting:
+				r.Activity = work.ActivityNeedsInput
+			case agentactivity.Idle:
+				r.Activity = work.ActivityIdle
+			}
+		}
+		return r
+	}
+	for id, v := range l.issues {
+		out[garden.IssueID(id)] = work.Evidence{Planner: run("planner", v.Planner), Implementation: run("implementation", v.Implementation), Stale: l.stale}
+	}
+	return out
 }

@@ -120,7 +120,7 @@ type Backend interface {
 	PlannerPlan(ctx context.Context, attemptID string) (PlannerPlanView, error)
 	// LocalWork summarizes, per Issue, the local agent work the board should flag: a planner attempt that is live,
 	// or ended with a ready plan file that was not published from here. It reconciles with one agent session list
-	// and one store read, never one call per Issue, and starts nothing.
+	// plus the optional implementation attempt store, never one call per Issue, and starts nothing.
 	LocalWork(ctx context.Context) (LocalWorkView, error)
 
 	// PlanReview verifies the Issue's comment log now and reports its plan revisions: the latest, the one under
@@ -921,7 +921,7 @@ type PlannerPlanView struct {
 // LocalRunSummary is one local agent run of an Issue in the compact form the board shows.
 type LocalRunSummary struct {
 	AttemptID string
-	// State is the attempt state: starting, running, ended, failed or cancelled.
+	// State is the exact stored planner or implementation attempt state.
 	State string
 	// Live is true while the attempt can still change.
 	Live bool
@@ -936,11 +936,12 @@ type IssueLocalWork struct {
 	// Planner is the live planner attempt, else the newest ended one whose plan is ready and not published from
 	// here.
 	Planner *LocalRunSummary
+	// Implementation is the newest non-cleaned attempt in this clone.
+	Implementation *LocalRunSummary
 }
 
 // LocalWorkView maps an Issue ID (the one PlannerAttempts takes) to its local work. Issues with nothing to
-// flag are absent. Implementation attempts are not included: they live in a separate store the board reads
-// per Issue through LaunchAttempts.
+// flag are absent. Planner and implementation summaries remain separate from canonical workflow state.
 type LocalWorkView struct {
 	Stamp  Stamp
 	Issues map[uint64]IssueLocalWork

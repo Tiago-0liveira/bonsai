@@ -264,7 +264,7 @@ func (m Model) gardenListHit(x, y int) (garden.IssueID, bool) {
 		}
 		return b.rows[n].Item.Issue.ID, true
 	}
-	columns := gardenBoardColumns(m.width)
+	columns := min(gardenBoardColumns(m.width, b.selection.Mode), len(b.collection.Lanes(b.selection.Mode)))
 	s := b.selection
 	s.EnsureVisible(b.collection, gardenBoardCapacity(rows), columns)
 	left := 1
@@ -274,9 +274,9 @@ func (m Model) gardenListHit(x, y int) (garden.IssueID, bool) {
 			continue
 		}
 		col := work.Column(s.Window + j)
-		items := b.collection.Columns[col]
+		items := b.collection.Lanes(s.Mode)[col]
 		first := min(s.Scroll[col], max(0, len(items)-1))
-		top := 2 // column title and count
+		top := 3 // lane title, count and upward scroll indicator
 		for n := first; n < len(items) && n < first+gardenBoardCapacity(rows); n++ {
 			card := m.boardCardRows(items[n].Item.Issue.ID)
 			// The trailing gap row belongs to no card.
@@ -453,7 +453,7 @@ func (m Model) issueRail(w int) []string {
 	}
 	status, fg := gardenApprovalIndicator(r)
 	add(p.Muted, true, "SUMMARY")
-	add(boardColumnColor(r.Column), true, r.Column.String())
+	add(boardPhaseColor(r.Column.Phase()), true, r.Column.String())
 	add(p.Text, false, fmt.Sprintf("%s / %s", r.Item.Classification.Type, r.Priority))
 	add(fg, false, status)
 	if lb, ok := m.localBadgeFor(r.Item.Issue.ID); ok {

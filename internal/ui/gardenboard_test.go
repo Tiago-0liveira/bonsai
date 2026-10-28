@@ -79,6 +79,7 @@ func TestGardenBoardKeyboardEveryColumnEveryCardAndRoundTrip(t *testing.T) {
 		t.Run(fmt.Sprint(sz), func(t *testing.T) {
 			fb := boardFake(t)
 			m := gardenEnv(t, fb, config.Prefs{}, sz[0], sz[1])
+			m = pressAll(t, m, "d")
 			expected := m.garden.board.collection
 			for col := work.Column(0); col < work.ColumnCount; col++ {
 				if m.garden.board.selection.Column != col {
@@ -91,7 +92,7 @@ func TestGardenBoardKeyboardEveryColumnEveryCardAndRoundTrip(t *testing.T) {
 					}
 					before := m.garden.board.selection
 					m = pressAll(t, m, "enter")
-					if m.garden.board.opened != 0 || before != m.garden.board.selection {
+					if m.garden.board.opened != 0 || !reflect.DeepEqual(before, m.garden.board.selection) {
 						t.Fatal("empty Enter changed selection")
 					}
 				}
@@ -100,7 +101,7 @@ func TestGardenBoardKeyboardEveryColumnEveryCardAndRoundTrip(t *testing.T) {
 						t.Fatalf("column %d row %d: %+v", col, row, m.garden.board.selection)
 					}
 					s := m.garden.board.selection
-					if int(col) < s.Window || int(col) >= s.Window+gardenBoardColumns(sz[0]) || row < s.Scroll[col] || row >= s.Scroll[col]+gardenBoardCapacity(sz[1]-9) {
+					if int(col) < s.Window || int(col) >= s.Window+gardenBoardColumns(sz[0], work.ModeDetailed) || row < s.Scroll[col] || row >= s.Scroll[col]+gardenBoardCapacity(sz[1]-9) {
 						t.Fatal("selected card is outside moving window/scroll")
 					}
 					before := s
@@ -110,7 +111,7 @@ func TestGardenBoardKeyboardEveryColumnEveryCardAndRoundTrip(t *testing.T) {
 					}
 					mustContain(t, "detail", view(m), fmt.Sprintf("Issue #%d", r.Item.Issue.Number), "esc Back to Board", "Issue / Overview")
 					m = pressAll(t, m, "esc")
-					if m.garden.board.opened != 0 || m.garden.board.selection != before {
+					if m.garden.board.opened != 0 || !reflect.DeepEqual(m.garden.board.selection, before) {
 						t.Fatal("Escape did not restore exact card and scroll")
 					}
 					if row < len(records)-1 {
@@ -135,11 +136,11 @@ func TestGardenBoardRefreshReorderFilteringDeletionAndUnrelatedUpdates(t *testin
 	before := m.garden.board.selection
 	slices.Reverse(fb.WorkView.Snapshot.Items)
 	m = pressAll(t, m, "R")
-	if m.garden.board.selection != before {
+	if !reflect.DeepEqual(m.garden.board.selection, before) {
 		t.Fatal("reorder changed stable identity or scroll")
 	}
 	m, _ = send(t, m, struct{ Unrelated bool }{true})
-	if m.garden.board.selection != before || m.shellFocus != shellBody {
+	if !reflect.DeepEqual(m.garden.board.selection, before) || m.shellFocus != shellBody {
 		t.Fatal("unrelated event stole focus")
 	}
 	m = pressAll(t, m, "enter", "right", "down")
@@ -197,7 +198,7 @@ func TestGardenBoardSearchCapturesKeysAndCancelRestoresSelection(t *testing.T) {
 		t.Fatal("search key escaped its scope")
 	}
 	m = pressAll(t, m, "esc")
-	if m.garden.board.query.Active() || m.garden.board.selection != before || m.shellFocus != shellBody {
+	if m.garden.board.query.Active() || !reflect.DeepEqual(m.garden.board.selection, before) || m.shellFocus != shellBody {
 		t.Fatal("cancel lost query/selection/focus")
 	}
 	m = pressAll(t, m, "/")
@@ -223,7 +224,7 @@ func TestGardenBoardOfflineNeverLooksEmptyAndOnlySuccessClears(t *testing.T) {
 	last := m.garden.board.snapshot.SuccessfulAt
 	fb.WorkErr = &gardenapi.Error{Code: gardenapi.CodeOffline, Message: "GitHub is offline."}
 	m = pressAll(t, m, "R")
-	if m.garden.board.selection != before || len(m.garden.board.collection.Records) != 36 || !m.garden.board.snapshot.SuccessfulAt.Equal(last) {
+	if !reflect.DeepEqual(m.garden.board.selection, before) || len(m.garden.board.collection.Records) != 36 || !m.garden.board.snapshot.SuccessfulAt.Equal(last) {
 		t.Fatal("failed refresh replaced last good data")
 	}
 	mustContain(t, "offline", view(m), "offline / stale", "GitHub is offline.", "Last good board retained.")
@@ -260,7 +261,7 @@ func TestGardenBoardLateForeignRepliesAndScopeChange(t *testing.T) {
 			}
 			msg.view.Snapshot.Items = nil
 			m, _ = send(t, m, msg)
-			if m.garden.board.selection != before || len(m.garden.board.collection.Records) != 36 || m.shellFocus != shellBody {
+			if !reflect.DeepEqual(m.garden.board.selection, before) || len(m.garden.board.collection.Records) != 36 || m.shellFocus != shellBody {
 				t.Fatal("late/foreign reply changed board or focus")
 			}
 		})
@@ -281,7 +282,7 @@ func TestGardenBoardLateForeignRepliesAndScopeChange(t *testing.T) {
 func TestGardenBoardDocumentAllSectionsAndLongText(t *testing.T) {
 	fb := boardFake(t)
 	m := gardenEnv(t, fb, config.Prefs{}, 80, 24)
-	m = pressAll(t, m, "right", "right", "enter")
+	m = pressAll(t, m, "right", "enter")
 	for n, want := range []string{"Readable issue body", "Keep 界 and é safe.", "What should happen next?", "Latest", "Local implementation launch is unavailable in this runtime."} {
 		m.garden.board.section = n
 		lines := strings.Join(m.gardenDocument(80), "\n")
@@ -328,7 +329,11 @@ func TestGardenBoardAllSizesThemesAndASCIIFitIndependentRegions(t *testing.T) {
 							if ascii {
 								divider = "|"
 							}
-							if strings.Count(header, divider) != 8 {
+							wantDividers := min(gardenBoardColumns(sz[0], work.ModePhases), 6) - 1
+							if ascii {
+								wantDividers *= 2
+							}
+							if strings.Count(header, divider) != wantDividers {
 								t.Fatal("column boundary missing", header)
 							}
 						} else if m.garden.board.selection.Window > int(m.garden.board.selection.Column) {
@@ -391,7 +396,7 @@ func TestGardenBoardSelectionDoesNotAliasOtherModels(t *testing.T) {
 	m := gardenEnv(t, fb, config.Prefs{}, 80, 24)
 	before := m.garden.board.selection
 	next := pressAll(t, m, "down")
-	if reflect.DeepEqual(next.garden.board.selection, before) || m.garden.board.selection != before {
+	if reflect.DeepEqual(next.garden.board.selection, before) || !reflect.DeepEqual(m.garden.board.selection, before) {
 		t.Fatal("selection value mutated previous model")
 	}
 }
@@ -402,7 +407,7 @@ func TestGardenBoardRefreshInFlightAllowsNavigationAndDoesNotStealFocus(t *testi
 	m = pressAll(t, m, "right", "right", "down")
 	s := m.garden.board.selection
 	m, _ = send(t, m, cmd())
-	if m.garden.board.selection != s || m.shellFocus != shellBody {
+	if !reflect.DeepEqual(m.garden.board.selection, s) || m.shellFocus != shellBody {
 		t.Fatal("refresh stole cursor")
 	}
 	m, cmd = m.gardenLoadWork()
@@ -426,7 +431,7 @@ func TestGardenBoardStageMoveKeepsIdentityAndFocus(t *testing.T) {
 		}
 	}
 	m = pressAll(t, m, "R")
-	if m.garden.board.selection.ID != id || m.garden.board.selection.Column != work.Done || m.shellFocus != shellBody || m.garden.board.selection.Window != 4 {
+	if m.garden.board.selection.ID != id || m.garden.board.selection.Column != work.Column(work.DonePhase) || m.shellFocus != shellBody || m.garden.board.selection.Window != 3 {
 		t.Fatalf("stage move lost selection: %+v", m.garden.board.selection)
 	}
 }

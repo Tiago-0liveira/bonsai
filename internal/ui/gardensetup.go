@@ -292,6 +292,8 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 	g := &m.garden
 	prev, had := g.status, g.hasStatus
 	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
+		// Local observations and in-flight replies belong to the old association.
+		g.local = gardenLocalState{seq: g.local.seq + 1, tickGen: g.local.tickGen + 1}
 		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
 		// A flight and an open assistant belong to the old connection; its sessions stay in memory, inactive.
 		g.assist.release()
@@ -813,9 +815,9 @@ func (m Model) gardenCrumbs() []string {
 		return m.gardenDraftsCrumbs()
 	case scrBoard:
 		b := m.garden.board
-		crumbs := []string{"Garden", "Board", b.selection.Column.String()}
-		if b.layout == layoutTable {
-			crumbs = []string{"Garden", "Table"}
+		crumbs := []string{"Garden", "Table"}
+		if b.layout != layoutTable {
+			crumbs = []string{"Garden", "Board", b.collection.LaneTitle(b.selection.Mode, b.selection.Column)}
 		}
 		if b.opened != 0 {
 			if r, _, ok := b.collection.Find(b.opened); ok {

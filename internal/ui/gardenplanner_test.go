@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -247,7 +248,7 @@ func TestFocusedPlannerTerminalKeepsEveryKeyFromTheGardenAndIsLeftWithCtrlBracke
 			}
 		}
 	}
-	if m.garden.planner.stage != stage || m.workspace != workspace || m.garden.board.selection != sel || m.modal != nil {
+	if m.garden.planner.stage != stage || m.workspace != workspace || !reflect.DeepEqual(m.garden.board.selection, sel) || m.modal != nil {
 		t.Fatalf("a focused key reached the Garden: stage %d workspace %d", m.garden.planner.stage, m.workspace)
 	}
 	if !m.plannerTerminalMode() {

@@ -2,6 +2,7 @@ package work
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -76,7 +77,7 @@ func TestCanonicalEligibilityAndIndependentType(t *testing.T) {
 			it := base
 			it.Issue.Labels = slices.Clone(base.Issue.Labels)
 			tc.change(&it)
-			got := Select([]gardensync.Item{it}, Query{})
+			got := Select([]gardensync.Item{it}, Query{}, nil)
 			if len(got.Records) != tc.want {
 				t.Fatalf("records=%d want %d", len(got.Records), tc.want)
 			}
@@ -86,7 +87,7 @@ func TestCanonicalEligibilityAndIndependentType(t *testing.T) {
 		it := base
 		it.Issue.Labels = slices.Clone(base.Issue.Labels)
 		it.Issue.Labels[1] = garden.FormatTypeLabel(typ)
-		c := Select([]gardensync.Item{it}, Query{Type: typ})
+		c := Select([]gardensync.Item{it}, Query{Type: typ}, nil)
 		if len(c.Columns[Approved]) != 1 || c.Records[0].Item.Classification.Type != typ {
 			t.Fatalf("type %s: %+v", typ, c)
 		}
@@ -102,7 +103,7 @@ func TestGroupingAndFilters(t *testing.T) {
 		{garden.StageInProgress, false, Running}, {garden.StageReview, true, HumanReview}, {garden.StageDone, false, Done}, {garden.StageBlocked, false, Blocked},
 	} {
 		it := accepted(t, 1, tc.stage, tc.plan)
-		got := Select([]gardensync.Item{it}, Query{})
+		got := Select([]gardensync.Item{it}, Query{}, nil)
 		if len(got.Columns[tc.want]) != 1 {
 			t.Fatalf("%+v placed in %+v", tc, got.Columns)
 		}
@@ -112,12 +113,12 @@ func TestGroupingAndFilters(t *testing.T) {
 		q    Query
 		want int
 	}{{Query{}, 3}, {Query{Text: "TASK 1"}, 1}, {Query{Text: "#2"}, 1}, {Query{Text: "界"}, 3}, {Query{Type: garden.TypeBug}, 0}, {Query{Priority: "P1"}, 3}, {Query{Priority: "P0"}, 0}, {Query{Text: "missing"}, 0}, {Query{Text: "Task", Type: garden.TypeFeature, Priority: "P1"}, 3}} {
-		got := Select(items, tc.q)
+		got := Select(items, tc.q, nil)
 		if len(got.Records) != tc.want || got.Total != 3 {
 			t.Fatalf("query %+v: %d/%d", tc.q, len(got.Records), got.Total)
 		}
 	}
-	got := Select(items, Query{})
+	got := Select(items, Query{}, nil)
 	if got.Records[0].Item.Issue.ID != 1 || got.Records[2].Item.Issue.ID != 3 {
 		t.Fatal("unstable order")
 	}
@@ -132,7 +133,7 @@ func TestSelectionEveryColumnScrollAndFallback(t *testing.T) {
 			c.Columns[col] = append(c.Columns[col], Record{Column: col, Item: gardensync.Item{Issue: garden.Issue{ID: garden.IssueID(int(col)*10 + row + 1)}}})
 		}
 	}
-	s := Selection{}
+	s := Selection{Mode: ModeDetailed}
 	s.Reconcile(c)
 	for col := Column(0); col < ColumnCount; col++ {
 		for row := 0; row < 5; row++ {
@@ -188,18 +189,18 @@ func TestAcceptedDiagnosticsStayVisibleWithoutPromotingUnverifiedWork(t *testing
 	item := accepted(t, 1, garden.StageReady, false)
 	item.Lane.Lane = garden.LaneAttention
 	item.Problems = []gardensync.Problem{{Code: "display-conflict", Message: "Display projection needs attention"}}
-	got := Select([]gardensync.Item{item}, Query{})
+	got := Select([]gardensync.Item{item}, Query{}, nil)
 	if len(got.Records) != 1 || got.Excluded != 0 || len(got.Records[0].Item.Problems) != 1 {
 		t.Fatalf("accepted diagnostics were hidden: %+v", got)
 	}
 	item.Verification.ValidApprovals = nil
-	if got := Select([]gardensync.Item{item}, Query{}); len(got.Records) != 0 || got.Excluded != 1 {
+	if got := Select([]gardensync.Item{item}, Query{}, nil); len(got.Records) != 0 || got.Excluded != 1 {
 		t.Fatal("diagnostics bypassed canonical acceptance")
 	}
 }
 
 func TestSelectionWaitsForFirstNonEmptyLoad(t *testing.T) {
-	var s Selection
+	s := Selection{Mode: ModeDetailed}
 	for range 2 {
 		s.Reconcile(Collection{})
 	}
@@ -227,7 +228,8 @@ func TestScrollClampsAfterCollectionShrinks(t *testing.T) {
 			for i := 0; i < count; i++ {
 				c.Columns[Approved] = append(c.Columns[Approved], Record{Item: gardensync.Item{Issue: garden.Issue{ID: garden.IssueID(i + 1)}}})
 			}
-			s := Selection{Column: Approved, Initialized: true}
+			s := Selection{Mode: ModeDetailed, Column: Approved, Initialized: true}
+			s.resize(c)
 			s.Rows[Approved] = 9
 			s.Scroll[Approved] = 9
 			s.Scroll[Blocked] = 9
@@ -271,27 +273,27 @@ func TestRowsOrderingIsDeterministicAndReadOnly(t *testing.T) {
 	}
 }
 func TestRowsCarryColumnFromSelect(t *testing.T) {
-	c := Select([]gardensync.Item{accepted(t, 1, garden.StageDone, false), accepted(t, 2, garden.StageReady, false)}, Query{})
+	c := Select([]gardensync.Item{accepted(t, 1, garden.StageDone, false), accepted(t, 2, garden.StageReady, false)}, Query{}, nil)
 	rows := c.Rows(SortState)
 	if rows[0].Column != Approved || rows[1].Column != Done {
 		t.Fatalf("%+v", rows)
 	}
 }
 func TestSelectionFocusSharesIdentity(t *testing.T) {
-	c := Select([]gardensync.Item{accepted(t, 1, garden.StageDone, false), accepted(t, 2, garden.StageDone, false), accepted(t, 3, garden.StageReady, false)}, Query{})
-	var s Selection
+	c := Select([]gardensync.Item{accepted(t, 1, garden.StageDone, false), accepted(t, 2, garden.StageDone, false), accepted(t, 3, garden.StageReady, false)}, Query{}, nil)
+	s := Selection{Mode: ModeDetailed}
 	if !s.Focus(c, 2) || s.ID != 2 || s.Column != Done || s.Rows[Done] != 1 || !s.Initialized {
 		t.Fatalf("%+v", s)
 	}
 	before := s
-	if s.Focus(c, 99) || s != before {
+	if s.Focus(c, 99) || !reflect.DeepEqual(s, before) {
 		t.Fatal("missing id changed selection")
 	}
 }
 func TestNextGateIsAHumanGateForEveryColumn(t *testing.T) {
 	want := map[Column]string{
 		Approved: "Request an AI plan", Planning: "Approve the plan once drafted", PlanReview: "Review and approve the plan",
-		Ready: "Launch unavailable (plan 09)", Running: "Review the change when the run ends", Reviewing: "Review the change after agent review",
+		Ready: "Start implementation locally (s)", Running: "Review the change when the run ends", Reviewing: "Review the change after agent review",
 		HumanReview: "Review the change", Done: "None", Blocked: "Resolve the blocker",
 	}
 	if len(want) != int(ColumnCount) {

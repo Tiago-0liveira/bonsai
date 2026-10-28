@@ -38,42 +38,28 @@ func boardLine(width int, bg, fg lipgloss.Color, bold bool, s string) string {
 	return shellRow(width, bg, seg(fg, bg, bold).Render(ansi.Truncate(s, width, "…")), "")
 }
 
-// boardBadgeLine is the local run flag of a card, on a row of its own under the number so neither the number nor
-// the title give way to it. The row exists only for an Issue with local work: the grid pads and clips by rows, so
-// an extra row never moves a column. The long form is tried first, then the short one with a "P:" prefix, which
-// keeps it visibly a planner flag.
-func (m Model) boardBadgeLine(w int, bg lipgloss.Color, issue garden.IssueID) (string, bool) {
-	b, ok := m.localBadgeFor(issue)
-	if !ok {
-		return "", false
-	}
-	label := b.long
-	for _, c := range []string{b.long, "P:" + b.short, b.short} {
-		label = c
-		if ansi.StringWidth(c) <= w-1 {
-			break
-		}
-	}
-	return boardLine(w, bg, b.fg, false, " "+label), true
-}
-
-func boardColumnColor(c work.Column) lipgloss.Color {
+func boardPhaseColor(phase work.Phase) lipgloss.Color {
 	p := theme.Current
-	switch c {
-	case work.PlanReview, work.HumanReview:
-		return p.Warning
-	case work.Blocked:
-		return p.Danger
-	case work.Approved, work.Ready, work.Running:
-		return p.Success
-	default:
-		return p.Muted
+	switch phase {
+	case work.Backlog:
+		return p.PhaseBacklog
+	case work.PlanningPhase:
+		return p.PhasePlanning
+	case work.ReadyPhase:
+		return p.PhaseReady
+	case work.Building:
+		return p.PhaseBuilding
+	case work.Review:
+		return p.PhaseReview
+	case work.DonePhase:
+		return p.PhaseDone
 	}
+	return p.Danger
 }
 
 // gardenWorkHead is the count row and feedback row both layouts share, so a
 // filter, notice or stale read reads the same on Board and Table.
-func (m Model) gardenWorkHead(width int, title, sort string) []string {
+func (m Model) gardenWorkHead(width int, title, sort, view string) []string {
 	p := theme.Current
 	b := m.garden.board
 	typeName, priority := "Any", "Any"
@@ -90,6 +76,9 @@ func (m Model) gardenWorkHead(width int, title, sort string) []string {
 	chip := "Type: " + typeName + " / Priority: " + priority
 	if sort != "" {
 		chip += " / Sort: " + sort
+	}
+	if view != "" {
+		chip += " · " + view
 	}
 	feedback := "Drafts and unverified acceptance stay off this board."
 	if b.collection.Excluded > 0 {
@@ -131,77 +120,54 @@ func (m Model) gsBoard(width, rows int) []string {
 	if b.layout == layoutTable {
 		return m.gsTable(width, rows)
 	}
+
 	p := theme.Current
 	s := b.selection
-	columns := gardenBoardColumns(width)
+	lanes, titles := b.collection.Lanes(s.Mode), b.collection.LaneTitles(s.Mode)
+	columns := min(gardenBoardColumns(width, s.Mode), len(lanes))
 	capacity := gardenBoardCapacity(rows)
 	s.EnsureVisible(b.collection, capacity, columns)
-	out := m.gardenWorkHead(width, "APPROVED WORK", "")
+	view := fmt.Sprintf("View: Phases %d", len(lanes))
+	if s.Mode == work.ModeDetailed {
+		view = fmt.Sprintf("View: Detailed %d", len(lanes))
+	}
+	out := m.gardenWorkHead(width, "APPROVED WORK", "", view)
 	gridRows := max(0, rows-3)
 	grid := make([][]string, columns)
 	widths := boardColumnWidths(width, columns)
-	for j := 0; j < columns; j++ {
-		c := work.Column(s.Window + j)
-		w := widths[j]
-		fg := boardColumnColor(c)
-		marker := " "
-		if c == s.Column && m.shellFocus != shellNav {
+	rail := "▌"
+	if m.agentGlyphsASCII() {
+		rail = "|"
+	}
+	for j, w := range widths {
+		lane := s.Window + j
+		phase := work.Phase(lane)
+		if s.Mode == work.ModeDetailed {
+			phase = work.Column(lane).Phase()
+		}
+		color := boardPhaseColor(phase)
+		marker := rail
+		if lane == int(s.Column) && m.shellFocus != shellNav {
 			marker = ">"
 		}
-		title := c.String()
-		if w < 14 {
-			if c == work.PlanReview {
-				title = "Plan rev"
-			}
-			if c == work.HumanReview {
-				title = "Human rev"
-			}
+		grid[j] = append(grid[j], boardLine(w, p.Raised, color, true, marker+" "+titles[lane]))
+		items := lanes[lane]
+		start := min(s.Scroll[lane], max(0, len(items)-1))
+		grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, " "+localPlural(len(items), "item", "items")))
+		up := ""
+		if start > 0 {
+			up = fmt.Sprintf(" ↑ %d more", start)
 		}
-		grid[j] = append(grid[j], boardLine(w, p.Raised, fg, true, marker+title))
-		items := b.collection.Columns[c]
-		start := min(s.Scroll[c], max(0, len(items)-1))
-		grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, fmt.Sprintf(" %d items", len(items))))
+		grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, up))
 		if len(items) == 0 {
 			grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, " (empty)"))
 		}
 		for n := start; n < len(items) && n < start+capacity; n++ {
-			r := items[n]
-			selected := r.Item.Issue.ID == s.ID
-			bg, fg := p.Surface, p.Text
-			if selected {
-				bg = p.Raised
-				fg = p.Success
-			}
-			mark := " "
-			if selected {
-				mark = "▌"
-			}
-			if m.agentGlyphsASCII() && selected {
-				mark = ">"
-			}
-			grid[j] = append(grid[j], boardLine(w, bg, fg, true, fmt.Sprintf("%s#%d", mark, r.Item.Issue.Number)))
-			if line, ok := m.boardBadgeLine(w, bg, r.Item.Issue.ID); ok {
-				grid[j] = append(grid[j], line)
-			}
-			title := boardTitle(r.Item.Issue.Title)
-			wrapped := strings.Split(ansi.Wrap(title, max(1, w-2), ""), "\n")
-			for line := 0; line < 2; line++ {
-				text := ""
-				if line < len(wrapped) {
-					text = wrapped[line]
-				}
-				if line == 1 && len(wrapped) > 2 {
-					text = ansi.Truncate(text, max(1, w-3), "") + "…"
-				}
-				grid[j] = append(grid[j], boardLine(w, bg, fg, false, " "+text))
-			}
-			typ := string(r.Item.Classification.Type)
-			if w < 16 {
-				typ = map[garden.ItemType]string{garden.TypeFeature: "Ftr", garden.TypeBug: "Bug", garden.TypeChore: "Chr", garden.TypeResearch: "Res"}[r.Item.Classification.Type]
-			}
-			grid[j] = append(grid[j], boardLine(w, bg, p.Muted, false, " "+typ+" / "+r.Priority))
-			status, statusColor := gardenApprovalIndicator(r)
-			grid[j] = append(grid[j], boardLine(w, bg, statusColor, false, " "+status), boardLine(w, p.Background, p.Muted, false, ""))
+			grid[j] = append(grid[j], m.boardCard(w, items[n], items[n].Item.Issue.ID == s.ID)...)
+		}
+		remaining := len(items) - min(len(items), start+capacity)
+		if remaining > 0 {
+			grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, " ↓ "+localPlural(remaining, "more item", "more items")))
 		}
 		for len(grid[j]) < gridRows {
 			grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, ""))
@@ -214,12 +180,151 @@ func (m Model) gsBoard(width, rows int) []string {
 		}
 		out = append(out, shellRow(width, p.Background, " "+strings.Join(parts, seg(p.Border, p.Background, false).Render(m.chrome("│"))), ""))
 	}
-	window := fmt.Sprintf("Columns %d–%d of 9 · ←/→ reveals states", s.Window+1, s.Window+columns)
-	if columns == 9 {
-		window = "All nine states · empty columns remain navigable"
+	window := "All six phases · empty columns remain navigable"
+	if s.Mode == work.ModeDetailed {
+		window = "All nine stages · empty columns remain navigable"
+	} else if len(lanes) > 6 {
+		window = "All six phases + Unplaced · empty columns remain navigable"
+	}
+	if columns < len(lanes) {
+		window = "Showing " + titles[s.Window] + " → " + titles[s.Window+columns-1]
+		if s.Window > 0 {
+			window = "‹ " + strings.Join(titles[:s.Window], " / ") + "   " + window
+		}
+		if s.Window+columns < len(lanes) {
+			window += "   " + strings.Join(titles[s.Window+columns:], " / ") + " ›"
+		}
 	}
 	out = append(out, gText(width, p.Muted, false, window))
 	return m.settingsASCII(out[:rows])
+}
+
+func boardState(r work.Record) string {
+	if r.Column == work.Blocked {
+		return "! Blocked"
+	}
+	if r.Column == work.Planning {
+		return "○ Planning · local planner"
+	}
+	glyph := "○"
+	switch r.Column {
+	case work.Ready, work.Done:
+		glyph = "✓"
+	case work.Running:
+		glyph = ">"
+	case work.PlanReview, work.Reviewing, work.HumanReview:
+		glyph = "◇"
+	}
+	return glyph + " " + r.Column.String()
+}
+func boardActivity(r work.Record, detailed bool) string {
+	if r.Column == work.Blocked {
+		if !r.Placed {
+			return "no proven phase"
+		}
+		if detailed {
+			return "last proven: " + r.Phase.String() + ": " + r.Reason
+		}
+		return "Blocked in " + r.Phase.String() + ": " + r.Reason
+	}
+	run := r.Evidence.Implementation
+	if run == nil {
+		run = r.Evidence.Planner
+	}
+	if run == nil {
+		return work.NextGate(r.Column)
+	}
+	name := "Planner"
+	if run.Kind == "implementation" {
+		name = "Implementation"
+	}
+	text := "Activity unknown"
+	switch run.Activity {
+	case work.ActivityWorking:
+		text = name + " working"
+		if run.Kind == "implementation" {
+			text = name + " running"
+		}
+	case work.ActivityNeedsInput:
+		text = name + " needs you"
+	case work.ActivityIdle:
+		text = name + " idle"
+	case work.ActivityExited:
+		text = name + " exited"
+	case work.ActivityFailed:
+		text = name + " failed"
+	}
+	if run.Kind == "implementation" {
+		// Show the stored state verbatim: only "ended" is an exit.
+		switch {
+		case run.AwaitingReview:
+			text = name + " awaiting review"
+		case run.Activity == work.ActivityUnknown || run.Activity == work.ActivityExited && run.State != "ended":
+			if run.State != "" {
+				text = name + " " + run.State
+			}
+		}
+	}
+	if run.PlanReady {
+		text = "Plan ready to publish"
+	}
+	// The marker precedes the timestamp so truncation drops the timestamp first.
+	if r.Evidence.Stale {
+		text += " (stale)"
+	}
+	if !run.Updated.IsZero() {
+		text += " · updated " + run.Updated.Local().Format("Jan 2 15:04")
+	}
+	return text
+}
+func (m Model) boardCard(w int, r work.Record, selected bool) []string {
+	p := theme.Current
+	bg, fg := p.Surface, p.Text
+	color := boardPhaseColor(r.Phase)
+	if r.Column == work.Blocked {
+		color = p.Danger
+	}
+	if selected {
+		bg, fg = p.Raised, p.Success
+	}
+	typ := string(r.Item.Classification.Type)
+	number := fmt.Sprintf("#%d", r.Item.Issue.Number)
+	meta := typ + " · " + r.Priority
+	if ansi.StringWidth(number+meta)+4 > w {
+		typ = map[garden.ItemType]string{garden.TypeFeature: "Ftr", garden.TypeBug: "Bug", garden.TypeChore: "Chr", garden.TypeResearch: "Res"}[r.Item.Classification.Type]
+		meta = typ + " · " + r.Priority
+	}
+	if ansi.StringWidth(number+meta)+4 > w {
+		meta = r.Priority
+	}
+	rail := "▌"
+	if m.agentGlyphsASCII() {
+		rail = "|"
+	}
+	// Color alone vanishes under flat contrast and the mono preset.
+	if selected {
+		rail = ">"
+	}
+	first := shellRow(w, bg, seg(color, bg, true).Render(rail)+seg(fg, bg, true).Render(number), seg(p.Muted, bg, false).Render(m.chrome(meta)))
+	out := []string{first}
+	wrapped := strings.Split(ansi.Wrap(boardTitle(r.Item.Issue.Title), max(1, w-2), ""), "\n")
+	for line := 0; line < 2; line++ {
+		text := ""
+		if line < len(wrapped) {
+			text = wrapped[line]
+		}
+		if line == 1 && len(wrapped) > 2 {
+			text = ansi.Truncate(text, max(1, w-3), "") + "…"
+		}
+		out = append(out, boardLine(w, bg, fg, false, " "+text))
+	}
+	out = append(out, boardLine(w, bg, color, true, " "+boardState(r)), boardLine(w, bg, p.Muted, false, " "+boardActivity(r, m.garden.board.selection.Mode == work.ModeDetailed)))
+	warning, wc := gardenApprovalIndicator(r)
+	if !strings.HasPrefix(warning, "!") {
+		warning = ""
+	}
+	out = append(out, boardLine(w, bg, wc, false, " "+warning), boardLine(w, p.Background, p.Muted, false, ""))
+	return out
 }
 
 // boardColumnWidths splits the width left after the margin and the column rules.
@@ -235,13 +340,8 @@ func boardColumnWidths(width, columns int) []int {
 	return out
 }
 
-// boardCardRows is the height of one card: number, optional local badge, two title lines, type, status, gap.
-func (m Model) boardCardRows(id garden.IssueID) int {
-	if _, ok := m.localBadgeFor(id); ok {
-		return 7
-	}
-	return 6
-}
+// boardCardRows includes the trailing gap used by keyboard and mouse geometry.
+func (m Model) boardCardRows(_ garden.IssueID) int { return 7 }
 
 func gardenApprovalIndicator(r work.Record) (string, lipgloss.Color) {
 	p := theme.Current

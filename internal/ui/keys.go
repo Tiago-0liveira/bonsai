@@ -53,6 +53,7 @@ type keyMap struct {
 	AgentStop       key.Binding
 	AgentPlayground key.Binding
 	GardenView      key.Binding
+	GardenStages    key.Binding
 	Prefs           key.Binding
 	Help            key.Binding
 	Quit            key.Binding
@@ -112,6 +113,7 @@ var defaultBindings = map[string]bindingSpec{
 	"agent_playground": {[]string{"O"}, "open in Playground (observe)"},
 	"agent_stop":       {[]string{"s"}, "stop agent"},
 	"garden_view":      {[]string{"v"}, "board/table"},
+	"garden_stages":    {[]string{"d"}, "phases/stages"},
 	"prefs":            {[]string{","}, "preferences"},
 	"help":             {[]string{"?"}, "keys"},
 	"quit":             {[]string{"q", "ctrl+c"}, "quit"},
@@ -216,6 +218,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		AgentStop:       b("agent_stop"),
 		AgentPlayground: b("agent_playground"),
 		GardenView:      b("garden_view"),
+		GardenStages:    b("garden_stages"),
 		Prefs:           b("prefs"),
 		Help:            b("help"),
 		Quit:            b("quit"),
@@ -238,7 +241,7 @@ var keymapSections = []keymapSection{
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
 	{"Agents tab", []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}},
 	{"Processes tab", []string{"kill_proc", "restart_proc", "set_policy", "proc_modal", "multi_view", "rename_proc", "proc_search"}},
-	{"Garden", []string{"garden_view"}},
+	{"Garden", []string{"garden_view", "garden_stages"}},
 }
 
 // effectiveKey returns the key in effect for an action given user overrides.

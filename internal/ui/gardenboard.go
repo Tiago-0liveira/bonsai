@@ -34,6 +34,8 @@ type gardenBoardState struct {
 	query              work.Query
 	collection         work.Collection
 	selection          work.Selection
+	otherSelection     work.Selection
+	evidence           map[garden.IssueID]work.Evidence
 	layout             gardenLayout
 	sort               work.Sort
 	tableScroll        int
@@ -107,6 +109,7 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 			b.notice = "No successful read yet; approved work is unknown. Refresh to retry."
 		}
 	}
+	b.evidence = m.garden.local.evidence()
 	b.reselect()
 	if b.opened != 0 && b.openedRepo != 0 && b.openedRepo != g.status.Target.RepoID {
 		b.close()
@@ -148,12 +151,13 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 func (b *gardenBoardState) reselect() {
-	b.collection = work.Select(b.snapshot.Items, b.query, b.snapshot.Findings...)
+	b.collection = work.Select(b.snapshot.Items, b.query, b.evidence, b.snapshot.Findings...)
 	b.rows = b.collection.Rows(b.sort)
 	if b.layout == layoutTable {
 		if notice := b.tableFocus(); notice != "" {
 			b.notice = notice
 		}
+		b.selection.Clamp(b.collection)
 	} else if reason := b.selection.Reconcile(b.collection); reason != "" {
 		b.notice = reason
 	}
@@ -247,25 +251,45 @@ func (m *Model) gardenRememberView() tea.Cmd {
 	return func() tea.Msg { return gardenViewSavedMsg{gen, st.PersistGardenView(gen, dir, view)} }
 }
 
-func gardenBoardColumns(width int) int {
-	if width < 120 {
-		return 4
+func gardenBoardColumns(width int, mode work.Mode) int {
+	if width < 100 {
+		return 3
 	}
-	return int(work.ColumnCount)
+	if width < 160 {
+		if mode == work.ModeDetailed {
+			return 5
+		}
+		return 6
+	}
+	if mode == work.ModeDetailed {
+		return 9
+	}
+	return 7 // clamped to six unless Unplaced exists
 }
-func gardenBoardCapacity(rows int) int { return max(1, (rows-5)/6) }
+func gardenBoardCapacity(rows int) int { return max(1, (rows-7)/7) }
+func (b *gardenBoardState) toggleStages() {
+	id := b.selection.ID
+	b.otherSelection, b.selection = b.selection, b.otherSelection
+	b.selection.Mode = work.ModeDetailed
+	if b.otherSelection.Mode == work.ModeDetailed {
+		b.selection.Mode = work.ModePhases
+	}
+	if !b.selection.Focus(b.collection, id) {
+		b.selection.Reconcile(b.collection)
+	}
+}
 func (m Model) gardenBoardRows() int {
 	return m.height - shellHeaderRows - shellFooterRows - settingsSubmenuRows
 }
 func (m *Model) gardenBoardVisible() {
 	b := &m.garden.board
-	b.selection.EnsureVisible(b.collection, gardenBoardCapacity(m.gardenBoardRows()), gardenBoardColumns(m.width))
+	b.selection.EnsureVisible(b.collection, gardenBoardCapacity(m.gardenBoardRows()), gardenBoardColumns(m.width, b.selection.Mode))
 	b.tableScroll = tableScrollFor(b.tableScroll, b.rowIndex(), gardenTableCapacity(m.gardenBoardRows()), len(b.collection.Records))
 }
 func (m Model) gardenStartSearch() (Model, tea.Cmd) {
 	b := &m.garden.board
 	b.beforeSearch = b.query
-	b.beforeSelection = b.selection
+	b.beforeSelection = b.selection.Clone()
 	b.search = textinput.New()
 	// Search handles keys only, so a static cursor avoids scheduling unhandled blink messages.
 	b.search.Cursor.SetMode(cursor.CursorStatic)
@@ -354,6 +378,12 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.gardenRememberView()
 		return m, cmd
 	}
+	if b.layout == layoutBoard && key.Matches(msg, m.keys.GardenStages) {
+		b.toggleStages()
+		m.gardenBoardVisible()
+		return m, nil
+	}
+
 	switch k {
 	case "esc":
 		m = m.gardenBack(scrBoard)
@@ -442,7 +472,7 @@ func (m Model) gardenBoardHints() []shellHint {
 		return append(h, shellHint{"i", "implementation attempts"}, shellHint{"←/→", "tab"}, shellHint{"↑/↓", "scroll"}, shellHint{"pgup/dn", "page"}, shellHint{m.keys.Refresh.Help().Key, "refresh"})
 	}
 	view := m.keys.GardenView.Help().Key
-	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
+	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {m.keys.GardenStages.Help().Key, "phases/stages"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
 	if b.layout == layoutTable {
 		h = []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"o", "sort"}, {"x", "clear"}, {view, "board"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
 	}
@@ -492,7 +522,7 @@ func (m Model) gardenBoardIdentity() string {
 	if b.layout == layoutTable {
 		return "Table / empty"
 	}
-	return "Board / " + b.selection.Column.String() + " / empty"
+	return "Board / " + b.collection.LaneTitle(b.selection.Mode, b.selection.Column) + " / empty"
 }
 func (m Model) gardenBoardSaved(msg gardenViewSavedMsg) Model {
 	if msg.err != nil && !errors.Is(msg.err, config.ErrSuperseded) && msg.gen == m.garden.board.saveGen {

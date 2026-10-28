@@ -3,8 +3,10 @@ package work
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
@@ -35,6 +37,106 @@ func (c Column) String() string {
 	return names[c]
 }
 
+// Phase groups verified stages without granting workflow approval.
+type Phase int
+
+const (
+	Backlog Phase = iota
+	PlanningPhase
+	ReadyPhase
+	Building
+	Review
+	DonePhase
+	PhaseCount
+)
+
+func (p Phase) String() string {
+	if p < 0 || p >= PhaseCount {
+		return "Unplaced"
+	}
+	return [...]string{"Backlog", "Planning", "Ready", "Building", "Review", "Done"}[p]
+}
+func (c Column) Phase() Phase {
+	switch c {
+	case Planning, PlanReview:
+		return PlanningPhase
+	case Ready:
+		return ReadyPhase
+	case Running:
+		return Building
+	case Reviewing, HumanReview:
+		return Review
+	case Done:
+		return DonePhase
+	case Blocked:
+		return PhaseCount
+	default:
+		return Backlog
+	}
+}
+
+type Activity int
+
+const (
+	ActivityUnknown Activity = iota
+	ActivityWorking
+	ActivityNeedsInput
+	ActivityIdle
+	ActivityExited
+	ActivityFailed
+)
+
+type RunEvidence struct {
+	Kind, State               string
+	Live                      bool
+	Activity                  Activity
+	AwaitingReview, PlanReady bool
+	Updated                   time.Time
+}
+type Evidence struct {
+	Planner, Implementation *RunEvidence
+	Stale                   bool
+}
+type Mode int
+
+const (
+	ModePhases Mode = iota
+	ModeDetailed
+)
+
+func (c Collection) Lanes(m Mode) [][]Record {
+	if m == ModeDetailed {
+		return c.Columns[:]
+	}
+	lanes := append([][]Record(nil), c.Phases[:]...)
+	if len(c.Unplaced) > 0 {
+		lanes = append(lanes, c.Unplaced)
+	}
+	return lanes
+}
+func (c Collection) LaneTitles(m Mode) []string {
+	if m == ModeDetailed {
+		return append([]string(nil), names[:]...)
+	}
+	titles := make([]string, PhaseCount)
+	for p := Phase(0); p < PhaseCount; p++ {
+		titles[p] = p.String()
+	}
+	if len(c.Unplaced) > 0 {
+		titles = append(titles, "Unplaced")
+	}
+	return titles
+}
+
+// LaneTitle is "" when the lane is gone, e.g. Unplaced vanished under a search.
+func (c Collection) LaneTitle(m Mode, lane Column) string {
+	titles := c.LaneTitles(m)
+	if lane < 0 || int(lane) >= len(titles) {
+		return ""
+	}
+	return titles[lane]
+}
+
 type Query struct {
 	Text     string
 	Type     garden.ItemType
@@ -46,6 +148,10 @@ func (q Query) Active() bool {
 }
 
 type Record struct {
+	Phase    Phase
+	Placed   bool
+	Reason   string
+	Evidence Evidence
 	Findings []gardensync.Finding
 	Item     gardensync.Item
 	Column   Column
@@ -54,12 +160,14 @@ type Record struct {
 type Collection struct {
 	Records         []Record
 	Columns         [ColumnCount][]Record
+	Phases          [PhaseCount][]Record
+	Unplaced        []Record
 	Total, Excluded int
 }
 
 // Select uses the canonical verifier again rather than trusting a cached lane or
 // a stage label. Attention findings cannot manufacture specification acceptance.
-func Select(items []gardensync.Item, q Query, findings ...gardensync.Finding) Collection {
+func Select(items []gardensync.Item, q Query, evidence map[garden.IssueID]Evidence, findings ...gardensync.Finding) Collection {
 	var out Collection
 	for _, it := range items {
 		if it.Deleted {
@@ -78,6 +186,17 @@ func Select(items []gardensync.Item, q Query, findings ...gardensync.Finding) Co
 		out.Total++
 		r := Record{Item: it, Column: placement(c.Stage, it.Issue, it.Verification), Priority: priority(it.Issue.Labels)}
 		r.Item.Classification = c
+		r.Evidence = evidence[it.Issue.ID]
+		if r.Column == Approved && lane.Lane == garden.LaneWork && r.Evidence.Planner != nil && (r.Evidence.Planner.Live || r.Evidence.Planner.PlanReady) {
+			r.Column = Planning
+		}
+		r.Phase, r.Placed = r.Column.Phase(), true
+		if r.Column == Blocked {
+			r.Phase, r.Reason, r.Placed = blockerPhase(it, r.Evidence, lane.Lane == garden.LaneWork)
+			if r.Placed && lane.Lane != garden.LaneWork {
+				r.Reason += "; approval not current"
+			}
+		}
 		for _, f := range findings {
 			if f.IssueID == it.Issue.ID {
 				r.Findings = append(r.Findings, f)
@@ -98,8 +217,38 @@ func Select(items []gardensync.Item, q Query, findings ...gardensync.Finding) Co
 	})
 	for _, r := range out.Records {
 		out.Columns[r.Column] = append(out.Columns[r.Column], r)
+		if r.Placed {
+			out.Phases[r.Phase] = append(out.Phases[r.Phase], r)
+		} else {
+			out.Unplaced = append(out.Unplaced, r)
+		}
 	}
 	return out
+}
+
+func blockerPhase(it gardensync.Item, e Evidence, accepted bool) (Phase, string, bool) {
+	if a := e.Implementation; a != nil {
+		p := Building
+		if a.AwaitingReview {
+			p = Review
+		}
+		return p, "implementation attempt " + a.State, true
+	}
+	if planrev.FromVerification(it.Issue, it.Verification).Ready {
+		return ReadyPhase, "plan approved", true
+	}
+	for _, h := range it.Verification.Heads {
+		if h.Kind == garden.RevisionPlan {
+			return PlanningPhase, "plan revision published", true
+		}
+	}
+	if e.Planner != nil {
+		return PlanningPhase, "local planner attempt", true
+	}
+	if accepted {
+		return Backlog, "specification accepted", true
+	}
+	return PhaseCount, "no proven phase", false
 }
 
 // Labels do not prove plan approval. Ready is derived from the verified pair;
@@ -142,7 +291,7 @@ func NextGate(c Column) string {
 	case PlanReview:
 		return "Review and approve the plan"
 	case Ready:
-		return "Launch unavailable (plan 09)"
+		return "Start implementation locally (s)"
 	case Running:
 		return "Review the change when the run ends"
 	case Reviewing:
@@ -242,19 +391,49 @@ func (c Collection) Rows(s Sort) []Record {
 	return out
 }
 
-// Selection keeps identity separate from position and remembers each column's
-// cursor and scroll. Empty columns retain focus without inventing an item.
+// Selection keeps identity separate from position and remembers each lane's
+// cursor and scroll. Column indexes a phase lane or a detailed stage according
+// to Mode. Empty lanes retain focus without inventing an item.
 type Selection struct {
 	ID          garden.IssueID
 	Column      Column
-	Rows        [ColumnCount]int
-	Scroll      [ColumnCount]int
+	Mode        Mode
+	Rows        []int
+	Scroll      []int
 	Window      int
 	Initialized bool
 }
 
+// resize copies cursor memory so Bubble Tea model values never alias on update.
+func (s *Selection) resize(c Collection) {
+	n := len(c.Lanes(s.Mode))
+	rows, scroll := make([]int, n), make([]int, n)
+	copy(rows, s.Rows)
+	copy(scroll, s.Scroll)
+	s.Rows, s.Scroll = rows, scroll
+	s.Column = Column(max(0, min(int(s.Column), n-1)))
+}
+
+// Clamp keeps the lane index valid when lanes disappear and nothing else reconciles.
+func (s *Selection) Clamp(c Collection) { s.resize(c) }
+func (s *Selection) Clone() Selection {
+	out := *s
+	out.Rows, out.Scroll = slices.Clone(s.Rows), slices.Clone(s.Scroll)
+	return out
+}
+func (s *Selection) find(c Collection, id garden.IssueID) (Column, int, bool) {
+	for lane, rows := range c.Lanes(s.Mode) {
+		for i, r := range rows {
+			if r.Item.Issue.ID == id {
+				return Column(lane), i, true
+			}
+		}
+	}
+	return 0, 0, false
+}
 func (s *Selection) choose(c Collection) {
-	rows := c.Columns[s.Column]
+	s.resize(c)
+	rows := c.Lanes(s.Mode)[s.Column]
 	s.Rows[s.Column] = max(0, min(s.Rows[s.Column], len(rows)-1))
 	s.ID = 0
 	if len(rows) > 0 {
@@ -265,22 +444,25 @@ func (s *Selection) choose(c Collection) {
 
 // Focus points the Board cursor at id so Table and Board share one identity.
 func (s *Selection) Focus(c Collection, id garden.IssueID) bool {
-	r, i, ok := c.Find(id)
+	col, i, ok := s.find(c, id)
 	if !ok {
 		return false
 	}
-	s.ID, s.Column, s.Initialized = id, r.Column, true
-	s.Rows[r.Column] = i
+	s.ID, s.Column, s.Initialized = id, col, true
+	s.resize(c)
+	s.Rows[col] = i
 	return true
 }
 func (s *Selection) Move(c Collection, horizontal, vertical int) {
-	s.Column = Column(max(0, min(int(s.Column)+horizontal, int(ColumnCount)-1)))
+	s.resize(c)
+	s.Column = Column(max(0, min(int(s.Column)+horizontal, len(c.Lanes(s.Mode))-1)))
 	s.Rows[s.Column] += vertical
 	s.choose(c)
 }
 func (s *Selection) Reconcile(c Collection) string {
+	s.resize(c)
 	if !s.Initialized {
-		for col, rows := range c.Columns {
+		for col, rows := range c.Lanes(s.Mode) {
 			if len(rows) > 0 {
 				s.Column = Column(col)
 				break
@@ -293,16 +475,16 @@ func (s *Selection) Reconcile(c Collection) string {
 		s.choose(c)
 		return ""
 	}
-	if r, i, ok := c.Find(s.ID); ok {
-		s.Column = r.Column
+	if col, i, ok := s.find(c, s.ID); ok {
+		s.Column = col
 		s.Rows[s.Column] = i
 		return ""
 	}
 	s.choose(c)
 	if s.ID == 0 {
-		for d := 1; d < int(ColumnCount); d++ {
+		for d := 1; d < len(c.Lanes(s.Mode)); d++ {
 			for _, n := range []int{int(s.Column) + d, int(s.Column) - d} {
-				if n >= 0 && n < int(ColumnCount) && len(c.Columns[n]) > 0 {
+				if n >= 0 && n < len(c.Lanes(s.Mode)) && len(c.Lanes(s.Mode)[n]) > 0 {
 					s.Column = Column(n)
 					s.choose(c)
 					return "Selected issue left this view; selected nearest available item."
@@ -316,17 +498,18 @@ func (s *Selection) Reconcile(c Collection) string {
 	return "Selected issue left this view; selected nearest available item."
 }
 func (s *Selection) EnsureVisible(c Collection, capacity, columns int) {
+	s.resize(c)
 	capacity = max(1, capacity)
-	columns = max(1, min(columns, int(ColumnCount)))
-	for col, rows := range c.Columns {
+	columns = max(1, min(columns, len(c.Lanes(s.Mode))))
+	for col, rows := range c.Lanes(s.Mode) {
 		s.Scroll[col] = max(0, min(s.Scroll[col], len(rows)-capacity))
 	}
-	row := max(0, min(s.Rows[s.Column], len(c.Columns[s.Column])-1))
+	row := max(0, min(s.Rows[s.Column], len(c.Lanes(s.Mode)[s.Column])-1))
 	s.Scroll[s.Column] = max(0, min(s.Scroll[s.Column], row))
 	if row >= s.Scroll[s.Column]+capacity {
 		s.Scroll[s.Column] = row - capacity + 1
 	}
-	s.Window = max(0, min(s.Window, int(ColumnCount)-columns))
+	s.Window = max(0, min(s.Window, len(c.Lanes(s.Mode))-columns))
 	if int(s.Column) < s.Window {
 		s.Window = int(s.Column)
 	}

@@ -113,7 +113,7 @@ func TestCaptureCreatesOneDraftAndReplayReturnsIt(t *testing.T) {
 	if len(drafts.Records) != 1 || drafts.Records[0].Item.Issue.ID != garden.IssueID(v.Issue.ID) || drafts.Records[0].Attention != "" {
 		t.Fatalf("drafts = %+v", drafts.Records)
 	}
-	if got := len(work.Select(w.Snapshot.Items, work.Query{}).Records); got != 1 {
+	if got := len(work.Select(w.Snapshot.Items, work.Query{}, nil).Records); got != 1 {
 		t.Fatalf("board has %d items; the draft must stay out and only the seeded one remains", got)
 	}
 	if len(w.PendingCaptures) != 0 {

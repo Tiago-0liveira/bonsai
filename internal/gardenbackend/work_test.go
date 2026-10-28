@@ -63,7 +63,7 @@ func TestWorkUsesVerifiedReaderAndPreservesLastSuccessThroughOfflineAndEmpty(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Snapshot.Complete || v.Snapshot.SuccessfulAt.IsZero() || len(work.Select(v.Snapshot.Items, work.Query{}).Records) != 1 {
+	if !v.Snapshot.Complete || v.Snapshot.SuccessfulAt.IsZero() || len(work.Select(v.Snapshot.Items, work.Query{}, nil).Records) != 1 {
 		t.Fatalf("not verified: %+v", v)
 	}
 	last := v.Snapshot.SuccessfulAt
@@ -87,7 +87,7 @@ func TestWorkUsesVerifiedReaderAndPreservesLastSuccessThroughOfflineAndEmpty(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !empty.Snapshot.Complete || len(work.Select(empty.Snapshot.Items, work.Query{}).Records) != 0 {
+	if !empty.Snapshot.Complete || len(work.Select(empty.Snapshot.Items, work.Query{}, nil).Records) != 0 {
 		t.Fatal("successful empty retained work")
 	}
 	before, _, err := h.b.association(ctx)
@@ -134,7 +134,7 @@ func TestWorkReadOnlyAndSkipCapabilities(t *testing.T) {
 	}
 	seedBoardIssue(t, f)
 	v, err := h.b.Work(context.Background())
-	if err != nil || len(work.Select(v.Snapshot.Items, work.Query{}).Records) != 1 {
+	if err != nil || len(work.Select(v.Snapshot.Items, work.Query{}, nil).Records) != 1 {
 		t.Fatalf("read-only: %+v %v", v, err)
 	}
 	if _, err = h.b.Skip(context.Background(), gardenapi.TargetRef{}); err != nil {
