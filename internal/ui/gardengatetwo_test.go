@@ -122,7 +122,7 @@ func TestPlansSectionUsesRevisionSummaries(t *testing.T) {
 	m = plannerPress(t, m, "R", "enter")
 	m.garden.board.section = 3
 	text := strings.Join(m.gardenDocument(80), "\n")
-	mustContain(t, "summary", text, "PLANS", "Latest r1", "awaiting decision")
+	mustContain(t, "summary", text, "PLAN r1 / NEEDS YOUR APPROVAL", "Latest r1", "awaiting decision")
 	mustNotContain(t, "summary", text, "Step number 17")
 	// Review still carries the full document for focused navigation.
 	m = plannerPress(t, m, "r")

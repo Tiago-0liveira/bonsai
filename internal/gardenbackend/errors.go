@@ -145,6 +145,8 @@ func safeAPIError(err error) *gardenapi.Error {
 		return &gardenapi.Error{Code: gardenapi.CodeInvalidInput, Message: "Accept the read-only permissions to request a plan."}
 	case errors.Is(err, plan.ErrReadOnlyUnsupported), errors.Is(err, agents.ErrReadOnlyUnsupported):
 		return &gardenapi.Error{Code: gardenapi.CodeReadOnlyUnsupported, Message: "That account's provider cannot enforce read-only access, so it cannot plan.", Next: "Choose an account whose provider can run read-only. Bonsai never runs a planner unrestricted."}
+	case errors.Is(err, plan.ErrFeedbackChanged):
+		return &gardenapi.Error{Code: gardenapi.CodeConflict, Message: "The plan revision or the feedback on it changed since you looked, so no revision attempt started.", Next: "Read the current plan review, then decide again."}
 	case errors.Is(err, plan.ErrAttemptActive):
 		return &gardenapi.Error{Code: gardenapi.CodeAttemptActive, Message: "A planner attempt is already running for this Issue.", Next: "Open it, or cancel it before requesting another."}
 	case errors.Is(err, plan.ErrPlanNotReady):

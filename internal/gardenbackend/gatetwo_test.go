@@ -7,7 +7,6 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
-	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/work"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
@@ -137,35 +136,5 @@ func TestIssueLinkActionsUseCanonicalURL(t *testing.T) {
 	}
 	if opened != copied || !strings.HasPrefix(opened, "https://github.com/acme/my-app/issues/") {
 		t.Fatalf("open=%q copy=%q", opened, copied)
-	}
-}
-
-func TestRequestedChangesReachNextExplicitPlanner(t *testing.T) {
-	h, _, id, ag, attempt := reviewHarness(t)
-	ctx := context.Background()
-	rv := publishForApproval(t, h, id, attempt, backendPlan)
-	req := exactApproval(rv)
-	req.Decision = garden.DecisionChangesRequested
-	req.Reason = "Cover the counter race.\x00"
-	if _, err := h.b.DecidePlan(ctx, req); err != nil {
-		t.Fatal(err)
-	}
-	if len(ag.started) != 1 {
-		t.Fatal("changes requested started a run")
-	}
-	ag.status["sess-1"] = plan.SessionStatus{State: "exited", ExitCode: new(int)}
-	p, err := h.b.PreviewPlanner(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ag.started) != 1 {
-		t.Fatal("preview started a run")
-	}
-	if _, err = h.b.StartPlanner(ctx, startReq(p, "claude-acct")); err != nil {
-		t.Fatal(err)
-	}
-	prompt := ag.started[1].Launch.Prompt
-	if !strings.Contains(prompt, "Cover the counter race.") || strings.ContainsRune(prompt, '\x00') {
-		t.Fatalf("prompt=%q", prompt)
 	}
 }

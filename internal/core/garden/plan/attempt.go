@@ -83,6 +83,14 @@ type Base struct {
 	DirtyDigest string `json:"dirty_digest,omitempty"`
 }
 
+// RevisionRef names one plan revision and the decision that asked for it to be revised.
+type RevisionRef struct {
+	RevisionHash string `json:"revision_hash"`
+	// Ordinal is the revision's rN number, kept for display only.
+	Ordinal           int   `json:"ordinal,omitempty"`
+	DecisionCommentID int64 `json:"decision_comment_id"`
+}
+
 // Isolation records the read-only guarantee the user accepted.
 type Isolation struct {
 	// Mechanism names what enforces read-only access below the model.
@@ -127,6 +135,13 @@ type Attempt struct {
 	// PlanPublishedAt is when this attempt's plan was published as a plan revision from here. It is a local
 	// convenience for "plan not yet published"; GitHub stays the record of what was published.
 	PlanPublishedAt *time.Time `json:"plan_published_at,omitempty"`
+	// PublishedRevision is the hash of the plan revision this attempt's plan became. It lets a revise attempt
+	// retain the settings of the attempt that produced the revision under review. Empty when unpublished, or
+	// published before the hash was recorded.
+	PublishedRevision string `json:"published_revision,omitempty"`
+	// Revises names the plan revision and changes-requested decision this attempt answers; nil for a plain
+	// request.
+	Revises *RevisionRef `json:"revises,omitempty"`
 
 	RequestedAt time.Time  `json:"requested_at"`
 	EndedAt     *time.Time `json:"ended_at,omitempty"`
@@ -136,7 +151,7 @@ type Attempt struct {
 func (a Attempt) valid() bool {
 	return a.ID != "" && a.Local != "" && a.Repo != 0 && a.Issue != 0 && a.Role == RolePlanner && a.State.valid() &&
 		a.Spec.RevisionHash != "" && a.Spec.Fingerprint != "" && a.Base.Commit != "" && a.Provider != "" && a.AccountID != "" &&
-		(a.PlanPath == "" || validPlanPath(a.PlanPath))
+		(a.PlanPath == "" || validPlanPath(a.PlanPath)) && (a.Revises == nil || a.Revises.RevisionHash != "" && a.Revises.DecisionCommentID != 0)
 }
 
 // validPlanPath is a shape check only; whether the path is the attempt's own is Service.ownedPlanDir's job.

@@ -51,6 +51,15 @@ type gardenPlannerState struct {
 	attempt       string // the attempt whose session the body shows
 	confirmCancel bool
 
+	// The overlay's Plan tab opens this screen with an intent. direct marks a screen opened from there, whose Esc
+	// returns to the overlay instead of the attempts; openAttempt asks for that attempt's session, publish for the
+	// ready plan's publish box. None of them starts anything.
+	direct      bool
+	openAttempt string
+	publish     bool
+	// revise marks the account choice opened from the request-changes form: its submit sends the feedback.
+	revise bool
+
 	// seen is the newest stamp of any attempts reply taken in, so a slow background poll cannot overwrite a newer read.
 	seen gardenapi.Stamp
 }
@@ -149,6 +158,7 @@ func (m Model) gardenOpenPlanner() (Model, tea.Cmd) {
 	if g.api == nil || g.busy.writes() || g.board.opened == 0 {
 		return m, nil
 	}
+	g.planner.direct, g.planner.openAttempt, g.planner.publish = false, "", false
 	return m.gardenLoadPlanner()
 }
 
@@ -185,6 +195,9 @@ func (m Model) onGardenPlannerPreview(msg gardenPlannerPreviewMsg) (Model, tea.C
 		return m, nil
 	}
 	if fail != nil {
+		if g.planner.stage == plannerNone {
+			g.planner.direct, g.planner.openAttempt, g.planner.publish = false, "", false
+		}
 		return m.gardenFailed(busyPlanner, fail)
 	}
 	if !g.gate.Accept(msg.view.Stamp) || msg.view.IssueID != uint64(g.board.opened) {
@@ -207,6 +220,23 @@ func (m Model) onGardenPlannerPreview(msg gardenPlannerPreviewMsg) (Model, tea.C
 		if v.CanRequest() {
 			p.btn = 1
 		}
+	}
+	// An intent from the overlay's Plan tab: go straight to the session or to the publish box. Opening either
+	// is reading; the plan is published only by the confirmation behind the box.
+	if id := p.openAttempt; id != "" {
+		p.openAttempt = ""
+		if a, ok := p.attemptByID(id); ok && a.SessionID != "" {
+			p.stage, p.attempt, p.confirmCancel = plannerSession, a.ID, false
+			return m, m.plannerAttach(a.SessionID, false)
+		}
+	}
+	if p.publish {
+		p.publish = false
+		if i, _, ok := p.readyAttempt(); ok {
+			p.sel = i
+			return m.gardenPlannerPublish()
+		}
+		g.notice = "There is no ready plan file to publish."
 	}
 	return m, nil
 }
@@ -264,6 +294,9 @@ func (m Model) gardenPlannerRequest() (Model, tea.Cmd) {
 func (m Model) onPlannerSubmit(msg launchSubmitMsg) (Model, tea.Cmd) {
 	g := &m.garden
 	p := &g.planner
+	if p.revise {
+		return m.onReviseSubmit(msg)
+	}
 	if p.stage != plannerChoose || p.dlg == nil || p.dlg.id != msg.dlg || p.preview == nil || g.busy != busyNone {
 		return m, nil
 	}
@@ -372,9 +405,14 @@ func (m Model) onGardenPlannerCancel(msg gardenPlannerCancelMsg) (Model, tea.Cmd
 		g.err = fail
 		return m, nil
 	}
-	if !g.gate.Accept(msg.view.Stamp) || g.planner.preview == nil {
+	if !g.gate.Accept(msg.view.Stamp) {
 		g.err = staleReply
 		return m, nil
+	}
+	if g.planner.preview == nil {
+		// Stopped from the overlay's Plan tab: there is no attempts list to update, only the tab to read again.
+		m, local := m.gardenLoadLocal()
+		return m, tea.Batch(local, m.planTabLoad())
 	}
 	// The cancel only asks the session to end: the attempt follows what the session reports, so refresh.
 	list := append([]plan.Attempt(nil), g.planner.preview.Attempts...)
@@ -517,7 +555,7 @@ func (m Model) gardenPlannerClose() (Model, tea.Cmd) {
 		m.shellFocus = shellBody
 	}
 	m, local := m.gardenLoadLocal() // the badge reflects what was just seen, not the last tick
-	return m, tea.Batch(rel, local)
+	return m, tea.Batch(rel, local, m.planTabReload())
 }
 
 // setOverlay records the live view of one attempt.
@@ -559,6 +597,9 @@ func (m Model) gardenPlannerChooseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // gardenPlannerChooseClose backs out of the account choice without starting anything.
 func (m Model) gardenPlannerChooseClose() Model {
 	p := &m.garden.planner
+	if p.revise {
+		return m.planReviseChoiceClose()
+	}
 	p.dlg, p.save, p.stage = nil, nil, plannerHub
 	m.shellFocus = shellBody
 	return m
@@ -641,6 +682,10 @@ func (m Model) gardenPlannerSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch k {
 	case "esc", "backspace":
+		if p.direct {
+			// Opened from the overlay's Plan tab: back to the overlay, the session keeps running.
+			return m.gardenPlannerClose()
+		}
 		// Back to the attempts: the attachment is released, the session is not stopped.
 		rel := m.plannerRelease()
 		p.stage, p.attempt = plannerHub, ""

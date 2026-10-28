@@ -40,22 +40,41 @@ func (b *Backend) planService() (*plan.Service, error) {
 	if b.deps.Plans == nil || b.deps.Checkout == nil || b.deps.Agents == nil {
 		return nil, unavailablePlanner
 	}
-	svc, err := plan.New(plan.Deps{Feedback: func(ctx context.Context, t approve.Target) (string, error) {
+	svc, err := plan.New(plan.Deps{Feedback: func(ctx context.Context, t approve.Target, ref *plan.ReviseRequest) (plan.Feedback, error) {
+		if ref == nil {
+			return plan.Feedback{}, nil
+		}
+		// One fresh read decides every condition, so the feedback cannot be mixed from two moments.
 		log, err := gate.Read(ctx, t)
 		if err != nil {
-			return "", err
+			return plan.Feedback{}, err
 		}
-		rv := planrev.Derive(log, t.Viewer)
-		if rv.Current != nil && rv.Current.State == planrev.StateChangesRequested {
-			return rv.Current.Reason(), nil
+		rev, d, ok := pendingRevise(planrev.Derive(log, t.Viewer))
+		if !ok || rev.Hash != ref.RevisionHash || d.CommentID != ref.DecisionCommentID {
+			return plan.Feedback{}, plan.ErrFeedbackChanged
 		}
-		return "", nil
+		return plan.Feedback{Reason: planrev.ReasonOf(d), PlanText: rev.Content, Ordinal: rev.Ordinal}, nil
 	}, Gate: gate, Repo: b.deps.Checkout, Agents: b.deps.Agents, Store: b.deps.Plans, Local: b.local, Dir: b.dir, NewID: b.deps.NewID})
 	if err != nil {
 		return nil, err
 	}
 	b.planner = svc
 	return svc, nil
+}
+
+// pendingRevise returns the current plan revision when it is trusted, up to date and its latest decision is an
+// unrevoked changes request: the only state a revision attempt may answer.
+func pendingRevise(rv planrev.Review) (planrev.Revision, garden.PlanDecision, bool) {
+	rev := rv.Current
+	if rev == nil || !rev.Trusted || rev.Stale || rev.Superseded || rev.State != planrev.StateChangesRequested {
+		return planrev.Revision{}, garden.PlanDecision{}, false
+	}
+	for i := len(rev.Decisions) - 1; i >= 0; i-- {
+		if d := rev.Decisions[i]; !d.Revoked {
+			return *rev, d, d.Decision == garden.DecisionChangesRequested
+		}
+	}
+	return planrev.Revision{}, garden.PlanDecision{}, false
 }
 
 // plannerTarget resolves the Issue and the authenticated viewer. Planning is local, so Read access is enough.
@@ -233,7 +252,8 @@ func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error
 			continue
 		}
 		view.Issues[uint64(a.Issue)] = gardenapi.IssueLocalWork{Planner: &gardenapi.LocalRunSummary{AttemptID: a.ID, State: string(a.State), Live: live,
-			Activity: o.Activity, PlanFile: o.File.State, Updated: a.UpdatedAt}}
+			Activity: o.Activity, PlanFile: o.File.State, Updated: a.UpdatedAt, Provider: string(a.Provider), AccountName: a.AccountName,
+			Model: a.Model, Effort: a.Effort, RequestedAt: a.RequestedAt, Revises: a.Revises}}
 	}
 	if b.deps.LaunchStore != nil {
 		attempts, err := b.deps.LaunchStore.List(ctx, b.local, 0)

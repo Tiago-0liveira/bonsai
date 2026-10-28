@@ -202,6 +202,14 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onGardenPlanPublish(msg)
 	case gardenPlanDecisionMsg:
 		nm, cmd = m.onGardenPlanDecision(msg)
+	case gardenPlanRevisePreviewMsg:
+		nm, cmd = m.onGardenPlanRevisePreview(msg)
+	case gardenPlanTabReviewMsg:
+		nm, cmd = m.onGardenPlanTabReview(msg)
+	case gardenPlanAccountsMsg:
+		nm = m.onGardenPlanAccounts(msg)
+	case gardenPlanReviseMsg:
+		nm, cmd = m.onGardenPlanRevise(msg)
 	case gardenPlannerPreviewMsg:
 		nm, cmd = m.onGardenPlannerPreview(msg)
 	case gardenPlannerAttemptsMsg:
@@ -294,6 +302,7 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
 		// Local observations and in-flight replies belong to the old association.
 		g.local = gardenLocalState{seq: g.local.seq + 1, tickGen: g.local.tickGen + 1}
+		g.plantab = gardenPlanTabState{seq: g.plantab.seq + 1}
 		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
 		// A flight and an open assistant belong to the old connection; its sessions stay in memory, inactive.
 		g.assist.release()

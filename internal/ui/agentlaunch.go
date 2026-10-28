@@ -79,6 +79,9 @@ type launchDialog struct {
 	// planner turns the dialog into the Garden planner's account choice: only model and effort can be set,
 	// the launch is read-only, and an account whose provider cannot enforce that cannot be chosen.
 	planner bool
+	// revise makes the planner choice the one behind Send feedback & revise plan: it accepts the read-only
+	// contract for a revision attempt instead of a new plan.
+	revise bool
 	// issue is the opened Issue's "#n title" the planner's choice is headed with; empty keeps the plain heading.
 	issue string
 	now   func() time.Time

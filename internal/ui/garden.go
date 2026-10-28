@@ -58,6 +58,7 @@ const (
 	busyPlannerCancel
 	busyPlanPublish
 	busyPlanDecide
+	busyPlanRevise // RevisePlan and StartPlanRevise: record feedback and start one revision attempt
 )
 
 func (b gardenBusy) writes() bool { return b >= busyApply }
@@ -79,6 +80,8 @@ type gardenState struct {
 	drafts  gardenDraftsState
 	planner gardenPlannerState
 	planrev gardenPlanState
+	// plantab is the overlay's Plan tab: the revise preview, the request-changes form and the stop confirmation.
+	plantab gardenPlanTabState
 	// launchSub is the shared Sessions.Changes subscription, opened once the first launch screen shows.
 	launchSub bool
 	launch    gardenLaunchState // local implementation launch: its own request tracks, see gardenlaunch.go

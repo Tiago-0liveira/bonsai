@@ -71,6 +71,10 @@ type gardenPlanState struct {
 	decision garden.Decision
 	target   *gardenapi.PlanDecisionRequest
 	reason   textinput.Model
+
+	// fromOverlay marks the approval confirmation the Plan tab draws inside the overlay: it is the same exact
+	// confirmation, and leaving it returns to the overlay instead of the plan review screen.
+	fromOverlay bool
 }
 
 type (
@@ -473,6 +477,9 @@ func (m Model) onGardenPlanDecision(msg gardenPlanDecisionMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
+	if p.fromOverlay {
+		return m.onOverlayPlanDecision(msg, fail)
+	}
 	p.stage = planReview
 	m.shellFocus = shellBody
 	if fail != nil {
@@ -530,6 +537,9 @@ func (m Model) gardenPlanComposeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		p.drafts = withDraft(p.drafts, p.attempt, p.ta.Value())
 		p.stage = planNone
 		m.shellFocus = shellBody
+		if m.garden.planner.direct {
+			return m.gardenPlannerClose() // opened from the overlay's Plan tab: back to the overlay
+		}
 		return m, nil
 	case "ctrl+s":
 		if strings.TrimSpace(p.ta.Value()) == "" {
@@ -575,16 +585,23 @@ func (m Model) gardenPlanConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) gardenPlanDecideKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	p := &m.garden.planrev
 	if p.decision == garden.DecisionApproved {
+		leave := func() Model {
+			if p.fromOverlay {
+				return m.planClose() // the confirmation was the overlay's: back to it, nothing recorded
+			}
+			p.stage = planReview
+			return m
+		}
 		switch msg.String() {
 		case "esc":
-			p.stage = planReview
+			m = leave()
 		case "tab", "shift+tab", "left", "right", "h", "l":
 			p.btn = 1 - p.btn
 		case "enter":
 			if p.btn == 1 {
 				return m.gardenRunPlanDecision()
 			}
-			p.stage = planReview
+			m = leave()
 		}
 		return m, nil
 	}
@@ -634,6 +651,13 @@ func (m Model) gardenPlanReviewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m = m.planClose()
+		if m.garden.planner.direct {
+			// The publish box came from the overlay's Plan tab: leave the planner screen too.
+			var rel tea.Cmd
+			m, rel = m.gardenPlannerClose()
+			nm, cmd := m.gardenLoadWork()
+			return nm, tea.Batch(rel, cmd)
+		}
 		return m.gardenLoadWork()
 	case "v":
 		m.garden.planrev.stage = planValidate

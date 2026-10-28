@@ -33,7 +33,12 @@ func (m Model) gardenOverlayOpen() bool {
 	b := m.garden.board
 	return m.layoutKind == LayoutRedesign && m.workspace == wsGarden && m.garden.api != nil && m.modal == nil &&
 		m.gardenScreen() == scrBoard && b.opened != 0 && !b.searching &&
-		!m.planActive() && !m.launchActive() && !m.plannerActive()
+		(!m.planActive() || m.planDecideInOverlay()) && !m.launchActive() && !m.plannerActive()
+}
+
+// planDecideInOverlay reports the approval confirmation the Plan tab draws inside the overlay.
+func (m Model) planDecideInOverlay() bool {
+	return m.garden.planrev.fromOverlay && m.garden.planrev.stage == planDecide
 }
 
 // overlayGeometry is the single place that sizes the panel's inner regions, so what scrolls is what is drawn.
@@ -66,10 +71,15 @@ type issueControl struct {
 func (m Model) issueControls() []issueControl {
 	g := m.garden
 	idle := g.api != nil && !g.busy.writes()
-	out := []issueControl{
-		{id: "close", key: "esc", long: "Back to " + m.garden.board.layoutName(), short: m.garden.board.layoutName(), enabled: true},
-		{id: "plan", key: "p", long: "Request plan", short: "Plan", enabled: idle},
-		{id: "review", key: "r", long: "Review plans", short: "Review", enabled: idle},
+	if sub, ok := m.planTabModeControls(); ok {
+		return sub
+	}
+	out := []issueControl{{id: "close", key: "esc", long: "Back to " + m.garden.board.layoutName(), short: m.garden.board.layoutName(), enabled: true}}
+	if g.board.section == planTabSection {
+		out = append(out, m.planTabActions(idle)...)
+	} else {
+		out = append(out, issueControl{id: "plan", key: "p", long: "Request plan", short: "Plan", enabled: idle},
+			issueControl{id: "review", key: "r", long: "Review plans", short: "Review", enabled: idle})
 	}
 	if m.launchSupported() {
 		start := issueControl{id: "start", key: "s", long: "Start locally…", short: "Start…", enabled: idle && m.launchOffered()}
@@ -88,9 +98,21 @@ func (m *Model) gardenOpenIssue(id garden.IssueID) {
 	}
 }
 
-func (m *Model) issueSetSection(n int) {
+// issueSetSection switches the tab. Leaving the Plan tab keeps the feedback typed there; entering it reads the
+// revise preview, which starts nothing.
+func (m *Model) issueSetSection(n int) tea.Cmd {
 	b := &m.garden.board
+	prev := b.section
 	b.section, b.docScroll = max(0, min(n, len(gardenDocumentSections)-1)), 0
+	if prev == planTabSection && b.section != planTabSection {
+		m.planFormClose()
+		m.garden.plantab.confirmStop = false
+		b.overlayFocus = ""
+	}
+	if b.section == planTabSection && prev != planTabSection {
+		return m.planTabLoad()
+	}
+	return nil
 }
 
 func (m *Model) issueScroll(delta int) {
@@ -103,6 +125,8 @@ func (m *Model) issueScroll(delta int) {
 func (m Model) issueActivate(id string) (tea.Model, tea.Cmd) {
 	switch id {
 	case "close":
+		m.planFormClose()
+		m.garden.plantab.confirmStop = false
 		m.garden.board.close()
 		return m, nil
 	case "plan":
@@ -113,6 +137,39 @@ func (m Model) issueActivate(id string) (tea.Model, tea.Cmd) {
 		return m.gardenLaunchOpen()
 	case "attempts":
 		return m.gardenLaunchHub()
+	case "open-planner":
+		return m.planTabOpenPlanner()
+	case "publish":
+		return m.planTabPublish()
+	case "stop":
+		return m.planTabStop()
+	case "stop-keep":
+		return m.planTabKeyStop("n")
+	case "stop-yes":
+		return m.planTabKeyStop("y")
+	case "approve":
+		return m.planTabReview("approve")
+	case "changes":
+		return m.planTabReview("changes")
+	case "retry":
+		return m.planTabRetry()
+	case "decide-cancel":
+		m = m.planClose()
+		return m, nil
+	case "decide-approve":
+		return m.gardenRunPlanDecision()
+	case "form-back":
+		m.planFormClose()
+		return m, nil
+	case "form-dirty":
+		if f := m.planForm(); f != nil && f.base.Dirty {
+			f.includeDirty = !f.includeDirty
+		}
+		return m, nil
+	case "form-account":
+		return m.planFormAccount()
+	case "form-send":
+		return m.planFormSend()
 	}
 	return m, nil
 }
@@ -143,10 +200,16 @@ func (m Model) issueFocusStep(dir int) string {
 // gardenIssueKey owns every key while the Issue overlay is open: nothing reaches the board or the globals.
 func (m Model) gardenIssueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	b := &m.garden.board
+	if m.planForm() != nil {
+		return m.planFormKey(msg)
+	}
 	m.garden.notice = "" // a notice explains the last action; the next key moves on
 	_, rows := m.gardenOverlayBody()
 	page := max(1, rows-1)
 	k := msg.String()
+	if m.planStopAsked() {
+		return m.planTabKeyStop(k)
+	}
 	switch {
 	case k == "esc", k == "backspace":
 		return m.issueActivate("close")
@@ -158,18 +221,21 @@ func (m Model) gardenIssueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if b.overlayFocus != "" {
 			return m.issueActivate(b.overlayFocus)
 		}
-	case k == "p":
-		return m.issueActivate("plan")
-	case k == "r":
-		return m.issueActivate("review")
+	case k == "p", k == "r":
+		if b.section == planTabSection {
+			return m.planTabShortcut(k)
+		}
+		return m.issueActivate(map[string]string{"p": "plan", "r": "review"}[k])
 	case k == "s":
 		return m.issueActivate("start")
 	case k == "i":
 		return m.issueActivate("attempts")
 	case k == "left", k == "h":
-		m.issueSetSection(b.section - 1)
+		return m, m.issueSetSection(b.section - 1)
 	case k == "right", k == "l":
-		m.issueSetSection(b.section + 1)
+		return m, m.issueSetSection(b.section + 1)
+	case b.section == planTabSection && (k == "a" || k == "b" || k == "c" || k == "u"):
+		return m.planTabShortcut(k)
 	case k == "down", k == "j":
 		m.issueScroll(1)
 	case k == "up", k == "k":
@@ -477,5 +543,40 @@ func (m Model) issueRail(w int) []string {
 	rv := planrev.FromVerification(r.Item.Issue, r.Item.Verification)
 	add(p.Muted, false, fmt.Sprintf("Plan revisions: %d", len(rv.Revisions)))
 	add(p.Muted, false, "Next gate: "+work.NextGate(r.Column))
+	if b.section == planTabSection {
+		m.planTabRail(add)
+	}
 	return out
+}
+
+// overlayFocusID is the focused action. The approval confirmation keeps its own focus (the two buttons), and the
+// text box of the request-changes form is the empty focus.
+func (m Model) overlayFocusID() string {
+	if m.planDecideInOverlay() {
+		if m.garden.planrev.btn == 1 {
+			return "decide-approve"
+		}
+		return "decide-cancel"
+	}
+	return m.garden.board.overlayFocus
+}
+
+// planTabShortcut runs a Plan tab key (a, b, c, u) through the action it names. A key whose action is not offered
+// in this state does nothing; one that is offered but disabled says why.
+func (m Model) planTabShortcut(k string) (tea.Model, tea.Cmd) {
+	for _, c := range m.issueControls() {
+		if c.key != k || c.id == "close" {
+			continue
+		}
+		if !c.enabled {
+			m.garden.notice = c.reason
+			return m, nil
+		}
+		return m.issueActivate(c.id)
+	}
+	// The tab offers no action on this key in this state; p and r keep their usual meaning.
+	if id := map[string]string{"p": "plan", "r": "review"}[k]; id != "" {
+		return m.issueActivate(id)
+	}
+	return m, nil
 }

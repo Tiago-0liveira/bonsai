@@ -599,22 +599,271 @@ func TestStoreRejectsCorruptAndForeignFiles(t *testing.T) {
 
 func writeFile(path, content string) error { return os.WriteFile(path, []byte(content), 0o600) }
 
-func TestChangesReasonIsSanitizedAndIncludedOnlyOnExplicitStart(t *testing.T) {
+func reviseRef(comment int64) *ReviseRequest {
+	return &ReviseRequest{RevisionHash: "plan-rev-1", DecisionCommentID: comment}
+}
+
+func TestPlainRequestCarriesNoFeedback(t *testing.T) {
 	f := newFixture(t)
 	calls := 0
-	f.svc.d.Feedback = func(context.Context, approve.Target) (string, error) {
+	f.svc.d.Feedback = func(context.Context, approve.Target, *ReviseRequest) (Feedback, error) {
 		calls++
-		return "Cover the race.\n\x1b\x00Keep the limit.", nil
+		return Feedback{Reason: "Cover the race.", PlanText: "old", Ordinal: 1}, nil
+	}
+	f.start()
+	if calls != 0 || strings.Contains(f.agents.started[0].Launch.Prompt, "Cover the race.") {
+		t.Fatalf("plain request read feedback: calls=%d", calls)
+	}
+}
+
+func TestRevisePromptQuotesPredecessorAndReason(t *testing.T) {
+	f := newFixture(t)
+	var got *ReviseRequest
+	f.svc.d.Feedback = func(_ context.Context, _ approve.Target, ref *ReviseRequest) (Feedback, error) {
+		got = ref
+		return Feedback{Reason: "Cover the race.\n\x1b\x00Keep the limit.\u202e", PlanText: "# Plan\r\nStep one\x07", Ordinal: 3}, nil
 	}
 	req := f.request()
-	if calls != 0 || len(f.agents.started) != 0 {
-		t.Fatal("preview requested feedback or started a run")
-	}
-	if _, err := f.svc.Start(context.Background(), req); err != nil {
+	req.Revise = reviseRef(901)
+	a, err := f.svc.Start(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
 	prompt := f.agents.started[0].Launch.Prompt
-	if calls != 1 || !strings.Contains(prompt, "Reviewer requested changes") || !strings.Contains(prompt, "Cover the race.") || strings.ContainsAny(prompt, "\x1b\x00") {
-		t.Fatalf("feedback calls=%d prompt=%q", calls, prompt)
+	for _, want := range []string{"untrusted review context", "Predecessor plan r3:\n> # Plan\n> Step one \n", "Reviewer feedback requesting changes:\n> Cover the race.\n>   Keep the limit. \n"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+	if strings.ContainsAny(prompt, "\x1b\x00\x07\r\u202e") || len(prompt) > MaxPromptBytes {
+		t.Fatalf("prompt not clean/bounded (%d bytes)", len(prompt))
+	}
+	if got == nil || got.DecisionCommentID != 901 || a.Revises == nil || *a.Revises != (RevisionRef{RevisionHash: "plan-rev-1", Ordinal: 3, DecisionCommentID: 901}) {
+		t.Fatalf("ref = %+v, revises = %+v", got, a.Revises)
+	}
+}
+
+func TestRevisePromptIsBounded(t *testing.T) {
+	f := newFixture(t)
+	f.svc.d.Feedback = func(context.Context, approve.Target, *ReviseRequest) (Feedback, error) {
+		return Feedback{Reason: "x", PlanText: strings.Repeat("plan line\n", MaxPromptBytes/8), Ordinal: 1}, nil
+	}
+	req := f.request()
+	req.Revise = reviseRef(901)
+	if _, err := f.svc.Start(context.Background(), req); !errors.Is(err, ErrSpecTooLarge) {
+		t.Fatalf("oversize = %v", err)
+	}
+	if list, _ := f.store.List(context.Background(), "local-1", testIssue); len(list) != 0 || len(f.agents.started) != 0 {
+		t.Fatal("refused revise left a record or a session")
+	}
+}
+
+func TestReviseFeedbackRefusals(t *testing.T) {
+	for name, tc := range map[string]struct {
+		resolver func(context.Context, approve.Target, *ReviseRequest) (Feedback, error)
+		ref      *ReviseRequest
+	}{
+		"resolver says changed": {func(context.Context, approve.Target, *ReviseRequest) (Feedback, error) {
+			return Feedback{}, ErrFeedbackChanged
+		}, reviseRef(901)},
+		"no resolver":    {nil, reviseRef(901)},
+		"empty revision": {func(context.Context, approve.Target, *ReviseRequest) (Feedback, error) { return Feedback{}, nil }, &ReviseRequest{DecisionCommentID: 901}},
+		"zero comment":   {func(context.Context, approve.Target, *ReviseRequest) (Feedback, error) { return Feedback{}, nil }, &ReviseRequest{RevisionHash: "h"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.svc.d.Feedback = tc.resolver
+			req := f.request()
+			req.Revise = tc.ref
+			if _, err := f.svc.Start(context.Background(), req); !errors.Is(err, ErrFeedbackChanged) {
+				t.Fatalf("err = %v", err)
+			}
+			if list, _ := f.store.List(context.Background(), "local-1", testIssue); len(list) != 0 || len(f.agents.started) != 0 {
+				t.Fatal("refused revise left a record or a session")
+			}
+		})
+	}
+}
+
+func okFeedback(context.Context, approve.Target, *ReviseRequest) (Feedback, error) {
+	return Feedback{Reason: "Cover the race.", PlanText: "# Plan", Ordinal: 1}, nil
+}
+
+func TestReviseIsIdempotentPerDecision(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.svc.d.Feedback = okFeedback
+	req := f.request()
+	req.Revise = reviseRef(901)
+	first, err := f.svc.Start(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Live, then ended: every non-failed state answers a repeat with the same attempt.
+	for _, step := range []func(){
+		func() {},
+		func() { f.agents.status[first.SessionID] = SessionStatus{State: "exited", ExitCode: exit(0)} },
+	} {
+		step()
+		_, err := f.svc.Start(ctx, req)
+		var dup *RevisionRequestedError
+		if !errors.As(err, &dup) || dup.AttemptID != first.ID || !errors.Is(err, ErrRevisionRequested) {
+			t.Fatalf("repeat = %v", err)
+		}
+	}
+	if len(f.agents.started) != 1 {
+		t.Fatalf("sessions started = %d", len(f.agents.started))
+	}
+}
+
+func TestReviseRetryAllowedAfterFailure(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.svc.d.Feedback = okFeedback
+	req := f.request()
+	req.Revise = reviseRef(901)
+	f.agents.startErr = errors.New("holder down")
+	if _, err := f.svc.Start(ctx, req); err == nil {
+		t.Fatal("start should fail")
+	}
+	f.agents.startErr = nil
+	retry, err := f.svc.Start(ctx, req)
+	if err != nil {
+		t.Fatalf("retry after failure = %v", err)
+	}
+	if retry.Revises == nil || retry.Revises.DecisionCommentID != 901 {
+		t.Fatalf("retry = %+v", retry)
+	}
+	// A different decision on the same Issue is a different request, and is blocked only by the live attempt.
+	other := req
+	other.Revise = reviseRef(902)
+	if _, err := f.svc.Start(ctx, other); !errors.Is(err, ErrAttemptActive) {
+		t.Fatalf("other decision while live = %v", err)
+	}
+}
+
+func TestReviseRetryAllowedAfterCancel(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.svc.d.Feedback = okFeedback
+	req := f.request()
+	req.Revise = reviseRef(901)
+	first, err := f.svc.Start(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Cancel(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.agents.status[first.SessionID] = SessionStatus{State: "exited", ExitCode: exit(1)}
+	retry, err := f.svc.Start(ctx, req)
+	if err != nil || retry.ID == first.ID {
+		t.Fatalf("retry after cancel = %+v, %v", retry, err)
+	}
+	if old, _ := f.store.Get(ctx, first.ID); old.State != StateCancelled {
+		t.Fatalf("first = %+v", old)
+	}
+}
+
+func TestReviseBlockedByAnyLiveAttempt(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.svc.d.Feedback = okFeedback
+	plain := f.start()
+	req := f.request()
+	req.Revise = reviseRef(901)
+	if _, err := f.svc.Start(ctx, req); !errors.Is(err, ErrAttemptActive) {
+		t.Fatalf("revise while plain attempt live = %v", err)
+	}
+	f.agents.status[plain.SessionID] = SessionStatus{State: "exited", ExitCode: exit(0)}
+	if _, err := f.svc.Start(ctx, req); err != nil {
+		t.Fatalf("revise after it ended = %v", err)
+	}
+}
+
+func TestReviseCrashBetweenRecordAndSessionReconciles(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.svc.d.Feedback = okFeedback
+	req := f.request()
+	req.Revise = reviseRef(901)
+	// The process died after the record and before the session: only a record exists.
+	a := Attempt{ID: "plan-crashed", Local: "local-1", Repo: testRepo, Issue: testIssue, Number: 12, Role: RolePlanner, Spec: req.Spec, Base: req.Base,
+		Provider: "claude", AccountID: claudeID, State: StateStarting, RequestedAt: f.clock, UpdatedAt: f.clock,
+		Revises: &RevisionRef{RevisionHash: "plan-rev-1", Ordinal: 1, DecisionCommentID: 901}}
+	if err := f.store.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	// Within the grace the record still answers the request.
+	var dup *RevisionRequestedError
+	if _, err := f.svc.Start(ctx, req); !errors.As(err, &dup) || dup.AttemptID != a.ID {
+		t.Fatalf("within grace = %v", err)
+	}
+	// Past it the abandoned start is reconciled to failed, which allows the explicit retry.
+	f.clock = f.clock.Add(startGrace + time.Second)
+	retry, err := f.svc.Start(ctx, req)
+	if err != nil || retry.ID == a.ID {
+		t.Fatalf("retry = %+v, %v", retry, err)
+	}
+	if old, _ := f.store.Get(ctx, a.ID); old.State != StateFailed {
+		t.Fatalf("crashed record = %+v", old)
+	}
+}
+
+func TestSourceAttemptReturnsNewestPublisher(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	first := f.start()
+	f.agents.status[first.SessionID] = SessionStatus{State: "exited", ExitCode: exit(0)}
+	if _, err := f.svc.Reconcile(ctx, testIssue); err != nil {
+		t.Fatal(err)
+	}
+	f.clock = f.clock.Add(time.Minute)
+	second := f.start()
+	for _, a := range []Attempt{first, second} {
+		if err := f.svc.MarkPublished(ctx, a.ID, "plan-rev-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, ok, err := f.svc.SourceAttempt(ctx, testIssue, "plan-rev-1")
+	if err != nil || !ok || got.ID != second.ID {
+		t.Fatalf("source = %+v ok=%v err=%v", got, ok, err)
+	}
+	for _, hash := range []string{"", "other"} {
+		if _, ok, err := f.svc.SourceAttempt(ctx, testIssue, hash); ok || err != nil {
+			t.Fatalf("hash %q: ok=%v err=%v", hash, ok, err)
+		}
+	}
+	if _, ok, _ := f.svc.SourceAttempt(ctx, testIssue+1, "plan-rev-1"); ok {
+		t.Fatal("another Issue matched")
+	}
+}
+
+func TestAttemptJSONCompatibility(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	// An attempt recorded before the new fields existed still loads, with them empty.
+	old := `{"schema_version":1,"attempts":{"plan-old":{"id":"plan-old","local_repo_id":"local-1","repo_id":7,"issue_id":42,"number":12,"role":"planner",
+"spec":{"revision_hash":"h","comment_id":1,"ordinal":1,"fingerprint":"fp"},"base":{"commit":"c0ffee"},"isolation":{"mechanism":"m","allows":null,"accepted_at":"2026-05-01T10:00:00Z","accepted_by":"1001"},
+"provider":"claude","account_id":"acct_claude","account_name":"work","state":"ended","requested_at":"2026-05-01T10:00:00Z","updated_at":"2026-05-01T10:00:00Z"}}}`
+	if err := writeFile(f.store.Path, old); err != nil {
+		t.Fatal(err)
+	}
+	a, err := f.store.Get(ctx, "plan-old")
+	if err != nil || a.Revises != nil || a.PublishedRevision != "" {
+		t.Fatalf("old record = %+v, %v", a, err)
+	}
+	for name, bad := range map[string]*RevisionRef{
+		"no hash":    {DecisionCommentID: 5},
+		"no comment": {RevisionHash: "h"},
+	} {
+		a.Revises = bad
+		if a.valid() {
+			t.Fatalf("%s: invalid ref accepted", name)
+		}
+	}
+	a.Revises = &RevisionRef{RevisionHash: "h", DecisionCommentID: 5}
+	if !a.valid() {
+		t.Fatal("valid ref refused")
 	}
 }

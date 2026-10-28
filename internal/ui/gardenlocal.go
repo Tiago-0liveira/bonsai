@@ -102,6 +102,13 @@ func (m Model) onGardenLocal(msg gardenLocalMsg) (Model, tea.Cmd) {
 	if s.GardenID != m.garden.status.Target.RepoID || s.Epoch != m.garden.status.Stamp.Epoch || s.LocalRepoID != m.garden.status.Stamp.LocalRepoID || !l.gate.Accept(s) {
 		return m, nil
 	}
+	// The Plan tab reads its preview again when the opened Issue's planner changed under it (it ended, a plan file
+	// became ready), so it never keeps describing a run that is over.
+	var reload tea.Cmd
+	if id := uint64(m.garden.board.opened); id != 0 && m.garden.board.section == planTabSection && l.loaded &&
+		localRunChanged(l.issues[id].Planner, msg.view.Issues[id].Planner) {
+		reload = m.planTabLoad()
+	}
 	// A successful read, including an empty one, replaces the list.
 	l.issues, l.loaded = msg.view.Issues, true
 	if msg.seq == l.seq {
@@ -110,7 +117,16 @@ func (m Model) onGardenLocal(msg gardenLocalMsg) (Model, tea.Cmd) {
 	m.garden.board.evidence = l.evidence()
 	m.garden.board.reselect()
 	m.gardenBoardVisible()
-	return m, nil
+	return m, reload
+}
+
+// localRunChanged reports whether the planner summary of an Issue differs in what the Plan tab depends on.
+func localRunChanged(a, b *gardenapi.LocalRunSummary) bool {
+	switch {
+	case a == nil || b == nil:
+		return a != b
+	}
+	return a.AttemptID != b.AttemptID || a.Live != b.Live || a.State != b.State || a.PlanFile != b.PlanFile
 }
 
 // gardenLocalStart begins the timer once, when the Garden has data to flag.

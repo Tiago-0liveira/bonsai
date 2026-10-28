@@ -165,6 +165,47 @@ func (b *Backend) DecidePlan(ctx context.Context, req gardenapi.PlanDecisionRequ
 		Decision: req.Decision}, ctx.Err()
 }
 
+// PreviewPlanRevise implements gardenapi.Backend with the scripted preview.
+func (b *Backend) PreviewPlanRevise(ctx context.Context, issue uint64) (gardenapi.PlanRevisePreviewView, error) {
+	gen, epoch := b.begin("PreviewPlanRevise")
+	if b.PreviewPlanReviseErr != nil {
+		return gardenapi.PlanRevisePreviewView{}, b.PreviewPlanReviseErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	v := b.PlanRevisePreview
+	v.Stamp, v.IssueID = stamp(gen, epoch, b.StatusView.Target.RepoID), issue
+	return v, ctx.Err()
+}
+
+// RevisePlan implements gardenapi.Backend with the scripted result.
+func (b *Backend) RevisePlan(ctx context.Context, req gardenapi.PlanReviseRequest) (gardenapi.PlanReviseView, error) {
+	gen, epoch := b.begin("RevisePlan")
+	if b.RevisePlanErr != nil {
+		return gardenapi.PlanReviseView{}, b.RevisePlanErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.PlanRevised = append(b.PlanRevised, req)
+	v := b.PlanReviseResult
+	v.Stamp, v.IssueID = stamp(gen, epoch, b.StatusView.Target.RepoID), req.IssueID
+	return v, ctx.Err()
+}
+
+// StartPlanRevise implements gardenapi.Backend with the scripted result.
+func (b *Backend) StartPlanRevise(ctx context.Context, req gardenapi.PlanReviseRequest) (gardenapi.PlanReviseView, error) {
+	gen, epoch := b.begin("StartPlanRevise")
+	if b.StartPlanReviseErr != nil {
+		return gardenapi.PlanReviseView{}, b.StartPlanReviseErr
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.PlanReviseStarted = append(b.PlanReviseStarted, req)
+	v := b.PlanReviseResult
+	v.Stamp, v.IssueID = stamp(gen, epoch, b.StatusView.Target.RepoID), req.IssueID
+	return v, ctx.Err()
+}
+
 // IssueLink records a desktop action without opening a browser or clipboard in tests.
 func (b *Backend) IssueLink(ctx context.Context, issue uint64, open bool) error {
 	action := "CopyIssueLink"

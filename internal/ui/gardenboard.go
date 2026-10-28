@@ -134,6 +134,10 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	var local tea.Cmd
 	m, local = m.gardenLoadLocal()
 	cmd = tea.Batch(cmd, local, m.gardenLocalStart())
+	if b.opened != 0 {
+		m.planTabSync()
+		cmd = tea.Batch(cmd, m.planTabReload())
+	}
 	if b.opened == 0 && g.planrev.stage != planNone {
 		m = m.planClose()
 		g = &m.garden
@@ -496,7 +500,19 @@ func (m Model) gardenBoardHints() []shellHint {
 		return m.gardenPlannerHints()
 	}
 	if b.opened != 0 {
+		if m.planForm() != nil {
+			return m.planFormHints()
+		}
+		if m.planStopAsked() {
+			return []shellHint{{"y", "stop the attempt"}, {"any", "keep it running"}}
+		}
 		h := []shellHint{{"esc", b.layoutName()}, {m.keys.Tab.Help().Key, "actions"}, {"p", "request plan"}, {"r", "review plans"}}
+		if b.section == planTabSection {
+			h = []shellHint{{"esc", b.layoutName()}, {m.keys.Tab.Help().Key, "actions"}}
+			for _, c := range m.planTabActions(true)[0:] {
+				h = append(h, shellHint{c.key, strings.TrimSuffix(strings.ToLower(c.long[:1])+c.long[1:], "…")})
+			}
+		}
 		if m.launchOffered() {
 			h = append(h, shellHint{"s", "start implementation locally…"})
 		}

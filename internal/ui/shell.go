@@ -705,6 +705,9 @@ func (m Model) shellHints() []shellHint {
 		if m.plannerActive() {
 			return m.gardenPlannerHints()
 		}
+		if m.planForm() != nil {
+			return m.planFormHints()
+		}
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}
 	if m.currentShellFocus() == shellInput {

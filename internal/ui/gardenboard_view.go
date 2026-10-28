@@ -398,6 +398,9 @@ func (m Model) gardenDocument(width int) []string {
 		return nil
 	}
 	p := theme.Current
+	if b.section == planTabSection {
+		return m.planTabDocument(width)
+	}
 	var text strings.Builder
 	switch b.section {
 	case 0:
@@ -462,23 +465,6 @@ func (m Model) gardenDocument(width int) []string {
 			text.WriteString("No Questions section recorded in the canonical issue document.")
 		}
 		text.WriteString("\n\nQuestion authoring is unavailable until plan 08.")
-	case 3:
-		text.WriteString("PLANS\n\n")
-		rv := planrev.FromVerification(r.Item.Issue, r.Item.Verification)
-		fmt.Fprintf(&text, "Current %s / Latest %s / Approved %s\n", revWord(rv.Current), revWord(rv.Latest), revWord(rv.Approved))
-		for _, rev := range rv.Revisions {
-			fmt.Fprintf(&text, "\nr%d / %s / %s\nSource specification: %s\n", rev.Ordinal, shortHash(rev.Hash), stateWords(rev.State), shortHash(rev.SourceSpecFingerprint))
-			if rev.Stale {
-				text.WriteString("Older specification; downstream disabled.\n")
-			}
-			if rev.Superseded {
-				text.WriteString("Superseded; snapshot retained.\n")
-			}
-		}
-		if len(rv.Revisions) == 0 {
-			text.WriteString("No verified plan revisions.\n")
-		}
-		text.WriteString("\nPress r to review with comparison, search and exact approval. Press p to request a read-only AI plan. " + m.launchPlansLine())
 	case 4:
 		fmt.Fprintf(&text, "EXECUTION\n\nCanonical stage: %s\nBoard state: %s\n\nThis read projection holds no local execution.\n%s", r.Item.Classification.Stage, r.Column, m.launchExecutionLine())
 	}
