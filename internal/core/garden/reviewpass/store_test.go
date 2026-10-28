@@ -448,8 +448,13 @@ func TestOpenPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
 	t.Setenv("AppData", dir)
+	// macOS ignores XDG_CONFIG_HOME, so expect whatever the platform resolves below the temp home.
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, err := Open()
-	if err != nil || s.Path != filepath.Join(dir, "bonsai", "garden-review-passes.json") {
+	if err != nil || s.Path != filepath.Join(configDir, "bonsai", "garden-review-passes.json") || !strings.HasPrefix(s.Path, dir) {
 		t.Fatalf("Open = %+v, %v", s, err)
 	}
 }
