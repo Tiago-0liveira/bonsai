@@ -38,19 +38,32 @@ conflict feedback. Display diagnostics stay visible when canonical acceptance
 remains valid; they cannot promote unverified work. Issue identity uses the stable remote issue ID, so title edits
 and reordered results preserve selection.
 
-The nine columns are Approved, Planning, Plan Review, Ready, Running, Reviewing,
-Human Review, Done and Blocked. At 120 and 160 columns all nine are visible. At
-80 columns, a four-column window follows the selected column; its range is shown
-below the board. Each column keeps its own cursor and scroll, including empty
-columns. The footer gives the selected issue's identity and board state; open
-the document to read a title too long for the footer.
+The default phases are Backlog, Planning, Ready, Building, Review and Done.
+`d` (configurable as `garden_stages`) switches to the detailed stages: Approved,
+Planning, Plan Review, Ready, Running, Reviewing, Human Review, Done and Blocked.
+Approved maps to Backlog; Planning/Plan Review to Planning; Running to Building;
+Reviewing/Human Review to Review. Cards keep their exact stage text.
+Both modes remember their own lane cursor, scroll and window while sharing the
+selected Issue and filters. The mode is session state. Below 100 columns, three
+lanes fit; below 160, six phases or five stages; from 160, all lanes fit. Hidden
+lanes are named in the footer, and empty lanes remain navigable.
+
+A Blocked Issue stays in its proven phase: an implementation attempt proves
+Building (Review when awaiting human review), an exact verified plan approval
+proves Ready, a verified plan head or local planner proves Planning, and current
+specification acceptance proves Backlog. A retained Issue with no such proof
+appears in a final Unplaced lane. Cards state the reason; detailed mode retains
+Blocked and names the last proven phase.
 
 The six canonical stage labels remain unchanged. Accepted `ready` work without a
 plan appears as Approved; a verified plan head appears as Plan Review; an exact
 verified approved plan/spec pair appears as **Ready**. A later head change removes
 Ready and shows the stale gate while retaining the accepted work and old approved
 snapshot. `in-progress` maps to Running, `review` to Human Review, and `done`/`blocked`
-to their matching columns. Planning and Reviewing await active-job evidence.
+to their matching stages. A live local planner or ready unpublished plan file
+puts an otherwise Approved Issue in Planning, explicitly marked local planner.
+Implementation evidence never changes a canonical stage; Reviewing remains empty
+until verified reviewer evidence exists.
 These presentation columns never change GitHub labels. Starting work is a separate explicit action ([local implementation launch](#start-implementation-locally)).
 
 | Key in Board | Action |
@@ -66,6 +79,7 @@ These presentation columns never change GitHub labels. Starting work is a separa
 | `R` (refresh binding) | Refresh the collection |
 | `esc` | Return to setup when available, otherwise workspace navigation |
 | `v` (`garden_view` binding) | Switch Board/Table, keeping the selected issue |
+| `d` (`garden_stages` binding, Board only) | Toggle phases/detailed stages |
 | `tab` (focus-next binding) | Cycle Setup (until connected), the work view and Drafts |
 | `ctrl+k` / `?` | Command palette / help |
 
@@ -105,11 +119,19 @@ squeezed below 28 columns).
 
 ### Local planner badges
 
-Board cards and Table rows flag an Issue whose read-only planner is still running on this
-machine, or whose plan file is ready and not yet published from here. The flag is a local
-overlay next to the state: it never moves the Issue between states, and a card shows it on
-its own row under the number (a table row in the LOCAL column; narrow cells use the short
-form, `P:working` on a card). It uses the Agents tab's status words:
+Board cards show local planner and implementation evidence alongside workflow
+state. Implementation uses this clone's newest non-cleaned stored attempt.
+Preparing, starting, start-unknown, recoverable and running count as live or
+unresolved, matching the launch state machine; this is not proof of agent
+activity. The current launch session seam exposes no activity signal, so a live
+implementation shows Activity unknown. Stored failure and exit states remain
+distinct. When both summaries exist, the card gives implementation precedence.
+Update times use an absolute date/time; a failed local read retains evidence and
+marks it stale. Narrow cards truncate these lines to their available cells.
+None of this evidence grants acceptance, Ready or completion.
+
+Table rows retain the planner LOCAL badge. A live planner or ready unpublished
+plan is flagged there using the existing words:
 
 | Badge | Meaning | Color |
 | --- | --- | --- |
@@ -125,8 +147,8 @@ footer adds a total when any exist, for example `1 planner working · 1 plan rea
 the sync time below 120 columns). Bonsai reads this with the board data, again while the
 Garden is in view (every 4 seconds while a planner is live or its screen is open, every 15
 seconds otherwise) and after starting, cancelling or leaving a planner; a failed read keeps
-the last good badges and only a successful empty read clears them. Implementation attempts
-are not flagged here: they stay under `i` on the Issue.
+the last good observations and only a successful empty read clears them.
+Implementation history remains available under `i` on the opened Issue.
 
 | Key in Table | Action |
 | --- | --- |

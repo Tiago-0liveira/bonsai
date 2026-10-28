@@ -1,6 +1,6 @@
 # 07 / A richer board with truthful state
 
-Status: planned.
+Status: Done.
 
 ## Deliverable
 
@@ -45,3 +45,33 @@ Cover every mapping, blocked-phase evidence, moved/revoked approvals, stale read
 late job events and selection/window behavior. Demonstrate both board modes at
 reference sizes. No new review executor, canonical label taxonomy or fabricated
 completion data is included.
+
+## Completion
+
+Implemented phase/evidence selection and lane cursors in `internal/core/garden/work`,
+implementation summaries in `internal/gardenbackend/planner.go` and
+`internal/ui/gardenapi`, scoped local refresh/reselection in `internal/ui/gardenlocal.go`,
+and the phase/detailed board, seven-row cards, hit geometry, configurable
+`garden_stages` binding and phase palette roles in `internal/ui`. Association
+changes clear old local observations. Updated the user guides and added core,
+backend, UI, palette and fake-backend render tests.
+
+Checks run: the requested targeted suite, Garden/backend race suite, formatting,
+`go vet ./...`, `go build ./...`, `GOOS=windows go build ./...` and `go test ./...`.
+Race, formatting, vet and both builds pass. Garden-focused tests and six reference
+renders pass. The targeted suite fails only the existing agent-host UI integration
+tests (`start agent session: agent session unavailable`); the full suite also
+encounters sandbox socket restrictions (`setsockopt: operation not permitted` /
+`socket: operation not permitted`), unrelated pkgmgr Git-root expectations under
+`/tmp`, and shellinit's inherited guard assertion. These gates need rerunning in
+an unrestricted development environment. Go used `GOCACHE=/tmp/bonsai-go-cache`
+because the default cache is read-only in this sandbox.
+
+Implementation session observations expose no activity signal, so active or
+unresolved implementation attempts display Activity unknown. Stored failures and
+exits remain distinct; no review executor or completion inference was added.
+The board prioritizes implementation when both local summaries exist; long
+activity timestamps and blocker reasons truncate to terminal cells. Table retains
+its existing planner badges and footer totals. Fake-backend renders cover both
+modes at 80x24, 120x35 and 160x48; plain-text dumps are under the requested
+scratchpad `p07-renders/` directory. No commit was made.

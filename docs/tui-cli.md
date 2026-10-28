@@ -303,10 +303,22 @@ Resume rechecks GitHub and keeps completed labels, Projects and fields.
 
 #### Garden board in the preview
 
-A connected Garden opens the approved-work board. Arrow keys select columns and
-cards, Enter (or a click) opens the issue panel, and Escape restores the same card
-and scroll. All nine columns fit at 120/160 columns; at 80 columns the selected
-column stays inside a moving four-column window. Empty columns remain navigable.
+A connected Garden opens six phases: Backlog, Planning, Ready, Building, Review
+and Done. `d` (`garden_stages`, configurable) toggles the nine detailed stages;
+each mode remembers its own cursor, scroll and lane window while sharing the
+selected Issue. The mode lasts for this session. Arrow keys select lanes and
+cards; Enter or a click opens the Issue panel. At widths below 100, three lanes
+are visible; below 160, six phases or five stages; from 160, all lanes fit.
+Empty lanes remain navigable. Blockers retain a proven phase and reason, or
+appear in a final Unplaced lane when no phase is proven.
+
+Cards retain the exact workflow stage and show observed planner or implementation
+activity with update time and stale markers, truncated to the available cells.
+Missing activity stays unknown; idle, exited and failed remain distinct. Local
+activity never grants approval or Ready. See the [board guide](garden.md#board)
+for mapping and [local activity](garden.md#local-planner-badges) for evidence details.
+Theme overrides include `phase_backlog`, `phase_planning`, `phase_ready`,
+`phase_building`, `phase_review` and `phase_done`, with fallback colors.
 
 Use `/` for scoped title/number search, `t` for type, `p` for priority, `x` to clear
 filters, and `R` to refresh. Failed reads preserve the last good board and show
@@ -316,8 +328,7 @@ acceptance never enter the board. Garden remembers its subview per repository.
 Table: rows with a selected-item inspector at 120/160 columns, `o` to cycle
 State/Number/Priority order, and the same selection, filters, document and
 Escape behavior. Garden remembers Board or Table per repository.
-Some columns await backend evidence from plans 08/09; selecting or opening never
-changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
+Selecting or opening never changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
 filter semantics, document sections, keys and current limitations.
 
 Drafts is a separate inbox for unvalidated ideas (`tab` from the Board, `n` to
