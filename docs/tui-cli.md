@@ -419,12 +419,25 @@ visible while the body scrolls. Tabs: Overview, Specification, Questions, Plan,
 Activity (`←`/`→` or click); `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End` or the wheel scroll.
 
 Actions are `p` request plan, `r` review plans, `s` start locally and `i` attempts;
+on the **Plan** tab `p` and `r` become the actions that fit its state (see below).
 `Tab`/`Shift+Tab` cycle the enabled ones, `Enter` runs the focused one and a click
 runs the one under the pointer, all through the same existing screens and
 confirmations. `s` and `i` appear only when the Garden runtime has local launch;
 `s` stays visible but disabled, with its reason, until the issue is Ready. Reading a
 tab never starts anything, and opening an agent terminal stays a separate action
 whose input mode still ends with `Ctrl+]`.
+
+On the Plan tab: `a` approve plan rN (the exact-pair confirmation, inside the panel;
+`tab` then `enter` approves), `c` request changes (or, while a planner runs, `c` stop
+attempt, then `y`), `b` start revision attempt (feedback already recorded), `u` publish
+the ready plan file, `p` open the planner (straight to a live session) and `r` open the
+review. In the request-changes form `ctrl+s` sends the feedback and starts one read-only
+revision attempt, `tab`/`shift+tab` move between the text, the checkout consent
+(`ctrl+y`), the account choice (`ctrl+g`, only without a retained account), Back and
+Send, and `esc` goes back keeping what you typed. A plain Request plan (`p`) no longer
+carries earlier feedback; only the form and `b` do. `esc` from a planner session, publish
+box or review opened from the tab returns to it. States and write behaviour:
+[Plan tab](garden.md#plan-tab-in-the-issue-overlay).
 
 While the panel is open it consumes every key and click, so `q`, `?`, the palette,
 workspace keys and `v` wait. `Esc`, `Backspace` or **Back** close it and restore the

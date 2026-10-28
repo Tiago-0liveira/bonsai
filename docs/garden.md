@@ -525,6 +525,8 @@ you press `x` to include them (the decision belongs to that exact set of changes
 changed checkout asks again), and the attempt records that they were accepted, with a
 count and a digest but never paths or contents.
 
+From the overlay's Plan tab the same request is `p` ([Plan tab](#plan-tab-in-the-issue-overlay)); it never includes earlier review feedback.
+
 Request AI plan opens the account choice, the same Accounts, model and effort form as
 a new agent session without any permission, sandbox, approval or full-access field:
 the role fixes the permissions. Each account shows what its provider enforces, and
@@ -623,14 +625,62 @@ columns wide (80 columns keep the unified comparison).
 append one decision comment naming that exact revision hash and specification
 fingerprint, never "the latest", keep every revision in the history and start nothing:
 the next read-only run is another explicit **Request AI plan** with its own local
-confirmation, even when a comment on GitHub asked for changes. A comment written on
+confirmation, even when a comment on GitHub asked for changes. (The overlay's Plan tab can instead start a revision attempt from the same request.) A comment written on
 GitHub or a phone without a Bonsai record only appears as a hint ("newer on GitHub"); it
-neither starts a run nor decides anything. The next explicit local planning attempt
-includes the verified request-changes reason as sanitized review context.
+neither starts a run nor decides anything. A plain **Request AI plan** carries no earlier
+feedback: a recorded reason reaches a planner only through a revision attempt bound to
+that exact decision ([Plan tab](#plan-tab-in-the-issue-overlay)).
 
 A source fingerprint must match the normalized content hash of the verified
 specification revision named in the plan. Supplied fingerprints cannot redefine
 that identity or carry an old approval onto a different specification.
+
+### Plan tab in the issue overlay
+
+The **Plan** tab of the issue overlay (`←`/`→` or click) shows where planning really
+stands and offers only the actions that fit. Opening or rereading it reads (the plan
+review and a *revise preview*); it never starts a planner, records a decision or retries
+anything. What it shows comes from the verified plan log, the local planner summary and
+that preview; nothing is guessed from terminal text.
+
+| State | What it says | Actions |
+|---|---|---|
+| Specification not approved | Why planning is unavailable (draft, stale, revoked, unverified); the revision history stays | `p` request plan (disabled, with the reason), `r` open review |
+| Planner running | Provider / account, effort, **elapsed since the request** (measured when drawn), the latest activity the planner reported and how long ago, whether it needs input, the plan file state (none yet, writing, ready, invalid) and "read-only, no worktree". No steps or progress are shown, and *idle* is never a finished plan | `p` open planner (straight to its session), `c` stop attempt, which asks `y` first |
+| Ended with a ready, unpublished plan file | The plan is not a revision until published | `u` publish plan (the existing box: it previews the exact text and source spec before anything is written), `p` open planner |
+| Revision awaiting your decision | `PLAN rN / NEEDS YOUR APPROVAL`: the summary (or the first Steps lines), the lines changed since the previous revision (`+`/`-`), Risks and Tests, the spec state and the distinct Latest / Current / Approved revisions | `a` approve plan rN, `c` request changes, `r` open review (whole document, comparisons, search, history) |
+| Changes requested, no attempt answers them | "Feedback recorded on rN. No revision attempt is running.", your feedback and, if a start failed, why | `b` start revision attempt, `r` open review |
+| Approved | "Approved rN against sM. Ready; coding starts only when you choose." | `r`, `p` |
+| Approval no longer matches | Which side changed (the specification or the plan); the approved snapshot stays visible and is never re-approved for you | `r`, `p` |
+
+`a` rereads the review and shows the same exact confirmation as plan review, inside the
+overlay: the full plan hash, source spec fingerprint, spec head and GitHub actor, with
+Cancel focused first. If the plan under review moved since the tab was drawn, or the heads
+move before the write, nothing is recorded and the tab reads again.
+
+`c` opens **Request changes to plan rN**: a required, multi-line reason (up to 4 KiB)
+attached to that exact revision, the account the revision will use, a consent line for
+uncommitted changes when the checkout has any, and the footer *Starts one read-only
+revision attempt. Nothing starts coding.* The account, model and effort are the ones of
+the attempt that wrote the revision, kept only while that account still exists and can
+run a read-only planner; otherwise **Choose account…** (`ctrl+g`) opens the same read-only
+account choice as Request AI plan, whose primary action (*Accept read-only and revise
+plan*) sends the feedback. `ctrl+s` (**Send feedback & revise plan**) records
+*changes requested* on the revision, then starts one read-only revision attempt that
+receives your feedback and the text of that revision. The send is one write: further keys
+are ignored until it answers. Text you typed survives Back, `esc` and a tab switch for the
+same revision; if the revision under review changes, it is dropped and the tab says so.
+
+Partial success is shown, not hidden. If the decision was recorded and the attempt could
+not start, the tab shows the pending feedback with the reason and **Start revision
+attempt** (`b`), a separate confirmation that starts the attempt for that recorded
+decision and writes no new decision; a failed attempt can be started again this way, one
+that is running or finished cannot. If the outcome of recording the decision is unknown,
+nothing is started: your text is kept, and reopening the tab reads what is on the Issue.
+Repeating a send finds the earlier decision and attempt instead of making new ones.
+
+`esc` from the planner session, publish box or plan review that these actions open returns
+to the Plan tab with its scroll restored; the planner keeps running.
 
 ### Approve the exact plan (gate two)
 
