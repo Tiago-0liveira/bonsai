@@ -439,6 +439,17 @@ carries earlier feedback; only the form and `b` do. `esc` from a planner session
 box or review opened from the tab returns to it. States and write behaviour:
 [Plan tab](garden.md#plan-tab-in-the-issue-overlay).
 
+When an implementation attempt awaits human review (or a completion record exists),
+the Overview becomes the review panel (headings YOUR REVIEW, COMPLETED, BLOCKED,
+STALE, UNKNOWN) and its actions are: `a` Accept…, `c` Request changes…, `u` Revoke
+acceptance…, `m` Start rework… (after a verified request for changes), `n` Complete
+without code…, `g` Open PR, `o` Open terminal and `w` Preview cleanup…. Only an
+allowed action is offered; `R` refreshes. Each decision opens a confirmation with
+Cancel focused and the exact record; acknowledgments are toggled with `1`-`9`, and
+the request-changes text box uses `ctrl+s` to preview and `esc` to go back. Nothing
+merges, closes, pushes, relabels or cleans on its own. Evidence, states and reasons:
+[Human review, rework and completion](garden.md#human-review-rework-and-completion).
+
 While the panel is open it consumes every key and click, so `q`, `?`, the palette,
 workspace keys and `v` wait. `Esc`, `Backspace` or **Back** close it and restore the
 exact card or row and scroll. If a refresh removes the issue, or the repository

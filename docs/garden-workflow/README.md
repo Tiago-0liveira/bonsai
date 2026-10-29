@@ -1,8 +1,8 @@
 # Garden workflow implementation
 
 Branch: `feat/garden-workflow`, created from `feat/tui-redesign` at
-`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Phases 01–10 are complete;
-phases 11–13 are planned. Existing Garden services and the opt-in redesign are
+`6ea2e7ea535d34c55dbe5849657e2203b9b798dc`. Phases 01–11 and 13 are
+complete; phase 12 is planned. Existing Garden services and the opt-in redesign are
 the baseline. Earlier Garden features provide capabilities for later phases, but
 do not by themselves satisfy those phases' deliverables and exit criteria.
 
@@ -60,9 +60,9 @@ plan references; their entry contracts describe code, not reading dependencies.
 | 08 | [Tables and attention](plans/08-tables-and-attention.md) | Done | Shared row/grouped views and Needs you |
 | 09 | [Planning and revisions](plans/09-planning-and-revisions.md) | Done | Focused plan reading, comparisons and feedback |
 | 10 | [Review policy](plans/10-review-policy.md) | Done | Explicit account/effort/permission policy and durable review identity |
-| 11 | [Launch and supervision](plans/11-launch-and-supervision.md) | Planned | Previewed implementation + review intent and real run controls |
+| 11 | [Launch and supervision](plans/11-launch-and-supervision.md) | Done | Previewed implementation + review intent and real run controls |
 | 12 | [Bounded review execution](plans/12-bounded-review-execution.md) | Planned | Detached one-pass review, fixes and verification |
-| 13 | [Human handoff and completion](plans/13-human-handoff.md) | Planned | Evidence, explicit rework and verified completion |
+| 13 | [Human handoff and completion](plans/13-human-handoff.md) | Done | Evidence, explicit rework and verified completion |
 
 ## Verification
 

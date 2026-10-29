@@ -851,6 +851,93 @@ holders, uncommitted, ignored or untracked files, extra commits, symlinks and a
 changed preview, and removes the worktree without force. The branch and the attempt
 history remain. Cleanup is never automatic and never erases your changes.
 
+## Human review, rework and completion
+
+When an implementation attempt reaches awaiting human review, the Issue overlay's
+Overview becomes the review panel. It reads the retained worktree and GitHub, never
+starts anything, and replaces its heading as the evidence changes: **YOUR REVIEW**,
+**COMPLETED**, **BLOCKED**, **STALE** or **UNKNOWN** (a work that is not ready yet
+says why: uncommitted changes, a run that has not finished, an unreadable head). It
+shows:
+
+- **CHANGES**: files, `+`/`-` line totals and the final head, then the changed files.
+  There is no separate "Open changes" view; read the diff in the retained terminal
+  (`o`) or the linked PR (`g`).
+- **Verification**, only from recorded evidence: `No checks recorded`, `No AI review`,
+  `AI review authorized, not run` and `Fixes after review were not re-reviewed`
+  are named, never shown as a green check. Findings read `no AI review report` until
+  a review report exists. Nothing in this version runs the reviewer or the checks
+  (see [Automatic review defaults](#automatic-review-defaults)), so a real run
+  currently shows `AI review authorized, not run` when you enabled the policy.
+- **PR line**, evidence and time, **your decision** and the reasons with their next
+  step.
+
+Every decision is a short comment on the GitHub Issue (a `handoff` record) that
+binds the exact specification revision and approval, plan revision and decision,
+attempt, base, final head and tree, review pass and PR. It is re-verified on every
+read: only the same trusted actors who may approve a specification count, and the
+record hash covers the text you wrote. Nothing is merged, closed, pushed,
+relabeled or cleaned by recording one, and no decision starts a run by itself.
+
+### Accept, request changes and revoke
+
+- **Accept…** (`a`) previews the exact comment, head and tree. Each acknowledgment
+  the evidence needs (`No AI review was run on this work`, `Fixes made after the AI
+  review were not reviewed again`, `Checks are missing or failed`) is an unchecked
+  toggle (`1`-`9`) and must be ticked before **Record accepted** enables. Cancel is
+  focused first. Acceptance refuses a dirty worktree, a run that changed no files
+  and a stale specification or plan.
+- **Request changes…** (`c`) opens a text box (`ctrl+s` previews the exact record,
+  `esc` goes back keeping the text). The feedback is posted to GitHub and starts
+  nothing.
+- **Revoke acceptance…** (`u`) withdraws a current acceptance or non-code completion
+  and returns the work to your review. Done work cannot be revoked: the merge
+  happened outside Bonsai's control.
+- **Open PR** (`g`), **Open terminal** (`o`) and **Preview cleanup…** (`w`) reuse
+  the existing screens. `R` (the configurable refresh key) reads again.
+
+Accepted, changes requested and revoked each show who decided and when. A new head,
+tree, specification, plan, review or PR marks an earlier acceptance **STALE** with
+the reason; it never carries over, so review again.
+
+### Rework
+
+After a verified changes-requested record, **Start rework…** (`m`) is a separate
+confirmation (Cancel first, with the same acknowledgments as a launch for escalated
+permissions). It runs one more attempt in the retained, owned worktree after the old
+holder is proven closed. Your feedback is added to the new run's prompt only and is
+not stored by Bonsai. One feedback comment starts at most one rework. When the
+[automatic review policy](#automatic-review-defaults) is enabled a fresh review pass
+is reserved for the new run; a pass that never started on the old run is closed as
+`superseded`, and a rework that fails to start closes its pass as
+`implementation-not-started`.
+
+### Done
+
+- **Code**: Done only from a fresh GitHub read (under two minutes old) showing that
+  the linked pull request is merged, its head is the head you accepted and its base
+  is the one it was published against. A squash or rebase merge is fine: the merge
+  commit is recorded, not compared. Done survives worktree cleanup.
+- **Non-code**: **Complete without code…** (`n`) records an explicit completion
+  with your evidence text. It is refused when the attempt changed code, and Done
+  then reads "Completed without code".
+
+Done is shown in the overlay. It is not mirrored to the GitHub stage label or the
+board column. Bonsai never merges, closes or relabels for you.
+
+### Why the panel is not Done
+
+| State | Reasons |
+| --- | --- |
+| Not ready | Uncommitted changes; run not finished; head unreadable |
+| Stale | Head, tree, specification, plan, review, attempt or PR changed after the acceptance; the PR gained commits after it |
+| Blocked | PR closed without merging; GitHub answered with another PR; merged head differs from the accepted one; different base; the attempt changed code, for non-code |
+| Unknown | The handoff log, the PR or GitHub could not be read (offline, not found, read failed, or the read is older than two minutes) |
+| Accepted | Waiting for the PR to be published or merged; merging stays a separate action |
+
+Unknown never means Done. The visible panel reads again about every 15 seconds and
+on refresh. See [TUI keys](tui-cli.md#garden-issue-overlay).
+
 ## Automatic review defaults
 
 Settings → Garden → **Automatic review** saves personal defaults for a bounded
@@ -905,6 +992,9 @@ config directory, refuses a newer schema and is never rewritten by an older
 Bonsai. These protections preserve future data when downgrading.
 
 ## Read-only verification and human review
+
+This section covers the Playground reviewer. For the Garden Issue overlay's review,
+acceptance, rework and Done, see [Human review, rework and completion](#human-review-rework-and-completion).
 
 In the redesign Playground, select an implementation session and press `r` for
 Human review. This applies to a verified Garden attempt launched by Bonsai in
