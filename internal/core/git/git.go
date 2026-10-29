@@ -263,6 +263,31 @@ func DeleteBranch(dir, branch string) error {
 	return err
 }
 
+// BranchTip returns the commit a local branch points to.
+func BranchTip(dir, branch string) (string, error) {
+	return run(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+}
+
+// IsAncestor reports whether commit is reachable from ref.
+func IsAncestor(dir, commit, ref string) (bool, error) {
+	_, err := run(dir, "merge-base", "--is-ancestor", commit, ref)
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// DeleteBranchAt deletes a local branch only while it still points at sha, so
+// commits added after the caller verified the branch are never discarded.
+func DeleteBranchAt(dir, branch, sha string) error {
+	_, err := run(dir, "update-ref", "-d", "refs/heads/"+branch, sha)
+	return err
+}
+
 // WorktreePath returns the conventional filesystem path for a branch's worktree:
 // a sibling of the main repo named "<repo>-<branch>" (slashes flattened).
 func WorktreePath(repoDir, branch string) string {
