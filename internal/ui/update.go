@@ -2184,7 +2184,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		if cmd := m.aliasCommand(msg.Value); cmd != "" {
 			prNum, _ := m.prForBranch(wt.Branch)
 			vars := config.HookVars(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), prNum)
-			return m.spawn(wt.Path, msg.Value, coreexec.ExpandVars(cmd, vars)), nil
+			return m.spawn(wt.Path, msg.Value, coreexec.InlineVarRefs(cmd, vars)), nil
 		}
 		return m, nil
 
