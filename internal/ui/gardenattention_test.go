@@ -457,7 +457,7 @@ func TestGardenTableColumnBudgetAndSignals(t *testing.T) {
 	}
 	r := work.Record{Column: work.PlanReview, Accepted: true}
 	r.Item.Verification.SupersededApprovals = []garden.Approval{{}}
-	if got := gardenTableSignal(r, true); !strings.HasPrefix(got, "! prior approval") || !strings.Contains(got, "Plan needs approval") {
+	if got := gardenTableSignal(r, true, true); !strings.HasPrefix(got, "! prior approval") || !strings.Contains(got, "Plan needs approval") {
 		t.Fatal("warning lost", got)
 	}
 	if got := gardenNext(work.Record{Column: work.Running}, true); got != "Review" {

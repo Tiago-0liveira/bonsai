@@ -75,6 +75,13 @@ func (m Model) issueControls() []issueControl {
 		return sub
 	}
 	out := []issueControl{{id: "close", key: "esc", long: "Back to " + m.garden.board.layoutName(), short: m.garden.board.layoutName(), enabled: true}}
+	if a, ok := m.launchOverviewAttempt(); ok && g.board.section == 0 {
+		out = append(out, issueControl{id: "launch-session", key: "o", long: "Open session", short: "Session", enabled: idle})
+		if a.State.Active() {
+			out = append(out, issueControl{id: "launch-stop", key: "x", long: "Stop run…", short: "Stop…", enabled: idle})
+		}
+		return append(out, issueControl{id: "attempts", key: "i", long: "Attempts", short: "Attempts", enabled: idle})
+	}
 	if g.board.section == planTabSection {
 		out = append(out, m.planTabActions(idle)...)
 	} else {
@@ -82,20 +89,35 @@ func (m Model) issueControls() []issueControl {
 			issueControl{id: "review", key: "r", long: "Review plans", short: "Review", enabled: idle})
 	}
 	if m.launchSupported() {
-		start := issueControl{id: "start", key: "s", long: "Start locally…", short: "Start…", enabled: idle && m.launchOffered()}
+		start := issueControl{id: "start", key: "s", long: "Start implementation…", short: "Start…", enabled: idle && m.launchOffered()}
 		if !m.launchOffered() {
 			start.reason = launchNotReadyText
 		}
-		out = append(out, start, issueControl{id: "attempts", key: "i", long: "Attempts", short: "Attempts", enabled: idle})
+		if g.board.section == 0 && m.launchOffered() {
+			out = []issueControl{out[0], start, {id: "run-settings", key: "e", long: "Change run settings", short: "Settings", enabled: idle}, {id: "attempts", key: "i", long: "Attempts", short: "Attempts", enabled: idle}}
+		} else {
+			out = append(out, start, issueControl{id: "attempts", key: "i", long: "Attempts", short: "Attempts", enabled: idle})
+		}
 	}
 	return out
 }
 
 // gardenOpenIssue is the one open action behind Enter and a click on a card or row.
-func (m *Model) gardenOpenIssue(id garden.IssueID) {
+func (m *Model) gardenOpenIssue(id garden.IssueID) tea.Cmd {
 	if id != 0 {
+		if m.garden.board.opened != id {
+			prev := m.garden.launch
+			m.garden.launch = gardenLaunchState{inflight: prev.inflight, previewSeq: prev.previewSeq + 1, readSeq: prev.readSeq + 1, stopGen: prev.stopGen + 1, overviewGen: prev.overviewGen + 1, run: -1}
+		}
 		m.garden.board.open(id, m.garden.status.Target.RepoID)
+		if !m.launchSupported() {
+			return nil
+		}
+		next, read := m.launchLoad(uint64(id))
+		*m = next
+		return tea.Batch(read, m.launchReadyLoad(), m.launchSubscribe())
 	}
+	return nil
 }
 
 // issueSetSection switches the tab. Leaving the Plan tab keeps the feedback typed there; entering it reads the
@@ -103,6 +125,8 @@ func (m *Model) gardenOpenIssue(id garden.IssueID) {
 func (m *Model) issueSetSection(n int) tea.Cmd {
 	b := &m.garden.board
 	prev := b.section
+	m.garden.launch.overviewGen++
+	m.garden.launch.overviewPending = false
 	b.section, b.docScroll = max(0, min(n, len(gardenDocumentSections)-1)), 0
 	if prev == planTabSection && b.section != planTabSection {
 		m.planFormClose()
@@ -112,7 +136,7 @@ func (m *Model) issueSetSection(n int) tea.Cmd {
 	if b.section == planTabSection && prev != planTabSection {
 		return m.planTabLoad()
 	}
-	return nil
+	return m.launchOverviewNext()
 }
 
 func (m *Model) issueScroll(delta int) {
@@ -125,6 +149,11 @@ func (m *Model) issueScroll(delta int) {
 func (m Model) issueActivate(id string) (tea.Model, tea.Cmd) {
 	switch id {
 	case "close":
+		m.garden.launch.overviewGen++
+		m.garden.launch.overviewPending = false
+		m.garden.launch.stopGen++
+		m.garden.launch.stopAttempt = ""
+		m.garden.launchReady.gen++
 		m.planFormClose()
 		m.garden.plantab.confirmStop = false
 		m.garden.board.close()
@@ -134,7 +163,17 @@ func (m Model) issueActivate(id string) (tea.Model, tea.Cmd) {
 	case "review":
 		return m.gardenOpenPlanReview()
 	case "start":
+		return m.gardenLaunchDefault()
+	case "run-settings":
 		return m.gardenLaunchOpen()
+	case "launch-session", "launch-stop":
+		if a, ok := m.launchOverviewAttempt(); ok {
+			m.garden.launch.attempt, m.garden.launch.run, m.garden.launch.stage = a.ID, -1, launchStageAttempt
+			if id == "launch-stop" {
+				return m.launchOpenConfirm(launchActStop)
+			}
+			return m.launchOpenTerminal()
+		}
 	case "attempts":
 		return m.gardenLaunchHub()
 	case "open-planner":
@@ -228,6 +267,12 @@ func (m Model) gardenIssueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.issueActivate(map[string]string{"p": "plan", "r": "review"}[k])
 	case k == "s":
 		return m.issueActivate("start")
+	case k == "e":
+		return m.issueActivate("run-settings")
+	case k == "o", k == "x":
+		if _, ok := m.launchOverviewAttempt(); ok {
+			return m.issueActivate(map[string]string{"o": "launch-session", "x": "launch-stop"}[k])
+		}
 	case k == "i":
 		return m.issueActivate("attempts")
 	case k == "left", k == "h":
@@ -288,8 +333,8 @@ func (m Model) gardenMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		b.tableFocus()
 	}
 	m.gardenBoardVisible()
-	m.gardenOpenIssue(id)
-	return m, nil
+	cmd := m.gardenOpenIssue(id)
+	return m, cmd
 }
 
 func (m Model) issueMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -308,8 +353,7 @@ func (m Model) issueMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		for _, hit := range hits {
 			if hit.y == py && px >= hit.x0 && px < hit.x1 {
 				if hit.tab >= 0 {
-					m.issueSetSection(hit.tab)
-					return m, nil
+					return m, m.issueSetSection(hit.tab)
 				}
 				m.garden.notice = ""
 				return m.issueActivate(hit.action)
@@ -485,7 +529,7 @@ func (m Model) issueOverlayRows(w, h int) ([]string, []overlayHit) {
 		switch {
 		case !c.enabled:
 			style = seg(p.Dim, p.Raised, false)
-		case c.id == b.overlayFocus:
+		case c.id == b.overlayFocus || b.overlayFocus == "" && (c.id == "start" || c.id == "launch-session"):
 			style = seg(p.Background, p.Accent, true)
 		}
 		bar.WriteString(style.Render(label) + seg("", p.Surface, false).Render(" "))
@@ -495,6 +539,9 @@ func (m Model) issueOverlayRows(w, h int) ([]string, []overlayHit) {
 	}
 	out = append(out, row(shellRow(cw, p.Surface, bar.String(), "")))
 	reason, fg := "←/→ tab · ↑/↓ scroll · tab actions", p.Muted
+	if a, ok := m.launchOverviewAttempt(); ok && b.section == 0 {
+		reason = m.launchNext(a)
+	}
 	for _, c := range controls {
 		if c.reason != "" {
 			reason = c.key + " unavailable: " + c.reason

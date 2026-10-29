@@ -246,6 +246,10 @@ func (m Model) quit() (tea.Model, tea.Cmd) {
 	if nm, asked := m.privQuitGuard(); asked {
 		return nm, nil
 	}
+	m.garden.launch.overviewGen++
+	m.garden.launch.overviewPending = false
+	m.garden.launch.stopGen++
+	m.garden.launch.stopAttempt = ""
 	if m.layoutKind == LayoutRedesign && !m.wt.started {
 		return m, m.agents.quit()
 	}

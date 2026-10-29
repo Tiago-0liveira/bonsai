@@ -279,6 +279,8 @@ func keyFor(k string) tea.KeyMsg {
 		return keyOf(k)
 	case "ctrl+s":
 		return tea.KeyMsg{Type: tea.KeyCtrlS}
+	case "ctrl+]":
+		return tea.KeyMsg{Type: tea.KeyCtrlCloseBracket}
 	}
 	return runeKey(k)
 }

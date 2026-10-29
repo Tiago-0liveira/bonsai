@@ -198,10 +198,10 @@ func TestIssueOverlayTabCyclesEnabledActionsAndEnterMatchesShortcut(t *testing.T
 		m = pressAll(t, m, "tab")
 		order = append(order, m.garden.board.overlayFocus)
 	}
-	if want := []string{"close", "plan", "review", "start", "attempts", "close"}; !slices.Equal(order, want) {
+	if want := []string{"close", "start", "run-settings", "attempts", "close", "start"}; !slices.Equal(order, want) {
 		t.Fatalf("tab order %v, want %v", order, want)
 	}
-	if m = pressAll(t, m, "shift+tab"); m.garden.board.overlayFocus != "attempts" {
+	if m = pressAll(t, m, "shift+tab"); m.garden.board.overlayFocus != "close" {
 		t.Fatalf("shift+tab wrapped to %q", m.garden.board.overlayFocus)
 	}
 	for _, tc := range []struct {
@@ -209,9 +209,9 @@ func TestIssueOverlayTabCyclesEnabledActionsAndEnterMatchesShortcut(t *testing.T
 		tabs     int
 		check    func(Model) bool
 	}{
-		{"p", 2, func(m Model) bool { return m.garden.planner.stage == plannerHub }},
-		{"s", 4, func(m Model) bool { return m.garden.launch.stage == launchStageChoose }},
-		{"i", 5, func(m Model) bool { return m.garden.launch.stage == launchStageHub }},
+		{"s", 2, func(m Model) bool { return m.garden.launch.stage == launchStageConfirm }},
+		{"e", 3, func(m Model) bool { return m.garden.launch.stage == launchStageChoose }},
+		{"i", 4, func(m Model) bool { return m.garden.launch.stage == launchStageHub }},
 	} {
 		base, _, _ := fakeLaunchUIEnv(t, 120, 35)
 		base = plannerPress(t, base, "enter")
@@ -230,7 +230,7 @@ func TestIssueOverlayTabCyclesEnabledActionsAndEnterMatchesShortcut(t *testing.T
 		x0, y0, _, _ := overlay.Center(base.width, base.height)
 		var viaClick Model
 		for _, hit := range hits {
-			if hit.action == map[string]string{"p": "plan", "s": "start", "i": "attempts"}[tc.shortcut] {
+			if hit.action == map[string]string{"s": "start", "e": "run-settings", "i": "attempts"}[tc.shortcut] {
 				var cmd tea.Cmd
 				viaClick, cmd = send(t, base, click(x0+hit.x0, y0+hit.y))
 				viaClick = plannerRun(t, viaClick, cmd)
@@ -244,9 +244,10 @@ func TestIssueOverlayTabCyclesEnabledActionsAndEnterMatchesShortcut(t *testing.T
 
 func TestIssueOverlayDisabledActionKeepsItsReason(t *testing.T) {
 	m, _, _ := fakeLaunchUIEnv(t, 120, 35)
-	m = plannerPress(t, m, "down", "enter")
+	m.garden.board.selection.Focus(m.garden.board.collection, 2)
+	m = plannerPress(t, m, "enter")
 	// #102 reads as in progress, which a Ready-only start must refuse with its reason.
-	m.garden.board.collection.Columns[work.Approved][1].Item.Classification.Stage = garden.StageInProgress
+	m.garden.board.collection.Columns[work.Approved][0].Item.Classification.Stage = garden.StageInProgress
 	var start issueControl
 	for _, c := range m.issueControls() {
 		if c.id == "start" {

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -290,13 +291,20 @@ func (m Model) gsLaunchConfirm(width, rows int) []string {
 	l := m.garden.launch
 	head, consequence, facts, blockers := m.confirmContent(width)
 	blocks := []gblock{{lines: []string{head}}}
-	body := append([]string{gText(width, p.Text, true, "Review the consequence")}, gWrap(width, p.Text, false, consequence)...)
-	blocks = append(blocks, gblock{lines: body})
-	if len(blockers) > 0 {
-		blocks = append(blocks, gblock{lines: blockers})
+	var content []string
+	if l.note != "" {
+		content = append(content, gWrap(width, p.Warning, true, l.note)...)
 	}
-	scroll := min(l.scroll, max(len(facts)-3, 0))
-	blocks = append(blocks, launchFactsBlock(facts, scroll))
+	content = append(content, blockers...)
+	if len(content) > 0 {
+		content = append(content, blankRow(width, p.Background))
+	}
+	content = append(content, gText(width, p.Text, true, "Review the consequence"))
+	content = append(content, gWrap(width, p.Text, false, consequence)...)
+	content = append(content, blankRow(width, p.Background))
+	content = append(content, facts...)
+	scroll := min(l.scroll, max(len(content)-3, 0))
+	blocks = append(blocks, launchFactsBlock(content, scroll))
 	label := m.confirmLabel()
 	confirm := gButton(label, l.btn == 1)
 	if !m.launchConfirmable() {
@@ -307,7 +315,7 @@ func (m Model) gsLaunchConfirm(width, rows int) []string {
 	case l.inflight:
 		actions = append(actions, gText(width, p.Warning, true, "Working… keys are ignored until it answers. Leaving this screen does not stop it."))
 	case l.stale:
-		actions = append(actions, gText(width, p.Warning, true, "The terminal size changed: reading the confirmation again…"))
+		actions = append(actions, gText(width, p.Warning, true, orDefault(l.note, "The terminal size changed: reading the confirmation again…")))
 	default:
 		actions = append(actions, gText(width, p.Muted, false, "Cancel is focused first. Tab moves to Confirm; Enter on Cancel changes nothing."))
 	}
@@ -350,6 +358,8 @@ func (m Model) confirmContent(width int) (head string, consequence string, facts
 		consequence = "Create an isolated worktree and start the selected coding agent on this machine.\n" +
 			"This starts a local holder. Leaving Bonsai detaches. Pushing and opening a Draft PR require a separate action."
 		facts = launchFactLines(width, m.startFacts(*v))
+		blockers = append(blockers, gText(width, p.Text, true, "Sequence"))
+		blockers = append(blockers, gWrap(width, p.Text, false, m.launchSequence(*v))...)
 		if g := pv.Remote.Review.Gate.Head; g != nil {
 			facts = append(facts, verbatim(width, "SPECIFICATION (exact approved text)", g.Content)...)
 		}
@@ -361,6 +371,10 @@ func (m Model) confirmContent(width int) (head string, consequence string, facts
 		}
 		if !pv.Remote.Live {
 			blockers = append(blockers, gWrap(width, p.Danger, true, "! The approvals were not verified live, so a start is not offered. Go back and review again.")...)
+		}
+		if m.launchReviewNeedsEscalation() {
+			r := v.Review.Policy.Reviewer
+			blockers = append(blockers, m.checkbox(width, l.reviewEscalate, "r", "I accept "+launchWho(r.Provider, r.AccountName, r.Effort)+" running with full access for the review")...)
 		}
 		if pv.Escalated {
 			blockers = append(blockers, m.checkbox(width, l.escalate, "x", "I accept that this agent may act without asking (full access or a bypassed permission mode).")...)
@@ -467,15 +481,25 @@ func launchStateText(a launch.Attempt) string {
 
 func launchMirrorText(a launch.Attempt) string {
 	st := a.Steps[launch.StepMirror]
+	// The outstanding target is the desired stage; the mirrored one is only what GitHub already shows.
+	target := a.DesiredStage
+	if target == "" {
+		target = a.MirroredStage
+	}
+	stage := "In progress"
+	if target != "" {
+		stage = launchStageName(target)
+	}
+	prefix := "stage update to " + stage + ": "
 	switch {
 	case st.Code == "remote-conflict":
-		return "remote stage conflict: GitHub changed elsewhere and was not overwritten"
-	case st.Code == "remote-pending" || st.State == launch.StepPending || st.State == launch.StepFailed:
-		return "remote status pending: the local state is true; GitHub has not caught up"
-	case st.State == launch.StepDone && a.MirroredStage != "":
-		return "remote stage mirrored: " + string(a.MirroredStage)
+		return prefix + "failed (remote stage conflict: GitHub changed elsewhere and was not overwritten)"
+	case st.State == launch.StepFailed:
+		return prefix + "failed"
+	case st.State == launch.StepDone && a.MirroredStage != "" && (a.DesiredStage == "" || a.DesiredStage == a.MirroredStage):
+		return prefix + "written"
 	}
-	return "remote status not mirrored yet"
+	return prefix + "pending"
 }
 
 func launchPRText(pr launch.PRLink) string {
@@ -570,15 +594,21 @@ func (m Model) gsLaunchAttempt(width, rows int) []string {
 	if !ok {
 		return gCompose(width, rows, []gblock{{lines: []string{gText(width, p.Muted, false, "This attempt is no longer in the list. Esc returns to the attempts.")}}}, nil)
 	}
-	head := gHead(width, fmt.Sprintf("▣ IMPLEMENTATION #%d / %s", a.Number, a.ID), string(a.State))
-	blocks := []gblock{{lines: []string{head}}}
+	blocks := []gblock{{lines: gWrap(width, p.Accent, true, strings.ReplaceAll(launchSupervisionHeading(a), "▶", m.pgG("▶", ">")))}}
+	detail := strings.SplitN(m.launchSupervision(a, time.Now()), "\n\n", 2)
+	if len(detail) == 2 {
+		facts := gWrap(width, p.Text, false, detail[1])
+		blocks = append(blocks, launchFactsBlock(facts, l.scroll))
+	}
 	if l.note != "" {
 		blocks = append(blocks, gblock{lines: gWrap(width, p.Warning, true, "! "+l.note)})
 	}
-	facts := launchFactLines(width, m.attemptFacts(a))
-	scroll := min(l.scroll, max(len(facts)-3, 0))
-	blocks = append(blocks, launchFactsBlock(facts, scroll))
-	actions := []string{gText(width, p.Muted, false, "Opening the terminal observes the stored session; it never starts one. Leaving it detaches and never stops the holder.")}
+	actions := gWrap(width, p.Muted, false, m.launchNext(a))
+	buttons := []string{gButton("o Open session", true)}
+	if a.State.Active() {
+		buttons = append(buttons, gButton("x Stop run…", false))
+	}
+	actions = append(actions, gButtons(width, "  ", buttons...))
 	return m.settingsASCII(gCompose(width, rows, blocksWithNotices(m, width, blocks...), actions))
 }
 

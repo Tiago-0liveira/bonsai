@@ -206,14 +206,15 @@ type Attempt struct {
 // read-only flag of Launch are forbidden: the prompt is built from the exact
 // approved records, never supplied.
 type Request struct {
-	Target     approve.Target
-	Branch     string
-	BaseRef    string
-	RemoteName string
-	AccountID  agents.AccountID
-	Launch     agents.LaunchOptions // overrides
-	Name       string
-	Cols, Rows int
+	ReviewPolicyHash string // empty means no automatic review
+	Target           approve.Target
+	Branch           string
+	BaseRef          string
+	RemoteName       string
+	AccountID        agents.AccountID
+	Launch           agents.LaunchOptions // overrides
+	Name             string
+	Cols, Rows       int
 }
 
 // RemoteSnapshot is one live verified read of the Issue's records. Live is true
@@ -326,6 +327,8 @@ type StartSession struct {
 
 // SessionObservation is what the holder says about one start identity.
 type SessionObservation struct {
+	// Activity is transient supervision data, never folded into persisted runs.
+	Activity string `json:"-"`
 	Identity StartIdentity
 	State    string
 	Alive    bool
@@ -336,6 +339,13 @@ type SessionObservation struct {
 	ExitCode  *int
 	StartedAt *time.Time
 	EndedAt   *time.Time
+}
+
+// Observed is the latest session answer read during one reconcile, never persisted.
+type Observed struct {
+	AttemptID  string
+	Session    SessionObservation
+	ObservedAt time.Time
 }
 
 type Holder interface {

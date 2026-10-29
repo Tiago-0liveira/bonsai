@@ -27,6 +27,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/publish"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/reviewpass"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
@@ -81,6 +82,9 @@ type Deps struct {
 	LaunchPRs       launch.PullRequests
 	LaunchClock     launch.Clock
 	LaunchIDs       launch.IDs
+	// LaunchReviewPrefs and LaunchReviews default to saved preferences and the local pass store.
+	LaunchReviewPrefs func() (*config.GardenAutoReviewPrefs, error)
+	LaunchReviews     reviewpass.Store
 }
 
 // Backend is the gardenapi.Backend for one local clone.

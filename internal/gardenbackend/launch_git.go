@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
@@ -159,7 +160,19 @@ func observation(res agentsapi.OperationSession, id launch.StartIdentity) launch
 	if s.ID == "" || s.ID != id.SessionID || s.OperationID != id.OperationID {
 		return launch.SessionObservation{}
 	}
+	activity := "unknown"
+	if a := s.Activity; a != nil {
+		switch a.State {
+		case agentactivity.Working, agentactivity.Idle:
+			activity = string(a.State)
+		case agentactivity.Waiting:
+			if a.Reason == agentactivity.ReasonPermission {
+				activity = "waiting-permission"
+			}
+		}
+	}
 	return launch.SessionObservation{
+		Activity: activity,
 		Identity: id, State: s.State, Alive: !res.Closed && s.Active(), Acknowledged: res.Acknowledged, Closed: res.Closed,
 		ExitCode: s.ExitCode, StartedAt: s.StartedAt, EndedAt: s.EndedAt,
 	}

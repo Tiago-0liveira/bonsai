@@ -115,6 +115,8 @@ type confirmed struct {
 func validateRequest(req Request) error {
 	t := req.Target
 	switch {
+	case req.ReviewPolicyHash != "" && !hashRE.MatchString(req.ReviewPolicyHash):
+		return fmt.Errorf("%w: review policy hash", ErrInvalid)
 	case t.Repo == 0 || t.Issue == 0 || t.Viewer == "":
 		return fmt.Errorf("%w: target", ErrInvalid)
 	case !refRE.MatchString(req.Branch) || strings.HasPrefix(req.Branch, "-") || strings.HasPrefix(req.Branch, "/") || strings.Contains(req.Branch, ".."):
@@ -463,21 +465,22 @@ func (s *Service) Preview(ctx context.Context, req Request) (Preview, error) {
 // request. It excludes UI generations, history, timestamps and display text.
 func (s *Service) requestHash(p Preview) string {
 	raw, _ := json.Marshal(struct {
-		Local       garden.LocalRepoID
-		Repo        garden.RepoID
-		Issue       garden.IssueID
-		Actor       string
-		Epoch       uint64
-		Inputs      Inputs
-		Proposal    domain.IsolationProposal
-		Provider    agents.ProviderID
-		AccountID   agents.AccountID
-		Name        string
-		Options     Options
-		SessionName string
-		Cols, Rows  int
+		Local            garden.LocalRepoID
+		Repo             garden.RepoID
+		Issue            garden.IssueID
+		Actor            string
+		Epoch            uint64
+		Inputs           Inputs
+		Proposal         domain.IsolationProposal
+		Provider         agents.ProviderID
+		AccountID        agents.AccountID
+		Name             string
+		Options          Options
+		SessionName      string
+		Cols, Rows       int
+		ReviewPolicyHash string `json:",omitempty"`
 	}{s.d.Local, p.Request.Target.Repo, p.Request.Target.Issue, p.Request.Target.Viewer, p.Remote.Epoch, p.Inputs, p.Proposal,
-		p.Account.Provider, p.Account.AccountID, p.Account.AccountName, optionsFrom(p.Account.Launch), p.Request.Name, p.Request.Cols, p.Request.Rows})
+		p.Account.Provider, p.Account.AccountID, p.Account.AccountName, optionsFrom(p.Account.Launch), p.Request.Name, p.Request.Cols, p.Request.Rows, p.Request.ReviewPolicyHash})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

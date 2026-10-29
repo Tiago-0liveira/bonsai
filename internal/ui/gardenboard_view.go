@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
@@ -236,7 +237,7 @@ func boardState(r work.Record) string {
 	}
 	return glyph + " " + r.Column.String()
 }
-func boardActivity(r work.Record, detailed bool) string {
+func boardActivity(r work.Record, detailed, localKnown bool) string {
 	if r.Column == work.Blocked {
 		if !r.Placed {
 			return "no proven phase"
@@ -245,6 +246,12 @@ func boardActivity(r work.Record, detailed bool) string {
 			return "last proven: " + r.Phase.String() + ": " + r.Reason
 		}
 		return "Blocked in " + r.Phase.String() + ": " + r.Reason
+	}
+	if r.Column == work.Running && r.Evidence.Implementation == nil {
+		if localKnown && !r.Evidence.Stale {
+			return "GitHub says Running · no local job on this machine"
+		}
+		return "GitHub says Running · local status unknown"
 	}
 	run := r.Evidence.Implementation
 	if run == nil {
@@ -337,7 +344,7 @@ func (m Model) boardCard(w int, r work.Record, selected bool) []string {
 		}
 		out = append(out, boardLine(w, bg, fg, false, " "+text))
 	}
-	out = append(out, boardLine(w, bg, color, true, " "+boardState(r)), boardLine(w, bg, p.Muted, false, " "+boardActivity(r, m.garden.board.selection.Mode == work.ModeDetailed)))
+	out = append(out, boardLine(w, bg, color, true, " "+boardState(r)), boardLine(w, bg, p.Muted, false, " "+boardActivity(r, m.garden.board.selection.Mode == work.ModeDetailed, m.garden.local.loaded && !m.garden.local.stale)))
 	warning, wc := gardenApprovalIndicator(r)
 	if !strings.HasPrefix(warning, "!") {
 		warning = ""
@@ -404,6 +411,14 @@ func (m Model) gardenDocument(width int) []string {
 	var text strings.Builder
 	switch b.section {
 	case 0:
+		if a, ok := m.launchOverviewAttempt(); ok {
+			text.WriteString(m.launchSupervision(a, time.Now()))
+			break
+		}
+		if m.launchSupported() && r.Item.Classification.Stage == garden.StageReady {
+			text.WriteString(m.launchReadyOverview())
+			break
+		}
 		status, _ := gardenApprovalIndicator(r)
 		text.WriteString(status + "\n" + m.launchOverview(r.Item.Classification.Stage == garden.StageReady) + "\n\n")
 		if fact := m.localFact(r.Item.Issue.ID); fact != "" {
@@ -489,7 +504,7 @@ func (m Model) launchOverview(ready bool) string {
 	case !m.launchSupported():
 		return "Implementation attempts (i) are unavailable here: this Garden runtime has no local launch."
 	case ready:
-		return "Start implementation locally… (s)  ·  Implementation attempts (i)\nNothing starts until you confirm the exact approved pair, branch and permissions."
+		return m.launchReadyOverview()
 	}
 	return "Implementation attempts (i): the local execution history of this Issue. A local start is offered once it is Ready."
 }

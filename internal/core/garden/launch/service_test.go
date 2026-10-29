@@ -2,6 +2,7 @@ package launch
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -633,4 +634,63 @@ func fakeLaunchReceive[T any](t *testing.T, ch <-chan T) T {
 		var zero T
 		return zero
 	}
+}
+
+// The pre-review payload is deliberately kept separate from requestHash: old
+// on-disk attempts must still accept exact replays after the new field is added.
+func TestLaunchRequestHashReviewCompatibility(t *testing.T) {
+	r := newFakeLaunchRig(t)
+	p := r.preview(t)
+	raw, err := json.Marshal(struct {
+		Local       garden.LocalRepoID
+		Repo        garden.RepoID
+		Issue       garden.IssueID
+		Actor       string
+		Epoch       uint64
+		Inputs      Inputs
+		Proposal    domain.IsolationProposal
+		Provider    agents.ProviderID
+		AccountID   agents.AccountID
+		Name        string
+		Options     Options
+		SessionName string
+		Cols, Rows  int
+	}{r.deps.Local, p.Request.Target.Repo, p.Request.Target.Issue, p.Request.Target.Viewer, p.Remote.Epoch, p.Inputs, p.Proposal,
+		p.Account.Provider, p.Account.AccountID, p.Account.AccountName, optionsFrom(p.Account.Launch), p.Request.Name, p.Request.Cols, p.Request.Rows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := fmt.Sprintf("%x", sha256.Sum256(raw))
+	if got := r.svc.requestHash(p); got != old {
+		t.Fatalf("legacy hash changed: %s != %s", got, old)
+	}
+	if _, err := r.svc.Start(context.Background(), StartRequest{Preview: p, Confirmed: true}); err != nil {
+		t.Fatal(err)
+	}
+	p.Request.ReviewPolicyHash = strings.Repeat("a", 64)
+	if _, err := r.svc.Start(context.Background(), StartRequest{Preview: p, Confirmed: true}); !errors.Is(err, ErrIdempotency) {
+		t.Fatalf("changed review replay: %v", err)
+	}
+	if len(r.holder.calls()) != 1 {
+		t.Fatal("changed replay started another holder")
+	}
+}
+
+func TestLaunchReviewHashValidation(t *testing.T) {
+	r := newFakeLaunchRig(t)
+	for _, hash := range []string{"", strings.Repeat("a", 64), strings.Repeat("0", 64)} {
+		req := r.request
+		req.ReviewPolicyHash = hash
+		if err := validateRequest(req); err != nil {
+			t.Fatalf("valid hash %q: %v", hash, err)
+		}
+	}
+	for _, hash := range []string{strings.Repeat("A", 64), strings.Repeat("g", 64), strings.Repeat("a", 63), strings.Repeat("a", 65), " a"} {
+		req := r.request
+		req.ReviewPolicyHash = hash
+		if err := validateRequest(req); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid hash %q: %v", hash, err)
+		}
+	}
+	r.noEffects(t)
 }

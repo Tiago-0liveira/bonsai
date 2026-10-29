@@ -425,7 +425,8 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		m.gardenOpenIssue(b.selection.ID)
+		cmd := m.gardenOpenIssue(b.selection.ID)
+		return m, cmd
 	case "/":
 		return m.gardenStartSearch()
 	case "t":

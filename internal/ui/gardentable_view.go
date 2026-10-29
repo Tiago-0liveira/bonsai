@@ -75,8 +75,8 @@ func gardenNext(r work.Record, short bool) string {
 	return b
 }
 
-func gardenTableSignal(r work.Record, attention bool) string {
-	text := boardActivity(r, false)
+func gardenTableSignal(r work.Record, attention, localKnown bool) string {
+	text := boardActivity(r, false, localKnown)
 	if attention {
 		_, text = work.Attention(r)
 	}
@@ -194,7 +194,7 @@ func (m Model) gsTable(width, rows int) []string {
 		if r.Column == work.Blocked {
 			rail = p.Danger
 		}
-		texts := [7]string{fmt.Sprintf("#%d", r.Item.Issue.Number), boardTitle(r.Item.Issue.Title), boardState(r), gardenTableSignal(r, attention), gardenNext(r, cols.next <= 8), string(r.Item.Classification.Type), r.Priority}
+		texts := [7]string{fmt.Sprintf("#%d", r.Item.Issue.Number), boardTitle(r.Item.Issue.Title), boardState(r), gardenTableSignal(r, attention, m.garden.local.loaded && !m.garden.local.stale), gardenNext(r, cols.next <= 8), string(r.Item.Classification.Type), r.Priority}
 		out = append(out, m.tableCells(width, bg, cols, marker, rail, texts, selected))
 	}
 	for len(out) < bodyStart+capacity {
@@ -214,7 +214,7 @@ func (m Model) gsTable(width, rows int) []string {
 				boardLine(width, p.Raised, p.Warning, true, "Enter "+action))
 		} else if r, _, ok := b.collection.Find(b.selection.ID); ok && b.rowIndex() >= 0 {
 			out = append(out,
-				boardLine(width, p.Background, p.Warning, true, fmt.Sprintf("#%d  %s", r.Item.Issue.Number, gardenTableSignal(r, attention))),
+				boardLine(width, p.Background, p.Warning, true, fmt.Sprintf("#%d  %s", r.Item.Issue.Number, gardenTableSignal(r, attention, m.garden.local.loaded && !m.garden.local.stale))),
 				boardLine(width, p.Background, p.Text, false, boardTitle(r.Item.Issue.Title)),
 				boardLine(width, p.Raised, p.Warning, true, "Enter open · next: "+gardenNext(r, false)))
 		} else {

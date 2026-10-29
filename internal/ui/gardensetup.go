@@ -230,6 +230,12 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onShellAgentsChanged(msg)
 	case gardenLaunchResolvedMsg:
 		nm, cmd = m.onGardenLaunchResolved(msg)
+	case gardenLaunchReadyMsg:
+		nm, cmd = m.onGardenLaunchReady(msg)
+	case gardenLaunchStopTickMsg:
+		nm, cmd = m.onGardenLaunchStopTick(msg)
+	case gardenLaunchOverviewTickMsg:
+		nm, cmd = m.onGardenLaunchOverviewTick(msg)
 	case gardenLaunchPreviewMsg:
 		nm, cmd = m.onGardenLaunchPreview(msg)
 	case gardenLaunchStartMsg:
@@ -323,7 +329,7 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 		// locally and are read again for the new one.
 		if g.launch.stage != launchStageNone {
 			release = tea.Batch(release, m.launchDetach())
-			g.launch = gardenLaunchState{inflight: g.launch.inflight, previewSeq: g.launch.previewSeq + 1, readSeq: g.launch.readSeq, run: -1}
+			g.launch = gardenLaunchState{inflight: g.launch.inflight, previewSeq: g.launch.previewSeq + 1, readSeq: g.launch.readSeq + 1, stopGen: g.launch.stopGen + 1, run: -1}
 		}
 		g.planrev = gardenPlanState{}
 	}

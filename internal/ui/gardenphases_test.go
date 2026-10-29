@@ -172,7 +172,7 @@ func TestGardenActivityTextAndExactStates(t *testing.T) {
 						want = "Implementation running"
 					}
 				}
-				text := boardActivity(r, false)
+				text := boardActivity(r, false, true)
 				if !strings.Contains(text, want) || !strings.Contains(text, "updated Jan 2 15:04") || !strings.Contains(text, "(stale)") {
 					t.Fatal(text)
 				}

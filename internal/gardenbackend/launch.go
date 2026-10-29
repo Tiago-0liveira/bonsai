@@ -2,6 +2,7 @@ package gardenbackend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/reviewpass"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
@@ -143,8 +145,9 @@ func (b *Backend) localAttempt(ctx context.Context, svc *launch.Service, id stri
 	return a, nil
 }
 
-func (b *Backend) attemptView(gen uint64, a launch.Attempt) gardenapi.LaunchAttemptView {
-	return gardenapi.LaunchAttemptView{Stamp: b.stamp(gen, a.Repo), IssueID: uint64(a.Issue), Attempt: a}
+func (b *Backend) attemptView(ctx context.Context, gen uint64, a launch.Attempt) gardenapi.LaunchAttemptView {
+	pass, unknown := b.launchReviewPass(ctx, a)
+	return gardenapi.LaunchAttemptView{Stamp: b.stamp(gen, a.Repo), IssueID: uint64(a.Issue), Attempt: a, Review: pass, ReviewUnknown: unknown}
 }
 
 // PreviewLaunch implements gardenapi.LaunchBackend. It reads and verifies;
@@ -165,11 +168,13 @@ func (b *Backend) PreviewLaunch(ctx context.Context, req gardenapi.LaunchPreview
 	if err != nil {
 		return gardenapi.LaunchPreviewView{}, apiError(err)
 	}
+	review := b.resolveLaunchReview(ctx)
+	cr.ReviewPolicyHash = review.Hash
 	p, err := svc.Preview(ctx, cr)
 	if err != nil {
 		return gardenapi.LaunchPreviewView{}, apiError(err)
 	}
-	return gardenapi.LaunchPreviewView{Stamp: b.stamp(gen, repo), IssueID: req.IssueID, Preview: p}, nil
+	return gardenapi.LaunchPreviewView{Stamp: b.stamp(gen, repo), IssueID: req.IssueID, Preview: p, Review: review}, nil
 }
 
 // StartLaunch implements gardenapi.LaunchBackend. The view's stamp is checked
@@ -191,20 +196,52 @@ func (b *Backend) StartLaunch(ctx context.Context, req gardenapi.LaunchStartRequ
 	start := launch.StartRequest{Preview: p.Preview, Confirmed: req.Confirmed, EscalationConfirmed: req.EscalationConfirmed}
 	if _, gerr := svc.Get(ctx, p.Preview.ID); gerr == nil {
 		a, err := svc.Start(ctx, start)
-		return b.attemptView(gen, a), apiError(err)
+		return b.attemptView(ctx, gen, a), apiError(err)
+	} else if !errors.Is(gerr, launch.ErrNotFound) {
+		return gardenapi.LaunchAttemptView{}, apiError(gerr)
 	}
-	_, repo, err := b.launchTarget(ctx, p.IssueID)
+	target, repo, err := b.launchTarget(ctx, p.IssueID)
 	if err != nil {
 		return gardenapi.LaunchAttemptView{}, err
 	}
 	if uint64(repo) != p.Stamp.GardenID || b.stamp(gen, repo).Epoch != p.Stamp.Epoch {
 		return gardenapi.LaunchAttemptView{}, apiError(ErrRemoteChanged)
 	}
+	if !req.Confirmed {
+		return gardenapi.LaunchAttemptView{}, apiError(launch.ErrNotAccepted)
+	}
+	if target.Viewer != p.Preview.Request.Target.Viewer || target.Repo != p.Preview.Request.Target.Repo || target.Issue != p.Preview.Request.Target.Issue || target.ReadOnly {
+		return gardenapi.LaunchAttemptView{}, apiError(launch.ErrAccess)
+	}
+	review := b.resolveLaunchReview(ctx)
+	if review.Hash != p.Preview.Request.ReviewPolicyHash {
+		return gardenapi.LaunchAttemptView{}, &gardenapi.Error{Code: gardenapi.CodeLaunchChanged, Message: "The automatic review policy changed since the preview.", Next: "Preview the launch again before confirming."}
+	}
+	var frozen *reviewpass.Pass
+	if review.Hash != "" {
+		if review.Policy.Reviewer.Escalated && !req.ReviewEscalationConfirmed {
+			return gardenapi.LaunchAttemptView{}, apiError(launch.ErrEscalationNotAccepted)
+		}
+		if p.Preview.Escalated && !req.EscalationConfirmed {
+			return gardenapi.LaunchAttemptView{}, apiError(launch.ErrEscalationNotAccepted)
+		}
+		// Reserve first so a crash after the holder starts cannot lose the
+		// authorized review. A pass only belongs to the attempt it snapshots.
+		pass, err := b.reserveLaunchReview(ctx, p.Preview, review, target.Viewer, req.ReviewEscalationConfirmed)
+		if err != nil {
+			return gardenapi.LaunchAttemptView{}, apiError(err)
+		}
+		frozen = &pass
+	}
 	a, err := svc.Start(ctx, start)
 	if a.ID == "" {
 		return gardenapi.LaunchAttemptView{}, apiError(err)
 	}
-	return b.attemptView(gen, a), apiError(err)
+	view := b.attemptView(ctx, gen, a)
+	if frozen != nil {
+		view.Review, view.ReviewUnknown = frozen, false
+	}
+	return view, apiError(err)
 }
 
 // LaunchAttempts implements gardenapi.LaunchBackend. It reconciles the local
@@ -228,11 +265,30 @@ func (b *Backend) LaunchAttempts(ctx context.Context, issue uint64) (gardenapi.L
 	if assoc == nil || assoc.Mode == connect.Skip {
 		return gardenapi.LaunchAttemptsView{}, apiError(launch.ErrOwnership)
 	}
-	list, err := svc.Reconcile(ctx, garden.IssueID(issue))
+	list, observed, err := svc.ReconcileObserved(ctx, garden.IssueID(issue))
 	if err != nil {
 		return gardenapi.LaunchAttemptsView{}, apiError(err)
 	}
-	return gardenapi.LaunchAttemptsView{Stamp: b.stamp(gen, assoc.GardenID.Repo), IssueID: issue, Attempts: list}, nil
+	view := gardenapi.LaunchAttemptsView{Stamp: b.stamp(gen, assoc.GardenID.Repo), IssueID: issue, Attempts: list}
+	for _, o := range observed {
+		if view.Activity == nil {
+			view.Activity = make(map[string]gardenapi.LaunchActivity)
+		}
+		view.Activity[o.AttemptID] = gardenapi.LaunchActivity{State: o.Session.State, Activity: o.Session.Activity, Alive: o.Session.Alive, ObservedAt: o.ObservedAt}
+	}
+	view.ReviewsErr = true
+	if store, err := b.launchReviewStore(); err == nil {
+		if passes, err := store.List(ctx, b.local, garden.IssueID(issue)); err == nil {
+			view.ReviewsErr = false
+			view.Reviews = make(map[string]reviewpass.Pass, len(passes))
+			for _, pass := range passes {
+				if pass.Snapshot.Repo == assoc.GardenID.Repo {
+					view.Reviews[pass.Snapshot.AttemptID] = pass
+				}
+			}
+		}
+	}
+	return view, nil
 }
 
 // RetryLaunch implements gardenapi.LaunchBackend.
@@ -251,7 +307,7 @@ func (b *Backend) RetryLaunch(ctx context.Context, req launch.RetryRequest) (gar
 	if a.ID == "" {
 		return gardenapi.LaunchAttemptView{}, apiError(err)
 	}
-	return b.attemptView(gen, a), apiError(err)
+	return b.attemptView(ctx, gen, a), apiError(err)
 }
 
 // StopLaunch implements gardenapi.LaunchBackend. It needs no GitHub access.
@@ -270,7 +326,7 @@ func (b *Backend) StopLaunch(ctx context.Context, id string) (gardenapi.LaunchAt
 	if a.ID == "" {
 		return gardenapi.LaunchAttemptView{}, apiError(err)
 	}
-	return b.attemptView(gen, a), apiError(err)
+	return b.attemptView(ctx, gen, a), apiError(err)
 }
 
 // PublishLaunch implements gardenapi.LaunchBackend.
@@ -289,7 +345,7 @@ func (b *Backend) PublishLaunch(ctx context.Context, req launch.PublishRequest) 
 	if a.ID == "" {
 		return gardenapi.LaunchAttemptView{}, apiError(err)
 	}
-	return b.attemptView(gen, a), apiError(err)
+	return b.attemptView(ctx, gen, a), apiError(err)
 }
 
 // PreviewLaunchCleanup implements gardenapi.LaunchBackend. It writes nothing.
@@ -332,5 +388,5 @@ func (b *Backend) CleanupLaunch(ctx context.Context, view gardenapi.LaunchCleanu
 	if a.ID == "" {
 		return gardenapi.LaunchAttemptView{}, apiError(err)
 	}
-	return b.attemptView(gen, a), apiError(err)
+	return b.attemptView(ctx, gen, a), apiError(err)
 }

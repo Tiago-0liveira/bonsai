@@ -78,7 +78,7 @@ func TestLocalBadgeOnBoardAndTableForEveryState(t *testing.T) {
 					t.Fatal("local update lost Issue")
 				}
 				text := activity[c.name]
-				if got := boardActivity(r, false); got != text {
+				if got := boardActivity(r, false, true); got != text {
 					t.Errorf("activity %s = %q, want %q", c.name, got, text)
 				}
 				b := m.garden.board

@@ -83,11 +83,12 @@ type gardenState struct {
 	// plantab is the overlay's Plan tab: the revise preview, the request-changes form and the stop confirmation.
 	plantab gardenPlanTabState
 	// launchSub is the shared Sessions.Changes subscription, opened once the first launch screen shows.
-	launchSub bool
-	launch    gardenLaunchState // local implementation launch: its own request tracks, see gardenlaunch.go
-	assist    gardenAssistState // AI draft elaboration: its own request track, see gardenassist.go
-	local     gardenLocalState  // local planner flags on the board: its own request track, see gardenlocal.go
-	api       gardenapi.Backend // nil when Garden is unavailable
+	launchSub   bool
+	launch      gardenLaunchState // local implementation launch: its own request tracks, see gardenlaunch.go
+	launchReady gardenLaunchReadyState
+	assist      gardenAssistState // AI draft elaboration: its own request track, see gardenassist.go
+	local       gardenLocalState  // local planner flags on the board: its own request track, see gardenlocal.go
+	api         gardenapi.Backend // nil when Garden is unavailable
 
 	// seq numbers requests: a reply carrying any other value was superseded or
 	// abandoned, so it is dropped before it can move focus. gate is the second
