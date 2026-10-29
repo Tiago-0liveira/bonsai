@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -102,6 +103,10 @@ type fakeLaunchUIBackend struct {
 
 var _ gardenapi.LaunchBackend = (*fakeLaunchUIBackend)(nil)
 
+// launchTestWorktreeRoot is absolute on every OS (a bare "/x" is not on Windows),
+// as review pass snapshots require. Nothing is written there.
+var launchTestWorktreeRoot = filepath.Join(os.TempDir(), "authorized", "worktrees")
+
 func (f *fakeLaunchUIBackend) PreviewLaunch(ctx context.Context, r gardenapi.LaunchPreviewRequest) (gardenapi.LaunchPreviewView, error) {
 	rv, err := f.Backend.PlanReview(ctx, r.IssueID)
 	if err != nil {
@@ -145,7 +150,7 @@ func (f *fakeLaunchUIBackend) PreviewLaunch(ctx context.Context, r gardenapi.Lau
 	p.Request.ReviewPolicyHash = f.review.Hash
 	it := f.Backend.WorkView.Snapshot.Items[0]
 	p.Remote = launch.RemoteSnapshot{Target: p.Request.Target, Local: garden.LocalRepoID(rv.Stamp.LocalRepoID), Epoch: rv.Stamp.Epoch, Issue: it.Issue, FullName: "acme/my-app", Review: rv.Review, Live: true, VerifiedAt: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
-	p.Proposal = domain.IsolationProposal{IsolationRequest: domain.IsolationRequest{OperationID: id, RepositoryID: "local", Branch: r.Branch, BaseRef: r.BaseRef, BaseSHA: approved.BaseCommit, RemoteName: r.RemoteName, Repository: "acme/my-app"}, Path: filepath.Join("/authorized/worktrees", strings.ReplaceAll(r.Branch, "/", "-")), RootRevision: 1, ConfigHash: strings.Repeat("d", 64)}
+	p.Proposal = domain.IsolationProposal{IsolationRequest: domain.IsolationRequest{OperationID: id, RepositoryID: "local", Branch: r.Branch, BaseRef: r.BaseRef, BaseSHA: approved.BaseCommit, RemoteName: r.RemoteName, Repository: "acme/my-app"}, Path: filepath.Join(launchTestWorktreeRoot, strings.ReplaceAll(r.Branch, "/", "-")), RootRevision: 1, ConfigHash: strings.Repeat("d", 64)}
 	p.Escalated = p.Account.Launch.PermissionMode == "bypassPermissions" || p.Account.Launch.Sandbox == "bypass" || p.Account.Launch.FullAccess != nil && *p.Account.Launch.FullAccess
 	f.lastPreview = gardenapi.LaunchPreviewView{Stamp: rv.Stamp, IssueID: r.IssueID, Preview: p, Review: f.review}
 	return f.lastPreview, nil

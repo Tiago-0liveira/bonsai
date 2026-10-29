@@ -165,6 +165,7 @@ func fakeLaunchBackendHarness(t *testing.T) (*harness, uint64, *fakeLaunchBacken
 	runtime := &fakeLaunchBackendRuntime{observations: map[launch.StartIdentity]launch.SessionObservation{}}
 	wt := &fakeLaunchBackendWorktrees{root: t.TempDir(), checks: map[string]domain.IsolationCheck{}}
 	h.b.deps.LaunchStore = &launch.FileStore{Path: filepath.Join(t.TempDir(), "launch.json")}
+	h.b.deps.LaunchReviews = &reviewpass.FileStore{Path: filepath.Join(t.TempDir(), "garden-review-passes.json")}
 	h.b.deps.LaunchAccounts = runtime
 	h.b.deps.LaunchHolder = runtime
 	h.b.deps.LaunchSessions = runtime
@@ -431,18 +432,9 @@ func (f *fakeLaunchReviewStore) List(ctx context.Context, local garden.LocalRepo
 }
 func trackLaunchReviews(t *testing.T, h *harness) *fakeLaunchReviewStore {
 	t.Helper()
-	store, err := reviewpass.Open()
-	if err != nil {
-		t.Fatal(err)
-	}
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if store.Path != filepath.Join(configDir, "bonsai", "garden-review-passes.json") {
-		t.Fatalf("unexpected review store: %s", store.Path)
-	}
-	tracked := &fakeLaunchReviewStore{Store: store}
+	// A temporary store, never reviewpass.Open: on Windows os.UserConfigDir is the
+	// real %AppData%, which the tests would share and pollute.
+	tracked := &fakeLaunchReviewStore{Store: &reviewpass.FileStore{Path: filepath.Join(t.TempDir(), "garden-review-passes.json")}}
 	h.b.deps.LaunchReviews = tracked
 	return tracked
 }
