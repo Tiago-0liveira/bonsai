@@ -36,6 +36,17 @@ func (p pullRequestSubset) CreatePullRequest(ctx context.Context, r github.Creat
 	return p.svc.CreatePullRequest(ctx, r)
 }
 
+// HandoffPullRequests is the one read human handoff needs: a fresh look at a single pull request.
+type HandoffPullRequests interface {
+	PullRequest(ctx context.Context, repo string, number int) (github.PullRequestDetail, error)
+}
+
+var _ HandoffPullRequests = pullRequestSubset{}
+
+func (p pullRequestSubset) PullRequest(ctx context.Context, repo string, number int) (github.PullRequestDetail, error) {
+	return p.svc.PullRequest(ctx, repo, number)
+}
+
 // launchRemote is the Garden side of a launch: a fresh verified read for every
 // confirmation and the expected-label stage mirror. It never reuses the read
 // model, the retained sync snapshot or a cached authorization.

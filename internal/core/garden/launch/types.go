@@ -156,6 +156,15 @@ type Run struct {
 	EndedAt      *time.Time `json:"ended_at,omitempty"`
 }
 
+// Rework records that a human's requested changes started one more run. It holds
+// only the verified comment's ID, never its text, so the same feedback can never
+// start a second run and the store stays free of free-form text.
+type Rework struct {
+	FeedbackCommentID int64     `json:"feedback_comment_id"`
+	Run               int       `json:"run"`
+	RequestedAt       time.Time `json:"requested_at"`
+}
+
 // PRLink is the pull request state of an attempt.
 type PRLink struct {
 	State   PRState `json:"state"`
@@ -192,6 +201,7 @@ type Attempt struct {
 	// SessionID is the newest run's session, kept after it exits.
 	SessionID     string       `json:"session_id,omitempty"`
 	Runs          []Run        `json:"runs"`
+	Reworks       []Rework     `json:"reworks,omitempty"`
 	DesiredStage  garden.Stage `json:"desired_stage,omitempty"`
 	MirroredStage garden.Stage `json:"mirrored_stage,omitempty"`
 	PR            PRLink       `json:"pr"`
@@ -264,6 +274,18 @@ type RetryRequest struct {
 	AttemptID           string
 	Confirmed           bool
 	RetryHooks          bool // explicit acknowledgment of possibly partial earlier hooks
+	EscalationConfirmed bool
+}
+
+// ReworkRequest asks for one more run of an attempt awaiting human review. The
+// feedback text is held in memory for the prompt only. The caller must pass a
+// comment ID and text taken from a verified changes_requested handoff entry for
+// this attempt's current identity; launch does not verify their authenticity.
+type ReworkRequest struct {
+	AttemptID           string
+	FeedbackCommentID   int64
+	Feedback            string
+	Confirmed           bool
 	EscalationConfirmed bool
 }
 
@@ -417,6 +439,8 @@ const (
 	MaxAttempts = 2000
 	// MaxPromptBytes bounds the approved prompt; a larger one is refused, never truncated.
 	MaxPromptBytes = 96 << 10
+	// MaxReworkFeedbackBytes bounds the requested-changes text; a larger one is refused.
+	MaxReworkFeedbackBytes = 8 << 10
 )
 
 // The codes persisted instead of any error text.

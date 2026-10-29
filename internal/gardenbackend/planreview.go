@@ -192,19 +192,8 @@ func (b *Backend) IssueLink(ctx context.Context, issue uint64, open bool) error 
 	if it.ID != garden.IssueID(issue) || it.Repo != t.Repository.ID || it.Number <= 0 {
 		return apiError(garden.ErrInvalidRevision)
 	}
-	parts := strings.Split(t.FullName, "/")
-	if len(parts) != 2 {
+	if !validRepoFullName(t.FullName) {
 		return apiError(garden.ErrInvalidRevision)
-	}
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." {
-			return apiError(garden.ErrInvalidRevision)
-		}
-		for _, r := range part {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
-				return apiError(garden.ErrInvalidRevision)
-			}
-		}
 	}
 	url := fmt.Sprintf("https://github.com/%s/issues/%d", t.FullName, it.Number)
 	if open {
@@ -216,4 +205,23 @@ func (b *Backend) IssueLink(ctx context.Context, issue uint64, open bool) error 
 		return &gardenapi.Error{Code: gardenapi.CodeFailed, Message: "The local Issue link action failed."}
 	}
 	return nil
+}
+
+// validRepoFullName accepts only owner/repo made of characters GitHub allows, so a name can never reshape a URL.
+func validRepoFullName(full string) bool {
+	parts := strings.Split(full, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+		for _, r := range part {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
+				return false
+			}
+		}
+	}
+	return true
 }

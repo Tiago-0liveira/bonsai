@@ -22,6 +22,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/handoff"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
@@ -85,6 +86,10 @@ type Deps struct {
 	// LaunchReviewPrefs and LaunchReviews default to saved preferences and the local pass store.
 	LaunchReviewPrefs func() (*config.GardenAutoReviewPrefs, error)
 	LaunchReviews     reviewpass.Store
+	// HandoffPRs reads one pull request and HandoffWork one retained worktree, for human handoff (plan 13). Both are
+	// optional: without them the view reports those sections as unavailable and never as success.
+	HandoffPRs  HandoffPullRequests
+	HandoffWork HandoffWork
 }
 
 // Backend is the gardenapi.Backend for one local clone.
@@ -106,7 +111,8 @@ type Backend struct {
 	planner        *plan.Service    // built on first use
 	reviews        *planrev.Service // built on first use
 	assistFlights  map[string]struct{}
-	launches       *launch.Service // built on first use
+	launches       *launch.Service  // built on first use
+	handoffs       *handoff.Service // built on first use
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)

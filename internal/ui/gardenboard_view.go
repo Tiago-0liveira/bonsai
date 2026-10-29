@@ -408,15 +408,18 @@ func (m Model) gardenDocument(width int) []string {
 	if b.section == planTabSection {
 		return m.planTabDocument(width)
 	}
+	if b.section == 0 && m.handoffShown() {
+		return m.handoffDocument(width)
+	}
 	var text strings.Builder
 	switch b.section {
 	case 0:
 		if a, ok := m.launchOverviewAttempt(); ok {
-			text.WriteString(m.launchSupervision(a, time.Now()))
+			text.WriteString(m.launchSupervision(a, time.Now()) + m.handoffUnavailableNote())
 			break
 		}
 		if m.launchSupported() && r.Item.Classification.Stage == garden.StageReady {
-			text.WriteString(m.launchReadyOverview())
+			text.WriteString(m.launchReadyOverview() + m.handoffUnavailableNote())
 			break
 		}
 		status, _ := gardenApprovalIndicator(r)

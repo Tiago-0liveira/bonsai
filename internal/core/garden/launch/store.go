@@ -129,6 +129,13 @@ func (a Attempt) valid() bool {
 			return false
 		}
 	}
+	seenFeedback := map[int64]bool{}
+	for _, w := range a.Reworks {
+		if w.FeedbackCommentID <= 0 || seenFeedback[w.FeedbackCommentID] || w.Run < 1 || w.Run > len(a.Runs) || w.RequestedAt.IsZero() {
+			return false
+		}
+		seenFeedback[w.FeedbackCommentID] = true
+	}
 	if len(a.Runs) == 0 {
 		if a.SessionID != "" {
 			return false
@@ -169,6 +176,7 @@ func cloneAttempt(a Attempt) Attempt {
 	for i, r := range a.Runs {
 		out.Runs[i] = cloneRun(r)
 	}
+	out.Reworks = append([]Rework(nil), a.Reworks...)
 	if a.Options.FullAccess != nil {
 		v := *a.Options.FullAccess
 		out.Options.FullAccess = &v

@@ -74,6 +74,9 @@ func (m Model) issueControls() []issueControl {
 	if sub, ok := m.planTabModeControls(); ok {
 		return sub
 	}
+	if sub, ok := m.handoffControls(); ok {
+		return sub
+	}
 	out := []issueControl{{id: "close", key: "esc", long: "Back to " + m.garden.board.layoutName(), short: m.garden.board.layoutName(), enabled: true}}
 	if a, ok := m.launchOverviewAttempt(); ok && g.board.section == 0 {
 		out = append(out, issueControl{id: "launch-session", key: "o", long: "Open session", short: "Session", enabled: idle})
@@ -110,12 +113,15 @@ func (m *Model) gardenOpenIssue(id garden.IssueID) tea.Cmd {
 			m.garden.launch = gardenLaunchState{inflight: prev.inflight, previewSeq: prev.previewSeq + 1, readSeq: prev.readSeq + 1, stopGen: prev.stopGen + 1, overviewGen: prev.overviewGen + 1, run: -1}
 		}
 		m.garden.board.open(id, m.garden.status.Target.RepoID)
+		m.handoffReset(uint64(id))
+		next, sync := m.handoffSync()
+		*m = next
 		if !m.launchSupported() {
-			return nil
+			return sync
 		}
 		next, read := m.launchLoad(uint64(id))
 		*m = next
-		return tea.Batch(read, m.launchReadyLoad(), m.launchSubscribe())
+		return tea.Batch(sync, read, m.launchReadyLoad(), m.launchSubscribe())
 	}
 	return nil
 }
@@ -136,7 +142,9 @@ func (m *Model) issueSetSection(n int) tea.Cmd {
 	if b.section == planTabSection && prev != planTabSection {
 		return m.planTabLoad()
 	}
-	return m.launchOverviewNext()
+	next, sync := m.handoffSync()
+	*m = next
+	return tea.Batch(m.launchOverviewNext(), sync)
 }
 
 func (m *Model) issueScroll(delta int) {
@@ -147,8 +155,12 @@ func (m *Model) issueScroll(delta int) {
 // issueActivate runs an action through the same entry points as its shortcut. A shortcut that cannot run says
 // why in the notice instead of staying silent.
 func (m Model) issueActivate(id string) (tea.Model, tea.Cmd) {
+	if strings.HasPrefix(id, "ho-") {
+		return m.handoffActivate(id)
+	}
 	switch id {
 	case "close":
+		m.handoffReset(0)
 		m.garden.launch.overviewGen++
 		m.garden.launch.overviewPending = false
 		m.garden.launch.stopGen++
@@ -243,6 +255,10 @@ func (m Model) gardenIssueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.planFormKey(msg)
 	}
 	m.garden.notice = "" // a notice explains the last action; the next key moves on
+	if m.handoffModal() {
+		return m.handoffKey(msg)
+	}
+	m.garden.handoff.note = ""
 	_, rows := m.gardenOverlayBody()
 	page := max(1, rows-1)
 	k := msg.String()
@@ -250,6 +266,10 @@ func (m Model) gardenIssueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.planTabKeyStop(k)
 	}
 	switch {
+	case k == "esc" && b.overlayFocus != "" && m.handoffShown():
+		b.overlayFocus = "" // Esc first restores the selection, a second one closes
+	case m.handoffShown() && handoffKeyIDs[k] != "":
+		return m.issueActivate(handoffKeyIDs[k])
 	case k == "esc", k == "backspace":
 		return m.issueActivate("close")
 	case key.Matches(msg, m.keys.Tab):
@@ -468,6 +488,9 @@ func (m Model) issueOverlayRows(w, h int) ([]string, []overlayHit) {
 		state += " · " + status
 		stateFg = fg
 		column = r.Column.String()
+		if m.handoffDone() {
+			state, stateFg = "✓ Done · "+state, p.Success
+		}
 	}
 	out = append(out, line(p.Text, true, head, column))
 	doc := m.gardenDocument(bodyW)
@@ -542,6 +565,9 @@ func (m Model) issueOverlayRows(w, h int) ([]string, []overlayHit) {
 	if a, ok := m.launchOverviewAttempt(); ok && b.section == 0 {
 		reason = m.launchNext(a)
 	}
+	if r, ok := m.handoffReason(); ok {
+		reason = r
+	}
 	for _, c := range controls {
 		if c.reason != "" {
 			reason = c.key + " unavailable: " + c.reason
@@ -593,6 +619,7 @@ func (m Model) issueRail(w int) []string {
 	if b.section == planTabSection {
 		m.planTabRail(add)
 	}
+	m.handoffRail(add)
 	return out
 }
 

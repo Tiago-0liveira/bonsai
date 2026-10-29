@@ -70,18 +70,24 @@ func (b *Backend) launchReviewPass(ctx context.Context, a launch.Attempt) (*revi
 }
 
 func (b *Backend) reserveLaunchReview(ctx context.Context, p launch.Preview, review gardenapi.LaunchReview, actor string, escalation bool) (reviewpass.Pass, error) {
-	store, err := b.launchReviewStore()
-	if err != nil {
-		return reviewpass.Pass{}, fmt.Errorf("open review passes: %w", err)
-	}
 	snapshot := reviewpass.Snapshot{
 		Local: b.local, Repo: p.Request.Target.Repo, Issue: p.Request.Target.Issue, Number: p.Remote.Issue.Number,
 		Inputs:    reviewpass.Inputs{SpecRevision: p.Inputs.Spec.RevisionHash, SpecFingerprint: p.Inputs.Spec.Fingerprint, SpecApprovalID: p.Inputs.SpecApprovalID, PlanRevision: p.Inputs.Plan.RevisionHash, PlanDecisionID: p.Inputs.Plan.DecisionID},
 		AttemptID: p.ID, Worktree: reviewpass.Worktree{Path: p.Proposal.Path, Branch: p.Proposal.Branch, BaseSHA: p.Proposal.BaseSHA}, Policy: review.Policy, PolicyHash: review.Hash,
 	}
-	id := launchReviewID(p.ID)
+	return b.reservePass(ctx, launchReviewID(p.ID), p.ID, "", snapshot, actor, escalation)
+}
+
+// reservePass reserves the one pass id names, or returns the identical earlier reservation. implRun, when set,
+// is the implementation run the pass reviews. Different consent for the same id is a conflict, never reused.
+func (b *Backend) reservePass(ctx context.Context, id, previewID, implRun string, snapshot reviewpass.Snapshot, actor string, escalation bool) (reviewpass.Pass, error) {
+	store, err := b.launchReviewStore()
+	if err != nil {
+		return reviewpass.Pass{}, fmt.Errorf("open review passes: %w", err)
+	}
 	matches := func(prior reviewpass.Pass) bool {
-		return reflect.DeepEqual(prior.Snapshot, snapshot) && prior.Authorization.ActorID == actor && prior.Authorization.PreviewID == p.ID
+		return reflect.DeepEqual(prior.Snapshot, snapshot) && prior.Authorization.ActorID == actor && prior.Authorization.PreviewID == previewID &&
+			(implRun == "" || prior.ImplementationRun == implRun)
 	}
 	prior, err := store.Get(ctx, id)
 	if err == nil {
@@ -98,10 +104,11 @@ func (b *Backend) reserveLaunchReview(ctx context.Context, p launch.Preview, rev
 		clock = launch.SystemClock()
 	}
 	now := clock.Now().UTC()
-	pass, err := reviewpass.NewPass(id, snapshot, reviewpass.Authorization{ActorID: actor, PreviewID: p.ID, ConfirmedAt: now, EscalationAcknowledged: escalation}, now)
+	pass, err := reviewpass.NewPass(id, snapshot, reviewpass.Authorization{ActorID: actor, PreviewID: previewID, ConfirmedAt: now, EscalationAcknowledged: escalation}, now)
 	if err != nil {
 		return reviewpass.Pass{}, fmt.Errorf("authorize review pass: %w", err)
 	}
+	pass.ImplementationRun = implRun
 	reserved, _, err := store.Reserve(ctx, pass)
 	if errors.Is(err, reviewpass.ErrConflict) {
 		// Concurrent confirmations have different timestamps but authorize the

@@ -241,7 +241,24 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 	case gardenLaunchStartMsg:
 		nm, cmd = m.onGardenLaunchStart(msg)
 	case gardenLaunchAttemptsMsg:
+		var sync tea.Cmd
 		nm, cmd = m.onGardenLaunchAttempts(msg)
+		nm, sync = nm.handoffSync()
+		cmd = tea.Batch(cmd, sync)
+	case gardenHandoffReadMsg:
+		nm, cmd = m.onGardenHandoffRead(msg)
+	case gardenHandoffTickMsg:
+		nm, cmd = m.onGardenHandoffTick(msg)
+	case gardenHandoffPreviewMsg:
+		nm, cmd = m.onGardenHandoffPreview(msg)
+	case gardenHandoffReworkPreviewMsg:
+		nm, cmd = m.onGardenHandoffReworkPreview(msg)
+	case gardenHandoffDecideMsg:
+		nm, cmd = m.onGardenHandoffDecide(msg)
+	case gardenHandoffReworkMsg:
+		nm, cmd = m.onGardenHandoffRework(msg)
+	case gardenHandoffOpenMsg:
+		nm, cmd = m.onGardenHandoffOpen(msg)
 	case gardenLaunchActionMsg:
 		nm, cmd = m.onGardenLaunchAction(msg)
 	case gardenLaunchCleanupMsg:

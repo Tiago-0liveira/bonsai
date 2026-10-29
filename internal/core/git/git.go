@@ -54,12 +54,46 @@ func runRaw(dir string, args ...string) (string, error) {
 // RunContext is the shared, bounded Git runner used by both local adapters.
 // Arguments are passed directly to Git, never interpreted by a shell.
 func RunContext(parent context.Context, dir string, args ...string) (string, error) {
+	return runContext(parent, dir, false, args...)
+}
+
+// RunIsolatedContext is RunContext without the inherited variables that redirect Git to another repository or
+// inject configuration, for callers that must read exactly the repository at dir.
+func RunIsolatedContext(parent context.Context, dir string, args ...string) (string, error) {
+	return runContext(parent, dir, true, args...)
+}
+
+// redirectingEnv reports whether an inherited variable changes which repository or configuration Git uses.
+func redirectingEnv(kv string) bool {
+	name, _, _ := strings.Cut(kv, "=")
+	name = strings.ToUpper(name)
+	switch name {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_INDEX_VERSION", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_PREFIX",
+		"GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+		"GIT_EXTERNAL_DIFF", "GIT_DIFF_OPTS", "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE":
+		return true
+	}
+	return strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
+}
+
+func runContext(parent context.Context, dir string, isolate bool, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, gitTimeout)
 	defer cancel()
 	trace.AddGit()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "LC_ALL=C")
+	env := cmd.Environ()
+	if isolate {
+		kept := env[:0:0]
+		for _, kv := range env {
+			if !redirectingEnv(kv) {
+				kept = append(kept, kv)
+			}
+		}
+		env = kept
+	}
+	cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() != nil {

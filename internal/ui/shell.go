@@ -727,6 +727,9 @@ func (m Model) shellHints() []shellHint {
 		if m.planForm() != nil {
 			return m.planFormHints()
 		}
+		if m.handoffTyping() {
+			return m.handoffHints()
+		}
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}
 	if m.currentShellFocus() == shellInput {

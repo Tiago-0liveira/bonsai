@@ -288,3 +288,19 @@ func TestReviewerTransitionMatrix(t *testing.T) {
 		}
 	}
 }
+
+func TestSupersededIsAFixedCodeOfAStoppedPass(t *testing.T) {
+	p := testPass(t, 1)
+	p.State, p.Code, p.EndedAt = StateStopped, CodeSuperseded, ptr(p.CreatedAt)
+	if !p.valid() {
+		t.Fatal("a stopped pass with the superseded code must be valid")
+	}
+}
+
+func TestImplementationNotStartedIsAFixedCodeOfAStoppedPass(t *testing.T) {
+	p := testPass(t, 1)
+	p.State, p.Code, p.EndedAt = StateStopped, CodeImplementationNotStarted, ptr(p.CreatedAt)
+	if !p.valid() {
+		t.Fatal("a stopped pass with the implementation-not-started code must be valid")
+	}
+}

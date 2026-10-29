@@ -495,7 +495,8 @@ func (m Model) launchClose() (Model, tea.Cmd) {
 	if m.shellFocus == shellInput {
 		m.shellFocus = shellBody
 	}
-	cmd := tea.Batch(rel, m.launchOverviewNext())
+	m, refresh := m.handoffRefresh()
+	cmd := tea.Batch(rel, m.launchOverviewNext(), refresh)
 	return m, cmd
 }
 

@@ -52,8 +52,11 @@ func wireLaunch(d *Deps, repoDir string, shared *ghcli.Shared, api *agentsapi.Ba
 	holder := launchHolder{ops: ops, sessions: api.Sessions}
 	d.LaunchHolder = holder
 	d.LaunchSessions = holder
+	d.HandoffWork = gitWork{}
 	if shared != nil {
-		d.LaunchPRs = pullRequestSubset{svc: shared.Service(repoDir)}
+		prs := pullRequestSubset{svc: shared.Service(repoDir)}
+		d.LaunchPRs = prs
+		d.HandoffPRs = prs
 	}
 }
 

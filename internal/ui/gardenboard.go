@@ -377,6 +377,9 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, rel
 	}
+	if m.handoffTyping() {
+		return m.handoffKey(msg) // typed text, capital R included, is never a refresh
+	}
 	if key.Matches(msg, m.keys.Refresh) {
 		return m.gardenLoadWork()
 	}
@@ -503,6 +506,9 @@ func (m Model) gardenBoardHints() []shellHint {
 	if b.opened != 0 {
 		if m.planForm() != nil {
 			return m.planFormHints()
+		}
+		if m.handoffModal() || m.handoffShown() {
+			return m.handoffHints()
 		}
 		if m.planStopAsked() {
 			return []shellHint{{"y", "stop the attempt"}, {"any", "keep it running"}}

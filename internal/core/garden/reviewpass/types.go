@@ -74,9 +74,13 @@ const (
 	CodeStopRequested        = "stop-requested"
 	CodeChecksFailed         = "checks-failed"
 	CodeReportInvalid        = "report-invalid"
+	// CodeSuperseded closes a pass that never started its reviewer because newer work replaced it.
+	CodeSuperseded = "superseded"
+	// CodeImplementationNotStarted closes a pass reserved for an implementation run that definitively never started.
+	CodeImplementationNotStarted = "implementation-not-started"
 )
 
-var fixedCodes = map[string]bool{"": true, CodeReviewerStartFailed: true, CodeReviewerStartUnknown: true, CodeReviewerLost: true, CodeReviewerExitFailed: true, CodeScopeChanged: true, CodePermissionsMissing: true, CodeInputsChanged: true, CodeHeadMoved: true, CodeStopRequested: true, CodeChecksFailed: true, CodeReportInvalid: true}
+var fixedCodes = map[string]bool{"": true, CodeReviewerStartFailed: true, CodeReviewerStartUnknown: true, CodeReviewerLost: true, CodeReviewerExitFailed: true, CodeScopeChanged: true, CodePermissionsMissing: true, CodeInputsChanged: true, CodeHeadMoved: true, CodeStopRequested: true, CodeChecksFailed: true, CodeReportInvalid: true, CodeSuperseded: true, CodeImplementationNotStarted: true}
 
 type Inputs struct {
 	SpecRevision    string `json:"spec_revision"`
