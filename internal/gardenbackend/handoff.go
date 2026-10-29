@@ -368,8 +368,10 @@ func (r *handoffRead) derive(now time.Time) {
 		return
 	}
 	d := handoff.Current(r.log, r.identity)
-	if d.State == handoff.DecisionCurrent && r.attempt != nil && r.liveOK && !r.inputsCurrent() {
+	if d.State == handoff.DecisionCurrent && r.attempt != nil && !r.inputsCurrent() {
 		// The attempt ran against a pair that is no longer the approved one, whatever the record says.
+		// With no approved pair at all the zero live inputs differ from the attempt's, so both
+		// are reported: a vanished approval must not leave the acceptance current.
 		var why []handoff.StaleReason
 		in := r.attempt.Inputs
 		if in.Spec.RevisionHash != r.live.Spec.RevisionHash || in.SpecApprovalID != r.live.SpecApprovalID {
