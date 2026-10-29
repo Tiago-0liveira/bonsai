@@ -132,7 +132,10 @@ func (f *fakeLaunchBackendWorktrees) PushIsolation(context.Context, domain.Isola
 func fakeLaunchBackendHarness(t *testing.T) (*harness, uint64, *fakeLaunchBackendRuntime, *fakeLaunchBackendWorktrees) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	// os.UserConfigDir reads APPDATA on Windows; without it the saved review prefs land in the real, shared one.
+	t.Setenv("APPDATA", cfg)
 	h, _, id, _, co := plannerHarness(t)
 	co.base.Commit = strings.Repeat("c", 40)
 	co.base.Branch = "main"
