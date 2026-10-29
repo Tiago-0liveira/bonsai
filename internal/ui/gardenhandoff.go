@@ -54,8 +54,9 @@ type gardenHandoffState struct {
 
 	mode     handoffMode
 	decision garden.HandoffDecision
-	text     textarea.Model
-	drafts   map[garden.HandoffDecision]string
+	// text is a pointer because the Model is copied by value on every message and a textarea is large.
+	text   *textarea.Model
+	drafts map[garden.HandoffDecision]string
 	// prevSeq makes an answer of a canceled or superseded preview obsolete.
 	prevSeq  uint64
 	preview  *gardenapi.HandoffDecisionPreview
@@ -344,6 +345,13 @@ func handoffAction(v gardenapi.HandoffView, id string) gardenapi.HandoffAction {
 	return gardenapi.HandoffAction{}
 }
 
+func (h *gardenHandoffState) textValue() string {
+	if h.text == nil {
+		return ""
+	}
+	return h.text.Value()
+}
+
 func handoffTextArea() textarea.Model {
 	ta := planFormTextarea()
 	ta.Placeholder = ""
@@ -409,7 +417,7 @@ func (m Model) handoffOpenText(d garden.HandoffDecision) (tea.Model, tea.Cmd) {
 	ta.CharLimit = planrev.MaxReasonBytes
 	ta.SetValue(h.drafts[d])
 	ta.Focus()
-	h.text, h.decision, h.mode, h.note, h.scroll = ta, d, handoffText, "", 0
+	h.text, h.decision, h.mode, h.note, h.scroll = &ta, d, handoffText, "", 0
 	m.garden.board.overlayFocus = ""
 	m.garden.board.docScroll = 0
 	m.shellFocus = shellInput
@@ -420,8 +428,14 @@ func (m Model) handoffOpenText(d garden.HandoffDecision) (tea.Model, tea.Cmd) {
 func (m *Model) handoffSize() {
 	h := &m.garden.handoff
 	w, rows := m.gardenOverlayBody()
-	h.text.SetWidth(max(w-2, 4))
-	h.text.SetHeight(max(2, min(rows-7, 8)))
+	if h.text == nil {
+		return
+	}
+	// Copy before resizing: earlier Model values share the pointer and must not change.
+	ta := *h.text
+	ta.SetWidth(max(w-2, 4))
+	ta.SetHeight(max(2, min(rows-7, 8)))
+	h.text = &ta
 }
 
 // handoffPreview asks for the exact record a decision would write. It writes nothing.
@@ -565,7 +579,7 @@ func (m Model) handoffModalActivate(id string) (tea.Model, tea.Cmd) {
 	switch {
 	case id == "ho-cancel" || id == "ho-back":
 		if h.mode == handoffText {
-			h.drafts = handoffDraft(h.drafts, h.decision, h.text.Value())
+			h.drafts = handoffDraft(h.drafts, h.decision, h.textValue())
 		}
 		return m.handoffBack(), nil
 	case id == "ho-send":
@@ -602,12 +616,12 @@ func handoffDraft(drafts map[garden.HandoffDecision]string, d garden.HandoffDeci
 // handoffSend is the text box's submit: it only asks for the preview.
 func (m Model) handoffSend() (tea.Model, tea.Cmd) {
 	h := &m.garden.handoff
-	text := strings.TrimSpace(h.text.Value())
+	text := strings.TrimSpace(h.textValue())
 	if text == "" {
 		h.note = "Text is required: say what should change, or what completes the work."
 		return m, nil
 	}
-	h.drafts = handoffDraft(h.drafts, h.decision, h.text.Value())
+	h.drafts = handoffDraft(h.drafts, h.decision, h.textValue())
 	return m.handoffPreview(h.decision, text)
 }
 
@@ -756,8 +770,11 @@ func (m Model) handoffKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handoffSend()
 		}
 		m.handoffSize()
-		var cmd tea.Cmd
-		h.text, cmd = h.text.Update(msg)
+		if h.text == nil {
+			return m, nil
+		}
+		ta, cmd := h.text.Update(msg)
+		h.text = &ta
 		return m, cmd
 	}
 	switch {

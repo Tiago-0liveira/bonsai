@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
@@ -517,7 +518,10 @@ func (m Model) handoffFlowRows(d *ovDoc) {
 		}
 		d.wrap(p.Muted, false, "", intro)
 		d.blank()
-		ta := h.text
+		var ta textarea.Model
+		if h.text != nil {
+			ta = *h.text
+		}
 		w, rows := m.gardenOverlayBody()
 		ta.SetWidth(max(w-2, 4))
 		ta.SetHeight(max(2, min(rows-7, 8)))
