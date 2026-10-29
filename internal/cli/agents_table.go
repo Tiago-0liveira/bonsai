@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 )
 
@@ -72,11 +73,26 @@ func tildePath(path string) string {
 	return path
 }
 
-// agentActivity is "working" while output arrived in the last 5 s, else how
-// long the terminal has been quiet.
+// liveActivity is what the provider reported for a session whose holder runs.
+// A dead holder's last report is stale and ignored.
+func liveActivity(row agentRow) *agentactivity.Activity {
+	if !row.Alive || !row.Summary.Active() {
+		return nil
+	}
+	return row.Summary.Activity
+}
+
+// agentActivity is the provider-reported status (Display label) when the
+// record has one; otherwise, for old holders and providers without hooks,
+// "working" while output arrived in the last 5 s, else how long the terminal
+// has been quiet.
 func agentActivity(row agentRow, now time.Time) string {
 	if !row.Summary.Active() {
 		return "-"
+	}
+	if a := liveActivity(row); a != nil {
+		_, label := agentactivity.Display(row.Summary.State, a)
+		return label
 	}
 	last := row.LastOutputAt
 	if row.info != nil {

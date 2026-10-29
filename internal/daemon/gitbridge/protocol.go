@@ -35,11 +35,22 @@ type Frame struct {
 
 // git.inventory is a strict subset of git.repository.refresh (worktrees,
 // branches, remotes; no status), so it is a read with the same authority.
-var reads = map[string]bool{"git.repository.refresh": true, "git.inventory": true, "git.branches": true, "git.worktrees": true, "git.status": true, "git.files": true, "git.file.read": true, "git.diff.read": true}
+var reads = map[string]bool{"git.repository.refresh": true, "git.inventory": true, "git.branches": true, "git.worktrees": true, "git.status": true, "git.files": true, "git.file.read": true, "git.diff.read": true,
+	// Isolation preview, inspection and head comparison change nothing.
+	"git.isolation.preview": true, "git.isolation.inspect": true, "git.isolation.head": true}
+
+// isolationKinds are the typed commands for implementation worktrees. Each takes
+// exactly one typed argument object; none runs caller-supplied Git or a shell.
+var isolationKinds = map[string]bool{"git.isolation.preview": true, "git.isolation.create": true, "git.isolation.inspect": true, "git.isolation.remove": true, "git.isolation.head": true, "git.isolation.push": true}
+
+func IsIsolation(kind string) bool { return isolationKinds[kind] }
 
 func IsRead(kind string) bool { return reads[kind] }
 func Allowed(kind string) bool {
 	if kind == "git.repository.sync" {
+		return true
+	}
+	if IsIsolation(kind) {
 		return true
 	}
 	return IsRead(kind) || map[string]bool{"git.fetch": true, "git.worktree.create": true, "git.worktree.remove": true, "git.pull": true, "git.push": true, "git.commit": true, "git.stage": true, "git.unstage": true, "git.rebase": true, "git.merge": true, "git.operation.continue": true, "git.operation.abort": true}[kind]

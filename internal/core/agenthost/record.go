@@ -41,6 +41,10 @@ type Record struct {
 	WorkDir       string                `json:"work_dir"`
 	Summary       agentterminal.Summary `json:"summary"`
 	LastOutputAt  *time.Time            `json:"last_output_at,omitempty"`
+	// StartHash and StartPhase are the receipt of an operation-bound start
+	// (see StartOperation). The hash binds the request without its prompt.
+	StartHash  string `json:"start_hash,omitempty"`
+	StartPhase string `json:"start_phase,omitempty"` // reserved|claimed|acknowledged|closed
 	// Alive is whether the holder still runs, filled in by List.
 	Alive bool `json:"-"`
 }
@@ -112,6 +116,21 @@ func Read(p Paths, id string) (Record, error) {
 	if !validID(id) {
 		return Record{}, fmt.Errorf("invalid agent session id")
 	}
+	r, err := loadRecord(p, id)
+	if err != nil {
+		return Record{}, err
+	}
+	r.Alive = held(p.lock(id))
+	// A reservation nobody holds yet may belong to a holder that is still
+	// forking: only the fencing path may settle it.
+	if !r.Alive && r.Summary.Active() && r.StartPhase != phaseReserved {
+		markLost(&r)
+	}
+	return r, nil
+}
+
+// loadRecord parses one record file without judging liveness.
+func loadRecord(p Paths, id string) (Record, error) {
 	raw, err := os.ReadFile(p.record(id))
 	if err != nil {
 		return Record{}, err
@@ -123,16 +142,13 @@ func Read(p Paths, id string) (Record, error) {
 	if r.ID != id {
 		return Record{}, fmt.Errorf("agent record %s names %s", id, r.ID)
 	}
-	r.Alive = held(p.lock(id))
-	if !r.Alive && r.Summary.Active() {
-		markLost(&r)
-	}
 	return r, nil
 }
 
 // markLost shows the session of a holder that died mid-session as failed.
 func markLost(r *Record) {
 	r.Summary.State = "failed"
+	r.Summary.Activity = nil
 	r.Summary.Error = LostError
 	if r.Summary.EndedAt == nil {
 		ended := r.Summary.CreatedAt
@@ -176,6 +192,11 @@ func Prune(p Paths) error {
 	}
 	var ended []Record
 	for _, r := range records {
+		// Operation receipts and tombstones are the only proof a retry needs to
+		// tell a closed start from an absent one, so ordinary pruning keeps them.
+		if r.StartHash != "" {
+			continue
+		}
 		if !r.Alive {
 			ended = append(ended, r)
 		}
@@ -206,6 +227,9 @@ func Remove(p Paths, id string) error {
 	}
 	if r.Alive {
 		return fmt.Errorf("agent session %s is still running", id)
+	}
+	if r.StartPhase == phaseReserved || r.StartPhase == phaseClaimed {
+		return fmt.Errorf("agent session %s has an unsettled start; query it first", id)
 	}
 	return remove(p, id)
 }

@@ -26,6 +26,17 @@ func providerSettingsPath(home string) string {
 	return filepath.Join(antigravityDir(home), "settings.json")
 }
 
+// hooksPath is where agy reads its global hooks: ~/.gemini/config/hooks.json,
+// shared by the CLI and its backend.
+func hooksPath(home string) string {
+	return filepath.Join(home, ".gemini", "config", "hooks.json")
+}
+
+// notificationsMarkerPath exists when the session turned notifications on.
+func notificationsMarkerPath(session agents.Session) string {
+	return filepath.Join(session.RuntimeDir, "activity-notifications")
+}
+
 func generationPath(session agents.Session) string {
 	return filepath.Join(session.RuntimeDir, "credential-generation.json")
 }

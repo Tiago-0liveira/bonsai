@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bonsai / Garden workflow sketches</title>
+<style>
+:root{color-scheme:light;--paper:#f3f2eb;--ink:#252c22;--muted:#687160;--line:#d7dccf;--green:#48632f;--terminal:#131612}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:90px}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 system-ui,sans-serif}main{max-width:1500px;margin:auto;padding:40px}h1{font-size:clamp(32px,4vw,54px);line-height:1.1;letter-spacing:-.045em;margin:15px 0 22px}h2{font-size:24px;line-height:1.3;letter-spacing:-.025em}a{color:var(--green);text-underline-offset:4px}button,select{font:inherit;color:inherit}button{cursor:pointer;border:1px solid #b7c0ac;background:transparent;border-radius:3px;padding:7px 13px}button:hover{background:#e4e8db}button[aria-pressed=true],button.active{background:#48632f;color:#f3f2eb;border-color:#48632f}:focus-visible{outline:3px solid #9c7029;outline-offset:4px}.eyebrow{font-size:12px;letter-spacing:.1em;font-weight:700;color:var(--green)}.intro{max-width:850px;font-size:18px}.note{max-width:1000px;color:var(--muted);font-size:14px}.links{display:flex;gap:20px;flex-wrap:wrap;margin:24px 0 35px}.explorer{border-top:1px solid var(--line);padding-top:25px}.explorer-top{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}.explorer-tabs,.sizes{display:flex;gap:8px;flex-wrap:wrap}.stagebar{display:flex;gap:7px;flex-wrap:wrap;margin:16px 0}.stagebar button{font-size:12px;padding:5px 9px}.viewport{background:var(--terminal);padding:10px;position:relative}.image-stage{position:relative;max-width:100%;margin:auto}.image-stage img{display:block;width:100%;height:auto}.hotspot{position:absolute;background:transparent;border:1px solid transparent;border-radius:0;padding:0;min-width:0;min-height:0}.hotspot:hover,.hotspot:focus-visible{background:#8db84c12;border:1px solid #9fc96b;outline-offset:1px}.explorer-caption{display:flex;justify-content:space-between;gap:20px;margin:12px 0;font-size:14px;color:var(--muted)}.close-preview{background:#e4e8db}#preview-title{font-weight:600;color:var(--ink)}.filters{position:sticky;top:0;z-index:2;background:var(--paper);border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:14px 0;margin-top:40px}.filters button{font-size:13px}.count{font-size:12px;color:var(--muted);margin-left:auto}.scene{border-bottom:1px solid var(--line);padding:26px 0 38px}.scene[hidden]{display:none}.scene-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.scene h2{margin:6px 0 8px}.scene .description{margin:0 0 6px;max-width:900px}.scene .sizes button{font-size:12px;padding:4px 9px}figure{margin:20px 0 10px}figure img{display:block;width:100%;height:auto;max-width:1356px;background:var(--terminal)}.image-button{display:block;border:0;padding:0;background:transparent;max-width:100%}.image-button:hover{background:transparent}figcaption{margin:10px 0;color:var(--muted);font-size:13px}.downloads{display:flex;gap:20px;font-size:14px}.feasibility{border-top:1px solid var(--line);padding-top:20px;margin-top:30px;max-width:1000px}.feasibility li{margin:9px 0}dialog{padding:0;border:1px solid #41483b;background:var(--terminal);max-width:98vw;max-height:97vh;color:#d1d5db}dialog::backdrop{background:#131612e8}.lightbox-controls{display:flex;align-items:center;justify-content:space-between;gap:25px;padding:12px 18px;background:#1b1f19;font-size:13px}.lightbox-controls button{color:#d1d5db;border-color:#41483b}.lightbox-image{max-width:95vw;max-height:84vh;display:block;object-fit:contain}.lightbox-controls a{color:#9fc96b}.lightbox-name{max-width:70vw}.footer{font-size:13px;color:var(--muted);padding:35px 0 15px}.compact-help{font-size:12px;color:var(--muted)}@media(max-width:700px){main{padding:22px 16px}.explorer-caption{flex-direction:column;gap:2px}.scene-heading{align-items:flex-start;flex-direction:column}.count{width:100%;margin-left:0}.filters{gap:5px;padding:10px 0}.filters button{padding:5px 8px}.viewport{padding:3px}.intro{font-size:16px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body><main>
+<p class="eyebrow">BONSAI / GARDEN WORKFLOW / EXPLORATION 01</p>
+<h1>A thought. A clear ticket.<br>A visible path to done.</h1>
+<p class="intro">A simpler drafting workspace, richer boards and tables, and a focused ticket overlay for every step. Drawn in the exact terminal grid and visual language of revision 02.</p>
+<p class="note">Exploratory sketches, not an approved implementation plan. All content is fictional. The explorer only changes images: it cannot create an issue, approve work, start an agent or merge a PR.</p>
+<nav class="links" aria-label="Design references"><a href="overview.png">Six-screen overview</a><a href="#sketches">All sketches</a><a href="README.md">Design notes</a><a href="../../design/tui-redesign/revision-02/index.html">Revision 02 reference</a><a href="manifest.json">Image manifest</a></nav>
+
+<section class="explorer" aria-label="Clickable image explorer">
+<div class="explorer-top"><div><p class="eyebrow">EXPLORE THE SKETCHES</p><h2>Open a card. Follow the next decision.</h2></div><div class="explorer-tabs" aria-label="Explorer surface"><button data-root="board" aria-pressed="true">Board</button><button data-root="board-detailed" aria-pressed="false">9 stages</button><button data-root="table" aria-pressed="false">Table</button><button data-root="inbox" aria-pressed="false">Drafts</button></div></div>
+<p class="note">Click a ticket, table row or highlighted action. Keyboard users can Tab through the image controls and press Enter. Escape returns from an overlay to the exact originating view.</p>
+<div class="stagebar" id="stages" aria-label="Open a workflow state"></div>
+<div class="viewport"><div class="image-stage" id="image-stage"><img id="preview" alt="" width="1796" height="1284"><div id="hotspots"></div></div></div>
+<div class="explorer-caption"><span id="preview-title" aria-live="polite"></span><span><button id="back" class="close-preview" hidden>← Return to view</button> <a id="preview-png" href="#">PNG</a> · <a id="preview-svg" href="#">SVG</a> · <button id="expand">Full size ↗</button></span></div>
+<p class="compact-help">A terminal overlay uses solid colored cells and box borders. At 80 × 24 it expands to a focused sheet. Color always accompanies a written state or symbol.</p>
+</section>
+
+<div id="sketches" class="filters" role="group" aria-label="Filter sketches"><button data-filter="All" aria-pressed="true">All sketches</button><button data-filter="Drafting" aria-pressed="false">Drafting</button><button data-filter="Views" aria-pressed="false">Board & table</button><button data-filter="Ticket overlays" aria-pressed="false">Ticket overlays</button><button data-filter="Recovery" aria-pressed="false">Recovery</button><button data-filter="Compact" aria-pressed="false">80-column layouts</button><span class="count" id="count"></span></div>
+<div id="gallery"></div>
+
+<aside class="feasibility"><h2>Designed to fit a terminal</h2><ul><li>Every glyph, filled surface, rail, border and action occupies whole cells on the reference 11 × 26 grid. No gradients, blur, transparency, freeform illustrations or rounded pixel controls appear inside the TUI.</li><li>The application shell, olive palette, DejaVu Sans Mono, shaded submenu and focus footer follow revision 02. Muted blue, cyan and plum add phase distinctions; amber marks decisions and red marks blockers.</li><li>Wide ticket overlays keep the parent visible with dimmed solid colors. Compact layouts use a nearly full-screen sheet. Focus belongs to the sheet; Escape returns to the original selection. Long content scrolls within the active section.</li><li>Mouse targets map to cell rectangles. Keyboard activation is equivalent: arrows select, Enter opens, Tab moves between overlay actions. Opening an item never runs a mutation.</li><li>Private draft recovery, grouped phases and the one-pass reviewer are proposed product behavior. Existing verified approvals, account isolation and GitHub freshness boundaries remain requirements.</li></ul><p class="note">Feasibility reference: Charm's <a href="https://github.com/charmbracelet/lipgloss">cell-based styling and composition</a>. The current Bonsai dependency is Lip Gloss v1; these sketches require no dependency change and make no claim that its v2 compositor is already installed.</p></aside>
+<p class="footer">Garden workflow / exploration 01 · <span id="inventory"></span> · Original revision 02 assets remain unchanged.</p>
+</main>
+<dialog id="lightbox" aria-label="Full-size sketch"><div class="lightbox-controls"><span class="lightbox-name" id="lightbox-name"></span><span><a id="lightbox-source" href="#">PNG</a> <button id="lightbox-close" autofocus>Close · Esc</button></span></div><img id="lightbox-image" class="lightbox-image" alt=""></dialog>
+<script>
+'use strict';
+const manifest = /* MANIFEST */;
+const screens = manifest.screens;
+const byKey = new Map();
+for (const screen of screens) { if (!byKey.has(screen.key)) byKey.set(screen.key, []); byKey.get(screen.key).push(screen); }
+const $ = id => document.getElementById(id);
+function el(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; }
+function imageUrl(screen, ext = 'png') { return `${ext}/${screen.stem}.${ext}`; }
+function choose(key, context = 'default') { const list = byKey.get(key); return list?.find(s => s.cols === (key.startsWith('board') ? 160 : 120) && s.context === context) || list?.[0]; }
+let root = 'board', current = choose(root), previous = current;
+function viewContext() { return ['table','table-grouped','attention'].includes(current.key) || current.context === 'table' ? 'table' : 'default'; }
+function show(screen, remember = true) {
+  if (!screen) return;
+  if (remember && ['board','board-detailed','table','inbox','attention'].includes(current.key)) previous = current;
+  current = screen;
+  const img = $('preview'); img.src = imageUrl(screen); img.alt = screen.title; img.width = screen.width; img.height = screen.height;
+  $('preview-title').textContent = `${screen.title} / ${screen.cols} × ${screen.rows}`;
+  $('preview-png').href = imageUrl(screen); $('preview-svg').href = imageUrl(screen, 'svg');
+  $('back').hidden = screen.key === root;
+  const host = $('hotspots'); host.replaceChildren();
+  for (const hot of screen.hotspots) {
+    const button = el('button', 'hotspot'); button.type = 'button'; button.setAttribute('aria-label', hot.label); button.title = hot.label;
+    const cell = manifest.cell;
+    Object.assign(button.style, { left: `${100*(cell.margin+hot.col*cell.width)/screen.width}%`, top: `${100*(cell.margin+hot.row*cell.height)/screen.height}%`, width: `${100*hot.w*cell.width/screen.width}%`, height: `${100*hot.h*cell.height/screen.height}%` });
+    button.addEventListener('click', () => hot.target === '@close' ? closeOverlay() : show(choose(hot.target, viewContext())));
+    host.append(button);
+  }
+}
+function closeOverlay() { show(previous || choose(root), false); $('expand').focus(); }
+document.querySelectorAll('[data-root]').forEach(button => button.addEventListener('click', () => {
+  root = button.dataset.root;
+  document.querySelectorAll('[data-root]').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+  previous = choose(root); show(previous, false);
+}));
+const stageLabels = [['manual','Write a draft'],['clarify','With AI'],['approved','Approved'],['planning','Planning'],['plan-review','Plan review'],['ready','Ready'],['running','Running'],['ai-review','AI review'],['human-review','Human review'],['done','Done'],['blocked','Blocked']];
+for (const [key, label] of stageLabels) { const button = el('button','',label); button.addEventListener('click', () => show(choose(key, viewContext()))); $('stages').append(button); }
+$('back').addEventListener('click', closeOverlay);
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('lightbox').open && current.key !== root) closeOverlay(); });
+function expand(screen) { $('lightbox-name').textContent = `${screen.title} / ${screen.cols} × ${screen.rows}`; $('lightbox-image').src = imageUrl(screen); $('lightbox-image').alt = screen.title; $('lightbox-source').href = imageUrl(screen); $('lightbox').showModal(); }
+$('expand').addEventListener('click', () => expand(current));
+$('lightbox-close').addEventListener('click', () => $('lightbox').close());
+$('lightbox').addEventListener('click', event => { if (event.target === $('lightbox')) $('lightbox').close(); });
+const sections = [];
+for (const [key, variants] of byKey) {
+  const first = variants[0], section = el('section','scene'); section.id = key; section.dataset.group = first.group;
+  const heading = el('div','scene-heading'), names = el('div');
+  names.append(el('p','eyebrow', first.group),el('h2','',first.title)); heading.append(names);
+  const sizes = el('div','sizes'); heading.append(sizes); section.append(heading,el('p','description',first.description),el('p','note',first.note));
+  const figure = el('figure'), imageButton = el('button','image-button'), image = el('img'), caption = el('figcaption');
+  image.loading = 'lazy'; imageButton.append(image); figure.append(imageButton,caption); section.append(figure);
+  const downloads = el('div','downloads'), png = el('a','','PNG'), svg = el('a','','Vector SVG'), explore = el('button','','Open in explorer ↑');
+  downloads.append(png,svg,explore); section.append(downloads);
+  let selected = first;
+  function select(screen) {
+    selected = screen; image.src = imageUrl(screen); image.alt = `${screen.title} at ${screen.cols} by ${screen.rows}`; image.width = screen.width; image.height = screen.height;
+    imageButton.setAttribute('aria-label', `Enlarge ${image.alt}`); caption.textContent = `${screen.cols} × ${screen.rows} / ${screen.width} × ${screen.height} px / cell-grid SVG → PNG`;
+    png.href = imageUrl(screen); svg.href = imageUrl(screen,'svg');
+    [...sizes.children].forEach(b => b.setAttribute('aria-pressed',String(b.dataset.stem === screen.stem)));
+  }
+  for (const screen of variants) { const button = el('button','',`${screen.cols} × ${screen.rows}${screen.context === 'table' ? ' / Table' : ''}`); button.dataset.stem = screen.stem; button.addEventListener('click', () => select(screen)); sizes.append(button); }
+  imageButton.addEventListener('click', () => expand(selected));
+  explore.addEventListener('click', () => { show(selected); document.querySelector('.explorer').scrollIntoView(); });
+  section.select = select; section.variants = variants; select(first); sections.push(section); $('gallery').append(section);
+}
+function filter(group) {
+  document.querySelectorAll('[data-filter]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.filter === group)));
+  let count = 0;
+  for (const section of sections) {
+    const compact = section.variants.find(s => s.cols === 80);
+    section.hidden = group === 'Compact' ? !compact : group !== 'All' && section.dataset.group !== group;
+    if (!section.hidden) { count++; section.select(group === 'Compact' ? compact : section.variants[0]); }
+  }
+  $('count').textContent = `${count} sketches shown`;
+}
+document.querySelectorAll('[data-filter]').forEach(button => button.addEventListener('click', () => filter(button.dataset.filter)));
+$('inventory').textContent = `${byKey.size} scenes / ${screens.length} SVG + PNG pairs`;
+show(current,false); filter('All');
+</script>
+</body></html>

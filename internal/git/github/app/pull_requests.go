@@ -24,6 +24,7 @@ type rawPR struct {
 	Draft                bool
 	Merged               bool
 	MergedAt             *time.Time `json:"merged_at"`
+	MergeCommitSHA       string     `json:"merge_commit_sha"`
 	HTMLURL              string     `json:"html_url"`
 	NodeID               string     `json:"node_id"`
 	CreatedAt            time.Time  `json:"created_at"`
@@ -106,7 +107,7 @@ func (c *Client) PullRequest(ctx context.Context, repo string, n int) (gh.PullRe
 	if _, e = c.request(ctx, repo, "GET", p, nil, &raw); e != nil {
 		return gh.PullRequestDetail{}, e
 	}
-	d := gh.PullRequestDetail{PullRequest: raw.domain(), Mergeable: "unknown", Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles, RequestedReviewers: []string{}, Comments: []gh.Comment{}, Reviews: []gh.Review{}, Commits: []gh.Commit{}, Files: []gh.File{}}
+	d := gh.PullRequestDetail{PullRequest: raw.domain(), Mergeable: "unknown", Merged: raw.Merged || raw.MergedAt != nil, MergedAt: raw.MergedAt, MergeCommitSHA: raw.MergeCommitSHA, Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles, RequestedReviewers: []string{}, Comments: []gh.Comment{}, Reviews: []gh.Review{}, Commits: []gh.Commit{}, Files: []gh.File{}}
 	if raw.Mergeable != nil {
 		d.Mergeable = "conflicting"
 		if *raw.Mergeable {

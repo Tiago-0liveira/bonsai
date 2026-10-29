@@ -1,6 +1,7 @@
 package worktreelist
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"strings"
 	"testing"
 
@@ -114,4 +115,32 @@ func TestSetPRStatusMode(t *testing.T) {
 		t.Errorf("unknown mode should fall back to full, got %q", prStatusMode)
 	}
 	SetPRStatusMode("full")
+}
+
+func TestRefreshPreservesFilterAndSelectedPath(t *testing.T) {
+	m := New()
+	m.SetSize(80, 20)
+	items := []Item{{WT: git.Worktree{Path: "/main", Branch: "main"}}, {WT: git.Worktree{Path: "/feature-one", Branch: "feature-one"}}, {WT: git.Worktree{Path: "/feature-two", Branch: "feature-two"}}}
+	m.SetItems(items)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	var cmd tea.Cmd
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature")})
+	if cmd != nil {
+		m, _ = m.Update(cmd())
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.SelectByPath("/feature-two") {
+		t.Fatal("visible filtered item not found")
+	}
+	if selected, ok := m.Selected(); !ok || selected.WT.Path != "/feature-two" {
+		t.Fatal("filtered index used underlying-list position")
+	}
+	items[2].Status.Modified = 3
+	m.SetItems([]Item{items[2], items[0], items[1]})
+	if selected, ok := m.Selected(); !ok || selected.WT.Path != "/feature-two" || selected.Status.Modified != 3 {
+		t.Fatalf("filtered refresh lost selected identity/data: %+v", selected)
+	}
+	if m.SelectByPath("/main") {
+		t.Fatal("hidden item escaped the active filter")
+	}
 }

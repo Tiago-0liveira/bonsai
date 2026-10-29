@@ -311,6 +311,9 @@ func (m Model) agentTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.agents.view
 	if msg.Type == tea.KeyCtrlCloseBracket {
 		m.leaveTerminalMode(v)
+		if m.launchSessionShown() && (v.state == attachControlling || !v.opts.ReadOnly) {
+			return m, m.reattachAgent(v, true)
+		}
 		return m, nil
 	}
 	switch v.state {

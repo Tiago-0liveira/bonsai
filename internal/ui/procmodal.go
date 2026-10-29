@@ -84,6 +84,11 @@ func (m Model) onProcModalSubmit(label string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Select the owning worktree, switch to the Processes tab, focus the process.
+	if m.layoutKind == LayoutRedesign {
+		m.wt.sub = wtProcesses
+		m.wt.selected[wtProcesses] = fmt.Sprint(rec.ID)
+		m.worktreesReconcile()
+	}
 	m.list.SelectByPath(rec.Worktree)
 	m.rightTab = tabProcs
 	m.focus = focusTerminal
@@ -238,7 +243,19 @@ func (m Model) currentPath() string {
 // daemon owns the processes, so quitting the TUI keeps them alive by default;
 // the modal only stops the ones the user unchecks.
 func (m Model) quit() (tea.Model, tea.Cmd) {
-	m.procs.refresh()
+	if nm, asked := m.privQuitGuard(); asked {
+		return nm, nil
+	}
+	m.garden.launch.overviewGen++
+	m.garden.launch.overviewPending = false
+	m.garden.launch.stopGen++
+	m.garden.launch.stopAttempt = ""
+	if m.layoutKind == LayoutRedesign && !m.wt.started {
+		return m, m.agents.quit()
+	}
+	if m.layoutKind != LayoutRedesign {
+		m.procs.refresh()
+	}
 	var running []*procstore.Record
 	for _, r := range m.procs.All() {
 		if procstore.IsActive(r.Status) {

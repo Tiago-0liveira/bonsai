@@ -10,7 +10,10 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
 
-func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	if req.Launch.ReadOnly {
+		return agents.PreparedSession{}, agents.RequireReadOnly(p)
+	}
 	settings, err := ParseSettings(req.Account)
 	if err != nil {
 		return agents.PreparedSession{}, err
@@ -26,11 +29,19 @@ func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRe
 	if info, err := os.Stat(home); err != nil || !info.IsDir() {
 		return agents.PreparedSession{}, fmt.Errorf("codex profile %q has no home directory; remove and add it again", req.Account.Name)
 	}
+	env := p.profileEnvironment(home, req.Account, req.Session)
+	if req.Activity.Usable() {
+		env[req.Activity.SpoolEnv] = req.Activity.SpoolPath
+		// Hooks are an upgrade over the terminal notifications, never a
+		// precondition: when they cannot be installed or trusted the session
+		// starts anyway and reports activity from its terminal only.
+		_ = p.installActivityHooks(ctx, req.Account, req.Activity, executable)
+	}
 	return agents.PreparedSession{
 		Executable:       executable,
-		Args:             launchArgs(settings, req.Args, req.Launch),
+		Args:             launchArgs(settings, req.Args, req.Launch, req.Activity),
 		Dir:              req.Session.WorkDir,
-		EnvSet:           p.profileEnvironment(home, req.Account, req.Session),
+		EnvSet:           env,
 		EnvUnsetPrefixes: scrubPrefixes,
 	}, nil
 }
@@ -44,6 +55,9 @@ func (p *Provider) FinalizeSession(context.Context, agents.FinalizeSessionReques
 // ValidateLaunch rejects options Codex has no equivalent for, and bad values,
 // before any session exists.
 func (p *Provider) ValidateLaunch(account agents.Account, launch agents.LaunchOptions) error {
+	if launch.ReadOnly {
+		return agents.RequireReadOnly(p)
+	}
 	if launch.FullAccess != nil {
 		return fmt.Errorf("codex does not support full access; use the Full access or Bypass permissions")
 	}
@@ -109,15 +123,21 @@ func (p *Provider) LaunchFields() []agents.LaunchField {
 // `--` so a leading dash stays literal; when the explicit args carry their own
 // `--`, Bonsai's flags go before it.
 //
+// activity adds the notification settings (see notificationArgs) for the
+// terminal fallback, except those the explicit args already choose.
+//
 // When the explicit args start with something other than a flag, the caller is
 // driving a subcommand (`login`, `resume --last`) or a positional prompt, so
 // only the global options go in front: the credential store override and
 // --no-daemon, which keeps a resumed or forked TUI out of the shared daemon too.
-func launchArgs(settings Settings, explicit []string, launch agents.LaunchOptions) []string {
+func launchArgs(settings Settings, explicit []string, launch agents.LaunchOptions, activity *agents.ActivityRequest) []string {
 	if len(explicit) > 0 && !strings.HasPrefix(explicit[0], "-") {
 		global := []string{"-c", storeOverride}
 		if !hasFlag(explicit, "--no-daemon") {
 			global = append(global, "--no-daemon")
+		}
+		if activity.Usable() {
+			global = append(global, notificationArgs(explicit)...)
 		}
 		return append(global, explicit...)
 	}
@@ -128,6 +148,9 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 	args := append(append([]string(nil), head...), "-c", storeOverride)
 	if !hasFlag(args, "--no-daemon") {
 		args = append(args, "--no-daemon")
+	}
+	if activity.Usable() {
+		args = append(args, notificationArgs(args)...)
 	}
 	if model := first(launch.Model, settings.Model); model != "" && !hasFlag(args, "-m", "--model") {
 		args = append(args, "-m", model)
@@ -165,6 +188,12 @@ func launchArgs(settings Settings, explicit []string, launch agents.LaunchOption
 		args = append(args, "--", launch.Prompt)
 	}
 	return args
+}
+
+// ReadOnly refuses the planner role because a shell sandbox does not constrain
+// configured MCP tools, plugins or hooks, and patch denial is unverified.
+func (p *Provider) ReadOnly() agents.ReadOnlySupport {
+	return agents.ReadOnlySupport{Reason: "Codex cannot enforce read-only access across patch tools, MCP, plugins and hooks"}
 }
 
 func first(values ...string) string {
@@ -218,3 +247,49 @@ func hasConfig(args []string, key string) bool {
 	}
 	return false
 }
+
+// ResolveLaunch returns the options a launch with these overrides runs with:
+// the model, effort and the sandbox and approval pair, profile defaults filled
+// in. Like launchArgs, an override of either sandbox or approval replaces both
+// profile values. A stored pair that matches no preset is kept as it is. It
+// starts nothing and the prompt and display name stay unset.
+func (p *Provider) ResolveLaunch(account agents.Account, launch agents.LaunchOptions) (agents.LaunchOptions, error) {
+	if launch.ReadOnly || launch.Prompt != "" || launch.DisplayName != "" {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: only model, effort, sandbox and approval can be resolved", agents.ErrInvalidLaunch)
+	}
+	if err := p.ValidateLaunch(account, launch); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	settings, err := ParseSettings(account)
+	if err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: invalid profile settings", agents.ErrInvalidLaunch)
+	}
+	effective := agents.LaunchOptions{
+		Model:    first(launch.Model, settings.Model),
+		Effort:   first(launch.Effort, settings.Effort),
+		Sandbox:  settings.Sandbox,
+		Approval: settings.Approval,
+	}
+	if launch.Sandbox != "" || launch.Approval != "" {
+		effective.Sandbox, effective.Approval = launch.Sandbox, launch.Approval
+	}
+	if err := validatePermissions(effective.Model, effective.Effort, effective.Sandbox, effective.Approval); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	if err := p.validateEffort(account, settings, effective); err != nil {
+		return agents.LaunchOptions{}, fmt.Errorf("%w: %v", agents.ErrInvalidLaunch, err)
+	}
+	return effective, nil
+}
+
+var _ agents.LaunchResolver = (*Provider)(nil)
+
+// CachedModels returns the model list already learned for the profile, however
+// old, and never starts Codex.
+func (p *Provider) CachedModels(account agents.Account) []agents.ModelOption {
+	p.modelsMu.Lock()
+	defer p.modelsMu.Unlock()
+	return append([]agents.ModelOption(nil), p.modelCache[account.ID].models...)
+}
+
+var _ agents.CachedModelLister = (*Provider)(nil)

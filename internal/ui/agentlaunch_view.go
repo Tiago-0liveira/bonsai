@@ -58,14 +58,23 @@ func (d launchDialog) compose(iw, h int) []string {
 	danger := lipgloss.NewStyle().Foreground(th.Danger)
 	rule := dim.Render(strings.Repeat(d.rule(), iw))
 
-	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render("New session")
-	top := []string{leftRight(title, dim.Render(d.target.branch), iw), rule}
+	heading, scope := "New session", d.target.branch
+	if d.planner {
+		heading, scope = "Request AI plan", "read-only / no worktree"
+	}
+	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render(heading)
+	top := []string{leftRight(title, dim.Render(scope), iw), rule}
+	if cur, ok := d.Current(); d.planner && ok {
+		top = append(top, d.plannerContract(cur, iw))
+	}
 	bottom := []string{rule, dim.Render(d.footerFit(iw))}
 	free := max(h-len(top)-len(bottom), 0)
 
 	var body []string
 	a, ok := d.Current()
 	switch {
+	case ok && d.plannerWide():
+		return d.composeChoose(a, iw, h)
 	case !d.Listed():
 		body = []string{dim.Render("Loading accounts…")}
 	case d.ListErr() != "":
@@ -86,6 +95,20 @@ func (d launchDialog) compose(iw, h int) []string {
 		lines = append(lines[:h-1], lines[len(lines)-1])
 	}
 	return lines
+}
+
+// plannerContract is the permission the chosen account would run with, or why it cannot plan. Choosing the
+// account and pressing the primary action is what accepts it.
+func (d launchDialog) plannerContract(a agentsapi.Account, iw int) string {
+	th := theme.Current
+	if !a.ReadOnly.Supported {
+		return ansi.Truncate(lipgloss.NewStyle().Foreground(th.Danger).Render("✗ "+plannerUnavailableText(a)), iw, "…")
+	}
+	text := "✓ Read-only: " + a.ReadOnly.Mechanism
+	if len(a.ReadOnly.Allows) > 0 {
+		text += " · " + strings.Join(a.ReadOnly.Allows, " · ")
+	}
+	return ansi.Truncate(lipgloss.NewStyle().Foreground(th.Success).Render(text), iw, "…")
 }
 
 // options is the body for a selected account: table, divider, options, save
@@ -271,14 +294,7 @@ func (d launchDialog) saveRow() string {
 // shows in place.
 func (d launchDialog) buttonsRow(a agentsapi.Account, iw int) string {
 	focused := d.focus == launchFocusButtons
-	start := "Start session"
-	disabled := false
-	switch {
-	case d.starting:
-		start, disabled = "Starting…", true
-	case accounts.NeedsSignIn(a.Info):
-		start = "Sign in first"
-	}
+	start, disabled := d.primaryLabel(a)
 	btn := func(label string, on, off bool) string {
 		st := lipgloss.NewStyle()
 		switch {
@@ -291,6 +307,26 @@ func (d launchDialog) buttonsRow(a agentsapi.Account, iw int) string {
 	}
 	row := btn("Cancel", focused && d.button == 0, false) + "     " + btn("[ "+start+" ]", focused && d.button == 1, disabled)
 	return leftRight("", row, iw)
+}
+
+// primaryLabel is the primary action's wording and whether it is unavailable.
+func (d launchDialog) primaryLabel(a agentsapi.Account) (label string, disabled bool) {
+	label = "Start session"
+	if d.planner {
+		label = "Accept read-only and request plan"
+		if d.revise {
+			label = "Accept read-only and revise plan"
+		}
+	}
+	switch {
+	case d.starting:
+		return "Starting…", true
+	case d.planner && !a.ReadOnly.Supported:
+		return "Cannot plan", true
+	case accounts.NeedsSignIn(a.Info):
+		return "Sign in first", false
+	}
+	return label, false
 }
 
 // footer is the one hint line, for the area that has focus.
@@ -309,6 +345,13 @@ func (d launchDialog) footer() string {
 		s = "←→ Action  Enter Select  Ctrl+S Start  Esc Back"
 	default:
 		s = "Tab Next field  Shift+Tab Previous  Ctrl+S Start  Esc Back"
+	}
+	if d.planner {
+		verb := "Request"
+		if d.revise {
+			verb = "Send"
+		}
+		s = strings.ReplaceAll(s, "Start", verb)
 	}
 	if d.ascii {
 		s = strings.NewReplacer("↑↓", "j/k", "←→", "h/l").Replace(s)

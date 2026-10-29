@@ -14,11 +14,25 @@ var (
 	ErrSessionNotFound    = errors.New("session not found")
 	ErrNotAuthenticated   = errors.New("account is not authenticated")
 	ErrUsageUnsupported   = errors.New("provider does not support usage")
+	ErrNativeUnresolved   = errors.New("native permissions are not decided")
+	ErrNativeUnsupported  = errors.New("native permissions are not supported")
 	ErrInvalidLaunch      = errors.New("invalid launch options")
 	ErrAccountBusy        = errors.New("account already has an active session")
 	ErrProviderBusy       = errors.New("provider already has an active session on another account")
 	ErrAccountInUse       = errors.New("account has active sessions")
 	ErrInvalidProfile     = errors.New("invalid profile defaults")
+	// ErrSessionConflict means a reserved session ID already names a session
+	// with a different provider, account or working directory.
+	ErrSessionConflict = errors.New("session id reserved for a different identity")
+	// ErrReadOnlyUnsupported means a read-only launch was asked of a provider whose
+	// CLI cannot enforce it. The launch is refused; it never runs unrestricted.
+	ErrReadOnlyUnsupported = errors.New("provider cannot enforce read-only access")
+	// ErrStructuredUnsupported means a structured call was asked of a provider
+	// that cannot run it tool-free. The call is refused before any process starts.
+	ErrStructuredUnsupported = errors.New("provider cannot run tool-free structured calls")
+	// ErrStructuredOutput means the provider's reply was missing, too large or not
+	// the requested JSON object. The message never carries the reply.
+	ErrStructuredOutput = errors.New("provider returned an unusable structured reply")
 )
 
 // AccountInUseError lists the active sessions that keep an account from being

@@ -76,8 +76,16 @@ type launchDialog struct {
 	id     uint64
 	ascii  bool
 	target launchTarget
-	now    func() time.Time
-	w, h   int
+	// planner turns the dialog into the Garden planner's account choice: only model and effort can be set,
+	// the launch is read-only, and an account whose provider cannot enforce that cannot be chosen.
+	planner bool
+	// revise makes the planner choice the one behind Send feedback & revise plan: it accepts the read-only
+	// contract for a revision attempt instead of a new plan.
+	revise bool
+	// issue is the opened Issue's "#n title" the planner's choice is headed with; empty keeps the plain heading.
+	issue string
+	now   func() time.Time
+	w, h  int
 
 	focus       launchFocus
 	name        textinput.Model
@@ -169,7 +177,11 @@ func (d launchDialog) onDefaults() launchDialog {
 	def := d.Defaults()
 	// Changes here apply to this launch only: the provider's own launch fields
 	// seeded from the account's defaults.
-	d.form = launchform.New(launchDialogFields(def.LaunchFields), def.Models, def.Values, d.ascii).Focus(d.focus == launchFocusForm)
+	fields := launchDialogFields(def.LaunchFields)
+	if d.planner {
+		fields = plannerDialogFields(fields)
+	}
+	d.form = launchform.New(fields, def.Models, def.Values, d.ascii).Focus(d.focus == launchFocusForm)
 	d.formLoaded = true
 	return d
 }
@@ -187,6 +199,18 @@ func launchDialogFields(fields []agents.LaunchField) []agents.LaunchField {
 	}
 	for _, f := range fields {
 		if f.ID != "model" && f.ID != "effort" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// plannerDialogFields keeps the model and the effort. Permission, sandbox, approval and full-access choices
+// do not exist for a read-only role: the provider's enforced restriction is the only permission it runs with.
+func plannerDialogFields(fields []agents.LaunchField) []agents.LaunchField {
+	var out []agents.LaunchField
+	for _, f := range fields {
+		if f.Kind == agents.LaunchFieldModel || f.ID == "model" || f.ID == "effort" {
 			out = append(out, f)
 		}
 	}
@@ -336,6 +360,11 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 		}
 		return d, nil
 	}
+	if d.planner && !a.ReadOnly.Supported {
+		// Refused here and again by the backend: there is no unrestricted fallback.
+		d.err = plannerUnavailableText(a)
+		return d, nil
+	}
 	if !d.formLoaded {
 		d.err = "Options are still loading."
 		return d, nil
@@ -352,6 +381,10 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 		Name:       name,
 		Launch:     agents.LaunchOptionsFrom(d.Defaults().LaunchFields, values["model"], values),
 	}
+	if d.planner {
+		// Only what the form can set survives; the role fixes the rest.
+		req.Launch = agents.LaunchOptions{Model: req.Launch.Model, Effort: req.Launch.Effort, ReadOnly: true}
+	}
 	sub := launchSubmitMsg{dlg: d.id, req: req, account: a.ID}
 	if d.save {
 		if ch := d.form.Changes(); len(ch) > 0 {
@@ -360,6 +393,15 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 	}
 	d.starting, d.err = true, ""
 	return d, emitMsg(sub)
+}
+
+// plannerUnavailableText is why an account cannot take the planner role.
+func plannerUnavailableText(a agentsapi.Account) string {
+	reason := a.ReadOnly.Reason
+	if reason == "" {
+		reason = "no enforced read-only mode"
+	}
+	return providerName(a.Provider) + " cannot plan: " + reason + ". Choose another account."
 }
 
 // failed shows a start error inline and lets the user try again.

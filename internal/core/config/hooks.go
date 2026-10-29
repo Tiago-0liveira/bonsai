@@ -35,12 +35,34 @@ func HookVars(mainDir, worktreePath, branch, upstream string, prNumber int) map[
 }
 
 // BaseBranch reduces an upstream ref like "origin/main" to its branch ("main").
+// An upstream is a remote-tracking ref, so only its remote segment is dropped:
+// "origin/release/v2" is "release/v2". Fully qualified forms are accepted.
 func BaseBranch(upstream string) string {
 	if upstream == "" {
 		return "main"
 	}
-	if i := strings.LastIndex(upstream, "/"); i >= 0 && i+1 < len(upstream) {
-		return upstream[i+1:]
+	if rest, ok := strings.CutPrefix(upstream, "refs/heads/"); ok {
+		return rest
+	}
+	ref := strings.TrimPrefix(strings.TrimPrefix(upstream, "refs/"), "remotes/")
+	if i := strings.Index(ref, "/"); i >= 0 && i+1 < len(ref) {
+		return ref[i+1:]
 	}
 	return upstream
+}
+
+// BranchOnRemote reduces a base ref that may be a local branch, a
+// "<remote>/<branch>" tracking ref or a fully qualified ref to the branch name
+// on remote. Because the remote is known, a local branch such as "release/v2"
+// is not mistaken for a remote-qualified one.
+func BranchOnRemote(ref, remote string) string {
+	ref = strings.TrimPrefix(ref, "refs/")
+	if rest, ok := strings.CutPrefix(ref, "heads/"); ok {
+		return rest
+	}
+	ref = strings.TrimPrefix(ref, "remotes/")
+	if rest, ok := strings.CutPrefix(ref, remote+"/"); ok && rest != "" {
+		return rest
+	}
+	return ref
 }

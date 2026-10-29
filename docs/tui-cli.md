@@ -5,6 +5,11 @@ a repository), the plain CLI subcommands, project configuration, hooks, prune an
 updates. For the browser workspace see [web.md](web.md); for AI agents see
 [agents.md](agents.md).
 
+The full terminal redesign has [approved mockups](design/tui-redesign/README.md)
+and [sequential implementation plans](plans/tui-redesign/README.md). The current
+TUI remains the default; the [redesign preview](#redesign-preview---tui-layout-redesign)
+contains the five working workspaces.
+
 ## TUI
 
 Run `bonsai` inside a repository. Press `n` to create a worktree, `enter` to
@@ -24,10 +29,17 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 The Agents tab lists the agents running in the selected worktree and the
 selected account's usage; worktree rows group running agents by provider with a
 glyph and count directly after the branch's other badges, plus `!` for an unseen
-failure. It shows the selected session's
+failure. Each glyph takes the style of its most urgent session: highlighted when
+an agent waits for you, normal while one works, dimmed when all of that
+provider's agents are idle. A single `?` follows the glyphs when any agent in the
+worktree waits for a permission, answer or plan approval (`✹?`; the badge grows by
+one cell). Agents whose provider reports no activity (hooks off or unsupported)
+count as working. It shows the selected session's
 live terminal read-only: you can watch the agent. The title row (`AGENTS · <branch>`)
 appears when the terminal is tall enough. A header shows the session's provider,
-profile, model and state, with `· read-only` when another client is controlling it.
+profile, model and status, with `· read-only` when another client is controlling it.
+The status is `Running`, `Working`, `Stalled`, `Idle` or, when the agent waits for
+you, what it asks for (`Needs permission: Bash`).
 The TUI uses the same agent sessions as the web UI and `bonsai agents`. If it starts
 without that backend, the Agents tab is unavailable and the TUI prints
 `agents unavailable: <err>` to stderr after exit. A session started by another
@@ -67,10 +79,11 @@ hint explains how to leave focus and take it back.
 
 Press `a` on the Agents tab to open the sessions screen. It lists the worktree's
 sessions as one flat list, running ones first, then ended ones, newest first. Each
-item shows the session name and its state (`● Running`, `✓ Exited`, `✗ Failed`) on one
+item shows the session name and its status (`● Working`, `● Waiting`, `● Idle`,
+`✓ Exited`, `✗ Failed`) on one
 line and `Provider · account` below it; sessions that share a name get a short ID
 suffix (`· …b6364576`). The right side is an inspector that follows the selection:
-provider, name, state, account, worktree, model, exit code and the short ID. On a
+provider, name, status (`Needs input (permission)` while waiting), account, worktree, model, exit code and the short ID. On a
 narrow pane the inspector moves below the list. It opens even when there are no
 sessions. `↑`/`↓` select, `/` searches by name, provider or account (`Esc` clears
 the search), `Enter` opens the selected session, `n` starts a new one and `Esc` goes
@@ -221,9 +234,363 @@ Unicode provider icons are ✹ for Claude (orange), ❃ for Codex (light gray), 
 ✦ for Antigravity (blue).
 
 Agent glyphs follow the `agent glyphs` row in preferences (`,`). `ascii` swaps
-bonsai's own drawing to ASCII: provider glyphs (`C X A`), state dots, picker marks
+bonsai's own drawing to ASCII: provider glyphs (`C X A`), the waiting mark (`?`), state dots, picker marks
 (`*` running, `+` exited, `x` failed), rules, hint rows and agent overlay borders.
 It does not touch the agent's terminal output or the status-bar separators.
+
+### Redesign preview (`--tui-layout redesign`)
+
+An opt-in preview of the redesigned TUI. The shell is a header with the Garden,
+Playground, Worktrees, Accounts and Settings tabs and a footer with the current
+workspace, focus, key hints and status. **Settings**, **Accounts**, **Garden
+setup/board**, **Playground** and **Worktrees** have bodies (see [Settings](#settings-in-the-preview),
+[Accounts](#accounts-in-the-preview), [Garden setup](#garden-setup-in-the-preview),
+[Playground](#playground-in-the-preview) and [Worktrees](#worktrees-in-the-preview)). Garden reads the GitHub login and
+repository setup state and verified approved work; Accounts loads agent profiles and usage the first time
+it opens. The last workspace is remembered per repository (see Settings). The default
+stays the current TUI (`--tui-layout legacy`), which keeps its own preferences
+overlay.
+
+```sh
+bonsai --tui-layout redesign                  # preview shell
+bonsai --config ci.yaml --tui-layout=redesign # with the existing --config; either order
+```
+
+The flag takes `legacy` or `redesign` (also as `--tui-layout=<value>`), must come
+before any subcommand, and is rejected with one (like `--config`). Any other
+value exits with an error before the TUI starts. The terminal must be at least
+64x10; below that the preview shows a resize notice.
+
+| Key | Action |
+|-----|--------|
+| `←`/`→` or `h`/`l` | Previous / next workspace (inside Settings, moves between categories or cycles a value; see below) |
+| `tab` / `shift+tab` | Next / previous workspace (the `focus_next` / `focus_prev` bindings) |
+| `alt+1` to `alt+5` | Jump to a workspace (bare digits stay reserved for agent sessions) |
+| `,` | Jump to Settings (the `prefs` binding) |
+| `enter` / `↓` | On any workspace tab, enter its body |
+| `m` | Open Accounts (the Agents tab's `agent_accounts` binding) |
+| `ctrl+k` | Command palette: "Go to <workspace>", "Settings: <category>", "Settings: Edit key bindings", "Accounts: Usage", "Accounts: Defaults", Garden Board/Table/Search/Refresh, Playground sections, Worktrees submenus and the existing Git/process/config actions |
+| `?` | Keys that work in the preview |
+| `q` / `ctrl+c` | Quit (outside the palette and help dialogs; inside them `esc` closes the dialog) |
+
+The footer shows the effective keys, so `keys:` overrides for the palette, help,
+quit and tab actions are reflected. The `ascii` glyph preference keeps all tab
+labels and swaps their icons for ASCII. The icons ♧ ▣ ⌘ ◎ ⚙ may render two cells wide in some terminals, which misaligns the header; the ASCII glyph preference is the workaround. Theme presets and `theme.overrides` gain
+four roles for the shell: `background`, `surface`, `raised` and `muted`.
+
+#### Garden setup in the preview
+
+Open Garden with `bonsai --tui-layout redesign` to preview and apply a setup
+plan. Setup creates the managed labels, a GitHub Project named **Bonsai Garden**,
+and the **Stage** and **Bonsai Type** single-select fields, or adds missing fields to a
+Project you select. Completed steps are saved if setup stops.
+
+GitHub reserves **Type** for its built-in issue type field. Garden uses
+**Bonsai Type** for its `feature`, `bug`, `chore` and `research` options. Saved
+setup plans that stopped at **Add field Type** can resume with the corrected
+name; completed steps and the original saved plan are preserved.
+
+GitHub Project access needs the `project` scope even when label creation already
+works. When setup reports `scope-missing`, run `gh auth refresh -s project`
+yourself, then choose **Resume setup**. The refresh key (`R` by default) and
+Resume both reread the stored GitHub credentials and identity, so you do not
+need to quit Bonsai. Bonsai never runs login or authorization refresh commands.
+
+A `github-graphql` failure means GitHub rejected Bonsai's GraphQL request.
+Update Bonsai and resume; if it persists, report the failing step and error
+code. Raw GitHub error responses and credentials are never displayed or saved.
+Resume rechecks GitHub and keeps completed labels, Projects and fields.
+
+#### Garden board in the preview
+
+A connected Garden opens six phases: Backlog, Planning, Ready, Building, Review
+and Done. `d` (`garden_stages`, configurable) toggles the nine detailed stages;
+each mode remembers its own cursor, scroll and lane window while sharing the
+selected Issue. The mode lasts for this session. Arrow keys select lanes and
+cards; Enter or a click opens the Issue panel. At widths below 100, three lanes
+are visible; below 160, six phases or five stages; from 160, all lanes fit.
+Empty lanes remain navigable. Blockers retain a proven phase and reason, or
+appear in a final Unplaced lane when no phase is proven.
+
+Cards retain the exact workflow stage and show observed planner or implementation
+activity with update time and stale markers, truncated to the available cells.
+Missing activity stays unknown; idle, exited and failed remain distinct. Local
+activity never grants approval or Ready. See the [board guide](garden.md#board)
+for mapping and [local activity](garden.md#local-planner-badges) for evidence details.
+Theme overrides include `phase_backlog`, `phase_planning`, `phase_ready`,
+`phase_building`, `phase_review` and `phase_done`, with fallback colors.
+
+Use `/` for scoped title/number search, `t` for type, `p` for priority, `x` to clear
+filters, and `R` to refresh. Failed reads preserve the last good board and show
+stale/offline state plus the last successful sync time. Drafts and unverified
+acceptance never enter the board. Garden remembers its subview per repository.
+`v` (the Garden-scoped `garden_view` key) switches the same approved work to a
+Table with ISSUE, TITLE, exact STATE, SIGNAL and NEXT; optional columns follow
+the available width, with a bottom detail strip on taller screens. `o` cycles
+State/Number/Priority order. `g` toggles phase grouping; Space or Enter on a group
+header collapses/expands it while keeping the selected issue. Enter or a click
+on an item opens the same overlay; Escape restores the line and scroll.
+
+`a` (`garden_attention`, configurable) toggles Needs you and returns to the work
+layout you came from; `v` from Needs you goes to Table. Needs you includes blockers,
+explicit live input requests, human review, pending published-plan approval,
+finished local plans to publish, and explicitly startable Ready work. Idle or
+unknown activity alone and stale local requests are excluded. Counts use the same
+filtered records as the view. Garden remembers Board, Table or Needs you per
+repository, without persisting grouping, collapse or filters. See
+[Table and Needs you](garden.md#table) for the predicates and selection behavior.
+Selecting or opening never changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
+filter semantics, document sections, keys and current limitations.
+
+Drafts is a separate inbox for unvalidated ideas (`tab` from the Board, `n` to
+start a private local draft saved on this machine without GitHub, an assistant or a
+provider (an assistant can be invited beside the draft with `Ctrl+G`; see
+[discuss a local draft](garden.md#discuss-a-local-draft-with-an-assistant)), with `Ctrl+S` to save now, `a`/`u`/`A` to archive, undo and show archived,
+`/` search, `t` type, `r` reconcile, `esc` back; see
+[local drafts](garden.md#local-drafts)). Without the private store, `n` captures a
+new idea as a GitHub Issue at Draft instead. GitHub capture needs a preview and confirmation, survives timeouts without
+duplicates, and never approves or starts anything. In a draft's document, `v`
+validates its specification: a preview of the exact revision and fingerprint, then
+an explicit confirmation records one verified approval and moves the same Issue
+from Drafts to Approved work. It needs Write access and starts no agent, worktree or
+pull request. See the [Garden guide](garden.md#drafts) and
+[gate one](garden.md#validate-a-specification-gate-one). AI-assisted questions are
+answered in a per-question panel (choose, write, don't know or skip). Questions
+without suggestions focus the answer field immediately. In review, `o` applies
+decisions and opens a local round to answer unresolved questions; see
+[AI draft assistance](garden.md#elaborate-a-draft-with-ai).
+
+A ready local draft is published from its review (`Ctrl+Enter`, then `enter`): the
+confirmation shows the repository, account, draft revision, title, type, managed
+labels and the exact specification, and `enter` runs **Approve & create issue**
+(`esc` goes back to editing). One operation creates the Issue at Draft, appends the
+specification, records its approval, moves it to Ready and reads everything back
+before the draft is marked published. Any edit, or a changed connection or account,
+invalidates the preview. If a step stops, the draft shows **Publishing incomplete**
+with the Issue link (or **Publishing** while GitHub is still being checked) and
+opens on a resume screen instead of the editor: `enter` or `r` resumes by reusing
+what exists, never a second Issue, revision or approval. Nothing starts a planner,
+worktree, agent or pull request. See
+[publishing a draft](garden-workflow/plans/06-approve-and-publish.md).
+
+In an opened Approved Issue, `p` opens its read-only planner. It verifies the
+approved specification and inspects the checkout, and an explicit **Request AI plan**
+(account, model and effort; `x` includes uncommitted changes) starts one read-only
+agent session in the same terminal controller as the Agents tab: `ctrl+]` unfocuses
+it, `enter` focuses it, `c` then `y` cancels the attempt and `esc` returns to the
+attempts. Providers that cannot enforce read-only access (Codex and Antigravity) cannot plan.
+No worktree is created and nothing runs until you request it. See
+[Request an AI plan](garden.md#request-an-ai-plan-read-only-planner) and
+[the read-only planner role](agents.md#the-read-only-planner-role).
+
+Issues with a local planner running, or a ready plan file, carry a badge on the Board and
+Table ([local planner badges](garden.md#local-planner-badges)) and a total in the footer;
+`p` on the Issue opens the planner again after leaving it, and `esc` from the session never
+stops it. On the planner screen `u` publishes the plan the selected attempt gave (a ready
+plan file fills the text box; otherwise you type or paste it; you edit it, `ctrl+s` previews
+it, one confirmation appends it to the Issue), and `r` in an
+opened Issue or on the planner screen opens the plan review: the current, latest and
+approved revisions shown separately, the plan as a document (`←`/`→` section, `/`
+search, `n`/`N` matches, `[`/`]` revision), `d` for a unified comparison with the
+previous revision and `w` for side by side from 100 columns. `c` requests changes
+(with a reason) and `x` rejects the revision under review; both name the exact
+revision, keep the history and start no run. See
+[Publish and review a plan](garden.md#publish-and-review-a-plan).
+
+In plan review `a` opens **Approve plan** with the full plan hash, current source
+spec fingerprint, spec head and GitHub actor; Cancel has initial focus. `tab` then
+`enter` records gate two only after fresh head and authority checks and yields
+**Ready** on the Board/Table. `v` revalidates a changed accepted specification through
+the existing gate-one flow; `p` separately requests a local read-only plan. Coding starts only
+from a Ready Issue through a separate confirmation ([local launch](#local-implementation-launch-in-the-preview)). New plan/spec revisions show a stale gate and
+retain the old approved snapshot; they never inherit its approval. The review shows
+who approved which revision, declared local/external source and verified time.
+`o` opens the canonical Issue in the local browser and `y` copies its link. The
+[external comment protocol](garden.md#external-approval-protocol-github-or-mobile-browser)
+supports approval in GitHub/mobile browsers, without a phone client or remote runs.
+
+#### Garden issue overlay
+
+Enter or a left click on a Board card or Table row opens one issue panel over the
+dimmed layout it came from: a near-full sheet at 80×24, a bounded centered panel
+at 120×35 and wider, with a side summary rail from about 100 columns. The header
+(number, title, column, type, priority, approval) and the pinned action bar stay
+visible while the body scrolls. Tabs: Overview, Specification, Questions, Plan,
+Activity (`←`/`→` or click); `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End` or the wheel scroll.
+
+Actions are `p` request plan, `r` review plans, `s` start locally and `i` attempts;
+on the **Plan** tab `p` and `r` become the actions that fit its state (see below).
+`Tab`/`Shift+Tab` cycle the enabled ones, `Enter` runs the focused one and a click
+runs the one under the pointer, all through the same existing screens and
+confirmations. `s` and `i` appear only when the Garden runtime has local launch;
+`s` stays visible but disabled, with its reason, until the issue is Ready. Reading a
+tab never starts anything, and opening an agent terminal stays a separate action
+whose input mode still ends with `Ctrl+]`.
+
+On the Plan tab: `a` approve plan rN (the exact-pair confirmation, inside the panel;
+`tab` then `enter` approves), `c` request changes (or, while a planner runs, `c` stop
+attempt, then `y`), `b` start revision attempt (feedback already recorded), `u` publish
+the ready plan file, `p` open the planner (straight to a live session) and `r` open the
+review. In the request-changes form `ctrl+s` sends the feedback and starts one read-only
+revision attempt, `tab`/`shift+tab` move between the text, the checkout consent
+(`ctrl+y`), the account choice (`ctrl+g`, only without a retained account), Back and
+Send, and `esc` goes back keeping what you typed. A plain Request plan (`p`) no longer
+carries earlier feedback; only the form and `b` do. `esc` from a planner session, publish
+box or review opened from the tab returns to it. States and write behaviour:
+[Plan tab](garden.md#plan-tab-in-the-issue-overlay).
+
+When an implementation attempt awaits human review (or a completion record exists),
+the Overview becomes the review panel (headings YOUR REVIEW, COMPLETED, BLOCKED,
+STALE, UNKNOWN) and its actions are: `a` Accept…, `c` Request changes…, `u` Revoke
+acceptance…, `m` Start rework… (after a verified request for changes), `n` Complete
+without code…, `g` Open PR, `o` Open terminal and `w` Preview cleanup…. Only an
+allowed action is offered; `R` refreshes. Each decision opens a confirmation with
+Cancel focused and the exact record; acknowledgments are toggled with `1`-`9`, and
+the request-changes text box uses `ctrl+s` to preview and `esc` to go back. Nothing
+merges, closes, pushes, relabels or cleans on its own. Evidence, states and reasons:
+[Human review, rework and completion](garden.md#human-review-rework-and-completion).
+
+While the panel is open it consumes every key and click, so `q`, `?`, the palette,
+workspace keys and `v` wait. `Esc`, `Backspace` or **Back** close it and restore the
+exact card or row and scroll. If a refresh removes the issue, or the repository
+changes, the panel closes with a notice on the board rather than showing another
+issue. Closing it never stops a planner or implementation session.
+
+#### Local implementation launch in the preview
+
+Ready shows the effective run: implementer, AI reviewer, review limit,
+worktree/base and native permissions, using saved policy and cached defaults.
+Reviewer availability is checked in the exact preview. From a Ready Garden Issue's
+Overview, `s` (**Start implementation…**) opens that preview directly
+with the default account; `e` (**Change run settings**) opens the account, model,
+effort and permissions form. In the form `ctrl+s` requests a preview and `ctrl+e`
+edits branch, base and remote. `i` opens **implementation attempts**, even when
+launch is blocked.
+
+Confirmation lists the exact approved inputs and authorized sequence: implementation,
+then the enabled automatic review, fixes and checks, then your review. Cancel is
+focused first. Escalated implementer permissions need an unchecked `x`
+acknowledgment; escalated reviewer permissions need a separate unchecked `r`
+acknowledgment. A changed review policy needs a new preview. Unresolved or
+unsupported permissions disable Confirm. The sequence is recorded and authorized;
+reviewer execution arrives in a later version.
+
+The overview supervises the attempt: lifecycle state, observed activity and age,
+checks only with evidence, **Next**, and the last synced GitHub stage separately.
+Idle is not completion. In an attempt, `o` (**Open session**) observes; `enter`
+takes control and `ctrl+]` returns to observation. From observation, `esc` leaves
+the session.
+`x` (**Stop run**) asks for confirmation and shows **Stopping** until closure is
+proven. Leaving the overlay or quitting only detaches.
+
+Other attempt actions are `r` retry, `w` cleanup, `p` push branch / Draft PR and
+`[`/`]` switch run. Mutations have separate confirmations; cleanup previews first.
+Details, blockers and recovery: [Garden guide](garden.md#start-implementation-locally).
+
+#### Settings in the preview
+
+Settings is reachable with `,`, the Settings tab or the palette, and works without
+an agent account or GitHub connection. Navigation has three levels: category,
+section, field. `←`/`→` (or `h`/`l`) move between categories at category and
+section level and cycle a value at field level. `tab` toggles between sections
+and fields, `enter` chooses or edits, and `esc` goes up exactly one level. During
+a text edit, `esc` cancels only that edit.
+
+- **General**: Startup (startup workspace, remember per repo); Editor & lists
+  (editor, sort, PR status, merge on prune); Repository (confirm destructive
+  actions, notifications).
+- **Appearance**: theme, surface contrast (layered or flat), icons (unicode or
+  ASCII), density.
+- **Keys**: one section per keymap group, plus the fixed Terminal row `ctrl+]`.
+- **Garden**: repository base ref, setup status, **AI drafting** and **Automatic review** personal defaults.
+  Assistant opens the account/model/effort dialog; choose **Save defaults** or
+  **Cancel**. Empty model and effort inherit the account profile, then provider
+  defaults. A missing or unsupported saved account shows "missing: choose again"
+  and requires an explicit new choice. Questions per round accepts 1–10 (default
+  5); Prompt guidance accepts up to 300 runes, with empty meaning none. Built-in
+  question quality, evidence and output rules remain fixed. Restore defaults asks
+  for confirmation and clears only AI drafting preferences. Session options
+  override these defaults for that session and never save them.
+  **Automatic review** stores an off-by-default policy: reviewer account, model,
+  effort, native permissions, a fixed one-pass limit and typed checks, plus
+  availability and Restore defaults. It grants no permission and starts nothing;
+  each implementation preview authorizes its frozen review sequence separately.
+  Settings edits never change a started attempt. It is separate from the
+  Playground reviewer under Agents. See
+  [Automatic review defaults](garden.md#automatic-review-defaults) for fields,
+  check syntax and downgrade limits.
+- **Agents**: "Account defaults" opens the Accounts workspace on Defaults.
+  **Garden review policy** configures the local review account, fixed enforced
+  read-only role, trigger, attempt scope and automatic run limit. Review defaults
+  off; enabling or changing its active account/trigger asks for local consent.
+  Unsupported accounts show a reason and cannot be selected. CI and high-finding
+  acceptance conditions are separate policy toggles. See the
+  [review guide](garden.md#read-only-verification-and-human-review). Other
+  unavailable Garden and Agents rows explain which feature will add them.
+
+Scope and precedence: personal preferences live in
+`~/.config/bonsai/state.json` and apply on this machine. They override the
+repository `.bonsai.yaml`, which overrides built-in defaults. An unset value
+inherits; each field shows its effective value and origin. Repository fields ask
+for confirmation, showing the file path, before writing `.bonsai.yaml`; the write
+keeps its comments. Personal changes autosave in order. A failed save restores the
+last saved state and shows the error. Unknown fields in `state.json` are kept.
+
+Settings adds these `state.json` fields: `prefs.contrast`, `prefs.density`,
+`prefs.start_workspace`, `prefs.no_workspace_memory`, `prefs.garden_assist`,
+`prefs.garden_review`, `prefs.garden_auto_review` and a per-repository
+`workspaces` map keyed by the canonical local repository path (symlinks resolved).
+
+The startup workspace is the first of: the explicit startup workspace, the
+workspace remembered for the repository, then Garden. Turn the memory off with
+"Remember per repo" under General.
+
+Key editor: `enter` on a key row captures the next key, `esc` cancels and
+`backspace` resets to the default. Captured keys include `q`, `?`, `ctrl+k` and
+`tab`; `ctrl+c` still quits.
+
+- Navigation actions are global and conflict with every other scope.
+- Worktree, Tabs, Files, Run and Git share one scope. The Agents tab, the
+  Processes tab and the Garden views (`garden_view`) are separate scopes, so a key
+  may be reused across them.
+- Always rejected: `esc`, `ctrl+c`, `ctrl+]`, `enter`, `tab`, `shift+tab`, `space`,
+  the arrow keys and `alt+1` to `alt+5`. `h`/`j`/`k`/`l` are rejected only for
+  Navigation actions.
+
+#### Accounts in the preview
+
+Accounts lists the agent profiles (Claude, Codex, Antigravity) of this user. They
+are local and global: the list does not depend on the selected worktree, and the
+workspace works without GitHub or terminal (PTY) support. It reuses the legacy
+profiles view: a table of profiles above the **Overview**, **Usage** and
+**Defaults** sections.
+
+Focus is nested. `enter` or `↓` on the tab opens the profile list; `↑`/`↓` pick a
+profile; `enter` moves into the sections; `tab` / `shift+tab` (or `1`, `2`, `3`)
+switch section; `esc` goes up one level (section to list, list to the tabs). The
+selected profile, section and any unsaved defaults are kept while you visit other
+workspaces or reload. Leaving Accounts or changing profile never stops a running
+session.
+
+- **Overview**: identity, sign-in method, running sessions and the model and
+  effort defaults. `Sign in again` and `Remove account` use the same CLI flows
+  as the Agents tab; sign-in runs in the real terminal (the TUI suspends, then
+  reloads). Bonsai never refreshes a login by itself. Removal asks first and is
+  refused while the profile has running sessions.
+- **Usage**: remaining capacity, labeled `N% left` for every window with its
+  reset time, plus credits and reset grants when the provider reports them. An
+  unavailable window reads "Unavailable", never 0%. A failed refresh keeps the
+  last good numbers, marked stale. `r` refreshes the selected profile; `↑`/`↓` scroll when the content is taller than the pane. Usage is
+  fetched through the same cache as the legacy TUI, only for the selected profile.
+- **Defaults**: the provider-declared launch defaults. "Provider default" means
+  inherited; a stored value the provider no longer offers shows as `(unlisted)`.
+  `ctrl+s` or `Save defaults` sends only the fields you changed. A failed save is
+  shown and the draft stays. Changing profile with unsaved changes asks to
+  discard first.
+
+Empty and failed states give a reason (no backend, loading, no profiles yet,
+sign-in required, sign-in state unknown, usage unavailable, read failed). `n`
+adds a profile.
 
 ## CLI
 
@@ -372,7 +739,11 @@ aliases:
 ### Hook and alias variables
 
 Use `{name}` inside hook commands and alias commands. Each is also exported to
-hooks as `$BONSAI_<NAME>` (uppercased).
+hooks as `$BONSAI_<NAME>` (uppercased). Placeholders are expanded as references to
+those variables, never pasted into the command text, so a branch or path with
+quotes, `$(...)` or `;` is passed as data. Inside single quotes the value still
+expands. Wrapping a placeholder in double quotes keeps values with spaces as one
+argument.
 
 | Variable | Value |
 |----------|-------|
@@ -445,3 +816,98 @@ at runtime. `go install github.com/Tiago-0liveira/bonsai@latest` and untagged
 `go build` keep the TUI/CLI but serve an explanatory placeholder at `/app`; to
 build the web app from source see [CONTRIBUTING.md](../CONTRIBUTING.md) and
 [development.md](development.md).
+
+#### Playground in the preview
+
+Playground lists sessions across verified worktrees of the current repository,
+including manual sessions and retained ended sessions. Enter its body, then use
+`enter` to request terminal control or `v` to observe. `ctrl+]` returns keyboard
+control to Bonsai. In Control, every other key belongs to the agent. See the
+[terminal behavior](agents.md) and the footer for the current input owner.
+
+Session details and Playground → Usage show **remaining account capacity** with
+Accounts → Usage's segmented meters, percentage left and capacity colors.
+ASCII mode uses `#`/`.` segments. These views use stored snapshots; refresh usage
+from Accounts.
+
+Select a session and press `c` for changes or `r` for **Human review**. The review
+screen shows the independent CI status and freshness, report revision, reviewed
+commit/base, findings and prior acceptance decisions. Manual sessions without a
+verified implementation attempt explain why review actions are unavailable.
+
+| Key in Human review | Action |
+|---|---|
+| `↑`/`↓`, `pgup`/`pgdown` | Scroll evidence and history |
+| `n` / `p` | Next / previous finding |
+| `[` / `]` | Newer / older report revision |
+| `r` | Refresh reports, policy and CI independently |
+| `t` | Confirm one local read-only reviewer run |
+| `d` | Enter and confirm a dismissal reason for this finding/revision |
+| `f` | Open the linked Issue's existing local implementation attempt form |
+| `a` | Preview acceptance, unresolved findings, CI and policy conditions |
+| `esc` | Return to sessions |
+
+Acceptance first shows a scrollable preview; `enter` continues through each
+required acknowledgment and a final cancel-first confirmation. `esc` cancels.
+Acceptance records a human decision; it does not merge, close an Issue or remove
+a worktree. New commits leave earlier reviews and acceptance visible as older
+provenance. Full behavior and automatic trigger limits are in the
+[Garden review guide](garden.md#read-only-verification-and-human-review).
+
+
+#### Worktrees in the preview
+
+Worktrees reuses the existing Git and process commands in four selectable
+submenus: **Checkouts**, **Processes**, **Branches** and **Pull requests**. It
+works without Garden or a provider account. Reads start on the first visit;
+returning keeps the selected checkout, process, output filter and document scroll.
+The process and PR refresh timers continue across workspace changes.
+
+At 100 columns and wider, the list and detail share the body. At 80 columns,
+Enter replaces the list with the inspector or selected process/PR detail;
+Escape returns to the list. From the list, Escape selects the submenu, then
+Escape returns to the workspace tabs. Tab/Shift+Tab cycle submenus while the
+list or submenu has focus. In detail, Tab returns to the list and Shift+Tab
+cycles the available detail tabs. The footer names the current focus. Mouse-wheel
+scrolling follows the hovered list or detail; the palette can disable it for
+terminal text selection. Agent holders receive no wheel input.
+
+Checkouts keeps the existing filter (`/`), six sort orders (`o`), metrics,
+dirty/PR/check badges and running-process/agent badges. Branches includes local
+branches with no checkout, and Pull requests includes the provider's bounded
+PR list. Rows use branch names, PR numbers and process IDs rather than display
+labels as identities. An unchecked branch or PR cannot act on another checkout;
+Enter explicitly previews creation using the configured destination and hooks.
+
+The existing bindings still open Git Log (`l`), Inspector (`i`), Diff (`d`),
+Checks (`b`), connected PR (`P`), Processes (`v`) and worktree Agents (`g`).
+Enter on a list row now means inspect; **Open shell** remains in the command
+palette (Enter in an ordinary detail also retains the shell binding). Editor
+(`e`), file copy (`c`), clipboard (`y`), scripts (`s`), aliases (`a`), create (`n`),
+fetch/pull/push/commit/rebase/update-base and prune retain their existing flows.
+The command palette also contains the repository config editors and all PR and
+process actions. Existing prune options, merge strategies, confirmations and
+backend ownership/active-session checks still apply.
+
+Process detail keeps its own controls: arrows select a process in the checkout,
+`j`/`k` scroll, `g`/`G` go to the beginning/live end, `/` searches output, `K`
+kills, `r` restarts, `p` selects restart policy, `m` selects multiple processes,
+`L` sets a tag, `y` copies output, `n` runs a command and `x` removes a finished
+record. Live versus paused output and discovered URLs remain visible. These
+keys never become agent terminal input. Quitting offers the existing keep/stop
+choices for known active processes, with keeping them selected by default.
+
+Inside Agents, `a` still opens all sessions of that checkout, `n` opens the
+existing launch form, and digits/brackets select sessions. `m` opens the same
+account in Accounts; `u` opens that account's Usage section. `O`
+(`agent_playground`) opens the **exact selected session** in Playground in
+**Observe**, with no writer request. Escape through the destination's parents
+returns to the original Worktrees location. Enter in Agents explicitly requests
+terminal control; Ctrl+] returns the keyboard. While typing, every other key
+belongs to the holder, including quit, palette and workspace shortcuts.
+
+For a Garden-created session, the Inspector shows its Issue and attempt identity;
+**Garden: open linked Issue** in the palette opens the already loaded Issue and
+its specification/plan sections. A manual checkout needs no task link. Human
+acceptance, PR merge and worktree prune remain separate actions. Leaving a
+workspace releases only its terminal attachment and never stops its holders.

@@ -15,7 +15,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/prefs"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/terminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
 // focusArea identifies which pane owns keyboard focus.
@@ -218,6 +217,30 @@ type Model struct {
 	// agents is the live agent session index; zero when no backend is injected.
 	agents agentState
 
+	// garden holds the Garden backend; zero when none is injected.
+	garden gardenState
+
+	// pg is the Playground workspace's session list.
+	pg pgState
+
+	wt worktreesState
+
+	// layoutKind picks the legacy TUI or the redesign preview shell; workspace
+	// and shellFocus only matter for the latter and live in memory only.
+	layoutKind Layout
+	workspace  workspace
+	shellFocus shellFocus
+	// work is the redesign shell's working copy of the preferences: edits land
+	// here first, then persist through commands ordered by prefsGen. wsGen does
+	// the same for the remembered workspace.
+	work     config.Prefs
+	prefsGen uint64
+	wsGen    uint64
+	set      settingsState
+	// acct is the Accounts workspace; it lives as long as the TUI so its
+	// selection, section and drafts survive switching workspaces.
+	acct accountsState
+
 	// Layout / status.
 	width, height int
 	focus         focusArea
@@ -235,23 +258,22 @@ type Model struct {
 func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option) Model {
 	// Resolve the color palette: a personal in-app pick (state.json) overrides
 	// the repo's .bonsai.yaml preset; per-role overrides stay repo-level.
+	work := state.PrefsSnapshot()
 	preset := cfg.Theme.Preset
-	if state.Prefs.Theme != "" {
-		preset = state.Prefs.Theme
+	if work.Theme != "" {
+		preset = work.Theme
 	}
-	theme.Current = theme.Resolve(preset, cfg.Theme.Overrides)
-	applyTheme()
-	worktreelist.SetTheme(theme.Current)
-	worktreelist.SetPRStatusMode(state.Prefs.PRStatus)
-	modals.SetTheme(theme.Current)
-	prefs.SetTheme(theme.Current)
+	// The layout option is not applied yet; contrast is re-resolved below for the
+	// redesign so legacy starts with an unchanged palette.
+	applyPalette(preset, cfg.Theme.Overrides, "")
+	worktreelist.SetPRStatusMode(work.PRStatus)
 
 	// Personal key overrides (state.json) override repo-level ones.
-	keys := make(map[string]string, len(cfg.Keys)+len(state.Prefs.Keys))
+	keys := make(map[string]string, len(cfg.Keys)+len(work.Keys))
 	for k, v := range cfg.Keys {
 		keys[k] = v
 	}
-	for k, v := range state.Prefs.Keys {
+	for k, v := range work.Keys {
 		keys[k] = v
 	}
 
@@ -259,6 +281,7 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 		repoDir:           repoDir,
 		cfg:               cfg,
 		state:             state,
+		work:              work,
 		procs:             newProcView(repoDir),
 		ghCache:           gh.NewCache(gh.DefaultCacheTTL),
 		configFile:        config.FileFor(repoDir),
@@ -266,7 +289,7 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 		list:              worktreelist.New(),
 		term:              terminal.New(),
 		focus:             focusList,
-		sort:              sortModeFromName(state.Prefs.Sort),
+		sort:              sortModeFromName(work.Sort),
 		metrics:           map[string]git.Metrics{},
 		activeProc:        map[string]int{},
 		procMultiSel:      map[string][]int{},
@@ -285,6 +308,27 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 	}
 	for _, o := range opts {
 		o(&m)
+	}
+	if m.layoutKind == LayoutRedesign {
+		m.workspace = m.startupWorkspace()
+		applyPalette(preset, cfg.Theme.Overrides, work.Contrast)
+		m.acct = newAccountsState(m.agents.api.Accounts, m.agentGlyphsASCII(), m.agents.usage)
+		// Init starts the load when the shell opens on Accounts.
+		m.acct.started = m.acct.present && m.workspace == wsAccounts
+		if m.workspace == wsGarden {
+			var load tea.Cmd
+			m, load = m.gardenLoadStatus()
+			m.garden.initCmd = load
+		}
+		pgAPI := m.pg.api // set by WithPlayground before the state is rebuilt
+		m.pg = newPgState()
+		m.pg.api = pgAPI
+		if m.workspace == wsPlayground {
+			m, m.pg.initCmd = m.playgroundEnter()
+		}
+		if m.workspace == wsWorktrees {
+			m, m.wt.initCmd = m.worktreesEnter()
+		}
 	}
 	m.list.Focus()
 	m.procSearchInput.Placeholder = "search output…"
@@ -334,11 +378,31 @@ func sortModeFromName(name string) sortMode {
 
 // Init kicks off the first data load.
 func (m Model) Init() tea.Cmd {
+	// Workspace reads stay lazy. Review reconciliation separately checks local
+	// consent and settles previously authorized reviewer runs.
+	if m.layoutKind == LayoutRedesign {
+		if m.acct.started {
+			return tea.Batch(m.acct.model.Init(), m.garden.initCmd, m.pg.initCmd, m.wt.initCmd, m.pgReviewInit())
+		}
+		return tea.Batch(m.garden.initCmd, m.pg.initCmd, m.wt.initCmd, m.pgReviewInit())
+	}
 	return tea.Batch(checkForUpdate, loadWorktrees(m.repoDir, false), indexFiles(m.repoDir), tickProc(), tickPRs(), m.initAgents())
 }
 
 // selectedWorktree returns the highlighted worktree, if any.
 func (m Model) selectedWorktree() (git.Worktree, bool) {
+	if m.layoutKind == LayoutRedesign && m.wt.sub != wtCheckouts {
+		r, ok := m.worktreesRow()
+		if !ok || r.path == "" {
+			return git.Worktree{}, false
+		}
+		for _, w := range m.worktrees {
+			if w.Path == r.path {
+				return w, true
+			}
+		}
+		return git.Worktree{}, false
+	}
 	it, ok := m.list.Selected()
 	if !ok {
 		return git.Worktree{}, false

@@ -110,3 +110,20 @@ func TestLaunchColumnsStaleUnknownFitsNarrowForms(t *testing.T) {
 	check("medium", col.Narrow[0].Cell(a), col.Narrow[0].Width)
 	check("narrow", col.Narrow[1].Cell(a), col.Narrow[1].Width)
 }
+
+func TestUsedMeterReportsUsedNotLeftAndSkipsUnknown(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	f66 := 0.66
+	a := agentsapi.Account{}
+	a.ID = "claude:a"
+	meter, used, ok := UsedMeter(usagestore.Store{a.ID: fiveHourUsage(&f66, nil, false)}, a, now, 10, true)
+	if !ok || used != 34 || ansi.Strip(meter) != "###......." {
+		t.Fatalf("meter %q used %d ok %v", ansi.Strip(meter), used, ok)
+	}
+	if _, _, ok := UsedMeter(usagestore.Store{a.ID: fiveHourUsage(nil, nil, false)}, a, now, 10, true); ok {
+		t.Fatal("an unknown value drew a meter")
+	}
+	if _, _, ok := UsedMeter(usagestore.Store{}, a, now, 10, false); ok {
+		t.Fatal("a missing reading drew a meter")
+	}
+}

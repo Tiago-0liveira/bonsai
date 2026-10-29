@@ -20,6 +20,9 @@ func newProcView(repoDir string) *procView {
 
 // refresh reloads the cached record list from the daemon (or on-disk registry).
 func (v *procView) refresh() {
+	if v.client == nil {
+		return
+	}
 	if recs, err := v.client.List(); err == nil {
 		v.recs = recs
 	}

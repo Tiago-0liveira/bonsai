@@ -214,6 +214,7 @@ func (i Item) prBadge() string {
 // itemDelegate renders a two-line row, coloring a leading "#N" PR badge
 // independently so it survives selection highlighting.
 type itemDelegate struct {
+	embedded bool
 	// badges returns the pre-styled agent glyphs for a worktree path; nil
 	// means agents are off and rows render exactly as before.
 	badges func(path string) string
@@ -286,13 +287,23 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		title = ansi.Truncate(title, width, "…")
 		desc = ansi.Truncate(desc, width, "…")
 	}
+	if d.embedded {
+		bg := theme.Current.Surface
+		if selected {
+			bg = theme.Current.Raised
+		}
+		row := func(s string) string { return lipgloss.NewStyle().Background(bg).Width(width).Render(s) }
+		title, desc = row(title), row(desc)
+	}
 	fmt.Fprintf(w, "%s\n%s", title, desc)
 }
 
 // Model wraps a bubbles list.
 type Model struct {
-	list    list.Model
-	focused bool
+	list     list.Model
+	focused  bool
+	embedded bool
+	badges   func(string) string
 }
 
 // New builds an empty worktree list.
@@ -311,14 +322,26 @@ func (m *Model) SetItems(items []Item) {
 	for i, it := range items {
 		li[i] = it
 	}
-	m.list.SetItems(li)
+	selected := ""
+	if it, ok := m.Selected(); ok {
+		selected = it.WT.Path
+	}
+	if cmd := m.list.SetItems(li); cmd != nil {
+		// The installed list filter is pure; applying it here keeps refreshed
+		// metrics from blanking an active filter until another keystroke.
+		m.list, _ = m.list.Update(cmd())
+	}
+	if selected != "" {
+		m.SelectByPath(selected)
+	}
 }
 
 // SetAgentBadges installs the per-path agent glyph source shown on each row's
 // first line; nil removes it. The component stays data-agnostic: the parent
 // owns the sessions and the styling.
 func (m *Model) SetAgentBadges(fn func(path string) string) {
-	m.list.SetDelegate(itemDelegate{badges: fn})
+	m.badges = fn
+	m.list.SetDelegate(itemDelegate{badges: fn, embedded: m.embedded})
 }
 
 // SetSize resizes the list.
@@ -340,7 +363,7 @@ func (m Model) Selected() (Item, bool) {
 // SelectByPath moves the highlight to the worktree with the given path, if
 // present. Returns whether a match was found.
 func (m *Model) SelectByPath(path string) bool {
-	for i, li := range m.list.Items() {
+	for i, li := range m.list.VisibleItems() {
 		if it, ok := li.(Item); ok && it.WT.Path == path {
 			m.list.Select(i)
 			return true
@@ -370,3 +393,10 @@ func (m Model) View() string {
 
 // Focused reports focus state (used by the parent for border color).
 func (m Model) Focused() bool { return m.focused }
+
+// SetEmbedded uses the shell's heading and shaded rows instead of a second app title.
+func (m *Model) SetEmbedded(on bool) {
+	m.embedded = on
+	m.list.SetDelegate(itemDelegate{badges: m.badges, embedded: on})
+	m.list.SetShowTitle(!on)
+}

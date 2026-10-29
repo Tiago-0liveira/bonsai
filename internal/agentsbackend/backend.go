@@ -39,6 +39,7 @@ type Backend struct {
 	runtime  *agentruntime.Runtime
 	sessions *sessions
 	accounts agentsapi.Accounts
+	assist   agentsapi.Assist
 
 	mu      sync.Mutex
 	streams map[*stream]struct{}
@@ -78,12 +79,13 @@ func New(opts ...Option) (*Backend, error) {
 		},
 	}
 	b.accounts = newAccounts(c.runtime, c.paths, selfExe)
+	b.assist = &assist{rt: c.runtime}
 	return b, nil
 }
 
 // API is the backend as the TUI consumes it.
 func (b *Backend) API() agentsapi.Backend {
-	return agentsapi.Backend{Sessions: b.sessions, Accounts: b.accounts}
+	return agentsapi.Backend{Sessions: b.sessions, Accounts: b.accounts, Assist: b.assist}
 }
 
 // Close ends every open stream. It never stops holders: sessions outlive the TUI.

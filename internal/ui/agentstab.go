@@ -13,7 +13,6 @@ import (
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
@@ -188,6 +187,9 @@ func (m Model) openAgentsTab() (tea.Model, tea.Cmd) {
 func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	s := msg.String()
 	switch {
+	case m.layoutKind == LayoutRedesign && key.Matches(msg, m.keys.AgentPlayground):
+		nm, cmd := m.worktreesPlayground()
+		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentAll):
 		if !m.agents.active() {
 			m.status = unsupportedNotice
@@ -289,19 +291,17 @@ func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// stateMarkStyled is the picker's state mark: running green, exited dim,
-// failed red.
-func stateMarkStyled(state string) string {
-	mark, c := "●", theme.Current.Success
-	switch state {
+// stateMarkStyled is the picker's status mark, colored like the status:
+// exited gets a check, failed a cross, every live status a dot.
+func stateMarkStyled(key string) string {
+	mark := "●"
+	switch key {
 	case "exited":
-		mark, c = "✓", theme.Current.Dim
+		mark = "✓"
 	case "failed":
-		mark, c = "✗", theme.Current.Danger
-	case "starting", "stopping":
-		c = theme.Current.Warning
+		mark = "✗"
 	}
-	return lipgloss.NewStyle().Foreground(c).Render(mark)
+	return lipgloss.NewStyle().Foreground(statusColor(key)).Render(mark)
 }
 
 func branchOf(wt git.Worktree) string {

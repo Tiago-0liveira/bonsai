@@ -18,9 +18,12 @@ const (
 // SandboxBypass is Bonsai's name for --dangerously-bypass-approvals-and-sandbox.
 const SandboxBypass = "bypass"
 
+// SandboxReadOnly is Codex's read-only sandbox policy (`-s read-only`).
+const SandboxReadOnly = "read-only"
+
 var (
 	authModes      = []string{AuthChatGPT, AuthDevice, AuthAPIKey}
-	sandboxModes   = []string{"read-only", "workspace-write", "danger-full-access", SandboxBypass}
+	sandboxModes   = []string{SandboxReadOnly, "workspace-write", "danger-full-access", SandboxBypass}
 	approvalModes  = []string{"untrusted", "on-request", "never"}
 	reasoningLevel = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 )
