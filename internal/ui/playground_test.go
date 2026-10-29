@@ -314,9 +314,8 @@ func (e *pgEnv) sess(id, provider, account, state string, created int) agentsapi
 	}
 }
 
-// pgDrain feeds a command's messages back. A command that waits (the change
-// subscription) is skipped after a short wait, since tests deliver such
-// messages themselves.
+// pgDrain feeds a command's messages back. Blocking subscriptions are skipped
+// before execution, since tests deliver their messages themselves.
 func pgDrain(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 	queue := []tea.Cmd{cmd}
@@ -329,8 +328,13 @@ func pgDrain(t *testing.T, m Model, cmd tea.Cmd) Model {
 		if name := runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(); strings.Contains(name, "worktreeRead") || strings.Contains(name, "indexFiles") || strings.Contains(name, "tickProc") || strings.Contains(name, "tickPRs") {
 			continue
 		}
-		if name := runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(); strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") {
-			continue // the terminal's blocking waits; tests deliver their messages themselves
+		if name := runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(); strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") || strings.Contains(name, "pgWaitCmd") {
+			continue // blocking waits; tests deliver their messages themselves
+		}
+		// Terminal fixtures opt into short timers. List tests do not need a
+		// live preview, and debounce tests deliver their ticks explicitly.
+		if name := runtime.FuncForPC(reflect.ValueOf(c).Pointer()).Name(); strings.Contains(name, "bubbletea.Tick") && m.pgDebounce() >= pgAttachDebounce {
+			continue
 		}
 		done := make(chan tea.Msg, 1)
 		go func() { done <- c() }()
