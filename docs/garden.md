@@ -755,12 +755,16 @@ an approval, overwrites a body or starts a run in response.
 
 ## Start implementation locally
 
-Only a **Ready** Issue (both gates, one verified plan/spec pair) can start coding, and
-only through an explicit action: `s` (**start implementation locally…**) in the Ready
-Issue's detail or in plan review. `i` opens **implementation attempts**, even when
-launch is blocked. Approving, refreshing,
-selecting, opening or navigating never starts anything. The action shows what will
-run before it asks:
+Only a **Ready** Issue (both gates, one verified plan/spec pair) can start coding.
+Ready shows the effective implementer, AI reviewer, review limit, worktree/base
+and native permissions from saved policy and cached defaults. Reviewer availability
+is checked in the preview.
+
+Press `s` (**Start implementation…**) in the Ready Issue's Overview to open the
+exact preview directly with the default account. `e` (**Change run
+settings**) opens the account, model, effort and permissions form. `i` opens
+**implementation attempts**, even when launch is blocked. Approving, refreshing,
+selecting, opening or navigating never starts anything. The preview shows:
 
 - exact repository, Issue, spec and plan revision hashes and comment IDs, both
   approval IDs, actor, and the approved base commit (uncommitted changes in your
@@ -778,8 +782,12 @@ run before it asks:
   here.
 
 On the form `ctrl+s` requests the preview and never launches. In the confirmation
-Cancel has initial focus; `x` acknowledges a permission escalation, `y` acknowledges
-retry hooks and `e` edits branch and base. Confirm (**Confirm: start locally**) creates the worktree in the daemon (placement and
+Cancel has initial focus. Confirmation lists the authorized sequence: implementation,
+then the enabled automatic review, fixes and checks, then your review. Escalated
+implementer permissions need a separate unchecked `x` acknowledgment; an escalated
+reviewer needs its own unchecked `r` acknowledgment. A changed review policy needs
+a new preview. `y` acknowledges retry hooks and `e` edits branch, base and remote.
+Confirm (**Confirm: start locally**) creates the worktree in the daemon (placement and
 hooks follow your `.bonsai.yaml` `worktree.root` and `worktree.path_template`), then starts one
 agent holder with the full approved spec and plan as its prompt. The holder is the
 same detached process as any [agent session](agents.md#garden-implementation-launch):
@@ -801,19 +809,29 @@ A double submit, timeout or crash never starts a second holder: Bonsai reconcile
 exact operation on reopening and while open, and shows `start unknown` or
 `recoverable` until it can tell. Reconcile never starts, pushes or opens anything.
 
-- **Open session terminal** (`o`) attaches to the attempt's run without selecting a
-  worktree; observing is default, taking control is explicit.
+The overview shows lifecycle state, observed activity and its age, checks only when
+there is evidence, and **Next** from the attempt's frozen review policy. The last
+synced GitHub stage is shown separately from the local holder. Idle means the
+process is still running, never completion.
+
+- **Open session** (`o`) observes the attempt's run without selecting a worktree.
+  `enter` takes control; `ctrl+]` returns to observation. From observation, `esc`
+  leaves the session.
+  Leaving the overlay or quitting only detaches.
 - **Retry** (`r`) is separately confirmed, repeats the retained-work and permission facts,
   reuses the owned worktree (your edits are kept) and starts a new numbered Run only
   once the old one is positively closed.
-- **Stop** (`x`) is separately confirmed; the run shows `stopping` until closure is proven.
+- **Stop run** (`x`) asks for confirmation and shows **Stopping** until holder closure
+  is proven.
 
 On start, Bonsai mirrors **In progress** to GitHub using the existing label check; a
 clean exit mirrors **Review**, a failed or stopped run mirrors **Blocked**, never
 Done. If GitHub is unreachable the local state stays true and shows
 `remote status pending`. A failure before the agent started leaves the Issue Ready.
 Success means **awaiting human review**, even with no commits. There is no automatic
-merge, commit or branch deletion; reviewers and verification arrive in plan 10.
+merge, commit or branch deletion. The review sequence is recorded and authorized,
+but reviewer execution arrives later; this version starts no automatic reviewer
+and runs no review checks.
 
 ### Push and Draft PR
 
@@ -835,11 +853,14 @@ history remain. Cleanup is never automatic and never erases your changes.
 
 ## Automatic review defaults
 
-Settings → Garden → **Automatic review** saves personal defaults for a future
-bounded review after implementation. It is off by default. This setting grants no
-permission: each start must explicitly authorize one review, permitted fixes and
-checks. That start flow arrives later; these fields currently start no reviewer,
-run no checks and change no implementation lifecycle.
+Settings → Garden → **Automatic review** saves personal defaults for a bounded
+review after implementation. It is off by default. Settings grants no permission:
+the [launch preview](#start-implementation-locally) authorizes the exact review,
+permitted fixes and checks, with separate reviewer escalation acknowledgment.
+The policy is frozen per attempt; Settings edits never change a started attempt,
+and a policy change before confirmation requires a new preview. The sequence is
+recorded and authorized, but nothing runs the reviewer yet in this version;
+execution arrives later, including review checks.
 
 - **Review after implementation** enables the default for new implementation starts.
 - **Reviewer account**, **Reviewer model**, **Reviewer effort** and **Reviewer

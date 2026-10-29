@@ -447,21 +447,34 @@ issue. Closing it never stops a planner or implementation session.
 
 #### Local implementation launch in the preview
 
-From a Ready Garden Issue (detail or plan review) press `s` (**start implementation
-locally…**); `i` opens **implementation attempts**, available even when launch is
-blocked. The form selects account, model, effort and native permissions. `ctrl+s`
-requests a preview and never launches; `ctrl+e` edits branch, base and remote. The
-confirmation repeats the exact approved inputs, worktree and permissions. Cancel is
-focused first, so a first `enter` cancels and **Confirm: start locally** must be
-chosen explicitly. `x` acknowledges a permission escalation, `y` retry hooks, `e`
-edits branch/base. Unresolved or unsupported permissions disable Confirm. `esc` or
-leaving Garden detaches without stopping the agent; pushing a Draft PR is separate.
+Ready shows the effective run: implementer, AI reviewer, review limit,
+worktree/base and native permissions, using saved policy and cached defaults.
+Reviewer availability is checked in the exact preview. From a Ready Garden Issue's
+Overview, `s` (**Start implementation…**) opens that preview directly
+with the default account; `e` (**Change run settings**) opens the account, model,
+effort and permissions form. In the form `ctrl+s` requests a preview and `ctrl+e`
+edits branch, base and remote. `i` opens **implementation attempts**, even when
+launch is blocked.
 
-In an attempt: `o` opens the session terminal (observe by default, explicit
-take-control, `esc` leaves without stopping), `x` stop, `r` retry, `w` cleanup,
-`p` push branch / Draft PR, `[`/`]` switch run. Each has its own confirmation;
-cleanup previews first. Reviewers are not available yet (plan 10). Details, blockers
-and recovery: [Garden guide](garden.md#start-implementation-locally).
+Confirmation lists the exact approved inputs and authorized sequence: implementation,
+then the enabled automatic review, fixes and checks, then your review. Cancel is
+focused first. Escalated implementer permissions need an unchecked `x`
+acknowledgment; escalated reviewer permissions need a separate unchecked `r`
+acknowledgment. A changed review policy needs a new preview. Unresolved or
+unsupported permissions disable Confirm. The sequence is recorded and authorized;
+reviewer execution arrives in a later version.
+
+The overview supervises the attempt: lifecycle state, observed activity and age,
+checks only with evidence, **Next**, and the last synced GitHub stage separately.
+Idle is not completion. In an attempt, `o` (**Open session**) observes; `enter`
+takes control and `ctrl+]` returns to observation. From observation, `esc` leaves
+the session.
+`x` (**Stop run**) asks for confirmation and shows **Stopping** until closure is
+proven. Leaving the overlay or quitting only detaches.
+
+Other attempt actions are `r` retry, `w` cleanup, `p` push branch / Draft PR and
+`[`/`]` switch run. Mutations have separate confirmations; cleanup previews first.
+Details, blockers and recovery: [Garden guide](garden.md#start-implementation-locally).
 
 #### Settings in the preview
 
@@ -490,8 +503,9 @@ a text edit, `esc` cancels only that edit.
   **Automatic review** stores an off-by-default policy: reviewer account, model,
   effort, native permissions, a fixed one-pass limit and typed checks, plus
   availability and Restore defaults. It grants no permission and starts nothing;
-  each implementation start will need separate authorization when that flow arrives.
-  It is separate from the Playground reviewer under Agents. See
+  each implementation preview authorizes its frozen review sequence separately.
+  Settings edits never change a started attempt. It is separate from the
+  Playground reviewer under Agents. See
   [Automatic review defaults](garden.md#automatic-review-defaults) for fields,
   check syntax and downgrade limits.
 - **Agents**: "Account defaults" opens the Accounts workspace on Defaults.
