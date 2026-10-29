@@ -21,6 +21,10 @@ import (
 // for future injection.
 var gitTimeout = 120 * time.Second
 
+// gitWaitDelay bounds how long Wait lingers for inherited output pipes after
+// git is killed.
+var gitWaitDelay = 2 * time.Second
+
 // Worktree describes a single entry from `git worktree list`.
 type Worktree struct {
 	Path   string
@@ -83,6 +87,10 @@ func runContext(parent context.Context, dir string, isolate bool, args ...string
 	trace.AddGit()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	killTreeOnCancel(cmd)
+	// Hooks and transport helpers can outlive git while holding its output pipes;
+	// without a bound the deadline would not apply to them.
+	cmd.WaitDelay = gitWaitDelay
 	env := cmd.Environ()
 	if isolate {
 		kept := env[:0:0]
@@ -260,6 +268,31 @@ func isDirtyRemoveErr(err error) bool {
 // DeleteBranch force-deletes a local branch.
 func DeleteBranch(dir, branch string) error {
 	_, err := run(dir, "branch", "-D", branch)
+	return err
+}
+
+// BranchTip returns the commit a local branch points to.
+func BranchTip(dir, branch string) (string, error) {
+	return run(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+}
+
+// IsAncestor reports whether commit is reachable from ref.
+func IsAncestor(dir, commit, ref string) (bool, error) {
+	_, err := run(dir, "merge-base", "--is-ancestor", commit, ref)
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// DeleteBranchAt deletes a local branch only while it still points at sha, so
+// commits added after the caller verified the branch are never discarded.
+func DeleteBranchAt(dir, branch, sha string) error {
+	_, err := run(dir, "update-ref", "-d", "refs/heads/"+branch, sha)
 	return err
 }
 

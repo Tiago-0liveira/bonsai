@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -291,9 +292,9 @@ func (m *Manager) KillAll() {
 }
 
 // RunHooks executes each command with the platform shell in dir sequentially, stopping at
-// the first failure. Before running, "{name}" placeholders are replaced using
-// vars (see config.HookVars) and each var is also exported as $BONSAI_<NAME>.
-// Empty command strings are skipped.
+// the first failure. Each var is exported as $BONSAI_<NAME> and every "{name}"
+// placeholder (see config.HookVars) becomes a reference to that variable, so
+// values are never parsed as shell source. Empty command strings are skipped.
 func RunHooks(dir string, commands []string, vars map[string]string) error {
 	return RunHooksContext(context.Background(), dir, commands, vars)
 }
@@ -302,17 +303,16 @@ func RunHooks(dir string, commands []string, vars map[string]string) error {
 // ends. A canceled hook is a failed one: the caller decides whether it may have
 // partly run.
 func RunHooksContext(ctx context.Context, dir string, commands []string, vars map[string]string) error {
-	env := hookEnv(vars)
+	env := VarsEnv(vars)
 	for _, c := range commands {
-		c = ExpandVars(c, vars)
+		c = ExpandVarRefs(c, vars)
 		if strings.TrimSpace(c) == "" {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		cmd := shellCommandContext(ctx, c)
-		cmd.Dir = dir
+		cmd := VarsCommand(ctx, dir, c)
 		cmd.Env = env
 		if err := cmd.Run(); err != nil {
 			if ctx.Err() != nil {
@@ -324,7 +324,9 @@ func RunHooksContext(ctx context.Context, dir string, commands []string, vars ma
 	return nil
 }
 
-// ExpandVars replaces each "{name}" in s with vars[name].
+// ExpandVars replaces each "{name}" in s with vars[name] as literal text. The
+// result is only safe when it is not parsed as shell source; commands that
+// reach a shell use ExpandVarRefs instead.
 func ExpandVars(s string, vars map[string]string) string {
 	for k, v := range vars {
 		s = strings.ReplaceAll(s, "{"+k+"}", v)
@@ -332,13 +334,119 @@ func ExpandVars(s string, vars map[string]string) string {
 	return s
 }
 
-// hookEnv returns the process environment plus a BONSAI_<NAME> entry per var.
-func hookEnv(vars map[string]string) []string {
+var placeholderRE = regexp.MustCompile(`^\{([A-Za-z0-9_]+)\}`)
+
+// refStyle selects the variable-reference syntax of the shell a command runs in.
+type refStyle int
+
+const (
+	refPOSIX refStyle = iota
+	// refCmd is cmd.exe with delayed expansion: unlike %VAR%, !VAR! is expanded
+	// after parsing, so metacharacters in a value stay data.
+	refCmd
+)
+
+func hookRefStyle() refStyle {
+	if runtime.GOOS == "windows" && envShell() == "" {
+		return refCmd
+	}
+	return refPOSIX
+}
+
+// ExpandVarRefs replaces each known "{name}" in s with a reference to the
+// $BONSAI_<NAME> variable that VarsEnv exports, so a value containing quotes,
+// "$(...)" or ";" is data and never becomes shell source. Inside single quotes
+// the reference is spliced out of the quotes so it still expands.
+func ExpandVarRefs(s string, vars map[string]string) string {
+	return expandVarRefs(s, vars, hookRefStyle())
+}
+
+func expandVarRefs(s string, vars map[string]string, style refStyle) string {
+	var b strings.Builder
+	single, double := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '{' {
+			if m := placeholderRE.FindStringSubmatch(s[i:]); m != nil {
+				if _, ok := vars[m[1]]; ok {
+					b.WriteString(varRef(m[1], style, single))
+					i += len(m[0]) - 1
+					continue
+				}
+			}
+		}
+		if style == refPOSIX {
+			switch {
+			case single:
+				single = c != '\''
+			case c == '\\' && i+1 < len(s):
+				b.WriteByte(c)
+				i++
+				c = s[i]
+			case c == '\'' && !double:
+				single = true
+			case c == '"':
+				double = !double
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+func varRef(name string, style refStyle, inSingle bool) string {
+	env := "BONSAI_" + strings.ToUpper(name)
+	if style == refCmd {
+		return "!" + env + "!"
+	}
+	if inSingle {
+		return `'"${` + env + `}"'`
+	}
+	return "${" + env + "}"
+}
+
+// InlineVarRefs is ExpandVarRefs for commands handed to a process manager that
+// cannot take an environment (the daemon): the variables are exported by a
+// single-quoted prefix inside the command text. Where the shell is cmd.exe
+// there is no equivalent quoting, so values are substituted literally.
+func InlineVarRefs(s string, vars map[string]string) string {
+	style := hookRefStyle()
+	if style == refCmd {
+		return ExpandVars(s, vars)
+	}
+	body := expandVarRefs(s, vars, style)
+	if body == s {
+		return s
+	}
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString("export BONSAI_" + strings.ToUpper(k) + "='" + strings.ReplaceAll(vars[k], "'", `'\''`) + "'; ")
+	}
+	return b.String() + body
+}
+
+// VarsEnv returns the process environment plus a BONSAI_<NAME> entry per var.
+func VarsEnv(vars map[string]string) []string {
 	env := os.Environ()
 	for k, v := range vars {
 		env = append(env, "BONSAI_"+strings.ToUpper(k)+"="+v)
 	}
 	return env
+}
+
+// VarsCommand builds the shell command for text produced by ExpandVarRefs.
+func VarsCommand(ctx context.Context, dir, command string) *exec.Cmd {
+	cmd := shellCommandContext(ctx, command)
+	if hookRefStyle() == refCmd && len(cmd.Args) == 3 {
+		cmd.Args = []string{cmd.Args[0], "/v:on", cmd.Args[1], cmd.Args[2]}
+	}
+	cmd.Dir = dir
+	return cmd
 }
 
 // shellCommand builds an *exec.Cmd using the appropriate shell for the platform.

@@ -739,7 +739,11 @@ aliases:
 ### Hook and alias variables
 
 Use `{name}` inside hook commands and alias commands. Each is also exported to
-hooks as `$BONSAI_<NAME>` (uppercased).
+hooks as `$BONSAI_<NAME>` (uppercased). Placeholders are expanded as references to
+those variables, never pasted into the command text, so a branch or path with
+quotes, `$(...)` or `;` is passed as data. Inside single quotes the value still
+expands. Wrapping a placeholder in double quotes keeps values with spaces as one
+argument.
 
 | Variable | Value |
 |----------|-------|

@@ -363,7 +363,7 @@ func (m Model) paletteCommands() []paletteCmd {
 				}
 				prNum, _ := m.prForBranch(wt.Branch)
 				vars := config.HookVars(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), prNum)
-				return m.spawn(wt.Path, name, coreexec.ExpandVars(cmd, vars)), nil
+				return m.spawn(wt.Path, name, coreexec.InlineVarRefs(cmd, vars)), nil
 			},
 		})
 	}

@@ -1838,8 +1838,8 @@ func (m Model) onPruneCandidates(msg pruneCandidatesMsg) (tea.Model, tea.Cmd) {
 }
 
 // mergedTargetsFrom returns non-main, clean worktrees whose branch appears in
-// merged (the union of merged PR heads and locally-merged branches).
-func (m Model) mergedTargetsFrom(merged map[string]bool) []pruneTarget {
+// merged, mapped to the tip commit verified as merged.
+func (m Model) mergedTargetsFrom(merged map[string]string) []pruneTarget {
 	var targets []pruneTarget
 	for _, t := range m.worktrees {
 		if t.IsMain || t.Branch == "" || t.Branch == "(detached)" {
@@ -1848,12 +1848,13 @@ func (m Model) mergedTargetsFrom(merged map[string]bool) []pruneTarget {
 		if m.statuses[t.Path].Dirty() {
 			continue
 		}
-		if !merged[t.Branch] {
+		sha := merged[t.Branch]
+		if sha == "" {
 			continue
 		}
 		prNum, _ := m.prForBranch(t.Branch)
 		targets = append(targets, pruneTarget{
-			path: t.Path, branch: t.Branch, upstream: m.upstreamFor(t.Branch), prNumber: prNum,
+			path: t.Path, branch: t.Branch, upstream: m.upstreamFor(t.Branch), sha: sha, prNumber: prNum,
 		})
 	}
 	return targets
@@ -2184,7 +2185,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		if cmd := m.aliasCommand(msg.Value); cmd != "" {
 			prNum, _ := m.prForBranch(wt.Branch)
 			vars := config.HookVars(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), prNum)
-			return m.spawn(wt.Path, msg.Value, coreexec.ExpandVars(cmd, vars)), nil
+			return m.spawn(wt.Path, msg.Value, coreexec.InlineVarRefs(cmd, vars)), nil
 		}
 		return m, nil
 

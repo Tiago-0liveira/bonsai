@@ -347,35 +347,63 @@ func loadBranches(kind branchesKind, dir string) tea.Cmd {
 	}
 }
 
-// pruneCandidatesMsg carries the union of merged branch heads for the
-// bulk-prune scan.
+// pruneCandidatesMsg carries the merged branches for the bulk-prune scan, each
+// bound to the commit that was verified as merged.
 type pruneCandidatesMsg struct {
-	merged map[string]bool
+	merged map[string]string
 	err    error
 }
 
 // loadPruneCandidates unions merged PR heads (gh) with locally-merged branches
-// (git) in a goroutine. err is set only when both sources fail.
+// (git) in a goroutine. A branch name alone is not evidence: it qualifies only
+// when its current tip is reachable from base or equals the merged PR's head
+// commit (squash merges), and the verified tip is returned for the later
+// recheck. err is set only when both sources fail.
 func loadPruneCandidates(repoDir, base string) tea.Cmd {
 	return func() tea.Msg {
-		merged := map[string]bool{}
+		prHead := map[string]string{}
+		names := map[string]bool{}
 		mprs, ghErr := gh.ListMergedPRs(repoDir)
 		if ghErr == nil {
 			for _, pr := range mprs {
-				merged[pr.Head] = true
+				names[pr.Head] = true
+				if prHead[pr.Head] == "" {
+					prHead[pr.Head] = pr.HeadSHA
+				}
 			}
 		}
 		locals, gitErr := git.MergedBranches(repoDir, base)
 		if gitErr == nil {
 			for _, b := range locals {
-				merged[b] = true
+				names[b] = true
 			}
 		}
 		if ghErr != nil && gitErr != nil {
 			return pruneCandidatesMsg{err: ghErr}
 		}
+		merged := verifyMerged(repoDir, base, names, prHead)
 		return pruneCandidatesMsg{merged: merged}
 	}
+}
+
+// verifyMerged keeps the names whose current tip is reachable from base or
+// equals the merged PR head commit, mapped to that tip.
+func verifyMerged(repoDir, base string, names map[string]bool, prHead map[string]string) map[string]string {
+	merged := map[string]string{}
+	for name := range names {
+		tip, err := git.BranchTip(repoDir, name)
+		if err != nil || tip == "" {
+			continue
+		}
+		if tip == prHead[name] {
+			merged[name] = tip
+			continue
+		}
+		if ok, err := git.IsAncestor(repoDir, tip, base); err == nil && ok {
+			merged[name] = tip
+		}
+	}
+	return merged
 }
 
 // fetchPRs fetches PRs in any state to decorate worktree rows (open, merged,
@@ -502,27 +530,46 @@ func createPR(repoDir, path, title, body, base string, draft bool) tea.Cmd {
 
 // bulkPrune removes each merged worktree in sequence, aggregating the result.
 // Targets whose delete hooks or removal fail (including dirty worktrees) are
-// skipped, and the first error is reported alongside the success count.
+// skipped, and the first error is reported alongside the success count. The
+// branch tip is rechecked against the verified commit before the worktree is
+// touched and the branch is deleted only while it still points there, so
+// commits made after the scan are never discarded.
 func bulkPrune(repoDir string, targets []pruneTarget, deleteHooks []string) tea.Cmd {
 	return func() tea.Msg {
 		var firstErr error
+		fail := func(err error) {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
 		n := 0
 		for _, t := range targets {
+			if t.branch != "" {
+				if tip, err := git.BranchTip(repoDir, t.branch); err != nil || tip != t.sha {
+					fail(fmt.Errorf("kept %s: its tip is no longer the merged commit", t.branch))
+					continue
+				}
+			}
 			vars := config.HookVars(repoDir, t.path, t.branch, t.upstream, t.prNumber)
 			if err := coreexec.RunHooks(t.path, deleteHooks, vars); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			if err := git.RemoveWorktree(repoDir, t.path); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
+				fail(err)
 				continue
 			}
 			if t.branch != "" {
-				_ = git.DeleteBranch(repoDir, t.branch)
+				// Hooks can commit; recheck before the removal that cannot be undone.
+				if tip, err := git.BranchTip(repoDir, t.branch); err != nil || tip != t.sha {
+					fail(fmt.Errorf("kept %s: its tip moved while pruning", t.branch))
+					continue
+				}
+			}
+			if err := git.RemoveWorktree(repoDir, t.path); err != nil {
+				fail(err)
+				continue
+			}
+			if t.branch != "" {
+				if err := git.DeleteBranchAt(repoDir, t.branch, t.sha); err != nil {
+					fail(fmt.Errorf("kept %s: its tip moved after the worktree was removed: %w", t.branch, err))
+				}
 			}
 			n++
 		}
@@ -530,10 +577,11 @@ func bulkPrune(repoDir string, targets []pruneTarget, deleteHooks []string) tea.
 	}
 }
 
-// pruneTarget is one worktree scheduled for bulk pruning.
+// pruneTarget is one worktree scheduled for bulk pruning; sha is the branch tip
+// that was verified as merged.
 type pruneTarget struct {
-	path, branch, upstream string
-	prNumber               int
+	path, branch, upstream, sha string
+	prNumber                    int
 }
 
 // createWorktree builds a new worktree. mode selects the source:
