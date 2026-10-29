@@ -21,6 +21,10 @@ import (
 // for future injection.
 var gitTimeout = 120 * time.Second
 
+// gitWaitDelay bounds how long Wait lingers for inherited output pipes after
+// git is killed.
+var gitWaitDelay = 2 * time.Second
+
 // Worktree describes a single entry from `git worktree list`.
 type Worktree struct {
 	Path   string
@@ -83,6 +87,10 @@ func runContext(parent context.Context, dir string, isolate bool, args ...string
 	trace.AddGit()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	killTreeOnCancel(cmd)
+	// Hooks and transport helpers can outlive git while holding its output pipes;
+	// without a bound the deadline would not apply to them.
+	cmd.WaitDelay = gitWaitDelay
 	env := cmd.Environ()
 	if isolate {
 		kept := env[:0:0]
