@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/reviewpass"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
@@ -23,11 +25,60 @@ import (
 
 type fakeLaunchUIAccounts struct {
 	agentsapi.Accounts
-	resolution agents.LaunchResolution
+	resolution  agents.LaunchResolution
+	resolutions map[agents.AccountID]agents.LaunchResolution
+	calls       []string
 }
 
-func (f *fakeLaunchUIAccounts) ResolveLaunch(context.Context, agents.AccountID, agents.LaunchOptions) (agents.LaunchResolution, error) {
-	return f.resolution, nil
+func (f *fakeLaunchUIAccounts) List(ctx context.Context) ([]agentsapi.Account, error) {
+	f.calls = append(f.calls, "List")
+	return f.Accounts.List(ctx)
+}
+func (f *fakeLaunchUIAccounts) CachedDefaults(_ context.Context, id agents.AccountID) (agentsapi.Defaults, error) {
+	f.calls = append(f.calls, "CachedDefaults:"+string(id))
+	r := f.resolution
+	if f.resolutions != nil {
+		var ok bool
+		r, ok = f.resolutions[id]
+		if !ok {
+			return agentsapi.Defaults{}, agents.ErrAccountNotFound
+		}
+	}
+	fields := []agents.LaunchField{}
+	for _, id := range []string{"effort", "permission_mode", "sandbox", "approval"} {
+		fields = append(fields, agents.LaunchField{ID: id, Kind: agents.LaunchFieldSelect})
+	}
+	return agentsapi.Defaults{LaunchFields: fields, Values: map[string]string{"model": r.Launch.Model, "effort": r.Launch.Effort, "permission_mode": r.Launch.PermissionMode, "sandbox": r.Launch.Sandbox, "approval": r.Launch.Approval}}, nil
+}
+func (f *fakeLaunchUIAccounts) ResolveLaunch(_ context.Context, id agents.AccountID, o agents.LaunchOptions) (agents.LaunchResolution, error) {
+	f.calls = append(f.calls, "ResolveLaunch:"+string(id))
+	r := f.resolution
+	if f.resolutions != nil {
+		var ok bool
+		r, ok = f.resolutions[id]
+		if !ok {
+			return r, agents.ErrAccountNotFound
+		}
+	}
+	if o.Model != "" {
+		r.Launch.Model = o.Model
+	}
+	if o.Effort != "" {
+		r.Launch.Effort = o.Effort
+	}
+	if o.PermissionMode != "" {
+		r.Launch.PermissionMode = o.PermissionMode
+	}
+	if o.Sandbox != "" {
+		r.Launch.Sandbox = o.Sandbox
+	}
+	if o.Approval != "" {
+		r.Launch.Approval = o.Approval
+	}
+	if o.FullAccess != nil {
+		r.Launch.FullAccess = o.FullAccess
+	}
+	return r, nil
 }
 
 type fakeLaunchUIBackend struct {
@@ -39,6 +90,11 @@ type fakeLaunchUIBackend struct {
 	stops, retries, publishes, cleanupPreviews, cleanups int
 	previewErr, startErr                                 error
 	startEntered, startRelease                           chan struct{}
+	calls                                                []string
+	review                                               gardenapi.LaunchReview
+	reviews                                              map[string]reviewpass.Pass
+	activity                                             map[string]gardenapi.LaunchActivity
+	stopPending                                          bool
 	lastPreview                                          gardenapi.LaunchPreviewView
 	lastCleanup                                          gardenapi.LaunchCleanupView
 	resolution                                           agents.LaunchResolution
@@ -47,6 +103,10 @@ type fakeLaunchUIBackend struct {
 
 var _ gardenapi.LaunchBackend = (*fakeLaunchUIBackend)(nil)
 
+// launchTestWorktreeRoot is absolute on every OS (a bare "/x" is not on Windows),
+// as review pass snapshots require. Nothing is written there.
+var launchTestWorktreeRoot = filepath.Join(os.TempDir(), "authorized", "worktrees")
+
 func (f *fakeLaunchUIBackend) PreviewLaunch(ctx context.Context, r gardenapi.LaunchPreviewRequest) (gardenapi.LaunchPreviewView, error) {
 	rv, err := f.Backend.PlanReview(ctx, r.IssueID)
 	if err != nil {
@@ -54,6 +114,7 @@ func (f *fakeLaunchUIBackend) PreviewLaunch(ctx context.Context, r gardenapi.Lau
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "PreviewLaunch")
 	f.previews = append(f.previews, r)
 	if f.previewErr != nil {
 		return gardenapi.LaunchPreviewView{}, f.previewErr
@@ -86,16 +147,22 @@ func (f *fakeLaunchUIBackend) PreviewLaunch(ctx context.Context, r gardenapi.Lau
 		r.AccountID = "c1"
 	}
 	p := launch.Preview{ID: id, Request: launch.Request{Target: approveTargetForFakeLaunch(rv), Branch: r.Branch, BaseRef: r.BaseRef, RemoteName: r.RemoteName, AccountID: r.AccountID, Launch: r.Launch, Name: r.Name, Cols: r.Cols, Rows: r.Rows}, Inputs: launch.Inputs{Spec: plan.SpecRef{RevisionHash: g.Head.Hash, CommentID: g.Head.CommentID, Ordinal: g.Ordinal, Fingerprint: g.Fingerprint}, SpecApprovalID: g.Approval.CommentID, Plan: launch.PlanRef{RevisionHash: approved.Hash, CommentID: approved.CommentID, Ordinal: approved.Ordinal, DecisionID: approved.Decisions[len(approved.Decisions)-1].CommentID, BaseCommit: approved.BaseCommit}}, Account: f.resolution, Attempts: append([]launch.Attempt(nil), f.attempts...)}
+	p.Request.ReviewPolicyHash = f.review.Hash
 	it := f.Backend.WorkView.Snapshot.Items[0]
 	p.Remote = launch.RemoteSnapshot{Target: p.Request.Target, Local: garden.LocalRepoID(rv.Stamp.LocalRepoID), Epoch: rv.Stamp.Epoch, Issue: it.Issue, FullName: "acme/my-app", Review: rv.Review, Live: true, VerifiedAt: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
-	p.Proposal = domain.IsolationProposal{IsolationRequest: domain.IsolationRequest{OperationID: id, RepositoryID: "local", Branch: r.Branch, BaseRef: r.BaseRef, BaseSHA: approved.BaseCommit, RemoteName: r.RemoteName, Repository: "acme/my-app"}, Path: filepath.Join("/authorized/worktrees", strings.ReplaceAll(r.Branch, "/", "-")), RootRevision: 1, ConfigHash: strings.Repeat("d", 64)}
+	p.Proposal = domain.IsolationProposal{IsolationRequest: domain.IsolationRequest{OperationID: id, RepositoryID: "local", Branch: r.Branch, BaseRef: r.BaseRef, BaseSHA: approved.BaseCommit, RemoteName: r.RemoteName, Repository: "acme/my-app"}, Path: filepath.Join(launchTestWorktreeRoot, strings.ReplaceAll(r.Branch, "/", "-")), RootRevision: 1, ConfigHash: strings.Repeat("d", 64)}
 	p.Escalated = p.Account.Launch.PermissionMode == "bypassPermissions" || p.Account.Launch.Sandbox == "bypass" || p.Account.Launch.FullAccess != nil && *p.Account.Launch.FullAccess
-	f.lastPreview = gardenapi.LaunchPreviewView{Stamp: rv.Stamp, IssueID: r.IssueID, Preview: p}
+	f.lastPreview = gardenapi.LaunchPreviewView{Stamp: rv.Stamp, IssueID: r.IssueID, Preview: p, Review: f.review}
 	return f.lastPreview, nil
 }
 func (f *fakeLaunchUIBackend) StartLaunch(ctx context.Context, r gardenapi.LaunchStartRequest) (gardenapi.LaunchAttemptView, error) {
 	f.mu.Lock()
+	f.calls = append(f.calls, "StartLaunch")
 	f.starts = append(f.starts, r)
+	if f.startErr != nil && safeGardenError(f.startErr).Code == gardenapi.CodeLaunchChanged {
+		f.mu.Unlock()
+		return gardenapi.LaunchAttemptView{}, f.startErr
+	}
 	entered, release := f.startEntered, f.startRelease
 	f.mu.Unlock()
 	if entered != nil {
@@ -119,24 +186,32 @@ func (f *fakeLaunchUIBackend) LaunchAttempts(ctx context.Context, id uint64) (ga
 	st, err := f.Backend.Status(ctx)
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "LaunchAttempts")
 	f.attemptsReads++
-	return gardenapi.LaunchAttemptsView{Stamp: st.Stamp, IssueID: id, Attempts: append([]launch.Attempt(nil), f.attempts...)}, err
+	return gardenapi.LaunchAttemptsView{Stamp: st.Stamp, IssueID: id, Reviews: f.reviews, Activity: f.activity, Attempts: append([]launch.Attempt(nil), f.attempts...)}, err
 }
 func (f *fakeLaunchUIBackend) RetryLaunch(_ context.Context, r launch.RetryRequest) (gardenapi.LaunchAttemptView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "RetryLaunch")
 	f.retries++
 	return gardenapi.LaunchAttemptView{Stamp: f.lastPreview.Stamp, IssueID: 1, Attempt: f.attempts[0]}, nil
 }
 func (f *fakeLaunchUIBackend) StopLaunch(_ context.Context, id string) (gardenapi.LaunchAttemptView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "StopLaunch")
 	f.stops++
+	if f.stopPending {
+		f.attempts[0].StopRequested = true
+		f.attempts[0].Revision++
+	}
 	return gardenapi.LaunchAttemptView{Stamp: f.lastPreview.Stamp, IssueID: 1, Attempt: f.attempts[0]}, nil
 }
 func (f *fakeLaunchUIBackend) PublishLaunch(_ context.Context, r launch.PublishRequest) (gardenapi.LaunchAttemptView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "PublishLaunch")
 	f.publishes++
 	if !r.Confirmed {
 		panic("UI sent unconfirmed publish")
@@ -146,6 +221,7 @@ func (f *fakeLaunchUIBackend) PublishLaunch(_ context.Context, r launch.PublishR
 func (f *fakeLaunchUIBackend) PreviewLaunchCleanup(_ context.Context, id string) (gardenapi.LaunchCleanupView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "PreviewLaunchCleanup")
 	f.cleanupPreviews++
 	a := f.attempts[0]
 	f.lastCleanup = gardenapi.LaunchCleanupView{Stamp: f.lastPreview.Stamp, IssueID: 1, Preview: launch.CleanupPreview{AttemptID: id, Revision: a.Revision, Allowed: true, Check: domain.IsolationCheck{Proposal: a.Proposal, HeadSHA: a.Proposal.BaseSHA, Owned: true, Exists: true, Clean: true, Hooks: "done", Fingerprint: strings.Repeat("e", 64)}}}
@@ -154,6 +230,7 @@ func (f *fakeLaunchUIBackend) PreviewLaunchCleanup(_ context.Context, id string)
 func (f *fakeLaunchUIBackend) CleanupLaunch(_ context.Context, p gardenapi.LaunchCleanupView, confirmed bool) (gardenapi.LaunchAttemptView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "CleanupLaunch")
 	f.cleanups++
 	if !confirmed || p.Preview.Revision != f.lastCleanup.Preview.Revision || p.Preview.Check.Fingerprint != f.lastCleanup.Preview.Check.Fingerprint {
 		panic("cleanup confirmation changed")
@@ -174,6 +251,7 @@ func fakeLaunchUIEnv(t *testing.T, w, h int) (Model, plannerRig, *fakeLaunchUIBa
 	m.garden.api = fb
 	rig.agents.Accounts.Items = rig.agents.Accounts.Items[:1]
 	m.agents.api.Accounts = &fakeLaunchUIAccounts{Accounts: m.agents.api.Accounts, resolution: resolution}
+	m = plannerPress(t, m, "R")
 	return m, rig, fb
 }
 func fakeLaunchUIReview(t *testing.T, m Model) Model {
@@ -193,7 +271,7 @@ func fakeLaunchUIReview(t *testing.T, m Model) Model {
 func TestGardenLaunchReadyActionAndApprovalReadsNeverStart(t *testing.T) {
 	m, _, fb := fakeLaunchUIEnv(t, 120, 35)
 	m = plannerPress(t, m, "enter")
-	mustContain(t, "Ready detail", view(m), "Start implementation locally", "Implementation attempts")
+	mustContain(t, "Ready detail", view(m), "READY TO BUILD", "Implementer", "AI reviewer", "Worktree", "Permissions")
 	m = plannerPress(t, m, "r", "R", "esc", "i", "esc", "esc")
 	if len(fb.starts) != 0 {
 		t.Fatal("read/refresh/history/navigation started holder")
@@ -211,7 +289,7 @@ func TestGardenLaunchConfirmationIsCancelFirstAndCtrlSCannotBypass(t *testing.T)
 			if len(fb.starts) != 0 {
 				t.Fatal("Ctrl+S skipped confirmation")
 			}
-			mustContain(t, "consequence", view(m), "Cancel", "Confirm", "local holder", "Draft PR")
+			mustContain(t, "consequence", view(m), "Cancel", "Confirm", "Sequence", "stops at your review")
 			mustFit(t, "confirmation", m)
 			m = plannerPress(t, m, "enter")
 			if len(fb.starts) != 0 {
@@ -241,7 +319,7 @@ func TestGardenLaunchExplicitConfirmFreezesExactPreviewOnce(t *testing.T) {
 func TestGardenLaunchBlockedPermissionsHaveNoActiveConfirmation(t *testing.T) {
 	m, _, fb := fakeLaunchUIEnv(t, 120, 35)
 	fb.previewErr = &gardenapi.Error{Code: gardenapi.CodeLaunchBlocked, Message: "Native permissions unresolved. Choose an explicit permission mode."}
-	m = plannerPress(t, m, "enter", "s", "ctrl+s", "tab", "enter")
+	m = plannerPress(t, m, "enter", "e", "ctrl+s", "tab", "enter")
 	if len(fb.starts) != 0 {
 		t.Fatal("blocked permissions reached StartLaunch")
 	}

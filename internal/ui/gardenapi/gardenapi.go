@@ -17,6 +17,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/assist"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
@@ -119,7 +120,7 @@ type Backend interface {
 	PlannerPlan(ctx context.Context, attemptID string) (PlannerPlanView, error)
 	// LocalWork summarizes, per Issue, the local agent work the board should flag: a planner attempt that is live,
 	// or ended with a ready plan file that was not published from here. It reconciles with one agent session list
-	// and one store read, never one call per Issue, and starts nothing.
+	// plus the optional implementation attempt store, never one call per Issue, and starts nothing.
 	LocalWork(ctx context.Context) (LocalWorkView, error)
 
 	// PlanReview verifies the Issue's comment log now and reports its plan revisions: the latest, the one under
@@ -138,6 +139,18 @@ type Backend interface {
 	// DecidePlan records changes requested, rejection, or exact-pair approval through Ready.
 	// It rechecks heads and authority and starts no run.
 	DecidePlan(ctx context.Context, req PlanDecisionRequest) (PlanDecisionView, error)
+
+	// PreviewPlanRevise reads what "send feedback & revise plan" would do for the Issue's current plan revision:
+	// the revision, the settings retained from the attempt that produced it, the checkout, and any recorded
+	// changes request that no revision attempt answers yet. It reads only and starts nothing.
+	PreviewPlanRevise(ctx context.Context, issue uint64) (PlanRevisePreviewView, error)
+	// RevisePlan records changes requested on one exact revision and then starts one read-only revision attempt
+	// carrying that feedback. Both outcomes are reported; a start failure never rolls the decision back, and an
+	// unknown decision outcome starts nothing. Repeating it finds the earlier decision and attempt.
+	RevisePlan(ctx context.Context, req PlanReviseRequest) (PlanReviseView, error)
+	// StartPlanRevise is the explicit retry for a recorded changes request whose attempt did not start or failed.
+	// It writes no decision.
+	StartPlanRevise(ctx context.Context, req PlanReviseRequest) (PlanReviseView, error)
 }
 
 // Stamp scopes one reply. Generation grows with every request of the clone and
@@ -523,6 +536,18 @@ const (
 	CodeSaveUnknown Code = "save-unknown"
 	// CodeCaptureUnknown means an Issue may have been created; reconcile before retrying.
 	CodeCaptureUnknown Code = "capture-unknown"
+	// CodePublishStale means the draft, the repository or the account changed since the preview: nothing was written.
+	CodePublishStale Code = "publish-stale"
+	// CodePublishNotReady means the draft cannot be approved yet.
+	CodePublishNotReady Code = "publish-not-ready"
+	// CodePublishResume means the draft is already being published: resume it instead of starting again.
+	CodePublishResume Code = "publish-resume"
+	// CodePublishInFlight means this publication is already running.
+	CodePublishInFlight Code = "publish-in-flight"
+	// CodePublishIncomplete means the Issue exists but a later step is not verified; resuming continues it.
+	CodePublishIncomplete Code = "publish-incomplete"
+	// CodePublishUnknown means the Issue may exist on GitHub but was not found yet; resuming looks again.
+	CodePublishUnknown Code = "publish-unknown"
 	// CodeInvalidInput means the request failed validation; nothing was sent.
 	CodeInvalidInput Code = "invalid-input"
 	// CodeAssistUnsupported means tool-free structured assistance is unavailable.
@@ -653,10 +678,21 @@ type AssistSettings struct {
 	Guidance      string
 }
 
+// PrivateDraftRef scopes one assistance request to a private local draft. Revision is the
+// durable revision the working copy started from and Generation the caller's request counter;
+// both come back unchanged so a late reply can be matched to the request that asked for it.
+type PrivateDraftRef struct {
+	ID         drafts.ID
+	Revision   uint64
+	Generation uint64
+}
+
 // AssistContext carries the caller's working copy; the backend never loads an Issue.
+// A request for a private draft sets PrivateDraft and leaves IssueID and Number zero.
 type AssistContext struct {
 	Stamp
 	RequestID          string
+	PrivateDraft       *PrivateDraftRef
 	IssueID            uint64
 	Number             int64
 	Title              string
@@ -678,6 +714,7 @@ type AssistDraftRequest struct {
 
 type AssistQuestionsView struct {
 	Stamp
+	PrivateDraft    *PrivateDraftRef
 	RequestID       string
 	Round           int
 	Set             assist.QuestionSet
@@ -686,6 +723,7 @@ type AssistQuestionsView struct {
 
 type AssistDraftView struct {
 	Stamp
+	PrivateDraft         *PrivateDraftRef
 	RequestID, InputHash string
 	Proposal             assist.Proposal
 }
@@ -895,7 +933,7 @@ type PlannerPlanView struct {
 // LocalRunSummary is one local agent run of an Issue in the compact form the board shows.
 type LocalRunSummary struct {
 	AttemptID string
-	// State is the attempt state: starting, running, ended, failed or cancelled.
+	// State is the exact stored planner or implementation attempt state.
 	State string
 	// Live is true while the attempt can still change.
 	Live bool
@@ -903,6 +941,15 @@ type LocalRunSummary struct {
 	Activity *agentactivity.Activity
 	PlanFile plan.PlanFileState
 	Updated  time.Time
+	// The rest is set for planner summaries only; it holds no token, prompt, environment value or output.
+	Provider    string
+	AccountName string
+	Model       string
+	Effort      string
+	// RequestedAt lets the view show elapsed time at render; nothing ticks in the store.
+	RequestedAt time.Time
+	// Revises is set when the attempt answers a recorded changes request.
+	Revises *plan.RevisionRef
 }
 
 // IssueLocalWork is the local work to flag on one Issue.
@@ -910,11 +957,12 @@ type IssueLocalWork struct {
 	// Planner is the live planner attempt, else the newest ended one whose plan is ready and not published from
 	// here.
 	Planner *LocalRunSummary
+	// Implementation is the newest non-cleaned attempt in this clone.
+	Implementation *LocalRunSummary
 }
 
 // LocalWorkView maps an Issue ID (the one PlannerAttempts takes) to its local work. Issues with nothing to
-// flag are absent. Implementation attempts are not included: they live in a separate store the board reads
-// per Issue through LaunchAttempts.
+// flag are absent. Planner and implementation summaries remain separate from canonical workflow state.
 type LocalWorkView struct {
 	Stamp  Stamp
 	Issues map[uint64]IssueLocalWork
@@ -1000,6 +1048,75 @@ type PlanDecisionView struct {
 	Decision  garden.Decision
 	Replayed  bool
 	Err       *Error
+}
+
+// PlanReviseSettings are the launch choices of a revision attempt. The planner role fixes everything else.
+type PlanReviseSettings struct {
+	AccountID     agents.AccountID
+	Model, Effort string
+}
+
+// PlanReviseRequest asks to revise one exact plan revision. Fingerprint and SpecHash are the specification the
+// reviewer saw it answer, Base the checkout the preview showed.
+type PlanReviseRequest struct {
+	Stamp        Stamp
+	IssueID      uint64
+	RevisionHash string
+	Fingerprint  string
+	SpecHash     string
+	ActorID      string
+	// Reason is the feedback. StartPlanRevise ignores it: the recorded decision's text is used.
+	Reason string
+	// DecisionCommentID is the recorded changes request StartPlanRevise answers; it must be the pending one.
+	// RevisePlan ignores it: it records the decision itself.
+	DecisionCommentID int64
+	Settings          PlanReviseSettings
+	// IncludeDirty lets the planner read uncommitted changes; required when Base.Dirty.
+	IncludeDirty bool
+	// AcceptReadOnly confirms the read-only permissions shown for the account.
+	AcceptReadOnly bool
+	Base           plan.Base
+	Cols, Rows     int
+}
+
+// PlanReviseView is the result of RevisePlan or StartPlanRevise.
+type PlanReviseView struct {
+	Stamp   Stamp
+	IssueID uint64
+	// Decision is how recording the changes request ended. State unknown means no attempt was started.
+	Decision PlanDecisionView
+	// Attempt is the revision attempt, nil when none started.
+	Attempt *plan.Attempt
+	// StartErr says why no attempt started after the decision was recorded.
+	StartErr *Error
+	// Existing is set when Attempt was started by an earlier request for the same feedback.
+	Existing bool
+}
+
+// PendingRevise is a recorded changes request on the current revision and the attempt that answers it.
+type PendingRevise struct {
+	DecisionCommentID int64
+	Reason            string
+	// Attempt is the newest revision attempt for the decision (possibly failed or cancelled, which an explicit retry replaces); nil when none was started.
+	Attempt *plan.Attempt
+}
+
+// PlanRevisePreviewView is what revising the current plan revision would bind, or why it cannot.
+type PlanRevisePreviewView struct {
+	Stamp    Stamp
+	IssueID  uint64
+	Revision planrev.Revision
+	// Settings are retained from the attempt that produced Revision; nil when unavailable.
+	Settings *PlanReviseSettings
+	// SettingsSource is the ID of the attempt Settings come from.
+	SettingsSource string
+	// SettingsUnavailable says why Settings are not retained, so the account has to be chosen again.
+	SettingsUnavailable string
+	// Base is the inspected checkout.
+	Base    plan.Base
+	Pending *PendingRevise
+	// Unavailable says why revising is not offered; empty when it is.
+	Unavailable string
 }
 
 func liveAttempt(list []plan.Attempt) (plan.Attempt, bool) {

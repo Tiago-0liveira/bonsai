@@ -118,7 +118,7 @@ func TestGardenLaunchTerminalEndedAndIdleDoNotInventCompletionOrDone(t *testing.
 		t.Fatal("exit automatically launched/published/cleaned")
 	}
 	m = plannerPress(t, m, "esc")
-	mustContain(t, "ended attempt", view(m), "awaiting-human-review")
+	mustContain(t, "ended attempt", view(m), "Awaiting your review")
 	mustNotContain(t, "no fabricated review", view(m), "automatic merge complete", "verification passed")
 }
 func fakeLaunchUIExitCode(n int) *int { return &n }

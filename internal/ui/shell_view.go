@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/overlay"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -17,6 +18,24 @@ func (m Model) shellView() string {
 	if !m.ready {
 		return "Loading bonsai…"
 	}
+	if !m.gardenOverlayOpen() {
+		return m.shellBase()
+	}
+	p := theme.Current
+	// A local, explicit palette keeps dimming independent of shared styles.
+	dim := theme.Palette{Text: p.Dim, Background: p.Background}
+	parent := ansi.NewStyle().ForegroundColor(theme.ANSIColor(dim.Text)).BackgroundColor(theme.ANSIColor(dim.Background)).Styled(ansi.Strip(m.shellBase()))
+	x, y, w, h := overlay.Center(m.width, m.height)
+	rows, _ := m.issueOverlayRows(w, h)
+	return overlay.Compose(
+		overlay.Frame{Content: parent, Width: m.width, Height: m.height},
+		overlay.Frame{Content: strings.Join(rows, "\n"), Width: w, Height: h},
+		x, y, ansi.NewStyle().BackgroundColor(theme.ANSIColor(p.Surface)),
+	)
+}
+
+// shellBase is the shell without any Issue overlay; the overlay dims and covers it.
+func (m Model) shellBase() string {
 	submenu := 0
 	if m.workspace == wsSettings || m.workspace == wsGarden || m.workspace == wsPlayground || m.workspace == wsWorktrees {
 		submenu = settingsSubmenuRows
@@ -230,6 +249,9 @@ func (m Model) shellFocusLabel() string {
 	}
 	if m.workspace == wsAccounts {
 		return m.accountsFocusLabel(f)
+	}
+	if m.workspace == wsGarden && f == shellInput && m.gardenScreen() == scrDrafts && m.garden.drafts.stage == draftsPrivate {
+		return "Draft" // writing in a private draft: the text owns the keys
 	}
 	if m.workspace == wsGarden && m.garden.api != nil && f == shellBody {
 		return m.gardenFocusLabel()

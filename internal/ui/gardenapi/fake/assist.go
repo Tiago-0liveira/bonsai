@@ -20,7 +20,7 @@ func (b *Backend) AssistQuestions(ctx context.Context, req gardenapi.AssistQuest
 	}
 	v := b.AssistQuestionsView
 	v.Stamp = stamp(gen, epoch, b.StatusView.Target.RepoID)
-	v.RequestID, v.Round = req.RequestID, req.Round
+	v.RequestID, v.Round, v.PrivateDraft = req.RequestID, req.Round, req.PrivateDraft
 	if v.Model == "" {
 		v.Model = req.Settings.Model
 	}
@@ -39,7 +39,7 @@ func (b *Backend) AssistDraft(ctx context.Context, req gardenapi.AssistDraftRequ
 	}
 	v := b.AssistDraftView
 	v.Stamp = stamp(gen, epoch, b.StatusView.Target.RepoID)
-	v.RequestID = req.RequestID
+	v.RequestID, v.PrivateDraft = req.RequestID, req.PrivateDraft
 	v.InputHash = garden.ContentHash(req.Draft)
 	return v, ctx.Err()
 }

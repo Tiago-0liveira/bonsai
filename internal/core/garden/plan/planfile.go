@@ -226,18 +226,25 @@ func readPlanFile(path string) (string, error) {
 	return strings.ToValidUTF8(string(b), "�"), nil
 }
 
-// MarkPublished records that the attempt's plan was published as a plan revision from Bonsai. It is idempotent.
-func (s *Service) MarkPublished(ctx context.Context, id string) error {
+// MarkPublished records that the attempt's plan was published as the plan revision revisionHash from Bonsai. It
+// is idempotent: a hash already stored is never replaced, and an empty one is filled in.
+func (s *Service) MarkPublished(ctx context.Context, id, revisionHash string) error {
 	_, err := s.d.Store.Update(ctx, id, func(cur Attempt) (Attempt, bool, error) {
 		if cur.Local != s.d.Local {
 			return cur, false, ErrNotFound
 		}
-		if cur.PlanPublishedAt != nil {
-			return cur, false, nil
-		}
 		now := s.d.Now().UTC()
-		cur.PlanPublishedAt, cur.UpdatedAt = &now, now
-		return cur, true, nil
+		changed := false
+		if cur.PlanPublishedAt == nil {
+			cur.PlanPublishedAt, changed = &now, true
+		}
+		if cur.PublishedRevision == "" && revisionHash != "" {
+			cur.PublishedRevision, changed = revisionHash, true
+		}
+		if changed {
+			cur.UpdatedAt = now
+		}
+		return cur, changed, nil
 	})
 	return err
 }

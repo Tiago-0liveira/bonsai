@@ -276,9 +276,10 @@ func cmdX(repoDir string, args []string, out, errOut io.Writer) error {
 		upstream = cfg.Upstream
 	}
 	vars := config.HookVars(repoDir, dir, branchForPath(repoDir, dir), upstream, 0)
-	command = coreexec.ExpandVars(command, vars)
+	command = coreexec.ExpandVarRefs(command, vars)
 
-	cmd := coreexec.Command(dir, command)
+	cmd := coreexec.VarsCommand(context.Background(), dir, command)
+	cmd.Env = coreexec.VarsEnv(vars)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, out, errOut
 	return cmd.Run()
 }

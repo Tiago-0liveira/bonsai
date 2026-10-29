@@ -38,19 +38,32 @@ conflict feedback. Display diagnostics stay visible when canonical acceptance
 remains valid; they cannot promote unverified work. Issue identity uses the stable remote issue ID, so title edits
 and reordered results preserve selection.
 
-The nine columns are Approved, Planning, Plan Review, Ready, Running, Reviewing,
-Human Review, Done and Blocked. At 120 and 160 columns all nine are visible. At
-80 columns, a four-column window follows the selected column; its range is shown
-below the board. Each column keeps its own cursor and scroll, including empty
-columns. The footer gives the selected issue's identity and board state; open
-the document to read a title too long for the footer.
+The default phases are Backlog, Planning, Ready, Building, Review and Done.
+`d` (configurable as `garden_stages`) switches to the detailed stages: Approved,
+Planning, Plan Review, Ready, Running, Reviewing, Human Review, Done and Blocked.
+Approved maps to Backlog; Planning/Plan Review to Planning; Running to Building;
+Reviewing/Human Review to Review. Cards keep their exact stage text.
+Both modes remember their own lane cursor, scroll and window while sharing the
+selected Issue and filters. The mode is session state. Below 100 columns, three
+lanes fit; below 160, six phases or five stages; from 160, all lanes fit. Hidden
+lanes are named in the footer, and empty lanes remain navigable.
+
+A Blocked Issue stays in its proven phase: an implementation attempt proves
+Building (Review when awaiting human review), an exact verified plan approval
+proves Ready, a verified plan head or local planner proves Planning, and current
+specification acceptance proves Backlog. A retained Issue with no such proof
+appears in a final Unplaced lane. Cards state the reason; detailed mode retains
+Blocked and names the last proven phase.
 
 The six canonical stage labels remain unchanged. Accepted `ready` work without a
 plan appears as Approved; a verified plan head appears as Plan Review; an exact
 verified approved plan/spec pair appears as **Ready**. A later head change removes
 Ready and shows the stale gate while retaining the accepted work and old approved
 snapshot. `in-progress` maps to Running, `review` to Human Review, and `done`/`blocked`
-to their matching columns. Planning and Reviewing await active-job evidence.
+to their matching stages. A live local planner or ready unpublished plan file
+puts an otherwise Approved Issue in Planning, explicitly marked local planner.
+Implementation evidence never changes a canonical stage; Reviewing remains empty
+until verified reviewer evidence exists.
 These presentation columns never change GitHub labels. Starting work is a separate explicit action ([local implementation launch](#start-implementation-locally)).
 
 | Key in Board | Action |
@@ -66,6 +79,8 @@ These presentation columns never change GitHub labels. Starting work is a separa
 | `R` (refresh binding) | Refresh the collection |
 | `esc` | Return to setup when available, otherwise workspace navigation |
 | `v` (`garden_view` binding) | Switch Board/Table, keeping the selected issue |
+| `d` (`garden_stages` binding, Board only) | Toggle phases/detailed stages |
+| `a` (`garden_attention` binding) | Toggle Needs you; return to the previous work layout |
 | `tab` (focus-next binding) | Cycle Setup (until connected), the work view and Drafts |
 | `ctrl+k` / `?` | Command palette / help |
 
@@ -74,7 +89,7 @@ count as filtered and shows the total eligible count. Priority is optional displ
 data from existing `priority:p0` through `priority:p3` labels (case-insensitive),
 not a new managed label or a setup change. Missing or conflicting priority is `?`.
 Search captures typed shortcuts; Enter applies it and Escape restores the previous
-query and selection. The palette includes Garden: Board, Garden: Table, Search
+query and selection. The palette includes Garden: Board, Garden: Table, Garden: Needs you, Search
 approved work, and Refresh.
 
 Refresh keeps the selected stable ID even if its row or column changes. On the
@@ -85,48 +100,83 @@ New attention items never take keyboard focus.
 
 ## Table
 
-The Table is a second view of the same approved work, not a second store: Board
-and Table share one collection, query, selected issue, notices, freshness and
-issue document; switching views issues no extra read. `v` (the Garden-scoped
-`garden_view` binding; it cannot be rebound to a key Garden itself reads, such as
-`/`, `t`, `p`, `x`, `o`, `h`/`j`/`k`/`l` or the page keys) toggles Board/Table and keeps the exact selected issue
-even though ordering differs; filters stay. The `v` key only applies inside
-Garden: Worktrees keeps `v` for Processes, and overriding `garden_view` in
-`keys:` changes both the key and every on-screen hint.
+Table and Needs you present the same approved-work projection as Board. All three
+share the query, selected issue, notices, freshness and issue overlay; switching
+layouts performs no backend read. `v` (`garden_view`) cycles Board/Table; from
+Needs you it goes to Table. `a` (`garden_attention`) toggles Needs you and returns
+to the Board or Table you came from. These bindings are scoped to Garden and can
+be changed in Settings → Keys → Garden. Garden remembers Board, Table or Needs
+you per repository; grouping, collapse and filters last only for this session.
 
-Rows show issue number, title, type, state (full names, never clipped), priority
-and approval/conflict status. Columns drop by available width, not by clipping
-the title or state: 80 columns show ISSUE, TITLE, TYPE and STATE; 120 adds a
-selected-item inspector (type, state, approval, next human gate) in place of TYPE
-and keeps P; 160 shows every column. The selected row always carries a marker.
-An Issue with [local planner work](#local-planner-badges) also gets a LOCAL column
-after STATE (a short form when the title needs the room, dropped before the title is
-squeezed below 28 columns).
+Rows show ISSUE, TITLE, exact STATE, SIGNAL and NEXT. At 80 columns SIGNAL is
+omitted and NEXT is shortened. At 120 SIGNAL and longer actions fit; 160 also
+adds TYPE and P. Local activity and approval warnings appear in SIGNAL. State
+names remain complete; long titles and signals end with an ellipsis, and the
+overlay shows full text. Every row has a phase rail; the selected row has a
+thicker marker. When at least 18 body rows are available, a three-line bottom
+strip shows the selected issue's signal, title and “Enter open · next: …”. On a
+group header it shows the group and “Enter expand” or “Enter collapse” instead.
+The Rows footer counts visible items and reports how many items collapsed groups
+hide.
+
+`o` cycles State/Number/Priority sorting. `g` toggles Group: None/Phase separately
+in Table and Needs you. Groups follow Backlog through Done, then Unplaced;
+blockers remain in their proven phase exactly once. Arrow/page/home/end keys
+move through item rows and group headers. Space collapses or expands the current
+group; Enter on a header does the same. Collapsing the selected issue's group
+keeps its identity, focuses the header and explains that it is hidden. Expanding
+that group returns to the issue. Enter or clicking an item opens the shared
+overlay; Escape returns to the same line, grouping and scroll. Clicking a group
+header toggles its collapse.
+
+### Needs you
+
+Needs you uses the current text/type/priority filters and sorted rows. Its count,
+submenu and footer describe the same filtered set. The first matching request
+wins, in this order:
+
+- A blocker, with its proven phase reason or “no proven phase”.
+- A live local implementation or planner explicitly waiting for input.
+- Human review of a change, proven by stage or fresh implementation handoff.
+- A published plan revision awaiting approval on currently accepted work.
+- A finished local plan awaiting review/publication on accepted Approved/Planning work.
+- Explicitly startable Ready work with current acceptance and no implementation attempt.
+
+Idle, working, failed, exited and unknown activity alone are not requests. Stale
+local evidence cannot establish an input request, handoff or plan publication.
+The Table summary counts active fresh local runs, needs and blockers from the
+same filtered collection; the summary chip leaves search and exclusion feedback
+visible. Entering Needs you from an issue without a request selects the first
+need and names both issues. Leaving restores the previous issue if that automatic
+choice is unchanged and the previous issue still matches the collection. Moving
+to another need keeps that explicit selection on return. A refresh that removes
+the selected need chooses the item at its previous position and names the
+replacement. Empty Needs you keeps
+the shared selection for Board and says nothing needs you. Failed reads retain
+last good rows and show the stale notice. Reading, filtering and grouping never
+start work or change GitHub state.
 
 ### Local planner badges
 
-Board cards and Table rows flag an Issue whose read-only planner is still running on this
-machine, or whose plan file is ready and not yet published from here. The flag is a local
-overlay next to the state: it never moves the Issue between states, and a card shows it on
-its own row under the number (a table row in the LOCAL column; narrow cells use the short
-form, `P:working` on a card). It uses the Agents tab's status words:
+Board cards show local planner and implementation evidence alongside workflow
+state. Implementation uses this clone's newest non-cleaned stored attempt.
+Preparing, starting, start-unknown, recoverable and running count as live or
+unresolved, matching the launch state machine; this is not proof of agent
+activity. The current launch session seam exposes no activity signal, so a live
+implementation shows Activity unknown. Stored failure and exit states remain
+distinct. When both summaries exist, the card gives implementation precedence.
+Update times use an absolute date/time; a failed local read retains evidence and
+marks it stale. Narrow cards truncate these lines to their available cells.
+None of this evidence grants acceptance, Ready or completion.
 
-| Badge | Meaning | Color |
-| --- | --- | --- |
-| `planner working` | the planner session is working (or reports nothing yet) | warning |
-| `planner needs you` | it waits for your input (the Issue document adds the reason) | warning |
-| `planner idle` | it finished its turn and waits for a prompt | muted |
-| `plan ready` | its plan file is ready; press `p`, then `u` | success |
-| `plan file invalid` | the plan file is not acceptable | danger |
-| `planner ended` | the attempt ended with nothing to publish | muted |
-
-A trailing `?` means the last local read failed and the badge is the last known one. The
-footer adds a total when any exist, for example `1 planner working · 1 plan ready` (without
+Table SIGNAL cells use the same activity text as Board cards; Needs you uses the
+specific request text. Approval warnings precede the signal. The footer also
+shows local planner totals, for example `1 planner working · 1 plan ready` (without
 the sync time below 120 columns). Bonsai reads this with the board data, again while the
 Garden is in view (every 4 seconds while a planner is live or its screen is open, every 15
 seconds otherwise) and after starting, cancelling or leaving a planner; a failed read keeps
-the last good badges and only a successful empty read clears them. Implementation attempts
-are not flagged here: they stay under `i` on the Issue.
+the last good observations and only a successful empty read clears them.
+Implementation history remains available under `i` on the opened Issue.
 
 | Key in Table | Action |
 | --- | --- |
@@ -143,11 +193,18 @@ document returns to the same row and scroll position in the Table.
 
 ## Read-only issue document
 
-Enter replaces the board with the document at every terminal size. The breadcrumb
-includes the issue number, and the visible Board parent action uses Escape or
-Backspace. Escape returns to the same card and board scroll. Left/Right switches
-Overview, Specification, Questions, Plans and Execution; Up/Down, Page Up/Down,
-Home and End scroll the current section. Wide layouts add a section rail.
+Enter, or a click on a card or row, opens the document as an opaque panel over the dimmed
+Board or Table, at every terminal size. A fixed header names the issue, its state and its
+approval; the pinned bar below the body holds the actions. Escape, Backspace or the
+**Back** control close it and return to the same card, row and scroll in the layout it
+came from. While it is open the panel owns every key and click: quit, help, the palette,
+workspace and view keys wait until it is closed, and clicks outside it do nothing.
+Left/Right (or a click) switches Overview, Specification, Questions, Plan and Activity;
+Up/Down, Page Up/Down, Home, End and the wheel scroll the current tab. Tab and Shift+Tab
+move through the enabled actions and Enter runs the focused one, exactly like its
+shortcut or a click. Wide layouts add a summary rail. If a refresh removes the issue, or
+it belongs to another repository, the panel closes with a notice on the board instead of
+showing another issue.
 
 Overview reads the canonical issue body. Specification and Plans read verified
 comment revisions, with comment IDs, hashes and source-spec fingerprints. Questions
@@ -195,7 +252,8 @@ concurrent edit never makes it vanish.
 | `↑` / `↓` or `k` / `j`, `pgup` / `pgdown`, `home` / `end` | Select a draft (kept by Issue ID across refreshes) |
 | `enter` | Open the draft document: Issue body, current specification and its approval gate. In it, `e` edits the specification and `v` validates it ([gate one](#validate-a-specification-gate-one)) |
 | `/`, `t`, `x` | Search number or title, cycle the type filter, clear filters |
-| `n` | Capture a new idea |
+| `n` | Start a new local draft ([Local drafts](#local-drafts)); without the private store, capture a new idea as a GitHub Issue |
+| `a` / `u` / `A` | Archive the selected local draft, undo (restore) it, show or hide archived local drafts |
 | `r` | Reconcile a capture whose outcome is unknown |
 | `R` (refresh binding) | Refresh |
 | `v` / `esc` | Back to the Board |
@@ -203,6 +261,72 @@ concurrent edit never makes it vanish.
 In the draft document, Up/Down, Page Up/Down, Home and End scroll within the
 document's bounds. Resizing or refreshing a shorter document keeps the stored
 position within those bounds, so scrolling back works immediately.
+
+### Local drafts
+
+Local drafts are private to this machine and need no GitHub Issue, assistant or
+provider. Press `n` in Drafts and write what is on your mind. The first text
+creates the draft (shown as `D-1A2B3C`, with the full ID only in the inspector);
+**Continue writing** opens the same draft's specification: Problem, Outcome,
+Requirements, Criteria and Questions, with Summary, Constraints and any other
+section you already have under *More*. `Ctrl+T` edits the title and `Ctrl+Y`
+cycles the type. **Discuss with AI…** and **Invite assistant…** are optional: see
+[Discuss a local draft with an assistant](#discuss-a-local-draft-with-an-assistant).
+Without an agent account the editor says so and everything else works unchanged.
+
+Text is saved by itself shortly after you stop typing (`Ctrl+S` saves now). The
+status reads `Saving…`, `✓ Saved locally`, `Unsaved changes`, `Save failed — text
+kept` or `Conflict — choose a version`, and never says saved while edits are
+unwritten. If another Bonsai window changed the draft, your text is kept as a
+recovery draft (`recovery of D-…` in the inbox) and you choose `k` to keep yours
+or `o` to open theirs. Quitting with unwritten edits asks first. Bonsai remembers
+which draft and section were open (never the text) and reopens them from the
+inbox after a restart. Archive is reversible (`a`, then `u`).
+
+`Ctrl+Enter` (or `Ctrl+R`) opens **Review & create issue** as a read-only
+preview with the concrete reasons a draft is not ready. Creating the GitHub issue
+is not available yet, so the confirmation is disabled and the draft stays saved
+locally.
+
+### Discuss a local draft with an assistant
+
+An assistant is an invitation, never a step. Focus **Invite assistant…** (or press
+`Ctrl+G`; on a compact screen it is the last tab) and choose an account that supports
+tool-free structured calls, a model and an effort, plus how many questions a round may
+ask (at most three) and optional guidance. The dialog lists exactly what would be sent:
+the title and type, the description, the specification text, your confirmed answers,
+your guidance and the repository name. No repository files are read and nothing is
+sent until **Start discussion**; **Keep writing myself** (`Esc`) leaves the draft
+exactly as it was. Bonsai never substitutes another account or model.
+
+The discussion sits beside the specification (a tab on compact screens), so you can keep
+writing while a request runs. It shows what the assistant understood and one focused
+question at a time, with suggested choices, *Write my own answer*, notes, *I don't know*
+and *Skip*; `w` or **Why?** shows why a question matters. `PgUp`/`PgDn` move between the
+questions, `Tab` moves between the options, the text and the buttons, `Esc` steps back
+and `Ctrl+G` returns to the text. While a request runs, `Esc` in the discussion cancels it.
+
+**Apply answers** asks for a proposal. A proposal is drawn apart from your draft and
+changes nothing until **Apply**. Each section is taken or left with `Enter`; a section
+you edited after the request began is kept as yours and is replaced only if you choose
+it, and suggestions nobody asked for join only when you confirm them. Applied sections
+are marked `●`. Applying also records the answers you gave as confirmed answers, saved
+with the draft and restored after a restart; the questions and proposals themselves are
+never saved. A question you already answered or settled is not asked again.
+
+A skipped or *I don't know* answer decides nothing: when you apply, its question is
+written into the Questions section as an open item (unless a line already asks it), so it
+blocks approval in the saved draft and after a restart, whatever you did with the
+proposal's own Questions text. While a round is showing, its scope and acceptance
+questions also count as open decisions in the readiness row; questions you never applied
+are not part of the draft. Only an advisory question
+(constraint or context) can be settled without an answer: **Defer** or **Assume** (of
+your chosen suggestion or your own words) records a decision with the draft and writes
+its line (`Deferred: …` or `Assumed: … (…)`, always one line) into Questions. That exact line then counts
+as deferred (`✓ Questions resolved · 1 deferred`); a hand-typed or edited line does not.
+A failed or cancelled request keeps all your text and offers **Retry** (`R`); a reply
+that arrives after you cancelled, left the draft or asked again is ignored. Review &
+create issue is still a read-only preview.
 
 ### Capture
 
@@ -401,6 +525,8 @@ you press `x` to include them (the decision belongs to that exact set of changes
 changed checkout asks again), and the attempt records that they were accepted, with a
 count and a digest but never paths or contents.
 
+From the overlay's Plan tab the same request is `p` ([Plan tab](#plan-tab-in-the-issue-overlay)); it never includes earlier review feedback.
+
 Request AI plan opens the account choice, the same Accounts, model and effort form as
 a new agent session without any permission, sandbox, approval or full-access field:
 the role fixes the permissions. Each account shows what its provider enforces, and
@@ -499,14 +625,62 @@ columns wide (80 columns keep the unified comparison).
 append one decision comment naming that exact revision hash and specification
 fingerprint, never "the latest", keep every revision in the history and start nothing:
 the next read-only run is another explicit **Request AI plan** with its own local
-confirmation, even when a comment on GitHub asked for changes. A comment written on
+confirmation, even when a comment on GitHub asked for changes. (The overlay's Plan tab can instead start a revision attempt from the same request.) A comment written on
 GitHub or a phone without a Bonsai record only appears as a hint ("newer on GitHub"); it
-neither starts a run nor decides anything. The next explicit local planning attempt
-includes the verified request-changes reason as sanitized review context.
+neither starts a run nor decides anything. A plain **Request AI plan** carries no earlier
+feedback: a recorded reason reaches a planner only through a revision attempt bound to
+that exact decision ([Plan tab](#plan-tab-in-the-issue-overlay)).
 
 A source fingerprint must match the normalized content hash of the verified
 specification revision named in the plan. Supplied fingerprints cannot redefine
 that identity or carry an old approval onto a different specification.
+
+### Plan tab in the issue overlay
+
+The **Plan** tab of the issue overlay (`←`/`→` or click) shows where planning really
+stands and offers only the actions that fit. Opening or rereading it reads (the plan
+review and a *revise preview*); it never starts a planner, records a decision or retries
+anything. What it shows comes from the verified plan log, the local planner summary and
+that preview; nothing is guessed from terminal text.
+
+| State | What it says | Actions |
+|---|---|---|
+| Specification not approved | Why planning is unavailable (draft, stale, revoked, unverified); the revision history stays | `p` request plan (disabled, with the reason), `r` open review |
+| Planner running | Provider / account, effort, **elapsed since the request** (measured when drawn), the latest activity the planner reported and how long ago, whether it needs input, the plan file state (none yet, writing, ready, invalid) and "read-only, no worktree". No steps or progress are shown, and *idle* is never a finished plan | `p` open planner (straight to its session), `c` stop attempt, which asks `y` first |
+| Ended with a ready, unpublished plan file | The plan is not a revision until published | `u` publish plan (the existing box: it previews the exact text and source spec before anything is written), `p` open planner |
+| Revision awaiting your decision | `PLAN rN / NEEDS YOUR APPROVAL`: the summary (or the first Steps lines), the lines changed since the previous revision (`+`/`-`), Risks and Tests, the spec state and the distinct Latest / Current / Approved revisions | `a` approve plan rN, `c` request changes, `r` open review (whole document, comparisons, search, history) |
+| Changes requested, no attempt answers them | "Feedback recorded on rN. No revision attempt is running.", your feedback and, if a start failed, why | `b` start revision attempt, `r` open review |
+| Approved | "Approved rN against sM. Ready; coding starts only when you choose." | `r`, `p` |
+| Approval no longer matches | Which side changed (the specification or the plan); the approved snapshot stays visible and is never re-approved for you | `r`, `p` |
+
+`a` rereads the review and shows the same exact confirmation as plan review, inside the
+overlay: the full plan hash, source spec fingerprint, spec head and GitHub actor, with
+Cancel focused first. If the plan under review moved since the tab was drawn, or the heads
+move before the write, nothing is recorded and the tab reads again.
+
+`c` opens **Request changes to plan rN**: a required, multi-line reason (up to 4 KiB)
+attached to that exact revision, the account the revision will use, a consent line for
+uncommitted changes when the checkout has any, and the footer *Starts one read-only
+revision attempt. Nothing starts coding.* The account, model and effort are the ones of
+the attempt that wrote the revision, kept only while that account still exists and can
+run a read-only planner; otherwise **Choose account…** (`ctrl+g`) opens the same read-only
+account choice as Request AI plan, whose primary action (*Accept read-only and revise
+plan*) sends the feedback. `ctrl+s` (**Send feedback & revise plan**) records
+*changes requested* on the revision, then starts one read-only revision attempt that
+receives your feedback and the text of that revision. The send is one write: further keys
+are ignored until it answers. Text you typed survives Back, `esc` and a tab switch for the
+same revision; if the revision under review changes, it is dropped and the tab says so.
+
+Partial success is shown, not hidden. If the decision was recorded and the attempt could
+not start, the tab shows the pending feedback with the reason and **Start revision
+attempt** (`b`), a separate confirmation that starts the attempt for that recorded
+decision and writes no new decision; a failed attempt can be started again this way, one
+that is running or finished cannot. If the outcome of recording the decision is unknown,
+nothing is started: your text is kept, and reopening the tab reads what is on the Issue.
+Repeating a send finds the earlier decision and attempt instead of making new ones.
+
+`esc` from the planner session, publish box or plan review that these actions open returns
+to the Plan tab with its scroll restored; the planner keeps running.
 
 ### Approve the exact plan (gate two)
 
@@ -581,12 +755,16 @@ an approval, overwrites a body or starts a run in response.
 
 ## Start implementation locally
 
-Only a **Ready** Issue (both gates, one verified plan/spec pair) can start coding, and
-only through an explicit action: `s` (**start implementation locally…**) in the Ready
-Issue's detail or in plan review. `i` opens **implementation attempts**, even when
-launch is blocked. Approving, refreshing,
-selecting, opening or navigating never starts anything. The action shows what will
-run before it asks:
+Only a **Ready** Issue (both gates, one verified plan/spec pair) can start coding.
+Ready shows the effective implementer, AI reviewer, review limit, worktree/base
+and native permissions from saved policy and cached defaults. Reviewer availability
+is checked in the preview.
+
+Press `s` (**Start implementation…**) in the Ready Issue's Overview to open the
+exact preview directly with the default account. `e` (**Change run
+settings**) opens the account, model, effort and permissions form. `i` opens
+**implementation attempts**, even when launch is blocked. Approving, refreshing,
+selecting, opening or navigating never starts anything. The preview shows:
 
 - exact repository, Issue, spec and plan revision hashes and comment IDs, both
   approval IDs, actor, and the approved base commit (uncommitted changes in your
@@ -604,8 +782,12 @@ run before it asks:
   here.
 
 On the form `ctrl+s` requests the preview and never launches. In the confirmation
-Cancel has initial focus; `x` acknowledges a permission escalation, `y` acknowledges
-retry hooks and `e` edits branch and base. Confirm (**Confirm: start locally**) creates the worktree in the daemon (placement and
+Cancel has initial focus. Confirmation lists the authorized sequence: implementation,
+then the enabled automatic review, fixes and checks, then your review. Escalated
+implementer permissions need a separate unchecked `x` acknowledgment; an escalated
+reviewer needs its own unchecked `r` acknowledgment. A changed review policy needs
+a new preview. `y` acknowledges retry hooks and `e` edits branch, base and remote.
+Confirm (**Confirm: start locally**) creates the worktree in the daemon (placement and
 hooks follow your `.bonsai.yaml` `worktree.root` and `worktree.path_template`), then starts one
 agent holder with the full approved spec and plan as its prompt. The holder is the
 same detached process as any [agent session](agents.md#garden-implementation-launch):
@@ -627,19 +809,29 @@ A double submit, timeout or crash never starts a second holder: Bonsai reconcile
 exact operation on reopening and while open, and shows `start unknown` or
 `recoverable` until it can tell. Reconcile never starts, pushes or opens anything.
 
-- **Open session terminal** (`o`) attaches to the attempt's run without selecting a
-  worktree; observing is default, taking control is explicit.
+The overview shows lifecycle state, observed activity and its age, checks only when
+there is evidence, and **Next** from the attempt's frozen review policy. The last
+synced GitHub stage is shown separately from the local holder. Idle means the
+process is still running, never completion.
+
+- **Open session** (`o`) observes the attempt's run without selecting a worktree.
+  `enter` takes control; `ctrl+]` returns to observation. From observation, `esc`
+  leaves the session.
+  Leaving the overlay or quitting only detaches.
 - **Retry** (`r`) is separately confirmed, repeats the retained-work and permission facts,
   reuses the owned worktree (your edits are kept) and starts a new numbered Run only
   once the old one is positively closed.
-- **Stop** (`x`) is separately confirmed; the run shows `stopping` until closure is proven.
+- **Stop run** (`x`) asks for confirmation and shows **Stopping** until holder closure
+  is proven.
 
 On start, Bonsai mirrors **In progress** to GitHub using the existing label check; a
 clean exit mirrors **Review**, a failed or stopped run mirrors **Blocked**, never
 Done. If GitHub is unreachable the local state stays true and shows
 `remote status pending`. A failure before the agent started leaves the Issue Ready.
 Success means **awaiting human review**, even with no commits. There is no automatic
-merge, commit or branch deletion; reviewers and verification arrive in plan 10.
+merge, commit or branch deletion. The review sequence is recorded and authorized,
+but reviewer execution arrives later; this version starts no automatic reviewer
+and runs no review checks.
 
 ### Push and Draft PR
 
@@ -659,7 +851,150 @@ holders, uncommitted, ignored or untracked files, extra commits, symlinks and a
 changed preview, and removes the worktree without force. The branch and the attempt
 history remain. Cleanup is never automatic and never erases your changes.
 
+## Human review, rework and completion
+
+When an implementation attempt reaches awaiting human review, the Issue overlay's
+Overview becomes the review panel. It reads the retained worktree and GitHub, never
+starts anything, and replaces its heading as the evidence changes: **YOUR REVIEW**,
+**COMPLETED**, **BLOCKED**, **STALE** or **UNKNOWN** (a work that is not ready yet
+says why: uncommitted changes, a run that has not finished, an unreadable head). It
+shows:
+
+- **CHANGES**: files, `+`/`-` line totals and the final head, then the changed files.
+  There is no separate "Open changes" view; read the diff in the retained terminal
+  (`o`) or the linked PR (`g`).
+- **Verification**, only from recorded evidence: `No checks recorded`, `No AI review`,
+  `AI review authorized, not run` and `Fixes after review were not re-reviewed`
+  are named, never shown as a green check. Findings read `no AI review report` until
+  a review report exists. Nothing in this version runs the reviewer or the checks
+  (see [Automatic review defaults](#automatic-review-defaults)), so a real run
+  currently shows `AI review authorized, not run` when you enabled the policy.
+- **PR line**, evidence and time, **your decision** and the reasons with their next
+  step.
+
+Every decision is a short comment on the GitHub Issue (a `handoff` record) that
+binds the exact specification revision and approval, plan revision and decision,
+attempt, base, final head and tree, review pass and PR. It is re-verified on every
+read: only the same trusted actors who may approve a specification count, and the
+record hash covers the text you wrote. Nothing is merged, closed, pushed,
+relabeled or cleaned by recording one, and no decision starts a run by itself.
+
+### Accept, request changes and revoke
+
+- **Accept…** (`a`) previews the exact comment, head and tree. Each acknowledgment
+  the evidence needs (`No AI review was run on this work`, `Fixes made after the AI
+  review were not reviewed again`, `Checks are missing or failed`) is an unchecked
+  toggle (`1`-`9`) and must be ticked before **Record accepted** enables. Cancel is
+  focused first. Acceptance refuses a dirty worktree, a run that changed no files
+  and a stale specification or plan.
+- **Request changes…** (`c`) opens a text box (`ctrl+s` previews the exact record,
+  `esc` goes back keeping the text). The feedback is posted to GitHub and starts
+  nothing.
+- **Revoke acceptance…** (`u`) withdraws a current acceptance or non-code completion
+  and returns the work to your review. Done work cannot be revoked: the merge
+  happened outside Bonsai's control.
+- **Open PR** (`g`), **Open terminal** (`o`) and **Preview cleanup…** (`w`) reuse
+  the existing screens. `R` (the configurable refresh key) reads again.
+
+Accepted, changes requested and revoked each show who decided and when. A new head,
+tree, specification, plan, review or PR marks an earlier acceptance **STALE** with
+the reason; it never carries over, so review again.
+
+### Rework
+
+After a verified changes-requested record, **Start rework…** (`m`) is a separate
+confirmation (Cancel first, with the same acknowledgments as a launch for escalated
+permissions). It runs one more attempt in the retained, owned worktree after the old
+holder is proven closed. Your feedback is added to the new run's prompt only and is
+not stored by Bonsai. One feedback comment starts at most one rework. When the
+[automatic review policy](#automatic-review-defaults) is enabled a fresh review pass
+is reserved for the new run; a pass that never started on the old run is closed as
+`superseded`, and a rework that fails to start closes its pass as
+`implementation-not-started`.
+
+### Done
+
+- **Code**: Done only from a fresh GitHub read (under two minutes old) showing that
+  the linked pull request is merged, its head is the head you accepted and its base
+  is the one it was published against. A squash or rebase merge is fine: the merge
+  commit is recorded, not compared. Done survives worktree cleanup.
+- **Non-code**: **Complete without code…** (`n`) records an explicit completion
+  with your evidence text. It is refused when the attempt changed code, and Done
+  then reads "Completed without code".
+
+Done is shown in the overlay. It is not mirrored to the GitHub stage label or the
+board column. Bonsai never merges, closes or relabels for you.
+
+### Why the panel is not Done
+
+| State | Reasons |
+| --- | --- |
+| Not ready | Uncommitted changes; run not finished; head unreadable |
+| Stale | Head, tree, specification, plan, review, attempt or PR changed after the acceptance; the PR gained commits after it |
+| Blocked | PR closed without merging; GitHub answered with another PR; merged head differs from the accepted one; different base; the attempt changed code, for non-code |
+| Unknown | The handoff log, the PR or GitHub could not be read (offline, not found, read failed, or the read is older than two minutes) |
+| Accepted | Waiting for the PR to be published or merged; merging stays a separate action |
+
+Unknown never means Done. The visible panel reads again about every 15 seconds and
+on refresh. See [TUI keys](tui-cli.md#garden-issue-overlay).
+
+## Automatic review defaults
+
+Settings → Garden → **Automatic review** saves personal defaults for a bounded
+review after implementation. It is off by default. Settings grants no permission:
+the [launch preview](#start-implementation-locally) authorizes the exact review,
+permitted fixes and checks, with separate reviewer escalation acknowledgment.
+The policy is frozen per attempt; Settings edits never change a started attempt,
+and a policy change before confirmation requires a new preview. The sequence is
+recorded and authorized, but nothing runs the reviewer yet in this version;
+execution arrives later, including review checks.
+
+- **Review after implementation** enables the default for new implementation starts.
+- **Reviewer account**, **Reviewer model**, **Reviewer effort** and **Reviewer
+  permissions** choose the reviewer and its provider-native options. Empty options
+  inherit the account profile. Changing account clears model, effort and permission
+  overrides; it never changes the account profile itself. Effort and permission
+  choices use cached launch options only. Without a cache, only **Profile default**
+  is offered, with “Launch options are not cached for this account yet.”
+- **Review limit** is fixed at **One review + fixes + checks**. **Checks** names the
+  verification commands. **Implementer** explains that the implementation account's
+  launch defaults are chosen separately at each start.
+- **Availability** explains whether the saved reviewer can launch. Reasons include
+  automatic review being off, missing local accounts or account services, an account
+  that cannot launch, and unresolved or unsupported native permissions. Inherited
+  full access is unavailable until permissions are chosen explicitly; an explicit
+  escalation still needs acknowledgment at start. No permission is silently widened.
+- **Restore defaults** asks for confirmation, then clears only these personal
+  defaults and turns automatic review off.
+
+The checks text form accepts at most eight commands, separated by `;`, for example
+`go test ./...; go vet ./...`. Each command is a typed executable plus arguments,
+with whitespace separating words: no shell, quoting, pipes or variable expansion.
+Shell executables, shell scripts (`.cmd`, `.bat`, `.ps1`) and wrappers such as `env`
+and `sudo` are refused. An executable is a simple name or a clean absolute path.
+Checks run relative to the worktree root by default; a typed `dir` must be a clean
+relative folder with no parent segments, colons or backslashes. Checks stored with
+a folder, custom display name or argument containing spaces cannot be edited in
+the text form without loss. Edit those typed records in `state.json`, or restore
+defaults.
+
+The separate Settings → Agents → **Garden review policy** controls the
+[Playground read-only reviewer](#read-only-verification-and-human-review).
+Its triggers and review limits do not enable this bounded review/fix/check policy.
+
+These defaults use `prefs.garden_auto_review` with `version: 1` in the personal
+`state.json` (normally `~/.config/bonsai/state.json`, honoring the platform user
+config directory). Invalid or newer-version values load as off, preserve their raw
+JSON during unrelated saves, and cannot be overwritten until restored by the newer
+Bonsai. Case variants of `garden_auto_review` are also quarantined and preserved.
+The separate review pass store, `garden-review-passes.json` in the same Bonsai
+config directory, refuses a newer schema and is never rewritten by an older
+Bonsai. These protections preserve future data when downgrading.
+
 ## Read-only verification and human review
+
+This section covers the Playground reviewer. For the Garden Issue overlay's review,
+acceptance, rework and Done, see [Human review, rework and completion](#human-review-rework-and-completion).
 
 In the redesign Playground, select an implementation session and press `r` for
 Human review. This applies to a verified Garden attempt launched by Bonsai in

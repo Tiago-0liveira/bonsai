@@ -2,19 +2,31 @@
 // restyled from one place, driven by config (a preset plus per-role overrides).
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+)
+
+// ANSIColor resolves palette values independently of Lip Gloss's output profile.
+// Color.RGBA otherwise collapses colors to black on a redirected or dumb output.
+func ANSIColor(c lipgloss.Color) color.Color {
+	return termenv.ConvertToRGB(termenv.TrueColor.Color(string(c)))
+}
 
 // Palette is the set of semantic color roles the UI styles are built from.
 type Palette struct {
-	Accent      lipgloss.Color // primary highlight (selection, active tab, titles)
-	BorderFocus lipgloss.Color // focused pane border
-	Border      lipgloss.Color // blurred pane border
-	Dim         lipgloss.Color // secondary/disabled text
-	Text        lipgloss.Color // normal text
-	Success     lipgloss.Color // running/ok/approved
-	Danger      lipgloss.Color // failed/destructive/changes-requested
-	Warning     lipgloss.Color // status line, pending
-	PRBadge     lipgloss.Color // "#N" PR badge
+	PhaseBacklog, PhasePlanning, PhaseReady, PhaseBuilding, PhaseReview, PhaseDone lipgloss.Color
+	Accent                                                                         lipgloss.Color // primary highlight (selection, active tab, titles)
+	BorderFocus                                                                    lipgloss.Color // focused pane border
+	Border                                                                         lipgloss.Color // blurred pane border
+	Dim                                                                            lipgloss.Color // secondary/disabled text
+	Text                                                                           lipgloss.Color // normal text
+	Success                                                                        lipgloss.Color // running/ok/approved
+	Danger                                                                         lipgloss.Color // failed/destructive/changes-requested
+	Warning                                                                        lipgloss.Color // status line, pending
+	PRBadge                                                                        lipgloss.Color // "#N" PR badge
 
 	// Surface roles for the redesigned shell: three stepped neutrals plus a
 	// readable secondary text (Dim stays the disabled/hint tone).
@@ -28,27 +40,32 @@ type Palette struct {
 var presets = map[string]Palette{
 	// bonsai: bark-brown base with leaf-green accents.
 	"bonsai": {
+		PhaseBacklog: "#a5a894", PhasePlanning: "#83a9b7", PhaseReady: "#9fc96b", PhaseBuilding: "#89bdb2", PhaseReview: "#b6a0cd", PhaseDone: "#728b50",
 		Accent: "#8db84c", BorderFocus: "#8db84c", Border: "#5a4632", Dim: "#9c8265",
 		Text: "#e9e2d5", Success: "#9fc96b", Danger: "#d1604f", Warning: "#dba54c", PRBadge: "#c99a5b",
 		Background: "#111611", Surface: "#1a211a", Raised: "#262f24", Muted: "#a5a894",
 	},
 	// sakura: the original pink bonsai look.
 	"sakura": {
+		PhaseBacklog: "246", PhasePlanning: "110", PhaseReady: "42", PhaseBuilding: "80", PhaseReview: "212", PhaseDone: "65",
 		Accent: "205", BorderFocus: "205", Border: "240", Dim: "240",
 		Text: "252", Success: "42", Danger: "203", Warning: "208", PRBadge: "212",
 		Background: "233", Surface: "235", Raised: "237", Muted: "246",
 	},
 	"dracula": {
+		PhaseBacklog: "247", PhasePlanning: "117", PhaseReady: "84", PhaseBuilding: "80", PhaseReview: "141", PhaseDone: "65",
 		Accent: "141", BorderFocus: "141", Border: "238", Dim: "244",
 		Text: "253", Success: "84", Danger: "203", Warning: "215", PRBadge: "212",
 		Background: "234", Surface: "236", Raised: "238", Muted: "247",
 	},
 	"nord": {
+		PhaseBacklog: "248", PhasePlanning: "110", PhaseReady: "108", PhaseBuilding: "109", PhaseReview: "139", PhaseDone: "65",
 		Accent: "110", BorderFocus: "110", Border: "239", Dim: "245",
 		Text: "254", Success: "108", Danger: "167", Warning: "179", PRBadge: "116",
 		Background: "235", Surface: "236", Raised: "238", Muted: "248",
 	},
 	"mono": {
+		PhaseBacklog: "247", PhasePlanning: "251", PhaseReady: "254", PhaseBuilding: "249", PhaseReview: "255", PhaseDone: "243",
 		Accent: "255", BorderFocus: "255", Border: "240", Dim: "243",
 		Text: "252", Success: "250", Danger: "245", Warning: "248", PRBadge: "255",
 		Background: "233", Surface: "235", Raised: "237", Muted: "247",
@@ -74,6 +91,19 @@ var Current = presets["bonsai"]
 func (p *Palette) applyOverride(role, color string) {
 	c := lipgloss.Color(color)
 	switch role {
+	case "phase_backlog":
+		p.PhaseBacklog = c
+	case "phase_planning":
+		p.PhasePlanning = c
+	case "phase_ready":
+		p.PhaseReady = c
+	case "phase_building":
+		p.PhaseBuilding = c
+	case "phase_review":
+		p.PhaseReview = c
+	case "phase_done":
+		p.PhaseDone = c
+
 	case "accent":
 		p.Accent = c
 	case "border_focus", "borderfocus":
@@ -115,7 +145,29 @@ func Resolve(preset string, overrides map[string]string) Palette {
 			p.applyOverride(role, color)
 		}
 	}
+	p.phaseFallbacks()
 	return p
+}
+
+func (p *Palette) phaseFallbacks() {
+	if p.PhaseBacklog == "" {
+		p.PhaseBacklog = p.Muted
+	}
+	if p.PhasePlanning == "" {
+		p.PhasePlanning = p.Accent
+	}
+	if p.PhaseReady == "" {
+		p.PhaseReady = p.Success
+	}
+	if p.PhaseBuilding == "" {
+		p.PhaseBuilding = p.Accent
+	}
+	if p.PhaseReview == "" {
+		p.PhaseReview = p.PRBadge
+	}
+	if p.PhaseDone == "" {
+		p.PhaseDone = p.Dim
+	}
 }
 
 // ApplyContrast adjusts the neutral surfaces for a contrast mode. "flat"

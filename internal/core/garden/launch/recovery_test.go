@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -533,5 +535,36 @@ func TestLaunchSuccessfulAttemptCannotRetryOrAutoStart(t *testing.T) {
 	}
 	if len(r.holder.calls()) != 1 {
 		t.Fatal("human-review result launched again")
+	}
+}
+
+func TestLaunchReconcileObservedKeepsIdleRunning(t *testing.T) {
+	r := newFakeLaunchRig(t)
+	a := r.start(t)
+	id := fakeLaunchRunIdentity(a)
+	r.holder.set(id, SessionObservation{State: "idle", Alive: true, Acknowledged: true, StartedAt: &fakeLaunchTime})
+	before, err := os.ReadFile(r.store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, observed, err := r.svc.ReconcileObserved(context.Background(), a.Issue)
+	if err != nil || len(list) != 1 || !reflect.DeepEqual(list[0], a) || len(observed) != 1 {
+		t.Fatalf("idle reconcile: attempts=%+v observed=%+v err=%v", list, observed, err)
+	}
+	o := observed[0]
+	if o.AttemptID != a.ID || o.Session.State != "idle" || !o.Session.Alive || !o.ObservedAt.Equal(fakeLaunchTime) {
+		t.Fatalf("observation=%+v", o)
+	}
+	after, err := os.ReadFile(r.store.Path)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("observation wrote store: %v", err)
+	}
+	r.holder.queryErr = errors.New("unavailable")
+	list, observed, err = r.svc.ReconcileObserved(context.Background(), a.Issue)
+	if err != nil || len(observed) != 0 || len(list) != 1 || list[0].State != StateRunning {
+		t.Fatalf("failed query: %+v %+v %v", list, observed, err)
+	}
+	if len(r.holder.calls()) != 1 {
+		t.Fatal("observation started holder")
 	}
 }

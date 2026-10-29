@@ -28,11 +28,11 @@ func isSHA(s string) bool {
 // prBase is the branch a pull request targets, only when the base ref plainly
 // names one. A detached commit can be implemented against but is never guessed
 // into a pull request base.
-func prBase(ref string) (string, bool) {
+func prBase(ref, remote string) (string, bool) {
 	if ref == "" || isSHA(ref) {
 		return "", false
 	}
-	return config.BaseBranch(ref), true
+	return config.BranchOnRemote(ref, remote), true
 }
 
 // prMatch classifies the pull requests GitHub lists for the branch. A single
@@ -172,7 +172,7 @@ func (s *Service) publish(ctx context.Context, a Attempt) (Attempt, error) {
 	if err := s.verifyAccess(ctx, a); err != nil {
 		return a, err
 	}
-	base, namesBranch := prBase(a.Proposal.BaseRef)
+	base, namesBranch := prBase(a.Proposal.BaseRef, a.Proposal.RemoteName)
 	if !namesBranch && !linked {
 		return s.update(ctx, a.ID, func(a *Attempt) bool {
 			if a.PR.State != PRUnknown {
@@ -392,7 +392,7 @@ func (s *Service) reconcilePR(ctx context.Context, a Attempt) Attempt {
 	if s.d.PRs == nil || a.PR.State != PRUnknown || a.State == StateCleaned {
 		return a
 	}
-	base, ok := prBase(a.Proposal.BaseRef)
+	base, ok := prBase(a.Proposal.BaseRef, a.Proposal.RemoteName)
 	if !ok {
 		return a
 	}

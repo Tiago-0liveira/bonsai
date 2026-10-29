@@ -131,7 +131,7 @@ func TestLocalWorkFlagsLiveAndUnpublishedReadyPlansWithOneSessionList(t *testing
 
 	// Published from here: nothing left to flag.
 	svc, _ := h.b.planService()
-	if err := svc.MarkPublished(ctx, a.ID); err != nil {
+	if err := svc.MarkPublished(ctx, a.ID, "hash-1"); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ = h.b.LocalWork(ctx); len(v.Issues) != 0 {

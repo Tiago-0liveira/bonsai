@@ -14,6 +14,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/reviewpass"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/launchform"
@@ -57,13 +58,19 @@ type gardenLaunchState struct {
 	// origin is where closing the form goes back to.
 	origin launchStage
 
-	attempts []launch.Attempt // oldest first, as read
-	loaded   bool
-	readErr  string
-	sel      int
-	attempt  string           // the attempt in detail or in the terminal
-	run      int              // index into the attempt's runs; -1 follows the newest
-	adapted  agents.AccountID // the account whose Codex form got its own sandbox and approval controls
+	attempts        []launch.Attempt // oldest first, as read
+	reviews         map[string]reviewpass.Pass
+	activity        map[string]gardenapi.LaunchActivity
+	activityStale   map[string]bool
+	reviewUnknown   map[string]bool
+	overviewGen     uint64
+	overviewPending bool
+	loaded          bool
+	readErr         string
+	sel             int
+	attempt         string           // the attempt in detail or in the terminal
+	run             int              // index into the attempt's runs; -1 follows the newest
+	adapted         agents.AccountID // the account whose Codex form got its own sandbox and approval controls
 
 	dlg *launchDialog
 	req gardenapi.LaunchPreviewRequest
@@ -73,12 +80,17 @@ type gardenLaunchState struct {
 	// the refreshed preview answers.
 	stale bool
 
-	action   launchAction
-	btn      int // 0 Cancel, 1 Confirm
-	escalate bool
-	hooks    bool
-	cleanup  *gardenapi.LaunchCleanupView
-	scroll   int
+	action         launchAction
+	btn            int // 0 Cancel, 1 Confirm
+	escalate       bool
+	reviewEscalate bool
+	stopGen        uint64
+	stopPolls      int
+	stopPending    bool
+	stopAttempt    string
+	hooks          bool
+	cleanup        *gardenapi.LaunchCleanupView
+	scroll         int
 
 	iso      [3]textinput.Model
 	isoFocus int
@@ -107,10 +119,12 @@ type (
 		err       error
 	}
 	gardenLaunchAttemptsMsg struct {
-		seq   uint64
-		issue uint64
-		view  gardenapi.LaunchAttemptsView
-		err   error
+		overviewGen uint64
+		stopGen     uint64
+		seq         uint64
+		issue       uint64
+		view        gardenapi.LaunchAttemptsView
+		err         error
 	}
 	gardenLaunchActionMsg struct {
 		kind      launchAction
@@ -128,6 +142,8 @@ type (
 		err   error
 	}
 )
+
+const launchNotReadyText = "Only a Ready Issue, with its exact approved specification and plan, can start an implementation."
 
 const launchUnavailableText = "Starting an implementation locally is unavailable here: this Garden runtime has no local launch."
 
@@ -412,7 +428,7 @@ func launchOverrides(d launchDialog) agents.LaunchOptions {
 
 // --- opening ---
 
-// gardenLaunchOpen is s on a Ready Issue: it opens the account and options form. It starts nothing and reads
+// gardenLaunchOpen changes run settings on a Ready Issue: it opens the account and options form. It starts nothing and reads
 // nothing but the accounts.
 func (m Model) gardenLaunchOpen() (Model, tea.Cmd) {
 	g := &m.garden
@@ -425,7 +441,7 @@ func (m Model) gardenLaunchOpen() (Model, tea.Cmd) {
 		return m, nil
 	}
 	if !m.launchOffered() {
-		g.notice = "Only a Ready Issue, with its exact approved specification and plan, can start an implementation."
+		g.notice = launchNotReadyText
 		return m, nil
 	}
 	if m.agents.api.Accounts == nil {
@@ -442,7 +458,7 @@ func (m Model) gardenLaunchOpen() (Model, tea.Cmd) {
 	d.SetSize(m.width, m.gardenBoardRows())
 	keep := l.attempts
 	loaded := l.loaded
-	*l = gardenLaunchState{stage: launchStageChoose, origin: origin, attempts: keep, loaded: loaded, dlg: &d,
+	*l = gardenLaunchState{stage: launchStageChoose, origin: origin, attempts: keep, reviews: l.reviews, activity: l.activity, stopGen: l.stopGen + 1, loaded: loaded, dlg: &d,
 		req: gardenapi.LaunchPreviewRequest{IssueID: uint64(g.board.opened), Cols: cols, Rows: rows}, previewSeq: l.previewSeq, readSeq: l.readSeq, run: -1}
 	m.shellFocus = shellInput
 	return m, tea.Batch(d.Init(), m.launchSubscribe())
@@ -475,17 +491,23 @@ func (m Model) launchClose() (Model, tea.Cmd) {
 		rel = m.plannerRelease()
 	}
 	prev := *l
-	*l = gardenLaunchState{inflight: prev.inflight, previewSeq: prev.previewSeq + 1, readSeq: prev.readSeq, attempts: prev.attempts, loaded: prev.loaded, run: -1}
+	*l = gardenLaunchState{inflight: prev.inflight, previewSeq: prev.previewSeq + 1, readSeq: prev.readSeq + 1, attempts: prev.attempts, reviews: prev.reviews, activity: prev.activity, activityStale: prev.activityStale, reviewUnknown: prev.reviewUnknown, loaded: prev.loaded, run: -1, stopGen: prev.stopGen + 1, overviewGen: prev.overviewGen + 1}
 	if m.shellFocus == shellInput {
 		m.shellFocus = shellBody
 	}
-	return m, rel
+	m, refresh := m.handoffRefresh()
+	cmd := tea.Batch(rel, m.launchOverviewNext(), refresh)
+	return m, cmd
 }
 
 // launchDetach releases the terminal when the user leaves the Garden workspace: the attachment closes, the
 // holder keeps running.
 func (m *Model) launchDetach() tea.Cmd {
 	l := &m.garden.launch
+	l.stopGen++
+	l.stopAttempt = ""
+	l.overviewGen++
+	l.overviewPending = false
 	if l.stage != launchStageSession {
 		return nil
 	}
@@ -514,32 +536,54 @@ func (m Model) launchLoad(issue uint64) (Model, tea.Cmd) {
 func (m Model) onGardenLaunchAttempts(msg gardenLaunchAttemptsMsg) (Model, tea.Cmd) {
 	g := &m.garden
 	l := &g.launch
-	if msg.seq != l.readSeq || msg.issue != uint64(g.board.opened) {
+	if msg.seq != l.readSeq || msg.issue != uint64(g.board.opened) || msg.stopGen != 0 && msg.stopGen != l.stopGen || msg.overviewGen != 0 && (msg.overviewGen != l.overviewGen || !m.launchOverviewWatching()) {
 		return m, nil
 	}
 	if msg.err != nil {
+		l.staleActivity()
 		// The local list stays: an unreadable store or a remote outage never empties what was known.
 		l.readErr = safeGardenError(msg.err).Message
-		return m, nil
+		cmd := tea.Batch(m.launchStopNext(), m.launchOverviewNext())
+		return m, cmd
 	}
 	if !m.sameClone(msg.view.Stamp) || msg.view.IssueID != msg.issue || msg.view.Stamp.Generation < l.readGen {
 		l.readErr = staleReply.Message
-		return m, nil
+		cmd := tea.Batch(m.launchStopNext(), m.launchOverviewNext())
+		return m, cmd
 	}
 	local := garden.LocalRepoID(m.garden.gate.Last().LocalRepoID)
 	if local == "" {
 		local = garden.LocalRepoID(msg.view.Stamp.LocalRepoID)
 	}
 	l.readErr = ""
+	l.staleActivity()
 	l.readGen = msg.view.Stamp.Generation
 	for _, a := range msg.view.Attempts {
 		// Only this clone's attempts of this Issue belong in this history, and an older revision never replaces a newer one.
-		if a.Local == local && uint64(a.Issue) == msg.issue {
+		if a.ID != "" && a.Local == local && uint64(a.Issue) == msg.issue {
 			l.merge(a)
+			l.setReviewUnknown(a.ID, msg.view.ReviewsErr)
+			if pass, ok := msg.view.Reviews[a.ID]; ok {
+				l.keepReview(a.ID, &pass)
+			}
+			if obs, ok := msg.view.Activity[a.ID]; ok {
+				prior, known := l.activity[a.ID]
+				if !known || obs.ObservedAt.After(prior.ObservedAt) {
+					if l.activity == nil {
+						l.activity = map[string]gardenapi.LaunchActivity{}
+					}
+					l.activity[a.ID] = obs
+					l.activityStale[a.ID] = false
+				}
+			}
+			if a.ID == l.attempt && !a.State.Active() && l.note == "Stop requested; closure not yet proven" {
+				l.note = ""
+			}
 		}
 	}
 	l.loaded = true
-	return m, nil
+	cmd := tea.Batch(m.launchStopNext(), m.launchOverviewNext())
+	return m, cmd
 }
 
 func (m Model) launchPreview() (Model, tea.Cmd) {
@@ -548,6 +592,7 @@ func (m Model) launchPreview() (Model, tea.Cmd) {
 		return m, nil
 	}
 	l := &m.garden.launch
+	l.escalate, l.reviewEscalate, l.btn = false, false, 0
 	l.previewSeq++
 	seq, req := l.previewSeq, l.req
 	return m, func() tea.Msg {
@@ -582,9 +627,14 @@ func (m Model) onGardenLaunchPreview(msg gardenLaunchPreviewMsg) (Model, tea.Cmd
 	if msg.seq != l.previewSeq || l.stage == launchStageNone || msg.issue != uint64(g.board.opened) {
 		return m, nil
 	}
+	l.escalate, l.reviewEscalate = false, false
 	if msg.err != nil {
 		fail := safeGardenError(msg.err)
 		l.stale = false
+		if l.dlg == nil {
+			l.preview, l.note = nil, launchErrText(msg.err)
+			return m, nil
+		}
 		if l.stage != launchStageChoose {
 			// The confirmation no longer holds: go back to the form with the reason.
 			l.preview, l.stage = nil, launchStageChoose
@@ -599,6 +649,10 @@ func (m Model) onGardenLaunchPreview(msg gardenLaunchPreviewMsg) (Model, tea.Cmd
 	if !g.gate.Accept(msg.view.Stamp) || msg.view.IssueID != msg.issue {
 		// A rejected answer never re-enables the confirmation it was meant to replace.
 		l.stale, l.preview = false, nil
+		if l.dlg == nil {
+			l.note = staleReply.Message
+			return m, nil
+		}
 		if l.stage != launchStageChoose {
 			l.stage = launchStageChoose
 			m.shellFocus = shellInput
@@ -662,7 +716,7 @@ func (m Model) launchRunStart() (Model, tea.Cmd) {
 		return m, nil
 	}
 	// The exact preview the user confirmed, unchanged: the backend verifies it again against fresh data.
-	req := gardenapi.LaunchStartRequest{Preview: *l.preview, Confirmed: true, EscalationConfirmed: l.escalate}
+	req := gardenapi.LaunchStartRequest{Preview: *l.preview, Confirmed: true, EscalationConfirmed: l.escalate, ReviewEscalationConfirmed: l.reviewEscalate}
 	issue, id := uint64(g.board.opened), l.preview.Preview.ID
 	pv := l.preview.Preview
 	scope := launchScope{local: pv.Remote.Local, repo: pv.Request.Target.Repo, issue: pv.Request.Target.Issue, attemptID: id}
@@ -687,6 +741,8 @@ func (m Model) onGardenLaunchStart(msg gardenLaunchStartMsg) (Model, tea.Cmd) {
 	}
 	if a.ID != "" && msg.issue == uint64(g.board.opened) {
 		l.merge(a)
+		l.keepReview(a.ID, msg.view.Review)
+		l.setReviewUnknown(a.ID, msg.view.ReviewUnknown)
 	}
 	m, read := m.launchLoad(msg.issue)
 	l = &m.garden.launch
@@ -697,6 +753,16 @@ func (m Model) onGardenLaunchStart(msg gardenLaunchStartMsg) (Model, tea.Cmd) {
 		l.stage, l.attempt, l.run, l.note, l.preview = launchStageAttempt, a.ID, -1, text, nil
 		m.shellFocus = shellBody
 	case here:
+		if msg.err != nil && safeGardenError(msg.err).Code == gardenapi.CodeLaunchChanged {
+			l.preview, l.stale, l.btn = nil, true, 0
+			l.note = "The review policy changed since this preview. Preview again."
+			m.shellFocus = shellBody
+			return m, read
+		}
+		if l.dlg == nil {
+			l.preview, l.note = nil, text
+			return m, read
+		}
 		// Refused before anything was reserved: nothing exists, so the form is still the place to fix it.
 		l.stage, l.preview = launchStageChoose, nil
 		m.shellFocus = shellInput
@@ -767,6 +833,8 @@ func (m Model) onGardenLaunchAction(msg gardenLaunchActionMsg) (Model, tea.Cmd) 
 	}
 	if a.ID != "" && msg.issue == uint64(g.board.opened) {
 		l.merge(a)
+		l.keepReview(a.ID, msg.view.Review)
+		l.setReviewUnknown(a.ID, msg.view.ReviewUnknown)
 	}
 	m, read := m.launchLoad(msg.issue)
 	l = &m.garden.launch
@@ -776,6 +844,11 @@ func (m Model) onGardenLaunchAction(msg gardenLaunchActionMsg) (Model, tea.Cmd) 
 			l.stage = launchStageHub
 		}
 		l.note = text
+	}
+	if msg.kind == launchActStop && a.ID != "" && attemptStopping(a) && m.launchActive() && m.workspace == wsGarden {
+		l.stopGen++
+		l.stopAttempt, l.stopPolls, l.stopPending = a.ID, 0, false
+		return m, tea.Batch(read, m.launchStopNext())
 	}
 	return m, read
 }
@@ -882,7 +955,7 @@ func (m Model) launchConfirmable() bool {
 		if p == nil || !p.Preview.Remote.Live || launchPermissionBlocker(p.Preview.Account) != "" {
 			return false
 		}
-		return !p.Preview.Escalated || l.escalate
+		return (!p.Preview.Escalated || l.escalate) && (!m.launchReviewNeedsEscalation() || l.reviewEscalate)
 	case launchActRetry:
 		a, ok := l.current()
 		if !ok || !attemptRetryable(a) {
@@ -905,6 +978,9 @@ func (m Model) launchConfirmable() bool {
 func (m Model) launchCancel() (Model, tea.Cmd) {
 	l := &m.garden.launch
 	if l.action == launchActStart {
+		if l.dlg == nil {
+			return m.launchClose()
+		}
 		l.stage, l.stale = launchStageChoose, false
 		l.previewSeq++ // a refresh in flight no longer applies
 		if l.dlg != nil {
@@ -975,7 +1051,7 @@ func (m Model) launchIsolationKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		l.req.BaseRef = strings.TrimSpace(l.iso[1].Value())
 		l.req.RemoteName = strings.TrimSpace(l.iso[2].Value())
 		// Any edit makes the old confirmation obsolete: the backend answers with a fresh preview and ID.
-		if l.isoFrom == launchStageConfirm && l.dlg != nil {
+		if l.isoFrom == launchStageConfirm {
 			l.stage, l.stale, l.btn = launchStageConfirm, true, 0
 			m.shellFocus = shellBody
 			cols, rows := m.launchDims()
@@ -1057,12 +1133,24 @@ func (m Model) launchConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		l.scroll += 5
 	case "e":
 		if l.action == launchActStart {
+			if l.preview == nil {
+				return m.gardenLaunchOpen()
+			}
 			m.launchOpenIsolation(launchStageConfirm)
 		}
 	case "x":
 		l.escalate = !l.escalate && m.launchNeedsEscalation()
 		if !l.escalate && l.btn == 1 && !m.launchConfirmable() {
 			l.btn = 0
+		}
+	case "r":
+		if m.launchReviewNeedsEscalation() {
+			l.reviewEscalate = !l.reviewEscalate
+			if !m.launchConfirmable() {
+				l.btn = 0
+			}
+		} else if l.action == launchActStart && l.preview == nil {
+			return m.launchPreview()
 		}
 	case "y":
 		if a, ok := l.current(); ok && l.action == launchActRetry && hooksNeedAck(a) {
@@ -1247,6 +1335,11 @@ func (m Model) gardenLaunchHints() []shellHint {
 		if m.launchNeedsEscalation() {
 			h = append(h, shellHint{"x", "acknowledge permission"})
 		}
+		if m.launchReviewNeedsEscalation() {
+			h = append(h, shellHint{"r", "acknowledge reviewer"})
+		} else if l.action == launchActStart && l.preview == nil {
+			h = append(h, shellHint{"r", "preview again"})
+		}
 		if a, ok := l.current(); ok && l.action == launchActRetry && hooksNeedAck(a) {
 			h = append(h, shellHint{"y", "acknowledge hooks"})
 		}
@@ -1337,6 +1430,11 @@ func (m Model) onShellAgentsSubscribed(msg agentsSubscribedMsg) (Model, tea.Cmd)
 func (m Model) onShellAgentsChanged(msg agentsChangedMsg) (Model, tea.Cmd) {
 	wait := waitAgentsCmd(msg.ch)
 	l := m.garden.launch
+	_, overview := m.launchOverviewAttempt()
+	if !l.inflight && overview && m.gardenOverlayOpen() && m.garden.board.section == 0 {
+		m, read := m.launchLoad(uint64(m.garden.board.opened))
+		return m, tea.Batch(wait, read)
+	}
 	switch l.stage {
 	case launchStageHub, launchStageAttempt, launchStageSession:
 		if !l.inflight && m.garden.board.opened != 0 {

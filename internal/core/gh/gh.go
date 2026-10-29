@@ -56,6 +56,8 @@ type PR struct {
 	Head   string `json:"headRefName"`
 	Base   string `json:"baseRefName"`
 	URL    string `json:"url"`
+	// HeadSHA is the head commit of the PR; only ListMergedPRs requests it.
+	HeadSHA string `json:"headRefOid"`
 	// IsDraft marks a draft pull request.
 	IsDraft bool `json:"isDraft"`
 	// ReviewDecision is the overall review verdict: APPROVED,
@@ -410,7 +412,7 @@ func Rollup(checks []Check) string {
 // ListMergedPRs returns recently merged pull requests (head branch + number),
 // used to detect worktrees whose branch has already been merged.
 func ListMergedPRs(dir string) ([]PR, error) {
-	out, err := runGHOutput(dir, "pr", "list", "--state", "merged", "--json", "number,title,headRefName,baseRefName,url", "--limit", "100")
+	out, err := runGHOutput(dir, "pr", "list", "--state", "merged", "--json", "number,title,headRefName,headRefOid,baseRefName,url", "--limit", "100")
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("gh pr list --state merged: %s", strings.TrimSpace(string(ee.Stderr)))

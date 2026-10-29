@@ -381,6 +381,37 @@ func TestGardenAssistPrefsRoundTripAndClone(t *testing.T) {
 	}
 }
 
+func TestGardenDraftSelectionIsOrderedOpaqueAndPersisted(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := st.PersistGardenDraft(2, repo, "draft-1a2b3c", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PersistGardenDraft(1, repo, "draft-old", 0); !errors.Is(err, ErrSuperseded) {
+		t.Fatalf("stale write: %v", err)
+	}
+	if err := st.PersistGardenDraft(3, repo, "Some authored text!", 0); !errors.Is(err, ErrInvalidGardenDraft) {
+		t.Fatalf("text accepted as an ID: %v", err)
+	}
+	again, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, sec := again.GardenDraft(repo); id != "draft-1a2b3c" || sec != 3 {
+		t.Fatalf("restored %q %d", id, sec)
+	}
+	if err := again.PersistGardenDraft(4, repo, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := again.GardenDraft(repo); id != "" {
+		t.Fatalf("not forgotten: %q", id)
+	}
+}
+
 func TestPrefsShellInitJSON(t *testing.T) {
 	b, err := json.Marshal(Prefs{DepthGlyph: "B", ShellPrompt: "off"})
 	if err != nil {
@@ -396,5 +427,27 @@ func TestPrefsShellInitJSON(t *testing.T) {
 	b, _ = json.Marshal(Prefs{})
 	if strings.Contains(string(b), "depth_glyph") || strings.Contains(string(b), "shell_prompt") {
 		t.Errorf("empty fields should be omitted: %s", b)
+	}
+}
+
+func TestGardenAttentionViewPersistence(t *testing.T) {
+	stateEnv(t)
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := st.PersistGardenView(1, dir, "attention"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PersistGardenView(2, dir, "attention-other"); !errors.Is(err, ErrInvalidGardenView) {
+		t.Fatalf("unknown view: %v", err)
+	}
+	next, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.GardenView(dir) != "attention" {
+		t.Fatal("attention view lost")
 	}
 }

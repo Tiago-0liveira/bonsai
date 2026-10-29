@@ -46,7 +46,7 @@ var shellNavKeys = map[string]bool{"h": true, "j": true, "k": true, "l": true}
 // gardenReservedKeys are read by the Garden views themselves, so a garden_view
 // override on one would silently shadow search, filters, sort or movement.
 var gardenReservedKeys = map[string]bool{
-	"/": true, "t": true, "p": true, "x": true, "o": true, "h": true, "j": true, "k": true, "l": true,
+	"g": true, "space": true, "/": true, "t": true, "p": true, "x": true, "o": true, "h": true, "j": true, "k": true, "l": true,
 	"n": true, "r": true, "i": true, "s": true, "e": true, "home": true, "end": true, "pgup": true, "pgdown": true, "backspace": true,
 }
 

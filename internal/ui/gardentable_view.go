@@ -11,75 +11,86 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
-const (
-	tableInspectorMin = 34
-	// Optional columns join only while the title keeps this much room, so the
-	// task identity is never traded for metadata.
-	tableMinTitle = 44
-	tableGap      = 2
-)
+const tableGap = 2
 
-// tableCols are the widths of the visible columns; 0 hides an optional one.
-// Marker, ISSUE, TITLE and STATE are always present and STATE is never narrower
-// than the longest state name.
-type tableCols struct{ issue, title, typ, state, local, prio, status int }
+type tableCols struct{ issue, title, state, signal, next, typ, prio int }
 
-// tableLocalMinTitle is the title room the LOCAL column may leave: it is the answer to "is my planner still
-// running", so it outranks the optional columns, but never the title.
-const tableLocalMinTitle = 28
-
-// gardenTableCols lays out the columns. localLong and localShort are the widest long and short local badges of
-// the rows (0 when no row has one); the short form is tried when the long one does not fit.
-func gardenTableCols(width, issueWidth int, inspector bool, localLong, localShort int) tableCols {
+// Optional columns leave at least 28 cells for the title. STATE includes the
+// exact card label, including its glyph and local planner qualifier.
+func gardenTableCols(width, issueWidth int) tableCols {
 	c := tableCols{issue: issueWidth}
 	for s := work.Column(0); s < work.ColumnCount; s++ {
-		c.state = max(c.state, len(s.String()))
+		c.state = max(c.state, ansi.StringWidth(boardState(work.Record{Column: s})))
 	}
-	// lead + marker, then a gap before every column after ISSUE
-	fixed := 2 + c.issue + tableGap*2 + c.state
-	c.title = max(12, width-fixed)
-	for _, w := range []int{localLong, localShort} {
-		if w > 0 && c.title-w-tableGap >= tableLocalMinTitle {
-			c.local = w
-			c.title -= w + tableGap
-			break
-		}
-	}
-	try := func(w int, set *int) {
-		if c.title-w-tableGap >= tableMinTitle {
-			*set = w
+	c.title = max(12, width-2-c.issue-tableGap*2-c.state)
+	add := func(w int, dst *int) {
+		if c.title-w-tableGap >= 28 {
+			*dst = w
 			c.title -= w + tableGap
 		}
 	}
-	// The inspector already names the type, so there the priority is tried first.
-	if inspector {
-		try(2, &c.prio)
-		try(8, &c.typ)
-	} else {
-		try(8, &c.typ)
-		try(2, &c.prio)
+	add(8, &c.next)
+	if c.next == 0 || c.title-18-tableGap < 28 {
+		return c
 	}
-	try(16, &c.status)
+	add(min(30, c.title-28-tableGap), &c.signal)
+	if c.next > 0 {
+		extra := min(22-c.next, c.title-28)
+		c.next += extra
+		c.title -= extra
+	}
+	add(2, &c.prio)
+	add(8, &c.typ)
 	return c
 }
 
-// cell clips to w by display width and pads, so wide runes never overflow.
 func tableCell(s string, w int) string {
 	s = ansi.Truncate(s, w, "…")
 	return s + strings.Repeat(" ", max(0, w-ansi.StringWidth(s)))
 }
 
-func (m Model) gardenTableLine(width int, bg lipgloss.Color, c tableCols, marker string, mfg lipgloss.Color, texts [6]string, fgs [6]lipgloss.Color, bold bool) string {
-	return m.gardenTableLine7(width, bg, c, marker, mfg,
-		[7]string{texts[0], texts[1], texts[2], texts[3], "", texts[4], texts[5]},
-		[7]lipgloss.Color{fgs[0], fgs[1], fgs[2], fgs[3], fgs[3], fgs[4], fgs[5]}, bold)
+func gardenNext(r work.Record, short bool) string {
+	need, _ := work.Attention(r)
+	var a, b string
+	switch need {
+	case work.NeedInput:
+		a, b = "Answer", "Answer the agent"
+	case work.NeedPlanApproval:
+		a, b = "Review", "Review plan"
+	case work.NeedPlanPublish:
+		a, b = "Review", "Review and publish plan"
+	case work.NeedStart:
+		a, b = "Start", "Start implementation"
+	case work.NeedHumanReview:
+		a, b = "Review", "Review changes"
+	case work.NeedBlocker:
+		a, b = "Resolve", "Resolve blocker"
+	default:
+		b = work.NextGate(r.Column)
+		a, _, _ = strings.Cut(b, " ")
+	}
+	if short {
+		return a
+	}
+	return b
 }
 
-// gardenTableLine7 is the Table's own row, with the LOCAL cell between STATE and P.
-func (m Model) gardenTableLine7(width int, bg lipgloss.Color, c tableCols, marker string, mfg lipgloss.Color, texts [7]string, fgs [7]lipgloss.Color, bold bool) string {
+func gardenTableSignal(r work.Record, attention, localKnown bool) string {
+	text := boardActivity(r, false, localKnown)
+	if attention {
+		_, text = work.Attention(r)
+	}
+	if warning, _ := gardenApprovalIndicator(r); strings.HasPrefix(warning, "!") {
+		text = warning + " · " + text
+	}
+	return boardTitle(text)
+}
+
+func (m Model) tableCells(width int, bg lipgloss.Color, c tableCols, marker string, rail lipgloss.Color, texts [7]string, bold bool) string {
+	p := theme.Current
 	var sb strings.Builder
-	sb.WriteString(seg(mfg, bg, true).Render(" " + marker))
-	widths := [7]int{c.issue, c.title, c.typ, c.state, c.local, c.prio, c.status}
+	sb.WriteString(seg(rail, bg, true).Render(marker + " "))
+	widths := [7]int{c.issue, c.title, c.state, c.signal, c.next, c.typ, c.prio}
 	for i, w := range widths {
 		if w == 0 {
 			continue
@@ -87,7 +98,14 @@ func (m Model) gardenTableLine7(width int, bg lipgloss.Color, c tableCols, marke
 		if i > 0 {
 			sb.WriteString(seg("", bg, false).Render(strings.Repeat(" ", tableGap)))
 		}
-		sb.WriteString(seg(fgs[i], bg, bold || i == 0).Render(tableCell(texts[i], w)))
+		fg := p.Muted
+		if i < 2 {
+			fg = p.Text
+		}
+		if i == 2 {
+			fg = rail
+		}
+		sb.WriteString(seg(fg, bg, bold).Render(tableCell(texts[i], w)))
 	}
 	return shellRow(width, bg, sb.String(), "")
 }
@@ -95,132 +113,145 @@ func (m Model) gardenTableLine7(width int, bg lipgloss.Color, c tableCols, marke
 func (m Model) gsTable(width, rows int) []string {
 	p := theme.Current
 	b := m.garden.board
-	records := b.rows
-	inspector := width >= 120
-	tableW, inspW := width, 0
-	if inspector {
-		inspW = max(tableInspectorMin, width/3)
-		tableW = width - inspW - 3
-	}
+	v := b.tableView()
+	attention := b.layout == layoutAttention
 	issueW := 5
-	for _, r := range records {
+	for _, r := range v.records {
 		issueW = max(issueW, len(fmt.Sprint(r.Item.Issue.Number))+1)
 	}
-	localLong, localShort := 0, 0
-	for _, r := range records {
-		if lb, ok := m.localBadgeFor(r.Item.Issue.ID); ok {
-			localLong = max(localLong, ansi.StringWidth(lb.long))
-			localShort = max(localShort, ansi.StringWidth(lb.short), len("LOCAL"))
-		}
-	}
-	cols := gardenTableCols(tableW, issueW, inspector, localLong, localShort)
+	cols := gardenTableCols(width, issueW)
 	capacity := gardenTableCapacity(rows)
-	row := b.rowIndex()
-	scroll := tableScrollFor(b.tableScroll, row, capacity, len(records))
-
-	title := "APPROVED WORK / ALL STATES"
-	if width < 100 {
-		title = "APPROVED WORK" // the count and filter chip need the room
+	scroll := tableScrollFor(v.scroll, v.line, capacity, len(v.lines))
+	group := "None"
+	if v.grouped {
+		group = "Phase"
 	}
-	out := m.gardenWorkHead(width, title, b.sort.String())
-	body := max(0, rows-3)
-	region := make([]string, 0, body)
-	head := [7]string{"ISSUE", "TITLE", "TYPE", "STATE", "LOCAL", "P", "STATUS"}
-	muted := [7]lipgloss.Color{p.Muted, p.Muted, p.Muted, p.Muted, p.Muted, p.Muted, p.Muted}
-	region = append(region, m.gardenTableLine7(tableW, p.Raised, cols, " ", p.Muted, head, muted, true))
+	title := "APPROVED WORK"
+	if attention {
+		title = "NEEDS YOU"
+	}
+	sort := b.sort.String()
+	if width < 100 {
+		sort = ""
+	}
+	s := b.collection.Summarize()
+	summary := fmt.Sprintf("● %d active  ◇ %d need you  ! %d blocked", s.Active, s.NeedsYou, s.Blocked)
+	if attention {
+		summary = "Decisions, questions and blockers"
+	}
+	out := m.gardenWorkHead(width, title, sort, summary)
+	out = append(out, m.tableCells(width, p.Raised, cols, " ", p.Muted, [7]string{"ISSUE", "TITLE", "STATE", "SIGNAL", "NEXT", "TYPE", "P"}, true))
 	empty := ""
 	switch {
 	case !b.loaded || b.snapshot.SuccessfulAt.IsZero():
 		empty = "(unknown until a successful read)"
-	case len(records) == 0 && b.query.Active():
+	case len(v.records) == 0 && attention && b.query.Active():
+		empty = "(nothing matching this filter needs you)"
+	case len(v.records) == 0 && attention:
+		empty = "(nothing needs you)"
+	case len(v.records) == 0 && b.query.Active():
 		empty = "(no approved work matches this filter)"
-	case len(records) == 0:
+	case len(v.records) == 0:
 		empty = "(no approved work yet)"
 	}
+	bodyStart := len(out)
 	if empty != "" {
-		region = append(region, boardLine(tableW, p.Background, p.Muted, false, " "+empty))
+		out = append(out, boardLine(width, p.Background, p.Muted, false, " "+empty))
 	}
-	for n := scroll; n < len(records) && n < scroll+capacity; n++ {
-		r := records[n]
+	before, shown, visible := 0, 0, 0
+	for i, l := range v.lines {
+		if !l.header {
+			visible++
+		}
+		if i < scroll && !l.header {
+			before++
+		}
+		if i < scroll || i >= scroll+capacity {
+			continue
+		}
+		bg := p.Surface
+		if i == v.line {
+			bg = p.Raised
+		}
+		if l.header {
+			out = append(out, boardLine(width, bg, boardPhaseColor(l.phase), true, m.gardenGroupHeader(l, v.collapsed[l.phase])))
+			continue
+		}
+		shown++
+		r := l.rec
 		selected := r.Item.Issue.ID == b.selection.ID
-		bg, fg, marker := p.Surface, p.Text, " "
+		marker := "▏"
 		if selected {
-			bg, fg, marker = p.Raised, p.Success, "▌"
-			if m.agentGlyphsASCII() {
+			marker = "▌"
+		}
+		if m.agentGlyphsASCII() {
+			marker = "|"
+			if selected {
 				marker = ">"
 			}
 		}
-		status, statusFg := gardenApprovalIndicator(r)
-		texts := [7]string{fmt.Sprintf("#%d", r.Item.Issue.Number), boardTitle(r.Item.Issue.Title), string(r.Item.Classification.Type), r.Column.String(), "", r.Priority, status}
-		fgs := [7]lipgloss.Color{fg, fg, p.Muted, boardColumnColor(r.Column), p.Muted, p.Muted, statusFg}
-		if lb, ok := m.localBadgeFor(r.Item.Issue.ID); ok {
-			texts[4], fgs[4] = lb.long, lb.fg
-			if ansi.StringWidth(lb.long) > cols.local {
-				texts[4] = lb.short
+		rail := boardPhaseColor(r.Phase)
+		if r.Column == work.Blocked {
+			rail = p.Danger
+		}
+		texts := [7]string{fmt.Sprintf("#%d", r.Item.Issue.Number), boardTitle(r.Item.Issue.Title), boardState(r), gardenTableSignal(r, attention, m.garden.local.loaded && !m.garden.local.stale), gardenNext(r, cols.next <= 8), string(r.Item.Classification.Type), r.Priority}
+		out = append(out, m.tableCells(width, bg, cols, marker, rail, texts, selected))
+	}
+	for len(out) < bodyStart+capacity {
+		out = append(out, blankRow(width, p.Background))
+	}
+	out = out[:bodyStart+capacity]
+	if gardenTableStrip(rows) > 0 {
+		if len(v.lines) > 0 && v.lines[v.line].header {
+			l := v.lines[v.line]
+			action := "collapse"
+			if v.collapsed[l.phase] {
+				action = "expand"
+			}
+			out = append(out,
+				boardLine(width, p.Background, boardPhaseColor(l.phase), true, m.gardenGroupHeader(l, v.collapsed[l.phase])),
+				blankRow(width, p.Background),
+				boardLine(width, p.Raised, p.Warning, true, "Enter "+action))
+		} else if r, _, ok := b.collection.Find(b.selection.ID); ok && b.rowIndex() >= 0 {
+			out = append(out,
+				boardLine(width, p.Background, p.Warning, true, fmt.Sprintf("#%d  %s", r.Item.Issue.Number, gardenTableSignal(r, attention, m.garden.local.loaded && !m.garden.local.stale))),
+				boardLine(width, p.Background, p.Text, false, boardTitle(r.Item.Issue.Title)),
+				boardLine(width, p.Raised, p.Warning, true, "Enter open · next: "+gardenNext(r, false)))
+		} else {
+			for range 3 {
+				out = append(out, blankRow(width, p.Background))
 			}
 		}
-		region = append(region, m.gardenTableLine7(tableW, bg, cols, marker, p.Success, texts, fgs, selected))
 	}
-	for len(region) < body {
-		region = append(region, blankRow(tableW, p.Background))
-	}
-	region = region[:body]
-	if inspector {
-		side := m.gardenInspector(inspW, len(region), records, row)
-		sep := seg(p.Border, p.Background, false).Render(" " + m.chrome("│") + " ")
-		for i := range region {
-			region[i] += sep + side[i]
-		}
-	}
-	out = append(out, region...)
 	footer := "No rows"
-	if len(records) > 0 {
-		footer = fmt.Sprintf("Rows %d–%d of %d", scroll+1, min(scroll+capacity, len(records)), len(records))
+	if len(v.records) > 0 {
+		first, last := 0, 0
+		if shown > 0 {
+			first, last = before+1, before+shown
+		}
+		footer = fmt.Sprintf("Rows %d–%d of %d", first, last, visible)
 	}
-	out = append(out, gText(width, p.Muted, false, footer+" · sort: "+b.sort.String()))
+	if hidden := len(v.records) - visible; hidden > 0 {
+		footer += fmt.Sprintf(" (%d hidden)", hidden)
+	}
+	if attention {
+		footer += fmt.Sprintf(" · %d of %d need you", len(v.records), len(b.collection.Records))
+	}
+	footer += " · sort: " + b.sort.String() + " · Group: " + group
+	out = append(out, gText(width, p.Muted, false, footer))
 	return m.settingsASCII(out[:rows])
 }
 
-// gardenInspector describes the selected row: identity, state and the next
-// human gate. It reads the same record the table highlights.
-func (m Model) gardenInspector(w, n int, records []work.Record, row int) []string {
-	p := theme.Current
-	var lines []string
-	line := func(bg, fg lipgloss.Color, bold bool, s string) {
-		lines = append(lines, boardLine(w, bg, fg, bold, " "+s))
+func (m Model) gardenGroupHeader(l tableLine, collapsed bool) string {
+	glyph, suffix := "▾", ""
+	if m.agentGlyphsASCII() {
+		glyph = "v"
 	}
-	blank := func() { line(p.Background, p.Muted, false, "") }
-	if row < 0 {
-		line(p.Background, p.Muted, false, "No item selected")
-	} else {
-		r := records[row]
-		line(p.Background, p.Text, true, fmt.Sprintf("#%d / %s", r.Item.Issue.Number, r.Item.Classification.Type))
-		blank()
-		title := strings.Split(ansi.Wrap(boardTitle(r.Item.Issue.Title), max(1, w-2), ""), "\n")
-		for i := 0; i < min(3, len(title)); i++ {
-			text := title[i]
-			if i == 2 && len(title) > 3 {
-				text = ansi.Truncate(text, max(1, w-3), "") + "…"
-			}
-			line(p.Background, p.Text, false, text)
+	if collapsed {
+		glyph, suffix = "▸", " (collapsed)"
+		if m.agentGlyphsASCII() {
+			glyph = ">"
 		}
-		blank()
-		line(p.Raised, boardColumnColor(r.Column), true, " "+r.Column.String())
-		status, fg := gardenApprovalIndicator(r)
-		line(p.Background, fg, false, status)
-		if lb, ok := m.localBadgeFor(r.Item.Issue.ID); ok {
-			line(p.Background, lb.fg, false, "local: "+lb.long)
-		}
-		blank()
-		line(p.Background, p.Muted, true, "NEXT HUMAN GATE")
-		for _, l := range strings.Split(ansi.Wrap(work.NextGate(r.Column), max(1, w-2), ""), "\n") {
-			line(p.Background, p.Text, false, l)
-		}
-		blank()
-		line(p.Raised, p.Success, true, " Enter open item")
 	}
-	for len(lines) < n {
-		blank()
-	}
-	return lines[:n]
+	return fmt.Sprintf("%s %s  %d%s", glyph, l.phase, l.group, suffix)
 }

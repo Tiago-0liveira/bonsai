@@ -3,7 +3,6 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -19,13 +18,14 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/gardenapi"
 )
 
-// gardenLayout is how the one approved-work selection is drawn; Board and Table
+// gardenLayout is how the one approved-work selection is drawn. All layouts
 // share the snapshot, query, selection and detail, never a second store.
 type gardenLayout int
 
 const (
 	layoutBoard gardenLayout = iota
 	layoutTable
+	layoutAttention
 )
 
 type gardenBoardState struct {
@@ -34,13 +34,19 @@ type gardenBoardState struct {
 	query              work.Query
 	collection         work.Collection
 	selection          work.Selection
+	otherSelection     work.Selection
+	evidence           map[garden.IssueID]work.Evidence
 	layout             gardenLayout
 	sort               work.Sort
-	tableScroll        int
+	table, attn        tableView
+	attentionFrom      gardenLayout
+	attentionID        garden.IssueID
+	attentionPicked    garden.IssueID
 	rows               []work.Record // Rows(sort), rebuilt only when the collection or sort changes
-	tableRow           int           // deletion anchor: the selection's last index in rows
 	opened             garden.IssueID
+	openedRepo         uint64 // the Garden the opened Issue was read from; another repository never keeps its overlay
 	section, docScroll int
+	overlayFocus       string // the focused action of the opened Issue; empty while the body owns the keys
 	searching          bool
 	search             textinput.Model
 	beforeSearch       work.Query
@@ -67,7 +73,10 @@ func (m Model) gardenLoadWork() (Model, tea.Cmd) {
 	}
 	ctx, seq := g.begin(busyWork)
 	api := g.api
-	return m, func() tea.Msg { v, err := api.Work(ctx); return gardenWorkMsg{seq, v, err} }
+	read := func() tea.Msg { v, err := api.Work(ctx); return gardenWorkMsg{seq, v, err} }
+	// The private drafts load beside the Work read, on their own sequence: neither can supersede the other.
+	list := m.privListCmd() // before the return: it advances the list sequence the reply must match
+	return m, tea.Batch(read, list)
 }
 func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	g := &m.garden
@@ -102,7 +111,12 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 			b.notice = "No successful read yet; approved work is unknown. Refresh to retry."
 		}
 	}
+	b.evidence = m.garden.local.evidence()
 	b.reselect()
+	if b.opened != 0 && b.openedRepo != 0 && b.openedRepo != g.status.Target.RepoID {
+		b.close()
+		b.notice = "Opened issue belongs to another repository; returned to " + b.layoutName() + "."
+	}
 	g.drafts.pendingErr = msg.view.PendingCapturesErr
 	if g.drafts.pendingErr == nil {
 		g.drafts.pending = msg.view.PendingCaptures
@@ -120,6 +134,10 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	var local tea.Cmd
 	m, local = m.gardenLoadLocal()
 	cmd = tea.Batch(cmd, local, m.gardenLocalStart())
+	if b.opened != 0 {
+		m.planTabSync()
+		cmd = tea.Batch(cmd, m.planTabReload())
+	}
 	if b.opened == 0 && g.planrev.stage != planNone {
 		m = m.planClose()
 		g = &m.garden
@@ -139,73 +157,89 @@ func (m Model) onGardenWork(msg gardenWorkMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 func (b *gardenBoardState) reselect() {
-	b.collection = work.Select(b.snapshot.Items, b.query, b.snapshot.Findings...)
+	var header work.Phase = -1
+	if b.layout != layoutBoard {
+		v := b.tableView()
+		if v.line < len(v.lines) && v.lines[v.line].header {
+			header = v.lines[v.line].phase
+		}
+	}
+	b.collection = work.Select(b.snapshot.Items, b.query, b.evidence, b.snapshot.Findings...)
 	b.rows = b.collection.Rows(b.sort)
-	if b.layout == layoutTable {
+	b.rebuildTables()
+	if b.layout != layoutBoard {
 		if notice := b.tableFocus(); notice != "" {
 			b.notice = notice
+		} else if i := b.tableView().headerIndex(header); i >= 0 {
+			b.tableView().line = i
 		}
+		b.selection.Clamp(b.collection)
 	} else if reason := b.selection.Reconcile(b.collection); reason != "" {
 		b.notice = reason
 	}
 	if b.opened != 0 {
 		if _, _, ok := b.collection.Find(b.opened); !ok {
-			b.opened = 0
-			b.docScroll = 0
+			b.close()
 			b.notice = "Opened issue left this view; returned to " + b.layoutName() + "."
 		}
 	}
 }
+
+// open shows the Issue overlay over the layout it came from. Board and Table keep
+// their selection and scroll underneath, so closing needs nothing restored.
+func (b *gardenBoardState) open(id garden.IssueID, repo uint64) {
+	b.opened, b.openedRepo = id, repo
+	b.section, b.docScroll, b.overlayFocus = 0, 0, ""
+}
+
+func (b *gardenBoardState) close() {
+	b.opened, b.openedRepo = 0, 0
+	b.docScroll, b.overlayFocus = 0, ""
+}
+
 func (b *gardenBoardState) layoutName() string {
+	if b.layout == layoutAttention {
+		return "Needs you"
+	}
 	if b.layout == layoutTable {
 		return "Table"
 	}
 	return "Board"
 }
 
-// rowIndex is where the shared selection sits in the cached Table order, or -1.
-// The selection ID is the only identity; tableRow just anchors a deletion.
-func (b *gardenBoardState) rowIndex() int {
-	if b.selection.ID == 0 {
-		return -1
+func (b *gardenBoardState) setLayout(l gardenLayout) {
+	entering := l == layoutAttention && b.layout != layoutAttention
+	if entering {
+		b.attentionFrom, b.attentionID = b.layout, b.selection.ID
+		// Entry starts at the first need; refresh fallback still uses its anchor.
+		b.attn.anchor = 0
+	} else if b.layout == layoutAttention && l != layoutAttention {
+		if b.selection.ID == b.attentionPicked {
+			b.selection.Focus(b.collection, b.attentionID)
+		}
+		b.attentionID, b.attentionPicked = 0, 0
 	}
-	return slices.IndexFunc(b.rows, func(r work.Record) bool { return r.Item.Issue.ID == b.selection.ID })
+	b.layout = l
+	if l != layoutBoard {
+		if notice := b.tableFocus(); notice != "" {
+			b.notice = notice
+		}
+	} else {
+		if notice := b.selection.Reconcile(b.collection); notice != "" {
+			b.notice = notice
+		}
+	}
+	if entering {
+		b.attentionPicked = b.selection.ID
+		if b.attentionID != b.attentionPicked {
+			if from, _, ok := b.collection.Find(b.attentionID); ok {
+				to, _, _ := b.collection.Find(b.attentionPicked)
+				b.notice = fmt.Sprintf("Selected #%d does not need you; showing #%d.", from.Item.Issue.Number, to.Item.Issue.Number)
+			}
+		}
+	}
 }
 
-// tableFocus makes the Table cursor follow the shared selection. When the
-// selected Issue vanished it lands on the row now at its old index (the previous
-// row if it was last) and returns a notice saying which.
-func (b *gardenBoardState) tableFocus() string {
-	if i := b.rowIndex(); i >= 0 {
-		b.selection.Focus(b.collection, b.selection.ID)
-		b.tableRow = i
-		return ""
-	}
-	left := b.selection.ID != 0
-	was := b.tableRow
-	b.selection.ID = 0
-	b.tableRow = max(0, min(was, len(b.rows)-1))
-	if len(b.rows) == 0 {
-		if left {
-			return "Selected issue left this view; no matching work remains."
-		}
-		return ""
-	}
-	b.selection.Focus(b.collection, b.rows[b.tableRow].Item.Issue.ID)
-	switch {
-	case !left:
-		return ""
-	case was >= len(b.rows):
-		return "Selected issue left this view; selected the previous row."
-	}
-	return "Selected issue left this view; selected the row now in its place."
-}
-func (b *gardenBoardState) setLayout(l gardenLayout) {
-	b.layout = l
-	if l == layoutTable {
-		b.tableFocus()
-	}
-}
 func (m *Model) gardenRememberView() tea.Cmd {
 	if m.state == nil {
 		return nil
@@ -215,6 +249,9 @@ func (m *Model) gardenRememberView() tea.Cmd {
 		view = "board"
 		if m.garden.board.layout == layoutTable {
 			view = "table"
+		}
+		if m.garden.board.layout == layoutAttention {
+			view = "attention"
 		}
 	}
 	if m.garden.board.rememberedView == view {
@@ -226,25 +263,48 @@ func (m *Model) gardenRememberView() tea.Cmd {
 	return func() tea.Msg { return gardenViewSavedMsg{gen, st.PersistGardenView(gen, dir, view)} }
 }
 
-func gardenBoardColumns(width int) int {
-	if width < 120 {
-		return 4
+func gardenBoardColumns(width int, mode work.Mode) int {
+	if width < 100 {
+		return 3
 	}
-	return int(work.ColumnCount)
+	if width < 160 {
+		if mode == work.ModeDetailed {
+			return 5
+		}
+		return 6
+	}
+	if mode == work.ModeDetailed {
+		return 9
+	}
+	return 7 // clamped to six unless Unplaced exists
 }
-func gardenBoardCapacity(rows int) int { return max(1, (rows-5)/6) }
+func gardenBoardCapacity(rows int) int { return max(1, (rows-7)/7) }
+func (b *gardenBoardState) toggleStages() {
+	id := b.selection.ID
+	b.otherSelection, b.selection = b.selection, b.otherSelection
+	b.selection.Mode = work.ModeDetailed
+	if b.otherSelection.Mode == work.ModeDetailed {
+		b.selection.Mode = work.ModePhases
+	}
+	if !b.selection.Focus(b.collection, id) {
+		b.selection.Reconcile(b.collection)
+	}
+}
 func (m Model) gardenBoardRows() int {
 	return m.height - shellHeaderRows - shellFooterRows - settingsSubmenuRows
 }
 func (m *Model) gardenBoardVisible() {
 	b := &m.garden.board
-	b.selection.EnsureVisible(b.collection, gardenBoardCapacity(m.gardenBoardRows()), gardenBoardColumns(m.width))
-	b.tableScroll = tableScrollFor(b.tableScroll, b.rowIndex(), gardenTableCapacity(m.gardenBoardRows()), len(b.collection.Records))
+	b.selection.EnsureVisible(b.collection, gardenBoardCapacity(m.gardenBoardRows()), gardenBoardColumns(m.width, b.selection.Mode))
+	if b.layout != layoutBoard {
+		v := b.tableView()
+		v.scroll = tableScrollFor(v.scroll, v.line, gardenTableCapacity(m.gardenBoardRows()), len(v.lines))
+	}
 }
 func (m Model) gardenStartSearch() (Model, tea.Cmd) {
 	b := &m.garden.board
 	b.beforeSearch = b.query
-	b.beforeSelection = b.selection
+	b.beforeSelection = b.selection.Clone()
 	b.search = textinput.New()
 	// Search handles keys only, so a static cursor avoids scheduling unhandled blink messages.
 	b.search.Cursor.SetMode(cursor.CursorStatic)
@@ -317,47 +377,27 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, rel
 	}
+	if m.handoffTyping() {
+		return m.handoffKey(msg) // typed text, capital R included, is never a refresh
+	}
 	if key.Matches(msg, m.keys.Refresh) {
 		return m.gardenLoadWork()
 	}
 	if b.opened != 0 {
-		m.garden.notice = "" // a notice explains the last action; the next key moves on
-		switch k {
-		case "p":
-			return m.gardenOpenPlanner()
-		case "r":
-			return m.gardenOpenPlanReview()
-		case "s":
-			return m.gardenLaunchOpen()
-		case "i":
-			return m.gardenLaunchHub()
-		case "esc", "backspace":
-			b.opened = 0
-			b.docScroll = 0
-		case "left", "h":
-			b.section = max(0, b.section-1)
-			b.docScroll = 0
-		case "right", "l":
-			b.section = min(len(gardenDocumentSections)-1, b.section+1)
-			b.docScroll = 0
-		case "down", "j":
-			b.docScroll++
-		case "up", "k":
-			b.docScroll = max(0, b.docScroll-1)
-		case "pgdown":
-			b.docScroll += max(1, m.height-12)
-		case "pgup":
-			b.docScroll = max(0, b.docScroll-max(1, m.height-12))
-		case "home":
-			b.docScroll = 0
-		case "end":
-			b.docScroll = 1 << 20
+		return m.gardenIssueKey(msg)
+	}
+	if key.Matches(msg, m.keys.GardenAttention) {
+		if b.layout == layoutAttention {
+			b.setLayout(b.attentionFrom)
+		} else {
+			b.setLayout(layoutAttention)
 		}
-		m.gardenClampDocument()
-		return m, nil
+		m.gardenBoardVisible()
+		cmd := m.gardenRememberView()
+		return m, cmd
 	}
 	if key.Matches(msg, m.keys.GardenView) {
-		if b.layout == layoutBoard {
+		if b.layout != layoutTable {
 			b.setLayout(layoutTable)
 		} else {
 			b.setLayout(layoutBoard)
@@ -366,16 +406,30 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.gardenRememberView()
 		return m, cmd
 	}
+	if b.layout == layoutBoard && key.Matches(msg, m.keys.GardenStages) {
+		b.toggleStages()
+		m.gardenBoardVisible()
+		return m, nil
+	}
+
 	switch k {
 	case "esc":
 		m = m.gardenBack(scrBoard)
 		cmd := m.gardenRememberView()
 		return m, cmd
 	case "enter":
-		if b.selection.ID != 0 {
-			b.opened = b.selection.ID
-			b.section, b.docScroll = 0, 0
+		if b.layout != layoutBoard {
+			v := b.tableView()
+			if len(v.lines) == 0 {
+				break
+			}
+			if v.lines[v.line].header {
+				b.toggleGroup()
+				break
+			}
 		}
+		cmd := m.gardenOpenIssue(b.selection.ID)
+		return m, cmd
 	case "/":
 		return m.gardenStartSearch()
 	case "t":
@@ -407,9 +461,10 @@ func (m Model) gardenBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, m.keys.Tab) && m.canToggleSub() {
 			m = m.gardenToggleSub()
 			cmd := m.gardenRememberView()
-			return m, cmd
+			list := m.privListCmd() // entering Drafts reads the private drafts; the Work read is shared with the Board
+			return m, tea.Batch(cmd, list)
 		}
-		if b.layout == layoutTable {
+		if b.layout != layoutBoard {
 			m.gardenTableKey(k)
 		} else {
 			m.gardenBoardMove(k)
@@ -449,17 +504,41 @@ func (m Model) gardenBoardHints() []shellHint {
 		return m.gardenPlannerHints()
 	}
 	if b.opened != 0 {
-		h := []shellHint{{"esc", b.layoutName()}, {"p", "request plan"}, {"r", "review plans"}}
+		if m.planForm() != nil {
+			return m.planFormHints()
+		}
+		if m.handoffModal() || m.handoffShown() {
+			return m.handoffHints()
+		}
+		if m.planStopAsked() {
+			return []shellHint{{"y", "stop the attempt"}, {"any", "keep it running"}}
+		}
+		h := []shellHint{{"esc", b.layoutName()}, {m.keys.Tab.Help().Key, "actions"}, {"p", "request plan"}, {"r", "review plans"}}
+		if b.section == planTabSection {
+			h = []shellHint{{"esc", b.layoutName()}, {m.keys.Tab.Help().Key, "actions"}}
+			for _, c := range m.planTabActions(true)[0:] {
+				h = append(h, shellHint{c.key, strings.TrimSuffix(strings.ToLower(c.long[:1])+c.long[1:], "…")})
+			}
+		}
 		if m.launchOffered() {
 			h = append(h, shellHint{"s", "start implementation locally…"})
 		}
-		return append(h, shellHint{"i", "implementation attempts"}, shellHint{"←/→", "section"}, shellHint{"↑/↓", "scroll"}, shellHint{"pgup/dn", "page"}, shellHint{m.keys.Refresh.Help().Key, "refresh"})
+		return append(h, shellHint{"i", "implementation attempts"}, shellHint{"←/→", "tab"}, shellHint{"↑/↓", "scroll"}, shellHint{"pgup/dn", "page"}, shellHint{m.keys.Refresh.Help().Key, "refresh"})
 	}
 	view := m.keys.GardenView.Help().Key
-	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
-	if b.layout == layoutTable {
-		h = []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"/", "search"}, {"t/p", "type/priority"}, {"o", "sort"}, {"x", "clear"}, {view, "board"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
+	h := []shellHint{{"←/→", "state"}, {"↑/↓", "item"}, {"enter", "open"}, {m.keys.GardenStages.Help().Key, "phases/stages"}, {"/", "search"}, {"t/p", "type/priority"}, {"x", "clear"}, {view, "table"}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
+	if b.layout != layoutBoard {
+		target := "board"
+		if b.layout == layoutAttention {
+			target = "table"
+		}
+		h = []shellHint{{"↑/↓", "select"}, {"enter", "open"}, {"space", "collapse"}, {"g", "group"}, {"/", "search"}, {"t/p", "type/priority"}, {"o", "sort"}, {"x", "clear"}, {view, target}, {m.keys.Refresh.Help().Key, "refresh"}, {"esc", "parent"}}
 	}
+	attention := "needs you"
+	if b.layout == layoutAttention {
+		attention = "all work"
+	}
+	h = append(h[:len(h)-2], shellHint{m.keys.GardenAttention.Help().Key, attention}, h[len(h)-2], h[len(h)-1])
 	if m.canToggleSub() {
 		h = append(h, shellHint{m.keys.Tab.Help().Key, "submenu"})
 	}
@@ -500,13 +579,19 @@ func (m Model) gardenBoardIdentity() string {
 	if b.opened != 0 {
 		id = b.opened
 	}
+	if b.layout == layoutAttention && b.opened == 0 && len(b.attn.records) == 0 {
+		return "Needs you / empty"
+	}
 	if r, _, ok := b.collection.Find(id); ok {
+		if b.layout == layoutAttention {
+			return fmt.Sprintf("Needs you / #%d / %s", r.Item.Issue.Number, r.Column)
+		}
 		return fmt.Sprintf("#%d  %s / %s", r.Item.Issue.Number, boardTitle(r.Item.Issue.Title), r.Column)
 	}
 	if b.layout == layoutTable {
 		return "Table / empty"
 	}
-	return "Board / " + b.selection.Column.String() + " / empty"
+	return "Board / " + b.collection.LaneTitle(b.selection.Mode, b.selection.Column) + " / empty"
 }
 func (m Model) gardenBoardSaved(msg gardenViewSavedMsg) Model {
 	if msg.err != nil && !errors.Is(msg.err, config.ErrSuperseded) && msg.gen == m.garden.board.saveGen {
@@ -516,15 +601,13 @@ func (m Model) gardenBoardSaved(msg gardenViewSavedMsg) Model {
 	return m
 }
 
-var gardenDocumentSections = []string{"Overview", "Specification", "Questions", "Plans", "Execution"}
+var gardenDocumentSections = []string{"Overview", "Specification", "Questions", "Plan", "Activity"}
 
+// gardenClampDocument keeps the overlay body's scroll inside its document at the current size.
 func (m *Model) gardenClampDocument() {
-	width := m.width
-	if width >= 120 {
-		width -= 26
-	}
+	width, rows := m.gardenOverlayBody()
 	lines := m.gardenDocument(width)
-	m.garden.board.docScroll = max(0, min(m.garden.board.docScroll, max(0, len(lines)-max(1, m.height-12))))
+	m.garden.board.docScroll = max(0, min(m.garden.board.docScroll, max(0, len(lines)-max(1, rows))))
 }
 func gardenIssueBody(body string) string {
 	if strings.HasPrefix(body, "<!-- bonsai:garden-metadata/v1 ") {

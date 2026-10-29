@@ -125,6 +125,9 @@ func (m Model) selectWorkspace(ws workspace) (Model, tea.Cmd) {
 	if m.wt.returning && ws != m.wt.returnWS && ws != wsWorktrees {
 		m.wt.returning = false
 	}
+	if m.workspace == wsSettings {
+		m = m.settingsAutoReviewLeave()
+	}
 	m.workspace = ws
 	m.shellFocus = shellNav
 	m.set.editing, m.set.capturing = false, false
@@ -328,6 +331,10 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case modals.KindConfigConfirm:
 			return m.confirmRepoWrite()
+		case modals.KindGardenDraftQuit:
+			return m.privQuitChoice(msg.Value)
+		case modals.KindGardenAutoReviewRestore:
+			return m.autoReviewRestore()
 		case modals.KindGardenAssistRestore:
 			return m.editPrefs(func(p *config.Prefs) { p.GardenAssist = nil })
 		case modals.KindGardenReviewEnable:
@@ -344,10 +351,23 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.pgLinkConfirmed(true)
 		}
 		return m, nil
+	case settingsAutoReviewAccountsMsg:
+		return m.onSettingsAutoReviewAccounts(msg), nil
+	case settingsAutoReviewDefaultsMsg:
+		return m.onSettingsAutoReviewDefaults(msg), nil
+	case settingsAutoReviewResolvedMsg:
+		return m.onSettingsAutoReviewResolved(msg), nil
 	case settingsReviewAccountsMsg:
 		return m.onSettingsReviewAccounts(msg), nil
 	case settingsSavedMsg:
-		return m.onSettingsSaved(msg), nil
+		rollback := m.set.pendingRollback || msg.gen == m.prefsGen && msg.err != nil
+		m = m.onSettingsSaved(msg)
+		if rollback && !m.set.pendingRollback && m.set.autoReview.accounts.asked {
+			m, defaults := m.autoReviewLoadDefaults()
+			m, resolve := m.autoReviewResolve()
+			return m, tea.Batch(defaults, resolve)
+		}
+		return m, nil
 	case workspaceSavedMsg:
 		if msg.err != nil && !errors.Is(msg.err, config.ErrSuperseded) && msg.gen == m.wsGen {
 			m.status = "Could not remember workspace: " + msg.err.Error()
@@ -362,6 +382,9 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.workspace == wsWorktrees {
 			return m.worktreesMouse(msg)
 		}
+		if m.workspace == wsGarden {
+			return m.gardenMouse(msg)
+		}
 	case tea.KeyMsg:
 		// Typing into an agent terminal (the planner's or the Playground's) comes before everything else: every
 		// key but Ctrl+] belongs to the agent, so quit, help, the palette and workspace keys cannot fire.
@@ -370,6 +393,10 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.agents.overlay != nil && m.workspace == wsWorktrees && m.modal == nil {
 			return m.overlayUpdate(msg)
+		}
+		if m.modal != nil && m.modal.Kind() == modals.KindGardenDraftQuit && msg.String() == "ctrl+c" {
+			m.modal = nil // a second ctrl+c while the unwritten-edits dialog is open quits without saving
+			return m.privQuitChoice("Quit without saving")
 		}
 		if m.modal != nil {
 			nm, cmd := m.modal.Update(msg)
@@ -409,6 +436,10 @@ func (m Model) shellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if focus == shellInput {
 		return m.bodyKey(msg)
+	}
+	// The Issue overlay is modal: quit, help, the palette and workspace keys wait until it is closed.
+	if m.gardenOverlayOpen() {
+		return m.gardenKey(msg)
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -548,6 +579,7 @@ func paletteTargets() (labels []string, targets map[string]paletteTarget) {
 	}
 	add("Garden: Board", paletteTarget{ws: wsGarden, gardenAction: "board"})
 	add("Garden: Table", paletteTarget{ws: wsGarden, gardenAction: "table"})
+	add("Garden: Needs you", paletteTarget{ws: wsGarden, gardenAction: "attention"})
 	add("Garden: Search approved work", paletteTarget{ws: wsGarden, gardenAction: "search"})
 	add("Garden: Refresh", paletteTarget{ws: wsGarden, gardenAction: "refresh"})
 	return labels, targets
@@ -564,7 +596,7 @@ func paletteTargetForLabel(label string) (paletteTarget, bool) {
 func (m Model) goToPalette(t paletteTarget) (Model, tea.Cmd) {
 	// Leaving the opened Issue's screens closes their terminal attachment; the holder is never stopped.
 	var rel tea.Cmd
-	if (t.gardenAction == "board" || t.gardenAction == "table") && m.garden.board.opened != 0 {
+	if (t.gardenAction == "board" || t.gardenAction == "table" || t.gardenAction == "attention") && m.garden.board.opened != 0 {
 		var r1, r2 tea.Cmd
 		m, r1 = m.launchClose()
 		if m.plannerActive() {
@@ -594,16 +626,18 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 		m.shellFocus = shellBody
 		if m.garden.hasStatus && m.garden.status.Caps.Read {
 			m.garden.sub = subBoard
-			if b := &m.garden.board; b.opened != 0 && (t.gardenAction == "board" || t.gardenAction == "table") {
-				b.opened, b.docScroll = 0, 0 // the detail belongs to the old layout's parent
+			if b := &m.garden.board; b.opened != 0 && (t.gardenAction == "board" || t.gardenAction == "table" || t.gardenAction == "attention") {
+				b.close() // the detail belongs to the old layout's parent
 			}
 			switch t.gardenAction {
 			case "board":
 				m.garden.board.setLayout(layoutBoard)
 			case "table":
 				m.garden.board.setLayout(layoutTable)
+			case "attention":
+				m.garden.board.setLayout(layoutAttention)
 			}
-			if t.gardenAction == "board" || t.gardenAction == "table" {
+			if t.gardenAction == "board" || t.gardenAction == "table" || t.gardenAction == "attention" {
 				m.gardenBoardVisible()
 				remember := m.gardenRememberView()
 				var read tea.Cmd
@@ -633,7 +667,8 @@ func (m Model) goToPaletteTarget(t paletteTarget) (Model, tea.Cmd) {
 	}
 	if t.hasCategory {
 		m.shellFocus = shellBody
-		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr}
+		m = m.settingsAutoReviewLeave()
+		m.set = settingsState{cat: t.category, level: levelCategory, saveErr: m.set.saveErr, autoReview: m.set.autoReview}
 		m, load := m.settingsWarm()
 		return m, tea.Batch(cmd, load)
 	}
@@ -688,6 +723,12 @@ func (m Model) shellHints() []shellHint {
 		}
 		if m.plannerActive() {
 			return m.gardenPlannerHints()
+		}
+		if m.planForm() != nil {
+			return m.planFormHints()
+		}
+		if m.handoffTyping() {
+			return m.handoffHints()
 		}
 		return []shellHint{{"enter", "apply search"}, {"esc", "cancel"}}
 	}

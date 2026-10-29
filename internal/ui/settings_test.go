@@ -708,7 +708,14 @@ func TestSettingsRendersBoundedEverywhere(t *testing.T) {
 					e := newSettingsEnv(t)
 					e.writeState(t, mustPrefsJSON(prefs))
 					base := e.model(t, 80, 24)
-					for _, sz := range sizes {
+					// Exercise every geometry with both glyph sets. Appearance
+					// combinations share the layout, so cover them at a short,
+					// narrow size and a normal size instead of repeating all sizes.
+					viewSizes := [][2]int{{64, 14}, {120, 35}}
+					if th == "bonsai" && !flat && density == "" {
+						viewSizes = sizes
+					}
+					for _, sz := range viewSizes {
 						for cat := range settingCategories {
 							for sec := range settingCategories[cat].sections {
 								for _, level := range []settingsLevel{levelCategory, levelSection, levelField} {

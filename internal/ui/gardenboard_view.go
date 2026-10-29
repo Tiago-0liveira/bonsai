@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
@@ -38,42 +39,28 @@ func boardLine(width int, bg, fg lipgloss.Color, bold bool, s string) string {
 	return shellRow(width, bg, seg(fg, bg, bold).Render(ansi.Truncate(s, width, "…")), "")
 }
 
-// boardBadgeLine is the local run flag of a card, on a row of its own under the number so neither the number nor
-// the title give way to it. The row exists only for an Issue with local work: the grid pads and clips by rows, so
-// an extra row never moves a column. The long form is tried first, then the short one with a "P:" prefix, which
-// keeps it visibly a planner flag.
-func (m Model) boardBadgeLine(w int, bg lipgloss.Color, issue garden.IssueID) (string, bool) {
-	b, ok := m.localBadgeFor(issue)
-	if !ok {
-		return "", false
-	}
-	label := b.long
-	for _, c := range []string{b.long, "P:" + b.short, b.short} {
-		label = c
-		if ansi.StringWidth(c) <= w-1 {
-			break
-		}
-	}
-	return boardLine(w, bg, b.fg, false, " "+label), true
-}
-
-func boardColumnColor(c work.Column) lipgloss.Color {
+func boardPhaseColor(phase work.Phase) lipgloss.Color {
 	p := theme.Current
-	switch c {
-	case work.PlanReview, work.HumanReview:
-		return p.Warning
-	case work.Blocked:
-		return p.Danger
-	case work.Approved, work.Ready, work.Running:
-		return p.Success
-	default:
-		return p.Muted
+	switch phase {
+	case work.Backlog:
+		return p.PhaseBacklog
+	case work.PlanningPhase:
+		return p.PhasePlanning
+	case work.ReadyPhase:
+		return p.PhaseReady
+	case work.Building:
+		return p.PhaseBuilding
+	case work.Review:
+		return p.PhaseReview
+	case work.DonePhase:
+		return p.PhaseDone
 	}
+	return p.Danger
 }
 
 // gardenWorkHead is the count row and feedback row both layouts share, so a
 // filter, notice or stale read reads the same on Board and Table.
-func (m Model) gardenWorkHead(width int, title, sort string) []string {
+func (m Model) gardenWorkHead(width int, title, sort, view string) []string {
 	p := theme.Current
 	b := m.garden.board
 	typeName, priority := "Any", "Any"
@@ -83,20 +70,42 @@ func (m Model) gardenWorkHead(width int, title, sort string) []string {
 	if b.query.Priority != "" {
 		priority = b.query.Priority
 	}
-	count := fmt.Sprintf("%s  %d", title, len(b.collection.Records))
+	n := len(b.collection.Records)
+	if b.layout == layoutAttention {
+		n = b.collection.Summarize().NeedsYou
+	}
+	count := fmt.Sprintf("%s  %d", title, n)
 	if b.query.Active() {
-		count += fmt.Sprintf(" filtered / %d", b.collection.Total)
+		if b.layout == layoutAttention {
+			count += " · filtered"
+		} else {
+			count += fmt.Sprintf(" filtered / %d", b.collection.Total)
+		}
 	}
 	chip := "Type: " + typeName + " / Priority: " + priority
 	if sort != "" {
 		chip += " / Sort: " + sort
 	}
-	feedback := "Drafts and unverified acceptance stay off this board."
-	if b.collection.Excluded > 0 {
-		feedback = fmt.Sprintf("%d draft, unverified or invalid items excluded. ", b.collection.Excluded) + feedback
+	if view != "" {
+		chip += " · " + view
 	}
+	if b.layout != layoutBoard && ansi.StringWidth(count+chip)+5 > width {
+		chip = "Type: " + typeName + " / Priority: " + priority + " · " + view
+		if ansi.StringWidth(count+chip)+5 > width {
+			chip = view
+		}
+	}
+	feedback := "Drafts and unverified acceptance stay off this board."
 	if b.query.Text != "" {
 		feedback = "Search: " + boardSafe(b.query.Text)
+	}
+	if b.collection.Excluded > 0 {
+		excluded := fmt.Sprintf("%d draft, unverified or invalid items excluded.", b.collection.Excluded)
+		if b.query.Text != "" {
+			feedback += " · " + excluded
+		} else {
+			feedback = excluded + " " + feedback
+		}
 	}
 	if b.notice != "" {
 		feedback = b.notice
@@ -128,88 +137,57 @@ func (m Model) gsBoard(width, rows int) []string {
 	if b.opened != 0 && m.garden.planner.stage != plannerNone {
 		return m.gsPlanner(width, rows)
 	}
-	if b.opened != 0 {
-		return m.gardenDetail(width, rows)
-	}
-	if b.layout == layoutTable {
+	if b.layout != layoutBoard {
 		return m.gsTable(width, rows)
 	}
+
 	p := theme.Current
 	s := b.selection
-	columns := gardenBoardColumns(width)
+	lanes, titles := b.collection.Lanes(s.Mode), b.collection.LaneTitles(s.Mode)
+	columns := min(gardenBoardColumns(width, s.Mode), len(lanes))
 	capacity := gardenBoardCapacity(rows)
 	s.EnsureVisible(b.collection, capacity, columns)
-	out := m.gardenWorkHead(width, "APPROVED WORK", "")
+	view := fmt.Sprintf("View: Phases %d", len(lanes))
+	if s.Mode == work.ModeDetailed {
+		view = fmt.Sprintf("View: Detailed %d", len(lanes))
+	}
+	out := m.gardenWorkHead(width, "APPROVED WORK", "", view)
 	gridRows := max(0, rows-3)
 	grid := make([][]string, columns)
-	usable := max(1, width-2-(columns-1))
-	base := usable / columns
-	remainder := usable % columns
-	for j := 0; j < columns; j++ {
-		c := work.Column(s.Window + j)
-		w := base
-		if j < remainder {
-			w++
+	widths := boardColumnWidths(width, columns)
+	rail := "▌"
+	if m.agentGlyphsASCII() {
+		rail = "|"
+	}
+	for j, w := range widths {
+		lane := s.Window + j
+		phase := work.Phase(lane)
+		if s.Mode == work.ModeDetailed {
+			phase = work.Column(lane).Phase()
 		}
-		fg := boardColumnColor(c)
-		marker := " "
-		if c == s.Column && m.shellFocus != shellNav {
+		color := boardPhaseColor(phase)
+		marker := rail
+		if lane == int(s.Column) && m.shellFocus != shellNav {
 			marker = ">"
 		}
-		title := c.String()
-		if w < 14 {
-			if c == work.PlanReview {
-				title = "Plan rev"
-			}
-			if c == work.HumanReview {
-				title = "Human rev"
-			}
+		grid[j] = append(grid[j], boardLine(w, p.Raised, color, true, marker+" "+titles[lane]))
+		items := lanes[lane]
+		start := min(s.Scroll[lane], max(0, len(items)-1))
+		grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, " "+localPlural(len(items), "item", "items")))
+		up := ""
+		if start > 0 {
+			up = fmt.Sprintf(" ↑ %d more", start)
 		}
-		grid[j] = append(grid[j], boardLine(w, p.Raised, fg, true, marker+title))
-		items := b.collection.Columns[c]
-		start := min(s.Scroll[c], max(0, len(items)-1))
-		grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, fmt.Sprintf(" %d items", len(items))))
+		grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, up))
 		if len(items) == 0 {
 			grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, " (empty)"))
 		}
 		for n := start; n < len(items) && n < start+capacity; n++ {
-			r := items[n]
-			selected := r.Item.Issue.ID == s.ID
-			bg, fg := p.Surface, p.Text
-			if selected {
-				bg = p.Raised
-				fg = p.Success
-			}
-			mark := " "
-			if selected {
-				mark = "▌"
-			}
-			if m.agentGlyphsASCII() && selected {
-				mark = ">"
-			}
-			grid[j] = append(grid[j], boardLine(w, bg, fg, true, fmt.Sprintf("%s#%d", mark, r.Item.Issue.Number)))
-			if line, ok := m.boardBadgeLine(w, bg, r.Item.Issue.ID); ok {
-				grid[j] = append(grid[j], line)
-			}
-			title := boardTitle(r.Item.Issue.Title)
-			wrapped := strings.Split(ansi.Wrap(title, max(1, w-2), ""), "\n")
-			for line := 0; line < 2; line++ {
-				text := ""
-				if line < len(wrapped) {
-					text = wrapped[line]
-				}
-				if line == 1 && len(wrapped) > 2 {
-					text = ansi.Truncate(text, max(1, w-3), "") + "…"
-				}
-				grid[j] = append(grid[j], boardLine(w, bg, fg, false, " "+text))
-			}
-			typ := string(r.Item.Classification.Type)
-			if w < 16 {
-				typ = map[garden.ItemType]string{garden.TypeFeature: "Ftr", garden.TypeBug: "Bug", garden.TypeChore: "Chr", garden.TypeResearch: "Res"}[r.Item.Classification.Type]
-			}
-			grid[j] = append(grid[j], boardLine(w, bg, p.Muted, false, " "+typ+" / "+r.Priority))
-			status, statusColor := gardenApprovalIndicator(r)
-			grid[j] = append(grid[j], boardLine(w, bg, statusColor, false, " "+status), boardLine(w, p.Background, p.Muted, false, ""))
+			grid[j] = append(grid[j], m.boardCard(w, items[n], items[n].Item.Issue.ID == s.ID)...)
+		}
+		remaining := len(items) - min(len(items), start+capacity)
+		if remaining > 0 {
+			grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, " ↓ "+localPlural(remaining, "more item", "more items")))
 		}
 		for len(grid[j]) < gridRows {
 			grid[j] = append(grid[j], boardLine(w, p.Background, p.Muted, false, ""))
@@ -222,13 +200,174 @@ func (m Model) gsBoard(width, rows int) []string {
 		}
 		out = append(out, shellRow(width, p.Background, " "+strings.Join(parts, seg(p.Border, p.Background, false).Render(m.chrome("│"))), ""))
 	}
-	window := fmt.Sprintf("Columns %d–%d of 9 · ←/→ reveals states", s.Window+1, s.Window+columns)
-	if columns == 9 {
-		window = "All nine states · empty columns remain navigable"
+	window := "All six phases · empty columns remain navigable"
+	if s.Mode == work.ModeDetailed {
+		window = "All nine stages · empty columns remain navigable"
+	} else if len(lanes) > 6 {
+		window = "All six phases + Unplaced · empty columns remain navigable"
+	}
+	if columns < len(lanes) {
+		window = "Showing " + titles[s.Window] + " → " + titles[s.Window+columns-1]
+		if s.Window > 0 {
+			window = "‹ " + strings.Join(titles[:s.Window], " / ") + "   " + window
+		}
+		if s.Window+columns < len(lanes) {
+			window += "   " + strings.Join(titles[s.Window+columns:], " / ") + " ›"
+		}
 	}
 	out = append(out, gText(width, p.Muted, false, window))
 	return m.settingsASCII(out[:rows])
 }
+
+func boardState(r work.Record) string {
+	if r.Column == work.Blocked {
+		return "! Blocked"
+	}
+	if r.Column == work.Planning {
+		return "○ Planning · local planner"
+	}
+	glyph := "○"
+	switch r.Column {
+	case work.Ready, work.Done:
+		glyph = "✓"
+	case work.Running:
+		glyph = ">"
+	case work.PlanReview, work.Reviewing, work.HumanReview:
+		glyph = "◇"
+	}
+	return glyph + " " + r.Column.String()
+}
+func boardActivity(r work.Record, detailed, localKnown bool) string {
+	if r.Column == work.Blocked {
+		if !r.Placed {
+			return "no proven phase"
+		}
+		if detailed {
+			return "last proven: " + r.Phase.String() + ": " + r.Reason
+		}
+		return "Blocked in " + r.Phase.String() + ": " + r.Reason
+	}
+	if r.Column == work.Running && r.Evidence.Implementation == nil {
+		if localKnown && !r.Evidence.Stale {
+			return "GitHub says Running · no local job on this machine"
+		}
+		return "GitHub says Running · local status unknown"
+	}
+	run := r.Evidence.Implementation
+	if run == nil {
+		run = r.Evidence.Planner
+	}
+	if run == nil {
+		return work.NextGate(r.Column)
+	}
+	name := "Planner"
+	if run.Kind == "implementation" {
+		name = "Implementation"
+	}
+	text := "Activity unknown"
+	switch run.Activity {
+	case work.ActivityWorking:
+		text = name + " working"
+		if run.Kind == "implementation" {
+			text = name + " running"
+		}
+	case work.ActivityNeedsInput:
+		text = name + " needs you"
+	case work.ActivityIdle:
+		text = name + " idle"
+	case work.ActivityExited:
+		text = name + " exited"
+	case work.ActivityFailed:
+		text = name + " failed"
+	}
+	if run.Kind == "implementation" {
+		// Show the stored state verbatim: only "ended" is an exit.
+		switch {
+		case run.AwaitingReview:
+			text = name + " awaiting review"
+		case run.Activity == work.ActivityUnknown || run.Activity == work.ActivityExited && run.State != "ended":
+			if run.State != "" {
+				text = name + " " + run.State
+			}
+		}
+	}
+	if run.PlanReady {
+		text = "Plan ready to publish"
+	}
+	// The marker precedes the timestamp so truncation drops the timestamp first.
+	if r.Evidence.Stale {
+		text += " (stale)"
+	}
+	if !run.Updated.IsZero() {
+		text += " · updated " + run.Updated.Local().Format("Jan 2 15:04")
+	}
+	return text
+}
+func (m Model) boardCard(w int, r work.Record, selected bool) []string {
+	p := theme.Current
+	bg, fg := p.Surface, p.Text
+	color := boardPhaseColor(r.Phase)
+	if r.Column == work.Blocked {
+		color = p.Danger
+	}
+	if selected {
+		bg, fg = p.Raised, p.Success
+	}
+	typ := string(r.Item.Classification.Type)
+	number := fmt.Sprintf("#%d", r.Item.Issue.Number)
+	meta := typ + " · " + r.Priority
+	if ansi.StringWidth(number+meta)+4 > w {
+		typ = map[garden.ItemType]string{garden.TypeFeature: "Ftr", garden.TypeBug: "Bug", garden.TypeChore: "Chr", garden.TypeResearch: "Res"}[r.Item.Classification.Type]
+		meta = typ + " · " + r.Priority
+	}
+	if ansi.StringWidth(number+meta)+4 > w {
+		meta = r.Priority
+	}
+	rail := "▌"
+	if m.agentGlyphsASCII() {
+		rail = "|"
+	}
+	// Color alone vanishes under flat contrast and the mono preset.
+	if selected {
+		rail = ">"
+	}
+	first := shellRow(w, bg, seg(color, bg, true).Render(rail)+seg(fg, bg, true).Render(number), seg(p.Muted, bg, false).Render(m.chrome(meta)))
+	out := []string{first}
+	wrapped := strings.Split(ansi.Wrap(boardTitle(r.Item.Issue.Title), max(1, w-2), ""), "\n")
+	for line := 0; line < 2; line++ {
+		text := ""
+		if line < len(wrapped) {
+			text = wrapped[line]
+		}
+		if line == 1 && len(wrapped) > 2 {
+			text = ansi.Truncate(text, max(1, w-3), "") + "…"
+		}
+		out = append(out, boardLine(w, bg, fg, false, " "+text))
+	}
+	out = append(out, boardLine(w, bg, color, true, " "+boardState(r)), boardLine(w, bg, p.Muted, false, " "+boardActivity(r, m.garden.board.selection.Mode == work.ModeDetailed, m.garden.local.loaded && !m.garden.local.stale)))
+	warning, wc := gardenApprovalIndicator(r)
+	if !strings.HasPrefix(warning, "!") {
+		warning = ""
+	}
+	out = append(out, boardLine(w, bg, wc, false, " "+warning), boardLine(w, p.Background, p.Muted, false, ""))
+	return out
+}
+
+// boardColumnWidths splits the width left after the margin and the column rules.
+func boardColumnWidths(width, columns int) []int {
+	usable := max(1, width-2-(columns-1))
+	out := make([]int, columns)
+	for j := range out {
+		out[j] = usable / columns
+		if j < usable%columns {
+			out[j]++
+		}
+	}
+	return out
+}
+
+// boardCardRows includes the trailing gap used by keyboard and mouse geometry.
+func (m Model) boardCardRows(_ garden.IssueID) int { return 7 }
 
 func gardenApprovalIndicator(r work.Record) (string, lipgloss.Color) {
 	p := theme.Current
@@ -266,10 +405,23 @@ func (m Model) gardenDocument(width int) []string {
 		return nil
 	}
 	p := theme.Current
+	if b.section == planTabSection {
+		return m.planTabDocument(width)
+	}
+	if b.section == 0 && m.handoffShown() {
+		return m.handoffDocument(width)
+	}
 	var text strings.Builder
 	switch b.section {
 	case 0:
-		fmt.Fprintf(&text, "#%d %s\n\n%s / %s / %s\n\n", r.Item.Issue.Number, boardSafe(r.Item.Issue.Title), r.Column, r.Item.Classification.Type, r.Priority)
+		if a, ok := m.launchOverviewAttempt(); ok {
+			text.WriteString(m.launchSupervision(a, time.Now()) + m.handoffUnavailableNote())
+			break
+		}
+		if m.launchSupported() && r.Item.Classification.Stage == garden.StageReady {
+			text.WriteString(m.launchReadyOverview() + m.handoffUnavailableNote())
+			break
+		}
 		status, _ := gardenApprovalIndicator(r)
 		text.WriteString(status + "\n" + m.launchOverview(r.Item.Classification.Stage == garden.StageReady) + "\n\n")
 		if fact := m.localFact(r.Item.Issue.ID); fact != "" {
@@ -331,79 +483,19 @@ func (m Model) gardenDocument(width int) []string {
 			text.WriteString("No Questions section recorded in the canonical issue document.")
 		}
 		text.WriteString("\n\nQuestion authoring is unavailable until plan 08.")
-	case 3:
-		text.WriteString("PLANS\n\n")
-		rv := planrev.FromVerification(r.Item.Issue, r.Item.Verification)
-		fmt.Fprintf(&text, "Current %s / Latest %s / Approved %s\n", revWord(rv.Current), revWord(rv.Latest), revWord(rv.Approved))
-		for _, rev := range rv.Revisions {
-			fmt.Fprintf(&text, "\nr%d / %s / %s\nSource specification: %s\n", rev.Ordinal, shortHash(rev.Hash), stateWords(rev.State), shortHash(rev.SourceSpecFingerprint))
-			if rev.Stale {
-				text.WriteString("Older specification; downstream disabled.\n")
-			}
-			if rev.Superseded {
-				text.WriteString("Superseded; snapshot retained.\n")
-			}
-		}
-		if len(rv.Revisions) == 0 {
-			text.WriteString("No verified plan revisions.\n")
-		}
-		text.WriteString("\nPress r to review with comparison, search and exact approval. Press p to request a read-only AI plan. " + m.launchPlansLine())
 	case 4:
 		fmt.Fprintf(&text, "EXECUTION\n\nCanonical stage: %s\nBoard state: %s\n\nThis read projection holds no local execution.\n%s", r.Item.Classification.Stage, r.Column, m.launchExecutionLine())
 	}
 	for _, problem := range r.Item.Problems {
 		fmt.Fprintf(&text, "\n\nAttention: %s", boardSafe(problem.Message))
 	}
-	return m.settingsASCII(gWrap(width, p.Text, false, text.String()))
-}
-
-func (m Model) gardenDetail(width, rows int) []string {
-	b := m.garden.board
-	p := theme.Current
-	status := m.gardenBoardStatus()
-	if n := m.garden.notice; n != "" {
-		status = "! " + n
-	}
-	out := []string{gText(width, p.Success, true, "‹ "+b.layoutName()+" (Esc)   Issue document"), gText(width, p.Muted, false, status)}
-	contentWidth := width
-	if width >= 120 {
-		contentWidth -= 26
-	}
-	doc := m.gardenDocument(contentWidth)
-	avail := max(0, rows-3)
-	start := max(0, min(b.docScroll, max(0, len(doc)-avail)))
-	for i := 0; i < avail; i++ {
-		line := blankRow(contentWidth, p.Background)
-		if start+i < len(doc) {
-			line = doc[start+i]
+	var out []string
+	for _, para := range strings.Split(text.String(), "\n") {
+		for _, l := range strings.Split(ansi.Wrap(para, max(width, 1), ""), "\n") {
+			out = append(out, shellRow(width, p.Surface, seg(p.Text, p.Surface, false).Render(l), ""))
 		}
-		if width >= 120 {
-			rail := ""
-			fg, bg := p.Muted, p.Surface
-			if i == 0 {
-				rail = "IN THIS ISSUE"
-			}
-			if i >= 2 && i < 2+len(gardenDocumentSections)*2 && i%2 == 0 {
-				n := (i - 2) / 2
-				rail = "  " + gardenDocumentSections[n]
-				if n == b.section {
-					rail = "> " + gardenDocumentSections[n]
-					fg, bg = p.Success, p.Raised
-				}
-			}
-			line = boardLine(24, bg, fg, i == 2+b.section*2, rail) + "  " + line
-		}
-		out = append(out, shellRow(width, p.Background, line, ""))
 	}
-	tabs := []string{}
-	for i, s := range gardenDocumentSections {
-		if i == b.section {
-			s = "[" + s + "]"
-		}
-		tabs = append(tabs, s)
-	}
-	out = append(out, gText(width, p.Success, false, strings.Join(tabs, " / ")))
-	return m.settingsASCII(out[:rows])
+	return m.settingsASCII(out)
 }
 
 // launchOverview is the launch actions of an opened Issue. Local execution is its own fact: it supplements the
@@ -415,7 +507,7 @@ func (m Model) launchOverview(ready bool) string {
 	case !m.launchSupported():
 		return "Implementation attempts (i) are unavailable here: this Garden runtime has no local launch."
 	case ready:
-		return "Start implementation locally… (s)  ·  Implementation attempts (i)\nNothing starts until you confirm the exact approved pair, branch and permissions."
+		return m.launchReadyOverview()
 	}
 	return "Implementation attempts (i): the local execution history of this Issue. A local start is offered once it is Ready."
 }

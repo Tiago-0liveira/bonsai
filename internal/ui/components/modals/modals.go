@@ -74,7 +74,10 @@ const (
 	KindConfigValue   Kind = "config_value"   // final value for a config setting
 	KindConfigConfirm Kind = "config_confirm" // confirm removal of a config entry
 
-	KindGardenAssistRestore Kind = "garden_assist_restore"
+	KindGardenAutoReviewRestore Kind = "garden_auto_review_restore"
+	KindGardenAssistRestore     Kind = "garden_assist_restore"
+	// KindGardenDraftQuit asks what to do with unwritten private draft edits when quitting.
+	KindGardenDraftQuit Kind = "garden_draft_quit"
 
 	// Confirm taking the writer role of an agent terminal from another client.
 	KindPlaygroundTakeover Kind = "playground_takeover"

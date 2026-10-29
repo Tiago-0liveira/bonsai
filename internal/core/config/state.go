@@ -1,16 +1,20 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
@@ -52,7 +56,8 @@ type Prefs struct {
 	// GardenAssist overrides AI drafting options; nil inherits built-in defaults.
 	GardenAssist *GardenAssistPrefs `json:"garden_assist,omitempty"`
 	// GardenReview is the local review policy; nil means automatic reviews are off.
-	GardenReview *GardenReviewPrefs `json:"garden_review,omitempty"`
+	GardenReview     *GardenReviewPrefs     `json:"garden_review,omitempty"`
+	GardenAutoReview *GardenAutoReviewPrefs `json:"garden_auto_review,omitempty"`
 	// DepthGlyph is the marker shown before the nesting depth in bonsai-
 	// spawned shell prompts and the TUI header ("" = 🪴).
 	DepthGlyph string `json:"depth_glyph,omitempty"`
@@ -75,6 +80,7 @@ type GardenAssistPrefs struct {
 
 // Clone returns a copy that shares no mutable data with p.
 func (p Prefs) Clone() Prefs {
+	p.GardenAutoReview = p.GardenAutoReview.Clone()
 	if p.GardenAssist != nil {
 		assist := *p.GardenAssist
 		p.GardenAssist = &assist
@@ -105,6 +111,8 @@ type State struct {
 	Workspaces map[string]string `json:"workspaces,omitempty"`
 	// GardenViews stores only the last Garden subview, scoped like Workspaces.
 	GardenViews map[string]string `json:"garden_views,omitempty"`
+	// GardenDrafts stores which private draft was open and at which section ("id|n"), never its text.
+	GardenDrafts map[string]string `json:"garden_drafts,omitempty"`
 
 	mu   sync.Mutex `json:"-"`
 	path string     `json:"-"`
@@ -113,20 +121,23 @@ type State struct {
 	prefsGen  uint64 `json:"-"`
 	wsGen     uint64 `json:"-"`
 	gardenGen uint64 `json:"-"`
+	draftGen  uint64 `json:"-"`
 	// extra* keep keys this version does not know, so a newer or hand-edited
 	// state.json survives a rewrite.
-	extra      map[string]json.RawMessage `json:"-"`
-	extraPrefs map[string]json.RawMessage `json:"-"`
+	extra               map[string]json.RawMessage `json:"-"`
+	extraPrefs          map[string]json.RawMessage `json:"-"`
+	autoReviewPreserved bool                       `json:"-"`
 }
 
 // stateDisk mirrors State's persisted fields without the mutex so snapshots
 // can be built and marshaled without copying a lock.
 type stateDisk struct {
-	CopyCounts  map[string]int    `json:"copy_counts"`
-	Aliases     []Alias           `json:"aliases"`
-	Prefs       Prefs             `json:"prefs"`
-	Workspaces  map[string]string `json:"workspaces,omitempty"`
-	GardenViews map[string]string `json:"garden_views,omitempty"`
+	CopyCounts   map[string]int    `json:"copy_counts"`
+	Aliases      []Alias           `json:"aliases"`
+	Prefs        Prefs             `json:"prefs"`
+	Workspaces   map[string]string `json:"workspaces,omitempty"`
+	GardenViews  map[string]string `json:"garden_views,omitempty"`
+	GardenDrafts map[string]string `json:"garden_drafts,omitempty"`
 }
 
 // jsonKeys lists the JSON object keys of struct type t, derived from tags so
@@ -207,7 +218,19 @@ func LoadState() (*State, error) {
 		}
 		return nil, err
 	}
-	if err := json.Unmarshal(data, st); err != nil {
+	// Decode the original bytes in order, retaining encoding/json's merge and
+	// case-folding semantics for unrelated preferences. Only the optional policy
+	// is captured raw so a malformed shape cannot prevent those from loading.
+	var decoded struct {
+		*State
+		Prefs struct {
+			*Prefs
+			GardenAutoReview json.RawMessage `json:"garden_auto_review"`
+		} `json:"prefs"`
+	}
+	decoded.State = st
+	decoded.Prefs.Prefs = &st.Prefs
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, err
 	}
 	if st.CopyCounts == nil {
@@ -230,7 +253,85 @@ func LoadState() (*State, error) {
 			st.extraPrefs = unknownKeys(pm, jsonKeys(reflect.TypeOf(Prefs{})))
 		}
 	}
+	var autoRaw json.RawMessage
+	autoEntries := map[string]json.RawMessage{}
+	prefsCount, policyCount := 0, 0
+	prefsExact, policyExact := false, false
+	walkJSONObject(data, func(key string, raw json.RawMessage) {
+		if !strings.EqualFold(key, "prefs") {
+			return
+		}
+		prefsCount++
+		prefsExact = key == "prefs"
+		walkJSONObject(raw, func(prefKey string, prefRaw json.RawMessage) {
+			if !strings.EqualFold(prefKey, "garden_auto_review") {
+				return
+			}
+			policyCount++
+			policyExact = prefKey == "garden_auto_review"
+			if key == "prefs" {
+				// Maps can retain only the last occurrence of an exact duplicate.
+				autoEntries[prefKey] = prefRaw
+				if policyExact {
+					autoRaw = prefRaw
+				}
+			}
+		})
+	})
+	if policyCount > 0 {
+		var policy GardenAutoReviewPrefs
+		if prefsCount == 1 && prefsExact && policyCount == 1 && policyExact && canonical(autoRaw, &policy) && policy.Version <= GardenAutoReviewVersion && policy.Validate() == nil {
+			st.Prefs.GardenAutoReview = &policy
+		} else {
+			st.Prefs.GardenAutoReview = nil
+			st.autoReviewPreserved = true
+			if st.extraPrefs == nil {
+				st.extraPrefs = map[string]json.RawMessage{}
+			}
+			// Non-exact top-level prefs objects remain intact in extra.
+			for key, raw := range autoEntries {
+				st.extraPrefs[key] = raw
+			}
+		}
+	}
 	return st, nil
+}
+
+// walkJSONObject visits occurrences rather than map entries so duplicates still
+// count when deciding whether a local policy has an unambiguous canonical key.
+// The caller has already checked JSON syntax with the general state decoder.
+func walkJSONObject(raw []byte, visit func(string, json.RawMessage)) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
+		return
+	}
+	for dec.More() {
+		token, err := dec.Token()
+		if err != nil {
+			return
+		}
+		key, ok := token.(string)
+		if !ok {
+			return
+		}
+		var value json.RawMessage
+		if dec.Decode(&value) != nil {
+			return
+		}
+		visit(key, value)
+	}
+}
+
+// GardenAutoReviewPreserved reports whether a rejected raw policy is protected
+// from overwrites while unrelated preferences remain editable.
+func (s *State) GardenAutoReviewPreserved() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gardenAutoReviewPreservedLocked()
+}
+
+func (s *State) gardenAutoReviewPreservedLocked() bool {
+	return s.autoReviewPreserved
 }
 
 // marshalDisk encodes d, merging preserved unknown keys; known fields win.
@@ -268,44 +369,106 @@ func (s *State) marshalDisk(d stateDisk) ([]byte, error) {
 	return json.MarshalIndent(top, "", "  ")
 }
 
-// writeLocked atomically writes d. Caller holds s.mu.
+// writeLocked atomically writes d. Caller holds s.mu and the state file lock.
+// The staging file is unique so independent writers never share it.
 func (s *State) writeLocked(d stateDisk) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
 	data, err := s.marshalDisk(d)
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return gitstore.ReplaceFile(tmp, s.path)
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, 0o644)
+	}
+	if werr == nil {
+		werr = gitstore.ReplaceFile(tmp, s.path)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+	}
+	return werr
+}
+
+// persistLocked serializes writers across processes with a lock file, rebases
+// d on the lists and maps another process persisted since this one loaded,
+// applies update, writes the result and adopts it in memory. update reports
+// whether anything changed; if not, nothing is written. Preferences are never
+// rebased: they are only replaced by the preference writers, whose newer
+// policy handling a plain decode would lose. Caller holds s.mu.
+func (s *State) persistLocked(update func(d *stateDisk) bool) error {
+	if s.path == "" {
+		return errors.New("state has no file path")
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+	lock, err := procstore.Lock(s.path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+
+	d := s.diskLocked()
+	if data, err := os.ReadFile(s.path); err == nil {
+		var latest struct {
+			CopyCounts   map[string]int    `json:"copy_counts"`
+			Aliases      []Alias           `json:"aliases"`
+			Workspaces   map[string]string `json:"workspaces"`
+			GardenViews  map[string]string `json:"garden_views"`
+			GardenDrafts map[string]string `json:"garden_drafts"`
+		}
+		if json.Unmarshal(data, &latest) == nil {
+			d.CopyCounts, d.Aliases, d.Workspaces = latest.CopyCounts, latest.Aliases, latest.Workspaces
+			d.GardenViews, d.GardenDrafts = latest.GardenViews, latest.GardenDrafts
+		}
+	}
+	if d.CopyCounts == nil {
+		d.CopyCounts = map[string]int{}
+	}
+	if !update(&d) {
+		return nil
+	}
+	if err := s.writeLocked(d); err != nil {
+		return err
+	}
+	s.CopyCounts, s.Aliases, s.Prefs = d.CopyCounts, d.Aliases, d.Prefs
+	s.Workspaces, s.GardenViews, s.GardenDrafts = d.Workspaces, d.GardenViews, d.GardenDrafts
+	return nil
 }
 
 // diskLocked snapshots the in-memory fields. Caller holds s.mu.
 func (s *State) diskLocked() stateDisk {
-	return stateDisk{CopyCounts: s.CopyCounts, Aliases: s.Aliases, Prefs: s.Prefs, Workspaces: s.Workspaces, GardenViews: s.GardenViews}
+	return stateDisk{CopyCounts: s.CopyCounts, Aliases: s.Aliases, Prefs: s.Prefs, Workspaces: s.Workspaces, GardenViews: s.GardenViews, GardenDrafts: s.GardenDrafts}
 }
 
-// Save writes the state to disk atomically. Save, PersistPrefs and
-// PersistLastWorkspace/PersistGardenView rewrite this process's in-memory state, so another bonsai
-// process's concurrent alias or copy-count writes can be lost; there is no
-// cross-process lock yet (pre-existing limitation).
+// Save writes this process's whole in-memory state, so it replaces whatever
+// another process persisted; the field-specific writers below merge instead.
 func (s *State) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.writeLocked(s.diskLocked())
+	return s.persistLocked(func(d *stateDisk) bool {
+		*d = s.diskLocked()
+		return true
+	})
 }
 
 // RecordCopy increments the copy frequency for relPath and persists.
 func (s *State) RecordCopy(relPath string) error {
 	s.mu.Lock()
-	s.CopyCounts[relPath]++
-	s.mu.Unlock()
-	return s.Save()
+	defer s.mu.Unlock()
+	return s.persistLocked(func(d *stateDisk) bool {
+		d.CopyCounts[relPath]++
+		return true
+	})
 }
 
 // CopyRank returns the recorded copy frequency for relPath (0 if never copied).
@@ -318,30 +481,32 @@ func (s *State) CopyRank(relPath string) int {
 // AddAlias appends an alias and persists.
 func (s *State) AddAlias(a Alias) error {
 	s.mu.Lock()
-	s.Aliases = append(s.Aliases, a)
-	s.mu.Unlock()
-	return s.Save()
+	defer s.mu.Unlock()
+	return s.persistLocked(func(d *stateDisk) bool {
+		d.Aliases = append(d.Aliases, a)
+		return true
+	})
 }
 
 // RemoveAlias deletes the alias with the given name and persists. Returns false
 // if no such alias existed.
 func (s *State) RemoveAlias(name string) (bool, error) {
 	s.mu.Lock()
-	out := s.Aliases[:0]
+	defer s.mu.Unlock()
 	found := false
-	for _, a := range s.Aliases {
-		if a.Name == name {
-			found = true
-			continue
+	err := s.persistLocked(func(d *stateDisk) bool {
+		out := make([]Alias, 0, len(d.Aliases))
+		for _, a := range d.Aliases {
+			if a.Name == name {
+				found = true
+				continue
+			}
+			out = append(out, a)
 		}
-		out = append(out, a)
-	}
-	s.Aliases = out
-	s.mu.Unlock()
-	if !found {
-		return false, nil
-	}
-	return true, s.Save()
+		d.Aliases = out
+		return found
+	})
+	return found, err
 }
 
 // SortedAliases returns aliases ordered by name.
@@ -360,9 +525,19 @@ func (s *State) SetPrefs(p Prefs) error {
 		return err
 	}
 	s.mu.Lock()
-	s.Prefs = p
-	s.mu.Unlock()
-	return s.Save()
+	defer s.mu.Unlock()
+	if s.gardenAutoReviewPreservedLocked() && p.GardenAutoReview != nil {
+		return ErrGardenAutoReviewNewer
+	}
+	if p.GardenAutoReview != nil {
+		if err := p.GardenAutoReview.Validate(); err != nil {
+			return err
+		}
+	}
+	return s.persistLocked(func(d *stateDisk) bool {
+		d.Prefs = p.Clone()
+		return true
+	})
 }
 
 // PrefsSnapshot returns a copy of the preferences that shares no map with s.
@@ -372,8 +547,7 @@ func (s *State) PrefsSnapshot() Prefs {
 	return s.Prefs.Clone()
 }
 
-// PersistPrefs (like Save) rewrites the whole in-memory state; see Save for the
-// multi-process caveat. It writes p to disk and, only if that succeeds, adopts it. gen
+// PersistPrefs writes p to disk and, only if that succeeds, adopts it. gen
 // orders concurrent callers: a gen below the last applied one returns
 // ErrSuperseded without touching disk or memory.
 func (s *State) PersistPrefs(gen uint64, p Prefs) error {
@@ -382,16 +556,24 @@ func (s *State) PersistPrefs(gen uint64, p Prefs) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.gardenAutoReviewPreservedLocked() && p.GardenAutoReview != nil {
+		return ErrGardenAutoReviewNewer
+	}
+	if p.GardenAutoReview != nil {
+		if err := p.GardenAutoReview.Validate(); err != nil {
+			return err
+		}
+	}
 	if gen < s.prefsGen {
 		return ErrSuperseded
 	}
 	p = p.Clone()
-	d := s.diskLocked()
-	d.Prefs = p
-	if err := s.writeLocked(d); err != nil {
+	if err := s.persistLocked(func(d *stateDisk) bool {
+		d.Prefs = p
+		return true
+	}); err != nil {
 		return fmt.Errorf("persist prefs: %w", err)
 	}
-	s.Prefs = p
 	s.prefsGen = gen
 	return nil
 }
@@ -404,7 +586,7 @@ func (s *State) LastWorkspace(repoDir string) string {
 	return s.Workspaces[id]
 }
 
-// PersistLastWorkspace has the same multi-process caveat as Save. It records name as repoDir's last workspace (empty name
+// PersistLastWorkspace records name as repoDir's last workspace (empty name
 // deletes the entry), ordered by gen like PersistPrefs.
 func (s *State) PersistLastWorkspace(gen uint64, repoDir, name string) error {
 	id := RepoIdentity(repoDir)
@@ -413,26 +595,32 @@ func (s *State) PersistLastWorkspace(gen uint64, repoDir, name string) error {
 	if gen < s.wsGen {
 		return ErrSuperseded
 	}
-	next := make(map[string]string, len(s.Workspaces)+1)
-	for k, v := range s.Workspaces {
-		next[k] = v
-	}
-	if name == "" {
-		delete(next, id)
-	} else {
-		next[id] = name
-	}
-	d := s.diskLocked()
-	d.Workspaces = next
-	if err := s.writeLocked(d); err != nil {
+	if err := s.persistLocked(func(d *stateDisk) bool {
+		d.Workspaces = withEntry(d.Workspaces, id, name)
+		return true
+	}); err != nil {
 		return fmt.Errorf("persist workspace: %w", err)
 	}
-	if len(next) == 0 {
-		next = nil
-	}
-	s.Workspaces = next
 	s.wsGen = gen
 	return nil
+}
+
+// withEntry returns a copy of m with key set to value, or removed when value is
+// empty; an emptied map becomes nil so it stays out of the file.
+func withEntry(m map[string]string, key, value string) map[string]string {
+	next := make(map[string]string, len(m)+1)
+	for k, v := range m {
+		next[k] = v
+	}
+	if value == "" {
+		delete(next, key)
+	} else {
+		next[key] = value
+	}
+	if len(next) == 0 {
+		return nil
+	}
+	return next
 }
 
 // GardenView remembers presentation only, never issue content or search text.
@@ -445,7 +633,7 @@ func (s *State) GardenView(repoDir string) string {
 
 // PersistGardenView follows the same ordered atomic state writes as workspace memory.
 func (s *State) PersistGardenView(gen uint64, repoDir, view string) error {
-	if view != "board" && view != "table" && view != "setup" {
+	if view != "board" && view != "table" && view != "attention" && view != "setup" {
 		return ErrInvalidGardenView
 	}
 	id := RepoIdentity(repoDir)
@@ -454,16 +642,67 @@ func (s *State) PersistGardenView(gen uint64, repoDir, view string) error {
 	if gen < s.gardenGen {
 		return ErrSuperseded
 	}
-	next := make(map[string]string, len(s.GardenViews)+1)
-	for k, v := range s.GardenViews {
-		next[k] = v
-	}
-	next[id] = view
-	d := s.diskLocked()
-	d.GardenViews = next
-	if err := s.writeLocked(d); err != nil {
+	if err := s.persistLocked(func(d *stateDisk) bool {
+		d.GardenViews = withEntry(d.GardenViews, id, view)
+		return true
+	}); err != nil {
 		return fmt.Errorf("persist Garden view: %w", err)
 	}
-	s.GardenViews, s.gardenGen = next, gen
+	s.gardenGen = gen
+	return nil
+}
+
+// GardenDraft returns the private draft remembered for repoDir and its section index.
+func (s *State) GardenDraft(repoDir string) (id string, section int) {
+	s.mu.Lock()
+	raw := s.GardenDrafts[RepoIdentity(repoDir)]
+	s.mu.Unlock()
+	id, n, ok := strings.Cut(raw, "|")
+	if !ok || !validDraftRef(id) {
+		return "", 0
+	}
+	section, err := strconv.Atoi(n)
+	if err != nil || section < 0 || section > 1000 {
+		return "", 0
+	}
+	return id, section
+}
+
+// validDraftRef accepts only an opaque ID, so the file can never carry authored text.
+func validDraftRef(id string) bool {
+	if id == "" || len(id) > 80 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// PersistGardenDraft remembers the open private draft and section; an empty id forgets it.
+// Writes are ordered like the other view memory.
+func (s *State) PersistGardenDraft(gen uint64, repoDir, id string, section int) error {
+	if id != "" && (!validDraftRef(id) || section < 0 || section > 1000) {
+		return ErrInvalidGardenDraft
+	}
+	ident := RepoIdentity(repoDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen < s.draftGen {
+		return ErrSuperseded
+	}
+	value := ""
+	if id != "" {
+		value = id + "|" + strconv.Itoa(section)
+	}
+	if err := s.persistLocked(func(d *stateDisk) bool {
+		d.GardenDrafts = withEntry(d.GardenDrafts, ident, value)
+		return true
+	}); err != nil {
+		return fmt.Errorf("persist Garden draft: %w", err)
+	}
+	s.draftGen = gen
 	return nil
 }

@@ -164,6 +164,9 @@ func (m Model) gardenWarm() (Model, tea.Cmd) {
 // gardenMsg handles the replies of the Garden calls. handled is false for any
 // other message.
 func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
+	if handled, nm, cmd := m.privMsg(msg); handled {
+		return true, nm, cmd
+	}
 	switch msg := msg.(type) {
 	case gardenWorkMsg:
 		nm, cmd = m.onGardenWork(msg)
@@ -199,6 +202,14 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onGardenPlanPublish(msg)
 	case gardenPlanDecisionMsg:
 		nm, cmd = m.onGardenPlanDecision(msg)
+	case gardenPlanRevisePreviewMsg:
+		nm, cmd = m.onGardenPlanRevisePreview(msg)
+	case gardenPlanTabReviewMsg:
+		nm, cmd = m.onGardenPlanTabReview(msg)
+	case gardenPlanAccountsMsg:
+		nm = m.onGardenPlanAccounts(msg)
+	case gardenPlanReviseMsg:
+		nm, cmd = m.onGardenPlanRevise(msg)
 	case gardenPlannerPreviewMsg:
 		nm, cmd = m.onGardenPlannerPreview(msg)
 	case gardenPlannerAttemptsMsg:
@@ -219,12 +230,35 @@ func (m Model) gardenMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		nm, cmd = m.onShellAgentsChanged(msg)
 	case gardenLaunchResolvedMsg:
 		nm, cmd = m.onGardenLaunchResolved(msg)
+	case gardenLaunchReadyMsg:
+		nm, cmd = m.onGardenLaunchReady(msg)
+	case gardenLaunchStopTickMsg:
+		nm, cmd = m.onGardenLaunchStopTick(msg)
+	case gardenLaunchOverviewTickMsg:
+		nm, cmd = m.onGardenLaunchOverviewTick(msg)
 	case gardenLaunchPreviewMsg:
 		nm, cmd = m.onGardenLaunchPreview(msg)
 	case gardenLaunchStartMsg:
 		nm, cmd = m.onGardenLaunchStart(msg)
 	case gardenLaunchAttemptsMsg:
+		var sync tea.Cmd
 		nm, cmd = m.onGardenLaunchAttempts(msg)
+		nm, sync = nm.handoffSync()
+		cmd = tea.Batch(cmd, sync)
+	case gardenHandoffReadMsg:
+		nm, cmd = m.onGardenHandoffRead(msg)
+	case gardenHandoffTickMsg:
+		nm, cmd = m.onGardenHandoffTick(msg)
+	case gardenHandoffPreviewMsg:
+		nm, cmd = m.onGardenHandoffPreview(msg)
+	case gardenHandoffReworkPreviewMsg:
+		nm, cmd = m.onGardenHandoffReworkPreview(msg)
+	case gardenHandoffDecideMsg:
+		nm, cmd = m.onGardenHandoffDecide(msg)
+	case gardenHandoffReworkMsg:
+		nm, cmd = m.onGardenHandoffRework(msg)
+	case gardenHandoffOpenMsg:
+		nm, cmd = m.onGardenHandoffOpen(msg)
 	case gardenLaunchActionMsg:
 		nm, cmd = m.onGardenLaunchAction(msg)
 	case gardenLaunchCleanupMsg:
@@ -289,11 +323,20 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 	g := &m.garden
 	prev, had := g.status, g.hasStatus
 	if had && (prev.Stamp.GardenID != v.Stamp.GardenID || prev.Stamp.Epoch != v.Stamp.Epoch) {
+		// Local observations and in-flight replies belong to the old association.
+		g.local = gardenLocalState{seq: g.local.seq + 1, tickGen: g.local.tickGen + 1}
+		g.plantab = gardenPlanTabState{seq: g.plantab.seq + 1}
 		g.board = gardenBoardState{saveGen: g.board.saveGen, memoryLoaded: g.board.memoryLoaded, rememberedView: g.board.rememberedView}
 		// A flight and an open assistant belong to the old connection; its sessions stay in memory, inactive.
 		g.assist.release()
 		// An unfinished idea outlives the change; its preview and results belong to the old Garden.
-		g.drafts = gardenDraftsState{form: g.drafts.form, formOpen: g.drafts.formOpen, editors: g.drafts.editors}
+		old := g.drafts
+		g.drafts = gardenDraftsState{form: old.form, formOpen: old.formOpen, editors: old.editors,
+			// Counters never restart: a reply from before the change must not match a later request.
+			privToken: old.privToken, privSeq: old.privSeq, openSeq: old.openSeq, saveGen: old.saveGen}
+		if p := old.private; p != nil && p.unwritten() {
+			g.drafts.private = p // parked: unwritten text survives and the quit guard still sees it
+		}
 		// A planner belongs to the Issue of the old Garden; its session keeps running, only the view goes.
 		if g.planner.stage != plannerNone {
 			release = m.plannerRelease()
@@ -303,7 +346,7 @@ func (m Model) gardenAdopt(v gardenapi.StatusView, force bool) (Model, tea.Cmd) 
 		// locally and are read again for the new one.
 		if g.launch.stage != launchStageNone {
 			release = tea.Batch(release, m.launchDetach())
-			g.launch = gardenLaunchState{inflight: g.launch.inflight, previewSeq: g.launch.previewSeq + 1, readSeq: g.launch.readSeq, run: -1}
+			g.launch = gardenLaunchState{inflight: g.launch.inflight, previewSeq: g.launch.previewSeq + 1, readSeq: g.launch.readSeq + 1, stopGen: g.launch.stopGen + 1, run: -1}
 		}
 		g.planrev = gardenPlanState{}
 	}
@@ -351,10 +394,13 @@ func (m Model) onGardenStatus(msg gardenStatusMsg) (Model, tea.Cmd) {
 	if first {
 		m.garden.board.memoryLoaded = true
 		m.garden.board.rememberedView = msg.remembered
-		if (msg.remembered == "board" || msg.remembered == "table") && m.garden.status.Caps.Read {
+		if (msg.remembered == "board" || msg.remembered == "table" || msg.remembered == "attention") && m.garden.status.Caps.Read {
 			m.garden.sub = subBoard
 			if msg.remembered == "table" {
 				m.garden.board.layout = layoutTable
+			}
+			if msg.remembered == "attention" {
+				m.garden.board.layout = layoutAttention
 			}
 		}
 	}
@@ -804,9 +850,9 @@ func (m Model) gardenCrumbs() []string {
 		return m.gardenDraftsCrumbs()
 	case scrBoard:
 		b := m.garden.board
-		crumbs := []string{"Garden", "Board", b.selection.Column.String()}
-		if b.layout == layoutTable {
-			crumbs = []string{"Garden", "Table"}
+		crumbs := []string{"Garden", b.layoutName()}
+		if b.layout == layoutBoard {
+			crumbs = []string{"Garden", "Board", b.collection.LaneTitle(b.selection.Mode, b.selection.Column)}
 		}
 		if b.opened != 0 {
 			if r, _, ok := b.collection.Find(b.opened); ok {
@@ -866,6 +912,9 @@ func (m Model) gardenWhere() string {
 func (m Model) gardenFocusLabel() string {
 	if m.gardenScreen() == scrDrafts {
 		return m.gardenDraftsFocusLabel()
+	}
+	if m.gardenScreen() == scrBoard && m.garden.board.layout == layoutAttention && m.garden.board.opened == 0 {
+		return "Needs you"
 	}
 	if m.gardenScreen() == scrBoard && m.garden.board.layout == layoutTable && m.garden.board.opened == 0 {
 		return "Approved table"

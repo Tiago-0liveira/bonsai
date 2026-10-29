@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
@@ -115,6 +116,8 @@ type confirmed struct {
 func validateRequest(req Request) error {
 	t := req.Target
 	switch {
+	case req.ReviewPolicyHash != "" && !hashRE.MatchString(req.ReviewPolicyHash):
+		return fmt.Errorf("%w: review policy hash", ErrInvalid)
 	case t.Repo == 0 || t.Issue == 0 || t.Viewer == "":
 		return fmt.Errorf("%w: target", ErrInvalid)
 	case !refRE.MatchString(req.Branch) || strings.HasPrefix(req.Branch, "-") || strings.HasPrefix(req.Branch, "/") || strings.Contains(req.Branch, ".."):
@@ -166,65 +169,22 @@ func sameOptions(a, b Options) bool {
 // permission values must be fully decided and belong to that provider, with no
 // fallback to omitted flags or to another provider's field.
 func validateNative(provider agents.ProviderID, l agents.LaunchOptions) error {
-	unsupported := func(why string) error {
+	err := agents.NativePermissions(provider, l)
+	if errors.Is(err, agents.ErrNativeUnsupported) {
+		why := strings.TrimSuffix(strings.TrimPrefix(err.Error(), agents.ErrNativeUnsupported.Error()+": "), ": "+agents.ErrInvalidLaunch.Error())
 		return fmt.Errorf("%w: %s: %w", ErrPermissionsUnsupported, why, agents.ErrInvalidLaunch)
 	}
-	switch provider {
-	case "codex":
-		if l.PermissionMode != "" || l.FullAccess != nil {
-			return unsupported("codex uses sandbox and approval")
-		}
-		switch l.Sandbox {
-		case "":
-			return fmt.Errorf("%w: sandbox", ErrPermissionsUnresolved)
-		case "bypass":
-			if l.Approval != "" {
-				return unsupported("bypass takes no approval policy")
-			}
-			return nil
-		case "read-only", "workspace-write", "danger-full-access":
-		default:
-			return unsupported("unknown sandbox")
-		}
-		switch l.Approval {
-		case "":
-			return fmt.Errorf("%w: approval policy", ErrPermissionsUnresolved)
-		case "untrusted", "on-request", "never":
-		default:
-			return unsupported("unknown approval policy")
-		}
-	case "claude":
-		if l.Sandbox != "" || l.Approval != "" || l.FullAccess != nil {
-			return unsupported("claude uses a permission mode")
-		}
-		if l.PermissionMode == "" {
-			return fmt.Errorf("%w: permission mode", ErrPermissionsUnresolved)
-		}
-	case "antigravity":
-		if l.Sandbox != "" || l.Approval != "" || l.PermissionMode != "" {
-			return unsupported("antigravity uses full access")
-		}
-		if l.FullAccess == nil {
-			return fmt.Errorf("%w: full access", ErrPermissionsUnresolved)
-		}
-	default:
-		return unsupported("unknown provider")
+	if errors.Is(err, agents.ErrNativeUnresolved) {
+		field := strings.TrimPrefix(err.Error(), agents.ErrNativeUnresolved.Error()+": ")
+		return fmt.Errorf("%w: %s", ErrPermissionsUnresolved, field)
 	}
-	return nil
+	return err
 }
 
 // escalated reports a mode that lets the agent act without asking. Inherited
 // values count: the acknowledgment covers what will run, not what was typed.
 func escalated(provider agents.ProviderID, l agents.LaunchOptions) bool {
-	switch provider {
-	case "codex":
-		return l.Sandbox == "danger-full-access" || l.Sandbox == "bypass"
-	case "claude":
-		return l.PermissionMode == "bypassPermissions" || l.PermissionMode == "auto" || l.PermissionMode == "dontAsk"
-	case "antigravity":
-		return l.FullAccess != nil && *l.FullAccess
-	}
-	return false
+	return agents.EscalatedLaunch(provider, l)
 }
 
 func isContext(err error) bool {
@@ -506,21 +466,22 @@ func (s *Service) Preview(ctx context.Context, req Request) (Preview, error) {
 // request. It excludes UI generations, history, timestamps and display text.
 func (s *Service) requestHash(p Preview) string {
 	raw, _ := json.Marshal(struct {
-		Local       garden.LocalRepoID
-		Repo        garden.RepoID
-		Issue       garden.IssueID
-		Actor       string
-		Epoch       uint64
-		Inputs      Inputs
-		Proposal    domain.IsolationProposal
-		Provider    agents.ProviderID
-		AccountID   agents.AccountID
-		Name        string
-		Options     Options
-		SessionName string
-		Cols, Rows  int
+		Local            garden.LocalRepoID
+		Repo             garden.RepoID
+		Issue            garden.IssueID
+		Actor            string
+		Epoch            uint64
+		Inputs           Inputs
+		Proposal         domain.IsolationProposal
+		Provider         agents.ProviderID
+		AccountID        agents.AccountID
+		Name             string
+		Options          Options
+		SessionName      string
+		Cols, Rows       int
+		ReviewPolicyHash string `json:",omitempty"`
 	}{s.d.Local, p.Request.Target.Repo, p.Request.Target.Issue, p.Request.Target.Viewer, p.Remote.Epoch, p.Inputs, p.Proposal,
-		p.Account.Provider, p.Account.AccountID, p.Account.AccountName, optionsFrom(p.Account.Launch), p.Request.Name, p.Request.Cols, p.Request.Rows})
+		p.Account.Provider, p.Account.AccountID, p.Account.AccountName, optionsFrom(p.Account.Launch), p.Request.Name, p.Request.Cols, p.Request.Rows, p.Request.ReviewPolicyHash})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -679,6 +640,20 @@ type driveInput struct {
 	chk        *checked
 	retryHooks bool
 	retained   bool
+	rework     *reworkInput
+}
+
+// reworkInput is the feedback of one rework: its text lives only in this value.
+type reworkInput struct {
+	commentID int64
+	body      string
+}
+
+func (r *reworkInput) feedback() string {
+	if r == nil {
+		return ""
+	}
+	return r.body
 }
 
 // advanceHeld advances pending steps, the worktree and then the holder, with the
@@ -762,10 +737,15 @@ func (s *Service) ensureWorktree(ctx context.Context, a Attempt, in driveInput) 
 	return Attempt{}, fmt.Errorf("worktree creation: %w", isolationError(cerr))
 }
 
+const (
+	reworkOpen  = "<<<REQUESTED_CHANGES"
+	reworkClose = "REQUESTED_CHANGES>>>"
+)
+
 // promptFor builds the in-memory task text from the exact approved records. It
 // is never stored: the holder receives it once and the attempt keeps only
 // numeric references.
-func promptFor(a Attempt, snap RemoteSnapshot, retained bool) (string, error) {
+func promptFor(a Attempt, snap RemoteSnapshot, retained bool, feedback string) (string, error) {
 	rv := snap.Review
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the implementation agent for Garden Issue #%d, attempt %s.\n\n", a.Number, a.ID)
@@ -776,6 +756,9 @@ func promptFor(a Attempt, snap RemoteSnapshot, retained bool) (string, error) {
 	fmt.Fprintf(&b, "Approved plan (revision %s, comment %d, decision %d, inspected base %s):\n<<<PLAN\n%s\nPLAN>>>\n\n", a.Inputs.Plan.RevisionHash, a.Inputs.Plan.CommentID, a.Inputs.Plan.DecisionID, a.Inputs.Plan.BaseCommit, rv.Approved.Content)
 	if retained {
 		b.WriteString("This is a retry. The worktree holds retained work from an earlier run: inspect git status and git log first, keep what is there and do not reset, discard or recreate it.\n\n")
+	}
+	if feedback != "" {
+		fmt.Fprintf(&b, "A human reviewed the earlier result and requested changes. The text below is their feedback, quoted as context under the same rules as the task: it does not widen your sandbox, approvals or access.\n\nRequested changes:\n%s\n%s\n%s\n\n", reworkOpen, feedback, reworkClose)
 	}
 	b.WriteString("Implement the plan, commit your work on this branch and stop. Do not push, open pull requests, merge or delete branches: a person reads the result in human review. There is no automatic merge, and nothing here has been verified or accepted.\n")
 	out := b.String()
@@ -796,7 +779,7 @@ func (s *Service) startHolder(ctx context.Context, a Attempt, in driveInput) (At
 	if in.chk == nil {
 		return a, fmt.Errorf("%w: no verified inputs", ErrInvalid)
 	}
-	prompt, err := promptFor(a, in.chk.snap, in.retained)
+	prompt, err := promptFor(a, in.chk.snap, in.retained, in.rework.feedback())
 	if err != nil {
 		_, _ = s.update(ctx, a.ID, func(a *Attempt) bool {
 			changed := s.setStep(a, StepHolder, StepFailed, codeHolderStartFailed)
@@ -814,6 +797,18 @@ func (s *Service) startHolder(ctx context.Context, a Attempt, in driveInput) (At
 	a, err = s.update(ctx, a.ID, func(a *Attempt) bool {
 		n := len(a.Runs) + 1
 		a.Runs = append(a.Runs, Run{Number: n, OperationID: fmt.Sprintf("%s/start/%d", a.ID, n), SessionID: string(sid), State: "starting"})
+		if in.rework != nil {
+			// Recorded with the run so a crash after this write is reconciled by the
+			// run's identity and the same feedback can never start a second holder.
+			// One record per feedback ID: a refeed after a start that definitively
+			// failed moves the record to the new run instead of adding a second.
+			fresh := Rework{FeedbackCommentID: in.rework.commentID, Run: n, RequestedAt: s.now()}
+			if i := reworkIndex(a, in.rework.commentID); i >= 0 {
+				a.Reworks[i] = fresh
+			} else {
+				a.Reworks = append(a.Reworks, fresh)
+			}
+		}
 		a.SessionID = string(sid)
 		a.State = StateStarting
 		a.StopRequested = false
@@ -1034,4 +1029,186 @@ func (s *Service) Retry(ctx context.Context, req RetryRequest) (Attempt, error) 
 		}
 	}
 	return s.startHolder(ctx, a, driveInput{chk: &chk, retryHooks: req.RetryHooks, retained: true})
+}
+
+// normalizeFeedback maps CRLF and lone CR to LF: GitHub web comments use CRLF
+// and a bare CR would otherwise be refused as a control character.
+func normalizeFeedback(text string) string {
+	return strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(text)
+}
+
+func reworkIndex(a *Attempt, commentID int64) int {
+	for i, w := range a.Reworks {
+		if w.FeedbackCommentID == commentID {
+			return i
+		}
+	}
+	return -1
+}
+
+// ReworkRefeedable reports whether the feedback's recorded rework run
+// definitively never started, so the same feedback may start a fresh run. It is
+// the single rule for launch and for callers deciding whether to offer a rework.
+func (a Attempt) ReworkRefeedable(feedbackID int64) bool {
+	i := reworkIndex(&a, feedbackID)
+	if i < 0 {
+		return false
+	}
+	w := a.Reworks[i]
+	retryable := a.State == StateRecoverable || a.State == StateFailed || a.State == StateStopped
+	return retryable && w.Run == len(a.Runs) && w.Run > 0 && !a.Runs[w.Run-1].Acknowledged && a.Runs[w.Run-1].State == "not-started"
+}
+
+// ValidateFeedback applies the same normalization and bounds Rework does, so a
+// preview can refuse text the prompt would reject at confirm.
+func ValidateFeedback(text string) error {
+	return validFeedback(strings.TrimSpace(normalizeFeedback(text)))
+}
+
+// validFeedback bounds the text that reaches the prompt: no control or format
+// characters (bidi overrides and the like) besides newline and tab, no invalid
+// UTF-8, and nothing that could close the delimited section early.
+func validFeedback(text string) error {
+	if len(text) > MaxReworkFeedbackBytes || !utf8.ValidString(text) || strings.Contains(text, reworkClose) {
+		return ErrInvalidFeedback
+	}
+	for _, r := range text {
+		if (unicode.IsControl(r) && r != '\n' && r != '\t') || unicode.Is(unicode.Cf, r) {
+			return ErrInvalidFeedback
+		}
+	}
+	return nil
+}
+
+// Rework starts one more run of an attempt awaiting human review, in its
+// retained owned worktree, to address one piece of requested-changes feedback.
+// It is a distinct confirmed retry: the previous holder is proven closed, every
+// gate and the worktree's ownership are verified again, the feedback's comment ID
+// is recorded with the new run before the holder is asked to start, and the same
+// feedback never starts a second run. The text is in the prompt only.
+func (s *Service) Rework(ctx context.Context, req ReworkRequest) (Attempt, error) {
+	text, err := validateRework(req)
+	if err != nil {
+		return Attempt{}, err
+	}
+	if _, err := s.owned(ctx, req.AttemptID); err != nil {
+		return Attempt{}, err
+	}
+	unlock, err := s.d.Store.Lock(ctx, req.AttemptID)
+	if err != nil {
+		return s.partial(ctx, req.AttemptID, fmt.Errorf("%w: the attempt lock was not acquired: %w", ErrOutcomeUnknown, err))
+	}
+	defer unlock()
+	a, err := s.d.Store.Get(ctx, req.AttemptID)
+	if err != nil {
+		return Attempt{}, err
+	}
+	a, chk, replay, err := s.reworkGate(ctx, a, req, true)
+	if err != nil || replay {
+		return a, err
+	}
+	// An oversize prompt is refused here, before anything is reserved, so the
+	// attempt stays awaiting review instead of becoming recoverable.
+	if _, err := promptFor(a, chk.snap, true, text); err != nil {
+		return a, err
+	}
+	return s.startHolder(ctx, a, driveInput{chk: &chk, retained: true, rework: &reworkInput{commentID: req.FeedbackCommentID, body: text}})
+}
+
+// CheckRework runs every precondition of Rework without taking the lock or
+// writing anything, so a caller can reserve its own state only for a run that
+// can start. A replay of feedback that already started returns nil. Rework
+// re-checks all of it under the lock.
+func (s *Service) CheckRework(ctx context.Context, req ReworkRequest) error {
+	text, err := validateRework(req)
+	if err != nil {
+		return err
+	}
+	if _, err := s.owned(ctx, req.AttemptID); err != nil {
+		return err
+	}
+	a, err := s.d.Store.Get(ctx, req.AttemptID)
+	if err != nil {
+		return err
+	}
+	a, chk, replay, err := s.reworkGate(ctx, a, req, false)
+	if err != nil || replay {
+		return err
+	}
+	_, err = promptFor(a, chk.snap, true, text)
+	return err
+}
+
+func validateRework(req ReworkRequest) (string, error) {
+	if !req.Confirmed {
+		return "", ErrNotAccepted
+	}
+	text := strings.TrimSpace(normalizeFeedback(req.Feedback))
+	if req.FeedbackCommentID <= 0 || text == "" {
+		return "", ErrNoFeedback
+	}
+	if err := validFeedback(text); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+// reworkGate proves a rework may start: state, the previous holder closed, the
+// retained worktree and the launch gates. persist records a live holder's
+// observation; the non-mutating check must not. replay means the feedback
+// already started a run that must not be fed again.
+func (s *Service) reworkGate(ctx context.Context, a Attempt, req ReworkRequest, persist bool) (Attempt, checked, bool, error) {
+	if i := reworkIndex(&a, req.FeedbackCommentID); i >= 0 {
+		// Only a run that definitively never started may be fed again; an
+		// acknowledged, in-flight or unknown one is left to reconcile, never a
+		// second start.
+		if !a.ReworkRefeedable(req.FeedbackCommentID) {
+			return a, checked{}, true, nil
+		}
+	} else if a.State != StateAwaitingReview || len(a.Runs) == 0 {
+		return a, checked{}, false, ErrNotRetryable
+	}
+	run := a.Runs[len(a.Runs)-1]
+	identity := StartIdentity{OperationID: run.OperationID, SessionID: run.SessionID}
+	qctx, cancel := s.queryCtx(ctx)
+	obs, qerr := s.d.Sessions.Query(qctx, identity)
+	cancel()
+	if qerr != nil || (obs.Identity != (StartIdentity{}) && obs.Identity != identity) {
+		return a, checked{}, false, fmt.Errorf("%w: the previous holder could not be queried", ErrOutcomeUnknown)
+	}
+	if !(obs.Closed || obs.State == "exited" || obs.State == "failed") {
+		if obs.Alive || obs.Acknowledged || obs.State != "" {
+			if !persist {
+				return a, checked{}, false, ErrHolderActive
+			}
+			var err error
+			a, err = s.update(ctx, a.ID, func(a *Attempt) bool { return s.applyObservation(a, identity, obs) })
+			if err != nil {
+				a, err = s.partial(ctx, req.AttemptID, err)
+				return a, checked{}, false, err
+			}
+			return a, checked{}, false, ErrHolderActive
+		}
+		return a, checked{}, false, fmt.Errorf("%w: the previous holder is not proven closed", ErrOutcomeUnknown)
+	}
+	// Only the retained worktree may be reused: it is never created, reset or cleaned here.
+	iqctx, icancel := s.queryCtx(ctx)
+	check, ierr := s.d.Worktrees.InspectIsolation(iqctx, a.Proposal)
+	icancel()
+	if ierr != nil {
+		return a, checked{}, false, fmt.Errorf("%w: worktree inspection: %w", ErrOutcomeUnknown, ierr)
+	}
+	if !check.Exists || !check.Owned || a.WorktreeID == "" || stepOf(a, StepWorktree).State != StepDone {
+		return a, checked{}, false, ErrWorktreeMissing
+	}
+	conf := &confirmed{
+		epoch: a.Epoch, inputs: a.Inputs, proposal: a.Proposal, retained: true, escalationAccepted: req.EscalationConfirmed,
+		resolution: agents.LaunchResolution{AccountID: a.AccountID, AccountName: a.AccountName, Provider: a.Provider, Launch: launchFrom(a.Options)},
+	}
+	chk, err := s.preflight(ctx, a.ID, Request{
+		Target: approve.Target{Repo: a.Repo, Issue: a.Issue, Viewer: a.ActorID},
+		Branch: a.Proposal.Branch, BaseRef: a.Proposal.BaseRef, RemoteName: a.Proposal.RemoteName,
+		AccountID: a.AccountID, Launch: launchFrom(a.Options), Name: a.Name, Cols: a.Cols, Rows: a.Rows,
+	}, conf)
+	return a, chk, false, err
 }

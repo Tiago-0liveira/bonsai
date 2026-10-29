@@ -39,7 +39,7 @@ func TestDraftsIncludeEveryTypeAndUnvalidatedStagesButExcludeUnusableItems(t *te
 			t.Errorf("row %d = %d (%q)", i, c.Records[i].Item.Issue.ID, c.Records[i].Attention)
 		}
 	}
-	if sel := Select(items, Query{}); len(sel.Records) != 0 {
+	if sel := Select(items, Query{}, nil); len(sel.Records) != 0 {
 		t.Fatalf("drafts leaked into Board/Table: %d", len(sel.Records))
 	}
 }
@@ -98,7 +98,7 @@ func TestDraftsSelectByVerifiedAcceptanceAcrossStages(t *testing.T) {
 			unvalidated.Issue.Labels[2] = garden.FormatStageLabel(stage)
 			approved := accepted(t, 2, stage, false)
 			items := []gardensync.Item{unvalidated, approved}
-			drafts, board := Drafts(items, Query{}), Select(items, Query{})
+			drafts, board := Drafts(items, Query{}), Select(items, Query{}, nil)
 			if len(drafts.Records) != 1 || drafts.Records[0].Item.Issue.ID != 1 || drafts.Records[0].Attention == "" {
 				t.Fatalf("unvalidated idea missing from Drafts: %+v", drafts)
 			}

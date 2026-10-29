@@ -22,10 +22,13 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/capture"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/edit"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/handoff"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/ops"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/publish"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/reviewpass"
 	gardensync "github.com/Tiago-0liveira/bonsai/internal/core/garden/sync"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
@@ -52,6 +55,7 @@ type Deps struct {
 	// InvalidateAuth forgets cached credentials; the next read uses gh's stored login.
 	InvalidateAuth func()
 	Store          *connect.Store
+	PrivateDrafts  PrivateDraftStore
 	// Creator and Ops enable capture: the only Issue-creating seam and the durable
 	// record of each create. Both are optional; without them capture is unavailable.
 	Creator garden.IssueCreator
@@ -79,6 +83,13 @@ type Deps struct {
 	LaunchPRs       launch.PullRequests
 	LaunchClock     launch.Clock
 	LaunchIDs       launch.IDs
+	// LaunchReviewPrefs and LaunchReviews default to saved preferences and the local pass store.
+	LaunchReviewPrefs func() (*config.GardenAutoReviewPrefs, error)
+	LaunchReviews     reviewpass.Store
+	// HandoffPRs reads one pull request and HandoffWork one retained worktree, for human handoff (plan 13). Both are
+	// optional: without them the view reports those sections as unavailable and never as success.
+	HandoffPRs  HandoffPullRequests
+	HandoffWork HandoffWork
 }
 
 // Backend is the gardenapi.Backend for one local clone.
@@ -96,10 +107,12 @@ type Backend struct {
 	captures       *capture.Service // built on first use
 	edits          *edit.Service    // built on first use
 	approvals      *approve.Service // built on first use
+	publishes      *publish.Service // built on first use
 	planner        *plan.Service    // built on first use
 	reviews        *planrev.Service // built on first use
 	assistFlights  map[string]struct{}
-	launches       *launch.Service // built on first use
+	launches       *launch.Service  // built on first use
+	handoffs       *handoff.Service // built on first use
 }
 
 var _ gardenapi.Backend = (*Backend)(nil)
@@ -111,6 +124,7 @@ type options struct {
 	shared *ghcli.Shared
 	store  *connect.Store
 	agents *agentsapi.Backend
+	drafts PrivateDraftStore
 }
 
 // WithShared supplies the GitHub client state (tests inject a token runner).
@@ -166,6 +180,7 @@ func New(repoDir string, opts ...Option) (*Backend, error) {
 		Viewer:         gh.Viewer,
 		InvalidateAuth: func() { o.shared.InvalidateAuth(ghcli.DefaultHost) },
 		Store:          o.store,
+		PrivateDrafts:  o.drafts,
 		Plans:          planStore,
 		Checkout:       checkoutInspector{coregit.CheckoutInspector{Dir: repoDir}},
 	}

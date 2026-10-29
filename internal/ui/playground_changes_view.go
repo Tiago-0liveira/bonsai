@@ -29,16 +29,20 @@ func pgSince(t time.Time) string {
 	if t.IsZero() {
 		return "never"
 	}
-	d := max(agentNow().Sub(t), 0)
+	return compactAge(agentNow().Sub(t)) + " ago"
+}
+
+func compactAge(d time.Duration) string {
+	d = max(d, 0)
 	switch {
 	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d/time.Second))
+		return fmt.Sprintf("%ds", int(d/time.Second))
 	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d/time.Minute))
+		return fmt.Sprintf("%dm", int(d/time.Minute))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d/time.Hour))
+		return fmt.Sprintf("%dh", int(d/time.Hour))
 	}
-	return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
+	return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
 }
 
 // pgSafe makes diff and path text safe to draw: no escapes or control bytes, spacing kept.

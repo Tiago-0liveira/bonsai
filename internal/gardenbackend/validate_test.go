@@ -82,7 +82,7 @@ func TestValidateMovesTheSameIssueFromDraftsToApprovedWork(t *testing.T) {
 	if _, _, in := work.Drafts(w.Snapshot.Items, work.Query{}).Find(garden.IssueID(id)); in {
 		t.Fatal("approved Issue is still in Drafts")
 	}
-	rec, _, ok := work.Select(w.Snapshot.Items, work.Query{}).Find(garden.IssueID(id))
+	rec, _, ok := work.Select(w.Snapshot.Items, work.Query{}, nil).Find(garden.IssueID(id))
 	if !ok || rec.Column != work.Approved || rec.Item.Classification.Type != garden.TypeFeature {
 		t.Fatalf("board record = %+v ok=%v", rec, ok)
 	}

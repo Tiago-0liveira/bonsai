@@ -303,26 +303,52 @@ Resume rechecks GitHub and keeps completed labels, Projects and fields.
 
 #### Garden board in the preview
 
-A connected Garden opens the approved-work board. Arrow keys select columns and
-cards, Enter opens the read-only issue document, and Escape restores the same card
-and scroll. All nine columns fit at 120/160 columns; at 80 columns the selected
-column stays inside a moving four-column window. Empty columns remain navigable.
+A connected Garden opens six phases: Backlog, Planning, Ready, Building, Review
+and Done. `d` (`garden_stages`, configurable) toggles the nine detailed stages;
+each mode remembers its own cursor, scroll and lane window while sharing the
+selected Issue. The mode lasts for this session. Arrow keys select lanes and
+cards; Enter or a click opens the Issue panel. At widths below 100, three lanes
+are visible; below 160, six phases or five stages; from 160, all lanes fit.
+Empty lanes remain navigable. Blockers retain a proven phase and reason, or
+appear in a final Unplaced lane when no phase is proven.
+
+Cards retain the exact workflow stage and show observed planner or implementation
+activity with update time and stale markers, truncated to the available cells.
+Missing activity stays unknown; idle, exited and failed remain distinct. Local
+activity never grants approval or Ready. See the [board guide](garden.md#board)
+for mapping and [local activity](garden.md#local-planner-badges) for evidence details.
+Theme overrides include `phase_backlog`, `phase_planning`, `phase_ready`,
+`phase_building`, `phase_review` and `phase_done`, with fallback colors.
 
 Use `/` for scoped title/number search, `t` for type, `p` for priority, `x` to clear
 filters, and `R` to refresh. Failed reads preserve the last good board and show
 stale/offline state plus the last successful sync time. Drafts and unverified
 acceptance never enter the board. Garden remembers its subview per repository.
 `v` (the Garden-scoped `garden_view` key) switches the same approved work to a
-Table: rows with a selected-item inspector at 120/160 columns, `o` to cycle
-State/Number/Priority order, and the same selection, filters, document and
-Escape behavior. Garden remembers Board or Table per repository.
-Some columns await backend evidence from plans 08/09; selecting or opening never
-changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
+Table with ISSUE, TITLE, exact STATE, SIGNAL and NEXT; optional columns follow
+the available width, with a bottom detail strip on taller screens. `o` cycles
+State/Number/Priority order. `g` toggles phase grouping; Space or Enter on a group
+header collapses/expands it while keeping the selected issue. Enter or a click
+on an item opens the same overlay; Escape restores the line and scroll.
+
+`a` (`garden_attention`, configurable) toggles Needs you and returns to the work
+layout you came from; `v` from Needs you goes to Table. Needs you includes blockers,
+explicit live input requests, human review, pending published-plan approval,
+finished local plans to publish, and explicitly startable Ready work. Idle or
+unknown activity alone and stale local requests are excluded. Counts use the same
+filtered records as the view. Garden remembers Board, Table or Needs you per
+repository, without persisting grouping, collapse or filters. See
+[Table and Needs you](garden.md#table) for the predicates and selection behavior.
+Selecting or opening never changes stage labels. See the [Garden guide](garden.md) for exact column mapping,
 filter semantics, document sections, keys and current limitations.
 
 Drafts is a separate inbox for unvalidated ideas (`tab` from the Board, `n` to
-capture a new one as a GitHub Issue at Draft, `/` search, `t` type, `r` reconcile,
-`esc` back). Creating needs a preview and confirmation, survives timeouts without
+start a private local draft saved on this machine without GitHub, an assistant or a
+provider (an assistant can be invited beside the draft with `Ctrl+G`; see
+[discuss a local draft](garden.md#discuss-a-local-draft-with-an-assistant)), with `Ctrl+S` to save now, `a`/`u`/`A` to archive, undo and show archived,
+`/` search, `t` type, `r` reconcile, `esc` back; see
+[local drafts](garden.md#local-drafts)). Without the private store, `n` captures a
+new idea as a GitHub Issue at Draft instead. GitHub capture needs a preview and confirmation, survives timeouts without
 duplicates, and never approves or starts anything. In a draft's document, `v`
 validates its specification: a preview of the exact revision and fingerprint, then
 an explicit confirmation records one verified approval and moves the same Issue
@@ -333,6 +359,19 @@ answered in a per-question panel (choose, write, don't know or skip). Questions
 without suggestions focus the answer field immediately. In review, `o` applies
 decisions and opens a local round to answer unresolved questions; see
 [AI draft assistance](garden.md#elaborate-a-draft-with-ai).
+
+A ready local draft is published from its review (`Ctrl+Enter`, then `enter`): the
+confirmation shows the repository, account, draft revision, title, type, managed
+labels and the exact specification, and `enter` runs **Approve & create issue**
+(`esc` goes back to editing). One operation creates the Issue at Draft, appends the
+specification, records its approval, moves it to Ready and reads everything back
+before the draft is marked published. Any edit, or a changed connection or account,
+invalidates the preview. If a step stops, the draft shows **Publishing incomplete**
+with the Issue link (or **Publishing** while GitHub is still being checked) and
+opens on a resume screen instead of the editor: `enter` or `r` resumes by reusing
+what exists, never a second Issue, revision or approval. Nothing starts a planner,
+worktree, agent or pull request. See
+[publishing a draft](garden-workflow/plans/06-approve-and-publish.md).
 
 In an opened Approved Issue, `p` opens its read-only planner. It verifies the
 approved specification and inspects the checkout, and an explicit **Request AI plan**
@@ -370,23 +409,83 @@ who approved which revision, declared local/external source and verified time.
 [external comment protocol](garden.md#external-approval-protocol-github-or-mobile-browser)
 supports approval in GitHub/mobile browsers, without a phone client or remote runs.
 
+#### Garden issue overlay
+
+Enter or a left click on a Board card or Table row opens one issue panel over the
+dimmed layout it came from: a near-full sheet at 80×24, a bounded centered panel
+at 120×35 and wider, with a side summary rail from about 100 columns. The header
+(number, title, column, type, priority, approval) and the pinned action bar stay
+visible while the body scrolls. Tabs: Overview, Specification, Questions, Plan,
+Activity (`←`/`→` or click); `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End` or the wheel scroll.
+
+Actions are `p` request plan, `r` review plans, `s` start locally and `i` attempts;
+on the **Plan** tab `p` and `r` become the actions that fit its state (see below).
+`Tab`/`Shift+Tab` cycle the enabled ones, `Enter` runs the focused one and a click
+runs the one under the pointer, all through the same existing screens and
+confirmations. `s` and `i` appear only when the Garden runtime has local launch;
+`s` stays visible but disabled, with its reason, until the issue is Ready. Reading a
+tab never starts anything, and opening an agent terminal stays a separate action
+whose input mode still ends with `Ctrl+]`.
+
+On the Plan tab: `a` approve plan rN (the exact-pair confirmation, inside the panel;
+`tab` then `enter` approves), `c` request changes (or, while a planner runs, `c` stop
+attempt, then `y`), `b` start revision attempt (feedback already recorded), `u` publish
+the ready plan file, `p` open the planner (straight to a live session) and `r` open the
+review. In the request-changes form `ctrl+s` sends the feedback and starts one read-only
+revision attempt, `tab`/`shift+tab` move between the text, the checkout consent
+(`ctrl+y`), the account choice (`ctrl+g`, only without a retained account), Back and
+Send, and `esc` goes back keeping what you typed. A plain Request plan (`p`) no longer
+carries earlier feedback; only the form and `b` do. `esc` from a planner session, publish
+box or review opened from the tab returns to it. States and write behaviour:
+[Plan tab](garden.md#plan-tab-in-the-issue-overlay).
+
+When an implementation attempt awaits human review (or a completion record exists),
+the Overview becomes the review panel (headings YOUR REVIEW, COMPLETED, BLOCKED,
+STALE, UNKNOWN) and its actions are: `a` Accept…, `c` Request changes…, `u` Revoke
+acceptance…, `m` Start rework… (after a verified request for changes), `n` Complete
+without code…, `g` Open PR, `o` Open terminal and `w` Preview cleanup…. Only an
+allowed action is offered; `R` refreshes. Each decision opens a confirmation with
+Cancel focused and the exact record; acknowledgments are toggled with `1`-`9`, and
+the request-changes text box uses `ctrl+s` to preview and `esc` to go back. Nothing
+merges, closes, pushes, relabels or cleans on its own. Evidence, states and reasons:
+[Human review, rework and completion](garden.md#human-review-rework-and-completion).
+
+While the panel is open it consumes every key and click, so `q`, `?`, the palette,
+workspace keys and `v` wait. `Esc`, `Backspace` or **Back** close it and restore the
+exact card or row and scroll. If a refresh removes the issue, or the repository
+changes, the panel closes with a notice on the board rather than showing another
+issue. Closing it never stops a planner or implementation session.
+
 #### Local implementation launch in the preview
 
-From a Ready Garden Issue (detail or plan review) press `s` (**start implementation
-locally…**); `i` opens **implementation attempts**, available even when launch is
-blocked. The form selects account, model, effort and native permissions. `ctrl+s`
-requests a preview and never launches; `ctrl+e` edits branch, base and remote. The
-confirmation repeats the exact approved inputs, worktree and permissions. Cancel is
-focused first, so a first `enter` cancels and **Confirm: start locally** must be
-chosen explicitly. `x` acknowledges a permission escalation, `y` retry hooks, `e`
-edits branch/base. Unresolved or unsupported permissions disable Confirm. `esc` or
-leaving Garden detaches without stopping the agent; pushing a Draft PR is separate.
+Ready shows the effective run: implementer, AI reviewer, review limit,
+worktree/base and native permissions, using saved policy and cached defaults.
+Reviewer availability is checked in the exact preview. From a Ready Garden Issue's
+Overview, `s` (**Start implementation…**) opens that preview directly
+with the default account; `e` (**Change run settings**) opens the account, model,
+effort and permissions form. In the form `ctrl+s` requests a preview and `ctrl+e`
+edits branch, base and remote. `i` opens **implementation attempts**, even when
+launch is blocked.
 
-In an attempt: `o` opens the session terminal (observe by default, explicit
-take-control, `esc` leaves without stopping), `x` stop, `r` retry, `w` cleanup,
-`p` push branch / Draft PR, `[`/`]` switch run. Each has its own confirmation;
-cleanup previews first. Reviewers are not available yet (plan 10). Details, blockers
-and recovery: [Garden guide](garden.md#start-implementation-locally).
+Confirmation lists the exact approved inputs and authorized sequence: implementation,
+then the enabled automatic review, fixes and checks, then your review. Cancel is
+focused first. Escalated implementer permissions need an unchecked `x`
+acknowledgment; escalated reviewer permissions need a separate unchecked `r`
+acknowledgment. A changed review policy needs a new preview. Unresolved or
+unsupported permissions disable Confirm. The sequence is recorded and authorized;
+reviewer execution arrives in a later version.
+
+The overview supervises the attempt: lifecycle state, observed activity and age,
+checks only with evidence, **Next**, and the last synced GitHub stage separately.
+Idle is not completion. In an attempt, `o` (**Open session**) observes; `enter`
+takes control and `ctrl+]` returns to observation. From observation, `esc` leaves
+the session.
+`x` (**Stop run**) asks for confirmation and shows **Stopping** until closure is
+proven. Leaving the overlay or quitting only detaches.
+
+Other attempt actions are `r` retry, `w` cleanup, `p` push branch / Draft PR and
+`[`/`]` switch run. Mutations have separate confirmations; cleanup previews first.
+Details, blockers and recovery: [Garden guide](garden.md#start-implementation-locally).
 
 #### Settings in the preview
 
@@ -403,7 +502,7 @@ a text edit, `esc` cancels only that edit.
 - **Appearance**: theme, surface contrast (layered or flat), icons (unicode or
   ASCII), density.
 - **Keys**: one section per keymap group, plus the fixed Terminal row `ctrl+]`.
-- **Garden**: repository base ref, setup status, and **AI drafting** personal defaults.
+- **Garden**: repository base ref, setup status, **AI drafting** and **Automatic review** personal defaults.
   Assistant opens the account/model/effort dialog; choose **Save defaults** or
   **Cancel**. Empty model and effort inherit the account profile, then provider
   defaults. A missing or unsupported saved account shows "missing: choose again"
@@ -412,6 +511,14 @@ a text edit, `esc` cancels only that edit.
   question quality, evidence and output rules remain fixed. Restore defaults asks
   for confirmation and clears only AI drafting preferences. Session options
   override these defaults for that session and never save them.
+  **Automatic review** stores an off-by-default policy: reviewer account, model,
+  effort, native permissions, a fixed one-pass limit and typed checks, plus
+  availability and Restore defaults. It grants no permission and starts nothing;
+  each implementation preview authorizes its frozen review sequence separately.
+  Settings edits never change a started attempt. It is separate from the
+  Playground reviewer under Agents. See
+  [Automatic review defaults](garden.md#automatic-review-defaults) for fields,
+  check syntax and downgrade limits.
 - **Agents**: "Account defaults" opens the Accounts workspace on Defaults.
   **Garden review policy** configures the local review account, fixed enforced
   read-only role, trigger, attempt scope and automatic run limit. Review defaults
@@ -431,7 +538,7 @@ last saved state and shows the error. Unknown fields in `state.json` are kept.
 
 Settings adds these `state.json` fields: `prefs.contrast`, `prefs.density`,
 `prefs.start_workspace`, `prefs.no_workspace_memory`, `prefs.garden_assist`,
-`prefs.garden_review` and a per-repository
+`prefs.garden_review`, `prefs.garden_auto_review` and a per-repository
 `workspaces` map keyed by the canonical local repository path (symlinks resolved).
 
 The startup workspace is the first of: the explicit startup workspace, the
@@ -632,7 +739,11 @@ aliases:
 ### Hook and alias variables
 
 Use `{name}` inside hook commands and alias commands. Each is also exported to
-hooks as `$BONSAI_<NAME>` (uppercased).
+hooks as `$BONSAI_<NAME>` (uppercased). Placeholders are expanded as references to
+those variables, never pasted into the command text, so a branch or path with
+quotes, `$(...)` or `;` is passed as data. Inside single quotes the value still
+expands. Wrapping a placeholder in double quotes keeps values with spaces as one
+argument.
 
 | Variable | Value |
 |----------|-------|

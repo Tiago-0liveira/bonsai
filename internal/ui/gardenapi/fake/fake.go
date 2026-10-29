@@ -103,6 +103,16 @@ type Backend struct {
 	PlanPublished []gardenapi.PlanPublishPreviewView
 	PlanDecided   []gardenapi.PlanDecisionRequest
 
+	// PreviewPlanReviseErr, RevisePlanErr and StartPlanReviseErr make that call fail.
+	PreviewPlanReviseErr, RevisePlanErr, StartPlanReviseErr error
+	// PlanRevisePreview is what PreviewPlanRevise reports, restamped per call; PlanReviseResult is what RevisePlan and
+	// StartPlanRevise report. Both are scripted, like the other views.
+	PlanRevisePreview gardenapi.PlanRevisePreviewView
+	PlanReviseResult  gardenapi.PlanReviseView
+	// PlanRevised and PlanReviseStarted list the requests RevisePlan and StartPlanRevise received, in order.
+	PlanRevised       []gardenapi.PlanReviseRequest
+	PlanReviseStarted []gardenapi.PlanReviseRequest
+
 	// Captured lists the previews Capture ran, in order, so a test can assert a
 	// retry reused the same operation ID.
 	Captured []gardenapi.CapturePreview
@@ -163,7 +173,7 @@ func (b *Backend) Count(method string) int {
 // Writes counts the calls that change GitHub or the association: Apply,
 // Resume, Skip and Unskip. A test that cancels setup asserts it is zero.
 func (b *Backend) Writes() int {
-	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip") + b.Count("Capture") + b.Count("Save") + b.Count("Resolve") + b.Count("Validate") + b.Count("StartPlanner") + b.Count("CancelPlanner") + b.Count("PublishPlan") + b.Count("DecidePlan")
+	return b.Count("Apply") + b.Count("Resume") + b.Count("Skip") + b.Count("Unskip") + b.Count("Capture") + b.Count("Save") + b.Count("Resolve") + b.Count("Validate") + b.Count("StartPlanner") + b.Count("CancelPlanner") + b.Count("PublishPlan") + b.Count("DecidePlan") + b.Count("RevisePlan") + b.Count("StartPlanRevise")
 }
 
 // begin records the call and returns its generation and the current epoch.

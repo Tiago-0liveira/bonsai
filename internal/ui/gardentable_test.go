@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func tpress(t *testing.T, m Model, keys ...string) Model {
 }
 func tableEnv(t *testing.T, fb *gardenfake.Backend, prefs config.Prefs, w, h int) Model {
 	t.Helper()
-	return pressAll(t, gardenEnv(t, fb, prefs, w, h), "v")
+	return tpress(t, pressAll(t, gardenEnv(t, fb, prefs, w, h), "v"), "home")
 }
 func rowIDs(rows []work.Record) []garden.IssueID {
 	var ids []garden.IssueID
@@ -119,8 +120,8 @@ func TestGardenTableToggleKeepsIdentityAndIssuesNoRead(t *testing.T) {
 	m = tpress(t, m, "down", "down", "pgdown", "o")
 	id := m.garden.board.selection.ID
 	rows := m.garden.board.collection.Rows(m.garden.board.sort)
-	if id == 0 || rows[m.garden.board.tableRow].Item.Issue.ID != id {
-		t.Fatalf("table cursor %d does not own %d", m.garden.board.tableRow, id)
+	if id == 0 || rows[m.garden.board.table.anchor].Item.Issue.ID != id {
+		t.Fatalf("table cursor %d does not own %d", m.garden.board.table.anchor, id)
 	}
 	r, _, _ := m.garden.board.collection.Find(id)
 	m, cmd = send(t, m, runeKey("v"))
@@ -131,7 +132,7 @@ func TestGardenTableToggleKeepsIdentityAndIssuesNoRead(t *testing.T) {
 		}
 	}
 	s := m.garden.board.selection
-	if m.garden.board.layout != layoutBoard || s.ID != id || s.Column != r.Column {
+	if m.garden.board.layout != layoutBoard || s.ID != id || s.Column != work.Column(r.Phase) {
 		t.Fatalf("board landed on %+v, want %d in %v", s, id, r.Column)
 	}
 	if fb.Count("Work") != reads || fb.Writes() != 0 {
@@ -139,7 +140,7 @@ func TestGardenTableToggleKeepsIdentityAndIssuesNoRead(t *testing.T) {
 	}
 	mustContain(t, "board card", view(m), fmt.Sprintf("#%d", r.Item.Issue.Number), "Board")
 	m = pressAll(t, m, "enter", "esc")
-	if m.garden.board.layout != layoutBoard || m.garden.board.opened != 0 || m.garden.board.selection != s {
+	if m.garden.board.layout != layoutBoard || m.garden.board.opened != 0 || !reflect.DeepEqual(m.garden.board.selection, s) {
 		t.Fatal("Board round trip lost its card")
 	}
 }
@@ -154,14 +155,14 @@ func TestGardenTableEnterOpensSharedDetailAndEscRestoresRowAndScroll(t *testing.
 			if b.selection.ID != rows[row].Item.Issue.ID {
 				t.Fatalf("row %d selected %d", row, b.selection.ID)
 			}
-			id, scroll, tr := b.selection.ID, b.tableScroll, b.tableRow
+			id, scroll, tr := b.selection.ID, b.table.scroll, b.table.anchor
 			m = pressAll(t, m, "enter")
 			if m.garden.board.opened != id {
 				t.Fatalf("row %d opened %d", row, m.garden.board.opened)
 			}
-			mustContain(t, "detail", view(m), "Garden › Table", fmt.Sprintf("#%d", rows[row].Item.Issue.Number), "Table (Esc)", "Issue / Overview")
+			mustContain(t, "detail", view(m), fmt.Sprintf("Issue #%d", rows[row].Item.Issue.Number), "esc Back to Table", "Issue / Overview")
 			m = pressAll(t, m, "esc")
-			if m.garden.board.opened != 0 || m.garden.board.layout != layoutTable || m.garden.board.selection.ID != id || m.garden.board.tableScroll != scroll || m.garden.board.tableRow != tr {
+			if m.garden.board.opened != 0 || m.garden.board.layout != layoutTable || m.garden.board.selection.ID != id || m.garden.board.table.scroll != scroll || m.garden.board.table.anchor != tr {
 				t.Fatalf("row %d: Esc did not restore row/scroll", row)
 			}
 			m = pressAll(t, m, "down")
@@ -191,8 +192,8 @@ func TestGardenTableLargeListKeepsFocusVisibleAndFitsEverySize(t *testing.T) {
 				verify := func(step string) {
 					t.Helper()
 					b := m.garden.board
-					if b.tableRow < b.tableScroll || b.tableRow >= b.tableScroll+capacity {
-						t.Fatalf("%s: row %d outside [%d,%d)", step, b.tableRow, b.tableScroll, b.tableScroll+capacity)
+					if b.table.anchor < b.table.scroll || b.table.anchor >= b.table.scroll+capacity {
+						t.Fatalf("%s: row %d outside [%d,%d)", step, b.table.anchor, b.table.scroll, b.table.scroll+capacity)
 					}
 					out := m.View()
 					assertBounded(t, step, out, sz[0], sz[1])
@@ -228,10 +229,10 @@ func TestGardenTableLargeListKeepsFocusVisibleAndFitsEverySize(t *testing.T) {
 					}
 					selectedLine := false
 					for _, line := range strings.Split(plain, "\n") {
-						if i := strings.IndexAny(line, "│|"); i >= 0 {
-							line = line[:i] // the inspector repeats the selected number
+						if !strings.HasPrefix(line, marker) && !strings.HasPrefix(line, "▏") && !strings.HasPrefix(line, "|") {
+							continue
 						}
-						for _, r := range rows[b.tableScroll:min(len(rows), b.tableScroll+capacity)] {
+						for _, r := range rows[b.table.scroll:min(len(rows), b.table.scroll+capacity)] {
 							if strings.Contains(line, fmt.Sprintf("#%d ", r.Item.Issue.Number)) {
 								if !strings.Contains(line, r.Column.String()) {
 									t.Fatalf("%s: STATE %q clipped in %q", step, r.Column, line)
@@ -255,8 +256,8 @@ func TestGardenTableLargeListKeepsFocusVisibleAndFitsEverySize(t *testing.T) {
 					m = tpress(t, m, k)
 					verify(k)
 				}
-				if m.garden.board.tableRow != 299 {
-					t.Fatalf("end left row %d", m.garden.board.tableRow)
+				if m.garden.board.table.anchor != 299 {
+					t.Fatalf("end left row %d", m.garden.board.table.anchor)
 				}
 			})
 		}
@@ -267,8 +268,7 @@ func TestGardenTableColumnsFollowWidth(t *testing.T) {
 	for _, tc := range []struct {
 		width int
 		want  string
-		insp  bool
-	}{{80, "ISSUE TITLE TYPE STATE", false}, {120, "ISSUE TITLE STATE P", true}, {160, "ISSUE TITLE TYPE STATE P STATUS", true}} {
+	}{{80, "ISSUE TITLE STATE NEXT"}, {120, "ISSUE TITLE STATE SIGNAL NEXT"}, {160, "ISSUE TITLE STATE SIGNAL NEXT TYPE P"}} {
 		fb := tableFake(t, 20)
 		m := tableEnv(t, fb, config.Prefs{}, tc.width, 35)
 		var header string
@@ -283,13 +283,8 @@ func TestGardenTableColumnsFollowWidth(t *testing.T) {
 		if got := strings.Join(strings.Fields(header), " "); got != tc.want {
 			t.Errorf("%d: columns %q want %q", tc.width, got, tc.want)
 		}
-		out := view(m)
-		if has := strings.Contains(out, "NEXT HUMAN GATE"); has != tc.insp {
-			t.Errorf("%d: inspector = %t", tc.width, has)
-		}
-		if tc.insp {
-			mustContain(t, "inspector", out, "Enter open item", work.NextGate(m.garden.board.selection.Column))
-		}
+		r, _, _ := m.garden.board.collection.Find(m.garden.board.selection.ID)
+		mustContain(t, "detail strip", view(m), "Enter open · next: "+gardenNext(r, false))
 	}
 }
 
@@ -340,8 +335,8 @@ func TestGardenTableSelectionDeletionIsDeterministic(t *testing.T) {
 		remove(fb, b.selection.ID)
 		want := rows[4].Item.Issue.ID
 		m = pressAll(t, m, "R")
-		if m.garden.board.selection.ID != want || m.garden.board.tableRow != 3 || m.garden.board.notice != "Selected issue left this view; selected the row now in its place." {
-			t.Fatalf("got %d row %d notice %q want %d", m.garden.board.selection.ID, m.garden.board.tableRow, m.garden.board.notice, want)
+		if m.garden.board.selection.ID != want || m.garden.board.table.anchor != 3 || m.garden.board.notice != "Selected issue left this view; selected the row now in its place." {
+			t.Fatalf("got %d row %d notice %q want %d", m.garden.board.selection.ID, m.garden.board.table.anchor, m.garden.board.notice, want)
 		}
 		mustContain(t, "notice", view(m), "Selected issue left this view; selected the row now in its place.")
 	})
@@ -352,7 +347,7 @@ func TestGardenTableSelectionDeletionIsDeterministic(t *testing.T) {
 		rows := b.collection.Rows(b.sort)
 		remove(fb, b.selection.ID)
 		m = pressAll(t, m, "R")
-		if m.garden.board.selection.ID != rows[len(rows)-2].Item.Issue.ID || m.garden.board.tableRow != len(rows)-2 {
+		if m.garden.board.selection.ID != rows[len(rows)-2].Item.Issue.ID || m.garden.board.table.anchor != len(rows)-2 {
 			t.Fatal("last-row deletion did not pick previous row")
 		}
 		if m.garden.board.notice != "Selected issue left this view; selected the previous row." {
@@ -388,7 +383,7 @@ func TestGardenTableSortCycleIsStableAndReadOnly(t *testing.T) {
 	for _, want := range []work.Sort{work.SortNumber, work.SortPriority, work.SortState} {
 		m = pressAll(t, m, "o")
 		b := m.garden.board
-		if b.sort != want || b.selection.ID != id || b.collection.Rows(b.sort)[b.tableRow].Item.Issue.ID != id {
+		if b.sort != want || b.selection.ID != id || b.collection.Rows(b.sort)[b.table.anchor].Item.Issue.ID != id {
 			t.Fatalf("sort %v lost the selection", want)
 		}
 		ids := rowIDs(b.collection.Rows(b.sort))
@@ -444,7 +439,7 @@ func footerText(m Model) string { return ansi.Strip(m.View()) }
 func TestGardenTableChromeCrumbsFocusAndPalette(t *testing.T) {
 	m := tableEnv(t, tableFake(t, 8), config.Prefs{}, 120, 35)
 	out := view(m)
-	mustContain(t, "table chrome", out, "Garden › Table", "Approved table", "APPROVED WORK / ALL STATES  8", "Table", "▤")
+	mustContain(t, "table chrome", out, "Garden › Table", "Approved table", "APPROVED WORK  8", "Table", "▤")
 	b := m.garden.board
 	r, _, _ := b.collection.Find(b.selection.ID)
 	if got := m.gardenBoardIdentity(); got != fmt.Sprintf("#%d  %s / %s", r.Item.Issue.Number, boardTitle(r.Item.Issue.Title), r.Column) {

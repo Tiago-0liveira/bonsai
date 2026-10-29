@@ -10,6 +10,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/approve"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/connect"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/launch"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/plan"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/planrev"
 	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
@@ -39,22 +40,41 @@ func (b *Backend) planService() (*plan.Service, error) {
 	if b.deps.Plans == nil || b.deps.Checkout == nil || b.deps.Agents == nil {
 		return nil, unavailablePlanner
 	}
-	svc, err := plan.New(plan.Deps{Feedback: func(ctx context.Context, t approve.Target) (string, error) {
+	svc, err := plan.New(plan.Deps{Feedback: func(ctx context.Context, t approve.Target, ref *plan.ReviseRequest) (plan.Feedback, error) {
+		if ref == nil {
+			return plan.Feedback{}, nil
+		}
+		// One fresh read decides every condition, so the feedback cannot be mixed from two moments.
 		log, err := gate.Read(ctx, t)
 		if err != nil {
-			return "", err
+			return plan.Feedback{}, err
 		}
-		rv := planrev.Derive(log, t.Viewer)
-		if rv.Current != nil && rv.Current.State == planrev.StateChangesRequested {
-			return rv.Current.Reason(), nil
+		rev, d, ok := pendingRevise(planrev.Derive(log, t.Viewer))
+		if !ok || rev.Hash != ref.RevisionHash || d.CommentID != ref.DecisionCommentID {
+			return plan.Feedback{}, plan.ErrFeedbackChanged
 		}
-		return "", nil
+		return plan.Feedback{Reason: planrev.ReasonOf(d), PlanText: rev.Content, Ordinal: rev.Ordinal}, nil
 	}, Gate: gate, Repo: b.deps.Checkout, Agents: b.deps.Agents, Store: b.deps.Plans, Local: b.local, Dir: b.dir, NewID: b.deps.NewID})
 	if err != nil {
 		return nil, err
 	}
 	b.planner = svc
 	return svc, nil
+}
+
+// pendingRevise returns the current plan revision when it is trusted, up to date and its latest decision is an
+// unrevoked changes request: the only state a revision attempt may answer.
+func pendingRevise(rv planrev.Review) (planrev.Revision, garden.PlanDecision, bool) {
+	rev := rv.Current
+	if rev == nil || !rev.Trusted || rev.Stale || rev.Superseded || rev.State != planrev.StateChangesRequested {
+		return planrev.Revision{}, garden.PlanDecision{}, false
+	}
+	for i := len(rev.Decisions) - 1; i >= 0; i-- {
+		if d := rev.Decisions[i]; !d.Revoked {
+			return *rev, d, d.Decision == garden.DecisionChangesRequested
+		}
+	}
+	return planrev.Revision{}, garden.PlanDecision{}, false
 }
 
 // plannerTarget resolves the Issue and the authenticated viewer. Planning is local, so Read access is enough.
@@ -194,9 +214,10 @@ func (b *Backend) PlannerPlan(ctx context.Context, attemptID string) (gardenapi.
 // LocalWork implements gardenapi.Backend.
 func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error) {
 	gen := b.gen.Add(1)
-	svc, err := b.planService()
-	if err != nil {
-		return gardenapi.LocalWorkView{}, apiError(err)
+	plannerReady := b.deps.Plans != nil && b.deps.Checkout != nil && b.deps.Agents != nil
+	// With neither source there is nothing to show; failing keeps the last good view instead of clearing it.
+	if !plannerReady && b.deps.LaunchStore == nil {
+		return gardenapi.LocalWorkView{}, unavailablePlanner
 	}
 	ctx, cancel := context.WithTimeout(ctx, editTimeout)
 	defer cancel()
@@ -205,9 +226,17 @@ func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error
 	if err != nil {
 		return gardenapi.LocalWorkView{}, err
 	}
-	obs, err := svc.Overview(ctx)
-	if err != nil {
-		return gardenapi.LocalWorkView{}, apiError(err)
+	var obs []plan.Observation
+	// Implementation history remains readable even when the planner runtime is unavailable.
+	if plannerReady {
+		svc, err := b.planService()
+		if err != nil {
+			return gardenapi.LocalWorkView{}, apiError(err)
+		}
+		obs, err = svc.Overview(ctx)
+		if err != nil {
+			return gardenapi.LocalWorkView{}, apiError(err)
+		}
 	}
 	view := gardenapi.LocalWorkView{Issues: map[uint64]gardenapi.IssueLocalWork{}}
 	// Newest request first, so the first qualifying attempt of an Issue is the one to show; a live one always wins.
@@ -223,7 +252,28 @@ func (b *Backend) LocalWork(ctx context.Context) (gardenapi.LocalWorkView, error
 			continue
 		}
 		view.Issues[uint64(a.Issue)] = gardenapi.IssueLocalWork{Planner: &gardenapi.LocalRunSummary{AttemptID: a.ID, State: string(a.State), Live: live,
-			Activity: o.Activity, PlanFile: o.File.State, Updated: a.UpdatedAt}}
+			Activity: o.Activity, PlanFile: o.File.State, Updated: a.UpdatedAt, Provider: string(a.Provider), AccountName: a.AccountName,
+			Model: a.Model, Effort: a.Effort, RequestedAt: a.RequestedAt, Revises: a.Revises}}
+	}
+	if b.deps.LaunchStore != nil {
+		attempts, err := b.deps.LaunchStore.List(ctx, b.local, 0)
+		if err != nil {
+			return gardenapi.LocalWorkView{}, apiError(err)
+		}
+		// FileStore orders by request time ascending, then ID.
+		for i := len(attempts) - 1; i >= 0; i-- {
+			a := attempts[i]
+			if a.State == launch.StateCleaned {
+				continue
+			}
+			cur := view.Issues[uint64(a.Issue)]
+			if cur.Implementation != nil {
+				continue
+			}
+			// Active includes unresolved starts and recoverable work; it never implies observed activity.
+			cur.Implementation = &gardenapi.LocalRunSummary{AttemptID: a.ID, State: string(a.State), Live: a.State.Active(), Updated: a.UpdatedAt}
+			view.Issues[uint64(a.Issue)] = cur
+		}
 	}
 	view.Stamp = b.stamp(gen, t.Repository.ID)
 	return view, nil

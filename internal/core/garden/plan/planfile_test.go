@@ -301,19 +301,47 @@ func TestMarkPublishedIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	a := f.start()
-	if err := f.svc.MarkPublished(ctx, a.ID); err != nil {
+	if err := f.svc.MarkPublished(ctx, a.ID, "hash-a"); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := f.store.Get(ctx, a.ID)
 	f.clock = f.clock.Add(time.Hour)
-	if err := f.svc.MarkPublished(ctx, a.ID); err != nil {
+	if err := f.svc.MarkPublished(ctx, a.ID, "hash-a"); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := f.store.Get(ctx, a.ID)
-	if first.PlanPublishedAt == nil || !second.PlanPublishedAt.Equal(*first.PlanPublishedAt) {
-		t.Fatalf("published at changed: %v -> %v", first.PlanPublishedAt, second.PlanPublishedAt)
+	if first.PlanPublishedAt == nil || !second.PlanPublishedAt.Equal(*first.PlanPublishedAt) || !second.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("record changed: %+v -> %+v", first, second)
 	}
-	if err := f.svc.MarkPublished(ctx, "plan-nope"); !errors.Is(err, ErrNotFound) {
+	if err := f.svc.MarkPublished(ctx, "plan-nope", "hash-a"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown = %v", err)
+	}
+}
+
+func TestMarkPublishedHashSemantics(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name         string
+		marks        []string
+		wantRevision string
+	}{
+		{"stores the hash", []string{"hash-a"}, "hash-a"},
+		{"never overwrites a different hash", []string{"hash-a", "hash-b"}, "hash-a"},
+		{"fills an empty hash later", []string{"", "hash-b"}, "hash-b"},
+		{"empty never clears", []string{"hash-a", ""}, "hash-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			a := f.start()
+			for _, h := range tc.marks {
+				if err := f.svc.MarkPublished(ctx, a.ID, h); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, _ := f.store.Get(ctx, a.ID)
+			if got.PublishedRevision != tc.wantRevision || got.PlanPublishedAt == nil {
+				t.Fatalf("record = %+v", got)
+			}
+		})
 	}
 }

@@ -244,7 +244,7 @@ func (s *Service) settlePreparing(ctx context.Context, a Attempt) (Attempt, erro
 // observeLatest queries the newest run's exact identity. A failed or empty
 // answer never invents a closure; a start that cannot be confirmed becomes
 // StartUnknown, and a running one keeps its last good state.
-func (s *Service) observeLatest(ctx context.Context, a Attempt) (Attempt, error) {
+func (s *Service) observeLatest(ctx context.Context, a Attempt, observed *[]Observed) (Attempt, error) {
 	if len(a.Runs) == 0 {
 		return a, nil
 	}
@@ -254,8 +254,12 @@ func (s *Service) observeLatest(ctx context.Context, a Attempt) (Attempt, error)
 	}
 	identity := StartIdentity{OperationID: run.OperationID, SessionID: run.SessionID}
 	qctx, cancel := s.queryCtx(ctx)
+	observedAt := s.now()
 	obs, err := s.d.Sessions.Query(qctx, identity)
 	cancel()
+	if observed != nil && err == nil && (obs.Identity == (StartIdentity{}) || obs.Identity == identity) {
+		*observed = append(*observed, Observed{AttemptID: a.ID, Session: obs, ObservedAt: observedAt})
+	}
 	if err != nil || inconclusive(obs) || (obs.Identity != (StartIdentity{}) && obs.Identity != identity) {
 		if a.State != StateStarting {
 			return a, nil
@@ -275,6 +279,10 @@ func (s *Service) observeLatest(ctx context.Context, a Attempt) (Attempt, error)
 // starts a holder, creates a worktree, reruns hooks, pushes or creates a pull
 // request; it inspects, records and retries the already authorized mirror.
 func (s *Service) reconcileHeld(ctx context.Context, a Attempt) (Attempt, error) {
+	return s.reconcileHeldObserved(ctx, a, nil)
+}
+
+func (s *Service) reconcileHeldObserved(ctx context.Context, a Attempt, observed *[]Observed) (Attempt, error) {
 	if a.State == StateCleaned {
 		return a, nil
 	}
@@ -283,7 +291,7 @@ func (s *Service) reconcileHeld(ctx context.Context, a Attempt) (Attempt, error)
 	case StatePreparing:
 		a, err = s.settlePreparing(ctx, a)
 	case StateStarting, StateStartUnknown, StateRunning:
-		a, err = s.observeLatest(ctx, a)
+		a, err = s.observeLatest(ctx, a, observed)
 	}
 	if err != nil {
 		return s.partial(ctx, a.ID, err)
@@ -296,22 +304,30 @@ func (s *Service) reconcileHeld(ctx context.Context, a Attempt) (Attempt, error)
 // Remote and pull request read failures are recorded as orthogonal state and
 // never empty a good local list; only a store fault is an error.
 func (s *Service) Reconcile(ctx context.Context, issue garden.IssueID) ([]Attempt, error) {
+	list, _, err := s.ReconcileObserved(ctx, issue)
+	return list, err
+}
+
+// ReconcileObserved returns the latest session answers alongside the reconciled
+// attempts, using only the queries reconciliation already needs.
+func (s *Service) ReconcileObserved(ctx context.Context, issue garden.IssueID) ([]Attempt, []Observed, error) {
 	list, err := s.d.Store.List(ctx, s.d.Local, issue)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var observed []Observed
 	out := make([]Attempt, 0, len(list))
 	for _, a := range list {
-		got, err := s.reconcileOne(ctx, a)
+		got, err := s.reconcileOneObserved(ctx, a, &observed)
 		if err != nil {
-			return out, err
+			return out, observed, err
 		}
 		out = append(out, got)
 	}
-	return out, nil
+	return out, observed, nil
 }
 
-func (s *Service) reconcileOne(ctx context.Context, a Attempt) (Attempt, error) {
+func (s *Service) reconcileOneObserved(ctx context.Context, a Attempt, observed *[]Observed) (Attempt, error) {
 	if a.State == StateCleaned {
 		return a, nil
 	}
@@ -327,7 +343,7 @@ func (s *Service) reconcileOne(ctx context.Context, a Attempt) (Attempt, error) 
 	if err != nil {
 		return Attempt{}, err
 	}
-	got, err := s.reconcileHeld(ctx, cur)
+	got, err := s.reconcileHeldObserved(ctx, cur, observed)
 	if err != nil && errors.Is(err, domain.ErrUncertain) {
 		return got, nil
 	}

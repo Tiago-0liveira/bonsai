@@ -38,6 +38,7 @@ type settingsState struct {
 	pending          *repoWrite
 	assist           *assistOptions
 	assistOpen       bool
+	autoReview       settingsAutoReview
 	// rev is what the Garden review policy section knows about accounts; revPending is the policy a consent
 	// dialog is asking about. Nothing is saved until the user confirms it.
 	rev        settingsReview
@@ -51,8 +52,9 @@ type settingsState struct {
 
 // settingsSavedMsg reports a finished personal-preference write.
 type settingsSavedMsg struct {
-	gen uint64
-	err error
+	note string
+	gen  uint64
+	err  error
 }
 
 func (m Model) curCategory() settingCategory { return settingCategories[m.set.cat] }
@@ -261,11 +263,15 @@ func (m Model) openLink(f settingField) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) beginEdit(f settingField) Model {
+	if strings.HasPrefix(f.id, "auto_review_") && m.autoReviewPreserved() {
+		m.status = autoReviewPreservedReason
+		return m
+	}
 	in := textinput.New()
 	in.Prompt = ""
 	in.CharLimit = 200
-	if f.id == "assist_guidance" {
-		// Let validation explain overlong pasted guidance instead of silently truncating it.
+	if f.id == "assist_guidance" || f.id == "auto_review_checks" {
+		// Let validation explain overlong pasted text instead of silently truncating it.
 		in.CharLimit = 0
 	}
 	in.SetValue(f.get(m))
@@ -317,6 +323,9 @@ func (m Model) commitEdit() (tea.Model, tea.Cmd) {
 		m.status = "Unchanged"
 		return m, nil
 	}
+	if f.apply != nil {
+		return f.apply(m, v)
+	}
 	if f.scope == scopeRepo {
 		return m.openRepoConfirm(f.repoKey, v), nil
 	}
@@ -360,10 +369,16 @@ func (m Model) onSettingsSaved(msg settingsSavedMsg) Model {
 		if msg.err == nil {
 			m.set.saveErr = ""
 			m.status = "Saved"
+			if msg.note != "" {
+				m.status += " · " + msg.note
+			}
 			return m
 		}
 		m.set.pendingRollback = true
 		m.set.saveErr = "Save failed: " + msg.err.Error()
+		if errors.Is(msg.err, config.ErrGardenAutoReviewNewer) {
+			m.set.saveErr = autoReviewPreservedReason
+		}
 		m.status = m.set.saveErr
 	}
 	if m.set.pendingRollback && m.set.inflight == 0 {

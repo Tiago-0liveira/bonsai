@@ -1,6 +1,9 @@
 package plan
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrNotApproved means the specification is not a verified approved one, so no planner may start. A
@@ -36,3 +39,20 @@ var (
 	// directory, so Bonsai will not read it.
 	ErrPlanFileInvalid = errors.New("planner plan file is not acceptable")
 )
+
+// ErrFeedbackChanged means the plan revision or changes-requested decision a revise attempt was bound to is no
+// longer the current, trusted one, so the feedback it would carry is out of date.
+var ErrFeedbackChanged = errors.New("plan feedback changed since the preview")
+
+// ErrRevisionRequested means a revise attempt for that decision already exists and did not fail. It is the
+// answer to a repeated request, not a failure.
+var ErrRevisionRequested = errors.New("a revision attempt was already requested for this feedback")
+
+// RevisionRequestedError carries the attempt that already answers the feedback.
+type RevisionRequestedError struct{ AttemptID string }
+
+func (e *RevisionRequestedError) Error() string {
+	return fmt.Sprintf("%s (%s)", ErrRevisionRequested, e.AttemptID)
+}
+
+func (e *RevisionRequestedError) Unwrap() error { return ErrRevisionRequested }

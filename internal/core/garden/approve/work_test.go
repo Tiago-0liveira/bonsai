@@ -39,7 +39,7 @@ func TestApprovedIssueLeavesDraftsAndKeepsItsType(t *testing.T) {
 		}
 		return gardensync.Item{Issue: log.Issue, Verification: log.Verification}
 	}
-	if work.Drafts([]gardensync.Item{item()}, work.Query{}).Total != 1 || len(work.Select([]gardensync.Item{item()}, work.Query{}).Records) != 0 {
+	if work.Drafts([]gardensync.Item{item()}, work.Query{}).Total != 1 || len(work.Select([]gardensync.Item{item()}, work.Query{}, nil).Records) != 0 {
 		t.Fatal("draft must start in Drafts only")
 	}
 	pv, err := svc.Preview(ctx, target)
@@ -49,7 +49,7 @@ func TestApprovedIssueLeavesDraftsAndKeepsItsType(t *testing.T) {
 	if _, err := svc.Validate(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
-	rows := work.Select([]gardensync.Item{item()}, work.Query{}).Records
+	rows := work.Select([]gardensync.Item{item()}, work.Query{}, nil).Records
 	if work.Drafts([]gardensync.Item{item()}, work.Query{}).Total != 0 || len(rows) != 1 {
 		t.Fatalf("work=%v", rows)
 	}

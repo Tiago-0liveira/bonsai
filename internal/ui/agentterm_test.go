@@ -17,13 +17,13 @@ import (
 )
 
 // runCmds runs a command's non-blocking parts and returns their messages. The
-// frame and input waits are skipped by name: they block on a channel, and one
-// left running would swallow the next chunk a test feeds in.
+// channel waits are skipped by name: running one would block the test or
+// swallow the next event a test feeds in.
 func runCmds(cmd tea.Cmd) []tea.Msg {
 	if cmd == nil {
 		return nil
 	}
-	if name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name(); strings.Contains(name, "tickProc") || strings.Contains(name, "tickPRs") || strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") || strings.Contains(name, "assistTickCmd") || strings.Contains(name, "gardenLocalTickCmd") || strings.Contains(name, "waitAgentsCmd") {
+	if name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name(); strings.Contains(name, "launchOverviewTickCmd") || strings.Contains(name, "launchStopTickCmd") || strings.Contains(name, "handoffTickCmd") || strings.Contains(name, "tickProc") || strings.Contains(name, "tickPRs") || strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") || strings.Contains(name, "assistTickCmd") || strings.Contains(name, "privAssistTickCmd") || strings.Contains(name, "gardenLocalTickCmd") || strings.Contains(name, "waitAgentsCmd") || strings.Contains(name, "pgWaitCmd") {
 		return nil
 	}
 	switch msg := cmd().(type) {

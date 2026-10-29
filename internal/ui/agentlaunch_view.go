@@ -314,6 +314,9 @@ func (d launchDialog) primaryLabel(a agentsapi.Account) (label string, disabled 
 	label = "Start session"
 	if d.planner {
 		label = "Accept read-only and request plan"
+		if d.revise {
+			label = "Accept read-only and revise plan"
+		}
 	}
 	switch {
 	case d.starting:
@@ -344,7 +347,11 @@ func (d launchDialog) footer() string {
 		s = "Tab Next field  Shift+Tab Previous  Ctrl+S Start  Esc Back"
 	}
 	if d.planner {
-		s = strings.ReplaceAll(s, "Start", "Request")
+		verb := "Request"
+		if d.revise {
+			verb = "Send"
+		}
+		s = strings.ReplaceAll(s, "Start", verb)
 	}
 	if d.ascii {
 		s = strings.NewReplacer("↑↓", "j/k", "←→", "h/l").Replace(s)

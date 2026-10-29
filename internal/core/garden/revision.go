@@ -36,6 +36,8 @@ const (
 	CommentRevocation CommentKind = "revocation"
 	// CommentDecision records a reviewer's decision on one plan revision.
 	CommentDecision CommentKind = "decision"
+	// CommentHandoff records the human's verdict on one finished implementation attempt (see HandoffRecord).
+	CommentHandoff CommentKind = "handoff"
 )
 
 // Decision is what a reviewer decided about a plan revision.
@@ -143,6 +145,8 @@ type CommentEnvelope struct {
 	RecordHash            string       `json:"record_hash,omitempty"`
 	Decision              Decision     `json:"decision,omitempty"`
 	Source                string       `json:"source,omitempty"`
+	// Handoff is present for kind handoff only; every other kind rejects it so old readers' records stay unchanged.
+	Handoff *HandoffRecord `json:"handoff,omitempty"`
 }
 
 // VerificationProblem records a comment-log inconsistency without hiding other valid records.
@@ -197,7 +201,7 @@ func EncodeCommentEnvelope(e CommentEnvelope, human string) (string, error) {
 	if e.SchemaVersion == 0 {
 		e.SchemaVersion = SchemaVersion
 	}
-	if e.Kind == CommentApproval || e.Kind == CommentRevocation || e.Kind == CommentDecision {
+	if e.Kind == CommentApproval || e.Kind == CommentRevocation || e.Kind == CommentDecision || e.Kind == CommentHandoff {
 		e.RecordHash = ContentHash(human)
 	}
 	b, err := json.Marshal(e)
@@ -636,6 +640,9 @@ func Verify(identity IssueIdentity, comments []Comment, policy ApprovalPolicy, o
 }
 
 func validEnvelopeFields(e CommentEnvelope) bool {
+	if e.Kind != CommentHandoff && e.Handoff != nil {
+		return false
+	}
 	if e.Source != "" && (e.Kind != CommentDecision || e.Source != "local" && e.Source != "external") {
 		return false
 	}
@@ -668,6 +675,8 @@ func validEnvelopeFields(e CommentEnvelope) bool {
 		return validHash(e.RevisionHash) && e.SourceSpecFingerprint != "" && e.RevisionCommentID > 0 && e.TargetCommentID == 0 && e.RevisionKind == "" && e.ContentHash == "" && e.RecordHash != "" && e.Decision.valid()
 	case CommentRevocation:
 		return e.TargetCommentID > 0 && e.RevisionHash == "" && e.SourceSpecFingerprint == "" && e.RevisionKind == "" && e.ContentHash == "" && e.RecordHash != ""
+	case CommentHandoff:
+		return validHandoffEnvelope(e)
 	default:
 		return false
 	}

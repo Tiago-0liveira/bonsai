@@ -39,3 +39,11 @@ func TestSampleCalls(t *testing.T) {
 		})
 	}
 }
+
+func TestAdvisoryAreaIsOnlyConstraintAndContext(t *testing.T) {
+	for area, want := range map[string]bool{"constraint": true, "context": true, "scope": false, "behavior": false, "acceptance": false, "": false, "other": false} {
+		if got := AdvisoryArea(area); got != want {
+			t.Errorf("AdvisoryArea(%q) = %v", area, got)
+		}
+	}
+}

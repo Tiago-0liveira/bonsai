@@ -110,7 +110,7 @@ func (b *Backend) PublishPlan(ctx context.Context, p gardenapi.PlanPublishPrevie
 	switch {
 	case err == nil:
 		v.State = gardenapi.PlanWriteDone
-		b.markPlanPublished(ctx, pv.AttemptID)
+		b.markPlanPublished(ctx, pv.AttemptID, res.Hash)
 		return v, nil
 	case errors.Is(err, planrev.ErrUnverified):
 		v.State = gardenapi.PlanWriteUnknown
@@ -127,18 +127,23 @@ func (b *Backend) PublishPlan(ctx context.Context, p gardenapi.PlanPublishPrevie
 
 // markPlanPublished lets the board stop flagging a plan that was published. It is a convenience: GitHub is the
 // record, so a failure here changes nothing the user did and is not reported.
-func (b *Backend) markPlanPublished(ctx context.Context, attemptID string) {
+func (b *Backend) markPlanPublished(ctx context.Context, attemptID, revisionHash string) {
 	if b.deps.Plans == nil || attemptID == "" {
 		return
 	}
 	if svc, err := b.planService(); err == nil {
-		_ = svc.MarkPublished(context.WithoutCancel(ctx), attemptID)
+		_ = svc.MarkPublished(context.WithoutCancel(ctx), attemptID, revisionHash)
 	}
 }
 
 // DecidePlan implements gardenapi.Backend.
 func (b *Backend) DecidePlan(ctx context.Context, req gardenapi.PlanDecisionRequest) (gardenapi.PlanDecisionView, error) {
-	gen := b.gen.Add(1)
+	return b.decidePlan(ctx, b.gen.Add(1), req)
+}
+
+// decidePlan is DecidePlan under a generation the caller already took, so a composite action stamps all its
+// replies with one.
+func (b *Backend) decidePlan(ctx context.Context, gen uint64, req gardenapi.PlanDecisionRequest) (gardenapi.PlanDecisionView, error) {
 	svc, err := b.reviewService()
 	if err != nil {
 		return gardenapi.PlanDecisionView{}, apiError(err)
@@ -187,19 +192,8 @@ func (b *Backend) IssueLink(ctx context.Context, issue uint64, open bool) error 
 	if it.ID != garden.IssueID(issue) || it.Repo != t.Repository.ID || it.Number <= 0 {
 		return apiError(garden.ErrInvalidRevision)
 	}
-	parts := strings.Split(t.FullName, "/")
-	if len(parts) != 2 {
+	if !validRepoFullName(t.FullName) {
 		return apiError(garden.ErrInvalidRevision)
-	}
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." {
-			return apiError(garden.ErrInvalidRevision)
-		}
-		for _, r := range part {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
-				return apiError(garden.ErrInvalidRevision)
-			}
-		}
 	}
 	url := fmt.Sprintf("https://github.com/%s/issues/%d", t.FullName, it.Number)
 	if open {
@@ -211,4 +205,23 @@ func (b *Backend) IssueLink(ctx context.Context, issue uint64, open bool) error 
 		return &gardenapi.Error{Code: gardenapi.CodeFailed, Message: "The local Issue link action failed."}
 	}
 	return nil
+}
+
+// validRepoFullName accepts only owner/repo made of characters GitHub allows, so a name can never reshape a URL.
+func validRepoFullName(full string) bool {
+	parts := strings.Split(full, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+		for _, r := range part {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
+				return false
+			}
+		}
+	}
+	return true
 }

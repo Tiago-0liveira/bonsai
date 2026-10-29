@@ -3,6 +3,7 @@ package gardenbackend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,9 +32,19 @@ type stubAgents struct {
 	status  map[string]plan.SessionStatus
 	// statusCalls counts Statuses calls, so a test can prove LocalWork lists sessions once.
 	statusCalls int
+	// startErr makes Start fail; gone lists accounts that no longer exist.
+	startErr error
+	gone     map[agents.AccountID]bool
+	// running makes a started session report "running", as a live holder does.
+	running bool
 }
 
 func (a *stubAgents) Account(_ context.Context, id agents.AccountID) (plan.Account, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.gone[id] {
+		return plan.Account{}, agents.ErrAccountNotFound
+	}
 	switch id {
 	case "claude-acct":
 		return plan.Account{ID: id, Name: "work", Provider: "claude", ReadOnly: agents.ReadOnlySupport{Supported: true, PlanFile: true, Mechanism: "tool allowlist", Allows: []string{"read files"}}}, nil
@@ -46,8 +57,15 @@ func (a *stubAgents) Account(_ context.Context, id agents.AccountID) (plan.Accou
 func (a *stubAgents) Start(_ context.Context, s plan.StartSession) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.startErr != nil {
+		return "", a.startErr
+	}
 	a.started = append(a.started, s)
-	return "sess-1", nil
+	id := fmt.Sprintf("sess-%d", len(a.started))
+	if a.running {
+		a.status[id] = plan.SessionStatus{State: "running"}
+	}
+	return id, nil
 }
 
 func (a *stubAgents) Stop(_ context.Context, id string) error {
