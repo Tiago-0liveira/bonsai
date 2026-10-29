@@ -181,7 +181,7 @@ func (b *Backend) readHandoff(ctx context.Context, issue uint64, attemptID strin
 		// The linked head, not the observed one: a push after acceptance must surface as a changed head
 		// rather than as a different decision.
 		r.identity.PRNumber, r.identity.PRHeadSHA = int64(r.pr.Number), r.pr.HeadSHA
-		r.linkedBase = linkedBase(r.attempt.Proposal.BaseRef)
+		r.linkedBase = linkedBase(r.attempt.Proposal.BaseRef, r.attempt.Proposal.RemoteName)
 	}
 	r.review, r.checks, r.checksAllPassed = reviewSection(r.passes, r.passesErr, r.work.Head)
 	r.derive(b.now())
@@ -309,11 +309,11 @@ func (r *handoffRead) verifyWithoutWorktree() {
 }
 
 // linkedBase mirrors the base publish targets: a plain branch, never a detached commit.
-func linkedBase(ref string) string {
+func linkedBase(ref, remote string) string {
 	if ref == "" || isCommitID(ref) {
 		return ""
 	}
-	return config.BaseBranch(ref)
+	return config.BranchOnRemote(ref, remote)
 }
 
 func isCommitID(s string) bool {
