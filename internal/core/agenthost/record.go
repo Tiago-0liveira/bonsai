@@ -194,8 +194,8 @@ func List(p Paths) ([]Record, error) {
 	return out, nil
 }
 
-// Prune removes abandoned reservations after fencing, and ended sessions beyond
-// the newest 32 or older than a day, with their locks and sockets. Records of
+// Prune closes abandoned reservations, and removes ended sessions beyond the
+// newest 32 or older than a day, with their locks and sockets. Records of
 // running holders are never touched.
 func Prune(p Paths) error {
 	records, err := List(p)
@@ -207,13 +207,10 @@ func Prune(p Paths) error {
 	now := time.Now()
 	for _, r := range records {
 		if abandonedReservation(r, now) {
-			settled, err := settleAbandonedReservation(p, r, now)
-			if err != nil {
+			// Closed, not removed: like any operation receipt it is the proof a
+			// retry needs to tell a settled start from one that never ran.
+			if _, err := settleAbandonedReservation(p, r, now); err != nil {
 				errs = append(errs, err)
-			} else if settled.StartPhase == phaseClosed {
-				// Fence first so a delayed holder refuses even if it already
-				// opened the lifetime lock before the receipt is removed.
-				errs = append(errs, remove(p, r.ID))
 			}
 			continue
 		}

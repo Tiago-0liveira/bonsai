@@ -453,7 +453,7 @@ func TestSettleAbandonedReservationKeepsHolderThatWonLockRace(t *testing.T) {
 	}
 }
 
-func TestPruneAbandonedReservations(t *testing.T) {
+func TestPruneClosesAbandonedReservations(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		creator int
@@ -483,16 +483,19 @@ func TestPruneAbandonedReservations(t *testing.T) {
 			if err := Prune(p); err != nil {
 				t.Fatal(err)
 			}
-			_, err := Read(p, r.ID)
+			got, err := Read(p, r.ID)
+			if err != nil {
+				t.Fatalf("Prune erased receipt: %v", err)
+			}
 			if tc.prune {
-				if !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("abandoned reservation not pruned: %v", err)
+				if got.StartPhase != phaseClosed || got.Summary.Active() {
+					t.Fatalf("abandoned reservation not closed: phase %q state %q", got.StartPhase, got.Summary.State)
 				}
 				if err := claimReservation(p, Spec{Summary: r.Summary, StartHash: r.StartHash}); err == nil {
-					t.Fatal("late holder claimed pruned receipt")
+					t.Fatal("late holder claimed closed receipt")
 				}
-			} else if err != nil {
-				t.Fatalf("live reservation pruned: %v", err)
+			} else if got.StartPhase != phaseReserved {
+				t.Fatalf("live reservation settled: phase %q", got.StartPhase)
 			}
 		})
 	}
