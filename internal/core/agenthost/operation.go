@@ -193,7 +193,7 @@ func (s Starter) StartOperation(ctx context.Context, req OperationStartRequest) 
 	}
 	task := req.Task
 	summary := Summary{ID: id, ProjectID: req.Project, WorktreeID: req.Tree, AccountID: req.AccountID, Provider: account.Provider, ProfileName: account.Name, Name: name, State: "starting", CreatedAt: time.Now().UTC(), Model: launch.Model, Options: launch.Values(), Origin: s.Origin, OperationID: req.OperationID, Task: &task}
-	reserved := Record{Version: RecordVersion, ID: id, Socket: s.Paths.socket(id), Protocol: Version, WorkDir: dir, Summary: summary, StartHash: hash, StartPhase: phaseReserved}
+	reserved := Record{Version: RecordVersion, ID: id, Socket: s.Paths.socket(id), Protocol: Version, WorkDir: dir, Summary: summary, StartHash: hash, StartPhase: phaseReserved, ReservedBy: os.Getpid()}
 	if err := writeRecord(s.Paths, reserved); err != nil {
 		_ = s.Sessions.Cleanup(runtime)
 		return OperationObservation{}, fmt.Errorf("cannot record agent operation: %w", err)
@@ -278,6 +278,10 @@ func (s Starter) admissionRecords() ([]Record, error) {
 		}
 		r, err := Read(s.Paths, id)
 		if err == nil {
+			r, err = settleAbandonedReservation(s.Paths, r, time.Now())
+			if err != nil {
+				return nil, err
+			}
 			out = append(out, r)
 			continue
 		}
@@ -286,6 +290,23 @@ func (s Starter) admissionRecords() ([]Record, error) {
 		}
 	}
 	return out, nil
+}
+
+// settleAbandonedReservation must fence before releasing admission capacity:
+// an apparently absent holder may acquire its lifetime lock after our read.
+func settleAbandonedReservation(p Paths, r Record, now time.Time) (Record, error) {
+	if !abandonedReservation(r, now) {
+		return r, nil
+	}
+	settled, fenced, err := fenceUnheld(p, r.ID, "")
+	if !fenced {
+		// The holder won the race; keep counting the original reservation.
+		return r, nil
+	}
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: cannot fence reservation %s: %w", ErrOperationUnknown, r.ID, err)
+	}
+	return settled, nil
 }
 
 // claimReservation is the holder's first act under its lifetime lock: the
