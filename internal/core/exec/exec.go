@@ -442,11 +442,19 @@ func VarsEnv(vars map[string]string) []string {
 // VarsCommand builds the shell command for text produced by ExpandVarRefs.
 func VarsCommand(ctx context.Context, dir, command string) *exec.Cmd {
 	cmd := shellCommandContext(ctx, command)
-	if hookRefStyle() == refCmd && len(cmd.Args) == 3 {
-		cmd.Args = []string{cmd.Args[0], "/v:on", cmd.Args[1], cmd.Args[2]}
-	}
+	enableDelayedExpansion(cmd, hookRefStyle())
 	cmd.Dir = dir
 	return cmd
+}
+
+var cmdVarRefRE = regexp.MustCompile(`!BONSAI_[A-Z0-9_]+!`)
+
+func enableDelayedExpansion(cmd *exec.Cmd, style refStyle) {
+	if style == refCmd && len(cmd.Args) == 3 && cmdVarRefRE.MatchString(cmd.Args[2]) {
+		// Only generated references need delayed expansion. Commands mixing
+		// substitutions with literal ! still expose those ! to cmd's expansion.
+		cmd.Args = []string{cmd.Args[0], "/v:on", cmd.Args[1], cmd.Args[2]}
+	}
 }
 
 // shellCommand builds an *exec.Cmd using the appropriate shell for the platform.
