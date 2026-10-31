@@ -20,3 +20,9 @@ func killTreeOnCancel(cmd *exec.Cmd) {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
+
+// Git is its session and process-group leader, so this also reaches hooks,
+// credential helpers and transports that inherited its group.
+func terminateTree(pid int) {
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
+}
