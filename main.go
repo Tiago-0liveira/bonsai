@@ -226,7 +226,7 @@ loop:
 	}
 	out.rest = args
 	if len(out.rest) > 0 {
-		if out.cfgPath != "" {
+		if cfgSet {
 			return out, errors.New("--config applies to the TUI only, not subcommands")
 		}
 		if layoutSet {

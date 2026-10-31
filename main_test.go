@@ -55,6 +55,7 @@ func TestParseRootArgs(t *testing.T) {
 		{"duplicate config", []string{"-c", "a.yaml", "--config=b.yaml"}, rootArgs{}, "--config given more than once"},
 		{"layout with subcommand", []string{"--tui-layout", "redesign", "list"}, rootArgs{}, "--tui-layout applies to the TUI only"},
 		{"config with subcommand", []string{"-c", "a.yaml", "list"}, rootArgs{}, "--config applies to the TUI only"},
+		{"empty config with subcommand", []string{"--config=", "list"}, rootArgs{}, "--config applies to the TUI only, not subcommands"},
 	}
 	for _, tc := range tests {
 		got, err := parseRootArgs(tc.args)
