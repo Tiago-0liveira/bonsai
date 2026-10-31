@@ -107,6 +107,7 @@ func TestGitSignals(t *testing.T) {
 		{"serve", []string{"serve"}, nil},
 		{"agents", []string{"agents", "attach"}, nil},
 		{"dev stack", []string{"__serve-dev-stack"}, nil},
+		{"dev webhook", []string{"__dev-webhook"}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

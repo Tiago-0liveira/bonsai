@@ -181,7 +181,7 @@ func gitSignals(args []string) []os.Signal {
 		return []os.Signal{syscall.SIGHUP}
 	}
 	switch args[0] {
-	case "web", "serve", "agents", "__serve-dev-stack":
+	case "web", "serve", "agents", "__serve-dev-stack", "__dev-webhook":
 		return nil
 	default:
 		return []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
