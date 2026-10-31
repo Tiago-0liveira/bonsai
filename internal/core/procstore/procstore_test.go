@@ -31,6 +31,7 @@ func TestRecordRoundTrip(t *testing.T) {
 		Policy:     Policy{Mode: PolicyAlways, MaxRestarts: 5},
 		StartedAt:  time.Now().Truncate(time.Second),
 		StartTicks: 987654,
+		BootID:     "test-boot-id",
 	}
 	if err := s.WriteRecord(r); err != nil {
 		t.Fatal(err)
@@ -42,8 +43,8 @@ func TestRecordRoundTrip(t *testing.T) {
 	if got.Label != "dev" || got.PID != 4242 || got.Policy.Mode != PolicyAlways {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
-	if got.StartTicks != r.StartTicks {
-		t.Fatalf("start ticks round-trip = %d, want %d", got.StartTicks, r.StartTicks)
+	if got.StartTicks != r.StartTicks || got.BootID != r.BootID {
+		t.Fatalf("start identity round-trip = (%d, %q), want (%d, %q)", got.StartTicks, got.BootID, r.StartTicks, r.BootID)
 	}
 	if got.Program != "npm" || got.WorkingDir != "/wt/feat-x/apps/web" || len(got.Args) != 2 || got.Args[1] != "dev;literal" {
 		t.Fatalf("structured command round-trip mismatch: %+v", got)

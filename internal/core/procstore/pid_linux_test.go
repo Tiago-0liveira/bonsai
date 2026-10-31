@@ -3,54 +3,70 @@
 package procstore
 
 import (
-	"os/exec"
 	"testing"
 	"time"
 )
 
-func TestProcessMatchesStartTicks(t *testing.T) {
-	cmd := exec.Command("sleep", "5")
-	startedAt := time.Now()
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
-	pid := cmd.Process.Pid
-	ticks := StartTicks(pid)
-	if ticks == 0 {
-		t.Fatal("live child has no readable start ticks")
+func TestProcessMatchesStartIdentity(t *testing.T) {
+	pid, startedAt := startWaitingChild(t)
+	ticks, bootID := StartIdentity(pid)
+	if ticks == 0 || bootID == "" {
+		t.Fatal("live child has no readable start identity")
 	}
 	tests := []struct {
 		name      string
 		startedAt time.Time
 		ticks     uint64
+		bootID    string
 		want      bool
 	}{
-		{"exact ticks", startedAt, ticks, true},
-		{"clock stepped forward", startedAt.Add(time.Hour), ticks, true},
-		{"clock stepped backward", startedAt.Add(-time.Hour), ticks, true},
-		{"different ticks", startedAt, ticks + 1, false},
-		{"legacy within tolerance", startedAt, 0, true},
-		{"legacy outside tolerance", startedAt.Add(time.Hour), 0, false},
-		{"missing start metadata", time.Time{}, ticks, false},
+		{"exact identity", startedAt, ticks, bootID, true},
+		{"clock stepped forward", startedAt.Add(time.Hour), ticks, bootID, true},
+		{"clock stepped backward", startedAt.Add(-time.Hour), ticks, bootID, true},
+		{"different ticks", startedAt, ticks + 1, bootID, false},
+		{"different boot", startedAt, ticks, bootID + "-other", false},
+		{"legacy within tolerance", startedAt, 0, "", true},
+		{"legacy outside tolerance", startedAt.Add(time.Hour), 0, "", false},
+		{"ticks without boot within tolerance", startedAt, ticks, "", true},
+		{"ticks without boot outside tolerance", startedAt.Add(time.Hour), ticks, "", false},
+		{"ticks without boot ignores ticks", startedAt, ticks + 1, "", true},
+		{"boot without ticks uses legacy", startedAt, 0, bootID + "-other", true},
+		{"missing start metadata", time.Time{}, ticks, bootID, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ProcessMatches(pid, tt.startedAt, tt.ticks, ""); got != tt.want {
+			if got := ProcessMatches(pid, tt.startedAt, tt.ticks, tt.bootID, ""); got != tt.want {
 				t.Fatalf("ProcessMatches = %v, want %v", got, tt.want)
 			}
 		})
 	}
 	for _, pid := range []int{0, -1} {
-		if got := StartTicks(pid); got != 0 {
-			t.Errorf("StartTicks(%d) = %d, want 0", pid, got)
+		if ticks, bootID := StartIdentity(pid); ticks != 0 || bootID != "" {
+			t.Errorf("StartIdentity(%d) = (%d, %q), want (0, empty)", pid, ticks, bootID)
 		}
-		if ProcessMatches(pid, startedAt, ticks, "") {
+		if ProcessMatches(pid, startedAt, ticks, bootID, "") {
 			t.Errorf("PID %d matched without readable metadata", pid)
 		}
+	}
+}
+
+func TestStartIdentityBootIDUnavailable(t *testing.T) {
+	pid, startedAt := startWaitingChild(t)
+	ticks, bootID := StartIdentity(pid)
+	if ticks == 0 || bootID == "" {
+		t.Fatal("live child has no readable start identity")
+	}
+	original := bootIDSource
+	t.Cleanup(func() { bootIDSource = original })
+	bootIDSource = func() string { return "" }
+	if ticks, bootID := StartIdentity(pid); ticks != 0 || bootID != "" {
+		t.Fatalf("StartIdentity = (%d, %q), want (0, empty)", ticks, bootID)
+	}
+	if ProcessMatches(pid, startedAt, ticks, bootID, "") {
+		t.Fatal("matched a boot-scoped identity without a readable current boot ID")
+	}
+	if !ProcessMatches(pid, startedAt, ticks, "", "") {
+		t.Fatal("legacy record did not use the time check when the current boot ID was unreadable")
 	}
 }
 
@@ -92,7 +108,7 @@ func TestProcessMatchesLiveChildFirstInspectedLate(t *testing.T) {
 	}
 	pid, startedAt := startWaitingChild(t)
 	time.Sleep(processStartTolerance + time.Second)
-	if !ProcessMatches(pid, startedAt, 0, "") {
+	if !ProcessMatches(pid, startedAt, 0, "", "") {
 		t.Fatal("live original child classified as lost after a delayed first inspection")
 	}
 }

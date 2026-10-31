@@ -325,7 +325,7 @@ func (c *Client) ListContext(ctx context.Context) ([]*procstore.Record, error) {
 	}
 	for _, r := range recs {
 		if procstore.IsActive(r.Status) || r.Status == procstore.StatusOrphan {
-			if procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.Worktree) {
+			if procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.BootID, r.Worktree) {
 				r.Status = procstore.StatusOrphan
 			} else {
 				r.Status = procstore.StatusLost
@@ -357,7 +357,7 @@ func (c *Client) hasLivePersistedTarget(id int, all bool, worktree string) (bool
 		default:
 			match = r.ID == id
 		}
-		if match && procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.Worktree) {
+		if match && procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.BootID, r.Worktree) {
 			return true, nil
 		}
 	}

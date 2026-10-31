@@ -113,6 +113,7 @@ type Record struct {
 	Restarts       int               `json:"restarts"`
 	StartedAt      time.Time         `json:"started_at"`
 	StartTicks     uint64            `json:"start_ticks,omitempty"`
+	BootID         string            `json:"boot_id,omitempty"`
 	ExitCode       *int              `json:"exit_code,omitempty"`
 	ExitError      string            `json:"exit_error,omitempty"`
 	LastURL        string            `json:"last_url,omitempty"`
@@ -188,6 +189,7 @@ type ServeProcess struct {
 	Required       bool      `json:"required"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
 	StartTicks     uint64    `json:"start_ticks,omitempty"`
+	BootID         string    `json:"boot_id,omitempty"`
 	ExitCode       *int      `json:"exit_code,omitempty"`
 	ExitError      string    `json:"exit_error,omitempty"`
 }

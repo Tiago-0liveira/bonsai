@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,17 +17,37 @@ import (
 // reachable without cgo.
 const userHZ = 100
 
+var (
+	bootIDOnce   sync.Once
+	cachedBootID string
+	bootIDSource = currentBootID
+)
+
+func currentBootID() string {
+	bootIDOnce.Do(func() {
+		data, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+		if err == nil {
+			cachedBootID = strings.TrimSpace(string(data))
+		}
+	})
+	return cachedBootID
+}
+
 // ProcessMatches reports whether pid is alive and still names the managed child.
 // Kernel start ticks in /proc/<pid>/stat are fixed for the process's lifetime,
 // so they detect PID reuse without wall-clock steps changing its identity.
-// Older records lack ticks and fall back to a wall-clock start comparison.
+// Ticks can repeat after a reboot, so the boot ID must also match.
+// Older records lacking either field fall back to a wall-clock start comparison.
 // The working directory is deliberately not part of identity: a valid managed
 // command may chdir after launch. Without readable metadata it fails closed.
-func ProcessMatches(pid int, startedAt time.Time, startTicks uint64, _ string) bool {
+func ProcessMatches(pid int, startedAt time.Time, startTicks uint64, bootID string, _ string) bool {
 	if !PidAlive(pid) || startedAt.IsZero() {
 		return false
 	}
-	if startTicks != 0 {
+	if startTicks != 0 && bootID != "" {
+		if current := bootIDSource(); current == "" || current != bootID {
+			return false
+		}
 		ticks, err := processStartTicks(pid)
 		return err == nil && ticks == startTicks
 	}
@@ -38,10 +59,17 @@ func ProcessMatches(pid int, startedAt time.Time, startTicks uint64, _ string) b
 	return diff >= -processStartTolerance && diff <= processStartTolerance
 }
 
-// StartTicks returns the kernel's process start ticks, or 0 if unavailable.
-func StartTicks(pid int) uint64 {
-	ticks, _ := processStartTicks(pid)
-	return ticks
+// StartIdentity returns a boot-scoped kernel identity, or (0, "") if either part is unavailable.
+func StartIdentity(pid int) (ticks uint64, bootID string) {
+	ticks, err := processStartTicks(pid)
+	if err != nil || ticks == 0 {
+		return 0, ""
+	}
+	bootID = bootIDSource()
+	if bootID == "" {
+		return 0, ""
+	}
+	return ticks, bootID
 }
 
 func processStartTicks(pid int) (uint64, error) {
