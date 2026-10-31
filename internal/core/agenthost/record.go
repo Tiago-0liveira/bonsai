@@ -28,6 +28,11 @@ const (
 // LostError is the error of a session whose holder died without recording its end.
 const LostError = "Agent host exited unexpectedly."
 
+// reservationTTL gives even a live or reused creator PID ample time to fork
+// and claim: Launch waits five seconds for readiness, well below two minutes.
+// Legacy receipts without a creator PID can only be recovered after this TTL.
+const reservationTTL = 2 * time.Minute
+
 // Record is a holder's state on disk, rewritten on every change. It never
 // holds the prompt or terminal output.
 type Record struct {
@@ -45,8 +50,15 @@ type Record struct {
 	// (see StartOperation). The hash binds the request without its prompt.
 	StartHash  string `json:"start_hash,omitempty"`
 	StartPhase string `json:"start_phase,omitempty"` // reserved|claimed|acknowledged|closed
+	// ReservedBy identifies the creator while the holder is still forking.
+	ReservedBy int `json:"reserved_by,omitempty"`
 	// Alive is whether the holder still runs, filled in by List.
 	Alive bool `json:"-"`
+}
+
+func abandonedReservation(r Record, now time.Time) bool {
+	return r.StartPhase == phaseReserved && !r.Alive &&
+		(r.ReservedBy != 0 && !procstore.PidAlive(r.ReservedBy) || now.Sub(r.Summary.CreatedAt) > reservationTTL)
 }
 
 // Paths locate holder records and sockets.
@@ -182,16 +194,29 @@ func List(p Paths) ([]Record, error) {
 	return out, nil
 }
 
-// Prune removes the records of ended sessions beyond the newest 32 and those
-// older than a day, with their locks and sockets. Records of running holders
-// are never touched.
+// Prune removes abandoned reservations after fencing, and ended sessions beyond
+// the newest 32 or older than a day, with their locks and sockets. Records of
+// running holders are never touched.
 func Prune(p Paths) error {
 	records, err := List(p)
 	if err != nil {
 		return err
 	}
 	var ended []Record
+	var errs []error
+	now := time.Now()
 	for _, r := range records {
+		if abandonedReservation(r, now) {
+			settled, err := settleAbandonedReservation(p, r, now)
+			if err != nil {
+				errs = append(errs, err)
+			} else if settled.StartPhase == phaseClosed {
+				// Fence first so a delayed holder refuses even if it already
+				// opened the lifetime lock before the receipt is removed.
+				errs = append(errs, remove(p, r.ID))
+			}
+			continue
+		}
 		// Operation receipts and tombstones are the only proof a retry needs to
 		// tell a closed start from an absent one, so ordinary pruning keeps them.
 		if r.StartHash != "" {
@@ -202,7 +227,6 @@ func Prune(p Paths) error {
 		}
 	}
 	cutoff := time.Now().Add(-keepEndedAt)
-	var errs []error
 	for i, r := range ended {
 		at := r.Summary.CreatedAt
 		if r.Summary.EndedAt != nil {

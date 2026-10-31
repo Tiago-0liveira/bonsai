@@ -62,6 +62,12 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (_ Record, startEr
 	if err != nil {
 		return Record{}, fmt.Errorf("cannot list agent sessions")
 	}
+	for i, r := range records {
+		records[i], err = settleAbandonedReservation(s.Paths, r, time.Now())
+		if err != nil {
+			return Record{}, err
+		}
+	}
 	if err := checkAdmission(records, account, req.AccountID, capabilities); err != nil {
 		return Record{}, err
 	}

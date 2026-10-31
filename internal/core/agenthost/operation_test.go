@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -42,7 +43,7 @@ func TestOperationReservationPrecedesLauncherAndFailureRetainsReceipt(t *testing
 			t.Fatal("prompt on disk")
 		}
 		r, err := Read(p, string(req.SessionID))
-		if err != nil || r.StartPhase != "reserved" || r.StartHash == "" || spec.StartHash != r.StartHash || r.Summary.OperationID != req.OperationID || r.Summary.Task == nil || *r.Summary.Task != req.Task || r.WorkDir != req.Dir || r.Summary.Origin != "tui" {
+		if err != nil || r.StartPhase != "reserved" || r.ReservedBy != os.Getpid() || r.StartHash == "" || spec.StartHash != r.StartHash || r.Summary.OperationID != req.OperationID || r.Summary.Task == nil || *r.Summary.Task != req.Task || r.WorkDir != req.Dir || r.Summary.Origin != "tui" {
 			t.Fatalf("reservation=%+v spec=%+v err=%v", r, spec, err)
 		}
 		return context.DeadlineExceeded
@@ -343,5 +344,156 @@ func fakeLaunchOperationReceive[T any](t *testing.T, ch <-chan T) T {
 		t.Fatal("timed out waiting for operation synchronization")
 		var zero T
 		return zero
+	}
+}
+
+func deadReservationPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
+}
+
+func TestAdmissionSettlesAbandonedReservations(t *testing.T) {
+	deadPID := deadReservationPID(t)
+	for _, operation := range []bool{false, true} {
+		for _, tc := range []struct {
+			name    string
+			creator int
+			age     time.Duration
+			held    bool
+			busy    bool
+		}{
+			{name: "dead creator", creator: deadPID},
+			{name: "live creator", creator: os.Getpid(), busy: true},
+			{name: "legacy expired", age: reservationTTL + time.Second},
+			{name: "legacy fresh", busy: true},
+			{name: "live creator expired", creator: os.Getpid(), age: reservationTTL + time.Second},
+			{name: "holder claimed lock", creator: deadPID, age: reservationTTL + time.Second, held: true, busy: true},
+		} {
+			t.Run(fmt.Sprintf("operation=%t/%s", operation, tc.name), func(t *testing.T) {
+				s, _, account := testStarter(t, "cat", agents.Capabilities{Interactive: true})
+				if err := s.Paths.ensure(); err != nil {
+					t.Fatal(err)
+				}
+				r := Record{Version: RecordVersion, ID: "sess_aba", StartHash: "hash", StartPhase: phaseReserved, ReservedBy: tc.creator,
+					Summary: Summary{ID: "sess_aba", AccountID: account, Provider: testProviderID, State: "starting", CreatedAt: time.Now().Add(-tc.age)}}
+				if err := writeRecord(s.Paths, r); err != nil {
+					t.Fatal(err)
+				}
+				if tc.held {
+					lock, err := lockFile(s.Paths.lock(r.ID))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer lock.Close()
+				}
+				launchReached := errors.New("admitted to launcher")
+				s.Launch = func(context.Context, Paths, Spec) error { return launchReached }
+				req := fakeLaunchOperationRequest(t, account)
+				var err error
+				if operation {
+					_, err = s.StartOperation(t.Context(), req)
+				} else {
+					_, err = s.Start(t.Context(), req.StartRequest)
+				}
+				want := launchReached
+				if tc.busy {
+					want = agents.ErrAccountBusy
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("start error = %v, want %v", err, want)
+				}
+				settled, err := Read(s.Paths, r.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.busy {
+					if settled.StartPhase != phaseReserved {
+						t.Fatalf("live reservation settled: %+v", settled)
+					}
+				} else {
+					if settled.StartPhase != phaseClosed || settled.Summary.Active() {
+						t.Fatalf("abandoned reservation not closed: %+v", settled)
+					}
+					lock, err := lockFile(s.Paths.lock(r.ID))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer lock.Close()
+					if err := claimReservation(s.Paths, Spec{Summary: r.Summary, StartHash: r.StartHash}); err == nil {
+						t.Fatal("late holder claimed a fenced reservation")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSettleAbandonedReservationKeepsHolderThatWonLockRace(t *testing.T) {
+	p := Paths{Records: t.TempDir(), Sockets: t.TempDir()}
+	r := Record{ID: "sess_aba", StartHash: "hash", StartPhase: phaseReserved, Summary: Summary{State: "starting", CreatedAt: time.Now().Add(-2 * reservationTTL)}}
+	if err := writeRecord(p, r); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockFile(p.lock(r.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	// The stale read says unheld, but the holder acquired the lock before fencing.
+	settled, err := settleAbandonedReservation(p, r, time.Now())
+	if err != nil || settled.StartPhase != phaseReserved {
+		t.Fatalf("settled = %+v, err = %v", settled, err)
+	}
+	if err := checkAdmission([]Record{settled}, agents.Account{}, "", agents.Capabilities{}); !errors.Is(err, agents.ErrAccountBusy) {
+		t.Fatalf("racing holder no longer counts: %v", err)
+	}
+}
+
+func TestPruneAbandonedReservations(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		creator int
+		age     time.Duration
+		held    bool
+		prune   bool
+	}{
+		{name: "dead creator", creator: deadReservationPID(t), prune: true},
+		{name: "legacy expired", age: reservationTTL + time.Second, prune: true},
+		{name: "live creator", creator: os.Getpid()},
+		{name: "legacy fresh"},
+		{name: "held", age: reservationTTL + time.Second, held: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Paths{Records: t.TempDir(), Sockets: t.TempDir()}
+			r := Record{ID: "sess_aba", StartHash: "hash", StartPhase: phaseReserved, ReservedBy: tc.creator, Summary: Summary{ID: "sess_aba", State: "starting", CreatedAt: time.Now().Add(-tc.age)}}
+			if err := writeRecord(p, r); err != nil {
+				t.Fatal(err)
+			}
+			if tc.held {
+				lock, err := lockFile(p.lock(r.ID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+			}
+			if err := Prune(p); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Read(p, r.ID)
+			if tc.prune {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("abandoned reservation not pruned: %v", err)
+				}
+				if err := claimReservation(p, Spec{Summary: r.Summary, StartHash: r.StartHash}); err == nil {
+					t.Fatal("late holder claimed pruned receipt")
+				}
+			} else if err != nil {
+				t.Fatalf("live reservation pruned: %v", err)
+			}
+		})
 	}
 }

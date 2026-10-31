@@ -1,6 +1,9 @@
 package codex
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -287,37 +290,111 @@ func TestPrepareSessionWithoutUsableActivityTouchesNoHooks(t *testing.T) {
 }
 
 // Hooks are an upgrade: whatever goes wrong while installing or trusting them,
-// the session starts, with the terminal fallback, and nothing is recorded as
-// trusted.
+// the session starts with the terminal fallback. A failed trust attempt is
+// cached so the next launch does not pay the same delay.
 func TestPrepareSessionStartsWhenHookTrustFails(t *testing.T) {
 	for _, mode := range []string{"error", "exit", "exit-after-init", "hang"} {
 		t.Run(mode, func(t *testing.T) {
-			old := appServerTimeout
+			old, oldTrust := appServerTimeout, hookTrustTimeout
 			appServerTimeout = 2 * time.Second
-			t.Cleanup(func() { appServerTimeout = old })
+			hookTrustTimeout = 400 * time.Millisecond
+			t.Cleanup(func() { appServerTimeout, hookTrustTimeout = old, oldTrust })
 			e := newTestEnv(t)
 			work := e.addLogin("work")
 			t.Setenv("FAKE_CODEX_APPSERVER", mode)
 
+			started := time.Now()
 			prepared := e.prepareActivity(work, e.activityRequest("/opt/bonsai"))
+			if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+				t.Fatalf("hook trust delayed launch for %v", elapsed)
+			}
 
 			if !containsArg(prepared.Args, `tui.notification_method="osc9"`) || prepared.EnvSet[agents.ActivityEnv] == "" {
 				t.Fatalf("terminal fallback missing: %q", prepared.Args)
 			}
-			if _, err := os.Stat(trustRecordPath(e.accounts, work)); !os.IsNotExist(err) {
-				t.Fatalf("trust record written after a failure: %v", err)
+			path := trustRecordPath(e.accounts, work)
+			record := readTrustRecord(path)
+			if record.Fingerprint != "" || record.FailedFingerprint == "" || record.FailedAt.IsZero() {
+				t.Fatalf("failure not cached: %+v", record)
 			}
 			if len(e.configWrites()) != 0 {
 				t.Fatalf("config written: %v", e.configWrites())
 			}
 
-			// The next launch tries again.
+			// Even a working app-server is skipped until this failure expires.
 			t.Setenv("FAKE_CODEX_APPSERVER", "")
+			e.prepareActivity(work, e.activityRequest("/opt/bonsai"))
+			if e.spawns() != 1 {
+				t.Fatalf("cached failure spawned another app-server: %d", e.spawns())
+			}
+			if err := e.provider.ensureHookTrust(t.Context(), work, prepared.Executable); err == nil {
+				t.Fatal("cached failure returned success")
+			}
+			if e.spawns() != 1 {
+				t.Fatalf("cached error spawned another app-server: %d", e.spawns())
+			}
+			record.FailedAt = time.Now().Add(-hookTrustFailureTTL - time.Second)
+			data, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writePrivateFile(path, data); err != nil {
+				t.Fatal(err)
+			}
+			// Only the hanging attempt needs a shortened deadline. A successful
+			// fake exchange launches several tools and needs its normal budget
+			// when other package tests are competing for CPU.
+			hookTrustTimeout, appServerTimeout = oldTrust, old
 			e.prepareActivity(work, e.activityRequest("/opt/bonsai"))
 			if len(e.trustedHashes(work)) != len(hookEvents) {
 				t.Fatalf("not trusted on retry: %v", e.trustedHashes(work))
 			}
+			record = readTrustRecord(path)
+			if e.spawns() != 2 || record.Fingerprint == "" || record.FailedFingerprint != "" || !record.FailedAt.IsZero() {
+				t.Fatalf("successful retry did not clear failure: %+v, spawns=%d", record, e.spawns())
+			}
+			data, err = os.ReadFile(path)
+			if err != nil || strings.Contains(string(data), "failed_") {
+				t.Fatalf("failure fields persisted after success: %s, %v", data, err)
+			}
 		})
+	}
+}
+
+func TestHookTrustChangedFingerprintRetriesCachedFailure(t *testing.T) {
+	e := newTestEnv(t)
+	work := e.addLogin("work")
+	t.Setenv("FAKE_CODEX_APPSERVER", "error")
+	e.prepareActivity(work, e.activityRequest("/opt/bonsai"))
+	if record := readTrustRecord(trustRecordPath(e.accounts, work)); record.FailedFingerprint == "" {
+		t.Fatal("failure not cached")
+	}
+	t.Setenv("FAKE_CODEX_APPSERVER", "")
+	e.prepareActivity(work, e.activityRequest("/opt/bonsai-2"))
+	record := readTrustRecord(trustRecordPath(e.accounts, work))
+	if e.spawns() != 2 || record.Fingerprint == "" || record.FailedFingerprint != "" || !record.FailedAt.IsZero() {
+		t.Fatalf("changed hooks did not retry and clear failure: %+v, spawns=%d", record, e.spawns())
+	}
+}
+
+func TestActivityHooksLockWaitHasSeparateShortBudget(t *testing.T) {
+	e := newTestEnv(t)
+	work := e.addLogin("work")
+	old := hookFileTimeout
+	hookFileTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { hookFileTimeout = old })
+	lock, err := agents.LockFileContext(t.Context(), hooksLockPath(e.accounts, work))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Unlock()
+	started := time.Now()
+	err = e.provider.installActivityHooks(t.Context(), work, e.activityRequest("/opt/bonsai"), "unused")
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > time.Second {
+		t.Fatalf("lock wait = %v, err = %v", time.Since(started), err)
+	}
+	if e.spawns() != 0 {
+		t.Fatal("app-server started without hooks lock")
 	}
 }
 

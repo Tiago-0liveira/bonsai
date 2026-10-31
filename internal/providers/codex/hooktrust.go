@@ -26,9 +26,17 @@ import (
 // formats stay Codex's business, and nothing here uses
 // --dangerously-bypass-hook-trust, which would run untrusted hooks too.
 
-// hookSetupTimeout bounds the whole install-and-trust step of a launch, lock
-// wait included.
-const hookSetupTimeout = 30 * time.Second
+// Hooks are optional, so neither lock contention nor an unresponsive
+// app-server should hold up a session for long. Separate budgets keep the
+// trust exchange independent of time already spent waiting for the file lock.
+// Variables let tests exercise deadlines without waiting seconds.
+var (
+	hookFileTimeout  = 3 * time.Second
+	hookTrustTimeout = 5 * time.Second
+)
+
+// A failing Codex version should not delay every launch until it is upgraded.
+const hookTrustFailureTTL = time.Hour
 
 const trustedStatus = "trusted"
 
@@ -52,7 +60,9 @@ type trustRecord struct {
 	// file's content and the Codex binary.
 	Fingerprint string `json:"fingerprint"`
 	// Hashes maps a hook key to the hash that was trusted.
-	Hashes map[string]string `json:"hashes"`
+	Hashes            map[string]string `json:"hashes"`
+	FailedFingerprint string            `json:"failed_fingerprint,omitempty"`
+	FailedAt          time.Time         `json:"failed_at,omitempty,omitzero"`
 }
 
 // installActivityHooks makes the profile run Bonsai's hooks: it upserts them
@@ -60,16 +70,23 @@ type trustRecord struct {
 // because concurrent sessions of an account share the file. Any failure is the
 // caller's to ignore: the session then reports activity from its terminal only.
 func (p *Provider) installActivityHooks(ctx context.Context, account agents.Account, request *agents.ActivityRequest, executable string) error {
-	ctx, cancel := context.WithTimeout(ctx, hookSetupTimeout)
+	fileCtx, cancel := context.WithTimeout(ctx, hookFileTimeout)
 	defer cancel()
-	lock, err := agents.LockFileContext(ctx, hooksLockPath(p.accounts, account))
+	lock, err := agents.LockFileContext(fileCtx, hooksLockPath(p.accounts, account))
 	if err != nil {
 		return err
 	}
 	defer lock.Unlock()
+	if err := fileCtx.Err(); err != nil {
+		return err
+	}
 	if err := writeActivityHooks(homeDir(p.accounts, account), request); err != nil {
 		return err
 	}
+	if err := fileCtx.Err(); err != nil {
+		return err
+	}
+	cancel()
 	return p.ensureHookTrust(ctx, account, executable)
 }
 
@@ -83,9 +100,16 @@ func (p *Provider) ensureHookTrust(ctx context.Context, account agents.Account, 
 		return err
 	}
 	recordPath := trustRecordPath(p.accounts, account)
-	if record := readTrustRecord(recordPath); record.Fingerprint == fingerprint && configTrusts(home, record.Hashes) {
+	record := readTrustRecord(recordPath)
+	if record.FailedFingerprint == fingerprint && !record.FailedAt.IsZero() && time.Since(record.FailedAt) < hookTrustFailureTTL {
+		return errors.New("codex hook trust recently failed for this fingerprint")
+	}
+	if record.Fingerprint == fingerprint && configTrusts(home, record.Hashes) {
 		return nil
 	}
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, hookTrustTimeout)
+	defer cancel()
 	hashes := map[string]string{}
 	err = p.withAppServer(ctx, account, func(ctx context.Context, conn *rpcConn) error {
 		result, err := conn.call(ctx, "hooks/list", map[string]any{})
@@ -117,8 +141,17 @@ func (p *Provider) ensureHookTrust(ctx context.Context, account agents.Account, 
 		})
 		return err
 	})
-	if err != nil {
+	// A launch the caller abandoned says nothing about this Codex version.
+	if err != nil && parent.Err() != nil {
 		return err
+	}
+	if err != nil {
+		record.FailedFingerprint, record.FailedAt = fingerprint, time.Now().UTC()
+		data, marshalErr := json.Marshal(record)
+		if marshalErr != nil {
+			return errors.Join(err, marshalErr)
+		}
+		return errors.Join(err, writePrivateFile(recordPath, data))
 	}
 	data, err := json.Marshal(trustRecord{Fingerprint: fingerprint, Hashes: hashes})
 	if err != nil {
