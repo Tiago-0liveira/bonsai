@@ -117,6 +117,9 @@ type State struct {
 	mu   sync.Mutex `json:"-"`
 	path string     `json:"-"`
 
+	// Keep the merge base aligned with the caller's working copy, not adopted disk edits.
+	prefsBase Prefs `json:"-"`
+
 	// Generations keep late async writes from replacing newer preferences or views.
 	prefsGen  uint64 `json:"-"`
 	wsGen     uint64 `json:"-"`
@@ -223,6 +226,7 @@ func LoadState() (*State, error) {
 		return nil, err
 	}
 	st.path = p
+	st.prefsBase = st.Prefs.Clone()
 	return st, nil
 }
 
@@ -426,14 +430,18 @@ func (s *State) persistLocked(update func(d *stateDisk) bool) error {
 
 	d := s.diskLocked()
 	if data, err := os.ReadFile(s.path); err == nil {
-		if latest, err := decodeState(data); err == nil {
-			d = latest.diskLocked()
-			s.extra, s.extraPrefs = latest.extra, latest.extraPrefs
-			s.autoReviewPreserved = latest.autoReviewPreserved
+		latest, err := decodeState(data)
+		if err != nil {
+			return fmt.Errorf("parse state: %w", err)
 		}
+		d = latest.diskLocked()
+		s.extra, s.extraPrefs = latest.extra, latest.extraPrefs
+		s.autoReviewPreserved = latest.autoReviewPreserved
 	} else if os.IsNotExist(err) {
 		s.extra, s.extraPrefs = nil, nil
 		s.autoReviewPreserved = false
+	} else {
+		return fmt.Errorf("read state: %w", err)
 	}
 	if d.CopyCounts == nil {
 		d.CopyCounts = map[string]int{}
@@ -460,10 +468,14 @@ func (s *State) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.persistLocked(func(d *stateDisk) bool {
+	if err := s.persistLocked(func(d *stateDisk) bool {
 		*d = s.diskLocked()
 		return true
-	})
+	}); err != nil {
+		return err
+	}
+	s.prefsBase = s.Prefs.Clone()
+	return nil
 }
 
 // RecordCopy increments the copy frequency for relPath and persists.
@@ -577,10 +589,10 @@ func (s *State) PersistPrefs(gen uint64, p Prefs) error {
 	return nil
 }
 
-// persistPrefsLocked compares against this process's snapshot so unchanged
+// persistPrefsLocked compares against this process's last submitted preferences so unchanged
 // fields retain concurrent edits. Each top-level field is one preference choice.
 func (s *State) persistPrefsLocked(p Prefs) error {
-	base, mine := s.Prefs.Clone(), p.Clone()
+	base, mine := s.prefsBase.Clone(), p.Clone()
 	var policyErr error
 	err := s.persistLocked(func(d *stateDisk) bool {
 		// The policy may have been upgraded since this process loaded it.
@@ -600,7 +612,11 @@ func (s *State) persistPrefsLocked(p Prefs) error {
 	if err != nil {
 		return err
 	}
-	return policyErr
+	if policyErr != nil {
+		return policyErr
+	}
+	s.prefsBase = mine.Clone()
+	return nil
 }
 
 // LastWorkspace returns the remembered workspace for repoDir ("" if none).

@@ -82,7 +82,79 @@ func TestPrefsMergeConcurrentFields(t *testing.T) {
 					t.Fatalf("merged prefs = %+v", got)
 				}
 			}
+			// The caller keeps editing its original working copy after a save.
+			mine.Contrast = "flat"
+			if err := tc.write(b, mine); err != nil {
+				t.Fatal(err)
+			}
+			reloaded, err = LoadState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range []Prefs{b.PrefsSnapshot(), reloaded.PrefsSnapshot()} {
+				if got.Theme != "nord" || got.Density != "compact" || got.Contrast != "flat" {
+					t.Fatalf("merged prefs after second edit = %+v", got)
+				}
+			}
 		})
+	}
+}
+
+func TestRecordCopyRejectsInvalidDiskState(t *testing.T) {
+	for _, body := range []string{
+		`{"copy_counts":"x","prefs":{"theme":"sakura","future_pref":42},"future_top":true}`,
+		`{not json`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			path := stateEnv(t)
+			writeState(t, path, `{"copy_counts":{"file":2},"prefs":{"theme":"bonsai"}}`)
+			st, err := LoadState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeState(t, path, body)
+			if err := st.RecordCopy("file"); err == nil || !strings.Contains(err.Error(), "parse state:") || errors.Unwrap(err) == nil {
+				t.Errorf("RecordCopy error = %v, want wrapped parse state error", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != body {
+				t.Errorf("invalid state overwritten: %s", data)
+			}
+			if got := st.CopyRank("file"); got != 2 {
+				t.Errorf("in-memory copy count = %d, want 2", got)
+			}
+		})
+	}
+}
+
+func TestRecordCopyRejectsUnreadableDiskState(t *testing.T) {
+	path := stateEnv(t)
+	writeState(t, path, `{"copy_counts":{"file":2}}`)
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory produces a read error even when tests run with elevated permissions.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = st.RecordCopy("file")
+	var pathErr *os.PathError
+	if err == nil || !strings.Contains(err.Error(), "read state:") || !errors.As(err, &pathErr) {
+		t.Fatalf("RecordCopy error = %v, want wrapped read state error", err)
+	}
+	if got := st.CopyRank("file"); got != 2 {
+		t.Fatalf("in-memory copy count = %d, want 2", got)
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("unreadable state replaced: %v", err)
 	}
 }
 
@@ -191,6 +263,32 @@ func TestSaveReplacesKnownFields(t *testing.T) {
 	}
 	if got.CopyRank("old") != 1 || got.CopyRank("new") != 0 || got.PrefsSnapshot().Theme != "bonsai" || got.PrefsSnapshot().Density != "" {
 		t.Fatalf("Save merged instead of replacing: %+v", got.diskLocked())
+	}
+}
+
+func TestSaveResetsPrefsMergeBase(t *testing.T) {
+	path := stateEnv(t)
+	writeState(t, path, `{"prefs":{"theme":"bonsai"}}`)
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Prefs.Theme = "nord"
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+	mine := st.PrefsSnapshot()
+	writeState(t, path, `{"prefs":{"theme":"sakura"}}`)
+	mine.Density = "compact"
+	if err := st.PersistPrefs(1, mine); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.PrefsSnapshot(); got.Theme != "sakura" || got.Density != "compact" {
+		t.Fatalf("merged prefs after Save = %+v", got)
 	}
 }
 
