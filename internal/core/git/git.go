@@ -4,6 +4,7 @@ package git
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -102,14 +103,29 @@ func runContext(parent context.Context, dir string, isolate bool, args ...string
 		env = kept
 	}
 	cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "LC_ALL=C")
-	out, err := cmd.CombinedOutput()
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	// Serialize Start and registration with termination so a signal cannot
+	// miss a process that has started but is not yet in the registry.
+	activeGit.Lock()
+	err := cmd.Start()
+	if err == nil {
+		activeGit.pids[cmd.Process.Pid] = struct{}{}
+	}
+	activeGit.Unlock()
+	if err == nil {
+		err = cmd.Wait()
+		activeGit.Lock()
+		delete(activeGit.pids, cmd.Process.Pid)
+		activeGit.Unlock()
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(out.String()))
 	}
-	return string(out), nil
+	return out.String(), nil
 }
 
 // RepoRoot returns the top-level directory of the git repo containing dir. Note

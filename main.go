@@ -25,6 +25,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
+	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
 	"github.com/Tiago-0liveira/bonsai/internal/gardenbackend"
@@ -117,7 +118,10 @@ func main() {
 	if len(args) > 0 {
 		switch args[0] {
 		case "--version", "-v", "version", "--update", "-u", "update":
-			if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
+			stop := handleGitSignals(args)
+			err := cli.Run(args, os.Stdout, os.Stderr)
+			stop()
+			if err != nil {
 				fmt.Fprintln(os.Stderr, "bonsai:", err)
 				os.Exit(1)
 			}
@@ -152,15 +156,68 @@ func main() {
 	// Any remaining argument selects a non-interactive subcommand; bare
 	// invocation runs the TUI.
 	if len(args) > 0 {
-		if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
+		stop := handleGitSignals(args)
+		err := cli.Run(args, os.Stdout, os.Stderr)
+		stop()
+		if err != nil {
 			exitWith(err)
 		}
 		return
 	}
 
-	if err := run(cfgPath, root.layout); err != nil {
+	stop := handleGitSignals(nil)
+	err = run(cfgPath, root.layout)
+	stop()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "bonsai:", err)
 		os.Exit(1)
+	}
+}
+
+// gitSignals leaves commands with their own shutdown or terminal cleanup in
+// control. Bubble Tea owns INT/TERM in the root TUI; only HUP is handled here.
+func gitSignals(args []string) []os.Signal {
+	if len(args) == 0 {
+		return []os.Signal{syscall.SIGHUP}
+	}
+	switch args[0] {
+	case "web", "serve", "agents", "__serve-dev-stack":
+		return nil
+	default:
+		return []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+	}
+}
+
+func handleGitSignals(args []string) func() {
+	signals := gitSignals(args)
+	if len(signals) == 0 {
+		return func() {}
+	}
+	ch := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	signal.Notify(ch, signals...)
+	go func() {
+		defer close(stopped)
+		var sig os.Signal
+		select {
+		case sig = <-ch:
+		case <-done:
+			// A signal already delivered must win over a Git error or
+			// successful return racing with shutdown.
+			select {
+			case sig = <-ch:
+			default:
+				return
+			}
+		}
+		coregit.TerminateActive()
+		os.Exit(128 + int(sig.(syscall.Signal)))
+	}()
+	return func() {
+		signal.Stop(ch)
+		close(done)
+		<-stopped
 	}
 }
 

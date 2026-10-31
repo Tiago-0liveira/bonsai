@@ -14,7 +14,11 @@ func killTreeOnCancel(cmd *exec.Cmd) {
 		if cmd.Process == nil {
 			return nil
 		}
-		_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+		terminateTree(cmd.Process.Pid)
 		return cmd.Process.Kill()
 	}
+}
+
+func terminateTree(pid int) {
+	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
 }
