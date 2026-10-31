@@ -21,6 +21,7 @@ func gardenEnv(t *testing.T, fb gardenapi.Backend, prefs config.Prefs, w, h int)
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	t.Cleanup(func() {
 		theme.Current = theme.Resolve("bonsai", nil)
 		applyTheme()
@@ -908,6 +909,7 @@ func TestGardenShowsLoadingLineWhileStatusIsInFlight(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	st, err := config.LoadState()
 	if err != nil {
 		t.Fatal(err)

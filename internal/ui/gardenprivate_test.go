@@ -93,6 +93,7 @@ func newPrivEnv(t *testing.T) privEnv {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	t.Cleanup(func() {
 		theme.Current = theme.Resolve("bonsai", nil)
 		applyTheme()
@@ -741,7 +742,10 @@ func TestPrivateStateFileHoldsNoText(t *testing.T) {
 	m := e.open(t, pb, 120, 35)
 	m = ptick(t, ptype(t, pk(t, m, "n"), "secret idea text"))
 	m = pk(t, m, "tab", "enter", "esc", "esc")
-	cfg := os.Getenv("XDG_CONFIG_HOME")
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, err := os.ReadFile(filepath.Join(cfg, "bonsai", "state.json"))
 	if err != nil {
 		t.Skipf("no state file: %v", err)

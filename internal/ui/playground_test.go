@@ -280,6 +280,7 @@ func newPgEnv(t *testing.T, w, h int, opts ...Option) *pgEnv {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -760,6 +761,7 @@ func TestPlaygroundPaletteEntries(t *testing.T) {
 func TestPlaygroundStartsOnPlaygroundLoadsFromInit(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	repo := t.TempDir()
 	fb := fake.New()
 	st, err := config.LoadState()
@@ -783,6 +785,7 @@ func TestPlaygroundStartsOnPlaygroundLoadsFromInit(t *testing.T) {
 func TestPlaygroundUnavailableWithoutAgents(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	st, _ := config.LoadState()
 	m := sized(t, New(t.TempDir(), &config.Config{}, st, WithLayout(LayoutRedesign)), 80, 24)
 	m, _ = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2"), Alt: true})

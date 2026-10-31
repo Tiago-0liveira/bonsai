@@ -58,6 +58,7 @@ func plannerEnv(t *testing.T, w, h int) (Model, plannerRig) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	t.Cleanup(func() {
 		theme.Current = theme.Resolve("bonsai", nil)
 		applyTheme()

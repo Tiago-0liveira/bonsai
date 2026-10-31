@@ -364,6 +364,7 @@ func TestAccountsWorkspaceLifecycleUsesOnlyExplicitCommands(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	for _, flow := range []string{"add", "login"} {
 		t.Run(flow, func(t *testing.T) {
 			// The sentinel is inspected, never executed; no external binary is needed.

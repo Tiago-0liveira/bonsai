@@ -387,6 +387,7 @@ func TestPlaygroundVersionMismatchAndUnsupportedAreClear(t *testing.T) {
 
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	st, _ := config.LoadState()
 	m := sized(t, New(t.TempDir(), &config.Config{}, st, WithLayout(LayoutRedesign)), 120, 35)
 	m, _ = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2"), Alt: true})

@@ -18,6 +18,7 @@ func shellModel(t *testing.T, prefs config.Prefs, keys map[string]string) Model 
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir()) // os.UserConfigDir on Windows
 	t.Cleanup(func() {
 		theme.Current = theme.Resolve("bonsai", nil)
 		applyTheme()
