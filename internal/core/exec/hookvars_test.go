@@ -5,10 +5,47 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestCmdDelayedExpansion(t *testing.T) {
+	vars := map[string]string{"branch": "main", "pr_number": "123", "0_a": "value"}
+	tests := []struct {
+		name, command string
+		style         refStyle
+		wantDelayed   bool
+	}{
+		{"literal bang", "echo done!", refCmd, false},
+		{"git format", "git log --format=%h!", refCmd, false},
+		{"paired bangs", "echo !literal!", refCmd, false},
+		{"unknown placeholder", "echo {unknown}!", refCmd, false},
+		{"substitution", "echo {branch}", refCmd, true},
+		{"quoted substitution", `echo "{pr_number}"`, refCmd, true},
+		{"placeholder grammar", "echo {0_a}", refCmd, true},
+		{"mixed bangs", "echo {branch} done!", refCmd, true},
+		{"empty name", "echo !BONSAI_!", refCmd, false},
+		{"invalid name", "echo !BONSAI_A-B!", refCmd, false},
+		{"incomplete reference", "echo !BONSAI_BRANCH", refCmd, false},
+		{"posix", "echo {branch} !BONSAI_BRANCH!", refPOSIX, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			command := expandVarRefs(tt.command, vars, tt.style)
+			cmd := &osexec.Cmd{Args: []string{"cmd.exe", "/c", command}}
+			enableDelayedExpansion(cmd, tt.style)
+			want := []string{"cmd.exe", "/c", command}
+			if tt.wantDelayed {
+				want = []string{"cmd.exe", "/v:on", "/c", command}
+			}
+			if !reflect.DeepEqual(cmd.Args, want) {
+				t.Fatalf("args = %q, want %q", cmd.Args, want)
+			}
+		})
+	}
+}
 
 func skipNoPOSIXShell(t *testing.T) {
 	t.Helper()

@@ -13,7 +13,7 @@ func TestProcessMatchesRejectsClearlyDifferentStartTime(t *testing.T) {
 	if !PidAlive(pid) {
 		t.Fatalf("current process PID %d should be alive", pid)
 	}
-	if ProcessMatches(pid, time.Now().Add(-2*time.Hour), "") {
+	if ProcessMatches(pid, time.Now().Add(-2*time.Hour), 0, "") {
 		t.Fatalf("PID %d matched a start time from two hours ago", pid)
 	}
 }
@@ -49,17 +49,17 @@ func startWaitingChild(t *testing.T) (pid int, startedAt time.Time) {
 
 func TestProcessMatchesLiveChild(t *testing.T) {
 	pid, startedAt := startWaitingChild(t)
-	if !ProcessMatches(pid, startedAt, "") {
+	if !ProcessMatches(pid, startedAt, 0, "") {
 		t.Fatalf("live child PID %d did not match its recorded start", pid)
 	}
-	if ProcessMatches(pid, startedAt.Add(-time.Hour), "") {
+	if ProcessMatches(pid, startedAt.Add(-time.Hour), 0, "") {
 		t.Fatalf("live child PID %d matched a start an hour earlier", pid)
 	}
 }
 
 func TestProcessMatchesRejectsMissingStartMetadata(t *testing.T) {
 	pid := os.Getpid()
-	if ProcessMatches(pid, time.Time{}, "") {
+	if ProcessMatches(pid, time.Time{}, 0, "") {
 		t.Fatalf("PID %d matched without persisted start metadata", pid)
 	}
 }

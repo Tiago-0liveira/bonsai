@@ -16,16 +16,19 @@ import (
 // reachable without cgo.
 const userHZ = 100
 
-// ProcessMatches reports whether pid is alive and was started when bonsai
-// recorded it. It compares the kernel's process start time (starttime in
-// /proc/<pid>/stat, fixed for the life of the process) with startedAt, so PID
-// reuse is detected without depending on when something first looked at
-// /proc/<pid>, which is what the directory's mtime reflects. The working
-// directory is deliberately not part of identity: a valid managed command may
-// chdir after launch. Without readable metadata it fails closed.
-func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
+// ProcessMatches reports whether pid is alive and still names the managed child.
+// Kernel start ticks in /proc/<pid>/stat are fixed for the process's lifetime,
+// so they detect PID reuse without wall-clock steps changing its identity.
+// Older records lack ticks and fall back to a wall-clock start comparison.
+// The working directory is deliberately not part of identity: a valid managed
+// command may chdir after launch. Without readable metadata it fails closed.
+func ProcessMatches(pid int, startedAt time.Time, startTicks uint64, _ string) bool {
 	if !PidAlive(pid) || startedAt.IsZero() {
 		return false
+	}
+	if startTicks != 0 {
+		ticks, err := processStartTicks(pid)
+		return err == nil && ticks == startTicks
 	}
 	started, err := processStartTime(pid)
 	if err != nil {
@@ -35,12 +38,22 @@ func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
 	return diff >= -processStartTolerance && diff <= processStartTolerance
 }
 
-func processStartTime(pid int) (time.Time, error) {
+// StartTicks returns the kernel's process start ticks, or 0 if unavailable.
+func StartTicks(pid int) uint64 {
+	ticks, _ := processStartTicks(pid)
+	return ticks
+}
+
+func processStartTicks(pid int) (uint64, error) {
 	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
-		return time.Time{}, err
+		return 0, err
 	}
-	ticks, err := parseStatStartTicks(string(stat))
+	return parseStatStartTicks(string(stat))
+}
+
+func processStartTime(pid int) (time.Time, error) {
+	ticks, err := processStartTicks(pid)
 	if err != nil {
 		return time.Time{}, err
 	}

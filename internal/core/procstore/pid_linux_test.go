@@ -3,9 +3,56 @@
 package procstore
 
 import (
+	"os/exec"
 	"testing"
 	"time"
 )
+
+func TestProcessMatchesStartTicks(t *testing.T) {
+	cmd := exec.Command("sleep", "5")
+	startedAt := time.Now()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	pid := cmd.Process.Pid
+	ticks := StartTicks(pid)
+	if ticks == 0 {
+		t.Fatal("live child has no readable start ticks")
+	}
+	tests := []struct {
+		name      string
+		startedAt time.Time
+		ticks     uint64
+		want      bool
+	}{
+		{"exact ticks", startedAt, ticks, true},
+		{"clock stepped forward", startedAt.Add(time.Hour), ticks, true},
+		{"clock stepped backward", startedAt.Add(-time.Hour), ticks, true},
+		{"different ticks", startedAt, ticks + 1, false},
+		{"legacy within tolerance", startedAt, 0, true},
+		{"legacy outside tolerance", startedAt.Add(time.Hour), 0, false},
+		{"missing start metadata", time.Time{}, ticks, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ProcessMatches(pid, tt.startedAt, tt.ticks, ""); got != tt.want {
+				t.Fatalf("ProcessMatches = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	for _, pid := range []int{0, -1} {
+		if got := StartTicks(pid); got != 0 {
+			t.Errorf("StartTicks(%d) = %d, want 0", pid, got)
+		}
+		if ProcessMatches(pid, startedAt, ticks, "") {
+			t.Errorf("PID %d matched without readable metadata", pid)
+		}
+	}
+}
 
 func TestParseStatStartTicks(t *testing.T) {
 	tests := []struct {
@@ -45,7 +92,7 @@ func TestProcessMatchesLiveChildFirstInspectedLate(t *testing.T) {
 	}
 	pid, startedAt := startWaitingChild(t)
 	time.Sleep(processStartTolerance + time.Second)
-	if !ProcessMatches(pid, startedAt, "") {
+	if !ProcessMatches(pid, startedAt, 0, "") {
 		t.Fatal("live original child classified as lost after a delayed first inspection")
 	}
 }

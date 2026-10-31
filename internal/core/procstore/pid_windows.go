@@ -29,7 +29,7 @@ func PidAlive(pid int) bool {
 }
 
 // ProcessMatches reports whether pid is alive and matches expected process metadata.
-func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
+func ProcessMatches(pid int, startedAt time.Time, _ uint64, worktree string) bool {
 	if pid <= 0 || startedAt.IsZero() {
 		return false
 	}
@@ -56,3 +56,6 @@ func ProcessMatches(pid int, startedAt time.Time, worktree string) bool {
 func pidAlive(pid int) bool {
 	return PidAlive(pid)
 }
+
+// StartTicks returns 0 because Linux process start ticks are unavailable here.
+func StartTicks(int) uint64 { return 0 }

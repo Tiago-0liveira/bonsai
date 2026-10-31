@@ -112,6 +112,7 @@ type Record struct {
 	Policy         Policy            `json:"policy"`
 	Restarts       int               `json:"restarts"`
 	StartedAt      time.Time         `json:"started_at"`
+	StartTicks     uint64            `json:"start_ticks,omitempty"`
 	ExitCode       *int              `json:"exit_code,omitempty"`
 	ExitError      string            `json:"exit_error,omitempty"`
 	LastURL        string            `json:"last_url,omitempty"`
@@ -186,6 +187,7 @@ type ServeProcess struct {
 	State          string    `json:"state"`
 	Required       bool      `json:"required"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
+	StartTicks     uint64    `json:"start_ticks,omitempty"`
 	ExitCode       *int      `json:"exit_code,omitempty"`
 	ExitError      string    `json:"exit_error,omitempty"`
 }
