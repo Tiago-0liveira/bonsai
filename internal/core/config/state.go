@@ -218,6 +218,17 @@ func LoadState() (*State, error) {
 		}
 		return nil, err
 	}
+	st, err = decodeState(data)
+	if err != nil {
+		return nil, err
+	}
+	st.path = p
+	return st, nil
+}
+
+// decodeState shares validation and raw-key preservation between loads and rebases.
+func decodeState(data []byte) (*State, error) {
+	st := &State{}
 	// Decode the original bytes in order, retaining encoding/json's merge and
 	// case-folding semantics for unrelated preferences. Only the optional policy
 	// is captured raw so a malformed shape cannot prevent those from loading.
@@ -236,7 +247,6 @@ func LoadState() (*State, error) {
 	if st.CopyCounts == nil {
 		st.CopyCounts = map[string]int{}
 	}
-	st.path = p
 	// A hand-edited invalid policy must not keep authorizing automatic runs: fail closed to "off".
 	if st.Prefs.GardenReview != nil && st.Prefs.GardenReview.Validate() != nil {
 		st.Prefs.GardenReview = nil
@@ -398,11 +408,9 @@ func (s *State) writeLocked(d stateDisk) error {
 }
 
 // persistLocked serializes writers across processes with a lock file, rebases
-// d on the lists and maps another process persisted since this one loaded,
-// applies update, writes the result and adopts it in memory. update reports
-// whether anything changed; if not, nothing is written. Preferences are never
-// rebased: they are only replaced by the preference writers, whose newer
-// policy handling a plain decode would lose. Caller holds s.mu.
+// known fields and preserved unknown keys on the latest disk state, then applies
+// update and adopts the written result. Preference writers merge changed fields;
+// Save explicitly replaces all known fields. Caller holds s.mu.
 func (s *State) persistLocked(update func(d *stateDisk) bool) error {
 	if s.path == "" {
 		return errors.New("state has no file path")
@@ -418,17 +426,14 @@ func (s *State) persistLocked(update func(d *stateDisk) bool) error {
 
 	d := s.diskLocked()
 	if data, err := os.ReadFile(s.path); err == nil {
-		var latest struct {
-			CopyCounts   map[string]int    `json:"copy_counts"`
-			Aliases      []Alias           `json:"aliases"`
-			Workspaces   map[string]string `json:"workspaces"`
-			GardenViews  map[string]string `json:"garden_views"`
-			GardenDrafts map[string]string `json:"garden_drafts"`
+		if latest, err := decodeState(data); err == nil {
+			d = latest.diskLocked()
+			s.extra, s.extraPrefs = latest.extra, latest.extraPrefs
+			s.autoReviewPreserved = latest.autoReviewPreserved
 		}
-		if json.Unmarshal(data, &latest) == nil {
-			d.CopyCounts, d.Aliases, d.Workspaces = latest.CopyCounts, latest.Aliases, latest.Workspaces
-			d.GardenViews, d.GardenDrafts = latest.GardenViews, latest.GardenDrafts
-		}
+	} else if os.IsNotExist(err) {
+		s.extra, s.extraPrefs = nil, nil
+		s.autoReviewPreserved = false
 	}
 	if d.CopyCounts == nil {
 		d.CopyCounts = map[string]int{}
@@ -519,7 +524,7 @@ func (s *State) SortedAliases() []Alias {
 	return out
 }
 
-// SetPrefs replaces the stored UI preferences and persists them.
+// SetPrefs merges changed UI preference fields with the latest disk preferences.
 func (s *State) SetPrefs(p Prefs) error {
 	if err := p.GardenReview.validateIfSet(); err != nil {
 		return err
@@ -534,10 +539,7 @@ func (s *State) SetPrefs(p Prefs) error {
 			return err
 		}
 	}
-	return s.persistLocked(func(d *stateDisk) bool {
-		d.Prefs = p.Clone()
-		return true
-	})
+	return s.persistPrefsLocked(p)
 }
 
 // PrefsSnapshot returns a copy of the preferences that shares no map with s.
@@ -547,7 +549,8 @@ func (s *State) PrefsSnapshot() Prefs {
 	return s.Prefs.Clone()
 }
 
-// PersistPrefs writes p to disk and, only if that succeeds, adopts it. gen
+// PersistPrefs merges changed fields of p into disk preferences and, only if
+// that succeeds, adopts the result. gen
 // orders concurrent callers: a gen below the last applied one returns
 // ErrSuperseded without touching disk or memory.
 func (s *State) PersistPrefs(gen uint64, p Prefs) error {
@@ -567,15 +570,37 @@ func (s *State) PersistPrefs(gen uint64, p Prefs) error {
 	if gen < s.prefsGen {
 		return ErrSuperseded
 	}
-	p = p.Clone()
-	if err := s.persistLocked(func(d *stateDisk) bool {
-		d.Prefs = p
-		return true
-	}); err != nil {
+	if err := s.persistPrefsLocked(p); err != nil {
 		return fmt.Errorf("persist prefs: %w", err)
 	}
 	s.prefsGen = gen
 	return nil
+}
+
+// persistPrefsLocked compares against this process's snapshot so unchanged
+// fields retain concurrent edits. Each top-level field is one preference choice.
+func (s *State) persistPrefsLocked(p Prefs) error {
+	base, mine := s.Prefs.Clone(), p.Clone()
+	var policyErr error
+	err := s.persistLocked(func(d *stateDisk) bool {
+		// The policy may have been upgraded since this process loaded it.
+		if s.gardenAutoReviewPreservedLocked() && mine.GardenAutoReview != nil {
+			policyErr = ErrGardenAutoReviewNewer
+			return false
+		}
+		merged := reflect.ValueOf(&d.Prefs).Elem()
+		baseValue, mineValue := reflect.ValueOf(base), reflect.ValueOf(mine)
+		for i := 0; i < merged.NumField(); i++ {
+			if !reflect.DeepEqual(mineValue.Field(i).Interface(), baseValue.Field(i).Interface()) {
+				merged.Field(i).Set(mineValue.Field(i))
+			}
+		}
+		return true
+	})
+	if err != nil {
+		return err
+	}
+	return policyErr
 }
 
 // LastWorkspace returns the remembered workspace for repoDir ("" if none).

@@ -3,13 +3,196 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestStateRebasesUnknownKeys(t *testing.T) {
+	path := stateEnv(t)
+	writeState(t, path, `{"prefs":{"removed_pref":1},"removed_top":1}`)
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeState(t, path, `{"prefs":{"future_pref":{"n":2}},"future_top":[1,2]}`)
+	if err := st.RecordCopy("file"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	prefs := got["prefs"].(map[string]any)
+	if !reflect.DeepEqual(got["future_top"], []any{float64(1), float64(2)}) || !reflect.DeepEqual(prefs["future_pref"], map[string]any{"n": float64(2)}) {
+		t.Fatalf("new unknown keys lost: %s", data)
+	}
+	if _, ok := got["removed_top"]; ok {
+		t.Fatalf("deleted top-level key restored: %s", data)
+	}
+	if _, ok := prefs["removed_pref"]; ok {
+		t.Fatalf("deleted prefs key restored: %s", data)
+	}
+}
+
+func TestPrefsMergeConcurrentFields(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(*State, Prefs) error
+	}{
+		{"SetPrefs", func(s *State, p Prefs) error { return s.SetPrefs(p) }},
+		{"PersistPrefs", func(s *State, p Prefs) error { return s.PersistPrefs(1, p) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := stateEnv(t)
+			writeState(t, path, `{"prefs":{"theme":"bonsai","density":"comfortable"}}`)
+			a, err := LoadState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := LoadState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			mine := a.PrefsSnapshot()
+			mine.Theme = "nord"
+			if err := tc.write(a, mine); err != nil {
+				t.Fatal(err)
+			}
+			mine = b.PrefsSnapshot()
+			mine.Density = "compact"
+			if err := tc.write(b, mine); err != nil {
+				t.Fatal(err)
+			}
+			reloaded, err := LoadState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range []Prefs{b.PrefsSnapshot(), reloaded.PrefsSnapshot()} {
+				if got.Theme != "nord" || got.Density != "compact" {
+					t.Fatalf("merged prefs = %+v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestStateRebasesPreservedGardenPolicy(t *testing.T) {
+	for _, body := range []string{
+		`{"prefs":{"garden_auto_review":{"version":2,"enabled":true,"future":42}}}`,
+		`{"Prefs":{"garden_auto_review":{"version":2,"enabled":true,"future":42}}}`,
+		`{"prefs":{"GARDEN_AUTO_REVIEW":[1,2]}}`,
+	} {
+		for _, tc := range []struct {
+			name  string
+			write func(*State) error
+		}{
+			{"RecordCopy", func(s *State) error { return s.RecordCopy("file") }},
+			{"SetPrefs", func(s *State) error { return s.SetPrefs(Prefs{Theme: "nord"}) }},
+			{"PersistPrefs", func(s *State) error { return s.PersistPrefs(1, Prefs{Density: "compact"}) }},
+		} {
+			t.Run(tc.name+"/"+body, func(t *testing.T) {
+				path := stateEnv(t)
+				s, err := LoadState()
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeState(t, path, body)
+				if err := tc.write(s); err != nil {
+					t.Fatal(err)
+				}
+				got, err := LoadState()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !got.GardenAutoReviewPreserved() || got.PrefsSnapshot().GardenAutoReview != nil || !s.GardenAutoReviewPreserved() {
+					t.Fatal("newer disk policy was lost or authorized")
+				}
+				var original, saved map[string]any
+				if err := json.Unmarshal([]byte(body), &original); err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(data, &saved); err != nil {
+					t.Fatal(err)
+				}
+				for key, value := range original {
+					for prefKey, prefValue := range value.(map[string]any) {
+						if !reflect.DeepEqual(saved[key].(map[string]any)[prefKey], prefValue) {
+							t.Fatalf("changed preserved %s.%s: %s", key, prefKey, data)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPrefsRejectPolicyUpgradedOnDisk(t *testing.T) {
+	for _, persist := range []bool{false, true} {
+		t.Run(fmt.Sprint(persist), func(t *testing.T) {
+			path := stateEnv(t)
+			writeState(t, path, `{"prefs":{"garden_auto_review":{"version":1,"enabled":true,"account":"a"}}}`)
+			s, err := LoadState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			mine := s.PrefsSnapshot()
+			mine.Theme = "nord"
+			const newer = `{"prefs":{"garden_auto_review":{"version":2,"future":42}}}`
+			writeState(t, path, newer)
+			write := func(p Prefs) error {
+				if persist {
+					return s.PersistPrefs(1, p)
+				}
+				return s.SetPrefs(p)
+			}
+			if err := write(mine); !errors.Is(err, ErrGardenAutoReviewNewer) {
+				t.Fatalf("upgraded policy write = %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != newer {
+				t.Fatalf("refusal changed disk: %s, %v", data, err)
+			}
+			mine.GardenAutoReview = nil
+			if err := write(mine); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSaveReplacesKnownFields(t *testing.T) {
+	path := stateEnv(t)
+	writeState(t, path, `{"copy_counts":{"old":1},"prefs":{"theme":"bonsai"}}`)
+	s, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeState(t, path, `{"copy_counts":{"new":2},"prefs":{"theme":"nord","density":"compact"}}`)
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CopyRank("old") != 1 || got.CopyRank("new") != 0 || got.PrefsSnapshot().Theme != "bonsai" || got.PrefsSnapshot().Density != "" {
+		t.Fatalf("Save merged instead of replacing: %+v", got.diskLocked())
+	}
+}
 
 func TestPrefsAgentGlyphsJSON(t *testing.T) {
 	b, err := json.Marshal(Prefs{AgentGlyphs: "ascii"})
