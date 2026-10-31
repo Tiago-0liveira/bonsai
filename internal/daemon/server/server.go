@@ -249,7 +249,7 @@ func (s *Server) adoptExisting() {
 			max = r.ID
 		}
 		if procstore.IsActive(r.Status) || r.Status == procstore.StatusOrphan {
-			alive := procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.Worktree)
+			alive := procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.BootID, r.Worktree)
 			if alive {
 				r.Status = procstore.StatusOrphan
 				text := fmt.Sprintf("daemon restarted · orphan process still alive (pid %d)", r.PID)
@@ -336,14 +336,15 @@ func (s *Server) stopAllProcesses() error {
 		pid := mp.rec.PID
 		startedAt := mp.rec.StartedAt
 		startTicks := mp.rec.StartTicks
+		bootID := mp.rec.BootID
 		worktree := mp.rec.Worktree
 		mp.mu.Unlock()
 
 		if done == nil {
-			stopped := !procstore.ProcessMatches(pid, startedAt, startTicks, worktree)
+			stopped := !procstore.ProcessMatches(pid, startedAt, startTicks, bootID, worktree)
 			if !stopped {
 				if remaining := time.Until(shutdownDeadline); remaining > 0 {
-					stopped = waitForProcessExit(pid, startedAt, startTicks, worktree, remaining)
+					stopped = waitForProcessExit(pid, startedAt, startTicks, bootID, worktree, remaining)
 				}
 			}
 
@@ -421,7 +422,7 @@ func (s *Server) activeCountLocked() int {
 	for _, mp := range s.procs {
 		mp.mu.Lock()
 		if mp.rec.Status == procstore.StatusOrphan &&
-			!procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.StartTicks, mp.rec.Worktree) {
+			!procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.StartTicks, mp.rec.BootID, mp.rec.Worktree) {
 			mp.rec.Status = procstore.StatusLost
 			_ = s.store.WriteRecord(mp.rec)
 		}

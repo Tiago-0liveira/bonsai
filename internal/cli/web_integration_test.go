@@ -192,7 +192,7 @@ func webRecordsSettled(t *testing.T, home string) bool {
 		t.Fatal(err)
 	}
 	for _, r := range records {
-		if !procstore.IsTerminal(r.Status) || procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.Worktree) {
+		if !procstore.IsTerminal(r.Status) || procstore.ProcessMatches(r.PID, r.StartedAt, r.StartTicks, r.BootID, r.Worktree) {
 			return false
 		}
 	}
