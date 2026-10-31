@@ -32,6 +32,12 @@ func newCloudCodeServer(t *testing.T) (*cloudCodeServer, string) {
 	t.Helper()
 	s := &cloudCodeServer{t: t, calls: map[string]int{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Local port probes are unrelated to the client under test.
+		if r.Header.Get("Authorization") == "" ||
+			(r.URL.Path != "/v1internal:loadCodeAssist" && r.URL.Path != "/v1internal:retrieveUserQuotaSummary") {
+			http.NotFound(w, r)
+			return
+		}
 		s.mu.Lock()
 		s.calls[r.URL.Path]++
 		status, loadBody, loadStatus, noGemini := s.status, s.loadBody, s.loadStatus, s.noGemini
@@ -359,5 +365,42 @@ func TestUsageStopsStartingAgyForAProfileWithoutAGeminiPool(t *testing.T) {
 	}
 	if got := e.usageCmds.Load(); got != 1 {
 		t.Fatalf("/usage runs = %d, want 1", got)
+	}
+}
+
+// Even an authenticated probe of an unrelated path must not affect API counts.
+func TestCloudCodeServerIgnoresStrayRequests(t *testing.T) {
+	server, url := newCloudCodeServer(t)
+	client := &http.Client{Timeout: time.Second}
+	for _, tt := range []struct {
+		path string
+		auth string
+	}{
+		{"/", ""},
+		{"/", "Bearer live-token"},
+		{"/v1internal:loadCodeAssist", ""},
+		{"/v1internal:retrieveUserQuotaSummary", ""},
+	} {
+		req, err := http.NewRequest(http.MethodGet, url+tt.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("User-Agent", "node")
+		if tt.auth != "" {
+			req.Header.Set("Authorization", tt.auth)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", tt.path, resp.StatusCode)
+		}
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.calls) != 0 {
+		t.Errorf("stray requests counted: %v", server.calls)
 	}
 }
