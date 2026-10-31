@@ -1,10 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	yaml "go.yaml.in/yaml/v3"
 
@@ -30,33 +32,49 @@ func FileFor(mainRoot string) string {
 // readDoc parses file into a yaml.Node tree so writes can round-trip comments
 // and layout. A missing or empty file yields a fresh empty document.
 func readDoc(file string) (*yaml.Node, error) {
+	root, _, err := readDocSource(file)
+	return root, err
+}
+
+// readDocSource retains the same bytes that determined the node positions.
+func readDocSource(file string) (*yaml.Node, []byte, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return emptyDoc(), nil
+			return emptyDoc(), data, nil
 		}
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, nil, fmt.Errorf("read config: %w", err)
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", filepath.Base(file), err)
+		return nil, nil, fmt.Errorf("parse %s: %w", filepath.Base(file), err)
 	}
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
-		return emptyDoc(), nil
+		return emptyDoc(), data, nil
 	}
-	return &root, nil
+	return &root, data, nil
 }
 
 func emptyDoc() *yaml.Node {
 	return &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode}}}
 }
 
-// writeDoc marshals root and replaces file atomically (tmp + rename).
+// writeDoc encodes structural edits with the repo's usual indentation. This
+// fallback can lose blank lines; scalar replacements use the original bytes.
 func writeDoc(file string, root *yaml.Node) error {
-	out, err := yaml.Marshal(root)
-	if err != nil {
+	var out bytes.Buffer
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(root); err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	return writeConfigBytes(file, out.Bytes())
+}
+
+func writeConfigBytes(file string, out []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(file), ".bonsai.yaml.*")
 	if err != nil {
 		return fmt.Errorf("write config: %w", err)
@@ -78,6 +96,92 @@ func writeDoc(file string, root *yaml.Node) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
+}
+
+// spliceScalar handles single-line block scalars whose token can be identified safely.
+// Multiline, tagged and anchored values fall back to encoding the document.
+func spliceScalar(data []byte, old, value *yaml.Node) ([]byte, bool) {
+	if old.Kind != yaml.ScalarNode || old.Anchor != "" || old.Line < 1 || old.Column < 1 || old.Style&(yaml.LiteralStyle|yaml.FoldedStyle|yaml.TaggedStyle) != 0 {
+		return nil, false
+	}
+	start := 0
+	for line := 1; line < old.Line; line++ {
+		i := bytes.IndexByte(data[start:], '\n')
+		if i < 0 {
+			return nil, false
+		}
+		start += i + 1
+	}
+	// yaml.Node columns count characters, while the splice uses byte offsets.
+	for col := 1; col < old.Column && start < len(data); col++ {
+		_, size := utf8.DecodeRune(data[start:])
+		start += size
+	}
+	end := start
+	for end < len(data) && data[end] != '\n' && data[end] != '\r' {
+		end++
+	}
+	token := data[start:end]
+	if len(token) == 0 {
+		return nil, false
+	}
+	if token[0] == '"' || token[0] == '\'' {
+		quote := token[0]
+		i := 1
+		for ; i < len(token); i++ {
+			if quote == '"' && token[i] == '\\' {
+				i++
+				continue
+			}
+			if token[i] == quote {
+				if quote == '\'' && i+1 < len(token) && token[i+1] == quote {
+					i++
+					continue
+				}
+				break
+			}
+		}
+		if i >= len(token) {
+			return nil, false
+		}
+		rest := bytes.TrimSpace(token[i+1:])
+		if len(rest) > 0 && rest[0] != '#' {
+			return nil, false
+		}
+		token = token[:i+1]
+	} else {
+		for i, ch := range token {
+			if ch == '#' && (i == 0 || token[i-1] == ' ' || token[i-1] == '\t') {
+				token = token[:i]
+				break
+			}
+		}
+		token = bytes.TrimRight(token, " \t")
+	}
+	var parsed yaml.Node
+	if err := yaml.Unmarshal(token, &parsed); err != nil || len(parsed.Content) != 1 {
+		return nil, false
+	}
+	n := parsed.Content[0]
+	if n.Kind != yaml.ScalarNode || n.Value != old.Value || n.Tag != old.Tag || n.Style != old.Style {
+		return nil, false
+	}
+	replacement := *value
+	replacement.Style = old.Style
+	replacement.HeadComment, replacement.LineComment, replacement.FootComment = "", "", ""
+	encoded, err := yaml.Marshal(&replacement)
+	if err != nil {
+		return nil, false
+	}
+	encoded = bytes.TrimSuffix(encoded, []byte("\n"))
+	if bytes.ContainsAny(encoded, "\r\n") {
+		return nil, false
+	}
+	out := make([]byte, 0, len(data)-len(token)+len(encoded))
+	out = append(out, data[:start]...)
+	out = append(out, encoded...)
+	out = append(out, data[start+len(token):]...)
+	return out, true
 }
 
 // mapValue returns the value node for key inside mapping node m, or nil when
@@ -141,7 +245,7 @@ func scalarNode(value string) *yaml.Node {
 // creating intermediate mappings as needed. Comments and unrelated keys in the
 // file are preserved. A missing file is created.
 func Set(file, keyPath, value string) error {
-	root, err := readDoc(file)
+	root, data, err := readDocSource(file)
 	if err != nil {
 		return err
 	}
@@ -152,7 +256,20 @@ func Set(file, keyPath, value string) error {
 	if !ok {
 		return fmt.Errorf("config key %q not found", keyPath)
 	}
-	setPair(parent, last, scalarNode(value))
+	next := scalarNode(value)
+	if old := mapValue(parent, last, false); old != nil {
+		// Standalone scalar encoding may emit commas that are unsafe in flow maps.
+		if parent.Style&yaml.FlowStyle == 0 {
+			if out, ok := spliceScalar(data, old, next); ok {
+				return writeConfigBytes(file, out)
+			}
+		}
+		next.HeadComment, next.LineComment, next.FootComment = old.HeadComment, old.LineComment, old.FootComment
+		if old.Kind == yaml.ScalarNode {
+			next.Style = old.Style
+		}
+	}
+	setPair(parent, last, next)
 	return writeDoc(file, root)
 }
 

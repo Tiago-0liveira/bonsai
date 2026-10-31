@@ -1,11 +1,117 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	yaml "go.yaml.in/yaml/v3"
 )
+
+func TestSetScalarStylesAndBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, value, want string
+	}{
+		{"plain with comment", "key: old  # keep [a,b]\n\nother: keep\n", "new", "key: new  # keep [a,b]\n\nother: keep\n"},
+		{"plain punctuation", "key: command {a,b} # keep\n\nother: keep\n", "next {c,d}", "key: next {c,d} # keep\n\nother: keep\n"},
+		{"double quoted", "key: \"old\" # keep\n", "new", "key: \"new\" # keep\n"},
+		{"escaped double quote", "key: \"o\\\"ld\" # keep\n", "new", "key: \"new\" # keep\n"},
+		{"single quoted", "key: 'it''s old' # keep\n", "it's new", "key: 'it''s new' # keep\n"},
+		{"needs quoting", "key: old\n\nother: keep\n", "value: with colon", "key: 'value: with colon'\n\nother: keep\n"},
+		{"unicode column", "clé: old # keep\n", "new", "clé: new # keep\n"},
+		{"CRLF", "key: old  # keep\r\n\r\nother: keep\r\n", "new", "key: new  # keep\r\n\r\nother: keep\r\n"},
+		{"no final newline", "key: old # keep", "new", "key: new # keep"},
+		{"empty quoted", "key: \"\"\n", "new", "key: \"new\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := writeFixture(t, tc.input)
+			key := "key"
+			if tc.name == "unicode column" {
+				key = "clé"
+			}
+			if err := Set(f, key, tc.value); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("output = %q, want %q", got, tc.want)
+			}
+			var values map[string]string
+			if err := yaml.Unmarshal(got, &values); err != nil || values[key] != tc.value {
+				t.Fatalf("decoded value = %q, error = %v", values[key], err)
+			}
+		})
+	}
+}
+
+func TestSetPreservesCommentedRepoLayout(t *testing.T) {
+	original, err := os.ReadFile("testdata/commented-repo-config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := writeFixture(t, string(original))
+	if err := Set(f, "theme.preset", "nord"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Replace(original, []byte(`  preset: "bonsai"`), []byte(`  preset: "nord"`), 1)
+	if bytes.Equal(want, original) {
+		t.Fatal("fixture does not contain the expected theme line")
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("Set changed unrelated layout:\n%s", got)
+	}
+}
+
+func TestWriteFallbackUsesTwoSpaceIndent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(string) error
+		want  string
+	}{
+		{"new mapping", func(f string) error { return Set(f, "theme.preset", "nord") }, "theme:\n  preset: nord\n"},
+		{"sequence", func(f string) error { return ListSet(f, "hooks.create", []string{"echo hi"}) }, "hooks:\n  create:\n    - echo hi\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := writeFixture(t, "")
+			if err := tc.write(f); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("output = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSetFlowMappingFallsBackSafely(t *testing.T) {
+	f := writeFixture(t, "theme: {preset: old # comment\n}\n")
+	if err := Set(f, "theme.preset", "a,b"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Theme struct{ Preset string }
+	}
+	if err := yaml.Unmarshal(data, &got); err != nil || got.Theme.Preset != "a,b" {
+		t.Fatalf("flow value changed: %s, %v", data, err)
+	}
+}
 
 const annotatedFixture = `# bonsai project config
 upstream: origin/main # base for metrics
