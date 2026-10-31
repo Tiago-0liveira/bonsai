@@ -123,7 +123,7 @@ func (s *Server) list() []*procstore.Record {
 	out := make([]*procstore.Record, 0, len(mps))
 	for _, mp := range mps {
 		mp.mu.Lock()
-		if mp.rec.Status == procstore.StatusOrphan && !procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.Worktree) {
+		if mp.rec.Status == procstore.StatusOrphan && !procstore.ProcessMatches(mp.rec.PID, mp.rec.StartedAt, mp.rec.StartTicks, mp.rec.Worktree) {
 			mp.rec.Status = procstore.StatusLost
 			_ = s.store.WriteRecord(mp.rec)
 		}
