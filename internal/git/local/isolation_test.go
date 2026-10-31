@@ -83,7 +83,8 @@ func (r *fakeLaunchIsolationRig) run(ctx context.Context, dir string, args ...st
 		return remote + "\trefs/heads/" + r.request.Branch + "\n", nil
 	}
 	if len(args) > 0 && args[0] == "push" {
-		sha, err := coregit.RunContext(ctx, dir, "rev-parse", "HEAD")
+		source, _, _ := strings.Cut(args[2], ":")
+		sha, err := coregit.RunContext(ctx, dir, "rev-parse", source)
 		if err != nil {
 			return "", err
 		}
@@ -320,11 +321,56 @@ func TestIsolationPublishedHeadUsesTreeDifferenceAndFreshRemoteProof(t *testing.
 	seen := false
 	for _, args := range r.calls {
 		if len(args) > 0 && args[0] == "push" {
-			seen = slices.Contains(args, "origin") && slices.Contains(args, "HEAD:refs/heads/"+c.Proposal.Branch)
+			seen = slices.Contains(args, "origin") && slices.Contains(args, head.HeadSHA+":refs/heads/"+c.Proposal.Branch)
 		}
 	}
 	if !seen {
 		t.Fatal("push did not use exact explicit remote/refspec")
+	}
+}
+
+func TestPushIsolationPublishesApprovedHeadDespiteConcurrentCommit(t *testing.T) {
+	r := newFakeLaunchIsolationRig(t)
+	c := r.create(t)
+	if err := os.WriteFile(filepath.Join(c.Proposal.Path, "change"), []byte("approved"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, c.Proposal.Path, "add", "change")
+	git(t, c.Proposal.Path, "commit", "-m", "approved")
+	head, err := r.service.InspectPublishedHead(context.Background(), c.Proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := t.TempDir()
+	git(t, remote, "init", "--bare")
+	var newer string
+	r.service.repos["local"].IsolationRun = func(ctx context.Context, dir string, args ...string) (string, error) {
+		switch args[0] {
+		case "push":
+			// Advance HEAD after validation, immediately before Git resolves the refspec.
+			git(t, dir, "commit", "--allow-empty", "-m", "unapproved")
+			newer = strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+			localArgs := slices.Clone(args)
+			localArgs[1] = remote
+			return coregit.RunContext(ctx, dir, localArgs...)
+		case "ls-remote":
+			localArgs := slices.Clone(args)
+			localArgs[2] = remote
+			return coregit.RunContext(ctx, dir, localArgs...)
+		default:
+			return r.run(ctx, dir, args...)
+		}
+	}
+	pushed, err := r.service.PushIsolation(context.Background(), domain.IsolationPushRequest{Proposal: c.Proposal, HeadSHA: head.HeadSHA})
+	if newer == "" || newer == head.HeadSHA {
+		t.Fatal("HEAD did not advance before the push")
+	}
+	remoteSHA := strings.TrimSpace(git(t, remote, "rev-parse", "refs/heads/"+c.Proposal.Branch))
+	if remoteSHA == newer || remoteSHA != head.HeadSHA {
+		t.Fatalf("remote = %s, want approved %s, never newer %s", remoteSHA, head.HeadSHA, newer)
+	}
+	if !errors.Is(err, domain.ErrInputsChanged) || pushed.HeadSHA != newer || !pushed.RemoteVerified || pushed.RemoteSHA != head.HeadSHA {
+		t.Fatalf("read-back = %+v, %v; want changed inputs with approved remote head", pushed, err)
 	}
 }
 

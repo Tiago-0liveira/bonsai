@@ -1022,7 +1022,7 @@ func (s *Service) PushIsolation(ctx context.Context, req domain.IsolationPushReq
 	if _, err := r.saveResource(p.OperationID, func(rec *resource) { rec.PushHead = req.HeadSHA }); err != nil {
 		return before, err
 	}
-	_, pushErr := r.git(ctx, p.Path, "push", p.RemoteName, "HEAD:refs/heads/"+p.Branch)
+	_, pushErr := r.git(ctx, p.Path, "push", p.RemoteName, req.HeadSHA+":refs/heads/"+p.Branch)
 	// The read-back is independent of the caller's cancellation but not unbounded:
 	// it runs under the repository gate and the daemon's mutation lock, and a
 	// stuck remote must end in an uncertain outcome the caller can query.

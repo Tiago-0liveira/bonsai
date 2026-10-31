@@ -7,10 +7,12 @@ import (
 	"syscall"
 )
 
-// killTreeOnCancel runs git in its own process group and kills the whole group
-// on cancellation, so hooks and helpers die with it.
+// killTreeOnCancel starts a new session without a controlling terminal so tty
+// prompts fail instead of stopping non-interactive git. Git leads its process
+// group, so cancellation still kills hooks and helpers with it.
 func killTreeOnCancel(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setParentDeathSignal(cmd.SysProcAttr)
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
