@@ -18,8 +18,8 @@ glyphs selected, passed / failed / pending checks use `+` / `x` / `~`.
 Footer hints use `key action · key action`; shifted letters appear as
 `shift+letter` to keep the key names lowercase without losing their meaning.
 
-Transient status messages clear after about five seconds or the next action
-key. Errors remain visible until the next action key.
+Info messages clear after about five seconds or the next key. Errors remain
+visible until the next key.
 
 Preferences, the command palette and full-screen modals float over a dimmed
 view of your worktrees. The Agents footer uses “accounts”, matching
@@ -41,35 +41,78 @@ stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 (`http://localhost:…`) detected in process output are shown next to each process.
 
+Worktree PR badges show the coloured state word beside the number, without a circle.
+
+The create-worktree flow offers **Start agent here** when agents are enabled.
+The `create_agent_toggle` action remembers the choice for this session; after creation,
+the new checkout is selected and its agent launch form opens. The palette also offers
+**New worktree with agent…**. New branches preview their configured path and base;
+Tab (`create_base`) edits the configured upstream or selected PR base (HEAD if unset) before Enter creates the worktree.
+
+Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
+on the first line. Branch names shorten first. The selected row shows its full
+path; other home-directory paths use `~`. The title shows position/count and
+`sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.
+
+With agents enabled, the sort cycle includes `attention`: worktrees with failed or
+waiting sessions come first after the main worktree. Single-worktree pruning warns
+with the names of active agents. Bulk pruning skips those worktrees and lists
+them in its confirmation. Stop their sessions before trying bulk prune again.
+
 ### Agents tab
 
-The Agents tab lists the agents running in the selected worktree and the
-selected account's usage; worktree rows group running agents by provider with a
-glyph and count directly after the branch's other badges, plus `!` for an unseen
-failure. Each glyph takes the style of its most urgent session: highlighted when
-an agent waits for you, normal while one works, dimmed when all of that
-provider's agents are idle. A single `?` follows the glyphs when any agent in the
-worktree waits for a permission, answer or plan approval (`✹?`; the badge grows by
-one cell). Agents whose provider reports no activity (hooks off or unsupported)
-count as working. It shows the selected session's
-live terminal read-only: you can watch the agent. The title row (`AGENTS · <branch>`)
-appears when the terminal is tall enough. A header shows the session's provider,
-profile, model and status, with `· read-only` when another client is controlling it.
-The status is `Running`, `Working`, `Stalled`, `Idle` or, when the agent waits for
-you, what it asks for (`Needs permission: Bash`).
+Agent pane hints follow your configured bindings, including the Agents tab
+shortcut. The worktree session picker is labelled “sessions”.
+
+While typing into an agent, the pane always displays `ctrl+] detach`. This fixed
+key returns to Bonsai navigation; the agent continues running.
+
+Worktree rows count sessions by state: `▶N` working, `⏸N` waiting for input,
+`✓N` finished and unseen, and `✗N` failed and unseen. ASCII mode uses
+`>N`, `=N`, `+N` and `xN`. The `?` keymap includes this legend.
+
+In the Agents tab, `a` opens worktree sessions and `A` opens repository
+sessions, searchable by session, account, worktree or path. Enter selects the
+worktree and session; a worktree hidden by the current filter must first be
+made visible. The global `!` action cycles through waiting and unseen ended
+sessions. These actions can be rebound as `agent_all`, `agent_all_repo` and
+`agent_attention`.
+
+Ended sessions remain visible in the strip and summary. Use `r`
+(`agent_retry`) in history or the tab to start another session with the same
+account, worktree and recorded launch settings. Prompts are intentionally not
+retained, so retry starts without the original task. `S` (`agent_stop_all`)
+asks for confirmation before stopping every live session in the worktree.
+Session renaming is unavailable in the sessions backend.
+
+The picker shows up to ten cached screen lines for the attached session;
+other sessions have no cheap screen snapshot accessor. Working sessions show
+time since output in the strip after this client observes live output.
+Retained summaries do not contain last-output timestamps.
+
+Settings → General → Agent attention bell enables a terminal bell when a
+working session starts waiting or ends. This personal preference defaults off.
+
+The bell setting is stored as the personal `agent_bell` preference.
+Repository and attention jumps focus the Agents pane for session navigation.
+
+
+The Agents tab shows sessions in the selected worktree and the selected
+account's usage. Its header identifies provider, account, model and lifecycle or
+activity status; ended sessions use `✓ Exited` or `✗ Failed`. The terminal is
+read-only until you explicitly take control. A title identifies the branch when
+there is room. Another client's control is marked read-only.
 The TUI uses the same agent sessions as the web UI and `bonsai agents`. If it starts
 without that backend, the Agents tab is unavailable and the TUI prints
 `agents unavailable: <err>` to stderr after exit. A session started by another
 bonsai version cannot be opened here; the tab says to run
 `bonsai agents attach <name>` instead.
 
-The TUI is a client of the same sessions as the web app; see
-[agents.md](agents.md#sessions-shared-with-the-tui-and-cli). It is read-only by
-default: the terminal only watches until you press `enter`. On the focused Agents
-tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops the
+See [agents.md](agents.md#sessions-shared-with-the-tui-and-cli) for the shared
+session backend. On the focused Agents tab, `n` starts a new agent, `m` opens accounts, `u` opens usage and `s` stops the
 selected running agent after a confirmation. The command palette (`ctrl+k`) has
 **Agents: open tab**, **new agent**, **accounts** and **usage** under **Agents**;
-stop is available on the focused tab. Profiles, usage, the session
+stop is available on the focused tab. Accounts, usage, the session
 picker and launch/stop views fill the available Agents tab without modal borders
 or size caps; the worktree list and right-pane tab bar remain visible.
 
@@ -82,10 +125,10 @@ on a session that failed or dropped its attach to retry first. The binding is
 `agent_attach` and can be rebound.
 
 The terminal has a two-row header, the agent output, and a hint row at the bottom.
-The bottom status bar shows **FOCUSED · Input goes to agent** while you are
+The bottom status bar shows **FOCUSED** while you are
 controlling the agent. Press `ctrl+]` to leave focus immediately and return to
 Bonsai navigation. The agent keeps running and its output continues to update.
-The navigation footer shows the available actions: `a` all agents, `m` profiles,
+The navigation footer shows the available actions: `a` sessions, `m` accounts,
 `u` usage, `n` new agent, `s` stop, and `enter` focus the selected agent. Enter is
 shown as retry while an attach has failed, and is hidden for an ended session.
 
@@ -104,8 +147,7 @@ provider, name, status (`Needs input (permission)` while waiting), account, work
 narrow pane the inspector moves below the list. It opens even when there are no
 sessions. `↑`/`↓` select, `/` searches by name, provider or account (`Esc` clears
 the search), `Enter` opens the selected session, `n` starts a new one and `Esc` goes
-back. Opening the screen clears the `!` failure markers on that worktree's rows, so
-the failures stay listed here with `✗`.
+back. Opening the screen acknowledges ended sessions; failures stay listed with `✗`.
 
 The new-session screen (`n`) shows **Start in: branch (short path)** above an
 account table grouped by provider. The selected worktree is the initial target,
@@ -137,13 +179,13 @@ with Task focused. **F** (`agent_fork`) opens a new task using the selected
 session's account, worktree, model, effort and permission/sandbox settings.
 Task starts empty; both shortcuts wait for Ctrl+S and can be rebound in Settings.
 
-In profiles (`m`), `Tab` and `Shift+Tab` cycle the right-hand Overview, Usage and
-Defaults tabs while `↑`/`↓` keeps selecting profiles. No selection confirmation
+In accounts (`m`), `Tab` and `Shift+Tab` cycle the right-hand Overview, Usage and
+Defaults tabs while `↑`/`↓` keeps selecting accounts. No selection confirmation
 is needed to browse. Press `Enter` to focus the details or edit a field; Tab
 still switches sections there, including while a choice list is open. `1`/`2`/`3`
-jump directly to Overview, Usage or Defaults. `Esc` returns focus to profiles;
+jump directly to Overview, Usage or Defaults. `Esc` returns focus to accounts;
 press it again to close. Unsaved defaults require confirmation before closing or
-switching profiles or adding a new one. Press `n` to add a profile; the shortcut
+switching accounts or adding a new one. Press `n` to add an account; the shortcut
 is shown in the footer, and arrow navigation stops at the last profile. The
 accounts sit in a scrollable table (Account, Provider, Plan, Connection) above a
 divider naming the selected account and the inspector tabs; only the inspector
@@ -225,7 +267,7 @@ or the usage overlay skips the window and asks the provider again.
 | `n` | New worktree (new branch / existing branch / PR) |
 | `ctrl+n` | Create a PR from the selected worktree |
 | `v` / `l` / `d` / `P` | Processes / Git Log / Diff / PR tab |
-| `g` | Agents tab (when agents are available); then `a` all agents, `1`-`9` / `[` `]` switch session, `enter` terminal mode (every key goes to the agent except `ctrl+]`, press `ctrl+]` to leave focus). On the focused Agents tab, `n` (new agent), `m` (accounts), `u` (usage) and `s` (stop agent) take precedence over the globals with the same letters |
+| `g` | Agents tab (when agents are available); then `a` sessions, `1`-`9` / `[` `]` switch session, `enter` terminal mode (every key goes to the agent except `ctrl+]`, press `ctrl+]` to leave focus). On the focused Agents tab, `n` (new agent), `m` (accounts), `u` (usage) and `s` (stop agent) take precedence over the globals with the same letters |
 | `i` | Inspector tab (status, last commit, diff, disk, stashes) |
 | `b` | Checks tab (GitHub Actions runs for the branch) |
 | `o` | Cycle list sort (name / ahead / behind / PR / activity / dirty) |
@@ -881,7 +923,6 @@ a worktree. New commits leave earlier reviews and acceptance visible as older
 provenance. Full behavior and automatic trigger limits are in the
 [Garden review guide](garden.md#read-only-verification-and-human-review).
 
-
 #### Worktrees in the preview
 
 Worktrees reuses the existing Git and process commands in four selectable
@@ -938,57 +979,3 @@ For a Garden-created session, the Inspector shows its Issue and attempt identity
 its specification/plan sections. A manual checkout needs no task link. Human
 acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
-
-Agent pane hints follow your configured bindings, including the Agents tab
-shortcut. The worktree session picker is labelled “sessions”.
-
-While typing into an agent, the pane always displays `ctrl+] detach`. This fixed
-key returns to Bonsai navigation; the agent continues running.
-
-Worktree rows count sessions by state: `▶N` working, `⏸N` waiting for input,
-`✓N` finished and unseen, and `✗N` failed and unseen. ASCII mode uses
-`>N`, `=N`, `+N` and `xN`. The `?` keymap includes this legend.
-Opening session history acknowledges ended sessions so their counts clear.
-
-In the Agents tab, `a` opens worktree sessions and `A` opens repository
-sessions, searchable by session, account, worktree or path. Enter selects the
-worktree and session; a worktree hidden by the current filter must first be
-made visible. The global `!` action cycles through waiting and unseen ended
-sessions. These actions can be rebound as `agent_all`, `agent_all_repo` and
-`agent_attention`.
-
-Ended sessions remain visible in the strip and summary. Use `r`
-(`agent_retry`) in history or the tab to start another session with the same
-account, worktree and recorded launch settings. Prompts are intentionally not
-retained, so retry starts without the original task. `S` (`agent_stop_all`)
-asks for confirmation before stopping every live session in the worktree.
-Session renaming is unavailable in the sessions backend.
-
-The picker shows up to ten cached screen lines for the attached session;
-other sessions have no cheap screen snapshot accessor. Working sessions show
-time since output in the strip after this client observes live output.
-Retained summaries do not contain last-output timestamps.
-
-Settings → General → Agent attention bell enables a terminal bell when a
-working session starts waiting or ends. This personal preference defaults off.
-
-The bell setting is stored as the personal `agent_bell` preference.
-Repository and attention jumps focus the Agents pane for session navigation.
-
-Worktree PR badges show the coloured state word beside the number, without a circle.
-
-The create-worktree flow offers **Start agent here** when agents are enabled.
-Space (`create_agent_toggle`) remembers the choice for this session; after creation,
-the new checkout is selected and its agent launch form opens. The palette also offers
-**New worktree with agent…**. New branches preview their configured path and base;
-Tab (`create_base`) edits the configured upstream or selected PR base (HEAD if unset) before Enter creates the worktree.
-
-Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
-on the first line. Branch names shorten first. The selected row shows its full
-path; other home-directory paths use `~`. The title shows position/count and
-`sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.
-
-With agents enabled, the sort cycle includes `attention`: worktrees with failed or
-waiting sessions come first after the main worktree. Single-worktree pruning warns
-with the names of active agents. Bulk pruning skips those worktrees and lists
-them in its confirmation. Stop their sessions before trying bulk prune again.
