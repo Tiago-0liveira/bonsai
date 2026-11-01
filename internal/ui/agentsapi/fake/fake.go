@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +57,8 @@ type Sessions struct {
 	StartErr  error
 	StopErr   error
 	AttachErr error
+	RenameErr error
+	PeekErr   error
 
 	mu       sync.Mutex
 	items    []agentsapi.Session
@@ -64,7 +67,13 @@ type Sessions struct {
 	streams  map[string][]*Stream
 	starts   []agentsapi.StartRequest
 	attaches []AttachCall
+	renames  []RenameCall
+	peeks    map[string][]string
+	peekReqs []string
 }
+
+// RenameCall records one Rename.
+type RenameCall struct{ ID, Name string }
 
 // AttachCall records one Attach.
 type AttachCall struct {
@@ -225,6 +234,66 @@ func (s *Sessions) Attach(_ context.Context, id string, opts agentsapi.AttachOpt
 	}
 	s.streams[id] = append(s.streams[id], st)
 	return st, nil
+}
+
+// Rename stores the trimmed name, records the call and fires Changes.
+func (s *Sessions) Rename(_ context.Context, id, name string) (string, error) {
+	s.mu.Lock()
+	s.renames = append(s.renames, RenameCall{ID: id, Name: name})
+	if s.RenameErr != nil {
+		s.mu.Unlock()
+		return "", s.RenameErr
+	}
+	name = strings.TrimSpace(name)
+	found := false
+	for i := range s.items {
+		if s.items[i].ID == id {
+			s.items[i].Name = name
+			found = true
+		}
+	}
+	s.mu.Unlock()
+	if !found {
+		return "", ErrNotFound
+	}
+	s.Emit()
+	return name, nil
+}
+
+// SetPeek sets the screen lines Snapshot returns for a session.
+func (s *Sessions) SetPeek(id string, lines ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.peeks == nil {
+		s.peeks = map[string][]string{}
+	}
+	s.peeks[id] = lines
+}
+
+// Snapshot returns the lines SetPeek stored, tailed to n, and records the ID.
+func (s *Sessions) Snapshot(_ context.Context, id string, n int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.peekReqs = append(s.peekReqs, id)
+	if s.PeekErr != nil {
+		return nil, s.PeekErr
+	}
+	lines := s.peeks[id]
+	return append([]string(nil), lines[max(len(lines)-n, 0):]...), nil
+}
+
+// Renames returns the recorded rename calls.
+func (s *Sessions) Renames() []RenameCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]RenameCall(nil), s.renames...)
+}
+
+// Peeks returns the session IDs Snapshot was asked for, in order.
+func (s *Sessions) Peeks() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.peekReqs...)
 }
 
 // Starts returns the recorded start requests.

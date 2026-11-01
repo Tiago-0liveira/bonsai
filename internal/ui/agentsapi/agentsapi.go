@@ -70,6 +70,13 @@ type Sessions interface {
 	Start(ctx context.Context, req StartRequest) (Session, error)
 	Stop(ctx context.Context, id string) error
 	Attach(ctx context.Context, id string, opts AttachOptions) (Stream, error)
+	// Rename sets a session's display name (trimmed, control characters
+	// dropped, at most agenthost.MaxNameRunes) and returns the stored name.
+	Rename(ctx context.Context, id, name string) (string, error)
+	// Snapshot is the last lines of a session's screen, read without taking
+	// part in it. Ended sessions and holders with no screen yield none. The
+	// text is for display only and must never be persisted or logged.
+	Snapshot(ctx context.Context, id string, lines int) ([]string, error)
 }
 
 // Account is an agent profile with the details the accounts modal shows.

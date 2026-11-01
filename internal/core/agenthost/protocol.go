@@ -31,7 +31,7 @@ const (
 
 // Request is one client message. The first one on a connection is a hello.
 type Request struct {
-	// Type is hello, input, resize, take, stop or info.
+	// Type is hello, input, resize, take, stop, rename or info.
 	Type    string `json:"type"`
 	Version int    `json:"version,omitempty"`
 	// Hello.
@@ -50,10 +50,14 @@ type Request struct {
 	Rows int `json:"rows,omitempty"`
 	// Stop: an error to record on the session, such as a vanished worktree.
 	Error string `json:"error,omitempty"`
+	// Rename: the new display name. Holders from before renaming answer
+	// "unknown request", so the protocol version stays.
+	Name string `json:"name,omitempty"`
 }
 
 // Frame is one holder message: ready (answering hello), the terminal stream's
-// output, gap, status and writer frames, info, or error.
+// output, gap, status and writer frames, info, renamed (the updated
+// summary in Status), or error.
 type Frame struct {
 	Type       string                 `json:"type"`
 	Version    int                    `json:"version,omitempty"`
