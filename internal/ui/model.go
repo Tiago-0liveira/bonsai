@@ -247,6 +247,8 @@ type Model struct {
 	rightTab      rightTab
 	logContent    string // last-loaded git log, shown on the Git Log tab
 	status        string
+	statusGen     uint64
+	statusShown   string
 	err           error
 	ready         bool
 	// depth is how many bonsai shells this bonsai already runs inside (0 at

@@ -12,6 +12,9 @@ contains the five working workspaces.
 
 ## TUI
 
+Transient status messages clear after about five seconds or the next action
+key. Errors remain visible until the next action key.
+
 Preferences, the command palette and full-screen modals float over a dimmed
 view of your worktrees. The Agents footer calls profiles “accounts”, matching
 the account picker and keymap.
