@@ -48,25 +48,25 @@ var presets = map[string]Palette{
 	// sakura: the original pink bonsai look.
 	"sakura": {
 		PhaseBacklog: "246", PhasePlanning: "110", PhaseReady: "42", PhaseBuilding: "80", PhaseReview: "212", PhaseDone: "65",
-		Accent: "205", BorderFocus: "205", Border: "240", Dim: "240",
+		Accent: "205", BorderFocus: "205", Border: "240", Dim: "247",
 		Text: "252", Success: "42", Danger: "203", Warning: "208", PRBadge: "212",
 		Background: "233", Surface: "235", Raised: "237", Muted: "246",
 	},
 	"dracula": {
 		PhaseBacklog: "247", PhasePlanning: "117", PhaseReady: "84", PhaseBuilding: "80", PhaseReview: "141", PhaseDone: "65",
-		Accent: "141", BorderFocus: "141", Border: "238", Dim: "244",
+		Accent: "141", BorderFocus: "141", Border: "238", Dim: "247",
 		Text: "253", Success: "84", Danger: "203", Warning: "215", PRBadge: "212",
 		Background: "234", Surface: "236", Raised: "238", Muted: "247",
 	},
 	"nord": {
 		PhaseBacklog: "248", PhasePlanning: "110", PhaseReady: "108", PhaseBuilding: "109", PhaseReview: "139", PhaseDone: "65",
-		Accent: "110", BorderFocus: "110", Border: "239", Dim: "245",
+		Accent: "110", BorderFocus: "110", Border: "239", Dim: "247",
 		Text: "254", Success: "108", Danger: "167", Warning: "179", PRBadge: "116",
 		Background: "235", Surface: "236", Raised: "238", Muted: "248",
 	},
 	"mono": {
 		PhaseBacklog: "247", PhasePlanning: "251", PhaseReady: "254", PhaseBuilding: "249", PhaseReview: "255", PhaseDone: "243",
-		Accent: "255", BorderFocus: "255", Border: "240", Dim: "243",
+		Accent: "255", BorderFocus: "255", Border: "240", Dim: "247",
 		Text: "252", Success: "250", Danger: "245", Warning: "248", PRBadge: "255",
 		Background: "233", Surface: "235", Raised: "237", Muted: "247",
 	},

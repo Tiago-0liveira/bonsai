@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/overlay"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
@@ -273,7 +275,7 @@ func (m Model) legendContent() string {
 	}
 
 	b.WriteString(sec.Render("Worktree list") + "\n")
-	row(pass.Render("●")+" / "+fail.Render("●")+" / "+pend.Render("◐"), "CI status of the connected PR: passing / failing / pending")
+	row(pass.Render(theme.CheckGlyph("pass", m.agentGlyphsASCII()))+" / "+fail.Render(theme.CheckGlyph("fail", m.agentGlyphsASCII()))+" / "+pend.Render(theme.CheckGlyph("pending", m.agentGlyphsASCII())), "CI status of the connected PR: passing / failing / pending")
 	row(badge.Render("#123"), "open pull request connected to this branch")
 	row(badge.Render("#123 merged")+"  "+dim.Render("#123 closed"), "PR state once it is no longer open")
 	row("↑2 ↓1", "commits ahead of / behind the base ref ("+m.cfg.Upstream+")")
@@ -282,9 +284,9 @@ func (m Model) legendContent() string {
 	row(run.Render("▶1"), "1 process currently running in this worktree")
 
 	b.WriteString("\n" + sec.Render("Checks & PR tabs") + "\n")
-	row(pass.Render("✓"), "check passed / review approved / mergeable")
-	row(fail.Render("✗"), "check failed / changes requested / conflicting")
-	row(pend.Render("◐"), "check still pending")
+	row(pass.Render(theme.CheckGlyph("pass", m.agentGlyphsASCII())), "check passed / review approved / mergeable")
+	row(fail.Render(theme.CheckGlyph("fail", m.agentGlyphsASCII())), "check failed / changes requested / conflicting")
+	row(pend.Render(theme.CheckGlyph("pending", m.agentGlyphsASCII())), "check still pending")
 
 	b.WriteString("\n" + sec.Render("Inspector") + "\n")
 	row(run.Render("✓ clean"), "no working-tree changes")
@@ -300,4 +302,15 @@ func padRight(s string, w int) string {
 		return s + strings.Repeat(" ", n)
 	}
 	return s
+}
+
+// legacyOverlay retains spatial context while the modal owns keyboard input.
+func (m Model) legacyOverlay(placed string) string {
+	base := m
+	base.prefs, base.modal = nil, nil
+	p := theme.Current
+	parent := ansi.NewStyle().ForegroundColor(theme.ANSIColor(p.Dim)).BackgroundColor(theme.ANSIColor(p.Background)).Styled(ansi.Strip(base.View()))
+	panel := overlay.Trim(overlay.Frame{Content: placed, Width: m.width, Height: m.height})
+	return overlay.Compose(overlay.Frame{Content: parent, Width: m.width, Height: m.height}, panel,
+		(m.width-panel.Width)/2, (m.height-panel.Height)/2, ansi.NewStyle().BackgroundColor(theme.ANSIColor(p.Background)))
 }

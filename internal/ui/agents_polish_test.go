@@ -134,7 +134,7 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e := liveEnv(t)
 		e.attached(t)
 		e.frames(t, status("running"))
-		if got := plain(e); got != "enter focus agent · a all · m profiles · u usage · n new · s stop · tab focus · ? keys" {
+		if got := plain(e); got != "enter focus agent · a all · m accounts · u usage · n new · s stop · tab focus · ? keys" {
 			t.Errorf("navigation = %q", got)
 		}
 	})
@@ -148,13 +148,13 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e := liveEnv(t)
 		e.attached(t)
 		e.frames(t, status("exited"))
-		if got := plain(e); got != "a all · m profiles · u usage · n new · tab focus · ? keys" {
+		if got := plain(e); got != "a all · m accounts · u usage · n new · tab focus · ? keys" {
 			t.Errorf("ended = %q", got)
 		}
 	})
 	t.Run("terminal", func(t *testing.T) {
 		e, _ := terminalEnv(t)
-		if got := plain(e); got != "FOCUSED · Input goes to agent · Ctrl+] unfocus" {
+		if got := plain(e); got != "FOCUSED · Input goes to agent · ctrl+] unfocus" {
 			t.Errorf("terminal = %q", got)
 		}
 	})
@@ -166,14 +166,14 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e.send(t, tea.KeyMsg{Type: tea.KeyEnter})
 		e.attached(t)
 		e.frames(t, status("running"))
-		if got := plain(e); got != "READ-ONLY · Ctrl+] unfocus" {
+		if got := plain(e); got != "READ-ONLY · ctrl+] unfocus" {
 			t.Errorf("observing other = %q", got)
 		}
 	})
 	t.Run("terminal while reconnecting", func(t *testing.T) {
 		e, _ := terminalEnv(t)
 		e.m.agents.view.stream = nil
-		if got := plain(e); got != "connecting… · Ctrl+] unfocus" {
+		if got := plain(e); got != "connecting… · ctrl+] unfocus" {
 			t.Errorf("reconnecting = %q", got)
 		}
 	})

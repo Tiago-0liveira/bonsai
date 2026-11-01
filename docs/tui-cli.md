@@ -12,6 +12,23 @@ contains the five working workspaces.
 
 ## TUI
 
+Check states keep distinct marks when colours are unavailable. With ASCII
+glyphs selected, passed / failed / pending checks use `+` / `x` / `~`.
+
+Footer hints use `key action · key action`; shifted letters appear as
+`shift+letter` to keep the key names lowercase without losing their meaning.
+
+Transient status messages clear after about five seconds or the next action
+key. Errors remain visible until the next action key.
+
+Preferences, the command palette and full-screen modals float over a dimmed
+view of your worktrees. The Agents footer uses “accounts”, matching
+the account picker and keymap.
+
+Tab labels show your configured jump keys, including Git Log in wide terminals.
+Long key names are shortened in compact headers. Built-in themes keep hints and
+inactive tabs at a minimum 4.5:1 contrast against their dark base and surfaces.
+
 Run `bonsai` inside a repository. Press `n` to create a worktree, `enter` to
 drop into a shell in the selected one, `?` for the searchable keymap and `q` to
 quit. `ctrl+k` opens the command palette, which also edits every `.bonsai.yaml`

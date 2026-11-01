@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,10 +33,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.layoutKind == LayoutRedesign {
 		return m.shellUpdate(msg)
 	}
+	if tick, ok := msg.(statusClearMsg); ok {
+		if tick.generation == m.statusGen {
+			m.status = ""
+			m.statusShown = ""
+			m.statusGen++
+		}
+		return m, nil
+	}
+	if k, ok := msg.(tea.KeyMsg); ok && (m.status != "" || m.err != nil) && m.statusKeyActive(k) {
+		m.status, m.statusShown, m.err = "", "", nil
+		m.statusGen++
+	}
 	nm, cmd := m.update(msg)
 	// Every update can change what the Agents tab shows, so the live view is
 	// reconciled here rather than at each place that changes the selection.
 	if next, ok := nm.(Model); ok {
+		if next.status != next.statusShown {
+			next.statusGen++
+			next.statusShown = next.status
+			if next.status != "" {
+				generation := next.statusGen
+				cmd = tea.Batch(cmd, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return statusClearMsg{generation} }))
+			}
+		}
 		cmd = next.syncAgentView(cmd)
 		return next, cmd
 	}
@@ -2383,4 +2404,42 @@ func (m Model) aliasCommand(name string) string {
 		return ""
 	}
 	return command
+}
+
+type statusClearMsg struct{ generation uint64 }
+
+func (m Model) statusKeyActive(k tea.KeyMsg) bool {
+	if m.modal != nil || m.prefs != nil || m.agents.overlay != nil || m.agentTerminalMode() {
+		return true
+	}
+	if fixedKeys[k.String()] {
+		return true
+	}
+	overrides := map[string]string{}
+	if m.cfg != nil {
+		for action, k := range m.cfg.Keys {
+			overrides[action] = k
+		}
+	}
+	if m.state != nil {
+		for action, k := range m.state.Prefs.Keys {
+			overrides[action] = k
+		}
+	}
+	for action := range defaultBindings {
+		scope, _, _ := scopeOfAction(action)
+		if scope == ksGarden {
+			continue
+		}
+		if scope == ksAgents && (m.rightTab != tabAgents || m.focus != focusTerminal) {
+			continue
+		}
+		if scope == ksProcesses && (m.rightTab != tabProcs || m.focus != focusTerminal) {
+			continue
+		}
+		if key.Matches(k, binding(action, overrides)) {
+			return true
+		}
+	}
+	return m.focus == focusTerminal && isProcScrollKey(k)
 }
