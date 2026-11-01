@@ -13,7 +13,8 @@ contains the five working workspaces.
 ## TUI
 
 Tab labels show your configured jump keys, including Git Log in wide terminals.
-Long key names are shortened in compact headers.
+Long key names are shortened in compact headers. Built-in themes keep hints and
+inactive tabs at a minimum 4.5:1 contrast against their dark base and surfaces.
 
 
 Run `bonsai` inside a repository. Press `n` to create a worktree, `enter` to
