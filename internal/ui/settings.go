@@ -111,7 +111,7 @@ func (m Model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.set.editing {
 		return m.editKey(msg)
 	}
-	m.status = ""
+	m.setStatus("", false)
 	m.set.editErr = ""
 	k := msg.String()
 	if k == "esc" {
@@ -216,7 +216,7 @@ func (m Model) cycleField(d int) (tea.Model, tea.Cmd) {
 		if choices[idx].off == "" {
 			break
 		}
-		m.status = choices[idx].label + " cannot be chosen: " + choices[idx].off
+		m.setStatus(choices[idx].label+" cannot be chosen: "+choices[idx].off, false)
 	}
 	if choices[idx].off != "" {
 		return m, nil // every choice is disabled: the reason stays in the status
@@ -250,9 +250,9 @@ func (m Model) activateField() (tea.Model, tea.Cmd) {
 	case kindLink:
 		return m.openLink(f)
 	case kindReadonly:
-		m.status = "Read-only: " + f.label
+		m.setStatus("Read-only: "+f.label, false)
 	default:
-		m.status = "Not available yet"
+		m.setStatus("Not available yet", false)
 	}
 	return m, nil
 }
@@ -264,7 +264,7 @@ func (m Model) openLink(f settingField) (tea.Model, tea.Cmd) {
 
 func (m Model) beginEdit(f settingField) Model {
 	if strings.HasPrefix(f.id, "auto_review_") && m.autoReviewPreserved() {
-		m.status = autoReviewPreservedReason
+		m.setStatus(autoReviewPreservedReason, false)
 		return m
 	}
 	in := textinput.New()
@@ -320,7 +320,7 @@ func (m Model) commitEdit() (tea.Model, tea.Cmd) {
 	m.set.editErr = ""
 	m.shellFocus = shellBody
 	if v == f.get(m) {
-		m.status = "Unchanged"
+		m.setStatus("Unchanged", false)
 		return m, nil
 	}
 	if f.apply != nil {
@@ -368,9 +368,9 @@ func (m Model) onSettingsSaved(msg settingsSavedMsg) Model {
 	if msg.gen == m.prefsGen && !superseded {
 		if msg.err == nil {
 			m.set.saveErr = ""
-			m.status = "Saved"
+			m.setStatus("Saved", false)
 			if msg.note != "" {
-				m.status += " · " + msg.note
+				m.setStatus(m.status+" · "+msg.note, m.statusErr)
 			}
 			return m
 		}
@@ -379,7 +379,7 @@ func (m Model) onSettingsSaved(msg settingsSavedMsg) Model {
 		if errors.Is(msg.err, config.ErrGardenAutoReviewNewer) {
 			m.set.saveErr = autoReviewPreservedReason
 		}
-		m.status = m.set.saveErr
+		m.setStatus(m.set.saveErr, false)
 	}
 	if m.set.pendingRollback && m.set.inflight == 0 {
 		m.set.pendingRollback = false
@@ -405,7 +405,7 @@ func (m Model) confirmRepoWrite() (tea.Model, tea.Cmd) {
 	if p == nil {
 		return m, nil
 	}
-	m.status = "Writing .bonsai.yaml…"
+	m.setStatus("Writing .bonsai.yaml…", false)
 	return m, saveConfigValue(m.configFile, p.key, p.value)
 }
 
@@ -415,14 +415,14 @@ func (m Model) confirmRepoWrite() (tea.Model, tea.Cmd) {
 func (m Model) onRepoConfigSaved(msg configSavedMsg) Model {
 	if msg.err != nil {
 		m.set.saveErr = "Save failed: " + msg.err.Error()
-		m.status = m.set.saveErr
+		m.setStatus(m.set.saveErr, false)
 		return m
 	}
 	m.set.saveErr = ""
 	cfg, err := config.LoadFor(m.repoDir)
 	if err != nil {
 		m.set.saveErr = "Saved, but reloading .bonsai.yaml failed: " + err.Error()
-		m.status = m.set.saveErr
+		m.setStatus(m.set.saveErr, false)
 		return m
 	}
 	before := len(m.curFields())
@@ -434,7 +434,7 @@ func (m Model) onRepoConfigSaved(msg configSavedMsg) Model {
 			m.set.level = levelSection
 		}
 	}
-	m.status = "Wrote " + msg.setting + " to .bonsai.yaml"
+	m.setStatus("Wrote "+msg.setting+" to .bonsai.yaml", false)
 	return m
 }
 
@@ -477,7 +477,7 @@ func (m Model) captureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case candidate == "backspace" || candidate == "delete":
 		if !personal {
 			m = finish(m)
-			m.status = desc + " is already at its default (" + def + ")"
+			m.setStatus(desc+" is already at its default ("+def+")", false)
 			return m, nil
 		}
 		return restore(m)
@@ -486,7 +486,7 @@ func (m Model) captureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// shared (shell is enter, rebase and restart_proc both use r).
 		if !personal {
 			m = finish(m)
-			m.status = desc + " is already at its default (" + def + ")"
+			m.setStatus(desc+" is already at its default ("+def+")", false)
 			return m, nil
 		}
 		return restore(m)
@@ -548,7 +548,7 @@ func (m Model) settingsAssistWarm() (Model, tea.Cmd) {
 
 func (m Model) openAssistDefaults() (Model, tea.Cmd) {
 	if m.agents.api.Accounts == nil {
-		m.status = "Agent accounts are unavailable here"
+		m.setStatus("Agent accounts are unavailable here", false)
 		return m, nil
 	}
 	m.set.assist = newAssistOptions(m.agents.api.Accounts, m.agents.usage, m.agentGlyphsASCII(), m.assistDefaults())

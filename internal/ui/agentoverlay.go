@@ -48,11 +48,11 @@ func (m *Model) leaveAgentTerminal() {
 // it is missing.
 func (m *Model) agentOverlayReady() bool {
 	if !m.agents.active() {
-		m.status = unsupportedNotice
+		m.setStatus(unsupportedNotice, false)
 		return false
 	}
 	if m.agents.api.Accounts == nil {
-		m.status = accountsUnavailable
+		m.setStatus(accountsUnavailable, false)
 		return false
 	}
 	return true
@@ -230,7 +230,7 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		return true, m, tea.ExecProcess(msg.Cmd, func(err error) tea.Msg { return agentExecDoneMsg{err: err} })
 	case agentExecDoneMsg:
 		if msg.err != nil {
-			m.status = "agents: " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		var ocmd tea.Cmd
 		m, ocmd = m.overlayUpdate(accounts.ReloadMsg{})
@@ -253,12 +253,12 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		return true, nm, cmd
 	case launchSavedMsg:
 		if msg.err != nil {
-			m.status = "agents: could not save defaults: " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: could not save defaults: "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		return true, m, nil
 	case agentStoppedMsg:
 		if msg.err != nil {
-			m.status = "agents: could not stop " + msg.name + ": " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: could not stop "+msg.name+": "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		return true, m, m.relistAgents()
 	}
@@ -307,12 +307,12 @@ func (m Model) onLaunchStarted(msg launchStartedMsg) (tea.Model, tea.Cmd) {
 			d := o.launch.failed(msg.err)
 			m.setAgentOverlay(agentOverlay{launch: &d})
 		} else {
-			m.status = "agents: could not start: " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: could not start: "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		return m, nil
 	}
 	if !open {
-		m.status = "agents: started " + sanitizeAgentText(sessionName(msg.session))
+		m.setStatus("agents: started "+sanitizeAgentText(sessionName(msg.session)), false)
 	}
 	var cmds []tea.Cmd
 	// Defaults are saved only after the agent really started, so a failed
@@ -346,7 +346,7 @@ func (m Model) onLaunchStarted(msg launchStartedMsg) (tea.Model, tea.Cmd) {
 // confirm-destructive setting does not cover.
 func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 	if !m.agents.active() {
-		m.status = unsupportedNotice
+		m.setStatus(unsupportedNotice, false)
 		return m, nil
 	}
 	wt, ok := m.selectedWorktree()
@@ -355,7 +355,7 @@ func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 	}
 	s, _, ok := m.selectedSession(cleanPath(wt.Path))
 	if !ok || !s.Active() {
-		m.status = "agents: no running agent to stop"
+		m.setStatus("agents: no running agent to stop", false)
 		return m, nil
 	}
 	m.leaveAgentTerminal()
@@ -410,7 +410,7 @@ func (m Model) askStopAllAgents() (tea.Model, tea.Cmd) {
 		}
 	}
 	if len(cmds) == 0 {
-		m.status = "agents: no running sessions to stop"
+		m.setStatus("agents: no running sessions to stop", false)
 		return m, nil
 	}
 	m.leaveAgentTerminal()

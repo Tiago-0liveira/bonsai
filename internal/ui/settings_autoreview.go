@@ -207,18 +207,18 @@ func autoReviewRefusal(err error) string {
 
 func (m Model) autoReviewApply(change func(*config.GardenAutoReviewPrefs)) (tea.Model, tea.Cmd) {
 	if m.autoReviewPreserved() {
-		m.status = autoReviewPreservedReason
+		m.setStatus(autoReviewPreservedReason, false)
 		return m, nil
 	}
 	cur, next := m.autoReviewPolicy(), m.autoReviewPolicy()
 	change(&next)
 	if next.Enabled && next.Account == "" {
-		m.status = "Choose a reviewer account before turning automatic review on."
+		m.setStatus("Choose a reviewer account before turning automatic review on.", false)
 		m.set.editErr = m.status
 		return m, nil
 	}
 	if err := next.Validate(); err != nil {
-		m.status = autoReviewRefusal(err)
+		m.setStatus(autoReviewRefusal(err), false)
 		m.set.editErr = m.status
 		return m, nil
 	}
@@ -235,7 +235,7 @@ func (m Model) autoReviewSave(next *config.GardenAutoReviewPrefs, note string, a
 	nm, save := m.editPrefs(func(p *config.Prefs) { p.GardenAutoReview = next.Clone() })
 	m = nm.(Model)
 	if note != "" {
-		m.status = note
+		m.setStatus(note, false)
 		persist := save
 		save = func() tea.Msg {
 			msg := persist().(settingsSavedMsg)
@@ -388,7 +388,7 @@ func (m Model) autoReviewPermissionHelp() string {
 
 func (m Model) confirmAutoReviewRestore() (Model, tea.Cmd) {
 	if m.autoReviewPreserved() {
-		m.status = autoReviewPreservedReason
+		m.setStatus(autoReviewPreservedReason, false)
 		return m, nil
 	}
 	modal := modals.NewConfirm(modals.KindGardenAutoReviewRestore, "Restore automatic review defaults?")
@@ -400,7 +400,7 @@ func (m Model) confirmAutoReviewRestore() (Model, tea.Cmd) {
 
 func (m Model) autoReviewRestore() (tea.Model, tea.Cmd) {
 	if m.autoReviewPreserved() {
-		m.status = autoReviewPreservedReason
+		m.setStatus(autoReviewPreservedReason, false)
 		return m, nil
 	}
 	return m.autoReviewSave(nil, "", true)
@@ -446,7 +446,7 @@ func gardenAutoReviewSection() settingSection {
 			origin: origin(func(p config.GardenAutoReviewPrefs) bool { return p.Account != "" }),
 			apply: func(m Model, v string) (tea.Model, tea.Cmd) {
 				if v == "" {
-					m.status = "Choose a reviewer account first."
+					m.setStatus("Choose a reviewer account first.", false)
 					return m, nil
 				}
 				return m.autoReviewApply(func(p *config.GardenAutoReviewPrefs) { p.Account = v })
@@ -484,7 +484,7 @@ func gardenAutoReviewSection() settingSection {
 				if v != "" {
 					f, ok := m.autoReviewPermissionField()
 					if !ok {
-						m.status = m.autoReviewOptionsHelp()
+						m.setStatus(m.autoReviewOptionsHelp(), false)
 						return m, nil
 					}
 					l = agents.LaunchOptionsFrom([]agents.LaunchField{f}, "", map[string]string{f.ID: v})
@@ -521,7 +521,7 @@ func gardenAutoReviewSection() settingSection {
 			apply: func(m Model, v string) (tea.Model, tea.Cmd) {
 				checks, err := config.ParseGardenChecks(v)
 				if err != nil {
-					m.status = autoReviewRefusal(err)
+					m.setStatus(autoReviewRefusal(err), false)
 					return m, nil
 				}
 				return m.autoReviewApply(func(p *config.GardenAutoReviewPrefs) { p.Checks = checks })
@@ -568,7 +568,7 @@ func gardenAutoReviewSection() settingSection {
 		if apply != nil {
 			f.apply = func(m Model, v string) (tea.Model, tea.Cmd) {
 				if m.autoReviewPreserved() {
-					m.status = autoReviewPreservedReason
+					m.setStatus(autoReviewPreservedReason, false)
 					return m, nil
 				}
 				return apply(m, v)
@@ -578,13 +578,13 @@ func gardenAutoReviewSection() settingSection {
 			field := *f
 			f.open = func(m Model) (Model, tea.Cmd) {
 				if m.autoReviewPreserved() {
-					m.status = autoReviewPreservedReason
+					m.setStatus(autoReviewPreservedReason, false)
 					return m, nil
 				}
 				checks := m.autoReviewPolicy().Checks
 				parsed, err := config.ParseGardenChecks(config.FormatGardenChecks(checks))
 				if err != nil || !reflect.DeepEqual(parsed, checks) {
-					m.status = "These checks have a folder, custom name or spaced argument; edit them in state.json or restore defaults."
+					m.setStatus("These checks have a folder, custom name or spaced argument; edit them in state.json or restore defaults.", false)
 					return m, nil
 				}
 				return m.beginEdit(field), nil

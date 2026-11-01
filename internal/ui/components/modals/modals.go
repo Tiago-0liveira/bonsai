@@ -366,7 +366,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.createOptions && bindingMatches(key, m.toggleAgent) {
+	if m.createOptions && key.Type != tea.KeyRunes && key.Type != tea.KeySpace && bindingMatches(key, m.toggleAgent) {
 		m.startAgent = !m.startAgent
 		return m, nil
 	}

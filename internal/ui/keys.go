@@ -95,7 +95,7 @@ var defaultBindings = map[string]bindingSpec{
 	"filter":                 {[]string{"/"}, "filter"},
 	"sort":                   {[]string{"o"}, "sort"},
 	"usage_pane_toggle":      {[]string{"U"}, "expand usage pane"},
-	"create_agent_toggle":    {[]string{" "}, "start agent here"},
+	"create_agent_toggle":    {[]string{"ctrl+a"}, "start agent here"},
 	"create_base":            {[]string{"tab"}, "creation base"},
 	"palette":                {[]string{"ctrl+k"}, "commands"},
 	"copy_file":              {[]string{"c"}, "copy file"},

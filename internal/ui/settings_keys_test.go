@@ -475,3 +475,17 @@ func TestSavedRepoConfigResetsCursorWhenFieldsChange(t *testing.T) {
 		t.Errorf("fields=%d cursor=%d", len(m.curFields()), m.set.field)
 	}
 }
+
+func TestCreateToggleBinding(t *testing.T) {
+	if got := defaultBindings["create_agent_toggle"].keys; len(got) != 1 || got[0] != "ctrl+a" {
+		t.Fatalf("%v", got)
+	}
+	for _, k := range []string{"a", " ", "space"} {
+		if validateKeyBinding("create_agent_toggle", k, nil) == nil {
+			t.Fatalf("accepted printable %q", k)
+		}
+	}
+	if err := validateKeyBinding("create_agent_toggle", "ctrl+a", nil); err != nil {
+		t.Fatal(err)
+	}
+}

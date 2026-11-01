@@ -93,6 +93,9 @@ func validateKeyBinding(action, candidate string, overrides map[string]string) e
 			return fmt.Errorf("%s jumps between workspaces", candidate)
 		}
 	}
+	if action == "create_agent_toggle" && (len([]rune(candidate)) == 1 || candidate == "space") {
+		return fmt.Errorf("%s is used for typing", candidate)
+	}
 	if fixedKeys[candidate] {
 		return fmt.Errorf("%s is reserved", candidate)
 	}

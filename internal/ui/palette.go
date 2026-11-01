@@ -129,10 +129,10 @@ func mouseToggleLabel(m Model) string {
 func (m Model) toggleMouse() (tea.Model, tea.Cmd) {
 	m.mouseOff = !m.mouseOff
 	if m.mouseOff {
-		m.status = "mouse off — drag to select text; wheel no longer scrolls"
+		m.setStatus("mouse off — drag to select text; wheel no longer scrolls", false)
 		return m, tea.DisableMouse
 	}
-	m.status = "mouse on — wheel scrolls; hold shift to select text"
+	m.setStatus("mouse on — wheel scrolls; hold shift to select text", false)
 	return m, tea.EnableMouseCellMotion
 }
 
@@ -185,15 +185,15 @@ func (m Model) paletteCommands() []paletteCmd {
 		wt("Open shell", m.keys.Enter, Model.openShell),
 		wt("Open editor", m.keys.Editor, Model.openEditor),
 		wt("Pull", m.keys.Pull, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
-			m.status = "pulling…"
+			m.setStatus("pulling…", false)
 			return m, gitPull(path)
 		})),
 		wt("Push", m.keys.Push, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
-			m.status = "pushing…"
+			m.setStatus("pushing…", false)
 			return m, gitPush(path)
 		})),
 		wt("Fetch", m.keys.Fetch, runOnWorktree(func(m Model, path string) (tea.Model, tea.Cmd) {
-			m.status = "fetching…"
+			m.setStatus("fetching…", false)
 			return m, gitFetch(path)
 		})),
 		wt("Commit changes", m.keys.Commit, Model.openCommitModal),
@@ -314,7 +314,7 @@ func (m Model) paletteCommands() []paletteCmd {
 				if p, err := m.procs.Restart(id); err == nil {
 					m.activeProc[wt.Path] = p.ID
 				} else {
-					m.status = "restart: " + err.Error()
+					m.setStatus("restart: "+err.Error(), true)
 				}
 				m.refreshProcPane()
 			}

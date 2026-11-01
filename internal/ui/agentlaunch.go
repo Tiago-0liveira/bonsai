@@ -645,7 +645,7 @@ func (m Model) openAgentTask(fork bool) (tea.Model, tea.Cmd) {
 		}
 		session, _, ok := m.selectedSession(cleanPath(wt.Path))
 		if !ok {
-			m.status = "agents: choose a session first"
+			m.setStatus("agents: choose a session first", false)
 			return m, nil
 		}
 		seed = &session

@@ -10,9 +10,9 @@ import (
 func TestCreateOptions(t *testing.T) {
 	m := NewInput(KindCreateNew, "New branch", "branch")
 	m.SetSize(100, 30)
-	m.SetCreateOptions(true, false, key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle")), key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "base")), "origin/main", func(name, base string) string { return "from " + base + " → /trees/" + name })
+	m.SetCreateOptions(true, false, key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("space", "toggle")), key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "base")), "origin/main", func(name, base string) string { return "from " + base + " → /trees/" + name })
 	m.SetInitial("feature")
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("-next")})
@@ -23,5 +23,19 @@ func TestCreateOptions(t *testing.T) {
 	got := cmd().(SubmitMsg)
 	if !got.StartAgent || got.Base != "origin/main-next" || got.Value != "feature" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestPrintableToggleDoesNotConsumeTyping(t *testing.T) {
+	for _, binding := range []string{" ", "a"} {
+		m := NewInput(KindCreateNew, "New branch", "branch")
+		m.SetCreateOptions(true, false, key.NewBinding(key.WithKeys(binding)), key.NewBinding(key.WithKeys("tab")), "", nil)
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if got := cmd().(SubmitMsg); got.Value != "a b" || got.StartAgent {
+			t.Fatalf("%+v", got)
+		}
 	}
 }

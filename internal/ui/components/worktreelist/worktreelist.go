@@ -88,7 +88,7 @@ func checkGlyph(rollup string, ascii bool) string {
 func (i Item) dirtyBadge() string {
 	var parts []string
 	if n := i.Status.Staged + i.Status.Modified; n > 0 {
-		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("±%d", n)))
+		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("%s%d", TrackedGlyph(false), n)))
 	}
 	if i.Status.Untracked > 0 {
 		parts = append(parts, descStyle.Render(fmt.Sprintf("?%d", i.Status.Untracked)))
@@ -238,13 +238,10 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	columns := func(row Item) []string {
 		dirty := row.dirtyBadge()
 		if d.ascii {
-			dirty = strings.ReplaceAll(dirty, "±", "+/-")
+			dirty = strings.ReplaceAll(dirty, TrackedGlyph(false), TrackedGlyph(true))
 		}
 		if row.Running > 0 {
-			glyph := "▶"
-			if d.ascii {
-				glyph = ">"
-			}
+			glyph := RunningGlyph(d.ascii)
 			dirty += " " + runningStyle.Render(fmt.Sprintf("%s%d", glyph, row.Running))
 		}
 		agents := ""
@@ -253,10 +250,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		}
 		metrics := ""
 		if row.HasMetrics && (row.Metrics.Ahead > 0 || row.Metrics.Behind > 0) {
-			up, down := "↑", "↓"
-			if d.ascii {
-				up, down = "^", "v"
-			}
+			up, down := AheadBehindGlyphs(d.ascii)
 			metrics = fmt.Sprintf("%s%d %s%d", up, row.Metrics.Ahead, down, row.Metrics.Behind)
 		}
 		return []string{strings.TrimSpace(row.prBadge()), checkGlyph(row.Checks, d.ascii), strings.TrimSpace(dirty), agents, metrics}
@@ -446,4 +440,24 @@ func (m *Model) SelectCreatedPath(path string) bool {
 	}
 	m.list.ResetFilter()
 	return m.SelectByPath(path)
+}
+
+func TrackedGlyph(ascii bool) string {
+	if ascii {
+		return "+/-"
+	}
+	return "±"
+}
+func RunningGlyph(ascii bool) string {
+	if ascii {
+		return ">"
+	}
+	return "▶"
+}
+
+func AheadBehindGlyphs(ascii bool) (string, string) {
+	if ascii {
+		return "^", "v"
+	}
+	return "↑", "↓"
 }

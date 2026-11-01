@@ -12,11 +12,11 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
-	"github.com/Tiago-0liveira/bonsai/internal/core/termscreen"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
+	"io"
 )
 
 // Option customizes a Model at construction.
@@ -273,7 +273,7 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 	}
 	var bell tea.Cmd
 	if m.livePrefs().AgentBell && agentNeedsBell(m.agents.sessions, msg.sessions) {
-		bell = func() tea.Msg { _ = termscreen.Bell(); return nil }
+		bell = m.ringBell()
 	}
 	m.agents.sessions = msg.sessions
 	m.agents.byTree = msg.byTree
@@ -340,6 +340,9 @@ func (m *Model) refreshAgentBadges() {
 		}
 	}
 	m.list.SetAgentBadges(func(path string) string { return badges[filepath.Clean(path)] })
+	if m.sort == sortAttention {
+		m.rebuildItems()
+	}
 }
 
 // agentUrgency orders what a session needs from the user: a waiting agent
@@ -374,21 +377,18 @@ func (m Model) agentBadge(idx []int, ascii bool) string {
 		s := m.agents.sessions[i]
 		switch {
 		case s.Active():
-			if sessionUrgency(s) == urgencyWaiting {
+			if m.sessionNeedsAttention(s) {
 				counts[1]++
 			} else {
 				counts[0]++
 			}
-		case !m.agents.ack[s.ID] && s.State == "exited":
+		case m.sessionNeedsAttention(s) && s.State == "exited":
 			counts[2]++
-		case !m.agents.ack[s.ID] && s.State == "failed":
+		case m.sessionNeedsAttention(s) && s.State == "failed":
 			counts[3]++
 		}
 	}
-	marks := []string{"▶", "⏸", "✓", "✗"}
-	if ascii {
-		marks = []string{">", "=", "+", "x"}
-	}
+	marks := agentBadgeGlyphs(ascii)
 	colors := []lipgloss.TerminalColor{theme.Current.Text, theme.Current.Warning, theme.Current.Dim, theme.Current.Danger}
 	var parts []string
 	for i, n := range counts {
@@ -413,4 +413,30 @@ func agentNeedsBell(old, next []agentsapi.Session) bool {
 		}
 	}
 	return false
+}
+
+func (m Model) sessionNeedsAttention(s agentsapi.Session) bool {
+	if s.Active() {
+		return sessionUrgency(s) == urgencyWaiting
+	}
+	return !m.agents.ack[s.ID] && (s.State == "failed" || s.State == "exited")
+}
+
+// WithOutput routes terminal signals to the same writer as Bubble Tea.
+func WithOutput(w io.Writer) Option { return func(m *Model) { m.output = w } }
+
+func agentBadgeGlyphs(ascii bool) []string {
+	if ascii {
+		return []string{">", "=", "+", "x"}
+	}
+	return []string{"▶", "⏸", "✓", "✗"}
+}
+
+func (m Model) ringBell() tea.Cmd {
+	return func() tea.Msg {
+		if m.output != nil {
+			_, _ = io.WriteString(m.output, "\a")
+		}
+		return nil
+	}
 }

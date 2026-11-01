@@ -367,13 +367,13 @@ func (m Model) onConfigValue(value string) (tea.Model, tea.Cmd) {
 		}
 	}
 	if strings.TrimSpace(value) == "" {
-		m.status = "config: empty value for " + s.key
+		m.setStatus("config: empty value for "+s.key, false)
 		return m, nil
 	}
 	if s.key == "pkgmgr.search_depth" {
 		depth, err := strconv.Atoi(value)
 		if err != nil || depth < 0 {
-			m.status = "config: pkgmgr.search_depth must be a non-negative integer"
+			m.setStatus("config: pkgmgr.search_depth must be a non-negative integer", false)
 			return m, nil
 		}
 		value = strconv.Itoa(depth)
@@ -438,21 +438,21 @@ func (m Model) onConfigSaved(msg configSavedMsg) (tea.Model, tea.Cmd) {
 	m.pendingCfg = nil
 	m.pendingCfgSub = ""
 	if msg.err != nil {
-		m.status = "config: " + msg.err.Error()
+		m.setStatus("config: "+msg.err.Error(), true)
 		return m, nil
 	}
 
 	cfg, err := config.LoadFor(m.repoDir)
 	if err != nil {
-		m.status = "config: saved, but reload failed: " + err.Error()
+		m.setStatus("config: saved, but reload failed: "+err.Error(), true)
 		return m, nil
 	}
 	m.cfg = cfg
 	m.applyConfigLive()
 
-	m.status = "config: " + msg.setting
+	m.setStatus("config: "+msg.setting, false)
 	if cols := keyCollisions(m.mergedKeyOverrides()); len(cols) > 0 {
-		m.status += " (key conflict ignored: " + cols[0] + ")"
+		m.setStatus(m.status+" (key conflict ignored: "+cols[0]+")", m.statusErr)
 	}
 	// Recompute metrics/status cheaply (gh results come from cache when fresh).
 	cmd := m.readWorktrees(false)

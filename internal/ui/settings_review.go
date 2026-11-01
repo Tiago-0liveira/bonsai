@@ -210,7 +210,8 @@ func (m Model) reviewApply(change func(*config.GardenReviewPrefs)) (tea.Model, t
 		return m, nil
 	}
 	if why := m.reviewRefusal(next); why != "" {
-		m.set.editErr, m.status = why, why
+		m.set.editErr = why
+		m.setStatus(why, true)
 		return m, nil
 	}
 	if next.Enabled && (!cur.Enabled || next.AccountID != cur.AccountID || next.Trigger != cur.Trigger) {
@@ -262,7 +263,8 @@ func (m Model) reviewConsentConfirmed() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if why := m.reviewRefusal(*p); why != "" {
-		m.set.editErr, m.status = why, why
+		m.set.editErr = why
+		m.setStatus(why, true)
 		return m, nil
 	}
 	next := *p
@@ -322,7 +324,8 @@ func gardenReviewSection() settingSection {
 			apply: func(m Model, v string) (tea.Model, tea.Cmd) {
 				if v == "" {
 					why := "No account can run a read-only reviewer: " + m.reviewNoneReason() + "."
-					m.set.editErr, m.status = why, why
+					m.set.editErr = why
+					m.setStatus(why, true)
 					return m, nil
 				}
 				return m.reviewApply(func(p *config.GardenReviewPrefs) { p.AccountID = v })

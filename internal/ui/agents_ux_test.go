@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bytes"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
@@ -185,5 +187,45 @@ func TestAgentStripOutputAge(t *testing.T) {
 	got = ansi.Strip(e.m.sessionStrip([]agentsapi.Session{s}, 0, 120, "", ""))
 	if !strings.Contains(got, "> 2m") {
 		t.Fatal(got)
+	}
+}
+
+func TestBellOutput(t *testing.T) {
+	var out bytes.Buffer
+	m := renderModel()
+	WithOutput(&out)(&m)
+	m.ringBell()()
+	if out.String() != "\a" {
+		t.Fatalf("got %q", out.String())
+	}
+}
+
+func TestSessionAttentionAcknowledgement(t *testing.T) {
+	for _, state := range []string{"running", "failed", "exited"} {
+		for _, ack := range []bool{false, true} {
+			e := newAgentsEnv(t)
+			s := agentsapi.Session{Summary: agentterminal.Summary{ID: "s", State: state}}
+			e.m.agents.sessions = []agentsapi.Session{s}
+			e.m.agents.byTree = map[string][]int{e.wtA: {0}}
+			e.m.agents.ack["s"] = ack
+			want := state != "running" && !ack
+			if e.m.sessionNeedsAttention(s) != want || (e.m.worktreeAttention(e.wtA) > 0) != want {
+				t.Fatalf("%s ack %v", state, ack)
+			}
+		}
+	}
+}
+
+func TestLegendTrackedGlyph(t *testing.T) {
+	for _, ascii := range []bool{false, true} {
+		m := newAgentsEnv(t).m
+		want := "±3"
+		if ascii {
+			m.state.Prefs.AgentGlyphs = "ascii"
+			want = "+/-3"
+		}
+		if got := m.legendContent(); !strings.Contains(got, want) || strings.Contains(got, "●3") {
+			t.Fatal(got)
+		}
 	}
 }

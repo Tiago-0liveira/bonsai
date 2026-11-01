@@ -86,7 +86,7 @@ func (m Model) accountsMsg(msg tea.Msg) (handled bool, nm Model, cmd tea.Cmd) {
 		return true, m, tea.ExecProcess(msg.Cmd, func(err error) tea.Msg { return agentExecDoneMsg{err: err} })
 	case agentExecDoneMsg:
 		if msg.err != nil {
-			m.status = "accounts: " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("accounts: "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		if !m.acct.present {
 			return true, m, nil
