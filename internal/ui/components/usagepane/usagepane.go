@@ -16,14 +16,10 @@ import (
 )
 
 const (
-	percentCells      = 4 // "100%"
-	minMeterCells     = 4
-	primaryMeterCells = 12 // grow the primary meter before adding a secondary one
-	minNameCells      = 6
-	maxNameCells      = 12
-	borderCells       = 2
-	padCells          = 2 // one space inside each border
-	railCells         = 2 // rail and following space
+	percentCells = 4
+	minNameCells = 6
+	maxNameCells = 12
+	borderCells  = 2
 )
 
 // Account is one account's row data.
@@ -34,111 +30,6 @@ type Account struct {
 	Stale              bool // last refresh failed or is overdue
 	Err                string
 	Loading            bool // no data yet
-}
-
-type mode int
-
-const (
-	modeFull    mode = iota // three content lines per account
-	modeCompact             // one content line per account
-)
-
-// Height is the outer height View draws for maxRows (borders included), or 0
-// when even one line does not fit.
-func Height(accounts []Account, maxRows int) int {
-	if maxRows < borderCells+1 {
-		return 0
-	}
-	_, rows, _ := plan(accounts, maxRows-borderCells)
-	return rows + borderCells
-}
-
-// View draws the box into at most maxRows rows (borders included). headerAge
-// is the oldest account's age, shown in the top border when it fits.
-func View(accounts []Account, headerAge string, width, maxRows int, now time.Time, ascii bool) string {
-	if maxRows < borderCells+1 || width < 12 {
-		return ""
-	}
-	cw := width - borderCells - padCells
-	md, rows, shown := plan(accounts, maxRows-borderCells)
-	visible := accounts[:shown]
-	layout := compactLayout(visible, cw-railCells, ascii)
-	labelW := windowLabelWidth(visible, cw-railCells)
-	meterW := expandedMeterWidth(visible, cw-railCells, labelW, now, ascii)
-	var lines []string
-	if len(accounts) == 0 {
-		lines = []string{dim("No agent accounts")}
-	}
-	for _, a := range visible {
-		if md == modeCompact {
-			lines = append(lines, rail(a.Provider, ascii)+compactLine(a, layout, ascii))
-		} else {
-			for _, line := range blockLines(a, cw-railCells, labelW, meterW, now, ascii) {
-				lines = append(lines, rail(a.Provider, ascii)+line)
-			}
-		}
-	}
-	if more := len(accounts) - shown; more > 0 && len(lines) < rows {
-		lines = append(lines, dim(fmt.Sprintf("+%d more", more)))
-	}
-
-	b := borders(ascii)
-	edge := lipgloss.NewStyle().Foreground(theme.Current.Border)
-	out := []string{topBorder(width, headerAge, ascii, b, edge)}
-	for _, l := range lines {
-		out = append(out, edge.Render(b.v)+" "+fit(l, cw)+" "+edge.Render(b.v))
-	}
-	out = append(out, edge.Render(b.bl+strings.Repeat(b.h, width-borderCells)+b.br))
-	return strings.Join(out, "\n")
-}
-
-// plan keeps automatic sizing and account overflow: all expanded blocks,
-// then one row per account, then the existing +N more row.
-func plan(accounts []Account, avail int) (md mode, rows, shown int) {
-	if len(accounts) == 0 {
-		return modeCompact, 1, 0
-	}
-	if n := 3 * len(accounts); n <= avail {
-		return modeFull, n, len(accounts)
-	}
-	if len(accounts) <= avail {
-		return modeCompact, len(accounts), len(accounts)
-	}
-	if avail == 1 {
-		return modeCompact, 1, 1
-	}
-	return modeCompact, avail, avail - 1
-}
-
-func blockLines(a Account, cw, labelW, meterW int, now time.Time, ascii bool) []string {
-	lines := []string{headerLine(a, cw, ascii), "", ""}
-	if state := accountState(a, ascii); state != "" {
-		lines[1] = dim(truncate(state, cw, ascii))
-		return lines
-	}
-	i := 1
-	for _, w := range windows(a) {
-		if w.limit != nil {
-			lines[i] = limitLine(w.limit, w.label(false), cw, labelW, meterW, now, ascii)
-			i++
-		}
-	}
-	return lines
-}
-
-func headerLine(a Account, cw int, ascii bool) string {
-	provider := providerName(a.Provider)
-	sep := " · "
-	if ascii {
-		sep = " / "
-	}
-	head := dim(provider + sep)
-	if lipgloss.Width(head)+minNameCells > cw {
-		head = providerGlyph(a.Provider, ascii) + " "
-	}
-	mark := staleMark(a)
-	nameW := max(cw-lipgloss.Width(head)-lipgloss.Width(mark), 0)
-	return head + text(pad(truncate(inline(a.Name), nameW, ascii), nameW)) + mark
 }
 
 type window struct {
@@ -156,167 +47,6 @@ func (w window) label(compact bool) string {
 		return "W"
 	}
 	return label
-}
-
-func windowLabelWidth(accounts []Account, cw int) int {
-	width := 0
-	for _, a := range accounts {
-		for _, w := range windows(a) {
-			if w.limit != nil {
-				width = max(width, lipgloss.Width(w.label(false)))
-			}
-		}
-	}
-	return min(width, max(cw-percentCells-1, 1))
-}
-
-// limitLine keeps label and value ahead of the meter and reset caption. The
-// common label column makes both headline windows line up across accounts.
-func limitLine(l *agents.UsageLimit, label string, cw, labelW, meterW int, now time.Time, ascii bool) string {
-	label = dim(pad(truncate(label, labelW, ascii), labelW))
-	frac, ok := agents.RemainingFraction(l)
-	if !ok {
-		return label + " " + dim("Unavailable")
-	}
-	pct := capacity(frac)
-	parts := []string{label}
-	if meterW > 0 {
-		parts = append(parts, bar(frac, meterW, ascii))
-	}
-	parts = append(parts, pct)
-	line := strings.Join(parts, " ")
-	if l.ResetsAt != nil {
-		reset := resetCaption(l, now, ascii)
-		if lipgloss.Width(line)+2+lipgloss.Width(reset) <= cw {
-			line += "  " + dim(reset)
-		}
-	}
-	return line
-}
-
-// Expanded windows have their own rows, so both meters can fill the width.
-// Reserve a shared reset column only when a useful meter still fits.
-func expandedMeterWidth(accounts []Account, cw, labelW int, now time.Time, ascii bool) int {
-	room := max(cw-labelW-percentCells-2, 0)
-	resetW := 0
-	for _, a := range accounts {
-		for _, w := range windows(a) {
-			if _, ok := agents.RemainingFraction(w.limit); ok && w.limit.ResetsAt != nil {
-				resetW = max(resetW, 2+lipgloss.Width(resetCaption(w.limit, now, ascii)))
-			}
-		}
-	}
-	if room-resetW >= minMeterCells {
-		return room - resetW
-	}
-	return room
-}
-
-func resetCaption(l *agents.UsageLimit, now time.Time, ascii bool) string {
-	mark := "↻ "
-	if ascii {
-		mark = "~ "
-	}
-	return mark + usagefmt.ResetsIn(now, l.ResetsAt, true)
-}
-
-type compactColumns struct {
-	name   int
-	meters [2]int
-	labels [2]int
-}
-
-// compactLayout shares identity columns and gives the remaining width to
-// meters. Numeric values survive when a narrow sidebar cannot fit meters.
-func compactLayout(accounts []Account, cw int, ascii bool) compactColumns {
-	// Provider glyph and space, then the name separator. Status marks stay
-	// inside the name column so they cannot displace a window's percentage.
-	const identityCells = 3
-	layout := compactColumns{}
-	var numeric [2]bool
-	nameW := minNameCells
-	stateW := 0
-	for _, a := range accounts {
-		nameW = max(nameW, lipgloss.Width(inline(a.Name))+lipgloss.Width(staleMark(a)))
-		stateW = max(stateW, lipgloss.Width(accountState(a, ascii)))
-		for i, w := range windows(a) {
-			if _, ok := agents.RemainingFraction(w.limit); ok {
-				numeric[i] = true
-			}
-			if w.limit != nil {
-				layout.labels[i] = max(layout.labels[i], lipgloss.Width(w.label(true)))
-			}
-		}
-	}
-	metricWidth := func() int {
-		n := 0
-		for _, label := range layout.labels {
-			if label == 0 {
-				continue
-			}
-			if n > 0 {
-				n++
-			}
-			n += label + 1 + percentCells
-		}
-		return n
-	}
-	// Unusually long provider labels must also yield to the numeric columns.
-	for cw-identityCells-metricWidth() < 1 && max(layout.labels[0], layout.labels[1]) > 1 {
-		if layout.labels[0] >= layout.labels[1] {
-			layout.labels[0]--
-		} else {
-			layout.labels[1]--
-		}
-	}
-	nameRoom := cw - identityCells - max(metricWidth(), min(stateW, max(cw-identityCells-1, 0)))
-	layout.name = min(nameW, maxNameCells, max(nameRoom, 1))
-	if (numeric[0] || numeric[1]) && nameRoom >= minNameCells+minMeterCells+1 {
-		layout.name = min(layout.name, nameRoom-minMeterCells-1)
-	}
-	// State messages share the metric area but do not consume meter space on
-	// accounts that have values. Give the primary window the available width
-	// until it is substantial, then add and grow the secondary meter.
-	room := cw - identityCells - layout.name - metricWidth()
-	switch {
-	case numeric[0] && numeric[1] && room >= primaryMeterCells+minMeterCells+2:
-		layout.meters[0] = max(primaryMeterCells, (room-1)/2)
-		layout.meters[1] = room - 2 - layout.meters[0]
-	case numeric[0]:
-		layout.meters[0] = max(room-1, 0)
-	case numeric[1]:
-		layout.meters[1] = max(room-1, 0)
-	}
-	return layout
-}
-
-// compactLine always uses the existing primary then secondary window, never
-// substitutes the most-used window, and never includes reset details.
-func compactLine(a Account, layout compactColumns, ascii bool) string {
-	mark := staleMark(a)
-	nameW := max(layout.name-lipgloss.Width(mark), 0)
-	head := providerGlyph(a.Provider, ascii) + " " + text(pad(truncate(inline(a.Name), nameW, ascii), nameW)) + mark + " "
-	if state := accountState(a, ascii); state != "" {
-		return head + dim(state)
-	}
-	var parts []string
-	for i, w := range windows(a) {
-		if w.limit == nil {
-			continue
-		}
-		label := dim(pad(truncate(w.label(true), layout.labels[i], ascii), layout.labels[i]))
-		frac, ok := agents.RemainingFraction(w.limit)
-		if !ok {
-			parts = append(parts, label+" "+dim("N/A"))
-			continue
-		}
-		value := capacity(frac)
-		if layout.meters[i] > 0 {
-			value = bar(frac, layout.meters[i], ascii) + " " + value
-		}
-		parts = append(parts, label+" "+value)
-	}
-	return head + strings.Join(parts, " ")
 }
 
 func accountState(a Account, ascii bool) string {
@@ -382,13 +112,6 @@ func providerName(p agents.ProviderID) string {
 
 func providerGlyph(p agents.ProviderID, ascii bool) string {
 	return theme.ProviderStyle(p).Render(theme.ProviderGlyph(p, ascii))
-}
-
-func rail(provider agents.ProviderID, ascii bool) string {
-	if ascii {
-		return theme.ProviderStyle(provider).Render("| ")
-	}
-	return theme.ProviderStyle(provider).Render("▌ ")
 }
 
 func bar(frac float64, width int, ascii bool) string {
@@ -518,4 +241,118 @@ func ViewSummary(accounts []Account, age string, width, maxRows int, ascii bool)
 	}
 	out = append(out, edge.Render(b.bl+strings.Repeat(b.h, width-2)+b.br))
 	return strings.Join(out, "\n")
+}
+
+// Pages counts compact account pages, including a short final page.
+func Pages(accounts, rows int) int {
+	if rows < 3 || accounts == 0 {
+		return 1
+	}
+	return (accounts + rows - 3) / (rows - 2)
+}
+
+// ViewPage keeps a stable outer height while rotating, so the worktree list
+// never jumps when the last page contains fewer accounts.
+func ViewPage(accounts []Account, status string, width, rows int, now time.Time, ascii bool, page int) string {
+	if width < 12 || rows < 3 {
+		return ""
+	}
+	rows = min(rows, max(3, len(accounts)+2))
+	pages := Pages(len(accounts), rows)
+	page = max(0, page) % pages
+	start := min(page*(rows-2), len(accounts))
+	end := min(start+rows-2, len(accounts))
+	b := borders(ascii)
+	edge := lipgloss.NewStyle().Foreground(theme.Current.Border)
+	// Page position has priority over the descriptive title in narrow panes.
+	title := " Usage "
+	if width >= 24 {
+		title = " Usage / left "
+	}
+	room := width - 2 - lipgloss.Width(title)
+	status = truncate(status, max(0, room), ascii)
+	top := edge.Render(b.tl) + text(title) + edge.Render(strings.Repeat(b.h, max(0, room-lipgloss.Width(status)))) + dim(status) + edge.Render(b.tr)
+	out := []string{top}
+	for _, a := range accounts[start:end] {
+		out = append(out, edge.Render(b.v)+" "+fit(pageLine(a, width-4, now, ascii), width-4)+" "+edge.Render(b.v))
+	}
+	for len(out) < rows-1 {
+		out = append(out, edge.Render(b.v)+" "+strings.Repeat(" ", width-4)+" "+edge.Render(b.v))
+	}
+	out = append(out, edge.Render(b.bl+strings.Repeat(b.h, width-2)+b.br))
+	return strings.Join(out, "\n")
+}
+
+func pageLine(a Account, width int, now time.Time, ascii bool) string {
+	nameWidth := min(maxNameCells, max(minNameCells, width/5))
+	head := providerGlyph(a.Provider, ascii) + " " + text(truncate(inline(a.Name), nameWidth, ascii)) + staleMark(a)
+	if state := accountState(a, ascii); state != "" {
+		return head + " " + dim(state)
+	}
+	var values, resets [2]string
+	for i, w := range windows(a) {
+		if w.limit == nil {
+			continue
+		}
+		values[i] = dim(w.label(true)) + " "
+		if frac, ok := agents.RemainingFraction(w.limit); ok {
+			values[i] += capacity(frac)
+		} else {
+			values[i] += dim("N/A")
+		}
+		if w.limit.ResetsAt != nil {
+			resets[i] = dim(compactReset(now, *w.limit.ResetsAt))
+		}
+	}
+	build := func(primaryReset, week, weekReset bool, meters [2]int) string {
+		line := head
+		for i, w := range windows(a) {
+			if values[i] == "" || i == 1 && !week {
+				continue
+			}
+			line += " " + values[i]
+			if (i == 0 && primaryReset || i == 1 && weekReset) && resets[i] != "" {
+				line += " " + resets[i]
+			}
+			if meters[i] > 0 {
+				if f, ok := agents.RemainingFraction(w.limit); ok {
+					line += " " + bar(f, meters[i], ascii)
+				}
+			}
+		}
+		return line
+	}
+	// Remove bars, then weekly reset, weekly value, and primary reset.
+	for _, keep := range [][3]bool{{true, true, true}, {true, true, false}, {true, false, false}, {false, false, false}} {
+		line := build(keep[0], keep[1], keep[2], [2]int{})
+		if lipgloss.Width(line) > width {
+			continue
+		}
+		meters := [2]int{}
+		if keep == [3]bool{true, true, true} {
+			spare := width - lipgloss.Width(line)
+			if spare >= 5 {
+				meters[0] = spare - 1
+			}
+			if spare >= 14 {
+				meters = [2]int{(spare - 2) * 2 / 3, (spare - 2) / 3}
+			}
+		}
+		return build(keep[0], keep[1], keep[2], meters)
+	}
+	return head + " " + values[0]
+}
+
+func compactReset(now, reset time.Time) string {
+	minutes := int(reset.Sub(now) / time.Minute)
+	if minutes <= 0 {
+		return "now"
+	}
+	if minutes >= 1440 {
+		return fmt.Sprintf("%dd%dh", minutes/1440, minutes%1440/60)
+	}
+	if minutes >= 60 {
+		return fmt.Sprintf("%dh%dm", minutes/60, minutes%60)
+	}
+	return fmt.Sprintf("%dm", minutes)
 }

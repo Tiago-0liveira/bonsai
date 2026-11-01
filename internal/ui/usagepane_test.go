@@ -401,7 +401,45 @@ func TestPaneToggleAndShortTerminal(t *testing.T) {
 		t.Fatal("toggle did not expand")
 	}
 	e.m.height = 34
-	if e.m.usagePaneExpanded() {
-		t.Fatal("short terminal expanded")
+	if !e.m.usagePaneExpanded() {
+		t.Fatal("short terminal lost explicit expansion")
+	}
+}
+
+func TestPanePercentageAndRotation(t *testing.T) {
+	e := paneEnv(t, 120, 40)
+	m := e.m
+	m.agents.pane.accounts = []agentsapi.Account{}
+	for i := 0; i < 30; i++ {
+		m.agents.pane.accounts = append(m.agents.pane.accounts, paneAccount(fmt.Sprint(i), "claude", fmt.Sprint(i)))
+	}
+	m.agents.pane.expanded = true
+	for _, percent := range []int{10, 35, 70} {
+		m.work.UsagePaneMaxPercent = percent
+		_, _, h := m.dims()
+		rows := m.usagePaneRows(h)
+		if rows > h*percent/100 || h-rows < usagePaneListMin {
+			t.Fatalf("cap %d: %d/%d", percent, rows, h)
+		}
+	}
+	if cmd := m.syncPaneRotation(); cmd == nil {
+		t.Fatal("no rotation timer")
+	}
+	gen := m.agents.pane.rotationGen
+	nm, cmd := m.Update(paneRotationMsg{gen: gen - 1})
+	if cmd != nil || nm.(Model).agents.pane.elapsed != 0 {
+		t.Fatal("stale timer applied")
+	}
+	for i := 0; i < 6; i++ {
+		nm, _ = m.Update(paneRotationMsg{gen: m.agents.pane.rotationGen})
+		m = nm.(Model)
+	}
+	if m.agents.pane.page != 1 {
+		t.Fatalf("page = %d", m.agents.pane.page)
+	}
+	zero := 0
+	m.work.UsagePaneRotateSeconds = &zero
+	if m.syncPaneRotation() != nil || m.agents.pane.rotating {
+		t.Fatal("disabled timer running")
 	}
 }

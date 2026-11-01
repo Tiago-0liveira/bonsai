@@ -90,7 +90,7 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
   provider-grouped accounts and usage, clear input-focus hints, color-coded
   capacity bars, and model/effort overrides for each new agent. Provider icons are ✹ for Claude and ❃ for Codex. Compact provider counts sit beside worktree badges,
   and a collapsed usage pane under the worktree list summarizes provider capacity.
-  Expand it with `U` for per-account meters ([usage pane](docs/tui-cli.md#usage-pane)).
+  Expand it with `U` for paginated account capacity and reset countdowns ([usage pane](docs/tui-cli.md#usage-pane)).
 - The TUI's [Usage page](docs/tui-cli.md#agents-tab) shows compact account strips
   with aligned default and model usage rows, remaining-capacity meters, colored
   balances and reset times.
