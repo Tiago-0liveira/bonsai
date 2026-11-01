@@ -227,7 +227,7 @@ func (m Model) paletteCommands() []paletteCmd {
 			return m, func() tea.Msg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}} }
 		}),
 		global("Cycle sort order", m.keys.Sort, func(m Model) (tea.Model, tea.Cmd) {
-			m.sort = (m.sort + 1) % 6
+			m.cycleWorktreeSort()
 			m.rebuildItems()
 			return m, nil
 		}),
@@ -287,6 +287,10 @@ func (m Model) paletteCommands() []paletteCmd {
 
 	if m.agents.enabled() {
 		cmds = append(cmds, tag("Agents", []paletteCmd{
+			global("New worktree with agent…", m.keys.Create, func(m Model) (tea.Model, tea.Cmd) {
+				m.createStartAgent = m.agents.enabled()
+				return m.openCreateSourceModal()
+			}),
 			global("Agents: open tab", m.keys.AgentsTab, Model.openAgentsTab),
 			global("Agents: new agent", m.keys.AgentNew, Model.openAgentLaunch),
 			global("Agents: accounts", m.keys.AgentAccounts, Model.openAgentAccounts),

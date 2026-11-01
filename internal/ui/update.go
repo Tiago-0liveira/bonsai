@@ -92,7 +92,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onWorktrees(msg)
 
 	case agentsListMsg:
-		return m.onAgentsList(msg)
+		next, cmd := m.onAgentsList(msg)
+		nm := next.(Model)
+		if nm.sort == sortAttention {
+			nm.rebuildItems()
+		}
+		return nm, cmd
 	case agentsSubscribedMsg:
 		return m.onAgentsSubscribed(msg)
 	case agentsChangedMsg:
@@ -246,6 +251,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modals.CancelMsg:
+		if m.modal != nil && (msg.Kind == modals.KindCreateSource || msg.Kind == modals.KindCreateNew || msg.Kind == modals.KindCreateExisting || msg.Kind == modals.KindCreatePR) {
+			m.createStartAgent = m.modal.StartAgent()
+		}
 		m.modal = nil
 		m.pendingConfirm = nil
 		m.pendingCfg = nil
@@ -367,11 +375,18 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.worktrees = msg.trees
+	m.list.SetPathHome(msg.home)
 	m.rebuildItems()
+	var launch tea.Cmd
+	if m.createdAgentPath != "" && m.list.SelectCreatedPath(m.createdAgentPath) {
+		m.createdAgentPath = ""
+		next, cmd := m.openAgentLaunch()
+		m, launch = next.(Model), cmd
+	}
 
 	// Fetch metrics per branch, connected PRs, dirty state, activity, and the log
 	// for the selection.
-	cmds := []tea.Cmd{m.worktreeRead("prs", fetchPRs(m.repoDir, m.ghCache, msg.force))}
+	cmds := []tea.Cmd{launch, m.worktreeRead("prs", fetchPRs(m.repoDir, m.ghCache, msg.force))}
 	// Which sessions belong to which row depends on the worktree set.
 	if c := m.relistAgents(); c != nil {
 		cmds = append(cmds, c)
@@ -495,6 +510,9 @@ func (m Model) upstreamFor(branch string) string {
 // per-path metrics, PRs, dirty state and CI rollups, applying the current sort
 // (main pinned first) while preserving the highlighted row.
 func (m *Model) rebuildItems() {
+	if m.sort == sortAttention && (!m.agents.enabled() || m.layoutKind == LayoutRedesign) {
+		m.sort = sortName
+	}
 	trees := m.sortedWorktrees()
 	items := make([]worktreelist.Item, len(trees))
 	for i, t := range trees {
@@ -528,7 +546,8 @@ func (m *Model) rebuildItems() {
 	if selected != "" {
 		m.list.SelectByPath(selected)
 	}
-	m.list.SetTitle("Worktrees · " + m.sort.label())
+	m.list.SetASCII(m.agentGlyphsASCII())
+	m.list.SetTitle("Worktrees · sort: " + m.sort.label())
 }
 
 // sortedWorktrees returns the worktrees ordered by the active sort mode, with the
@@ -542,6 +561,8 @@ func (m *Model) sortedWorktrees() []git.Worktree {
 			return ta.IsMain // main first
 		}
 		switch m.sort {
+		case sortAttention:
+			return m.worktreeAttention(ta.Path) > m.worktreeAttention(tb.Path)
 		case sortAhead:
 			return m.metrics[ta.Path].Ahead > m.metrics[tb.Path].Ahead
 		case sortBehind:
@@ -597,6 +618,9 @@ func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.createdPath != "" && msg.err == nil && m.createStartAgent && m.agents.enabled() {
+		m.createdAgentPath = msg.createdPath
+	}
 	if msg.err != nil {
 		m.status = msg.label + ": " + msg.err.Error()
 	} else if msg.label == "shell" {
@@ -964,8 +988,13 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ChecksTab):
 		return m.openChecksTab()
 
+	case key.Matches(msg, m.keys.UsagePaneToggle):
+		m.agents.pane.expanded = !m.agents.pane.expanded
+		m.layout()
+		return m, nil
+
 	case key.Matches(msg, m.keys.Sort):
-		m.sort = (m.sort + 1) % 6
+		m.cycleWorktreeSort()
 		m.rebuildItems()
 		return m, nil
 
@@ -1329,6 +1358,7 @@ func (m Model) onBranches(msg branchesMsg) (tea.Model, tea.Cmd) {
 		modal = modals.NewSelect(modals.KindBranches, "Rebase onto", msg.branches)
 	case branchesForCreateExisting:
 		modal = modals.NewSelect(modals.KindCreateExisting, "Existing branch", msg.branches)
+		m.configureCreateModal(&modal, false)
 	default:
 		return m, nil
 	}
@@ -1347,6 +1377,7 @@ const (
 func (m Model) openCreateSourceModal() (tea.Model, tea.Cmd) {
 	modal := modals.NewSelect(modals.KindCreateSource, "Create worktree from",
 		[]string{createSourceNew, createSourceExisting, createSourcePR})
+	m.configureCreateModal(&modal, false)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -1850,10 +1881,15 @@ func (m Model) onPruneCandidates(msg pruneCandidatesMsg) (tea.Model, tea.Cmd) {
 	}
 	targets := m.mergedTargetsFrom(msg.merged)
 	if len(targets) == 0 {
-		m.status = "no merged worktrees to prune"
+		m.status = "no merged worktrees to prune (active agent sessions are skipped)"
 		return m, nil
 	}
 	var b strings.Builder
+	for _, t := range m.worktrees {
+		if names := m.activeAgentNames(t.Path); len(names) > 0 && msg.merged[t.Branch] != "" {
+			b.WriteString("Skipped " + t.Branch + ": active agents " + strings.Join(names, ", ") + "\n")
+		}
+	}
 	for _, t := range targets {
 		b.WriteString("• " + t.branch + "\n")
 	}
@@ -1869,7 +1905,7 @@ func (m Model) mergedTargetsFrom(merged map[string]string) []pruneTarget {
 		if t.IsMain || t.Branch == "" || t.Branch == "(detached)" {
 			continue
 		}
-		if m.statuses[t.Path].Dirty() {
+		if m.statuses[t.Path].Dirty() || len(m.activeAgentNames(t.Path)) > 0 {
 			continue
 		}
 		sha := merged[t.Branch]
@@ -2002,6 +2038,7 @@ func (m Model) onPRs(msg prsMsg) (tea.Model, tea.Cmd) {
 		items[i] = fmt.Sprintf("#%d %s", pr.Number, pr.Title)
 	}
 	modal := modals.NewSelect(modals.KindCreatePR, "Checkout pull request", items)
+	m.configureCreateModal(&modal, false)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -2024,6 +2061,9 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 	mergeLabel := fmt.Sprintf("merge PR #%d to %s", prNum, config.BaseBranch(m.upstreamFor(wt.Branch)))
 
 	steps := []string{}
+	if names := m.activeAgentNames(wt.Path); len(names) > 0 {
+		steps = append(steps, "WARNING: active agent sessions: "+strings.Join(names, ", "))
+	}
 	if len(m.cfg.DeleteHooks()) > 0 {
 		steps = append(steps, "run on_worktree_delete")
 	}
@@ -2039,6 +2079,9 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 // onModalSubmit routes a confirmed modal value to the right core operation.
 func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 	open := m.modal
+	if open != nil && (msg.Kind == modals.KindCreateSource || msg.Kind == modals.KindCreateNew || msg.Kind == modals.KindCreateExisting || msg.Kind == modals.KindCreatePR) {
+		m.createStartAgent = msg.StartAgent && m.agents.enabled()
+	}
 	m.modal = nil
 
 	// These kinds do not require an existing selection.
@@ -2126,7 +2169,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = "creating " + msg.Value
-		return m, createWorktree(m.repoDir, "new", msg.Value, 0, m.cfg)
+		return m, createWorktree(m.repoDir, "new", msg.Value, 0, m.cfg, msg.Base)
 	case modals.KindCreateExisting:
 		m.status = "creating worktree for " + msg.Value
 		return m, createWorktree(m.repoDir, "existing", msg.Value, 0, m.cfg)
@@ -2344,6 +2387,7 @@ func (m Model) onCreateSource(choice string) (tea.Model, tea.Cmd) {
 	switch choice {
 	case createSourceNew:
 		modal := modals.NewInput(modals.KindCreateNew, "New branch name", "feature/awesome")
+		m.configureCreateModal(&modal, true)
 		modal.SetSize(m.width, m.height)
 		m.modal = &modal
 		return m, nil
@@ -2445,4 +2489,77 @@ func (m Model) statusKeyActive(k tea.KeyMsg) bool {
 		}
 	}
 	return m.focus == focusTerminal && isProcScrollKey(k)
+}
+
+func (m Model) configureCreateModal(modal *modals.Model, preview bool) {
+	var render func(string, string) string
+	cfg := m.cfg
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	if preview {
+		render = func(branch, base string) string {
+			arrow := " → "
+			if m.agentGlyphsASCII() {
+				arrow = " -> "
+			}
+			return "from " + base + arrow + cfg.WorktreePath(m.repoDir, branch)
+		}
+	}
+	base := cfg.Upstream
+	if m.cfg != nil {
+		if wt, ok := m.selectedWorktree(); ok {
+			base = m.upstreamFor(wt.Branch)
+		}
+	}
+	if base == "" {
+		base = "HEAD"
+	}
+	modal.SetCreateOptions(m.agents.enabled(), m.createStartAgent, m.keys.CreateAgentToggle, m.keys.CreateBase, base, render)
+}
+
+func (m *Model) cycleWorktreeSort() {
+	count := int(sortAttention)
+	if m.agents.enabled() && m.layoutKind != LayoutRedesign {
+		count++
+	}
+	m.sort = sortMode((int(m.sort) + 1) % count)
+}
+
+func (m Model) worktreeAttention(path string) int {
+	if !m.agents.enabled() {
+		return 0
+	}
+	rank := 0
+	for _, i := range m.agents.byTree[filepath.Clean(path)] {
+		if i < 0 || i >= len(m.agents.sessions) {
+			continue
+		}
+		s := m.agents.sessions[i]
+		if s.State == "failed" || sessionUrgency(s) == urgencyWaiting {
+			rank++
+		}
+	}
+	return rank
+}
+
+func (m Model) activeAgentNames(path string) []string {
+	if !m.agents.enabled() {
+		return nil
+	}
+	var names []string
+	for _, i := range m.agents.byTree[filepath.Clean(path)] {
+		if i < 0 || i >= len(m.agents.sessions) {
+			continue
+		}
+		s := m.agents.sessions[i]
+		if s.State == "running" || s.State == "starting" || s.State == "stopping" {
+			name := s.Name
+			if name == "" {
+				name = string(s.ID)
+			}
+			names = append(names, name)
+		}
+	}
+	return names
 }

@@ -23,6 +23,9 @@ type keyMap struct {
 	ChecksTab            key.Binding
 	Filter               key.Binding
 	Sort                 key.Binding
+	UsagePaneToggle      key.Binding
+	CreateAgentToggle    key.Binding
+	CreateBase           key.Binding
 	Palette              key.Binding
 	CopyFile             key.Binding
 	Yank                 key.Binding
@@ -91,6 +94,9 @@ var defaultBindings = map[string]bindingSpec{
 	"checks_tab":             {[]string{"b"}, "CI runs"},
 	"filter":                 {[]string{"/"}, "filter"},
 	"sort":                   {[]string{"o"}, "sort"},
+	"usage_pane_toggle":      {[]string{"U"}, "expand usage pane"},
+	"create_agent_toggle":    {[]string{" "}, "start agent here"},
+	"create_base":            {[]string{"tab"}, "creation base"},
 	"palette":                {[]string{"ctrl+k"}, "commands"},
 	"copy_file":              {[]string{"c"}, "copy file"},
 	"yank":                   {[]string{"y"}, "yank/copy"},
@@ -146,7 +152,11 @@ func binding(action string, overrides map[string]string) key.Binding {
 			keys = []string{ov}
 		}
 	}
-	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(keys[0], spec.desc))
+	help := keys[0]
+	if help == " " {
+		help = "space"
+	}
+	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(help, spec.desc))
 }
 
 // keyCollisions reports user-introduced key conflicts: an override whose key
@@ -207,6 +217,9 @@ func newKeyMap(overrides map[string]string) keyMap {
 		ChecksTab:            b("checks_tab"),
 		Filter:               b("filter"),
 		Sort:                 b("sort"),
+		UsagePaneToggle:      b("usage_pane_toggle"),
+		CreateAgentToggle:    b("create_agent_toggle"),
+		CreateBase:           b("create_base"),
 		Palette:              b("palette"),
 		CopyFile:             b("copy_file"),
 		Yank:                 b("yank"),
@@ -261,7 +274,8 @@ type keymapSection struct {
 
 var keymapSections = []keymapSection{
 	{"Navigation", []string{"agent_attention", "focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
-	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
+	{"Create worktree", []string{"create_agent_toggle", "create_base"}},
+	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "usage_pane_toggle", "refresh", "prune", "bulk_prune"}},
 	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab"}},
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},

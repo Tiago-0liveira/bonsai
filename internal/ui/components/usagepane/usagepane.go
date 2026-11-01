@@ -444,3 +444,70 @@ func pad(s string, w int) string {
 func fit(s string, w int) string {
 	return pad(ansi.Truncate(s, w, ""), w)
 }
+
+// Summary selects the account with the least headroom across either window.
+// Unknown data stays unknown rather than implying spare capacity.
+func Summary(accounts []Account) ([]Account, []int) {
+	var rows []Account
+	var counts []int
+	ranks := []float64{}
+	indices := map[agents.ProviderID]int{}
+	for _, a := range accounts {
+		rank := 2.0
+		for _, w := range windows(a) {
+			if f, ok := agents.RemainingFraction(w.limit); ok {
+				rank = min(rank, f)
+			}
+		}
+		if i, ok := indices[a.Provider]; ok {
+			counts[i]++
+			if rank < ranks[i] {
+				rows[i], ranks[i] = a, rank
+			}
+		} else {
+			indices[a.Provider] = len(rows)
+			rows = append(rows, a)
+			counts = append(counts, 1)
+			ranks = append(ranks, rank)
+		}
+	}
+	return rows, counts
+}
+
+func SummaryHeight(accounts []Account) int { rows, _ := Summary(accounts); return len(rows) + 2 }
+
+func ViewSummary(accounts []Account, age string, width, maxRows int, ascii bool) string {
+	if width < 12 || maxRows < 3 {
+		return ""
+	}
+	rows, counts := Summary(accounts)
+	b := borders(ascii)
+	edge := lipgloss.NewStyle().Foreground(theme.Current.Border)
+	out := []string{topBorder(width, age, ascii, b, edge)}
+	for i, a := range rows {
+		if i >= maxRows-2 {
+			break
+		}
+		line := providerGlyph(a.Provider, ascii) + " " + providerName(a.Provider) + staleMark(a)
+		if counts[i] > 1 {
+			line += fmt.Sprintf(" +%d", counts[i]-1)
+		}
+		if state := accountState(a, ascii); state != "" {
+			line += " " + state
+		} else {
+			for _, w := range windows(a) {
+				if w.limit != nil {
+					line += " " + w.label(true) + " "
+					if f, ok := agents.RemainingFraction(w.limit); ok {
+						line += capacity(f)
+					} else {
+						line += "N/A"
+					}
+				}
+			}
+		}
+		out = append(out, edge.Render(b.v)+" "+fit(line, width-4)+" "+edge.Render(b.v))
+	}
+	out = append(out, edge.Render(b.bl+strings.Repeat(b.h, width-2)+b.br))
+	return strings.Join(out, "\n")
+}

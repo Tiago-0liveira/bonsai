@@ -19,9 +19,8 @@ const (
 	// or failed account is retried within a minute of crossing that limit
 	// rather than a full period later.
 	usagePaneCheck = time.Minute
-	// usagePaneMinRows is the terminal height below which the pane would
-	// squeeze the worktree list, so it is hidden.
-	usagePaneMinRows = 30
+	// Very short terminals cannot spare even the provider summary.
+	usagePaneMinRows = 15
 	// usagePaneMaxFetches bounds provider calls in flight at once.
 	usagePaneMaxFetches = 8
 	// usagePaneListMin is the fewest rows the worktree list keeps.
@@ -31,6 +30,7 @@ const (
 // paneState is the always-on usage pane's model state. Its usage numbers live
 // in the shared store (agentState.usage).
 type paneState struct {
+	expanded bool
 	accounts []agentsapi.Account
 	// listSeq/listApplied number account lists the same way agentState.seq does.
 	listSeq, listApplied uint64
@@ -223,9 +223,20 @@ func (m Model) usagePaneRows(innerH int) int {
 	if m.height < usagePaneMinRows || !m.paneEnabled() || len(m.agents.pane.accounts) == 0 {
 		return 0
 	}
-	rows := usagepane.Height(m.paneAccounts(), (innerH+2)*40/100)
+	rows := usagepane.SummaryHeight(m.paneAccounts())
+	if m.usagePaneExpanded() {
+		rows = usagepane.Height(m.paneAccounts(), (innerH+2)*40/100)
+	}
 	if rows == 0 || innerH-rows < usagePaneListMin {
 		return 0
 	}
 	return rows
+}
+
+func (m Model) usagePaneExpanded() bool { return m.agents.pane.expanded && m.height >= 35 }
+func (m Model) usagePaneView(width, rows int) string {
+	if m.usagePaneExpanded() {
+		return usagepane.View(m.paneAccounts(), m.paneHeaderAge(), width, rows, agentNow(), m.agentGlyphsASCII())
+	}
+	return usagepane.ViewSummary(m.paneAccounts(), m.paneHeaderAge(), width, rows, m.agentGlyphsASCII())
 }

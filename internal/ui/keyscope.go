@@ -12,6 +12,7 @@ const (
 	ksAgents                    // the Agents tab
 	ksProcesses                 // the Processes tab
 	ksLaunch                    // launch dialog
+	ksCreate                    // create-worktree modal
 	ksGarden                    // the Garden work views
 )
 
@@ -19,6 +20,7 @@ const (
 // here fails TestEverySectionHasOneScope, so new sections cannot silently skip
 // the conflict check.
 var sectionScopes = map[string]keyScope{
+	"Create worktree":   ksCreate,
 	"Navigation":        ksGlobal,
 	"Worktree":          ksWorktree,
 	"Tabs":              ksWorktree,
@@ -65,7 +67,13 @@ func scopeOfAction(action string) (keyScope, string, bool) {
 	return 0, "", false
 }
 
-func scopesOverlap(a, b keyScope) bool { return a == b || a == ksGlobal || b == ksGlobal }
+func scopesOverlap(a, b keyScope) bool {
+	// Creation modals consume keys before global navigation.
+	if a == ksCreate || b == ksCreate {
+		return a == b
+	}
+	return a == b || a == ksGlobal || b == ksGlobal
+}
 
 // keysOf lists every key an action answers to under overrides: an override
 // replaces the defaults, as binding() does.

@@ -22,6 +22,7 @@ import (
 // --- Messages ---
 
 type worktreesMsg struct {
+	home  string
 	trees []git.Worktree
 	err   error
 	// force reports whether gh-backed data (PR list, CI checks) must be
@@ -63,8 +64,9 @@ type scriptsMsg struct {
 
 // opDoneMsg reports completion of a git/fs/exec operation.
 type opDoneMsg struct {
-	label string
-	err   error
+	createdPath string
+	label       string
+	err         error
 }
 
 // procTickMsg drives periodic refresh of the process-output viewport.
@@ -150,7 +152,8 @@ type prCreatedMsg struct {
 func loadWorktrees(repoDir string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		trees, err := git.ListWorktrees(repoDir)
-		return worktreesMsg{trees: trees, err: err, force: force}
+		home, _ := os.UserHomeDir()
+		return worktreesMsg{trees: trees, err: err, force: force, home: home}
 	}
 }
 
@@ -591,7 +594,7 @@ type pruneTarget struct {
 //
 // The path comes from cfg.WorktreePath (template + root); create hooks run in the
 // new worktree on success and cfg.Upstream feeds the {base_branch} hook variable.
-func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Config) tea.Cmd {
+func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Config, base ...string) tea.Cmd {
 	return func() tea.Msg {
 		var (
 			path string
@@ -602,7 +605,7 @@ func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Conf
 			path = cfg.WorktreePath(repoDir, branch)
 			err = ensureParent(path)
 			if err == nil {
-				err = git.AddWorktreeNewBranch(repoDir, path, branch)
+				err = git.AddWorktreeNewBranch(repoDir, path, branch, base...)
 			}
 		case "existing":
 			path = cfg.WorktreePath(repoDir, branch)
@@ -625,7 +628,7 @@ func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Conf
 		if hookErr := coreexec.RunHooks(path, cfg.CreateHooks(), vars); hookErr != nil {
 			return opDoneMsg{label: "create hook", err: hookErr}
 		}
-		return opDoneMsg{label: "create " + branch, err: nil}
+		return opDoneMsg{label: "create " + branch, createdPath: path, err: nil}
 	}
 }
 

@@ -2,6 +2,7 @@ package worktreelist
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -18,24 +19,24 @@ func TestPrBadge(t *testing.T) {
 		notThere []string
 	}{
 		{
-			name:    "open PR shows half circle and label",
+			name:    "open PR shows state word",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateOpen},
-			contain: []string{"#12", "◐", "open"},
+			contain: []string{"#12", "open"},
 		},
 		{
 			name:    "draft PR shows draft",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateOpen, PRDraft: true},
-			contain: []string{"#12", "◐", "draft"},
+			contain: []string{"#12", "draft"},
 		},
 		{
-			name:    "approved PR shows full circle",
+			name:    "approved PR shows state word",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateOpen, PRReview: gh.ReviewApproved},
-			contain: []string{"#12", "●", "approved"},
+			contain: []string{"#12", "approved"},
 		},
 		{
 			name:    "changes-requested PR shows changes",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateOpen, PRReview: gh.ReviewChangesRequested},
-			contain: []string{"#12", "◐", "changes"},
+			contain: []string{"#12", "changes"},
 		},
 		{
 			name:    "draft wins over approval",
@@ -45,19 +46,19 @@ func TestPrBadge(t *testing.T) {
 		{
 			name:    "merged PR shows merged",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateMerged},
-			contain: []string{"#12", "●", "merged"},
+			contain: []string{"#12", "merged"},
 		},
 		{
 			name:    "closed PR shows closed",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateClosed},
-			contain: []string{"#12", "●", "closed"},
+			contain: []string{"#12", "closed"},
 		},
 		{
-			name:     "compact mode shows glyph without label",
+			name:     "compact mode keeps state readable",
 			mode:     "compact",
 			item:     Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateMerged},
-			contain:  []string{"#12", "●"},
-			notThere: []string{"merged"},
+			contain:  []string{"#12", "merged"},
+			notThere: []string{"●", "◐"},
 		},
 		{
 			name:     "off mode shows number only",
@@ -142,5 +143,30 @@ func TestRefreshPreservesFilterAndSelectedPath(t *testing.T) {
 	}
 	if m.SelectByPath("/main") {
 		t.Fatal("hidden item escaped the active filter")
+	}
+}
+
+func TestRowColumnsAndHomePaths(t *testing.T) {
+	m := New()
+	m.SetSize(100, 20)
+	m.SetPathHome("/home/test")
+	m.SetItems([]Item{{WT: git.Worktree{Path: "/home/test/one", Branch: "short"}, PR: 1, PRState: gh.StateOpen, Checks: "pass"}, {WT: git.Worktree{Path: "/home/test/two", Branch: "a-longer-branch"}, PR: 2, PRState: gh.StateOpen, Checks: "fail"}})
+	out := m.View()
+	if !strings.Contains(out, "/home/test/one") || !strings.Contains(out, "~/two") {
+		t.Fatal(out)
+	}
+	columns := []int{}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "#") {
+			columns = append(columns, ansi.StringWidth(line[:strings.Index(line, "#")]))
+		}
+	}
+	if len(columns) != 2 || columns[0] != columns[1] {
+		t.Fatalf("PR columns %v\n%s", columns, out)
+	}
+	for _, tc := range []struct{ state, want string }{{"pass", "+"}, {"fail", "x"}, {"pending", "~"}} {
+		if checkGlyph(tc.state, true) != tc.want {
+			t.Fatal(tc.state)
+		}
 	}
 }

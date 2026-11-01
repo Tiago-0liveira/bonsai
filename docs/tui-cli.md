@@ -35,7 +35,7 @@ quit. `ctrl+k` opens the command palette, which also edits every `.bonsai.yaml`
 setting (with descriptions and examples) and applies it live.
 
 The worktree list shows ahead/behind arrows (`↑N ↓M`), `#PR` badges detected via
-`gh`, dirty change counts (`●N ?M`), CI dots and 6 sort modes. The right pane has
+`gh`, dirty change counts (`±N ?M`), CI shapes (`✓` pass, `✗` fail, `◌` pending) and 6 sort modes (7 with agents enabled). The right pane has
 Inspector (working-tree status, last commit, diff-vs-base summary, disk usage,
 stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
@@ -195,15 +195,11 @@ Expanded strips use three lines per account: provider and name, then the two
 headline windows with remaining percentages and reset countdowns when available.
 Accounts without shared windows show `No shared windows` once; loading and
 unavailable states never imply a capacity value.
-The pane is display only: it takes no keys, and resizing below 30 rows
-hides it and gives the rows back to the list. On short terminals it shrinks to
-one line per account with the provider glyph, name, primary-window meter and
-percentage, and secondary-window percentage (`W` means Week), then to `+N more`.
-Compact rows give spare width to the primary (usually 5h) meter first, then add
-and grow a secondary (usually Week) meter when there is enough room for both.
-Narrow widths shorten names and meters before sacrificing numeric values;
-compact rows omit reset countdowns. Sizing remains automatic and only takes
-space from the worktree list; the right-hand content keeps its full height.
+The pane starts collapsed with one row per provider: its name, the most limited
+account's primary and weekly capacity, and `+N` additional accounts. `U`
+(`usage_pane_toggle`) expands the full account list. Below 35 terminal rows it
+automatically stays collapsed; below 15 rows it hides. The worktree list receives
+the reclaimed rows. Provider names identify the glyphs in Unicode and ASCII mode.
 
 Every minute the pane checks for accounts whose data is 3 minutes old or more
 and refetches only those. The box title shows the age of the oldest data:
@@ -978,3 +974,21 @@ working session starts waiting or ends. This personal preference defaults off.
 
 The bell setting is stored as the personal `agent_bell` preference.
 Repository and attention jumps focus the Agents pane for session navigation.
+
+Worktree PR badges show the coloured state word beside the number, without a circle.
+
+The create-worktree flow offers **Start agent here** when agents are enabled.
+Space (`create_agent_toggle`) remembers the choice for this session; after creation,
+the new checkout is selected and its agent launch form opens. The palette also offers
+**New worktree with agent…**. New branches preview their configured path and base;
+Tab (`create_base`) edits the configured upstream or selected PR base (HEAD if unset) before Enter creates the worktree.
+
+Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
+on the first line. Branch names shorten first. The selected row shows its full
+path; other home-directory paths use `~`. The title shows position/count and
+`sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.
+
+With agents enabled, the sort cycle includes `attention`: worktrees with failed or
+waiting sessions come first after the main worktree. Single-worktree pruning warns
+with the names of active agents. Bulk pruning skips those worktrees and lists
+them in its confirmation. Stop their sessions before trying bulk prune again.
