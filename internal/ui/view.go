@@ -1015,7 +1015,7 @@ func (m Model) contextHelp() string {
 		case v.state == attachObservingOther:
 			return descSt.Render("READ-ONLY") + sep + pair("ctrl+]", "unfocus")
 		}
-		return descSt.Render("FOCUSED · Input goes to agent") + sep + pair("ctrl+]", "unfocus")
+		return descSt.Render("FOCUSED") + sep + pair("ctrl+]", "unfocus")
 	}
 	if m.rightTab == tabAgents && m.agents.active() {
 		if m.agents.overlay != nil {

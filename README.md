@@ -87,7 +87,7 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
 - Run **many agent sessions at once** across worktrees, in the web terminal dock
   or with `bonsai agent run`.
 - Start, watch, control and stop sessions from the **TUI's Agents tab**, with
-  provider-grouped profiles and usage, clear input-focus hints, color-coded
+  provider-grouped accounts and usage, clear input-focus hints, color-coded
   capacity bars, and model/effort overrides for each new agent. Provider icons are ✹ for Claude and ❃ for Codex. Compact provider counts sit beside worktree badges,
   and a collapsed usage pane under the worktree list summarizes provider capacity.
   Expand it with `U` for per-account meters ([usage pane](docs/tui-cli.md#usage-pane)).

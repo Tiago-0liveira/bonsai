@@ -24,7 +24,7 @@ const (
 	bannerControlledByOther = "Controlled by another client · Ctrl+] then Enter to take control"
 	hintOtherControls       = "READ-ONLY · Ctrl+] Unfocus, then Enter to take control"
 	hintControlLost         = "Control taken by another client  ·  Ctrl+] then Enter Take back"
-	hintAgentFocused        = "FOCUSED · Input goes to agent · Ctrl+] Unfocus"
+	hintAgentFocused        = "FOCUSED · ctrl+] detach"
 	observingOtherNote      = "Another client controls this agent: Ctrl+] then Enter takes control"
 	inputDroppedNote        = "agents: input dropped, the agent is not reading"
 	hintConnecting          = "Connecting to the agent…  ·  keys are ignored until attached  ·  Ctrl+] Unfocus"

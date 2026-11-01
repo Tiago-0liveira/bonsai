@@ -15,7 +15,7 @@ func TestAgentHintsUseOverrides(t *testing.T) {
 	e := newAgentsEnv(t)
 	e.m.keys = newKeyMap(map[string]string{"agents_tab": "ctrl+g", "agent_all": "ctrl+a", "agent_new": "ctrl+n", "agent_usage": "ctrl+u"})
 	s := e.session("a", "claude", "running", e.wtA)
-	if got := e.m.narrowRow(s, 0, 1); !strings.Contains(got, "Agents (ctrl+g)") || !strings.Contains(got, "ctrl+a: sessions") {
+	if got := e.m.narrowRow(s, 0, 1); !strings.Contains(got, "Agents (ctrl+g)") || !strings.Contains(got, "ctrl+a sessions") {
 		t.Fatal(got)
 	}
 	if got := strings.Join(e.m.emptyArea("feat-a", 80, 20), "\n"); !strings.Contains(got, "[ctrl+n]") || !strings.Contains(got, "[ctrl+u]") {

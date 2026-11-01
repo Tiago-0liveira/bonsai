@@ -138,7 +138,7 @@ func TestTerminalEnterReattachesAtOffsetAsWriter(t *testing.T) {
 	if e.m.agents.view.state != attachControlling || !e.m.agentTerminalMode() {
 		t.Errorf("state = %v", e.m.agents.view.state)
 	}
-	if !strings.Contains(ansi.Strip(e.m.statusBar()), "FOCUSED · Input goes to agent · ctrl+] unfocus") {
+	if !strings.Contains(ansi.Strip(e.m.statusBar()), "FOCUSED · ctrl+] unfocus") {
 		t.Errorf("status bar = %q", ansi.Strip(e.m.statusBar()))
 	}
 }
@@ -207,7 +207,7 @@ func TestTerminalObservingOtherSwallowsKeysWithOneHint(t *testing.T) {
 		t.Fatalf("state = %v", v.state)
 	}
 	view := ansi.Strip(e.m.View())
-	for _, want := range []string{"Controlled by another client", "Ctrl+] Unfocus, then Enter", "Ctrl+] Unfocus"} {
+	for _, want := range []string{"Controlled by another client", "Ctrl+] Unfocus, then Enter", "ctrl+] detach"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("View lacks %q:\n%s", want, view)
 		}
@@ -376,7 +376,7 @@ func TestTerminalLayoutFitsNarrowAndWide(t *testing.T) {
 		e, _ := terminalEnv(t)
 		e.send(t, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		view := ansi.Strip(e.m.View())
-		if !strings.Contains(view, "FOCUSED") || !strings.Contains(view, "Ctrl+] Unfocus") {
+		if !strings.Contains(view, "FOCUSED") || !strings.Contains(view, "ctrl+] detach") {
 			if size[0] >= 80 {
 				t.Errorf("%v: View lacks the hint row or usage hint:\n%s", size, view)
 			}

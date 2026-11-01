@@ -1,7 +1,7 @@
 # AI agents and provider profiles
 
 Bonsai runs coding agents (Claude Code, Codex and Antigravity) next to your
-worktrees. Each provider can have several **profiles** (one per account), and
+worktrees. Each provider can have several **accounts** (also called profiles), and
 every profile gets its own isolated config directory, so many sessions can run
 at once across worktrees without one account's login leaking into another.
 
@@ -232,6 +232,11 @@ The TUI's Agents tab is another client of these sessions. It watches the selecte
 session read-only; `enter` takes control to type, and `ctrl+]` immediately returns
 input to Bonsai. Press `enter` again to take control back when another client is
 writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
+
+The TUI calls profiles **accounts** and lists running and ended sessions.
+Worktree badges count working, waiting and unseen ended sessions; `!` jumps to
+sessions needing attention. See the [TUI guide](tui-cli.md#agents-tab) for the
+state legend, session controls and collapsed [usage pane](tui-cli.md#usage-pane).
 
 The TUI launch form shows its worktree target and lets you change it with
 `launch_change_worktree` (default `ctrl+w`). Its optional multiline Task becomes

@@ -154,7 +154,7 @@ func TestAgentsContextHintPerState(t *testing.T) {
 	})
 	t.Run("terminal", func(t *testing.T) {
 		e, _ := terminalEnv(t)
-		if got := plain(e); got != "FOCUSED · Input goes to agent · ctrl+] unfocus" {
+		if got := plain(e); got != "FOCUSED · ctrl+] unfocus" {
 			t.Errorf("terminal = %q", got)
 		}
 	})

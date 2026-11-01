@@ -117,9 +117,9 @@ func headerStatus(s agentsapi.Session) (key, label string) {
 	return key, label
 }
 
-// stateDot is the colored dot followed by label.
+// stateDot shares lifecycle marks with the session picker.
 func stateDot(key, label string) string {
-	return lipgloss.NewStyle().Foreground(statusColor(key)).Render("● " + label)
+	return stateMarkStyled(key) + lipgloss.NewStyle().Foreground(statusColor(key)).Render(" "+label)
 }
 
 // fit truncates to width and pads with spaces to exactly width.
@@ -215,20 +215,20 @@ func (m Model) agentsLayout(w, h int) agentsLayout {
 		fixed = []string{fit(row, w)}
 	case w < agentsWideMin:
 		fixed = []string{
-			m.sessionStrip(strip, selIdx, w, "", m.keys.AgentAll.Help().Key+": sessions"),
+			m.sessionStrip(strip, selIdx, w, "", hintKey(m.keys.AgentAll.Help().Key)+" sessions"),
 			fit(m.compactHeader(sel, w), w),
 			rule,
 		}
 	default:
 		fixed = []string{
-			m.sessionStrip(strip, selIdx, w, "Sessions: ", m.keys.AgentAll.Help().Key+": sessions  "+m.keys.AgentNew.Help().Key+": New"),
+			m.sessionStrip(strip, selIdx, w, "Sessions ", hintKey(m.keys.AgentAll.Help().Key)+" sessions · "+hintKey(m.keys.AgentNew.Help().Key)+" new"),
 			rule,
 			fit(m.fullHeaderTitle(sel), w),
 			fit(m.usageRow(sel, w), w),
 			rule,
 		}
 		if h-len(fixed)-2 >= agentsTitleMinArea {
-			title := lipgloss.NewStyle().Bold(true).Render("AGENTS") + dimText(" · "+branchOf(wt))
+			title := lipgloss.NewStyle().Bold(true).Render("Agents") + dimText(" · "+branchOf(wt))
 			fixed = append([]string{fit(title, w), ""}, fixed...)
 		}
 	}
@@ -264,9 +264,9 @@ func (m Model) agentsRows(w, h int) []string {
 }
 
 func (m Model) emptyStrip(w int) string {
-	hints := m.keys.AgentAll.Help().Key + ": sessions  " + m.keys.AgentNew.Help().Key + ": New"
+	hints := hintKey(m.keys.AgentAll.Help().Key) + " sessions · " + hintKey(m.keys.AgentNew.Help().Key) + " new"
 	if w < agentsWideMin {
-		hints = m.keys.AgentAll.Help().Key + ": sessions"
+		hints = hintKey(m.keys.AgentAll.Help().Key) + " sessions"
 	}
 	hints = m.agentsStripStatus(hints)
 	return leftRight(dimText("Sessions"), dimText(hints), w)
@@ -292,7 +292,7 @@ func (m Model) agentsStripStatus(hints string) string {
 // narrowRow is the single summary row for panes under 60 cells.
 func (m Model) narrowRow(s agentsapi.Session, idx, n int) string {
 	name := ansi.Truncate(sessionName(s), stripNameCells, "…")
-	return "Agents (" + m.keys.AgentsTab.Help().Key + ") │ " + m.agentGlyph(s.Provider) + " " + name + " [" + itoa(idx+1) + "/" + itoa(n) + "] │ " + m.keys.AgentAll.Help().Key + ": sessions"
+	return "Agents (" + hintKey(m.keys.AgentsTab.Help().Key) + ") │ " + m.agentGlyph(s.Provider) + " " + name + " [" + itoa(idx+1) + "/" + itoa(n) + "] │ " + hintKey(m.keys.AgentAll.Help().Key) + " sessions"
 }
 
 // sessionStrip lays out numbered labels left to right. When they overflow, it
@@ -382,7 +382,7 @@ func (m Model) fullHeaderTitle(s agentsapi.Session) string {
 
 // compactHeader is the one-row header for panes under 100 cells.
 func (m Model) compactHeader(s agentsapi.Session, w int) string {
-	return m.compactHeaderHint(s, w, m.keys.AgentUsage.Help().Key+": Usage")
+	return m.compactHeaderHint(s, w, hintKey(m.keys.AgentUsage.Help().Key)+" usage")
 }
 
 func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string {
@@ -395,7 +395,7 @@ func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string
 
 // usageRow is the second header row: usage text plus the usage hint.
 func (m Model) usageRow(s agentsapi.Session, w int) string {
-	return leftRight(m.usageText(s, false), dimText(m.keys.AgentUsage.Help().Key+": Usage"), w)
+	return leftRight(m.usageText(s, false), dimText(hintKey(m.keys.AgentUsage.Help().Key)+" usage"), w)
 }
 
 // usageText is the headline for the session's account, dim and marked when the
@@ -432,7 +432,7 @@ func (m Model) emptyArea(branch string, w, rows int) []string {
 	if branch != "" {
 		lines = append(lines, "Start an agent in "+branch, "")
 	}
-	lines = append(lines, "["+m.keys.AgentNew.Help().Key+"] New agent", "", "["+m.keys.AgentUsage.Help().Key+"] View account usage")
+	lines = append(lines, "["+hintKey(m.keys.AgentNew.Help().Key)+"] New agent", "", "["+hintKey(m.keys.AgentUsage.Help().Key)+"] View account usage")
 	return centered(lines, w, rows)
 }
 
@@ -479,5 +479,12 @@ func (m Model) endedSessionsSummary(path string) string {
 	if failed+exited == 0 {
 		return ""
 	}
-	return itoa(failed) + " failed · " + itoa(exited) + " exited · " + m.keys.AgentAll.Help().Key + " view · " + m.keys.AgentRetry.Help().Key + " retry"
+	var parts []string
+	if failed > 0 {
+		parts = append(parts, itoa(failed)+" failed")
+	}
+	if exited > 0 {
+		parts = append(parts, itoa(exited)+" exited")
+	}
+	return strings.Join(parts, " · ") + " · " + hintKey(m.keys.AgentAll.Help().Key) + " view · " + hintKey(m.keys.AgentRetry.Help().Key) + " retry"
 }
