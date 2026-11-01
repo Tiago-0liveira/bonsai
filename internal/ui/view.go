@@ -769,41 +769,42 @@ func (m Model) View() string {
 }
 
 // tabLabel is the header text for a tab, including its jump key hint.
+// tabLabel keeps default labels available to the redesign shell.
 func tabLabel(t rightTab, compact bool) string {
-	if compact {
-		switch t {
-		case tabProcs:
-			return " Procs (v) "
-		case tabDiff:
-			return " Diff (d) "
-		case tabPR:
-			return " PR (P) "
-		case tabInspect:
-			return " Insp (i) "
-		case tabChecks:
-			return " Checks (b) "
-		case tabAgents:
-			return " Agents (g) "
-		default:
-			return " Log (l) "
-		}
-	}
+	return (Model{keys: newKeyMap(nil)}).tabLabel(t, compact)
+}
+
+func (m Model) tabLabel(t rightTab, compact bool) string {
+	name, binding := "Git Log", m.keys.LogTab
 	switch t {
 	case tabProcs:
-		return " Processes (v) "
+		name, binding = "Processes", m.keys.ViewProcs
 	case tabDiff:
-		return " Diff (d) "
+		name, binding = "Diff", m.keys.DiffTab
 	case tabPR:
-		return " PR (P) "
+		name, binding = "PR", m.keys.PRTab
 	case tabInspect:
-		return " Inspect (i) "
+		name, binding = "Inspect", m.keys.InspectTab
 	case tabChecks:
-		return " Checks (b) "
+		name, binding = "Checks", m.keys.ChecksTab
 	case tabAgents:
-		return " Agents (g) "
-	default:
-		return " Git Log "
+		name, binding = "Agents", m.keys.AgentsTab
 	}
+	if compact {
+		switch t {
+		case tabLog:
+			name = "Log"
+		case tabProcs:
+			name = "Procs"
+		case tabInspect:
+			name = "Insp"
+		}
+	}
+	hint := binding.Help().Key
+	if compact {
+		hint = ansi.Truncate(hint, 10, "…")
+	}
+	return " " + name + " (" + hint + ") "
 }
 
 // visibleTabs returns the right-pane tabs available for the current selection:
@@ -846,7 +847,7 @@ func (m Model) tabStrip(width int) string {
 	buildParts := func(compact bool, tabList []rightTab) []string {
 		parts := make([]string, 0, len(tabList))
 		for _, t := range tabList {
-			label := tabLabel(t, compact)
+			label := m.tabLabel(t, compact)
 			if t == m.rightTab {
 				parts = append(parts, activeTab.Render(label))
 			} else {

@@ -12,6 +12,10 @@ contains the five working workspaces.
 
 ## TUI
 
+Tab labels show your configured jump keys, including Git Log in wide terminals.
+Long key names are shortened in compact headers.
+
+
 Run `bonsai` inside a repository. Press `n` to create a worktree, `enter` to
 drop into a shell in the selected one, `?` for the searchable keymap and `q` to
 quit. `ctrl+k` opens the command palette, which also edits every `.bonsai.yaml`
