@@ -90,11 +90,17 @@ sessions. These actions can be rebound as `agent_all`, `agent_all_repo` and
 Ended sessions remain visible in the strip and summary. `F` (`agent_fork`)
 starts another session with the same settings and a new task. `S`
 (`agent_stop_all`) asks for confirmation before stopping every live session in the worktree.
-Session renaming is unavailable in the sessions backend.
+`R` (`agent_rename`) in the picker, or in the Agents tab (where it wins over
+the global refresh key), opens an inline name field prefilled with the current
+name: Enter saves, Esc cancels. Names are trimmed, lose control characters and
+are limited to 80 characters. A session started by an older Bonsai build keeps
+its name until it is restarted. The web UI does not offer rename.
 
-The picker shows up to ten cached screen lines for the attached session;
-other sessions have no cheap screen snapshot accessor. Working sessions show
-time since output in the strip after this client observes live output.
+The picker's detail pane shows the last ten screen lines of the selected
+running session, attached or not. It reads them with a short read-only attach
+that never takes control, caches them for five seconds and shows `loading…`
+until they arrive; ended sessions show none. Screen text stays in memory only.
+Working sessions show time since output in the strip after this client observes live output.
 Retained summaries do not contain last-output timestamps.
 
 Settings → General → Agent attention bell enables a terminal bell when a

@@ -181,6 +181,9 @@ func (m Model) overlayUpdate(msg tea.Msg) (Model, tea.Cmd) {
 	case o.sessions != nil:
 		var sp sessionsPicker
 		sp, cmd = o.sessions.Update(msg)
+		var peek tea.Cmd
+		m, peek = m.peekPicker(&sp)
+		cmd = tea.Batch(cmd, peek)
 		m.setAgentOverlay(agentOverlay{sessions: &sp})
 	}
 	return m, cmd
@@ -241,6 +244,14 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 	case sessionsPickMsg:
 		m.agents.overlay = nil
 		nm, cmd = m.onAgentsPick(msg.path, msg.id)
+		return true, nm, cmd
+	case sessionsRenameMsg:
+		return true, m, renameSessionCmd(m.agents.ctx, m.agents.api.Sessions, msg.id, msg.name)
+	case agentRenamedMsg:
+		nm, cmd = m.onAgentRenamed(msg)
+		return true, nm, cmd
+	case agentPeekMsg:
+		nm, cmd = m.onAgentPeek(msg)
 		return true, nm, cmd
 	case sessionsNewMsg:
 		nm, cmd = m.openAgentLaunch()

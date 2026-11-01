@@ -8,6 +8,12 @@ var ErrSessionNotFound = errors.New("agent session not found")
 // ErrSessionUnavailable hides holder, filesystem and provider details from UI errors.
 var ErrSessionUnavailable = errors.New("agent session unavailable")
 
+// ErrInvalidName means a rename asked for an empty or over-long name.
+var ErrInvalidName = errors.New("invalid agent session name")
+
+// ErrRenameUnsupported means the session's holder predates renaming.
+var ErrRenameUnsupported = errors.New("this agent session cannot be renamed until it is restarted")
+
 // ErrSessionEnded means the retained session has no holder to control.
 var ErrSessionEnded = errors.New("agent session has ended")
 

@@ -12,13 +12,13 @@
                                             │ Worktree feat-a
    Broken run                    ✗ Failed   │ ID       r2
    Claude · work                            │
-                                            │
-   Previous attempt              ✓ Exited   │
+                                            │ Last screen:
+   Previous attempt              ✓ Exited   │ loading…
    Codex · work                             │
                                             │
                                             │
                                             │
                                             │ [ Enter Open session ]
  ──────────────────────────────────────────────────────────────────────────────
- ↑↓ Select  / Search  n New session  Esc Back
+ ↑↓ Select  / Search  n New session  R Rename  Esc Back
 

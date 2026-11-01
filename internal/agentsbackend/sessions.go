@@ -145,3 +145,50 @@ func (s *sessions) Attach(ctx context.Context, id string, opts agentsapi.AttachO
 // sizePollInterval is how often an attached stream re-reads the holder's PTY
 // size, since the protocol has no size frame.
 var sizePollInterval = 2 * time.Second
+
+func (s *sessions) Rename(ctx context.Context, id, name string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	summary, err := agenthost.Rename(s.paths, id, name)
+	switch {
+	case err == nil:
+		return summary.Name, nil
+	case errors.Is(err, agenthost.ErrNameInvalid):
+		return "", ErrInvalidName
+	case errors.Is(err, agenthost.ErrRenameUnsupported):
+		return "", ErrRenameUnsupported
+	case errors.Is(err, os.ErrNotExist) || id == "":
+		return "", ErrSessionNotFound
+	case errors.Is(err, agenthost.ErrVersion):
+		return "", fmt.Errorf("rename agent session: %w", agentsapi.ErrVersion)
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	return "", fmt.Errorf("rename agent session: %w", ErrSessionUnavailable)
+}
+
+func (s *sessions) Snapshot(ctx context.Context, id string, lines int) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	record, err := agenthost.Read(s.paths, id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || id == "" {
+			return nil, ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("read agent session: %w", ErrSessionUnavailable)
+	}
+	out, err := agenthost.Snapshot(ctx, record, lines)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, agenthost.ErrVersion) {
+			return nil, fmt.Errorf("peek agent session: %w", agentsapi.ErrVersion)
+		}
+		return nil, fmt.Errorf("peek agent session: %w", ErrSessionUnavailable)
+	}
+	return out, nil
+}

@@ -52,6 +52,10 @@ type sessionsPicker struct {
 	cursor          int
 	top             int // first visible item
 	selID           string
+	peekLoading     string // session whose snapshot is in flight with nothing to show yet
+	renaming        bool
+	renameID        string
+	rename          textinput.Model
 }
 
 func newSessionsPicker(branch string, ascii bool) sessionsPicker {
@@ -162,6 +166,9 @@ func (p sessionsPicker) Update(msg tea.Msg) (sessionsPicker, tea.Cmd) {
 	if !ok {
 		return p, nil
 	}
+	if p.renaming {
+		return p.updateRename(k)
+	}
 	closeCmd := func() tea.Msg { return accounts.CloseMsg{} }
 	switch k.String() {
 	case "ctrl+c":
@@ -209,6 +216,9 @@ func (p sessionsPicker) Update(msg tea.Msg) (sessionsPicker, tea.Cmd) {
 		p.cursor = 0
 		p.sync()
 		return p, cmd
+	}
+	if key.Matches(k, p.keys.AgentRename) {
+		return p.startRename()
 	}
 	if key.Matches(k, p.keys.AgentNew) {
 		return p, func() tea.Msg { return sessionsNewMsg{} }
@@ -388,6 +398,9 @@ func (p sessionsPicker) compose() []string {
 
 func (p sessionsPicker) searchRow(iw int) string {
 	th := theme.Current
+	if p.renaming {
+		return p.renameRow(iw)
+	}
 	if !p.search {
 		return lipgloss.NewStyle().Foreground(th.Dim).Render("/ Search sessions…")
 	}
@@ -410,10 +423,17 @@ func (p sessionsPicker) footer() string {
 	if p.ascii {
 		arrows = "Up/Down"
 	}
+	if p.renaming {
+		return "Enter Save name  Esc Cancel"
+	}
 	if p.search {
 		return arrows + " Select  Enter Open  Esc Clear search"
 	}
-	return arrows + " Select  / Search  " + p.keys.AgentNew.Help().Key + " New session  Esc Back"
+	hints := arrows + " Select  / Search  " + p.keys.AgentNew.Help().Key + " New session  "
+	if _, ok := p.selected(); ok {
+		hints += p.keys.AgentRename.Help().Key + " Rename  "
+	}
+	return hints + "Esc Back"
 }
 
 // footerFit shortens words, not keys, until the hints fit w.
@@ -604,7 +624,11 @@ func (p sessionsPicker) inspector(width, rows int) []string {
 	}
 	if peek := p.peek[s.ID]; len(peek) > 0 {
 		lines = append(lines, "", "Last screen:")
-		lines = append(lines, peek...)
+		for _, l := range peek {
+			lines = append(lines, ansi.Truncate(l, width, "…"))
+		}
+	} else if p.peekLoading == s.ID {
+		lines = append(lines, "", "Last screen:", lipgloss.NewStyle().Foreground(theme.Current.Dim).Render("loading…"))
 	}
 	copy(out, lines[:min(len(lines), max(rows-1, 0))])
 	if rows >= 1 {

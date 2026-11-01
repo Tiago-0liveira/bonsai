@@ -52,6 +52,7 @@ type keyMap struct {
 	AgentStopAll         key.Binding
 	AgentAttention       key.Binding
 	AgentAllRepo         key.Binding
+	AgentRename          key.Binding
 	AgentNew             key.Binding
 	AgentQuickNew        key.Binding
 	AgentFork            key.Binding
@@ -118,6 +119,7 @@ var defaultBindings = map[string]bindingSpec{
 	"rename_proc":            {[]string{"L"}, "tag process (multi-view label)"},
 	"proc_search":            {[]string{"/"}, "search process output"},
 	"agents_tab":             {[]string{"g"}, "agents"},
+	"agent_rename":           {[]string{"R"}, "rename session"},
 	"agent_all_repo":         {[]string{"A"}, "repository sessions"},
 	"agent_attention":        {[]string{"!"}, "next session needing attention"},
 	"agent_stop_all":         {[]string{"S"}, "stop worktree sessions"},
@@ -244,6 +246,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		AgentAttention:       b("agent_attention"),
 		AgentStopAll:         b("agent_stop_all"),
 		AgentAll:             b("agent_all"),
+		AgentRename:          b("agent_rename"),
 		AgentNew:             b("agent_new"),
 		AgentQuickNew:        b("agent_quick_new"),
 		AgentFork:            b("agent_fork"),
@@ -277,7 +280,7 @@ var keymapSections = []keymapSection{
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
-	{"Agents tab", []string{"agent_stop_all", "agent_all_repo", "agents_tab", "agent_all", "agent_new", "agent_quick_new", "agent_fork", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}},
+	{"Agents tab", []string{"agent_stop_all", "agent_all_repo", "agents_tab", "agent_rename", "agent_all", "agent_new", "agent_quick_new", "agent_fork", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}},
 	{"Agent launch", []string{"launch_change_worktree"}},
 	{"Processes tab", []string{"kill_proc", "restart_proc", "set_policy", "proc_modal", "multi_view", "rename_proc", "proc_search"}},
 	{"Garden", []string{"garden_view", "garden_stages", "garden_attention"}},

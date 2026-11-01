@@ -678,6 +678,19 @@ func (h *host) handle(conn net.Conn) {
 			}
 		case "stop":
 			h.stop(r.Error)
+		case "rename":
+			name, err := CleanName(r.Name)
+			if err != nil {
+				c.queue(Frame{Type: "error", Error: err.Error()})
+				continue
+			}
+			var summary Summary
+			_ = h.update(func(s *agentterminal.Summary) error {
+				s.Name = name
+				summary = *s
+				return nil
+			})
+			c.queue(Frame{Type: "renamed", Status: &summary})
 		case "info":
 			info := h.info()
 			c.queue(Frame{Type: "info", Info: &info})
