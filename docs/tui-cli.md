@@ -90,21 +90,35 @@ the search), `Enter` opens the selected session, `n` starts a new one and `Esc` 
 back. Opening the screen clears the `!` failure markers on that worktree's rows, so
 the failures stay listed here with `✗`.
 
-The new-session screen (`n`) is an account table above the launch options. The
-table lists every account with its **5h left** capacity (meter and percentage of
-what remains) and **Resets in** countdown; only the reported five-hour window is
-used, so an account without one shows `Not reported`, and loading, unavailable
-and stale readings are labeled instead of drawn as a zero or full meter. `↑`/`↓`
-(or `j`/`k`) select an account and `Enter` moves to the options. `Tab` and
-`Shift+Tab` move through the name, model, effort, other launch options, the
-**Save as account defaults** box and the buttons. Within the options, `↑`/`↓`
-moves between fields, `←`/`→` changes a value, and `Enter` opens a choice list.
-`Esc` dismisses that list before closing the screen. `ctrl+s` starts the
-session. Model and effort start from the selected account's defaults; edits apply
-only to this session unless **Save as account defaults** is checked. Effort
-choices follow the selected model's capabilities. On short or narrow panes the
-table shows fewer rows (`a-b of N`), then drops the meter, then uses two lines
-per account; extra options scroll while Start and the footer stay in view.
+The new-session screen (`n`) shows **Start in: branch (short path)** above an
+account table grouped by provider. The selected worktree is the initial target,
+including after creating a worktree. Use `launch_change_worktree` (default
+`ctrl+w`) to choose another loaded worktree. Accounts show remaining **5H** and
+**WEEK** percentages, with **Resets in** for the window with least headroom.
+Missing windows show `Not reported`; loading, unavailable and stale readings
+remain labeled. The suggested connected account has the highest minimum
+remaining capacity among its reported windows. Unknown/stale readings are not
+ranked. An explicit initial account or manual account selection takes priority.
+
+`↑`/`↓` (or `j`/`k`) select accounts and skip provider headings. `Enter`
+moves to the optional multiline **Task**, followed by Name, Model, Effort and
+provider options. Enter in Task adds a newline; `Tab` and `Shift+Tab` move
+between fields. Task is sent as the provider's initial prompt and is never saved
+as account defaults. Untouched names use `<branch>-<provider>-<next free index>`;
+typing a task derives a slug from its first four words. Edited names are preserved.
+
+Within provider options, `↑`/`↓` moves between fields, `←`/`→` changes a
+value, and `Enter` opens a choice list. `Esc` dismisses the list before closing
+the screen. `ctrl+s` starts the session. Model and effort begin at account
+defaults; edits apply to this session unless **Save as account defaults** is
+checked. Effort choices follow the selected model's capabilities. On short or
+narrow panes the account table scrolls or uses two lines per account; options
+scroll while Start and the footer stay visible.
+
+In the Agents tab, **N** (`agent_quick_new`) opens a suggested-account launch
+with Task focused. **F** (`agent_fork`) opens a new task using the selected
+session's account, worktree, model, effort and permission/sandbox settings.
+Task starts empty; both shortcuts wait for Ctrl+S and can be rebound in Settings.
 
 In profiles (`m`), `Tab` and `Shift+Tab` cycle the right-hand Overview, Usage and
 Defaults tabs while `↑`/`↓` keeps selecting profiles. No selection confirmation
@@ -911,26 +925,3 @@ For a Garden-created session, the Inspector shows its Issue and attempt identity
 its specification/plan sections. A manual checkout needs no task link. Human
 acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
-
-The agent launch form shows **Start in** with the target branch and short path.
-Use the configurable `launch_change_worktree` action (default `ctrl+w`) to choose
-another loaded worktree. The optional multiline **Task** is sent as the initial
-provider prompt; Enter adds a newline, Tab advances, and Ctrl+S starts. Task text
-is never saved as account defaults. The selected worktree is the initial target,
-including when launching immediately after creating a worktree.
-
-Untouched session names use `<branch>-<provider>-<next free index>`; typing a
-task uses its first four words as a slug. Edited names are preserved. The account
-table shows remaining **5H** and **WEEK** percentages and the reset for the window
-with least headroom. The suggested connected account has the highest minimum
-remaining capacity among its reported windows; unknown/stale readings are not
-ranked. Selecting an account pins that choice.
-
-Launch accounts are grouped under provider headings. Up/down moves between
-accounts and skips the headings.
-
-In the Agents tab, **N** (`agent_quick_new`) opens a suggested-account launch
-with Task focused. **F** (`agent_fork`) starts a new task using the selected
-session’s account, worktree, model, effort and permission/sandbox settings.
-The Task starts empty; neither shortcut starts a session until Ctrl+S. Both
-shortcuts can be rebound in Settings.

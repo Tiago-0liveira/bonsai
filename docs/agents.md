@@ -233,6 +233,17 @@ session read-only; `enter` takes control to type, and `ctrl+]` immediately retur
 input to Bonsai. Press `enter` again to take control back when another client is
 writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
 
+The TUI launch form shows its worktree target and lets you change it with
+`launch_change_worktree` (default `ctrl+w`). Its optional multiline Task becomes
+the initial provider prompt; Enter adds a newline and Ctrl+S starts. Task text
+is never saved as account defaults. Names start as branch/provider/index and
+follow the task's first four words until edited. Accounts are grouped by provider
+with 5H and WEEK remaining capacity, the limiting window's reset, and a suggested
+account based on reported headroom. In the Agents tab, `agent_quick_new` (default
+`N`) focuses Task immediately; `agent_fork` (default `F`) reuses the selected
+session's account, worktree, model, effort and permission/sandbox choices with an
+empty Task. See the [launch controls](tui-cli.md#agents-tab) for navigation.
+
 `bonsai agents attach <id|name>` opens a terminal with pinned controls below the
 agent output. Press `Ctrl+]`, release it, then `d` to detach and leave the agent
 running, or `k` to request a kill. The kill prompt defaults to cancel: press `y`
@@ -479,26 +490,3 @@ workspaces releases the UI attachment while the holder continues. Garden task
 and attempt references are shown when present; manual sessions require neither
 Garden setup nor a fabricated approved plan. Existing account/session/worktree
 locks still govern launch, stop and prune operations.
-
-The agent launch form shows **Start in** with the target branch and short path.
-Use the configurable `launch_change_worktree` action (default `ctrl+w`) to choose
-another loaded worktree. The optional multiline **Task** is sent as the initial
-provider prompt; Enter adds a newline, Tab advances, and Ctrl+S starts. Task text
-is never saved as account defaults. The selected worktree is the initial target,
-including when launching immediately after creating a worktree.
-
-Untouched session names use `<branch>-<provider>-<next free index>`; typing a
-task uses its first four words as a slug. Edited names are preserved. The account
-table shows remaining **5H** and **WEEK** percentages and the reset for the window
-with least headroom. The suggested connected account has the highest minimum
-remaining capacity among its reported windows; unknown/stale readings are not
-ranked. Selecting an account pins that choice.
-
-Launch accounts are grouped under provider headings. Up/down moves between
-accounts and skips the headings.
-
-In the Agents tab, **N** (`agent_quick_new`) opens a suggested-account launch
-with Task focused. **F** (`agent_fork`) starts a new task using the selected
-session’s account, worktree, model, effort and permission/sandbox settings.
-The Task starts empty; neither shortcut starts a session until Ctrl+S. Both
-shortcuts can be rebound in Settings.
