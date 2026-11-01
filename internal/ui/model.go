@@ -148,7 +148,9 @@ type Model struct {
 	seenProcStatus map[string]string
 
 	// sort is the current worktree ordering.
-	sort sortMode
+	sort             sortMode
+	createStartAgent bool
+	createdAgentPath string
 
 	// Diff tab (file list) state.
 	diffBase        string

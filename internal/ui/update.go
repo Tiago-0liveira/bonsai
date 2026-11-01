@@ -225,6 +225,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modals.CancelMsg:
+		if m.modal != nil && (msg.Kind == modals.KindCreateSource || msg.Kind == modals.KindCreateNew || msg.Kind == modals.KindCreateExisting || msg.Kind == modals.KindCreatePR) {
+			m.createStartAgent = m.modal.StartAgent()
+		}
 		m.modal = nil
 		m.pendingConfirm = nil
 		m.pendingCfg = nil
@@ -347,10 +350,16 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 	}
 	m.worktrees = msg.trees
 	m.rebuildItems()
+	var launch tea.Cmd
+	if m.createdAgentPath != "" && m.list.SelectByPath(m.createdAgentPath) {
+		m.createdAgentPath = ""
+		next, cmd := m.openAgentLaunch()
+		m, launch = next.(Model), cmd
+	}
 
 	// Fetch metrics per branch, connected PRs, dirty state, activity, and the log
 	// for the selection.
-	cmds := []tea.Cmd{m.worktreeRead("prs", fetchPRs(m.repoDir, m.ghCache, msg.force))}
+	cmds := []tea.Cmd{launch, m.worktreeRead("prs", fetchPRs(m.repoDir, m.ghCache, msg.force))}
 	// Which sessions belong to which row depends on the worktree set.
 	if c := m.relistAgents(); c != nil {
 		cmds = append(cmds, c)
@@ -576,6 +585,9 @@ func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.createdPath != "" && msg.err == nil && m.createStartAgent && m.agents.enabled() {
+		m.createdAgentPath = msg.createdPath
+	}
 	if msg.err != nil {
 		m.status = msg.label + ": " + msg.err.Error()
 	} else if msg.label == "shell" {
@@ -1305,6 +1317,7 @@ func (m Model) onBranches(msg branchesMsg) (tea.Model, tea.Cmd) {
 		modal = modals.NewSelect(modals.KindBranches, "Rebase onto", msg.branches)
 	case branchesForCreateExisting:
 		modal = modals.NewSelect(modals.KindCreateExisting, "Existing branch", msg.branches)
+		m.configureCreateModal(&modal, false)
 	default:
 		return m, nil
 	}
@@ -1323,6 +1336,7 @@ const (
 func (m Model) openCreateSourceModal() (tea.Model, tea.Cmd) {
 	modal := modals.NewSelect(modals.KindCreateSource, "Create worktree from",
 		[]string{createSourceNew, createSourceExisting, createSourcePR})
+	m.configureCreateModal(&modal, false)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -1978,6 +1992,7 @@ func (m Model) onPRs(msg prsMsg) (tea.Model, tea.Cmd) {
 		items[i] = fmt.Sprintf("#%d %s", pr.Number, pr.Title)
 	}
 	modal := modals.NewSelect(modals.KindCreatePR, "Checkout pull request", items)
+	m.configureCreateModal(&modal, false)
 	modal.SetSize(m.width, m.height)
 	m.modal = &modal
 	return m, nil
@@ -2015,6 +2030,9 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 // onModalSubmit routes a confirmed modal value to the right core operation.
 func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 	open := m.modal
+	if open != nil && (msg.Kind == modals.KindCreateSource || msg.Kind == modals.KindCreateNew || msg.Kind == modals.KindCreateExisting || msg.Kind == modals.KindCreatePR) {
+		m.createStartAgent = msg.StartAgent && m.agents.enabled()
+	}
 	m.modal = nil
 
 	// These kinds do not require an existing selection.
@@ -2102,7 +2120,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = "creating " + msg.Value
-		return m, createWorktree(m.repoDir, "new", msg.Value, 0, m.cfg)
+		return m, createWorktree(m.repoDir, "new", msg.Value, 0, m.cfg, msg.Base)
 	case modals.KindCreateExisting:
 		m.status = "creating worktree for " + msg.Value
 		return m, createWorktree(m.repoDir, "existing", msg.Value, 0, m.cfg)
@@ -2320,6 +2338,7 @@ func (m Model) onCreateSource(choice string) (tea.Model, tea.Cmd) {
 	switch choice {
 	case createSourceNew:
 		modal := modals.NewInput(modals.KindCreateNew, "New branch name", "feature/awesome")
+		m.configureCreateModal(&modal, true)
 		modal.SetSize(m.width, m.height)
 		m.modal = &modal
 		return m, nil
@@ -2383,4 +2402,18 @@ func (m Model) aliasCommand(name string) string {
 		return ""
 	}
 	return command
+}
+
+func (m Model) configureCreateModal(modal *modals.Model, preview bool) {
+	var render func(string, string) string
+	cfg := m.cfg
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	if preview {
+		render = func(branch, base string) string {
+			return "from " + base + " → " + cfg.WorktreePath(m.repoDir, branch)
+		}
+	}
+	modal.SetCreateOptions(m.agents.enabled(), m.createStartAgent, m.keys.CreateAgentToggle, m.keys.CreateBase, cfg.Upstream, render)
 }

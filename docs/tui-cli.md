@@ -913,3 +913,9 @@ acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
 
 Worktree PR badges show the coloured state word beside the number, without a circle.
+
+The create-worktree flow offers **Start agent here** when agents are enabled.
+Space (`create_agent_toggle`) remembers the choice for this session; after creation,
+the new checkout is selected and its agent launch form opens. The palette also offers
+**New worktree with agent…**. New branches preview their configured path and base;
+Tab (`create_base`) edits the base before Enter creates the worktree.
