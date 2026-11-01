@@ -64,7 +64,8 @@ type agentState struct {
 	ctx    context.Context // owned by the model; cancelled on quit
 	cancel context.CancelFunc
 
-	sessions []agentsapi.Session
+	sessions    []agentsapi.Session
+	attentionID string
 	// byTree maps a cleaned worktree path to indices into sessions.
 	byTree map[string][]int
 	// seq is the last list request issued, applied the last one applied; a
@@ -72,8 +73,7 @@ type agentState struct {
 	seq, applied uint64
 	subscribed   bool // a Changes subscription is live or pending; cleared if Changes fails
 	err          string
-	// ack holds failed session IDs the user has already seen, so their "!"
-	// stops showing.
+	// ack holds ended session IDs the user has already seen.
 	ack map[string]bool
 
 	// selected remembers each worktree's chosen session for the TUI's lifetime.
@@ -270,11 +270,16 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 	if m.agents.enterAfter != "" && msg.seq >= m.agents.enterSeq && !hasSession(msg.sessions, m.agents.enterAfter) {
 		m.agents.enterAfter = "" // the started session is gone already
 	}
+
 	m.agents.sessions = msg.sessions
 	m.agents.byTree = msg.byTree
 	m.refreshAgentBadges()
 	if o := m.agents.overlay; o != nil && o.sessions != nil {
-		o.sessions.setSessions(m.orderedSessions(o.sessions.path))
+		if o.sessions.repo {
+			m.populateRepoPicker(o.sessions)
+		} else {
+			o.sessions.setSessions(m.orderedSessions(o.sessions.path))
+		}
 	}
 	// New or ended sessions can change which account the open tab shows.
 	if m.rightTab == tabAgents {
@@ -333,8 +338,6 @@ func (m *Model) refreshAgentBadges() {
 	m.list.SetAgentBadges(func(path string) string { return badges[filepath.Clean(path)] })
 }
 
-var agentProviderOrder = []agents.ProviderID{"claude", "codex", "antigravity"}
-
 // agentUrgency orders what a session needs from the user: a waiting agent
 // beats a working one, which beats an idle one. Sessions without activity
 // (old holders, providers without hooks) count as working so they are never
@@ -360,59 +363,34 @@ func sessionUrgency(s agentsapi.Session) agentUrgency {
 	return urgencyWorking
 }
 
-// agentBadge renders one worktree's glyphs: active sessions per provider with
-// a count, each glyph styled by its most urgent session (waiting is the
-// attention style, working the provider color, all idle dimmed). One "?"
-// ends the glyphs when any session waits for the user, then "!" for failed sessions
-// the user has not acknowledged. Both marks are plain ASCII.
+// agentBadge counts lifecycle states independently of provider identity.
 func (m Model) agentBadge(idx []int, ascii bool) string {
-	counts := map[agents.ProviderID]int{}
-	urgency := map[agents.ProviderID]agentUrgency{}
-	failed, waiting := false, false
+	counts := [4]int{}
 	for _, i := range idx {
 		s := m.agents.sessions[i]
 		switch {
 		case s.Active():
-			p := s.Provider
-			u := sessionUrgency(s)
-			if counts[p] == 0 || u > urgency[p] {
-				urgency[p] = u
+			if sessionUrgency(s) == urgencyWaiting {
+				counts[1]++
+			} else {
+				counts[0]++
 			}
-			counts[p]++
-			waiting = waiting || u == urgencyWaiting
-		case s.State == "failed" && !m.agents.ack[s.ID]:
-			failed = true
+		case !m.agents.ack[s.ID] && s.State == "exited":
+			counts[2]++
+		case !m.agents.ack[s.ID] && s.State == "failed":
+			counts[3]++
 		}
 	}
-	attention := lipgloss.NewStyle().Foreground(theme.Current.Warning).Bold(true)
+	marks := []string{"▶", "⏸", "✓", "✗"}
+	if ascii {
+		marks = []string{">", "=", "+", "x"}
+	}
+	colors := []lipgloss.TerminalColor{theme.Current.Text, theme.Current.Warning, theme.Current.Dim, theme.Current.Danger}
 	var parts []string
-	seen := map[agents.ProviderID]bool{}
-	add := func(p agents.ProviderID) {
-		if n := counts[p]; n > 0 && !seen[p] {
-			seen[p] = true
-			style := theme.ProviderStyle(p)
-			switch urgency[p] {
-			case urgencyWaiting:
-				style = attention
-			case urgencyIdle:
-				style = lipgloss.NewStyle().Foreground(theme.Current.Dim)
-			}
-			parts = append(parts, style.Render(theme.AgentBadge(p, n, ascii)))
+	for i, n := range counts {
+		if n > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(colors[i]).Render(marks[i]+itoa(n)))
 		}
-	}
-	for _, p := range agentProviderOrder {
-		add(p)
-	}
-	// Unknown providers still count, after the known ones, in a stable order.
-	for _, i := range idx {
-		add(m.agents.sessions[i].Provider)
-	}
-	if waiting && len(parts) > 0 {
-		// Attached without a separator so the badge grows by one cell, not two.
-		parts[len(parts)-1] += attention.Render("?")
-	}
-	if failed {
-		parts = append(parts, lipgloss.NewStyle().Foreground(theme.Current.Warning).Render("!"))
 	}
 	return strings.Join(parts, " ")
 }

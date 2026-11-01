@@ -46,6 +46,10 @@ type keyMap struct {
 	ProcSearch      key.Binding
 	AgentsTab       key.Binding
 	AgentAll        key.Binding
+	AgentStopAll    key.Binding
+	AgentAttention  key.Binding
+	AgentAllRepo    key.Binding
+	AgentRetry      key.Binding
 	AgentNew        key.Binding
 	AgentAccounts   key.Binding
 	AgentUsage      key.Binding
@@ -106,6 +110,10 @@ var defaultBindings = map[string]bindingSpec{
 	"rename_proc":      {[]string{"L"}, "tag process (multi-view label)"},
 	"proc_search":      {[]string{"/"}, "search process output"},
 	"agents_tab":       {[]string{"g"}, "agents"},
+	"agent_retry":      {[]string{"r"}, "retry session"},
+	"agent_all_repo":   {[]string{"A"}, "repository sessions"},
+	"agent_attention":  {[]string{"!"}, "next session needing attention"},
+	"agent_stop_all":   {[]string{"S"}, "stop worktree sessions"},
 	"agent_all":        {[]string{"a"}, "sessions"},
 	"agent_new":        {[]string{"n"}, "new agent"},
 	"agent_accounts":   {[]string{"m"}, "agent accounts"},
@@ -215,7 +223,11 @@ func newKeyMap(overrides map[string]string) keyMap {
 		RenameProc:      b("rename_proc"),
 		ProcSearch:      b("proc_search"),
 		AgentsTab:       b("agents_tab"),
+		AgentAllRepo:    b("agent_all_repo"),
+		AgentAttention:  b("agent_attention"),
+		AgentStopAll:    b("agent_stop_all"),
 		AgentAll:        b("agent_all"),
+		AgentRetry:      b("agent_retry"),
 		AgentNew:        b("agent_new"),
 		AgentAccounts:   b("agent_accounts"),
 		AgentUsage:      b("agent_usage"),
@@ -239,13 +251,13 @@ type keymapSection struct {
 }
 
 var keymapSections = []keymapSection{
-	{"Navigation", []string{"focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
+	{"Navigation", []string{"agent_attention", "focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
 	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
 	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab"}},
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
-	{"Agents tab", []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}},
+	{"Agents tab", []string{"agent_stop_all", "agent_all_repo", "agents_tab", "agent_retry", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}},
 	{"Processes tab", []string{"kill_proc", "restart_proc", "set_policy", "proc_modal", "multi_view", "rename_proc", "proc_search"}},
 	{"Garden", []string{"garden_view", "garden_stages", "garden_attention"}},
 }
@@ -263,4 +275,11 @@ const agentTerminalSection = "Agent terminal (fixed key)"
 
 var agentTerminalKeys = []struct{ key, desc string }{
 	{"ctrl+]", "unfocus agent"},
+}
+
+var agentLegendKeys = []struct{ key, desc string }{
+	{"▶N / >N", "working sessions"},
+	{"⏸N / =N", "waiting sessions"},
+	{"✓N / +N", "done, unseen"},
+	{"✗N / xN", "failed, unseen"},
 }

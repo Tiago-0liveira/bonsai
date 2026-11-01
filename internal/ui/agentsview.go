@@ -232,6 +232,9 @@ func (m Model) agentsLayout(w, h int) agentsLayout {
 			fixed = append([]string{fit(title, w), ""}, fixed...)
 		}
 	}
+	if summary := m.endedSessionsSummary(path); summary != "" {
+		fixed = append([]string{fit(dimText(summary), w)}, fixed...)
+	}
 	if h-len(fixed) < minTerminalRows {
 		return agentsLayout{}
 	}
@@ -266,7 +269,7 @@ func (m Model) emptyStrip(w int) string {
 		hints = m.keys.AgentAll.Help().Key + ": sessions"
 	}
 	hints = m.agentsStripStatus(hints)
-	return leftRight(dimText("No running agents"), dimText(hints), w)
+	return leftRight(dimText("Sessions"), dimText(hints), w)
 }
 
 func (m Model) agentsStaleIndicator() string {
@@ -299,7 +302,11 @@ func (m Model) sessionStrip(strip []agentsapi.Session, sel, w int, prefix, hints
 	labels := make([]string, len(strip))
 	for i, s := range strip {
 		name := ansi.Truncate(sessionName(s), stripNameCells, "…")
+
 		text := "[" + itoa(i+1) + " " + m.agentGlyph(s.Provider) + " " + name + "]"
+		if !s.Active() {
+			text = dimText(text)
+		}
 		if i == sel {
 			text = lipgloss.NewStyle().Bold(true).Foreground(theme.Current.Accent).Render(text)
 		}
@@ -414,7 +421,7 @@ func placeholderArea(s agentsapi.Session, w, rows int) []string {
 }
 
 func (m Model) emptyArea(branch string, w, rows int) []string {
-	lines := []string{"No active agents", ""}
+	lines := []string{"No sessions yet", ""}
 	if branch != "" {
 		lines = append(lines, "Start an agent in "+branch, "")
 	}
@@ -446,4 +453,24 @@ func centered(lines []string, w, rows int) []string {
 // agentPaneModal distinguishes agent-local pickers from app-wide dialogs.
 func (m Model) agentPaneModal() bool {
 	return m.modal != nil && (m.modal.Kind() == kindAgentStop)
+}
+
+// endedSessionsSummary keeps ended sessions visible before opening history.
+func (m Model) endedSessionsSummary(path string) string {
+	failed, exited := 0, 0
+	for _, i := range m.agents.byTree[path] {
+		s := m.agents.sessions[i]
+		if s.Active() {
+			return ""
+		}
+		if s.State == "failed" {
+			failed++
+		} else if s.State == "exited" {
+			exited++
+		}
+	}
+	if failed+exited == 0 {
+		return ""
+	}
+	return itoa(failed) + " failed · " + itoa(exited) + " exited · " + m.keys.AgentAll.Help().Key + " view · " + m.keys.AgentRetry.Help().Key + " retry"
 }

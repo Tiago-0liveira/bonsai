@@ -358,7 +358,7 @@ func (m Model) terminalLayout(w, h int, strip []agentsapi.Session, sel agentsapi
 		}
 		head = leftRight(left, dimText("ctrl+] detach · "+focusLabel), w)
 	} else {
-		head = m.compactHeaderHint(sel, w, "ctrl+] detach")
+		head = m.compactHeaderHint(sel, w, "ctrl+] detach · "+focusLabel)
 	}
 	fixed := []string{m.sessionStrip(strip, selIdx, w, "", ""), fit(head, w), rule}
 	tail := []string{rule, fit(m.terminalHint(), w)}
@@ -375,13 +375,13 @@ func (m Model) terminalHint() string {
 	case v.stream == nil:
 		// A re-attach is in flight (take-over, detach, retry): keys are
 		// swallowed until it lands, so say so instead of looking frozen.
-		return warn.Render("ctrl+] detach · " + hintConnecting)
+		return warn.Render(hintConnecting)
 	case v.state == attachObservingOther && v.lost:
-		return warn.Render("ctrl+] detach · " + hintControlLost)
+		return warn.Render(hintControlLost)
 	case v.state == attachObservingOther:
-		return warn.Render("ctrl+] detach · " + hintOtherControls)
+		return warn.Render(hintOtherControls)
 	}
-	return dimText("ctrl+] detach · " + hintAgentFocused)
+	return dimText(hintAgentFocused)
 }
 
 // agentNavHints are the state-specific hints ahead of the standing ones in

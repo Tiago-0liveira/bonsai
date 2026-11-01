@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"github.com/charmbracelet/bubbles/key"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -27,32 +29,37 @@ const (
 // sessionsPickMsg asks the Agents tab to show a session; sessionsNewMsg asks
 // for the launcher. The picker closes in both cases.
 type (
-	sessionsPickMsg struct{ path, id string } // path: the picker's own worktree
-	sessionsNewMsg  struct{}
+	sessionsPickMsg  struct{ path, id string } // path: the picker's own worktree
+	sessionsNewMsg   struct{}
+	sessionsRetryMsg struct{ session agentsapi.Session }
 )
 
 // sessionsPicker is the "all sessions" overlay of one worktree: a searchable
 // list beside an inspector that follows the selection. It only draws and
 // navigates; opening a session is the parent's job.
 type sessionsPicker struct {
-	w, h     int
-	ascii    bool
-	branch   string
-	path     string              // worktree whose sessions are listed
-	sessions []agentsapi.Session // ordered: running newest first, then ended newest first
-	dupes    map[string]bool     // names shared by more than one session
-	query    textinput.Model
-	search   bool
-	cursor   int
-	top      int // first visible item
-	selID    string
+	keys            keyMap
+	repo            bool
+	paths, branches map[string]string
+	peek            map[string][]string
+	w, h            int
+	ascii           bool
+	branch          string
+	path            string              // worktree whose sessions are listed
+	sessions        []agentsapi.Session // ordered: running newest first, then ended newest first
+	dupes           map[string]bool     // names shared by more than one session
+	query           textinput.Model
+	search          bool
+	cursor          int
+	top             int // first visible item
+	selID           string
 }
 
 func newSessionsPicker(branch string, ascii bool) sessionsPicker {
 	ti := textinput.New()
 	ti.Prompt = ""
 	ti.CharLimit = 100
-	return sessionsPicker{branch: branch, ascii: ascii, query: ti}
+	return sessionsPicker{keys: newKeyMap(nil), branch: branch, ascii: ascii, query: ti}
 }
 
 func (p *sessionsPicker) SetSize(w, h int) {
@@ -119,7 +126,7 @@ func (p sessionsPicker) visible() []agentsapi.Session {
 	}
 	var out []agentsapi.Session
 	for _, s := range p.sessions {
-		plain := sessionName(s) + " " + providerName(s.Provider) + " " + s.ProfileName
+		plain := sessionName(s) + " " + providerName(s.Provider) + " " + s.ProfileName + " " + p.branches[s.ID] + " " + s.WorkDir
 		if strings.Contains(strings.ToLower(plain), q) {
 			out = append(out, s)
 		}
@@ -190,6 +197,9 @@ func (p sessionsPicker) Update(msg tea.Msg) (sessionsPicker, tea.Cmd) {
 		if vis := p.visible(); p.cursor >= 0 && p.cursor < len(vis) {
 			id := vis[p.cursor].ID
 			path := p.path
+			if p.repo {
+				path = p.paths[id]
+			}
 			return p, func() tea.Msg { return sessionsPickMsg{path: path, id: id} }
 		}
 		return p, nil
@@ -201,12 +211,19 @@ func (p sessionsPicker) Update(msg tea.Msg) (sessionsPicker, tea.Cmd) {
 		p.sync()
 		return p, cmd
 	}
+	if key.Matches(k, p.keys.AgentRetry) {
+		if ss, ok := p.selected(); ok && !ss.Active() {
+			return p, func() tea.Msg { return sessionsRetryMsg{ss} }
+		}
+		return p, nil
+	}
+	if key.Matches(k, p.keys.AgentNew) {
+		return p, func() tea.Msg { return sessionsNewMsg{} }
+	}
 	switch k.String() {
 	case "/":
 		p.search = true
 		return p, p.query.Focus()
-	case "n":
-		return p, func() tea.Msg { return sessionsNewMsg{} }
 	}
 	return p, nil
 }
@@ -340,7 +357,7 @@ func (p sessionsPicker) compose() []string {
 		case len(p.sessions) == 1:
 			count = "1 session"
 		}
-		out = append(out, leftRight(dim.Render("All sessions in this worktree"), dim.Render(count), iw))
+		out = append(out, leftRight(dim.Render(p.subtitle()), dim.Render(count), iw))
 	}
 	if g.rule {
 		out = append(out, rule)
@@ -403,7 +420,7 @@ func (p sessionsPicker) footer() string {
 	if p.search {
 		return arrows + " Select  Enter Open  Esc Clear search"
 	}
-	return arrows + " Select  / Search  n New session  Esc Back"
+	return arrows + " Select  / Search  " + p.keys.AgentNew.Help().Key + " New session  " + p.keys.AgentRetry.Help().Key + " Retry  Esc Back"
 }
 
 // footerFit shortens words, not keys, until the hints fit w.
@@ -425,7 +442,14 @@ func (p sessionsPicker) listLines(g sessionsGeom, width, rows int) []string {
 	var out []string
 	if g.colHdr {
 		nameW := max(width-2-2-sessionsStatusW, 0)
-		hdr := "  " + fit("SESSION", nameW) + "  " + "STATUS"
+		if p.repo && width >= 60 {
+			nameW -= 16
+		}
+		heading := "SESSION"
+		if p.repo && width >= 60 {
+			heading = fit("SESSION", nameW) + "  " + fit("WORKTREE", 14)
+		}
+		hdr := "  " + fit(heading, max(width-2-2-sessionsStatusW, 0)) + "  " + "STATUS"
 		if nameW < 8 {
 			hdr = "  SESSION"
 		}
@@ -433,7 +457,7 @@ func (p sessionsPicker) listLines(g sessionsGeom, width, rows int) []string {
 	}
 	vis := p.visible()
 	if len(vis) == 0 {
-		msg := []string{"No sessions in this worktree yet.", "Press n to start one."}
+		msg := []string{"No sessions in this worktree yet.", "Press " + p.keys.AgentNew.Help().Key + " to start one."}
 		if len(p.sessions) > 0 {
 			msg = []string{`No sessions match "` + ansi.Truncate(p.query.Value(), max(width-18, 4), "…") + `".`}
 		}
@@ -465,10 +489,19 @@ func (p sessionsPicker) item(s agentsapi.Session, selected bool, width int) []st
 		nameSt = accent
 	}
 	status := p.status(s, true)
-	sub := dimText(providerName(s.Provider) + " · " + s.ProfileName)
+	subText := providerName(s.Provider) + " · " + s.ProfileName
+	if p.repo {
+		subText = p.branches[s.ID] + " · " + subText
+	}
+	sub := dimText(subText)
 	nameW := width - 2 - 2 - sessionsStatusW
+	branchColumn := ""
+	if p.repo && width >= 60 {
+		nameW -= 16
+		branchColumn = "  " + fit(p.branches[s.ID], 14)
+	}
 	if nameW >= 8 {
-		l1 := marker + nameSt.Render(fit(p.label(s, nameW), nameW)) + "  " + status
+		l1 := marker + nameSt.Render(fit(p.label(s, nameW), nameW)) + branchColumn + "  " + status
 		return []string{l1, "  " + sub}
 	}
 	l1 := marker + nameSt.Render(p.label(s, max(width-2, 1)))
@@ -497,7 +530,14 @@ func (p sessionsPicker) fields(s agentsapi.Session) []sessionField {
 	if acct == "" {
 		acct = string(s.AccountID)
 	}
-	out := []sessionField{{"Account", acct}, {"Worktree", p.branch}}
+	branch := p.branch
+	if p.repo {
+		branch = p.branches[s.ID]
+		if branch == "" {
+			branch = filepath.Base(s.WorkDir)
+		}
+	}
+	out := []sessionField{{"Account", acct}, {"Worktree", branch}}
 	if s.Model != "" {
 		out = append(out, sessionField{"Model", s.Model})
 	}
@@ -569,6 +609,10 @@ func (p sessionsPicker) inspector(width, rows int) []string {
 			break
 		}
 	}
+	if peek := p.peek[s.ID]; len(peek) > 0 {
+		lines = append(lines, "", "Last screen:")
+		lines = append(lines, peek...)
+	}
 	copy(out, lines[:min(len(lines), max(rows-1, 0))])
 	if rows >= 1 {
 		out[rows-1] = p.button(width)
@@ -611,6 +655,25 @@ func (p sessionsPicker) stackedDetails(width, rows int) []string {
 		if e.prio < keep {
 			out = append(out, e.text)
 		}
+	}
+	return out
+}
+
+func (p sessionsPicker) subtitle() string {
+	if p.repo {
+		return "All sessions in this repository · worktree / account"
+	}
+	return "All sessions in this worktree"
+}
+
+func (m Model) agentPeek() map[string][]string {
+	out := map[string][]string{}
+	if v := m.agents.view; v != nil && v.term != nil {
+		lines := strings.Split(v.term.View(), "\n")
+		for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+			lines = lines[:len(lines)-1]
+		}
+		out[v.sessionID] = lines[max(len(lines)-10, 0):]
 	}
 	return out
 }

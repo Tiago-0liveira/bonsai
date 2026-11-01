@@ -401,7 +401,7 @@ func applyAgentStatus(v *agentView, s agentterminal.Summary) {
 		if s.ExitCode != nil {
 			code = fmt.Sprintf(" (code %d)", *s.ExitCode)
 		}
-		v.banner = "exited" + code + " · n: new · a: all"
+		v.banner = "exited" + code
 	case "failed":
 		v.state = attachEnded
 		// The holder's error is free text; strip escapes and control bytes so
@@ -416,7 +416,7 @@ func applyAgentStatus(v *agentView, s agentterminal.Summary) {
 		if reason == "" {
 			reason = "unknown error"
 		}
-		v.banner = "failed: " + reason + " · n: new · a: all"
+		v.banner = "failed: " + reason
 	}
 }
 

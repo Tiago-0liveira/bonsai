@@ -1008,7 +1008,7 @@ func (m Model) contextHelp() string {
 		}
 		if m.focus == focusTerminal {
 			parts := append(m.agentNavHints(pair, descSt),
-				pair(m.keys.AgentAll.Help().Key, "all"),
+				pair(m.keys.AgentAll.Help().Key, "sessions"),
 				pair(m.keys.AgentAccounts.Help().Key, "profiles"),
 				pair(m.keys.AgentUsage.Help().Key, "usage"),
 				pair(m.keys.AgentNew.Help().Key, "new"))

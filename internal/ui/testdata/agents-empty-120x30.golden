@@ -1,4 +1,4 @@
-No running agents                                                                                         a: All  n: New
+Sessions                                                                                             a: sessions  n: New
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -10,7 +10,7 @@ No running agents                                                               
 
 
 
-                                                    No active agents
+                                                    No sessions yet
 
                                                 Start an agent in feat-a
 
@@ -29,4 +29,4 @@ No running agents                                                               
 
 
 ========================================================================================================================
-a all · m profiles · u usage · n new · tab focus · ? keys
+a sessions · m profiles · u usage · n new · tab focus · ? keys

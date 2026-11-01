@@ -479,3 +479,6 @@ workspaces releases the UI attachment while the holder continues. Garden task
 and attempt references are shown when present; manual sessions require neither
 Garden setup nor a fabricated approved plan. Existing account/session/worktree
 locks still govern launch, stop and prune operations.
+
+The [TUI session controls](tui-cli.md) include repository history, an attention
+queue, retry with recorded launch settings, and confirmed worktree-wide stop.

@@ -42,44 +42,44 @@ func TestAgentBadgeActivity(t *testing.T) {
 	}{
 		{"working only", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), working)}
-		}, false, "✹"},
+		}, false, "▶1"},
 		{"no activity is never marked", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{e.session("a", "claude", "running", e.wtA)}
-		}, false, "✹"},
+		}, false, "▶1"},
 		{"idle only", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), idle)}
-		}, false, "✹"},
+		}, false, "▶1"},
 		{"waiting adds one question mark", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), waiting)}
-		}, false, "✹?"},
+		}, false, "⏸1"},
 		{"waiting ascii", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), waiting)}
-		}, true, "C?"},
+		}, true, "=1"},
 		{"two waiting sessions still one mark", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{
 				withActivity(e.session("a", "claude", "running", e.wtA), waiting),
 				withActivity(e.session("b", "codex", "running", e.wtA), waiting),
 			}
-		}, false, "✹ ❃?"},
+		}, false, "⏸2"},
 		{"mixed providers", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{
 				withActivity(e.session("a", "claude", "running", e.wtA), idle),
 				withActivity(e.session("b", "claude", "running", e.wtA), waiting),
 				withActivity(e.session("c", "codex", "running", e.wtA), working),
 			}
-		}, false, "✹2 ❃?"},
+		}, false, "▶2 ⏸1"},
 		{"failed stays last", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{
 				withActivity(e.session("a", "claude", "running", e.wtA), waiting),
 				e.session("f", "codex", "failed", e.wtA),
 			}
-		}, false, "✹? !"},
+		}, false, "⏸1 ✗1"},
 		{"failed alone", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{e.session("f", "codex", "failed", e.wtA)}
-		}, false, "!"},
+		}, false, "✗1"},
 		{"stale activity on an ended session is ignored", func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{withActivity(e.session("a", "claude", "exited", e.wtA), waiting)}
-		}, false, ""},
+		}, false, "✓1"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,12 +108,7 @@ func TestAgentBadgeStyles(t *testing.T) {
 	)
 	e.relist(t)
 	got := e.m.agentBadge(allIdx(len(e.m.agents.sessions)), false)
-	attention := lipgloss.NewStyle().Foreground(th.Warning).Bold(true)
-	want := strings.Join([]string{
-		attention.Render("✹2"),
-		lipgloss.NewStyle().Foreground(th.Dim).Render("❃"),
-		theme.ProviderStyle("antigravity").Render("✦") + attention.Render("?"),
-	}, " ")
+	want := lipgloss.NewStyle().Foreground(th.Text).Render("▶3") + " " + lipgloss.NewStyle().Foreground(th.Warning).Render("⏸1")
 	if got != want {
 		t.Errorf("badge styles:\n got %q\nwant %q", got, want)
 	}
@@ -127,8 +122,8 @@ func TestAgentBadgeWaitingAddsOneCell(t *testing.T) {
 	plain := ansi.StringWidth(e.m.agentBadge(allIdx(2), false))
 	e.fb.Sessions.Set(withActivity(e.session("b", "codex", "running", e.wtA), act(agentactivity.Waiting, agentactivity.ReasonPlan, "")))
 	e.relist(t)
-	if got := ansi.StringWidth(e.m.agentBadge(allIdx(2), false)); got != plain+1 {
-		t.Errorf("waiting badge width = %d, want %d", got, plain+1)
+	if got := ansi.StringWidth(e.m.agentBadge(allIdx(2), false)); got != plain+3 {
+		t.Errorf("waiting badge width = %d, want %d", got, plain+3)
 	}
 	for _, w := range []int{30, 40, 80} {
 		e.m.list.SetSize(w, 30)
@@ -137,7 +132,7 @@ func TestAgentBadgeWaitingAddsOneCell(t *testing.T) {
 				t.Errorf("width %d: line is %d cells: %q", w, got, l)
 			}
 		}
-		if row := e.rowOf("feat-a"); !strings.Contains(row, "✹ ❃?") {
+		if row := e.rowOf("feat-a"); !strings.Contains(row, "▶1 ⏸1") {
 			t.Errorf("width %d: waiting badge missing: %q", w, row)
 		}
 	}

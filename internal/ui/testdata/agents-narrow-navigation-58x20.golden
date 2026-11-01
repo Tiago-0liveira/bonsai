@@ -1,4 +1,4 @@
-Agents (g) │ ❃ Tests [2/2] │ a: Switch
+Agents (g) │ ❃ Tests [2/2] │ a: sessions
 
   Reading internal/auth/redirect.go
 
@@ -19,4 +19,4 @@ Agents (g) │ ❃ Tests [2/2] │ a: Switch
 ────────────
 >
 ==========================================================
-enter focus agent · a all · m profiles · u usage · n new · s stop · tab focus · ? keys
+enter focus agent · a sessions · m profiles · u usage · n new · s stop · tab focus · ? keys
