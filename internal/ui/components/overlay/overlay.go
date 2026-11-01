@@ -127,3 +127,28 @@ func Center(width, height int) (x, y, w, h int) {
 	}
 	return (width - w) / 2, (height - h) / 2, w, h
 }
+
+// Trim removes the blank canvas added by centered component views. Border cells
+// retain the full panel rectangle, including blank lines inside the panel.
+func Trim(f Frame) Frame {
+	lines := rows(f, "")
+	left, right, top, bottom := f.Width, 0, f.Height, 0
+	for y, line := range lines {
+		plain := ansi.Strip(line)
+		if strings.TrimSpace(plain) == "" {
+			continue
+		}
+		leading := len(plain) - len(strings.TrimLeft(plain, " "))
+		trailing := ansi.StringWidth(strings.TrimRight(plain, " "))
+		left, right = min(left, leading), max(right, trailing)
+		top, bottom = min(top, y), max(bottom, y+1)
+	}
+	if bottom <= top || right <= left {
+		return Frame{}
+	}
+	out := make([]string, bottom-top)
+	for i := range out {
+		out[i] = cut(lines[top+i], left, right-left, "")
+	}
+	return Frame{Content: strings.Join(out, "\n"), Width: right - left, Height: bottom - top}
+}

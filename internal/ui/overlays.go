@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/overlay"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
@@ -300,4 +302,15 @@ func padRight(s string, w int) string {
 		return s + strings.Repeat(" ", n)
 	}
 	return s
+}
+
+// legacyOverlay retains spatial context while the modal owns keyboard input.
+func (m Model) legacyOverlay(placed string) string {
+	base := m
+	base.prefs, base.modal = nil, nil
+	p := theme.Current
+	parent := ansi.NewStyle().ForegroundColor(theme.ANSIColor(p.Dim)).BackgroundColor(theme.ANSIColor(p.Background)).Styled(ansi.Strip(base.View()))
+	panel := overlay.Trim(overlay.Frame{Content: placed, Width: m.width, Height: m.height})
+	return overlay.Compose(overlay.Frame{Content: parent, Width: m.width, Height: m.height}, panel,
+		(m.width-panel.Width)/2, (m.height-panel.Height)/2, ansi.NewStyle().BackgroundColor(theme.ANSIColor(p.Background)))
 }

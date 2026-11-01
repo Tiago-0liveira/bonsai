@@ -717,10 +717,10 @@ func (m Model) View() string {
 		return "Loading bonsai…"
 	}
 	if m.prefs != nil {
-		return clampHeight(m.prefs.View(), m.height)
+		return m.legacyOverlay(m.prefs.View())
 	}
 	if m.modal != nil && !m.agentPaneModal() {
-		return clampHeight(m.modal.View(), m.height)
+		return m.legacyOverlay(m.modal.View())
 	}
 
 	leftW, rightW, innerH := m.dims()

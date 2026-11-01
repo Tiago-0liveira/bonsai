@@ -12,7 +12,9 @@ contains the five working workspaces.
 
 ## TUI
 
-The Agents footer uses “accounts”, matching the account picker and keymap.
+Preferences, the command palette and full-screen modals float over a dimmed
+view of your worktrees. The Agents footer calls profiles “accounts”, matching
+the account picker and keymap.
 
 Tab labels show your configured jump keys, including Git Log in wide terminals.
 Long key names are shortened in compact headers. Built-in themes keep hints and
