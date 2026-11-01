@@ -413,8 +413,8 @@ func (d launchDialog) groupedTable(w, h int) []string {
 			to = from + rh
 		}
 		row := tbl
-		row.Selected = a.ID
-		// One row is requested so the shared table renders just this account.
+		row.Accounts = []agentsapi.Account{a}
+		// Preserve the selection while requesting only this account.
 		lines = append(lines, row.View(w, rh)...)
 		for range rh {
 			rowAccounts = append(rowAccounts, i+1)

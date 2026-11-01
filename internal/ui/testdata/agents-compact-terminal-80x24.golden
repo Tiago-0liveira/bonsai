@@ -21,6 +21,6 @@ $ claude
 
 > ──────────
 ────────────────────────────────────────────────────────────────────────────────
-FOCUSED · Input goes to agent · Ctrl+] Unfocus
+FOCUSED · ctrl+] detach
 ================================================================================
-FOCUSED · Input goes to agent · ctrl+] unfocus
+FOCUSED · ctrl+] unfocus

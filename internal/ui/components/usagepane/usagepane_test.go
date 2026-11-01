@@ -373,3 +373,33 @@ func TestSummaryUsesMostLimitedAccount(t *testing.T) {
 		t.Fatalf("%+v %v", got, counts)
 	}
 }
+
+func TestSummaryColumnsAlign(t *testing.T) {
+	for _, ascii := range []bool{false, true} {
+		rows := append(twoAccounts(), Account{Provider: "antigravity", Primary: lim("5h", 1, 0), Secondary: lim("weekly", .98, 0)})
+		rows = append(rows, rows[2])
+		for _, width := range []int{24, 40, 60} {
+			view := plain(ViewSummary(rows, "", width, 10, ascii))
+			column, weekly := -1, -1
+			for _, row := range strings.Split(view, "\n") {
+				if i := strings.Index(row, "5h"); i >= 0 {
+					cells := ansi.StringWidth(row[:i])
+					if column >= 0 && cells != column {
+						t.Fatalf("unaligned columns:\n%s", view)
+					}
+					column = cells
+				}
+				if i := strings.Index(row, " W "); i >= 0 {
+					cells := ansi.StringWidth(row[:i])
+					if weekly >= 0 && cells != weekly {
+						t.Fatalf("unaligned weekly columns:\n%s", view)
+					}
+					weekly = cells
+				}
+				if ansi.StringWidth(row) > width {
+					t.Fatalf("row exceeds width %d: %s", width, row)
+				}
+			}
+		}
+	}
+}

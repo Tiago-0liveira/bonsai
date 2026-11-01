@@ -484,14 +484,22 @@ func ViewSummary(accounts []Account, age string, width, maxRows int, ascii bool)
 	b := borders(ascii)
 	edge := lipgloss.NewStyle().Foreground(theme.Current.Border)
 	out := []string{topBorder(width, age, ascii, b, edge)}
+	labels := make([]string, len(rows))
+	labelWidth := 0
+	for i, a := range rows {
+		labels[i] = providerGlyph(a.Provider, ascii) + " " + providerName(a.Provider) + staleMark(a)
+		if counts[i] > 1 {
+			labels[i] += fmt.Sprintf(" +%d", counts[i]-1)
+		}
+		labelWidth = max(labelWidth, ansi.StringWidth(labels[i]))
+	}
+	// Reserve space for both capacity windows before shortening labels.
+	labelWidth = min(labelWidth, max(1, width-4-17))
 	for i, a := range rows {
 		if i >= maxRows-2 {
 			break
 		}
-		line := providerGlyph(a.Provider, ascii) + " " + providerName(a.Provider) + staleMark(a)
-		if counts[i] > 1 {
-			line += fmt.Sprintf(" +%d", counts[i]-1)
-		}
+		line := fit(labels[i], labelWidth)
 		if state := accountState(a, ascii); state != "" {
 			line += " " + state
 		} else {
