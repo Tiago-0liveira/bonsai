@@ -229,3 +229,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full test and lint workflow.
 ## License
 
 [MIT](LICENSE)
+
+See the [TUI guide](docs/tui-cli.md) for agent session controls and configurable shortcuts.

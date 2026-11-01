@@ -106,7 +106,7 @@ var defaultBindings = map[string]bindingSpec{
 	"rename_proc":      {[]string{"L"}, "tag process (multi-view label)"},
 	"proc_search":      {[]string{"/"}, "search process output"},
 	"agents_tab":       {[]string{"g"}, "agents"},
-	"agent_all":        {[]string{"a"}, "all agents"},
+	"agent_all":        {[]string{"a"}, "sessions"},
 	"agent_new":        {[]string{"n"}, "new agent"},
 	"agent_accounts":   {[]string{"m"}, "agent accounts"},
 	"agent_usage":      {[]string{"u"}, "agent usage"},

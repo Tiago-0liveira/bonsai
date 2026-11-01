@@ -215,13 +215,13 @@ func (m Model) agentsLayout(w, h int) agentsLayout {
 		fixed = []string{fit(row, w)}
 	case w < agentsWideMin:
 		fixed = []string{
-			m.sessionStrip(strip, selIdx, w, "", "a: All"),
+			m.sessionStrip(strip, selIdx, w, "", m.keys.AgentAll.Help().Key+": sessions"),
 			fit(m.compactHeader(sel, w), w),
 			rule,
 		}
 	default:
 		fixed = []string{
-			m.sessionStrip(strip, selIdx, w, "Sessions: ", "a: All  n: New"),
+			m.sessionStrip(strip, selIdx, w, "Sessions: ", m.keys.AgentAll.Help().Key+": sessions  "+m.keys.AgentNew.Help().Key+": New"),
 			rule,
 			fit(m.fullHeaderTitle(sel), w),
 			fit(m.usageRow(sel, w), w),
@@ -254,16 +254,16 @@ func (m Model) agentsRows(w, h int) []string {
 	if sel, _, hasSel := m.selectedSession(cleanPath(wt.Path)); hasSel {
 		area = m.agentTerminalArea(sel, w, lay.body)
 	} else {
-		area = m.chromeRows(emptyArea(wt.Branch, w, lay.body))
+		area = m.chromeRows(m.emptyArea(wt.Branch, w, lay.body))
 	}
 	rows := append(append(append([]string(nil), m.chromeRows(lay.fixed)...), area...), m.chromeRows(lay.tail)...)
 	return rows
 }
 
 func (m Model) emptyStrip(w int) string {
-	hints := "a: All  n: New"
+	hints := m.keys.AgentAll.Help().Key + ": sessions  " + m.keys.AgentNew.Help().Key + ": New"
 	if w < agentsWideMin {
-		hints = "a: All"
+		hints = m.keys.AgentAll.Help().Key + ": sessions"
 	}
 	hints = m.agentsStripStatus(hints)
 	return leftRight(dimText("No running agents"), dimText(hints), w)
@@ -289,7 +289,7 @@ func (m Model) agentsStripStatus(hints string) string {
 // narrowRow is the single summary row for panes under 60 cells.
 func (m Model) narrowRow(s agentsapi.Session, idx, n int) string {
 	name := ansi.Truncate(sessionName(s), stripNameCells, "…")
-	return "Agents (g) │ " + m.agentGlyph(s.Provider) + " " + name + " [" + itoa(idx+1) + "/" + itoa(n) + "] │ a: Switch"
+	return "Agents (" + m.keys.AgentsTab.Help().Key + ") │ " + m.agentGlyph(s.Provider) + " " + name + " [" + itoa(idx+1) + "/" + itoa(n) + "] │ " + m.keys.AgentAll.Help().Key + ": sessions"
 }
 
 // sessionStrip lays out numbered labels left to right. When they overflow, it
@@ -368,7 +368,7 @@ func (m Model) fullHeaderTitle(s agentsapi.Session) string {
 
 // compactHeader is the one-row header for panes under 100 cells.
 func (m Model) compactHeader(s agentsapi.Session, w int) string {
-	return m.compactHeaderHint(s, w, "u: Usage")
+	return m.compactHeaderHint(s, w, m.keys.AgentUsage.Help().Key+": Usage")
 }
 
 func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string {
@@ -381,7 +381,7 @@ func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string
 
 // usageRow is the second header row: usage text plus the usage hint.
 func (m Model) usageRow(s agentsapi.Session, w int) string {
-	return leftRight(m.usageText(s, false), dimText("u: Usage"), w)
+	return leftRight(m.usageText(s, false), dimText(m.keys.AgentUsage.Help().Key+": Usage"), w)
 }
 
 // usageText is the headline for the session's account, dim and marked when the
@@ -413,12 +413,12 @@ func placeholderArea(s agentsapi.Session, w, rows int) []string {
 	return centered(lines, w, rows)
 }
 
-func emptyArea(branch string, w, rows int) []string {
+func (m Model) emptyArea(branch string, w, rows int) []string {
 	lines := []string{"No active agents", ""}
 	if branch != "" {
 		lines = append(lines, "Start an agent in "+branch, "")
 	}
-	lines = append(lines, "[n] New agent", "", "[u] View account usage")
+	lines = append(lines, "["+m.keys.AgentNew.Help().Key+"] New agent", "", "["+m.keys.AgentUsage.Help().Key+"] View account usage")
 	return centered(lines, w, rows)
 }
 

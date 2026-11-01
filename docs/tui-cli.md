@@ -911,3 +911,6 @@ For a Garden-created session, the Inspector shows its Issue and attempt identity
 its specification/plan sections. A manual checkout needs no task link. Human
 acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
+
+Agent pane hints follow your configured bindings, including the Agents tab
+shortcut. The worktree session picker is labelled “sessions”.
