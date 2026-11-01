@@ -93,6 +93,10 @@ func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
 		branch:   branchOf(wt),
 	}
 	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), m.agents.usage, m.agentGlyphsASCII())
+	d.changeWorktree = m.keys.LaunchChangeWorktree
+	for _, tree := range m.worktrees {
+		d.targets = append(d.targets, launchTarget{worktree: git.ID(webRepositoryID, tree.Path), workDir: tree.Path, branch: branchOf(tree)})
+	}
 	d.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{launch: &d})
 	return m, d.Init()
@@ -315,6 +319,7 @@ func (m Model) onLaunchStarted(msg launchStartedMsg) (tea.Model, tea.Cmd) {
 	if open {
 		m.agents.overlay = nil
 		path := cleanPath(msg.workDir)
+		m.list.SelectByPath(msg.workDir)
 		if wt, ok := m.selectedWorktree(); ok && cleanPath(wt.Path) == path {
 			m.agents.selected[path] = msg.session.ID
 			m.agents.enterAfter, m.agents.enterPath = msg.session.ID, path

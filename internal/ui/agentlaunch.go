@@ -2,11 +2,15 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -29,6 +33,7 @@ type launchFocus int
 
 const (
 	launchFocusAccount launchFocus = iota
+	launchFocusTask
 	launchFocusName
 	launchFocusForm
 	launchFocusSave
@@ -73,9 +78,14 @@ type (
 // answer carries the dialog ID so one for a closed dialog is dropped.
 type launchDialog struct {
 	accounts.Browser
-	id     uint64
-	ascii  bool
-	target launchTarget
+	id             uint64
+	ascii          bool
+	target         launchTarget
+	targets        []launchTarget
+	choosing       bool
+	targetIndex    int
+	changeWorktree key.Binding
+	task           textarea.Model
 	// planner turns the dialog into the Garden planner's account choice: only model and effort can be set,
 	// the launch is read-only, and an account whose provider cannot enforce that cannot be chosen.
 	planner bool
@@ -106,18 +116,26 @@ func newLaunchDialog(id uint64, api agentsapi.Accounts, target launchTarget, ini
 	ti.CharLimit = launchNameLen
 	// A steady cursor needs no blink ticks fed back through Update.
 	ti.Cursor.SetMode(cursor.CursorStatic)
+	ta := textarea.New()
+	ta.CharLimit = 8192
+	ta.SetHeight(3)
+	ta.ShowLineNumbers = false
+	ta.Prompt = ""
+	ta.Placeholder = "Optional task for the agent"
+	ta.Cursor.SetMode(cursor.CursorStatic)
 	return launchDialog{
+		task: ta, changeWorktree: binding("launch_change_worktree", nil),
 		Browser: accounts.NewBrowser(api, initial, usage, true),
 		id:      id, ascii: ascii, target: target,
 		now: time.Now, name: ti, button: 1,
 	}
 }
 
-func (d *launchDialog) SetSize(w, h int) { d.w, d.h = w, h }
+func (d *launchDialog) SetSize(w, h int) { d.w, d.h = w, h; d.task.SetWidth(max(w-8, 1)) }
 
 // Capturing reports that a text input or dropdown has the keys.
 func (d launchDialog) Capturing() bool {
-	return d.focus == launchFocusName || (d.focus == launchFocusForm && d.form.Editing())
+	return d.focus == launchFocusTask || d.focus == launchFocusName || (d.focus == launchFocusForm && d.form.Editing())
 }
 
 // launchCtx bounds the dialog's own backend calls (saving defaults).
@@ -219,6 +237,18 @@ func plannerDialogFields(fields []agents.LaunchField) []agents.LaunchField {
 
 func (d launchDialog) setFocus(f launchFocus) launchDialog {
 	d.focus = (f + launchFocusCount) % launchFocusCount
+	if d.planner && d.focus == launchFocusTask {
+		if f < launchFocusTask {
+			d.focus = launchFocusAccount
+		} else {
+			d.focus = launchFocusName
+		}
+	}
+	if d.focus == launchFocusTask {
+		d.task.Focus()
+	} else {
+		d.task.Blur()
+	}
 	if d.focus == launchFocusName {
 		d.name.Focus()
 	} else {
@@ -240,6 +270,31 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 	if d.starting {
 		if s == "esc" {
 			return d, close
+		}
+		return d, nil
+	}
+	if d.choosing {
+		switch s {
+		case "esc":
+			d.choosing = false
+		case "up", "k":
+			d.targetIndex = max(d.targetIndex-1, 0)
+		case "down", "j":
+			d.targetIndex = min(d.targetIndex+1, len(d.targets)-1)
+		case "enter":
+			if len(d.targets) > 0 {
+				d.target = d.targets[d.targetIndex]
+			}
+			d.choosing = false
+		}
+		return d, nil
+	}
+	if !d.planner && key.Matches(k, d.changeWorktree) && len(d.targets) > 0 {
+		d.choosing = true
+		for i, t := range d.targets {
+			if t.workDir == d.target.workDir {
+				d.targetIndex = i
+			}
 		}
 		return d, nil
 	}
@@ -265,12 +320,16 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 	switch d.focus {
 	case launchFocusAccount:
 		return d.accountKey(s)
+	case launchFocusTask:
+		var cmd tea.Cmd
+		d.task, cmd = d.task.Update(k)
+		return d, cmd
 	case launchFocusName:
 		if s == "enter" || s == "down" {
 			return d.setFocus(launchFocusForm), nil
 		}
 		if s == "up" {
-			return d.setFocus(launchFocusAccount), nil
+			return d.setFocus(launchFocusTask), nil
 		}
 		d.nameTouched = true
 		var cmd tea.Cmd
@@ -322,7 +381,7 @@ func (d launchDialog) accountKey(s string) (launchDialog, tea.Cmd) {
 	case "k", "up":
 		delta = -1
 	case "enter":
-		return d.setFocus(launchFocusName), nil
+		return d.setFocus(launchFocusTask), nil
 	}
 	ordered := d.Ordered()
 	if delta == 0 || len(ordered) == 0 {
@@ -381,6 +440,7 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 		Name:       name,
 		Launch:     agents.LaunchOptionsFrom(d.Defaults().LaunchFields, values["model"], values),
 	}
+	req.Launch.Prompt = sanitizeLaunchTask(d.task.Value())
 	if d.planner {
 		// Only what the form can set survives; the role fixes the rest.
 		req.Launch = agents.LaunchOptions{Model: req.Launch.Model, Effort: req.Launch.Effort, ReadOnly: true}
@@ -424,4 +484,39 @@ func sanitizeAgentText(s string) string {
 		return r
 	}, ansi.Strip(s))
 	return ansi.Truncate(strings.TrimSpace(s), 200, "…")
+}
+
+// Task content stays in the transient dialog and start request, never account defaults.
+func sanitizeLaunchTask(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, ansi.Strip(s))
+	r := []rune(strings.TrimSpace(s))
+	return string(r[:min(len(r), 8192)])
+}
+
+func launchShortPath(path string) string {
+	// The last two components distinguish sibling worktrees without consuming the header.
+	parent := filepath.Base(filepath.Dir(path))
+	if parent == "." || parent == string(filepath.Separator) {
+		return path
+	}
+	return "…/" + filepath.Join(parent, filepath.Base(path))
+}
+
+func (d launchDialog) targetLines() []string {
+	lines := []string{"Choose worktree"}
+	for i, t := range d.targets {
+		marker := "  "
+		if i == d.targetIndex {
+			marker = "> "
+		}
+		lines = append(lines, fmt.Sprintf("%s%s (%s)", marker, t.branch, launchShortPath(t.workDir)))
+	}
+	lines = append(lines, "↑↓ worktree · enter select · esc back")
+	return lines
 }

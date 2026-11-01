@@ -35,7 +35,7 @@ func checkLaunchBounds(t *testing.T, e *agentsEnv, w, h int, wantStart string) s
 			t.Errorf("%dx%d: row wider than the screen: %q", w, h, l)
 		}
 	}
-	for _, want := range []string{wantStart, "Esc "} {
+	for _, want := range []string{wantStart, "esc "} {
 		if !strings.Contains(view, want) {
 			t.Errorf("%dx%d: %q must stay reachable:\n%s", w, h, want, view)
 		}
@@ -67,7 +67,7 @@ func TestLaunchViewShowsFiveHourCapacityPerAccount(t *testing.T) {
 		if size[0] > 100 && !strings.Contains(view, "5H LEFT") {
 			t.Errorf("%v: wide view keeps the 5H LEFT heading:\n%s", size, view)
 		}
-		if got := strings.Count(view, "Ctrl+S") + strings.Count(view, "^S"); got != 1 {
+		if got := strings.Count(view, "ctrl+s") + strings.Count(view, "^S"); got != 1 {
 			t.Errorf("%v: exactly one footer hint expected, got %d:\n%s", size, got, view)
 		}
 	}
@@ -76,11 +76,11 @@ func TestLaunchViewShowsFiveHourCapacityPerAccount(t *testing.T) {
 func TestLaunchFooterFollowsFocusAndStatusBarStaysQuiet(t *testing.T) {
 	e := accountsEnv(t)
 	e.launchAt(t, 140, 40)
-	if v := e.overlayView(); !strings.Contains(v, "↑↓ Account  Enter Options  Ctrl+S Start  Esc Back") {
+	if v := e.overlayView(); !strings.Contains(v, "↑↓ account · enter options · ctrl+s start · esc back") {
 		t.Errorf("table focus footer:\n%s", v)
 	}
 	e.sendKey(t, tea.KeyEnter)
-	if v := e.overlayView(); !strings.Contains(v, "Tab Next field  Shift+Tab Previous  Ctrl+S Start  Esc Back") || strings.Contains(v, "↑↓ Account") {
+	if v := e.overlayView(); !strings.Contains(v, "enter newline · tab next · ctrl+s start · esc back") || strings.Contains(v, "↑↓ account") {
 		t.Errorf("field focus footer:\n%s", v)
 	}
 	if got := ansi.Strip(e.m.contextHelp()); got != "" {
@@ -137,7 +137,7 @@ func TestLaunchExtraProviderFieldsScrollWithoutLosingActions(t *testing.T) {
 		e.fb.Accounts.LaunchDefaults["claude:work"] = agentsapi.Defaults{LaunchFields: fields, Values: map[string]string{}}
 		e.launchAt(t, size[0], size[1])
 		e.sendKey(t, tea.KeyEnter) // Name
-		for range 9 {
+		for range 10 {
 			e.sendKey(t, tea.KeyTab)
 		}
 		view := checkLaunchBounds(t, e, size[0], size[1], "Start session")

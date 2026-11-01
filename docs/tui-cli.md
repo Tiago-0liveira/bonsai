@@ -911,3 +911,10 @@ For a Garden-created session, the Inspector shows its Issue and attempt identity
 its specification/plan sections. A manual checkout needs no task link. Human
 acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
+
+The agent launch form shows **Start in** with the target branch and short path.
+Use the configurable `launch_change_worktree` action (default `ctrl+w`) to choose
+another loaded worktree. The optional multiline **Task** is sent as the initial
+provider prompt; Enter adds a newline, Tab advances, and Ctrl+S starts. Task text
+is never saved as account defaults. The selected worktree is the initial target,
+including when launching immediately after creating a worktree.

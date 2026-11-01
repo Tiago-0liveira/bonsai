@@ -73,7 +73,7 @@ func TestLaunchDialogListsAccountsInATableWithoutBoxes(t *testing.T) {
 		if claude < 0 || codex < claude {
 			t.Fatalf("%v: providers must be grouped Claude then Codex:\n%s", size, view)
 		}
-		for _, want := range []string{"New session", "feat-a", "ACCOUNT", "PROVIDER", "Session options", "Save as account defaults", "Start session", "Ctrl+S Start"} {
+		for _, want := range []string{"New session", "feat-a", "ACCOUNT", "PROVIDER", "Session options", "Save as account defaults", "Start session", "ctrl+s start"} {
 			if !strings.Contains(view, want) && !(size[0] < 100 && want == "5H LEFT") {
 				t.Errorf("%v: missing %q:\n%s", size, want, view)
 			}
@@ -101,6 +101,7 @@ func TestLaunchDialogStartsWithTheWebIdentities(t *testing.T) {
 	}
 	// Move to the Name field, replace the default, go on to the form and pick
 	// the next permissions option.
+	e.sendKey(t, tea.KeyTab) // task
 	e.sendKey(t, tea.KeyTab)
 	if got := e.dialog().name.Value(); got != "work" {
 		t.Errorf("default name = %q, want the profile name", got)
@@ -195,6 +196,7 @@ func TestLaunchSuccessSelectsAndEntersTerminalMode(t *testing.T) {
 func TestLaunchSaveAsDefaultsSendsChangesAfterStart(t *testing.T) {
 	e := accountsEnv(t)
 	e.openLaunch(t)
+	e.sendKey(t, tea.KeyTab)  // task
 	e.sendKey(t, tea.KeyTab)  // name
 	e.sendKey(t, tea.KeyTab)  // model
 	e.sendKey(t, tea.KeyDown) // effort
@@ -224,6 +226,7 @@ func TestLaunchSaveAsDefaultsSkippedWhenStartFails(t *testing.T) {
 	e := accountsEnv(t)
 	e.fb.Sessions.StartErr = errors.New("boom")
 	e.openLaunch(t)
+	e.sendKey(t, tea.KeyTab) // task
 	e.sendKey(t, tea.KeyTab)
 	e.sendKey(t, tea.KeyTab)
 	e.sendKey(t, tea.KeyDown) // effort
@@ -619,6 +622,7 @@ func TestLaunchModelAndEffortOverridesStayWithSession(t *testing.T) {
 	if view := e.overlayView(); !strings.Contains(view, "Model") || !strings.Contains(view, "Effort") {
 		t.Fatalf("launch overrides must be visible:\n%s", view)
 	}
+	e.sendKey(t, tea.KeyTab) // task
 	e.sendKey(t, tea.KeyTab) // name
 	e.sendKey(t, tea.KeyTab) // model
 	e.sendKey(t, tea.KeyRight)
@@ -655,6 +659,7 @@ func TestLaunchModelChangeRevalidatesEffort(t *testing.T) {
 				},
 			}
 			e.openLaunch(t)
+			e.sendKey(t, tea.KeyTab) // task
 			e.sendKey(t, tea.KeyTab)
 			e.sendKey(t, tea.KeyTab)
 			e.sendKey(t, tea.KeyRight)
@@ -719,6 +724,51 @@ func TestAgentDialogsStayInsideTabOnOpenAndResize(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func TestLaunchTaskAndWorktreeChoice(t *testing.T) {
+	e := accountsEnv(t)
+	e.selectWT(e.wtB)
+	e.openLaunch(t)
+	if got := e.dialog().target.workDir; got != e.wtB {
+		t.Fatalf("target = %q", got)
+	}
+	e.sendKey(t, tea.KeyCtrlW)
+	d := e.dialog()
+	if !d.choosing {
+		t.Fatal("worktree chooser did not open")
+	}
+	for i, target := range d.targets {
+		if target.workDir == e.wtA {
+			d.targetIndex = i
+		}
+	}
+	e.m.agents.overlay.launch = &d
+	e.sendKey(t, tea.KeyEnter)
+	e.sendKey(t, tea.KeyTab)
+	e.key(t, "first line")
+	e.sendKey(t, tea.KeyEnter)
+	e.key(t, "second line")
+	e.sendKey(t, tea.KeyCtrlS)
+	starts := e.fb.Sessions.Starts()
+	if len(starts) != 1 || starts[0].WorkDir != e.wtA || starts[0].Launch.Prompt != "first line\nsecond line" {
+		t.Fatalf("start = %+v", starts)
+	}
+	if len(e.fb.Accounts.Updates()) != 0 {
+		t.Fatal("task saved as defaults")
+	}
+}
+
+func TestSanitizeLaunchTask(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"  hello\r\nworld  ", "hello\nworld"},
+		{"\x1b[31mhello\x1b[0m\x00", "hello"},
+		{strings.Repeat("é", 9000), strings.Repeat("é", 8192)},
+	} {
+		if got := sanitizeLaunchTask(tt.in); got != tt.want {
+			t.Errorf("sanitized length=%d, want %d", len(got), len(tt.want))
 		}
 	}
 }

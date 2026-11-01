@@ -479,3 +479,10 @@ workspaces releases the UI attachment while the holder continues. Garden task
 and attempt references are shown when present; manual sessions require neither
 Garden setup nor a fabricated approved plan. Existing account/session/worktree
 locks still govern launch, stop and prune operations.
+
+The agent launch form shows **Start in** with the target branch and short path.
+Use the configurable `launch_change_worktree` action (default `ctrl+w`) to choose
+another loaded worktree. The optional multiline **Task** is sent as the initial
+provider prompt; Enter adds a newline, Tab advances, and Ctrl+S starts. Task text
+is never saved as account defaults. The selected worktree is the initial target,
+including when launching immediately after creating a worktree.
