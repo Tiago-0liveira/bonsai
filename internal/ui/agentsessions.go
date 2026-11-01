@@ -29,9 +29,8 @@ const (
 // sessionsPickMsg asks the Agents tab to show a session; sessionsNewMsg asks
 // for the launcher. The picker closes in both cases.
 type (
-	sessionsPickMsg  struct{ path, id string } // path: the picker's own worktree
-	sessionsNewMsg   struct{}
-	sessionsRetryMsg struct{ session agentsapi.Session }
+	sessionsPickMsg struct{ path, id string } // path: the picker's own worktree
+	sessionsNewMsg  struct{}
 )
 
 // sessionsPicker is the "all sessions" overlay of one worktree: a searchable
@@ -210,12 +209,6 @@ func (p sessionsPicker) Update(msg tea.Msg) (sessionsPicker, tea.Cmd) {
 		p.cursor = 0
 		p.sync()
 		return p, cmd
-	}
-	if key.Matches(k, p.keys.AgentRetry) {
-		if ss, ok := p.selected(); ok && !ss.Active() {
-			return p, func() tea.Msg { return sessionsRetryMsg{ss} }
-		}
-		return p, nil
 	}
 	if key.Matches(k, p.keys.AgentNew) {
 		return p, func() tea.Msg { return sessionsNewMsg{} }
@@ -420,7 +413,7 @@ func (p sessionsPicker) footer() string {
 	if p.search {
 		return arrows + " Select  Enter Open  Esc Clear search"
 	}
-	return arrows + " Select  / Search  " + p.keys.AgentNew.Help().Key + " New session  " + p.keys.AgentRetry.Help().Key + " Retry  Esc Back"
+	return arrows + " Select  / Search  " + p.keys.AgentNew.Help().Key + " New session  Esc Back"
 }
 
 // footerFit shortens words, not keys, until the hints fit w.

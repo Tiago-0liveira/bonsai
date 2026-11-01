@@ -35,7 +35,7 @@ func TestAgentEndedSummaryAndAcknowledgement(t *testing.T) {
 	e.fb.Sessions.Add(e.session("failed", "claude", "failed", e.wtA), e.session("done", "codex", "exited", e.wtA))
 	e.relist(t)
 	e.openTab(t)
-	if got := e.pane(120, 30); !strings.Contains(got, "1 failed · 1 exited · a view · r retry") || strings.Contains(got, "No active agents") {
+	if got := e.pane(120, 30); !strings.Contains(got, "1 failed · 1 exited · a view") || strings.Contains(got, "No active agents") {
 		t.Fatal(got)
 	}
 	if len(e.m.stripSessions(cleanPath(e.wtA))) != 2 {
@@ -92,24 +92,6 @@ func TestAgentAttentionCycles(t *testing.T) {
 	nm, _ := e.m.nextAgentAttention()
 	if nm.(Model).status != "No sessions need attention" {
 		t.Fatal("missing empty queue status")
-	}
-}
-
-func TestAgentRetryPreservesRecordedOptions(t *testing.T) {
-	e := newAgentsEnv(t)
-	s := e.session("failed", "codex", "failed", e.wtA)
-	s.Model = "test-model"
-	s.Options = map[string]string{"effort": "high", "sandbox": "workspace-write", "approval": "on-request"}
-	nm, cmd := e.m.retrySession(s)
-	e.m = nm.(Model)
-	_ = cmd()
-	starts := e.fb.Sessions.Starts()
-	if len(starts) != 1 {
-		t.Fatal(starts)
-	}
-	got := starts[0]
-	if got.WorkDir != s.WorkDir || got.AccountID != s.AccountID || got.Launch.Model != s.Model || got.Launch.Effort != "high" || got.Launch.Sandbox != "workspace-write" || got.Launch.Approval != "on-request" || got.Launch.Prompt != "" {
-		t.Fatalf("%+v", got)
 	}
 }
 

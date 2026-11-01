@@ -93,6 +93,9 @@ func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
 		branch:   branchOf(wt),
 	}
 	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), m.agents.usage, m.agentGlyphsASCII())
+	// The last-used account is only a fallback: until the user moves the
+	// cursor, the account with the most headroom wins once usage is known.
+	d.accountPinned = false
 	d.sessions = m.agents.sessions
 	d.changeWorktree = m.keys.LaunchChangeWorktree
 	for _, tree := range m.worktrees {
@@ -239,9 +242,6 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		m.agents.overlay = nil
 		nm, cmd = m.onAgentsPick(msg.path, msg.id)
 		return true, nm, cmd
-	case sessionsRetryMsg:
-		nm, cmd = m.retrySession(msg.session)
-		return true, nm, cmd
 	case sessionsNewMsg:
 		nm, cmd = m.openAgentLaunch()
 		return true, nm, cmd
@@ -371,28 +371,6 @@ func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 
 func stopAgentCmd(ctx context.Context, s agentsapi.Sessions, id, name string) tea.Cmd {
 	return func() tea.Msg { return agentStoppedMsg{name: name, err: s.Stop(ctx, id)} }
-}
-
-func (m Model) retrySession(s agentsapi.Session) (tea.Model, tea.Cmd) {
-	if !m.agents.active() || s.Active() {
-		return m, nil
-	}
-	// Retained summaries deliberately omit the task prompt.
-	launch := agents.LaunchOptions{Model: s.Model, DisplayName: s.Name,
-		PermissionMode: s.Options["permission_mode"], Effort: s.Options["effort"],
-		Sandbox: s.Options["sandbox"], Approval: s.Options["approval"], ReadOnly: s.Options["read_only"] == "true"}
-	if value, ok := s.Options["full_access"]; ok {
-		on := value == "true"
-		launch.FullAccess = &on
-	}
-	cols, rows := m.agentAreaSize()
-	if cols <= 0 || rows <= 0 {
-		cols, rows = 80, 24
-	}
-	req := agentsapi.StartRequest{ProjectID: s.ProjectID, WorktreeID: s.WorktreeID, WorkDir: s.WorkDir,
-		AccountID: s.AccountID, Name: s.Name, Cols: cols, Rows: rows, Launch: launch}
-	m.agents.overlay = nil
-	return m, startAgentCmd(m.agents.ctx, m.agents.api.Sessions, m.repoDir, launchSubmitMsg{}, req)
 }
 
 func (m Model) askStopAllAgents() (tea.Model, tea.Cmd) {

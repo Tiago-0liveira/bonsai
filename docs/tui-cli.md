@@ -50,6 +50,10 @@ this session and each creation uses the value it was submitted with; after creat
 the new checkout is selected and its agent launch form opens. The palette also offers
 **New worktree with agent…**. New branches preview their configured path and base;
 Tab (`create_base`) edits the configured upstream or selected PR base (HEAD if unset) before Enter creates the worktree.
+The new-branch name is checked with the `git check-ref-format --branch` rules: an invalid
+name (for example `my test`) shows the reason and a suggested fix under the input,
+hides the path preview and keeps Enter disabled. `bonsai create` and the TUI refuse
+the same names before running git.
 A base that starts with `-` is rejected.
 
 Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
@@ -83,11 +87,9 @@ made visible. The global `!` action cycles through waiting and unseen ended
 sessions. These actions can be rebound as `agent_all`, `agent_all_repo` and
 `agent_attention`.
 
-Ended sessions remain visible in the strip and summary. Use `r`
-(`agent_retry`) in history or the tab to start another session with the same
-account, worktree and recorded launch settings. Prompts are intentionally not
-retained, so retry starts without the original task. `S` (`agent_stop_all`)
-asks for confirmation before stopping every live session in the worktree.
+Ended sessions remain visible in the strip and summary. `F` (`agent_fork`)
+starts another session with the same settings and a new task. `S`
+(`agent_stop_all`) asks for confirmation before stopping every live session in the worktree.
 Session renaming is unavailable in the sessions backend.
 
 The picker shows up to ten cached screen lines for the attached session;
@@ -162,7 +164,10 @@ including after creating a worktree. Use `launch_change_worktree` (default
 Missing windows show `Not reported`; loading, unavailable and stale readings
 remain labeled. The suggested connected account has the highest minimum
 remaining capacity among its reported windows. Unknown/stale readings are not
-ranked. An explicit initial account or manual account selection takes priority.
+ranked. **n** and **N** open with the suggested account selected, falling back
+to the selected session's account while no usage is known; usage that arrives
+later moves the selection until you move it yourself. **F** keeps the source
+session's account, and a manual selection always takes priority.
 
 `↑`/`↓` (or `j`/`k`) select accounts and skip provider headings. `Enter`
 moves to the optional multiline **Task**, followed by Name, Model, Effort and

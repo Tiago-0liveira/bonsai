@@ -798,33 +798,88 @@ func TestLaunchGeneratedNamesPreserveEdits(t *testing.T) {
 	}
 }
 
-func TestLaunchSuggestedAccountAndExplicitSelection(t *testing.T) {
-	for _, explicit := range []bool{false, true} {
-		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+// launchUsage gives claude:personal the most headroom (min of 5H and WEEK).
+func launchUsage(e *agentsEnv) {
+	for id, f := range map[agents.AccountID]float64{"claude:work": .9, "claude:personal": .7, "codex:work": .8} {
+		u := usageWithFiveHour(f, 0, false)
+		weekly := .6
+		if id == "claude:work" {
+			weekly = .1
+		}
+		u.Headline.Secondary = &agents.UsageLimit{Window: "weekly", RemainingFraction: &weekly}
+		e.fb.Accounts.Usages[id] = u
+	}
+}
+
+func TestLaunchOpensOnTheSuggestedAccount(t *testing.T) {
+	// "quick" is N, "session" is n with a running session on another account.
+	for _, mode := range []string{"new", "session", "quick"} {
+		t.Run(mode, func(t *testing.T) {
 			e := accountsEnv(t)
-			for id, f := range map[agents.AccountID]float64{"claude:work": .9, "claude:personal": .7, "codex:work": .8} {
-				u := usageWithFiveHour(f, 0, false)
-				weekly := .6
-				if id == "claude:work" {
-					weekly = .1
-				}
-				u.Headline.Secondary = &agents.UsageLimit{Window: "weekly", RemainingFraction: &weekly}
-				e.fb.Accounts.Usages[id] = u
-			}
-			if explicit {
+			launchUsage(e)
+			if mode != "new" {
 				e.fb.Sessions.Add(e.agent("current", "claude", "running", e.wtA, "current", 1))
 				e.relist(t)
 			}
-			e.openLaunch(t)
-			want := agents.AccountID("claude:personal")
-			if explicit {
-				want = "claude:work"
+			if mode == "quick" {
+				e.key(t, "N")
+				e.run(t, e.lastCmd)
+			} else {
+				e.openLaunch(t)
 			}
-			if got := e.dialog().Selected(); got != want {
-				t.Fatalf("selection = %s, want %s", got, want)
+			if got := e.dialog().Selected(); got != "claude:personal" {
+				t.Fatalf("selection = %s, want the suggested claude:personal", got)
 			}
 			if got := e.dialog().suggested; got != "claude:personal" {
 				t.Fatalf("suggested = %s", got)
+			}
+		})
+	}
+}
+
+func TestForkKeepsTheSourceSessionAccount(t *testing.T) {
+	e := accountsEnv(t)
+	launchUsage(e)
+	e.fb.Sessions.Add(e.agent("current", "claude", "running", e.wtA, "current", 1))
+	e.relist(t)
+	e.key(t, "F")
+	e.run(t, e.lastCmd)
+	if got := e.dialog().Selected(); got != "claude:work" {
+		t.Fatalf("fork selection = %s, want the source account claude:work", got)
+	}
+	if got := e.dialog().suggested; got != "claude:personal" {
+		t.Fatalf("suggested = %s", got)
+	}
+}
+
+func TestLaunchWithoutUsageKeepsTheLastUsedAccount(t *testing.T) {
+	e := accountsEnv(t)
+	e.fb.Sessions.Add(e.agent("current", "codex", "running", e.wtA, "current", 1))
+	e.relist(t)
+	e.openLaunch(t)
+	if got := e.dialog().Selected(); got != "codex:work" {
+		t.Fatalf("selection = %s, want the last-used codex:work", got)
+	}
+}
+
+func TestLaunchLateUsageMovesOnlyAnUntouchedCursor(t *testing.T) {
+	for _, moved := range []bool{false, true} {
+		t.Run(fmt.Sprint(moved), func(t *testing.T) {
+			e := accountsEnv(t)
+			e.openLaunch(t)
+			if moved {
+				e.sendKey(t, tea.KeyDown)
+			}
+			before := e.dialog().Selected()
+			launchUsage(e)
+			e.send(t, accounts.ReloadMsg{})
+			e.run(t, e.lastCmd)
+			want := agents.AccountID("claude:personal")
+			if moved {
+				want = before
+			}
+			if got := e.dialog().Selected(); got != want {
+				t.Fatalf("selection = %s, want %s (moved=%v)", got, want, moved)
 			}
 		})
 	}

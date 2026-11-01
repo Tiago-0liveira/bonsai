@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
@@ -472,5 +474,36 @@ func TestWorktreesWheelUsesWorkspaceGeometryAndCaptureBoundaries(t *testing.T) {
 	m, _ = send(t, m, tea.MouseMsg{X: 2, Y: 9, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
 	if m.wt.index[wtProcesses] != 1 {
 		t.Fatal("wheel did not move scoped process rows")
+	}
+}
+
+func TestCreateBranchModalRejectsInvalidNames(t *testing.T) {
+	m := wtModel(t, 120, 35)
+	m = wtPress(t, m, "n")
+	m, _ = send(t, m, modals.SubmitMsg{Kind: modals.KindCreateSource, Value: createSourceNew})
+	for _, r := range "my test" {
+		nm, _ := m.modal.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m.modal = &nm
+	}
+	view := ansi.Strip(m.modal.View())
+	mustContain(t, "invalid name", view, "spaces are not allowed", "try my-test")
+	if strings.Contains(view, "→") || strings.Contains(view, "->") {
+		t.Fatalf("invalid name must not preview a path:\n%s", view)
+	}
+	if _, cmd := m.modal.Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		t.Fatal("enter must stay disabled")
+	}
+}
+
+func TestCreateWorktreeRejectsInvalidBranchBeforeTouchingDisk(t *testing.T) {
+	repo := t.TempDir()
+	cfg := &config.Config{}
+	msg := createWorktree(repo, "new", "my test", 0, cfg, "", false)()
+	done, ok := msg.(opDoneMsg)
+	if !ok || done.err == nil || !errors.Is(done.err, coregit.ErrBranchSpace) {
+		t.Fatalf("msg = %#v", msg)
+	}
+	if _, err := os.Stat(cfg.WorktreePath(repo, "my test")); err == nil {
+		t.Fatal("create must not touch the filesystem for an invalid name")
 	}
 }

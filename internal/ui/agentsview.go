@@ -486,5 +486,5 @@ func (m Model) endedSessionsSummary(path string) string {
 	if exited > 0 {
 		parts = append(parts, itoa(exited)+" exited")
 	}
-	return strings.Join(parts, " · ") + " · " + hintKey(m.keys.AgentAll.Help().Key) + " view · " + hintKey(m.keys.AgentRetry.Help().Key) + " retry"
+	return strings.Join(parts, " · ") + " · " + hintKey(m.keys.AgentAll.Help().Key) + " view"
 }

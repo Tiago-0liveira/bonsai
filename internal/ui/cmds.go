@@ -603,6 +603,10 @@ func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Conf
 		)
 		switch mode {
 		case "new":
+			// Before ensureParent, which would create directories for a name git refuses.
+			if err := git.ValidBranchName(branch); err != nil {
+				return opDoneMsg{label: "create", err: fmt.Errorf("invalid branch name %q: %w", branch, err)}
+			}
 			path = cfg.WorktreePath(repoDir, branch)
 			err = ensureParent(path)
 			if err == nil {

@@ -21,7 +21,7 @@ Severity: R = critical, Y = moderate, G = minor. Fix order inside each workstrea
 
 | ID | Sev | Finding | Fix |
 | --- | --- | --- | --- |
-| F5 | R | Empty state says "No running agents" / "No active agents" while the worktree has a failed session; it is only visible after `a`. | Empty state lists failed/exited sessions ("1 failed session · a view · r retry"); strip shows them dimmed. |
+| F5 | R | Empty state says "No running agents" / "No active agents" while the worktree has a failed session; it is only visible after `a`. | Empty state lists failed/exited sessions ("1 failed session · a view"); strip shows them dimmed. |
 | F6 | Y | Header "No running agents" and body "No active agents" repeat each other. | Keep one message. |
 | F7 | Y | `a` is labelled "all agents" but the picker is "All sessions in this worktree". | Label it "sessions"; add a real cross-worktree view (F8). |
 | F8 | Y | No way to see every session across worktrees. | `A` opens all sessions of the repo with a worktree column; enter jumps to that worktree + session. |
@@ -67,7 +67,7 @@ Severity: R = critical, Y = moderate, G = minor. Fix order inside each workstrea
 | --- | --- |
 | Q1 | Attention queue: `!` jumps to the next session needing you (waiting, failed, finished) across worktrees. |
 | Q2 | Live agent state on rows with time since last output (`▶ 2m`). Pairs with F4. |
-| Q3 | Retry a failed session (`r` in the picker / empty state) with the same account and options. |
+| Q3 | ~~Retry a failed session (`r` in the picker / empty state) with the same account and options.~~ Removed by request. |
 | Q4 | Quick spawn (`N`): launch with the suggested account straight into the Task field. |
 | Q5 | "Same settings, new task": open the launch form seeded from the selected session. |
 | Q6 | Peek: picker detail pane shows the last ~10 lines of the session's screen. |
