@@ -658,7 +658,7 @@ func TestAgentsPickerEmptyAndActions(t *testing.T) {
 func TestAgentsStatusBar(t *testing.T) {
 	e := newAgentsEnv(t)
 	e.openTab(t)
-	if got := ansi.Strip(e.m.contextHelp()); got != "a all · m profiles · u usage · n new · tab focus · ? keys" {
+	if got := ansi.Strip(e.m.contextHelp()); got != "a all · m accounts · u usage · n new · tab focus · ? keys" {
 		t.Errorf("agents tab hints = %q", got)
 	}
 	e.m.rightTab = tabLog

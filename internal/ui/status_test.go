@@ -56,3 +56,12 @@ func TestStatusClearsOnActionKey(t *testing.T) {
 		})
 	}
 }
+
+// Status expiry runs alongside mutations; these tests inspect only the mutation.
+func statusPrimaryResult(cmd tea.Cmd) tea.Msg {
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		return batch[0]()
+	}
+	return msg
+}

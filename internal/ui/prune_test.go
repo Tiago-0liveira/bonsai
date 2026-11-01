@@ -150,7 +150,7 @@ func TestKindPruneForceThreadsThrough(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("no command returned for KindPrune")
 	}
-	done, ok := cmd().(opDoneMsg)
+	done, ok := statusPrimaryResult(cmd).(opDoneMsg)
 	if !ok {
 		t.Fatalf("prune command returned %T, want opDoneMsg", done)
 	}
@@ -163,7 +163,7 @@ func TestKindPruneForceThreadsThrough(t *testing.T) {
 
 	// With force it is removed.
 	_, cmd = m.Update(modals.SubmitMsg{Kind: modals.KindPrune, Value: "force"})
-	done, ok = cmd().(opDoneMsg)
+	done, ok = statusPrimaryResult(cmd).(opDoneMsg)
 	if !ok {
 		t.Fatalf("prune command returned %T, want opDoneMsg", done)
 	}

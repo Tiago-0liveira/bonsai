@@ -138,7 +138,7 @@ func TestTerminalEnterReattachesAtOffsetAsWriter(t *testing.T) {
 	if e.m.agents.view.state != attachControlling || !e.m.agentTerminalMode() {
 		t.Errorf("state = %v", e.m.agents.view.state)
 	}
-	if !strings.Contains(ansi.Strip(e.m.statusBar()), "FOCUSED · Input goes to agent · Ctrl+] unfocus") {
+	if !strings.Contains(ansi.Strip(e.m.statusBar()), "FOCUSED · Input goes to agent · ctrl+] unfocus") {
 		t.Errorf("status bar = %q", ansi.Strip(e.m.statusBar()))
 	}
 }
@@ -212,12 +212,12 @@ func TestTerminalObservingOtherSwallowsKeysWithOneHint(t *testing.T) {
 			t.Errorf("View lacks %q:\n%s", want, view)
 		}
 	}
-	if bar := ansi.Strip(e.m.statusBar()); !strings.Contains(bar, "READ-ONLY · Ctrl+] unfocus") {
+	if bar := ansi.Strip(e.m.statusBar()); !strings.Contains(bar, "READ-ONLY · ctrl+] unfocus") {
 		t.Errorf("status bar = %q", bar)
 	}
 	e.typeKeys(t, runes("q"))
-	if e.m.status != observingOtherNote {
-		t.Errorf("status = %q, want the one-time note", e.m.status)
+	if e.m.status != "" {
+		t.Errorf("status = %q, want the one-time note to expire", e.m.status)
 	}
 	e.m.status = ""
 	e.typeKeys(t, runes("q"), tea.KeyMsg{Type: tea.KeyCtrlC})
