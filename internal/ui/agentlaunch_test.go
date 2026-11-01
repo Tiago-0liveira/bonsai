@@ -73,8 +73,8 @@ func TestLaunchDialogListsAccountsInATableWithoutBoxes(t *testing.T) {
 		if claude < 0 || codex < claude {
 			t.Fatalf("%v: providers must be grouped Claude then Codex:\n%s", size, view)
 		}
-		for _, want := range []string{"New session", "feat-a", "ACCOUNT", "PROVIDER", "Session options", "Save as account defaults", "Start session", "Ctrl+S Start"} {
-			if !strings.Contains(view, want) && !(size[0] < 100 && want == "5H LEFT") {
+		for _, want := range []string{"New session", "feat-a", "ACCOUNT", "PROVIDER", "Session options", "Save as account defaults", "Start session", "ctrl+s start"} {
+			if !strings.Contains(view, want) && !(size[0] < 100 && want == "5H") {
 				t.Errorf("%v: missing %q:\n%s", size, want, view)
 			}
 		}
@@ -101,8 +101,9 @@ func TestLaunchDialogStartsWithTheWebIdentities(t *testing.T) {
 	}
 	// Move to the Name field, replace the default, go on to the form and pick
 	// the next permissions option.
+	e.sendKey(t, tea.KeyTab) // task
 	e.sendKey(t, tea.KeyTab)
-	if got := e.dialog().name.Value(); got != "work" {
+	if got := e.dialog().name.Value(); got != "feat-a-claude-1" {
 		t.Errorf("default name = %q, want the profile name", got)
 	}
 	e.send(t, tea.KeyMsg{Type: tea.KeyCtrlU})
@@ -195,6 +196,7 @@ func TestLaunchSuccessSelectsAndEntersTerminalMode(t *testing.T) {
 func TestLaunchSaveAsDefaultsSendsChangesAfterStart(t *testing.T) {
 	e := accountsEnv(t)
 	e.openLaunch(t)
+	e.sendKey(t, tea.KeyTab)  // task
 	e.sendKey(t, tea.KeyTab)  // name
 	e.sendKey(t, tea.KeyTab)  // model
 	e.sendKey(t, tea.KeyDown) // effort
@@ -224,6 +226,7 @@ func TestLaunchSaveAsDefaultsSkippedWhenStartFails(t *testing.T) {
 	e := accountsEnv(t)
 	e.fb.Sessions.StartErr = errors.New("boom")
 	e.openLaunch(t)
+	e.sendKey(t, tea.KeyTab) // task
 	e.sendKey(t, tea.KeyTab)
 	e.sendKey(t, tea.KeyTab)
 	e.sendKey(t, tea.KeyDown) // effort
@@ -248,7 +251,7 @@ func TestLaunchDialogSwitchingAccountReloadsForm(t *testing.T) {
 	if d.Selected() != "claude:personal" || d.form.Values()["permissions"] != "read-only" {
 		t.Errorf("selected=%q values=%v", d.Selected(), d.form.Values())
 	}
-	if d.name.Value() != "personal" {
+	if d.name.Value() != "feat-a-claude-1" {
 		t.Errorf("untouched name follows the account, got %q", d.name.Value())
 	}
 }
@@ -619,6 +622,7 @@ func TestLaunchModelAndEffortOverridesStayWithSession(t *testing.T) {
 	if view := e.overlayView(); !strings.Contains(view, "Model") || !strings.Contains(view, "Effort") {
 		t.Fatalf("launch overrides must be visible:\n%s", view)
 	}
+	e.sendKey(t, tea.KeyTab) // task
 	e.sendKey(t, tea.KeyTab) // name
 	e.sendKey(t, tea.KeyTab) // model
 	e.sendKey(t, tea.KeyRight)
@@ -655,6 +659,7 @@ func TestLaunchModelChangeRevalidatesEffort(t *testing.T) {
 				},
 			}
 			e.openLaunch(t)
+			e.sendKey(t, tea.KeyTab) // task
 			e.sendKey(t, tea.KeyTab)
 			e.sendKey(t, tea.KeyTab)
 			e.sendKey(t, tea.KeyRight)
@@ -720,5 +725,216 @@ func TestAgentDialogsStayInsideTabOnOpenAndResize(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLaunchTaskAndWorktreeChoice(t *testing.T) {
+	e := accountsEnv(t)
+	e.selectWT(e.wtB)
+	e.openLaunch(t)
+	if got := e.dialog().target.workDir; got != e.wtB {
+		t.Fatalf("target = %q", got)
+	}
+	e.sendKey(t, tea.KeyCtrlW)
+	d := e.dialog()
+	if !d.choosing {
+		t.Fatal("worktree chooser did not open")
+	}
+	for i, target := range d.targets {
+		if target.workDir == e.wtA {
+			d.targetIndex = i
+		}
+	}
+	e.m.agents.overlay.launch = &d
+	e.sendKey(t, tea.KeyEnter)
+	e.sendKey(t, tea.KeyTab)
+	e.key(t, "first line")
+	e.sendKey(t, tea.KeyEnter)
+	e.key(t, "second line")
+	e.sendKey(t, tea.KeyCtrlS)
+	starts := e.fb.Sessions.Starts()
+	if len(starts) != 1 || starts[0].WorkDir != e.wtA || starts[0].Launch.Prompt != "first line\nsecond line" {
+		t.Fatalf("start = %+v", starts)
+	}
+	if len(e.fb.Accounts.Updates()) != 0 {
+		t.Fatal("task saved as defaults")
+	}
+}
+
+func TestSanitizeLaunchTask(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"  hello\r\nworld  ", "hello\nworld"},
+		{"\x1b[31mhello\x1b[0m\x00", "hello"},
+		{strings.Repeat("é", 9000), strings.Repeat("é", 8192)},
+	} {
+		if got := sanitizeLaunchTask(tt.in); got != tt.want {
+			t.Errorf("sanitized length=%d, want %d", len(got), len(tt.want))
+		}
+	}
+}
+
+func TestLaunchGeneratedNamesPreserveEdits(t *testing.T) {
+	e := accountsEnv(t)
+	s := e.agent("old", "claude", "exited", e.wtA, "feat-a-claude-1", 1)
+	e.fb.Sessions.Add(s)
+	e.relist(t)
+	e.openLaunch(t)
+	if got := e.dialog().name.Value(); got != "feat-a-claude-2" {
+		t.Fatalf("name = %q", got)
+	}
+	e.sendKey(t, tea.KeyTab)
+	e.key(t, "Fix the broken login flow")
+	if got := e.dialog().name.Value(); got != "fix-the-broken-login" {
+		t.Fatalf("task name = %q", got)
+	}
+	e.sendKey(t, tea.KeyTab)
+	e.sendKey(t, tea.KeyCtrlA)
+	e.sendKey(t, tea.KeyCtrlK)
+	e.key(t, "mine")
+	e.sendKey(t, tea.KeyShiftTab)
+	e.key(t, " please")
+	if got := e.dialog().name.Value(); got != "mine" {
+		t.Fatalf("edited name = %q", got)
+	}
+}
+
+func TestLaunchSuggestedAccountAndExplicitSelection(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			e := accountsEnv(t)
+			for id, f := range map[agents.AccountID]float64{"claude:work": .9, "claude:personal": .7, "codex:work": .8} {
+				u := usageWithFiveHour(f, 0, false)
+				weekly := .6
+				if id == "claude:work" {
+					weekly = .1
+				}
+				u.Headline.Secondary = &agents.UsageLimit{Window: "weekly", RemainingFraction: &weekly}
+				e.fb.Accounts.Usages[id] = u
+			}
+			if explicit {
+				e.fb.Sessions.Add(e.agent("current", "claude", "running", e.wtA, "current", 1))
+				e.relist(t)
+			}
+			e.openLaunch(t)
+			want := agents.AccountID("claude:personal")
+			if explicit {
+				want = "claude:work"
+			}
+			if got := e.dialog().Selected(); got != want {
+				t.Fatalf("selection = %s, want %s", got, want)
+			}
+			if got := e.dialog().suggested; got != "claude:personal" {
+				t.Fatalf("suggested = %s", got)
+			}
+		})
+	}
+}
+
+func TestLaunchProviderHeadingsAreNotSelectable(t *testing.T) {
+	e := accountsEnv(t)
+	e.openLaunch(t)
+	d := e.dialog()
+	lines := d.groupedTable(120, 40)
+	headers := 0
+	for _, line := range lines {
+		if line == "Claude" || line == "Codex" {
+			headers++
+		}
+	}
+	if headers != 2 {
+		t.Fatalf("provider headings = %d: %v", headers, lines)
+	}
+	for _, want := range []agents.AccountID{"claude:personal", "codex:work"} {
+		e.sendKey(t, tea.KeyDown)
+		if got := e.dialog().Selected(); got != want {
+			t.Fatalf("selected = %s, want %s", got, want)
+		}
+	}
+}
+
+func TestQuickLaunchUsesBindingAndTaskFocus(t *testing.T) {
+	e := accountsEnv(t)
+	e.m.keys = newKeyMap(map[string]string{"agent_quick_new": "ctrl+t"})
+	e.key(t, "N")
+	if e.m.agents.overlay != nil {
+		t.Fatal("old shortcut remained active")
+	}
+	e.sendKey(t, tea.KeyCtrlT)
+	if e.dialog().focus != launchFocusTask {
+		t.Fatal("quick launch must focus Task")
+	}
+	e.key(t, "a new task")
+	e.sendKey(t, tea.KeyCtrlS)
+	starts := e.fb.Sessions.Starts()
+	if len(starts) != 1 || starts[0].Launch.Prompt != "a new task" {
+		t.Fatalf("starts = %+v", starts)
+	}
+}
+
+func TestForkLaunchCopiesAcceptedSettings(t *testing.T) {
+	for _, provider := range []string{"claude", "codex", "antigravity"} {
+		t.Run(provider, func(t *testing.T) {
+			e := accountsEnv(t)
+			a := acct(provider, "work", 0)
+			e.setAccounts(a)
+			fields := []agents.LaunchField{
+				{ID: "effort", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "high"}}},
+				{ID: "permission_mode", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "acceptEdits"}}},
+				{ID: "sandbox", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "workspace-write"}}},
+				{ID: "approval", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "on-request"}}},
+				{ID: "full_access", Kind: agents.LaunchFieldToggle},
+			}
+			e.fb.Accounts.LaunchDefaults[a.ID] = agentsapi.Defaults{LaunchFields: fields}
+			s := e.agent("original", provider, "running", e.wtB, "previous", 1)
+			s.Model = "chosen-model"
+			s.Options = map[string]string{"effort": "high", "permission_mode": "acceptEdits", "sandbox": "workspace-write", "approval": "on-request", "full_access": "true"}
+			e.fb.Sessions.Add(s)
+			e.relist(t)
+			e.selectWT(e.wtB)
+			e.key(t, "F")
+			e.run(t, e.lastCmd)
+			d := e.dialog()
+			if d.focus != launchFocusTask || d.task.Value() != "" || d.Selected() != a.ID || d.target.workDir != e.wtB {
+				t.Fatalf("fork dialog = %+v", d.target)
+			}
+			e.key(t, "next task")
+			e.sendKey(t, tea.KeyCtrlS)
+			starts := e.fb.Sessions.Starts()
+			if len(starts) != 1 {
+				t.Fatalf("starts = %+v", starts)
+			}
+			launch := starts[0].Launch
+			if launch.Model != "chosen-model" || launch.Effort != "high" || launch.PermissionMode != "acceptEdits" || launch.Sandbox != "workspace-write" || launch.Approval != "on-request" || launch.FullAccess == nil || !*launch.FullAccess || launch.Prompt != "next task" {
+				t.Fatalf("fork launch = %+v", launch)
+			}
+		})
+	}
+}
+
+func TestLaunchWorktreeBindingAndPlannerFocus(t *testing.T) {
+	e := accountsEnv(t)
+	e.m.keys = newKeyMap(map[string]string{"launch_change_worktree": "ctrl+t"})
+	e.openLaunch(t)
+	e.sendKey(t, tea.KeyCtrlW)
+	if e.dialog().choosing {
+		t.Fatal("old worktree key is still active")
+	}
+	e.sendKey(t, tea.KeyCtrlT)
+	if !e.dialog().choosing {
+		t.Fatal("custom worktree key was ignored")
+	}
+	d := e.dialog()
+	if !strings.Contains(d.footer(), "ctrl+t worktree") {
+		t.Fatal("footer ignored binding")
+	}
+	d.planner = true
+	d = d.setFocus(launchFocusName)
+	d = d.setFocus(launchFocusTask)
+	if d.focus != launchFocusAccount {
+		t.Fatal("planner must skip Task going backward")
+	}
+	d = d.setFocus(launchFocusTask)
+	if d.focus != launchFocusName {
+		t.Fatal("planner must skip Task going forward")
 	}
 }

@@ -233,6 +233,12 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		handled, cmd := m.enterTerminalMode()
 		return handled, m, cmd
+	case key.Matches(msg, m.keys.AgentQuickNew):
+		nm, cmd := m.openAgentTask(false)
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentFork):
+		nm, cmd := m.openAgentTask(true)
+		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentNew):
 		nm, cmd := m.openAgentLaunch()
 		return true, nm, cmd

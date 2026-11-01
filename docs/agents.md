@@ -233,6 +233,17 @@ session read-only; `enter` takes control to type, and `ctrl+]` immediately retur
 input to Bonsai. Press `enter` again to take control back when another client is
 writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
 
+The TUI launch form shows its worktree target and lets you change it with
+`launch_change_worktree` (default `ctrl+w`). Its optional multiline Task becomes
+the initial provider prompt; Enter adds a newline and Ctrl+S starts. Task text
+is never saved as account defaults. Names start as branch/provider/index and
+follow the task's first four words until edited. Accounts are grouped by provider
+with 5H and WEEK remaining capacity, the limiting window's reset, and a suggested
+account based on reported headroom. In the Agents tab, `agent_quick_new` (default
+`N`) focuses Task immediately; `agent_fork` (default `F`) reuses the selected
+session's account, worktree, model, effort and permission/sandbox choices with an
+empty Task. See the [launch controls](tui-cli.md#agents-tab) for navigation.
+
 `bonsai agents attach <id|name>` opens a terminal with pinned controls below the
 agent output. Press `Ctrl+]`, release it, then `d` to detach and leave the agent
 running, or `k` to request a kill. The kill prompt defaults to cancel: press `y`

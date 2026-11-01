@@ -20,7 +20,7 @@ const maxLaunchGaps = 5
 func (d launchDialog) table() accounts.Table {
 	return accounts.Table{
 		Accounts: d.Ordered(), Selected: d.Selected(),
-		Columns:  accounts.LaunchColumns(d.Usage(), d.now, d.ascii),
+		Columns:  d.usageColumns(),
 		ASCII:    d.ascii,
 		Focused:  d.focus == launchFocusAccount,
 		UnderSep: " · ",
@@ -64,6 +64,9 @@ func (d launchDialog) compose(iw, h int) []string {
 	}
 	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render(heading)
 	top := []string{leftRight(title, dim.Render(scope), iw), rule}
+	if !d.planner {
+		top = append(top, dim.Render("Start in: "+d.target.branch+" ("+launchShortPath(d.target.workDir)+")"))
+	}
 	if cur, ok := d.Current(); d.planner && ok {
 		top = append(top, d.plannerContract(cur, iw))
 	}
@@ -73,6 +76,11 @@ func (d launchDialog) compose(iw, h int) []string {
 	var body []string
 	a, ok := d.Current()
 	switch {
+	case d.choosing:
+		choices := d.targetLines()
+		window, _ := scrollWindow(choices[1:len(choices)-1], d.targetIndex, d.targetIndex+1, max(free-2, 0))
+		body = append([]string{choices[0]}, window...)
+		body = append(body, choices[len(choices)-1])
 	case ok && d.plannerWide():
 		return d.composeChoose(a, iw, h)
 	case !d.Listed():
@@ -121,7 +129,7 @@ func (d launchDialog) options(a agentsapi.Account, iw, free int) []string {
 	useTable := tbl.Fits(iw)
 	tableNeed, rowH := 1, 1
 	if useTable {
-		tableNeed, rowH = tbl.Height(iw), tbl.RowHeight(iw)
+		tableNeed, rowH = tbl.Height(iw)+d.providerGroupCount(), tbl.RowHeight(iw)
 	}
 
 	formLines, from, to := d.formLines(iw)
@@ -160,12 +168,15 @@ func (d launchDialog) options(a agentsapi.Account, iw, free int) []string {
 		// The save box and actions are already reserved; a table taller than
 		// what is left would push them out of the pane.
 		tableH = min(tableH, max(avail, 0))
+		if avail > 0 {
+			tableH = min(tableH, max(avail-1, 0))
+		}
 		formH = max(avail-tableH, 0)
 	}
 
 	var tableLines []string
 	if useTable {
-		tableLines = tbl.View(iw, tableH)
+		tableLines = d.groupedTable(iw, tableH)
 	} else {
 		tableLines = []string{d.sidebar().Selector(d.focus == launchFocusAccount)}
 	}
@@ -200,9 +211,18 @@ func (d launchDialog) formLines(iw int) (lines []string, from, to int) {
 	if d.formLoaded {
 		labelW = d.form.CompactLabelWidth(iw)
 	}
-	lines = []string{d.nameRow(iw, labelW)}
+	offset := 0
+	if !d.planner {
+		lines = append(lines, dim.Render("Task (optional)"))
+		lines = append(lines, strings.Split(d.task.View(), "\n")...)
+		offset = len(lines)
+		if d.focus == launchFocusTask {
+			from, to = 0, offset
+		}
+	}
+	lines = append(lines, d.nameRow(iw, labelW))
 	if d.focus == launchFocusName {
-		from, to = 0, 1
+		from, to = offset, offset+1
 	}
 	switch {
 	case d.formErr != "":
@@ -213,7 +233,7 @@ func (d launchDialog) formLines(iw int) (lines []string, from, to int) {
 		fl, ff, ft := d.form.CompactLines(iw)
 		lines = append(lines, fl...)
 		if d.focus == launchFocusForm {
-			from, to = ff+1, ft+1
+			from, to = ff+1+offset, ft+1+offset
 		}
 	}
 	return lines, from, to
@@ -331,30 +351,29 @@ func (d launchDialog) primaryLabel(a agentsapi.Account) (label string, disabled 
 
 // footer is the one hint line, for the area that has focus.
 func (d launchDialog) footer() string {
-	var s string
+	s := "tab next · shift+tab previous · ctrl+s start · esc back"
 	switch {
 	case d.starting:
-		s = "Starting…  Esc Cancel"
-	case d.focus == launchFocusForm && d.form.Editing():
-		s = "↑↓ Choice  Enter Select  Ctrl+S Start  Esc Close"
+		s = "starting… · esc cancel"
+	case d.focus == launchFocusTask:
+		s = "enter newline · tab next · ctrl+s start · esc back"
 	case d.focus == launchFocusAccount:
-		s = "↑↓ Account  Enter Options  Ctrl+S Start  Esc Back"
+		s = "↑↓ account · enter options · ctrl+s start · esc back"
+	case d.focus == launchFocusForm && d.form.Editing():
+		s = "↑↓ choice · enter select · ctrl+s start · esc back"
 	case d.focus == launchFocusSave:
-		s = "Space Toggle  Tab Next field  Ctrl+S Start  Esc Back"
+		s = "space toggle · tab next · ctrl+s start · esc back"
 	case d.focus == launchFocusButtons:
-		s = "←→ Action  Enter Select  Ctrl+S Start  Esc Back"
-	default:
-		s = "Tab Next field  Shift+Tab Previous  Ctrl+S Start  Esc Back"
+		s = "←→ action · enter select · ctrl+s start · esc back"
+	}
+	if !d.planner {
+		s += " · " + d.changeWorktree.Help().Key + " worktree"
 	}
 	if d.planner {
-		verb := "Request"
-		if d.revise {
-			verb = "Send"
-		}
-		s = strings.ReplaceAll(s, "Start", verb)
+		s = strings.ReplaceAll(s, "start", "request")
 	}
 	if d.ascii {
-		s = strings.NewReplacer("↑↓", "j/k", "←→", "h/l").Replace(s)
+		s = strings.NewReplacer("↑↓", "up/down", "←→", "left/right", "…", "...").Replace(s)
 	}
 	return s
 }
@@ -363,14 +382,73 @@ func (d launchDialog) footer() string {
 // never cuts one mid-word.
 func (d launchDialog) footerFit(w int) string {
 	s := d.footer()
-	for _, r := range [][2]string{
-		{"Tab Next field", "Tab Next"}, {"Shift+Tab Previous", "S-Tab Prev"}, {"Enter Options", "Enter"},
-		{"Ctrl+S", "^S"}, {"  ", " "},
-	} {
-		if ansi.StringWidth(s) <= w {
-			break
+	if ansi.StringWidth(s) > w {
+		s = "ctrl+s start · esc back"
+		if d.planner {
+			s = "ctrl+s request · esc back"
+		} else {
+			s += " · " + d.changeWorktree.Help().Key + " worktree"
 		}
-		s = strings.ReplaceAll(s, r[0], r[1])
 	}
 	return ansi.Truncate(s, w, "…")
+}
+
+// Provider headings are presentation rows; navigation continues to use account IDs.
+func (d launchDialog) groupedTable(w, h int) []string {
+	tbl := d.table()
+	rh := tbl.RowHeight(w)
+	ordered := d.Ordered()
+	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	var lines []string
+	var rowAccounts []int
+	from, to := 0, 0
+	var previous agentsapi.Account
+	for i, a := range ordered {
+		if i == 0 || a.Provider != previous.Provider {
+			lines = append(lines, dim.Render(providerName(a.Provider)))
+			rowAccounts = append(rowAccounts, i+1)
+		}
+		if a.ID == d.Selected() {
+			from = len(lines)
+			to = from + rh
+		}
+		row := tbl
+		row.Selected = a.ID
+		// One row is requested so the shared table renders just this account.
+		lines = append(lines, row.View(w, rh)...)
+		for range rh {
+			rowAccounts = append(rowAccounts, i+1)
+		}
+		previous = a
+	}
+	if h <= 0 {
+		return nil
+	}
+	if len(lines)+1 <= h {
+		heading := tbl.View(w, tbl.Height(w))[0]
+		return append([]string{heading}, lines...)
+	}
+	if h <= 3 {
+		a, _ := d.Current()
+		out := []string{dim.Render(providerName(a.Provider))}
+		out = append(out, tbl.View(w, rh)...)
+		return out[:min(h, len(out))]
+	}
+	heading := tbl.View(w, tbl.Height(w))[0]
+	window, start := scrollWindow(lines, from, to, max(h-2, 0))
+	out := append([]string{heading}, window...)
+	out = append(out, dim.Render(fmt.Sprintf("%d-%d of %d", rowAccounts[start], rowAccounts[start+len(window)-1], len(ordered))))
+	return out
+}
+
+func (d launchDialog) providerGroupCount() int {
+	count := 0
+	var prev string
+	for _, a := range d.Ordered() {
+		if string(a.Provider) != prev {
+			count++
+			prev = string(a.Provider)
+		}
+	}
+	return count
 }

@@ -11,6 +11,7 @@ const (
 	ksWorktree                  // the worktree list and its tabs
 	ksAgents                    // the Agents tab
 	ksProcesses                 // the Processes tab
+	ksLaunch                    // launch dialog
 	ksGarden                    // the Garden work views
 )
 
@@ -25,6 +26,7 @@ var sectionScopes = map[string]keyScope{
 	"Run":               ksWorktree,
 	"Git":               ksWorktree,
 	"Agents tab":        ksAgents,
+	"Agent launch":      ksLaunch,
 	"Processes tab":     ksProcesses,
 	"Garden":            ksGarden,
 }
