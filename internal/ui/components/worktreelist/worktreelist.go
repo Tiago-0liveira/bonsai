@@ -68,22 +68,22 @@ func (i Item) FilterValue() string { return i.WT.Branch + " " + i.WT.Path }
 func checkDot(rollup string) string {
 	switch rollup {
 	case "pass":
-		return checkPass.Render("●")
+		return checkPass.Render("✓")
 	case "fail":
-		return checkFail.Render("●")
+		return checkFail.Render("✗")
 	case "pending":
-		return checkPending.Render("◐")
+		return checkPending.Render("◌")
 	}
 	return ""
 }
 
-// dirtyBadge renders working-tree change counts: a colored "●N" for tracked
+// dirtyBadge renders working-tree change counts: a colored "±N" for tracked
 // changes (staged + modified) and a dim "?M" for untracked files. Clean
 // worktrees render "".
 func (i Item) dirtyBadge() string {
 	var parts []string
 	if n := i.Status.Staged + i.Status.Modified; n > 0 {
-		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("●%d", n)))
+		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("±%d", n)))
 	}
 	if i.Status.Untracked > 0 {
 		parts = append(parts, descStyle.Render(fmt.Sprintf("?%d", i.Status.Untracked)))
@@ -202,13 +202,8 @@ func (i Item) prBadge() string {
 	if i.PRState == "" || prStatusMode == "off" {
 		return prBadgeStyle.Render(fmt.Sprintf("#%d ", n))
 	}
-	glyph, label, st := i.prStatus()
-	switch prStatusMode {
-	case "compact":
-		return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(glyph) + " "
-	default: // full
-		return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(glyph+" "+label) + " "
-	}
+	_, label, st := i.prStatus()
+	return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(label) + " "
 }
 
 // itemDelegate renders a two-line row, coloring a leading "#N" PR badge

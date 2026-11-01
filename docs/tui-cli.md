@@ -18,7 +18,7 @@ quit. `ctrl+k` opens the command palette, which also edits every `.bonsai.yaml`
 setting (with descriptions and examples) and applies it live.
 
 The worktree list shows ahead/behind arrows (`↑N ↓M`), `#PR` badges detected via
-`gh`, dirty change counts (`●N ?M`), CI dots and 6 sort modes. The right pane has
+`gh`, dirty change counts (`±N ?M`), CI shapes (`✓` pass, `✗` fail, `◌` pending) and 6 sort modes. The right pane has
 Inspector (working-tree status, last commit, diff-vs-base summary, disk usage,
 stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
@@ -911,3 +911,5 @@ For a Garden-created session, the Inspector shows its Issue and attempt identity
 its specification/plan sections. A manual checkout needs no task link. Human
 acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
+
+Worktree PR badges show the coloured state word beside the number, without a circle.
