@@ -77,7 +77,10 @@ func (d launchDialog) compose(iw, h int) []string {
 	a, ok := d.Current()
 	switch {
 	case d.choosing:
-		body = d.targetLines()
+		choices := d.targetLines()
+		window, _ := scrollWindow(choices[1:len(choices)-1], d.targetIndex, d.targetIndex+1, max(free-2, 0))
+		body = append([]string{choices[0]}, window...)
+		body = append(body, choices[len(choices)-1])
 	case ok && d.plannerWide():
 		return d.composeChoose(a, iw, h)
 	case !d.Listed():
@@ -397,11 +400,13 @@ func (d launchDialog) groupedTable(w, h int) []string {
 	ordered := d.Ordered()
 	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
 	var lines []string
+	var rowAccounts []int
 	from, to := 0, 0
 	var previous agentsapi.Account
 	for i, a := range ordered {
 		if i == 0 || a.Provider != previous.Provider {
 			lines = append(lines, dim.Render(providerName(a.Provider)))
+			rowAccounts = append(rowAccounts, i+1)
 		}
 		if a.ID == d.Selected() {
 			from = len(lines)
@@ -411,6 +416,9 @@ func (d launchDialog) groupedTable(w, h int) []string {
 		row.Selected = a.ID
 		// One row is requested so the shared table renders just this account.
 		lines = append(lines, row.View(w, rh)...)
+		for range rh {
+			rowAccounts = append(rowAccounts, i+1)
+		}
 		previous = a
 	}
 	if h <= 0 {
@@ -427,9 +435,9 @@ func (d launchDialog) groupedTable(w, h int) []string {
 		return out[:min(h, len(out))]
 	}
 	heading := tbl.View(w, tbl.Height(w))[0]
-	window, _ := scrollWindow(lines, from, to, max(h-2, 0))
+	window, start := scrollWindow(lines, from, to, max(h-2, 0))
 	out := append([]string{heading}, window...)
-	out = append(out, dim.Render(fmt.Sprintf("%d accounts · of %d", len(ordered), len(ordered))))
+	out = append(out, dim.Render(fmt.Sprintf("%d-%d of %d", rowAccounts[start], rowAccounts[start+len(window)-1], len(ordered))))
 	return out
 }
 

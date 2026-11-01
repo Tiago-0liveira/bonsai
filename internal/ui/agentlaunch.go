@@ -275,9 +275,10 @@ func plannerDialogFields(fields []agents.LaunchField) []agents.LaunchField {
 }
 
 func (d launchDialog) setFocus(f launchFocus) launchDialog {
+	previous := d.focus
 	d.focus = (f + launchFocusCount) % launchFocusCount
 	if d.planner && d.focus == launchFocusTask {
-		if f < launchFocusTask {
+		if previous == launchFocusName {
 			d.focus = launchFocusAccount
 		} else {
 			d.focus = launchFocusName
@@ -560,7 +561,7 @@ func launchShortPath(path string) string {
 	if parent == "." || parent == string(filepath.Separator) {
 		return path
 	}
-	return "…/" + filepath.Join(parent, filepath.Base(path))
+	return ".../" + filepath.Join(parent, filepath.Base(path))
 }
 
 func (d launchDialog) targetLines() []string {
@@ -572,7 +573,11 @@ func (d launchDialog) targetLines() []string {
 		}
 		lines = append(lines, fmt.Sprintf("%s%s (%s)", marker, t.branch, launchShortPath(t.workDir)))
 	}
-	lines = append(lines, "↑↓ worktree · enter select · esc back")
+	hint := "↑↓ worktree · enter select · esc back"
+	if d.ascii {
+		hint = "up/down worktree · enter select · esc back"
+	}
+	lines = append(lines, hint)
 	return lines
 }
 

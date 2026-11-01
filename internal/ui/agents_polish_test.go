@@ -65,7 +65,7 @@ func TestAgentKeysHaveTheirOwnHelpSection(t *testing.T) {
 			agentsSection = sec.actions
 		}
 	}
-	want := []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}
+	want := []string{"agents_tab", "agent_all", "agent_new", "agent_quick_new", "agent_fork", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}
 	if strings.Join(agentsSection, ",") != strings.Join(want, ",") {
 		t.Fatalf("Agents tab section = %v, want %v", agentsSection, want)
 	}

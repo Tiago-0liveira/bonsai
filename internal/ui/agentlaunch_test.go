@@ -910,3 +910,31 @@ func TestForkLaunchCopiesAcceptedSettings(t *testing.T) {
 		})
 	}
 }
+
+func TestLaunchWorktreeBindingAndPlannerFocus(t *testing.T) {
+	e := accountsEnv(t)
+	e.m.keys = newKeyMap(map[string]string{"launch_change_worktree": "ctrl+t"})
+	e.openLaunch(t)
+	e.sendKey(t, tea.KeyCtrlW)
+	if e.dialog().choosing {
+		t.Fatal("old worktree key is still active")
+	}
+	e.sendKey(t, tea.KeyCtrlT)
+	if !e.dialog().choosing {
+		t.Fatal("custom worktree key was ignored")
+	}
+	d := e.dialog()
+	if !strings.Contains(d.footer(), "ctrl+t worktree") {
+		t.Fatal("footer ignored binding")
+	}
+	d.planner = true
+	d = d.setFocus(launchFocusName)
+	d = d.setFocus(launchFocusTask)
+	if d.focus != launchFocusAccount {
+		t.Fatal("planner must skip Task going backward")
+	}
+	d = d.setFocus(launchFocusTask)
+	if d.focus != launchFocusName {
+		t.Fatal("planner must skip Task going forward")
+	}
+}
