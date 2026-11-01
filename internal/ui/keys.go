@@ -108,7 +108,7 @@ var defaultBindings = map[string]bindingSpec{
 	"agents_tab":       {[]string{"g"}, "agents"},
 	"agent_all":        {[]string{"a"}, "all agents"},
 	"agent_new":        {[]string{"n"}, "new agent"},
-	"agent_accounts":   {[]string{"m"}, "agent accounts"},
+	"agent_accounts":   {[]string{"m"}, "accounts"},
 	"agent_usage":      {[]string{"u"}, "agent usage"},
 	"agent_attach":     {[]string{"enter"}, "control agent (terminal mode)"},
 	"agent_playground": {[]string{"O"}, "open in Playground (observe)"},

@@ -12,6 +12,8 @@ contains the five working workspaces.
 
 ## TUI
 
+The Agents footer uses “accounts”, matching the account picker and keymap.
+
 Tab labels show your configured jump keys, including Git Log in wide terminals.
 Long key names are shortened in compact headers. Built-in themes keep hints and
 inactive tabs at a minimum 4.5:1 contrast against their dark base and surfaces.
