@@ -46,8 +46,8 @@ func TestGolden(t *testing.T) {
 	loading := append(stale, Account{Provider: "antigravity", Name: "new", Loading: true})
 	states := append(loading, Account{Provider: "codex", Name: "unavailable", Primary: &agents.UsageLimit{Window: "5h"}}, Account{Provider: "antigravity", Name: "studio"})
 	for name, got := range map[string]string{
-		"summary-40x5":          ViewSummary(append(twoAccounts(), twoAccounts()[0]), "2m", 40, 5, false),
-		"summary-ascii-40x5":    ViewSummary(twoAccounts(), "2m", 40, 5, true),
+		"summary-40x5":          ViewSummaryAt(append(twoAccounts(), twoAccounts()[0]), "2m", 40, 5, testNow, false),
+		"summary-ascii-40x5":    ViewSummaryAt(twoAccounts(), "2m", 40, 5, testNow, true),
 		"two-accounts-40x12":    ViewPage(twoAccounts(), "2m", 40, 12, testNow, false, 0),
 		"stale-loading-40x12":   ViewPage(loading, "refreshing…", 40, 12, testNow, false, 0),
 		"compact-40x6":          ViewPage(twoAccounts(), "2m", 40, 6, testNow, false, 0),
@@ -210,4 +210,38 @@ func TestCompactReset(t *testing.T) {
 			t.Errorf("%s: got %s, want %s", tc.after, got, tc.want)
 		}
 	}
+}
+
+func TestMixedColumnsAcrossPages(t *testing.T) {
+	accounts := twoAccounts()
+	accounts[0].Name = "tfg"
+	accounts[0].Stale = true
+	accounts[1].Name = "a-very-long-account"
+	for _, ascii := range []bool{false, true} {
+		columns := map[string]int{}
+		for page := 0; page < 2; page++ {
+			view := plain(ViewPage(accounts, fmt.Sprintf("%d/2", page+1), 80, 3, testNow, ascii, page))
+			checkGolden(t, fmt.Sprintf("aligned-%t-page-%d", ascii, page+1), view)
+			row := strings.Split(view, "\n")[1]
+			bar := "▰"
+			if ascii {
+				bar = "#"
+			}
+			for _, token := range []string{"5h", " W ", bar} {
+				index := strings.Index(row, token)
+				if index < 0 {
+					t.Fatalf("missing %s: %s", token, view)
+				}
+				col := ansi.StringWidth(row[:index])
+				if previous, ok := columns[token]; ok && previous != col {
+					t.Fatalf("%s moved: %s", token, view)
+				}
+				columns[token] = col
+			}
+			if strings.Contains(view, "! stale") != (page == 0) {
+				t.Fatalf("incorrect stale hint: %s", view)
+			}
+		}
+	}
+	checkGolden(t, "summary-reset", plain(ViewSummaryAt(accounts, "", 64, 4, testNow, false)))
 }
