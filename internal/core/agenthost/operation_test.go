@@ -208,12 +208,16 @@ func TestOperationSocketReadyDoesNotAcknowledgeProviderStart(t *testing.T) {
 	if err := fakeLaunchOperationReceive(t, errs); err != nil {
 		t.Fatal(err)
 	}
-	c, _, err := Dial(obs.Record, Request{Mode: ModeStatus, Client: "test"})
+	c, ready, err := Dial(obs.Record, Request{Mode: ModeStatus, Client: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	readUntil(t, c, func(f Frame, _ string) bool { return f.Status != nil && f.Status.State == "running" })
+	// Dial consumes the ready frame, which already carries the current status:
+	// a session that started before the dial publishes nothing further.
+	if ready.Status == nil || ready.Status.State != "running" {
+		readUntil(t, c, func(f Frame, _ string) bool { return f.Status != nil && f.Status.State == "running" })
+	}
 	actual, err := QueryOperation(context.Background(), s.Paths, req.SessionID, req.OperationID)
 	if err != nil || !actual.Acknowledged || actual.Record.Summary.OperationID != req.OperationID || actual.Record.Summary.Task == nil {
 		t.Fatalf("actual start=%+v %v", actual, err)
