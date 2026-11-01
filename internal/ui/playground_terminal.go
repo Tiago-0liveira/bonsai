@@ -148,7 +148,7 @@ func (m *Model) pgAttach(id string, write bool) tea.Cmd {
 // pgEnter is Enter on the selected session: it requests control.
 func (m Model) pgEnter() (Model, tea.Cmd) {
 	if !m.agents.active() {
-		m.status = "Agent terminals are unavailable on this host"
+		m.setStatus("Agent terminals are unavailable on this host", false)
 		return m, nil
 	}
 	r, ok := m.playgroundSelected()
@@ -158,10 +158,10 @@ func (m Model) pgEnter() (Model, tea.Cmd) {
 	s := r.Rec.Session
 	switch {
 	case pgEnded(s):
-		m.status = "This agent has ended and accepts no input"
+		m.setStatus("This agent has ended and accepts no input", false)
 		return m, nil
 	case !pgAttachable(s):
-		m.status = "This session is still starting; it cannot be attached yet"
+		m.setStatus("This session is still starting; it cannot be attached yet", false)
 		return m, nil
 	}
 	v := m.agents.view
@@ -171,7 +171,7 @@ func (m Model) pgEnter() (Model, tea.Cmd) {
 	}
 	switch {
 	case v.state == attachEnded:
-		m.status = "This agent has ended and accepts no input"
+		m.setStatus("This agent has ended and accepts no input", false)
 		return m, nil
 	case v.err != "" || (v.stream == nil && v.banner != ""):
 		m.pg.open = true
@@ -180,7 +180,7 @@ func (m Model) pgEnter() (Model, tea.Cmd) {
 		}
 		return m, nil // retrying cannot help: the message stays on screen
 	case v.stream == nil:
-		m.status = "Still connecting to the agent"
+		m.setStatus("Still connecting to the agent", false)
 		return m, nil
 	case v.state == attachObservingOther:
 		return m.pgOpenTakeover(s.ID), nil
@@ -193,7 +193,7 @@ func (m Model) pgEnter() (Model, tea.Cmd) {
 // pgObserve opens the terminal read-only over the whole body, without asking for control.
 func (m Model) pgObserve() (Model, tea.Cmd) {
 	if !m.agents.active() {
-		m.status = "Agent terminals are unavailable on this host"
+		m.setStatus("Agent terminals are unavailable on this host", false)
 		return m, nil
 	}
 	r, ok := m.playgroundSelected()
@@ -202,7 +202,7 @@ func (m Model) pgObserve() (Model, tea.Cmd) {
 	}
 	s := r.Rec.Session
 	if !pgAttachable(s) {
-		m.status = "This session is still starting; it cannot be attached yet"
+		m.setStatus("This session is still starting; it cannot be attached yet", false)
 		return m, nil
 	}
 	m.pg.open = true
@@ -240,7 +240,7 @@ func (m Model) pgTakeConfirmed() (Model, tea.Cmd) {
 	m.pg.takeFor = ""
 	v := m.agents.view
 	if !m.pg.own || v == nil || v.sessionID != id || v.state != attachObservingOther {
-		m.status = "Control was not taken: the session changed"
+		m.setStatus("Control was not taken: the session changed", false)
 		return m, nil
 	}
 	m.pg.open = true

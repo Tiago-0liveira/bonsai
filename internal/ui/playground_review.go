@@ -65,7 +65,7 @@ func (m Model) reviewBackend() (playgroundapi.ReviewBackend, bool) {
 
 func (m Model) pgReviewOpen() (tea.Model, tea.Cmd) {
 	if _, ok := m.reviewBackend(); !ok {
-		m.status = "Read-only review is unavailable on this host"
+		m.setStatus("Read-only review is unavailable on this host", false)
 		return m, nil
 	}
 	r, ok := m.playgroundSelected()

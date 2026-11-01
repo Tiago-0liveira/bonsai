@@ -48,7 +48,7 @@ func TestCreateSelectsNewWorktreeBeforeAgentLaunch(t *testing.T) {
 	e := newAgentsEnv(t)
 	e.m.createStartAgent = true
 	path := e.repo + "-new"
-	nm, _ := e.m.onOpDone(opDoneMsg{label: "create new", createdPath: path})
+	nm, _ := e.m.onOpDone(opDoneMsg{label: "create new", createdPath: path, startAgent: true})
 	m := nm.(Model)
 	trees := append(append([]git.Worktree(nil), m.worktrees...), git.Worktree{Path: path, Branch: "new"})
 	nm, _ = m.onWorktrees(worktreesMsg{trees: trees})
@@ -59,5 +59,16 @@ func TestCreateSelectsNewWorktreeBeforeAgentLaunch(t *testing.T) {
 	}
 	if m.createdAgentPath != "" {
 		t.Fatal("pending launch not consumed")
+	}
+}
+
+func TestCreateUsesSubmittedAgentChoice(t *testing.T) {
+	for _, start := range []bool{false, true} {
+		e := newAgentsEnv(t)
+		e.m.createStartAgent = !start
+		nm, _ := e.m.onOpDone(opDoneMsg{createdPath: e.wtA, startAgent: start})
+		if got := nm.(Model).createdAgentPath != ""; got != start {
+			t.Fatalf("submitted %v got %v", start, got)
+		}
 	}
 }

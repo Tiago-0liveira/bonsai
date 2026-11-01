@@ -322,10 +322,13 @@ func WorktreePath(repoDir, branch string) string {
 
 // AddWorktreeNewBranch creates a worktree at path checking out a newly created
 // branch.
-func AddWorktreeNewBranch(dir, path, branch string, base ...string) error {
-	args := []string{"worktree", "add", "-b", branch, path}
-	if len(base) > 0 && base[0] != "" {
-		args = append(args, base[0])
+func AddWorktreeNewBranch(dir, path, branch, base string) error {
+	if strings.HasPrefix(base, "-") {
+		return fmt.Errorf("%w: %q", ErrInvalidWorktreeBase, base)
+	}
+	args := []string{"worktree", "add", "-b", branch, "--", path}
+	if base != "" {
+		args = append(args, base)
 	}
 	_, err := run(dir, args...)
 	return err

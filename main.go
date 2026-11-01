@@ -377,14 +377,14 @@ func run(cfgPath string, layout ui.Layout) error {
 			}
 		}
 	}
-	model := newTUIModel(repoDir, cfg, state, agentsAPI, extra...)
+	model := newTUIModel(repoDir, cfg, state, agentsAPI, append(extra, ui.WithOutput(os.Stdout))...)
 	// Here, not in newTUIModel, so tests do not write shims to the real cache dir.
 	go coreexec.PrepareShellIntegration()
 	// Mouse tracking is on so the wheel scrolls the pane under the pointer.
 	// Without it, terminals translate the wheel into arrow keys, which the panes
 	// read as "move the selection". The cost is that dragging to select text now
 	// needs shift held (or the mouse turned off from the command palette).
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithOutput(os.Stdout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	if backendErr != nil {
 		// After the TUI has left the alternate screen, so the line stays visible.

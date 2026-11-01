@@ -373,9 +373,9 @@ func (m Model) worktreesInspect() (tea.Model, tea.Cmd) {
 		if r.path == "" {
 			var action tea.Cmd
 			if r.pr > 0 {
-				action = createWorktree(m.repoDir, "pr", "", r.pr, m.cfg)
+				action = createWorktree(m.repoDir, "pr", "", r.pr, m.cfg, "", false)
 			} else {
-				action = createWorktree(m.repoDir, "existing", r.branch, 0, m.cfg)
+				action = createWorktree(m.repoDir, "existing", r.branch, 0, m.cfg, "", false)
 			}
 			// Creation is explicit even when destructive confirmations are disabled.
 			m.pendingConfirm = &confirmState{action: action}
@@ -608,7 +608,7 @@ func (m Model) worktreesGarden() (tea.Model, tea.Cmd) {
 	}
 	rec, ok := pgTask(m.garden.board.collection, session.Task)
 	if !ok || m.garden.api == nil {
-		m.status = "The linked Issue is not loaded in Garden"
+		m.setStatus("The linked Issue is not loaded in Garden", false)
 		return m, nil
 	}
 	m.worktreesRememberDocument()

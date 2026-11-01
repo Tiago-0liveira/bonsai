@@ -211,7 +211,7 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 				return true, nm, cmd
 			}
 		}
-		m.status = "agents: no ended session to retry"
+		m.setStatus("agents: no ended session to retry", false)
 		return true, m, nil
 	case key.Matches(msg, m.keys.AgentStopAll):
 		nm, cmd := m.askStopAllAgents()
@@ -221,7 +221,7 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentAll):
 		if !m.agents.active() {
-			m.status = unsupportedNotice
+			m.setStatus(unsupportedNotice, false)
 			return true, m, nil
 		}
 		nm, cmd := m.openAgentsPicker()
@@ -323,7 +323,7 @@ func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
 		if !m.list.SelectByPath(path) {
 			m.list, _ = m.list.Update(tea.KeyMsg{Type: tea.KeyEsc})
 			if !m.list.SelectByPath(path) {
-				m.status = "agents: worktree is hidden by the current filter or no longer exists"
+				m.setStatus("agents: worktree is hidden by the current filter or no longer exists", false)
 				return m, nil
 			}
 		}
@@ -365,7 +365,7 @@ func cleanPath(p string) string { return filepath.Clean(p) }
 // openRepoSessions uses the same ordered history and filter as the local picker.
 func (m Model) openRepoSessions() (tea.Model, tea.Cmd) {
 	if !m.agents.active() {
-		m.status = unsupportedNotice
+		m.setStatus(unsupportedNotice, false)
 		return m, nil
 	}
 	m.leaveAgentTerminal()
@@ -384,20 +384,20 @@ func (m Model) openRepoSessions() (tea.Model, tea.Cmd) {
 
 func (m Model) nextAgentAttention() (tea.Model, tea.Cmd) {
 	if !m.agents.active() {
-		m.status = "No sessions need attention"
+		m.setStatus("No sessions need attention", false)
 		return m, nil
 	}
 	var candidates []sessionsPickMsg
 	for _, wt := range m.worktrees {
 		path := cleanPath(wt.Path)
 		for _, s := range m.orderedSessions(path) {
-			if (s.Active() && sessionUrgency(s) == urgencyWaiting) || (!s.Active() && !m.agents.ack[s.ID]) {
+			if m.sessionNeedsAttention(s) {
 				candidates = append(candidates, sessionsPickMsg{path, s.ID})
 			}
 		}
 	}
 	if len(candidates) == 0 {
-		m.status = "No sessions need attention"
+		m.setStatus("No sessions need attention", false)
 		return m, nil
 	}
 	next := 0

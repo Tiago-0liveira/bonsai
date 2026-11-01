@@ -181,7 +181,7 @@ func cmdCreate(repoDir string, args []string, out, errOut io.Writer) error {
 		}
 		path = cfg.WorktreePath(repoDir, branch)
 		if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
-			err = git.AddWorktreeNewBranch(repoDir, path, branch)
+			err = git.AddWorktreeNewBranch(repoDir, path, branch, "")
 		}
 	}
 	if err != nil {

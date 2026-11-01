@@ -164,7 +164,7 @@ func (m Model) applyPrefs(p prefs.SaveMsg) (tea.Model, tea.Cmd) {
 
 	m.keys = newKeyMap(m.mergedKeyOverrides())
 	if cols := keyCollisions(m.mergedKeyOverrides()); len(cols) > 0 {
-		m.status = "key conflicts ignored: " + cols[0]
+		m.setStatus("key conflicts ignored: "+cols[0], false)
 	}
 	if p.Sort != "" {
 		m.sort = sortModeFromName(p.Sort)
@@ -283,11 +283,13 @@ func (m Model) legendContent() string {
 	row(pass.Render(theme.CheckGlyph("pass", m.agentGlyphsASCII()))+" / "+fail.Render(theme.CheckGlyph("fail", m.agentGlyphsASCII()))+" / "+pend.Render(theme.CheckGlyph("pending", m.agentGlyphsASCII())), "CI status of the connected PR: passing / failing / pending")
 	row(badge.Render("#123"), "open pull request connected to this branch")
 	row(badge.Render("#123 merged")+"  "+dim.Render("#123 closed"), "PR state once it is no longer open")
-	row("↑2 ↓1", "commits ahead of / behind the base ref ("+m.cfg.Upstream+")")
-	row(dirty.Render("●3"), "3 tracked files changed (staged + modified)")
+	up, down := worktreelist.AheadBehindGlyphs(m.agentGlyphsASCII())
+	row(up+"2 "+down+"1", "commits ahead of / behind the base ref ("+m.cfg.Upstream+")")
+	row(dirty.Render(worktreelist.TrackedGlyph(m.agentGlyphsASCII())+"3"), "3 tracked files changed (staged + modified)")
 	row(dim.Render("?2"), "2 untracked files")
-	row(run.Render("▶1"), "1 process currently running in this worktree")
+	row(run.Render(worktreelist.RunningGlyph(m.agentGlyphsASCII())+"1"), "1 process currently running in this worktree")
 
+	row(strings.Join(agentBadgeGlyphs(m.agentGlyphsASCII()), " / "), "agent working / waiting / exited / failed")
 	b.WriteString("\n" + sec.Render("Checks & PR tabs") + "\n")
 	row(pass.Render(theme.CheckGlyph("pass", m.agentGlyphsASCII())), "check passed / review approved / mergeable")
 	row(fail.Render(theme.CheckGlyph("fail", m.agentGlyphsASCII())), "check failed / changes requested / conflicting")

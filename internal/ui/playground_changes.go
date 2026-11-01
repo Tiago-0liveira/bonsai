@@ -186,7 +186,7 @@ func (m Model) pgChangesOpen() (tea.Model, tea.Cmd) {
 	r, ok := m.playgroundSelected()
 	switch {
 	case m.pg.api == nil:
-		m.status = "Changes are not available on this host"
+		m.setStatus("Changes are not available on this host", false)
 		return m, nil
 	case !ok || m.pg.sub == pgSubUsage:
 		return m, nil
@@ -536,10 +536,10 @@ func (m Model) pgLinkStart() Model {
 	case m.pg.link.busy:
 		return m
 	case !m.pg.chg.changes.have || m.pg.chg.changes.bad:
-		m.status = "Read the changes first; the link depends on whether the session already has a task"
+		m.setStatus("Read the changes first; the link depends on whether the session already has a task", false)
 		return m
 	case !m.pgLinkable():
-		m.status = "This session already has a task; it cannot be linked again here"
+		m.setStatus("This session already has a task; it cannot be linked again here", false)
 		return m
 	}
 	m.pg.link = pgLinkFlow{session: m.pg.chg.session}
@@ -615,7 +615,7 @@ func (m Model) pgLinkConfirmed(replace bool) (Model, tea.Cmd) {
 	l := m.pg.link
 	if l.session == "" || l.issue <= 0 || m.pg.api == nil || l.session != m.pg.sel || !m.pg.chg.open {
 		m.pg.link = pgLinkFlow{}
-		m.status = "Nothing was linked: the session changed"
+		m.setStatus("Nothing was linked: the session changed", false)
 		return m, nil
 	}
 	m.pg.link.busy = true
@@ -635,7 +635,7 @@ func (m Model) pgLinkDone(msg pgLinkMsg) (Model, tea.Cmd) {
 		if c.session == msg.session {
 			c.note = s
 		}
-		m.status = s
+		m.setStatus(s, false)
 	}
 	if msg.err == nil {
 		say(fmt.Sprintf("Linked to Issue #%d (display only: no plan, approval or attempt)", msg.issue))

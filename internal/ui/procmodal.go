@@ -67,7 +67,7 @@ func (m Model) openProcModal() (tea.Model, tea.Cmd) {
 
 	initial := build("")
 	if len(initial) == 0 {
-		m.status = "no processes"
+		m.setStatus("no processes", false)
 		return m, nil
 	}
 	modal := modals.NewSectionedFuzzy(modals.KindProcesses, "Processes", build, initial)
@@ -123,10 +123,10 @@ func (m Model) onPolicyModalSubmit(choice string) (tea.Model, tea.Cmd) {
 	id := m.policyModalID
 	pol := procstore.Policy{Mode: choice, MaxRestarts: procstore.DefaultPolicy().MaxRestarts}
 	if _, err := m.procs.SetPolicy(id, pol); err != nil {
-		m.status = "policy: " + err.Error()
+		m.setStatus("policy: "+err.Error(), true)
 		return m, nil
 	}
-	m.status = fmt.Sprintf("#%d restart policy: %s", id, choice)
+	m.setStatus(fmt.Sprintf("#%d restart policy: %s", id, choice), false)
 	m.refreshProcPane()
 	return m, nil
 }
@@ -187,7 +187,7 @@ func (m Model) openProcMultiViewModal() (tea.Model, tea.Cmd) {
 	}
 	recs := m.procs.List(wt.Path)
 	if len(recs) == 0 {
-		m.status = "no processes"
+		m.setStatus("no processes", false)
 		return m, nil
 	}
 	selected := map[int]bool{}

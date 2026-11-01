@@ -370,7 +370,7 @@ func (m Model) shellUpdateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case workspaceSavedMsg:
 		if msg.err != nil && !errors.Is(msg.err, config.ErrSuperseded) && msg.gen == m.wsGen {
-			m.status = "Could not remember workspace: " + msg.err.Error()
+			m.setStatus("Could not remember workspace: "+msg.err.Error(), true)
 		}
 		return m, nil
 	case configSavedMsg:

@@ -65,3 +65,38 @@ func statusPrimaryResult(cmd tea.Cmd) tea.Msg {
 	}
 	return msg
 }
+
+func TestStatusAssignmentGeneration(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		m := renderModel()
+		m.setStatus("x", false)
+		old := m.statusGen
+		m.setStatus("x", failed)
+		nm, _ := m.Update(statusClearMsg{old})
+		m = nm.(Model)
+		if m.status != "x" {
+			t.Fatal("stale tick cleared repeated status")
+		}
+		if failed {
+			nm, _ = m.Update(statusClearMsg{m.statusGen})
+			if nm.(Model).status != "x" {
+				t.Fatal("error expired")
+			}
+		}
+	}
+}
+
+func TestOperationFailureDoesNotExpire(t *testing.T) {
+	for _, label := range []string{"create", "bulk prune", "pull"} {
+		t.Run(label, func(t *testing.T) {
+			m := renderModel()
+			m.list = worktreelist.New()
+			nm, _ := m.onOpDone(opDoneMsg{label: label, err: errors.New("failed")})
+			m = nm.(Model)
+			nm, _ = m.Update(statusClearMsg{m.statusGen})
+			if !nm.(Model).statusErr || nm.(Model).status == "" {
+				t.Fatal("failure expired")
+			}
+		})
+	}
+}

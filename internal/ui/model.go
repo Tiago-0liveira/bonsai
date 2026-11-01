@@ -5,6 +5,7 @@ package ui
 import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"io"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -247,15 +248,18 @@ type Model struct {
 	acct accountsState
 
 	// Layout / status.
-	width, height int
-	focus         focusArea
-	rightTab      rightTab
-	logContent    string // last-loaded git log, shown on the Git Log tab
-	status        string
-	statusGen     uint64
-	statusShown   string
-	err           error
-	ready         bool
+	width, height   int
+	focus           focusArea
+	rightTab        rightTab
+	logContent      string // last-loaded git log, shown on the Git Log tab
+	status          string
+	statusGen       uint64
+	statusErr       bool
+	statusScheduled uint64
+	output          io.Writer
+	statusShown     string
+	err             error
+	ready           bool
 	// depth is how many bonsai shells this bonsai already runs inside (0 at
 	// top level); the caller reads it, the UI never touches the environment.
 	depth int
@@ -341,7 +345,7 @@ func New(repoDir string, cfg *config.Config, state *config.State, opts ...Option
 	m.procSearchInput.Placeholder = "search output…"
 	m.term.SetTitle("Git Log")
 	if cols := keyCollisions(keys); len(cols) > 0 {
-		m.status = "key conflicts ignored: " + cols[0]
+		m.setStatus("key conflicts ignored: "+cols[0], false)
 	}
 	return m
 }

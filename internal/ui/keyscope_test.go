@@ -102,3 +102,13 @@ func TestValidateKeyBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateToggleScopeAllowsControlShortcut(t *testing.T) {
+	scope, _, ok := scopeOfAction("create_agent_toggle")
+	if !ok || scope != ksCreate {
+		t.Fatal("toggle must be scoped to creation")
+	}
+	if fixedKeys["ctrl+a"] {
+		t.Fatal("default toggle shortcut is reserved")
+	}
+}

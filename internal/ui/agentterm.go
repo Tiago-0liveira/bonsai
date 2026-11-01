@@ -151,7 +151,7 @@ func (m Model) onAgentInput(msg agentInputMsg) (tea.Model, tea.Cmd) {
 	// (focus reports, cursor queries) away from an agent we do not control.
 	send, dropped := v.queueInput(msg.data)
 	if dropped {
-		m.status = inputDroppedNote
+		m.setStatus(inputDroppedNote, false)
 	}
 	return m, tea.Batch(send, waitInputCmd(v.term))
 }
@@ -171,7 +171,7 @@ func (m Model) onAgentTook(msg agentTookMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.err != nil {
-		m.status = "agents: could not take control"
+		m.setStatus("agents: could not take control", true)
 		return m, nil
 	}
 	// The writer frame normally decides; checking now covers a holder that
@@ -229,7 +229,7 @@ func (m *Model) enterTerminalMode() (handled bool, cmd tea.Cmd) {
 		return false, nil
 	}
 	if v.state == attachEnded {
-		m.status = "This agent has ended"
+		m.setStatus("This agent has ended", false)
 		return true, nil
 	}
 	if v.term == nil || v.stream == nil {
@@ -329,7 +329,7 @@ func (m Model) agentTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case attachObservingOther:
 		if !v.hinted {
 			v.hinted = true
-			m.status = observingOtherNote
+			m.setStatus(observingOtherNote, false)
 		}
 	}
 	return m, nil

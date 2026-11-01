@@ -34,8 +34,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.shellUpdate(msg)
 	}
 	if tick, ok := msg.(statusClearMsg); ok {
-		if tick.generation == m.statusGen {
-			m.status = ""
+		if tick.generation == m.statusGen && !m.statusErr {
+			m.setStatus("", false)
 			m.statusShown = ""
 			m.statusGen++
 		}
@@ -49,10 +49,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Every update can change what the Agents tab shows, so the live view is
 	// reconciled here rather than at each place that changes the selection.
 	if next, ok := nm.(Model); ok {
-		if next.status != next.statusShown {
+		if next.status != next.statusShown || next.statusGen != next.statusScheduled {
 			next.statusGen++
 			next.statusShown = next.status
-			if next.status != "" {
+			next.statusScheduled = next.statusGen
+			if next.status != "" && !next.statusErr {
 				generation := next.statusGen
 				cmd = tea.Batch(cmd, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return statusClearMsg{generation} }))
 			}
@@ -81,7 +82,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = fmt.Errorf("update failed: %w", msg.err)
 		} else {
-			m.status = "Updated to " + msg.tag + ". Restart Bonsai to use it."
+			m.setStatus("Updated to "+msg.tag+". Restart Bonsai to use it.", false)
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -141,7 +142,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case logMsg:
 		if m.layoutKind == LayoutRedesign && msg.err != nil {
-			m.status = "Git Log stale: " + msg.err.Error()
+			m.setStatus("Git Log stale: "+msg.err.Error(), true)
 			return m, nil
 		}
 		// Log failures (e.g. a branch with no commits yet) are non-fatal: show a
@@ -586,7 +587,7 @@ const runCommandLabel = "＋ run command…"
 
 func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = "scripts: " + msg.err.Error()
+		m.setStatus("scripts: "+msg.err.Error(), true)
 		return m, nil
 	}
 	m.scriptRun = msg.runCmd
@@ -618,16 +619,16 @@ func (m Model) onScripts(msg scriptsMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
-	if msg.createdPath != "" && msg.err == nil && m.createStartAgent && m.agents.enabled() {
+	if msg.createdPath != "" && msg.err == nil && msg.startAgent && m.agents.enabled() {
 		m.createdAgentPath = msg.createdPath
 	}
 	if msg.err != nil {
-		m.status = msg.label + ": " + msg.err.Error()
+		m.setStatus(msg.label+": "+msg.err.Error(), true)
 	} else if msg.label == "shell" {
 		// The shell cannot print this: resuming redraws the alt screen over it.
-		m.status = "back in bonsai " + m.depthMarker(m.depth+1)
+		m.setStatus("back in bonsai "+m.depthMarker(m.depth+1), false)
 	} else {
-		m.status = msg.label + ": ok"
+		m.setStatus(msg.label+": ok", false)
 	}
 	// Refresh worktrees + log after any mutating op. Force a gh refetch so
 	// badges reflect the just-completed op instead of a cached state.
@@ -1000,7 +1001,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Fetch):
 		if wt, ok := m.selectedWorktree(); ok {
-			m.status = "fetching…"
+			m.setStatus("fetching…", false)
 			return m, gitFetch(wt.Path)
 		}
 		return m, nil
@@ -1032,14 +1033,14 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Pull):
 		if wt, ok := m.selectedWorktree(); ok {
-			m.status = "pulling…"
+			m.setStatus("pulling…", false)
 			return m, gitPull(wt.Path)
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Push):
 		if wt, ok := m.selectedWorktree(); ok {
-			m.status = "pushing…"
+			m.setStatus("pushing…", false)
 			return m, gitPush(wt.Path)
 		}
 		return m, nil
@@ -1126,7 +1127,7 @@ func (m Model) openCopyModal() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if wt.IsMain {
-		m.status = "select a target worktree (not main) to copy into"
+		m.setStatus("select a target worktree (not main) to copy into", false)
 		return m, nil
 	}
 	files := m.fileIndex
@@ -1340,7 +1341,7 @@ func (m Model) openRebaseModal() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m.status = "loading branches…"
+	m.setStatus("loading branches…", false)
 	cmd := m.readBranches(branchesForRebase, wt.Path)
 	return m, cmd
 }
@@ -1349,7 +1350,7 @@ func (m Model) openRebaseModal() (tea.Model, tea.Cmd) {
 // list once the branches arrive.
 func (m Model) onBranches(msg branchesMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = "branches: " + msg.err.Error()
+		m.setStatus("branches: "+msg.err.Error(), true)
 		return m, nil
 	}
 	var modal modals.Model
@@ -1496,7 +1497,7 @@ func (m Model) openPRTab() (tea.Model, tea.Cmd) {
 	}
 	n, isPR := m.prForBranch(wt.Branch)
 	if !isPR {
-		m.status = "no PR connected to this worktree"
+		m.setStatus("no PR connected to this worktree", false)
 		return m, nil
 	}
 	m.rightTab = tabPR
@@ -1516,7 +1517,7 @@ func (m Model) openDiffTab() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if wt.IsMain {
-		m.status = "diff vs base is unavailable on the main worktree"
+		m.setStatus("diff vs base is unavailable on the main worktree", false)
 		return m, nil
 	}
 	m.rightTab = tabDiff
@@ -1632,7 +1633,7 @@ func (m Model) openChecksTab() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if wt.Branch == "" || wt.Branch == "(detached)" {
-		m.status = "checks need a branch — HEAD is detached"
+		m.setStatus("checks need a branch — HEAD is detached", false)
 		return m, nil
 	}
 	m.rightTab = tabChecks
@@ -1673,7 +1674,7 @@ func (m Model) onDiff(msg diffMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.err != nil {
 		if m.layoutKind == LayoutRedesign {
-			m.status = "Diff stale: " + msg.err.Error()
+			m.setStatus("Diff stale: "+msg.err.Error(), true)
 			if m.rightTab == tabDiff {
 				m.term.SetContent(m.renderDiff() + "\nDiff stale: " + msg.err.Error())
 			}
@@ -1851,11 +1852,11 @@ func (m Model) openUpdateBaseModal() (tea.Model, tea.Cmd) {
 func (m Model) openCreatePR() (tea.Model, tea.Cmd) {
 	wt, ok := m.selectedWorktree()
 	if !ok || wt.IsMain {
-		m.status = "select a feature worktree to open a PR"
+		m.setStatus("select a feature worktree to open a PR", false)
 		return m, nil
 	}
 	if _, isPR := m.prForBranch(wt.Branch); isPR {
-		m.status = "this worktree already has a PR"
+		m.setStatus("this worktree already has a PR", false)
 		return m, nil
 	}
 	modal := modals.NewInput(modals.KindPRTitle, "New PR title", wt.Branch)
@@ -1867,7 +1868,7 @@ func (m Model) openCreatePR() (tea.Model, tea.Cmd) {
 // openBulkPruneModal kicks off an async scan for merged worktrees; the confirm
 // appears when the candidates arrive (onPruneCandidates).
 func (m Model) openBulkPruneModal() (tea.Model, tea.Cmd) {
-	m.status = "scanning for merged worktrees…"
+	m.setStatus("scanning for merged worktrees…", false)
 	cmd := m.worktreePromptRead("prune-candidates", loadPruneCandidates(m.repoDir, config.BaseBranch(m.cfg.Upstream)))
 	return m, cmd
 }
@@ -1876,12 +1877,12 @@ func (m Model) openBulkPruneModal() (tea.Model, tea.Cmd) {
 // confirms removal of the merged targets.
 func (m Model) onPruneCandidates(msg pruneCandidatesMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = "prune scan: " + msg.err.Error()
+		m.setStatus("prune scan: "+msg.err.Error(), true)
 		return m, nil
 	}
 	targets := m.mergedTargetsFrom(msg.merged)
 	if len(targets) == 0 {
-		m.status = "no merged worktrees to prune (active agent sessions are skipped)"
+		m.setStatus("no merged worktrees to prune (active agent sessions are skipped)", false)
 		return m, nil
 	}
 	var b strings.Builder
@@ -1923,10 +1924,10 @@ func (m Model) mergedTargetsFrom(merged map[string]string) []pruneTarget {
 // onPRCreated reports the outcome of creating a PR and refreshes the PR map.
 func (m Model) onPRCreated(msg prCreatedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = "create PR: " + msg.err.Error()
+		m.setStatus("create PR: "+msg.err.Error(), true)
 		return m, nil
 	}
-	m.status = fmt.Sprintf("opened PR #%d", msg.number)
+	m.setStatus(fmt.Sprintf("opened PR #%d", msg.number), false)
 	cmd := m.worktreeRead("prs", fetchPRs(m.repoDir, m.ghCache, true))
 	return m, cmd
 }
@@ -1952,7 +1953,7 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			if p, err := m.procs.Restart(id); err == nil {
 				m.activeProc[wt.Path] = p.ID
 			} else {
-				m.status = "restart: " + err.Error()
+				m.setStatus("restart: "+err.Error(), true)
 			}
 			m.refreshProcPane()
 		}
@@ -2025,11 +2026,11 @@ func (m Model) procTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 
 func (m Model) onPRs(msg prsMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = "PRs: " + msg.err.Error()
+		m.setStatus("PRs: "+msg.err.Error(), true)
 		return m, nil
 	}
 	if len(msg.prs) == 0 {
-		m.status = "no open pull requests"
+		m.setStatus("no open pull requests", false)
 		return m, nil
 	}
 	m.prs = msg.prs
@@ -2050,7 +2051,7 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if wt.IsMain {
-		m.status = "cannot prune the main worktree"
+		m.setStatus("cannot prune the main worktree", false)
 		return m, nil
 	}
 
@@ -2111,7 +2112,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		}
 		if c.available != nil {
 			if ok, reason := c.available(m); !ok {
-				m.status = reason
+				m.setStatus(reason, false)
 				return m, nil
 			}
 		}
@@ -2140,19 +2141,19 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 	case modals.KindPrefEditor:
 		m.state.Prefs.Editor = msg.Value
 		if err := m.state.Save(); err != nil {
-			m.status = "editor: " + err.Error()
+			m.setStatus("editor: "+err.Error(), true)
 			return m, nil
 		}
 		if msg.Value == "" {
-			m.status = "editor: cleared personal override"
+			m.setStatus("editor: cleared personal override", false)
 		} else {
-			m.status = "editor: " + msg.Value
+			m.setStatus("editor: "+msg.Value, false)
 		}
 		return m, nil
 
 	case modals.KindPRTitle:
 		if msg.Value == "" {
-			m.status = "empty PR title"
+			m.setStatus("empty PR title", false)
 			return m, nil
 		}
 		m.pendingPRTitle = msg.Value
@@ -2165,22 +2166,22 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		return m.onCreateSource(msg.Value)
 	case modals.KindCreateNew:
 		if msg.Value == "" {
-			m.status = "empty branch name"
+			m.setStatus("empty branch name", false)
 			return m, nil
 		}
-		m.status = "creating " + msg.Value
-		return m, createWorktree(m.repoDir, "new", msg.Value, 0, m.cfg, msg.Base)
+		m.setStatus("creating "+msg.Value, false)
+		return m, createWorktree(m.repoDir, "new", msg.Value, 0, m.cfg, msg.Base, m.createStartAgent)
 	case modals.KindCreateExisting:
-		m.status = "creating worktree for " + msg.Value
-		return m, createWorktree(m.repoDir, "existing", msg.Value, 0, m.cfg)
+		m.setStatus("creating worktree for "+msg.Value, false)
+		return m, createWorktree(m.repoDir, "existing", msg.Value, 0, m.cfg, "", m.createStartAgent)
 	case modals.KindCreatePR:
 		num := parseLeadingNum(msg.Value)
-		m.status = fmt.Sprintf("creating worktree for PR #%d", num)
-		return m, createWorktree(m.repoDir, "pr", "", num, m.cfg)
+		m.setStatus(fmt.Sprintf("creating worktree for PR #%d", num), false)
+		return m, createWorktree(m.repoDir, "pr", "", num, m.cfg, "", m.createStartAgent)
 
 	case modals.KindNewAlias:
 		if msg.Value == "" {
-			m.status = "empty alias name"
+			m.setStatus("empty alias name", false)
 			return m, nil
 		}
 		m.pendingAlias = msg.Value
@@ -2191,13 +2192,13 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	case modals.KindNewAliasCmd:
 		if msg.Value == "" || m.pendingAlias == "" {
-			m.status = "empty alias command"
+			m.setStatus("empty alias command", false)
 			return m, nil
 		}
 		if err := m.state.AddAlias(config.Alias{Name: m.pendingAlias, Command: msg.Value}); err != nil {
-			m.status = "add alias: " + err.Error()
+			m.setStatus("add alias: "+err.Error(), true)
 		} else {
-			m.status = "added alias " + m.pendingAlias
+			m.setStatus("added alias "+m.pendingAlias, false)
 		}
 		m.pendingAlias = ""
 		return m, nil
@@ -2216,7 +2217,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modals.KindCopyFile:
-		m.status = "copying " + msg.Value
+		m.setStatus("copying "+msg.Value, false)
 		return m, copyFile(m.repoDir, wt.Path, msg.Value, m.state.RecordCopy)
 
 	case modals.KindScripts:
@@ -2237,7 +2238,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	case modals.KindRunCommand:
 		if msg.Value == "" {
-			m.status = "empty command"
+			m.setStatus("empty command", false)
 			return m, nil
 		}
 		return m.spawn(wt.Path, msg.Value, msg.Value), nil
@@ -2264,10 +2265,10 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	case modals.KindCommit:
 		if msg.Value == "" {
-			m.status = "empty commit message"
+			m.setStatus("empty commit message", false)
 			return m, nil
 		}
-		m.status = "committing…"
+		m.setStatus("committing…", false)
 		return m, gitCommit(wt.Path, msg.Value)
 
 	case modals.KindPrune:
@@ -2275,9 +2276,9 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		force := strings.Contains(msg.Value, "force")
 		prNum, _ := m.prForBranch(wt.Branch)
 		if merge {
-			m.status = fmt.Sprintf("merging PR #%d then pruning %s", prNum, wt.Branch)
+			m.setStatus(fmt.Sprintf("merging PR #%d then pruning %s", prNum, wt.Branch), false)
 		} else {
-			m.status = "pruning " + wt.Branch
+			m.setStatus("pruning "+wt.Branch, false)
 		}
 		return m, pruneWorktree(m.repoDir, wt.Path, wt.Branch, m.upstreamFor(wt.Branch), m.cfg.DeleteHooks(), merge, force, prNum)
 
@@ -2285,13 +2286,13 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 		base := config.BaseBranch(m.upstreamFor(wt.Branch))
 		title := m.pendingPRTitle
 		m.pendingPRTitle = ""
-		m.status = "creating PR…"
+		m.setStatus("creating PR…", false)
 		return m, createPR(m.repoDir, wt.Path, title, msg.Value, base, false)
 
 	case modals.KindMergeStrategy:
 		if n, isPR := m.prForBranch(wt.Branch); isPR {
 			strat := msg.Value
-			m.status = "merging PR #" + strconv.Itoa(n) + " (" + strat + ")"
+			m.setStatus("merging PR #"+strconv.Itoa(n)+" ("+strat+")", false)
 			return m.confirm("Merge PR #"+strconv.Itoa(n)+" via "+strat+"?", "", prMerge(m.repoDir, n, strat))
 		}
 		return m, nil
@@ -2304,7 +2305,7 @@ func (m Model) onModalSubmit(msg modals.SubmitMsg) (tea.Model, tea.Cmd) {
 
 	case modals.KindReviewChanges:
 		if msg.Value == "" {
-			m.status = "request-changes needs a comment"
+			m.setStatus("request-changes needs a comment", false)
 			return m, nil
 		}
 		if n, isPR := m.prForBranch(wt.Branch); isPR {
@@ -2336,11 +2337,11 @@ func (m Model) spawn(path, label, command string) Model {
 	ownerPath, branch := m.worktreeOwner(path)
 	p, err := m.procs.Spawn(path, branch, label, command)
 	if err != nil {
-		m.status = "spawn: " + err.Error()
+		m.setStatus("spawn: "+err.Error(), true)
 		return m
 	}
 	m.activeProc[ownerPath] = p.ID
-	m.status = "running " + label
+	m.setStatus("running "+label, false)
 	return m
 }
 
@@ -2352,11 +2353,11 @@ func (m Model) spawnExec(ownerPath, label string, inv scriptInvocation) Model {
 	}
 	p, err := m.procs.SpawnExec(ownerPath, branch, dir, label, inv.Program, inv.Args)
 	if err != nil {
-		m.status = "spawn: " + err.Error()
+		m.setStatus("spawn: "+err.Error(), true)
 		return m
 	}
 	m.activeProc[ownerPath] = p.ID
-	m.status = "running " + label
+	m.setStatus("running "+label, false)
 	return m
 }
 
@@ -2392,11 +2393,11 @@ func (m Model) onCreateSource(choice string) (tea.Model, tea.Cmd) {
 		m.modal = &modal
 		return m, nil
 	case createSourceExisting:
-		m.status = "loading branches…"
+		m.setStatus("loading branches…", false)
 		cmd := m.readBranches(branchesForCreateExisting, m.repoDir)
 		return m, cmd
 	case createSourcePR:
-		m.status = "loading pull requests…"
+		m.setStatus("loading pull requests…", false)
 		cmd := m.worktreePromptRead("create-pr", loadPRs(m.repoDir))
 		return m, cmd
 	}
@@ -2536,7 +2537,7 @@ func (m Model) worktreeAttention(path string) int {
 			continue
 		}
 		s := m.agents.sessions[i]
-		if s.State == "failed" || sessionUrgency(s) == urgencyWaiting {
+		if m.sessionNeedsAttention(s) {
 			rank++
 		}
 	}
@@ -2562,4 +2563,9 @@ func (m Model) activeAgentNames(path string) []string {
 		}
 	}
 	return names
+}
+
+func (m *Model) setStatus(text string, failed bool) {
+	m.status, m.statusErr = text, failed
+	m.statusGen++
 }
