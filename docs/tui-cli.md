@@ -160,7 +160,10 @@ including after creating a worktree. Use `launch_change_worktree` (default
 Missing windows show `Not reported`; loading, unavailable and stale readings
 remain labeled. The suggested connected account has the highest minimum
 remaining capacity among its reported windows. Unknown/stale readings are not
-ranked. An explicit initial account or manual account selection takes priority.
+ranked. **n** and **N** open with the suggested account selected, falling back
+to the selected session's account while no usage is known; usage that arrives
+later moves the selection until you move it yourself. **F** keeps the source
+session's account, and a manual selection always takes priority.
 
 `↑`/`↓` (or `j`/`k`) select accounts and skip provider headings. `Enter`
 moves to the optional multiline **Task**, followed by Name, Model, Effort and

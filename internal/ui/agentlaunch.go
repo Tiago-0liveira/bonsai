@@ -637,7 +637,7 @@ func (d launchDialog) updateName() launchDialog {
 // Quick launch starts in Task; forking reuses only accepted session settings.
 func (m Model) openAgentTask(fork bool) (tea.Model, tea.Cmd) {
 	var seed *agentsapi.Session
-	initial := agents.AccountID("")
+	initial := m.selectedAgentAccount()
 	if fork {
 		wt, ok := m.selectedWorktree()
 		if !ok {
@@ -658,7 +658,8 @@ func (m Model) openAgentTask(fork bool) (tea.Model, tea.Cmd) {
 	}
 	d := *next.agents.overlay.launch
 	d.Browser = accounts.NewBrowser(next.agents.api.Accounts, initial, next.agents.usage, true)
-	d.accountPinned = initial != ""
+	// A fork keeps the source session's account; a new task follows the suggestion.
+	d.accountPinned = fork
 	d.seed = seed
 	if seed != nil {
 		for _, target := range d.targets {

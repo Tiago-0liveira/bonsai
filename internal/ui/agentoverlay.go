@@ -93,6 +93,9 @@ func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
 		branch:   branchOf(wt),
 	}
 	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), m.agents.usage, m.agentGlyphsASCII())
+	// The last-used account is only a fallback: until the user moves the
+	// cursor, the account with the most headroom wins once usage is known.
+	d.accountPinned = false
 	d.sessions = m.agents.sessions
 	d.changeWorktree = m.keys.LaunchChangeWorktree
 	for _, tree := range m.worktrees {
