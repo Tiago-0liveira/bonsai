@@ -19,8 +19,7 @@ const (
 	// or failed account is retried within a minute of crossing that limit
 	// rather than a full period later.
 	usagePaneCheck = time.Minute
-	// usagePaneMinRows is the terminal height below which the pane would
-	// squeeze the worktree list, so it is hidden.
+	// Very short terminals cannot spare even the provider summary.
 	usagePaneMinRows = 15
 	// usagePaneMaxFetches bounds provider calls in flight at once.
 	usagePaneMaxFetches = 8

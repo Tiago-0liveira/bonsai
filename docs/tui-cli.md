@@ -18,7 +18,7 @@ quit. `ctrl+k` opens the command palette, which also edits every `.bonsai.yaml`
 setting (with descriptions and examples) and applies it live.
 
 The worktree list shows ahead/behind arrows (`↑N ↓M`), `#PR` badges detected via
-`gh`, dirty change counts (`±N ?M`), CI shapes (`✓` pass, `✗` fail, `◌` pending) and 6 sort modes. The right pane has
+`gh`, dirty change counts (`±N ?M`), CI shapes (`✓` pass, `✗` fail, `◌` pending) and 6 sort modes (7 with agents enabled). The right pane has
 Inspector (working-tree status, last commit, diff-vs-base summary, disk usage,
 stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
@@ -914,7 +914,7 @@ The create-worktree flow offers **Start agent here** when agents are enabled.
 Space (`create_agent_toggle`) remembers the choice for this session; after creation,
 the new checkout is selected and its agent launch form opens. The palette also offers
 **New worktree with agent…**. New branches preview their configured path and base;
-Tab (`create_base`) edits the base before Enter creates the worktree.
+Tab (`create_base`) edits the configured upstream or selected PR base (HEAD if unset) before Enter creates the worktree.
 
 Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
 on the first line. Branch names shorten first. The selected row shows its full

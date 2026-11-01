@@ -177,10 +177,6 @@ func (m Model) paletteCommands() []paletteCmd {
 
 	cmds := tag("Worktree & git", []paletteCmd{
 		global("New worktree", m.keys.Create, Model.openCreateSourceModal),
-		global("New worktree with agent…", m.keys.Create, func(m Model) (tea.Model, tea.Cmd) {
-			m.createStartAgent = m.agents.enabled()
-			return m.openCreateSourceModal()
-		}),
 		global("Prune merged worktrees", m.keys.BulkPrune, Model.openBulkPruneModal),
 		global("Refresh", m.keys.Refresh, func(m Model) (tea.Model, tea.Cmd) {
 			cmd := m.readWorktrees(true)
@@ -291,6 +287,10 @@ func (m Model) paletteCommands() []paletteCmd {
 
 	if m.agents.enabled() {
 		cmds = append(cmds, tag("Agents", []paletteCmd{
+			global("New worktree with agent…", m.keys.Create, func(m Model) (tea.Model, tea.Cmd) {
+				m.createStartAgent = m.agents.enabled()
+				return m.openCreateSourceModal()
+			}),
 			global("Agents: open tab", m.keys.AgentsTab, Model.openAgentsTab),
 			global("Agents: new agent", m.keys.AgentNew, Model.openAgentLaunch),
 			global("Agents: accounts", m.keys.AgentAccounts, Model.openAgentAccounts),

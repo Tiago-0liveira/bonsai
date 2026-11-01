@@ -64,7 +64,7 @@ func (i Item) Description() string {
 // FilterValue drives list filtering.
 func (i Item) FilterValue() string { return i.WT.Branch + " " + i.WT.Path }
 
-// checkDot renders a colored CI rollup indicator, or "" when unknown.
+// checkDot renders a CI rollup with a distinct shape, or "" when unknown.
 func checkDot(rollup string) string { return checkGlyph(rollup, false) }
 func checkGlyph(rollup string, ascii bool) string {
 	pass, fail, pending := "✓", "✗", "◌"
@@ -172,33 +172,27 @@ func SetPRStatusMode(mode string) {
 	}
 }
 
-// prStatus maps the connected PR's state, draft flag and review decision to
-// its indicator glyph, label and style. Half circles mark not-ready states
-// (draft, unapproved, changes requested); full circles mark settled ones
-// (approved, merged, closed).
-func (i Item) prStatus() (glyph, label string, st lipgloss.Style) {
+// prStatus keeps PR state readable without relying on colour.
+func (i Item) prStatus() (label string, st lipgloss.Style) {
 	switch i.PRState {
 	case gh.StateMerged:
-		return "●", "merged", mergedBadgeStyle
+		return "merged", mergedBadgeStyle
 	case gh.StateClosed:
-		return "●", "closed", closedBadgeStyle
+		return "closed", closedBadgeStyle
 	}
 	if i.PRDraft {
-		return "◐", "draft", draftBadgeStyle
+		return "draft", draftBadgeStyle
 	}
 	switch i.PRReview {
 	case gh.ReviewApproved:
-		return "●", "approved", approvedBadgeStyle
+		return "approved", approvedBadgeStyle
 	case gh.ReviewChangesRequested:
-		return "◐", "changes", changesBadgeStyle
+		return "changes", changesBadgeStyle
 	}
-	return "◐", "open", prBadgeStyle
+	return "open", prBadgeStyle
 }
 
-// prBadge renders the connected PR badge: a colored "#N" plus, depending on
-// the display mode, a state glyph ("compact") or glyph and label ("full").
-// With "off" only the number shows. Branches named "pr-N" without a known
-// state always render the plain badge.
+// prBadge shows a PR number and state word. Off mode keeps only the number.
 func (i Item) prBadge() string {
 	n, ok := i.prNumber()
 	if !ok {
@@ -207,7 +201,7 @@ func (i Item) prBadge() string {
 	if i.PRState == "" || prStatusMode == "off" {
 		return prBadgeStyle.Render(fmt.Sprintf("#%d ", n))
 	}
-	_, label, st := i.prStatus()
+	label, st := i.prStatus()
 	return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(label) + " "
 }
 

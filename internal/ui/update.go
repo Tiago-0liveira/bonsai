@@ -489,6 +489,9 @@ func (m Model) upstreamFor(branch string) string {
 // per-path metrics, PRs, dirty state and CI rollups, applying the current sort
 // (main pinned first) while preserving the highlighted row.
 func (m *Model) rebuildItems() {
+	if m.sort == sortAttention && (!m.agents.enabled() || m.layoutKind == LayoutRedesign) {
+		m.sort = sortName
+	}
 	trees := m.sortedWorktrees()
 	items := make([]worktreelist.Item, len(trees))
 	for i, t := range trees {
@@ -2441,7 +2444,16 @@ func (m Model) configureCreateModal(modal *modals.Model, preview bool) {
 			return "from " + base + arrow + cfg.WorktreePath(m.repoDir, branch)
 		}
 	}
-	modal.SetCreateOptions(m.agents.enabled(), m.createStartAgent, m.keys.CreateAgentToggle, m.keys.CreateBase, cfg.Upstream, render)
+	base := cfg.Upstream
+	if m.cfg != nil {
+		if wt, ok := m.selectedWorktree(); ok {
+			base = m.upstreamFor(wt.Branch)
+		}
+	}
+	if base == "" {
+		base = "HEAD"
+	}
+	modal.SetCreateOptions(m.agents.enabled(), m.createStartAgent, m.keys.CreateAgentToggle, m.keys.CreateBase, base, render)
 }
 
 func (m *Model) cycleWorktreeSort() {
@@ -2479,7 +2491,7 @@ func (m Model) activeAgentNames(path string) []string {
 			continue
 		}
 		s := m.agents.sessions[i]
-		if s.State == "running" || s.State == "starting" {
+		if s.State == "running" || s.State == "starting" || s.State == "stopping" {
 			name := s.Name
 			if name == "" {
 				name = string(s.ID)

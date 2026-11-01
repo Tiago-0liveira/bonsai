@@ -19,7 +19,7 @@ func TestPrBadge(t *testing.T) {
 		notThere []string
 	}{
 		{
-			name:    "open PR shows half circle and label",
+			name:    "open PR shows state word",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateOpen},
 			contain: []string{"#12", "open"},
 		},
@@ -29,7 +29,7 @@ func TestPrBadge(t *testing.T) {
 			contain: []string{"#12", "draft"},
 		},
 		{
-			name:    "approved PR shows full circle",
+			name:    "approved PR shows state word",
 			item:    Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateOpen, PRReview: gh.ReviewApproved},
 			contain: []string{"#12", "approved"},
 		},
@@ -54,7 +54,7 @@ func TestPrBadge(t *testing.T) {
 			contain: []string{"#12", "closed"},
 		},
 		{
-			name:     "compact mode shows glyph without label",
+			name:     "compact mode keeps state readable",
 			mode:     "compact",
 			item:     Item{WT: git.Worktree{Branch: "feat-x"}, PR: 12, PRState: gh.StateMerged},
 			contain:  []string{"#12", "merged"},
