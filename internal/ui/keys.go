@@ -9,6 +9,7 @@ import (
 // keyMap holds every global binding. Modal-local and tab-local keys are handled
 // inside their components / the focused-tab key routers.
 type keyMap struct {
+	UsagePaneToggle   key.Binding
 	Tab               key.Binding
 	ShiftTab          key.Binding
 	Enter             key.Binding
@@ -72,6 +73,7 @@ type bindingSpec struct {
 // defaultBindings maps each action name to its default keys + help text. Order
 // here is not significant; display grouping is defined by keymapSections.
 var defaultBindings = map[string]bindingSpec{
+	"usage_pane_toggle":   {[]string{"U"}, "expand usage pane"},
 	"focus_next":          {[]string{"tab"}, "focus"},
 	"focus_prev":          {[]string{"shift+tab"}, "focus"},
 	"shell":               {[]string{"enter"}, "shell"},
@@ -196,6 +198,7 @@ func newKeyMap(overrides map[string]string) keyMap {
 		InspectTab:        b("inspect_tab"),
 		ChecksTab:         b("checks_tab"),
 		Filter:            b("filter"),
+		UsagePaneToggle:   b("usage_pane_toggle"),
 		Sort:              b("sort"),
 		CreateAgentToggle: b("create_agent_toggle"),
 		CreateBase:        b("create_base"),
@@ -247,7 +250,7 @@ type keymapSection struct {
 var keymapSections = []keymapSection{
 	{"Navigation", []string{"focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
 	{"Create worktree", []string{"create_agent_toggle", "create_base"}},
-	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
+	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "usage_pane_toggle", "refresh", "prune", "bulk_prune"}},
 	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab"}},
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},

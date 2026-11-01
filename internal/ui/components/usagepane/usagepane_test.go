@@ -146,6 +146,8 @@ func TestGolden(t *testing.T) {
 	loading := append(stale, Account{Provider: "antigravity", Name: "new", Loading: true})
 	states := append(loading, Account{Provider: "codex", Name: "unavailable", Primary: &agents.UsageLimit{Window: "5h"}}, Account{Provider: "antigravity", Name: "studio"})
 	for name, got := range map[string]string{
+		"summary-40x5":          ViewSummary(append(twoAccounts(), twoAccounts()[0]), "2m", 40, 5, false),
+		"summary-ascii-40x5":    ViewSummary(twoAccounts(), "2m", 40, 5, true),
 		"two-accounts-40x12":    View(twoAccounts(), "2m", 40, 12, testNow, false),
 		"stale-loading-40x12":   View(loading, "refreshing…", 40, 12, testNow, false),
 		"compact-40x6":          View(twoAccounts(), "2m", 40, 6, testNow, false),
@@ -358,5 +360,16 @@ func TestViewMetersUseAvailableWidth(t *testing.T) {
 		if width >= 40 && !strings.Contains(out, "2h14m") {
 			t.Errorf("expanded meters crowded out reset captions:\n%s", out)
 		}
+	}
+}
+
+func TestSummaryUsesMostLimitedAccount(t *testing.T) {
+	rows := twoAccounts()
+	other := rows[0]
+	other.Name = "limited"
+	other.Primary = rows[1].Secondary
+	got, counts := Summary(append(rows, other))
+	if len(got) != 2 || got[0].Name != "limited" || counts[0] != 2 {
+		t.Fatalf("%+v %v", got, counts)
 	}
 }

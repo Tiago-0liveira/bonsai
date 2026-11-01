@@ -65,14 +65,19 @@ func (i Item) Description() string {
 func (i Item) FilterValue() string { return i.WT.Branch + " " + i.WT.Path }
 
 // checkDot renders a colored CI rollup indicator, or "" when unknown.
-func checkDot(rollup string) string {
+func checkDot(rollup string) string { return checkGlyph(rollup, false) }
+func checkGlyph(rollup string, ascii bool) string {
+	pass, fail, pending := "✓", "✗", "◌"
+	if ascii {
+		pass, fail, pending = "+", "x", "~"
+	}
 	switch rollup {
 	case "pass":
-		return checkPass.Render("✓")
+		return checkPass.Render(pass)
 	case "fail":
-		return checkFail.Render("✗")
+		return checkFail.Render(fail)
 	case "pending":
-		return checkPending.Render("◌")
+		return checkPending.Render(pending)
 	}
 	return ""
 }
@@ -210,6 +215,8 @@ func (i Item) prBadge() string {
 // independently so it survives selection highlighting.
 type itemDelegate struct {
 	embedded bool
+	home     string
+	ascii    bool
 	// badges returns the pre-styled agent glyphs for a worktree path; nil
 	// means agents are off and rows render exactly as before.
 	badges func(path string) string
@@ -234,54 +241,74 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		nameStyle = selectedTitle
 	}
 
-	head := pointer
-	if dot := checkDot(it.Checks); dot != "" {
-		head += dot + " "
-	}
-	head += it.prBadge()
-	name := it.Title()
-	var tail string
-	if badge := it.dirtyBadge(); badge != "" {
-		tail += " " + badge
-	}
-	if it.Running > 0 {
-		tail += " " + runningStyle.Render(fmt.Sprintf("▶%d", it.Running))
-	}
-
-	var agents string
-	if d.badges != nil {
-		agents = d.badges(it.WT.Path)
-	}
-	agentsW := ansi.StringWidth(agents)
-
-	var title string
-	switch {
-	case agents == "" || width <= 0 || agentsW > width:
-		// Badges are never truncated: with no room at all they are dropped.
-		title = head + nameStyle.Render(name) + tail
-	default:
-		leftW := ansi.StringWidth(head) + ansi.StringWidth(name) + ansi.StringWidth(tail)
-		if leftW+1+agentsW <= width {
-			title = head + nameStyle.Render(name) + tail + " " + agents
-			break
+	columns := func(row Item) []string {
+		dirty := row.dirtyBadge()
+		if d.ascii {
+			dirty = strings.ReplaceAll(dirty, "±", "+/-")
 		}
-		// Too tight: the branch name gives way first, the agents stay next
-		// to the existing badges.
-		avail := width - agentsW - 1 - ansi.StringWidth(head) - ansi.StringWidth(tail)
-		if avail >= 1 {
-			title = head + nameStyle.Render(ansi.Truncate(name, avail, "…")) + tail + " " + agents
+		if row.Running > 0 {
+			glyph := "▶"
+			if d.ascii {
+				glyph = ">"
+			}
+			dirty += " " + runningStyle.Render(fmt.Sprintf("%s%d", glyph, row.Running))
+		}
+		agents := ""
+		if d.badges != nil {
+			agents = d.badges(row.WT.Path)
+		}
+		metrics := ""
+		if row.HasMetrics && (row.Metrics.Ahead > 0 || row.Metrics.Behind > 0) {
+			up, down := "↑", "↓"
+			if d.ascii {
+				up, down = "^", "v"
+			}
+			metrics = fmt.Sprintf("%s%d %s%d", up, row.Metrics.Ahead, down, row.Metrics.Behind)
+		}
+		return []string{strings.TrimSpace(row.prBadge()), checkGlyph(row.Checks, d.ascii), strings.TrimSpace(dirty), agents, metrics}
+	}
+	cells := columns(it)
+	widths := make([]int, len(cells))
+	for _, li := range m.VisibleItems() {
+		if row, ok := li.(Item); ok {
+			for j, c := range columns(row) {
+				widths[j] = max(widths[j], ansi.StringWidth(c))
+			}
+		}
+	}
+	tailW := 0
+	for _, w := range widths {
+		if w > 0 {
+			tailW += w + 1
+		}
+	}
+	nameW := max(width-2-tailW, 1)
+	tail := ""
+	for j, c := range cells {
+		if widths[j] > 0 {
+			tail += " " + c + strings.Repeat(" ", max(widths[j]-ansi.StringWidth(c), 0))
+		}
+	}
+	title := pointer + nameStyle.Render(ansi.Truncate(it.Title(), nameW, "…"))
+	title += strings.Repeat(" ", max(nameW-ansi.StringWidth(it.Title()), 0)) + tail
+	if width > 0 && ansi.StringWidth(title) > width {
+		// At extreme widths preserve the complete opaque agent badge if it fits.
+		agents := cells[3]
+		if agents != "" && ansi.StringWidth(agents) < width {
+			title = ansi.Truncate(title, max(width-ansi.StringWidth(agents)-1, 0), "…") + " " + agents
 		} else {
-			left := head + nameStyle.Render(name) + tail
-			title = ansi.Truncate(left, max(width-agentsW-1, 0), "…") + " " + agents
+			title = ansi.Truncate(title, width, "…")
 		}
 	}
-
-	desc := "  " + descStyle.Render(it.Description())
-
+	path := it.WT.Path
+	if !selected && d.home != "" && (path == d.home || strings.HasPrefix(path, d.home+"/")) {
+		path = "~" + strings.TrimPrefix(path, d.home)
+	}
+	desc := "  " + descStyle.Render(path)
 	if width > 0 {
-		title = ansi.Truncate(title, width, "…")
 		desc = ansi.Truncate(desc, width, "…")
 	}
+
 	if d.embedded {
 		bg := theme.Current.Surface
 		if selected {
@@ -299,6 +326,8 @@ type Model struct {
 	focused  bool
 	embedded bool
 	badges   func(string) string
+	home     string
+	ascii    bool
 }
 
 // New builds an empty worktree list.
@@ -336,7 +365,7 @@ func (m *Model) SetItems(items []Item) {
 // owns the sessions and the styling.
 func (m *Model) SetAgentBadges(fn func(path string) string) {
 	m.badges = fn
-	m.list.SetDelegate(itemDelegate{badges: fn, embedded: m.embedded})
+	m.list.SetDelegate(itemDelegate{badges: fn, embedded: m.embedded, home: m.home, ascii: m.ascii})
 }
 
 // SetSize resizes the list.
@@ -383,7 +412,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) View() string {
 	l := m.list
 	l.Styles.Title = titleStyle
-	return l.View()
+	if !m.embedded {
+		count := len(l.VisibleItems())
+		position := 0
+		if count > 0 {
+			position = l.Index() + 1
+		}
+		l.Title = strings.Replace(l.Title, "Worktrees", fmt.Sprintf("Worktrees %d/%d", position, count), 1)
+	}
+	l.Title = ansi.Truncate(l.Title, max(l.Width()-4, 0), "…")
+	lines := strings.Split(l.View(), "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, l.Width(), "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Focused reports focus state (used by the parent for border color).
@@ -392,6 +434,13 @@ func (m Model) Focused() bool { return m.focused }
 // SetEmbedded uses the shell's heading and shaded rows instead of a second app title.
 func (m *Model) SetEmbedded(on bool) {
 	m.embedded = on
-	m.list.SetDelegate(itemDelegate{badges: m.badges, embedded: on})
+	m.list.SetDelegate(itemDelegate{badges: m.badges, embedded: on, home: m.home, ascii: m.ascii})
 	m.list.SetShowTitle(!on)
 }
+
+// SetPathHome injects the home directory resolved by the parent's load command.
+func (m *Model) SetPathHome(home string) {
+	m.home = strings.TrimRight(home, "/")
+	m.SetAgentBadges(m.badges)
+}
+func (m *Model) SetASCII(ascii bool) { m.ascii = ascii; m.SetAgentBadges(m.badges) }

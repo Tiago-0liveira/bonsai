@@ -13,7 +13,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/usagepane"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -740,7 +739,7 @@ func (m Model) View() string {
 		Width(leftInnerW).Height(listH).
 		Render(clampHeight(m.list.View(), listH))
 	if paneRows > 0 {
-		pane := usagepane.View(m.paneAccounts(), m.paneHeaderAge(), leftW, paneRows, agentNow(), m.agentGlyphsASCII())
+		pane := m.usagePaneView(leftW, paneRows)
 		left = lipgloss.JoinVertical(lipgloss.Left, left, pane)
 	}
 	left = clampHeight(left, targetPaneH)

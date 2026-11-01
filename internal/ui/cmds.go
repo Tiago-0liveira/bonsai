@@ -22,6 +22,7 @@ import (
 // --- Messages ---
 
 type worktreesMsg struct {
+	home  string
 	trees []git.Worktree
 	err   error
 	// force reports whether gh-backed data (PR list, CI checks) must be
@@ -151,7 +152,8 @@ type prCreatedMsg struct {
 func loadWorktrees(repoDir string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		trees, err := git.ListWorktrees(repoDir)
-		return worktreesMsg{trees: trees, err: err, force: force}
+		home, _ := os.UserHomeDir()
+		return worktreesMsg{trees: trees, err: err, force: force, home: home}
 	}
 }
 

@@ -164,15 +164,11 @@ Expanded strips use three lines per account: provider and name, then the two
 headline windows with remaining percentages and reset countdowns when available.
 Accounts without shared windows show `No shared windows` once; loading and
 unavailable states never imply a capacity value.
-The pane is display only: it takes no keys, and resizing below 30 rows
-hides it and gives the rows back to the list. On short terminals it shrinks to
-one line per account with the provider glyph, name, primary-window meter and
-percentage, and secondary-window percentage (`W` means Week), then to `+N more`.
-Compact rows give spare width to the primary (usually 5h) meter first, then add
-and grow a secondary (usually Week) meter when there is enough room for both.
-Narrow widths shorten names and meters before sacrificing numeric values;
-compact rows omit reset countdowns. Sizing remains automatic and only takes
-space from the worktree list; the right-hand content keeps its full height.
+The pane starts collapsed with one row per provider: its name, the most limited
+account's primary and weekly capacity, and `+N` additional accounts. `U`
+(`usage_pane_toggle`) expands the full account list. Below 35 terminal rows it
+automatically stays collapsed; below 15 rows it hides. The worktree list receives
+the reclaimed rows. Provider names identify the glyphs in Unicode and ASCII mode.
 
 Every minute the pane checks for accounts whose data is 3 minutes old or more
 and refetches only those. The box title shows the age of the oldest data:
@@ -919,3 +915,8 @@ Space (`create_agent_toggle`) remembers the choice for this session; after creat
 the new checkout is selected and its agent launch form opens. The palette also offers
 **New worktree with agent…**. New branches preview their configured path and base;
 Tab (`create_base`) edits the base before Enter creates the worktree.
+
+Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
+on the first line. Branch names shorten first. The selected row shows its full
+path; other home-directory paths use `~`. The title shows position/count and
+`sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.

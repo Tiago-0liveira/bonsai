@@ -349,6 +349,7 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.worktrees = msg.trees
+	m.list.SetPathHome(msg.home)
 	m.rebuildItems()
 	var launch tea.Cmd
 	if m.createdAgentPath != "" && m.list.SelectByPath(m.createdAgentPath) {
@@ -516,7 +517,8 @@ func (m *Model) rebuildItems() {
 	if selected != "" {
 		m.list.SelectByPath(selected)
 	}
-	m.list.SetTitle("Worktrees · " + m.sort.label())
+	m.list.SetASCII(m.agentGlyphsASCII())
+	m.list.SetTitle("Worktrees · sort: " + m.sort.label())
 }
 
 // sortedWorktrees returns the worktrees ordered by the active sort mode, with the
@@ -951,6 +953,11 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.ChecksTab):
 		return m.openChecksTab()
+
+	case key.Matches(msg, m.keys.UsagePaneToggle):
+		m.agents.pane.expanded = !m.agents.pane.expanded
+		m.layout()
+		return m, nil
 
 	case key.Matches(msg, m.keys.Sort):
 		m.sort = (m.sort + 1) % 6

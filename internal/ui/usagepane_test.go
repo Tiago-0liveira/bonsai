@@ -237,7 +237,7 @@ func TestPaneVisibilityThreshold(t *testing.T) {
 	for _, tc := range []struct {
 		h    int
 		want bool
-	}{{24, false}, {29, false}, {30, true}, {40, true}} {
+	}{{14, false}, {24, true}, {29, true}, {30, true}, {40, true}} {
 		t.Run(fmt.Sprint(tc.h), func(t *testing.T) {
 			e := paneEnv(t, 120, tc.h, paneAccount("c1", "claude", "work"))
 			e.fb.Accounts.Stored["c1"] = paneUsage(time.Minute, 0.72, 0.41)
@@ -288,10 +288,10 @@ func TestPaneLeftColumnHeightIsExact(t *testing.T) {
 }
 
 func TestPaneHiddenViewMatchesNoAccounts(t *testing.T) {
-	with := paneEnv(t, 120, 24, paneAccount("c1", "claude", "work"))
+	with := paneEnv(t, 120, 14, paneAccount("c1", "claude", "work"))
 	with.fb.Accounts.Stored["c1"] = paneUsage(time.Minute, 0.72, 0.41)
 	with.startPane(t)
-	without := paneEnv(t, 120, 24)
+	without := paneEnv(t, 120, 14)
 	without.startPane(t)
 	if a, b := with.m.View(), without.m.View(); a != b {
 		t.Errorf("view differs below the threshold:\n%s\n---\n%s", a, b)
@@ -387,5 +387,21 @@ func TestPaneLeavesRightColumnUnchanged(t *testing.T) {
 				t.Fatal("hidden pane must leave no chrome and return its space to Worktrees")
 			}
 		})
+	}
+}
+
+func TestPaneToggleAndShortTerminal(t *testing.T) {
+	e := paneEnv(t, 120, 40, paneAccount("c1", "claude", "work"))
+	if e.m.usagePaneExpanded() {
+		t.Fatal("expanded by default")
+	}
+	nm, _ := e.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("U")})
+	e.m = nm.(Model)
+	if !e.m.usagePaneExpanded() {
+		t.Fatal("toggle did not expand")
+	}
+	e.m.height = 34
+	if e.m.usagePaneExpanded() {
+		t.Fatal("short terminal expanded")
 	}
 }
