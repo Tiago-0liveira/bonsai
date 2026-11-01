@@ -606,6 +606,7 @@ func firstLine(s string) string {
 	return s
 }
 
+// checkMark keeps the configured glyph set consistent in both check lists.
 func (m Model) checkMark(bucket string) string {
 	ascii := m.state != nil && m.agentGlyphsASCII()
 	mark := theme.CheckGlyph(bucket, ascii)
@@ -618,20 +619,6 @@ func (m Model) checkMark(bucket string) string {
 		return prWarn.Render(mark)
 	default:
 		return procDim.Render(mark)
-	}
-}
-
-// checkMark renders a colored glyph for a check bucket.
-func checkMark(bucket string) string {
-	switch bucket {
-	case "pass":
-		return procRunning.Render("✓")
-	case "fail", "cancel":
-		return procFailed.Render("✗")
-	case "pending":
-		return prWarn.Render("◐")
-	default:
-		return procDim.Render("·")
 	}
 }
 
