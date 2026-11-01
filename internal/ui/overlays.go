@@ -275,7 +275,7 @@ func (m Model) legendContent() string {
 	}
 
 	b.WriteString(sec.Render("Worktree list") + "\n")
-	row(pass.Render("●")+" / "+fail.Render("●")+" / "+pend.Render("◐"), "CI status of the connected PR: passing / failing / pending")
+	row(pass.Render(theme.CheckGlyph("pass", m.agentGlyphsASCII()))+" / "+fail.Render(theme.CheckGlyph("fail", m.agentGlyphsASCII()))+" / "+pend.Render(theme.CheckGlyph("pending", m.agentGlyphsASCII())), "CI status of the connected PR: passing / failing / pending")
 	row(badge.Render("#123"), "open pull request connected to this branch")
 	row(badge.Render("#123 merged")+"  "+dim.Render("#123 closed"), "PR state once it is no longer open")
 	row("↑2 ↓1", "commits ahead of / behind the base ref ("+m.cfg.Upstream+")")
@@ -284,9 +284,9 @@ func (m Model) legendContent() string {
 	row(run.Render("▶1"), "1 process currently running in this worktree")
 
 	b.WriteString("\n" + sec.Render("Checks & PR tabs") + "\n")
-	row(pass.Render("✓"), "check passed / review approved / mergeable")
-	row(fail.Render("✗"), "check failed / changes requested / conflicting")
-	row(pend.Render("◐"), "check still pending")
+	row(pass.Render(theme.CheckGlyph("pass", m.agentGlyphsASCII())), "check passed / review approved / mergeable")
+	row(fail.Render(theme.CheckGlyph("fail", m.agentGlyphsASCII())), "check failed / changes requested / conflicting")
+	row(pend.Render(theme.CheckGlyph("pending", m.agentGlyphsASCII())), "check still pending")
 
 	b.WriteString("\n" + sec.Render("Inspector") + "\n")
 	row(run.Render("✓ clean"), "no working-tree changes")

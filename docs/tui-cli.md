@@ -12,6 +12,9 @@ contains the five working workspaces.
 
 ## TUI
 
+Check states keep distinct marks when colours are unavailable. With ASCII
+glyphs selected, passed / failed / pending checks use `+` / `x` / `~`.
+
 Footer hints use `key action · key action`; shifted letters appear as
 `shift+letter` to keep the key names lowercase without losing their meaning.
 

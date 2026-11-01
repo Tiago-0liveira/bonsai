@@ -101,7 +101,7 @@ func (m Model) procHint() string {
 	}{
 		{m.keys.Kill, "kill"}, {m.keys.Restart, "restart"}, {m.keys.SetPolicy, "policy"},
 		{m.keys.MultiView, "multi"}, {m.keys.RenameProc, "tag"}, {m.keys.ProcSearch, "search"},
-		{m.keys.Yank, "copy"}, {m.keys.Scripts, "new"},
+		{m.keys.Yank, "copy"}, {m.keys.Create, "new"}, {m.keys.Prune, "remove"},
 	} {
 		parts = append(parts, hintKey(item.binding.Help().Key)+" "+item.action)
 	}
@@ -109,7 +109,7 @@ func (m Model) procHint() string {
 }
 
 func (m Model) procEmptyHint() string {
-	return "no processes yet · " + hintKey(m.keys.Scripts.Help().Key) + " run a script or command"
+	return "no processes yet · " + hintKey(m.keys.Create.Help().Key) + " run a script or command"
 }
 
 // procScrollState labels whether the output pane is tailing the live end of the
@@ -289,7 +289,7 @@ func (m Model) renderPRDetail(d gh.PRDetail, checks []gh.Check) string {
 	if len(checks) > 0 {
 		b.WriteString(prSection.Render("Checks") + "\n")
 		for _, c := range checks {
-			b.WriteString("  " + checkMark(c.Bucket) + " " + c.Name + "\n")
+			b.WriteString("  " + m.checkMark(c.Bucket) + " " + c.Name + "\n")
 		}
 		b.WriteString(rule(w) + "\n")
 	}
@@ -522,7 +522,7 @@ func (m Model) renderChecks() string {
 		b.WriteString(prMeta.Render("no workflow runs for branch "+wt.Branch) + "\n")
 	} else {
 		for _, r := range m.ciRuns {
-			line := "  " + checkMark(r.Bucket()) + " " + diffPathSt.Render(r.Name)
+			line := "  " + m.checkMark(r.Bucket()) + " " + diffPathSt.Render(r.Name)
 			meta := r.Workflow
 			if r.Event != "" {
 				meta += " · " + r.Event
@@ -604,6 +604,21 @@ func firstLine(s string) string {
 		return s[:i] + " …"
 	}
 	return s
+}
+
+func (m Model) checkMark(bucket string) string {
+	ascii := m.state != nil && m.agentGlyphsASCII()
+	mark := theme.CheckGlyph(bucket, ascii)
+	switch bucket {
+	case "pass":
+		return procRunning.Render(mark)
+	case "fail", "cancel":
+		return procFailed.Render(mark)
+	case "pending":
+		return prWarn.Render(mark)
+	default:
+		return procDim.Render(mark)
+	}
 }
 
 // checkMark renders a colored glyph for a check bucket.

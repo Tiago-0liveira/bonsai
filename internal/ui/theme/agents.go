@@ -60,3 +60,29 @@ func AgentBadge(p agents.ProviderID, count int, ascii bool) string {
 	}
 	return g
 }
+
+// CheckGlyph preserves pass/fail/pending distinctions without terminal colours.
+func CheckGlyph(bucket string, ascii bool) string {
+	switch bucket {
+	case "pass":
+		if ascii {
+			return "+"
+		}
+		return "✓"
+	case "fail", "cancel":
+		if ascii {
+			return "x"
+		}
+		return "✗"
+	case "pending":
+		if ascii {
+			return "~"
+		}
+		return "◐"
+	default:
+		if ascii {
+			return "-"
+		}
+		return "·"
+	}
+}
