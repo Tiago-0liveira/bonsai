@@ -914,3 +914,6 @@ workspace releases only its terminal attachment and never stops its holders.
 
 Agent pane hints follow your configured bindings, including the Agents tab
 shortcut. The worktree session picker is labelled “sessions”.
+
+While typing into an agent, the pane always displays `ctrl+] detach`. This fixed
+key returns to Bonsai navigation; the agent continues running.
