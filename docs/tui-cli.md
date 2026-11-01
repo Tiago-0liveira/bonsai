@@ -12,6 +12,9 @@ contains the five working workspaces.
 
 ## TUI
 
+Footer hints use `key action · key action`; shifted letters appear as
+`shift+letter` to keep the key names lowercase without losing their meaning.
+
 Transient status messages clear after about five seconds or the next action
 key. Errors remain visible until the next action key.
 

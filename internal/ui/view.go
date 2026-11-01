@@ -86,10 +86,31 @@ func applyTheme() {
 	diffPathSt = lipgloss.NewStyle().Foreground(p.Text)
 }
 
-const (
-	procHint      = "↑/↓ select · j/k scroll · g/G top/end · K kill · r restart · p policy · m multi · L tag · / search · y copy · n new · x remove"
-	procEmptyHint = "no processes yet — press n to run a script or command"
-)
+func hintKey(k string) string {
+	if len(k) == 1 && k[0] >= 'A' && k[0] <= 'Z' {
+		return "shift+" + strings.ToLower(k)
+	}
+	return strings.ToLower(k)
+}
+
+func (m Model) procHint() string {
+	parts := []string{"↑/↓ select", "j/k scroll", "g/shift+g top/end"}
+	for _, item := range []struct {
+		binding key.Binding
+		action  string
+	}{
+		{m.keys.Kill, "kill"}, {m.keys.Restart, "restart"}, {m.keys.SetPolicy, "policy"},
+		{m.keys.MultiView, "multi"}, {m.keys.RenameProc, "tag"}, {m.keys.ProcSearch, "search"},
+		{m.keys.Yank, "copy"}, {m.keys.Scripts, "new"},
+	} {
+		parts = append(parts, hintKey(item.binding.Help().Key)+" "+item.action)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m Model) procEmptyHint() string {
+	return "no processes yet · " + hintKey(m.keys.Scripts.Help().Key) + " run a script or command"
+}
 
 // procScrollState labels whether the output pane is tailing the live end of the
 // log or parked where the user scrolled to. Without it, a paused view looks
@@ -98,7 +119,7 @@ func (m Model) procScrollState() string {
 	if m.term.AtBottom() {
 		return procRunning.Render("● live")
 	}
-	return procMarkerWarn.Render(fmt.Sprintf("⏸ %.0f%% · G to follow", m.term.ScrollPercent()*100))
+	return procMarkerWarn.Render(fmt.Sprintf("⏸ %.0f%% · shift+g follow", m.term.ScrollPercent()*100))
 }
 
 // renderProcFooter builds the Processes-tab footer pinned to the bottom of the
@@ -111,11 +132,11 @@ func (m Model) renderProcFooter() string {
 		return procDim.Render(ansi.Truncate("(no worktree selected)", m.termInnerWidth(), "…"))
 	}
 	if m.procs == nil {
-		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
+		return procDim.Render(ansi.Truncate(m.procEmptyHint(), m.termInnerWidth(), "…"))
 	}
 	procs := m.procs.List(wt.Path)
 	if len(procs) == 0 {
-		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
+		return procDim.Render(ansi.Truncate(m.procEmptyHint(), m.termInnerWidth(), "…"))
 	}
 	sel, selOK := m.activeProcess(wt.Path)
 	multi := m.procMultiSel[wt.Path]
@@ -155,7 +176,7 @@ func (m Model) renderProcFooter() string {
 	}
 	// Truncated, not wrapped: the footer's height is derived, not measured (see
 	// procFooterHeight), so it has to stay exactly one row.
-	b.WriteString(procDim.Render(ansi.Truncate(procHint, m.termInnerWidth(), "…")))
+	b.WriteString(procDim.Render(ansi.Truncate(m.procHint(), m.termInnerWidth(), "…")))
 	return b.String()
 }
 
@@ -183,7 +204,7 @@ func procLine(p *procstore.Record, url string) string {
 	return line
 }
 
-const prPaneHint = "enter desc · t commits · a approve · c changes · m merge · x close · O reopen · y ready"
+const prPaneHint = "enter desc · t commits · a approve · c changes · m merge · x close · shift+o reopen · y ready"
 
 // renderPRDetail builds the PR tab body GitHub-style: a header block, a
 // collapsible description, collapsible commits, CI checks, and the review/comment
@@ -357,7 +378,6 @@ func (m Model) renderDiff() string {
 }
 
 // inspectPaneHint is the footer hint shown at the bottom of the Inspector tab.
-const inspectPaneHint = "worktree detail · R refresh"
 
 // renderInspect builds the Inspector tab body: working-tree status, last
 // commit, diff-vs-base summary, and disk/stash stats for the selected worktree.
@@ -460,7 +480,7 @@ func (m Model) renderInspect() string {
 			b.WriteString("  Attempt: " + pgClean(s.Task.AttemptID, 100) + "\n  Open linked Issue from the command palette.\n")
 		}
 	}
-	b.WriteString("\n" + prMeta.Render(inspectPaneHint) + "\n")
+	b.WriteString("\n" + prMeta.Render(hintKey(m.keys.Refresh.Help().Key)+" refresh") + "\n")
 	return b.String()
 }
 
@@ -478,8 +498,6 @@ func ago(t time.Time) string {
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }
-
-const checksPaneHint = "branch workflow runs · R refresh"
 
 // renderChecks builds the Checks tab body: the selected branch's recent GitHub
 // Actions runs, newest first, with pass/fail/pending glyphs.
@@ -517,7 +535,7 @@ func (m Model) renderChecks() string {
 		}
 	}
 
-	b.WriteString("\n" + prMeta.Render(checksPaneHint) + "\n")
+	b.WriteString("\n" + prMeta.Render(hintKey(m.keys.Refresh.Help().Key)+" refresh") + "\n")
 	return b.String()
 }
 
@@ -841,7 +859,7 @@ func (m Model) tabStrip(width int) string {
 		return ""
 	}
 
-	hint := inactiveTab.Render("  shift+tab ⇄")
+	hint := inactiveTab.Render("  " + hintKey(m.keys.ShiftTab.Help().Key) + " cycle")
 	sep := inactiveTab.Render("│")
 
 	buildParts := func(compact bool, tabList []rightTab) []string {
@@ -987,16 +1005,16 @@ func (m Model) statusBar() string {
 func (m Model) contextHelp() string {
 	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
 	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
-	pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
+	pair := func(k, d string) string { return keySt.Render(hintKey(k)) + " " + descSt.Render(d) }
 	sep := descSt.Render(" · ")
 	if m.agentTerminalMode() {
 		switch v := m.agents.view; {
 		case v.stream == nil:
-			return descSt.Render("connecting…") + sep + pair("Ctrl+]", "unfocus")
+			return descSt.Render("connecting…") + sep + pair("ctrl+]", "unfocus")
 		case v.state == attachObservingOther:
-			return descSt.Render("READ-ONLY") + sep + pair("Ctrl+]", "unfocus")
+			return descSt.Render("READ-ONLY") + sep + pair("ctrl+]", "unfocus")
 		}
-		return descSt.Render("FOCUSED · Input goes to agent") + sep + pair("Ctrl+]", "unfocus")
+		return descSt.Render("FOCUSED · Input goes to agent") + sep + pair("ctrl+]", "unfocus")
 	}
 	if m.rightTab == tabAgents && m.agents.active() {
 		if m.agents.overlay != nil {
@@ -1005,7 +1023,7 @@ func (m Model) contextHelp() string {
 			return ""
 		}
 		if m.modal != nil {
-			return descSt.Render("Enter select · Esc close")
+			return descSt.Render("enter select · esc close")
 		}
 		if m.focus == focusTerminal {
 			parts := append(m.agentNavHints(pair, descSt),
@@ -1034,7 +1052,7 @@ func (m Model) contextHelp() string {
 	parts := make([]string, 0, len(bindings))
 	for _, b := range bindings {
 		h := b.Help()
-		parts = append(parts, keySt.Render(h.Key)+" "+descSt.Render(h.Desc))
+		parts = append(parts, keySt.Render(hintKey(h.Key))+" "+descSt.Render(h.Desc))
 	}
 	return strings.Join(parts, descSt.Render(" · "))
 }
