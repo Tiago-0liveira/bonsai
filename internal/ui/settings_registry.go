@@ -269,6 +269,14 @@ func generalEditor() settingSection {
 			set:     func(p *config.Prefs, v string) { p.PruneMerge = v == "true" },
 			origin:  func(m Model) string { return personalOrDefault(m.work.PruneMerge) },
 		},
+		{
+			id: "agent_bell", label: "Agent attention bell", scope: scopeMachine, kind: kindToggle,
+			help:    "Ring the terminal bell when a working agent waits or ends. Off by default.",
+			choices: boolChoices(),
+			get:     func(m Model) string { return strconv.FormatBool(m.work.AgentBell) },
+			set:     func(p *config.Prefs, v string) { p.AgentBell = v == "true" },
+			origin:  func(m Model) string { return personalOrDefault(m.work.AgentBell) },
+		},
 	}}
 }
 

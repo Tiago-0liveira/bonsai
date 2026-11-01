@@ -282,8 +282,7 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	path := cleanPath(wt.Path)
-	// Opening the list is seeing it: failed sessions of this worktree list
-	// their ✗ there, so the worktree row's "!" has done its job.
+	// Opening history acknowledges the ended sessions shown there.
 	m.ackFailedAgents(path)
 	m.leaveAgentTerminal()
 	p := newSessionsPicker(branchOf(wt), m.agentGlyphsASCII())
@@ -295,8 +294,7 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ackFailedAgents marks the failed sessions of a worktree as seen and refreshes
-// the "!" badges.
+// ackFailedAgents marks ended sessions as seen and refreshes their counts.
 func (m *Model) ackFailedAgents(path string) {
 	changed := false
 	for _, i := range m.agents.byTree[path] {
@@ -325,6 +323,10 @@ func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.rightTab = tabAgents
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
+	m.layout()
 	m.agents.selected[cleanPath(path)] = id
 	m.agents.ack[id] = true
 	m.refreshAgentBadges()

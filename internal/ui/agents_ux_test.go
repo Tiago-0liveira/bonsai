@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
+	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -120,6 +123,39 @@ func TestAgentStopAllRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestAgentBellTransitions(t *testing.T) {
+	e := newAgentsEnv(t)
+	old := e.session("a", "claude", "running", e.wtA)
+	cases := []struct {
+		name    string
+		state   string
+		waiting bool
+		want    bool
+	}{
+		{"still working", "running", false, false},
+		{"waiting", "running", true, true},
+		{"done", "exited", false, true},
+		{"failed", "failed", false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			next := e.session("a", "claude", tc.state, e.wtA)
+			if tc.waiting {
+				next.Activity = act(agentactivity.Waiting, "", "")
+			}
+			if got := agentNeedsBell([]agentsapi.Session{old}, []agentsapi.Session{next}); got != tc.want {
+				t.Fatalf("bell=%v want %v", got, tc.want)
+			}
+			if agentNeedsBell(nil, []agentsapi.Session{next}) {
+				t.Fatal("initial snapshot must be silent")
+			}
+			if agentNeedsBell([]agentsapi.Session{next}, []agentsapi.Session{next}) {
+				t.Fatal("repeated state must be silent")
+			}
+		})
+	}
+}
+
 func TestAgentPeekUsesCachedScreen(t *testing.T) {
 	e, _ := terminalEnv(t)
 	e.m.agents.view.term.Write([]byte("cached session preview"))
@@ -129,5 +165,25 @@ func TestAgentPeekUsesCachedScreen(t *testing.T) {
 	}
 	if len(peek[e.m.agents.view.sessionID]) > 10 {
 		t.Fatal("peek must be bounded")
+	}
+}
+
+func TestAgentStripOutputAge(t *testing.T) {
+	e, _ := terminalEnv(t)
+	v := e.m.agents.view
+	v.lastOutput = agentNow().Add(-2 * time.Minute)
+	wt, _ := e.m.selectedWorktree()
+	s, idx, ok := e.m.selectedSession(cleanPath(wt.Path))
+	if !ok {
+		t.Fatal("missing session")
+	}
+	got := ansi.Strip(e.m.sessionStrip([]agentsapi.Session{s}, idx, 120, "", ""))
+	if !strings.Contains(got, "▶ 2m") {
+		t.Fatal(got)
+	}
+	e.m.state.Prefs.AgentGlyphs = "ascii"
+	got = ansi.Strip(e.m.sessionStrip([]agentsapi.Session{s}, 0, 120, "", ""))
+	if !strings.Contains(got, "> 2m") {
+		t.Fatal(got)
 	}
 }

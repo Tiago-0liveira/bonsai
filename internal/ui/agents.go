@@ -12,6 +12,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
+	"github.com/Tiago-0liveira/bonsai/internal/core/termscreen"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
@@ -270,7 +271,10 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 	if m.agents.enterAfter != "" && msg.seq >= m.agents.enterSeq && !hasSession(msg.sessions, m.agents.enterAfter) {
 		m.agents.enterAfter = "" // the started session is gone already
 	}
-
+	var bell tea.Cmd
+	if m.livePrefs().AgentBell && agentNeedsBell(m.agents.sessions, msg.sessions) {
+		bell = func() tea.Msg { _ = termscreen.Bell(); return nil }
+	}
 	m.agents.sessions = msg.sessions
 	m.agents.byTree = msg.byTree
 	m.refreshAgentBadges()
@@ -286,11 +290,11 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 		if wt, ok := m.selectedWorktree(); ok {
 			if s, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && s.AccountID != m.agents.usageAccount {
 				cmd := m.requestAgentUsage()
-				return m, cmd
+				return m, tea.Batch(cmd, bell)
 			}
 		}
 	}
-	return m, nil
+	return m, bell
 }
 
 func (m Model) onAgentsSubscribed(msg agentsSubscribedMsg) (tea.Model, tea.Cmd) {
@@ -393,4 +397,20 @@ func (m Model) agentBadge(idx []int, ascii bool) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// agentNeedsBell compares successful snapshots; initial and stale reads never ring.
+func agentNeedsBell(old, next []agentsapi.Session) bool {
+	previous := map[string]agentsapi.Session{}
+	for _, s := range old {
+		previous[s.ID] = s
+	}
+	for _, s := range next {
+		p, ok := previous[s.ID]
+		if ok && p.Active() && sessionUrgency(p) == urgencyWorking &&
+			((s.Active() && sessionUrgency(s) == urgencyWaiting) || s.State == "exited" || s.State == "failed") {
+			return true
+		}
+	}
+	return false
 }

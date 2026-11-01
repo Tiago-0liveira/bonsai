@@ -302,8 +302,15 @@ func (m Model) sessionStrip(strip []agentsapi.Session, sel, w int, prefix, hints
 	labels := make([]string, len(strip))
 	for i, s := range strip {
 		name := ansi.Truncate(sessionName(s), stripNameCells, "…")
-
-		text := "[" + itoa(i+1) + " " + m.agentGlyph(s.Provider) + " " + name + "]"
+		age := ""
+		if v := m.agents.view; v != nil && v.sessionID == s.ID && s.Active() && sessionUrgency(s) == urgencyWorking && !v.lastOutput.IsZero() {
+			elapsed := max(agentNow().Sub(v.lastOutput), 0)
+			age = " ▶ " + elapsed.Round(time.Second).String()
+			if m.agentGlyphsASCII() {
+				age = " > " + elapsed.Round(time.Second).String()
+			}
+		}
+		text := "[" + itoa(i+1) + " " + m.agentGlyph(s.Provider) + " " + name + age + "]"
 		if !s.Active() {
 			text = dimText(text)
 		}

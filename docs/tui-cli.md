@@ -944,3 +944,6 @@ Retained summaries do not contain last-output timestamps.
 
 Settings → General → Agent attention bell enables a terminal bell when a
 working session starts waiting or ends. This personal preference defaults off.
+
+The bell setting is stored as the personal `agent_bell` preference.
+Repository and attention jumps focus the Agents pane for session navigation.

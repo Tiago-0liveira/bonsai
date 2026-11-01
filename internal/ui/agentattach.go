@@ -38,7 +38,8 @@ const (
 
 // agentView is the single live attachment the Agents tab shows.
 type agentView struct {
-	sessionID string
+	sessionID  string
+	lastOutput time.Time
 	// token changes with every new stream: messages from a stream the view has
 	// moved on from carry an old one and are dropped.
 	token  uint64
@@ -344,6 +345,9 @@ func (m Model) onAgentFrames(msg agentFramesMsg) (tea.Model, tea.Cmd) {
 	for _, f := range msg.frames {
 		switch f.Type {
 		case "output":
+			if !v.replaying && len(f.Data) > 0 {
+				v.lastOutput = agentNow()
+			}
 			v.term.Write(f.Data)
 			v.offset = f.Offset + uint64(len(f.Data))
 		case "gap":
