@@ -622,13 +622,18 @@ func (p sessionsPicker) inspector(width, rows int) []string {
 			break
 		}
 	}
-	if peek := p.peek[s.ID]; len(peek) > 0 {
+	loading := "loading…"
+	if p.ascii {
+		loading = "loading..."
+	}
+	// Ended sessions have no live screen to peek at.
+	if peek := p.peek[s.ID]; s.Active() && len(peek) > 0 {
 		lines = append(lines, "", "Last screen:")
 		for _, l := range peek {
 			lines = append(lines, ansi.Truncate(l, width, "…"))
 		}
-	} else if p.peekLoading == s.ID {
-		lines = append(lines, "", "Last screen:", lipgloss.NewStyle().Foreground(theme.Current.Dim).Render("loading…"))
+	} else if s.Active() && p.peekLoading == s.ID {
+		lines = append(lines, "", "Last screen:", lipgloss.NewStyle().Foreground(theme.Current.Dim).Render(loading))
 	}
 	copy(out, lines[:min(len(lines), max(rows-1, 0))])
 	if rows >= 1 {

@@ -250,8 +250,9 @@ account and the number of additional accounts. The configurable
 `usage_pane_toggle` action (default `U`) expands or collapses it.
 
 Expanded rows show account identity, primary (usually 5h) and weekly remaining
-capacity and compact reset countdowns. Narrow columns remove bars first, then
-weekly reset, weekly capacity, and finally primary reset. Unknown capacity stays
+capacity and compact reset countdowns. Narrow columns remove the weekly bar,
+then the primary bar, then the weekly reset, then the primary reset, and finally
+weekly capacity; the account and primary capacity always stay. Unknown capacity stays
 unknown; failed refreshes retain the last good values with a warning.
 
 Settings → General → Usage pane controls personal preferences:

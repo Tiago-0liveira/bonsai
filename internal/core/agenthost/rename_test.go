@@ -103,9 +103,18 @@ func TestSnapshotRendersTailWithoutTakingControl(t *testing.T) {
 	if err != nil || len(lines) != 3 || lines[2] != "line 40" || lines[0] != "line 38" {
 		t.Fatalf("snapshot %q %v", lines, err)
 	}
-	info, err := Query(r)
-	if err != nil || len(info.Clients) != 1 || !info.Clients[0].Writer {
-		t.Fatalf("peek disturbed clients: %+v %v", info.Clients, err)
+	// The holder notices the snapshot's closed connection asynchronously, so
+	// wait (bounded) for it to leave instead of asserting immediately.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		info, err := Query(r)
+		if err == nil && len(info.Clients) == 1 && info.Clients[0].Writer {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("peek disturbed clients: %+v %v", info.Clients, err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

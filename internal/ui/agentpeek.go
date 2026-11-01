@@ -48,6 +48,13 @@ func (m Model) peekPicker(sp *sessionsPicker) (Model, tea.Cmd) {
 	if m.agents.peeks == nil {
 		m.agents.peeks = map[string]peekEntry{}
 	}
+	// An ended session's screen is no longer current: drop it so the picker
+	// never shows a stale tail as if the agent were still there.
+	for _, s := range sp.sessions {
+		if !s.Active() {
+			delete(m.agents.peeks, s.ID)
+		}
+	}
 	var cmd tea.Cmd
 	live := m.agentPeek()
 	if s, ok := sp.selected(); ok && s.Active() && live[s.ID] == nil {

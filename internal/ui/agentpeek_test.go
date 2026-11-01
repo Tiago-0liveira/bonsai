@@ -6,6 +6,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 )
 
 func peekEnv(t *testing.T) *agentsEnv {
@@ -72,5 +74,20 @@ func TestPickerPeekDropsLateAnswerAndCachesBriefly(t *testing.T) {
 	e.sendKey(t, tea.KeyUp)
 	if got := strings.Join(e.fb.Sessions.Peeks(), ","); got != "r2,r1,r1,r1" {
 		t.Fatalf("expired entry not refreshed: %s", got)
+	}
+}
+
+// A snapshot taken while a session ran must not linger once it has ended.
+func TestPickerHidesPeekOfEndedSession(t *testing.T) {
+	e := newAgentsEnv(t)
+	for _, ascii := range []bool{false, true} {
+		p := newSessionsPicker("feat-a", ascii)
+		p.setSessions([]agentsapi.Session{e.agent("x1", "claude", "exited", e.wtA, "Done", 2)})
+		p.peek = map[string][]string{"x1": {"old screen"}}
+		p.peekLoading = "x1"
+		got := strings.Join(p.inspector(80, 20), "\n")
+		if strings.Contains(got, "old screen") || strings.Contains(got, "Last screen:") || strings.Contains(got, "loading") {
+			t.Fatalf("ascii=%v: ended session shows a peek:\n%s", ascii, got)
+		}
 	}
 }

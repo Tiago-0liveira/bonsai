@@ -245,3 +245,28 @@ func TestMixedColumnsAcrossPages(t *testing.T) {
 	}
 	checkGolden(t, "summary-reset", plain(ViewSummaryAt(accounts, "", 64, 4, testNow, false)))
 }
+
+// The collapsed summary keeps the stale marker in its own cell so marked and
+// unmarked providers start their capacity columns at the same offset, and
+// lines never overflow the pane.
+func TestSummaryStaleMarkerKeepsColumns(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	accts := []Account{
+		{Provider: "claude", Name: "a", Stale: true, Primary: lim("5h", 0.6, 2*time.Hour), Secondary: lim("weekly", 0.95, 30*time.Hour)},
+		{Provider: "antigravity", Name: "b", Primary: lim("5h", 1, time.Hour), Secondary: lim("weekly", 0.98, 30*time.Hour)},
+	}
+	for _, w := range []int{30, 56} {
+		var cols []int
+		for _, line := range strings.Split(ansi.Strip(ViewSummaryAt(accts, "", w, 6, now, false)), "\n") {
+			if ansi.StringWidth(line) > w {
+				t.Fatalf("w=%d: line overflows: %q", w, line)
+			}
+			if i := strings.Index(line, " 5h "); i >= 0 {
+				cols = append(cols, ansi.StringWidth(line[:i]))
+			}
+		}
+		if len(cols) != 2 || cols[0] != cols[1] {
+			t.Fatalf("w=%d: 5h columns at %v, want two equal offsets", w, cols)
+		}
+	}
+}

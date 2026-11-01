@@ -213,8 +213,12 @@ func ViewSummaryAt(accounts []Account, age string, width, maxRows int, now time.
 	out := []string{topBorder(width, age, ascii, b, edge)}
 	labels := make([]string, len(rows))
 	labelWidth := 0
+	// The stale marker gets its own cell after the label, as in expanded rows,
+	// so a marked provider does not push its columns right.
+	anyStale := false
 	for i, a := range rows {
-		labels[i] = providerGlyph(a.Provider, ascii) + " " + providerName(a.Provider) + staleMark(a)
+		labels[i] = providerGlyph(a.Provider, ascii) + " " + providerName(a.Provider)
+		anyStale = anyStale || staleMark(a) != ""
 		if counts[i] > 1 {
 			labels[i] += fmt.Sprintf(" +%d", counts[i]-1)
 		}
@@ -227,12 +231,23 @@ func ViewSummaryAt(accounts []Account, age string, width, maxRows int, now time.
 		}
 	}
 	// Reserve space for both capacity windows before shortening labels.
-	labelWidth = min(labelWidth, max(1, width-4-17))
+	slot := 0
+	if anyStale {
+		slot = 1
+	}
+	labelWidth = min(labelWidth, max(1, width-4-17-slot))
 	for i, a := range rows {
 		if i >= maxRows-2 {
 			break
 		}
 		line := fit(labels[i], labelWidth)
+		if anyStale {
+			if mark := staleMark(a); mark != "" {
+				line += mark
+			} else {
+				line += " "
+			}
+		}
 		if state := accountState(a, ascii); state != "" {
 			line += " " + state
 		} else {
