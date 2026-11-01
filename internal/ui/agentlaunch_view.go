@@ -402,6 +402,7 @@ func (d launchDialog) groupedTable(w, h int) []string {
 	var lines []string
 	var rowAccounts []int
 	from, to := 0, 0
+	rows := tbl.RowLines(w)
 	var previous agentsapi.Account
 	for i, a := range ordered {
 		if i == 0 || a.Provider != previous.Provider {
@@ -412,10 +413,9 @@ func (d launchDialog) groupedTable(w, h int) []string {
 			from = len(lines)
 			to = from + rh
 		}
-		row := tbl
-		row.Accounts = []agentsapi.Account{a}
-		// Preserve the selection while requesting only this account.
-		lines = append(lines, row.View(w, rh)...)
+		if i < len(rows) {
+			lines = append(lines, rows[i]...)
+		}
 		for range rh {
 			rowAccounts = append(rowAccounts, i+1)
 		}

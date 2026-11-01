@@ -183,6 +183,21 @@ func (t Table) RowHeight(w int) int {
 	return max(l.rowHeight(), 1)
 }
 
+// RowLines renders every account's row with one column plan computed from all
+// accounts, so callers that interleave their own lines (provider headings)
+// keep the columns aligned. It returns nil when the table does not fit w.
+func (t Table) RowLines(w int) [][]string {
+	l, ok := t.layout(w)
+	if !ok {
+		return nil
+	}
+	out := make([][]string, len(t.Accounts))
+	for i, a := range t.Accounts {
+		out[i] = padLines(t.row(a, l, w), w)
+	}
+	return out
+}
+
 // View draws at most h lines of exactly w cells: a heading, then the rows
 // around the selection, then a range indicator when rows are hidden. Very
 // short heights show only the selected row. It returns nil when the table does

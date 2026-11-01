@@ -195,3 +195,30 @@ func TestLaunchViewSurvivesTinyHeights(t *testing.T) {
 		_ = e.m.View()
 	}
 }
+
+// Provider headings split the account table into groups; the columns after the
+// provider must still line up across groups of different provider-name widths.
+func TestLaunchGroupedColumnsAlign(t *testing.T) {
+	e := newAgentsEnv(t)
+	e.setAccounts(acct("claude", "work", 0), acct("antigravity", "pool", 0))
+	e.openTab(t)
+	e.launchAt(t, 140, 40)
+	starts := map[int]bool{}
+	for _, line := range strings.Split(e.overlayView(), "\n") {
+		for _, provider := range []string{"Claude", "Antigravity"} {
+			// Account rows are the only lines that carry usage cells.
+			if !strings.Contains(line, "Unavailable") {
+				continue
+			}
+			i := strings.Index(line, " "+provider+" ")
+			if i < 0 {
+				continue
+			}
+			rest := line[i+len(provider)+1:]
+			starts[ansi.StringWidth(line[:i+len(provider)+1])+len(rest)-len(strings.TrimLeft(rest, " "))] = true
+		}
+	}
+	if len(starts) != 1 {
+		t.Fatalf("columns after the provider start at %d different offsets, want 1:\n%s", len(starts), e.overlayView())
+	}
+}
