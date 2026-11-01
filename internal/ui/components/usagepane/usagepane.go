@@ -17,7 +17,6 @@ import (
 
 const (
 	percentCells = 4
-	minNameCells = 6
 	maxNameCells = 12
 	borderCells  = 2
 )
@@ -200,6 +199,11 @@ func Summary(accounts []Account) ([]Account, []int) {
 func SummaryHeight(accounts []Account) int { rows, _ := Summary(accounts); return len(rows) + 2 }
 
 func ViewSummary(accounts []Account, age string, width, maxRows int, ascii bool) string {
+	return ViewSummaryAt(accounts, age, width, maxRows, time.Now(), ascii)
+}
+
+// ViewSummaryAt uses the supplied clock for the selected accounts' reset times.
+func ViewSummaryAt(accounts []Account, age string, width, maxRows int, now time.Time, ascii bool) string {
 	if width < 12 || maxRows < 3 {
 		return ""
 	}
@@ -216,6 +220,12 @@ func ViewSummary(accounts []Account, age string, width, maxRows int, ascii bool)
 		}
 		labelWidth = max(labelWidth, ansi.StringWidth(labels[i]))
 	}
+	resetWidth := 0
+	for _, a := range rows {
+		if a.Primary != nil && a.Primary.ResetsAt != nil {
+			resetWidth = max(resetWidth, len(compactReset(now, *a.Primary.ResetsAt)))
+		}
+	}
 	// Reserve space for both capacity windows before shortening labels.
 	labelWidth = min(labelWidth, max(1, width-4-17))
 	for i, a := range rows {
@@ -226,7 +236,7 @@ func ViewSummary(accounts []Account, age string, width, maxRows int, ascii bool)
 		if state := accountState(a, ascii); state != "" {
 			line += " " + state
 		} else {
-			for _, w := range windows(a) {
+			for j, w := range windows(a) {
 				if w.limit != nil {
 					line += " " + w.label(true) + " "
 					if f, ok := agents.RemainingFraction(w.limit); ok {
@@ -234,12 +244,19 @@ func ViewSummary(accounts []Account, age string, width, maxRows int, ascii bool)
 					} else {
 						line += "N/A"
 					}
+					if j == 0 && resetWidth > 0 && labelWidth+17+1+resetWidth <= width-4 {
+						reset := ""
+						if w.limit.ResetsAt != nil {
+							reset = compactReset(now, *w.limit.ResetsAt)
+						}
+						line += " " + dim(strings.Repeat(" ", resetWidth-len(reset))+reset)
+					}
 				}
 			}
 		}
 		out = append(out, edge.Render(b.v)+" "+fit(line, width-4)+" "+edge.Render(b.v))
 	}
-	out = append(out, edge.Render(b.bl+strings.Repeat(b.h, width-2)+b.br))
+	out = append(out, bottomBorder(rows[:min(len(rows), maxRows-2)], width, b, edge))
 	return strings.Join(out, "\n")
 }
 
@@ -267,80 +284,137 @@ func ViewPage(accounts []Account, status string, width, rows int, now time.Time,
 	// Page position has priority over the descriptive title in narrow panes.
 	title := " Usage "
 	if width >= 24 {
-		title = " Usage / left "
+		title = " Usage · left "
+		if ascii {
+			title = " Usage / left "
+		}
 	}
 	room := width - 2 - lipgloss.Width(title)
 	status = truncate(status, max(0, room), ascii)
 	top := edge.Render(b.tl) + text(title) + edge.Render(strings.Repeat(b.h, max(0, room-lipgloss.Width(status)))) + dim(status) + edge.Render(b.tr)
 	out := []string{top}
+	plan := planColumns(accounts, width-4, now)
 	for _, a := range accounts[start:end] {
-		out = append(out, edge.Render(b.v)+" "+fit(pageLine(a, width-4, now, ascii), width-4)+" "+edge.Render(b.v))
+		out = append(out, edge.Render(b.v)+" "+fit(pageLine(a, plan, now, ascii), width-4)+" "+edge.Render(b.v))
 	}
 	for len(out) < rows-1 {
 		out = append(out, edge.Render(b.v)+" "+strings.Repeat(" ", width-4)+" "+edge.Render(b.v))
 	}
-	out = append(out, edge.Render(b.bl+strings.Repeat(b.h, width-2)+b.br))
+	out = append(out, bottomBorder(accounts[start:end], width, b, edge))
 	return strings.Join(out, "\n")
 }
 
-func pageLine(a Account, width int, now time.Time, ascii bool) string {
-	nameWidth := min(maxNameCells, max(minNameCells, width/5))
-	head := providerGlyph(a.Provider, ascii) + " " + text(truncate(inline(a.Name), nameWidth, ascii)) + staleMark(a)
+func bottomBorder(accounts []Account, width int, b border, edge lipgloss.Style) string {
+	hint := ""
+	for _, a := range accounts {
+		if a.Stale || a.Err != "" {
+			hint = " ! stale "
+			break
+		}
+	}
+	if len(hint) > width-4 {
+		hint = ""
+	}
+	return edge.Render(b.bl) + dim(hint) + edge.Render(strings.Repeat(b.h, width-2-len(hint))+b.br)
+}
+
+type columnPlan struct {
+	name, reset, meter                                 int
+	primaryReset, weekReset, primaryBar, weekBar, week bool
+}
+
+// Plan against every account so carousel pages retain the same columns.
+func planColumns(accounts []Account, width int, now time.Time) columnPlan {
+	p := columnPlan{primaryReset: true, weekReset: true, primaryBar: true, weekBar: true, week: true}
+	for _, a := range accounts {
+		p.name = max(p.name, ansi.StringWidth(inline(a.Name)))
+		for _, w := range windows(a) {
+			if w.limit != nil && w.limit.ResetsAt != nil {
+				p.reset = max(p.reset, len(compactReset(now, *w.limit.ResetsAt)))
+			}
+		}
+	}
+	p.name = min(maxNameCells, max(1, p.name))
+	// Preserve the primary percentage even in the smallest supported pane.
+	p.name = min(p.name, max(1, width-11))
+	size := func() int {
+		n := 2 + p.name + 1 + 1 + 2 + 1 + percentCells
+		if p.primaryReset && p.reset > 0 {
+			n += 1 + p.reset
+		}
+		if p.primaryBar {
+			n += 5
+		}
+		if p.week {
+			n += 1 + 1 + 1 + percentCells
+		}
+		if p.weekReset && p.reset > 0 {
+			n += 1 + p.reset
+		}
+		if p.weekBar {
+			n += 5
+		}
+		return n
+	}
+	for _, drop := range []*bool{&p.weekBar, &p.primaryBar, &p.weekReset, &p.primaryReset, &p.week} {
+		if size() <= width {
+			break
+		}
+		*drop = false
+	}
+	bars := 0
+	if p.primaryBar {
+		bars++
+	}
+	if p.weekBar {
+		bars++
+	}
+	if bars > 0 {
+		p.meter = 4 + (width-size())/bars
+	}
+	return p
+}
+
+func pageLine(a Account, p columnPlan, now time.Time, ascii bool) string {
+	marker := staleMark(a)
+	if marker == "" {
+		marker = " "
+	}
+	head := providerGlyph(a.Provider, ascii) + " " + text(pad(truncate(inline(a.Name), p.name, ascii), p.name)) + marker
 	if state := accountState(a, ascii); state != "" {
 		return head + " " + dim(state)
 	}
-	var values, resets [2]string
+	line := head
 	for i, w := range windows(a) {
-		if w.limit == nil {
-			continue
+		if i == 1 && !p.week {
+			break
 		}
-		values[i] = dim(w.label(true)) + " "
-		if frac, ok := agents.RemainingFraction(w.limit); ok {
-			values[i] += capacity(frac)
-		} else {
-			values[i] += dim("N/A")
+		label := "5h"
+		if i == 1 {
+			label = "W"
 		}
-		if w.limit.ResetsAt != nil {
-			resets[i] = dim(compactReset(now, *w.limit.ResetsAt))
+		value := dim(" N/A")
+		frac, known := agents.RemainingFraction(w.limit)
+		if known {
+			value = capacity(frac)
+		}
+		line += " " + dim(label) + " " + value
+		if (i == 0 && p.primaryReset || i == 1 && p.weekReset) && p.reset > 0 {
+			reset := ""
+			if w.limit != nil && w.limit.ResetsAt != nil {
+				reset = compactReset(now, *w.limit.ResetsAt)
+			}
+			line += " " + dim(strings.Repeat(" ", p.reset-len(reset))+reset)
+		}
+		if i == 0 && p.primaryBar || i == 1 && p.weekBar {
+			meter := strings.Repeat(" ", p.meter)
+			if known {
+				meter = bar(frac, p.meter, ascii)
+			}
+			line += " " + meter
 		}
 	}
-	build := func(primaryReset, week, weekReset bool, meters [2]int) string {
-		line := head
-		for i, w := range windows(a) {
-			if values[i] == "" || i == 1 && !week {
-				continue
-			}
-			line += " " + values[i]
-			if (i == 0 && primaryReset || i == 1 && weekReset) && resets[i] != "" {
-				line += " " + resets[i]
-			}
-			if meters[i] > 0 {
-				if f, ok := agents.RemainingFraction(w.limit); ok {
-					line += " " + bar(f, meters[i], ascii)
-				}
-			}
-		}
-		return line
-	}
-	// Remove bars, then weekly reset, weekly value, and primary reset.
-	for _, keep := range [][3]bool{{true, true, true}, {true, true, false}, {true, false, false}, {false, false, false}} {
-		line := build(keep[0], keep[1], keep[2], [2]int{})
-		if lipgloss.Width(line) > width {
-			continue
-		}
-		meters := [2]int{}
-		if keep == [3]bool{true, true, true} {
-			spare := width - lipgloss.Width(line)
-			if spare >= 5 {
-				meters[0] = spare - 1
-			}
-			if spare >= 14 {
-				meters = [2]int{(spare - 2) * 2 / 3, (spare - 2) / 3}
-			}
-		}
-		return build(keep[0], keep[1], keep[2], meters)
-	}
-	return head + " " + values[0]
+	return line
 }
 
 func compactReset(now, reset time.Time) string {

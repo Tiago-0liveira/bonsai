@@ -247,7 +247,7 @@ func (m Model) usagePaneView(width, rows int) string {
 	if m.usagePaneExpanded() {
 		return usagepane.ViewPage(m.paneAccounts(), m.panePageLabel(rows), width, rows, agentNow(), m.agentGlyphsASCII(), m.agents.pane.page)
 	}
-	return usagepane.ViewSummary(m.paneAccounts(), m.paneHeaderAge(), width, rows, m.agentGlyphsASCII())
+	return usagepane.ViewSummaryAt(m.paneAccounts(), m.paneHeaderAge(), width, rows, agentNow(), m.agentGlyphsASCII())
 }
 
 func (m Model) panePercent() int {
