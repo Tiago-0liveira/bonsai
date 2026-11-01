@@ -18,8 +18,8 @@ glyphs selected, passed / failed / pending checks use `+` / `x` / `~`.
 Footer hints use `key action · key action`; shifted letters appear as
 `shift+letter` to keep the key names lowercase without losing their meaning.
 
-Info messages clear after about five seconds or the next key. Errors remain
-visible until the next key.
+Info messages clear about five seconds after they were last shown, or on the
+next action key. Errors remain visible until the next action key.
 
 Preferences, the command palette and full-screen modals float over a dimmed
 view of your worktrees. The Agents footer uses “accounts”, matching
@@ -44,18 +44,23 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 Worktree PR badges show the coloured state word beside the number, without a circle.
 
 The create-worktree flow offers **Start agent here** when agents are enabled.
-The `create_agent_toggle` action remembers the choice for this session; after creation,
+`ctrl+a` (`create_agent_toggle`) toggles it without taking a typed character, so
+spaces still work in branch names and PR searches. The choice is remembered for
+this session and each creation uses the value it was submitted with; after creation,
 the new checkout is selected and its agent launch form opens. The palette also offers
 **New worktree with agent…**. New branches preview their configured path and base;
 Tab (`create_base`) edits the configured upstream or selected PR base (HEAD if unset) before Enter creates the worktree.
+A base that starts with `-` is rejected.
 
 Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
 on the first line. Branch names shorten first. The selected row shows its full
 path; other home-directory paths use `~`. The title shows position/count and
 `sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.
 
-With agents enabled, the sort cycle includes `attention`: worktrees with failed or
-waiting sessions come first after the main worktree. Single-worktree pruning warns
+With agents enabled, the sort cycle includes `attention`: worktrees with sessions
+that are waiting, or that failed or finished and are not yet seen, come first after
+the main worktree. It uses the same rule as the `!` jump and the row badges, so
+opening a session's history drops it from the ordering. Single-worktree pruning warns
 with the names of active agents. Bulk pruning skips those worktrees and lists
 them in its confirmation. Stop their sessions before trying bulk prune again.
 
