@@ -22,13 +22,12 @@ Transient status messages clear after about five seconds or the next action
 key. Errors remain visible until the next action key.
 
 Preferences, the command palette and full-screen modals float over a dimmed
-view of your worktrees. The Agents footer calls profiles “accounts”, matching
+view of your worktrees. The Agents footer uses “accounts”, matching
 the account picker and keymap.
 
 Tab labels show your configured jump keys, including Git Log in wide terminals.
 Long key names are shortened in compact headers. Built-in themes keep hints and
 inactive tabs at a minimum 4.5:1 contrast against their dark base and surfaces.
-
 
 Run `bonsai` inside a repository. Press `n` to create a worktree, `enter` to
 drop into a shell in the selected one, `?` for the searchable keymap and `q` to
