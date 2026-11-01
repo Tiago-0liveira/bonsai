@@ -138,7 +138,11 @@ func binding(action string, overrides map[string]string) key.Binding {
 			keys = []string{ov}
 		}
 	}
-	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(keys[0], spec.desc))
+	help := keys[0]
+	if help == " " {
+		help = "space"
+	}
+	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(help, spec.desc))
 }
 
 // keyCollisions reports user-introduced key conflicts: an override whose key

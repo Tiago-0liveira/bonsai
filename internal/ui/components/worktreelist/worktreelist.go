@@ -444,3 +444,12 @@ func (m *Model) SetPathHome(home string) {
 	m.SetAgentBadges(m.badges)
 }
 func (m *Model) SetASCII(ascii bool) { m.ascii = ascii; m.SetAgentBadges(m.badges) }
+
+// SelectCreatedPath reveals a newly created checkout even during filtering.
+func (m *Model) SelectCreatedPath(path string) bool {
+	if m.SelectByPath(path) {
+		return true
+	}
+	m.list.ResetFilter()
+	return m.SelectByPath(path)
+}

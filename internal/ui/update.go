@@ -71,7 +71,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onWorktrees(msg)
 
 	case agentsListMsg:
-		return m.onAgentsList(msg)
+		next, cmd := m.onAgentsList(msg)
+		nm := next.(Model)
+		if nm.sort == sortAttention {
+			nm.rebuildItems()
+		}
+		return nm, cmd
 	case agentsSubscribedMsg:
 		return m.onAgentsSubscribed(msg)
 	case agentsChangedMsg:
@@ -352,7 +357,7 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 	m.list.SetPathHome(msg.home)
 	m.rebuildItems()
 	var launch tea.Cmd
-	if m.createdAgentPath != "" && m.list.SelectByPath(m.createdAgentPath) {
+	if m.createdAgentPath != "" && m.list.SelectCreatedPath(m.createdAgentPath) {
 		m.createdAgentPath = ""
 		next, cmd := m.openAgentLaunch()
 		m, launch = next.(Model), cmd
@@ -532,6 +537,8 @@ func (m *Model) sortedWorktrees() []git.Worktree {
 			return ta.IsMain // main first
 		}
 		switch m.sort {
+		case sortAttention:
+			return m.worktreeAttention(ta.Path) > m.worktreeAttention(tb.Path)
 		case sortAhead:
 			return m.metrics[ta.Path].Ahead > m.metrics[tb.Path].Ahead
 		case sortBehind:
@@ -960,7 +967,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Sort):
-		m.sort = (m.sort + 1) % 6
+		m.cycleWorktreeSort()
 		m.rebuildItems()
 		return m, nil
 
@@ -1847,10 +1854,15 @@ func (m Model) onPruneCandidates(msg pruneCandidatesMsg) (tea.Model, tea.Cmd) {
 	}
 	targets := m.mergedTargetsFrom(msg.merged)
 	if len(targets) == 0 {
-		m.status = "no merged worktrees to prune"
+		m.status = "no merged worktrees to prune (active agent sessions are skipped)"
 		return m, nil
 	}
 	var b strings.Builder
+	for _, t := range m.worktrees {
+		if names := m.activeAgentNames(t.Path); len(names) > 0 && msg.merged[t.Branch] != "" {
+			b.WriteString("Skipped " + t.Branch + ": active agents " + strings.Join(names, ", ") + "\n")
+		}
+	}
 	for _, t := range targets {
 		b.WriteString("• " + t.branch + "\n")
 	}
@@ -1866,7 +1878,7 @@ func (m Model) mergedTargetsFrom(merged map[string]string) []pruneTarget {
 		if t.IsMain || t.Branch == "" || t.Branch == "(detached)" {
 			continue
 		}
-		if m.statuses[t.Path].Dirty() {
+		if m.statuses[t.Path].Dirty() || len(m.activeAgentNames(t.Path)) > 0 {
 			continue
 		}
 		sha := merged[t.Branch]
@@ -2022,6 +2034,9 @@ func (m Model) openPruneModal() (tea.Model, tea.Cmd) {
 	mergeLabel := fmt.Sprintf("merge PR #%d to %s", prNum, config.BaseBranch(m.upstreamFor(wt.Branch)))
 
 	steps := []string{}
+	if names := m.activeAgentNames(wt.Path); len(names) > 0 {
+		steps = append(steps, "WARNING: active agent sessions: "+strings.Join(names, ", "))
+	}
 	if len(m.cfg.DeleteHooks()) > 0 {
 		steps = append(steps, "run on_worktree_delete")
 	}
@@ -2419,8 +2434,58 @@ func (m Model) configureCreateModal(modal *modals.Model, preview bool) {
 	}
 	if preview {
 		render = func(branch, base string) string {
-			return "from " + base + " → " + cfg.WorktreePath(m.repoDir, branch)
+			arrow := " → "
+			if m.agentGlyphsASCII() {
+				arrow = " -> "
+			}
+			return "from " + base + arrow + cfg.WorktreePath(m.repoDir, branch)
 		}
 	}
 	modal.SetCreateOptions(m.agents.enabled(), m.createStartAgent, m.keys.CreateAgentToggle, m.keys.CreateBase, cfg.Upstream, render)
+}
+
+func (m *Model) cycleWorktreeSort() {
+	count := int(sortAttention)
+	if m.agents.enabled() && m.layoutKind != LayoutRedesign {
+		count++
+	}
+	m.sort = sortMode((int(m.sort) + 1) % count)
+}
+
+func (m Model) worktreeAttention(path string) int {
+	if !m.agents.enabled() {
+		return 0
+	}
+	rank := 0
+	for _, i := range m.agents.byTree[filepath.Clean(path)] {
+		if i < 0 || i >= len(m.agents.sessions) {
+			continue
+		}
+		s := m.agents.sessions[i]
+		if s.State == "failed" || sessionUrgency(s) == urgencyWaiting {
+			rank++
+		}
+	}
+	return rank
+}
+
+func (m Model) activeAgentNames(path string) []string {
+	if !m.agents.enabled() {
+		return nil
+	}
+	var names []string
+	for _, i := range m.agents.byTree[filepath.Clean(path)] {
+		if i < 0 || i >= len(m.agents.sessions) {
+			continue
+		}
+		s := m.agents.sessions[i]
+		if s.State == "running" || s.State == "starting" {
+			name := s.Name
+			if name == "" {
+				name = string(s.ID)
+			}
+			names = append(names, name)
+		}
+	}
+	return names
 }

@@ -48,6 +48,7 @@ const (
 	sortPR
 	sortActivity
 	sortDirty
+	sortAttention
 )
 
 // label is the short suffix shown in the list title for a sort mode.
@@ -61,6 +62,8 @@ func (s sortMode) label() string {
 		return "PR"
 	case sortActivity:
 		return "activity"
+	case sortAttention:
+		return "attention"
 	case sortDirty:
 		return "dirty"
 	default:
@@ -352,6 +355,8 @@ func (s sortMode) name() string {
 		return "pr"
 	case sortActivity:
 		return "activity"
+	case sortAttention:
+		return "attention"
 	case sortDirty:
 		return "dirty"
 	default:
@@ -371,6 +376,8 @@ func sortModeFromName(name string) sortMode {
 		return sortPR
 	case "activity":
 		return sortActivity
+	case "attention":
+		return sortAttention
 	case "dirty":
 		return sortDirty
 	default:

@@ -920,3 +920,8 @@ Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind count
 on the first line. Branch names shorten first. The selected row shows its full
 path; other home-directory paths use `~`. The title shows position/count and
 `sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.
+
+With agents enabled, the sort cycle includes `attention`: worktrees with failed or
+waiting sessions come first after the main worktree. Single-worktree pruning warns
+with the names of active agents. Bulk pruning skips those worktrees and lists
+them in its confirmation. Stop their sessions before trying bulk prune again.

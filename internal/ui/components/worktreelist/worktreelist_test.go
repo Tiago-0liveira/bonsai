@@ -2,6 +2,7 @@ package worktreelist
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -157,7 +158,7 @@ func TestRowColumnsAndHomePaths(t *testing.T) {
 	columns := []int{}
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "#") {
-			columns = append(columns, strings.Index(line, "#"))
+			columns = append(columns, ansi.StringWidth(line[:strings.Index(line, "#")]))
 		}
 	}
 	if len(columns) != 2 || columns[0] != columns[1] {
