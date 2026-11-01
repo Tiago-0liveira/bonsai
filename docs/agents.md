@@ -496,3 +496,9 @@ ranked. Selecting an account pins that choice.
 
 Launch accounts are grouped under provider headings. Up/down moves between
 accounts and skips the headings.
+
+In the Agents tab, **N** (`agent_quick_new`) opens a suggested-account launch
+with Task focused. **F** (`agent_fork`) starts a new task using the selected
+session’s account, worktree, model, effort and permission/sandbox settings.
+The Task starts empty; neither shortcut starts a session until Ctrl+S. Both
+shortcuts can be rebound in Settings.

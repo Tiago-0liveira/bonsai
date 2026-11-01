@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -212,11 +213,28 @@ func (d launchDialog) onDefaults() launchDialog {
 	values := def.Values
 	if d.seed != nil {
 		values = make(map[string]string, len(def.Values)+len(d.seed.Options)+1)
-		for k, v := range def.Values {
-			values[k] = v
+		for _, field := range fields {
+			values[field.ID] = ""
 		}
 		for k, v := range d.seed.Options {
 			values[k] = v
+		}
+		for _, field := range fields {
+			for _, option := range field.Options {
+				if len(option.Set) == 0 {
+					continue
+				}
+				matches := true
+				for k, v := range option.Set {
+					if d.seed.Options[k] != v {
+						matches = false
+					}
+				}
+				if matches {
+					values[field.ID] = option.Value
+					break
+				}
+			}
 		}
 		values["model"] = d.seed.Model
 	}
@@ -286,6 +304,9 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 	case "ctrl+c":
 		return d, close
 	case "ctrl+s":
+		if d.choosing {
+			return d, nil
+		}
 		return d.submit()
 	}
 	if d.starting {
@@ -422,6 +443,7 @@ func (d launchDialog) accountKey(s string) (launchDialog, tea.Cmd) {
 		return d, nil
 	}
 	d.accountPinned = true
+	d.seed = nil
 	var cmd tea.Cmd
 	d.Browser, cmd = d.Browser.Select(next)
 	return d.resetForm(), cmd
@@ -455,7 +477,7 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 	}
 	name := strings.TrimSpace(d.name.Value())
 	if name == "" {
-		name = a.Name
+		name = d.defaultName(a)
 	}
 	values := d.form.Values()
 	req := agentsapi.StartRequest{
@@ -525,6 +547,14 @@ func sanitizeLaunchTask(s string) string {
 }
 
 func launchShortPath(path string) string {
+	if home := os.Getenv("HOME"); home != "" {
+		if path == home {
+			return "~"
+		}
+		if rel, err := filepath.Rel(home, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.Join("~", rel)
+		}
+	}
 	// The last two components distinguish sibling worktrees without consuming the header.
 	parent := filepath.Base(filepath.Dir(path))
 	if parent == "." || parent == string(filepath.Separator) {
@@ -575,7 +605,8 @@ func (d launchDialog) defaultName(a agentsapi.Account) string {
 	if task := launchSlug(sanitizeLaunchTask(d.task.Value()), 4); task != "" {
 		return task
 	}
-	prefix := launchSlug(d.target.branch, 0) + "-" + string(a.Provider) + "-"
+	branch := []rune(launchSlug(d.target.branch, 0))
+	prefix := string(branch[:min(len(branch), 35)]) + "-" + string(a.Provider) + "-"
 	for n := 1; ; n++ {
 		name := fmt.Sprintf("%s%d", prefix, n)
 		used := false
@@ -596,4 +627,43 @@ func (d launchDialog) updateName() launchDialog {
 		d.name.SetValue(d.defaultName(a))
 	}
 	return d
+}
+
+// Quick launch starts in Task; forking reuses only accepted session settings.
+func (m Model) openAgentTask(fork bool) (tea.Model, tea.Cmd) {
+	var seed *agentsapi.Session
+	initial := agents.AccountID("")
+	if fork {
+		wt, ok := m.selectedWorktree()
+		if !ok {
+			return m, nil
+		}
+		session, _, ok := m.selectedSession(cleanPath(wt.Path))
+		if !ok {
+			m.status = "agents: choose a session first"
+			return m, nil
+		}
+		seed = &session
+		initial = session.AccountID
+	}
+	nm, _ := m.openAgentLaunch()
+	next := nm.(Model)
+	if next.agents.overlay == nil || next.agents.overlay.launch == nil {
+		return next, nil
+	}
+	d := *next.agents.overlay.launch
+	d.Browser = accounts.NewBrowser(next.agents.api.Accounts, initial, next.agents.usage, true)
+	d.accountPinned = initial != ""
+	d.seed = seed
+	if seed != nil {
+		for _, target := range d.targets {
+			if cleanPath(target.workDir) == cleanPath(seed.WorkDir) {
+				d.target = target
+				break
+			}
+		}
+	}
+	d = d.setFocus(launchFocusTask)
+	next.setAgentOverlay(agentOverlay{launch: &d})
+	return next, d.Init()
 }

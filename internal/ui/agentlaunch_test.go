@@ -851,3 +851,62 @@ func TestLaunchProviderHeadingsAreNotSelectable(t *testing.T) {
 		}
 	}
 }
+
+func TestQuickLaunchUsesBindingAndTaskFocus(t *testing.T) {
+	e := accountsEnv(t)
+	e.m.keys = newKeyMap(map[string]string{"agent_quick_new": "ctrl+t"})
+	e.key(t, "N")
+	if e.m.agents.overlay != nil {
+		t.Fatal("old shortcut remained active")
+	}
+	e.sendKey(t, tea.KeyCtrlT)
+	if e.dialog().focus != launchFocusTask {
+		t.Fatal("quick launch must focus Task")
+	}
+	e.key(t, "a new task")
+	e.sendKey(t, tea.KeyCtrlS)
+	starts := e.fb.Sessions.Starts()
+	if len(starts) != 1 || starts[0].Launch.Prompt != "a new task" {
+		t.Fatalf("starts = %+v", starts)
+	}
+}
+
+func TestForkLaunchCopiesAcceptedSettings(t *testing.T) {
+	for _, provider := range []string{"claude", "codex", "antigravity"} {
+		t.Run(provider, func(t *testing.T) {
+			e := accountsEnv(t)
+			a := acct(provider, "work", 0)
+			e.setAccounts(a)
+			fields := []agents.LaunchField{
+				{ID: "effort", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "high"}}},
+				{ID: "permission_mode", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "acceptEdits"}}},
+				{ID: "sandbox", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "workspace-write"}}},
+				{ID: "approval", Kind: agents.LaunchFieldSelect, Options: []agents.FieldOption{{Value: "on-request"}}},
+				{ID: "full_access", Kind: agents.LaunchFieldToggle},
+			}
+			e.fb.Accounts.LaunchDefaults[a.ID] = agentsapi.Defaults{LaunchFields: fields}
+			s := e.agent("original", provider, "running", e.wtB, "previous", 1)
+			s.Model = "chosen-model"
+			s.Options = map[string]string{"effort": "high", "permission_mode": "acceptEdits", "sandbox": "workspace-write", "approval": "on-request", "full_access": "true"}
+			e.fb.Sessions.Add(s)
+			e.relist(t)
+			e.selectWT(e.wtB)
+			e.key(t, "F")
+			e.run(t, e.lastCmd)
+			d := e.dialog()
+			if d.focus != launchFocusTask || d.task.Value() != "" || d.Selected() != a.ID || d.target.workDir != e.wtB {
+				t.Fatalf("fork dialog = %+v", d.target)
+			}
+			e.key(t, "next task")
+			e.sendKey(t, tea.KeyCtrlS)
+			starts := e.fb.Sessions.Starts()
+			if len(starts) != 1 {
+				t.Fatalf("starts = %+v", starts)
+			}
+			launch := starts[0].Launch
+			if launch.Model != "chosen-model" || launch.Effort != "high" || launch.PermissionMode != "acceptEdits" || launch.Sandbox != "workspace-write" || launch.Approval != "on-request" || launch.FullAccess == nil || !*launch.FullAccess || launch.Prompt != "next task" {
+				t.Fatalf("fork launch = %+v", launch)
+			}
+		})
+	}
+}
