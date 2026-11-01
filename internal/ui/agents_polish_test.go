@@ -87,7 +87,7 @@ func TestAgentKeysHaveTheirOwnHelpSection(t *testing.T) {
 	nm, _ := e.m.openKeymap()
 	e.m = nm.(Model)
 	view := ansi.Strip(e.m.modal.View())
-	for _, s := range []string{"Agents tab (8)", agentTerminalSection + " (1)"} {
+	for _, s := range []string{"Agents tab (10)", agentTerminalSection + " (1)"} {
 		if !strings.Contains(view, s) {
 			t.Errorf("help lacks %q:\n%s", s, view)
 		}
