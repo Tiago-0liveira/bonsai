@@ -195,24 +195,6 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case m.layoutKind == LayoutRedesign && key.Matches(msg, m.keys.AgentPlayground):
 		nm, cmd := m.worktreesPlayground()
 		return true, nm, cmd
-	case key.Matches(msg, m.keys.AgentRetry):
-		wt, ok := m.selectedWorktree()
-		if !ok {
-			return true, m, nil
-		}
-		if ss, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && !ss.Active() {
-			nm, cmd := m.retrySession(ss)
-			return true, nm, cmd
-		}
-		sessions := m.orderedSessions(cleanPath(wt.Path))
-		for _, ss := range sessions {
-			if !ss.Active() {
-				nm, cmd := m.retrySession(ss)
-				return true, nm, cmd
-			}
-		}
-		m.setStatus("agents: no ended session to retry", false)
-		return true, m, nil
 	case key.Matches(msg, m.keys.AgentStopAll):
 		nm, cmd := m.askStopAllAgents()
 		return true, nm, cmd

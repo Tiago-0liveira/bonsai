@@ -497,4 +497,4 @@ Garden setup nor a fabricated approved plan. Existing account/session/worktree
 locks still govern launch, stop and prune operations.
 
 The [TUI session controls](tui-cli.md) include repository history, an attention
-queue, retry with recorded launch settings, and confirmed worktree-wide stop.
+queue, same-settings new tasks, and confirmed worktree-wide stop.

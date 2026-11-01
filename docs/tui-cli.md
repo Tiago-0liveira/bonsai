@@ -83,11 +83,9 @@ made visible. The global `!` action cycles through waiting and unseen ended
 sessions. These actions can be rebound as `agent_all`, `agent_all_repo` and
 `agent_attention`.
 
-Ended sessions remain visible in the strip and summary. Use `r`
-(`agent_retry`) in history or the tab to start another session with the same
-account, worktree and recorded launch settings. Prompts are intentionally not
-retained, so retry starts without the original task. `S` (`agent_stop_all`)
-asks for confirmation before stopping every live session in the worktree.
+Ended sessions remain visible in the strip and summary. `F` (`agent_fork`)
+starts another session with the same settings and a new task. `S`
+(`agent_stop_all`) asks for confirmation before stopping every live session in the worktree.
 Session renaming is unavailable in the sessions backend.
 
 The picker shows up to ten cached screen lines for the attached session;
