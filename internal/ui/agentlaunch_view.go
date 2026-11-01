@@ -126,7 +126,7 @@ func (d launchDialog) options(a agentsapi.Account, iw, free int) []string {
 	useTable := tbl.Fits(iw)
 	tableNeed, rowH := 1, 1
 	if useTable {
-		tableNeed, rowH = tbl.Height(iw), tbl.RowHeight(iw)
+		tableNeed, rowH = tbl.Height(iw)+d.providerGroupCount(), tbl.RowHeight(iw)
 	}
 
 	formLines, from, to := d.formLines(iw)
@@ -173,7 +173,7 @@ func (d launchDialog) options(a agentsapi.Account, iw, free int) []string {
 
 	var tableLines []string
 	if useTable {
-		tableLines = tbl.View(iw, tableH)
+		tableLines = d.groupedTable(iw, tableH)
 	} else {
 		tableLines = []string{d.sidebar().Selector(d.focus == launchFocusAccount)}
 	}
@@ -388,4 +388,59 @@ func (d launchDialog) footerFit(w int) string {
 		}
 	}
 	return ansi.Truncate(s, w, "…")
+}
+
+// Provider headings are presentation rows; navigation continues to use account IDs.
+func (d launchDialog) groupedTable(w, h int) []string {
+	tbl := d.table()
+	rh := tbl.RowHeight(w)
+	ordered := d.Ordered()
+	dim := lipgloss.NewStyle().Foreground(theme.Current.Dim)
+	var lines []string
+	from, to := 0, 0
+	var previous agentsapi.Account
+	for i, a := range ordered {
+		if i == 0 || a.Provider != previous.Provider {
+			lines = append(lines, dim.Render(providerName(a.Provider)))
+		}
+		if a.ID == d.Selected() {
+			from = len(lines)
+			to = from + rh
+		}
+		row := tbl
+		row.Selected = a.ID
+		// One row is requested so the shared table renders just this account.
+		lines = append(lines, row.View(w, rh)...)
+		previous = a
+	}
+	if h <= 0 {
+		return nil
+	}
+	if len(lines)+1 <= h {
+		heading := tbl.View(w, tbl.Height(w))[0]
+		return append([]string{heading}, lines...)
+	}
+	if h <= 3 {
+		a, _ := d.Current()
+		out := []string{dim.Render(providerName(a.Provider))}
+		out = append(out, tbl.View(w, rh)...)
+		return out[:min(h, len(out))]
+	}
+	heading := tbl.View(w, tbl.Height(w))[0]
+	window, _ := scrollWindow(lines, from, to, max(h-2, 0))
+	out := append([]string{heading}, window...)
+	out = append(out, dim.Render(fmt.Sprintf("%d accounts · of %d", len(ordered), len(ordered))))
+	return out
+}
+
+func (d launchDialog) providerGroupCount() int {
+	count := 0
+	var prev string
+	for _, a := range d.Ordered() {
+		if string(a.Provider) != prev {
+			count++
+			prev = string(a.Provider)
+		}
+	}
+	return count
 }

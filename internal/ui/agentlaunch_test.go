@@ -829,3 +829,25 @@ func TestLaunchSuggestedAccountAndExplicitSelection(t *testing.T) {
 		})
 	}
 }
+
+func TestLaunchProviderHeadingsAreNotSelectable(t *testing.T) {
+	e := accountsEnv(t)
+	e.openLaunch(t)
+	d := e.dialog()
+	lines := d.groupedTable(120, 40)
+	headers := 0
+	for _, line := range lines {
+		if line == "Claude" || line == "Codex" {
+			headers++
+		}
+	}
+	if headers != 2 {
+		t.Fatalf("provider headings = %d: %v", headers, lines)
+	}
+	for _, want := range []agents.AccountID{"claude:personal", "codex:work"} {
+		e.sendKey(t, tea.KeyDown)
+		if got := e.dialog().Selected(); got != want {
+			t.Fatalf("selected = %s, want %s", got, want)
+		}
+	}
+}

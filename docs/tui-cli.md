@@ -925,3 +925,6 @@ table shows remaining **5H** and **WEEK** percentages and the reset for the wind
 with least headroom. The suggested connected account has the highest minimum
 remaining capacity among its reported windows; unknown/stale readings are not
 ranked. Selecting an account pins that choice.
+
+Launch accounts are grouped under provider headings. Up/down moves between
+accounts and skips the headings.
