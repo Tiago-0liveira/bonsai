@@ -164,6 +164,7 @@ type Model struct {
 	base          textinput.Model
 	baseFocused   bool
 	preview       func(string, string) string
+	nameCheck     func(string) (reason, hint string) // reason is empty for an acceptable name
 	kind          Kind
 	mode          mode
 	title         string
@@ -357,6 +358,19 @@ func (m *Model) SetCreateOptions(enabled, start bool, toggle, baseKey key.Bindin
 	m.base.Prompt = "Base: "
 }
 
+// SetNameCheck makes the input a validated name: while check returns a reason,
+// the reason is shown under the input in place of the preview and Enter does
+// nothing. A non-empty hint is a valid replacement offered to the user.
+func (m *Model) SetNameCheck(check func(string) (reason, hint string)) { m.nameCheck = check }
+
+// nameProblem is the reason the current input cannot be submitted, if any.
+func (m Model) nameProblem() (reason, hint string) {
+	if m.nameCheck == nil {
+		return "", ""
+	}
+	return m.nameCheck(m.input.Value())
+}
+
 func (m Model) StartAgent() bool { return m.startAgent }
 
 // Update handles key input and returns the (possibly emitting) modal.
@@ -385,6 +399,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.base, cmd = m.base.Update(msg)
 		return m, cmd
+	}
+
+	if key.String() == "enter" {
+		if reason, _ := m.nameProblem(); reason != "" || (m.nameCheck != nil && m.input.Value() == "") {
+			return m, nil
+		}
 	}
 
 	// Scroll mode: esc/q close, everything else drives the viewport.
@@ -653,7 +673,14 @@ func (m Model) View() string {
 	}
 
 	if m.preview != nil {
-		b.WriteString("\n" + m.base.View() + "\n" + m.preview(m.input.Value(), m.base.Value()) + "\n")
+		detail := m.preview(m.input.Value(), m.base.Value())
+		if reason, hint := m.nameProblem(); reason != "" {
+			detail = dangerStyle.Render("✗ " + reason)
+			if hint != "" {
+				detail += dimStyle.Render(" · try " + hint)
+			}
+		}
+		b.WriteString("\n" + m.base.View() + "\n" + detail + "\n")
 		b.WriteString(dimStyle.Render("enter create · " + m.baseKey.Help().Key + " base · esc cancel"))
 	}
 	if m.createOptions {

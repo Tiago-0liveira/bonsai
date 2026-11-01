@@ -50,6 +50,10 @@ this session and each creation uses the value it was submitted with; after creat
 the new checkout is selected and its agent launch form opens. The palette also offers
 **New worktree with agent…**. New branches preview their configured path and base;
 Tab (`create_base`) edits the configured upstream or selected PR base (HEAD if unset) before Enter creates the worktree.
+The new-branch name is checked with the `git check-ref-format --branch` rules: an invalid
+name (for example `my test`) shows the reason and a suggested fix under the input,
+hides the path preview and keeps Enter disabled. `bonsai create` and the TUI refuse
+the same names before running git.
 A base that starts with `-` is rejected.
 
 Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts

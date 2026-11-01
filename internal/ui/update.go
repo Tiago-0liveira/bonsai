@@ -2517,6 +2517,9 @@ func (m Model) configureCreateModal(modal *modals.Model, preview bool) {
 		base = "HEAD"
 	}
 	modal.SetCreateOptions(m.agents.enabled(), m.createStartAgent, m.keys.CreateAgentToggle, m.keys.CreateBase, base, render)
+	if preview {
+		modal.SetNameCheck(branchNameCheck)
+	}
 }
 
 func (m *Model) cycleWorktreeSort() {
@@ -2568,4 +2571,17 @@ func (m Model) activeAgentNames(path string) []string {
 func (m *Model) setStatus(text string, failed bool) {
 	m.status, m.statusErr = text, failed
 	m.statusGen++
+}
+
+// branchNameCheck judges the new-branch input while typing. An empty field is
+// not an error to show: the modal itself refuses to submit it.
+func branchNameCheck(name string) (reason, hint string) {
+	if name == "" {
+		return "", ""
+	}
+	err := git.ValidBranchName(name)
+	if err == nil {
+		return "", ""
+	}
+	return err.Error(), git.SuggestBranchName(name)
 }

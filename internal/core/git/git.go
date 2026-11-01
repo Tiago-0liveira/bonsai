@@ -323,6 +323,9 @@ func WorktreePath(repoDir, branch string) string {
 // AddWorktreeNewBranch creates a worktree at path checking out a newly created
 // branch.
 func AddWorktreeNewBranch(dir, path, branch, base string) error {
+	if err := ValidBranchName(branch); err != nil {
+		return fmt.Errorf("invalid branch name %q: %w", branch, err)
+	}
 	if strings.HasPrefix(base, "-") {
 		return fmt.Errorf("%w: %q", ErrInvalidWorktreeBase, base)
 	}
