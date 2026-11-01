@@ -918,3 +918,10 @@ another loaded worktree. The optional multiline **Task** is sent as the initial
 provider prompt; Enter adds a newline, Tab advances, and Ctrl+S starts. Task text
 is never saved as account defaults. The selected worktree is the initial target,
 including when launching immediately after creating a worktree.
+
+Untouched session names use `<branch>-<provider>-<next free index>`; typing a
+task uses its first four words as a slug. Edited names are preserved. The account
+table shows remaining **5H** and **WEEK** percentages and the reset for the window
+with least headroom. The suggested connected account has the highest minimum
+remaining capacity among its reported windows; unknown/stale readings are not
+ranked. Selecting an account pins that choice.

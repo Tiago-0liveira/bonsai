@@ -20,7 +20,7 @@ const maxLaunchGaps = 5
 func (d launchDialog) table() accounts.Table {
 	return accounts.Table{
 		Accounts: d.Ordered(), Selected: d.Selected(),
-		Columns:  accounts.LaunchColumns(d.Usage(), d.now, d.ascii),
+		Columns:  d.usageColumns(),
 		ASCII:    d.ascii,
 		Focused:  d.focus == launchFocusAccount,
 		UnderSep: " · ",
@@ -165,6 +165,9 @@ func (d launchDialog) options(a agentsapi.Account, iw, free int) []string {
 		// The save box and actions are already reserved; a table taller than
 		// what is left would push them out of the pane.
 		tableH = min(tableH, max(avail, 0))
+		if avail > 0 {
+			tableH = min(tableH, max(avail-1, 0))
+		}
 		formH = max(avail-tableH, 0)
 	}
 

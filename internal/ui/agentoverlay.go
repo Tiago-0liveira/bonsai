@@ -93,6 +93,7 @@ func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
 		branch:   branchOf(wt),
 	}
 	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), m.agents.usage, m.agentGlyphsASCII())
+	d.sessions = m.agents.sessions
 	d.changeWorktree = m.keys.LaunchChangeWorktree
 	for _, tree := range m.worktrees {
 		d.targets = append(d.targets, launchTarget{worktree: git.ID(webRepositoryID, tree.Path), workDir: tree.Path, branch: branchOf(tree)})

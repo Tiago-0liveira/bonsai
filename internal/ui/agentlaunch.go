@@ -97,9 +97,13 @@ type launchDialog struct {
 	now   func() time.Time
 	w, h  int
 
-	focus       launchFocus
-	name        textinput.Model
-	nameTouched bool
+	focus         launchFocus
+	name          textinput.Model
+	nameTouched   bool
+	sessions      []agentsapi.Session
+	accountPinned bool
+	suggested     agents.AccountID
+	seed          *agentsapi.Session
 
 	form       launchform.Form
 	formLoaded bool
@@ -127,7 +131,7 @@ func newLaunchDialog(id uint64, api agentsapi.Accounts, target launchTarget, ini
 		task: ta, changeWorktree: binding("launch_change_worktree", nil),
 		Browser: accounts.NewBrowser(api, initial, usage, true),
 		id:      id, ascii: ascii, target: target,
-		now: time.Now, name: ti, button: 1,
+		now: time.Now, name: ti, button: 1, accountPinned: initial != "",
 	}
 }
 
@@ -166,6 +170,12 @@ func (d launchDialog) Update(msg tea.Msg) (launchDialog, tea.Cmd) {
 	var cmd tea.Cmd
 	var ch accounts.Change
 	d.Browser, cmd, ch = d.Browser.Update(msg)
+	d.suggested = d.suggestedAccount()
+	if !d.planner && !d.accountPinned && d.suggested != "" && d.suggested != d.Selected() {
+		var pick tea.Cmd
+		d.Browser, pick = d.Browser.Select(d.suggested)
+		cmd = tea.Batch(cmd, pick)
+	}
 	// Re-selecting after a reload re-reads the form: a sign-in changes nothing
 	// in it, but a defaults edit made in the accounts modal would.
 	if d.Selected() != prev || (ch&accounts.ChangedList != 0 && d.ListErr() == "") {
@@ -181,7 +191,7 @@ func (d launchDialog) Update(msg tea.Msg) (launchDialog, tea.Cmd) {
 func (d launchDialog) resetForm() launchDialog {
 	d.formLoaded, d.formErr, d.save, d.err = false, "", false, ""
 	if a, ok := d.Current(); ok && !d.nameTouched {
-		d.name.SetValue(a.Name)
+		d.name.SetValue(d.defaultName(a))
 	}
 	return d
 }
@@ -199,7 +209,18 @@ func (d launchDialog) onDefaults() launchDialog {
 	if d.planner {
 		fields = plannerDialogFields(fields)
 	}
-	d.form = launchform.New(fields, def.Models, def.Values, d.ascii).Focus(d.focus == launchFocusForm)
+	values := def.Values
+	if d.seed != nil {
+		values = make(map[string]string, len(def.Values)+len(d.seed.Options)+1)
+		for k, v := range def.Values {
+			values[k] = v
+		}
+		for k, v := range d.seed.Options {
+			values[k] = v
+		}
+		values["model"] = d.seed.Model
+	}
+	d.form = launchform.New(fields, def.Models, values, d.ascii).Focus(d.focus == launchFocusForm)
 	d.formLoaded = true
 	return d
 }
@@ -286,6 +307,7 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 				d.target = d.targets[d.targetIndex]
 			}
 			d.choosing = false
+			d = d.updateName()
 		}
 		return d, nil
 	}
@@ -323,6 +345,7 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 	case launchFocusTask:
 		var cmd tea.Cmd
 		d.task, cmd = d.task.Update(k)
+		d = d.updateName()
 		return d, cmd
 	case launchFocusName:
 		if s == "enter" || s == "down" {
@@ -331,9 +354,10 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 		if s == "up" {
 			return d.setFocus(launchFocusTask), nil
 		}
-		d.nameTouched = true
+		before := d.name.Value()
 		var cmd tea.Cmd
 		d.name, cmd = d.name.Update(k)
+		d.nameTouched = d.nameTouched || before != d.name.Value()
 		return d, cmd
 	case launchFocusForm:
 		if !editing && s == "down" && d.form.AtLast() {
@@ -397,6 +421,7 @@ func (d launchDialog) accountKey(s string) (launchDialog, tea.Cmd) {
 	if next == d.Selected() {
 		return d, nil
 	}
+	d.accountPinned = true
 	var cmd tea.Cmd
 	d.Browser, cmd = d.Browser.Select(next)
 	return d.resetForm(), cmd
@@ -519,4 +544,56 @@ func (d launchDialog) targetLines() []string {
 	}
 	lines = append(lines, "↑↓ worktree · enter select · esc back")
 	return lines
+}
+
+func launchSlug(s string, words int) string {
+	parts := strings.Fields(s)
+	if words > 0 {
+		parts = parts[:min(len(parts), words)]
+	}
+	var out strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(strings.Join(parts, "-")) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if dash && out.Len() > 0 {
+				out.WriteByte('-')
+			}
+			out.WriteRune(r)
+			dash = false
+		} else {
+			dash = true
+		}
+	}
+	r := []rune(out.String())
+	return string(r[:min(len(r), launchNameLen)])
+}
+
+func (d launchDialog) defaultName(a agentsapi.Account) string {
+	if d.planner {
+		return a.Name
+	}
+	if task := launchSlug(sanitizeLaunchTask(d.task.Value()), 4); task != "" {
+		return task
+	}
+	prefix := launchSlug(d.target.branch, 0) + "-" + string(a.Provider) + "-"
+	for n := 1; ; n++ {
+		name := fmt.Sprintf("%s%d", prefix, n)
+		used := false
+		for _, s := range d.sessions {
+			if cleanPath(s.WorkDir) == cleanPath(d.target.workDir) && s.Name == name {
+				used = true
+				break
+			}
+		}
+		if !used {
+			return name
+		}
+	}
+}
+
+func (d launchDialog) updateName() launchDialog {
+	if a, ok := d.Current(); ok && !d.nameTouched {
+		d.name.SetValue(d.defaultName(a))
+	}
+	return d
 }

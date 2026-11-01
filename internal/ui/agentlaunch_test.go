@@ -74,7 +74,7 @@ func TestLaunchDialogListsAccountsInATableWithoutBoxes(t *testing.T) {
 			t.Fatalf("%v: providers must be grouped Claude then Codex:\n%s", size, view)
 		}
 		for _, want := range []string{"New session", "feat-a", "ACCOUNT", "PROVIDER", "Session options", "Save as account defaults", "Start session", "ctrl+s start"} {
-			if !strings.Contains(view, want) && !(size[0] < 100 && want == "5H LEFT") {
+			if !strings.Contains(view, want) && !(size[0] < 100 && want == "5H") {
 				t.Errorf("%v: missing %q:\n%s", size, want, view)
 			}
 		}
@@ -103,7 +103,7 @@ func TestLaunchDialogStartsWithTheWebIdentities(t *testing.T) {
 	// the next permissions option.
 	e.sendKey(t, tea.KeyTab) // task
 	e.sendKey(t, tea.KeyTab)
-	if got := e.dialog().name.Value(); got != "work" {
+	if got := e.dialog().name.Value(); got != "feat-a-claude-1" {
 		t.Errorf("default name = %q, want the profile name", got)
 	}
 	e.send(t, tea.KeyMsg{Type: tea.KeyCtrlU})
@@ -251,7 +251,7 @@ func TestLaunchDialogSwitchingAccountReloadsForm(t *testing.T) {
 	if d.Selected() != "claude:personal" || d.form.Values()["permissions"] != "read-only" {
 		t.Errorf("selected=%q values=%v", d.Selected(), d.form.Values())
 	}
-	if d.name.Value() != "personal" {
+	if d.name.Value() != "feat-a-claude-1" {
 		t.Errorf("untouched name follows the account, got %q", d.name.Value())
 	}
 }
@@ -770,5 +770,62 @@ func TestSanitizeLaunchTask(t *testing.T) {
 		if got := sanitizeLaunchTask(tt.in); got != tt.want {
 			t.Errorf("sanitized length=%d, want %d", len(got), len(tt.want))
 		}
+	}
+}
+
+func TestLaunchGeneratedNamesPreserveEdits(t *testing.T) {
+	e := accountsEnv(t)
+	s := e.agent("old", "claude", "exited", e.wtA, "feat-a-claude-1", 1)
+	e.fb.Sessions.Add(s)
+	e.relist(t)
+	e.openLaunch(t)
+	if got := e.dialog().name.Value(); got != "feat-a-claude-2" {
+		t.Fatalf("name = %q", got)
+	}
+	e.sendKey(t, tea.KeyTab)
+	e.key(t, "Fix the broken login flow")
+	if got := e.dialog().name.Value(); got != "fix-the-broken-login" {
+		t.Fatalf("task name = %q", got)
+	}
+	e.sendKey(t, tea.KeyTab)
+	e.sendKey(t, tea.KeyCtrlA)
+	e.sendKey(t, tea.KeyCtrlK)
+	e.key(t, "mine")
+	e.sendKey(t, tea.KeyShiftTab)
+	e.key(t, " please")
+	if got := e.dialog().name.Value(); got != "mine" {
+		t.Fatalf("edited name = %q", got)
+	}
+}
+
+func TestLaunchSuggestedAccountAndExplicitSelection(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			e := accountsEnv(t)
+			for id, f := range map[agents.AccountID]float64{"claude:work": .9, "claude:personal": .7, "codex:work": .8} {
+				u := usageWithFiveHour(f, 0, false)
+				weekly := .6
+				if id == "claude:work" {
+					weekly = .1
+				}
+				u.Headline.Secondary = &agents.UsageLimit{Window: "weekly", RemainingFraction: &weekly}
+				e.fb.Accounts.Usages[id] = u
+			}
+			if explicit {
+				e.fb.Sessions.Add(e.agent("current", "claude", "running", e.wtA, "current", 1))
+				e.relist(t)
+			}
+			e.openLaunch(t)
+			want := agents.AccountID("claude:personal")
+			if explicit {
+				want = "claude:work"
+			}
+			if got := e.dialog().Selected(); got != want {
+				t.Fatalf("selection = %s, want %s", got, want)
+			}
+			if got := e.dialog().suggested; got != "claude:personal" {
+				t.Fatalf("suggested = %s", got)
+			}
+		})
 	}
 }

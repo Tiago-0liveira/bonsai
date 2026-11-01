@@ -64,8 +64,8 @@ func TestLaunchViewShowsFiveHourCapacityPerAccount(t *testing.T) {
 				t.Errorf("%v: missing %q:\n%s", size, want, view)
 			}
 		}
-		if size[0] > 100 && !strings.Contains(view, "5H LEFT") {
-			t.Errorf("%v: wide view keeps the 5H LEFT heading:\n%s", size, view)
+		if size[0] > 100 && !strings.Contains(view, "5H") {
+			t.Errorf("%v: wide view keeps the 5H heading:\n%s", size, view)
 		}
 		if got := strings.Count(view, "ctrl+s") + strings.Count(view, "^S"); got != 1 {
 			t.Errorf("%v: exactly one footer hint expected, got %d:\n%s", size, got, view)
