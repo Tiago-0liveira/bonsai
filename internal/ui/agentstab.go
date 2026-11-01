@@ -213,6 +213,9 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		m.setStatus("agents: no ended session to retry", false)
 		return true, m, nil
+	case key.Matches(msg, m.keys.AgentRename):
+		nm, cmd := m.openRenameSelected()
+		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentStopAll):
 		nm, cmd := m.askStopAllAgents()
 		return true, nm, cmd
@@ -294,10 +297,10 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 	p := newSessionsPicker(branchOf(wt), m.agentGlyphsASCII())
 	p.path = path
 	p.keys = m.keys
-	p.peek = m.agentPeek()
 	p.setSessions(m.orderedSessions(path))
+	m, peek := m.peekPicker(&p)
 	m.setAgentOverlay(agentOverlay{sessions: &p})
-	return m, nil
+	return m, peek
 }
 
 // ackFailedAgents marks ended sessions as seen and refreshes their counts.
@@ -370,7 +373,7 @@ func (m Model) openRepoSessions() (tea.Model, tea.Cmd) {
 	}
 	m.leaveAgentTerminal()
 	p := newSessionsPicker("Repository", m.agentGlyphsASCII())
-	p.repo, p.keys, p.peek = true, m.keys, m.agentPeek()
+	p.repo, p.keys = true, m.keys
 	m.populateRepoPicker(&p)
 	for _, ss := range p.sessions {
 		if !ss.Active() {
@@ -378,8 +381,9 @@ func (m Model) openRepoSessions() (tea.Model, tea.Cmd) {
 		}
 	}
 	m.refreshAgentBadges()
+	m, peek := m.peekPicker(&p)
 	m.setAgentOverlay(agentOverlay{sessions: &p})
-	return m, nil
+	return m, peek
 }
 
 func (m Model) nextAgentAttention() (tea.Model, tea.Cmd) {

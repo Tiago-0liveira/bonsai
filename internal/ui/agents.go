@@ -103,6 +103,11 @@ type agentState struct {
 	enterAfter string
 	enterSeq   uint64
 	enterPath  string
+
+	// peeks caches screen tails for the sessions picker; peekGen numbers the
+	// requests so only the latest answer is applied.
+	peeks   map[string]peekEntry
+	peekGen uint64
 }
 
 // enabled: a backend is present (the tab will exist). active: it is also

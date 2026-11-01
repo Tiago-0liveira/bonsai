@@ -500,7 +500,7 @@ func (m Model) worktreesMsg(msg tea.Msg) (bool, tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg.(type) {
-	case launchSubmitMsg, launchStartedMsg, launchSavedMsg, agentStoppedMsg:
+	case launchSubmitMsg, launchStartedMsg, launchSavedMsg, agentStoppedMsg, agentRenamedMsg, agentPeekMsg:
 		_, nm, cmd := m.onAgentOverlayMsg(msg)
 		return true, nm, cmd
 	}
