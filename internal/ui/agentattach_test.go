@@ -152,7 +152,7 @@ func TestAgentsEndedBanner(t *testing.T) {
 		st   agentterminal.Summary
 		want string
 	}{
-		{"exited", agentterminal.Summary{State: "exited", ExitCode: &code}, "exited (code 3) · n: new · a: all"},
+		{"exited", agentterminal.Summary{State: "exited", ExitCode: &code}, "exited (code 3)"},
 		{"failed", agentterminal.Summary{State: "failed", Error: "spawn failed"}, "failed: spawn failed"},
 	}
 	for _, tc := range tests {

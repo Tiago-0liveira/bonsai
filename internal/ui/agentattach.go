@@ -38,7 +38,8 @@ const (
 
 // agentView is the single live attachment the Agents tab shows.
 type agentView struct {
-	sessionID string
+	sessionID  string
+	lastOutput time.Time
 	// token changes with every new stream: messages from a stream the view has
 	// moved on from carry an old one and are dropped.
 	token  uint64
@@ -344,6 +345,9 @@ func (m Model) onAgentFrames(msg agentFramesMsg) (tea.Model, tea.Cmd) {
 	for _, f := range msg.frames {
 		switch f.Type {
 		case "output":
+			if !v.replaying && len(f.Data) > 0 {
+				v.lastOutput = agentNow()
+			}
 			v.term.Write(f.Data)
 			v.offset = f.Offset + uint64(len(f.Data))
 		case "gap":
@@ -401,7 +405,7 @@ func applyAgentStatus(v *agentView, s agentterminal.Summary) {
 		if s.ExitCode != nil {
 			code = fmt.Sprintf(" (code %d)", *s.ExitCode)
 		}
-		v.banner = "exited" + code + " · n: new · a: all"
+		v.banner = "exited" + code
 	case "failed":
 		v.state = attachEnded
 		// The holder's error is free text; strip escapes and control bytes so
@@ -416,7 +420,7 @@ func applyAgentStatus(v *agentView, s agentterminal.Summary) {
 		if reason == "" {
 			reason = "unknown error"
 		}
-		v.banner = "failed: " + reason + " · n: new · a: all"
+		v.banner = "failed: " + reason
 	}
 }
 

@@ -35,6 +35,8 @@ type Prefs struct {
 	// PRStatus is the worktree-list PR status display mode: "full" (glyph
 	// plus label), "compact" (glyph only) or "off" ("" = full).
 	PRStatus string `json:"pr_status,omitempty"`
+	// AgentBell enables terminal attention notifications; silent by default.
+	AgentBell bool `json:"agent_bell,omitempty"`
 	// AgentGlyphs picks how agent providers are drawn: "unicode" (✹ ❃ ✦) or
 	// "ascii" (C X A) for fonts that render the glyphs badly ("" = unicode).
 	AgentGlyphs string `json:"agent_glyphs,omitempty"`

@@ -1,6 +1,6 @@
 AGENTS · feat-a
 
-Sessions: [1 ✹ Auth fix] [2 ❃ Tests]                                                                      a: All  n: New
+Sessions: [1 ✹ Auth fix] [2 ❃ Tests]                                                                 a: sessions  n: New
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ❃ Codex · work │ ● Running
 5h ███████░░░ left · Week 41% left · Reset 2h14m                                                                u: Usage
@@ -29,4 +29,4 @@ Sessions: [1 ✹ Auth fix] [2 ❃ Tests]                                        
 >
 
 ========================================================================================================================
-enter focus agent · a all · m accounts · u usage · n new · s stop · tab focus · ? keys
+enter focus agent · a sessions · m accounts · u usage · n new · s stop · tab focus · ? keys

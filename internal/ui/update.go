@@ -905,6 +905,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch {
+	case key.Matches(msg, m.keys.AgentAttention) && m.layoutKind != LayoutRedesign:
+		return m.nextAgentAttention()
+
 	case key.Matches(msg, m.keys.Palette):
 		return m.openPalette()
 

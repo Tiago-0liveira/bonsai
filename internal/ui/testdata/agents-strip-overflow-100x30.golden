@@ -1,6 +1,6 @@
 AGENTS · feat-a
 
-Sessions: [4 ❃ Task number…] [5 ✦ Task number…] [6 ✹ Task number…] [+3 more]          a: All  n: New
+Sessions: [4 ❃ Task number…] [5 ✦ Task number…] [6 ✹ Task number…] [+3 more]     a: sessions  n: New
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ✹ Claude · work │ ● Running
 5h ███████░░░ left · Week 41% left · Reset 2h14m                                            u: Usage
@@ -29,4 +29,4 @@ Sessions: [4 ❃ Task number…] [5 ✦ Task number…] [6 ✹ Task number…] [
 ────────────
 >
 ====================================================================================================
-enter focus agent · a all · m accounts · u usage · n new · s stop · tab focus · ? keys
+enter focus agent · a sessions · m accounts · u usage · n new · s stop · tab focus · ? keys

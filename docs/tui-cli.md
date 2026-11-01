@@ -928,3 +928,39 @@ For a Garden-created session, the Inspector shows its Issue and attempt identity
 its specification/plan sections. A manual checkout needs no task link. Human
 acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
+
+Agent pane hints follow your configured bindings, including the Agents tab
+shortcut. The worktree session picker is labelled “sessions”.
+
+While typing into an agent, the pane always displays `ctrl+] detach`. This fixed
+key returns to Bonsai navigation; the agent continues running.
+
+Worktree rows count sessions by state: `▶N` working, `⏸N` waiting for input,
+`✓N` finished and unseen, and `✗N` failed and unseen. ASCII mode uses
+`>N`, `=N`, `+N` and `xN`. The `?` keymap includes this legend.
+Opening session history acknowledges ended sessions so their counts clear.
+
+In the Agents tab, `a` opens worktree sessions and `A` opens repository
+sessions, searchable by session, account, worktree or path. Enter selects the
+worktree and session; a worktree hidden by the current filter must first be
+made visible. The global `!` action cycles through waiting and unseen ended
+sessions. These actions can be rebound as `agent_all`, `agent_all_repo` and
+`agent_attention`.
+
+Ended sessions remain visible in the strip and summary. Use `r`
+(`agent_retry`) in history or the tab to start another session with the same
+account, worktree and recorded launch settings. Prompts are intentionally not
+retained, so retry starts without the original task. `S` (`agent_stop_all`)
+asks for confirmation before stopping every live session in the worktree.
+Session renaming is unavailable in the sessions backend.
+
+The picker shows up to ten cached screen lines for the attached session;
+other sessions have no cheap screen snapshot accessor. Working sessions show
+time since output in the strip after this client observes live output.
+Retained summaries do not contain last-output timestamps.
+
+Settings → General → Agent attention bell enables a terminal bell when a
+working session starts waiting or ends. This personal preference defaults off.
+
+The bell setting is stored as the personal `agent_bell` preference.
+Repository and attention jumps focus the Agents pane for session navigation.

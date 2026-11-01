@@ -20,7 +20,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
-// --- "!" acknowledgement ---
+// --- "✗1" acknowledgement ---
 
 func TestAgentsPickerOpenAcknowledgesFailures(t *testing.T) {
 	e := newAgentsEnv(t)
@@ -30,14 +30,14 @@ func TestAgentsPickerOpenAcknowledgesFailures(t *testing.T) {
 	)
 	e.relist(t)
 	e.openTab(t)
-	if row := e.rowOf("feat-a"); !strings.HasSuffix(strings.TrimRight(row, " "), "!") {
+	if row := e.rowOf("feat-a"); !strings.HasSuffix(strings.TrimRight(row, " "), "✗1") {
 		t.Fatalf("setup: failed marker missing: %q", row)
 	}
 	e.key(t, "a")
 	if !e.m.agents.ack["f1"] {
 		t.Error("opening the picker shows the failed session, which acknowledges it")
 	}
-	if row := e.rowOf("feat-a"); strings.Contains(row, "!") {
+	if row := e.rowOf("feat-a"); strings.Contains(row, "✗1") {
 		t.Errorf("! should clear when the picker opens: %q", row)
 	}
 }
@@ -65,7 +65,7 @@ func TestAgentKeysHaveTheirOwnHelpSection(t *testing.T) {
 			agentsSection = sec.actions
 		}
 	}
-	want := []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}
+	want := []string{"agent_stop_all", "agent_all_repo", "agents_tab", "agent_retry", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}
 	if strings.Join(agentsSection, ",") != strings.Join(want, ",") {
 		t.Fatalf("Agents tab section = %v, want %v", agentsSection, want)
 	}
@@ -87,7 +87,7 @@ func TestAgentKeysHaveTheirOwnHelpSection(t *testing.T) {
 	nm, _ := e.m.openKeymap()
 	e.m = nm.(Model)
 	view := ansi.Strip(e.m.modal.View())
-	for _, s := range []string{"Agents tab (8)", agentTerminalSection + " (1)"} {
+	for _, s := range []string{"Agents tab (11)", agentTerminalSection + " (1)"} {
 		if !strings.Contains(view, s) {
 			t.Errorf("help lacks %q:\n%s", s, view)
 		}
@@ -134,7 +134,7 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e := liveEnv(t)
 		e.attached(t)
 		e.frames(t, status("running"))
-		if got := plain(e); got != "enter focus agent · a all · m accounts · u usage · n new · s stop · tab focus · ? keys" {
+		if got := plain(e); got != "enter focus agent · a sessions · m accounts · u usage · n new · s stop · tab focus · ? keys" {
 			t.Errorf("navigation = %q", got)
 		}
 	})
@@ -148,7 +148,7 @@ func TestAgentsContextHintPerState(t *testing.T) {
 		e := liveEnv(t)
 		e.attached(t)
 		e.frames(t, status("exited"))
-		if got := plain(e); got != "a all · m accounts · u usage · n new · tab focus · ? keys" {
+		if got := plain(e); got != "a sessions · m accounts · u usage · n new · tab focus · ? keys" {
 			t.Errorf("ended = %q", got)
 		}
 	})

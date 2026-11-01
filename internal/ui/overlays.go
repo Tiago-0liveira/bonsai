@@ -227,6 +227,11 @@ func (m Model) openKeymap() (tea.Model, tea.Cmd) {
 		terminalKeys = append(terminalKeys, paletteEntry{display: display, plain: plain})
 	}
 	sections = append(sections, kmSection{name: agentTerminalSection, entries: terminalKeys})
+	var legend []paletteEntry
+	for _, e := range agentLegendKeys {
+		legend = append(legend, paletteEntry{plain: e.key + " " + e.desc + " Agent state legend", display: keySt.Render(padRight(e.key, 10)) + e.desc})
+	}
+	sections = append(sections, kmSection{name: "Agent state legend", entries: legend})
 
 	filter := func(q string) []modals.Section {
 		q = strings.ToLower(strings.TrimSpace(q))

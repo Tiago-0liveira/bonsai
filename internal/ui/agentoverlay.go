@@ -234,6 +234,9 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		m.agents.overlay = nil
 		nm, cmd = m.onAgentsPick(msg.path, msg.id)
 		return true, nm, cmd
+	case sessionsRetryMsg:
+		nm, cmd = m.retrySession(msg.session)
+		return true, nm, cmd
 	case sessionsNewMsg:
 		nm, cmd = m.openAgentLaunch()
 		return true, nm, cmd
@@ -362,4 +365,54 @@ func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 
 func stopAgentCmd(ctx context.Context, s agentsapi.Sessions, id, name string) tea.Cmd {
 	return func() tea.Msg { return agentStoppedMsg{name: name, err: s.Stop(ctx, id)} }
+}
+
+func (m Model) retrySession(s agentsapi.Session) (tea.Model, tea.Cmd) {
+	if !m.agents.active() || s.Active() {
+		return m, nil
+	}
+	// Retained summaries deliberately omit the task prompt.
+	launch := agents.LaunchOptions{Model: s.Model, DisplayName: s.Name,
+		PermissionMode: s.Options["permission_mode"], Effort: s.Options["effort"],
+		Sandbox: s.Options["sandbox"], Approval: s.Options["approval"], ReadOnly: s.Options["read_only"] == "true"}
+	if value, ok := s.Options["full_access"]; ok {
+		on := value == "true"
+		launch.FullAccess = &on
+	}
+	cols, rows := m.agentAreaSize()
+	if cols <= 0 || rows <= 0 {
+		cols, rows = 80, 24
+	}
+	req := agentsapi.StartRequest{ProjectID: s.ProjectID, WorktreeID: s.WorktreeID, WorkDir: s.WorkDir,
+		AccountID: s.AccountID, Name: s.Name, Cols: cols, Rows: rows, Launch: launch}
+	m.agents.overlay = nil
+	return m, startAgentCmd(m.agents.ctx, m.agents.api.Sessions, m.repoDir, launchSubmitMsg{}, req)
+}
+
+func (m Model) askStopAllAgents() (tea.Model, tea.Cmd) {
+	if !m.agents.active() {
+		return m, nil
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	var cmds []tea.Cmd
+	for _, s := range m.orderedSessions(cleanPath(wt.Path)) {
+		if s.Active() {
+			cmds = append(cmds, stopAgentCmd(m.agents.ctx, m.agents.api.Sessions, s.ID, sessionName(s)))
+		}
+	}
+	if len(cmds) == 0 {
+		m.status = "agents: no running sessions to stop"
+		return m, nil
+	}
+	m.leaveAgentTerminal()
+	m.pendingConfirm = &confirmState{action: tea.Batch(cmds...)}
+	modal := modals.NewConfirm(kindAgentStop, fmt.Sprintf("Stop all %d sessions in %s?", len(cmds), branchOf(wt)))
+	modal.SetBody("All agent processes in this worktree end.")
+	modal.SetInline(true)
+	modal.SetSize(m.agentPaneSize())
+	m.modal = &modal
+	return m, nil
 }

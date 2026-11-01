@@ -356,9 +356,9 @@ func (m Model) terminalLayout(w, h int, strip []agentsapi.Session, sel agentsapi
 		if u := m.usageText(sel, false); u != "" {
 			left += " │ " + u
 		}
-		head = leftRight(left, dimText(focusLabel), w)
+		head = leftRight(left, dimText("ctrl+] detach · "+focusLabel), w)
 	} else {
-		head = m.compactHeaderHint(sel, w, focusLabel)
+		head = m.compactHeaderHint(sel, w, "ctrl+] detach · "+focusLabel)
 	}
 	fixed := []string{m.sessionStrip(strip, selIdx, w, "", ""), fit(head, w), rule}
 	tail := []string{rule, fit(m.terminalHint(), w)}

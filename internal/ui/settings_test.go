@@ -274,6 +274,7 @@ func TestSettingsMachineFieldsPersist(t *testing.T) {
 		{"editor", catGeneral, 1, 0, []string{"enter", "n", "v", "i", "m", "enter"}, func(p config.Prefs) bool { return p.Editor == "nvim" }},
 		{"sort", catGeneral, 1, 1, []string{"right"}, func(p config.Prefs) bool { return p.Sort == "ahead" }},
 		{"pr status", catGeneral, 1, 2, []string{"right"}, func(p config.Prefs) bool { return p.PRStatus == "compact" }},
+		{"agent bell", catGeneral, 1, 4, []string{"enter"}, func(p config.Prefs) bool { return p.AgentBell }},
 		{"prune merge", catGeneral, 1, 3, []string{"enter"}, func(p config.Prefs) bool { return p.PruneMerge }},
 		{"theme", catAppearance, 0, 0, []string{"right", "right"}, func(p config.Prefs) bool { return p.Theme == "sakura" }},
 		{"contrast", catAppearance, 1, 0, []string{"right"}, func(p config.Prefs) bool { return p.Contrast == "flat" }},

@@ -49,8 +49,13 @@ func (m *Model) fetchUsage(id agents.AccountID, lim usagestore.Limiter) tea.Cmd 
 func (m Model) stripSessions(path string) []agentsapi.Session {
 	var active []agentsapi.Session
 	for _, i := range m.agents.byTree[path] {
-		if s := m.agents.sessions[i]; s.Active() {
+		if s := m.agents.sessions[i]; s.Active() || !m.agents.ack[s.ID] {
 			active = append(active, s)
+		}
+	}
+	if len(active) == 0 {
+		for _, i := range m.agents.byTree[path] {
+			active = append(active, m.agents.sessions[i])
 		}
 	}
 	sort.SliceStable(active, func(a, b int) bool { return active[a].CreatedAt.Before(active[b].CreatedAt) })
@@ -190,6 +195,30 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case m.layoutKind == LayoutRedesign && key.Matches(msg, m.keys.AgentPlayground):
 		nm, cmd := m.worktreesPlayground()
 		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentRetry):
+		wt, ok := m.selectedWorktree()
+		if !ok {
+			return true, m, nil
+		}
+		if ss, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && !ss.Active() {
+			nm, cmd := m.retrySession(ss)
+			return true, nm, cmd
+		}
+		sessions := m.orderedSessions(cleanPath(wt.Path))
+		for _, ss := range sessions {
+			if !ss.Active() {
+				nm, cmd := m.retrySession(ss)
+				return true, nm, cmd
+			}
+		}
+		m.status = "agents: no ended session to retry"
+		return true, m, nil
+	case key.Matches(msg, m.keys.AgentStopAll):
+		nm, cmd := m.askStopAllAgents()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentAllRepo):
+		nm, cmd := m.openRepoSessions()
+		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentAll):
 		if !m.agents.active() {
 			m.status = unsupportedNotice
@@ -253,23 +282,23 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	path := cleanPath(wt.Path)
-	// Opening the list is seeing it: failed sessions of this worktree list
-	// their ✗ there, so the worktree row's "!" has done its job.
+	// Opening history acknowledges the ended sessions shown there.
 	m.ackFailedAgents(path)
 	m.leaveAgentTerminal()
 	p := newSessionsPicker(branchOf(wt), m.agentGlyphsASCII())
 	p.path = path
+	p.keys = m.keys
+	p.peek = m.agentPeek()
 	p.setSessions(m.orderedSessions(path))
 	m.setAgentOverlay(agentOverlay{sessions: &p})
 	return m, nil
 }
 
-// ackFailedAgents marks the failed sessions of a worktree as seen and refreshes
-// the "!" badges.
+// ackFailedAgents marks ended sessions as seen and refreshes their counts.
 func (m *Model) ackFailedAgents(path string) {
 	changed := false
 	for _, i := range m.agents.byTree[path] {
-		if s := m.agents.sessions[i]; s.State == "failed" && !m.agents.ack[s.ID] {
+		if s := m.agents.sessions[i]; !s.Active() && !m.agents.ack[s.ID] {
 			m.agents.ack[s.ID] = true
 			changed = true
 		}
@@ -284,6 +313,20 @@ func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
 	if path == "" {
 		return m, nil
 	}
+	if wt, ok := m.selectedWorktree(); !ok || cleanPath(wt.Path) != cleanPath(path) {
+		if !m.list.SelectByPath(path) {
+			m.list, _ = m.list.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			if !m.list.SelectByPath(path) {
+				m.status = "agents: worktree is hidden by the current filter or no longer exists"
+				return m, nil
+			}
+		}
+	}
+	m.rightTab = tabAgents
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
+	m.layout()
 	m.agents.selected[cleanPath(path)] = id
 	m.agents.ack[id] = true
 	m.refreshAgentBadges()
@@ -312,3 +355,76 @@ func branchOf(wt git.Worktree) string {
 }
 
 func cleanPath(p string) string { return filepath.Clean(p) }
+
+// openRepoSessions uses the same ordered history and filter as the local picker.
+func (m Model) openRepoSessions() (tea.Model, tea.Cmd) {
+	if !m.agents.active() {
+		m.status = unsupportedNotice
+		return m, nil
+	}
+	m.leaveAgentTerminal()
+	p := newSessionsPicker("Repository", m.agentGlyphsASCII())
+	p.repo, p.keys, p.peek = true, m.keys, m.agentPeek()
+	m.populateRepoPicker(&p)
+	for _, ss := range p.sessions {
+		if !ss.Active() {
+			m.agents.ack[ss.ID] = true
+		}
+	}
+	m.refreshAgentBadges()
+	m.setAgentOverlay(agentOverlay{sessions: &p})
+	return m, nil
+}
+
+func (m Model) nextAgentAttention() (tea.Model, tea.Cmd) {
+	if !m.agents.active() {
+		m.status = "No sessions need attention"
+		return m, nil
+	}
+	var candidates []sessionsPickMsg
+	for _, wt := range m.worktrees {
+		path := cleanPath(wt.Path)
+		for _, s := range m.orderedSessions(path) {
+			if (s.Active() && sessionUrgency(s) == urgencyWaiting) || (!s.Active() && !m.agents.ack[s.ID]) {
+				candidates = append(candidates, sessionsPickMsg{path, s.ID})
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		m.status = "No sessions need attention"
+		return m, nil
+	}
+	next := 0
+	for i, c := range candidates {
+		if c.id == m.agents.attentionID {
+			next = (i + 1) % len(candidates)
+			break
+		}
+	}
+	c := candidates[next]
+	m.agents.attentionID = c.id
+	return m.onAgentsPick(c.path, c.id)
+}
+
+func (m Model) populateRepoPicker(p *sessionsPicker) {
+	p.paths, p.branches = map[string]string{}, map[string]string{}
+	for _, s := range m.agents.sessions {
+		p.paths[s.ID] = cleanPath(s.WorkDir)
+		p.branches[s.ID] = filepath.Base(s.WorkDir)
+	}
+	for _, wt := range m.worktrees {
+		for _, i := range m.agents.byTree[cleanPath(wt.Path)] {
+			s := m.agents.sessions[i]
+			p.paths[s.ID] = cleanPath(wt.Path)
+			p.branches[s.ID] = branchOf(wt)
+		}
+	}
+	list := append([]agentsapi.Session(nil), m.agents.sessions...)
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].Active() != list[j].Active() {
+			return list[i].Active()
+		}
+		return list[i].CreatedAt.After(list[j].CreatedAt)
+	})
+	p.setSessions(list)
+}
