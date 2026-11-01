@@ -23,6 +23,10 @@ import (
 // the prune merge default. Project settings (hooks, aliases, upstream) stay
 // in .bonsai.yaml.
 type Prefs struct {
+	// Zero leaves the height default intact; a pointer distinguishes disabled
+	// rotation from an unset interval.
+	UsagePaneMaxPercent    int  `json:"usage_pane_max_percent,omitempty"`
+	UsagePaneRotateSeconds *int `json:"usage_pane_rotate_seconds,omitempty"`
 	// Theme names a palette preset chosen in-app ("" = use .bonsai.yaml).
 	Theme string `json:"theme,omitempty"`
 	// Sort is the default worktree list ordering (name/ahead/behind/pr/
@@ -82,6 +86,10 @@ type GardenAssistPrefs struct {
 
 // Clone returns a copy that shares no mutable data with p.
 func (p Prefs) Clone() Prefs {
+	if p.UsagePaneRotateSeconds != nil {
+		v := *p.UsagePaneRotateSeconds
+		p.UsagePaneRotateSeconds = &v
+	}
 	p.GardenAutoReview = p.GardenAutoReview.Clone()
 	if p.GardenAssist != nil {
 		assist := *p.GardenAssist

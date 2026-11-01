@@ -95,7 +95,7 @@ var settingCategories []settingCategory
 
 func init() {
 	settingCategories = []settingCategory{
-		{id: "general", name: "General", sections: []settingSection{generalStartup(), generalEditor(), generalRepository()}},
+		{id: "general", name: "General", sections: []settingSection{generalStartup(), generalEditor(), generalRepository(), usagePaneSettings()}},
 		{id: "appearance", name: "Appearance", sections: appearanceSections()},
 		keysCategory(),
 		{id: "garden", name: "Garden", sections: gardenSections()},
@@ -584,5 +584,24 @@ func gardenAssistSection() settingSection {
 			display: func(Model) string { return "Restore defaults ›" },
 			open:    func(m Model) (Model, tea.Cmd) { return m.confirmAssistRestore() },
 		},
+	}}
+}
+
+func usagePaneSettings() settingSection {
+	numeric := func(id, label string, lo, hi int, get func(Model) int, set func(*config.Prefs, int)) settingField {
+		return settingField{id: id, label: label, scope: scopeMachine, kind: kindText,
+			get: func(m Model) string { return strconv.Itoa(get(m)) },
+			set: func(p *config.Prefs, v string) { n, _ := strconv.Atoi(v); set(p, n) },
+			validate: func(v string) error {
+				n, e := strconv.Atoi(v)
+				if e != nil || n < lo || n > hi {
+					return fmt.Errorf("Enter %d–%d", lo, hi)
+				}
+				return nil
+			}}
+	}
+	return settingSection{id: "usage-pane", name: "Usage pane", fields: []settingField{
+		numeric("usage_pane_max_percent", "Maximum height (%)", 10, 70, func(m Model) int { return m.panePercent() }, func(p *config.Prefs, n int) { p.UsagePaneMaxPercent = n }),
+		numeric("usage_pane_rotate_seconds", "Page interval (seconds; 0 stops)", 0, 60, func(m Model) int { return m.paneInterval() }, func(p *config.Prefs, n int) { p.UsagePaneRotateSeconds = &n }),
 	}}
 }

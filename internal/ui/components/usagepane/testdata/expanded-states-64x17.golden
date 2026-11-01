@@ -1,17 +1,7 @@
-╭ Usage · left ─────────────────────────────────── refreshing… ╮
-│ ▌ Claude · work-claude                                       │
-│ ▌ 5h   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱  72%  ↻ 2h14m  │
-│ ▌ Week ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱  41%  ↻ 3d     │
-│ ▌ Codex · codex-main                                       ! │
-│ ▌ 5h   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱  98%  ↻ 4h50m  │
-│ ▌ Week ▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱  12%  ↻ 30h00m │
-│ ▌ Antigravity · new                                          │
-│ ▌ Loading…                                                   │
-│ ▌                                                            │
-│ ▌ Codex · unavailable                                        │
-│ ▌ 5h   Unavailable                                           │
-│ ▌                                                            │
-│ ▌ Antigravity · studio                                       │
-│ ▌ No shared windows                                          │
-│ ▌                                                            │
+╭ Usage / left ─────────────────────────────────────refreshing…╮
+│ ✹ work-claude 5h  72% 2h14m ▰▰▰▰▰▰▰▰▰▱▱▱ W  41% 3d4h ▰▰▱▱▱▱  │
+│ ❃ codex-main! 5h  98% 4h50m ▰▰▰▰▰▰▰▰▰▰▰▰ W  12% 1d6h ▰▱▱▱▱▱  │
+│ ✦ new Loading…                                               │
+│ ❃ unavailable 5h N/A                                         │
+│ ✦ studio No shared windows                                   │
 ╰──────────────────────────────────────────────────────────────╯

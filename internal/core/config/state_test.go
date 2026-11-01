@@ -732,3 +732,27 @@ func TestGardenAttentionViewPersistence(t *testing.T) {
 		t.Fatal("attention view lost")
 	}
 }
+
+func TestUsagePanePrefsRoundTrip(t *testing.T) {
+	for _, seconds := range []int{0, 6, 60} {
+		t.Run(fmt.Sprint(seconds), func(t *testing.T) {
+			p := Prefs{UsagePaneMaxPercent: 35, UsagePaneRotateSeconds: &seconds}
+			data, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got Prefs
+			if err = json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.UsagePaneMaxPercent != 35 || got.UsagePaneRotateSeconds == nil || *got.UsagePaneRotateSeconds != seconds {
+				t.Fatalf("round trip: %+v", got)
+			}
+			clone := p.Clone()
+			*clone.UsagePaneRotateSeconds = 99
+			if *p.UsagePaneRotateSeconds != seconds {
+				t.Fatal("clone aliases interval")
+			}
+		})
+	}
+}

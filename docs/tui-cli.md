@@ -233,20 +233,27 @@ profiles and accounts.
 
 ### Usage pane
 
-When the terminal has at least 30 rows and agent accounts exist, a small
-bordered **Usage · left** box sits under the worktree list. Its rails and
-segmented meters show remaining capacity, ordered Claude, Codex, then Antigravity.
-The rails match each provider: orange for Claude, light gray for Codex, and blue
-for Antigravity. Expanded meters grow to fill the available row width.
-Expanded strips use three lines per account: provider and name, then the two
-headline windows with remaining percentages and reset countdowns when available.
-Accounts without shared windows show `No shared windows` once; loading and
-unavailable states never imply a capacity value.
-The pane starts collapsed with one row per provider: its name, the most limited
-account's primary and weekly capacity, and `+N` additional accounts. `U`
-(`usage_pane_toggle`) expands the full account list. Below 35 terminal rows it
-automatically stays collapsed; below 15 rows it hides. The worktree list receives
-the reclaimed rows. Provider names identify the glyphs in Unicode and ASCII mode.
+With agent accounts configured, a bordered usage box sits under the worktree
+list. It starts collapsed with one row per provider, showing the most limited
+account and the number of additional accounts. The configurable
+`usage_pane_toggle` action (default `U`) expands or collapses it.
+
+Expanded rows show account identity, primary (usually 5h) and weekly remaining
+capacity and compact reset countdowns. Narrow columns remove bars first, then
+weekly reset, weekly capacity, and finally primary reset. Unknown capacity stays
+unknown; failed refreshes retain the last good values with a warning.
+
+Settings → General → Usage pane controls personal preferences:
+`usage_pane_max_percent` defaults to 35 (10–70), and limits the pane's share
+of the left column, including its borders. The worktree list keeps at least
+three rows. Below 15 terminal rows, or when fewer than three pane rows fit,
+the pane hides. There is no height-triggered collapse.
+
+Expanded accounts paginate within that limit. `usage_pane_rotate_seconds`
+defaults to 6 (0–60); zero freezes the current page. Multiple pages show their
+position and a draining four-cell countdown. Rotation stops when collapsed,
+hidden, or when all accounts fit. The final page retains the same height.
+ASCII mode replaces provider glyphs, borders, meters and countdown cells.
 
 Every minute the pane checks for accounts whose data is 3 minutes old or more
 and refetches only those. The box title shows the age of the oldest data:
