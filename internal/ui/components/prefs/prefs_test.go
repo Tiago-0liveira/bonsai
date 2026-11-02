@@ -246,19 +246,35 @@ func TestSortCycle(t *testing.T) {
 }
 
 func TestPRStatusCycle(t *testing.T) {
-	m := testModel()
-	if m.prStatus != "full" {
-		t.Fatalf("default PR status = %q, want full", m.prStatus)
-	}
-	for i, r := range m.rows {
-		if r.kind == rowPRStatus {
-			m.cursor = i
-		}
-	}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	snap := saveFrom(t, cmd)
-	if snap == nil || snap.PRStatus != "compact" {
-		t.Errorf("right on PR status should cycle full→compact, got %+v", snap)
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyType
+		want []string
+	}{
+		{"right", tea.KeyRight, []string{"compact", "color", "off", "full"}},
+		{"left", tea.KeyLeft, []string{"off", "color", "compact", "full"}},
+		{"enter", tea.KeyEnter, []string{"compact", "color", "off", "full"}},
+		{"space", tea.KeySpace, []string{"compact", "color", "off", "full"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := testModel()
+			if m.prStatus != "full" {
+				t.Fatalf("default PR status = %q, want full", m.prStatus)
+			}
+			for i, r := range m.rows {
+				if r.kind == rowPRStatus {
+					m.cursor = i
+				}
+			}
+			for _, want := range tc.want {
+				var cmd tea.Cmd
+				m, cmd = m.Update(tea.KeyMsg{Type: tc.key})
+				snap := saveFrom(t, cmd)
+				if m.prStatus != want || snap == nil || snap.PRStatus != want {
+					t.Fatalf("want %q, got mode %q and snapshot %+v", want, m.prStatus, snap)
+				}
+			}
+		})
 	}
 }
 

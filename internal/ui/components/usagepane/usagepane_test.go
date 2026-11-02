@@ -100,6 +100,62 @@ func TestSummaryUsesMostLimitedAccount(t *testing.T) {
 	}
 }
 
+func TestSummaryHiddenProviderKeepsVisibleBars(t *testing.T) {
+	for _, ascii := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ascii=%t", ascii), func(t *testing.T) {
+			accounts := twoAccounts()
+			want := plain(ViewSummaryAt(accounts, "", 70, 4, testNow, ascii))
+			bar := "▰"
+			if ascii {
+				bar = "#"
+			}
+			for _, row := range strings.Split(want, "\n")[1:3] {
+				if !strings.Contains(row, bar) {
+					t.Fatalf("expected visible meter: %s", row)
+				}
+			}
+			hidden := Account{Provider: "provider-with-a-very-long-name", Primary: lim("5h", .97, 9999*time.Hour+59*time.Minute), Secondary: lim("weekly", .5, 9999*time.Hour)}
+			got := plain(ViewSummaryAt(append(accounts, hidden), "", 70, 4, testNow, ascii))
+			if got != want {
+				t.Fatalf("hidden provider changed visible layout:\n%s\nwant:\n%s", got, want)
+			}
+			t.Logf("collapsed summary at width 70:\n%s", got)
+		})
+	}
+}
+
+func TestTinyWidthKeepsPrimaryPercentage(t *testing.T) {
+	accounts := twoAccounts()
+	for i := range accounts {
+		accounts[i].Primary = lim("5h", .97, time.Hour)
+		accounts[i].Stale = i == 1
+	}
+	for _, width := range []int{12, 13, 14, 15, 16} {
+		for _, ascii := range []bool{false, true} {
+			for _, expanded := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%d/ascii=%t/expanded=%t", width, ascii, expanded), func(t *testing.T) {
+					view := ViewSummaryAt(accounts, "", width, 4, testNow, ascii)
+					if expanded {
+						view = ViewPage(accounts, "", width, 4, testNow, ascii, 0)
+					}
+					if width == 14 && !expanded {
+						t.Logf("collapsed summary at width 14:\n%s", plain(view))
+					}
+					lines := strings.Split(plain(view), "\n")
+					if len(lines) != 4 {
+						t.Fatalf("expected two account rows: %s", view)
+					}
+					for _, row := range lines[1:3] {
+						if ansi.StringWidth(row) != width || !strings.Contains(row, "97%") {
+							t.Errorf("width %d: primary percentage clipped: %q", width, row)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestSummaryColumnsAlign(t *testing.T) {
 	for _, ascii := range []bool{false, true} {
 		rows := append(twoAccounts(), Account{Provider: "antigravity", Primary: lim("5h", 1, 0), Secondary: lim("weekly", .98, 0)})

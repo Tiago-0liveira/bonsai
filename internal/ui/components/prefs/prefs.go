@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Tiago-0liveira/bonsai/internal/ui/components/worktreelist"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -19,7 +20,7 @@ type SaveMsg struct {
 	Theme      string
 	Sort       string
 	PruneMerge bool
-	// PRStatus is the worktree-list PR status display mode (full/compact/off).
+	// PRStatus is the worktree-list PR status display mode (full/compact/color/off).
 	PRStatus string
 	// AgentGlyphs is how agent providers are drawn: "unicode" or "ascii".
 	AgentGlyphs string
@@ -51,9 +52,6 @@ type Action struct {
 
 // SortModes are the worktree list orderings, in cycle order.
 var SortModes = []string{"name", "ahead", "behind", "pr", "activity", "dirty"}
-
-// PRStatusModes are the worktree-list PR status display modes, in cycle order.
-var PRStatusModes = []string{"full", "compact", "off"}
 
 // AgentGlyphModes are the agent provider glyph styles, in cycle order. ASCII
 // exists for terminals or fonts that draw the unicode glyphs badly.
@@ -128,7 +126,7 @@ func New(themePreset, sort string, pruneMerge bool, prStatus, agentGlyphs, edito
 		sort = SortModes[0]
 	}
 	if prStatus == "" {
-		prStatus = PRStatusModes[0]
+		prStatus = worktreelist.PRStatusModes[0]
 	}
 	if agentGlyphs == "" {
 		agentGlyphs = AgentGlyphModes[0]
@@ -430,17 +428,7 @@ func (m Model) activate(dir int) (Model, tea.Cmd) {
 		return m, m.save()
 
 	case rowPRStatus:
-		d := dir
-		if d == 0 {
-			d = 1
-		}
-		idx := 0
-		for i, s := range PRStatusModes {
-			if s == m.prStatus {
-				idx = i
-			}
-		}
-		m.prStatus = PRStatusModes[(idx+d+len(PRStatusModes))%len(PRStatusModes)]
+		m.prStatus = cycle(worktreelist.PRStatusModes, m.prStatus, dir)
 		m.msg = "PR status: " + m.prStatus
 		return m, m.save()
 

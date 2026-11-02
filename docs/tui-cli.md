@@ -42,13 +42,14 @@ merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 (`http://localhost:…`) detected in process output are shown next to each process.
 
 **PR status in worktree list** defaults to `full`: the PR number, coloured state
-word and CI glyph appear before the branch, padded so branch names align across
-rows. `compact` also keeps the state word. `color` shows only the number and CI
-glyph before the branch, colouring the branch by PR state: dim for draft, green
+word and CI glyph flow inline before the branch. `compact` also keeps the state
+word, padded so branch names align across rows. `color` shows only the number and
+CI glyph in that aligned column, colouring the branch by PR state: dim for draft, green
 for open, purple/magenta for merged and red for closed (using the active theme).
 Selected branches remain bold with a cursor marker. Rows without PRs keep their
 normal branch colour; lists without PRs reserve no PR column. `off` keeps the
-number and CI glyph after the branch, without a state word.
+number and CI glyph after the branch, without a state word. Settings and the
+classic preferences dialog both cycle through `full`, `compact`, `color`, `off`.
 
 The create-worktree flow offers **Start agent here** when agents are enabled.
 `ctrl+a` (`create_agent_toggle`) toggles it without taking a typed character, so
@@ -64,8 +65,8 @@ the same names before running git.
 A base that starts with `-` is rejected.
 
 Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
-on the first line. Branch names shorten first. The selected row shows its full
-path; other home-directory paths use `~`. The title shows position/count and
+on the first line. Branch names shorten first. Home-directory paths use `~` on
+every row, including the selected one. The title shows position/count and
 `sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.
 
 With agents enabled, the sort cycle includes `attention`: worktrees with sessions
@@ -261,9 +262,12 @@ capacity with bars and reset countdowns. Bars share all spare width and use the
 same capacity warning colors as percentages. Narrow panes first shorten resets
 (`4h45m`, `4h45`, `4h`; `2d3h`, `2d`), then hide the weekly reset and shrink bars
 to four cells. They then hide the weekly bar, primary bar, primary reset and
-finally weekly capacity; primary capacity always stays. Expanded rows include
-account identity. Unknown capacity stays unknown; failed refreshes retain the
-last good values with a warning.
+finally weekly capacity; primary capacity always stays. At the smallest widths,
+the name gives way to the provider glyph and the primary window label may hide
+to keep the full primary percentage visible. Collapsed columns use only visible
+providers; expanded columns stay aligned across all account pages. Expanded rows
+include account identity. Unknown capacity stays unknown; failed refreshes
+retain the last good values with a warning.
 
 Settings → General → Usage pane controls personal preferences:
 `usage_pane_max_percent` defaults to 35 (10–70), and limits the pane's share

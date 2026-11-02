@@ -195,6 +195,7 @@ func ViewSummaryAt(accounts []Account, age string, width, maxRows int, now time.
 		return ""
 	}
 	rows, counts := Summary(accounts)
+	rows = rows[:min(len(rows), maxRows-2)]
 	b := borders(ascii)
 	edge := lipgloss.NewStyle().Foreground(theme.Current.Border)
 	out := []string{topBorder(width, age, ascii, b, edge)}
@@ -206,13 +207,10 @@ func ViewSummaryAt(accounts []Account, age string, width, maxRows int, now time.
 		}
 	}
 	plan := planColumnsWithNames(rows, width-4, now, width-4)
-	for i, a := range rows {
-		if i >= maxRows-2 {
-			break
-		}
+	for _, a := range rows {
 		out = append(out, edge.Render(b.v)+" "+fit(pageLine(a, plan, now, ascii), width-4)+" "+edge.Render(b.v))
 	}
-	out = append(out, bottomBorder(rows[:min(len(rows), maxRows-2)], width, b, edge))
+	out = append(out, bottomBorder(rows, width, b, edge))
 	return strings.Join(out, "\n")
 }
 
@@ -278,6 +276,7 @@ type columnPlan struct {
 	name, gap                                          int
 	reset, precision, meter                            [2]int
 	primaryReset, weekReset, primaryBar, weekBar, week bool
+	primaryLabel                                       bool
 }
 
 // Plan against every account so carousel pages retain the same columns.
@@ -286,7 +285,7 @@ func planColumns(accounts []Account, width int, now time.Time) columnPlan {
 }
 
 func planColumnsWithNames(accounts []Account, width int, now time.Time, nameCap int) columnPlan {
-	p := columnPlan{primaryReset: true, weekReset: true, primaryBar: true, weekBar: true, week: true, meter: [2]int{8, 8}}
+	p := columnPlan{primaryReset: true, weekReset: true, primaryBar: true, weekBar: true, week: true, primaryLabel: true, meter: [2]int{8, 8}}
 	for _, a := range accounts {
 		p.name = max(p.name, ansi.StringWidth(inline(a.Name)))
 	}
@@ -303,7 +302,13 @@ func planColumnsWithNames(accounts []Account, width int, now time.Time, nameCap 
 	}
 	resetWidths()
 	size := func() int {
-		n := 2 + p.name + 1 + 1 + 2 + 1 + percentCells
+		n := 2 + 1 + percentCells // provider glyph, stale marker and primary percentage
+		if p.name > 0 {
+			n += 1 + p.name
+		}
+		if p.primaryLabel {
+			n += 1 + 2
+		}
 		if p.primaryReset && p.reset[0] > 0 {
 			n += 1 + p.reset[0]
 		}
@@ -343,6 +348,13 @@ func planColumnsWithNames(accounts []Account, width int, now time.Time, nameCap 
 		}
 		*drop = false
 	}
+	// At the smallest widths, preserve the percentage before identity or labels.
+	if size() > width {
+		p.name = 0
+	}
+	if size() > width {
+		p.primaryLabel = false
+	}
 	spare := max(0, width-size())
 	switch {
 	case p.primaryBar && p.weekBar:
@@ -361,7 +373,11 @@ func pageLine(a Account, p columnPlan, now time.Time, ascii bool) string {
 	if marker == "" {
 		marker = " "
 	}
-	head := providerGlyph(a.Provider, ascii) + " " + text(pad(truncate(inline(a.Name), p.name, ascii), p.name)) + marker
+	head := providerGlyph(a.Provider, ascii)
+	if p.name > 0 {
+		head += " " + text(pad(truncate(inline(a.Name), p.name, ascii), p.name))
+	}
+	head += marker
 	if state := accountState(a, ascii); state != "" {
 		return head + " " + dim(state)
 	}
@@ -382,7 +398,10 @@ func pageLine(a Account, p columnPlan, now time.Time, ascii bool) string {
 		if known {
 			value = capacity(frac)
 		}
-		line += " " + dim(label) + " " + value
+		if i == 1 || p.primaryLabel {
+			line += " " + dim(label)
+		}
+		line += " " + value
 		if (i == 0 && p.primaryReset || i == 1 && p.weekReset) && p.reset[i] > 0 {
 			reset := ""
 			if w != nil && w.ResetsAt != nil {
