@@ -1,14 +1,18 @@
 ╭────────────────────────────────────────╮
-│  🪴 Worktrees · name                   │
+│  🪴 Worktrees 1/3 · sort: name         │
 │                                        │
-│› main (main)                           │
-│  <path>                                │
+│┃ main                                ──│
+│┃ ↳ main (root)                    clean│
 │                                        │
-│  feat-a                                │
-│  <path>                                │
+│  feat-a                              ──│
+│  ↳ main (wt: wt-a)                clean│
 │                                        │
-│  feat-b                                │
-│  <path>                                │
+│  feat-b                              ──│
+│  ↳ main (wt: wt-b)                clean│
+│                                        │
+│                                        │
+│                                        │
+│                                        │
 │                                        │
 │                                        │
 │                                        │
@@ -30,11 +34,7 @@
 │                                        │
 ╰────────────────────────────────────────╯
 ╭ Usage · left ───────────── refreshing… ╮
-│ ▌ Claude · work-claude               ! │
-│ ▌ 5h   ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱  72%  ↻ 2h14m │
-│ ▌ Week ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱  41%  ↻ 3d    │
-│ ▌ Codex · codex-main                   │
-│ ▌ Loading…                             │
-│ ▌                                      │
-╰────────────────────────────────────────╯
+│ ✹ Claude! 5h  72% 2h14m W  41%         │
+│ ❃ Codex   Loading…                     │
+╰ ! stale ───────────────────────────────╯
 tab focus · enter shell · n new worktree ·

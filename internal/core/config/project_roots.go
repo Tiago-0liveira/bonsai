@@ -43,6 +43,110 @@ func ProjectRootsPath() (string, error) {
 	}
 	return filepath.Join(dir, "bonsai", "project-roots.json"), nil
 }
+
+// GardenAssociationsPath keeps Garden setup state beside other Bonsai config.
+func GardenAssociationsPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-associations.json"), nil
+}
+
+// GardenOperationsPath keeps the durable records of Garden writes that must survive a crash (capture, import).
+func GardenOperationsPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-operations.json"), nil
+}
+
+// GardenPlannerPath keeps the planner attempt history: which agent planned which approved specification, and how
+// each attempt ended. It holds no prompts, terminal output or credentials.
+func GardenPlannerPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-planner.json"), nil
+}
+
+// GardenPlanFileName is the one file a planner attempt may write, inside its own plan directory.
+const GardenPlanFileName = "plan.md"
+
+// GardenPlansRoot is the Bonsai-owned directory under which every planner attempt gets a directory of its own. It is
+// the only place a planner session is allowed to write. It follows the user's home so tests can redirect it.
+func GardenPlansRoot() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".bonsai", "garden", "plans"), nil
+}
+
+// GardenPlanDir is the directory of one planner attempt: <plans root>/<local repo key>/<issue>/<attempt>. Identifiers
+// are never trusted as path elements: each is used only when it is a plain name and is hashed otherwise, and the
+// result is checked to stay under the root. The directory is not created.
+func GardenPlanDir(localRepo string, issue uint64, attemptID string) (string, error) {
+	root, err := GardenPlansRoot()
+	if err != nil {
+		return "", err
+	}
+	if localRepo == "" || attemptID == "" || issue == 0 {
+		return "", fmt.Errorf("plan directory needs a repository, an issue and an attempt")
+	}
+	dir := filepath.Join(root, planPathElement(localRepo), fmt.Sprintf("%d", issue), planPathElement(attemptID))
+	if !ContainsPath(root, dir) || dir == root {
+		return "", fmt.Errorf("plan directory escapes %s", root)
+	}
+	return dir, nil
+}
+
+// planPathElement keeps a short plain name and replaces anything else (separators, dots, odd bytes, length) with
+// its digest, so no identifier can climb out of its parent or collide with another through sanitizing.
+func planPathElement(id string) string {
+	plain := id != "" && len(id) <= 64 && id[0] != '.' && id[0] != '-' && !strings.HasPrefix(id, "h-")
+	for i := 0; plain && i < len(id); i++ {
+		c := id[i]
+		plain = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.'
+	}
+	if plain {
+		return id
+	}
+	return fmt.Sprintf("h-%x", sha256.Sum256([]byte(id)))[:34]
+}
+
+// GardenLaunchPath keeps the local implementation attempts: which approved inputs started which isolated worktree and
+// agent session, and how each attempt ended. It holds no prompts, terminal output, commands or credentials.
+func GardenLaunchPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-launch.json"), nil
+}
+
+// GardenLaunchGitPath keeps the replay metadata of the daemon Git commands a launch sends, so a restarted client
+// resends the same envelope instead of a new one. It is transport state, not the record of what happened.
+func GardenLaunchGitPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-launch-git.json"), nil
+}
+
+// GardenReviewPath keeps the append-only reviewer reports, dismissals and human acceptance decisions of Garden
+// attempts, per local clone. It holds no prompts, terminal output, commands, environment or credentials.
+func GardenReviewPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-review.json"), nil
+}
+
 func CanonicalDirectory(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") || (os.PathSeparator == '\\' && strings.HasPrefix(path, `~\`)) {
 		home, err := os.UserHomeDir()
@@ -280,4 +384,14 @@ func WithProjectRootsContext(ctx context.Context, path string, fn func(ProjectRo
 		case <-timer.C:
 		}
 	}
+}
+
+// GardenReviewPassPath keeps bounded local review passes and sanitized evidence references.
+// It holds no prompts, terminal output, environment values or credentials.
+func GardenReviewPassPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bonsai", "garden-review-passes.json"), nil
 }

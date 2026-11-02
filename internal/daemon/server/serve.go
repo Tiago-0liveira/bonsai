@@ -522,6 +522,7 @@ func (s *Server) serveSnapshot(rt *serveRuntime) *procstore.ServeGroup {
 			rec := *mp.rec
 			mp.mu.Unlock()
 			p.PID, p.ProcessGroupID, p.ExpectedPort, p.Required = rec.PID, rec.ProcessGroupID, rec.ExpectedPort, rec.ServeRequired
+			p.StartTicks, p.BootID = rec.StartTicks, rec.BootID
 			p.StartedAt, p.ExitCode, p.ExitError, p.State = rec.StartedAt, rec.ExitCode, rec.ExitError, rec.Status
 			alive := rec.Status == procstore.StatusRunning || rec.Status == procstore.StatusOrphan
 			if rec.ExpectedPort > 0 && alive {

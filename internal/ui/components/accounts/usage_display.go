@@ -39,6 +39,16 @@ func Headline(h agents.UsageHeadline, now time.Time, ascii, compact bool) string
 	return strings.Join(parts, " · ")
 }
 
+// RemainingCapacity shares the Usage screen's segmented meter and percentage
+// with other account-capacity views. Zero cells keeps only the percentage.
+func RemainingCapacity(fraction float64, cells int, ascii bool) string {
+	value := ""
+	if cells > 0 {
+		value = stripMeter(fraction, cells, ascii) + " "
+	}
+	return value + rankStyle(usagefmt.RankOf(fraction)).Bold(true).Render(fmt.Sprintf("%3d%% left", usagefmt.Percent(fraction)))
+}
+
 func fiveHour(l *agents.UsageLimit) bool {
 	return l != nil && (l.Window == "5h" || l.ID == "five_hour" || l.ID == "5h")
 }

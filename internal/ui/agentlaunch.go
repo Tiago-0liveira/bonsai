@@ -2,11 +2,16 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -29,6 +34,7 @@ type launchFocus int
 
 const (
 	launchFocusAccount launchFocus = iota
+	launchFocusTask
 	launchFocusName
 	launchFocusForm
 	launchFocusSave
@@ -73,15 +79,32 @@ type (
 // answer carries the dialog ID so one for a closed dialog is dropped.
 type launchDialog struct {
 	accounts.Browser
-	id     uint64
-	ascii  bool
-	target launchTarget
-	now    func() time.Time
-	w, h   int
+	id             uint64
+	ascii          bool
+	target         launchTarget
+	targets        []launchTarget
+	choosing       bool
+	targetIndex    int
+	changeWorktree key.Binding
+	task           textarea.Model
+	// planner turns the dialog into the Garden planner's account choice: only model and effort can be set,
+	// the launch is read-only, and an account whose provider cannot enforce that cannot be chosen.
+	planner bool
+	// revise makes the planner choice the one behind Send feedback & revise plan: it accepts the read-only
+	// contract for a revision attempt instead of a new plan.
+	revise bool
+	// issue is the opened Issue's "#n title" the planner's choice is headed with; empty keeps the plain heading.
+	issue string
+	now   func() time.Time
+	w, h  int
 
-	focus       launchFocus
-	name        textinput.Model
-	nameTouched bool
+	focus         launchFocus
+	name          textinput.Model
+	nameTouched   bool
+	sessions      []agentsapi.Session
+	accountPinned bool
+	suggested     agents.AccountID
+	seed          *agentsapi.Session
 
 	form       launchform.Form
 	formLoaded bool
@@ -98,18 +121,26 @@ func newLaunchDialog(id uint64, api agentsapi.Accounts, target launchTarget, ini
 	ti.CharLimit = launchNameLen
 	// A steady cursor needs no blink ticks fed back through Update.
 	ti.Cursor.SetMode(cursor.CursorStatic)
+	ta := textarea.New()
+	ta.CharLimit = 8192
+	ta.SetHeight(3)
+	ta.ShowLineNumbers = false
+	ta.Prompt = ""
+	ta.Placeholder = "Optional task for the agent"
+	ta.Cursor.SetMode(cursor.CursorStatic)
 	return launchDialog{
+		task: ta, changeWorktree: binding("launch_change_worktree", nil),
 		Browser: accounts.NewBrowser(api, initial, usage, true),
 		id:      id, ascii: ascii, target: target,
-		now: time.Now, name: ti, button: 1,
+		now: time.Now, name: ti, button: 1, accountPinned: initial != "",
 	}
 }
 
-func (d *launchDialog) SetSize(w, h int) { d.w, d.h = w, h }
+func (d *launchDialog) SetSize(w, h int) { d.w, d.h = w, h; d.task.SetWidth(max(w-8, 1)) }
 
 // Capturing reports that a text input or dropdown has the keys.
 func (d launchDialog) Capturing() bool {
-	return d.focus == launchFocusName || (d.focus == launchFocusForm && d.form.Editing())
+	return d.focus == launchFocusTask || d.focus == launchFocusName || (d.focus == launchFocusForm && d.form.Editing())
 }
 
 // launchCtx bounds the dialog's own backend calls (saving defaults).
@@ -140,6 +171,12 @@ func (d launchDialog) Update(msg tea.Msg) (launchDialog, tea.Cmd) {
 	var cmd tea.Cmd
 	var ch accounts.Change
 	d.Browser, cmd, ch = d.Browser.Update(msg)
+	d.suggested = d.suggestedAccount()
+	if !d.planner && !d.accountPinned && d.suggested != "" && d.suggested != d.Selected() {
+		var pick tea.Cmd
+		d.Browser, pick = d.Browser.Select(d.suggested)
+		cmd = tea.Batch(cmd, pick)
+	}
 	// Re-selecting after a reload re-reads the form: a sign-in changes nothing
 	// in it, but a defaults edit made in the accounts modal would.
 	if d.Selected() != prev || (ch&accounts.ChangedList != 0 && d.ListErr() == "") {
@@ -155,7 +192,7 @@ func (d launchDialog) Update(msg tea.Msg) (launchDialog, tea.Cmd) {
 func (d launchDialog) resetForm() launchDialog {
 	d.formLoaded, d.formErr, d.save, d.err = false, "", false, ""
 	if a, ok := d.Current(); ok && !d.nameTouched {
-		d.name.SetValue(a.Name)
+		d.name.SetValue(d.defaultName(a))
 	}
 	return d
 }
@@ -169,7 +206,39 @@ func (d launchDialog) onDefaults() launchDialog {
 	def := d.Defaults()
 	// Changes here apply to this launch only: the provider's own launch fields
 	// seeded from the account's defaults.
-	d.form = launchform.New(launchDialogFields(def.LaunchFields), def.Models, def.Values, d.ascii).Focus(d.focus == launchFocusForm)
+	fields := launchDialogFields(def.LaunchFields)
+	if d.planner {
+		fields = plannerDialogFields(fields)
+	}
+	values := def.Values
+	if d.seed != nil {
+		values = make(map[string]string, len(def.Values)+len(d.seed.Options)+1)
+		for _, field := range fields {
+			values[field.ID] = ""
+		}
+		for k, v := range d.seed.Options {
+			values[k] = v
+		}
+		for _, field := range fields {
+			for _, option := range field.Options {
+				if len(option.Set) == 0 {
+					continue
+				}
+				matches := true
+				for k, v := range option.Set {
+					if d.seed.Options[k] != v {
+						matches = false
+					}
+				}
+				if matches {
+					values[field.ID] = option.Value
+					break
+				}
+			}
+		}
+		values["model"] = d.seed.Model
+	}
+	d.form = launchform.New(fields, def.Models, values, d.ascii).Focus(d.focus == launchFocusForm)
 	d.formLoaded = true
 	return d
 }
@@ -193,8 +262,33 @@ func launchDialogFields(fields []agents.LaunchField) []agents.LaunchField {
 	return out
 }
 
+// plannerDialogFields keeps the model and the effort. Permission, sandbox, approval and full-access choices
+// do not exist for a read-only role: the provider's enforced restriction is the only permission it runs with.
+func plannerDialogFields(fields []agents.LaunchField) []agents.LaunchField {
+	var out []agents.LaunchField
+	for _, f := range fields {
+		if f.Kind == agents.LaunchFieldModel || f.ID == "model" || f.ID == "effort" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func (d launchDialog) setFocus(f launchFocus) launchDialog {
+	previous := d.focus
 	d.focus = (f + launchFocusCount) % launchFocusCount
+	if d.planner && d.focus == launchFocusTask {
+		if previous == launchFocusName {
+			d.focus = launchFocusAccount
+		} else {
+			d.focus = launchFocusName
+		}
+	}
+	if d.focus == launchFocusTask {
+		d.task.Focus()
+	} else {
+		d.task.Blur()
+	}
 	if d.focus == launchFocusName {
 		d.name.Focus()
 	} else {
@@ -211,11 +305,40 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 	case "ctrl+c":
 		return d, close
 	case "ctrl+s":
+		if d.choosing {
+			return d, nil
+		}
 		return d.submit()
 	}
 	if d.starting {
 		if s == "esc" {
 			return d, close
+		}
+		return d, nil
+	}
+	if d.choosing {
+		switch s {
+		case "esc":
+			d.choosing = false
+		case "up", "k":
+			d.targetIndex = max(d.targetIndex-1, 0)
+		case "down", "j":
+			d.targetIndex = min(d.targetIndex+1, len(d.targets)-1)
+		case "enter":
+			if len(d.targets) > 0 {
+				d.target = d.targets[d.targetIndex]
+			}
+			d.choosing = false
+			d = d.updateName()
+		}
+		return d, nil
+	}
+	if !d.planner && key.Matches(k, d.changeWorktree) && len(d.targets) > 0 {
+		d.choosing = true
+		for i, t := range d.targets {
+			if t.workDir == d.target.workDir {
+				d.targetIndex = i
+			}
 		}
 		return d, nil
 	}
@@ -241,16 +364,22 @@ func (d launchDialog) onKey(k tea.KeyMsg) (launchDialog, tea.Cmd) {
 	switch d.focus {
 	case launchFocusAccount:
 		return d.accountKey(s)
+	case launchFocusTask:
+		var cmd tea.Cmd
+		d.task, cmd = d.task.Update(k)
+		d = d.updateName()
+		return d, cmd
 	case launchFocusName:
 		if s == "enter" || s == "down" {
 			return d.setFocus(launchFocusForm), nil
 		}
 		if s == "up" {
-			return d.setFocus(launchFocusAccount), nil
+			return d.setFocus(launchFocusTask), nil
 		}
-		d.nameTouched = true
+		before := d.name.Value()
 		var cmd tea.Cmd
 		d.name, cmd = d.name.Update(k)
+		d.nameTouched = d.nameTouched || before != d.name.Value()
 		return d, cmd
 	case launchFocusForm:
 		if !editing && s == "down" && d.form.AtLast() {
@@ -298,7 +427,7 @@ func (d launchDialog) accountKey(s string) (launchDialog, tea.Cmd) {
 	case "k", "up":
 		delta = -1
 	case "enter":
-		return d.setFocus(launchFocusName), nil
+		return d.setFocus(launchFocusTask), nil
 	}
 	ordered := d.Ordered()
 	if delta == 0 || len(ordered) == 0 {
@@ -314,6 +443,8 @@ func (d launchDialog) accountKey(s string) (launchDialog, tea.Cmd) {
 	if next == d.Selected() {
 		return d, nil
 	}
+	d.accountPinned = true
+	d.seed = nil
 	var cmd tea.Cmd
 	d.Browser, cmd = d.Browser.Select(next)
 	return d.resetForm(), cmd
@@ -336,13 +467,18 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 		}
 		return d, nil
 	}
+	if d.planner && !a.ReadOnly.Supported {
+		// Refused here and again by the backend: there is no unrestricted fallback.
+		d.err = plannerUnavailableText(a)
+		return d, nil
+	}
 	if !d.formLoaded {
 		d.err = "Options are still loading."
 		return d, nil
 	}
 	name := strings.TrimSpace(d.name.Value())
 	if name == "" {
-		name = a.Name
+		name = d.defaultName(a)
 	}
 	values := d.form.Values()
 	req := agentsapi.StartRequest{
@@ -352,6 +488,11 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 		Name:       name,
 		Launch:     agents.LaunchOptionsFrom(d.Defaults().LaunchFields, values["model"], values),
 	}
+	req.Launch.Prompt = sanitizeLaunchTask(d.task.Value())
+	if d.planner {
+		// Only what the form can set survives; the role fixes the rest.
+		req.Launch = agents.LaunchOptions{Model: req.Launch.Model, Effort: req.Launch.Effort, ReadOnly: true}
+	}
 	sub := launchSubmitMsg{dlg: d.id, req: req, account: a.ID}
 	if d.save {
 		if ch := d.form.Changes(); len(ch) > 0 {
@@ -360,6 +501,15 @@ func (d launchDialog) submit() (launchDialog, tea.Cmd) {
 	}
 	d.starting, d.err = true, ""
 	return d, emitMsg(sub)
+}
+
+// plannerUnavailableText is why an account cannot take the planner role.
+func plannerUnavailableText(a agentsapi.Account) string {
+	reason := a.ReadOnly.Reason
+	if reason == "" {
+		reason = "no enforced read-only mode"
+	}
+	return providerName(a.Provider) + " cannot plan: " + reason + ". Choose another account."
 }
 
 // failed shows a start error inline and lets the user try again.
@@ -382,4 +532,144 @@ func sanitizeAgentText(s string) string {
 		return r
 	}, ansi.Strip(s))
 	return ansi.Truncate(strings.TrimSpace(s), 200, "…")
+}
+
+// Task content stays in the transient dialog and start request, never account defaults.
+func sanitizeLaunchTask(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, ansi.Strip(s))
+	r := []rune(strings.TrimSpace(s))
+	return string(r[:min(len(r), 8192)])
+}
+
+func launchShortPath(path string) string {
+	if home := os.Getenv("HOME"); home != "" {
+		if path == home {
+			return "~"
+		}
+		if rel, err := filepath.Rel(home, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.Join("~", rel)
+		}
+	}
+	// The last two components distinguish sibling worktrees without consuming the header.
+	parent := filepath.Base(filepath.Dir(path))
+	if parent == "." || parent == string(filepath.Separator) {
+		return path
+	}
+	return ".../" + filepath.Join(parent, filepath.Base(path))
+}
+
+func (d launchDialog) targetLines() []string {
+	lines := []string{"Choose worktree"}
+	for i, t := range d.targets {
+		marker := "  "
+		if i == d.targetIndex {
+			marker = "> "
+		}
+		lines = append(lines, fmt.Sprintf("%s%s (%s)", marker, t.branch, launchShortPath(t.workDir)))
+	}
+	hint := "↑↓ worktree · enter select · esc back"
+	if d.ascii {
+		hint = "up/down worktree · enter select · esc back"
+	}
+	lines = append(lines, hint)
+	return lines
+}
+
+func launchSlug(s string, words int) string {
+	parts := strings.Fields(s)
+	if words > 0 {
+		parts = parts[:min(len(parts), words)]
+	}
+	var out strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(strings.Join(parts, "-")) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if dash && out.Len() > 0 {
+				out.WriteByte('-')
+			}
+			out.WriteRune(r)
+			dash = false
+		} else {
+			dash = true
+		}
+	}
+	r := []rune(out.String())
+	return string(r[:min(len(r), launchNameLen)])
+}
+
+func (d launchDialog) defaultName(a agentsapi.Account) string {
+	if d.planner {
+		return a.Name
+	}
+	if task := launchSlug(sanitizeLaunchTask(d.task.Value()), 4); task != "" {
+		return task
+	}
+	branch := []rune(launchSlug(d.target.branch, 0))
+	prefix := string(branch[:min(len(branch), 35)]) + "-" + string(a.Provider) + "-"
+	for n := 1; ; n++ {
+		name := fmt.Sprintf("%s%d", prefix, n)
+		used := false
+		for _, s := range d.sessions {
+			if cleanPath(s.WorkDir) == cleanPath(d.target.workDir) && s.Name == name {
+				used = true
+				break
+			}
+		}
+		if !used {
+			return name
+		}
+	}
+}
+
+func (d launchDialog) updateName() launchDialog {
+	if a, ok := d.Current(); ok && !d.nameTouched {
+		d.name.SetValue(d.defaultName(a))
+	}
+	return d
+}
+
+// Quick launch starts in Task; forking reuses only accepted session settings.
+func (m Model) openAgentTask(fork bool) (tea.Model, tea.Cmd) {
+	var seed *agentsapi.Session
+	initial := m.selectedAgentAccount()
+	if fork {
+		wt, ok := m.selectedWorktree()
+		if !ok {
+			return m, nil
+		}
+		session, _, ok := m.selectedSession(cleanPath(wt.Path))
+		if !ok {
+			m.setStatus("agents: choose a session first", false)
+			return m, nil
+		}
+		seed = &session
+		initial = session.AccountID
+	}
+	nm, _ := m.openAgentLaunch()
+	next := nm.(Model)
+	if next.agents.overlay == nil || next.agents.overlay.launch == nil {
+		return next, nil
+	}
+	d := *next.agents.overlay.launch
+	d.Browser = accounts.NewBrowser(next.agents.api.Accounts, initial, next.agents.usage, true)
+	// A fork keeps the source session's account; a new task follows the suggestion.
+	d.accountPinned = fork
+	d.seed = seed
+	if seed != nil {
+		for _, target := range d.targets {
+			if cleanPath(target.workDir) == cleanPath(seed.WorkDir) {
+				d.target = target
+				break
+			}
+		}
+	}
+	d = d.setFocus(launchFocusTask)
+	next.setAgentOverlay(agentOverlay{launch: &d})
+	return next, d.Init()
 }

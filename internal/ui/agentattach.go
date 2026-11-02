@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/vterm"
@@ -38,7 +40,8 @@ const (
 
 // agentView is the single live attachment the Agents tab shows.
 type agentView struct {
-	sessionID string
+	sessionID  string
+	lastOutput time.Time
 	// token changes with every new stream: messages from a stream the view has
 	// moved on from carry an old one and are dropped.
 	token  uint64
@@ -58,6 +61,7 @@ type agentView struct {
 	attempts   int                     // failed dials so far
 	banner     string
 	err        string
+	resuming   bool
 	retry      bool // enter attaches again; false when retrying cannot help
 
 	// control is terminal mode: the user is typing into the agent. state says
@@ -90,6 +94,87 @@ func attachCmd(ctx context.Context, s agentsapi.Sessions, id string, token uint6
 		st, err := s.Attach(ctx, id, opts)
 		return agentAttachedMsg{token: token, stream: st, err: err}
 	}
+}
+
+func interrupted(s agentterminal.Summary) bool {
+	return s.State == "failed" && s.Error == agenthost.LostError
+}
+
+type agentResumedMsg struct {
+	token   uint64
+	session agentsapi.Session
+	err     error
+}
+
+func resumeCmd(ctx context.Context, api agentsapi.Sessions, id string, cols, rows int, token uint64) tea.Cmd {
+	return func() tea.Msg {
+		session, err := api.Resume(ctx, id, cols, rows)
+		return agentResumedMsg{token: token, session: session, err: err}
+	}
+}
+
+func (m *Model) resumeSelectedAgent() tea.Cmd {
+	if !m.agents.active() {
+		return nil
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return nil
+	}
+	ss, _, ok := m.selectedSession(cleanPath(wt.Path))
+	if !ok || ss.Active() {
+		return nil
+	}
+	old := m.agents.view
+	if old != nil && old.sessionID == ss.ID && old.resuming {
+		return nil
+	}
+	m.agents.attachSeq++
+	v := &agentView{sessionID: ss.ID, token: m.agents.attachSeq, resuming: true, banner: "resuming…"}
+	m.agents.view = v
+	cols, rows := m.agentAreaSize()
+	var release tea.Cmd
+	if old != nil {
+		release = releaseCmd(old.stream, old.term)
+	}
+	return tea.Batch(release, resumeCmd(m.agents.ctx, m.agents.api.Sessions, ss.ID, cols, rows, v.token))
+}
+
+func (m Model) onAgentResumed(msg agentResumedMsg) (tea.Model, tea.Cmd) {
+	v := m.agents.view
+	if v == nil || v.token != msg.token || !v.resuming {
+		return m, nil
+	}
+	v.resuming = false
+	if msg.err != nil {
+		reason := msg.err.Error()
+		hint := ""
+		if errors.Is(msg.err, agents.ErrNotResumable) {
+			var nr *agents.NotResumableError
+			if errors.As(msg.err, &nr) {
+				reason = nr.Reason
+			}
+			if reason != agents.ReasonWorktreeGone {
+				hint = " · F start fresh"
+			}
+		}
+		v.state = attachEnded
+		v.banner = "can't resume: " + sanitizeAgentBanner(reason) + hint
+		return m, nil
+	}
+	// Lists requested before the mutation must not restore the ended summary.
+	m.agents.applied = m.agents.seq
+	for i := range m.agents.sessions {
+		if m.agents.sessions[i].ID == v.sessionID {
+			m.agents.sessions[i] = msg.session
+			break
+		}
+	}
+	v.banner = ""
+	v.control = true
+	v.opts = agentsapi.AttachOptions{ReadOnly: false}
+	m.setStatus("resumed after interruption", false)
+	return m, attachCmd(m.agents.ctx, m.agents.api.Sessions, v.sessionID, v.token, v.attachOptions())
 }
 
 // waitFramesCmd blocks for one frame, then takes whatever is already queued
@@ -149,6 +234,10 @@ func (a agentState) quit() tea.Cmd {
 // agentPaneSize is the Agents tab's pane rectangle (inside the border, below
 // the tab strip), as View passes it to renderAgentsPane.
 func (m Model) agentPaneSize() (w, h int) {
+	if m.layoutKind == LayoutRedesign && m.workspace == wsWorktrees {
+		w, h := m.worktreesPaneSize()
+		return w, max(1, h-1)
+	}
 	_, rightW, innerH := m.dims()
 	return max(rightW-2, 1), max(innerH-1, 1)
 }
@@ -156,6 +245,9 @@ func (m Model) agentPaneSize() (w, h int) {
 // wantedSession is the session the live view should show: the selected one of
 // the selected worktree, while the Agents tab is visible.
 func (m Model) wantedSession() string {
+	if m.layoutKind == LayoutRedesign && (m.workspace != wsWorktrees || m.shellFocus == shellNav || m.focus != focusTerminal || m.wt.menu) {
+		return ""
+	}
 	if !m.ready || !m.agents.active() || m.rightTab != tabAgents {
 		return ""
 	}
@@ -212,6 +304,10 @@ func (m *Model) syncAgentView(cmd tea.Cmd) tea.Cmd {
 // agentAreaSize is the terminal area inside the pane: what the layout leaves
 // after the header rows.
 func (m Model) agentAreaSize() (w, rows int) {
+	if m.layoutKind == LayoutRedesign {
+		// The one terminal belongs to the workspace in view.
+		return m.terminalAreaSize()
+	}
 	pw, ph := m.agentPaneSize()
 	lay := m.agentsLayout(pw, ph)
 	if !lay.ok {
@@ -333,6 +429,9 @@ func (m Model) onAgentFrames(msg agentFramesMsg) (tea.Model, tea.Cmd) {
 	for _, f := range msg.frames {
 		switch f.Type {
 		case "output":
+			if !v.replaying && len(f.Data) > 0 {
+				v.lastOutput = agentNow()
+			}
 			v.term.Write(f.Data)
 			v.offset = f.Offset + uint64(len(f.Data))
 		case "gap":
@@ -390,23 +489,33 @@ func applyAgentStatus(v *agentView, s agentterminal.Summary) {
 		if s.ExitCode != nil {
 			code = fmt.Sprintf(" (code %d)", *s.ExitCode)
 		}
-		v.banner = "exited" + code + " · n: new · a: all"
+		v.banner = "exited" + code
 	case "failed":
 		v.state = attachEnded
 		// The holder's error is free text; strip escapes and control bytes so
 		// it cannot move the cursor or recolor the banner row.
-		reason := strings.Map(func(r rune) rune {
-			if unicode.IsControl(r) {
-				return ' '
-			}
-			return r
-		}, ansi.Strip(s.Error))
-		reason = ansi.Truncate(strings.TrimSpace(reason), 120, "…")
-		if reason == "" {
-			reason = "unknown error"
+		if interrupted(s) {
+			v.banner = "interrupted · enter to resume"
+			return
 		}
-		v.banner = "failed: " + reason + " · n: new · a: all"
+		reason := sanitizeAgentBanner(s.Error)
+		v.banner = "failed: " + reason
 	}
+}
+
+// sanitizeAgentBanner keeps backend errors from controlling terminal chrome.
+func sanitizeAgentBanner(text string) string {
+	reason := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, ansi.Strip(text))
+	reason = ansi.Truncate(strings.TrimSpace(reason), 120, "…")
+	if reason == "" {
+		return "unknown error"
+	}
+	return reason
 }
 
 // agentTerminalArea is the rows the live view fills: the emulator, an error

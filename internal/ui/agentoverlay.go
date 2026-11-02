@@ -48,11 +48,11 @@ func (m *Model) leaveAgentTerminal() {
 // it is missing.
 func (m *Model) agentOverlayReady() bool {
 	if !m.agents.active() {
-		m.status = unsupportedNotice
+		m.setStatus(unsupportedNotice, false)
 		return false
 	}
 	if m.agents.api.Accounts == nil {
-		m.status = accountsUnavailable
+		m.setStatus(accountsUnavailable, false)
 		return false
 	}
 	return true
@@ -93,6 +93,14 @@ func (m Model) openAgentLaunch() (tea.Model, tea.Cmd) {
 		branch:   branchOf(wt),
 	}
 	d := newLaunchDialog(m.agents.launchSeq, m.agents.api.Accounts, target, m.selectedAgentAccount(), m.agents.usage, m.agentGlyphsASCII())
+	// The last-used account is only a fallback: until the user moves the
+	// cursor, the account with the most headroom wins once usage is known.
+	d.accountPinned = false
+	d.sessions = m.agents.sessions
+	d.changeWorktree = m.keys.LaunchChangeWorktree
+	for _, tree := range m.worktrees {
+		d.targets = append(d.targets, launchTarget{worktree: git.ID(webRepositoryID, tree.Path), workDir: tree.Path, branch: branchOf(tree)})
+	}
 	d.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{launch: &d})
 	return m, d.Init()
@@ -107,6 +115,9 @@ func (m Model) openAgentAccounts() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) showAccounts(initial agents.AccountID, tab accounts.Tab) (tea.Model, tea.Cmd) {
+	if m.layoutKind == LayoutRedesign && m.workspace == wsWorktrees {
+		return m.worktreesAccounts(initial, tab)
+	}
 	am := accounts.New(m.agents.api.Accounts, accounts.Options{ASCII: m.agentGlyphsASCII(), Initial: initial, Tab: tab, Usage: m.agents.usage})
 	am.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{accounts: &am})
@@ -118,6 +129,9 @@ func (m Model) openAgentUsage() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.leaveAgentTerminal()
+	if m.layoutKind == LayoutRedesign && m.workspace == wsWorktrees {
+		return m.worktreesAccounts(m.selectedAgentAccount(), accounts.TabUsage)
+	}
 	q := accounts.NewQuick(m.agents.api.Accounts, m.selectedAgentAccount(), m.agentGlyphsASCII()).WithUsage(m.agents.usage)
 	q.SetSize(m.agentPaneSize())
 	m.setAgentOverlay(agentOverlay{quick: &q})
@@ -167,6 +181,9 @@ func (m Model) overlayUpdate(msg tea.Msg) (Model, tea.Cmd) {
 	case o.sessions != nil:
 		var sp sessionsPicker
 		sp, cmd = o.sessions.Update(msg)
+		var peek tea.Cmd
+		m, peek = m.peekPicker(&sp)
+		cmd = tea.Batch(cmd, peek)
 		m.setAgentOverlay(agentOverlay{sessions: &sp})
 	}
 	return m, cmd
@@ -219,14 +236,36 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		return true, m, tea.ExecProcess(msg.Cmd, func(err error) tea.Msg { return agentExecDoneMsg{err: err} })
 	case agentExecDoneMsg:
 		if msg.err != nil {
-			m.status = "agents: " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		var ocmd tea.Cmd
 		m, ocmd = m.overlayUpdate(accounts.ReloadMsg{})
 		return true, m, tea.Batch(ocmd, m.relistAgents())
+	case sessionsResumeMsg:
+		m.agents.overlay = nil
+		next, pickCmd := m.onAgentsPick(msg.path, msg.id)
+		m = next.(Model)
+		if wt, ok := m.selectedWorktree(); ok && cleanPath(wt.Path) == cleanPath(msg.path) && m.agents.selected[cleanPath(msg.path)] == msg.id {
+			pickCmd = tea.Batch(pickCmd, m.resumeSelectedAgent())
+		}
+		return true, m, pickCmd
 	case sessionsPickMsg:
 		m.agents.overlay = nil
-		nm, cmd = m.onAgentsPick(msg.path, msg.id)
+		next, pickCmd := m.onAgentsPick(msg.path, msg.id)
+		m = next.(Model)
+		if wt, ok := m.selectedWorktree(); ok && cleanPath(wt.Path) == cleanPath(msg.path) {
+			if ss, _, ok := m.selectedSession(cleanPath(msg.path)); ok && ss.ID == msg.id && interrupted(ss.Summary) {
+				pickCmd = tea.Batch(pickCmd, m.resumeSelectedAgent())
+			}
+		}
+		return true, m, pickCmd
+	case sessionsRenameMsg:
+		return true, m, renameSessionCmd(m.agents.ctx, m.agents.api.Sessions, msg.id, msg.name)
+	case agentRenamedMsg:
+		nm, cmd = m.onAgentRenamed(msg)
+		return true, nm, cmd
+	case agentPeekMsg:
+		nm, cmd = m.onAgentPeek(msg)
 		return true, nm, cmd
 	case sessionsNewMsg:
 		nm, cmd = m.openAgentLaunch()
@@ -239,12 +278,12 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		return true, nm, cmd
 	case launchSavedMsg:
 		if msg.err != nil {
-			m.status = "agents: could not save defaults: " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: could not save defaults: "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		return true, m, nil
 	case agentStoppedMsg:
 		if msg.err != nil {
-			m.status = "agents: could not stop " + msg.name + ": " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: could not stop "+msg.name+": "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		return true, m, m.relistAgents()
 	}
@@ -293,12 +332,12 @@ func (m Model) onLaunchStarted(msg launchStartedMsg) (tea.Model, tea.Cmd) {
 			d := o.launch.failed(msg.err)
 			m.setAgentOverlay(agentOverlay{launch: &d})
 		} else {
-			m.status = "agents: could not start: " + sanitizeAgentText(msg.err.Error())
+			m.setStatus("agents: could not start: "+sanitizeAgentText(msg.err.Error()), true)
 		}
 		return m, nil
 	}
 	if !open {
-		m.status = "agents: started " + sanitizeAgentText(sessionName(msg.session))
+		m.setStatus("agents: started "+sanitizeAgentText(sessionName(msg.session)), false)
 	}
 	var cmds []tea.Cmd
 	// Defaults are saved only after the agent really started, so a failed
@@ -309,6 +348,7 @@ func (m Model) onLaunchStarted(msg launchStartedMsg) (tea.Model, tea.Cmd) {
 	if open {
 		m.agents.overlay = nil
 		path := cleanPath(msg.workDir)
+		m.list.SelectByPath(msg.workDir)
 		if wt, ok := m.selectedWorktree(); ok && cleanPath(wt.Path) == path {
 			m.agents.selected[path] = msg.session.ID
 			m.agents.enterAfter, m.agents.enterPath = msg.session.ID, path
@@ -331,7 +371,7 @@ func (m Model) onLaunchStarted(msg launchStartedMsg) (tea.Model, tea.Cmd) {
 // confirm-destructive setting does not cover.
 func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 	if !m.agents.active() {
-		m.status = unsupportedNotice
+		m.setStatus(unsupportedNotice, false)
 		return m, nil
 	}
 	wt, ok := m.selectedWorktree()
@@ -340,7 +380,7 @@ func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 	}
 	s, _, ok := m.selectedSession(cleanPath(wt.Path))
 	if !ok || !s.Active() {
-		m.status = "agents: no running agent to stop"
+		m.setStatus("agents: no running agent to stop", false)
 		return m, nil
 	}
 	m.leaveAgentTerminal()
@@ -356,4 +396,32 @@ func (m Model) askStopAgent() (tea.Model, tea.Cmd) {
 
 func stopAgentCmd(ctx context.Context, s agentsapi.Sessions, id, name string) tea.Cmd {
 	return func() tea.Msg { return agentStoppedMsg{name: name, err: s.Stop(ctx, id)} }
+}
+
+func (m Model) askStopAllAgents() (tea.Model, tea.Cmd) {
+	if !m.agents.active() {
+		return m, nil
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok {
+		return m, nil
+	}
+	var cmds []tea.Cmd
+	for _, s := range m.orderedSessions(cleanPath(wt.Path)) {
+		if s.Active() {
+			cmds = append(cmds, stopAgentCmd(m.agents.ctx, m.agents.api.Sessions, s.ID, sessionName(s)))
+		}
+	}
+	if len(cmds) == 0 {
+		m.setStatus("agents: no running sessions to stop", false)
+		return m, nil
+	}
+	m.leaveAgentTerminal()
+	m.pendingConfirm = &confirmState{action: tea.Batch(cmds...)}
+	modal := modals.NewConfirm(kindAgentStop, fmt.Sprintf("Stop all %d sessions in %s?", len(cmds), branchOf(wt)))
+	modal.SetBody("All agent processes in this worktree end.")
+	modal.SetInline(true)
+	modal.SetSize(m.agentPaneSize())
+	m.modal = &modal
+	return m, nil
 }

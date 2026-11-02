@@ -1,0 +1,2 @@
+# Preserve the original brief's intentional Markdown hard line breaks.
+original-design-brief.md whitespace=-blank-at-eol

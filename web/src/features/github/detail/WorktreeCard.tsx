@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
-import { Check, LayoutGrid, LoaderCircle } from 'lucide-react'
+import { LayoutGrid } from 'lucide-react'
 import type { Agent, Health, Process, Worktree } from '../../../types'
 import { useBonsaiStore } from '../../../stores/bonsai'
+import { AgentStatusBadge } from '../../../components/ui/AgentStatus'
 import { Card } from './Card'
 
 const DOT: Record<Health, string> = {
@@ -9,12 +10,6 @@ const DOT: Record<Health, string> = {
   warning: 'bg-warn',
   error: 'bg-danger',
   idle: 'bg-faint',
-}
-
-function AgentState({ state }: { state: Agent['state'] }) {
-  if (state === 'running') return <LoaderCircle size={11} className="flex-none animate-spin text-accent" aria-label="running" />
-  if (state === 'finished') return <Check size={11} className="flex-none text-ok" aria-label="finished" />
-  return <span className="h-1.5 w-1.5 flex-none rounded-full bg-faint" role="img" aria-label="idle" />
 }
 
 /** What runs in the worktree that holds the PR's branch. */
@@ -39,7 +34,7 @@ export function WorktreeCard({ worktree, onShowOnCanvas }: { worktree: Worktree;
             <span className="grid h-4 w-4 flex-none place-items-center rounded bg-panel-3 font-mono text-[8px] text-muted" aria-hidden="true">{agent.name.slice(0, 2).toUpperCase()}</span>
             <span className="min-w-0 flex-1 truncate">{agent.name}</span>
             <span className="min-w-0 max-w-[45%] truncate font-mono text-[10px] text-muted-2" title={agent.task}>{agent.task}</span>
-            <AgentState state={agent.state} />
+            <AgentStatusBadge agent={agent} />
           </div>
         ))}
         {!processes.length && !agents.length && <p className="text-[11.5px] text-muted-2">Nothing running here.</p>}

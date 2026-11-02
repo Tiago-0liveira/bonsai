@@ -13,7 +13,6 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/components/usagepane"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
@@ -86,10 +85,31 @@ func applyTheme() {
 	diffPathSt = lipgloss.NewStyle().Foreground(p.Text)
 }
 
-const (
-	procHint      = "↑/↓ select · j/k scroll · g/G top/end · K kill · r restart · p policy · m multi · L tag · / search · y copy · n new · x remove"
-	procEmptyHint = "no processes yet — press n to run a script or command"
-)
+func hintKey(k string) string {
+	if len(k) == 1 && k[0] >= 'A' && k[0] <= 'Z' {
+		return "shift+" + strings.ToLower(k)
+	}
+	return strings.ToLower(k)
+}
+
+func (m Model) procHint() string {
+	parts := []string{"↑/↓ select", "j/k scroll", "g/shift+g top/end"}
+	for _, item := range []struct {
+		binding key.Binding
+		action  string
+	}{
+		{m.keys.Kill, "kill"}, {m.keys.Restart, "restart"}, {m.keys.SetPolicy, "policy"},
+		{m.keys.MultiView, "multi"}, {m.keys.RenameProc, "tag"}, {m.keys.ProcSearch, "search"},
+		{m.keys.Yank, "copy"}, {m.keys.Create, "new"}, {m.keys.Prune, "remove"},
+	} {
+		parts = append(parts, hintKey(item.binding.Help().Key)+" "+item.action)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m Model) procEmptyHint() string {
+	return "no processes yet · " + hintKey(m.keys.Create.Help().Key) + " run a script or command"
+}
 
 // procScrollState labels whether the output pane is tailing the live end of the
 // log or parked where the user scrolled to. Without it, a paused view looks
@@ -98,7 +118,7 @@ func (m Model) procScrollState() string {
 	if m.term.AtBottom() {
 		return procRunning.Render("● live")
 	}
-	return procMarkerWarn.Render(fmt.Sprintf("⏸ %.0f%% · G to follow", m.term.ScrollPercent()*100))
+	return procMarkerWarn.Render(fmt.Sprintf("⏸ %.0f%% · shift+g follow", m.term.ScrollPercent()*100))
 }
 
 // renderProcFooter builds the Processes-tab footer pinned to the bottom of the
@@ -111,11 +131,11 @@ func (m Model) renderProcFooter() string {
 		return procDim.Render(ansi.Truncate("(no worktree selected)", m.termInnerWidth(), "…"))
 	}
 	if m.procs == nil {
-		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
+		return procDim.Render(ansi.Truncate(m.procEmptyHint(), m.termInnerWidth(), "…"))
 	}
 	procs := m.procs.List(wt.Path)
 	if len(procs) == 0 {
-		return procDim.Render(ansi.Truncate(procEmptyHint, m.termInnerWidth(), "…"))
+		return procDim.Render(ansi.Truncate(m.procEmptyHint(), m.termInnerWidth(), "…"))
 	}
 	sel, selOK := m.activeProcess(wt.Path)
 	multi := m.procMultiSel[wt.Path]
@@ -155,7 +175,7 @@ func (m Model) renderProcFooter() string {
 	}
 	// Truncated, not wrapped: the footer's height is derived, not measured (see
 	// procFooterHeight), so it has to stay exactly one row.
-	b.WriteString(procDim.Render(ansi.Truncate(procHint, m.termInnerWidth(), "…")))
+	b.WriteString(procDim.Render(ansi.Truncate(m.procHint(), m.termInnerWidth(), "…")))
 	return b.String()
 }
 
@@ -183,7 +203,7 @@ func procLine(p *procstore.Record, url string) string {
 	return line
 }
 
-const prPaneHint = "enter desc · t commits · a approve · c changes · m merge · x close · O reopen · y ready"
+const prPaneHint = "enter desc · t commits · a approve · c changes · m merge · x close · shift+o reopen · y ready"
 
 // renderPRDetail builds the PR tab body GitHub-style: a header block, a
 // collapsible description, collapsible commits, CI checks, and the review/comment
@@ -268,7 +288,7 @@ func (m Model) renderPRDetail(d gh.PRDetail, checks []gh.Check) string {
 	if len(checks) > 0 {
 		b.WriteString(prSection.Render("Checks") + "\n")
 		for _, c := range checks {
-			b.WriteString("  " + checkMark(c.Bucket) + " " + c.Name + "\n")
+			b.WriteString("  " + m.checkMark(c.Bucket) + " " + c.Name + "\n")
 		}
 		b.WriteString(rule(w) + "\n")
 	}
@@ -304,60 +324,55 @@ func (m Model) renderPRDetail(d gh.PRDetail, checks []gh.Check) string {
 	return b.String()
 }
 
-const diffPaneHint = "↑/↓ select · enter open diff · esc close"
+const diffPaneHint = "j/k move · enter view patch · c collapse dir"
 
-// diffHeaderLines is the number of content lines rendered above the first file
-// row (summary + rule), used to map the cursor index to a viewport line.
 const diffHeaderLines = 2
 
-// renderDiff builds the changed-file list for the Diff tab: a summary line and
-// one row per file with +/− counts. The selected row is marked with a cursor;
-// pressing enter opens that file's diff in a scrollable modal.
 func (m Model) renderDiff() string {
 	if len(m.diffFiles) == 0 {
 		return prMeta.Render("(no changes vs " + config.BaseBranch(m.diffBase) + ")")
 	}
-	var b strings.Builder
-
-	// Summary.
-	totA, totD := 0, 0
+	width := m.termInnerWidth()
+	if m.layoutKind != LayoutRedesign {
+		_, right, _ := m.dims()
+		width = max(1, right-2)
+	}
+	adds, dels := 0, 0
 	for _, f := range m.diffFiles {
-		if f.Add > 0 {
-			totA += f.Add
-		}
-		if f.Del > 0 {
-			totD += f.Del
+		adds += max(f.Add, 0)
+		dels += max(f.Del, 0)
+	}
+	branch := ""
+	if wt, ok := m.selectedWorktree(); ok {
+		branch = wt.Branch
+	}
+	summary := fmt.Sprintf("%s files changed   +%s  -%s   base: %s ← %s", diffNumber(len(m.diffFiles)), diffNumber(adds), diffNumber(dels), config.BaseBranch(m.diffBase), branch)
+	var b strings.Builder
+	summary = strings.Replace(summary, "+"+diffNumber(adds), diffAdd.Render("+"+diffNumber(adds)), 1)
+	summary = strings.Replace(summary, "-"+diffNumber(dels), diffDel.Render("-"+diffNumber(dels)), 1)
+	b.WriteString(ansi.Truncate(summary, width, "…") + "\n")
+	divider := "━"
+	ascii := m.state != nil && m.agentGlyphsASCII()
+	if ascii {
+		divider = "-"
+	}
+	b.WriteString(prMeta.Render(strings.Repeat(divider, max(0, width))) + "\n")
+	rows := m.diffRows()
+	peak, aw, dw := 1, 2, 2
+	for _, r := range rows {
+		if (!r.dir || r.summary) && r.file.Add >= 0 {
+			peak = max(peak, r.file.Add+r.file.Del)
+			aw = max(aw, len(diffNumber(r.file.Add))+1)
+			dw = max(dw, len(diffNumber(r.file.Del))+1)
 		}
 	}
-	b.WriteString(fmt.Sprintf("%s %s %s %s\n",
-		prSection.Render(fmt.Sprintf("%d files changed", len(m.diffFiles))),
-		prMeta.Render("·"),
-		diffAdd.Render(fmt.Sprintf("+%d", totA)),
-		diffDel.Render(fmt.Sprintf("−%d", totD))))
-	b.WriteString(rule(m.termInnerWidth()) + "\n")
-
-	for i, f := range m.diffFiles {
-		cursor := "  "
-		path := diffPathSt.Render(f.Path)
-		if i == m.diffCursor {
-			cursor = diffCursorSt.Render("› ")
-			path = diffCursorSt.Render(f.Path)
-		}
-		counts := ""
-		if f.Add < 0 { // binary
-			counts = prMeta.Render("  (binary)")
-		} else {
-			counts = "  " + diffAdd.Render(fmt.Sprintf("+%d", f.Add)) + " " + diffDel.Render(fmt.Sprintf("−%d", f.Del))
-		}
-		b.WriteString(cursor + path + counts + "\n")
+	for i, r := range rows {
+		b.WriteString(renderDiffRow(r, i == m.diffCursor, width, peak, aw, dw, ascii) + "\n")
 	}
-
-	b.WriteString("\n" + prMeta.Render(diffPaneHint) + "\n")
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // inspectPaneHint is the footer hint shown at the bottom of the Inspector tab.
-const inspectPaneHint = "worktree detail · R refresh"
 
 // renderInspect builds the Inspector tab body: working-tree status, last
 // commit, diff-vs-base summary, and disk/stash stats for the selected worktree.
@@ -376,7 +391,9 @@ func (m Model) renderInspect() string {
 
 	// ── Working tree ───────────────────────────────────────────────────────
 	b.WriteString(prSection.Render("Working tree") + "\n")
-	if !d.status.Dirty() {
+	if m.layoutKind == LayoutRedesign && !d.statusKnown {
+		b.WriteString("  Working tree status unavailable\n")
+	} else if !d.status.Dirty() {
 		b.WriteString("  " + procRunning.Render("✓ clean") + "\n")
 	} else {
 		var parts []string
@@ -393,6 +410,9 @@ func (m Model) renderInspect() string {
 	}
 	b.WriteString(rule(w) + "\n")
 
+	if m.layoutKind == LayoutRedesign && d.statusErr != "" {
+		b.WriteString("  Status stale: " + pgClean(d.statusErr, 100) + "\n")
+	}
 	// ── Last commit ────────────────────────────────────────────────────────
 	b.WriteString(prSection.Render("Last commit") + "\n")
 	if d.commitOK {
@@ -444,7 +464,18 @@ func (m Model) renderInspect() string {
 		b.WriteString("  " + prMeta.Render(strings.Join(stats, " · ")) + "\n")
 	}
 
-	b.WriteString("\n" + prMeta.Render(inspectPaneHint) + "\n")
+	if m.layoutKind == LayoutRedesign {
+		if s, _, found := m.selectedSession(cleanPath(wt.Path)); found && s.Task != nil {
+			b.WriteString("\n" + prSection.Render("Garden context") + "\n")
+			if rec, ok := pgTask(m.garden.board.collection, s.Task); ok {
+				b.WriteString(fmt.Sprintf("  #%d %s\n", rec.Item.Issue.Number, pgClean(rec.Item.Issue.Title, 100)))
+			} else {
+				b.WriteString(fmt.Sprintf("  Issue ID %d (details not loaded)\n", s.Task.IssueID))
+			}
+			b.WriteString("  Attempt: " + pgClean(s.Task.AttemptID, 100) + "\n  Open linked Issue from the command palette.\n")
+		}
+	}
+	b.WriteString("\n" + prMeta.Render(hintKey(m.keys.Refresh.Help().Key)+" refresh") + "\n")
 	return b.String()
 }
 
@@ -462,8 +493,6 @@ func ago(t time.Time) string {
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }
-
-const checksPaneHint = "branch workflow runs · R refresh"
 
 // renderChecks builds the Checks tab body: the selected branch's recent GitHub
 // Actions runs, newest first, with pass/fail/pending glyphs.
@@ -483,11 +512,12 @@ func (m Model) renderChecks() string {
 
 	if m.ciErr != "" {
 		b.WriteString(prMeta.Render("(gh unavailable: "+m.ciErr+")") + "\n")
-	} else if len(m.ciRuns) == 0 {
+	}
+	if len(m.ciRuns) == 0 && m.ciErr == "" {
 		b.WriteString(prMeta.Render("no workflow runs for branch "+wt.Branch) + "\n")
 	} else {
 		for _, r := range m.ciRuns {
-			line := "  " + checkMark(r.Bucket()) + " " + diffPathSt.Render(r.Name)
+			line := "  " + m.checkMark(r.Bucket()) + " " + diffPathSt.Render(r.Name)
 			meta := r.Workflow
 			if r.Event != "" {
 				meta += " · " + r.Event
@@ -500,7 +530,7 @@ func (m Model) renderChecks() string {
 		}
 	}
 
-	b.WriteString("\n" + prMeta.Render(checksPaneHint) + "\n")
+	b.WriteString("\n" + prMeta.Render(hintKey(m.keys.Refresh.Help().Key)+" refresh") + "\n")
 	return b.String()
 }
 
@@ -541,6 +571,10 @@ func mergeableBadge(m string) string {
 
 // termInnerWidth returns a safe render width for the right pane body.
 func (m Model) termInnerWidth() int {
+	if m.layoutKind == LayoutRedesign {
+		w, _ := m.worktreesPaneSize()
+		return w
+	}
 	_, rightW, _ := m.dims()
 	w := rightW - 4
 	if w < 10 {
@@ -567,17 +601,19 @@ func firstLine(s string) string {
 	return s
 }
 
-// checkMark renders a colored glyph for a check bucket.
-func checkMark(bucket string) string {
+// checkMark keeps the configured glyph set consistent in both check lists.
+func (m Model) checkMark(bucket string) string {
+	ascii := m.state != nil && m.agentGlyphsASCII()
+	mark := theme.CheckGlyph(bucket, ascii)
 	switch bucket {
 	case "pass":
-		return procRunning.Render("✓")
+		return procRunning.Render(mark)
 	case "fail", "cancel":
-		return procFailed.Render("✗")
+		return procFailed.Render(mark)
 	case "pending":
-		return prWarn.Render("◐")
+		return prWarn.Render(mark)
 	default:
-		return procDim.Render("·")
+		return procDim.Render(mark)
 	}
 }
 
@@ -626,6 +662,10 @@ func (m Model) dims() (leftW, rightW, innerH int) {
 
 // layout recomputes child component sizes from the current terminal size.
 func (m *Model) layout() {
+	if m.layoutKind == LayoutRedesign {
+		m.worktreesLayout()
+		return
+	}
 	if m.width == 0 || m.height == 0 {
 		return
 	}
@@ -653,6 +693,9 @@ func (m *Model) layout() {
 // disables scrolling and pins the view to the top of the log.
 func (m Model) termHeight(innerH int) int {
 	h := innerH - 1 // -1 for the tab strip line
+	if m.rightTab == tabDiff {
+		h--
+	}
 	if m.rightTab == tabProcs {
 		h -= m.procFooterHeight()
 	}
@@ -682,6 +725,9 @@ func (m Model) procFooterHeight() int {
 // View renders two bordered panes filling the screen above a status/help bar,
 // with any active modal drawn centered on top.
 func (m Model) View() string {
+	if m.layoutKind == LayoutRedesign {
+		return m.shellView()
+	}
 	if m.updatePromptVisible() {
 		return clampHeight(m.updatePrompt(), m.height)
 	}
@@ -689,10 +735,10 @@ func (m Model) View() string {
 		return "Loading bonsai…"
 	}
 	if m.prefs != nil {
-		return clampHeight(m.prefs.View(), m.height)
+		return m.legacyOverlay(m.prefs.View())
 	}
 	if m.modal != nil && !m.agentPaneModal() {
-		return clampHeight(m.modal.View(), m.height)
+		return m.legacyOverlay(m.modal.View())
 	}
 
 	leftW, rightW, innerH := m.dims()
@@ -712,7 +758,7 @@ func (m Model) View() string {
 		Width(leftInnerW).Height(listH).
 		Render(clampHeight(m.list.View(), listH))
 	if paneRows > 0 {
-		pane := usagepane.View(m.paneAccounts(), m.paneHeaderAge(), leftW, paneRows, agentNow(), m.agentGlyphsASCII())
+		pane := m.usagePaneView(leftW, paneRows)
 		left = lipgloss.JoinVertical(lipgloss.Left, left, pane)
 	}
 	left = clampHeight(left, targetPaneH)
@@ -725,6 +771,8 @@ func (m Model) View() string {
 		// room, see layout); the process list + hint sit in a footer pinned to
 		// the bottom.
 		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View() + "\n" + m.renderProcFooter()
+	} else if m.rightTab == tabDiff {
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View() + "\n" + ansi.Truncate(diffPaneHint, rightInnerW, "…")
 	} else {
 		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View()
 	}
@@ -741,41 +789,42 @@ func (m Model) View() string {
 }
 
 // tabLabel is the header text for a tab, including its jump key hint.
+// tabLabel keeps default labels available to the redesign shell.
 func tabLabel(t rightTab, compact bool) string {
-	if compact {
-		switch t {
-		case tabProcs:
-			return " Procs (v) "
-		case tabDiff:
-			return " Diff (d) "
-		case tabPR:
-			return " PR (P) "
-		case tabInspect:
-			return " Insp (i) "
-		case tabChecks:
-			return " Checks (b) "
-		case tabAgents:
-			return " Agents (g) "
-		default:
-			return " Log (l) "
-		}
-	}
+	return (Model{keys: newKeyMap(nil)}).tabLabel(t, compact)
+}
+
+func (m Model) tabLabel(t rightTab, compact bool) string {
+	name, binding := "Git Log", m.keys.LogTab
 	switch t {
 	case tabProcs:
-		return " Processes (v) "
+		name, binding = "Processes", m.keys.ViewProcs
 	case tabDiff:
-		return " Diff (d) "
+		name, binding = "Diff", m.keys.DiffTab
 	case tabPR:
-		return " PR (P) "
+		name, binding = "PR", m.keys.PRTab
 	case tabInspect:
-		return " Inspect (i) "
+		name, binding = "Inspect", m.keys.InspectTab
 	case tabChecks:
-		return " Checks (b) "
+		name, binding = "Checks", m.keys.ChecksTab
 	case tabAgents:
-		return " Agents (g) "
-	default:
-		return " Git Log "
+		name, binding = "Agents", m.keys.AgentsTab
 	}
+	if compact {
+		switch t {
+		case tabLog:
+			name = "Log"
+		case tabProcs:
+			name = "Procs"
+		case tabInspect:
+			name = "Insp"
+		}
+	}
+	hint := binding.Help().Key
+	if compact {
+		hint = ansi.Truncate(hint, 10, "…")
+	}
+	return " " + name + " (" + hint + ") "
 }
 
 // visibleTabs returns the right-pane tabs available for the current selection:
@@ -812,13 +861,13 @@ func (m Model) tabStrip(width int) string {
 		return ""
 	}
 
-	hint := inactiveTab.Render("  shift+tab ⇄")
+	hint := inactiveTab.Render("  " + hintKey(m.keys.ShiftTab.Help().Key) + " cycle")
 	sep := inactiveTab.Render("│")
 
 	buildParts := func(compact bool, tabList []rightTab) []string {
 		parts := make([]string, 0, len(tabList))
 		for _, t := range tabList {
-			label := tabLabel(t, compact)
+			label := m.tabLabel(t, compact)
 			if t == m.rightTab {
 				parts = append(parts, activeTab.Render(label))
 			} else {
@@ -958,16 +1007,16 @@ func (m Model) statusBar() string {
 func (m Model) contextHelp() string {
 	keySt := lipgloss.NewStyle().Foreground(theme.Current.Text)
 	descSt := lipgloss.NewStyle().Foreground(theme.Current.Dim)
-	pair := func(k, d string) string { return keySt.Render(k) + " " + descSt.Render(d) }
+	pair := func(k, d string) string { return keySt.Render(hintKey(k)) + " " + descSt.Render(d) }
 	sep := descSt.Render(" · ")
 	if m.agentTerminalMode() {
 		switch v := m.agents.view; {
 		case v.stream == nil:
-			return descSt.Render("connecting…") + sep + pair("Ctrl+]", "unfocus")
+			return descSt.Render("connecting…") + sep + pair("ctrl+]", "unfocus")
 		case v.state == attachObservingOther:
-			return descSt.Render("READ-ONLY") + sep + pair("Ctrl+]", "unfocus")
+			return descSt.Render("READ-ONLY") + sep + pair("ctrl+]", "unfocus")
 		}
-		return descSt.Render("FOCUSED · Input goes to agent") + sep + pair("Ctrl+]", "unfocus")
+		return descSt.Render("FOCUSED") + sep + pair("ctrl+]", "unfocus")
 	}
 	if m.rightTab == tabAgents && m.agents.active() {
 		if m.agents.overlay != nil {
@@ -976,12 +1025,12 @@ func (m Model) contextHelp() string {
 			return ""
 		}
 		if m.modal != nil {
-			return descSt.Render("Enter select · Esc close")
+			return descSt.Render("enter select · esc close")
 		}
 		if m.focus == focusTerminal {
 			parts := append(m.agentNavHints(pair, descSt),
-				pair(m.keys.AgentAll.Help().Key, "all"),
-				pair(m.keys.AgentAccounts.Help().Key, "profiles"),
+				pair(m.keys.AgentAll.Help().Key, "sessions"),
+				pair(m.keys.AgentAccounts.Help().Key, "accounts"),
 				pair(m.keys.AgentUsage.Help().Key, "usage"),
 				pair(m.keys.AgentNew.Help().Key, "new"))
 			if wt, ok := m.selectedWorktree(); ok {
@@ -1005,7 +1054,7 @@ func (m Model) contextHelp() string {
 	parts := make([]string, 0, len(bindings))
 	for _, b := range bindings {
 		h := b.Help()
-		parts = append(parts, keySt.Render(h.Key)+" "+descSt.Render(h.Desc))
+		parts = append(parts, keySt.Render(hintKey(h.Key))+" "+descSt.Render(h.Desc))
 	}
 	return strings.Join(parts, descSt.Render(" · "))
 }

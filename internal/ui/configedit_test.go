@@ -206,8 +206,8 @@ func TestConfigEmptyValueRejected(t *testing.T) {
 
 	nm, cmd := model.Update(modals.SubmitMsg{Kind: modals.KindConfigValue, Value: "   "})
 	model = nm.(Model)
-	if cmd != nil {
-		t.Error("empty value should not save")
+	if cmd == nil {
+		t.Error("validation message needs an expiry timer")
 	}
 	if !strings.Contains(model.status, "empty") {
 		t.Errorf("status should explain the refusal: %q", model.status)
@@ -235,8 +235,8 @@ func TestConfigPkgMgrSearchDepthRejectsInvalid(t *testing.T) {
 
 	nm, cmd := model.Update(modals.SubmitMsg{Kind: modals.KindConfigValue, Value: "-1"})
 	model = nm.(Model)
-	if cmd != nil {
-		t.Fatal("negative search depth should not save")
+	if cmd == nil {
+		t.Fatal("validation message needs an expiry timer")
 	}
 	if !strings.Contains(model.status, "non-negative integer") {
 		t.Fatalf("status = %q, want validation message", model.status)

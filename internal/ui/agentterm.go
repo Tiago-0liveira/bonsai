@@ -24,7 +24,7 @@ const (
 	bannerControlledByOther = "Controlled by another client · Ctrl+] then Enter to take control"
 	hintOtherControls       = "READ-ONLY · Ctrl+] Unfocus, then Enter to take control"
 	hintControlLost         = "Control taken by another client  ·  Ctrl+] then Enter Take back"
-	hintAgentFocused        = "FOCUSED · Input goes to agent · Ctrl+] Unfocus"
+	hintAgentFocused        = "FOCUSED · ctrl+] detach"
 	observingOtherNote      = "Another client controls this agent: Ctrl+] then Enter takes control"
 	inputDroppedNote        = "agents: input dropped, the agent is not reading"
 	hintConnecting          = "Connecting to the agent…  ·  keys are ignored until attached  ·  Ctrl+] Unfocus"
@@ -151,7 +151,7 @@ func (m Model) onAgentInput(msg agentInputMsg) (tea.Model, tea.Cmd) {
 	// (focus reports, cursor queries) away from an agent we do not control.
 	send, dropped := v.queueInput(msg.data)
 	if dropped {
-		m.status = inputDroppedNote
+		m.setStatus(inputDroppedNote, false)
 	}
 	return m, tea.Batch(send, waitInputCmd(v.term))
 }
@@ -171,7 +171,7 @@ func (m Model) onAgentTook(msg agentTookMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.err != nil {
-		m.status = "agents: could not take control"
+		m.setStatus("agents: could not take control", true)
 		return m, nil
 	}
 	// The writer frame normally decides; checking now covers a holder that
@@ -229,7 +229,7 @@ func (m *Model) enterTerminalMode() (handled bool, cmd tea.Cmd) {
 		return false, nil
 	}
 	if v.state == attachEnded {
-		m.status = "This agent has ended"
+		m.setStatus("This agent has ended", false)
 		return true, nil
 	}
 	if v.term == nil || v.stream == nil {
@@ -311,6 +311,9 @@ func (m Model) agentTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.agents.view
 	if msg.Type == tea.KeyCtrlCloseBracket {
 		m.leaveTerminalMode(v)
+		if m.launchSessionShown() && (v.state == attachControlling || !v.opts.ReadOnly) {
+			return m, m.reattachAgent(v, true)
+		}
 		return m, nil
 	}
 	switch v.state {
@@ -326,7 +329,7 @@ func (m Model) agentTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case attachObservingOther:
 		if !v.hinted {
 			v.hinted = true
-			m.status = observingOtherNote
+			m.setStatus(observingOtherNote, false)
 		}
 	}
 	return m, nil
@@ -353,9 +356,9 @@ func (m Model) terminalLayout(w, h int, strip []agentsapi.Session, sel agentsapi
 		if u := m.usageText(sel, false); u != "" {
 			left += " │ " + u
 		}
-		head = leftRight(left, dimText(focusLabel), w)
+		head = leftRight(left, dimText("ctrl+] detach · "+focusLabel), w)
 	} else {
-		head = m.compactHeaderHint(sel, w, focusLabel)
+		head = m.compactHeaderHint(sel, w, "ctrl+] detach · "+focusLabel)
 	}
 	fixed := []string{m.sessionStrip(strip, selIdx, w, "", ""), fit(head, w), rule}
 	tail := []string{rule, fit(m.terminalHint(), w)}

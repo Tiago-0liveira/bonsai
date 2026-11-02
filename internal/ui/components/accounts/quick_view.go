@@ -130,13 +130,19 @@ func stripWindows(a agentsapi.Account, u agentsapi.Usage) ([][]*agents.UsageLimi
 		copy.Window = pool + " " + stripWindowName(l, i)
 		return &copy
 	}
-	var third [2]*agents.UsageLimit
+	// Third-party pools pair their own windows. A pool the provider names keeps
+	// that name; unnamed ones share the generic "Claude/GPT" row.
+	type pool struct {
+		name    string
+		windows [2]*agents.UsageLimit
+	}
+	var thirds []*pool
 	var other []agents.UsageLimit
 	for _, l := range extra {
 		// Identify the model pool as well as the window: a snapshot fallback
 		// can contain default windows and unfamiliar limits too.
-		pool := strings.ToLower(l.Group + " " + l.ID)
-		isThird := strings.Contains(pool, "claude") || strings.Contains(pool, "gpt") || strings.Contains(pool, "3p") || strings.Contains(pool, "third")
+		pk := strings.ToLower(l.Group + " " + l.ID)
+		isThird := strings.Contains(pk, "claude") || strings.Contains(pk, "gpt") || strings.Contains(pk, "3p") || strings.Contains(pk, "third")
 		i := -1
 		switch l.Window {
 		case "5h":
@@ -144,16 +150,36 @@ func stripWindows(a agentsapi.Account, u agentsapi.Usage) ([][]*agents.UsageLimi
 		case "weekly":
 			i = 1
 		}
-		if i >= 0 && strings.Contains(pool, "gemini") && rows[0][i] == nil {
+		if i >= 0 && strings.Contains(pk, "gemini") && rows[0][i] == nil {
 			copy := l
 			rows[0][i] = &copy
-		} else if i >= 0 && isThird && third[i] == nil {
-			third[i] = label(&l, "Claude/GPT", i)
+		} else if i >= 0 && isThird {
+			// The combined Claude+GPT pool keeps its short generic label; a
+			// pool for one reported model keeps that model's name.
+			name, g := l.Group, strings.ToLower(l.Group)
+			if name == "" || (strings.Contains(g, "claude") && strings.Contains(g, "gpt")) {
+				name = "Claude/GPT"
+			}
+			var p *pool
+			for _, t := range thirds {
+				if t.name == name {
+					p = t
+				}
+			}
+			if p == nil {
+				p = &pool{name: name}
+				thirds = append(thirds, p)
+			}
+			if p.windows[i] == nil {
+				p.windows[i] = label(&l, name, i)
+			} else {
+				other = append(other, l)
+			}
 		} else {
 			other = append(other, l)
 		}
 	}
-	if third[0] != nil || third[1] != nil {
+	if len(thirds) > 0 {
 		// A third-party balance is not the default balance. Keep the default
 		// windows visibly unknown when the provider only reports that pool.
 		for i, window := range []string{"5h", "weekly"} {
@@ -161,7 +187,9 @@ func stripWindows(a agentsapi.Account, u agentsapi.Usage) ([][]*agents.UsageLimi
 				rows[0][i] = &agents.UsageLimit{Window: window}
 			}
 		}
-		rows = append(rows, third[:])
+		for _, p := range thirds {
+			rows = append(rows, p.windows[:])
+		}
 	}
 	return rows, other
 }
@@ -368,10 +396,7 @@ func (q Quick) windowLine(l *agents.UsageLimit, i, labelW, cells int) string {
 	if !ok {
 		return line + dim.Render("Unavailable")
 	}
-	if cells > 0 {
-		line += stripMeter(f, cells, q.ascii) + " "
-	}
-	line += rankStyle(usagefmt.RankOf(f)).Bold(true).Render(fmt.Sprintf("%3d%% left", usagefmt.Percent(f)))
+	line += RemainingCapacity(f, cells, q.ascii)
 	if l.ResetsAt != nil {
 		line += dim.Render(" · Reset ") + usageValue(usagefmt.ResetsIn(q.now(), l.ResetsAt, true), theme.Current.Accent)
 	}

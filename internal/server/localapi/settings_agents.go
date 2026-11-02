@@ -14,6 +14,9 @@ type agentSettingsResponse struct {
 	Revision       uint64 `json:"revision"`
 	KeepRunning    bool   `json:"keep_running"`
 	ActiveSessions int    `json:"active_sessions"`
+	// Notifications are the desktop notifications each session's holder
+	// raises; they apply to sessions started after the change.
+	Notifications config.WebAgentNotifications `json:"notifications"`
 }
 
 func (s *Server) registerAgentSettingsRoutes(mux *http.ServeMux) {
@@ -22,7 +25,7 @@ func (s *Server) registerAgentSettingsRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) agentSettingsValue(cfg config.WebConfig) agentSettingsResponse {
-	out := agentSettingsResponse{Revision: cfg.Revision, KeepRunning: cfg.Agents.KeepRunning}
+	out := agentSettingsResponse{Revision: cfg.Revision, KeepRunning: cfg.Agents.KeepRunning, Notifications: cfg.Agents.Notifications}
 	if s.agents != nil {
 		out.ActiveSessions = s.agents.manager.ActiveCount()
 	}
@@ -44,14 +47,19 @@ func (s *Server) agentSettings(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) changeAgentSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		KeepRunning *bool   `json:"keep_running"`
-		Revision    *uint64 `json:"revision"`
+		KeepRunning   *bool `json:"keep_running"`
+		Notifications *struct {
+			Enabled      *bool `json:"enabled"`
+			NeedsInput   *bool `json:"needs_input"`
+			TurnComplete *bool `json:"turn_complete"`
+		} `json:"notifications"`
+		Revision *uint64 `json:"revision"`
 	}
 	if !decodeStrictJSON(w, r, &body) {
 		return
 	}
-	if body.Revision == nil || body.KeepRunning == nil {
-		writeAPIError(w, 400, "invalid", "keep_running and revision are required")
+	if body.Revision == nil || (body.KeepRunning == nil && body.Notifications == nil) {
+		writeAPIError(w, 400, "invalid", "revision and keep_running or notifications are required")
 		return
 	}
 	if s.webConfigPath == "" {
@@ -59,7 +67,21 @@ func (s *Server) changeAgentSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, err := config.UpdateWebConfig(s.webConfigPath, *body.Revision, func(cfg *config.WebConfig) error {
-		cfg.Agents.KeepRunning = *body.KeepRunning
+		if body.KeepRunning != nil {
+			cfg.Agents.KeepRunning = *body.KeepRunning
+		}
+		if n := body.Notifications; n != nil {
+			// Absent toggles keep their value, so a client changes one at a time.
+			if n.Enabled != nil {
+				cfg.Agents.Notifications.Enabled = *n.Enabled
+			}
+			if n.NeedsInput != nil {
+				cfg.Agents.Notifications.NeedsInput = *n.NeedsInput
+			}
+			if n.TurnComplete != nil {
+				cfg.Agents.Notifications.TurnComplete = *n.TurnComplete
+			}
+		}
 		return nil
 	})
 	if err != nil {

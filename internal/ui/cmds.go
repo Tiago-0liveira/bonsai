@@ -22,6 +22,7 @@ import (
 // --- Messages ---
 
 type worktreesMsg struct {
+	home  string
 	trees []git.Worktree
 	err   error
 	// force reports whether gh-backed data (PR list, CI checks) must be
@@ -36,6 +37,7 @@ type metricsMsg struct {
 }
 
 type logMsg struct {
+	path    string
 	content string
 	err     error
 }
@@ -62,8 +64,10 @@ type scriptsMsg struct {
 
 // opDoneMsg reports completion of a git/fs/exec operation.
 type opDoneMsg struct {
-	label string
-	err   error
+	createdPath string
+	startAgent  bool
+	label       string
+	err         error
 }
 
 // procTickMsg drives periodic refresh of the process-output viewport.
@@ -91,6 +95,7 @@ type prMapMsg struct {
 
 // prDetailMsg carries a fully-loaded PR for the PR detail tab.
 type prDetailMsg struct {
+	number int
 	detail gh.PRDetail
 	err    error
 }
@@ -98,6 +103,7 @@ type prDetailMsg struct {
 // checksMsg carries a worktree's PR CI checks + rollup for the row badge and the
 // PR tab checks section.
 type checksMsg struct {
+	err    error
 	path   string
 	number int
 	checks []gh.Check
@@ -106,12 +112,14 @@ type checksMsg struct {
 
 // statusMsg carries a worktree's working-tree change counts for row badges.
 type statusMsg struct {
+	err     error
 	path    string
 	summary git.StatusSummary
 }
 
 // activityMsg carries a worktree's HEAD commit time (for sort-by-activity).
 type activityMsg struct {
+	err  error
 	path string
 	unix int64
 }
@@ -145,7 +153,8 @@ type prCreatedMsg struct {
 func loadWorktrees(repoDir string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		trees, err := git.ListWorktrees(repoDir)
-		return worktreesMsg{trees: trees, err: err, force: force}
+		home, _ := os.UserHomeDir()
+		return worktreesMsg{trees: trees, err: err, force: force, home: home}
 	}
 }
 
@@ -161,7 +170,7 @@ func loadMetrics(path, branch, upstream string) tea.Cmd {
 func loadLog(path string) tea.Cmd {
 	return func() tea.Msg {
 		out, err := git.Log(path)
-		return logMsg{content: out, err: err}
+		return logMsg{path: path, content: out, err: err}
 	}
 }
 
@@ -342,35 +351,63 @@ func loadBranches(kind branchesKind, dir string) tea.Cmd {
 	}
 }
 
-// pruneCandidatesMsg carries the union of merged branch heads for the
-// bulk-prune scan.
+// pruneCandidatesMsg carries the merged branches for the bulk-prune scan, each
+// bound to the commit that was verified as merged.
 type pruneCandidatesMsg struct {
-	merged map[string]bool
+	merged map[string]string
 	err    error
 }
 
 // loadPruneCandidates unions merged PR heads (gh) with locally-merged branches
-// (git) in a goroutine. err is set only when both sources fail.
+// (git) in a goroutine. A branch name alone is not evidence: it qualifies only
+// when its current tip is reachable from base or equals the merged PR's head
+// commit (squash merges), and the verified tip is returned for the later
+// recheck. err is set only when both sources fail.
 func loadPruneCandidates(repoDir, base string) tea.Cmd {
 	return func() tea.Msg {
-		merged := map[string]bool{}
+		prHead := map[string]string{}
+		names := map[string]bool{}
 		mprs, ghErr := gh.ListMergedPRs(repoDir)
 		if ghErr == nil {
 			for _, pr := range mprs {
-				merged[pr.Head] = true
+				names[pr.Head] = true
+				if prHead[pr.Head] == "" {
+					prHead[pr.Head] = pr.HeadSHA
+				}
 			}
 		}
 		locals, gitErr := git.MergedBranches(repoDir, base)
 		if gitErr == nil {
 			for _, b := range locals {
-				merged[b] = true
+				names[b] = true
 			}
 		}
 		if ghErr != nil && gitErr != nil {
 			return pruneCandidatesMsg{err: ghErr}
 		}
+		merged := verifyMerged(repoDir, base, names, prHead)
 		return pruneCandidatesMsg{merged: merged}
 	}
+}
+
+// verifyMerged keeps the names whose current tip is reachable from base or
+// equals the merged PR head commit, mapped to that tip.
+func verifyMerged(repoDir, base string, names map[string]bool, prHead map[string]string) map[string]string {
+	merged := map[string]string{}
+	for name := range names {
+		tip, err := git.BranchTip(repoDir, name)
+		if err != nil || tip == "" {
+			continue
+		}
+		if tip == prHead[name] {
+			merged[name] = tip
+			continue
+		}
+		if ok, err := git.IsAncestor(repoDir, tip, base); err == nil && ok {
+			merged[name] = tip
+		}
+	}
+	return merged
 }
 
 // fetchPRs fetches PRs in any state to decorate worktree rows (open, merged,
@@ -387,7 +424,7 @@ func fetchPRs(repoDir string, cache *gh.Cache, force bool) tea.Cmd {
 func loadPRDetail(repoDir string, number int) tea.Cmd {
 	return func() tea.Msg {
 		d, err := gh.ViewPR(repoDir, number)
-		return prDetailMsg{detail: d, err: err}
+		return prDetailMsg{number: number, detail: d, err: err}
 	}
 }
 
@@ -397,7 +434,7 @@ func loadChecks(repoDir string, cache *gh.Cache, path string, number int, force 
 	return func() tea.Msg {
 		checks, err := cache.Checks(repoDir, number, force)
 		if err != nil {
-			return checksMsg{path: path, number: number}
+			return checksMsg{path: path, number: number, err: err}
 		}
 		return checksMsg{path: path, number: number, checks: checks, rollup: gh.Rollup(checks)}
 	}
@@ -423,16 +460,16 @@ func loadRuns(repoDir, path, branch string) tea.Cmd {
 // loadStatus reports a worktree's working-tree change counts.
 func loadStatus(path string) tea.Cmd {
 	return func() tea.Msg {
-		s, _ := git.StatusSummaryOf(path)
-		return statusMsg{path: path, summary: s}
+		s, err := git.StatusSummaryOf(path)
+		return statusMsg{path: path, summary: s, err: err}
 	}
 }
 
 // loadActivity fetches a worktree's HEAD commit time for sort-by-activity.
 func loadActivity(path string) tea.Cmd {
 	return func() tea.Msg {
-		u, _ := git.LastCommitUnix(path)
-		return activityMsg{path: path, unix: u}
+		u, err := git.LastCommitUnix(path)
+		return activityMsg{path: path, unix: u, err: err}
 	}
 }
 
@@ -497,27 +534,46 @@ func createPR(repoDir, path, title, body, base string, draft bool) tea.Cmd {
 
 // bulkPrune removes each merged worktree in sequence, aggregating the result.
 // Targets whose delete hooks or removal fail (including dirty worktrees) are
-// skipped, and the first error is reported alongside the success count.
+// skipped, and the first error is reported alongside the success count. The
+// branch tip is rechecked against the verified commit before the worktree is
+// touched and the branch is deleted only while it still points there, so
+// commits made after the scan are never discarded.
 func bulkPrune(repoDir string, targets []pruneTarget, deleteHooks []string) tea.Cmd {
 	return func() tea.Msg {
 		var firstErr error
+		fail := func(err error) {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
 		n := 0
 		for _, t := range targets {
+			if t.branch != "" {
+				if tip, err := git.BranchTip(repoDir, t.branch); err != nil || tip != t.sha {
+					fail(fmt.Errorf("kept %s: its tip is no longer the merged commit", t.branch))
+					continue
+				}
+			}
 			vars := config.HookVars(repoDir, t.path, t.branch, t.upstream, t.prNumber)
 			if err := coreexec.RunHooks(t.path, deleteHooks, vars); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			if err := git.RemoveWorktree(repoDir, t.path); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
+				fail(err)
 				continue
 			}
 			if t.branch != "" {
-				_ = git.DeleteBranch(repoDir, t.branch)
+				// Hooks can commit; recheck before the removal that cannot be undone.
+				if tip, err := git.BranchTip(repoDir, t.branch); err != nil || tip != t.sha {
+					fail(fmt.Errorf("kept %s: its tip moved while pruning", t.branch))
+					continue
+				}
+			}
+			if err := git.RemoveWorktree(repoDir, t.path); err != nil {
+				fail(err)
+				continue
+			}
+			if t.branch != "" {
+				if err := git.DeleteBranchAt(repoDir, t.branch, t.sha); err != nil {
+					fail(fmt.Errorf("kept %s: its tip moved after the worktree was removed: %w", t.branch, err))
+				}
 			}
 			n++
 		}
@@ -525,10 +581,11 @@ func bulkPrune(repoDir string, targets []pruneTarget, deleteHooks []string) tea.
 	}
 }
 
-// pruneTarget is one worktree scheduled for bulk pruning.
+// pruneTarget is one worktree scheduled for bulk pruning; sha is the branch tip
+// that was verified as merged.
 type pruneTarget struct {
-	path, branch, upstream string
-	prNumber               int
+	path, branch, upstream, sha string
+	prNumber                    int
 }
 
 // createWorktree builds a new worktree. mode selects the source:
@@ -538,7 +595,7 @@ type pruneTarget struct {
 //
 // The path comes from cfg.WorktreePath (template + root); create hooks run in the
 // new worktree on success and cfg.Upstream feeds the {base_branch} hook variable.
-func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Config) tea.Cmd {
+func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Config, base string, startAgent bool) tea.Cmd {
 	return func() tea.Msg {
 		var (
 			path string
@@ -546,10 +603,14 @@ func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Conf
 		)
 		switch mode {
 		case "new":
+			// Before ensureParent, which would create directories for a name git refuses.
+			if err := git.ValidBranchName(branch); err != nil {
+				return opDoneMsg{label: "create", err: fmt.Errorf("invalid branch name %q: %w", branch, err)}
+			}
 			path = cfg.WorktreePath(repoDir, branch)
 			err = ensureParent(path)
 			if err == nil {
-				err = git.AddWorktreeNewBranch(repoDir, path, branch)
+				err = git.AddWorktreeNewBranch(repoDir, path, branch, base)
 			}
 		case "existing":
 			path = cfg.WorktreePath(repoDir, branch)
@@ -572,7 +633,7 @@ func createWorktree(repoDir, mode, branch string, prNumber int, cfg *config.Conf
 		if hookErr := coreexec.RunHooks(path, cfg.CreateHooks(), vars); hookErr != nil {
 			return opDoneMsg{label: "create hook", err: hookErr}
 		}
-		return opDoneMsg{label: "create " + branch, err: nil}
+		return opDoneMsg{label: "create " + branch, createdPath: path, startAgent: startAgent, err: nil}
 	}
 }
 
@@ -600,14 +661,16 @@ func loadCommitPreview(path string) tea.Cmd {
 // Each section carries an OK flag so a single failure (e.g. no commits yet)
 // doesn't blank the rest.
 type inspectorData struct {
-	status   git.StatusSummary
-	commit   git.HeadCommit
-	commitOK bool
-	diskKB   int64
-	diskOK   bool
-	stashes  int
-	files    []git.DiffFile // diff vs base (empty for the main worktree)
-	base     string
+	status      git.StatusSummary
+	statusKnown bool
+	statusErr   string
+	commit      git.HeadCommit
+	commitOK    bool
+	diskKB      int64
+	diskOK      bool
+	stashes     int
+	files       []git.DiffFile // diff vs base (empty for the main worktree)
+	base        string
 }
 
 // inspectorMsg carries the loaded inspector data for a worktree path, used to
@@ -630,6 +693,9 @@ func loadInspector(path, base string) tea.Cmd {
 			defer wg.Done()
 			if s, err := git.StatusSummaryOf(path); err == nil {
 				d.status = s
+				d.statusKnown = true
+			} else {
+				d.statusErr = err.Error()
 			}
 		}()
 		go func() {
@@ -667,12 +733,14 @@ func loadInspector(path, base string) tea.Cmd {
 
 // tickProc schedules the next process-output refresh.
 func tickProc() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return procTickMsg{} })
+	return func() tea.Msg {
+		return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return procTickMsg{} })()
+	}
 }
 
 // tickPRs schedules the next pull-request state re-check.
 func tickPRs() tea.Cmd {
-	return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })
+	return func() tea.Msg { return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return prTickMsg{} })() }
 }
 
 func commandScopeLabel(root, dir string) string {

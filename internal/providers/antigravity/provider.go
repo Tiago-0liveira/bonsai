@@ -116,8 +116,14 @@ func checkSetupOptions(options agents.SetupOptions) error {
 }
 
 var (
-	_ agents.SetupSchema          = (*Provider)(nil)
-	_ agents.AccountAuthenticator = (*Provider)(nil)
-	_ agents.ModelLister          = (*Provider)(nil)
-	_ agents.LaunchValidator      = (*Provider)(nil)
+	_ agents.SetupSchema              = (*Provider)(nil)
+	_ agents.AccountAuthenticator     = (*Provider)(nil)
+	_ agents.ModelLister              = (*Provider)(nil)
+	_ agents.LaunchValidator          = (*Provider)(nil)
+	_ agents.ReadOnlyEnforcer         = (*Provider)(nil)
+	_ agents.Resumer                  = (*Provider)(nil)
+	_ agents.RuntimeRetainer          = (*Provider)(nil)
+	_ agents.ActivityReporter         = (*Provider)(nil)
+	_ agents.TerminalClassifier       = (*Provider)(nil)
+	_ agents.TerminalScreenClassifier = (*Provider)(nil)
 )

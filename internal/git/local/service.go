@@ -15,20 +15,34 @@ import (
 	"sync"
 	"time"
 
+	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	core "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/trace"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
+	gitstore "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 )
 
 type Config struct {
 	ID, Root, WorktreeRoot string
 	WithWorktreeRoot       func(context.Context, func(string) error) error
 	BeforeRemove           func(context.Context, string) error
+	// IsolationJournal records which resources an implementation operation
+	// owns. Without it isolation can preview but never create, push or remove.
+	IsolationJournal *gitstore.Store
+	// IsolationRun runs every Git command the isolation operations add, so a
+	// test can keep them off the network. Nil runs core Git.
+	IsolationRun func(context.Context, string, ...string) (string, error)
+	// IsolationHooks runs configured lifecycle hooks. Nil runs the shell hooks.
+	IsolationHooks func(context.Context, string, []string, map[string]string) error
 }
 type repository struct {
 	Config
 	gate chan struct{}
 	inv  inventoryCache
+	// hooksActive lists operations whose create hooks run in this process, to
+	// tell a running hook from one an earlier process left half done.
+	hooksMu     sync.Mutex
+	hooksActive map[string]bool
 }
 
 // inventoryCacheTTL bounds how long a worktree inventory read by Repository or
@@ -110,10 +124,14 @@ func New(configs []Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		if c.WithWorktreeRoot == nil {
-			if c.WorktreeRoot == "" {
-				return nil, fmt.Errorf("worktree root must be configured")
+		if c.WithWorktreeRoot == nil && c.WorktreeRoot == "" {
+			// Isolation places worktrees through the project roots, not this
+			// root, so a service may exist without one; plain creation refuses.
+			c.WithWorktreeRoot = func(context.Context, func(string) error) error {
+				return fmt.Errorf("worktree root must be configured")
 			}
+		}
+		if c.WithWorktreeRoot == nil {
 			c.WorktreeRoot, err = filepath.Abs(c.WorktreeRoot)
 			if err != nil {
 				return nil, err
@@ -126,7 +144,13 @@ func New(configs []Config) (*Service, error) {
 				return nil, err
 			}
 		}
-		s.repos[c.ID] = &repository{Config: c, gate: make(chan struct{}, 1)}
+		if c.IsolationRun == nil {
+			c.IsolationRun = core.RunContext
+		}
+		if c.IsolationHooks == nil {
+			c.IsolationHooks = coreexec.RunHooksContext
+		}
+		s.repos[c.ID] = &repository{Config: c, gate: make(chan struct{}, 1), hooksActive: map[string]bool{}}
 	}
 	return s, nil
 }

@@ -375,3 +375,33 @@ func TestLegacyInterfacesIgnoredAndRemovedOnSave(t *testing.T) {
 		})
 	}
 }
+
+func TestWebAgentNotificationsDefaultsAndPartialFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web.json")
+	cfg, _, err := EnsureWebConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := cfg.Agents.Notifications; n.Enabled || !n.NeedsInput || !n.TurnComplete {
+		t.Fatalf("defaults = %+v, want disabled with both toggles on", n)
+	}
+	// A file written before notifications existed, or with only some keys, keeps
+	// the defaults for the keys it omits.
+	old := `{"version":1,"revision":4,"api_port":7001,"updates":{"mode":"standard"},"agents":{"keep_running":true}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = ReadWebConfig(path)
+	if err != nil || !cfg.Agents.KeepRunning || cfg.Agents.Notifications.Enabled || !cfg.Agents.Notifications.NeedsInput {
+		t.Fatalf("old file = %+v, %v", cfg.Agents, err)
+	}
+	partial := `{"version":1,"revision":5,"api_port":7001,"updates":{"mode":"standard"},"agents":{"notifications":{"enabled":true,"turn_complete":false}}}`
+	if err := os.WriteFile(path, []byte(partial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = ReadWebConfig(path)
+	want := WebAgentNotifications{Enabled: true, NeedsInput: true, TurnComplete: false}
+	if err != nil || cfg.Agents.Notifications != want {
+		t.Fatalf("partial = %+v, %v; want %+v", cfg.Agents.Notifications, err, want)
+	}
+}

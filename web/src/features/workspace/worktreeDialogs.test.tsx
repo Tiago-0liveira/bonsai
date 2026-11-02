@@ -82,6 +82,17 @@ describe('worktree dialogs', () => {
     expect(stop.mock.invocationCallOrder[0]).toBeLessThan(remove.mock.invocationCallOrder[0])
   })
 
+  it.each(['idle', 'waiting'] as const)('still blocks deletion while a %s agent runs, and names its status', (state) => {
+    const tree = { ...worktrees[0], id: 'with-agent', main: false, dirtyFiles: 0, gitState: 'normal' }
+    const agent = { id: 'agent', name: 'Claude work', worktreeId: tree.id, state: 'running' as const, lifecycleState: 'running' as const, activity: { state, since: '2099-01-01T00:00:00Z', source: 'hook' as const } }
+    useBonsaiStore.setState({ worktrees: [tree], deleteWorktreeId: tree.id, agents: [agent as never] })
+    render(<DeleteWorktreeDialog />)
+    expect(screen.getByRole('alert')).toHaveTextContent('Stop active agents before deleting this worktree.')
+    expect(within(screen.getByRole('list', { name: 'Active agents' })).getByText('Claude work')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: state === 'idle' ? 'Idle' : 'Needs input' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete worktree' })).toBeDisabled()
+  })
+
   it('requires explicit discard for dirty deletion and protects the main copy', () => {
     const tree = { ...worktrees[0], id: 'dirty', main: false, dirtyFiles: 2, gitState: 'normal', path: '/trees/dirty' }
     useBonsaiStore.setState({ worktrees: [tree], deleteWorktreeId: tree.id })

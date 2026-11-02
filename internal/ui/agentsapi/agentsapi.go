@@ -5,6 +5,7 @@ package agentsapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os/exec"
 	"time"
@@ -67,8 +68,18 @@ type Sessions interface {
 	// Changes yields after any record create/update/remove, coalesced; closes with ctx.
 	Changes(ctx context.Context) (<-chan struct{}, error)
 	Start(ctx context.Context, req StartRequest) (Session, error)
+	// Resume brings an ended session back under the same id (no-op if alive).
+	// Not-resumable errors wrap agents.ErrNotResumable with a NotResumableError.
+	Resume(ctx context.Context, id string, cols, rows int) (Session, error)
 	Stop(ctx context.Context, id string) error
 	Attach(ctx context.Context, id string, opts AttachOptions) (Stream, error)
+	// Rename sets a session's display name (trimmed, control characters
+	// dropped, at most agenthost.MaxNameRunes) and returns the stored name.
+	Rename(ctx context.Context, id, name string) (string, error)
+	// Snapshot is the last lines of a session's screen, read without taking
+	// part in it. Ended sessions and holders with no screen yield none. The
+	// text is for display only and must never be persisted or logged.
+	Snapshot(ctx context.Context, id string, lines int) ([]string, error)
 }
 
 // Account is an agent profile with the details the accounts modal shows.
@@ -78,6 +89,14 @@ type Account struct {
 	Running int                // active sessions on this account
 	// ConcurrentSameAccount: the provider allows several sessions on one account.
 	ConcurrentSameAccount bool
+	// ReadOnly is the provider's verdict on running a session that cannot change
+	// anything, which the Garden planner role requires. Unsupported accounts stay
+	// listed so the reason can be shown; they are never started read-only.
+	ReadOnly agents.ReadOnlySupport
+	// Structured is the provider's verdict on tool-free structured calls, which
+	// Garden draft assistance requires. Unsupported accounts stay listed so the
+	// reason can be shown; they are never asked to run one.
+	Structured agents.StructuredSupport
 }
 
 // Usage is an account's usage with its freshness, so a failed refresh can
@@ -125,4 +144,23 @@ type Accounts interface {
 type Backend struct {
 	Sessions Sessions
 	Accounts Accounts
+	// Assist runs tool-free structured calls; nil when unavailable.
+	Assist Assist
+}
+
+// AssistRequest is one tool-free structured call on an account.
+type AssistRequest struct {
+	AccountID     agents.AccountID
+	Model, Effort string
+	System        string // fixed instructions only: it goes in argv, so never user text
+	Input         []byte // user-derived; reaches the provider on stdin only
+	Schema        json.RawMessage
+	MaxOutput     int64
+}
+
+// Assist runs a structured call and returns the answer object. It fails with
+// agents.ErrStructuredUnsupported before any process starts when the account's
+// provider cannot run one tool-free.
+type Assist interface {
+	Run(ctx context.Context, req AssistRequest) (json.RawMessage, error)
 }

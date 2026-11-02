@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -74,6 +75,27 @@ const (
 	KindConfigValue   Kind = "config_value"   // final value for a config setting
 	KindConfigConfirm Kind = "config_confirm" // confirm removal of a config entry
 
+	KindGardenAutoReviewRestore Kind = "garden_auto_review_restore"
+	KindGardenAssistRestore     Kind = "garden_assist_restore"
+	// KindGardenDraftQuit asks what to do with unwritten private draft edits when quitting.
+	KindGardenDraftQuit Kind = "garden_draft_quit"
+
+	// Confirm taking the writer role of an agent terminal from another client.
+	KindPlaygroundTakeover Kind = "playground_takeover"
+
+	// Link a Playground session to an Issue: the number, the confirmation and the replace confirmation.
+	KindPlaygroundLinkIssue   Kind = "playground_link_issue"
+	KindPlaygroundLinkConfirm Kind = "playground_link_confirm"
+	KindPlaygroundLinkReplace Kind = "playground_link_replace"
+
+	// Garden review (plan 10.4). Enabling the local policy, and each explicit review action, has its own
+	// confirmation; none of them starts anything before the user says yes.
+	KindGardenReviewEnable         Kind = "garden_review_enable"
+	KindPlaygroundReviewRetry      Kind = "playground_review_retry"
+	KindPlaygroundReviewDismiss    Kind = "playground_review_dismiss"     // the reason, typed
+	KindPlaygroundReviewDismissAsk Kind = "playground_review_dismiss_ask" // its confirmation
+	KindPlaygroundReviewAcceptAsk  Kind = "playground_review_accept_ask"
+
 	KindPrefEditor Kind = "pref_editor" // personal "open editor" override (state.json)
 
 	// Scrollable read-only diff of a single file.
@@ -95,8 +117,10 @@ const (
 
 // SubmitMsg is emitted when the user confirms a choice.
 type SubmitMsg struct {
-	Kind  Kind
-	Value string
+	Kind       Kind
+	Value      string
+	StartAgent bool
+	Base       string
 }
 
 // CancelMsg is emitted when the user dismisses the modal.
@@ -133,17 +157,25 @@ type visRow struct {
 
 // Model is the overlay state.
 type Model struct {
-	kind   Kind
-	mode   mode
-	title  string
-	body   string // optional read-only text shown above an input (e.g. commit preview)
-	input  textinput.Model
-	items  []string
-	cursor int
-	filter FilterFunc
-	width  int
-	height int
-	inline bool
+	createOptions bool
+	startAgent    bool
+	toggleAgent   key.Binding
+	baseKey       key.Binding
+	base          textinput.Model
+	baseFocused   bool
+	preview       func(string, string) string
+	nameCheck     func(string) (reason, hint string) // reason is empty for an acceptable name
+	kind          Kind
+	mode          mode
+	title         string
+	body          string // optional read-only text shown above an input (e.g. commit preview)
+	input         textinput.Model
+	items         []string
+	cursor        int
+	filter        FilterFunc
+	width         int
+	height        int
+	inline        bool
 
 	// Sectioned fuzzy fields.
 	sectioned     bool
@@ -308,7 +340,9 @@ func (m *Model) SetInitial(v string) {
 
 func (m Model) submit(value string) tea.Cmd {
 	k := m.kind
-	return func() tea.Msg { return SubmitMsg{Kind: k, Value: value} }
+	return func() tea.Msg {
+		return SubmitMsg{Kind: k, Value: value, StartAgent: m.startAgent, Base: m.base.Value()}
+	}
 }
 
 func (m Model) cancel() tea.Cmd {
@@ -316,11 +350,61 @@ func (m Model) cancel() tea.Cmd {
 	return func() tea.Msg { return CancelMsg{Kind: k} }
 }
 
+// SetCreateOptions installs session-local creation choices and a pure preview callback.
+func (m *Model) SetCreateOptions(enabled, start bool, toggle, baseKey key.Binding, base string, preview func(string, string) string) {
+	m.createOptions, m.startAgent, m.toggleAgent, m.baseKey, m.preview = enabled, start, toggle, baseKey, preview
+	m.base = textinput.New()
+	m.base.SetValue(base)
+	m.base.Prompt = "Base: "
+}
+
+// SetNameCheck makes the input a validated name: while check returns a reason,
+// the reason is shown under the input in place of the preview and Enter does
+// nothing. A non-empty hint is a valid replacement offered to the user.
+func (m *Model) SetNameCheck(check func(string) (reason, hint string)) { m.nameCheck = check }
+
+// nameProblem is the reason the current input cannot be submitted, if any.
+func (m Model) nameProblem() (reason, hint string) {
+	if m.nameCheck == nil {
+		return "", ""
+	}
+	return m.nameCheck(m.input.Value())
+}
+
+func (m Model) StartAgent() bool { return m.startAgent }
+
 // Update handles key input and returns the (possibly emitting) modal.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
+	}
+
+	if m.createOptions && key.Type != tea.KeyRunes && key.Type != tea.KeySpace && bindingMatches(key, m.toggleAgent) {
+		m.startAgent = !m.startAgent
+		return m, nil
+	}
+	if m.preview != nil && bindingMatches(key, m.baseKey) {
+		m.baseFocused = !m.baseFocused
+		if m.baseFocused {
+			m.input.Blur()
+			m.base.Focus()
+		} else {
+			m.base.Blur()
+			m.input.Focus()
+		}
+		return m, nil
+	}
+	if m.baseFocused && key.String() != "enter" && key.String() != "esc" && key.String() != "ctrl+c" {
+		var cmd tea.Cmd
+		m.base, cmd = m.base.Update(msg)
+		return m, cmd
+	}
+
+	if key.String() == "enter" {
+		if reason, _ := m.nameProblem(); reason != "" || (m.nameCheck != nil && m.input.Value() == "") {
+			return m, nil
+		}
 	}
 
 	// Scroll mode: esc/q close, everything else drives the viewport.
@@ -588,6 +672,25 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("↑/↓ move · enter select · esc cancel"))
 	}
 
+	if m.preview != nil {
+		detail := m.preview(m.input.Value(), m.base.Value())
+		if reason, hint := m.nameProblem(); reason != "" {
+			detail = dangerStyle.Render("✗ " + reason)
+			if hint != "" {
+				detail += dimStyle.Render(" · try " + hint)
+			}
+		}
+		b.WriteString("\n" + m.base.View() + "\n" + detail + "\n")
+		b.WriteString(dimStyle.Render("enter create · " + m.baseKey.Help().Key + " base · esc cancel"))
+	}
+	if m.createOptions {
+		mark := "[ ]"
+		if m.startAgent {
+			mark = "[x]"
+		}
+		b.WriteString("\n" + mark + " Start agent here · " + m.toggleAgent.Help().Key + " toggle")
+	}
+
 	body := b.String()
 	if m.inline && m.width > 0 && m.height > 0 {
 		lines := strings.Split(body, "\n")
@@ -762,3 +865,5 @@ func (m Model) renderList() string {
 	}
 	return b.String()
 }
+
+func bindingMatches(msg tea.KeyMsg, b key.Binding) bool { return key.Matches(msg, b) }

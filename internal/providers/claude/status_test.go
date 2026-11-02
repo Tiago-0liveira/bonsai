@@ -52,6 +52,10 @@ func (r *blockingRunner) Output(ctx context.Context, _ agents.PreparedSession) (
 	return nil, ctx.Err()
 }
 
+func (r *blockingRunner) Run(ctx context.Context, p agents.PreparedSession, _ RunOptions) ([]byte, error) {
+	return r.Output(ctx, p)
+}
+
 func TestStatusTimeoutIsUnknownNotAnError(t *testing.T) {
 	e := newTestEnv(t)
 	account := e.addLogin("work")
@@ -81,6 +85,11 @@ type countingRunner struct {
 func (r *countingRunner) Output(ctx context.Context, p agents.PreparedSession) ([]byte, error) {
 	r.calls.Add(1)
 	return r.inner.Output(ctx, p)
+}
+
+func (r *countingRunner) Run(ctx context.Context, p agents.PreparedSession, o RunOptions) ([]byte, error) {
+	r.calls.Add(1)
+	return r.inner.Run(ctx, p, o)
 }
 
 func TestStatusIsCached(t *testing.T) {
@@ -201,6 +210,11 @@ type recordingRunner struct {
 func (r *recordingRunner) Output(ctx context.Context, p agents.PreparedSession) ([]byte, error) {
 	r.seen = append(r.seen, p)
 	return r.inner.Output(ctx, p)
+}
+
+func (r *recordingRunner) Run(ctx context.Context, p agents.PreparedSession, o RunOptions) ([]byte, error) {
+	r.seen = append(r.seen, p)
+	return r.inner.Run(ctx, p, o)
 }
 
 func TestVersionCheckUsesThrowawayConfigDir(t *testing.T) {

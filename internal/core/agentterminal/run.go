@@ -13,12 +13,14 @@ import (
 // seconds; descendants are killed when the process exits. It returns the exit
 // code (-1 when the process never ran).
 func RunInStream[S any](ctx context.Context, stream *Stream[S], prepared agents.PreparedSession, cols, rows int) (int, error) {
-	return runInStream(ctx, stream, prepared, cols, rows, nil)
+	return runInStream(ctx, stream, prepared, cols, rows, nil, nil)
 }
 
-// runInStream is RunInStream with started, called once the process runs. An
-// error from started stops the process and is returned.
-func runInStream[S any](ctx context.Context, stream *Stream[S], prepared agents.PreparedSession, cols, rows int, started func() error) (int, error) {
+// runInStream is RunInStream with started, called once the process runs, and
+// output, called with each chunk the process writes before the stream gets
+// it. An error from started stops the process and is returned. output must
+// neither keep nor alter its chunk.
+func runInStream[S any](ctx context.Context, stream *Stream[S], prepared agents.PreparedSession, cols, rows int, started func() error, output func([]byte)) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return -1, err
 	}
@@ -42,6 +44,9 @@ func runInStream[S any](ctx context.Context, stream *Stream[S], prepared agents.
 		for {
 			n, readErr := proc.file.Read(buf)
 			if n > 0 {
+				if output != nil {
+					output(buf[:n])
+				}
 				_, _ = stream.Write(buf[:n])
 			}
 			if readErr != nil {

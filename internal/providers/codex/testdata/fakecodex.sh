@@ -33,6 +33,48 @@ b64url() {
 	printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '=\n'
 }
 
+# Hooks: the app-server answers `hooks/list` from $CODEX_HOME/hooks.json and
+# `config/batchWrite` by writing [hooks.state."<key>"] sections to the file it is
+# given (both as the real ones do, with a fake hash). Interactive sessions
+# understand `HOOK <Event> <json>`: they run, with the payload on stdin, the hook
+# commands of <Event> that config.toml trusts. A real SessionStart fires on startup.
+# `NOTIFY <text>` makes them send <text> as an OSC 9 notification.
+tab=$(printf '\t')
+# list_hooks prints "<event> TAB <key> TAB <command>" for each handler in hooks.json,
+# reading the layout json.MarshalIndent gives it (two spaces per level).
+list_hooks() {
+	[ -f "$home/hooks.json" ] || return 0
+	awk -v file="$home/hooks.json" '
+	/^    "[A-Za-z]+": \[$/ { ev = $1; gsub(/[":]/, "", ev); snake = ev; gsub(/[A-Z]/, "_&", snake); snake = tolower(snake); sub(/^_/, "", snake); g = -1; next }
+	/^      \{$/ { g++; h = -1; next }
+	/^          \{$/ { h++; next }
+	/^            "command": "/ { c = $0; sub(/^            "command": "/, "", c); sub(/",?$/, "", c); printf "%s\t%s:%s:%d:%d\t%s\n", ev, file, snake, g, h, c }
+	' "$home/hooks.json"
+}
+hook_hash() {
+	printf '%s' "$1:$2" | cksum | cut -d' ' -f1
+}
+is_trusted() {
+	[ -f "$home/config.toml" ] || return 1
+	awk -v k="[hooks.state.\"$1\"]" -v h="trusted_hash = \"$2\"" '
+	$0 == k { f = 1; next }
+	f && $0 == h { ok = 1 }
+	f && /^\[/ { f = 0 }
+	END { exit !ok }' "$home/config.toml"
+}
+fire_hook() {
+	[ -f "$home/hooks.json" ] || return 0
+	list=$(mktemp)
+	list_hooks >"$list"
+	while IFS="$tab" read -r ev key cmd; do
+		[ "$ev" = "$1" ] || continue
+		is_trusted "$key" "sha256:$(hook_hash "$ev" "$cmd")" || continue
+		cmd=$(printf '%s' "$cmd" | sed 's/\\"/"/g; s/\\\\/\\/g')
+		printf '%s' "$2" | sh -c "$cmd"
+	done <"$list"
+	rm -f "$list"
+}
+
 # Global -c options may precede a subcommand.
 store=default
 sub=
@@ -156,6 +198,40 @@ app-server)
 			continue
 		fi
 		case "$method" in
+		hooks/list)
+			list=$(mktemp)
+			list_hooks >"$list"
+			entries=
+			order=0
+			while IFS="$tab" read -r ev key cmd; do
+				hash="sha256:$(hook_hash "$ev" "$cmd")"
+				status=untrusted
+				is_trusted "$key" "$hash" && status=trusted
+				entries="${entries:+$entries,}{\"key\":\"$key\",\"eventName\":\"x\",\"handlerType\":\"command\",\"command\":\"$cmd\",\"async\":true,\"matcher\":null,\"timeoutSec\":5,\"statusMessage\":null,\"sourcePath\":\"$home/hooks.json\",\"source\":\"user\",\"pluginId\":null,\"displayOrder\":$order,\"enabled\":true,\"isManaged\":false,\"currentHash\":\"$hash\",\"trustStatus\":\"$status\"}"
+				order=$((order + 1))
+			done <"$list"
+			rm -f "$list"
+			printf '{"id":%s,"result":{"data":[{"cwd":"%s","hooks":[%s],"warnings":[],"errors":[]}]}}\n' "$id" "$PWD" "$entries"
+			continue
+			;;
+		config/batchWrite)
+			file=$(printf '%s' "$line" | sed -n 's/.*"filePath":"\([^"]*\)".*/\1/p')
+			log "config-write ${file:-none}"
+			target="${file:-$home/config.toml}"
+			printf '%s' "$line" | grep -o '"[^"]*":{"trusted_hash":"[^"]*"}' >"$target.pairs"
+			while IFS= read -r pair; do
+				key=$(printf '%s' "$pair" | sed 's/^"\(.*\)":{"trusted_hash".*/\1/')
+				hash=$(printf '%s' "$pair" | sed 's/.*"trusted_hash":"\([^"]*\)".*/\1/')
+				if [ -f "$target" ]; then
+					awk -v k="[hooks.state.\"$key\"]" '$0 == k { skip = 2 } skip > 0 { skip--; next } { print }' "$target" >"$target.new"
+					mv "$target.new" "$target"
+				fi
+				printf '\n[hooks.state."%s"]\ntrusted_hash = "%s"\n' "$key" "$hash" >>"$target"
+			done <"$target.pairs"
+			rm -f "$target.pairs"
+			printf '{"id":%s,"result":{"status":"ok","version":"sha256:fake","filePath":"%s","overriddenMetadata":null}}\n' "$id" "$target"
+			continue
+			;;
 		initialize) file=initialize.json ;;
 		account/read) file=account-read.json ;;
 		account/rateLimits/read) file=rate-limits.json ;;
@@ -200,7 +276,25 @@ printf 'HOME=%s\n' "$HOME"
 printf 'SESSION=%s\n' "$BONSAI_AGENT_SESSION_ID"
 printf 'HAS_OPENAI_KEY=%s\n' "$([ -n "${OPENAI_API_KEY+x}" ] && echo 1 || echo 0)"
 printf 'HAS_CODEX_KEY=%s\n' "$([ -n "${CODEX_API_KEY+x}" ] && echo 1 || echo 0)"
+printf 'HOOKS=%s\n' "$([ -f "$home/hooks.json" ] && echo 1 || echo 0)"
 printf 'READY\n'
+fire_hook SessionStart '{"source":"startup"}'
 while IFS= read -r l; do
-	printf 'REPLY:%s\n' "$l"
+	case "$l" in
+	"HOOK "*)
+		rest=${l#HOOK }
+		event=${rest%% *}
+		payload=${rest#"$event"}
+		fire_hook "$event" "${payload# }"
+		printf 'HOOKED:%s\n' "$event"
+		;;
+	"NOTIFY "*)
+		# An OSC 9 desktop notification, as Codex's TUI sends for approvals.
+		printf '\033]9;%s\007' "${l#NOTIFY }"
+		printf 'NOTIFIED\n'
+		;;
+	*)
+		printf 'REPLY:%s\n' "$l"
+		;;
+	esac
 done

@@ -30,6 +30,7 @@ type fakeGitHub struct {
 	auth      []string
 	validAuth string
 	remaining int
+	scopes    string
 	bodies    map[string]string
 }
 
@@ -37,6 +38,9 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.auth = append(f.auth, r.Header.Get("Authorization"))
+	if f.scopes != "" {
+		w.Header().Set("X-OAuth-Scopes", f.scopes)
+	}
 	w.Header().Set("X-RateLimit-Limit", "5000")
 	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(f.remaining))
 	w.Header().Set("X-RateLimit-Reset", "2000000000")
@@ -152,6 +156,94 @@ func TestUnauthorizedReReadsTheTokenOnce(t *testing.T) {
 	}
 	if statuses, _ := f.take(); !equalInts(statuses, []int{401, 401}) {
 		t.Fatalf("statuses %v", statuses)
+	}
+}
+
+func TestInvalidateAuthRereadsStoredTokenWithoutUnauthorized(t *testing.T) {
+	f := &fakeGitHub{remaining: 4999, bodies: map[string]string{
+		"/repos/acme/repo": `{"id":1,"full_name":"acme/repo","default_branch":"main"}`,
+	}}
+	tokens := &fakeTokens{tokens: []string{"tok-before", "tok-after"}}
+	shared, _ := newFakeShared(t, f, tokens)
+	service := shared.Service(t.TempDir())
+	for i := 0; i < 2; i++ {
+		if _, err := service.Repository(context.Background(), "acme/repo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if tokens.calls.Load() != 1 {
+		t.Fatal("ordinary requests must reuse the stored token")
+	}
+	shared.InvalidateAuth(DefaultHost)
+	if _, err := service.Repository(context.Background(), "acme/repo"); err != nil {
+		t.Fatal(err)
+	}
+	statuses, auth := f.take()
+	if !equalInts(statuses, []int{200, 304, 200}) || strings.Join(auth, ",") != "Bearer tok-before,Bearer tok-before,Bearer tok-after" {
+		t.Fatalf("statuses %v auth %v", statuses, auth)
+	}
+	if tokens.calls.Load() != 2 {
+		t.Fatal("explicit refresh did not reread the stored token")
+	}
+}
+
+func TestInvalidateAuthDetachesAnOlderTokenRead(t *testing.T) {
+	shared := NewShared()
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls int
+	var mu sync.Mutex
+	shared.SetTokenRunner(func(context.Context, string) ([]byte, []byte, error) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			close(started)
+			<-release
+			return []byte("old-token"), nil, nil
+		}
+		return []byte("new-token"), nil, nil
+	})
+	go func() {
+		defer close(done)
+		_, _ = shared.tokens.Token(context.Background(), DefaultHost)
+	}()
+	<-started
+	shared.InvalidateAuth(DefaultHost)
+	token, err := shared.tokens.Token(context.Background(), DefaultHost)
+	close(release)
+	<-done
+	if err != nil || token != "new-token" {
+		t.Fatalf("fresh token = %q, %v", token, err)
+	}
+	if token, err = shared.tokens.Token(context.Background(), DefaultHost); err != nil || token != "new-token" {
+		t.Fatalf("late read replaced fresh credentials: %q, %v", token, err)
+	}
+}
+
+func TestNotModifiedKeepsCurrentOAuthScopes(t *testing.T) {
+	f := &fakeGitHub{remaining: 4999, bodies: map[string]string{"/repos/acme/repo": `{"id":1}`}}
+	tokens := &fakeTokens{tokens: []string{"unchanged-token"}}
+	shared, server := newFakeShared(t, f, tokens)
+	client := shared.client(transport{})
+	for _, scope := range []string{"repo", "repo, project"} {
+		f.mu.Lock()
+		f.scopes = scope
+		f.mu.Unlock()
+		shared.InvalidateAuth(DefaultHost)
+		resp, err := client.Get(server.URL + "/repos/acme/repo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := resp.Header.Get("X-OAuth-Scopes")
+		drain(resp)
+		if got != scope {
+			t.Fatalf("OAuth scopes = %q, want %q", got, scope)
+		}
+	}
+	statuses, _ := f.take()
+	if !equalInts(statuses, []int{200, 304}) {
+		t.Fatalf("statuses = %v", statuses)
 	}
 }
 

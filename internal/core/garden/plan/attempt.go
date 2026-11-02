@@ -1,0 +1,160 @@
+// Package plan is the local planner attempt of the Garden workflow (plan 08.2). An attempt is one explicit,
+// user-started, read-only agent session bound to an approved specification revision and the inspected
+// repository base. Its one write is a plan file in a directory Bonsai made for the attempt. It records who ran
+// what under which permissions, and how it ended; it creates no worktree and publishes nothing.
+// Plan revisions and gate two build on the attempt ID (plan 08.3, 08.4).
+package plan
+
+import (
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
+	"github.com/Tiago-0liveira/bonsai/internal/core/config"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden"
+)
+
+// Role is what an attempt's agent was asked to be.
+type Role string
+
+// RolePlanner is the only role plan 08.2 starts: it reads the repository and talks; the only thing it may write
+// is its own plan file inside a Bonsai-owned directory.
+const RolePlanner Role = "planner"
+
+// State is where an attempt stands. Starting and Running are live; the rest are final and never change.
+type State string
+
+const (
+	// StateStarting means the attempt is recorded and its session is being created.
+	StateStarting State = "starting"
+	// StateRunning means the session is live.
+	StateRunning State = "running"
+	// StateEnded means the session exited with code 0. It says nothing about whether a plan was published.
+	StateEnded State = "ended"
+	// StateFailed means the session could not start, failed, or exited with an error. Partial work stays
+	// viewable through SessionID for as long as the holder record is retained.
+	StateFailed State = "failed"
+	// StateCancelled means the user stopped the attempt.
+	StateCancelled State = "cancelled"
+)
+
+// Live reports whether the attempt can still change.
+func (s State) Live() bool { return s == StateStarting || s == StateRunning }
+
+func (s State) valid() bool {
+	switch s {
+	case StateStarting, StateRunning, StateEnded, StateFailed, StateCancelled:
+		return true
+	}
+	return false
+}
+
+// rank orders states so a late or repeated observation can never move an attempt backwards.
+func (s State) rank() int {
+	switch s {
+	case StateStarting:
+		return 0
+	case StateRunning:
+		return 1
+	}
+	return 2
+}
+
+// SpecRef is the approved specification revision an attempt plans for.
+type SpecRef struct {
+	RevisionHash string `json:"revision_hash"`
+	CommentID    int64  `json:"comment_id"`
+	Ordinal      int    `json:"ordinal"`
+	Fingerprint  string `json:"fingerprint"`
+}
+
+// Base is the inspected repository state the planner reads. Only a count and a digest of uncommitted changes
+// are kept: paths and contents never reach the record.
+type Base struct {
+	Commit string `json:"commit"`
+	// Branch is empty on a detached HEAD.
+	Branch string `json:"branch,omitempty"`
+	// Dirty is true when the checkout has uncommitted changes; the planner then reads them too.
+	Dirty      bool `json:"dirty,omitempty"`
+	DirtyFiles int  `json:"dirty_files,omitempty"`
+	// DirtyDigest fingerprints the status entries (paths and states, not contents) so a change between the
+	// preview and the start is detected.
+	DirtyDigest string `json:"dirty_digest,omitempty"`
+}
+
+// RevisionRef names one plan revision and the decision that asked for it to be revised.
+type RevisionRef struct {
+	RevisionHash string `json:"revision_hash"`
+	// Ordinal is the revision's rN number, kept for display only.
+	Ordinal           int   `json:"ordinal,omitempty"`
+	DecisionCommentID int64 `json:"decision_comment_id"`
+}
+
+// Isolation records the read-only guarantee the user accepted.
+type Isolation struct {
+	// Mechanism names what enforces read-only access below the model.
+	Mechanism string   `json:"mechanism"`
+	Allows    []string `json:"allows"`
+	// DirtyAccepted is true when the user explicitly let the planner read uncommitted changes.
+	DirtyAccepted bool      `json:"dirty_accepted,omitempty"`
+	AcceptedAt    time.Time `json:"accepted_at"`
+	AcceptedBy    string    `json:"accepted_by"`
+}
+
+// Attempt is one planner run. Fields hold no token, environment value, prompt or terminal output.
+type Attempt struct {
+	ID     string             `json:"id"`
+	Local  garden.LocalRepoID `json:"local_repo_id"`
+	Repo   garden.RepoID      `json:"repo_id"`
+	Issue  garden.IssueID     `json:"issue_id"`
+	Number int64              `json:"number"`
+	Role   Role               `json:"role"`
+
+	Spec      SpecRef   `json:"spec"`
+	Base      Base      `json:"base"`
+	Isolation Isolation `json:"isolation"`
+
+	Provider    agents.ProviderID `json:"provider"`
+	AccountID   agents.AccountID  `json:"account_id"`
+	AccountName string            `json:"account_name"`
+	Model       string            `json:"model,omitempty"`
+	Effort      string            `json:"effort,omitempty"`
+
+	// PlanPath is the one file the planner may write: plan.md inside this attempt's Bonsai-owned directory under
+	// the plans root. Empty for an attempt recorded before plan files existed. It names a path, never content.
+	PlanPath string `json:"plan_path,omitempty"`
+	// SessionID names the holder-backed session; the transcript stays with that record, not here.
+	SessionID string `json:"session_id,omitempty"`
+	State     State  `json:"state"`
+	// Reason is a short fixed phrase for a failed or cancelled attempt, never provider text.
+	Reason          string `json:"reason,omitempty"`
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	CancelRequested bool   `json:"cancel_requested,omitempty"`
+
+	// PlanPublishedAt is when this attempt's plan was published as a plan revision from here. It is a local
+	// convenience for "plan not yet published"; GitHub stays the record of what was published.
+	PlanPublishedAt *time.Time `json:"plan_published_at,omitempty"`
+	// PublishedRevision is the hash of the plan revision this attempt's plan became. It lets a revise attempt
+	// retain the settings of the attempt that produced the revision under review. Empty when unpublished, or
+	// published before the hash was recorded.
+	PublishedRevision string `json:"published_revision,omitempty"`
+	// Revises names the plan revision and changes-requested decision this attempt answers; nil for a plain
+	// request.
+	Revises *RevisionRef `json:"revises,omitempty"`
+
+	RequestedAt time.Time  `json:"requested_at"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (a Attempt) valid() bool {
+	return a.ID != "" && a.Local != "" && a.Repo != 0 && a.Issue != 0 && a.Role == RolePlanner && a.State.valid() &&
+		a.Spec.RevisionHash != "" && a.Spec.Fingerprint != "" && a.Base.Commit != "" && a.Provider != "" && a.AccountID != "" &&
+		(a.PlanPath == "" || validPlanPath(a.PlanPath)) && (a.Revises == nil || a.Revises.RevisionHash != "" && a.Revises.DecisionCommentID != 0)
+}
+
+// validPlanPath is a shape check only; whether the path is the attempt's own is Service.ownedPlanDir's job.
+func validPlanPath(p string) bool {
+	return len(p) <= 4096 && filepath.IsAbs(p) && filepath.Base(p) == config.GardenPlanFileName && !strings.ContainsRune(p, 0)
+}

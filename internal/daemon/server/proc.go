@@ -21,9 +21,9 @@ var errGenerationMismatch = errors.New("generation mismatch")
 
 const orphanStopTimeout = 2 * time.Second
 
-func waitForProcessExit(pid int, startedAt time.Time, worktree string, timeout time.Duration) bool {
+func waitForProcessExit(pid int, startedAt time.Time, startTicks uint64, bootID string, worktree string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for procstore.ProcessMatches(pid, startedAt, worktree) {
+	for procstore.ProcessMatches(pid, startedAt, startTicks, bootID, worktree) {
 		if !time.Now().Before(deadline) {
 			return false
 		}
@@ -123,6 +123,8 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	mp.rec.Attempt++
 	mp.rec.RetryAt = nil
 	mp.rec.PID = 0
+	mp.rec.StartTicks = 0
+	mp.rec.BootID = ""
 	mp.rec.ProcessGroupID = 0
 	var urlBuf []byte
 	logw, err := newLogWriter(s.store.LogPath(mp.rec.ID), cap, func(chunk []byte) {
@@ -205,6 +207,7 @@ func (s *Server) start(mp *managedProc, expectedGen uint64) error {
 	mp.rec.ProcessGroupID = cmd.Process.Pid
 	mp.rec.Status = procstore.StatusRunning
 	mp.rec.StartedAt = time.Now()
+	mp.rec.StartTicks, mp.rec.BootID = procstore.StartIdentity(cmd.Process.Pid)
 	mp.rec.ExitCode = nil
 	mp.rec.ExitError = ""
 	_ = s.store.WriteRecord(mp.rec)
@@ -437,8 +440,10 @@ func (s *Server) killManaged(mp *managedProc) bool {
 	if status == procstore.StatusOrphan {
 		pid := mp.rec.PID
 		startedAt := mp.rec.StartedAt
+		startTicks := mp.rec.StartTicks
+		bootID := mp.rec.BootID
 		worktree := mp.rec.Worktree
-		if !procstore.ProcessMatches(pid, startedAt, worktree) {
+		if !procstore.ProcessMatches(pid, startedAt, startTicks, bootID, worktree) {
 			mp.rec.Status = procstore.StatusLost
 			s.appendMarker(mp.rec.ID, procstore.Marker{
 				Kind: procstore.MarkerExit,
@@ -459,7 +464,7 @@ func (s *Server) killManaged(mp *managedProc) bool {
 		if pid > 0 {
 			coreexec.KillPID(pid)
 		}
-		stopped := waitForProcessExit(pid, startedAt, worktree, orphanStopTimeout)
+		stopped := waitForProcessExit(pid, startedAt, startTicks, bootID, worktree, orphanStopTimeout)
 
 		mp.mu.Lock()
 		if mp.rec.Status == procstore.StatusStopping {
@@ -489,6 +494,8 @@ func (s *Server) killManaged(mp *managedProc) bool {
 		cmd := mp.cmd
 		pid := mp.rec.PID
 		startedAt := mp.rec.StartedAt
+		startTicks := mp.rec.StartTicks
+		bootID := mp.rec.BootID
 		worktree := mp.rec.Worktree
 		mp.mu.Unlock()
 		if cmd != nil {
@@ -498,7 +505,7 @@ func (s *Server) killManaged(mp *managedProc) bool {
 		if pid > 0 {
 			coreexec.KillPID(pid)
 		}
-		stopped := waitForProcessExit(pid, startedAt, worktree, orphanStopTimeout)
+		stopped := waitForProcessExit(pid, startedAt, startTicks, bootID, worktree, orphanStopTimeout)
 		mp.mu.Lock()
 		if mp.rec.Status == procstore.StatusStopping {
 			if stopped {

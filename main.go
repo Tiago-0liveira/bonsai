@@ -24,9 +24,14 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
+	"github.com/Tiago-0liveira/bonsai/internal/core/garden/drafts"
+	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
 	"github.com/Tiago-0liveira/bonsai/internal/daemon/server"
+	"github.com/Tiago-0liveira/bonsai/internal/gardenbackend"
+	"github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
+	"github.com/Tiago-0liveira/bonsai/internal/playgroundbackend"
 	"github.com/Tiago-0liveira/bonsai/internal/server/localapi"
 	"github.com/Tiago-0liveira/bonsai/internal/server/webhooks"
 	"github.com/Tiago-0liveira/bonsai/internal/ui"
@@ -84,6 +89,13 @@ func main() {
 		return
 	}
 
+	// Hidden: `bonsai __agent-hook <provider> <event>` is what an agent CLI runs
+	// for each lifecycle hook. It must stay fast and never fail, so it comes
+	// before any config or flag handling.
+	if len(args) >= 1 && args[0] == "__agent-hook" {
+		os.Exit(agentruntime.RunHook(args[1:], os.Stdin, os.Stdout))
+	}
+
 	// Hidden: in-process cold sync benchmark.
 	if len(args) >= 1 && args[0] == "__sync-bench" {
 		if err := runSyncBench(args[1:], os.Stdout); err != nil {
@@ -106,7 +118,10 @@ func main() {
 	if len(args) > 0 {
 		switch args[0] {
 		case "--version", "-v", "version", "--update", "-u", "update":
-			if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
+			stop := handleGitSignals(args)
+			err := cli.Run(args, os.Stdout, os.Stderr)
+			stop()
+			if err != nil {
 				fmt.Fprintln(os.Stderr, "bonsai:", err)
 				os.Exit(1)
 			}
@@ -114,15 +129,13 @@ func main() {
 		}
 	}
 
-	// --config <file> (or --config=<file>) overrides config discovery for the
-	// TUI. It must come before any subcommand.
-	var cfgPath string
-	switch {
-	case len(args) >= 2 && (args[0] == "--config" || args[0] == "-c"):
-		cfgPath, args = args[1], args[2:]
-	case len(args) >= 1 && strings.HasPrefix(args[0], "--config="):
-		cfgPath, args = strings.TrimPrefix(args[0], "--config="), args[1:]
+	// Root TUI flags (--config, --tui-layout) must come before any subcommand.
+	root, err := parseRootArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bonsai:", err)
+		os.Exit(1)
 	}
+	cfgPath, args := root.cfgPath, root.rest
 	if cfgPath != "" {
 		if strings.HasPrefix(cfgPath, "~") {
 			if home, err := os.UserHomeDir(); err == nil {
@@ -143,20 +156,141 @@ func main() {
 	// Any remaining argument selects a non-interactive subcommand; bare
 	// invocation runs the TUI.
 	if len(args) > 0 {
-		if cfgPath != "" {
-			fmt.Fprintln(os.Stderr, "bonsai: --config applies to the TUI only, not subcommands")
-			os.Exit(1)
-		}
-		if err := cli.Run(args, os.Stdout, os.Stderr); err != nil {
+		stop := handleGitSignals(args)
+		err := cli.Run(args, os.Stdout, os.Stderr)
+		stop()
+		if err != nil {
 			exitWith(err)
 		}
 		return
 	}
 
-	if err := run(cfgPath); err != nil {
+	stop := handleGitSignals(nil)
+	err = run(cfgPath, root.layout)
+	stop()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "bonsai:", err)
 		os.Exit(1)
 	}
+}
+
+// gitSignals leaves commands with their own shutdown or terminal cleanup in
+// control. Bubble Tea owns INT/TERM in the root TUI; only HUP is handled here.
+func gitSignals(args []string) []os.Signal {
+	if len(args) == 0 {
+		return []os.Signal{syscall.SIGHUP}
+	}
+	switch args[0] {
+	case "web", "serve", "agents", "__serve-dev-stack", "__dev-webhook":
+		return nil
+	default:
+		return []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+	}
+}
+
+func handleGitSignals(args []string) func() {
+	signals := gitSignals(args)
+	if len(signals) == 0 {
+		return func() {}
+	}
+	ch := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	signal.Notify(ch, signals...)
+	go func() {
+		defer close(stopped)
+		var sig os.Signal
+		select {
+		case sig = <-ch:
+		case <-done:
+			// A signal already delivered must win over a Git error or
+			// successful return racing with shutdown.
+			select {
+			case sig = <-ch:
+			default:
+				return
+			}
+		}
+		coregit.TerminateActive()
+		os.Exit(128 + int(sig.(syscall.Signal)))
+	}()
+	return func() {
+		signal.Stop(ch)
+		close(done)
+		<-stopped
+	}
+}
+
+// rootArgs is the result of splitting the TUI's root flags from a subcommand.
+type rootArgs struct {
+	cfgPath string
+	layout  ui.Layout
+	rest    []string
+}
+
+// parseRootArgs consumes --config/-c and --tui-layout (either order, "--flag
+// value" or "--flag=value") up to the first other argument, which starts the
+// subcommand. Both flags configure the TUI only, so they are rejected when a
+// subcommand follows. A value-less --config is left in rest so the CLI reports
+// it as it always has.
+func parseRootArgs(args []string) (rootArgs, error) {
+	out := rootArgs{layout: ui.LayoutLegacy}
+	layoutSet, cfgSet := false, false
+	setConfig := func(v string) error {
+		if cfgSet {
+			return errors.New("--config given more than once")
+		}
+		out.cfgPath, cfgSet = v, true
+		return nil
+	}
+	setLayout := func(v string) error {
+		l, err := ui.ParseLayout(v)
+		if err != nil {
+			return err
+		}
+		out.layout, layoutSet = l, true
+		return nil
+	}
+loop:
+	for len(args) > 0 {
+		switch a := args[0]; {
+		case (a == "--config" || a == "-c") && len(args) >= 2:
+			if err := setConfig(args[1]); err != nil {
+				return out, err
+			}
+			args = args[2:]
+		case strings.HasPrefix(a, "--config="):
+			if err := setConfig(strings.TrimPrefix(a, "--config=")); err != nil {
+				return out, err
+			}
+			args = args[1:]
+		case a == "--tui-layout":
+			if len(args) < 2 {
+				return out, fmt.Errorf("--tui-layout requires a value (%s or %s)", ui.LayoutLegacy, ui.LayoutRedesign)
+			}
+			if err := setLayout(args[1]); err != nil {
+				return out, err
+			}
+			args = args[2:]
+		case strings.HasPrefix(a, "--tui-layout="):
+			if err := setLayout(strings.TrimPrefix(a, "--tui-layout=")); err != nil {
+				return out, err
+			}
+			args = args[1:]
+		default:
+			break loop
+		}
+	}
+	out.rest = args
+	if len(out.rest) > 0 {
+		if cfgSet {
+			return out, errors.New("--config applies to the TUI only, not subcommands")
+		}
+		if layoutSet {
+			return out, errors.New("--tui-layout applies to the TUI only, not subcommands")
+		}
+	}
+	return out, nil
 }
 
 // exitWith reports err and exits non-zero. A cli.ExitError has already told
@@ -170,7 +304,7 @@ func exitWith(err error) {
 	os.Exit(1)
 }
 
-func run(cfgPath string) error {
+func run(cfgPath string, layout ui.Layout) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -198,7 +332,8 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	// The TUI always starts: without a backend it just has no Agents tab.
+	// The TUI always starts: without a backend it just has no Agents tab and
+	// the redesign's Accounts workspace says why it is empty.
 	var agentsAPI *agentsapi.Backend
 	backend, backendErr := agentsbackend.New()
 	if backendErr == nil {
@@ -207,25 +342,66 @@ func run(cfgPath string) error {
 		api := backend.API()
 		agentsAPI = &api
 	}
-	model := newTUIModel(repoDir, cfg, state, agentsAPI)
+	// Garden is part of the redesign shell only, and optional like agents: the
+	// legacy layout never reaches GitHub, and a missing gh login just leaves the
+	// Garden workspace without a backend.
+	extra := []ui.Option{ui.WithLayout(layout)}
+	var gardenErr, playgroundErr error
+	if layout == ui.LayoutRedesign {
+		// One GitHub client state for Garden and the Playground: one token cache and rate-limit view.
+		shared := ghcli.NewShared()
+		var gardenAPI *gardenbackend.Backend
+		gardenOpts := []gardenbackend.Option{gardenbackend.WithShared(shared)}
+		if agentsAPI != nil {
+			// Planner sessions are ordinary agent sessions; without the agent runtime Garden still works but cannot plan.
+			gardenOpts = append(gardenOpts, gardenbackend.WithAgents(*agentsAPI))
+		}
+		// Private drafts are optional: without the store the backend answers ErrUnavailable and
+		// the TUI keeps the GitHub capture form, so a bad config dir never blocks Garden.
+		if store, err := drafts.Open(); err == nil {
+			gardenOpts = append(gardenOpts, gardenbackend.WithPrivateDrafts(store))
+		}
+		if gardenAPI, gardenErr = gardenbackend.New(repoDir, gardenOpts...); gardenErr == nil {
+			extra = append(extra, ui.WithGarden(gardenAPI))
+		}
+		// The Playground reads sessions, so it needs the agent runtime; Garden only
+		// verifies manual task links and may be missing.
+		if agentsAPI != nil {
+			pgOpts := []playgroundbackend.Option{playgroundbackend.WithAgents(*agentsAPI), playgroundbackend.WithShared(shared)}
+			if gardenErr == nil {
+				pgOpts = append(pgOpts, playgroundbackend.WithGarden(gardenAPI))
+			}
+			var pg *playgroundbackend.Backend
+			if pg, playgroundErr = playgroundbackend.New(repoDir, pgOpts...); playgroundErr == nil {
+				extra = append(extra, ui.WithPlayground(pg))
+			}
+		}
+	}
+	model := newTUIModel(repoDir, cfg, state, agentsAPI, append(extra, ui.WithOutput(os.Stdout))...)
 	// Here, not in newTUIModel, so tests do not write shims to the real cache dir.
 	go coreexec.PrepareShellIntegration()
 	// Mouse tracking is on so the wheel scrolls the pane under the pointer.
 	// Without it, terminals translate the wheel into arrow keys, which the panes
 	// read as "move the selection". The cost is that dragging to select text now
 	// needs shift held (or the mouse turned off from the command palette).
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithOutput(os.Stdout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	if backendErr != nil {
 		// After the TUI has left the alternate screen, so the line stays visible.
 		fmt.Fprintln(os.Stderr, "agents unavailable:", backendErr)
 	}
+	if gardenErr != nil {
+		fmt.Fprintln(os.Stderr, "garden unavailable:", gardenErr)
+	}
+	if playgroundErr != nil {
+		fmt.Fprintln(os.Stderr, "playground changes unavailable:", playgroundErr)
+	}
 	return err
 }
 
 // newTUIModel builds the TUI, with agent support when a backend is given.
-func newTUIModel(repoDir string, cfg *config.Config, state *config.State, agents *agentsapi.Backend) ui.Model {
-	opts := []ui.Option{ui.WithDepth(shellinit.Depth())}
+func newTUIModel(repoDir string, cfg *config.Config, state *config.State, agents *agentsapi.Backend, extra ...ui.Option) ui.Model {
+	opts := append([]ui.Option{ui.WithDepth(shellinit.Depth())}, extra...)
 	if agents != nil {
 		opts = append(opts, ui.WithAgents(*agents))
 	}
@@ -307,7 +483,23 @@ func runAgentHost(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	paths := agenthost.Paths{Records: *records, Sockets: *sockets}
-	return agenthost.Serve(ctx, spec, agenthost.Deps{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Paths: paths}, agenthost.Ready)
+	return agenthost.Serve(ctx, spec, agenthost.Deps{Accounts: runtime.Accounts, Sessions: runtime.Sessions, Registry: runtime.Registry, Paths: paths, Notifications: notifyPrefs()}, agenthost.Ready)
+}
+
+// notifyPrefs reads the agent notification preference from web.json once. Any
+// failure (no config dir, unreadable or invalid file) means no notifications:
+// a session never fails for them.
+func notifyPrefs() agenthost.NotifyPrefs {
+	path, err := config.WebConfigPath()
+	if err != nil {
+		return agenthost.NotifyPrefs{}
+	}
+	cfg, _, err := config.ReadWebConfig(path)
+	if err != nil {
+		return agenthost.NotifyPrefs{}
+	}
+	n := cfg.Agents.Notifications
+	return agenthost.NotifyPrefs{Enabled: n.Enabled, NeedsInput: n.NeedsInput, TurnComplete: n.TurnComplete}
 }
 
 func runDevWebhookInternal(args []string) error {

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 )
@@ -39,6 +40,8 @@ type Manager struct {
 	startCtx    context.Context
 	cancelStart context.CancelFunc
 	changed     func(string)
+	activity    agentactivity.Bus
+	adoptDial   func(context.Context, Record, Request) (*Conn, Frame, error)
 }
 
 type entry struct {
@@ -93,6 +96,11 @@ func InProcess(deps Deps) Launcher {
 		}
 	}
 }
+
+// Activity is the bus of every followed session's events: activity changes
+// from the holders' activity frames and lifecycle changes. Neither goes
+// through the manager's change callback, which is the heavy path.
+func (m *Manager) Activity() *agentactivity.Bus { return &m.activity }
 
 func (m *Manager) notify(project string) {
 	if m.changed != nil {
@@ -173,6 +181,9 @@ func (m *Manager) follow(e *entry, conn *Conn) {
 		default:
 		}
 		r, err := Read(m.paths, e.record.ID)
+		if err == nil && r.Generation != e.record.Generation {
+			return
+		}
 		if err != nil || !r.Alive {
 			m.mu.Lock()
 			summary := e.summary
@@ -181,7 +192,7 @@ func (m *Manager) follow(e *entry, conn *Conn) {
 				summary = r.Summary
 			}
 			if summary.Active() {
-				summary.State, summary.Error = "failed", LostError
+				summary.State, summary.Error, summary.Activity = "failed", LostError, nil
 				if summary.EndedAt == nil {
 					now := time.Now().UTC()
 					summary.EndedAt = &now
@@ -224,8 +235,16 @@ func (m *Manager) watch(e *entry, conn *Conn) bool {
 		if err != nil {
 			return false
 		}
-		if f.Type == "status" && f.Status != nil && m.apply(e, *f.Status) {
-			return true
+		if f.Status == nil {
+			continue
+		}
+		switch f.Type {
+		case "status":
+			if m.apply(e, *f.Status) {
+				return true
+			}
+		case "activity":
+			m.applyActivity(e, *f.Status)
 		}
 	}
 }
@@ -233,15 +252,42 @@ func (m *Manager) watch(e *entry, conn *Conn) bool {
 // apply records a holder's summary and reports whether the session ended.
 func (m *Manager) apply(e *entry, summary Summary) bool {
 	m.mu.Lock()
+	if m.entries[e.summary.ID] != e {
+		m.mu.Unlock()
+		return true
+	}
+	prev := e.summary.State
 	e.summary = summary
 	ended := !summary.Active()
 	if ended {
 		e.live = false
 		m.evict()
 	}
+	if summary.State != prev {
+		m.activity.Publish(agentactivity.Event{Type: agentactivity.LifecycleChanged, At: time.Now(), Session: sessionRef(summary), Lifecycle: summary.State})
+	}
 	m.mu.Unlock()
 	m.notify(summary.ProjectID)
 	return ended
+}
+
+// applyActivity records the activity of a holder's activity frame and, for a
+// transition, publishes it on the activity bus. It never calls the change
+// callback: activity must not take the heavy path every lifecycle change takes.
+// A frame for a session the manager already considers stopping is stale.
+func (m *Manager) applyActivity(e *entry, summary Summary) {
+	m.mu.Lock()
+	if m.entries[e.summary.ID] != e || e.summary.State != "running" || summary.State != "running" {
+		m.mu.Unlock()
+		return
+	}
+	prev := e.summary.Activity
+	e.summary.Activity = summary.Activity
+	current := e.summary
+	if current.Activity != nil && (prev == nil || prev.Changed(*current.Activity)) {
+		m.activity.Publish(agentactivity.Event{Type: agentactivity.ActivityChanged, At: time.Now(), Session: sessionRef(current), From: prev, To: current.Activity})
+	}
+	m.mu.Unlock()
 }
 
 // evict drops the oldest ended sessions beyond 32. Callers hold m.mu.
@@ -329,6 +375,7 @@ func (m *Manager) Stop(project, id string) error {
 	record, live := e.record, e.live && e.record.ID != ""
 	if live && e.summary.Active() {
 		e.summary.State = "stopping"
+		e.summary.Activity = nil
 	}
 	m.mu.Unlock()
 	if live {
@@ -442,6 +489,7 @@ func (m *Manager) Restore(summary Summary) {
 	if summary.Active() {
 		now := time.Now().UTC()
 		summary.State = "failed"
+		summary.Activity = nil
 		summary.EndedAt = &now
 		summary.Error = "Agent interrupted by API restart; start explicitly to run again."
 	}
@@ -544,14 +592,19 @@ func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
 			continue
 		}
 		m.mu.Lock()
-		_, known := m.entries[r.ID]
+		existing := m.entries[r.ID]
+		known := existing != nil && existing.record.Generation == r.Generation
 		closed := m.closed
 		m.mu.Unlock()
 		if known || closed {
 			continue
 		}
 		e := &entry{summary: r.Summary, workDir: r.WorkDir, record: r, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
-		conn, ready, err := DialContext(ctx, r, Request{Mode: ModeStatus})
+		dial := m.adoptDial
+		if dial == nil {
+			dial = DialContext
+		}
+		conn, ready, err := dial(ctx, r, Request{Mode: ModeStatus})
 		if ctx.Err() != nil {
 			if conn != nil {
 				_ = conn.Close()
@@ -560,12 +613,16 @@ func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
 		}
 		if err != nil {
 			conn = nil
+		} else if ready.Generation != r.Generation {
+			_ = conn.Close()
+			continue
 		} else if ready.Status != nil {
 			e.summary = *ready.Status
 			out[r.ID] = e.summary
 		}
 		m.mu.Lock()
-		if _, raced := m.entries[r.ID]; raced || m.closed {
+		current, readErr := Read(m.paths, r.ID)
+		if m.entries[r.ID] != existing || m.closed || readErr != nil || current.Generation != r.Generation {
 			// Start registered it while this dialed.
 			m.mu.Unlock()
 			if conn != nil {

@@ -52,6 +52,11 @@ type PullRequest struct {
 type PullRequestDetail struct {
 	PullRequest
 	Mergeable string `json:"mergeable"`
+	// Merged, MergedAt and MergeCommitSHA are GitHub's own merge identity. A squash or rebase merge produces a
+	// commit that is not the PR head, so completion checks must not compare MergeCommitSHA with HeadSHA.
+	Merged         bool       `json:"merged"`
+	MergedAt       *time.Time `json:"merged_at,omitempty"`
+	MergeCommitSHA string     `json:"merge_commit_sha,omitempty"`
 	// Additions, Deletions and ChangedFiles are GitHub's own totals, so they
 	// stay correct when Files is truncated.
 	Additions    int `json:"additions"`

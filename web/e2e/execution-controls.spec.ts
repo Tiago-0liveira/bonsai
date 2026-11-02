@@ -98,5 +98,5 @@ test('restored start dialog launches with full access and keeps terminal control
   const card = page.locator('.runtime-tile').filter({ has: page.getByRole('button', { name: 'Stop agent', exact: true }) })
   await expect(card).toBeVisible()
   await expect(card.locator('.runtime-heading').getByRole('button', { name: 'Stop agent' })).toBeVisible()
-  await expect(card.locator('.runtime-heading')).toContainText('running · connected')
+  await expect(card.locator('.runtime-heading')).toContainText('Running · connected')
 })

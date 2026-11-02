@@ -21,9 +21,10 @@ const (
 	modelKey = "model"
 	// primaryFields is how many leading fields are the headline options; the
 	// rest are provider-specific extras under their own sub-heading.
-	primaryFields = 3
-	maxListRows   = 8
-	otherHeading  = "Other provider-specific options"
+	primaryFields  = 3
+	maxListRows    = 8
+	otherHeading   = "Other provider-specific options"
+	unlistedSuffix = " (unlisted)"
 )
 
 // choice is one entry of a dropdown, resolved from a field option, a model or
@@ -57,6 +58,31 @@ func New(fields []agents.LaunchField, models []agents.ModelOption, values map[st
 		values:  maps.Clone(values),
 		ascii:   ascii,
 	}
+}
+
+// WithASCII switches the glyph set without touching the values, so an open
+// draft survives a preference change.
+func (f Form) WithASCII(on bool) Form {
+	f.ascii = on
+	return f
+}
+
+// Carry applies to f the edits cur made since base: the fields whose value
+// differs between the two. A save reloads the form from the backend; this keeps
+// what was typed while the save was in flight.
+func (f Form) Carry(cur, base Form) Form {
+	for _, fd := range f.fields {
+		if cur.effective(cur.values, fd) == base.effective(base.values, fd) {
+			continue
+		}
+		if v, set := cur.values[fd.ID]; set {
+			f = f.set(fd.ID, v)
+		} else {
+			f = f.reset(fd)
+		}
+	}
+	f.cursor = cur.cursor
+	return f.revalidate()
 }
 
 // Focus shows or hides the focus highlight and decides whether keys are
@@ -504,27 +530,18 @@ func (f Form) renderField(fd agents.LaunchField, w int, st styles, focused bool)
 	cs := f.choices(fd)
 	ci := indexOf(cs, cur)
 	tone, help := "", ""
-	text, marker := "", ""
+	var text, marker string
+	text, marker = f.displayText(fd, cur, cs, ci), ""
 	switch {
 	case fd.Kind == agents.LaunchFieldToggle:
-		text, marker = "Off", "[space]"
-		if cur == "true" {
-			text = "On"
-		}
+		marker = "[space]"
 		if ci >= 0 {
 			tone, help = cs[ci].tone, cs[ci].help
 		}
 	case editable(fd):
-		text, marker = cur, "["+f.arrow()+"]"
+		marker = "[" + f.arrow() + "]"
 		if ci >= 0 {
-			text, tone, help = cs[ci].label, cs[ci].tone, cs[ci].help
-		} else if cur == "" {
-			text = agents.ProviderDefaultLabel
-		}
-	default:
-		text = cur
-		if text == "" {
-			text = "-"
+			tone, help = cs[ci].tone, cs[ci].help
 		}
 	}
 
@@ -559,6 +576,32 @@ func (f Form) renderField(fd agents.LaunchField, w int, st styles, focused bool)
 		}
 	}
 	return lines
+}
+
+// displayText is the value as shown. A stored value the provider no longer
+// offers stays visible and is named, never passed off as a valid choice or
+// folded into "Off".
+func (f Form) displayText(fd agents.LaunchField, cur string, cs []choice, ci int) string {
+	switch {
+	case fd.Kind == agents.LaunchFieldToggle:
+		switch cur {
+		case "true":
+			return "On"
+		case "", "false":
+			return "Off"
+		}
+		return cur + unlistedSuffix
+	case !editable(fd):
+		if cur == "" {
+			return "-"
+		}
+		return cur
+	case ci >= 0:
+		return cs[ci].label
+	case cur == "":
+		return agents.ProviderDefaultLabel
+	}
+	return cur + unlistedSuffix
 }
 
 func (f Form) arrow() string {
@@ -679,25 +722,17 @@ func (f Form) compactField(fd agents.LaunchField, w, labelW, boxW int, st styles
 	cs := f.choices(fd)
 	ci := indexOf(cs, cur)
 	tone, help := "", ""
-	text, chevron := cur, " "
+	text, chevron := f.displayText(fd, cur, cs, ci), " "
 	switch {
 	case fd.Kind == agents.LaunchFieldToggle:
-		text = "Off"
-		if cur == "true" {
-			text = "On"
-		}
 		if ci >= 0 {
 			tone, help = cs[ci].tone, cs[ci].help
 		}
 	case editable(fd):
 		chevron = f.compactArrow()
 		if ci >= 0 {
-			text, tone, help = cs[ci].label, cs[ci].tone, cs[ci].help
-		} else if cur == "" {
-			text = agents.ProviderDefaultLabel
+			tone, help = cs[ci].tone, cs[ci].help
 		}
-	case text == "":
-		text = "-"
 	}
 
 	marker, label := "  ", st.label
@@ -754,14 +789,9 @@ func (f Form) compactField(fd agents.LaunchField, w, labelW, boxW int, st styles
 // value and every choice of its dropdown.
 func (f Form) valueTextWidth(fd agents.LaunchField) int {
 	cur := f.effective(f.values, fd)
-	w := ansi.StringWidth(cur)
-	switch {
-	case fd.Kind == agents.LaunchFieldToggle:
-		w = 3 // "Off"
-	case cur == "":
-		w = max(w, ansi.StringWidth(agents.ProviderDefaultLabel))
-	}
-	for _, c := range f.choices(fd) {
+	cs := f.choices(fd)
+	w := ansi.StringWidth(f.displayText(fd, cur, cs, indexOf(cs, cur)))
+	for _, c := range cs {
 		w = max(w, ansi.StringWidth(c.label))
 	}
 	return max(w, 1)

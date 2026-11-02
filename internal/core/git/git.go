@@ -4,6 +4,7 @@ package git
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +21,10 @@ import (
 // lock can't block a tea.Cmd goroutine forever. A var (not const) as a seam
 // for future injection.
 var gitTimeout = 120 * time.Second
+
+// gitWaitDelay bounds how long Wait lingers for inherited output pipes after
+// git is killed.
+var gitWaitDelay = 2 * time.Second
 
 // Worktree describes a single entry from `git worktree list`.
 type Worktree struct {
@@ -54,20 +59,73 @@ func runRaw(dir string, args ...string) (string, error) {
 // RunContext is the shared, bounded Git runner used by both local adapters.
 // Arguments are passed directly to Git, never interpreted by a shell.
 func RunContext(parent context.Context, dir string, args ...string) (string, error) {
+	return runContext(parent, dir, false, args...)
+}
+
+// RunIsolatedContext is RunContext without the inherited variables that redirect Git to another repository or
+// inject configuration, for callers that must read exactly the repository at dir.
+func RunIsolatedContext(parent context.Context, dir string, args ...string) (string, error) {
+	return runContext(parent, dir, true, args...)
+}
+
+// redirectingEnv reports whether an inherited variable changes which repository or configuration Git uses.
+func redirectingEnv(kv string) bool {
+	name, _, _ := strings.Cut(kv, "=")
+	name = strings.ToUpper(name)
+	switch name {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_INDEX_VERSION", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_PREFIX",
+		"GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+		"GIT_EXTERNAL_DIFF", "GIT_DIFF_OPTS", "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE":
+		return true
+	}
+	return strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
+}
+
+func runContext(parent context.Context, dir string, isolate bool, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, gitTimeout)
 	defer cancel()
 	trace.AddGit()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "LC_ALL=C")
-	out, err := cmd.CombinedOutput()
+	killTreeOnCancel(cmd)
+	// Hooks and transport helpers can outlive git while holding its output pipes;
+	// without a bound the deadline would not apply to them.
+	cmd.WaitDelay = gitWaitDelay
+	env := cmd.Environ()
+	if isolate {
+		kept := env[:0:0]
+		for _, kv := range env {
+			if !redirectingEnv(kv) {
+				kept = append(kept, kv)
+			}
+		}
+		env = kept
+	}
+	cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "LC_ALL=C")
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	// Serialize Start and registration with termination so a signal cannot
+	// miss a process that has started but is not yet in the registry.
+	activeGit.Lock()
+	err := cmd.Start()
+	if err == nil {
+		activeGit.pids[cmd.Process.Pid] = struct{}{}
+	}
+	activeGit.Unlock()
+	if err == nil {
+		err = cmd.Wait()
+		activeGit.Lock()
+		delete(activeGit.pids, cmd.Process.Pid)
+		activeGit.Unlock()
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(out.String()))
 	}
-	return string(out), nil
+	return out.String(), nil
 }
 
 // RepoRoot returns the top-level directory of the git repo containing dir. Note
@@ -229,6 +287,31 @@ func DeleteBranch(dir, branch string) error {
 	return err
 }
 
+// BranchTip returns the commit a local branch points to.
+func BranchTip(dir, branch string) (string, error) {
+	return run(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+}
+
+// IsAncestor reports whether commit is reachable from ref.
+func IsAncestor(dir, commit, ref string) (bool, error) {
+	_, err := run(dir, "merge-base", "--is-ancestor", commit, ref)
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// DeleteBranchAt deletes a local branch only while it still points at sha, so
+// commits added after the caller verified the branch are never discarded.
+func DeleteBranchAt(dir, branch, sha string) error {
+	_, err := run(dir, "update-ref", "-d", "refs/heads/"+branch, sha)
+	return err
+}
+
 // WorktreePath returns the conventional filesystem path for a branch's worktree:
 // a sibling of the main repo named "<repo>-<branch>" (slashes flattened).
 func WorktreePath(repoDir, branch string) string {
@@ -239,8 +322,18 @@ func WorktreePath(repoDir, branch string) string {
 
 // AddWorktreeNewBranch creates a worktree at path checking out a newly created
 // branch.
-func AddWorktreeNewBranch(dir, path, branch string) error {
-	_, err := run(dir, "worktree", "add", "-b", branch, path)
+func AddWorktreeNewBranch(dir, path, branch, base string) error {
+	if err := ValidBranchName(branch); err != nil {
+		return fmt.Errorf("invalid branch name %q: %w", branch, err)
+	}
+	if strings.HasPrefix(base, "-") {
+		return fmt.Errorf("%w: %q", ErrInvalidWorktreeBase, base)
+	}
+	args := []string{"worktree", "add", "-b", branch, "--", path}
+	if base != "" {
+		args = append(args, base)
+	}
+	_, err := run(dir, args...)
 	return err
 }
 

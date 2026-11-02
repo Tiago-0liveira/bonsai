@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/shellinit"
@@ -15,6 +15,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
+	"io"
 )
 
 // Option customizes a Model at construction.
@@ -31,9 +32,12 @@ func (m Model) depthMarker(level int) string {
 }
 
 // WithAgents injects the agent backend. A backend without Sessions, or whose
-// Sessions are unsupported on this host, leaves every agent feature off.
+// Sessions are unsupported on this host, leaves every session feature off.
+// Accounts are kept regardless: profiles are local-user state that needs no
+// terminal support, so the redesign's Accounts workspace stays usable.
 func WithAgents(b agentsapi.Backend) Option {
 	return func(m *Model) {
+		m.agents.api.Accounts = b.Accounts
 		if b.Sessions == nil {
 			return
 		}
@@ -60,7 +64,8 @@ type agentState struct {
 	ctx    context.Context // owned by the model; cancelled on quit
 	cancel context.CancelFunc
 
-	sessions []agentsapi.Session
+	sessions    []agentsapi.Session
+	attentionID string
 	// byTree maps a cleaned worktree path to indices into sessions.
 	byTree map[string][]int
 	// seq is the last list request issued, applied the last one applied; a
@@ -68,8 +73,7 @@ type agentState struct {
 	seq, applied uint64
 	subscribed   bool // a Changes subscription is live or pending; cleared if Changes fails
 	err          string
-	// ack holds failed session IDs the user has already seen, so their "!"
-	// stops showing.
+	// ack holds ended session IDs the user has already seen.
 	ack map[string]bool
 
 	// selected remembers each worktree's chosen session for the TUI's lifetime.
@@ -98,6 +102,11 @@ type agentState struct {
 	enterAfter string
 	enterSeq   uint64
 	enterPath  string
+
+	// peeks caches screen tails for the sessions picker; peekGen numbers the
+	// requests so only the latest answer is applied.
+	peeks   map[string]peekEntry
+	peekGen uint64
 }
 
 // enabled: a backend is present (the tab will exist). active: it is also
@@ -216,6 +225,9 @@ func (m *Model) relistAgents() tea.Cmd {
 	if !m.agents.active() {
 		return nil
 	}
+	if m.layoutKind == LayoutRedesign {
+		return m.playgroundRelist()
+	}
 	m.agents.seq++
 	return listAgentsCmd(m.agents.ctx, m.agents.api.Sessions, m.repoDir, m.worktreePaths(), m.agents.seq)
 }
@@ -235,6 +247,13 @@ func (m Model) initAgents() tea.Cmd {
 
 // resubscribeAgents retries a failed Changes subscription.
 func (m *Model) resubscribeAgents() tea.Cmd {
+	if m.layoutKind == LayoutRedesign {
+		if !m.agents.active() || m.pg.subscribed {
+			return nil
+		}
+		m.pg.subscribed = true
+		return pgSubscribeCmd(m.agents.ctx, m.agents.api.Sessions)
+	}
 	if !m.agents.active() || m.agents.subscribed {
 		return nil
 	}
@@ -256,22 +275,30 @@ func (m Model) onAgentsList(msg agentsListMsg) (tea.Model, tea.Cmd) {
 	if m.agents.enterAfter != "" && msg.seq >= m.agents.enterSeq && !hasSession(msg.sessions, m.agents.enterAfter) {
 		m.agents.enterAfter = "" // the started session is gone already
 	}
+	var bell tea.Cmd
+	if m.livePrefs().AgentBell && agentNeedsBell(m.agents.sessions, msg.sessions) {
+		bell = m.ringBell()
+	}
 	m.agents.sessions = msg.sessions
 	m.agents.byTree = msg.byTree
 	m.refreshAgentBadges()
 	if o := m.agents.overlay; o != nil && o.sessions != nil {
-		o.sessions.setSessions(m.orderedSessions(o.sessions.path))
+		if o.sessions.repo {
+			m.populateRepoPicker(o.sessions)
+		} else {
+			o.sessions.setSessions(m.orderedSessions(o.sessions.path))
+		}
 	}
 	// New or ended sessions can change which account the open tab shows.
 	if m.rightTab == tabAgents {
 		if wt, ok := m.selectedWorktree(); ok {
 			if s, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && s.AccountID != m.agents.usageAccount {
 				cmd := m.requestAgentUsage()
-				return m, cmd
+				return m, tea.Batch(cmd, bell)
 			}
 		}
 	}
-	return m, nil
+	return m, bell
 }
 
 func (m Model) onAgentsSubscribed(msg agentsSubscribedMsg) (tea.Model, tea.Cmd) {
@@ -301,7 +328,7 @@ func hasSession(list []agentsapi.Session, id string) bool {
 }
 
 // agentGlyphsASCII reports the glyph preference.
-func (m Model) agentGlyphsASCII() bool { return m.state.Prefs.AgentGlyphs == "ascii" }
+func (m Model) agentGlyphsASCII() bool { return m.livePrefs().AgentGlyphs == "ascii" }
 
 // refreshAgentBadges rebuilds the per-worktree glyph text and hands it to the
 // list. Called when sessions or the glyph preference change.
@@ -312,46 +339,99 @@ func (m *Model) refreshAgentBadges() {
 	ascii := m.agentGlyphsASCII()
 	badges := make(map[string]string, len(m.agents.byTree))
 	for path, idx := range m.agents.byTree {
-		if b := m.agentBadge(idx, ascii); b != "" {
+		if b := m.worktreeProviderBadges(idx, ascii); b != "" {
 			badges[path] = b
 		}
 	}
 	m.list.SetAgentBadges(func(path string) string { return badges[filepath.Clean(path)] })
+	if m.sort == sortAttention {
+		m.rebuildItems()
+	}
 }
 
-var agentProviderOrder = []agents.ProviderID{"claude", "codex", "antigravity"}
+// agentUrgency orders what a session needs from the user: a waiting agent
+// beats a working one, which beats an idle one. Sessions without activity
+// (old holders, providers without hooks) count as working so they are never
+// dimmed on a guess.
+type agentUrgency int
 
-// agentBadge renders one worktree's glyphs: active sessions per provider with
-// a count, then "!" for failed sessions the user has not acknowledged.
-func (m Model) agentBadge(idx []int, ascii bool) string {
+const (
+	urgencyIdle agentUrgency = iota
+	urgencyWorking
+	urgencyWaiting
+)
+
+func sessionUrgency(s agentsapi.Session) agentUrgency {
+	if s.State != "running" || s.Activity == nil {
+		return urgencyWorking
+	}
+	switch s.Activity.State {
+	case agentactivity.Waiting:
+		return urgencyWaiting
+	case agentactivity.Idle:
+		return urgencyIdle
+	}
+	return urgencyWorking
+}
+
+// agentNeedsBell compares successful snapshots; initial and stale reads never ring.
+func agentNeedsBell(old, next []agentsapi.Session) bool {
+	previous := map[string]agentsapi.Session{}
+	for _, s := range old {
+		previous[s.ID] = s
+	}
+	for _, s := range next {
+		p, ok := previous[s.ID]
+		if ok && p.Active() && sessionUrgency(p) == urgencyWorking &&
+			((s.Active() && sessionUrgency(s) == urgencyWaiting) || s.State == "exited" || s.State == "failed") {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) sessionNeedsAttention(s agentsapi.Session) bool {
+	if s.Active() {
+		return sessionUrgency(s) == urgencyWaiting
+	}
+	return !m.agents.ack[s.ID] && (s.State == "failed" || s.State == "exited")
+}
+
+// WithOutput routes terminal signals to the same writer as Bubble Tea.
+func WithOutput(w io.Writer) Option { return func(m *Model) { m.output = w } }
+
+func agentBadgeGlyphs(ascii bool) []string {
+	if ascii {
+		return []string{">", "=", "+", "x"}
+	}
+	return []string{"▶", "⏸", "✓", "✗"}
+}
+
+func (m Model) ringBell() tea.Cmd {
+	return func() tea.Msg {
+		if m.output != nil {
+			_, _ = io.WriteString(m.output, "\a")
+		}
+		return nil
+	}
+}
+
+// worktreeProviderBadges uses only active sessions; ended-session attention
+// remains available through the existing attention navigation and sort.
+func (m Model) worktreeProviderBadges(idx []int, ascii bool) string {
 	counts := map[agents.ProviderID]int{}
-	failed := false
 	for _, i := range idx {
 		s := m.agents.sessions[i]
-		switch {
-		case s.Active():
+		if s.Active() {
 			counts[s.Provider]++
-		case s.State == "failed" && !m.agents.ack[s.ID]:
-			failed = true
 		}
 	}
 	var parts []string
-	seen := map[agents.ProviderID]bool{}
-	add := func(p agents.ProviderID) {
-		if n := counts[p]; n > 0 && !seen[p] {
-			seen[p] = true
-			parts = append(parts, theme.ProviderStyle(p).Render(theme.AgentBadge(p, n, ascii)))
+	for _, provider := range []agents.ProviderID{"claude", "codex", "antigravity"} {
+		if n := counts[provider]; n > 0 {
+			glyph := theme.ProviderGlyph(provider, ascii)
+			parts = append(parts, theme.ProviderStyle(provider).Render(glyph+itoa(n)))
 		}
-	}
-	for _, p := range agentProviderOrder {
-		add(p)
-	}
-	// Unknown providers still count, after the known ones, in a stable order.
-	for _, i := range idx {
-		add(m.agents.sessions[i].Provider)
-	}
-	if failed {
-		parts = append(parts, lipgloss.NewStyle().Foreground(theme.Current.Warning).Render("!"))
 	}
 	return strings.Join(parts, " ")
 }

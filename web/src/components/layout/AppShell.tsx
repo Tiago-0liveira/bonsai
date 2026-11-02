@@ -14,12 +14,16 @@ import { BottomWorkspace } from '../../features/terminal/BottomWorkspace'
 import { useOpenRuntimeEntries } from '../../features/terminal/openRuntimeEntries'
 import { useBonsaiStore } from '../../stores/bonsai'
 import { TopBar } from './TopBar'
+import { useAgentNotifications } from './useAgentNotifications'
+import { useNeedsInputTitle } from './useNeedsInputTitle'
 import { WorkspaceNotice } from './WorkspaceNotice'
 import { WorkspaceVisibility } from '../ui/WorkspaceVisibility'
 import { ProviderBadge } from '../ui/ProviderBadge'
+import { AgentStatusDot } from '../ui/AgentStatus'
 import { observeCanvasFrame } from '../../features/workspace/canvas/canvasFrame'
 import { FrameBox } from '../../features/workspace/canvas/FrameBox'
 import type { CanvasRoute } from '../../features/workspace/WorkspacePage'
+import type { Process } from '../../types'
 
 const WorkspacePage = lazy(() => import('../../features/workspace/WorkspacePage').then(module => ({ default: module.WorkspacePage })))
 const CommandPalette = lazy(() => import('../../features/command-palette/CommandPalette').then(module => ({ default: module.CommandPalette })))
@@ -60,9 +64,8 @@ function CanvasLayer({ route }: { route: CanvasRoute | null }) {
   )
 }
 
-function runtimeDot(entry: ReturnType<typeof useOpenRuntimeEntries>['openEntries'][number]) {
-  if (entry.type === 'agent') return entry.agent.state === 'running' ? 'bg-accent-solid' : entry.agent.state === 'idle' ? 'bg-warn-solid' : 'bg-muted-2'
-  return entry.process.status === 'healthy' ? 'bg-accent-solid' : entry.process.status === 'warning' ? 'bg-warn-solid' : 'bg-muted-2'
+function processDot(status: Process['status']) {
+  return status === 'healthy' ? 'bg-accent-solid' : status === 'warning' ? 'bg-warn-solid' : 'bg-muted-2'
 }
 
 // Rendered only while the dock is collapsed so the open-runtime lookup does not re-render the shell otherwise.
@@ -88,7 +91,7 @@ function CollapsedTerminalsBar({ reopenRef }: { reopenRef: React.RefObject<HTMLB
             >
               {entry.type === 'agent' ? <ProviderBadge provider={entry.agent.provider} size={16} /> : <TerminalSquare size={12} className="shrink-0 text-muted" />}
               <span className="min-w-0 truncate">{name}</span>
-              <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + runtimeDot(entry)} />
+              {entry.type === 'agent' ? <AgentStatusDot agent={entry.agent} /> : <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + processDot(entry.process.status)} />}
             </button>
           )
         })}
@@ -117,6 +120,8 @@ export function AppShell({ children, canvasRoute = null }: { children: React.Rea
   const reopenRef = useRef<HTMLButtonElement>(null)
   const dragging = useRef(false)
   const normalHeight = useRef(dockHeight)
+  useNeedsInputTitle()
+  useAgentNotifications()
 
   useEffect(() => {
     const panel = dockRef.current

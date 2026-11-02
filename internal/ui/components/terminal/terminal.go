@@ -114,3 +114,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // View renders the viewport.
 func (m Model) View() string { return m.vp.View() }
+
+// YOffset and SetYOffset preserve document anchors across workspace round-trips.
+func (m Model) YOffset() int      { return m.vp.YOffset }
+func (m *Model) SetYOffset(n int) { m.vp.SetYOffset(n) }
+func (m Model) Following() bool   { return m.follow }

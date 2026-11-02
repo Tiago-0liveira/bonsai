@@ -93,3 +93,15 @@ func TestEffectiveKey(t *testing.T) {
 		t.Errorf("effectiveKey override = %q", got)
 	}
 }
+
+// A config saved before session retry was removed still carries agent_retry;
+// it must neither collide with another action nor change any binding.
+func TestRemovedActionOverrideIsIgnored(t *testing.T) {
+	overrides := map[string]string{"agent_retry": "x"}
+	if got := keyCollisions(overrides); got != nil {
+		t.Fatalf("collisions = %v", got)
+	}
+	if got, want := newKeyMap(overrides).AgentAll.Help().Key, newKeyMap(nil).AgentAll.Help().Key; got != want {
+		t.Fatalf("binding changed: %q vs %q", got, want)
+	}
+}

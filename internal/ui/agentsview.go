@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/accounts"
@@ -70,23 +71,58 @@ func (m Model) chromeRows(rows []string) []string {
 
 func dimText(s string) string { return lipgloss.NewStyle().Foreground(theme.Current.Dim).Render(s) }
 
-// stateDot colors the lifecycle state: transitions warn, running is green,
-// failures red, finished dim.
-func stateDot(state string) string {
-	c := theme.Current.Dim
-	switch state {
-	case "starting", "stopping":
-		c = theme.Current.Warning
-	case "running":
-		c = theme.Current.Success
+// sessionStatus is the one status clients show for a session: the lifecycle
+// state, or the activity while the agent runs. key styles it, label is text.
+func sessionStatus(s agentsapi.Session) (key, label string) {
+	if interrupted(s.Summary) {
+		return "interrupted", "interrupted"
+	}
+	if s.State == "" {
+		return "unknown", "Unknown"
+	}
+	return agentactivity.Display(s.State, s.Activity)
+}
+
+// statusColor maps a Display key to its theme color: waiting and stalled ask
+// for attention, working and running are green, idle and exited are dim.
+func statusColor(key string) lipgloss.Color {
+	switch key {
+	case "starting", "stopping", "waiting", "stalled", "interrupted":
+		return theme.Current.Warning
+	case "working", "running":
+		return theme.Current.Success
 	case "failed":
-		c = theme.Current.Danger
+		return theme.Current.Danger
 	}
-	label := state
-	if label != "" {
-		label = strings.ToUpper(label[:1]) + label[1:]
+	return theme.Current.Dim
+}
+
+// headerStatus is the Agents tab header's state text. Waiting names what the
+// agent asks for, with the tool or short detail when the provider sent one
+// ("Needs permission: Bash"); every other state is its Display label.
+func headerStatus(s agentsapi.Session) (key, label string) {
+	key, label = sessionStatus(s)
+	if key != "waiting" || s.Activity == nil {
+		return key, label
 	}
-	return lipgloss.NewStyle().Foreground(c).Render("● " + label)
+	label = "Needs input"
+	switch s.Activity.Reason {
+	case agentactivity.ReasonPermission:
+		label = "Needs permission"
+	case agentactivity.ReasonQuestion:
+		label = "Asks a question"
+	case agentactivity.ReasonPlan:
+		label = "Plan ready for review"
+	}
+	if d := s.Activity.Detail; d != "" {
+		label += ": " + d
+	}
+	return key, label
+}
+
+// stateDot shares lifecycle marks with the session picker.
+func stateDot(key, label string) string {
+	return stateMarkStyled(key) + lipgloss.NewStyle().Foreground(statusColor(key)).Render(" "+label)
 }
 
 // fit truncates to width and pads with spaces to exactly width.
@@ -182,22 +218,25 @@ func (m Model) agentsLayout(w, h int) agentsLayout {
 		fixed = []string{fit(row, w)}
 	case w < agentsWideMin:
 		fixed = []string{
-			m.sessionStrip(strip, selIdx, w, "", "a: All"),
+			m.sessionStrip(strip, selIdx, w, "", hintKey(m.keys.AgentAll.Help().Key)+" sessions"),
 			fit(m.compactHeader(sel, w), w),
 			rule,
 		}
 	default:
 		fixed = []string{
-			m.sessionStrip(strip, selIdx, w, "Sessions: ", "a: All  n: New"),
+			m.sessionStrip(strip, selIdx, w, "Sessions ", hintKey(m.keys.AgentAll.Help().Key)+" sessions · "+hintKey(m.keys.AgentNew.Help().Key)+" new"),
 			rule,
 			fit(m.fullHeaderTitle(sel), w),
 			fit(m.usageRow(sel, w), w),
 			rule,
 		}
 		if h-len(fixed)-2 >= agentsTitleMinArea {
-			title := lipgloss.NewStyle().Bold(true).Render("AGENTS") + dimText(" · "+branchOf(wt))
+			title := lipgloss.NewStyle().Bold(true).Render("Agents") + dimText(" · "+branchOf(wt))
 			fixed = append([]string{fit(title, w), ""}, fixed...)
 		}
+	}
+	if summary := m.endedSessionsSummary(path); summary != "" {
+		fixed = append([]string{fit(dimText(summary), w)}, fixed...)
 	}
 	if h-len(fixed) < minTerminalRows {
 		return agentsLayout{}
@@ -221,19 +260,19 @@ func (m Model) agentsRows(w, h int) []string {
 	if sel, _, hasSel := m.selectedSession(cleanPath(wt.Path)); hasSel {
 		area = m.agentTerminalArea(sel, w, lay.body)
 	} else {
-		area = m.chromeRows(emptyArea(wt.Branch, w, lay.body))
+		area = m.chromeRows(m.emptyArea(wt.Branch, w, lay.body))
 	}
 	rows := append(append(append([]string(nil), m.chromeRows(lay.fixed)...), area...), m.chromeRows(lay.tail)...)
 	return rows
 }
 
 func (m Model) emptyStrip(w int) string {
-	hints := "a: All  n: New"
+	hints := hintKey(m.keys.AgentAll.Help().Key) + " sessions · " + hintKey(m.keys.AgentNew.Help().Key) + " new"
 	if w < agentsWideMin {
-		hints = "a: All"
+		hints = hintKey(m.keys.AgentAll.Help().Key) + " sessions"
 	}
 	hints = m.agentsStripStatus(hints)
-	return leftRight(dimText("No running agents"), dimText(hints), w)
+	return leftRight(dimText("Sessions"), dimText(hints), w)
 }
 
 func (m Model) agentsStaleIndicator() string {
@@ -256,7 +295,7 @@ func (m Model) agentsStripStatus(hints string) string {
 // narrowRow is the single summary row for panes under 60 cells.
 func (m Model) narrowRow(s agentsapi.Session, idx, n int) string {
 	name := ansi.Truncate(sessionName(s), stripNameCells, "…")
-	return "Agents (g) │ " + m.agentGlyph(s.Provider) + " " + name + " [" + itoa(idx+1) + "/" + itoa(n) + "] │ a: Switch"
+	return "Agents (" + hintKey(m.keys.AgentsTab.Help().Key) + ") │ " + m.agentGlyph(s.Provider) + " " + name + " [" + itoa(idx+1) + "/" + itoa(n) + "] │ " + hintKey(m.keys.AgentAll.Help().Key) + " sessions"
 }
 
 // sessionStrip lays out numbered labels left to right. When they overflow, it
@@ -266,7 +305,18 @@ func (m Model) sessionStrip(strip []agentsapi.Session, sel, w int, prefix, hints
 	labels := make([]string, len(strip))
 	for i, s := range strip {
 		name := ansi.Truncate(sessionName(s), stripNameCells, "…")
-		text := "[" + itoa(i+1) + " " + m.agentGlyph(s.Provider) + " " + name + "]"
+		age := ""
+		if v := m.agents.view; v != nil && v.sessionID == s.ID && s.Active() && sessionUrgency(s) == urgencyWorking && !v.lastOutput.IsZero() {
+			elapsed := max(agentNow().Sub(v.lastOutput), 0)
+			age = " ▶ " + elapsed.Round(time.Second).String()
+			if m.agentGlyphsASCII() {
+				age = " > " + elapsed.Round(time.Second).String()
+			}
+		}
+		text := "[" + itoa(i+1) + " " + m.agentGlyph(s.Provider) + " " + name + age + "]"
+		if !s.Active() {
+			text = dimText(text)
+		}
 		if i == sel {
 			text = lipgloss.NewStyle().Bold(true).Foreground(theme.Current.Accent).Render(text)
 		}
@@ -326,7 +376,7 @@ func (m Model) fullHeaderTitle(s agentsapi.Session) string {
 	if s.Model != "" {
 		parts = append(parts, s.Model)
 	}
-	head := m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(s.State)
+	head := m.agentGlyph(s.Provider) + " " + strings.Join(parts, " · ") + " │ " + stateDot(headerStatus(s))
 	if v := m.agents.view; v != nil && v.sessionID == s.ID && v.state == attachObservingOther {
 		head += dimText(" · read-only")
 	}
@@ -335,7 +385,7 @@ func (m Model) fullHeaderTitle(s agentsapi.Session) string {
 
 // compactHeader is the one-row header for panes under 100 cells.
 func (m Model) compactHeader(s agentsapi.Session, w int) string {
-	return m.compactHeaderHint(s, w, "u: Usage")
+	return m.compactHeaderHint(s, w, hintKey(m.keys.AgentUsage.Help().Key)+" usage")
 }
 
 func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string {
@@ -348,7 +398,7 @@ func (m Model) compactHeaderHint(s agentsapi.Session, w int, hint string) string
 
 // usageRow is the second header row: usage text plus the usage hint.
 func (m Model) usageRow(s agentsapi.Session, w int) string {
-	return leftRight(m.usageText(s, false), dimText("u: Usage"), w)
+	return leftRight(m.usageText(s, false), dimText(hintKey(m.keys.AgentUsage.Help().Key)+" usage"), w)
 }
 
 // usageText is the headline for the session's account, dim and marked when the
@@ -376,16 +426,20 @@ func (m Model) usageText(s agentsapi.Session, compact bool) string {
 
 // placeholderArea stands in for the terminal when no view is attached to s.
 func placeholderArea(s agentsapi.Session, w, rows int) []string {
-	lines := []string{sessionName(s), dimText(s.State)}
+	label := s.State
+	if interrupted(s.Summary) {
+		label = "interrupted"
+	}
+	lines := []string{sessionName(s), dimText(label)}
 	return centered(lines, w, rows)
 }
 
-func emptyArea(branch string, w, rows int) []string {
-	lines := []string{"No active agents", ""}
+func (m Model) emptyArea(branch string, w, rows int) []string {
+	lines := []string{"No sessions yet", ""}
 	if branch != "" {
 		lines = append(lines, "Start an agent in "+branch, "")
 	}
-	lines = append(lines, "[n] New agent", "", "[u] View account usage")
+	lines = append(lines, "["+hintKey(m.keys.AgentNew.Help().Key)+"] New agent", "", "["+hintKey(m.keys.AgentUsage.Help().Key)+"] View account usage")
 	return centered(lines, w, rows)
 }
 
@@ -413,4 +467,36 @@ func centered(lines []string, w, rows int) []string {
 // agentPaneModal distinguishes agent-local pickers from app-wide dialogs.
 func (m Model) agentPaneModal() bool {
 	return m.modal != nil && (m.modal.Kind() == kindAgentStop)
+}
+
+// endedSessionsSummary keeps ended sessions visible before opening history.
+func (m Model) endedSessionsSummary(path string) string {
+	failed, exited, lost := 0, 0, 0
+	for _, i := range m.agents.byTree[path] {
+		s := m.agents.sessions[i]
+		if s.Active() {
+			return ""
+		}
+		if interrupted(s.Summary) {
+			lost++
+		} else if s.State == "failed" {
+			failed++
+		} else if s.State == "exited" {
+			exited++
+		}
+	}
+	if failed+exited+lost == 0 {
+		return ""
+	}
+	var parts []string
+	if lost > 0 {
+		parts = append(parts, itoa(lost)+" interrupted")
+	}
+	if failed > 0 {
+		parts = append(parts, itoa(failed)+" failed")
+	}
+	if exited > 0 {
+		parts = append(parts, itoa(exited)+" exited")
+	}
+	return strings.Join(parts, " · ") + " · " + hintKey(m.keys.AgentAll.Help().Key) + " view"
 }

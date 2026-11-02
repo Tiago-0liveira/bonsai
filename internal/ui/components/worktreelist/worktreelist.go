@@ -4,6 +4,7 @@ package worktreelist
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -20,9 +21,11 @@ import (
 // Item is a worktree row, optionally decorated with ahead/behind metrics and a
 // connected pull-request number.
 type Item struct {
-	WT         git.Worktree
-	Metrics    git.Metrics
-	HasMetrics bool
+	Base        string
+	DefaultBase string
+	WT          git.Worktree
+	Metrics     git.Metrics
+	HasMetrics  bool
 	// PR is the number of a PR whose head is this branch (0 = none).
 	PR int
 	// PRState is the connected PR's state (gh.StateOpen / StateMerged /
@@ -64,29 +67,34 @@ func (i Item) Description() string {
 // FilterValue drives list filtering.
 func (i Item) FilterValue() string { return i.WT.Branch + " " + i.WT.Path }
 
-// checkDot renders a colored CI rollup indicator, or "" when unknown.
-func checkDot(rollup string) string {
+// checkDot renders a CI rollup with a distinct shape, or "" when unknown.
+func checkDot(rollup string) string { return checkGlyph(rollup, false) }
+func checkGlyph(rollup string, ascii bool) string {
+	pass, fail, pending := "✓", "✗", "◌"
+	if ascii {
+		pass, fail, pending = "+", "x", "~"
+	}
 	switch rollup {
 	case "pass":
-		return checkPass.Render("●")
+		return checkPass.Render(pass)
 	case "fail":
-		return checkFail.Render("●")
+		return checkFail.Render(fail)
 	case "pending":
-		return checkPending.Render("◐")
+		return checkPending.Render(pending)
 	}
 	return ""
 }
 
-// dirtyBadge renders working-tree change counts: a colored "●N" for tracked
+// dirtyBadge renders working-tree change counts: a colored "±N" for tracked
 // changes (staged + modified) and a dim "?M" for untracked files. Clean
 // worktrees render "".
 func (i Item) dirtyBadge() string {
 	var parts []string
 	if n := i.Status.Staged + i.Status.Modified; n > 0 {
-		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("●%d", n)))
+		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("%s%d", TrackedGlyph(false), n)))
 	}
 	if i.Status.Untracked > 0 {
-		parts = append(parts, descStyle.Render(fmt.Sprintf("?%d", i.Status.Untracked)))
+		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("?%d", i.Status.Untracked)))
 	}
 	return strings.Join(parts, " ")
 }
@@ -167,33 +175,27 @@ func SetPRStatusMode(mode string) {
 	}
 }
 
-// prStatus maps the connected PR's state, draft flag and review decision to
-// its indicator glyph, label and style. Half circles mark not-ready states
-// (draft, unapproved, changes requested); full circles mark settled ones
-// (approved, merged, closed).
-func (i Item) prStatus() (glyph, label string, st lipgloss.Style) {
+// prStatus keeps PR state readable without relying on colour.
+func (i Item) prStatus() (label string, st lipgloss.Style) {
 	switch i.PRState {
 	case gh.StateMerged:
-		return "●", "merged", mergedBadgeStyle
+		return "merged", mergedBadgeStyle
 	case gh.StateClosed:
-		return "●", "closed", closedBadgeStyle
+		return "closed", closedBadgeStyle
 	}
 	if i.PRDraft {
-		return "◐", "draft", draftBadgeStyle
+		return "draft", draftBadgeStyle
 	}
 	switch i.PRReview {
 	case gh.ReviewApproved:
-		return "●", "approved", approvedBadgeStyle
+		return "approved", approvedBadgeStyle
 	case gh.ReviewChangesRequested:
-		return "◐", "changes", changesBadgeStyle
+		return "changes", changesBadgeStyle
 	}
-	return "◐", "open", prBadgeStyle
+	return "open", prBadgeStyle
 }
 
-// prBadge renders the connected PR badge: a colored "#N" plus, depending on
-// the display mode, a state glyph ("compact") or glyph and label ("full").
-// With "off" only the number shows. Branches named "pr-N" without a known
-// state always render the plain badge.
+// prBadge shows a PR number and state word. Off mode keeps only the number.
 func (i Item) prBadge() string {
 	n, ok := i.prNumber()
 	if !ok {
@@ -202,20 +204,18 @@ func (i Item) prBadge() string {
 	if i.PRState == "" || prStatusMode == "off" {
 		return prBadgeStyle.Render(fmt.Sprintf("#%d ", n))
 	}
-	glyph, label, st := i.prStatus()
-	switch prStatusMode {
-	case "compact":
-		return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(glyph) + " "
-	default: // full
-		return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(glyph+" "+label) + " "
-	}
+	label, st := i.prStatus()
+	return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(label) + " "
 }
 
 // itemDelegate renders a two-line row, coloring a leading "#N" PR badge
 // independently so it survives selection highlighting.
 type itemDelegate struct {
+	embedded bool
+	home     string
+	ascii    bool
 	// badges returns the pre-styled agent glyphs for a worktree path; nil
-	// means agents are off and rows render exactly as before.
+	// means no active agents are shown.
 	badges func(path string) string
 }
 
@@ -231,68 +231,159 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	width := m.Width()
 	selected := index == m.Index()
 
-	pointer := "  "
-	nameStyle := normalTitle
-	if selected {
-		pointer = accentStyle.Render("› ")
-		nameStyle = selectedTitle
-	}
+	title, desc := d.renderRow(it, width, selected)
 
-	head := pointer
-	if dot := checkDot(it.Checks); dot != "" {
-		head += dot + " "
-	}
-	head += it.prBadge()
-	name := it.Title()
-	var tail string
-	if badge := it.dirtyBadge(); badge != "" {
-		tail += " " + badge
-	}
-	if it.Running > 0 {
-		tail += " " + runningStyle.Render(fmt.Sprintf("▶%d", it.Running))
-	}
-
-	var agents string
-	if d.badges != nil {
-		agents = d.badges(it.WT.Path)
-	}
-	agentsW := ansi.StringWidth(agents)
-
-	var title string
-	switch {
-	case agents == "" || width <= 0 || agentsW > width:
-		// Badges are never truncated: with no room at all they are dropped.
-		title = head + nameStyle.Render(name) + tail
-	default:
-		leftW := ansi.StringWidth(head) + ansi.StringWidth(name) + ansi.StringWidth(tail)
-		if leftW+1+agentsW <= width {
-			title = head + nameStyle.Render(name) + tail + " " + agents
-			break
+	if d.embedded {
+		bg := theme.Current.Surface
+		if selected {
+			bg = theme.Current.Raised
 		}
-		// Too tight: the branch name gives way first, the agents stay next
-		// to the existing badges.
-		avail := width - agentsW - 1 - ansi.StringWidth(head) - ansi.StringWidth(tail)
-		if avail >= 1 {
-			title = head + nameStyle.Render(ansi.Truncate(name, avail, "…")) + tail + " " + agents
-		} else {
-			left := head + nameStyle.Render(name) + tail
-			title = ansi.Truncate(left, max(width-agentsW-1, 0), "…") + " " + agents
-		}
-	}
-
-	desc := "  " + descStyle.Render(it.Description())
-
-	if width > 0 {
-		title = ansi.Truncate(title, width, "…")
-		desc = ansi.Truncate(desc, width, "…")
+		row := func(s string) string { return lipgloss.NewStyle().Background(bg).Width(width).Render(s) }
+		title, desc = row(title), row(desc)
 	}
 	fmt.Fprintf(w, "%s\n%s", title, desc)
 }
 
+// renderRow reserves telemetry before truncating labels so narrow panes keep
+// useful activity visible without splitting provider badges.
+func (d itemDelegate) renderRow(it Item, width int, selected bool) (string, string) {
+	width = max(0, width)
+	gutter := "  "
+	style := normalTitle
+	if selected {
+		gutter = "┃ "
+		if d.ascii {
+			gutter = "| "
+		}
+		style = selectedTitle
+	}
+	ellipsis := "…"
+	if d.ascii {
+		ellipsis = "."
+	}
+	fit := func(left, right string) string {
+		room := max(0, width-2)
+		if lipgloss.Width(right)+2 > room {
+			right = ""
+		}
+		labelWidth := room
+		if right != "" {
+			labelWidth -= lipgloss.Width(right) + 1
+		}
+		left = ansi.Truncate(left, max(0, labelWidth), ellipsis)
+		padding := max(0, width-lipgloss.Width(gutter)-lipgloss.Width(left)-lipgloss.Width(right))
+		return ansi.Truncate(accentStyle.Render(gutter)+left+strings.Repeat(" ", padding)+right, width, "")
+	}
+	agents := ""
+	if d.badges != nil {
+		agents = d.badges(it.WT.Path)
+	}
+	if agents == "" {
+		agents = descStyle.Render("──")
+		if d.ascii {
+			agents = descStyle.Render("--")
+		}
+	}
+	activity := agents
+	if it.Running > 0 {
+		activity = runningStyle.Render(fmt.Sprintf("%s%d", RunningGlyph(d.ascii), it.Running)) + " " + activity
+	}
+	name := it.WT.Branch
+	if name == "" {
+		name = "(detached)"
+	}
+	badge := strings.TrimSpace(it.prBadge())
+	if badge != "" {
+		if prStatusMode != "off" && it.PRState != "" {
+			symbol := "●"
+			if it.PRDraft {
+				symbol = "○"
+			}
+			if it.PRState == gh.StateMerged {
+				symbol = "✓"
+			}
+			if it.PRState == gh.StateClosed {
+				symbol = "×"
+			}
+			if d.ascii {
+				symbol = ""
+			}
+			label, st := it.prStatus()
+			n, _ := it.prNumber()
+			badge = prBadgeStyle.Render(fmt.Sprintf("#%d ", n)) + st.Render(symbol+label)
+		}
+		if check := checkGlyph(it.Checks, d.ascii); check != "" {
+			badge += " " + check
+		}
+		badge = "[" + badge + "]"
+	}
+	// Keep the inline badge after the branch while reserving the activity tail.
+	if lipgloss.Width(activity)+2 > max(0, width-2) {
+		activity = ""
+	}
+	available := max(0, width-2)
+	if activity != "" {
+		available -= lipgloss.Width(activity) + 1
+	}
+	if lipgloss.Width(badge)+2 > available {
+		badge = ""
+	}
+	nameWidth := available
+	if badge != "" {
+		nameWidth -= lipgloss.Width(badge) + 1
+	}
+	left := style.Render(ansi.Truncate(name, max(0, nameWidth), ellipsis))
+	if badge != "" {
+		left += " " + badge
+	}
+	title := fit(left, activity)
+	base := it.Base
+	if base == "" {
+		base = it.DefaultBase
+	}
+	if base == "" && it.WT.IsMain {
+		base = it.WT.Branch
+	}
+	arrow := "↳ "
+	if d.ascii {
+		arrow = "-> "
+	}
+	baseStyle := descStyle
+	if base != "" && base != it.DefaultBase && base != "main" && base != "master" {
+		base = "base: " + base
+		baseStyle = accentStyle
+	}
+	if it.WT.IsMain {
+		base += " (root)"
+	} else if dir := filepath.Base(it.WT.Path); dir != "." && dir != "" && dir != filepath.Base(it.WT.Branch) && dir != strings.ReplaceAll(it.WT.Branch, "/", "-") {
+		base += " (wt: " + dir + ")"
+	}
+	if base == "" {
+		base = "base unknown"
+	}
+	changes := it.dirtyBadge()
+	if d.ascii {
+		changes = strings.ReplaceAll(changes, "±", "+/-")
+	}
+	if changes == "" {
+		changes = descStyle.Render("clean")
+	}
+	telemetry := changes
+	if it.HasMetrics {
+		up, down := AheadBehindGlyphs(d.ascii)
+		telemetry += fmt.Sprintf("  %s%d %s%d", up, it.Metrics.Ahead, down, it.Metrics.Behind)
+	}
+	return title, fit(baseStyle.Render(arrow+base), telemetry)
+}
+
 // Model wraps a bubbles list.
 type Model struct {
-	list    list.Model
-	focused bool
+	list     list.Model
+	focused  bool
+	embedded bool
+	badges   func(string) string
+	home     string
+	ascii    bool
 }
 
 // New builds an empty worktree list.
@@ -311,14 +402,26 @@ func (m *Model) SetItems(items []Item) {
 	for i, it := range items {
 		li[i] = it
 	}
-	m.list.SetItems(li)
+	selected := ""
+	if it, ok := m.Selected(); ok {
+		selected = it.WT.Path
+	}
+	if cmd := m.list.SetItems(li); cmd != nil {
+		// The installed list filter is pure; applying it here keeps refreshed
+		// metrics from blanking an active filter until another keystroke.
+		m.list, _ = m.list.Update(cmd())
+	}
+	if selected != "" {
+		m.SelectByPath(selected)
+	}
 }
 
 // SetAgentBadges installs the per-path agent glyph source shown on each row's
 // first line; nil removes it. The component stays data-agnostic: the parent
 // owns the sessions and the styling.
 func (m *Model) SetAgentBadges(fn func(path string) string) {
-	m.list.SetDelegate(itemDelegate{badges: fn})
+	m.badges = fn
+	m.list.SetDelegate(itemDelegate{badges: fn, embedded: m.embedded, home: m.home, ascii: m.ascii})
 }
 
 // SetSize resizes the list.
@@ -340,7 +443,7 @@ func (m Model) Selected() (Item, bool) {
 // SelectByPath moves the highlight to the worktree with the given path, if
 // present. Returns whether a match was found.
 func (m *Model) SelectByPath(path string) bool {
-	for i, li := range m.list.Items() {
+	for i, li := range m.list.VisibleItems() {
 		if it, ok := li.(Item); ok && it.WT.Path == path {
 			m.list.Select(i)
 			return true
@@ -365,8 +468,64 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) View() string {
 	l := m.list
 	l.Styles.Title = titleStyle
-	return l.View()
+	if !m.embedded {
+		count := len(l.VisibleItems())
+		position := 0
+		if count > 0 {
+			position = l.Index() + 1
+		}
+		l.Title = strings.Replace(l.Title, "Worktrees", fmt.Sprintf("Worktrees %d/%d", position, count), 1)
+	}
+	l.Title = ansi.Truncate(l.Title, max(l.Width()-4, 0), "…")
+	lines := strings.Split(l.View(), "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, l.Width(), "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Focused reports focus state (used by the parent for border color).
 func (m Model) Focused() bool { return m.focused }
+
+// SetEmbedded uses the shell's heading and shaded rows instead of a second app title.
+func (m *Model) SetEmbedded(on bool) {
+	m.embedded = on
+	m.list.SetDelegate(itemDelegate{badges: m.badges, embedded: on, home: m.home, ascii: m.ascii})
+	m.list.SetShowTitle(!on)
+}
+
+// SetPathHome injects the home directory resolved by the parent's load command.
+func (m *Model) SetPathHome(home string) {
+	m.home = strings.TrimRight(home, "/")
+	m.SetAgentBadges(m.badges)
+}
+func (m *Model) SetASCII(ascii bool) { m.ascii = ascii; m.SetAgentBadges(m.badges) }
+
+// SelectCreatedPath reveals a newly created checkout even during filtering.
+func (m *Model) SelectCreatedPath(path string) bool {
+	if m.SelectByPath(path) {
+		return true
+	}
+	m.list.ResetFilter()
+	return m.SelectByPath(path)
+}
+
+func TrackedGlyph(ascii bool) string {
+	if ascii {
+		return "+/-"
+	}
+	return "±"
+}
+func RunningGlyph(ascii bool) string {
+	if ascii {
+		return ">"
+	}
+	return "▶"
+}
+
+func AheadBehindGlyphs(ascii bool) (string, string) {
+	if ascii {
+		return "^", "v"
+	}
+	return "↑", "↓"
+}

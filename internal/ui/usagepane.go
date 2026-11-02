@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,9 +21,8 @@ const (
 	// or failed account is retried within a minute of crossing that limit
 	// rather than a full period later.
 	usagePaneCheck = time.Minute
-	// usagePaneMinRows is the terminal height below which the pane would
-	// squeeze the worktree list, so it is hidden.
-	usagePaneMinRows = 30
+	// Very short terminals cannot spare even the provider summary.
+	usagePaneMinRows = 15
 	// usagePaneMaxFetches bounds provider calls in flight at once.
 	usagePaneMaxFetches = 8
 	// usagePaneListMin is the fewest rows the worktree list keeps.
@@ -31,7 +32,11 @@ const (
 // paneState is the always-on usage pane's model state. Its usage numbers live
 // in the shared store (agentState.usage).
 type paneState struct {
-	accounts []agentsapi.Account
+	expanded      bool
+	page, elapsed int
+	rotationGen   uint64
+	rotating      bool
+	accounts      []agentsapi.Account
 	// listSeq/listApplied number account lists the same way agentState.seq does.
 	listSeq, listApplied uint64
 	// tickGen makes duplicate timers stale once one re-arms.
@@ -223,9 +228,105 @@ func (m Model) usagePaneRows(innerH int) int {
 	if m.height < usagePaneMinRows || !m.paneEnabled() || len(m.agents.pane.accounts) == 0 {
 		return 0
 	}
-	rows := usagepane.Height(m.paneAccounts(), (innerH+2)*40/100)
+	capRows := min(innerH*m.panePercent()/100, innerH-usagePaneListMin)
+	if capRows < 3 {
+		return 0
+	}
+	rows := min(usagepane.SummaryHeight(m.paneAccounts()), capRows)
+	if m.usagePaneExpanded() {
+		rows = min(len(m.paneAccounts())+2, capRows)
+	}
 	if rows == 0 || innerH-rows < usagePaneListMin {
 		return 0
 	}
 	return rows
+}
+
+func (m Model) usagePaneExpanded() bool { return m.agents.pane.expanded }
+func (m Model) usagePaneView(width, rows int) string {
+	if m.usagePaneExpanded() {
+		return usagepane.ViewPage(m.paneAccounts(), m.panePageLabel(rows), width, rows, agentNow(), m.agentGlyphsASCII(), m.agents.pane.page)
+	}
+	return usagepane.ViewSummaryAt(m.paneAccounts(), m.paneHeaderAge(), width, rows, agentNow(), m.agentGlyphsASCII())
+}
+
+func (m Model) panePercent() int {
+	if n := m.work.UsagePaneMaxPercent; n >= 10 && n <= 70 {
+		return n
+	}
+	return 35
+}
+func (m Model) paneInterval() int {
+	if n := m.work.UsagePaneRotateSeconds; n != nil && *n >= 0 && *n <= 60 {
+		return *n
+	}
+	return 6
+}
+func (m Model) panePageLabel(rows int) string {
+	pages := usagepane.Pages(len(m.agents.pane.accounts), rows)
+	if pages <= 1 {
+		return m.paneHeaderAge()
+	}
+	filled := 4
+	if interval := m.paneInterval(); interval > 0 {
+		filled = 4 * (interval - m.agents.pane.elapsed) / interval
+	}
+	full, empty := "▰", "▱"
+	if m.agentGlyphsASCII() {
+		full, empty = "#", "."
+	}
+	return fmt.Sprintf("%d/%d %s%s", m.agents.pane.page%pages+1, pages, strings.Repeat(full, max(0, filled)), strings.Repeat(empty, 4-min(4, max(0, filled))))
+}
+
+type paneRotationMsg struct{ gen uint64 }
+
+// Update reconciles the carousel after ordinary updates so account, size and
+// preference changes all invalidate timers through the same path.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if tick, ok := msg.(paneRotationMsg); ok {
+		p := &m.agents.pane
+		if tick.gen != p.rotationGen || !p.rotating {
+			return m, nil
+		}
+		p.rotating = false
+		_, _, innerH := m.dims()
+		rows := m.usagePaneRows(innerH)
+		pages := usagepane.Pages(len(p.accounts), rows)
+		if m.usagePaneExpanded() && rows > 0 && pages > 1 && m.paneInterval() > 0 {
+			p.elapsed++
+			if p.elapsed >= m.paneInterval() {
+				p.elapsed = 0
+				p.page = (p.page + 1) % pages
+			}
+		}
+		cmd := m.syncPaneRotation()
+		return m, cmd
+	}
+	nm, cmd := m.updateWithPane(msg)
+	if next, ok := nm.(Model); ok {
+		rotation := next.syncPaneRotation()
+		return next, tea.Batch(cmd, rotation)
+	}
+	return nm, cmd
+}
+func (m *Model) syncPaneRotation() tea.Cmd {
+	_, _, innerH := m.dims()
+	rows := m.usagePaneRows(innerH)
+	active := m.layoutKind != LayoutRedesign && m.usagePaneExpanded() && rows > 0 && usagepane.Pages(len(m.agents.pane.accounts), rows) > 1 && m.paneInterval() > 0
+	p := &m.agents.pane
+	if !active {
+		if p.rotating {
+			p.rotationGen++
+		}
+		p.rotating = false
+		p.elapsed = 0
+		return nil
+	}
+	if p.rotating {
+		return nil
+	}
+	p.rotating = true
+	p.rotationGen++
+	gen := p.rotationGen
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return paneRotationMsg{gen} })
 }

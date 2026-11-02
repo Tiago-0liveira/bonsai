@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 )
@@ -67,10 +68,42 @@ func (s *sessions) Start(ctx context.Context, req agentsapi.StartRequest) (agent
 		if ctx.Err() != nil {
 			return agentsapi.Session{}, ctx.Err()
 		}
+		// Only these refusals are named: they say what the user can change. Every other
+		// detail stays hidden behind ErrSessionUnavailable.
+		for _, known := range []error{agents.ErrReadOnlyUnsupported, agents.ErrAccountBusy, agents.ErrProviderBusy} {
+			if errors.Is(err, known) {
+				return agentsapi.Session{}, fmt.Errorf("start agent session: %w: %w", known, ErrSessionUnavailable)
+			}
+		}
 		return agentsapi.Session{}, fmt.Errorf("start agent session: %w", ErrSessionUnavailable)
 	}
 	out := session(record)
 	return out, nil
+}
+
+func (s *sessions) Resume(ctx context.Context, id string, cols, rows int) (agentsapi.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return agentsapi.Session{}, err
+	}
+	record, err := s.starter.Resume(ctx, id, cols, rows)
+	if err == nil {
+		return session(record), nil
+	}
+	if ctx.Err() != nil {
+		return agentsapi.Session{}, ctx.Err()
+	}
+	if errors.Is(err, agents.ErrSessionNotFound) || errors.Is(err, os.ErrNotExist) || id == "" {
+		return agentsapi.Session{}, ErrSessionNotFound
+	}
+	if errors.Is(err, agents.ErrNotResumable) {
+		return agentsapi.Session{}, fmt.Errorf("resume agent session: %w", err)
+	}
+	for _, known := range []error{agents.ErrAccountBusy, agents.ErrProviderBusy} {
+		if errors.Is(err, known) {
+			return agentsapi.Session{}, fmt.Errorf("resume agent session: %w: %w", known, ErrSessionUnavailable)
+		}
+	}
+	return agentsapi.Session{}, fmt.Errorf("resume agent session: %w", ErrSessionUnavailable)
 }
 
 func (s *sessions) Stop(ctx context.Context, id string) error {
@@ -137,3 +170,50 @@ func (s *sessions) Attach(ctx context.Context, id string, opts agentsapi.AttachO
 // sizePollInterval is how often an attached stream re-reads the holder's PTY
 // size, since the protocol has no size frame.
 var sizePollInterval = 2 * time.Second
+
+func (s *sessions) Rename(ctx context.Context, id, name string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	summary, err := agenthost.Rename(s.paths, id, name)
+	switch {
+	case err == nil:
+		return summary.Name, nil
+	case errors.Is(err, agenthost.ErrNameInvalid):
+		return "", ErrInvalidName
+	case errors.Is(err, agenthost.ErrRenameUnsupported):
+		return "", ErrRenameUnsupported
+	case errors.Is(err, os.ErrNotExist) || id == "":
+		return "", ErrSessionNotFound
+	case errors.Is(err, agenthost.ErrVersion):
+		return "", fmt.Errorf("rename agent session: %w", agentsapi.ErrVersion)
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	return "", fmt.Errorf("rename agent session: %w", ErrSessionUnavailable)
+}
+
+func (s *sessions) Snapshot(ctx context.Context, id string, lines int) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	record, err := agenthost.Read(s.paths, id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || id == "" {
+			return nil, ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("read agent session: %w", ErrSessionUnavailable)
+	}
+	out, err := agenthost.Snapshot(ctx, record, lines)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, agenthost.ErrVersion) {
+			return nil, fmt.Errorf("peek agent session: %w", agentsapi.ErrVersion)
+		}
+		return nil, fmt.Errorf("peek agent session: %w", ErrSessionUnavailable)
+	}
+	return out, nil
+}

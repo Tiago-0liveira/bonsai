@@ -9,51 +9,66 @@ import (
 // keyMap holds every global binding. Modal-local and tab-local keys are handled
 // inside their components / the focused-tab key routers.
 type keyMap struct {
-	Tab           key.Binding
-	ShiftTab      key.Binding
-	Enter         key.Binding
-	Editor        key.Binding
-	Create        key.Binding
-	CreatePR      key.Binding
-	ViewProcs     key.Binding
-	LogTab        key.Binding
-	PRTab         key.Binding
-	DiffTab       key.Binding
-	InspectTab    key.Binding
-	ChecksTab     key.Binding
-	Filter        key.Binding
-	Sort          key.Binding
-	Palette       key.Binding
-	CopyFile      key.Binding
-	Yank          key.Binding
-	Scripts       key.Binding
-	Aliases       key.Binding
-	Pull          key.Binding
-	Push          key.Binding
-	Fetch         key.Binding
-	Commit        key.Binding
-	Rebase        key.Binding
-	Update        key.Binding
-	Prune         key.Binding
-	BulkPrune     key.Binding
-	Refresh       key.Binding
-	Kill          key.Binding
-	Restart       key.Binding
-	SetPolicy     key.Binding
-	ProcModal     key.Binding
-	MultiView     key.Binding
-	RenameProc    key.Binding
-	ProcSearch    key.Binding
-	AgentsTab     key.Binding
-	AgentAll      key.Binding
-	AgentNew      key.Binding
-	AgentAccounts key.Binding
-	AgentUsage    key.Binding
-	AgentAttach   key.Binding
-	AgentStop     key.Binding
-	Prefs         key.Binding
-	Help          key.Binding
-	Quit          key.Binding
+	Tab                  key.Binding
+	ShiftTab             key.Binding
+	Enter                key.Binding
+	Editor               key.Binding
+	Create               key.Binding
+	CreatePR             key.Binding
+	ViewProcs            key.Binding
+	LogTab               key.Binding
+	PRTab                key.Binding
+	DiffTab              key.Binding
+	InspectTab           key.Binding
+	ChecksTab            key.Binding
+	Filter               key.Binding
+	Sort                 key.Binding
+	UsagePaneToggle      key.Binding
+	CreateAgentToggle    key.Binding
+	CreateBase           key.Binding
+	Palette              key.Binding
+	CopyFile             key.Binding
+	Yank                 key.Binding
+	Scripts              key.Binding
+	Aliases              key.Binding
+	Pull                 key.Binding
+	Push                 key.Binding
+	Fetch                key.Binding
+	Commit               key.Binding
+	Rebase               key.Binding
+	Update               key.Binding
+	Prune                key.Binding
+	BulkPrune            key.Binding
+	Refresh              key.Binding
+	Kill                 key.Binding
+	Restart              key.Binding
+	SetPolicy            key.Binding
+	ProcModal            key.Binding
+	MultiView            key.Binding
+	RenameProc           key.Binding
+	ProcSearch           key.Binding
+	AgentsTab            key.Binding
+	AgentAll             key.Binding
+	AgentStopAll         key.Binding
+	AgentAttention       key.Binding
+	AgentAllRepo         key.Binding
+	AgentRename          key.Binding
+	AgentNew             key.Binding
+	AgentQuickNew        key.Binding
+	AgentFork            key.Binding
+	LaunchChangeWorktree key.Binding
+	AgentAccounts        key.Binding
+	AgentUsage           key.Binding
+	AgentAttach          key.Binding
+	AgentResume          key.Binding
+	AgentStop            key.Binding
+	AgentPlayground      key.Binding
+	GardenView           key.Binding
+	GardenStages         key.Binding
+	GardenAttention      key.Binding
+	Prefs                key.Binding
+	Help                 key.Binding
+	Quit                 key.Binding
 }
 
 // bindingSpec is the default key(s) and help text for one action. The action
@@ -66,51 +81,66 @@ type bindingSpec struct {
 // defaultBindings maps each action name to its default keys + help text. Order
 // here is not significant; display grouping is defined by keymapSections.
 var defaultBindings = map[string]bindingSpec{
-	"focus_next":     {[]string{"tab"}, "focus"},
-	"focus_prev":     {[]string{"shift+tab"}, "focus"},
-	"shell":          {[]string{"enter"}, "shell"},
-	"editor":         {[]string{"e"}, "editor"},
-	"new_worktree":   {[]string{"n"}, "new worktree"},
-	"create_pr":      {[]string{"ctrl+n"}, "create PR"},
-	"processes":      {[]string{"v"}, "processes"},
-	"log_tab":        {[]string{"l"}, "git log"},
-	"pr_tab":         {[]string{"P"}, "PR detail"},
-	"diff_tab":       {[]string{"d"}, "diff vs base"},
-	"inspect_tab":    {[]string{"i"}, "inspect"},
-	"checks_tab":     {[]string{"b"}, "CI runs"},
-	"filter":         {[]string{"/"}, "filter"},
-	"sort":           {[]string{"o"}, "sort"},
-	"palette":        {[]string{"ctrl+k"}, "commands"},
-	"copy_file":      {[]string{"c"}, "copy file"},
-	"yank":           {[]string{"y"}, "yank/copy"},
-	"scripts":        {[]string{"s"}, "scripts"},
-	"aliases":        {[]string{"a"}, "aliases"},
-	"pull":           {[]string{"ctrl+p"}, "pull"},
-	"push":           {[]string{"ctrl+u"}, "push"},
-	"fetch":          {[]string{"f"}, "fetch"},
-	"commit":         {[]string{"C"}, "commit"},
-	"rebase":         {[]string{"r"}, "rebase"},
-	"update_base":    {[]string{"u"}, "update from base"},
-	"prune":          {[]string{"x"}, "prune"},
-	"bulk_prune":     {[]string{"X"}, "prune merged"},
-	"refresh":        {[]string{"R"}, "refresh"},
-	"kill_proc":      {[]string{"K"}, "kill proc"},
-	"restart_proc":   {[]string{"r"}, "restart proc"},
-	"set_policy":     {[]string{"p"}, "restart policy"},
-	"proc_modal":     {[]string{"V"}, "all processes"},
-	"multi_view":     {[]string{"m"}, "view multiple processes together"},
-	"rename_proc":    {[]string{"L"}, "tag process (multi-view label)"},
-	"proc_search":    {[]string{"/"}, "search process output"},
-	"agents_tab":     {[]string{"g"}, "agents"},
-	"agent_all":      {[]string{"a"}, "all agents"},
-	"agent_new":      {[]string{"n"}, "new agent"},
-	"agent_accounts": {[]string{"m"}, "agent accounts"},
-	"agent_usage":    {[]string{"u"}, "agent usage"},
-	"agent_attach":   {[]string{"enter"}, "control agent (terminal mode)"},
-	"agent_stop":     {[]string{"s"}, "stop agent"},
-	"prefs":          {[]string{","}, "preferences"},
-	"help":           {[]string{"?"}, "keys"},
-	"quit":           {[]string{"q", "ctrl+c"}, "quit"},
+	"focus_next":             {[]string{"tab"}, "focus"},
+	"focus_prev":             {[]string{"shift+tab"}, "focus"},
+	"shell":                  {[]string{"enter"}, "shell"},
+	"editor":                 {[]string{"e"}, "editor"},
+	"new_worktree":           {[]string{"n"}, "new worktree"},
+	"create_pr":              {[]string{"ctrl+n"}, "create PR"},
+	"processes":              {[]string{"v"}, "processes"},
+	"log_tab":                {[]string{"l"}, "git log"},
+	"pr_tab":                 {[]string{"P"}, "PR detail"},
+	"diff_tab":               {[]string{"d"}, "diff vs base"},
+	"inspect_tab":            {[]string{"i"}, "inspect"},
+	"checks_tab":             {[]string{"b"}, "CI runs"},
+	"filter":                 {[]string{"/"}, "filter"},
+	"sort":                   {[]string{"o"}, "sort"},
+	"usage_pane_toggle":      {[]string{"U"}, "expand usage pane"},
+	"create_agent_toggle":    {[]string{"ctrl+a"}, "start agent here"},
+	"create_base":            {[]string{"tab"}, "creation base"},
+	"palette":                {[]string{"ctrl+k"}, "commands"},
+	"copy_file":              {[]string{"c"}, "copy file"},
+	"yank":                   {[]string{"y"}, "yank/copy"},
+	"scripts":                {[]string{"s"}, "scripts"},
+	"aliases":                {[]string{"a"}, "aliases"},
+	"pull":                   {[]string{"ctrl+p"}, "pull"},
+	"push":                   {[]string{"ctrl+u"}, "push"},
+	"fetch":                  {[]string{"f"}, "fetch"},
+	"commit":                 {[]string{"C"}, "commit"},
+	"rebase":                 {[]string{"r"}, "rebase"},
+	"update_base":            {[]string{"u"}, "update from base"},
+	"prune":                  {[]string{"x"}, "prune"},
+	"bulk_prune":             {[]string{"X"}, "prune merged"},
+	"refresh":                {[]string{"R"}, "refresh"},
+	"kill_proc":              {[]string{"K"}, "kill proc"},
+	"restart_proc":           {[]string{"r"}, "restart proc"},
+	"set_policy":             {[]string{"p"}, "restart policy"},
+	"proc_modal":             {[]string{"V"}, "all processes"},
+	"multi_view":             {[]string{"m"}, "view multiple processes together"},
+	"rename_proc":            {[]string{"L"}, "tag process (multi-view label)"},
+	"proc_search":            {[]string{"/"}, "search process output"},
+	"agents_tab":             {[]string{"g"}, "agents"},
+	"agent_rename":           {[]string{"R"}, "rename session"},
+	"agent_all_repo":         {[]string{"A"}, "repository sessions"},
+	"agent_attention":        {[]string{"!"}, "next session needing attention"},
+	"agent_stop_all":         {[]string{"S"}, "stop worktree sessions"},
+	"agent_all":              {[]string{"a"}, "sessions"},
+	"agent_new":              {[]string{"n"}, "new agent"},
+	"agent_quick_new":        {[]string{"N"}, "quick new agent"},
+	"agent_fork":             {[]string{"F"}, "same settings, new task"},
+	"launch_change_worktree": {[]string{"ctrl+w"}, "change launch worktree"},
+	"agent_accounts":         {[]string{"m"}, "accounts"},
+	"agent_usage":            {[]string{"u"}, "agent usage"},
+	"agent_resume":           {[]string{"r"}, "resume session"},
+	"agent_attach":           {[]string{"enter"}, "control agent (terminal mode)"},
+	"agent_playground":       {[]string{"O"}, "open in Playground (observe)"},
+	"agent_stop":             {[]string{"s"}, "stop agent"},
+	"garden_view":            {[]string{"v"}, "board/table"},
+	"garden_stages":          {[]string{"d"}, "phases/stages"},
+	"garden_attention":       {[]string{"a"}, "needs you"},
+	"prefs":                  {[]string{","}, "preferences"},
+	"help":                   {[]string{"?"}, "keys"},
+	"quit":                   {[]string{"q", "ctrl+c"}, "quit"},
 }
 
 // binding builds a key.Binding for an action, applying a config override to the
@@ -119,9 +149,16 @@ func binding(action string, overrides map[string]string) key.Binding {
 	spec := defaultBindings[action]
 	keys := spec.keys
 	if ov, ok := overrides[action]; ok && ov != "" {
-		keys = []string{ov}
+		// Saved Garden overrides obey the same rules as Settings capture.
+		if scope, _, _ := scopeOfAction(action); scope != ksGarden || validateKeyBinding(action, ov, overrides) == nil {
+			keys = []string{ov}
+		}
 	}
-	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(keys[0], spec.desc))
+	help := keys[0]
+	if help == " " {
+		help = "space"
+	}
+	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(help, spec.desc))
 }
 
 // keyCollisions reports user-introduced key conflicts: an override whose key
@@ -168,51 +205,66 @@ func keyCollisions(overrides map[string]string) []string {
 func newKeyMap(overrides map[string]string) keyMap {
 	b := func(a string) key.Binding { return binding(a, overrides) }
 	return keyMap{
-		Tab:           b("focus_next"),
-		ShiftTab:      b("focus_prev"),
-		Enter:         b("shell"),
-		Editor:        b("editor"),
-		Create:        b("new_worktree"),
-		CreatePR:      b("create_pr"),
-		ViewProcs:     b("processes"),
-		LogTab:        b("log_tab"),
-		PRTab:         b("pr_tab"),
-		DiffTab:       b("diff_tab"),
-		InspectTab:    b("inspect_tab"),
-		ChecksTab:     b("checks_tab"),
-		Filter:        b("filter"),
-		Sort:          b("sort"),
-		Palette:       b("palette"),
-		CopyFile:      b("copy_file"),
-		Yank:          b("yank"),
-		Scripts:       b("scripts"),
-		Aliases:       b("aliases"),
-		Pull:          b("pull"),
-		Push:          b("push"),
-		Fetch:         b("fetch"),
-		Commit:        b("commit"),
-		Rebase:        b("rebase"),
-		Update:        b("update_base"),
-		Prune:         b("prune"),
-		BulkPrune:     b("bulk_prune"),
-		Refresh:       b("refresh"),
-		Kill:          b("kill_proc"),
-		Restart:       b("restart_proc"),
-		SetPolicy:     b("set_policy"),
-		ProcModal:     b("proc_modal"),
-		MultiView:     b("multi_view"),
-		RenameProc:    b("rename_proc"),
-		ProcSearch:    b("proc_search"),
-		AgentsTab:     b("agents_tab"),
-		AgentAll:      b("agent_all"),
-		AgentNew:      b("agent_new"),
-		AgentAccounts: b("agent_accounts"),
-		AgentUsage:    b("agent_usage"),
-		AgentAttach:   b("agent_attach"),
-		AgentStop:     b("agent_stop"),
-		Prefs:         b("prefs"),
-		Help:          b("help"),
-		Quit:          b("quit"),
+		Tab:                  b("focus_next"),
+		ShiftTab:             b("focus_prev"),
+		Enter:                b("shell"),
+		Editor:               b("editor"),
+		Create:               b("new_worktree"),
+		CreatePR:             b("create_pr"),
+		ViewProcs:            b("processes"),
+		LogTab:               b("log_tab"),
+		PRTab:                b("pr_tab"),
+		DiffTab:              b("diff_tab"),
+		InspectTab:           b("inspect_tab"),
+		ChecksTab:            b("checks_tab"),
+		Filter:               b("filter"),
+		Sort:                 b("sort"),
+		UsagePaneToggle:      b("usage_pane_toggle"),
+		CreateAgentToggle:    b("create_agent_toggle"),
+		CreateBase:           b("create_base"),
+		Palette:              b("palette"),
+		CopyFile:             b("copy_file"),
+		Yank:                 b("yank"),
+		Scripts:              b("scripts"),
+		Aliases:              b("aliases"),
+		Pull:                 b("pull"),
+		Push:                 b("push"),
+		Fetch:                b("fetch"),
+		Commit:               b("commit"),
+		Rebase:               b("rebase"),
+		Update:               b("update_base"),
+		Prune:                b("prune"),
+		BulkPrune:            b("bulk_prune"),
+		Refresh:              b("refresh"),
+		Kill:                 b("kill_proc"),
+		Restart:              b("restart_proc"),
+		SetPolicy:            b("set_policy"),
+		ProcModal:            b("proc_modal"),
+		MultiView:            b("multi_view"),
+		RenameProc:           b("rename_proc"),
+		ProcSearch:           b("proc_search"),
+		AgentsTab:            b("agents_tab"),
+		AgentAllRepo:         b("agent_all_repo"),
+		AgentAttention:       b("agent_attention"),
+		AgentStopAll:         b("agent_stop_all"),
+		AgentAll:             b("agent_all"),
+		AgentRename:          b("agent_rename"),
+		AgentNew:             b("agent_new"),
+		AgentQuickNew:        b("agent_quick_new"),
+		AgentFork:            b("agent_fork"),
+		LaunchChangeWorktree: b("launch_change_worktree"),
+		AgentAccounts:        b("agent_accounts"),
+		AgentUsage:           b("agent_usage"),
+		AgentAttach:          b("agent_attach"),
+		AgentResume:          b("agent_resume"),
+		AgentStop:            b("agent_stop"),
+		AgentPlayground:      b("agent_playground"),
+		GardenView:           b("garden_view"),
+		GardenStages:         b("garden_stages"),
+		GardenAttention:      b("garden_attention"),
+		Prefs:                b("prefs"),
+		Help:                 b("help"),
+		Quit:                 b("quit"),
 	}
 }
 
@@ -224,14 +276,17 @@ type keymapSection struct {
 }
 
 var keymapSections = []keymapSection{
-	{"Navigation", []string{"focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
-	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "refresh", "prune", "bulk_prune"}},
+	{"Navigation", []string{"agent_attention", "focus_next", "focus_prev", "palette", "prefs", "help", "quit"}},
+	{"Create worktree", []string{"create_agent_toggle", "create_base"}},
+	{"Worktree", []string{"shell", "editor", "new_worktree", "create_pr", "filter", "sort", "usage_pane_toggle", "refresh", "prune", "bulk_prune"}},
 	{"Tabs", []string{"log_tab", "processes", "inspect_tab", "diff_tab", "checks_tab", "pr_tab"}},
 	{"Files & clipboard", []string{"copy_file", "yank"}},
 	{"Run", []string{"scripts", "aliases"}},
 	{"Git", []string{"pull", "push", "fetch", "commit", "rebase", "update_base"}},
-	{"Agents tab", []string{"agents_tab", "agent_all", "agent_new", "agent_accounts", "agent_usage", "agent_attach", "agent_stop"}},
+	{"Agents tab", []string{"agent_stop_all", "agent_all_repo", "agents_tab", "agent_rename", "agent_all", "agent_new", "agent_quick_new", "agent_fork", "agent_accounts", "agent_usage", "agent_attach", "agent_resume", "agent_stop", "agent_playground"}},
+	{"Agent launch", []string{"launch_change_worktree"}},
 	{"Processes tab", []string{"kill_proc", "restart_proc", "set_policy", "proc_modal", "multi_view", "rename_proc", "proc_search"}},
+	{"Garden", []string{"garden_view", "garden_stages", "garden_attention"}},
 }
 
 // effectiveKey returns the key in effect for an action given user overrides.
@@ -247,4 +302,11 @@ const agentTerminalSection = "Agent terminal (fixed key)"
 
 var agentTerminalKeys = []struct{ key, desc string }{
 	{"ctrl+]", "unfocus agent"},
+}
+
+var agentLegendKeys = []struct{ key, desc string }{
+	{"▶N / >N", "working sessions"},
+	{"⏸N / =N", "waiting sessions"},
+	{"✓N / +N", "done, unseen"},
+	{"✗N / xN", "failed, unseen"},
 }

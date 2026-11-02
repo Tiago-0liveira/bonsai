@@ -118,3 +118,45 @@ func TestRemoveWorktreeDirty(t *testing.T) {
 		t.Errorf("worktree still listed after force removal: %+v", trees)
 	}
 }
+
+func TestAddWorktreeNewBranchBase(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := gitInit(t)
+	runGit(t, repo, "branch", "base")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "after base")
+	for _, tc := range []struct {
+		name string
+		base string
+		want string
+	}{
+		{"default", "", "main"}, {"explicit", "base", "base"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "tree")
+			if err := AddWorktreeNewBranch(repo, path, tc.name, tc.base); err != nil {
+				t.Fatal(err)
+			}
+			got, err := run(repo, "rev-parse", tc.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := run(repo, "rev-parse", tc.want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("created %s at %s, want %s", tc.name, got, want)
+			}
+		})
+	}
+}
+
+func TestRejectOptionWorktreeBase(t *testing.T) {
+	for _, base := range []string{"--force", "-B", "--detach"} {
+		t.Run(base, func(t *testing.T) {
+			if err := AddWorktreeNewBranch(t.TempDir(), "unused", "new", base); !errors.Is(err, ErrInvalidWorktreeBase) {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}

@@ -34,6 +34,10 @@ type Options struct {
 	Now func() time.Time
 	// Usage seeds the modal with what the root model already knows.
 	Usage usagestore.Store
+	// Embedded draws the view as a workspace body: no footer (the shell owns
+	// it), no auto-opened add form, and explicit reasons for every empty or
+	// failed state.
+	Embedded bool
 }
 
 // CloseMsg asks the parent to close the modal.
@@ -61,11 +65,15 @@ type Model struct {
 	w, h  int // screen size; the frame is derived by FrameSize
 	tab   Tab
 	focus accountFocus
+	// embedded: see Options.Embedded.
+	embedded bool
 
-	ov  overviewState
-	df  defaultsState
-	add addState
-	dlg *dialog
+	// usageOff is the first Usage line shown when the content overflows.
+	usageOff int
+	ov       overviewState
+	df       defaultsState
+	add      addState
+	dlg      *dialog
 }
 
 type accountFocus int
@@ -87,16 +95,25 @@ func New(api agentsapi.Accounts, opts Options) Model {
 		now = time.Now
 	}
 	return Model{
-		Browser: NewBrowser(api, opts.Initial, opts.Usage, false),
-		ascii:   opts.ASCII,
-		now:     now,
-		tab:     min(max(opts.Tab, TabOverview), tabCount-1),
-		add:     newAddState(),
+		Browser:  NewBrowser(api, opts.Initial, opts.Usage, false),
+		ascii:    opts.ASCII,
+		embedded: opts.Embedded,
+		now:      now,
+		tab:      min(max(opts.Tab, TabOverview), tabCount-1),
+		add:      newAddState(),
 	}
 }
 
 // SetSize gives the view the available pane size.
 func (m *Model) SetSize(w, h int) { m.w, m.h = w, h }
+
+// SetASCII follows the glyph preference, which can change while the view lives.
+func (m *Model) SetASCII(on bool) {
+	m.ascii = on
+	if m.df.loaded {
+		m.df.form = m.df.form.WithASCII(on)
+	}
+}
 
 // FrameSize uses the entire available Agents pane.
 func FrameSize(screenW, screenH int) (w, h int) {
@@ -106,7 +123,7 @@ func FrameSize(screenW, screenH int) (w, h int) {
 // Capturing reports that keys must all reach the modal: a text input, a
 // dropdown or a dialog is active.
 func (m Model) Capturing() bool {
-	return m.dlg != nil || (m.add.active && m.add.stage == stageName) || m.formEditing()
+	return m.dlg != nil || m.add.active || m.formEditing()
 }
 
 func (m Model) formEditing() bool {
@@ -195,20 +212,7 @@ func (m Model) ruleGlyph() string {
 func (m Model) compose(iw, h int) []string {
 	th := theme.Current
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
-	rule := dim.Render(strings.Repeat(m.ruleGlyph(), iw))
-
-	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render("Accounts")
-	if m.listed && len(m.accounts) > 0 && !m.add.active {
-		title = twoCol(title, dim.Render(plural(len(m.accounts), "account")), iw)
-	}
-	// Blank spacer lines are the first thing to go in a short pane.
-	var gap []string
-	if h >= 20 {
-		gap = []string{""}
-	}
-	top := append([]string{title, rule}, gap...)
-	bottom := []string{rule, dim.Render(shortenFooter(m.footer(), iw))}
-	free := max(h-len(top)-len(bottom), 0)
+	top, bottom, gap, free := m.frame(iw, h)
 
 	var body []string
 	switch {
@@ -221,11 +225,7 @@ func (m Model) compose(iw, h int) []string {
 			body = m.inspect(iw, free, gap)
 			break
 		}
-		if m.listErr != "" {
-			body = []string{lipgloss.NewStyle().Foreground(th.Danger).Render("Couldn't load accounts"), dim.Render(m.listErr)}
-		} else {
-			body = []string{dim.Render("No accounts yet.")}
-		}
+		body = m.noAccountBody()
 	}
 
 	lines := append(top, padTo(body, free)...)
@@ -234,6 +234,59 @@ func (m Model) compose(iw, h int) []string {
 		lines = append(lines[:h-1], lines[len(lines)-1])
 	}
 	return lines
+}
+
+// frame is the fixed rows around the body: what compose puts above and below
+// it, the spacer rows, and the rows left for the body.
+func (m Model) frame(iw, h int) (top, bottom, gap []string, free int) {
+	th := theme.Current
+	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	rule := dim.Render(strings.Repeat(m.ruleGlyph(), iw))
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(th.Text).Render("Accounts")
+	if m.embedded {
+		title += dim.Render(" · local profiles, not tied to a worktree")
+	}
+	if m.listed && len(m.accounts) > 0 && !m.add.active {
+		title = twoCol(title, dim.Render(plural(len(m.accounts), "account")), iw)
+	}
+	// Blank spacer lines are the first thing to go in a short pane.
+	if h >= 20 {
+		gap = []string{""}
+	}
+	top = append([]string{title, rule}, gap...)
+	if !m.embedded {
+		bottom = []string{rule, dim.Render(shortenFooter(m.footer(), iw))}
+	} else if m.listErr != "" && len(m.accounts) > 0 {
+		// The list on screen is the last good one; say so instead of implying
+		// it is current.
+		warn := lipgloss.NewStyle().Foreground(th.Warning).Render("Couldn't refresh accounts · showing the last list · " + m.listErr)
+		top = append([]string{title, ansi.Truncate(warn, iw, "…"), rule}, gap...)
+	}
+	return top, bottom, gap, max(h-len(top)-len(bottom), 0)
+}
+
+// noAccountBody explains why no profile is shown: the list failed, or nothing
+// has been added yet.
+func (m Model) noAccountBody() []string {
+	th := theme.Current
+	dim := lipgloss.NewStyle().Foreground(th.Dim)
+	if m.listErr != "" {
+		lines := []string{lipgloss.NewStyle().Foreground(th.Danger).Render("Couldn't load accounts"), dim.Render(m.listErr)}
+		if m.embedded {
+			lines = append(lines, "", dim.Render("Press r to try again."))
+		}
+		return lines
+	}
+	if !m.embedded {
+		return []string{dim.Render("No accounts yet.")}
+	}
+	return []string{
+		dim.Render("No accounts yet."),
+		"",
+		dim.Render("An account is a provider profile with its own sign-in and defaults."),
+		dim.Render("Press n to add a Claude, Codex or Antigravity account."),
+	}
 }
 
 // padTo cuts or extends lines with blanks to exactly n.
@@ -296,6 +349,13 @@ func connectionLabel(a agentsapi.Account) string {
 // inspect builds the lines between the title and the footer for the selected
 // account, filling rows lines.
 func (m Model) inspect(iw, rows int, gap []string) []string {
+	out, insp, avail := m.inspectLayout(iw, rows, gap)
+	return append(out, insp.render(avail)...)
+}
+
+// inspectLayout is everything above the inspector body, the body itself and
+// the rows it gets.
+func (m Model) inspectLayout(iw, rows int, gap []string) (above []string, insp inspector, avail int) {
 	a, _ := m.Current()
 	tbl := m.accountTable()
 	useTable := tbl.Fits(iw)
@@ -310,9 +370,9 @@ func (m Model) inspect(iw, rows int, gap []string) []string {
 		mid = []string{side.Selector(m.focus == focusProfiles)}
 	}
 	tabs := append(m.tabRows(iw), gap...)
-	insp := m.inspector(a, iw, !useTable)
+	insp = m.inspector(a, iw, !useTable)
 
-	avail := rows - len(mid) - len(tabs)
+	avail = rows - len(mid) - len(tabs)
 	var out []string
 	if useTable {
 		// Table rows yield before inspector content does, but never below the
@@ -323,7 +383,7 @@ func (m Model) inspect(iw, rows int, gap []string) []string {
 	}
 	out = append(out, mid...)
 	out = append(out, tabs...)
-	return append(out, insp.render(avail)...)
+	return out, insp, avail
 }
 
 // divider is the single rule between the table and the tabs, naming the
@@ -385,6 +445,7 @@ func (m Model) tabRows(w int) []string {
 func (m *Model) resetAccount() {
 	m.ov = overviewState{}
 	m.df = defaultsState{}
+	m.usageOff = 0
 }
 
 func plural(n int, unit string) string {

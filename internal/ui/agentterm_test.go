@@ -17,13 +17,13 @@ import (
 )
 
 // runCmds runs a command's non-blocking parts and returns their messages. The
-// frame and input waits are skipped by name: they block on a channel, and one
-// left running would swallow the next chunk a test feeds in.
+// channel waits are skipped by name: running one would block the test or
+// swallow the next event a test feeds in.
 func runCmds(cmd tea.Cmd) []tea.Msg {
 	if cmd == nil {
 		return nil
 	}
-	if name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name(); strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") {
+	if name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name(); strings.Contains(name, "launchOverviewTickCmd") || strings.Contains(name, "launchStopTickCmd") || strings.Contains(name, "handoffTickCmd") || strings.Contains(name, "tickProc") || strings.Contains(name, "tickPRs") || strings.Contains(name, "waitInputCmd") || strings.Contains(name, "waitFramesCmd") || strings.Contains(name, "assistTickCmd") || strings.Contains(name, "privAssistTickCmd") || strings.Contains(name, "gardenLocalTickCmd") || strings.Contains(name, "waitAgentsCmd") || strings.Contains(name, "pgWaitCmd") {
 		return nil
 	}
 	switch msg := cmd().(type) {
@@ -138,7 +138,7 @@ func TestTerminalEnterReattachesAtOffsetAsWriter(t *testing.T) {
 	if e.m.agents.view.state != attachControlling || !e.m.agentTerminalMode() {
 		t.Errorf("state = %v", e.m.agents.view.state)
 	}
-	if !strings.Contains(ansi.Strip(e.m.statusBar()), "FOCUSED · Input goes to agent · Ctrl+] unfocus") {
+	if !strings.Contains(ansi.Strip(e.m.statusBar()), "FOCUSED · ctrl+] unfocus") {
 		t.Errorf("status bar = %q", ansi.Strip(e.m.statusBar()))
 	}
 }
@@ -207,17 +207,17 @@ func TestTerminalObservingOtherSwallowsKeysWithOneHint(t *testing.T) {
 		t.Fatalf("state = %v", v.state)
 	}
 	view := ansi.Strip(e.m.View())
-	for _, want := range []string{"Controlled by another client", "Ctrl+] Unfocus, then Enter", "Ctrl+] Unfocus"} {
+	for _, want := range []string{"Controlled by another client", "Ctrl+] Unfocus, then Enter", "ctrl+] detach"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("View lacks %q:\n%s", want, view)
 		}
 	}
-	if bar := ansi.Strip(e.m.statusBar()); !strings.Contains(bar, "READ-ONLY · Ctrl+] unfocus") {
+	if bar := ansi.Strip(e.m.statusBar()); !strings.Contains(bar, "READ-ONLY · ctrl+] unfocus") {
 		t.Errorf("status bar = %q", bar)
 	}
 	e.typeKeys(t, runes("q"))
-	if e.m.status != observingOtherNote {
-		t.Errorf("status = %q, want the one-time note", e.m.status)
+	if e.m.status != "" {
+		t.Errorf("status = %q, want the one-time note to expire", e.m.status)
 	}
 	e.m.status = ""
 	e.typeKeys(t, runes("q"), tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -376,7 +376,7 @@ func TestTerminalLayoutFitsNarrowAndWide(t *testing.T) {
 		e, _ := terminalEnv(t)
 		e.send(t, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		view := ansi.Strip(e.m.View())
-		if !strings.Contains(view, "FOCUSED") || !strings.Contains(view, "Ctrl+] Unfocus") {
+		if !strings.Contains(view, "FOCUSED") || !strings.Contains(view, "ctrl+] detach") {
 			if size[0] >= 80 {
 				t.Errorf("%v: View lacks the hint row or usage hint:\n%s", size, view)
 			}

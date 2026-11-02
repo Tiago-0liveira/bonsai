@@ -63,7 +63,7 @@ func (m Model) addKey(k tea.KeyMsg) (Model, tea.Cmd) {
 	case stageProvider:
 		switch key {
 		case "esc":
-			if m.selected == "" {
+			if m.selected == "" && !m.embedded {
 				return m, emit(CloseMsg{})
 			}
 			a.active = false

@@ -146,7 +146,7 @@ func TestAgentsEmptyState(t *testing.T) {
 	for _, w := range []int{50, 80, 120} {
 		out := e.pane(w, 20)
 		assertBox(t, out, w, 20)
-		for _, want := range []string{"No running agents", "No active agents", "[n] New agent", "[u] View account usage", "feat-a"} {
+		for _, want := range []string{"No sessions yet", "[n] New agent", "[u] View account usage", "feat-a"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("w=%d missing %q:\n%s", w, want, out)
 			}
@@ -155,7 +155,7 @@ func TestAgentsEmptyState(t *testing.T) {
 }
 
 func TestAgentsStripOverflow(t *testing.T) {
-	for _, w := range []int{80, 120, 200} {
+	for _, w := range []int{80, 120, 220} {
 		t.Run(fmt.Sprint(w), func(t *testing.T) {
 			e := newAgentsEnv(t)
 			manySessions(e, 9)
@@ -167,8 +167,8 @@ func TestAgentsStripOverflow(t *testing.T) {
 			if w <= 120 && !strings.Contains(first, "more]") {
 				t.Errorf("expected overflow marker at %d: %q", w, first)
 			}
-			if w == 200 && strings.Contains(first, "more]") {
-				t.Errorf("200 cells should fit 9 labels: %q", first)
+			if w == 220 && strings.Contains(first, "more]") {
+				t.Errorf("220 cells should fit 9 labels: %q", first)
 			}
 			// Selecting the last session must keep its label visible.
 			e.key(t, "9")
@@ -176,7 +176,7 @@ func TestAgentsStripOverflow(t *testing.T) {
 			if !strings.Contains(first, "[9 ") {
 				t.Errorf("selected label scrolled out: %q", first)
 			}
-			if !strings.Contains(first, "a: All") {
+			if !strings.Contains(first, "a sessions") {
 				t.Errorf("hints dropped: %q", first)
 			}
 		})
@@ -203,9 +203,9 @@ func TestAgentsCompactBreakpoints(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{120, []string{"Sessions: ", "n: New", "Claude · work", "│ ● Running", "5h ███████░░░ left", "Week 41% left", "u: Usage"}, nil},
-		{70, []string{"[1 ✹ Auth fix]", "a: All", "work · 5h ███████░░░ · W 41%", "u: Usage"}, []string{"Sessions:", "n: New", "left"}},
-		{50, []string{"Agents (g) │", "[3/3]", "a: Switch"}, []string{"u: Usage", "5h"}},
+		{120, []string{"Sessions ", "n new", "Claude · work", "│ ● Running", "5h ███████░░░ left", "Week 41% left", "u usage"}, nil},
+		{70, []string{"[1 ✹ Auth fix]", "a sessions", "work · 5h ███████░░░ · W 41%", "u usage"}, []string{"Sessions:", "n new", "left"}},
+		{50, []string{"Agents (g) │", "[3/3]", "a sessions"}, []string{"u usage", "5h"}},
 	}
 	for _, tc := range tests {
 		t.Run(fmt.Sprint(tc.w), func(t *testing.T) {
@@ -310,8 +310,8 @@ func TestAgentsPicker(t *testing.T) {
 	)
 	e.relist(t)
 	e.openTab(t)
-	if row := e.rowOf("feat-a"); !strings.HasSuffix(strings.TrimRight(row, " "), "!") {
-		t.Fatalf("setup: failed marker missing: %q", row)
+	if row := e.rowOf("feat-a"); !strings.HasSuffix(strings.TrimRight(row, " "), "✹1 ❃1") {
+		t.Fatalf("setup: active provider counts missing: %q", row)
 	}
 
 	e.m.width, e.m.height = 140, 40
@@ -363,7 +363,7 @@ func TestAgentsPicker(t *testing.T) {
 	if !e.m.agents.ack["f1"] {
 		t.Error("picking a failed session acknowledges it")
 	}
-	if row := e.rowOf("feat-a"); strings.Contains(row, "!") {
+	if row := e.rowOf("feat-a"); strings.Contains(row, "✗1") {
 		t.Errorf("! should clear after ack: %q", row)
 	}
 	if first := strings.Split(e.pane(120, 20), "\n")[0]; !strings.Contains(first, "Broken run") {
@@ -599,22 +599,22 @@ func TestAgentsWideLayoutRows(t *testing.T) {
 	t.Run("title and blank row when the terminal keeps 20 rows", func(t *testing.T) {
 		rows := strings.Split(e.pane(120, 27), "\n")
 		assertBox(t, strings.Join(rows, "\n"), 120, 27)
-		if !strings.HasPrefix(rows[0], "AGENTS · feat-a") || strings.TrimSpace(rows[1]) != "" {
+		if !strings.HasPrefix(rows[0], "Agents · feat-a") || strings.TrimSpace(rows[1]) != "" {
 			t.Errorf("title rows: %q / %q", rows[0], rows[1])
 		}
-		if !strings.HasPrefix(rows[2], "Sessions: ") || !strings.HasPrefix(rows[3], "──") {
+		if !strings.HasPrefix(rows[2], "Sessions ") || !strings.HasPrefix(rows[3], "──") {
 			t.Errorf("strip then rule expected: %q / %q", rows[2], rows[3])
 		}
 		if !strings.Contains(rows[4], "Codex · work") || !strings.Contains(rows[4], "● Running") {
 			t.Errorf("header 1: %q", rows[4])
 		}
-		if !strings.Contains(rows[5], "u: Usage") || !strings.HasPrefix(rows[6], "──") {
+		if !strings.Contains(rows[5], "u usage") || !strings.HasPrefix(rows[6], "──") {
 			t.Errorf("header 2 then rule expected: %q / %q", rows[5], rows[6])
 		}
 	})
 	t.Run("title drops first when the terminal would get under 20 rows", func(t *testing.T) {
 		rows := strings.Split(e.pane(120, 26), "\n")
-		if !strings.HasPrefix(rows[0], "Sessions: ") || strings.Contains(strings.Join(rows, "\n"), "AGENTS ·") {
+		if !strings.HasPrefix(rows[0], "Sessions ") || strings.Contains(strings.Join(rows, "\n"), "AGENTS ·") {
 			t.Errorf("title should be gone:\n%s", strings.Join(rows, "\n"))
 		}
 		if !strings.HasPrefix(rows[1], "──") {
@@ -658,7 +658,7 @@ func TestAgentsPickerEmptyAndActions(t *testing.T) {
 func TestAgentsStatusBar(t *testing.T) {
 	e := newAgentsEnv(t)
 	e.openTab(t)
-	if got := ansi.Strip(e.m.contextHelp()); got != "a all · m profiles · u usage · n new · tab focus · ? keys" {
+	if got := ansi.Strip(e.m.contextHelp()); got != "a sessions · m accounts · u usage · n new · tab focus · ? keys" {
 		t.Errorf("agents tab hints = %q", got)
 	}
 	e.m.rightTab = tabLog

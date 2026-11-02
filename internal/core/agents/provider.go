@@ -127,6 +127,16 @@ type LaunchOptions struct {
 	Effort         string // provider-defined level, from the chosen model's Efforts
 	Sandbox        string // Codex: read-only|workspace-write|danger-full-access|bypass
 	Approval       string // Codex: untrusted|on-request|never
+	// ReadOnly asks for a session the provider's CLI itself keeps from changing
+	// files or running anything outside a read-only sandbox (see ReadOnlyEnforcer).
+	// It cannot be combined with PermissionMode, Sandbox, Approval or FullAccess,
+	// and a provider that cannot enforce it refuses the launch.
+	ReadOnly bool
+	// PlanFile is the one absolute file a ReadOnly session may still write: a Garden plan or review report for
+	// Bonsai to read. It is only meaningful with ReadOnly, only a provider whose ReadOnlySupport.PlanFile is
+	// true accepts it, and that provider confines the write to exactly this path below the model. It is never
+	// recorded in session options.
+	PlanFile string
 }
 
 // Values returns the accepted launch choices other than the model, keyed by
@@ -140,6 +150,9 @@ func (o LaunchOptions) Values() map[string]string {
 			values[key] = value
 		}
 	}
+	if o.ReadOnly {
+		values["read_only"] = "true"
+	}
 	if o.FullAccess != nil {
 		values["full_access"] = strconv.FormatBool(*o.FullAccess)
 	}
@@ -149,11 +162,38 @@ func (o LaunchOptions) Values() map[string]string {
 	return values
 }
 
+// LaunchOptionsFromValues is the inverse of Values: it rebuilds the launch
+// choices recorded for a session. Prompt and PlanFile are never recorded, so
+// they stay empty. Unknown keys and an unparsable full_access are ignored.
+func LaunchOptionsFromValues(model, name string, values map[string]string) LaunchOptions {
+	o := LaunchOptions{
+		Model:          model,
+		DisplayName:    name,
+		PermissionMode: values["permission_mode"],
+		Effort:         values["effort"],
+		Sandbox:        values["sandbox"],
+		Approval:       values["approval"],
+	}
+	if read, err := strconv.ParseBool(values["read_only"]); err == nil {
+		o.ReadOnly = read
+	}
+	if full, err := strconv.ParseBool(values["full_access"]); err == nil {
+		o.FullAccess = &full
+	}
+	return o
+}
+
 type PrepareSessionRequest struct {
 	Account Account
 	Session Session
 	Args    []string
 	Launch  LaunchOptions
+	// Activity, when set, asks the provider to report the session's activity
+	// through hooks it installs for this session only.
+	Activity *ActivityRequest
+	// Resume, when non-nil, continues an earlier conversation instead of
+	// starting a fresh one; the provider must then ignore Launch.Prompt.
+	Resume *ResumeTarget
 }
 
 type PreparedSession struct {

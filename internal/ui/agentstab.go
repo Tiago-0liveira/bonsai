@@ -13,7 +13,6 @@ import (
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/components/modals"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/usagestore"
 )
 
@@ -50,8 +49,13 @@ func (m *Model) fetchUsage(id agents.AccountID, lim usagestore.Limiter) tea.Cmd 
 func (m Model) stripSessions(path string) []agentsapi.Session {
 	var active []agentsapi.Session
 	for _, i := range m.agents.byTree[path] {
-		if s := m.agents.sessions[i]; s.Active() {
+		if s := m.agents.sessions[i]; s.Active() || !m.agents.ack[s.ID] {
 			active = append(active, s)
+		}
+	}
+	if len(active) == 0 {
+		for _, i := range m.agents.byTree[path] {
+			active = append(active, m.agents.sessions[i])
 		}
 	}
 	sort.SliceStable(active, func(a, b int) bool { return active[a].CreatedAt.Before(active[b].CreatedAt) })
@@ -188,20 +192,47 @@ func (m Model) openAgentsTab() (tea.Model, tea.Cmd) {
 func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	s := msg.String()
 	switch {
+	case m.layoutKind == LayoutRedesign && key.Matches(msg, m.keys.AgentPlayground):
+		nm, cmd := m.worktreesPlayground()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentRename):
+		nm, cmd := m.openRenameSelected()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentStopAll):
+		nm, cmd := m.askStopAllAgents()
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentAllRepo):
+		nm, cmd := m.openRepoSessions()
+		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentAll):
 		if !m.agents.active() {
-			m.status = unsupportedNotice
+			m.setStatus(unsupportedNotice, false)
 			return true, m, nil
 		}
 		nm, cmd := m.openAgentsPicker()
 		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentResume):
+		cmd := m.resumeSelectedAgent()
+		return true, m, cmd
 	case key.Matches(msg, m.keys.AgentAttach):
+		if wt, ok := m.selectedWorktree(); ok {
+			if ss, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && interrupted(ss.Summary) {
+				cmd := m.resumeSelectedAgent()
+				return true, m, cmd
+			}
+		}
 		// A failed or dropped attach retries first; otherwise enter takes control.
 		if cmd := m.retryAgentAttach(); cmd != nil {
 			return true, m, cmd
 		}
 		handled, cmd := m.enterTerminalMode()
 		return handled, m, cmd
+	case key.Matches(msg, m.keys.AgentQuickNew):
+		nm, cmd := m.openAgentTask(false)
+		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentFork):
+		nm, cmd := m.openAgentTask(true)
+		return true, nm, cmd
 	case key.Matches(msg, m.keys.AgentNew):
 		nm, cmd := m.openAgentLaunch()
 		return true, nm, cmd
@@ -251,23 +282,23 @@ func (m Model) openAgentsPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	path := cleanPath(wt.Path)
-	// Opening the list is seeing it: failed sessions of this worktree list
-	// their ✗ there, so the worktree row's "!" has done its job.
+	// Opening history acknowledges the ended sessions shown there.
 	m.ackFailedAgents(path)
 	m.leaveAgentTerminal()
 	p := newSessionsPicker(branchOf(wt), m.agentGlyphsASCII())
 	p.path = path
+	p.keys = m.keys
 	p.setSessions(m.orderedSessions(path))
+	m, peek := m.peekPicker(&p)
 	m.setAgentOverlay(agentOverlay{sessions: &p})
-	return m, nil
+	return m, peek
 }
 
-// ackFailedAgents marks the failed sessions of a worktree as seen and refreshes
-// the "!" badges.
+// ackFailedAgents marks ended sessions as seen and refreshes their counts.
 func (m *Model) ackFailedAgents(path string) {
 	changed := false
 	for _, i := range m.agents.byTree[path] {
-		if s := m.agents.sessions[i]; s.State == "failed" && !m.agents.ack[s.ID] {
+		if s := m.agents.sessions[i]; !s.Active() && !m.agents.ack[s.ID] {
 			m.agents.ack[s.ID] = true
 			changed = true
 		}
@@ -282,6 +313,20 @@ func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
 	if path == "" {
 		return m, nil
 	}
+	if wt, ok := m.selectedWorktree(); !ok || cleanPath(wt.Path) != cleanPath(path) {
+		if !m.list.SelectByPath(path) {
+			m.list, _ = m.list.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			if !m.list.SelectByPath(path) {
+				m.setStatus("agents: worktree is hidden by the current filter or no longer exists", false)
+				return m, nil
+			}
+		}
+	}
+	m.rightTab = tabAgents
+	m.focus = focusTerminal
+	m.list.Blur()
+	m.term.Focus()
+	m.layout()
 	m.agents.selected[cleanPath(path)] = id
 	m.agents.ack[id] = true
 	m.refreshAgentBadges()
@@ -289,19 +334,17 @@ func (m Model) onAgentsPick(path, id string) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// stateMarkStyled is the picker's state mark: running green, exited dim,
-// failed red.
-func stateMarkStyled(state string) string {
-	mark, c := "●", theme.Current.Success
-	switch state {
+// stateMarkStyled is the picker's status mark, colored like the status:
+// exited gets a check, failed a cross, every live status a dot.
+func stateMarkStyled(key string) string {
+	mark := "●"
+	switch key {
 	case "exited":
-		mark, c = "✓", theme.Current.Dim
+		mark = "✓"
 	case "failed":
-		mark, c = "✗", theme.Current.Danger
-	case "starting", "stopping":
-		c = theme.Current.Warning
+		mark = "✗"
 	}
-	return lipgloss.NewStyle().Foreground(c).Render(mark)
+	return lipgloss.NewStyle().Foreground(statusColor(key)).Render(mark)
 }
 
 func branchOf(wt git.Worktree) string {
@@ -312,3 +355,77 @@ func branchOf(wt git.Worktree) string {
 }
 
 func cleanPath(p string) string { return filepath.Clean(p) }
+
+// openRepoSessions uses the same ordered history and filter as the local picker.
+func (m Model) openRepoSessions() (tea.Model, tea.Cmd) {
+	if !m.agents.active() {
+		m.setStatus(unsupportedNotice, false)
+		return m, nil
+	}
+	m.leaveAgentTerminal()
+	p := newSessionsPicker("Repository", m.agentGlyphsASCII())
+	p.repo, p.keys = true, m.keys
+	m.populateRepoPicker(&p)
+	for _, ss := range p.sessions {
+		if !ss.Active() {
+			m.agents.ack[ss.ID] = true
+		}
+	}
+	m.refreshAgentBadges()
+	m, peek := m.peekPicker(&p)
+	m.setAgentOverlay(agentOverlay{sessions: &p})
+	return m, peek
+}
+
+func (m Model) nextAgentAttention() (tea.Model, tea.Cmd) {
+	if !m.agents.active() {
+		m.setStatus("No sessions need attention", false)
+		return m, nil
+	}
+	var candidates []sessionsPickMsg
+	for _, wt := range m.worktrees {
+		path := cleanPath(wt.Path)
+		for _, s := range m.orderedSessions(path) {
+			if m.sessionNeedsAttention(s) {
+				candidates = append(candidates, sessionsPickMsg{path, s.ID})
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		m.setStatus("No sessions need attention", false)
+		return m, nil
+	}
+	next := 0
+	for i, c := range candidates {
+		if c.id == m.agents.attentionID {
+			next = (i + 1) % len(candidates)
+			break
+		}
+	}
+	c := candidates[next]
+	m.agents.attentionID = c.id
+	return m.onAgentsPick(c.path, c.id)
+}
+
+func (m Model) populateRepoPicker(p *sessionsPicker) {
+	p.paths, p.branches = map[string]string{}, map[string]string{}
+	for _, s := range m.agents.sessions {
+		p.paths[s.ID] = cleanPath(s.WorkDir)
+		p.branches[s.ID] = filepath.Base(s.WorkDir)
+	}
+	for _, wt := range m.worktrees {
+		for _, i := range m.agents.byTree[cleanPath(wt.Path)] {
+			s := m.agents.sessions[i]
+			p.paths[s.ID] = cleanPath(wt.Path)
+			p.branches[s.ID] = branchOf(wt)
+		}
+	}
+	list := append([]agentsapi.Session(nil), m.agents.sessions...)
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].Active() != list[j].Active() {
+			return list[i].Active()
+		}
+		return list[i].CreatedAt.After(list[j].CreatedAt)
+	})
+	p.setSessions(list)
+}

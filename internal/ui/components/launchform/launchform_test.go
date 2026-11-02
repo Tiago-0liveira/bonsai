@@ -374,3 +374,13 @@ func TestAtLastTracksCursor(t *testing.T) {
 		t.Fatal("a single field is the last one")
 	}
 }
+
+func TestStoredValueTheProviderNoLongerOffersIsNamed(t *testing.T) {
+	f := New(claudeProfile(), testModels(), map[string]string{"model": "retired-model"}, false)
+	if out := ansi.Strip(f.View(60, 20)); !strings.Contains(out, "retired-model (unlisted)") {
+		t.Errorf("unlisted value passes as a normal choice:\n%s", out)
+	}
+	if f.Dirty() {
+		t.Error("showing an unlisted value must not make a draft")
+	}
+}

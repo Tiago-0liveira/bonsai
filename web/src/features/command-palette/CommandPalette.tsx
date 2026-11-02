@@ -20,6 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useBonsaiStore } from '../../stores/bonsai'
+import { agentDisplayStatus } from '../../lib/agentStatus'
 
 export function CommandPalette() {
   const open = useBonsaiStore((state) => state.paletteOpen)
@@ -73,7 +74,7 @@ export function CommandPalette() {
             <CommandItem icon={GitBranch} label="Create worktree" onSelect={() => run(() => setWorktreeDialogOpen(true))} />
             <CommandItem icon={Bot} label="Start agent" onSelect={() => run(() => openAgent(selection.type === 'worktree' ? selection.id : agent?.worktreeId))} />
             <CommandItem icon={Play} label="Start process" onSelect={() => run(() => openProcess(selection.type === 'worktree' ? selection.id : agent?.worktreeId ?? process?.worktreeId))} />
-            <CommandItem icon={Square} label="Stop agent" disabled={!isLiveAgent(agent) || agent?.state === 'finished'} onSelect={() => run(() => setAgentState(agent!.id, 'finished'))} />
+            <CommandItem icon={Square} label="Stop agent" hint={agent && isLiveAgent(agent) ? agentDisplayStatus(agent).label : undefined} disabled={!isLiveAgent(agent) || agent?.state === 'finished'} onSelect={() => run(() => setAgentState(agent!.id, 'finished'))} />
             <CommandItem icon={TerminalSquare} label="Open terminal" disabled={!isLiveAgent(agent)} onSelect={() => run(() => openTerminal(agent!.id))} />
           </Command.Group>
 

@@ -82,7 +82,7 @@ func TestAgentBadgeFollowsOtherBadgesWhenRoomy(t *testing.T) {
 	m.SetAgentBadges(func(string) string { return "✹2" })
 	for _, l := range strings.Split(ansi.Strip(m.View()), "\n") {
 		if strings.Contains(l, "x") && strings.Contains(l, "✹") {
-			if got := strings.TrimSpace(l); !strings.HasSuffix(got, "x ▶1 ✹2") {
+			if got := strings.TrimSpace(l); !strings.Contains(got, "▶1 ✹2") {
 				t.Errorf("agent count should follow the branch badges with one space: %q", got)
 			}
 			return

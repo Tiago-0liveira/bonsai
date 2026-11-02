@@ -33,7 +33,9 @@ import { useBonsaiStore } from '../../../stores/bonsai'
 import { MenuContent, MenuItem, MenuSeparator } from '../../../components/ui/ContextMenu'
 import { WorktreeMenuItems } from './WorktreeMenu'
 import { ProviderBadge } from '../../../components/ui/ProviderBadge'
-import type { AgentProvider, AgentState, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
+import { AgentStatusDot, NeedsInputChip } from '../../../components/ui/AgentStatus'
+import { agentDisplayStatus } from '../../../lib/agentStatus'
+import type { AgentProvider, CiStatus, DefaultBranchInfo, Health, ProcessLifecycleStatus, PrStatus } from '../../../types'
 
 export interface StackItemData {
   id: string
@@ -46,6 +48,8 @@ export interface StackItemData {
   connectionLabel?: string
   dirtyFiles?: number
   hasRunningAgent: boolean
+  /** Agents of this worktree that wait for the user. */
+  needsInput?: number
   processCount?: number
 }
 
@@ -65,7 +69,7 @@ export interface BonsaiGraphData extends Record<string, unknown> {
   title: string
   subtitle?: string
   health?: Health
-  agentState?: AgentState
+  needsInput?: number
   provider?: string
   model?: string
   reasoningEffort?: string
@@ -96,12 +100,6 @@ export interface BonsaiGraphData extends Record<string, unknown> {
 }
 
 const UNAVAILABLE = 'unavailable'
-
-const agentDot: Record<AgentState, string> = {
-  running: 'bg-accent-solid shadow-[0_0_0_3px_rgb(var(--accent-solid)/.20)]',
-  idle: 'bg-warn-solid shadow-[0_0_0_3px_rgb(var(--warn-solid)/.25)]',
-  finished: 'bg-muted-2 shadow-[0_0_0_3px_rgb(var(--muted-2)/.15)]',
-}
 
 function CiBadge({ status, failed = 0, compact = false, label = 'CI', iconOnly = false, stale = false }: { status?: CiStatus; failed?: number; compact?: boolean; label?: string; iconOnly?: boolean; stale?: boolean }) {
   if (!status) return null
@@ -236,6 +234,7 @@ function StackCard({ data }: { data: BonsaiGraphData }) {
       <div>
         {(data.stackItems ?? []).map((item) => (
           <div key={item.id} className="flex items-center gap-2 border-b border-border-subtle px-3 py-2 last:border-0">
+            <NeedsInputChip count={item.needsInput ?? 0} />
             <span className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (item.hasRunningAgent ? 'bg-[rgb(var(--accent-solid))] shadow-[0_0_7px_rgb(var(--accent-solid)/.8)]' : 'bg-[rgb(var(--muted-2))]')} title={item.hasRunningAgent ? 'Agent running' : 'No agent running'} />
             <button
               type="button"
@@ -290,7 +289,8 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
   if (data.kind === 'stack') return <StackCard data={data} />
 
   const shellWidth = data.kind === 'agent' ? 'w-[153px] h-[54px] flex flex-col px-2 pb-[5px] pt-[7px]' : data.kind === 'project' ? 'w-[370px] px-3.5 py-3' : 'w-[300px]'
-  const waiting = data.kind === 'agent' && data.agentState === 'idle'
+  const status = agent && agentDisplayStatus(agent)
+  const waiting = status?.key === 'waiting' ? status : undefined
   const hubCiRunning = data.kind === 'project' && !!data.ciSummary?.includes('running')
   const hubCiFailed = data.kind === 'project' && !!data.ciSummary?.includes('failed')
   const hubCiTone = hubCiFailed ? 'bg-danger-solid/28 text-danger' : hubCiRunning ? 'bg-accent/12 text-accent' : 'bg-ok/10 text-ok'
@@ -364,6 +364,7 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
                 <div className="flex h-5 items-center gap-1.5">
                   <GitBranch size={13} className="shrink-0 text-muted-2" />
                   <span title={data.title} className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-text">{data.title}</span>
+                  <NeedsInputChip count={data.needsInput ?? 0} />
                   {data.connectionLabel && <span className="shrink-0 font-mono text-[10px] text-warn">{data.connectionLabel}</span>}
                 </div>
                 <div className="mt-1.5 flex h-5 items-center gap-1.5">
@@ -431,10 +432,10 @@ const NodeShell = memo(function NodeShell({ data, selected }: { data: BonsaiGrap
               <div className="flex h-5 shrink-0 items-center gap-1.5">
                 <ProviderBadge provider={(agent?.provider ?? data.provider) as AgentProvider} size={18} />
                 <span title={data.title} className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-text">{data.title}</span>
-                <span aria-hidden className={'h-1.5 w-1.5 shrink-0 rounded-full ' + agentDot[data.agentState ?? 'finished']} />
+                {agent && <AgentStatusDot agent={agent} />}
               </div>
               <div className="flex h-5 shrink-0 items-center gap-[3px]">
-                <span title={data.task} className={'min-w-0 flex-1 truncate font-mono text-[9.5px] ' + (waiting ? 'text-warn' : 'text-muted-2')}>{data.task}</span>
+                <span title={waiting ? waiting.description : data.task} className={'min-w-0 flex-1 truncate font-mono text-[9.5px] ' + (waiting ? 'font-semibold text-warn' : 'text-muted-2')}>{waiting ? waiting.description : data.task}</span>
                 <div className="nodrag nopan flex shrink-0" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
                   <button
                     type="button"

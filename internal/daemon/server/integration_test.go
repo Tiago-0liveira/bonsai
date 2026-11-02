@@ -1588,7 +1588,7 @@ func TestActiveCountReconcilesExitedOrphan(t *testing.T) {
 
 	coreexec.KillPID(orphan.PID)
 	if !waitFor(t, 3*time.Second, func() bool {
-		return !procstore.ProcessMatches(orphan.PID, orphan.StartedAt, orphan.Worktree)
+		return !procstore.ProcessMatches(orphan.PID, orphan.StartedAt, orphan.StartTicks, orphan.BootID, orphan.Worktree)
 	}) {
 		t.Fatalf("orphan PID %d did not exit", orphan.PID)
 	}

@@ -235,6 +235,19 @@ func TestDefaultsModelErrorKeepsFallback(t *testing.T) {
 	}
 }
 
+// The list carries the provider's read-only verdict, so the Garden planner can show
+// why an account is unavailable instead of starting it unrestricted.
+func TestListCarriesReadOnlyVerdict(t *testing.T) {
+	f := newFixture(t)
+	list, err := f.acc.List(context.Background())
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if list[0].ReadOnly.Supported || list[0].ReadOnly.Reason == "" {
+		t.Fatalf("a provider without enforcement must be unsupported with a reason: %+v", list[0].ReadOnly)
+	}
+}
+
 func TestRemoveRefusedWhileRunning(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

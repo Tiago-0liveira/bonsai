@@ -36,9 +36,13 @@ func (m Model) guard(act func(Model) (Model, tea.Cmd)) (Model, tea.Cmd) {
 		cancel:  "Keep editing",
 		confirm: "Discard",
 		then: func(m Model) (Model, tea.Cmd) {
-			// The edits go with the form: forget them before acting so the
-			// action does not ask again.
+			// The edits go with the form: rebuild it clean from the saved
+			// values, so the action does not ask again and backing out of it
+			// (cancelling Add) still shows editable defaults.
 			m.df = defaultsState{}
+			if m.defaultsErr == "" {
+				m = m.onDefaults()
+			}
 			return act(m)
 		},
 	}

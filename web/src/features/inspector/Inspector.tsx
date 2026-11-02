@@ -7,7 +7,7 @@ import * as ScrollArea from '@radix-ui/react-scroll-area'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useRouter } from '@tanstack/react-router'
 import {
-  Archive, Bot, Check, CheckCircle2, ChevronRight, CircleDot, Clock3, Copy,
+  Archive, Bot, CheckCircle2, ChevronRight, CircleDot, Clock3, Copy,
   ExternalLink, FileDiff, FolderOpen, GitBranch, GitPullRequest, History, Layers3, LoaderCircle,
   Play, Plus, RotateCcw, Save, SlidersHorizontal, Square, SquareCode, TerminalSquare, Trash2, Undo2,
   AlertCircle, XCircle, type LucideIcon,
@@ -19,6 +19,8 @@ import { useProjectWorktrees, useProjectAgents, useProjectProcesses, useProjectP
 import { FeatureBoundary } from '../../app/chunkRecovery'
 import { ProviderBadge } from '../../components/ui/ProviderBadge'
 import { ProviderLogo } from '../../components/ui/ProviderLogo'
+import { AgentStatusBadge, AgentStatusDot, NeedsInputChip } from '../../components/ui/AgentStatus'
+import { countNeedsInput } from '../../lib/agentStatus'
 import { ProcessActions } from '../terminal/ProcessActions'
 import type { Agent, AgentProvider, Process, PullRequest, SyncFreshnessState, Worktree } from '../../types'
 
@@ -83,9 +85,9 @@ function QuickButton({ icon: Icon, label, onClick, danger = false, primary = fal
 
 const UNTRACKED_COUNT_HINT = 'An untracked folder counts as one entry. Open the worktree for the full file list.'
 
-function Metric({ value, label, icon: Icon, tone = '', title }: { value: number | string; label: string; icon: LucideIcon; tone?: string; title?: string }) {
+function Metric({ value, label, icon: Icon, tone = '', title, extra }: { value: number | string; label: string; icon: LucideIcon; tone?: string; title?: string; extra?: ReactNode }) {
   return <div className="min-w-0 rounded-[10px] border border-border bg-panel-2 px-2.5 py-2" title={title}>
-    <div className={'flex items-center gap-1.5 font-mono text-[13px] font-semibold tabular-nums ' + (tone || 'text-text')}><Icon size={12} className="opacity-70" />{value}</div>
+    <div className={'flex items-center gap-1.5 font-mono text-[13px] font-semibold tabular-nums ' + (tone || 'text-text')}><Icon size={12} className="opacity-70" />{value}{extra}</div>
     <div className="mt-1 font-mono text-[9.5px] uppercase tracking-[.06em] text-muted-2">{label}</div>
   </div>
 }
@@ -184,11 +186,7 @@ function RuntimeCard({ processes, agents, onProcess, onAgent, onStartProcess, on
       {agents.length ? agents.map((item) => <button type="button" key={item.id} onClick={() => onAgent(item.id)} className={row}>
         <ProviderBadge provider={item.provider as AgentProvider} size={20} />
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-text">{item.name}</span>
-        {item.state === 'running'
-          ? <span aria-label="running" className="h-2 w-2 shrink-0 rounded-full bg-accent-solid shadow-[0_0_0_3px_rgb(var(--accent-solid)/.2)]" />
-          : item.state === 'idle'
-            ? <span aria-label="waiting" className="h-2 w-2 shrink-0 rounded-full bg-warn-solid shadow-[0_0_0_3px_rgb(var(--warn-solid)/.25)]" />
-            : <Check size={13} aria-label="finished" className="shrink-0 text-muted-2" />}
+        <AgentStatusDot agent={item} className="!h-2 !w-2" />
       </button>) : <p className="py-1.5 text-[12px] text-muted-2">No agent sessions.</p>}
     </div>
   </div>
@@ -198,7 +196,7 @@ function AgentRow({ agent, onClick }: { agent: Agent; onClick: () => void }) {
   return <button onClick={onClick} className="bonsai-focus inspector-link">
     <span className="inspector-avatar text-text"><ProviderLogo provider={agent.provider} size={14} /></span>
     <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{agent.name}</span><span className="mt-0.5 block truncate text-[10px] text-[rgb(var(--muted))]">{agent.task}</span></span>
-    <span className="shrink-0 text-right text-[9px] text-[rgb(var(--muted))]"><span className="block capitalize">{agent.lifecycleState ?? agent.state}</span><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
+    <span className="flex shrink-0 flex-col items-end text-[9px] text-[rgb(var(--muted))]"><AgentStatusBadge agent={agent} /><span className="mt-0.5 block text-[rgb(var(--muted-2))]">{agent.runtime}</span></span>
   </button>
 }
 
@@ -281,7 +279,7 @@ export function Inspector() {
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Metric value={projectWorktrees.length} label="Branches" icon={GitBranch} />
-                <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-accent" />
+                <Metric value={projectAgents.filter((item) => item.state === 'running').length} label="Running" icon={Bot} tone="text-accent" extra={<NeedsInputChip count={countNeedsInput(projectAgents)} />} />
                 <Metric value={projectWorktrees.reduce((total, item) => total + item.dirtyFiles, 0)} label="Changed files" icon={FileDiff} tone="text-warn" title={UNTRACKED_COUNT_HINT} />
               </div>
               <Section title="Needs attention" meta={<span className="inspector-count">{attention.length}</span>}>
@@ -400,7 +398,7 @@ export function Inspector() {
             </>}
             {agent && <>
               <div className="inspector-hero">
-                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><ProviderLogo provider={agent.provider} size={13} className="shrink-0 text-text" />{agent.provider}<span className={'ml-auto flex items-center gap-1.5 capitalize ' + (agent.state === 'running' ? 'text-[rgb(var(--accent))]' : '')}><span className="h-1.5 w-1.5 rounded-full bg-current" />{agent.lifecycleState ?? agent.state}</span></div>
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-[rgb(var(--muted))]"><ProviderLogo provider={agent.provider} size={13} className="shrink-0 text-text" />{agent.provider}<AgentStatusBadge agent={agent} className="ml-auto" /></div>
                 <h2 className="text-[16px] font-semibold tracking-tight">{agent.name}</h2>
                 <p className="mt-2 text-[12px] leading-5 text-[rgb(var(--muted))]">{agent.task}</p>
                 <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[rgb(var(--muted))]"><Clock3 size={12} />{isLiveAgent(agent) ? 'API session' : `${agent.runtime} runtime`}<span className="ml-auto capitalize">{presentation(agent)}</span></div>

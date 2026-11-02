@@ -255,3 +255,222 @@ func TestStreamTakeSendsWriterFrames(t *testing.T) {
 		t.Fatal("the next attachment after a read-only one did not write")
 	}
 }
+
+type hooksProvider struct {
+	agents.Provider
+	events *[]string
+}
+
+func (p hooksProvider) PrepareSession(_ context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", `printf HELLO`}, Dir: r.Session.WorkDir}, nil
+}
+
+func (p hooksProvider) FinalizeSession(context.Context, agents.FinalizeSessionRequest) error {
+	*p.events = append(*p.events, "finalize")
+	return nil
+}
+
+func (p hooksProvider) Label() string { return "Hooks" }
+
+func (p hooksProvider) ID() agents.ProviderID { return "hooks" }
+
+func TestRunSessionHooksSeeOutputAndEndBeforeFinalize(t *testing.T) {
+	accounts, err := agents.NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := agents.NewAccountID()
+	account := agents.Account{ID: id, Provider: "hooks", Name: "fixture"}
+	if err := accounts.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := agents.NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := sessions.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []string
+	var seen strings.Builder
+	stream := NewStream[Summary](80, 24)
+	RunSession(context.Background(), stream, hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, nil,
+		func(change func(*Summary) error) error { return change(&Summary{}) },
+		RunHooks{
+			Output: func(p []byte) { seen.Write(p) },
+			Ending: func() { events = append(events, "ending") },
+		})
+	if seen.String() != "HELLO" {
+		t.Fatalf("output hook saw %q", seen.String())
+	}
+	if strings.Join(events, ",") != "ending,finalize" {
+		t.Fatalf("order %v", events)
+	}
+	// The zero value is today's behavior.
+	RunSession(context.Background(), NewStream[Summary](80, 24), hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, nil, func(change func(*Summary) error) error { return change(&Summary{}) }, RunHooks{})
+}
+
+type resumeProvider struct {
+	hooksProvider
+	resume     chan *agents.ResumeTarget
+	retain     bool
+	retained   int
+	executable string
+	prepareErr error
+	finalErr   error
+	retainErr  error
+}
+
+func (p *resumeProvider) PrepareSession(ctx context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	if p.prepareErr != nil {
+		return agents.PreparedSession{}, p.prepareErr
+	}
+	if p.resume != nil {
+		p.resume <- r.Resume
+	}
+	prepared, err := p.hooksProvider.PrepareSession(ctx, r)
+	if p.executable != "" {
+		prepared.Executable = p.executable
+	}
+	return prepared, err
+}
+
+func (p *resumeProvider) RetainRuntime(context.Context, agents.Account, agents.Session) (bool, error) {
+	p.retained++
+	return p.retain, p.retainErr
+}
+
+func (p *resumeProvider) FinalizeSession(ctx context.Context, r agents.FinalizeSessionRequest) error {
+	_ = p.hooksProvider.FinalizeSession(ctx, r)
+	return p.finalErr
+}
+
+func runResumeFixture(t *testing.T, provider agents.Provider, resume *agents.ResumeTarget) agents.Session {
+	t.Helper()
+	return runResumeFixtureWithUpdate(t, context.Background(), provider, resume, nil)
+}
+
+func runResumeFixtureWithUpdate(t *testing.T, ctx context.Context, provider agents.Provider, resume *agents.ResumeTarget, onUpdate func(Summary)) agents.Session {
+	t.Helper()
+	accounts, err := agents.NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := agents.NewAccountID()
+	account := agents.Account{ID: id, Provider: "hooks", Name: "fixture"}
+	if err := accounts.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := agents.NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := sessions.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := Summary{}
+	RunSession(ctx, NewStream[Summary](80, 24), provider, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, resume, func(change func(*Summary) error) error {
+		err := change(&summary)
+		if err == nil && onUpdate != nil {
+			onUpdate(summary)
+		}
+		return err
+	}, RunHooks{})
+	return runtime
+}
+
+func TestRunSessionPassesResume(t *testing.T) {
+	var events []string
+	p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, resume: make(chan *agents.ResumeTarget, 1)}
+	runResumeFixture(t, p, &agents.ResumeTarget{ID: "abc"})
+	if got := <-p.resume; got == nil || got.ID != "abc" {
+		t.Fatalf("resume %+v", got)
+	}
+}
+
+func TestRunSessionRetainsRuntime(t *testing.T) {
+	for _, retain := range []bool{true, false} {
+		var events []string
+		p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, retain: retain}
+		runtime := runResumeFixture(t, p, nil)
+		_, err := os.Stat(runtime.RuntimeDir)
+		if kept := err == nil; kept != retain || p.retained != 1 {
+			t.Fatalf("retain=%v kept=%v retainer calls=%d", retain, kept, p.retained)
+		}
+	}
+}
+
+func TestRunSessionRetentionBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		cancelRunning bool
+		failedStart   bool
+		finalErr      error
+		retainErr     error
+		wantKept      bool
+		wantCalls     int
+	}{
+		{name: "canceled after running retains", cancelRunning: true, wantKept: true, wantCalls: 1},
+		{name: "failed start cleans up", failedStart: true},
+		{name: "finalize failure cleans up", finalErr: errors.New("finalize failed")},
+		{name: "retainer failure cleans up", retainErr: errors.New("retain failed"), wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []string
+			p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, retain: true, finalErr: tc.finalErr, retainErr: tc.retainErr}
+			if tc.failedStart {
+				p.executable = filepath.Join(t.TempDir(), "missing-provider")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ran := false
+			runtime := runResumeFixtureWithUpdate(t, ctx, p, nil, func(s Summary) {
+				if s.State == "running" {
+					ran = true
+					if tc.cancelRunning {
+						cancel()
+					}
+				}
+			})
+			if ran == tc.failedStart {
+				t.Fatalf("reached running=%v, failed start=%v", ran, tc.failedStart)
+			}
+			if tc.cancelRunning && ctx.Err() == nil {
+				t.Fatal("running session was not canceled")
+			}
+			_, err := os.Stat(runtime.RuntimeDir)
+			if tc.wantKept && err != nil || !tc.wantKept && !os.IsNotExist(err) {
+				t.Fatalf("runtime kept want=%v, stat error=%v", tc.wantKept, err)
+			}
+			if p.retained != tc.wantCalls {
+				t.Fatalf("retainer calls=%d, want %d", p.retained, tc.wantCalls)
+			}
+			if strings.Join(events, ",") != "finalize" {
+				t.Fatalf("finalization events: %v", events)
+			}
+		})
+	}
+}
+
+func TestFailedResumePreservesRuntime(t *testing.T) {
+	for _, prepare := range []bool{false, true} {
+		for _, resumed := range []bool{false, true} {
+			var events []string
+			p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, executable: filepath.Join(t.TempDir(), "missing")}
+			if prepare {
+				p.prepareErr = errors.New("prepare")
+			}
+			var target *agents.ResumeTarget
+			if resumed {
+				target = &agents.ResumeTarget{}
+			}
+			runtime := runResumeFixture(t, p, target)
+			_, err := os.Stat(filepath.Join(runtime.RuntimeDir, "session.json"))
+			if (err == nil) != resumed || p.retained != 0 {
+				t.Fatalf("prepare=%v resume=%v err=%v retained=%d", prepare, resumed, err, p.retained)
+			}
+		}
+	}
+}

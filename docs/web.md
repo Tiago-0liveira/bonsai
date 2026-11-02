@@ -86,6 +86,43 @@ on, the stop prints how many agents still run. `bonsai web status` shows the
 running agents and what a stop does with them. While the setting is off and
 agents run, Settings and the Agents tab say they will be stopped.
 
+### Agent status in the browser
+
+Every place the web app shows an agent (the Branches list, canvas nodes, the
+Inspector, terminal cards, the Agents tab, the delete-worktree dialog) shows the
+same status as `bonsai agents`: `Starting`, `Stopping`, `Exited` and `Failed`
+come from the session's lifecycle and always win; a running session shows
+`Working`, `Idle`, `Stalled` or `Needs input (permission)` when its provider
+reports activity, and plain `Running` when it does not (hooks disabled, older
+session, provider without hooks). A status Bonsai only guessed from the terminal
+has a dashed outline and says `(inferred)` in its tooltip. An idle or waiting
+agent is still running: it keeps its stop button and still blocks deleting its
+worktree.
+
+An agent that needs you is marked in text, not just color: its canvas node says
+what it needs (`Needs permission: Bash`), its worktree row and node show a bell
+with the count, the Inspector's **Running** count adds the number needing input,
+and the tab title gets a `(n)` prefix while any agent waits.
+
+### Notifications
+
+Settings > Agents has two separate notification controls.
+
+- **Desktop notifications** are sent by each agent session's holder process, so
+  they work without the web app open. The three switches (send, needs input,
+  turn complete) are saved in `web.json` and are off by default. They apply to
+  sessions started after the change; see [agents.md](agents.md#desktop-notifications).
+- **Browser notifications** are a per-browser choice. Turn them on with the
+  button (the browser asks for permission on that click). While the tab is in
+  the background, the browser then notifies when an agent starts waiting for
+  input or ends a turn (Idle after Working). The notification shows the status,
+  the session name and the worktree, never a prompt, command or terminal
+  output. Clicking it focuses the tab. Nothing is shown for what was already
+  true when the page loaded, only for changes it sees afterwards. The choice
+  is kept in this browser's local storage (`bonsai-browser-notifications-v1`);
+  if storage is blocked it lasts until the page closes. If the browser blocks
+  or does not support notifications, Settings says so and the option stays off.
+
 ## Local API and supervisor
 
 `bonsai web` uses one user-level supervisor for the local API and, when you

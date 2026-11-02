@@ -36,6 +36,8 @@ type terminalTestProvider struct {
 	agents.Provider
 	starts    atomic.Int32
 	finalizes atomic.Int32
+	// script replaces the default shell loop; set it before the first start.
+	script string
 }
 
 func (p *terminalTestProvider) ID() agents.ProviderID { return "antigravity" }
@@ -55,7 +57,11 @@ func (p *terminalTestProvider) LaunchFields() []agents.LaunchField {
 }
 func (p *terminalTestProvider) PrepareSession(_ context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
 	p.starts.Add(1)
-	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", `printf '\033[32mBONSAI_PTY_READY\033[0m\n'; while IFS= read -r line; do printf 'REPLY:%s\n' "$line"; done`}, Dir: r.Session.WorkDir, EnvSet: map[string]string{"HOME": r.Session.HomeDir}}, nil
+	script := `printf '\033[32mBONSAI_PTY_READY\033[0m\n'; while IFS= read -r line; do printf 'REPLY:%s\n' "$line"; done`
+	if p.script != "" {
+		script = p.script
+	}
+	return agents.PreparedSession{Executable: "/bin/sh", Args: []string{"-c", script}, Dir: r.Session.WorkDir, EnvSet: map[string]string{"HOME": r.Session.HomeDir}}, nil
 }
 func (p *terminalTestProvider) FinalizeSession(ctx context.Context, _ agents.FinalizeSessionRequest) error {
 	p.finalizes.Add(1)

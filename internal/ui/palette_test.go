@@ -143,8 +143,8 @@ func TestPaletteSubmitUnavailableSetsStatus(t *testing.T) {
 	}
 	nm, cmd := model.Update(modals.SubmitMsg{Kind: modals.KindPalette, Value: pruneLabel})
 	model = nm.(Model)
-	if cmd != nil {
-		t.Error("unavailable palette command should not return a command")
+	if cmd == nil {
+		t.Error("refusal message needs an expiry timer")
 	}
 	if model.status != "main worktree" {
 		t.Errorf("status = %q, want the refusal reason", model.status)

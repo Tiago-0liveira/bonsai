@@ -32,7 +32,7 @@ test('starts two Claude sessions on the same profile with their launch options',
 
   await start('First', 'Plan')
   await expect(page.getByTestId('rf__node-claude-session-1')).toBeVisible()
-  await expect(page.locator('.runtime-tile')).toContainText('running · connected')
+  await expect(page.locator('.runtime-tile')).toContainText('Running · connected')
   await start('Second', 'Accept edits')
   await expect(page.getByTestId('rf__node-claude-session-1')).toBeVisible()
   await expect(page.getByTestId('rf__node-claude-session-2')).toBeVisible()

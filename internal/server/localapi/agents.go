@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/agentruntime"
+	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agenthost"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentsetup"
@@ -34,6 +35,8 @@ type agentAPI struct {
 	// setup runs web sign-ins; setupKeys are their request keys.
 	setup     *agentsetup.Jobs
 	setupKeys setupKeys
+	// activity debounces activity transitions into snapshot commits.
+	activity *activityPublisher
 }
 type agentRequest struct {
 	Model  string `json:"model,omitempty"`
@@ -142,6 +145,7 @@ func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
 		if schema, ok := provider.(agents.SetupSchema); ok {
 			out["setup"] = schema.SetupSpec(r.Context())
 		}
+		out["activity"] = activityProfileJSON(provider)
 		return out
 	}
 	out := []map[string]any{}
@@ -158,6 +162,19 @@ func (s *Server) agentProviders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, out)
+}
+
+// activityProfileJSON lists the activity states a provider reports itself
+// (native) and the ones only inferred from its terminal. Providers that report
+// nothing get empty lists, so the web can always read both.
+func activityProfileJSON(provider agents.Provider) map[string][]agentactivity.State {
+	out := map[string][]agentactivity.State{"native": {}, "inferred": {}}
+	if reporter, ok := provider.(agents.ActivityReporter); ok {
+		profile := reporter.ActivityProfile()
+		out["native"] = append(out["native"], profile.Native...)
+		out["inferred"] = append(out["inferred"], profile.Inferred...)
+	}
+	return out
 }
 func (s *Server) agentAccounts(w http.ResponseWriter, r *http.Request) {
 	registry := s.agentRegistry()
@@ -328,6 +345,7 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 			writeJSON(w, 200, current)
 		} else {
 			old.Summary.State = "failed"
+			old.Summary.Activity = nil
 			old.Summary.Error = "Previous request was interrupted or its session is no longer retained. Start explicitly with a new request key."
 			writeJSON(w, 200, old.Summary)
 		}
@@ -372,7 +390,7 @@ func (s *Server) agentMutation(w http.ResponseWriter, r *http.Request, body agen
 		if current, ok := s.agents.manager.Get(project, summary.ID); ok {
 			summary = current
 		}
-		return gitstore.Put(data, "api_agent_mutations", key, agentMutation{Fingerprint: fingerprint, Summary: summary})
+		return gitstore.Put(data, "api_agent_mutations", key, agentMutation{Fingerprint: fingerprint, Summary: withoutActivity(summary)})
 	})
 	if err != nil {
 		writeAPIError(w, 503, "journal_unavailable", "Request accepted but result could not be saved. Reconcile sessions before starting again.")
@@ -439,7 +457,7 @@ func (s *Server) publishAgents(_ string) {
 							continue
 						}
 						if summary, ok := byID[record.Summary.ID]; ok {
-							record.Summary = summary
+							record.Summary = withoutActivity(summary)
 							if err := gitstore.Put(data, section, key, record); err != nil {
 								return err
 							}
@@ -454,7 +472,7 @@ func (s *Server) publishAgents(_ string) {
 					if summary.Origin == "" || summary.Origin == "web" || journaled[summary.ID] {
 						continue
 					}
-					if err := gitstore.Put(data, "api_agent_adoptions", summary.ID, agentMutation{Summary: summary}); err != nil {
+					if err := gitstore.Put(data, "api_agent_adoptions", summary.ID, agentMutation{Summary: withoutActivity(summary)}); err != nil {
 						return err
 					}
 				}
@@ -463,13 +481,16 @@ func (s *Server) publishAgents(_ string) {
 				log.Printf("Agent lifecycle journal update failed")
 			}
 		}
-		s.stateSync.commit(info.ID, "agents", func(snapshot *browserSnapshot) {
-			snapshot.Agents = summaries
-			now := time.Now().UTC()
-			snapshot.Freshness["agents"] = browserFreshness{State: "ready", UpdatedAt: &now}
-		})
+		s.commitAgents(info.ID, summaries)
 	}
 	s.publishAgentsChanged()
+}
+
+// withoutActivity drops the volatile activity: it is only true while the holder runs,
+// so a journal copy would be stale on the next API start.
+func withoutActivity(summary agentterminal.Summary) agentterminal.Summary {
+	summary.Activity = nil
+	return summary
 }
 
 func (s *Server) hasLiveAgents(project, tree string) bool {
@@ -502,10 +523,11 @@ func (s *Server) recoverAgents() error {
 						continue
 					}
 					if summary, ok := held[record.Summary.ID]; ok {
-						record.Summary = summary
+						record.Summary = withoutActivity(summary)
 					} else if record.Summary.Active() {
 						now := time.Now().UTC()
 						record.Summary.State = "failed"
+						record.Summary.Activity = nil
 						record.Summary.EndedAt = &now
 						record.Summary.Error = "Agent interrupted by API restart; start explicitly to run again."
 					}

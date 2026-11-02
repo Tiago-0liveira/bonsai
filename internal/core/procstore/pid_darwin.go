@@ -23,7 +23,7 @@ func PidAlive(pid int) bool {
 // Darwin has no procfs, so use kern.proc.pid and compare the kernel-reported
 // process creation time. If that metadata cannot be read, fail closed rather
 // than treating a reused PID as the original managed child.
-func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
+func ProcessMatches(pid int, startedAt time.Time, _ uint64, _ string, _ string) bool {
 	if pid <= 0 || startedAt.IsZero() {
 		return false
 	}
@@ -42,3 +42,6 @@ func ProcessMatches(pid int, startedAt time.Time, _ string) bool {
 func pidAlive(pid int) bool {
 	return PidAlive(pid)
 }
+
+// StartIdentity returns an empty identity because Linux start ticks and boot IDs are unavailable here.
+func StartIdentity(int) (uint64, string) { return 0, "" }

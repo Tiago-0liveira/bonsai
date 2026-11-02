@@ -47,3 +47,19 @@ it('offers to take control while another terminal has it', async () => {
   act(() => { callbacks.connection('read-only'); callbacks.status({ state: 'exited' } as never) })
   expect(screen.queryByRole('button', { name: 'Take control' })).toBeNull()
 })
+
+it('shows the status of its own status frames, the same one other surfaces show', async () => {
+  const host = document.body.appendChild(document.createElement('div'))
+  render(<AgentTerminal agent={agent} actionsHost={host} />)
+  await waitFor(() => expect(connectTerminal).toHaveBeenCalled())
+  const callbacks = vi.mocked(connectTerminal).mock.calls[0][1]
+  act(() => { callbacks.connection('connected'); callbacks.status({ state: 'running', activity: { state: 'waiting', reason: 'permission', detail: 'Bash', since: '2099-01-01T00:00:00Z', source: 'hook' } } as never) })
+  expect(host).toHaveTextContent('Needs input (permission) · connected')
+  expect(host.querySelector('[data-agent-status]')).toHaveAttribute('title', 'Session Needs permission: Bash; terminal connected')
+  // A holder without activity, and a session that ended, fall back to the lifecycle.
+  act(() => callbacks.status({ state: 'running' } as never))
+  expect(host).toHaveTextContent('Running · connected')
+  act(() => callbacks.status({ state: 'exited', activity: { state: 'waiting', since: '2099-01-01T00:00:00Z', source: 'hook' } } as never))
+  expect(host).toHaveTextContent('Exited · connected')
+  host.remove()
+})

@@ -272,3 +272,24 @@ func TestTransportDomainErrorsKeepTheirCode(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestPullRequestDetailCarriesMergeIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() == "/repos/owner/repo/pulls/7" {
+			fmt.Fprint(w, `{"number":7,"state":"closed","merged":true,"merged_at":"2026-02-03T04:05:06Z","merge_commit_sha":"squash1","head":{"ref":"feat/x","sha":"abc"},"base":{"ref":"main"}}`)
+			return
+		}
+		fmt.Fprint(w, `[]`)
+	}))
+	defer server.Close()
+	c := New(testTokens{})
+	c.BaseURL = server.URL
+	d, err := c.PullRequest(context.Background(), "owner/repo", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
+	if !d.Merged || d.MergedAt == nil || !d.MergedAt.Equal(want) || d.MergeCommitSHA != "squash1" || d.State != "merged" || d.HeadSHA != "abc" {
+		t.Fatalf("merge identity = %+v", d)
+	}
+}

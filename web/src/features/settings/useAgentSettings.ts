@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isLiveAgent } from '../../api/agents'
 import { isActiveSession } from '../../api/agentsOverview'
-import { loadAgentSettings, saveAgentSettings, type AgentSettings } from '../../api/settings'
+import { loadAgentSettings, saveAgentSettings, type AgentSettings, type AgentSettingsChange } from '../../api/settings'
 import { useBonsaiStore } from '../../stores/bonsai'
 
 // useAgentSettings reads GET /api/settings/agents on mount and when the window
@@ -18,12 +18,12 @@ export function useAgentSettings() {
     window.addEventListener('focus', load)
     return () => window.removeEventListener('focus', load)
   }, [load])
-  const save = useCallback(async (keepRunning: boolean) => {
+  const save = useCallback(async (change: AgentSettingsChange) => {
     if (!settings) return
     setSaving(true)
     setError('')
     try {
-      setSettings(await saveAgentSettings(settings, keepRunning))
+      setSettings(await saveAgentSettings(settings, change))
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
       await load()

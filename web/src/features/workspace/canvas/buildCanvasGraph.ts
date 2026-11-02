@@ -2,6 +2,7 @@ import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import type { Agent, CanvasProcess, Health, NodePlacement, Project, Worktree } from '../../../types'
 import type { WorktreeGroup } from '../../../api/git'
 import type { BonsaiGraphData } from '../nodes/BonsaiNode'
+import { countNeedsInput } from '../../../lib/agentStatus'
 import { connectionLabel } from '../connectionLabel'
 import { groupCanvasWorktrees } from './worktreeGroups'
 
@@ -160,6 +161,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
             ciStale: worktree.ciStale,
             prStale: worktree.prStale,
             hasRunningAgent: projectAgents.some((agent) => agent.worktreeId === worktree.id && agent.state === 'running'),
+            needsInput: countNeedsInput(projectAgents, worktree.id),
             processCount: stackProcesses.filter(process => process.worktreeId === worktree.id).length,
           })),
         } satisfies BonsaiGraphData,
@@ -199,6 +201,7 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         ciStale: worktree.ciStale,
         prStale: worktree.prStale,
         gitState: worktree.gitState,
+        needsInput: countNeedsInput(worktreeAgents),
         stats: [{ label: 'agents', value: canvasAgents.length }, { label: 'processes', value: projectProcesses.filter(process => process.worktreeId === worktree.id).length }],
         historyItems: historyAgents.map((agent) => ({
           id: agent.id,
@@ -221,7 +224,6 @@ export function buildCanvasGraph(input: CanvasGraphInput) {
         entityId: agent.id,
         kind: 'agent',
         title: agent.name,
-        agentState: agent.state,
         provider: agent.provider,
         model: agent.profileName ?? agent.model,
         reasoningEffort: agent.reasoningEffort + (agent.fastMode ? ' · Fast' : ''),

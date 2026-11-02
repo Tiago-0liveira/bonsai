@@ -154,6 +154,10 @@ func (m *fileCredentialManager) Reconcile(ctx context.Context, account agents.Ac
 		}
 		return err
 	}
+	if notificationsEnabledBy(session) {
+		// Bonsai switched notifications on for this session only.
+		candidate.ProviderSettings = restoreNotifications(candidate.ProviderSettings, current.ProviderSettings)
+	}
 	if candidate.Identity == "" {
 		candidate.Identity = current.Identity
 	} else if !isFallbackIdentity(current.Identity, account) && candidate.Identity != current.Identity {

@@ -10,6 +10,8 @@ import (
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	store "github.com/Tiago-0liveira/bonsai/internal/storage/git"
 	"io"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,6 +39,14 @@ type arguments struct {
 	SetUpstream     bool     `json:"set_upstream"`
 	ConfirmDiscard  bool     `json:"confirm_discard"`
 	OperationID     string   `json:"operation_id"`
+
+	// Typed arguments of the isolation commands. Exactly one is set, and only
+	// for its own command; see validateIsolationArguments.
+	IsolationRequest  *domain.IsolationRequest       `json:"isolation_request"`
+	IsolationCreate   *domain.IsolationCreateRequest `json:"isolation_create"`
+	IsolationProposal *domain.IsolationProposal      `json:"isolation_proposal"`
+	IsolationRemove   *domain.IsolationRemoveRequest `json:"isolation_remove"`
+	IsolationPush     *domain.IsolationPushRequest   `json:"isolation_push"`
 }
 
 func failure(id string, e error) Result {
@@ -61,6 +71,9 @@ func (x *Executor) Execute(ctx context.Context, c Command) Result {
 	}
 	if dec.Decode(new(any)) != io.EOF {
 		return failure(c.ID, domain.ErrInvalid)
+	}
+	if e := validateIsolationArguments(c, a); e != nil {
+		return failure(c.ID, e)
 	}
 	var e error
 	if !IsRead(c.Type) {
@@ -150,6 +163,8 @@ func (x *Executor) Execute(ctx context.Context, c Command) Result {
 		} else {
 			value, e = x.Local.Diff(ctx, req)
 		}
+	case "git.isolation.preview", "git.isolation.create", "git.isolation.inspect", "git.isolation.remove", "git.isolation.head", "git.isolation.push":
+		value, e = x.isolation(ctx, c.Type, a)
 	case "git.fetch":
 		e = x.Local.Fetch(ctx, c.RepositoryID)
 	case "git.worktree.create":
@@ -194,6 +209,11 @@ func (x *Executor) Execute(ctx context.Context, c Command) Result {
 	result := Result{ID: c.ID}
 	if e != nil {
 		result = failure(c.ID, e)
+		// A creation that failed after the worktree existed reports what it
+		// left, so the caller never has to guess what to retain.
+		if check, ok := value.(domain.IsolationCheck); ok && check.Proposal.OperationID != "" {
+			result.Payload, _ = json.Marshal(check)
+		}
 	} else {
 		result.Payload, _ = json.Marshal(value)
 	}
@@ -205,4 +225,147 @@ func (x *Executor) Execute(ctx context.Context, c Command) Result {
 		}
 	}
 	return result
+}
+
+// isolation dispatches the typed isolation commands to the optional service. A
+// local service without it refuses explicitly instead of ignoring the command.
+func (x *Executor) isolation(ctx context.Context, kind string, a arguments) (any, error) {
+	svc, ok := x.Local.(domain.IsolationService)
+	if !ok {
+		return nil, domain.E("invalid", "this daemon cannot serve implementation worktrees")
+	}
+	switch kind {
+	case "git.isolation.preview":
+		return svc.PreviewIsolation(ctx, *a.IsolationRequest)
+	case "git.isolation.create":
+		return svc.CreateIsolation(ctx, *a.IsolationCreate)
+	case "git.isolation.inspect":
+		return svc.InspectIsolation(ctx, *a.IsolationProposal)
+	case "git.isolation.remove":
+		return nil, svc.RemoveIsolation(ctx, *a.IsolationRemove)
+	case "git.isolation.head":
+		return svc.InspectPublishedHead(ctx, *a.IsolationProposal)
+	default:
+		return svc.PushIsolation(ctx, *a.IsolationPush)
+	}
+}
+
+// validateIsolationArguments keeps the isolation arguments out of every legacy
+// command and every legacy argument out of an isolation command, requires the
+// one typed object the command takes, rejects duplicate keys at any depth (the
+// decoder alone would let the last one win) and binds the inner identities to
+// the registered repository the outer command names.
+func validateIsolationArguments(c Command, a arguments) error {
+	typed := a.IsolationRequest != nil || a.IsolationCreate != nil || a.IsolationProposal != nil || a.IsolationRemove != nil || a.IsolationPush != nil
+	if !IsIsolation(c.Type) {
+		if typed {
+			return domain.ErrInvalid
+		}
+		return nil
+	}
+	if c.WorktreeID != "" {
+		return domain.ErrInvalid
+	}
+	if err := rejectDuplicateKeys(c.Arguments); err != nil {
+		return err
+	}
+	var want, repo, worktreeRepo string
+	switch c.Type {
+	case "git.isolation.preview":
+		if a.IsolationRequest == nil {
+			return domain.ErrInvalid
+		}
+		want, repo = "request", a.IsolationRequest.RepositoryID
+	case "git.isolation.create":
+		if a.IsolationCreate == nil {
+			return domain.ErrInvalid
+		}
+		want, repo = "create", a.IsolationCreate.Proposal.RepositoryID
+	case "git.isolation.inspect", "git.isolation.head":
+		if a.IsolationProposal == nil {
+			return domain.ErrInvalid
+		}
+		want, repo = "proposal", a.IsolationProposal.RepositoryID
+	case "git.isolation.remove":
+		if a.IsolationRemove == nil {
+			return domain.ErrInvalid
+		}
+		want, repo, worktreeRepo = "remove", a.IsolationRemove.Check.Proposal.RepositoryID, a.IsolationRemove.Check.Worktree.RepositoryID
+	case "git.isolation.push":
+		if a.IsolationPush == nil {
+			return domain.ErrInvalid
+		}
+		want, repo = "push", a.IsolationPush.Proposal.RepositoryID
+	}
+	only := a
+	switch want {
+	case "request":
+		only.IsolationRequest = nil
+	case "create":
+		only.IsolationCreate = nil
+	case "proposal":
+		only.IsolationProposal = nil
+	case "remove":
+		only.IsolationRemove = nil
+	case "push":
+		only.IsolationPush = nil
+	}
+	if !reflect.DeepEqual(only, arguments{}) {
+		return domain.ErrInvalid
+	}
+	if repo != c.RepositoryID || worktreeRepo != "" && worktreeRepo != c.RepositoryID {
+		return domain.ErrForbidden
+	}
+	return nil
+}
+
+// rejectDuplicateKeys fails on an object that repeats a key, ignoring case as
+// the decoder's field matching does, at every depth.
+func rejectDuplicateKeys(raw json.RawMessage) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if err := walkJSON(dec); err != nil {
+		return domain.ErrInvalid
+	}
+	if dec.Decode(new(any)) != io.EOF {
+		return domain.ErrInvalid
+	}
+	return nil
+}
+
+func walkJSON(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for dec.More() {
+			key, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			name, _ := key.(string)
+			name = strings.ToLower(name)
+			if seen[name] {
+				return errors.New("duplicate key")
+			}
+			seen[name] = true
+			if err := walkJSON(dec); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for dec.More() {
+			if err := walkJSON(dec); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = dec.Token()
+	return err
 }

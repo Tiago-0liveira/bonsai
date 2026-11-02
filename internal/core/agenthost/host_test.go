@@ -4,6 +4,8 @@ package agenthost
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,7 +102,7 @@ func TestPublishedStatusHasPersistedRecord(t *testing.T) {
 	}
 	defer lock.Close()
 	summary := Summary{ID: "sess_a1", State: "starting", CreatedAt: time.Now().UTC()}
-	h := &host{deps: Deps{Paths: p}, stream: agentterminal.NewStream[Summary](80, 24), summary: summary, monitors: map[*serverConn]struct{}{}}
+	h := newHost(Deps{Paths: p}, "", agentterminal.NewStream[Summary](80, 24), "", nil, summary)
 	_, _, _, frames := h.stream.Attach(0, summary)
 	if err := h.update(func(s *Summary) error { s.State = "running"; return nil }); err != nil {
 		t.Fatal(err)
@@ -293,11 +295,11 @@ func TestRecordsLivenessAndPrune(t *testing.T) {
 	if r := byID["sess_dd"]; !r.Alive || r.Summary.State != "running" {
 		t.Fatalf("live holder: %+v", r)
 	}
-	if err := Prune(p); err != nil {
+	if err := Prune(p, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Read(p, "sess_cc"); !os.IsNotExist(err) {
-		t.Fatalf("day-old record kept: %v", err)
+	if _, err := Read(p, "sess_cc"); err != nil {
+		t.Fatalf("newest old record removed: %v", err)
 	}
 	for _, id := range []string{"sess_aa", "sess_bb", "sess_dd"} {
 		if _, err := Read(p, id); err != nil {
@@ -333,5 +335,236 @@ func TestLaunchReportsHolderStartFailure(t *testing.T) {
 	}
 	if held(p.lock("sess_0123")) {
 		t.Fatal("failed holder kept its lock")
+	}
+}
+
+type discoveringProvider struct {
+	*testProvider
+	calls   chan agents.ResumeRequest
+	answers []string
+}
+
+// PrepareSession reports no id, like a provider that only learns it later.
+func (p *discoveringProvider) PrepareSession(ctx context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	prepared, err := p.testProvider.PrepareSession(ctx, r)
+	prepared.ProviderSessionID = ""
+	return prepared, err
+}
+
+func (p *discoveringProvider) DiscoverSessionID(_ context.Context, r agents.ResumeRequest) (string, error) {
+	p.calls <- r
+	if len(p.answers) == 0 {
+		return "", nil
+	}
+	a := p.answers[0]
+	p.answers = p.answers[1:]
+	return a, nil
+}
+
+func TestHolderDiscoversProviderSessionID(t *testing.T) {
+	old := [3]time.Duration{discoverFast, discoverFastFor, discoverSlow}
+	discoverFast, discoverFastFor, discoverSlow = time.Millisecond, time.Hour, time.Millisecond
+	t.Cleanup(func() { discoverFast, discoverFastFor, discoverSlow = old[0], old[1], old[2] })
+	f := newFixture(t, "sleep 30")
+	other := Record{Version: RecordVersion, ID: "sess_ee", Protocol: Version, Summary: agentterminal.Summary{ID: "sess_ee", AccountID: f.account.ID, ProviderSessionID: "taken", State: "exited", CreatedAt: time.Now().UTC()}}
+	if err := f.deps.Paths.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecord(f.deps.Paths, other); err != nil {
+		t.Fatal(err)
+	}
+	provider := &discoveringProvider{testProvider: &testProvider{script: "sleep 30", capabilities: agents.Capabilities{Interactive: true}}, calls: make(chan agents.ResumeRequest, 16), answers: []string{"", "", "abc"}}
+	registry := agents.NewRegistry()
+	if err := registry.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	f.deps.Registry = registry
+	r, _ := f.start(t)
+	var last agents.ResumeRequest
+	for i := 0; i < 3; i++ {
+		select {
+		case last = <-provider.calls:
+		case <-time.After(10 * time.Second):
+			t.Fatal("discovery did not poll")
+		}
+	}
+	if len(last.Claimed) != 1 || last.Claimed[0] != "taken" || last.StartedAt.IsZero() {
+		t.Fatalf("request %+v", last)
+	}
+	conn, ready, err := Dial(r, Request{Mode: ModeTerminal, Client: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if ready.Status == nil || ready.Status.ProviderSessionID != "abc" {
+		readUntil(t, conn, func(frame Frame, _ string) bool {
+			return frame.Status != nil && frame.Status.ProviderSessionID == "abc"
+		})
+	}
+	got, err := Read(f.deps.Paths, r.ID)
+	if err != nil || got.Summary.ProviderSessionID != "abc" {
+		t.Fatalf("record %+v %v", got.Summary, err)
+	}
+}
+
+func TestPruneRemovesRuntime(t *testing.T) {
+	f := newFixture(t, "true")
+	account := f.account
+	runtime, err := f.deps.Sessions.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := string(runtime.ID)
+	p := f.deps.Paths
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-48 * time.Hour)
+	if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Protocol: Version, Socket: p.socket(id), Summary: agentterminal.Summary{ID: id, State: "exited", CreatedAt: old, EndedAt: &old}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 32; i++ {
+		at := old.Add(time.Duration(i+1) * time.Minute)
+		id := fmt.Sprintf("sess_ee%02x", i)
+		if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Summary: agentterminal.Summary{ID: id, State: "exited", CreatedAt: at, EndedAt: &at}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Prune(p, f.deps.Sessions); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(runtime.RuntimeDir); !os.IsNotExist(err) {
+		t.Fatalf("runtime kept: %v", err)
+	}
+}
+
+func TestReapRuntimesKeepsYoungAndRecorded(t *testing.T) {
+	f := newFixture(t, "true")
+	store := f.deps.Sessions.(*agents.FileSessionStore)
+	mk := func(age time.Duration) agents.Session {
+		t.Helper()
+		s, err := store.Create(f.account, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Backdate the metadata so the runtime looks old.
+		path := filepath.Join(s.RuntimeDir, "session.json")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		m["created_at"] = time.Now().UTC().Add(-age)
+		raw, _ = json.Marshal(m)
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	young, orphan, recorded := mk(time.Hour), mk(48*time.Hour), mk(48*time.Hour)
+	p := f.deps.Paths
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	id := string(recorded.ID)
+	if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Protocol: Version, Summary: agentterminal.Summary{ID: id, State: "exited"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReapRuntimes(p, store); err != nil {
+		t.Fatal(err)
+	}
+	for s, want := range map[agents.Session]bool{young: true, orphan: false, recorded: true} {
+		if _, err := os.Stat(s.RuntimeDir); (err == nil) != want {
+			t.Fatalf("%s kept=%v want %v", s.ID, err == nil, want)
+		}
+	}
+}
+
+func TestPruneRuntimeRemovalFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		recordFailure bool
+	}{
+		{name: "record removal failure keeps runtime", recordFailure: true},
+		{name: "ancillary removal failure cleans runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.recordFailure && os.Geteuid() == 0 {
+				t.Skip("root bypasses directory write permissions")
+			}
+			f := newFixture(t, "true")
+			runtime, err := f.deps.Sessions.Create(f.account, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, id := f.deps.Paths, string(runtime.ID)
+			if err := p.ensure(); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().UTC().Add(-48 * time.Hour)
+			if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Protocol: Version, Summary: Summary{ID: id, State: "exited", CreatedAt: old, EndedAt: &old}}); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 32; i++ {
+				at := old.Add(time.Duration(i+1) * time.Minute)
+				keepID := fmt.Sprintf("sess_ee%02x", i)
+				if err := writeRecord(p, Record{Version: RecordVersion, ID: keepID, Summary: Summary{ID: keepID, State: "exited", CreatedAt: at, EndedAt: &at}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if tc.recordFailure {
+				if err := os.Chmod(p.Records, 0o500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chmod(p.Records, 0o700); err != nil {
+						t.Error(err)
+					}
+				})
+			} else {
+				// A nonempty socket-path directory cannot be removed with os.Remove.
+				if err := os.Mkdir(p.socket(id), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(p.socket(id), "child"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := Prune(p, f.deps.Sessions); err == nil {
+				t.Fatal("expected removal failure")
+			}
+			for _, path := range []string{p.record(id), runtime.RuntimeDir} {
+				_, err := os.Stat(path)
+				if tc.recordFailure && err != nil || !tc.recordFailure && !os.IsNotExist(err) {
+					t.Fatalf("%s: want kept=%v, stat error=%v", path, tc.recordFailure, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPruneKeepsAllRecent(t *testing.T) {
+	f := newFixture(t, "true")
+	p := f.deps.Paths
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("sess_ff%02x", i)
+		if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Summary: agentterminal.Summary{ID: id, State: "exited", CreatedAt: now, EndedAt: &now}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Prune(p, nil); err != nil {
+		t.Fatal(err)
+	}
+	records, err := List(p)
+	if err != nil || len(records) != 40 {
+		t.Fatalf("records=%d err=%v", len(records), err)
 	}
 }

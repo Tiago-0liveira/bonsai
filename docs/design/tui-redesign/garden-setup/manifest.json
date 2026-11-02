@@ -1,0 +1,138 @@
+{
+  "revision": "garden-setup-01",
+  "based_on": "revision-02",
+  "screens": [
+    {
+      "id": "GS-01",
+      "title": "Garden is not set up",
+      "workspace": "Garden",
+      "cols": 80,
+      "rows": 24,
+      "stem": "gs-01-80x24-first-use",
+      "description": "State none: choose Create, Connect existing or Skip; repository, identity, access and zero import are visible.",
+      "focus": "Setup / Create Garden",
+      "note": "The rail selects the setup mode; Enter previews its plan. Nothing is written from this screen."
+    },
+    {
+      "id": "GS-01",
+      "title": "Garden is not set up",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-01-120x35-first-use",
+      "description": "State none: choose Create, Connect existing or Skip; repository, identity, access and zero import are visible.",
+      "focus": "Setup / Create Garden",
+      "note": "The rail selects the setup mode; Enter previews its plan. Nothing is written from this screen."
+    },
+    {
+      "id": "GS-01",
+      "title": "Garden is not set up",
+      "workspace": "Garden",
+      "cols": 160,
+      "rows": 48,
+      "stem": "gs-01-160x48-first-use",
+      "description": "State none: choose Create, Connect existing or Skip; repository, identity, access and zero import are visible.",
+      "focus": "Setup / Create Garden",
+      "note": "The rail selects the setup mode; Enter previews its plan. Nothing is written from this screen."
+    },
+    {
+      "id": "GS-02",
+      "title": "Choose the GitHub repository",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-02-120x35-target",
+      "description": "Shown only when remotes resolve to different numeric repository IDs (AmbiguousError).",
+      "focus": "Setup / Choose repository",
+      "note": "Remotes sharing an ID are one row with aliases. URLs are shown sanitized, never with credentials."
+    },
+    {
+      "id": "GS-03",
+      "title": "Connect an existing Project",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-03-120x35-connect",
+      "description": "ConnectExisting: explicit Project choice; same-name Projects are flagged, never auto-adopted.",
+      "focus": "Setup / Connect existing Project",
+      "note": "Fields are reused by name; only missing fields are added. Unrelated fields stay untouched."
+    },
+    {
+      "id": "GS-04",
+      "title": "Preview the setup plan",
+      "workspace": "Garden",
+      "cols": 80,
+      "rows": 24,
+      "stem": "gs-04-80x24-plan",
+      "description": "Pure plan preview: every label, Project and field step, reuse and manual step; import count is zero.",
+      "focus": "Setup / Preview plan",
+      "note": "Each row is a selectable step. Enter moves to confirmation; nothing is written here."
+    },
+    {
+      "id": "GS-04",
+      "title": "Preview the setup plan",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-04-120x35-plan",
+      "description": "Pure plan preview: every label, Project and field step, reuse and manual step; import count is zero.",
+      "focus": "Setup / Preview plan",
+      "note": "Each row is a selectable step. Enter moves to confirmation; nothing is written here."
+    },
+    {
+      "id": "GS-04",
+      "title": "Preview the setup plan",
+      "workspace": "Garden",
+      "cols": 160,
+      "rows": 48,
+      "stem": "gs-04-160x48-plan",
+      "description": "Pure plan preview: every label, Project and field step, reuse and manual step; import count is zero.",
+      "focus": "Setup / Preview plan",
+      "note": "Each row is a selectable step. Enter moves to confirmation; nothing is written here."
+    },
+    {
+      "id": "GS-05",
+      "title": "Confirm the setup",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-05-120x35-confirm",
+      "description": "Exact consequence before Apply, in the C-01 confirmation style; Cancel has initial focus.",
+      "focus": "Setup / Confirm setup",
+      "note": "Only Apply setup writes to GitHub. Escape cancels without writing."
+    },
+    {
+      "id": "GS-06",
+      "title": "Setup is incomplete",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-06-120x35-resume",
+      "description": "partial-setup: completed steps kept, failed step shows a safe code, Resume re-observes first.",
+      "focus": "Setup / Incomplete setup",
+      "note": "The user grants the scope; Bonsai never refreshes a token. Resume is the primary action."
+    },
+    {
+      "id": "GS-07",
+      "title": "Read-only connection",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-07-120x35-read-only",
+      "description": "Read access: the Garden is readable, setup actions are absent with a reason.",
+      "focus": "Setup / Read-only access",
+      "note": "No setup or approval action is offered. Board, Table and Drafts remain readable."
+    },
+    {
+      "id": "GS-08",
+      "title": "Garden is off for this repository",
+      "workspace": "Garden",
+      "cols": 120,
+      "rows": 35,
+      "stem": "gs-08-120x35-skipped",
+      "description": "skipped: a durable, reversible opt-out for this local clone.",
+      "focus": "Garden / Off",
+      "note": "Enter starts setup again. Settings › Garden reflects the same state."
+    }
+  ]
+}

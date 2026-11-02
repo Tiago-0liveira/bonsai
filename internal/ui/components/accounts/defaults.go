@@ -24,6 +24,10 @@ type defaultsState struct {
 	saving  bool
 	saveErr string
 	saved   bool // "Saved" is showing for a few seconds
+	// sent is the form as it was when Save went out; edits made after it are
+	// carried over the reload that follows the save.
+	sent    launchform.Form
+	hasSent bool
 	// replace lets the next Defaults result overwrite the form even though it
 	// is dirty, which is the case right after a save.
 	replace bool
@@ -76,5 +80,6 @@ func (m Model) save() (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.df.saving, m.df.saveErr = true, ""
+	m.df.sent, m.df.hasSent = m.df.form, true
 	return m, saveCmd(m.api, m.selected, m.next(&m.latest.save), m.df.form.Changes())
 }

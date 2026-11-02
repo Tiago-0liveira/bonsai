@@ -205,6 +205,7 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 	if err := s.recoverAgents(); err != nil {
 		return nil, err
 	}
+	s.watchAgentActivity(activityDebounce)
 	watchCtx, stop := context.WithCancel(context.Background())
 	s.stopAgentWatch = stop
 	s.agentWatchDone = make(chan struct{})
@@ -222,6 +223,9 @@ func newServer(cfg Config, registry projectRegistry, rootsPath string) (*Server,
 func (s *Server) Close() {
 	if s.agents == nil {
 		return
+	}
+	if s.agents.activity != nil {
+		s.agents.activity.stop()
 	}
 	if s.stopAgentWatch != nil {
 		s.stopAgentWatch()

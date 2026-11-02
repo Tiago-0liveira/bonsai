@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -28,6 +29,11 @@ const (
 // LostError is the error of a session whose holder died without recording its end.
 const LostError = "Agent host exited unexpectedly."
 
+// reservationTTL gives even a live or reused creator PID ample time to fork
+// and claim: Launch waits five seconds for readiness, well below two minutes.
+// Legacy receipts without a creator PID can only be recovered after this TTL.
+const reservationTTL = 2 * time.Minute
+
 // Record is a holder's state on disk, rewritten on every change. It never
 // holds the prompt or terminal output.
 type Record struct {
@@ -41,8 +47,19 @@ type Record struct {
 	WorkDir       string                `json:"work_dir"`
 	Summary       agentterminal.Summary `json:"summary"`
 	LastOutputAt  *time.Time            `json:"last_output_at,omitempty"`
+	// StartHash and StartPhase are the receipt of an operation-bound start
+	// (see StartOperation). The hash binds the request without its prompt.
+	StartHash  string `json:"start_hash,omitempty"`
+	StartPhase string `json:"start_phase,omitempty"` // reserved|claimed|acknowledged|closed
+	// ReservedBy identifies the creator while the holder is still forking.
+	ReservedBy int `json:"reserved_by,omitempty"`
 	// Alive is whether the holder still runs, filled in by List.
 	Alive bool `json:"-"`
+}
+
+func abandonedReservation(r Record, now time.Time) bool {
+	return r.StartPhase == phaseReserved && !r.Alive &&
+		(r.ReservedBy != 0 && !procstore.PidAlive(r.ReservedBy) || now.Sub(r.Summary.CreatedAt) > reservationTTL)
 }
 
 // Paths locate holder records and sockets.
@@ -112,6 +129,21 @@ func Read(p Paths, id string) (Record, error) {
 	if !validID(id) {
 		return Record{}, fmt.Errorf("invalid agent session id")
 	}
+	r, err := loadRecord(p, id)
+	if err != nil {
+		return Record{}, err
+	}
+	r.Alive = held(p.lock(id))
+	// A reservation nobody holds yet may belong to a holder that is still
+	// forking: only the fencing path may settle it.
+	if !r.Alive && r.Summary.Active() && r.StartPhase != phaseReserved {
+		markLost(&r)
+	}
+	return r, nil
+}
+
+// loadRecord parses one record file without judging liveness.
+func loadRecord(p Paths, id string) (Record, error) {
 	raw, err := os.ReadFile(p.record(id))
 	if err != nil {
 		return Record{}, err
@@ -123,16 +155,13 @@ func Read(p Paths, id string) (Record, error) {
 	if r.ID != id {
 		return Record{}, fmt.Errorf("agent record %s names %s", id, r.ID)
 	}
-	r.Alive = held(p.lock(id))
-	if !r.Alive && r.Summary.Active() {
-		markLost(&r)
-	}
 	return r, nil
 }
 
 // markLost shows the session of a holder that died mid-session as failed.
 func markLost(r *Record) {
 	r.Summary.State = "failed"
+	r.Summary.Activity = nil
 	r.Summary.Error = LostError
 	if r.Summary.EndedAt == nil {
 		ended := r.Summary.CreatedAt
@@ -166,31 +195,81 @@ func List(p Paths) ([]Record, error) {
 	return out, nil
 }
 
-// Prune removes the records of ended sessions beyond the newest 32 and those
-// older than a day, with their locks and sockets. Records of running holders
-// are never touched.
-func Prune(p Paths) error {
+// Prune closes abandoned reservations, and removes ended sessions beyond the
+// newest 32 or older than a day, with their locks and sockets. Records of
+// running holders are never touched. A removed session's runtime dir goes with
+// it, which is how a retained (resumable) runtime is finally released.
+func Prune(p Paths, sessions agents.SessionStore) error {
 	records, err := List(p)
 	if err != nil {
 		return err
 	}
 	var ended []Record
+	var errs []error
+	now := time.Now()
 	for _, r := range records {
+		if abandonedReservation(r, now) {
+			// Closed, not removed: like any operation receipt it is the proof a
+			// retry needs to tell a settled start from one that never ran.
+			if _, err := settleAbandonedReservation(p, r, now); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		// Operation receipts and tombstones are the only proof a retry needs to
+		// tell a closed start from an absent one, so ordinary pruning keeps them.
+		if r.StartHash != "" {
+			continue
+		}
 		if !r.Alive {
 			ended = append(ended, r)
 		}
 	}
 	cutoff := time.Now().Add(-keepEndedAt)
-	var errs []error
 	for i, r := range ended {
 		at := r.Summary.CreatedAt
 		if r.Summary.EndedAt != nil {
 			at = *r.Summary.EndedAt
 		}
-		if len(ended)-i <= keepEnded && at.After(cutoff) {
+		if len(ended)-i <= keepEnded || !at.Before(cutoff) {
 			continue
 		}
-		errs = append(errs, remove(p, r.ID))
+		if err := os.Remove(p.record(r.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+			continue
+		}
+		errs = append(errs, removePaths(p.lock(r.ID), p.socket(r.ID)))
+		if sessions != nil {
+			if runtime, err := sessions.Get(agents.SessionID(r.ID)); err == nil {
+				errs = append(errs, sessions.Cleanup(runtime))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ReapRuntimes removes runtime dirs no holder record accounts for and that are
+// older than keepEndedAt. Setup and probe flows also create runtimes without
+// records, so a young or recorded runtime is never touched.
+func ReapRuntimes(p Paths, sessions agents.SessionStore) error {
+	lister, ok := sessions.(agents.SessionLister)
+	if !ok {
+		return nil
+	}
+	runtimes, err := lister.List()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	cutoff := time.Now().Add(-keepEndedAt)
+	for _, runtime := range runtimes {
+		if !runtime.CreatedAt.Before(cutoff) || !validID(string(runtime.ID)) {
+			continue
+		}
+		if _, err := os.Stat(p.record(string(runtime.ID))); !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		errs = append(errs, sessions.Cleanup(runtime))
 	}
 	return errors.Join(errs...)
 }
@@ -207,12 +286,19 @@ func Remove(p Paths, id string) error {
 	if r.Alive {
 		return fmt.Errorf("agent session %s is still running", id)
 	}
+	if r.StartPhase == phaseReserved || r.StartPhase == phaseClaimed {
+		return fmt.Errorf("agent session %s has an unsettled start; query it first", id)
+	}
 	return remove(p, id)
 }
 
 func remove(p Paths, id string) error {
+	return removePaths(p.record(id), p.lock(id), p.socket(id))
+}
+
+func removePaths(paths ...string) error {
 	var errs []error
-	for _, path := range []string{p.record(id), p.lock(id), p.socket(id)} {
+	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
