@@ -136,6 +136,14 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 		return fmt.Errorf("agent session %s already has a host", id)
 	}
 	defer lock.Close()
+	if spec.Resume != nil {
+		// Rename can succeed while resume resolves the provider conversation.
+		// The lifetime lock keeps its acknowledged name stable until we publish.
+		if current, err := loadRecord(deps.Paths, id); err == nil {
+			spec.Summary.Name = current.Summary.Name
+			spec.Launch.DisplayName = current.Summary.Name
+		}
+	}
 	if spec.StartHash != "" {
 		// Before any provider work: a fenced, replaced or missing reservation
 		// means the starter gave up on this holder.

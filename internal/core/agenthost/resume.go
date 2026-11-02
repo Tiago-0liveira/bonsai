@@ -66,15 +66,9 @@ func (s Starter) Resume(ctx context.Context, id string, cols, rows int) (_ Recor
 	if r.Alive {
 		return r, nil
 	}
-	records, err := List(s.Paths)
+	records, err := admissibleRecords(s.Paths, time.Now())
 	if err != nil {
-		return Record{}, fmt.Errorf("cannot list agent sessions")
-	}
-	for i, record := range records {
-		records[i], err = settleAbandonedReservation(s.Paths, record, time.Now())
-		if err != nil {
-			return Record{}, err
-		}
+		return Record{}, err
 	}
 	if err := checkAdmission(records, account, account.ID, provider.Capabilities()); err != nil {
 		return Record{}, err

@@ -113,6 +113,76 @@ func TestResumeRelaunchesSameID(t *testing.T) {
 	}
 }
 
+type renameResumeProvider struct {
+	*resumeProvider
+	launchNames chan string
+}
+
+func (p *renameResumeProvider) PrepareSession(_ context.Context, req agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	p.launchNames <- req.Launch.DisplayName
+	return agents.PreparedSession{}, errors.New("stop after observing launch name")
+}
+
+func TestResumePreservesRenameDuringResolution(t *testing.T) {
+	s, p, r := resumeFixture(t)
+	resolving, release := make(chan struct{}), make(chan struct{})
+	p.resolve = func(ctx context.Context, _ agents.ResumeRequest) (agents.ResumeTarget, error) {
+		close(resolving)
+		select {
+		case <-release:
+			return agents.ResumeTarget{ID: "conversation"}, nil
+		case <-ctx.Done():
+			return agents.ResumeTarget{}, ctx.Err()
+		}
+	}
+	provider := &renameResumeProvider{resumeProvider: p, launchNames: make(chan string, 1)}
+	s.Registry = agents.NewRegistry()
+	if err := s.Registry.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	s.Launch = InProcess(Deps{Accounts: s.Accounts, Sessions: s.Sessions, Registry: s.Registry, Linger: time.Millisecond})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	type result struct {
+		record Record
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		record, err := s.Resume(ctx, r.ID, 80, 24)
+		done <- result{record, err}
+	}()
+	select {
+	case <-resolving:
+	case <-ctx.Done():
+		t.Fatal("resume never reached provider resolution")
+	}
+	const name = "renamed during resume"
+	if renamed, err := Rename(s.Paths, r.ID, name); err != nil || renamed.Name != name {
+		t.Fatalf("rename = %+v, %v", renamed, err)
+	}
+	close(release)
+	select {
+	case got := <-done:
+		if got.err != nil || got.record.Summary.Name != name {
+			t.Fatalf("resume = %+v, %v", got.record, got.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("resume did not finish")
+	}
+	select {
+	case got := <-provider.launchNames:
+		if got != name {
+			t.Fatalf("launch DisplayName = %q, want %q", got, name)
+		}
+	case <-ctx.Done():
+		t.Fatal("holder never prepared the provider session")
+	}
+	if got, err := Read(s.Paths, r.ID); err != nil || got.Summary.Name != name {
+		t.Fatalf("resumed record = %+v, %v", got, err)
+	}
+}
+
 func TestResumeAliveReturnsRecord(t *testing.T) {
 	s, _, r := resumeFixture(t)
 	lock, err := lockFile(s.Paths.lock(r.ID))
