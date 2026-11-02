@@ -398,7 +398,7 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 	for _, t := range msg.trees {
 		cmds = append(cmds, m.worktreeRead("status:"+t.Path, loadStatus(t.Path)), m.worktreeRead("activity:"+t.Path, loadActivity(t.Path)))
 		if t.Branch != "" && t.Branch != "(detached)" {
-			cmds = append(cmds, m.worktreeRead("metrics:"+t.Path, loadMetrics(t.Path, t.Branch, m.cfg.Upstream)))
+			cmds = append(cmds, m.worktreeRead("metrics:"+t.Path, loadMetrics(t.Path, t.Branch, m.cfg.Upstream, m.metricPRBase(t.Branch))))
 		}
 	}
 	if wt, ok := m.selectedWorktree(); ok {
@@ -414,6 +414,20 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) onMetrics(msg metricsMsg) Model {
+	// PR discovery can race the initial local-only read in the legacy layout.
+	if msg.prBase != m.metricPRBase(msg.branch) {
+		return m
+	}
+	current := false
+	for _, wt := range m.worktrees {
+		if wt.Path == msg.path && wt.Branch == msg.branch {
+			current = true
+			break
+		}
+	}
+	if !current {
+		return m
+	}
 	if msg.err != nil {
 		return m
 	}
@@ -447,10 +461,8 @@ func (m Model) onPRMap(msg prMapMsg) (tea.Model, tea.Cmd) {
 		if t.Branch == "" || t.Branch == "(detached)" {
 			continue
 		}
+		cmds = append(cmds, m.worktreeRead("metrics:"+t.Path, loadMetrics(t.Path, t.Branch, m.cfg.Upstream, m.metricPRBase(t.Branch))))
 		if pr, ok := m.prByBranch[t.Branch]; ok && pr.Number > 0 {
-			if pr.Base != "" {
-				cmds = append(cmds, m.worktreeRead("metrics:"+t.Path, loadMetrics(t.Path, t.Branch, m.upstreamFor(t.Branch))))
-			}
 			cmds = append(cmds, m.worktreeRead("checks:"+t.Path, loadChecks(m.repoDir, m.ghCache, t.Path, pr.Number, msg.force)))
 		}
 	}
@@ -497,9 +509,20 @@ func (m Model) onChecks(msg checksMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// upstreamFor returns the ref a branch's ahead/behind metrics and base-branch
-// label should compare against: a connected PR's real base (as <remote>/<base>)
-// when known, otherwise the configured global upstream.
+// metricPRBase also connects fetched pr-N worktrees by PR number.
+func (m Model) metricPRBase(branch string) string {
+	if pr, ok := m.prByBranch[branch]; ok {
+		return pr.Base
+	}
+	if strings.HasPrefix(branch, "pr-") {
+		if n, err := strconv.Atoi(strings.TrimPrefix(branch, "pr-")); err == nil {
+			return m.prByNumber[n].Base
+		}
+	}
+	return ""
+}
+
+// upstreamFor selects the configured remote base for explicit branch operations.
 func (m Model) upstreamFor(branch string) string {
 	if pr, ok := m.prByBranch[branch]; ok && pr.Base != "" {
 		return config.RemoteOf(m.cfg.Upstream) + "/" + pr.Base
@@ -517,10 +540,11 @@ func (m *Model) rebuildItems() {
 	trees := m.sortedWorktrees()
 	items := make([]worktreelist.Item, len(trees))
 	for i, t := range trees {
-		it := worktreelist.Item{WT: t}
+		it := worktreelist.Item{WT: t, DefaultBase: config.BaseBranch(m.cfg.Upstream)}
 		if mtr, ok := m.metrics[t.Path]; ok {
 			it.Metrics = mtr
 			it.HasMetrics = true
+			it.BaseMerged = m.prByBranch[mtr.Base].State == gh.StateMerged
 		}
 		pr, ok := m.prByBranch[t.Branch]
 		if !ok {

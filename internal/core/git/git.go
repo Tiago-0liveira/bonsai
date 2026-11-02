@@ -37,8 +37,10 @@ type Worktree struct {
 
 // Metrics holds ahead/behind counts relative to an upstream.
 type Metrics struct {
-	Ahead  int
-	Behind int
+	Ahead      int
+	Behind     int
+	Base       string
+	BaseSource string
 }
 
 // run executes a git command in dir and returns trimmed stdout. Bounded by
@@ -329,12 +331,23 @@ func AddWorktreeNewBranch(dir, path, branch, base string) error {
 	if strings.HasPrefix(base, "-") {
 		return fmt.Errorf("%w: %q", ErrInvalidWorktreeBase, base)
 	}
+	recordedBase := base
+	if recordedBase == "" || recordedBase == "HEAD" {
+		recordedBase, _ = run(dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+	}
 	args := []string{"worktree", "add", "-b", branch, "--", path}
 	if base != "" {
 		args = append(args, base)
 	}
-	_, err := run(dir, args...)
-	return err
+	if _, err := run(dir, args...); err != nil {
+		return err
+	}
+	if recordedBase != "" {
+		if _, err := run(dir, "config", "--local", "branch."+branch+".bonsaiBase", recordedBase); err != nil {
+			return fmt.Errorf("record worktree base: %w", err)
+		}
+	}
+	return nil
 }
 
 // AddWorktreeExisting creates a worktree at path checking out an existing branch.

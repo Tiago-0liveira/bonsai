@@ -66,7 +66,16 @@ A base that starts with `-` is rejected.
 
 Worktree rows align branch, PR, CI, changes, agent badges and ahead/behind counts
 on the first line. Branch names shorten first. Home-directory paths use `~` on
-every row, including the selected one. The title shows position/count and
+every row, including the selected one. Counts compare against the connected PR
+base, then the repo-local `branch.<name>.bonsaiBase` recorded at branch creation,
+then the closest local ancestor (ties prefer the configured upstream), falling
+back to the configured upstream. Missing local bases use `origin/<base>` when
+available. The second line shows a dim `⤴ base` right-aligned below the counts;
+guessed or default upstream bases stay hidden. `⟳` warns that the base moved
+(behind > 0); `⚠` means the base's PR is merged, so the branch needs retargeting
+or rebasing. ASCII mode uses `^`, `~` and `!`. Prefixes such as `feat/` are
+dropped only when the rest stays unique. Paths shrink before base labels. The
+title shows position/count and
 `sort:` followed by the current ordering. ASCII glyph preferences apply to row markers.
 
 With agents enabled, the sort cycle includes `attention`: worktrees with sessions
@@ -829,7 +838,7 @@ bonsai reads **`.bonsai.yaml`** from your repo root. The
 [annotated example](../.bonsai.yaml) documents every field. In short:
 
 ```yaml
-upstream: origin/main          # base ref for ↑ahead/↓behind and prune's merge target
+upstream: origin/main          # fallback base for ↑ahead/↓behind and prune's merge target
 
 hooks:
   on_worktree_create:

@@ -507,3 +507,41 @@ func TestCreateWorktreeRejectsInvalidBranchBeforeTouchingDisk(t *testing.T) {
 		t.Fatal("create must not touch the filesystem for an invalid name")
 	}
 }
+
+func TestMetricsKeepCurrentPRBase(t *testing.T) {
+	for _, tc := range []struct {
+		name, branch, prBase string
+		accept               bool
+	}{
+		{"current", "feature", "parent", true},
+		{"late local guess", "feature", "", false},
+		{"retargeted PR", "feature", "old-parent", false},
+		{"replaced checkout branch", "old-feature", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := wtModel(t, 70, 25)
+			m.prByBranch["feature"] = gh.PR{Number: 67, Head: "feature", Base: "parent", State: gh.StateOpen}
+			m.prByBranch["parent"] = gh.PR{Number: 66, Head: "parent", State: gh.StateMerged}
+			msg := metricsMsg{path: "/repo/feature", branch: tc.branch, prBase: tc.prBase, metrics: git.Metrics{Ahead: 9, Base: "parent", BaseSource: "pr"}}
+			m = m.onMetrics(msg)
+			if got := m.metrics[msg.path].Ahead; (got == 9) != tc.accept {
+				t.Fatalf("ahead=%d, accept=%t", got, tc.accept)
+			}
+			if tc.accept {
+				m.list.SelectByPath(msg.path)
+				item, ok := m.list.Selected()
+				if !ok || !item.BaseMerged || item.Metrics.Base != "parent" {
+					t.Fatalf("missing base decoration: %+v", item)
+				}
+			}
+		})
+	}
+}
+
+func TestMetricPRBaseByNumber(t *testing.T) {
+	m := testModel()
+	m.prByNumber = map[int]gh.PR{42: {Number: 42, Head: "fork-feature", Base: "parent"}}
+	if got := m.metricPRBase("pr-42"); got != "parent" {
+		t.Fatalf("base=%q", got)
+	}
+}
