@@ -105,6 +105,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAgentsChanged(msg)
 	case agentsClosedMsg:
 		return m, nil
+	case agentResumedMsg:
+		return m.onAgentResumed(msg)
 	case agentAttachedMsg:
 		return m.onAgentAttached(msg)
 	case agentRetryMsg:

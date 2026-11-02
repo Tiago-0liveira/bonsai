@@ -241,10 +241,24 @@ func (m Model) onAgentOverlayMsg(msg tea.Msg) (handled bool, nm tea.Model, cmd t
 		var ocmd tea.Cmd
 		m, ocmd = m.overlayUpdate(accounts.ReloadMsg{})
 		return true, m, tea.Batch(ocmd, m.relistAgents())
+	case sessionsResumeMsg:
+		m.agents.overlay = nil
+		next, pickCmd := m.onAgentsPick(msg.path, msg.id)
+		m = next.(Model)
+		if wt, ok := m.selectedWorktree(); ok && cleanPath(wt.Path) == cleanPath(msg.path) && m.agents.selected[cleanPath(msg.path)] == msg.id {
+			pickCmd = tea.Batch(pickCmd, m.resumeSelectedAgent())
+		}
+		return true, m, pickCmd
 	case sessionsPickMsg:
 		m.agents.overlay = nil
-		nm, cmd = m.onAgentsPick(msg.path, msg.id)
-		return true, nm, cmd
+		next, pickCmd := m.onAgentsPick(msg.path, msg.id)
+		m = next.(Model)
+		if wt, ok := m.selectedWorktree(); ok && cleanPath(wt.Path) == cleanPath(msg.path) {
+			if ss, _, ok := m.selectedSession(cleanPath(msg.path)); ok && ss.ID == msg.id && interrupted(ss.Summary) {
+				pickCmd = tea.Batch(pickCmd, m.resumeSelectedAgent())
+			}
+		}
+		return true, m, pickCmd
 	case sessionsRenameMsg:
 		return true, m, renameSessionCmd(m.agents.ctx, m.agents.api.Sessions, msg.id, msg.name)
 	case agentRenamedMsg:

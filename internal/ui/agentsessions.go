@@ -29,8 +29,9 @@ const (
 // sessionsPickMsg asks the Agents tab to show a session; sessionsNewMsg asks
 // for the launcher. The picker closes in both cases.
 type (
-	sessionsPickMsg struct{ path, id string } // path: the picker's own worktree
-	sessionsNewMsg  struct{}
+	sessionsResumeMsg struct{ path, id string }
+	sessionsPickMsg   struct{ path, id string } // path: the picker's own worktree
+	sessionsNewMsg    struct{}
 )
 
 // sessionsPicker is the "all sessions" overlay of one worktree: a searchable
@@ -216,6 +217,16 @@ func (p sessionsPicker) Update(msg tea.Msg) (sessionsPicker, tea.Cmd) {
 		p.cursor = 0
 		p.sync()
 		return p, cmd
+	}
+	if key.Matches(k, p.keys.AgentResume) {
+		if ss, ok := p.selected(); ok && !ss.Active() {
+			path := p.path
+			if p.repo {
+				path = p.paths[ss.ID]
+			}
+			return p, func() tea.Msg { return sessionsResumeMsg{path: path, id: ss.ID} }
+		}
+		return p, nil
 	}
 	if key.Matches(k, p.keys.AgentRename) {
 		return p.startRename()
@@ -430,7 +441,10 @@ func (p sessionsPicker) footer() string {
 		return arrows + " Select  Enter Open  Esc Clear search"
 	}
 	hints := arrows + " Select  / Search  " + p.keys.AgentNew.Help().Key + " New session  "
-	if _, ok := p.selected(); ok {
+	if ss, ok := p.selected(); ok {
+		if !ss.Active() {
+			hints += p.keys.AgentResume.Help().Key + " Resume  "
+		}
 		hints += p.keys.AgentRename.Help().Key + " Rename  "
 	}
 	return hints + "Esc Back"
@@ -454,7 +468,7 @@ func (p sessionsPicker) listLines(g sessionsGeom, width, rows int) []string {
 	dim := lipgloss.NewStyle().Foreground(th.Dim)
 	var out []string
 	if g.colHdr {
-		nameW := max(width-2-2-sessionsStatusW, 0)
+		nameW := max(width-2-2-p.statusWidth(), 0)
 		if p.repo && width >= 60 {
 			nameW -= 16
 		}
@@ -462,7 +476,7 @@ func (p sessionsPicker) listLines(g sessionsGeom, width, rows int) []string {
 		if p.repo && width >= 60 {
 			heading = fit("SESSION", nameW) + "  " + fit("WORKTREE", 14)
 		}
-		hdr := "  " + fit(heading, max(width-2-2-sessionsStatusW, 0)) + "  " + "STATUS"
+		hdr := "  " + fit(heading, max(width-2-2-p.statusWidth(), 0)) + "  " + "STATUS"
 		if nameW < 8 {
 			hdr = "  SESSION"
 		}
@@ -507,7 +521,7 @@ func (p sessionsPicker) item(s agentsapi.Session, selected bool, width int) []st
 		subText = p.branches[s.ID] + " · " + subText
 	}
 	sub := dimText(subText)
-	nameW := width - 2 - 2 - sessionsStatusW
+	nameW := width - 2 - 2 - p.statusWidth()
 	branchColumn := ""
 	if p.repo && width >= 60 {
 		nameW -= 16
@@ -519,6 +533,15 @@ func (p sessionsPicker) item(s agentsapi.Session, selected bool, width int) []st
 	}
 	l1 := marker + nameSt.Render(p.label(s, max(width-2, 1)))
 	return []string{l1, "  " + leftRight(sub, status, max(width-2, 1))}
+}
+
+func (p sessionsPicker) statusWidth() int {
+	for _, ss := range p.sessions {
+		if interrupted(ss.Summary) {
+			return 13
+		}
+	}
+	return sessionsStatusW
 }
 
 // status is the status mark in its color followed by the status label. The
@@ -573,7 +596,11 @@ func (p sessionsPicker) fieldLine(f sessionField, width int) string {
 }
 
 func (p sessionsPicker) button(width int) string {
-	b := lipgloss.NewStyle().Foreground(theme.Current.Accent).Bold(true).Render("[ Enter Open session ]")
+	label := "[ Enter Open session ]"
+	if ss, ok := p.selected(); ok && interrupted(ss.Summary) {
+		label = "[ Enter resume ]"
+	}
+	b := lipgloss.NewStyle().Foreground(theme.Current.Accent).Bold(true).Render(label)
 	return ansi.Truncate(b, width, "…")
 }
 

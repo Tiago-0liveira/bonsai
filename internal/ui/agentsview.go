@@ -74,6 +74,9 @@ func dimText(s string) string { return lipgloss.NewStyle().Foreground(theme.Curr
 // sessionStatus is the one status clients show for a session: the lifecycle
 // state, or the activity while the agent runs. key styles it, label is text.
 func sessionStatus(s agentsapi.Session) (key, label string) {
+	if interrupted(s.Summary) {
+		return "interrupted", "interrupted"
+	}
 	if s.State == "" {
 		return "unknown", "Unknown"
 	}
@@ -84,7 +87,7 @@ func sessionStatus(s agentsapi.Session) (key, label string) {
 // for attention, working and running are green, idle and exited are dim.
 func statusColor(key string) lipgloss.Color {
 	switch key {
-	case "starting", "stopping", "waiting", "stalled":
+	case "starting", "stopping", "waiting", "stalled", "interrupted":
 		return theme.Current.Warning
 	case "working", "running":
 		return theme.Current.Success
@@ -423,7 +426,11 @@ func (m Model) usageText(s agentsapi.Session, compact bool) string {
 
 // placeholderArea stands in for the terminal when no view is attached to s.
 func placeholderArea(s agentsapi.Session, w, rows int) []string {
-	lines := []string{sessionName(s), dimText(s.State)}
+	label := s.State
+	if interrupted(s.Summary) {
+		label = "interrupted"
+	}
+	lines := []string{sessionName(s), dimText(label)}
 	return centered(lines, w, rows)
 }
 
@@ -464,22 +471,27 @@ func (m Model) agentPaneModal() bool {
 
 // endedSessionsSummary keeps ended sessions visible before opening history.
 func (m Model) endedSessionsSummary(path string) string {
-	failed, exited := 0, 0
+	failed, exited, lost := 0, 0, 0
 	for _, i := range m.agents.byTree[path] {
 		s := m.agents.sessions[i]
 		if s.Active() {
 			return ""
 		}
-		if s.State == "failed" {
+		if interrupted(s.Summary) {
+			lost++
+		} else if s.State == "failed" {
 			failed++
 		} else if s.State == "exited" {
 			exited++
 		}
 	}
-	if failed+exited == 0 {
+	if failed+exited+lost == 0 {
 		return ""
 	}
 	var parts []string
+	if lost > 0 {
+		parts = append(parts, itoa(lost)+" interrupted")
+	}
 	if failed > 0 {
 		parts = append(parts, itoa(failed)+" failed")
 	}
