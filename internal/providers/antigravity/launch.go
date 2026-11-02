@@ -20,7 +20,15 @@ func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSession
 	if err != nil {
 		return agents.PreparedSession{}, err
 	}
-	models := p.launchModels(ctx, req.Account, settings, req.Args, req.Launch)
+	launch := req.Launch
+	if req.Resume != nil {
+		// A resumed conversation never replays the original prompt.
+		launch.Prompt = ""
+		if err := p.reconcileBeforeResume(ctx, req.Account, req.Session); err != nil {
+			return agents.PreparedSession{}, err
+		}
+	}
+	models := p.launchModels(ctx, req.Account, settings, req.Args, launch)
 	if err := p.credentialMgr.Materialize(ctx, req.Account, req.Session); err != nil {
 		return agents.PreparedSession{}, err
 	}
@@ -29,9 +37,13 @@ func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSession
 	if req.Activity.Usable() && installActivity(req.Session, req.Activity) {
 		env[req.Activity.SpoolEnv] = req.Activity.SpoolPath
 	}
+	args := launchArgs(settings, req.Args, launch, models)
+	if req.Resume != nil {
+		args = append(args, resumeArgs(*req.Resume)...)
+	}
 	return agents.PreparedSession{
 		Executable: executable,
-		Args:       launchArgs(settings, req.Args, req.Launch, models),
+		Args:       args,
 		Dir:        req.Session.WorkDir,
 		EnvSet:     env,
 	}, nil
