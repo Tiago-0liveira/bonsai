@@ -36,8 +36,8 @@ type Prefs struct {
 	Keys map[string]string `json:"keys,omitempty"`
 	// PruneMerge turns the prune modal's merge-PR step on by default.
 	PruneMerge bool `json:"prune_merge,omitempty"`
-	// PRStatus is the worktree-list PR status display mode: "full" (glyph
-	// plus label), "compact" (glyph only) or "off" ("" = full).
+	// PRStatus is the worktree-list PR status display mode: "full" or "compact"
+	// (state word), "color" (branch state color), or "off" (number only). Empty = full.
 	PRStatus string `json:"pr_status,omitempty"`
 	// AgentBell enables terminal attention notifications; silent by default.
 	AgentBell bool `json:"agent_bell,omitempty"`

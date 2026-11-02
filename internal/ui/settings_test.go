@@ -789,7 +789,12 @@ func TestSettingsCursorStaysVisibleWhenBodyIsShort(t *testing.T) {
 		for f := range m.curFields() {
 			m.set.field = f
 			label := m.curFields()[f].label
-			if !strings.Contains(ansi.Strip(m.View()), label) {
+			visibleLabel := label
+			if sz[0] == 64 {
+				// Narrow settings rows shorten labels to leave room for the value.
+				visibleLabel = ansi.Truncate(label, 21, "…")
+			}
+			if !strings.Contains(ansi.Strip(m.View()), visibleLabel) {
 				t.Errorf("%dx%d: selected field %q scrolled out of view:\n%s", sz[0], sz[1], label, ansi.Strip(m.View()))
 			}
 		}
