@@ -234,7 +234,11 @@ func Prune(p Paths, sessions agents.SessionStore) error {
 		if len(ended)-i <= keepEnded && at.After(cutoff) {
 			continue
 		}
-		errs = append(errs, remove(p, r.ID))
+		if err := os.Remove(p.record(r.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+			continue
+		}
+		errs = append(errs, removePaths(p.lock(r.ID), p.socket(r.ID)))
 		if sessions != nil {
 			if runtime, err := sessions.Get(agents.SessionID(r.ID)); err == nil {
 				errs = append(errs, sessions.Cleanup(runtime))
@@ -289,8 +293,12 @@ func Remove(p Paths, id string) error {
 }
 
 func remove(p Paths, id string) error {
+	return removePaths(p.record(id), p.lock(id), p.socket(id))
+}
+
+func removePaths(paths ...string) error {
 	var errs []error
-	for _, path := range []string{p.record(id), p.lock(id), p.socket(id)} {
+	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}

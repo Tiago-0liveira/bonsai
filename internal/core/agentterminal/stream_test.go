@@ -272,6 +272,8 @@ func (p hooksProvider) FinalizeSession(context.Context, agents.FinalizeSessionRe
 
 func (p hooksProvider) Label() string { return "Hooks" }
 
+func (p hooksProvider) ID() agents.ProviderID { return "hooks" }
+
 func TestRunSessionHooksSeeOutputAndEndBeforeFinalize(t *testing.T) {
 	accounts, err := agents.NewFileAccountStore(t.TempDir())
 	if err != nil {
@@ -311,24 +313,41 @@ func TestRunSessionHooksSeeOutputAndEndBeforeFinalize(t *testing.T) {
 
 type resumeProvider struct {
 	hooksProvider
-	resume   chan *agents.ResumeTarget
-	retain   bool
-	retained int
+	resume     chan *agents.ResumeTarget
+	retain     bool
+	retained   int
+	executable string
+	finalErr   error
+	retainErr  error
 }
 
 func (p *resumeProvider) PrepareSession(ctx context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
 	if p.resume != nil {
 		p.resume <- r.Resume
 	}
-	return p.hooksProvider.PrepareSession(ctx, r)
+	prepared, err := p.hooksProvider.PrepareSession(ctx, r)
+	if p.executable != "" {
+		prepared.Executable = p.executable
+	}
+	return prepared, err
 }
 
 func (p *resumeProvider) RetainRuntime(context.Context, agents.Account, agents.Session) (bool, error) {
 	p.retained++
-	return p.retain, nil
+	return p.retain, p.retainErr
+}
+
+func (p *resumeProvider) FinalizeSession(ctx context.Context, r agents.FinalizeSessionRequest) error {
+	_ = p.hooksProvider.FinalizeSession(ctx, r)
+	return p.finalErr
 }
 
 func runResumeFixture(t *testing.T, provider agents.Provider, resume *agents.ResumeTarget) agents.Session {
+	t.Helper()
+	return runResumeFixtureWithUpdate(t, context.Background(), provider, resume, nil)
+}
+
+func runResumeFixtureWithUpdate(t *testing.T, ctx context.Context, provider agents.Provider, resume *agents.ResumeTarget, onUpdate func(Summary)) agents.Session {
 	t.Helper()
 	accounts, err := agents.NewFileAccountStore(t.TempDir())
 	if err != nil {
@@ -347,7 +366,14 @@ func runResumeFixture(t *testing.T, provider agents.Provider, resume *agents.Res
 	if err != nil {
 		t.Fatal(err)
 	}
-	RunSession(context.Background(), NewStream[Summary](80, 24), provider, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, resume, func(change func(*Summary) error) error { return change(&Summary{}) }, RunHooks{})
+	summary := Summary{}
+	RunSession(ctx, NewStream[Summary](80, 24), provider, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, resume, func(change func(*Summary) error) error {
+		err := change(&summary)
+		if err == nil && onUpdate != nil {
+			onUpdate(summary)
+		}
+		return err
+	}, RunHooks{})
 	return runtime
 }
 
@@ -369,5 +395,57 @@ func TestRunSessionRetainsRuntime(t *testing.T) {
 		if kept := err == nil; kept != retain || p.retained != 1 {
 			t.Fatalf("retain=%v kept=%v retainer calls=%d", retain, kept, p.retained)
 		}
+	}
+}
+
+func TestRunSessionRetentionBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		cancelRunning bool
+		failedStart   bool
+		finalErr      error
+		retainErr     error
+		wantKept      bool
+		wantCalls     int
+	}{
+		{name: "canceled after running retains", cancelRunning: true, wantKept: true, wantCalls: 1},
+		{name: "failed start cleans up", failedStart: true},
+		{name: "finalize failure cleans up", finalErr: errors.New("finalize failed")},
+		{name: "retainer failure cleans up", retainErr: errors.New("retain failed"), wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []string
+			p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, retain: true, finalErr: tc.finalErr, retainErr: tc.retainErr}
+			if tc.failedStart {
+				p.executable = filepath.Join(t.TempDir(), "missing-provider")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ran := false
+			runtime := runResumeFixtureWithUpdate(t, ctx, p, nil, func(s Summary) {
+				if s.State == "running" {
+					ran = true
+					if tc.cancelRunning {
+						cancel()
+					}
+				}
+			})
+			if ran == tc.failedStart {
+				t.Fatalf("reached running=%v, failed start=%v", ran, tc.failedStart)
+			}
+			if tc.cancelRunning && ctx.Err() == nil {
+				t.Fatal("running session was not canceled")
+			}
+			_, err := os.Stat(runtime.RuntimeDir)
+			if tc.wantKept && err != nil || !tc.wantKept && !os.IsNotExist(err) {
+				t.Fatalf("runtime kept want=%v, stat error=%v", tc.wantKept, err)
+			}
+			if p.retained != tc.wantCalls {
+				t.Fatalf("retainer calls=%d, want %d", p.retained, tc.wantCalls)
+			}
+			if strings.Join(events, ",") != "finalize" {
+				t.Fatalf("finalization events: %v", events)
+			}
+		})
 	}
 }

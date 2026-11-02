@@ -34,6 +34,7 @@ func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Pr
 	prepared, err := provider.PrepareSession(ctx, agents.PrepareSessionRequest{Account: account, Session: runtime, Launch: launch, Resume: resume, Activity: hooks.Activity})
 	preparedOK := err == nil
 	code := -1
+	running := false
 	if err == nil {
 		_ = update(func(s *Summary) error {
 			// A resumed session already carries its id; keep it when the
@@ -48,6 +49,7 @@ func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Pr
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
+				running = true
 				s.State = "running"
 				now := time.Now().UTC()
 				s.StartedAt = &now
@@ -64,11 +66,12 @@ func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Pr
 	if preparedOK {
 		finalErr = provider.FinalizeSession(cleanupCtx, agents.FinalizeSessionRequest{Account: account, Session: runtime})
 	}
-	// Retention only follows a clean finalize: a failed Reconcile must never be
+	// Retention requires a started process and a clean finalize. A user stop
+	// after starting remains resumable. A failed Reconcile must never be
 	// followed by a credential scrub, and a retainer error falls back to cleanup.
 	var cleanupErr error
 	retained := false
-	if retainer, ok := provider.(agents.RuntimeRetainer); ok && preparedOK && finalErr == nil {
+	if retainer, ok := provider.(agents.RuntimeRetainer); ok && running && finalErr == nil {
 		var retainErr error
 		if retained, retainErr = retainer.RetainRuntime(cleanupCtx, account, runtime); retainErr != nil {
 			retained = false

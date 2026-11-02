@@ -390,16 +390,19 @@ func TestHolderDiscoversProviderSessionID(t *testing.T) {
 	if len(last.Claimed) != 1 || last.Claimed[0] != "taken" || last.StartedAt.IsZero() {
 		t.Fatalf("request %+v", last)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		got, err := Read(f.deps.Paths, r.ID)
-		if err == nil && got.Summary.ProviderSessionID == "abc" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("record %+v %v", got.Summary, err)
-		}
-		time.Sleep(5 * time.Millisecond)
+	conn, ready, err := Dial(r, Request{Mode: ModeTerminal, Client: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if ready.Status == nil || ready.Status.ProviderSessionID != "abc" {
+		readUntil(t, conn, func(frame Frame, _ string) bool {
+			return frame.Status != nil && frame.Status.ProviderSessionID == "abc"
+		})
+	}
+	got, err := Read(f.deps.Paths, r.ID)
+	if err != nil || got.Summary.ProviderSessionID != "abc" {
+		t.Fatalf("record %+v %v", got.Summary, err)
 	}
 }
 
@@ -469,5 +472,61 @@ func TestReapRuntimesKeepsYoungAndRecorded(t *testing.T) {
 		if _, err := os.Stat(s.RuntimeDir); (err == nil) != want {
 			t.Fatalf("%s kept=%v want %v", s.ID, err == nil, want)
 		}
+	}
+}
+
+func TestPruneRuntimeRemovalFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		recordFailure bool
+	}{
+		{name: "record removal failure keeps runtime", recordFailure: true},
+		{name: "ancillary removal failure cleans runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.recordFailure && os.Geteuid() == 0 {
+				t.Skip("root bypasses directory write permissions")
+			}
+			f := newFixture(t, "true")
+			runtime, err := f.deps.Sessions.Create(f.account, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, id := f.deps.Paths, string(runtime.ID)
+			if err := p.ensure(); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().UTC().Add(-48 * time.Hour)
+			if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Protocol: Version, Summary: Summary{ID: id, State: "exited", CreatedAt: old, EndedAt: &old}}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.recordFailure {
+				if err := os.Chmod(p.Records, 0o500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chmod(p.Records, 0o700); err != nil {
+						t.Error(err)
+					}
+				})
+			} else {
+				// A nonempty socket-path directory cannot be removed with os.Remove.
+				if err := os.Mkdir(p.socket(id), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(p.socket(id), "child"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := Prune(p, f.deps.Sessions); err == nil {
+				t.Fatal("expected removal failure")
+			}
+			for _, path := range []string{p.record(id), runtime.RuntimeDir} {
+				_, err := os.Stat(path)
+				if tc.recordFailure && err != nil || !tc.recordFailure && !os.IsNotExist(err) {
+					t.Fatalf("%s: want kept=%v, stat error=%v", path, tc.recordFailure, err)
+				}
+			}
+		})
 	}
 }
