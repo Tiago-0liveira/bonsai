@@ -157,7 +157,8 @@ func TestRowColumnsAndHomePaths(t *testing.T) {
 	m.SetPathHome("/home/test")
 	m.SetItems([]Item{{WT: git.Worktree{Path: "/home/test/one", Branch: "short"}, PR: 1, PRState: gh.StateOpen, Checks: "pass"}, {WT: git.Worktree{Path: "/home/test/two", Branch: "a-longer-branch"}, PR: 2, PRState: gh.StateOpen, Checks: "fail"}})
 	out := m.View()
-	if !strings.Contains(out, "/home/test/one") || !strings.Contains(out, "~/two") {
+	// The selected row keeps the short path too; the full path is noise.
+	if strings.Contains(out, "/home/test/") || !strings.Contains(out, "~/one") || !strings.Contains(out, "~/two") {
 		t.Fatal(out)
 	}
 	columns := []int{}
@@ -206,14 +207,21 @@ func TestPRBlockPlacementAndAlignment(t *testing.T) {
 			if tc.mode != "off" {
 				wantColumn += ansi.StringWidth(tc.block) + 1
 			}
+			// Full mode flows the badge inline: its varying state words would
+			// otherwise push every branch toward the middle of the row.
+			inline := map[int]int{0: 2 + ansi.StringWidth("#1 open") + 1, 1: 2, 2: 2 + ansi.StringWidth(tc.block) + 1}
 			for i, item := range items {
 				row := ansi.Strip(renderRow(items, i, 80, false))
 				branchIndex := strings.Index(row, item.Title())
 				if branchIndex < 0 {
 					t.Fatalf("missing branch %q: %q", item.Title(), row)
 				}
-				if got := ansi.StringWidth(row[:branchIndex]); got != wantColumn {
-					t.Errorf("branch column = %d, want %d: %q", got, wantColumn, row)
+				want := wantColumn
+				if tc.mode == "full" {
+					want = inline[i]
+				}
+				if got := ansi.StringWidth(row[:branchIndex]); got != want {
+					t.Errorf("branch column = %d, want %d: %q", got, want, row)
 				}
 				if item.PR > 0 {
 					pr, branch := strings.Index(row, "#"), strings.Index(row, item.Title())

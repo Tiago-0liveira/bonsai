@@ -270,18 +270,26 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		}
 		return block
 	}
-	prWidth := 0
-	if prStatusMode != "off" {
+	prefix := ""
+	switch prStatusMode {
+	case "off":
+	case "full":
+		// State words vary in width ("open" vs "merged"), so a shared column
+		// would push every branch, PR or not, toward the middle of the row.
+		if block := prBlock(it); block != "" {
+			prefix = block + " "
+		}
+	default:
+		prWidth := 0
 		for _, li := range m.Items() {
 			if row, ok := li.(Item); ok {
 				prWidth = max(prWidth, ansi.StringWidth(prBlock(row)))
 			}
 		}
-	}
-	prefix := ""
-	if prWidth > 0 {
-		block := prBlock(it)
-		prefix = block + strings.Repeat(" ", prWidth-ansi.StringWidth(block)+1)
+		if prWidth > 0 {
+			block := prBlock(it)
+			prefix = block + strings.Repeat(" ", prWidth-ansi.StringWidth(block)+1)
+		}
 	}
 
 	columns := func(row Item) []string {
@@ -345,7 +353,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	}
 	title = pointer + prefix + title
 	path := it.WT.Path
-	if !selected && d.home != "" && (path == d.home || strings.HasPrefix(path, d.home+"/")) {
+	if d.home != "" && (path == d.home || strings.HasPrefix(path, d.home+"/")) {
 		path = "~" + strings.TrimPrefix(path, d.home)
 	}
 	desc := "  " + descStyle.Render(path)
