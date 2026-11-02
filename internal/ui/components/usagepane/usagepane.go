@@ -31,21 +31,8 @@ type Account struct {
 	Loading            bool // no data yet
 }
 
-type window struct {
-	limit    *agents.UsageLimit
-	fallback string
-}
-
-func windows(a Account) []window {
-	return []window{{a.Primary, "Pri"}, {a.Secondary, "Sec"}}
-}
-
-func (w window) label(compact bool) string {
-	label := inline(usagefmt.WindowName(w.limit, w.fallback))
-	if compact && label == "Week" {
-		return "W"
-	}
-	return label
+func windows(a Account) []*agents.UsageLimit {
+	return []*agents.UsageLimit{a.Primary, a.Secondary}
 }
 
 func accountState(a Account, ascii bool) string {
@@ -177,7 +164,7 @@ func Summary(accounts []Account) ([]Account, []int) {
 	for _, a := range accounts {
 		rank := 2.0
 		for _, w := range windows(a) {
-			if f, ok := agents.RemainingFraction(w.limit); ok {
+			if f, ok := agents.RemainingFraction(w); ok {
 				rank = min(rank, f)
 			}
 		}
@@ -211,65 +198,19 @@ func ViewSummaryAt(accounts []Account, age string, width, maxRows int, now time.
 	b := borders(ascii)
 	edge := lipgloss.NewStyle().Foreground(theme.Current.Border)
 	out := []string{topBorder(width, age, ascii, b, edge)}
-	labels := make([]string, len(rows))
-	labelWidth := 0
-	// The stale marker gets its own cell after the label, as in expanded rows,
-	// so a marked provider does not push its columns right.
-	anyStale := false
-	for i, a := range rows {
-		labels[i] = providerGlyph(a.Provider, ascii) + " " + providerName(a.Provider)
-		anyStale = anyStale || staleMark(a) != ""
+	// Share the expanded layout so both views spend spare cells on meters.
+	for i := range rows {
+		rows[i].Name = providerName(rows[i].Provider)
 		if counts[i] > 1 {
-			labels[i] += fmt.Sprintf(" +%d", counts[i]-1)
-		}
-		labelWidth = max(labelWidth, ansi.StringWidth(labels[i]))
-	}
-	resetWidth := 0
-	for _, a := range rows {
-		if a.Primary != nil && a.Primary.ResetsAt != nil {
-			resetWidth = max(resetWidth, len(compactReset(now, *a.Primary.ResetsAt)))
+			rows[i].Name += fmt.Sprintf(" +%d", counts[i]-1)
 		}
 	}
-	// Reserve space for both capacity windows before shortening labels.
-	slot := 0
-	if anyStale {
-		slot = 1
-	}
-	labelWidth = min(labelWidth, max(1, width-4-17-slot))
+	plan := planColumnsWithNames(rows, width-4, now, width-4)
 	for i, a := range rows {
 		if i >= maxRows-2 {
 			break
 		}
-		line := fit(labels[i], labelWidth)
-		if anyStale {
-			if mark := staleMark(a); mark != "" {
-				line += mark
-			} else {
-				line += " "
-			}
-		}
-		if state := accountState(a, ascii); state != "" {
-			line += " " + state
-		} else {
-			for j, w := range windows(a) {
-				if w.limit != nil {
-					line += " " + w.label(true) + " "
-					if f, ok := agents.RemainingFraction(w.limit); ok {
-						line += capacity(f)
-					} else {
-						line += "N/A"
-					}
-					if j == 0 && resetWidth > 0 && labelWidth+17+1+resetWidth <= width-4 {
-						reset := ""
-						if w.limit.ResetsAt != nil {
-							reset = compactReset(now, *w.limit.ResetsAt)
-						}
-						line += " " + dim(strings.Repeat(" ", resetWidth-len(reset))+reset)
-					}
-				}
-			}
-		}
-		out = append(out, edge.Render(b.v)+" "+fit(line, width-4)+" "+edge.Render(b.v))
+		out = append(out, edge.Render(b.v)+" "+fit(pageLine(a, plan, now, ascii), width-4)+" "+edge.Render(b.v))
 	}
 	out = append(out, bottomBorder(rows[:min(len(rows), maxRows-2)], width, b, edge))
 	return strings.Join(out, "\n")
@@ -334,58 +275,83 @@ func bottomBorder(accounts []Account, width int, b border, edge lipgloss.Style) 
 }
 
 type columnPlan struct {
-	name, reset, meter                                 int
+	name, gap                                          int
+	reset, precision, meter                            [2]int
 	primaryReset, weekReset, primaryBar, weekBar, week bool
 }
 
 // Plan against every account so carousel pages retain the same columns.
 func planColumns(accounts []Account, width int, now time.Time) columnPlan {
-	p := columnPlan{primaryReset: true, weekReset: true, primaryBar: true, weekBar: true, week: true}
+	return planColumnsWithNames(accounts, width, now, maxNameCells)
+}
+
+func planColumnsWithNames(accounts []Account, width int, now time.Time, nameCap int) columnPlan {
+	p := columnPlan{primaryReset: true, weekReset: true, primaryBar: true, weekBar: true, week: true, meter: [2]int{8, 8}}
 	for _, a := range accounts {
 		p.name = max(p.name, ansi.StringWidth(inline(a.Name)))
-		for _, w := range windows(a) {
-			if w.limit != nil && w.limit.ResetsAt != nil {
-				p.reset = max(p.reset, len(compactReset(now, *w.limit.ResetsAt)))
+	}
+	p.name = min(nameCap, max(1, p.name), max(1, width-11))
+	resetWidths := func() {
+		p.reset = [2]int{}
+		for _, a := range accounts {
+			for i, w := range windows(a) {
+				if w != nil && w.ResetsAt != nil {
+					p.reset[i] = max(p.reset[i], len(resetFormat(now, *w.ResetsAt, p.precision[i])))
+				}
 			}
 		}
 	}
-	p.name = min(maxNameCells, max(1, p.name))
-	// Preserve the primary percentage even in the smallest supported pane.
-	p.name = min(p.name, max(1, width-11))
+	resetWidths()
 	size := func() int {
 		n := 2 + p.name + 1 + 1 + 2 + 1 + percentCells
-		if p.primaryReset && p.reset > 0 {
-			n += 1 + p.reset
+		if p.primaryReset && p.reset[0] > 0 {
+			n += 1 + p.reset[0]
 		}
 		if p.primaryBar {
-			n += 5
+			n += 1 + p.meter[0]
 		}
 		if p.week {
 			n += 1 + 1 + 1 + percentCells
 		}
-		if p.weekReset && p.reset > 0 {
-			n += 1 + p.reset
+		if p.weekReset && p.reset[1] > 0 {
+			n += 1 + p.reset[1]
 		}
 		if p.weekBar {
-			n += 5
+			n += 1 + p.meter[1]
 		}
 		return n
 	}
-	for _, drop := range []*bool{&p.weekBar, &p.primaryBar, &p.weekReset, &p.primaryReset, &p.week} {
+	// Prefer precise resets until they would crowd the meters.
+	for level := 1; level <= 2; level++ {
+		for i := range p.precision {
+			if size() > width {
+				p.precision[i] = level
+				resetWidths()
+			}
+		}
+	}
+	if size() > width {
+		p.weekReset = false
+	}
+	for size() > width && p.meter[0] > 4 {
+		p.meter[0]--
+		p.meter[1]--
+	}
+	for _, drop := range []*bool{&p.weekBar, &p.primaryBar, &p.primaryReset, &p.week} {
 		if size() <= width {
 			break
 		}
 		*drop = false
 	}
-	bars := 0
-	if p.primaryBar {
-		bars++
-	}
-	if p.weekBar {
-		bars++
-	}
-	if bars > 0 {
-		p.meter = 4 + (width-size())/bars
+	spare := max(0, width-size())
+	switch {
+	case p.primaryBar && p.weekBar:
+		p.meter[0] += (spare + 1) / 2
+		p.meter[1] += spare / 2
+	case p.primaryBar:
+		p.meter[0] += spare
+	default:
+		p.gap = spare
 	}
 	return p
 }
@@ -404,27 +370,30 @@ func pageLine(a Account, p columnPlan, now time.Time, ascii bool) string {
 		if i == 1 && !p.week {
 			break
 		}
+		if i == 1 || !p.week {
+			line += strings.Repeat(" ", p.gap)
+		}
 		label := "5h"
 		if i == 1 {
 			label = "W"
 		}
 		value := dim(" N/A")
-		frac, known := agents.RemainingFraction(w.limit)
+		frac, known := agents.RemainingFraction(w)
 		if known {
 			value = capacity(frac)
 		}
 		line += " " + dim(label) + " " + value
-		if (i == 0 && p.primaryReset || i == 1 && p.weekReset) && p.reset > 0 {
+		if (i == 0 && p.primaryReset || i == 1 && p.weekReset) && p.reset[i] > 0 {
 			reset := ""
-			if w.limit != nil && w.limit.ResetsAt != nil {
-				reset = compactReset(now, *w.limit.ResetsAt)
+			if w != nil && w.ResetsAt != nil {
+				reset = resetFormat(now, *w.ResetsAt, p.precision[i])
 			}
-			line += " " + dim(strings.Repeat(" ", p.reset-len(reset))+reset)
+			line += " " + dim(strings.Repeat(" ", p.reset[i]-len(reset))+reset)
 		}
 		if i == 0 && p.primaryBar || i == 1 && p.weekBar {
-			meter := strings.Repeat(" ", p.meter)
+			meter := strings.Repeat(" ", p.meter[i])
 			if known {
-				meter = bar(frac, p.meter, ascii)
+				meter = bar(frac, p.meter[i], ascii)
 			}
 			line += " " + meter
 		}
@@ -432,15 +401,27 @@ func pageLine(a Account, p columnPlan, now time.Time, ascii bool) string {
 	return line
 }
 
-func compactReset(now, reset time.Time) string {
+func resetFormat(now, reset time.Time, precision int) string {
 	minutes := int(reset.Sub(now) / time.Minute)
-	if minutes <= 0 {
+	if !reset.After(now) {
 		return "now"
 	}
+	if minutes < 1 {
+		return "<1m"
+	}
 	if minutes >= 1440 {
+		if precision > 0 {
+			return fmt.Sprintf("%dd", minutes/1440)
+		}
 		return fmt.Sprintf("%dd%dh", minutes/1440, minutes%1440/60)
 	}
 	if minutes >= 60 {
+		if precision == 2 {
+			return fmt.Sprintf("%dh", minutes/60)
+		}
+		if precision == 1 {
+			return fmt.Sprintf("%dh%02d", minutes/60, minutes%60)
+		}
 		return fmt.Sprintf("%dh%dm", minutes/60, minutes%60)
 	}
 	return fmt.Sprintf("%dm", minutes)
