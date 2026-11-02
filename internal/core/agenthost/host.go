@@ -272,34 +272,34 @@ func (h *host) discoverSessionID(ctx context.Context, d agents.SessionIDDiscover
 		if time.Since(runningAt) >= discoverFastFor {
 			wait = discoverSlow
 		}
-		id, err := d.DiscoverSessionID(ctx, agents.ResumeRequest{Account: account, Session: runtime, StartedAt: *started, Claimed: h.claimedIDs(account.ID)})
+		lock, err := agents.LockFileContext(ctx, filepath.Join(h.deps.Paths.Records, "claim-"+string(account.ID)+".lock"))
+		if err != nil {
+			continue
+		}
+		records, err := List(h.deps.Paths)
+		if err != nil {
+			_ = lock.Unlock()
+			continue
+		}
+		h.mu.Lock()
+		summary := h.summary
+		h.mu.Unlock()
+		req := discoveryRequest(records, summary, account, runtime)
+		id, err := d.DiscoverSessionID(ctx, req)
+		if err == nil && id != "" {
+			err = h.update(func(s *agentterminal.Summary) error {
+				if s.ProviderSessionID == "" {
+					s.ProviderSessionID = id
+				}
+				return nil
+			})
+		}
+		_ = lock.Unlock()
 		if err != nil || id == "" {
 			continue
 		}
-		_ = h.update(func(s *agentterminal.Summary) error {
-			if s.ProviderSessionID == "" {
-				s.ProviderSessionID = id
-			}
-			return nil
-		})
 		return
 	}
-}
-
-// claimedIDs are the provider ids other sessions of the account already own,
-// so discovery never attributes one conversation to two sessions.
-func (h *host) claimedIDs(account agents.AccountID) []string {
-	records, err := List(h.deps.Paths)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, r := range records {
-		if r.ID != h.summary.ID && r.Summary.AccountID == account && r.Summary.ProviderSessionID != "" {
-			out = append(out, r.Summary.ProviderSessionID)
-		}
-	}
-	return out
 }
 
 // useActivityProfile configures the tracker for a provider. It replaces the

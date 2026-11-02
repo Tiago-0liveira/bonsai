@@ -5,6 +5,7 @@ package agenthost
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -297,8 +298,8 @@ func TestRecordsLivenessAndPrune(t *testing.T) {
 	if err := Prune(p, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Read(p, "sess_cc"); !os.IsNotExist(err) {
-		t.Fatalf("day-old record kept: %v", err)
+	if _, err := Read(p, "sess_cc"); err != nil {
+		t.Fatalf("newest old record removed: %v", err)
 	}
 	for _, id := range []string{"sess_aa", "sess_bb", "sess_dd"} {
 		if _, err := Read(p, id); err != nil {
@@ -422,6 +423,13 @@ func TestPruneRemovesRuntime(t *testing.T) {
 	if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Protocol: Version, Socket: p.socket(id), Summary: agentterminal.Summary{ID: id, State: "exited", CreatedAt: old, EndedAt: &old}}); err != nil {
 		t.Fatal(err)
 	}
+	for i := 0; i < 32; i++ {
+		at := old.Add(time.Duration(i+1) * time.Minute)
+		id := fmt.Sprintf("sess_ee%02x", i)
+		if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Summary: agentterminal.Summary{ID: id, State: "exited", CreatedAt: at, EndedAt: &at}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := Prune(p, f.deps.Sessions); err != nil {
 		t.Fatal(err)
 	}
@@ -500,6 +508,14 @@ func TestPruneRuntimeRemovalFailures(t *testing.T) {
 			if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Protocol: Version, Summary: Summary{ID: id, State: "exited", CreatedAt: old, EndedAt: &old}}); err != nil {
 				t.Fatal(err)
 			}
+			for i := 0; i < 32; i++ {
+				at := old.Add(time.Duration(i+1) * time.Minute)
+				keepID := fmt.Sprintf("sess_ee%02x", i)
+				if err := writeRecord(p, Record{Version: RecordVersion, ID: keepID, Summary: Summary{ID: keepID, State: "exited", CreatedAt: at, EndedAt: &at}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			if tc.recordFailure {
 				if err := os.Chmod(p.Records, 0o500); err != nil {
 					t.Fatal(err)
@@ -528,5 +544,27 @@ func TestPruneRuntimeRemovalFailures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPruneKeepsAllRecent(t *testing.T) {
+	f := newFixture(t, "true")
+	p := f.deps.Paths
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("sess_ff%02x", i)
+		if err := writeRecord(p, Record{Version: RecordVersion, ID: id, Summary: agentterminal.Summary{ID: id, State: "exited", CreatedAt: now, EndedAt: &now}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Prune(p, nil); err != nil {
+		t.Fatal(err)
+	}
+	records, err := List(p)
+	if err != nil || len(records) != 40 {
+		t.Fatalf("records=%d err=%v", len(records), err)
 	}
 }

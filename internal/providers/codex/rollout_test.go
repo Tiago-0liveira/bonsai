@@ -178,3 +178,31 @@ func TestResumeTargetCodex(t *testing.T) {
 		t.Fatalf("discover: %q, %v", id, err)
 	}
 }
+
+func TestHistoricalNextDayRollout(t *testing.T) {
+	home := t.TempDir()
+	start := time.Date(2020, 1, 2, 23, 59, 0, 0, time.Local)
+	next := start.Add(2 * time.Minute)
+	writeRollout(t, home, idA, "/w", next, next, "")
+	id, _, err := findRollout(home, "/w", start, nil)
+	if err != nil || id != idA {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+func TestDelayedRolloutContender(t *testing.T) {
+	e := newTestEnv(t)
+	account := e.addLogin("work")
+	start := time.Now().Add(-time.Minute)
+	writeRollout(t, e.profileHome(account), idB, "/w", start, start, "")
+	req := agents.ResumeRequest{Account: account, Session: agents.Session{WorkDir: "/w"}, StartedAt: start, Contenders: 1}
+	if id, err := e.provider.DiscoverSessionID(t.Context(), req); err != nil || id != "" {
+		t.Fatalf("%q %v", id, err)
+	}
+	if _, err := e.provider.ResumeTarget(t.Context(), req); !errors.Is(err, agents.ErrNotResumable) {
+		t.Fatal(err)
+	}
+	req.ProviderSessionID = idB
+	if got, err := e.provider.ResumeTarget(t.Context(), req); err != nil || got.ID != idB {
+		t.Fatalf("%+v %v", got, err)
+	}
+}

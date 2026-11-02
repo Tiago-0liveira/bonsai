@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
@@ -101,17 +102,16 @@ func (s Starter) Resume(ctx context.Context, id string, cols, rows int) (_ Recor
 			resumeErr = errors.Join(resumeErr, fmt.Errorf("cannot clean recreated session runtime: %w", err))
 		}
 	}()
-	started := r.Summary.CreatedAt
-	if r.Summary.StartedAt != nil {
-		started = *r.Summary.StartedAt
+	claimLock, err := agents.LockFileContext(ctx, filepath.Join(s.Paths.Records, "claim-"+string(account.ID)+".lock"))
+	if err != nil {
+		return Record{}, err
 	}
-	var claimed []string
-	for _, other := range records {
-		if other.ID != id && other.Summary.AccountID == account.ID && other.Summary.ProviderSessionID != "" {
-			claimed = append(claimed, other.Summary.ProviderSessionID)
-		}
+	defer claimLock.Unlock()
+	records, err = List(s.Paths)
+	if err != nil {
+		return Record{}, err
 	}
-	target, err := resumer.ResumeTarget(ctx, agents.ResumeRequest{Account: account, Session: runtime, ProviderSessionID: r.Summary.ProviderSessionID, StartedAt: started, Claimed: claimed})
+	target, err := resumer.ResumeTarget(ctx, discoveryRequest(records, r.Summary, account, runtime))
 	if err != nil {
 		return Record{}, err
 	}
@@ -156,4 +156,26 @@ func (s Starter) Resume(ctx context.Context, id string, cols, rows int) (_ Recor
 		return Record{}, fmt.Errorf("agent resume cancelled: %w", err)
 	}
 	return record, nil
+}
+
+// discoveryRequest excludes unknown conversations whose ownership is ambiguous.
+func discoveryRequest(records []Record, summary agentterminal.Summary, account agents.Account, runtime agents.Session) agents.ResumeRequest {
+	started := summary.CreatedAt
+	if summary.StartedAt != nil {
+		started = *summary.StartedAt
+	}
+	req := agents.ResumeRequest{Account: account, Session: runtime, ProviderSessionID: summary.ProviderSessionID, StartedAt: started}
+	for _, other := range records {
+		if other.ID == summary.ID || other.Summary.AccountID != account.ID {
+			continue
+		}
+		if other.Summary.ProviderSessionID != "" {
+			req.Claimed = append(req.Claimed, other.Summary.ProviderSessionID)
+			continue
+		}
+		if filepath.Clean(other.WorkDir) == filepath.Clean(runtime.WorkDir) && (other.Alive || other.Summary.EndedAt != nil && !other.Summary.EndedAt.Before(started)) {
+			req.Contenders++
+		}
+	}
+	return req
 }

@@ -517,3 +517,19 @@ func TestResumeFailedHolderKeepsRecreatedRuntime(t *testing.T) {
 		t.Fatalf("record = %+v, %v", got, err)
 	}
 }
+
+func TestDiscoveryContenderLifetime(t *testing.T) {
+	start := time.Now()
+	before := start.Add(-time.Second)
+	summary := Summary{ID: "sess_a", AccountID: "account", CreatedAt: start}
+	other := Record{ID: "sess_b", WorkDir: "/w", Summary: Summary{AccountID: "account", EndedAt: &before}}
+	req := discoveryRequest([]Record{other}, summary, agents.Account{ID: "account"}, agents.Session{WorkDir: "/w"})
+	if req.Contenders != 0 {
+		t.Fatal(req)
+	}
+	other.Summary.EndedAt = &start
+	req = discoveryRequest([]Record{other}, summary, agents.Account{ID: "account"}, agents.Session{WorkDir: "/w"})
+	if req.Contenders != 1 {
+		t.Fatal(req)
+	}
+}

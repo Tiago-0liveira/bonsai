@@ -40,6 +40,12 @@ type rolloutMeta struct {
 // "" until exactly one unclaimed rollout matches; an ambiguous result keeps the
 // holder polling because another record may claim its own id meanwhile.
 func (p *Provider) DiscoverSessionID(_ context.Context, req agents.ResumeRequest) (string, error) {
+	if req.ProviderSessionID != "" {
+		return req.ProviderSessionID, nil
+	}
+	if req.Contenders > 0 {
+		return "", nil
+	}
 	id, _, err := findRollout(homeDir(p.accounts, req.Account), req.Session.WorkDir, req.StartedAt, req.Claimed)
 	return id, err
 }
@@ -47,6 +53,9 @@ func (p *Provider) DiscoverSessionID(_ context.Context, req agents.ResumeRequest
 // ResumeTarget checks the conversation is on disk. A recorded id must have a
 // rollout file; without one the rollout is rediscovered by cwd and start time.
 func (p *Provider) ResumeTarget(_ context.Context, req agents.ResumeRequest) (agents.ResumeTarget, error) {
+	if req.ProviderSessionID == "" && req.Contenders > 0 {
+		return agents.ResumeTarget{}, agents.NotResumable(agents.ReasonNotFound)
+	}
 	home := homeDir(p.accounts, req.Account)
 	root := filepath.Join(home, "sessions")
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
@@ -102,7 +111,7 @@ func rolloutExists(root, id string) bool {
 // ambiguous with no id.
 func findRollout(home, workDir string, startedAt time.Time, claimed []string) (id string, ambiguous bool, err error) {
 	var dirs []string
-	for _, day := range []time.Time{startedAt.AddDate(0, 0, -1), startedAt, time.Now()} {
+	for _, day := range []time.Time{startedAt.AddDate(0, 0, -1), startedAt, startedAt.AddDate(0, 0, 1), time.Now()} {
 		local := day.Local()
 		dir := filepath.Join(home, "sessions", local.Format("2006"), local.Format("01"), local.Format("02"))
 		if !slices.Contains(dirs, dir) {

@@ -231,7 +231,7 @@ func Prune(p Paths, sessions agents.SessionStore) error {
 		if r.Summary.EndedAt != nil {
 			at = *r.Summary.EndedAt
 		}
-		if len(ended)-i <= keepEnded && at.After(cutoff) {
+		if len(ended)-i <= keepEnded || !at.Before(cutoff) {
 			continue
 		}
 		if err := os.Remove(p.record(r.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {

@@ -77,7 +77,7 @@ func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Pr
 			retained = false
 		}
 	}
-	if !retained {
+	if !retained && !(resume != nil && !running) {
 		cleanupErr = sessions.Cleanup(runtime)
 	}
 	_ = update(func(s *Summary) error {

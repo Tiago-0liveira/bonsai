@@ -317,11 +317,15 @@ type resumeProvider struct {
 	retain     bool
 	retained   int
 	executable string
+	prepareErr error
 	finalErr   error
 	retainErr  error
 }
 
 func (p *resumeProvider) PrepareSession(ctx context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	if p.prepareErr != nil {
+		return agents.PreparedSession{}, p.prepareErr
+	}
 	if p.resume != nil {
 		p.resume <- r.Resume
 	}
@@ -447,5 +451,26 @@ func TestRunSessionRetentionBoundaries(t *testing.T) {
 				t.Fatalf("finalization events: %v", events)
 			}
 		})
+	}
+}
+
+func TestFailedResumePreservesRuntime(t *testing.T) {
+	for _, prepare := range []bool{false, true} {
+		for _, resumed := range []bool{false, true} {
+			var events []string
+			p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, executable: filepath.Join(t.TempDir(), "missing")}
+			if prepare {
+				p.prepareErr = errors.New("prepare")
+			}
+			var target *agents.ResumeTarget
+			if resumed {
+				target = &agents.ResumeTarget{}
+			}
+			runtime := runResumeFixture(t, p, target)
+			_, err := os.Stat(filepath.Join(runtime.RuntimeDir, "session.json"))
+			if (err == nil) != resumed || p.retained != 0 {
+				t.Fatalf("prepare=%v resume=%v err=%v retained=%d", prepare, resumed, err, p.retained)
+			}
+		}
 	}
 }

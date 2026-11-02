@@ -37,6 +37,7 @@ type ResumeRequest struct {
 	Session           Session   // runtime (WorkDir, HomeDir)
 	ProviderSessionID string    // from the holder record; may be empty
 	StartedAt         time.Time // original start, for discovery windows
+	Contenders        int       // other unknown-id holders with overlapping lifetimes
 	Claimed           []string  // provider ids held by other records of this account
 }
 
