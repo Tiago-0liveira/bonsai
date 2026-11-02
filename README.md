@@ -234,3 +234,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full test and lint workflow.
 [MIT](LICENSE)
 
 See the [TUI guide](docs/tui-cli.md) for agent session controls and configurable shortcuts.
+
+The TUI Diff tab groups changed files into collapsible directories with aligned
+line counts and relative churn meters using ▰/▱ cells. Binary-only and bulk leaf folders start collapsed. Selected rows have a full-width highlight. See [TUI keys](docs/tui-cli.md).

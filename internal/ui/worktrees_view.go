@@ -43,6 +43,9 @@ func (m *Model) worktreesLayout() {
 	}
 	m.list.SetSize(max(1, lw), h)
 	th := h - 1
+	if m.rightTab == tabDiff {
+		th--
+	}
 	if m.rightTab == tabProcs {
 		th -= min(m.procFooterHeight(), max(1, h/2))
 	}
@@ -170,6 +173,10 @@ func (m Model) worktreesDetail(width, rows int) []string {
 			}
 			lines = append(lines, footer...)
 		}
+	}
+	if m.rightTab == tabDiff {
+		lines = wtFitLines(lines, width, max(0, rows-2))
+		lines = append(lines, ansi.Truncate(diffPaneHint, width, "…"))
 	}
 	header := m.chrome(" " + title + " / " + strings.TrimSpace(tabLabel(m.rightTab, true)))
 	lines = append([]string{seg(theme.Current.Text, theme.Current.Surface, true).Render(ansi.Truncate(header, width, "…"))}, lines...)

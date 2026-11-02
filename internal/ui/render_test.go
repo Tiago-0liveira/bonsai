@@ -62,7 +62,7 @@ func TestRenderDiff(t *testing.T) {
 	}
 	m.diffCursor = 0
 	out := m.renderDiff()
-	for _, want := range []string{"2 files changed", "a.go", "+10", "binary"} {
+	for _, want := range []string{"2 files changed", "a.go", "+10", "[bin]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderDiff missing %q\n%s", want, out)
 		}

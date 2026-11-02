@@ -161,6 +161,7 @@ type Model struct {
 	diffPath        string // worktree path the diff belongs to
 	diffFiles       []git.DiffFile
 	diffCursor      int
+	diffCollapsed   map[string]bool
 	diffFileContent map[string]string // file path -> colored diff (lazy)
 	diffModalFile   string            // file whose diff the scroll modal is showing
 
