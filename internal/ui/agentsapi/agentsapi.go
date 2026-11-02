@@ -68,6 +68,9 @@ type Sessions interface {
 	// Changes yields after any record create/update/remove, coalesced; closes with ctx.
 	Changes(ctx context.Context) (<-chan struct{}, error)
 	Start(ctx context.Context, req StartRequest) (Session, error)
+	// Resume brings an ended session back under the same id (no-op if alive).
+	// Not-resumable errors wrap agents.ErrNotResumable with a NotResumableError.
+	Resume(ctx context.Context, id string, cols, rows int) (Session, error)
 	Stop(ctx context.Context, id string) error
 	Attach(ctx context.Context, id string, opts AttachOptions) (Stream, error)
 	// Rename sets a session's display name (trimmed, control characters
