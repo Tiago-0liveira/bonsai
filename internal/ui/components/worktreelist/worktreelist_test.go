@@ -2,7 +2,6 @@ package worktreelist
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -146,23 +145,14 @@ func TestRefreshPreservesFilterAndSelectedPath(t *testing.T) {
 	}
 }
 
-func TestRowColumnsAndHomePaths(t *testing.T) {
+func TestRowInlinePRBadges(t *testing.T) {
 	m := New()
 	m.SetSize(100, 20)
 	m.SetPathHome("/home/test")
 	m.SetItems([]Item{{WT: git.Worktree{Path: "/home/test/one", Branch: "short"}, PR: 1, PRState: gh.StateOpen, Checks: "pass"}, {WT: git.Worktree{Path: "/home/test/two", Branch: "a-longer-branch"}, PR: 2, PRState: gh.StateOpen, Checks: "fail"}})
 	out := m.View()
-	if !strings.Contains(out, "/home/test/one") || !strings.Contains(out, "~/two") {
+	if !strings.Contains(out, "short [#1 ●open ✓]") || !strings.Contains(out, "a-longer-branch [#2 ●open ✗]") {
 		t.Fatal(out)
-	}
-	columns := []int{}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "#") {
-			columns = append(columns, ansi.StringWidth(line[:strings.Index(line, "#")]))
-		}
-	}
-	if len(columns) != 2 || columns[0] != columns[1] {
-		t.Fatalf("PR columns %v\n%s", columns, out)
 	}
 	for _, tc := range []struct{ state, want string }{{"pass", "+"}, {"fail", "x"}, {"pending", "~"}} {
 		if checkGlyph(tc.state, true) != tc.want {

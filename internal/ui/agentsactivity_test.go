@@ -4,12 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/ui/agentsapi"
-	"github.com/Tiago-0liveira/bonsai/internal/ui/theme"
 )
 
 func act(state agentactivity.State, reason agentactivity.Reason, detail string) *agentactivity.Activity {
@@ -30,110 +28,16 @@ func allIdx(n int) []int {
 	return idx
 }
 
-func TestAgentBadgeActivity(t *testing.T) {
-	waiting := act(agentactivity.Waiting, agentactivity.ReasonPermission, "Bash")
-	working := act(agentactivity.Working, "", "")
-	idle := act(agentactivity.Idle, agentactivity.ReasonTurnComplete, "")
-	tests := []struct {
-		name     string
-		sessions func(e *agentsEnv) []agentsapi.Session
-		ascii    bool
-		want     string
-	}{
-		{"working only", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), working)}
-		}, false, "▶1"},
-		{"no activity is never marked", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{e.session("a", "claude", "running", e.wtA)}
-		}, false, "▶1"},
-		{"idle only", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), idle)}
-		}, false, "▶1"},
-		{"waiting adds one question mark", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), waiting)}
-		}, false, "⏸1"},
-		{"waiting ascii", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{withActivity(e.session("a", "claude", "running", e.wtA), waiting)}
-		}, true, "=1"},
-		{"two waiting sessions still one mark", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{
-				withActivity(e.session("a", "claude", "running", e.wtA), waiting),
-				withActivity(e.session("b", "codex", "running", e.wtA), waiting),
-			}
-		}, false, "⏸2"},
-		{"mixed providers", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{
-				withActivity(e.session("a", "claude", "running", e.wtA), idle),
-				withActivity(e.session("b", "claude", "running", e.wtA), waiting),
-				withActivity(e.session("c", "codex", "running", e.wtA), working),
-			}
-		}, false, "▶2 ⏸1"},
-		{"failed stays last", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{
-				withActivity(e.session("a", "claude", "running", e.wtA), waiting),
-				e.session("f", "codex", "failed", e.wtA),
-			}
-		}, false, "⏸1 ✗1"},
-		{"failed alone", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{e.session("f", "codex", "failed", e.wtA)}
-		}, false, "✗1"},
-		{"stale activity on an ended session is ignored", func(e *agentsEnv) []agentsapi.Session {
-			return []agentsapi.Session{withActivity(e.session("a", "claude", "exited", e.wtA), waiting)}
-		}, false, "✓1"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			e := newAgentsEnv(t)
-			e.fb.Sessions.Add(tc.sessions(e)...)
-			e.relist(t)
-			got := ansi.Strip(e.m.agentBadge(allIdx(len(e.m.agents.sessions)), tc.ascii))
-			if got != tc.want {
-				t.Errorf("badge = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// The glyph takes the style of its most urgent session; "?" and the waiting
-// glyph share the attention style and idle-only glyphs are dimmed.
-func TestAgentBadgeStyles(t *testing.T) {
-	useTrueColor(t)
-	th := theme.Current
+func TestWorktreeProviderBadges(t *testing.T) {
 	e := newAgentsEnv(t)
-	e.fb.Sessions.Add(
-		withActivity(e.session("a", "claude", "running", e.wtA), act(agentactivity.Idle, agentactivity.ReasonReady, "")),
-		withActivity(e.session("b", "claude", "running", e.wtA), act(agentactivity.Waiting, agentactivity.ReasonQuestion, "")),
-		withActivity(e.session("c", "codex", "running", e.wtA), act(agentactivity.Idle, agentactivity.ReasonReady, "")),
-		withActivity(e.session("d", "antigravity", "running", e.wtA), act(agentactivity.Working, "", "")),
-	)
+	e.fb.Sessions.Add(e.session("a", "claude", "running", e.wtA), e.session("b", "codex", "starting", e.wtA), e.session("c", "claude", "failed", e.wtA), e.session("d", "antigravity", "running", e.wtA))
 	e.relist(t)
-	got := e.m.agentBadge(allIdx(len(e.m.agents.sessions)), false)
-	want := lipgloss.NewStyle().Foreground(th.Text).Render("▶3") + " " + lipgloss.NewStyle().Foreground(th.Warning).Render("⏸1")
-	if got != want {
-		t.Errorf("badge styles:\n got %q\nwant %q", got, want)
-	}
-}
-
-// The badge grows by one cell at most, so the narrow row layout keeps fitting.
-func TestAgentBadgeWaitingAddsOneCell(t *testing.T) {
-	e := newAgentsEnv(t)
-	e.fb.Sessions.Add(e.session("a", "claude", "running", e.wtA), e.session("b", "codex", "running", e.wtA))
-	e.relist(t)
-	plain := ansi.StringWidth(e.m.agentBadge(allIdx(2), false))
-	e.fb.Sessions.Set(withActivity(e.session("b", "codex", "running", e.wtA), act(agentactivity.Waiting, agentactivity.ReasonPlan, "")))
-	e.relist(t)
-	if got := ansi.StringWidth(e.m.agentBadge(allIdx(2), false)); got != plain+3 {
-		t.Errorf("waiting badge width = %d, want %d", got, plain+3)
-	}
-	for _, w := range []int{30, 40, 80} {
-		e.m.list.SetSize(w, 30)
-		for _, l := range strings.Split(e.m.list.View(), "\n") {
-			if got := ansi.StringWidth(l); got > w {
-				t.Errorf("width %d: line is %d cells: %q", w, got, l)
-			}
-		}
-		if row := e.rowOf("feat-a"); !strings.Contains(row, "▶1 ⏸1") {
-			t.Errorf("width %d: waiting badge missing: %q", w, row)
+	for _, tc := range []struct {
+		ascii bool
+		want  string
+	}{{false, "✹1 ❃1 ✦1"}, {true, "C1 X1 A1"}} {
+		if got := ansi.Strip(e.m.worktreeProviderBadges(allIdx(len(e.m.agents.sessions)), tc.ascii)); got != tc.want {
+			t.Fatalf("got %q want %q", got, tc.want)
 		}
 	}
 }

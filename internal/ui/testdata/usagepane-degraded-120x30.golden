@@ -1,14 +1,14 @@
 ╭────────────────────────────────────────╮
 │  🪴 Worktrees 1/3 · sort: name         │
 │                                        │
-│› main (main)                           │
-│  <path>                                │
+│┃ main                                ──│
+│┃ ↳ main (root)                    clean│
 │                                        │
-│  feat-a                                │
-│  <path>                                │
+│  feat-a                              ──│
+│  ↳ main (wt: wt-a)                clean│
 │                                        │
-│  feat-b                                │
-│  <path>                                │
+│  feat-b                              ──│
+│  ↳ main (wt: wt-b)                clean│
 │                                        │
 │                                        │
 │                                        │
