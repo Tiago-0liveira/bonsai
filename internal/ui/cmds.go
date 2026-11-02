@@ -14,6 +14,7 @@ import (
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	coreexec "github.com/Tiago-0liveira/bonsai/internal/core/exec"
 	"github.com/Tiago-0liveira/bonsai/internal/core/fs"
+	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	"github.com/Tiago-0liveira/bonsai/internal/core/pkgmgr"
 	gh "github.com/Tiago-0liveira/bonsai/internal/git/github/ghcli"
 	git "github.com/Tiago-0liveira/bonsai/internal/git/local"
@@ -31,9 +32,10 @@ type worktreesMsg struct {
 }
 
 type metricsMsg struct {
-	path    string
-	metrics git.Metrics
-	err     error
+	branch, prBase string
+	path           string
+	metrics        git.Metrics
+	err            error
 }
 
 type logMsg struct {
@@ -158,11 +160,11 @@ func loadWorktrees(repoDir string, force bool) tea.Cmd {
 	}
 }
 
-// loadMetrics computes ahead/behind for one worktree branch against upstream.
-func loadMetrics(path, branch, upstream string) tea.Cmd {
+// loadMetrics resolves the branch base before counting ahead/behind.
+func loadMetrics(path, branch, upstream, prBase string) tea.Cmd {
 	return func() tea.Msg {
-		mtr, err := git.AheadBehind(path, branch, upstream)
-		return metricsMsg{path: path, metrics: mtr, err: err}
+		mtr, err := coregit.BaseMetrics(path, branch, upstream, prBase)
+		return metricsMsg{path: path, branch: branch, prBase: prBase, metrics: mtr, err: err}
 	}
 }
 

@@ -315,3 +315,72 @@ func TestPRBlockNarrowAndASCII(t *testing.T) {
 		}
 	}
 }
+
+func TestBaseRows(t *testing.T) {
+	for _, width := range []int{70, 45, 20} {
+		for _, ascii := range []bool{false, true} {
+			for _, tc := range []struct {
+				name, source   string
+				behind         int
+				merged, hidden bool
+			}{
+				{"main", "default", 0, false, true},
+				{"main", "guess", 0, false, true},
+				{"main", "pr", 0, false, false},
+				{"feat/tui-redesign", "recorded", 0, false, false},
+				{"feat/tui-redesign", "pr", 2, false, false},
+				{"feat/tui-redesign", "pr", 2, true, false},
+			} {
+				t.Run(fmt.Sprintf("%d/%t/%+v", width, ascii, tc), func(t *testing.T) {
+					item := Item{WT: git.Worktree{Branch: "child", Path: "/long/path/to/checkout"}, HasMetrics: true, DefaultBase: "main", BaseMerged: tc.merged, Metrics: git.Metrics{Base: tc.name, BaseSource: tc.source, Ahead: 3, Behind: tc.behind}}
+					row := ansi.Strip(renderBaseRow([]Item{item}, 0, width, ascii))
+					lines := strings.Split(row, "\n")
+					for _, line := range lines {
+						if ansi.StringWidth(line) > width {
+							t.Fatalf("overflow %q", line)
+						}
+					}
+					arrow, moved, merged := BaseGlyphs(ascii)
+					if tc.hidden {
+						if strings.Contains(lines[1], arrow+" ") {
+							t.Fatalf("unexpected label %q", row)
+						}
+						return
+					}
+					if !strings.Contains(lines[1], arrow+" ") || ansi.StringWidth(lines[1]) != width {
+						t.Fatalf("missing aligned label %q", row)
+					}
+					if tc.merged && !strings.Contains(lines[1], merged) {
+						t.Fatalf("missing merged hint %q", row)
+					}
+					if !tc.merged && tc.behind > 0 && !strings.Contains(lines[1], moved) {
+						t.Fatalf("missing moved hint %q", row)
+					}
+					if width >= 45 && !strings.HasSuffix(lines[1], strings.TrimPrefix(tc.name, "feat/")) {
+						t.Fatalf("base truncated before path %q", row)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestBaseNameCollision(t *testing.T) {
+	item := Item{WT: git.Worktree{Branch: "child"}, HasMetrics: true, Metrics: git.Metrics{Base: "feat/shared", BaseSource: "recorded"}}
+	for _, branch := range []string{"fix/shared", "shared"} {
+		items := []Item{item, {WT: git.Worktree{Branch: branch}}}
+		row := ansi.Strip(renderBaseRow(items, 0, 70, false))
+		if !strings.HasSuffix(row, "feat/shared") {
+			t.Fatalf("ambiguous base shortened: %q", row)
+		}
+	}
+}
+
+func renderBaseRow(items []Item, index, width int, ascii bool) string {
+	m := New()
+	m.SetSize(width, 20)
+	m.SetItems(items)
+	var out strings.Builder
+	itemDelegate{ascii: ascii}.Render(&out, m.list, index, items[index])
+	return out.String()
+}

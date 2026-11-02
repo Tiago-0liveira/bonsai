@@ -20,9 +20,11 @@ import (
 // Item is a worktree row, optionally decorated with ahead/behind metrics and a
 // connected pull-request number.
 type Item struct {
-	WT         git.Worktree
-	Metrics    git.Metrics
-	HasMetrics bool
+	WT          git.Worktree
+	Metrics     git.Metrics
+	HasMetrics  bool
+	DefaultBase string
+	BaseMerged  bool
 	// PR is the number of a PR whose head is this branch (0 = none).
 	PR int
 	// PRState is the connected PR's state (gh.StateOpen / StateMerged /
@@ -348,9 +350,26 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	if !selected && d.home != "" && (path == d.home || strings.HasPrefix(path, d.home+"/")) {
 		path = "~" + strings.TrimPrefix(path, d.home)
 	}
+	label := it.baseLabel(m.Items(), d.ascii, max(width-4, 0))
+	labelW := ansi.StringWidth(label)
+	pathW := max(width-2, 0)
+	if labelW > 0 {
+		pathW = max(pathW-labelW-1, 0)
+	}
+	if labelW > 0 && ansi.StringWidth(path) > pathW {
+		path = ansi.TruncateLeft(path, ansi.StringWidth(path)-pathW+1, "…")
+		path = ansi.Truncate(path, pathW, "")
+	}
 	desc := "  " + descStyle.Render(path)
+	if labelW > 0 {
+		desc += strings.Repeat(" ", max(width-ansi.StringWidth(desc)-labelW, 0)) + label
+	}
 	if width > 0 {
-		desc = ansi.Truncate(desc, width, "…")
+		ellipsis := ""
+		if labelW == 0 {
+			ellipsis = "…"
+		}
+		desc = ansi.Truncate(desc, width, ellipsis)
 	}
 
 	if d.embedded {
@@ -516,4 +535,50 @@ func AheadBehindGlyphs(ascii bool) (string, string) {
 		return "^", "v"
 	}
 	return "↑", "↓"
+}
+
+// BaseGlyphs follows the list's ASCII preference for terminals without glyphs.
+func BaseGlyphs(ascii bool) (string, string, string) {
+	if ascii {
+		return "^", "~", "!"
+	}
+	return "⤴", "⟳", "⚠"
+}
+
+func (i Item) baseLabel(items []list.Item, ascii bool, budget int) string {
+	name := i.Metrics.Base
+	source := i.Metrics.BaseSource
+	if !i.HasMetrics || name == "" || (name == i.DefaultBase && (source == "default" || source == "guess")) {
+		return ""
+	}
+	// Only drop a category prefix when the resulting name remains unambiguous.
+	if _, short, ok := strings.Cut(name, "/"); ok {
+		unique := true
+		for _, li := range items {
+			if row, ok := li.(Item); ok && row.WT.Branch != name {
+				other := row.WT.Branch
+				if _, tail, hasPrefix := strings.Cut(other, "/"); hasPrefix {
+					other = tail
+				}
+				if other == short {
+					unique = false
+					break
+				}
+			}
+		}
+		if unique {
+			name = short
+		}
+	}
+	arrow, moved, merged := BaseGlyphs(ascii)
+	hint := ""
+	if i.BaseMerged {
+		hint = checkFail.Render(merged) + " "
+	} else if i.Metrics.Behind > 0 {
+		hint = checkPending.Render(moved) + " "
+	}
+	prefix := hint + descStyle.Render(arrow+" ")
+	// The base takes space from the path first, retaining at least three name cells.
+	name = ansi.Truncate(name, max(budget-ansi.StringWidth(prefix), 3), "…")
+	return prefix + descStyle.Render(name)
 }

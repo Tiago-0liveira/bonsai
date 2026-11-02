@@ -52,7 +52,7 @@ serves only a placeholder (no embedded web UI; see [Building](#building-from-sou
 - **Lifecycle hooks** (`on_worktree_create` / `on_worktree_delete`) and
   **aliases**: run project commands (Node, Python, Go, Rust, Make) or your own as
   background processes, many per worktree, with live dev-server URLs next to each.
-- See **PR and CI status**, ahead/behind, dirty counts and a **diff** against base
+- See **PR and CI status**, ahead/behind against each branch’s resolved base ([base labels](docs/tui-cli.md)), dirty counts and a **diff** against base
   for every worktree at a glance.
 - **Prune** with a clear preview of exactly what will happen, optionally merging
   the PR first.
@@ -170,7 +170,7 @@ Full reference, keybindings and the `bcd` shell helper: [docs/tui-cli.md](docs/t
 Drop an optional **`.bonsai.yaml`** in your repo root:
 
 ```yaml
-upstream: origin/main          # base ref for ahead/behind and prune's merge target
+upstream: origin/main          # fallback base for ahead/behind and prune's merge target
 
 hooks:
   on_worktree_create:
