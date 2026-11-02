@@ -60,7 +60,7 @@ func TestOperationReservationPrecedesLauncherAndFailureRetainsReceipt(t *testing
 	if !errors.Is(err, ErrOperationClosed) || calls != 1 {
 		t.Fatalf("closed replay relaunched: %v calls=%d", err, calls)
 	}
-	if err := Prune(s.Paths); err != nil {
+	if err := Prune(s.Paths, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(s.Paths.record(string(req.SessionID))); err != nil {
@@ -305,7 +305,7 @@ func TestOperationReceiptsSurviveAgeAndEndedCountPruning(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Prune(p); err != nil {
+	if err := Prune(p, nil); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 40; i++ {
@@ -484,7 +484,7 @@ func TestPruneClosesAbandonedReservations(t *testing.T) {
 				}
 				defer lock.Close()
 			}
-			if err := Prune(p); err != nil {
+			if err := Prune(p, nil); err != nil {
 				t.Fatal(err)
 			}
 			got, err := Read(p, r.ID)

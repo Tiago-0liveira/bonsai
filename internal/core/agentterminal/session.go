@@ -30,13 +30,18 @@ type RunHooks struct {
 // update applies one change to the session's summary (provider session ID,
 // running, the final state); the caller serializes changes and publishes each
 // result. An error from the change that marks the session running stops it.
-func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Provider, account agents.Account, runtime agents.Session, sessions agents.SessionStore, cols, rows int, launch agents.LaunchOptions, update func(func(*Summary) error) error, hooks RunHooks) {
-	prepared, err := provider.PrepareSession(ctx, agents.PrepareSessionRequest{Account: account, Session: runtime, Launch: launch, Activity: hooks.Activity})
+func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Provider, account agents.Account, runtime agents.Session, sessions agents.SessionStore, cols, rows int, launch agents.LaunchOptions, resume *agents.ResumeTarget, update func(func(*Summary) error) error, hooks RunHooks) {
+	prepared, err := provider.PrepareSession(ctx, agents.PrepareSessionRequest{Account: account, Session: runtime, Launch: launch, Resume: resume, Activity: hooks.Activity})
 	preparedOK := err == nil
 	code := -1
+	running := false
 	if err == nil {
 		_ = update(func(s *Summary) error {
-			s.ProviderSessionID = prepared.ProviderSessionID
+			// A resumed session already carries its id; keep it when the
+			// provider reports none.
+			if prepared.ProviderSessionID != "" {
+				s.ProviderSessionID = prepared.ProviderSessionID
+			}
 			return nil
 		})
 		code, err = runInStream(ctx, stream, prepared, cols, rows, func() error {
@@ -44,6 +49,7 @@ func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Pr
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
+				running = true
 				s.State = "running"
 				now := time.Now().UTC()
 				s.StartedAt = &now
@@ -60,7 +66,20 @@ func RunSession(ctx context.Context, stream *Stream[Summary], provider agents.Pr
 	if preparedOK {
 		finalErr = provider.FinalizeSession(cleanupCtx, agents.FinalizeSessionRequest{Account: account, Session: runtime})
 	}
-	cleanupErr := sessions.Cleanup(runtime)
+	// Retention requires a started process and a clean finalize. A user stop
+	// after starting remains resumable. A failed Reconcile must never be
+	// followed by a credential scrub, and a retainer error falls back to cleanup.
+	var cleanupErr error
+	retained := false
+	if retainer, ok := provider.(agents.RuntimeRetainer); ok && running && finalErr == nil {
+		var retainErr error
+		if retained, retainErr = retainer.RetainRuntime(cleanupCtx, account, runtime); retainErr != nil {
+			retained = false
+		}
+	}
+	if !retained && !(resume != nil && !running) {
+		cleanupErr = sessions.Cleanup(runtime)
+	}
 	_ = update(func(s *Summary) error {
 		now := time.Now().UTC()
 		s.EndedAt = &now

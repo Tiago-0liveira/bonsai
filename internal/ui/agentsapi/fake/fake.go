@@ -52,13 +52,15 @@ func (b *Backend) Emit() { b.Sessions.Emit() }
 // Sessions is the fake agentsapi.Sessions. Set the exported error fields to
 // make the matching call fail.
 type Sessions struct {
-	Supports  bool
-	ListErr   error
-	StartErr  error
-	StopErr   error
-	AttachErr error
-	RenameErr error
-	PeekErr   error
+	Supports     bool
+	ListErr      error
+	StartErr     error
+	ResumeErr    error
+	ResumeResult agentsapi.Session
+	StopErr      error
+	AttachErr    error
+	RenameErr    error
+	PeekErr      error
 
 	mu       sync.Mutex
 	items    []agentsapi.Session
@@ -66,6 +68,7 @@ type Sessions struct {
 	subs     []chan struct{}
 	streams  map[string][]*Stream
 	starts   []agentsapi.StartRequest
+	resumes  []ResumeCall
 	attaches []AttachCall
 	renames  []RenameCall
 	peeks    map[string][]string
@@ -74,6 +77,27 @@ type Sessions struct {
 
 // RenameCall records one Rename.
 type RenameCall struct{ ID, Name string }
+
+// ResumeCall records one Resume.
+type ResumeCall struct {
+	ID         string
+	Cols, Rows int
+}
+
+// Resume records the call and returns the configured result.
+func (s *Sessions) Resume(_ context.Context, id string, cols, rows int) (agentsapi.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resumes = append(s.resumes, ResumeCall{ID: id, Cols: cols, Rows: rows})
+	return s.ResumeResult, s.ResumeErr
+}
+
+// Resumes returns the recorded resume calls.
+func (s *Sessions) Resumes() []ResumeCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ResumeCall(nil), s.resumes...)
+}
 
 // AttachCall records one Attach.
 type AttachCall struct {

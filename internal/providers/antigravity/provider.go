@@ -121,6 +121,8 @@ var (
 	_ agents.ModelLister              = (*Provider)(nil)
 	_ agents.LaunchValidator          = (*Provider)(nil)
 	_ agents.ReadOnlyEnforcer         = (*Provider)(nil)
+	_ agents.Resumer                  = (*Provider)(nil)
+	_ agents.RuntimeRetainer          = (*Provider)(nil)
 	_ agents.ActivityReporter         = (*Provider)(nil)
 	_ agents.TerminalClassifier       = (*Provider)(nil)
 	_ agents.TerminalScreenClassifier = (*Provider)(nil)

@@ -233,6 +233,27 @@ session read-only; `enter` takes control to type, and `ctrl+]` immediately retur
 input to Bonsai. Press `enter` again to take control back when another client is
 writing (see [TUI Agents tab](tui-cli.md#agents-tab)).
 
+An interrupted session shows `interrupted` in the TUI. Opening it with Enter
+resumes the saved conversation and attaches immediately. Use `r` in the Agents
+tab or sessions picker to resume a normally ended session. If resume is
+unavailable, the view explains why; `F` starts a fresh task with the same settings
+when the worktree still exists. See the [resume controls](tui-cli.md#agents-tab).
+
+Resume relaunches the same session (same name, profile, worktree, model and
+launch options; the original prompt is never sent again) with the provider's own
+resume flag:
+
+- Claude: `--resume <session id>`, the id Bonsai assigns at launch.
+- Codex: `codex resume <id>`, with the id read from the profile's rollout files
+  (matched by worktree and start time; ambiguous matches are not resumed).
+- Antigravity: `--conversation <id>` (or `--continue`) inside the session's
+  private home. Bonsai keeps that home after the session ends, without its
+  credentials, until the session record is pruned.
+
+An ended session stays resumable while it is listed (the newest 32 ended
+sessions, plus any that ended in the last 24 hours). Interactive agent sessions,
+and so resume, are not available on Windows.
+
 The TUI calls profiles **accounts** and lists running and ended sessions.
 Worktree badges count working, waiting and unseen ended sessions; `!` jumps to
 sessions needing attention. See the [TUI guide](tui-cli.md#agents-tab) for the

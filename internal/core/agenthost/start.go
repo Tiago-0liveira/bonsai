@@ -58,15 +58,9 @@ func (s Starter) Start(ctx context.Context, req StartRequest) (_ Record, startEr
 		}
 	}()
 
-	records, err := List(s.Paths)
+	records, err := admissibleRecords(s.Paths, time.Now())
 	if err != nil {
-		return Record{}, fmt.Errorf("cannot list agent sessions")
-	}
-	for i, r := range records {
-		records[i], err = settleAbandonedReservation(s.Paths, r, time.Now())
-		if err != nil {
-			return Record{}, err
-		}
+		return Record{}, err
 	}
 	if err := checkAdmission(records, account, req.AccountID, capabilities); err != nil {
 		return Record{}, err
@@ -203,6 +197,22 @@ func (s Starter) admit(ctx context.Context) (*agents.FileLock, error) {
 		return nil, fmt.Errorf("cannot lock agent admission: %w", err)
 	}
 	return lock, nil
+}
+
+// admissibleRecords settles abandoned reservations before admission is checked.
+// The caller must hold the admission lock through holder readiness.
+func admissibleRecords(p Paths, now time.Time) ([]Record, error) {
+	records, err := List(p)
+	if err != nil {
+		return nil, fmt.Errorf("cannot list agent sessions")
+	}
+	for i, r := range records {
+		records[i], err = settleAbandonedReservation(p, r, now)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return records, nil
 }
 
 // checkAdmission refuses a start the running sessions in records rule out. A

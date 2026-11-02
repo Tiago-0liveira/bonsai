@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentterminal"
 	"github.com/Tiago-0liveira/bonsai/internal/core/config"
 	"github.com/Tiago-0liveira/bonsai/internal/core/procstore"
@@ -196,8 +197,9 @@ func List(p Paths) ([]Record, error) {
 
 // Prune closes abandoned reservations, and removes ended sessions beyond the
 // newest 32 or older than a day, with their locks and sockets. Records of
-// running holders are never touched.
-func Prune(p Paths) error {
+// running holders are never touched. A removed session's runtime dir goes with
+// it, which is how a retained (resumable) runtime is finally released.
+func Prune(p Paths, sessions agents.SessionStore) error {
 	records, err := List(p)
 	if err != nil {
 		return err
@@ -229,10 +231,45 @@ func Prune(p Paths) error {
 		if r.Summary.EndedAt != nil {
 			at = *r.Summary.EndedAt
 		}
-		if len(ended)-i <= keepEnded && at.After(cutoff) {
+		if len(ended)-i <= keepEnded || !at.Before(cutoff) {
 			continue
 		}
-		errs = append(errs, remove(p, r.ID))
+		if err := os.Remove(p.record(r.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+			continue
+		}
+		errs = append(errs, removePaths(p.lock(r.ID), p.socket(r.ID)))
+		if sessions != nil {
+			if runtime, err := sessions.Get(agents.SessionID(r.ID)); err == nil {
+				errs = append(errs, sessions.Cleanup(runtime))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ReapRuntimes removes runtime dirs no holder record accounts for and that are
+// older than keepEndedAt. Setup and probe flows also create runtimes without
+// records, so a young or recorded runtime is never touched.
+func ReapRuntimes(p Paths, sessions agents.SessionStore) error {
+	lister, ok := sessions.(agents.SessionLister)
+	if !ok {
+		return nil
+	}
+	runtimes, err := lister.List()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	cutoff := time.Now().Add(-keepEndedAt)
+	for _, runtime := range runtimes {
+		if !runtime.CreatedAt.Before(cutoff) || !validID(string(runtime.ID)) {
+			continue
+		}
+		if _, err := os.Stat(p.record(string(runtime.ID))); !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		errs = append(errs, sessions.Cleanup(runtime))
 	}
 	return errors.Join(errs...)
 }
@@ -256,8 +293,12 @@ func Remove(p Paths, id string) error {
 }
 
 func remove(p Paths, id string) error {
+	return removePaths(p.record(id), p.lock(id), p.socket(id))
+}
+
+func removePaths(paths ...string) error {
 	var errs []error
-	for _, path := range []string{p.record(id), p.lock(id), p.socket(id)} {
+	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}

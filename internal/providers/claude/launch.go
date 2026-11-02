@@ -35,9 +35,19 @@ func (p *Provider) PrepareSession(_ context.Context, req agents.PrepareSessionRe
 		// restrictions, so a read-only launch accepts none.
 		return agents.PreparedSession{}, fmt.Errorf("%w: a read-only launch takes no explicit arguments", agents.ErrInvalidLaunch)
 	}
-	args, providerSessionID, err := launchArgs(settings, req.Args, req.Launch, req.Activity)
+	explicit, launch := req.Args, req.Launch
+	if req.Resume != nil {
+		// Leading --resume makes launchArgs skip --session-id; the original
+		// prompt was already answered, so it must not be sent again.
+		explicit = append([]string{"--resume", req.Resume.ID}, explicit...)
+		launch.Prompt = ""
+	}
+	args, providerSessionID, err := launchArgs(settings, explicit, launch, req.Activity)
 	if err != nil {
 		return agents.PreparedSession{}, err
+	}
+	if req.Resume != nil {
+		providerSessionID = req.Resume.ID
 	}
 	env := profileEnvironment(dir, req.Account, req.Session, token)
 	if req.Activity.Usable() {

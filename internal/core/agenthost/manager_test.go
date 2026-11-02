@@ -825,3 +825,55 @@ func TestWatchRecordsAdoptsOtherClientsSessions(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestAdoptionGenerationRace(t *testing.T) {
+	s, _, r := resumeFixture(t)
+	lock, err := lockFile(s.Paths.lock(r.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	r.Generation = "A"
+	r.Summary.State = "running"
+	if err := writeRecord(s.Paths, r); err != nil {
+		t.Fatal(err)
+	}
+	old := &entry{record: r, summary: r.Summary}
+	m := &Manager{paths: s.Paths, entries: map[string]*entry{}, quit: make(chan struct{})}
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	m.adoptDial = func(_ context.Context, candidate Record, _ Request) (*Conn, Frame, error) {
+		if candidate.Generation == "A" {
+			close(entered)
+			<-release
+		}
+		return nil, Frame{}, errors.New("offline")
+	}
+	go func() { m.Adopt(); close(done) }()
+	<-entered
+	r.Generation = "B"
+	if err := writeRecord(s.Paths, r); err != nil {
+		t.Fatal(err)
+	}
+	m.Adopt()
+	m.mu.Lock()
+	current := m.entries[r.ID]
+	m.mu.Unlock()
+	if current == nil || current.record.Generation != "B" {
+		t.Fatal("B not adopted")
+	}
+	defer func() { close(m.quit); <-current.done }()
+
+	close(release)
+	<-done
+	late := old.summary
+	late.State = "exited"
+	if !m.apply(old, late) {
+		t.Fatal("stale follower continued")
+	}
+	m.applyActivity(old, late)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.entries[r.ID] != current || current.summary.State != "running" {
+		t.Fatal("late A replaced B")
+	}
+}

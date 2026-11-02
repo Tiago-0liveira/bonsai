@@ -65,7 +65,7 @@ func TestAgentKeysHaveTheirOwnHelpSection(t *testing.T) {
 			agentsSection = sec.actions
 		}
 	}
-	want := []string{"agent_stop_all", "agent_all_repo", "agents_tab", "agent_rename", "agent_all", "agent_new", "agent_quick_new", "agent_fork", "agent_accounts", "agent_usage", "agent_attach", "agent_stop", "agent_playground"}
+	want := []string{"agent_stop_all", "agent_all_repo", "agents_tab", "agent_rename", "agent_all", "agent_new", "agent_quick_new", "agent_fork", "agent_accounts", "agent_usage", "agent_attach", "agent_resume", "agent_stop", "agent_playground"}
 	if strings.Join(agentsSection, ",") != strings.Join(want, ",") {
 		t.Fatalf("Agents tab section = %v, want %v", agentsSection, want)
 	}
@@ -87,7 +87,7 @@ func TestAgentKeysHaveTheirOwnHelpSection(t *testing.T) {
 	nm, _ := e.m.openKeymap()
 	e.m = nm.(Model)
 	view := ansi.Strip(e.m.modal.View())
-	for _, s := range []string{"Agents tab (13)", agentTerminalSection + " (1)"} {
+	for _, s := range []string{"Agents tab (14)", agentTerminalSection + " (1)"} {
 		if !strings.Contains(view, s) {
 			t.Errorf("help lacks %q:\n%s", s, view)
 		}

@@ -211,7 +211,16 @@ func (m Model) agentsTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		nm, cmd := m.openAgentsPicker()
 		return true, nm, cmd
+	case key.Matches(msg, m.keys.AgentResume):
+		cmd := m.resumeSelectedAgent()
+		return true, m, cmd
 	case key.Matches(msg, m.keys.AgentAttach):
+		if wt, ok := m.selectedWorktree(); ok {
+			if ss, _, ok := m.selectedSession(cleanPath(wt.Path)); ok && interrupted(ss.Summary) {
+				cmd := m.resumeSelectedAgent()
+				return true, m, cmd
+			}
+		}
 		// A failed or dropped attach retries first; otherwise enter takes control.
 		if cmd := m.retryAgentAttach(); cmd != nil {
 			return true, m, cmd

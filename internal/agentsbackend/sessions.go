@@ -81,6 +81,31 @@ func (s *sessions) Start(ctx context.Context, req agentsapi.StartRequest) (agent
 	return out, nil
 }
 
+func (s *sessions) Resume(ctx context.Context, id string, cols, rows int) (agentsapi.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return agentsapi.Session{}, err
+	}
+	record, err := s.starter.Resume(ctx, id, cols, rows)
+	if err == nil {
+		return session(record), nil
+	}
+	if ctx.Err() != nil {
+		return agentsapi.Session{}, ctx.Err()
+	}
+	if errors.Is(err, agents.ErrSessionNotFound) || errors.Is(err, os.ErrNotExist) || id == "" {
+		return agentsapi.Session{}, ErrSessionNotFound
+	}
+	if errors.Is(err, agents.ErrNotResumable) {
+		return agentsapi.Session{}, fmt.Errorf("resume agent session: %w", err)
+	}
+	for _, known := range []error{agents.ErrAccountBusy, agents.ErrProviderBusy} {
+		if errors.Is(err, known) {
+			return agentsapi.Session{}, fmt.Errorf("resume agent session: %w: %w", known, ErrSessionUnavailable)
+		}
+	}
+	return agentsapi.Session{}, fmt.Errorf("resume agent session: %w", ErrSessionUnavailable)
+}
+
 func (s *sessions) Stop(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err

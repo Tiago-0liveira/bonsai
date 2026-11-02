@@ -549,7 +549,7 @@ func (m Model) worktreesMsg(msg tea.Msg) (bool, tea.Model, tea.Cmd) {
 	}
 	switch msg.(type) {
 	case worktreesMsg, metricsMsg, fileIndexMsg, logMsg, scriptsMsg, commitPreviewMsg, prsMsg, branchesMsg, pruneCandidatesMsg, prMapMsg, prDetailMsg, checksMsg, statusMsg, activityMsg, diffMsg, inspectorMsg, runsMsg, fileDiffMsg, prCreatedMsg, opDoneMsg, procTickMsg, prTickMsg, modals.MultiSubmitMsg,
-		agentAttachedMsg, agentRetryMsg, agentFramesMsg, agentInputMsg, agentInputSentMsg, agentTookMsg, agentResizeTickMsg, agentUsageTickMsg, paneAccountsMsg, paneTickMsg, usagestore.Observation:
+		agentResumedMsg, agentAttachedMsg, agentRetryMsg, agentFramesMsg, agentInputMsg, agentInputSentMsg, agentTookMsg, agentResizeTickMsg, agentUsageTickMsg, paneAccountsMsg, paneTickMsg, usagestore.Observation:
 		oldPath := m.currentPath()
 		nm, cmd := m.update(msg)
 		next := nm.(Model)

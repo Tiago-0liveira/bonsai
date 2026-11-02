@@ -21,6 +21,7 @@ var (
 	ErrProviderBusy       = errors.New("provider already has an active session on another account")
 	ErrAccountInUse       = errors.New("account has active sessions")
 	ErrInvalidProfile     = errors.New("invalid profile defaults")
+	ErrNotResumable       = errors.New("session cannot be resumed")
 	// ErrSessionConflict means a reserved session ID already names a session
 	// with a different provider, account or working directory.
 	ErrSessionConflict = errors.New("session id reserved for a different identity")

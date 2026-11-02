@@ -87,6 +87,13 @@ made visible. The global `!` action cycles through waiting and unseen ended
 sessions. These actions can be rebound as `agent_all`, `agent_all_repo` and
 `agent_attention`.
 
+Sessions whose agent host disappeared show `interrupted`. Enter in the Agents
+tab or sessions picker resumes and attaches in one action, without confirmation.
+The `r` key (`agent_resume`) resumes any ended session in either place; it does
+nothing on an active session. Normally exited sessions still open read-only with
+Enter. A resume failure explains why and offers `F start fresh` through the
+existing new-task flow, unless the worktree no longer exists.
+
 Ended sessions remain visible in the strip and summary. `F` (`agent_fork`)
 starts another session with the same settings and a new task. `S`
 (`agent_stop_all`) asks for confirmation before stopping every live session in the worktree.

@@ -37,9 +37,19 @@ func (p *Provider) PrepareSession(ctx context.Context, req agents.PrepareSession
 		// starts anyway and reports activity from its terminal only.
 		_ = p.installActivityHooks(ctx, req.Account, req.Activity, executable)
 	}
+	var args []string
+	if req.Resume == nil {
+		args = launchArgs(settings, req.Args, req.Launch, req.Activity)
+	} else {
+		// Resume re-applies the same option flags (all accepted by `codex
+		// resume`) but never a prompt: the conversation already has one.
+		resumed := req.Launch
+		resumed.Prompt = ""
+		args = append([]string{"resume", req.Resume.ID}, launchArgs(settings, nil, resumed, req.Activity)...)
+	}
 	return agents.PreparedSession{
 		Executable:       executable,
-		Args:             launchArgs(settings, req.Args, req.Launch, req.Activity),
+		Args:             args,
 		Dir:              req.Session.WorkDir,
 		EnvSet:           env,
 		EnvUnsetPrefixes: scrubPrefixes,

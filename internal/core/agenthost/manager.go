@@ -41,6 +41,7 @@ type Manager struct {
 	cancelStart context.CancelFunc
 	changed     func(string)
 	activity    agentactivity.Bus
+	adoptDial   func(context.Context, Record, Request) (*Conn, Frame, error)
 }
 
 type entry struct {
@@ -180,6 +181,9 @@ func (m *Manager) follow(e *entry, conn *Conn) {
 		default:
 		}
 		r, err := Read(m.paths, e.record.ID)
+		if err == nil && r.Generation != e.record.Generation {
+			return
+		}
 		if err != nil || !r.Alive {
 			m.mu.Lock()
 			summary := e.summary
@@ -248,6 +252,10 @@ func (m *Manager) watch(e *entry, conn *Conn) bool {
 // apply records a holder's summary and reports whether the session ended.
 func (m *Manager) apply(e *entry, summary Summary) bool {
 	m.mu.Lock()
+	if m.entries[e.summary.ID] != e {
+		m.mu.Unlock()
+		return true
+	}
 	prev := e.summary.State
 	e.summary = summary
 	ended := !summary.Active()
@@ -255,10 +263,10 @@ func (m *Manager) apply(e *entry, summary Summary) bool {
 		e.live = false
 		m.evict()
 	}
-	m.mu.Unlock()
 	if summary.State != prev {
 		m.activity.Publish(agentactivity.Event{Type: agentactivity.LifecycleChanged, At: time.Now(), Session: sessionRef(summary), Lifecycle: summary.State})
 	}
+	m.mu.Unlock()
 	m.notify(summary.ProjectID)
 	return ended
 }
@@ -269,17 +277,17 @@ func (m *Manager) apply(e *entry, summary Summary) bool {
 // A frame for a session the manager already considers stopping is stale.
 func (m *Manager) applyActivity(e *entry, summary Summary) {
 	m.mu.Lock()
-	if e.summary.State != "running" || summary.State != "running" {
+	if m.entries[e.summary.ID] != e || e.summary.State != "running" || summary.State != "running" {
 		m.mu.Unlock()
 		return
 	}
 	prev := e.summary.Activity
 	e.summary.Activity = summary.Activity
 	current := e.summary
-	m.mu.Unlock()
 	if current.Activity != nil && (prev == nil || prev.Changed(*current.Activity)) {
 		m.activity.Publish(agentactivity.Event{Type: agentactivity.ActivityChanged, At: time.Now(), Session: sessionRef(current), From: prev, To: current.Activity})
 	}
+	m.mu.Unlock()
 }
 
 // evict drops the oldest ended sessions beyond 32. Callers hold m.mu.
@@ -584,14 +592,19 @@ func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
 			continue
 		}
 		m.mu.Lock()
-		_, known := m.entries[r.ID]
+		existing := m.entries[r.ID]
+		known := existing != nil && existing.record.Generation == r.Generation
 		closed := m.closed
 		m.mu.Unlock()
 		if known || closed {
 			continue
 		}
 		e := &entry{summary: r.Summary, workDir: r.WorkDir, record: r, live: true, attachments: map[*Attachment]struct{}{}, done: make(chan struct{})}
-		conn, ready, err := DialContext(ctx, r, Request{Mode: ModeStatus})
+		dial := m.adoptDial
+		if dial == nil {
+			dial = DialContext
+		}
+		conn, ready, err := dial(ctx, r, Request{Mode: ModeStatus})
 		if ctx.Err() != nil {
 			if conn != nil {
 				_ = conn.Close()
@@ -600,12 +613,16 @@ func (m *Manager) AdoptContext(ctx context.Context) map[string]Summary {
 		}
 		if err != nil {
 			conn = nil
+		} else if ready.Generation != r.Generation {
+			_ = conn.Close()
+			continue
 		} else if ready.Status != nil {
 			e.summary = *ready.Status
 			out[r.ID] = e.summary
 		}
 		m.mu.Lock()
-		if _, raced := m.entries[r.ID]; raced || m.closed {
+		current, readErr := Read(m.paths, r.ID)
+		if m.entries[r.ID] != existing || m.closed || readErr != nil || current.Generation != r.Generation {
 			// Start registered it while this dialed.
 			m.mu.Unlock()
 			if conn != nil {
