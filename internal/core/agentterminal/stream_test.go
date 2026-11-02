@@ -293,7 +293,7 @@ func TestRunSessionHooksSeeOutputAndEndBeforeFinalize(t *testing.T) {
 	var events []string
 	var seen strings.Builder
 	stream := NewStream[Summary](80, 24)
-	RunSession(context.Background(), stream, hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{},
+	RunSession(context.Background(), stream, hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, nil,
 		func(change func(*Summary) error) error { return change(&Summary{}) },
 		RunHooks{
 			Output: func(p []byte) { seen.Write(p) },
@@ -306,5 +306,68 @@ func TestRunSessionHooksSeeOutputAndEndBeforeFinalize(t *testing.T) {
 		t.Fatalf("order %v", events)
 	}
 	// The zero value is today's behavior.
-	RunSession(context.Background(), NewStream[Summary](80, 24), hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, func(change func(*Summary) error) error { return change(&Summary{}) }, RunHooks{})
+	RunSession(context.Background(), NewStream[Summary](80, 24), hooksProvider{events: &events}, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, nil, func(change func(*Summary) error) error { return change(&Summary{}) }, RunHooks{})
+}
+
+type resumeProvider struct {
+	hooksProvider
+	resume   chan *agents.ResumeTarget
+	retain   bool
+	retained int
+}
+
+func (p *resumeProvider) PrepareSession(ctx context.Context, r agents.PrepareSessionRequest) (agents.PreparedSession, error) {
+	if p.resume != nil {
+		p.resume <- r.Resume
+	}
+	return p.hooksProvider.PrepareSession(ctx, r)
+}
+
+func (p *resumeProvider) RetainRuntime(context.Context, agents.Account, agents.Session) (bool, error) {
+	p.retained++
+	return p.retain, nil
+}
+
+func runResumeFixture(t *testing.T, provider agents.Provider, resume *agents.ResumeTarget) agents.Session {
+	t.Helper()
+	accounts, err := agents.NewFileAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := agents.NewAccountID()
+	account := agents.Account{ID: id, Provider: "hooks", Name: "fixture"}
+	if err := accounts.Create(account); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := agents.NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := sessions.Create(account, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	RunSession(context.Background(), NewStream[Summary](80, 24), provider, account, runtime, sessions, 80, 24, agents.LaunchOptions{}, resume, func(change func(*Summary) error) error { return change(&Summary{}) }, RunHooks{})
+	return runtime
+}
+
+func TestRunSessionPassesResume(t *testing.T) {
+	var events []string
+	p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, resume: make(chan *agents.ResumeTarget, 1)}
+	runResumeFixture(t, p, &agents.ResumeTarget{ID: "abc"})
+	if got := <-p.resume; got == nil || got.ID != "abc" {
+		t.Fatalf("resume %+v", got)
+	}
+}
+
+func TestRunSessionRetainsRuntime(t *testing.T) {
+	for _, retain := range []bool{true, false} {
+		var events []string
+		p := &resumeProvider{hooksProvider: hooksProvider{events: &events}, retain: retain}
+		runtime := runResumeFixture(t, p, nil)
+		_, err := os.Stat(runtime.RuntimeDir)
+		if kept := err == nil; kept != retain || p.retained != 1 {
+			t.Fatalf("retain=%v kept=%v retainer calls=%d", retain, kept, p.retained)
+		}
+	}
 }

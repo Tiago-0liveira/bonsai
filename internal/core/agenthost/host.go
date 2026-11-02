@@ -30,6 +30,8 @@ type Spec struct {
 	Cols    int                   `json:"cols"`
 	Rows    int                   `json:"rows"`
 	Launch  agents.LaunchOptions  `json:"launch"`
+	// Resume, when set, relaunches the provider's earlier conversation.
+	Resume *agents.ResumeTarget `json:"resume,omitempty"`
 	// StartHash is the receipt hash of an operation-bound start. The holder
 	// refuses to run unless the reserved record on disk carries it.
 	StartHash string `json:"start_hash,omitempty"`
@@ -141,7 +143,8 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 			return err
 		}
 	}
-	_ = Prune(deps.Paths)
+	_ = Prune(deps.Paths, deps.Sessions)
+	_ = ReapRuntimes(deps.Paths, deps.Sessions)
 	account, err := deps.Accounts.Get(spec.Summary.AccountID)
 	if err != nil {
 		return fmt.Errorf("profile unavailable")
@@ -210,11 +213,85 @@ func serve(ctx context.Context, spec Spec, deps Deps, ready func(error)) error {
 			h.tracker.Stop()
 		},
 	}
-	agentterminal.RunSession(sessionCtx, h.stream, provider, account, runtime, deps.Sessions, spec.Cols, spec.Rows, spec.Launch, h.update, hooks)
+	discoverDone := make(chan struct{})
+	if discoverer, ok := provider.(agents.SessionIDDiscoverer); ok && spec.Summary.ProviderSessionID == "" {
+		go func() {
+			defer close(discoverDone)
+			h.discoverSessionID(sessionCtx, discoverer, account, runtime)
+		}()
+	} else {
+		close(discoverDone)
+	}
+	agentterminal.RunSession(sessionCtx, h.stream, provider, account, runtime, deps.Sessions, spec.Cols, spec.Rows, spec.Launch, spec.Resume, h.update, hooks)
+	cancel()
+	<-discoverDone
 	close(stopped)
 	close(h.ended)
 	h.linger()
 	return nil
+}
+
+// Discovery polls often while a fresh session is likely to write its first
+// conversation file, then rarely. Variables so tests need not wait seconds.
+var (
+	discoverFast    = 2 * time.Second
+	discoverFastFor = 30 * time.Second
+	discoverSlow    = 15 * time.Second
+)
+
+// discoverSessionID polls the provider for its own session id once the session
+// runs, and records it, until found or the session ends (ctx is canceled).
+func (h *host) discoverSessionID(ctx context.Context, d agents.SessionIDDiscoverer, account agents.Account, runtime agents.Session) {
+	var runningAt time.Time
+	for wait := discoverFast; ; {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		h.mu.Lock()
+		state, started, known := h.summary.State, h.summary.StartedAt, h.summary.ProviderSessionID != ""
+		h.mu.Unlock()
+		if known {
+			return
+		}
+		if state != "running" || started == nil {
+			continue
+		}
+		if runningAt.IsZero() {
+			runningAt = time.Now()
+		}
+		if time.Since(runningAt) >= discoverFastFor {
+			wait = discoverSlow
+		}
+		id, err := d.DiscoverSessionID(ctx, agents.ResumeRequest{Account: account, Session: runtime, StartedAt: *started, Claimed: h.claimedIDs(account.ID)})
+		if err != nil || id == "" {
+			continue
+		}
+		_ = h.update(func(s *agentterminal.Summary) error {
+			if s.ProviderSessionID == "" {
+				s.ProviderSessionID = id
+			}
+			return nil
+		})
+		return
+	}
+}
+
+// claimedIDs are the provider ids other sessions of the account already own,
+// so discovery never attributes one conversation to two sessions.
+func (h *host) claimedIDs(account agents.AccountID) []string {
+	records, err := List(h.deps.Paths)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, r := range records {
+		if r.ID != h.summary.ID && r.Summary.AccountID == account && r.Summary.ProviderSessionID != "" {
+			out = append(out, r.Summary.ProviderSessionID)
+		}
+	}
+	return out
 }
 
 // useActivityProfile configures the tracker for a provider. It replaces the
