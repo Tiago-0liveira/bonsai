@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
 )
@@ -104,7 +105,7 @@ func TestSummaryColumnsAlign(t *testing.T) {
 		rows := append(twoAccounts(), Account{Provider: "antigravity", Primary: lim("5h", 1, 0), Secondary: lim("weekly", .98, 0)})
 		rows = append(rows, rows[2])
 		for _, width := range []int{24, 40, 60} {
-			view := plain(ViewSummary(rows, "", width, 10, ascii))
+			view := plain(ViewSummaryAt(rows, "", width, 10, testNow, ascii))
 			column, weekly := -1, -1
 			for _, row := range strings.Split(view, "\n") {
 				if i := strings.Index(row, "5h"); i >= 0 {
@@ -154,14 +155,6 @@ func TestPageGolden(t *testing.T) {
 					t.Fatalf("bad width: %q", line)
 				}
 			}
-			if tc.width == 40 {
-				if !strings.Contains(plain(out), "2h14m") {
-					t.Fatal("lost primary reset")
-				}
-				if strings.Contains(plain(out), "▰▰▰") {
-					t.Fatal("bar displaced reset")
-				}
-			}
 			if tc.ascii {
 				for _, r := range plain(out) {
 					if r > 127 {
@@ -206,7 +199,7 @@ func TestCompactReset(t *testing.T) {
 	}{
 		{-time.Minute, "now"}, {45 * time.Minute, "45m"}, {3*time.Hour + 26*time.Minute, "3h26m"}, {52 * time.Hour, "2d4h"},
 	} {
-		if got := compactReset(testNow, testNow.Add(tc.after)); got != tc.want {
+		if got := resetFormat(testNow, testNow.Add(tc.after), 0); got != tc.want {
 			t.Errorf("%s: got %s, want %s", tc.after, got, tc.want)
 		}
 	}
@@ -267,6 +260,145 @@ func TestSummaryStaleMarkerKeepsColumns(t *testing.T) {
 		}
 		if len(cols) != 2 || cols[0] != cols[1] {
 			t.Fatalf("w=%d: 5h columns at %v, want two equal offsets", w, cols)
+		}
+	}
+}
+
+func threeProviders() []Account {
+	accounts := []Account{
+		{Provider: "claude", Name: "personal", Primary: lim("5h", .97, 4*time.Hour+45*time.Minute), Secondary: lim("weekly", .92, 51*time.Hour)},
+		{Provider: "codex", Name: "work", Stale: true, Primary: lim("5h", .45, 45*time.Minute), Secondary: lim("weekly", .12, 30*time.Second)},
+	}
+	for range 7 {
+		accounts = append(accounts, Account{Provider: "antigravity", Name: "studio", Primary: lim("5h", .8, 2*time.Hour+5*time.Minute), Secondary: lim("weekly", .6, 48*time.Hour)})
+	}
+	return accounts
+}
+
+func TestAdaptiveWidth(t *testing.T) {
+	for _, width := range []int{40, 56, 70, 90, 110, 120} {
+		for _, ascii := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/ascii=%t", width, ascii), func(t *testing.T) {
+				accounts := threeProviders()
+				view := plain(ViewSummaryAt(accounts, "2m", width, 5, testNow, ascii))
+				checkGolden(t, fmt.Sprintf("adaptive-%d-%t", width, ascii), view)
+				if !strings.Contains(view, "Antigravity +6") {
+					t.Fatal("lost grouping:", view)
+				}
+				barChars := "▰▱"
+				if ascii {
+					barChars = "#."
+				}
+				columns := map[string]int{}
+				check := func(row string) {
+					t.Helper()
+					if ansi.StringWidth(row) != width {
+						t.Fatalf("wrong width: %q", row)
+					}
+					// Only the intentional one-cell inset may follow the final column.
+					if strings.HasSuffix(row, "  │") || strings.HasSuffix(row, "  |") {
+						t.Fatalf("unused trailing cells: %q", row)
+					}
+					meters := 0
+					for _, field := range strings.Fields(row) {
+						if strings.Trim(field, barChars) == "" {
+							meters++
+							if ansi.StringWidth(field) < 4 {
+								t.Fatal("meter below minimum:", row)
+							}
+						}
+					}
+					if width >= 70 && meters != 2 {
+						t.Fatal("expected both meters:", row)
+					}
+					for _, token := range []string{"5h", " W "} {
+						if i := strings.Index(row, token); i >= 0 {
+							col := ansi.StringWidth(row[:i])
+							if prev, ok := columns[token]; ok && prev != col {
+								t.Fatalf("%s moved: %q", token, row)
+							}
+							columns[token] = col
+						}
+					}
+				}
+				for _, row := range strings.Split(view, "\n")[1:4] {
+					check(row)
+				}
+				if width >= 100 && (!strings.Contains(view, "4h45m") || !strings.Contains(view, "2d3h")) {
+					t.Fatal("lost precise resets:", view)
+				}
+				columns = map[string]int{}
+				for page := range len(accounts) {
+					row := strings.Split(plain(ViewPage(accounts, "", width, 3, testNow, ascii, page)), "\n")[1]
+					check(row)
+				}
+			})
+		}
+	}
+}
+
+func TestResetPrecision(t *testing.T) {
+	for _, tc := range []struct {
+		duration time.Duration
+		want     [3]string
+	}{
+		{4*time.Hour + 45*time.Minute, [3]string{"4h45m", "4h45", "4h"}},
+		{51 * time.Hour, [3]string{"2d3h", "2d", "2d"}},
+		{45 * time.Minute, [3]string{"45m", "45m", "45m"}},
+		{30 * time.Second, [3]string{"<1m", "<1m", "<1m"}},
+		{-time.Minute, [3]string{"now", "now", "now"}},
+	} {
+		for precision, want := range tc.want {
+			if got := resetFormat(testNow, testNow.Add(tc.duration), precision); got != want {
+				t.Errorf("%s precision %d: got %q, want %q", tc.duration, precision, got, want)
+			}
+		}
+	}
+}
+
+func TestPlannerResetSelection(t *testing.T) {
+	accounts := []Account{{Name: "a", Primary: lim("5h", .9, 4*time.Hour+45*time.Minute), Secondary: lim("weekly", .5, 51*time.Hour)}}
+	for _, tc := range []struct {
+		width         int
+		primary, week string
+	}{
+		{48, "4h45m", "2d3h"}, {47, "4h45", "2d3h"}, {45, "4h45", "2d"}, {44, "4h", "2d"},
+	} {
+		p := planColumns(accounts, tc.width, testNow)
+		for i, want := range []string{tc.primary, tc.week} {
+			got := resetFormat(testNow, *windows(accounts[0])[i].ResetsAt, p.precision[i])
+			if got != want {
+				t.Errorf("width %d, window %d: got %q, want %q", tc.width, i, got, want)
+			}
+		}
+	}
+}
+
+func TestBarUsesCapacityColors(t *testing.T) {
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
+	for _, tc := range []struct {
+		fraction float64
+		filled   int
+	}{{.9, 18}, {.4, 8}, {.2, 4}, {.05, 1}} {
+		for _, ascii := range []bool{false, true} {
+			filled, empty := "▰", "▱"
+			if ascii {
+				filled, empty = "#", "."
+			}
+			got := bar(tc.fraction, 20, ascii)
+			if plain(got) != strings.Repeat(filled, tc.filled)+strings.Repeat(empty, 20-tc.filled) {
+				t.Errorf("unexpected segments: %q", got)
+			}
+			// Meters must communicate the same warning level as the number.
+			color := strings.SplitN(capacity(tc.fraction), "m", 2)[0] + "m"
+			if !strings.HasPrefix(got, color) {
+				t.Errorf("bar and percentage colors differ: %q vs %q", got, capacity(tc.fraction))
+			}
+			if !strings.HasSuffix(got, dim(strings.Repeat(empty, 20-tc.filled))) {
+				t.Errorf("unused capacity is not muted: %q", got)
+			}
 		}
 	}
 }

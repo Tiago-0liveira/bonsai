@@ -249,11 +249,14 @@ list. It starts collapsed with one row per provider, showing the most limited
 account and the number of additional accounts. The configurable
 `usage_pane_toggle` action (default `U`) expands or collapses it.
 
-Expanded rows show account identity, primary (usually 5h) and weekly remaining
-capacity and compact reset countdowns. Narrow columns remove the weekly bar,
-then the primary bar, then the weekly reset, then the primary reset, and finally
-weekly capacity; the account and primary capacity always stay. Unknown capacity stays
-unknown; failed refreshes retain the last good values with a warning.
+Collapsed and expanded rows show primary (usually 5h) and weekly remaining
+capacity with bars and reset countdowns. Bars share all spare width and use the
+same capacity warning colors as percentages. Narrow panes first shorten resets
+(`4h45m`, `4h45`, `4h`; `2d3h`, `2d`), then hide the weekly reset and shrink bars
+to four cells. They then hide the weekly bar, primary bar, primary reset and
+finally weekly capacity; primary capacity always stays. Expanded rows include
+account identity. Unknown capacity stays unknown; failed refreshes retain the
+last good values with a warning.
 
 Settings → General → Usage pane controls personal preferences:
 `usage_pane_max_percent` defaults to 35 (10–70), and limits the pane's share
