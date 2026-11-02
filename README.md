@@ -106,6 +106,9 @@ running. Manage it with `status`, `logs`, `restart`, `stop` and `doctor`.
   This includes Claude questions and plan approval, pending Codex async questions,
   and inferred Antigravity input dialogs.
 
+Interrupted sessions resume when opened in the TUI; ended sessions can be resumed
+with `r` ([session controls](docs/tui-cli.md#agents-tab)).
+
 Details: [docs/agents.md](docs/agents.md).
 
 ### 🔄 Also
