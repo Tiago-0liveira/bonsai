@@ -1016,3 +1016,13 @@ For a Garden-created session, the Inspector shows its Issue and attempt identity
 its specification/plan sections. A manual checkout needs no task link. Human
 acceptance, PR merge and worktree prune remain separate actions. Leaving a
 workspace releases only its terminal attachment and never stops its holders.
+
+The Diff tab groups changed files by directory and compresses directory chains.
+Binary-only directories and leaf directories with at least ten files start collapsed.
+Bulk folders show their file count, shared extension when present, and total churn. With the pane focused, `j`/`k` (or
+arrow keys) select rows, highlighted across the pane with a bold path and cursor; `c` toggles a directory or the selected file's parent.
+Enter toggles a directory or opens the selected file's patch. The summary compares
+the configured base with HEAD; the eight-cell bars show relative file churn using ▰/▱ cells (#/. in ASCII mode),
+with unused cells muted.
+`b` continues to open Checks. Staging and working-tree comparison are not Diff-tab
+actions.

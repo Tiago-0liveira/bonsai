@@ -114,16 +114,8 @@ func providerGlyph(p agents.ProviderID, ascii bool) string {
 }
 
 func bar(frac float64, width int, ascii bool) string {
-	b := usagefmt.Bar(frac, width)
-	filled, empty := "▰", "▱"
-	if ascii {
-		filled, empty = "#", "."
-	}
-	// Color each run independently so unused capacity stays muted even when
-	// the remaining capacity is low or a fetch is stale.
-	n := strings.Count(b, "█")
-	return rankStyle(usagefmt.RankOf(frac)).Render(strings.Repeat(filled, n)) +
-		dim(strings.Repeat(empty, width-n))
+	return theme.Bar(frac, width, ascii, rankStyle(usagefmt.RankOf(frac)),
+		lipgloss.NewStyle().Foreground(theme.Current.Dim))
 }
 
 func capacity(frac float64) string {

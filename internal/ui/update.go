@@ -368,6 +368,10 @@ func (m Model) onResize(msg tea.WindowSizeMsg) Model {
 	}
 	m.sizeAgentOverlay()
 	m.layout()
+	if m.rightTab == tabDiff && m.diffFiles != nil {
+		m.refreshDiffPane()
+		m.term.EnsureVisible(diffHeaderLines + m.diffCursor)
+	}
 	m.ready = true
 	return m
 }
@@ -1540,6 +1544,7 @@ func (m *Model) enterDiff(wt git.Worktree) tea.Cmd {
 		m.diffPath = wt.Path
 		m.diffBase = base
 		m.diffFiles = nil
+		m.diffCollapsed = nil
 		m.diffCursor = 0
 		m.diffFileContent = map[string]string{}
 		m.term.SetFollow(false)
@@ -1690,7 +1695,7 @@ func (m Model) onDiff(msg diffMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.diffFiles = msg.files
-	if m.diffCursor >= len(m.diffFiles) {
+	if m.diffCursor >= len(m.diffRows()) {
 		m.diffCursor = 0
 	}
 	if m.rightTab == tabDiff {
@@ -1710,7 +1715,24 @@ func (m Model) diffTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	if len(m.diffFiles) == 0 {
 		return false, m, nil
 	}
+	rows := m.diffRows()
+	if len(rows) == 0 {
+		return false, m, nil
+	}
+	m.diffCursor = min(m.diffCursor, len(rows)-1)
 	switch msg.String() {
+	case "c":
+		r := rows[m.diffCursor]
+		target := r.parent
+		if r.dir {
+			target = r.path
+		}
+		if target != "" {
+			m.toggleDiffDir(target)
+			m.refreshDiffPane()
+			m.term.EnsureVisible(diffHeaderLines + m.diffCursor)
+		}
+		return true, m, nil
 	case "up", "ctrl+k", "k":
 		if m.diffCursor > 0 {
 			m.diffCursor--
@@ -1719,14 +1741,21 @@ func (m Model) diffTabKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		m.term.EnsureVisible(diffHeaderLines + m.diffCursor)
 		return true, m, nil
 	case "down", "ctrl+j", "j":
-		if m.diffCursor < len(m.diffFiles)-1 {
+		if m.diffCursor < len(rows)-1 {
 			m.diffCursor++
 		}
 		m.refreshDiffPane()
 		m.term.EnsureVisible(diffHeaderLines + m.diffCursor)
 		return true, m, nil
 	case "enter", " ":
-		f := m.diffFiles[m.diffCursor].Path
+		r := rows[m.diffCursor]
+		if r.dir {
+			m.toggleDiffDir(r.path)
+			m.refreshDiffPane()
+			m.term.EnsureVisible(diffHeaderLines + m.diffCursor)
+			return true, m, nil
+		}
+		f := r.file.Path
 		content := "(loading…)"
 		if c, ok := m.diffFileContent[f]; ok {
 			content = c

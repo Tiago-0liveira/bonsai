@@ -324,56 +324,52 @@ func (m Model) renderPRDetail(d gh.PRDetail, checks []gh.Check) string {
 	return b.String()
 }
 
-const diffPaneHint = "↑/↓ select · enter open diff · esc close"
+const diffPaneHint = "j/k move · enter view patch · c collapse dir"
 
-// diffHeaderLines is the number of content lines rendered above the first file
-// row (summary + rule), used to map the cursor index to a viewport line.
 const diffHeaderLines = 2
 
-// renderDiff builds the changed-file list for the Diff tab: a summary line and
-// one row per file with +/− counts. The selected row is marked with a cursor;
-// pressing enter opens that file's diff in a scrollable modal.
 func (m Model) renderDiff() string {
 	if len(m.diffFiles) == 0 {
 		return prMeta.Render("(no changes vs " + config.BaseBranch(m.diffBase) + ")")
 	}
-	var b strings.Builder
-
-	// Summary.
-	totA, totD := 0, 0
+	width := m.termInnerWidth()
+	if m.layoutKind != LayoutRedesign {
+		_, right, _ := m.dims()
+		width = max(1, right-2)
+	}
+	adds, dels := 0, 0
 	for _, f := range m.diffFiles {
-		if f.Add > 0 {
-			totA += f.Add
-		}
-		if f.Del > 0 {
-			totD += f.Del
+		adds += max(f.Add, 0)
+		dels += max(f.Del, 0)
+	}
+	branch := ""
+	if wt, ok := m.selectedWorktree(); ok {
+		branch = wt.Branch
+	}
+	summary := fmt.Sprintf("%s files changed   +%s  -%s   base: %s ← %s", diffNumber(len(m.diffFiles)), diffNumber(adds), diffNumber(dels), config.BaseBranch(m.diffBase), branch)
+	var b strings.Builder
+	summary = strings.Replace(summary, "+"+diffNumber(adds), diffAdd.Render("+"+diffNumber(adds)), 1)
+	summary = strings.Replace(summary, "-"+diffNumber(dels), diffDel.Render("-"+diffNumber(dels)), 1)
+	b.WriteString(ansi.Truncate(summary, width, "…") + "\n")
+	divider := "━"
+	ascii := m.state != nil && m.agentGlyphsASCII()
+	if ascii {
+		divider = "-"
+	}
+	b.WriteString(prMeta.Render(strings.Repeat(divider, max(0, width))) + "\n")
+	rows := m.diffRows()
+	peak, aw, dw := 1, 2, 2
+	for _, r := range rows {
+		if (!r.dir || r.summary) && r.file.Add >= 0 {
+			peak = max(peak, r.file.Add+r.file.Del)
+			aw = max(aw, len(diffNumber(r.file.Add))+1)
+			dw = max(dw, len(diffNumber(r.file.Del))+1)
 		}
 	}
-	b.WriteString(fmt.Sprintf("%s %s %s %s\n",
-		prSection.Render(fmt.Sprintf("%d files changed", len(m.diffFiles))),
-		prMeta.Render("·"),
-		diffAdd.Render(fmt.Sprintf("+%d", totA)),
-		diffDel.Render(fmt.Sprintf("−%d", totD))))
-	b.WriteString(rule(m.termInnerWidth()) + "\n")
-
-	for i, f := range m.diffFiles {
-		cursor := "  "
-		path := diffPathSt.Render(f.Path)
-		if i == m.diffCursor {
-			cursor = diffCursorSt.Render("› ")
-			path = diffCursorSt.Render(f.Path)
-		}
-		counts := ""
-		if f.Add < 0 { // binary
-			counts = prMeta.Render("  (binary)")
-		} else {
-			counts = "  " + diffAdd.Render(fmt.Sprintf("+%d", f.Add)) + " " + diffDel.Render(fmt.Sprintf("−%d", f.Del))
-		}
-		b.WriteString(cursor + path + counts + "\n")
+	for i, r := range rows {
+		b.WriteString(renderDiffRow(r, i == m.diffCursor, width, peak, aw, dw, ascii) + "\n")
 	}
-
-	b.WriteString("\n" + prMeta.Render(diffPaneHint) + "\n")
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // inspectPaneHint is the footer hint shown at the bottom of the Inspector tab.
@@ -697,6 +693,9 @@ func (m *Model) layout() {
 // disables scrolling and pins the view to the top of the log.
 func (m Model) termHeight(innerH int) int {
 	h := innerH - 1 // -1 for the tab strip line
+	if m.rightTab == tabDiff {
+		h--
+	}
 	if m.rightTab == tabProcs {
 		h -= m.procFooterHeight()
 	}
@@ -772,6 +771,8 @@ func (m Model) View() string {
 		// room, see layout); the process list + hint sit in a footer pinned to
 		// the bottom.
 		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View() + "\n" + m.renderProcFooter()
+	} else if m.rightTab == tabDiff {
+		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View() + "\n" + ansi.Truncate(diffPaneHint, rightInnerW, "…")
 	} else {
 		rightBody = m.tabStrip(rightInnerW) + "\n" + m.term.View()
 	}
