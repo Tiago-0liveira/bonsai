@@ -272,18 +272,20 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		}
 		return block
 	}
+	inlinePrefix := ""
+	if block := prBlock(it); prStatusMode != "off" && block != "" {
+		inlinePrefix = block + " "
+	}
 	prefix := ""
 	switch prStatusMode {
 	case "off":
 	case "full":
 		// State words vary in width ("open" vs "merged"), so a shared column
 		// would push every branch, PR or not, toward the middle of the row.
-		if block := prBlock(it); block != "" {
-			prefix = block + " "
-		}
+		prefix = inlinePrefix
 	default:
 		prWidth := 0
-		for _, li := range m.Items() {
+		for _, li := range m.VisibleItems() {
 			if row, ok := li.(Item); ok {
 				prWidth = max(prWidth, ansi.StringWidth(prBlock(row)))
 			}
@@ -333,6 +335,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			tailW += w + 1
 		}
 	}
+	if (prStatusMode == "compact" || prStatusMode == "color") &&
+		ansi.StringWidth(pointer+prefix+it.Title())+tailW > width {
+		// Spend alignment padding before shortening the branch or its PR block.
+		prefix = inlinePrefix
+	}
 	nameW := max(width-2-ansi.StringWidth(prefix)-tailW, 1)
 	tail := ""
 	for j, c := range cells {
@@ -341,7 +348,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		}
 	}
 	title := nameStyle.Render(ansi.Truncate(it.Title(), nameW, "…"))
-	title += strings.Repeat(" ", max(nameW-ansi.StringWidth(it.Title()), 0)) + tail
+	title += strings.Repeat(" ", max(nameW-ansi.StringWidth(title), 0)) + tail
 	// Reserve the complete PR block before truncating the branch and tail.
 	remaining := max(width-ansi.StringWidth(pointer+prefix), 0)
 	if width > 0 && ansi.StringWidth(title) > remaining {
@@ -354,6 +361,10 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		}
 	}
 	title = pointer + prefix + title
+	if width > 0 && ansi.StringWidth(title) > width {
+		// Only an oversized pointer and PR block can exhaust the branch budget.
+		title = ansi.Truncate(title, width, "")
+	}
 	path := it.WT.Path
 	if d.home != "" && (path == d.home || strings.HasPrefix(path, d.home+"/")) {
 		path = "~" + strings.TrimPrefix(path, d.home)

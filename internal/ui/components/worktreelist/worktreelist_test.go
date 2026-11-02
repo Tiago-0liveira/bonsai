@@ -324,6 +324,125 @@ func TestPRBlockNarrowAndASCII(t *testing.T) {
 	}
 }
 
+func TestPRColumnUsesVisibleItems(t *testing.T) {
+	for _, mode := range []string{"compact", "color"} {
+		t.Run(mode, func(t *testing.T) {
+			SetPRStatusMode(mode)
+			t.Cleanup(func() { SetPRStatusMode("full") })
+			m := New()
+			m.SetSize(24, 20)
+			m.SetItems([]Item{
+				{WT: git.Worktree{Branch: "hidden"}, PR: 114, PRState: gh.StateMerged, Checks: "pass"},
+				{WT: git.Worktree{Branch: "plain-visible-branch"}},
+			})
+			m.list.SetFilterText("plain")
+			visible := m.list.VisibleItems()
+			if len(visible) != 1 {
+				t.Fatalf("visible items = %d, want 1", len(visible))
+			}
+			var out strings.Builder
+			itemDelegate{}.Render(&out, m.list, 0, visible[0])
+			row := ansi.Strip(strings.Split(out.String(), "\n")[0])
+			if strings.TrimRight(row, " ") != "› plain-visible-branch" {
+				t.Errorf("filtered row has PR padding or truncation: %q", row)
+			}
+		})
+	}
+}
+
+func TestPRBlockFitsNarrowRows(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+	for _, mode := range []string{"full", "compact", "color"} {
+		for _, width := range []int{8, 12, 16, 24} {
+			for _, ascii := range []bool{false, true} {
+				for _, embedded := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/width=%d/ascii=%t/embedded=%t", mode, width, ascii, embedded), func(t *testing.T) {
+						SetPRStatusMode(mode)
+						t.Cleanup(func() { SetPRStatusMode("full") })
+						items := []Item{
+							{WT: git.Worktree{Branch: "feature/a-long-branch", Path: "/home/test/feature"}, PR: 1, PRState: gh.StateOpen, Checks: "pass"},
+							{WT: git.Worktree{Branch: "another-long-branch", Path: "/home/test/another"}, PR: 1234567, PRState: gh.StateOpen, PRReview: gh.ReviewApproved, Checks: "fail"},
+							{WT: git.Worktree{Branch: "plain-long-branch", Path: "/home/test/plain"}},
+						}
+						m := New()
+						m.SetSize(width, 20)
+						m.SetItems(items)
+						for i, item := range items {
+							var out strings.Builder
+							itemDelegate{ascii: ascii, embedded: embedded, home: "/home/test"}.Render(&out, m.list, i, item)
+							lines := strings.Split(out.String(), "\n")
+							if len(lines) != 2 {
+								t.Fatalf("row wrapped: %q", out.String())
+							}
+							for _, line := range lines {
+								if got := ansi.StringWidth(line); got > width {
+									t.Errorf("line width = %d, want <= %d: %q", got, width, ansi.Strip(line))
+								}
+							}
+							block := item.prBadge()
+							if item.PR > 0 {
+								block += " " + checkGlyph(item.Checks, ascii)
+								if 2+ansi.StringWidth(block) <= width && !strings.Contains(ansi.Strip(lines[0]), ansi.Strip(block)) {
+									t.Errorf("lost complete PR block %q: %q", ansi.Strip(block), ansi.Strip(lines[0]))
+								}
+							}
+							if i == 0 && width > 3+ansi.StringWidth(block) && !strings.Contains(ansi.Strip(lines[0]), " "+ansi.Truncate(item.Title(), width-3-ansi.StringWidth(block), "…")) {
+								t.Errorf("alignment padding shortened branch: %q", ansi.Strip(lines[0]))
+							}
+							if item.PR == 0 && !strings.Contains(ansi.Strip(lines[0]), ansi.Truncate(item.Title(), width-2, "…")) {
+								t.Errorf("alignment padding hid non-PR branch: %q", ansi.Strip(lines[0]))
+							}
+							if mode == "compact" && width == 16 && !ascii && !embedded {
+								t.Logf("sample row: %q / %q", ansi.Strip(lines[0]), ansi.Strip(lines[1]))
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestTruncatedBranchTailAlignment(t *testing.T) {
+	for _, mode := range PRStatusModes {
+		for _, ascii := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/ascii=%t", mode, ascii), func(t *testing.T) {
+				SetPRStatusMode(mode)
+				t.Cleanup(func() { SetPRStatusMode("full") })
+				width := 23
+				if ascii {
+					width = 25
+				}
+				items := []Item{
+					{WT: git.Worktree{Branch: strings.Repeat("界", 20)}, Status: git.StatusSummary{Modified: 1}, HasMetrics: true, Metrics: git.Metrics{Ahead: 3, Behind: 2}},
+					{WT: git.Worktree{Branch: "short"}, Status: git.StatusSummary{Modified: 1}, HasMetrics: true, Metrics: git.Metrics{Ahead: 3, Behind: 2}},
+				}
+				long := ansi.Strip(renderRow(items, 0, width, ascii))
+				short := ansi.Strip(renderRow(items, 1, width, ascii))
+				tracked, up := TrackedGlyph(ascii), "↑"
+				if ascii {
+					up = "^"
+				}
+				branch, _, _ := strings.Cut(long, tracked)
+				if !strings.HasSuffix(strings.TrimSpace(branch), "…") || !strings.Contains(short, "short") {
+					t.Fatalf("expected truncated and untruncated branches: %q / %q", long, short)
+				}
+				for _, marker := range []string{tracked + "1", up + "3"} {
+					longIndex, shortIndex := strings.Index(long, marker), strings.Index(short, marker)
+					if longIndex < 0 || shortIndex < 0 {
+						t.Fatalf("missing tail %q: %q / %q", marker, long, short)
+					}
+					if ansi.StringWidth(long[:longIndex]) != ansi.StringWidth(short[:shortIndex]) {
+						t.Errorf("tail %q is misaligned: %q / %q", marker, long, short)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestBaseRows(t *testing.T) {
 	for _, width := range []int{70, 45, 20} {
 		for _, ascii := range []bool{false, true} {
