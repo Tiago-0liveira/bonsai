@@ -115,6 +115,7 @@ var (
 	prBadgeStyle       lipgloss.Style
 	draftBadgeStyle    lipgloss.Style
 	mergedBadgeStyle   lipgloss.Style
+	mergedBranchStyle  lipgloss.Style
 	approvedBadgeStyle lipgloss.Style
 	closedBadgeStyle   lipgloss.Style
 	changesBadgeStyle  lipgloss.Style
@@ -140,6 +141,7 @@ func SetTheme(p theme.Palette) {
 	prBadgeStyle = lipgloss.NewStyle().Foreground(p.PRBadge).Bold(true)
 	draftBadgeStyle = lipgloss.NewStyle().Foreground(p.Dim)
 	mergedBadgeStyle = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
+	mergedBranchStyle = lipgloss.NewStyle().Foreground(p.PhaseReview)
 	approvedBadgeStyle = lipgloss.NewStyle().Foreground(p.Success).Bold(true)
 	closedBadgeStyle = lipgloss.NewStyle().Foreground(p.Danger)
 	changesBadgeStyle = lipgloss.NewStyle().Foreground(p.Danger)
@@ -156,7 +158,7 @@ func SetTheme(p theme.Palette) {
 
 // PRStatusModes are the display modes for the row PR status indicator, in
 // cycle order.
-var PRStatusModes = []string{"full", "compact", "off"}
+var PRStatusModes = []string{"full", "compact", "color", "off"}
 
 // prStatusMode is the active display mode; "full" is the default.
 var prStatusMode = PRStatusModes[0]
@@ -165,7 +167,7 @@ var prStatusMode = PRStatusModes[0]
 // back to "full".
 func SetPRStatusMode(mode string) {
 	switch mode {
-	case "compact", "off":
+	case "compact", "color", "off":
 		prStatusMode = mode
 	default:
 		prStatusMode = "full"
@@ -192,17 +194,32 @@ func (i Item) prStatus() (label string, st lipgloss.Style) {
 	return "open", prBadgeStyle
 }
 
-// prBadge shows a PR number and state word. Off mode keeps only the number.
+// prBadge shows a PR number and state word. Off and color keep only the number.
 func (i Item) prBadge() string {
 	n, ok := i.prNumber()
 	if !ok {
 		return ""
 	}
-	if i.PRState == "" || prStatusMode == "off" {
-		return prBadgeStyle.Render(fmt.Sprintf("#%d ", n))
+	if i.PRState == "" || prStatusMode == "off" || prStatusMode == "color" {
+		return prBadgeStyle.Render(fmt.Sprintf("#%d", n))
 	}
 	label, st := i.prStatus()
-	return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(label) + " "
+	return prBadgeStyle.Render(fmt.Sprintf("#%d", n)) + " " + st.Render(label)
+}
+
+// prBranchColor follows PR state rather than review decisions, so an open PR
+// stays green even when changes are requested.
+func (i Item) prBranchColor() lipgloss.TerminalColor {
+	switch i.PRState {
+	case gh.StateMerged:
+		return mergedBranchStyle.GetForeground()
+	case gh.StateClosed:
+		return closedBadgeStyle.GetForeground()
+	}
+	if i.PRDraft {
+		return draftBadgeStyle.GetForeground()
+	}
+	return approvedBadgeStyle.GetForeground()
 }
 
 // itemDelegate renders a two-line row, coloring a leading "#N" PR badge
@@ -231,8 +248,40 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	pointer := "  "
 	nameStyle := normalTitle
 	if selected {
-		pointer = accentStyle.Render("› ")
+		cursor := "› "
+		if d.ascii {
+			cursor = "> "
+		}
+		pointer = accentStyle.Render(cursor)
 		nameStyle = selectedTitle
+	}
+
+	if _, hasPR := it.prNumber(); prStatusMode == "color" && hasPR {
+		nameStyle = nameStyle.Foreground(it.prBranchColor())
+	}
+
+	prBlock := func(row Item) string {
+		if _, ok := row.prNumber(); !ok {
+			return ""
+		}
+		block := row.prBadge()
+		if checks := checkGlyph(row.Checks, d.ascii); checks != "" {
+			block += " " + checks
+		}
+		return block
+	}
+	prWidth := 0
+	if prStatusMode != "off" {
+		for _, li := range m.Items() {
+			if row, ok := li.(Item); ok {
+				prWidth = max(prWidth, ansi.StringWidth(prBlock(row)))
+			}
+		}
+	}
+	prefix := ""
+	if prWidth > 0 {
+		block := prBlock(it)
+		prefix = block + strings.Repeat(" ", prWidth-ansi.StringWidth(block)+1)
 	}
 
 	columns := func(row Item) []string {
@@ -253,7 +302,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			up, down := AheadBehindGlyphs(d.ascii)
 			metrics = fmt.Sprintf("%s%d %s%d", up, row.Metrics.Ahead, down, row.Metrics.Behind)
 		}
-		return []string{strings.TrimSpace(row.prBadge()), checkGlyph(row.Checks, d.ascii), strings.TrimSpace(dirty), agents, metrics}
+		pr, checks := "", ""
+		if prStatusMode == "off" {
+			pr, checks = strings.TrimSpace(row.prBadge()), checkGlyph(row.Checks, d.ascii)
+		}
+		return []string{pr, checks, strings.TrimSpace(dirty), agents, metrics}
 	}
 	cells := columns(it)
 	widths := make([]int, len(cells))
@@ -270,24 +323,27 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			tailW += w + 1
 		}
 	}
-	nameW := max(width-2-tailW, 1)
+	nameW := max(width-2-ansi.StringWidth(prefix)-tailW, 1)
 	tail := ""
 	for j, c := range cells {
 		if widths[j] > 0 {
 			tail += " " + c + strings.Repeat(" ", max(widths[j]-ansi.StringWidth(c), 0))
 		}
 	}
-	title := pointer + nameStyle.Render(ansi.Truncate(it.Title(), nameW, "…"))
+	title := nameStyle.Render(ansi.Truncate(it.Title(), nameW, "…"))
 	title += strings.Repeat(" ", max(nameW-ansi.StringWidth(it.Title()), 0)) + tail
-	if width > 0 && ansi.StringWidth(title) > width {
+	// Reserve the complete PR block before truncating the branch and tail.
+	remaining := max(width-ansi.StringWidth(pointer+prefix), 0)
+	if width > 0 && ansi.StringWidth(title) > remaining {
 		// At extreme widths preserve the complete opaque agent badge if it fits.
 		agents := cells[3]
-		if agents != "" && ansi.StringWidth(agents) < width {
-			title = ansi.Truncate(title, max(width-ansi.StringWidth(agents)-1, 0), "…") + " " + agents
+		if agents != "" && ansi.StringWidth(agents) < remaining {
+			title = ansi.Truncate(title, max(remaining-ansi.StringWidth(agents)-1, 0), "…") + " " + agents
 		} else {
-			title = ansi.Truncate(title, width, "…")
+			title = ansi.Truncate(title, remaining, "…")
 		}
 	}
+	title = pointer + prefix + title
 	path := it.WT.Path
 	if !selected && d.home != "" && (path == d.home || strings.HasPrefix(path, d.home+"/")) {
 		path = "~" + strings.TrimPrefix(path, d.home)

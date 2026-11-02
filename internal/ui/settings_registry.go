@@ -254,7 +254,7 @@ func generalEditor() settingSection {
 			origin:  func(m Model) string { return personalOrDefault(m.work.Sort != "") },
 		},
 		{
-			id: "pr_status", label: "PR status in list", scope: scopeMachine, kind: kindChoice,
+			id: "pr_status", label: "PR status in worktree list", scope: scopeMachine, kind: kindChoice,
 			help:    "How much pull-request state each worktree row shows.",
 			choices: choicesOf(worktreelist.PRStatusModes),
 			get:     func(m Model) string { return orDefault(m.work.PRStatus, worktreelist.PRStatusModes[0]) },

@@ -41,7 +41,14 @@ stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 (`http://localhost:…`) detected in process output are shown next to each process.
 
-Worktree PR badges show the coloured state word beside the number, without a circle.
+**PR status in worktree list** defaults to `full`: the PR number, coloured state
+word and CI glyph appear before the branch, padded so branch names align across
+rows. `compact` also keeps the state word. `color` shows only the number and CI
+glyph before the branch, colouring the branch by PR state: dim for draft, green
+for open, purple/magenta for merged and red for closed (using the active theme).
+Selected branches remain bold with a cursor marker. Rows without PRs keep their
+normal branch colour; lists without PRs reserve no PR column. `off` keeps the
+number and CI glyph after the branch, without a state word.
 
 The create-worktree flow offers **Start agent here** when agents are enabled.
 `ctrl+a` (`create_agent_toggle`) toggles it without taking a typed character, so
