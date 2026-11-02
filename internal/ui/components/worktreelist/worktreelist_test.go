@@ -493,12 +493,40 @@ func TestBaseRows(t *testing.T) {
 }
 
 func TestBaseNameCollision(t *testing.T) {
-	item := Item{WT: git.Worktree{Branch: "child"}, HasMetrics: true, Metrics: git.Metrics{Base: "feat/shared", BaseSource: "recorded"}}
-	for _, branch := range []string{"fix/shared", "shared"} {
-		items := []Item{item, {WT: git.Worktree{Branch: branch}}}
-		row := ansi.Strip(renderBaseRow(items, 0, 70, false))
-		if !strings.HasSuffix(row, "feat/shared") {
-			t.Fatalf("ambiguous base shortened: %q", row)
+	for _, tc := range []struct{ base, other string }{
+		{"feat/shared", "fix/shared"}, {"feat/shared", "shared"},
+		{"feat/team/task", "team/task"}, {"feat/team/task", "fix/team/task"},
+	} {
+		t.Run(tc.base+"/"+tc.other, func(t *testing.T) {
+			item := Item{WT: git.Worktree{Branch: "child"}, HasMetrics: true, Metrics: git.Metrics{Base: tc.base, BaseSource: "recorded"}}
+			items := []Item{item, {WT: git.Worktree{Branch: tc.other}}}
+			row := ansi.Strip(renderBaseRow(items, 0, 70, false))
+			if !strings.HasSuffix(row, tc.base) {
+				t.Fatalf("ambiguous base shortened: %q", row)
+			}
+		})
+	}
+}
+
+func TestBaseLabelTightWidth(t *testing.T) {
+	for _, ascii := range []bool{false, true} {
+		for _, merged := range []bool{false, true} {
+			for _, width := range []int{7, 8, 9, 10} {
+				t.Run(fmt.Sprintf("%t/%t/%d", ascii, merged, width), func(t *testing.T) {
+					item := Item{WT: git.Worktree{Branch: "child", Path: "/long/path"}, HasMetrics: true, BaseMerged: merged, Metrics: git.Metrics{Base: "parent", Behind: 1}}
+					row := strings.Split(ansi.Strip(renderBaseRow([]Item{item}, 0, width, ascii)), "\n")[1]
+					arrow, moved, warning := BaseGlyphs(ascii)
+					hint := moved
+					if merged {
+						hint = warning
+					}
+					prefix := hint + " " + arrow + " "
+					_, name, ok := strings.Cut(row, prefix)
+					if !ok || ansi.StringWidth(name) < 3 || ansi.StringWidth(row) > width {
+						t.Fatalf("clipped label: %q", row)
+					}
+				})
+			}
 		}
 	}
 }

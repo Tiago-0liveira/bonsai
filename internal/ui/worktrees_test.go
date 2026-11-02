@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -31,7 +32,7 @@ func wtModel(t *testing.T, w, h int) Model {
 	}}
 	m.worktrees = []git.Worktree{{Path: "/repo/main", Branch: "main", IsMain: true}, {Path: "/repo/feature", Branch: "feature"}}
 	m.statuses["/repo/feature"] = git.StatusSummary{Modified: 2, Untracked: 1}
-	m.metrics["/repo/feature"] = git.Metrics{Ahead: 3, Behind: 1}
+	m.metrics[metricsKey("/repo/feature", "feature")] = git.Metrics{Ahead: 3, Behind: 1}
 	m.prByBranch["feature"] = gh.PR{Number: 67, Head: "feature", Title: "Usage", State: gh.StateOpen}
 	m.prByNumber = map[int]gh.PR{67: m.prByBranch["feature"], 69: {Number: 69, Head: "remote-only", Title: "Reconnect", State: gh.StateOpen}}
 	m.wt.branches = []string{"main", "feature", "unchecked"}
@@ -524,7 +525,7 @@ func TestMetricsKeepCurrentPRBase(t *testing.T) {
 			m.prByBranch["parent"] = gh.PR{Number: 66, Head: "parent", State: gh.StateMerged}
 			msg := metricsMsg{path: "/repo/feature", branch: tc.branch, prBase: tc.prBase, metrics: git.Metrics{Ahead: 9, Base: "parent", BaseSource: "pr"}}
 			m = m.onMetrics(msg)
-			if got := m.metrics[msg.path].Ahead; (got == 9) != tc.accept {
+			if got := m.metrics[metricsKey(msg.path, msg.branch)].Ahead; (got == 9) != tc.accept {
 				t.Fatalf("ahead=%d, accept=%t", got, tc.accept)
 			}
 			if tc.accept {
@@ -543,5 +544,135 @@ func TestMetricPRBaseByNumber(t *testing.T) {
 	m.prByNumber = map[int]gh.PR{42: {Number: 42, Head: "fork-feature", Base: "parent"}}
 	if got := m.metricPRBase("pr-42"); got != "parent" {
 		t.Fatalf("base=%q", got)
+	}
+}
+
+func metricsRepoModel(t *testing.T, layout Layout) (Model, string) {
+	t.Helper()
+	m := wtModel(t, 70, 25)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "missing"))
+	main, path := pruneRepo(t)
+	runGitCmd(t, path, "commit", "--allow-empty", "-qm", "feature")
+	m.repoDir, m.layoutKind, m.cfg.Upstream = main, layout, "main"
+	m.worktrees = []git.Worktree{{Path: path, Branch: "feat"}}
+	m.metrics = map[string]git.Metrics{}
+	m.prByBranch = map[string]gh.PR{"feat": {Head: "feat", Base: "main"}}
+	m.rebuildItems()
+	return m, path
+}
+
+func TestMetricsRequestGeneration(t *testing.T) {
+	for _, layout := range []Layout{LayoutLegacy, LayoutRedesign} {
+		for _, oldFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/oldFirst=%t", layout, oldFirst), func(t *testing.T) {
+				m, path := metricsRepoModel(t, layout)
+				old := m.readMetrics(path, "feat")().(metricsMsg)
+				if old.err != nil {
+					t.Fatal(old.err)
+				}
+				runGitCmd(t, path, "commit", "--allow-empty", "-qm", "newer")
+				latest := m.readMetrics(path, "feat")
+				// A request for another path must not invalidate this path.
+				_ = m.readMetrics(m.repoDir, "main")
+				key := metricsKey(path, "feat")
+				if oldFirst {
+					m = m.onMetrics(old)
+					if _, ok := m.metrics[key]; ok {
+						t.Fatal("old reply accepted while latest request pending")
+					}
+				}
+				fresh := latest().(metricsMsg)
+				if fresh.err != nil {
+					t.Fatal(fresh.err)
+				}
+				m = m.onMetrics(fresh)
+				m = m.onMetrics(old)
+				if got := m.metrics[key].Ahead; got != 2 {
+					t.Fatalf("ahead = %d, want 2", got)
+				}
+				old.err = errors.New("old failure")
+				m = m.onMetrics(old)
+				if m.metrics[key].Ahead != 2 {
+					t.Fatal("old failure cleared current metrics")
+				}
+			})
+		}
+	}
+}
+
+func TestMetricsBranchSwitchAndDetach(t *testing.T) {
+	for _, layout := range []Layout{LayoutLegacy, LayoutRedesign} {
+		for _, branch := range []string{"next", "(detached)", ""} {
+			t.Run(string(layout)+"/"+branch, func(t *testing.T) {
+				m, path := metricsRepoModel(t, layout)
+				old := m.readMetrics(path, "feat")().(metricsMsg)
+				m = m.onMetrics(old)
+				before := m.wt.generations["metrics:"+path]
+				if branch == "next" {
+					runGitCmd(t, path, "checkout", "-b", "next")
+				} else {
+					runGitCmd(t, path, "checkout", "--detach")
+				}
+				nm, cmd := m.onWorktrees(worktreesMsg{trees: []git.Worktree{{Path: path, Branch: branch}}})
+				m = nm.(Model)
+				m = m.onMetrics(old)
+				m.list.SelectByPath(path)
+				item, ok := m.list.Selected()
+				if !ok || item.HasMetrics || len(m.metrics) != 0 {
+					t.Fatalf("previous metrics retained: %+v, %v", item, m.metrics)
+				}
+				if branch == "next" {
+					if cmd == nil || m.wt.generations["metrics:"+path] <= before+1 {
+						t.Fatal("branch switch did not request fresh metrics")
+					}
+					fresh := loadMetrics(path, branch, "main", "")().(metricsMsg)
+					fresh.generation = m.wt.generations["metrics:"+path]
+					m = m.onMetrics(fresh)
+					if m.metrics[metricsKey(path, branch)].Ahead != 1 {
+						t.Fatal("fresh branch metrics missing")
+					}
+					// Returning to the old branch must not revive its cached counts.
+					runGitCmd(t, path, "checkout", "feat")
+					nm, _ = m.onWorktrees(worktreesMsg{trees: []git.Worktree{{Path: path, Branch: "feat"}}})
+					m = nm.(Model).onMetrics(old)
+					item, _ = m.list.Selected()
+					if item.HasMetrics {
+						t.Fatal("returning to branch revived old metrics")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestNormalizedBaseDecorations(t *testing.T) {
+	for _, source := range []string{"guess", "pr"} {
+		t.Run(source, func(t *testing.T) {
+			m, path := metricsRepoModel(t, LayoutRedesign)
+			runGitCmd(t, m.repoDir, "remote", "add", "upstream", "https://example.invalid/repo")
+			runGitCmd(t, m.repoDir, "branch", "team/parent", "main")
+			runGitCmd(t, m.repoDir, "update-ref", "refs/remotes/upstream/team/parent", "main")
+			m.cfg.Upstream = "refs/remotes/upstream/team/parent"
+			m.prByBranch = map[string]gh.PR{"team/parent": {Head: "team/parent", State: gh.StateMerged}}
+			if source == "pr" {
+				m.prByBranch["feat"] = gh.PR{Head: "feat", Base: "upstream/team/parent"}
+			}
+			msg := m.readMetrics(path, "feat")().(metricsMsg)
+			if msg.err != nil {
+				t.Fatal(msg.err)
+			}
+			m = m.onMetrics(msg)
+			m.list.SelectByPath(path)
+			item, _ := m.list.Selected()
+			if item.Metrics.Base != "team/parent" || !item.BaseMerged || item.DefaultBase != "team/parent" {
+				t.Fatalf("bad decoration: %+v", item)
+			}
+			m.list.SetSize(70, 20)
+			view := ansi.Strip(m.list.View())
+			if strings.Contains(view, "⤴") != (source == "pr") {
+				t.Fatalf("default base visibility: %q", view)
+			}
+		})
 	}
 }

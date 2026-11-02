@@ -32,6 +32,7 @@ type worktreesMsg struct {
 }
 
 type metricsMsg struct {
+	generation     uint64
 	branch, prBase string
 	path           string
 	metrics        git.Metrics
@@ -165,6 +166,22 @@ func loadMetrics(path, branch, upstream, prBase string) tea.Cmd {
 	return func() tea.Msg {
 		mtr, err := coregit.BaseMetrics(path, branch, upstream, prBase)
 		return metricsMsg{path: path, branch: branch, prBase: prBase, metrics: mtr, err: err}
+	}
+}
+
+// readMetrics orders reads in both layouts, including requests with the same PR base.
+func (m *Model) readMetrics(path, branch string) tea.Cmd {
+	if m.wt.generations == nil {
+		m.wt.generations = map[string]uint64{}
+	}
+	key := "metrics:" + path
+	m.wt.generations[key]++
+	gen := m.wt.generations[key]
+	cmd := loadMetrics(path, branch, m.cfg.Upstream, m.metricPRBase(branch))
+	return func() tea.Msg {
+		msg := cmd().(metricsMsg)
+		msg.generation = gen
+		return msg
 	}
 }
 

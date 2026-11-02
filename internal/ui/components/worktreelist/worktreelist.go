@@ -371,7 +371,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	}
 	label := it.baseLabel(m.Items(), d.ascii, max(width-4, 0))
 	labelW := ansi.StringWidth(label)
-	pathW := max(width-2, 0)
+	indent := "  "
+	if labelW > width-len(indent) {
+		indent = strings.Repeat(" ", max(width-labelW, 0))
+	}
+	pathW := max(width-len(indent), 0)
 	if labelW > 0 {
 		pathW = max(pathW-labelW-1, 0)
 	}
@@ -379,7 +383,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		path = ansi.TruncateLeft(path, ansi.StringWidth(path)-pathW+1, "…")
 		path = ansi.Truncate(path, pathW, "")
 	}
-	desc := "  " + descStyle.Render(path)
+	desc := indent + descStyle.Render(path)
 	if labelW > 0 {
 		desc += strings.Repeat(" ", max(width-ansi.StringWidth(desc)-labelW, 0)) + label
 	}
@@ -576,10 +580,8 @@ func (i Item) baseLabel(items []list.Item, ascii bool, budget int) string {
 		for _, li := range items {
 			if row, ok := li.(Item); ok && row.WT.Branch != name {
 				other := row.WT.Branch
-				if _, tail, hasPrefix := strings.Cut(other, "/"); hasPrefix {
-					other = tail
-				}
-				if other == short {
+				_, tail, _ := strings.Cut(other, "/")
+				if other == short || tail == short {
 					unique = false
 					break
 				}

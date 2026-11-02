@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
@@ -101,5 +103,47 @@ func TestMissingWorktreeRemovalKeepsLocksAndProcessProtection(t *testing.T) {
 	}
 	if err := s.RemoveWorktree(ctx, domain.RemoveWorktreeRequest{WorktreeID: "unknown"}); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateWorktreeRecordsBase(t *testing.T) {
+	for _, tc := range []struct{ mode, base, want string }{
+		{"new", "main", "main"},
+		{"new", "origin/team/parent", "team/parent"},
+		{"new", "refs/remotes/upstream/team/parent", "team/parent"},
+		{"remote", "upstream/team/parent", "team/parent"},
+		{"new", "HEAD~1", ""},
+		{"new", "release-tag", ""},
+		{"new", "sha", ""},
+		{"existing", "main", ""},
+	} {
+		t.Run(tc.mode+"/"+tc.base, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "missing"))
+			s, root, _ := setup(t)
+			git(t, root, "commit", "--allow-empty", "-m", "second")
+			for _, remote := range []string{"origin", "upstream"} {
+				git(t, root, "remote", "add", remote, "https://example.invalid/repo")
+				git(t, root, "update-ref", "refs/remotes/"+remote+"/team/parent", "main")
+			}
+			git(t, root, "tag", "release-tag")
+			if tc.mode == "existing" {
+				git(t, root, "branch", "child")
+			}
+			base := tc.base
+			if base == "sha" {
+				base = strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+			}
+			if _, err := s.CreateWorktree(context.Background(), domain.CreateWorktreeRequest{RepositoryID: "repo", Mode: tc.mode, Branch: "child", Base: base}); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("git", "config", "--local", "--get", "branch.child.bonsaiBase")
+			cmd.Dir = root
+			out, err := cmd.Output()
+			if got := strings.TrimSpace(string(out)); got != tc.want || (tc.want != "" && err != nil) {
+				t.Fatalf("recorded %q, %v; want %q", got, err, tc.want)
+			}
+		})
 	}
 }

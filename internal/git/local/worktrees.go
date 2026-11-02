@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	coregit "github.com/Tiago-0liveira/bonsai/internal/core/git"
 	domain "github.com/Tiago-0liveira/bonsai/internal/git"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ func (s *Service) createWorktree(ctx context.Context, r *repository, req domain.
 	}
 	path := filepath.Join(root, fmt.Sprintf("%x", sha256.Sum256([]byte(req.Branch)))[:24])
 	args := []string{"worktree", "add"}
+	recordBase := ""
 	switch req.Mode {
 	case "existing":
 		if _, e = ref(ctx, r.Root, "refs/heads/"+req.Branch); e != nil {
@@ -51,6 +53,7 @@ func (s *Service) createWorktree(ctx context.Context, r *repository, req domain.
 		}
 		args = append(args, "--", path, req.Branch)
 	case "new":
+		recordBase = req.Base
 		base, e := ref(ctx, r.Root, req.Base)
 		if e != nil {
 			return domain.Worktree{}, e
@@ -82,6 +85,7 @@ func (s *Service) createWorktree(ctx context.Context, r *repository, req domain.
 			}
 			args = append(args, "--", path, req.Branch)
 		} else {
+			recordBase = "refs/remotes/" + base
 			args = append(args, "--track", "-b", req.Branch, "--", path, "refs/remotes/"+base)
 		}
 	default:
@@ -94,6 +98,11 @@ func (s *Service) createWorktree(ctx context.Context, r *repository, req domain.
 	}
 	if _, e = run(ctx, r.Root, args...); e != nil {
 		return domain.Worktree{}, e
+	}
+	if recordBase != "" {
+		// The worktree already exists; a missing base only degrades the list to
+		// its ancestry guess, so it must not report the creation as failed.
+		_ = coregit.RecordWorktreeBase(r.Root, req.Branch, recordBase)
 	}
 	trees, e := s.ListWorktrees(ctx, r.ID)
 	if e != nil {

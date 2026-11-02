@@ -375,6 +375,24 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 	}
+	// A checkout can reuse a path; discard its previous branch's metrics before
+	// rebuilding, including when HEAD becomes detached or the path disappears.
+	for _, old := range m.worktrees {
+		current := false
+		for _, tree := range msg.trees {
+			if tree.Path == old.Path && tree.Branch == old.Branch && tree.Branch != "" && tree.Branch != "(detached)" {
+				current = true
+				break
+			}
+		}
+		if !current {
+			delete(m.metrics, metricsKey(old.Path, old.Branch))
+			if m.wt.generations == nil {
+				m.wt.generations = map[string]uint64{}
+			}
+			m.wt.generations["metrics:"+old.Path]++
+		}
+	}
 	m.worktrees = msg.trees
 	m.list.SetPathHome(msg.home)
 	m.rebuildItems()
@@ -398,7 +416,7 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 	for _, t := range msg.trees {
 		cmds = append(cmds, m.worktreeRead("status:"+t.Path, loadStatus(t.Path)), m.worktreeRead("activity:"+t.Path, loadActivity(t.Path)))
 		if t.Branch != "" && t.Branch != "(detached)" {
-			cmds = append(cmds, m.worktreeRead("metrics:"+t.Path, loadMetrics(t.Path, t.Branch, m.cfg.Upstream, m.metricPRBase(t.Branch))))
+			cmds = append(cmds, m.readMetrics(t.Path, t.Branch))
 		}
 	}
 	if wt, ok := m.selectedWorktree(); ok {
@@ -413,7 +431,12 @@ func (m Model) onWorktrees(msg worktreesMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func metricsKey(path, branch string) string { return path + "\x00" + branch }
+
 func (m Model) onMetrics(msg metricsMsg) Model {
+	if msg.generation != m.wt.generations["metrics:"+msg.path] || msg.branch == "" || msg.branch == "(detached)" {
+		return m
+	}
 	// PR discovery can race the initial local-only read in the legacy layout.
 	if msg.prBase != m.metricPRBase(msg.branch) {
 		return m
@@ -431,7 +454,7 @@ func (m Model) onMetrics(msg metricsMsg) Model {
 	if msg.err != nil {
 		return m
 	}
-	m.metrics[msg.path] = msg.metrics
+	m.metrics[metricsKey(msg.path, msg.branch)] = msg.metrics
 	m.rebuildItems()
 	return m
 }
@@ -461,7 +484,7 @@ func (m Model) onPRMap(msg prMapMsg) (tea.Model, tea.Cmd) {
 		if t.Branch == "" || t.Branch == "(detached)" {
 			continue
 		}
-		cmds = append(cmds, m.worktreeRead("metrics:"+t.Path, loadMetrics(t.Path, t.Branch, m.cfg.Upstream, m.metricPRBase(t.Branch))))
+		cmds = append(cmds, m.readMetrics(t.Path, t.Branch))
 		if pr, ok := m.prByBranch[t.Branch]; ok && pr.Number > 0 {
 			cmds = append(cmds, m.worktreeRead("checks:"+t.Path, loadChecks(m.repoDir, m.ghCache, t.Path, pr.Number, msg.force)))
 		}
@@ -541,7 +564,7 @@ func (m *Model) rebuildItems() {
 	items := make([]worktreelist.Item, len(trees))
 	for i, t := range trees {
 		it := worktreelist.Item{WT: t, DefaultBase: config.BaseBranch(m.cfg.Upstream)}
-		if mtr, ok := m.metrics[t.Path]; ok {
+		if mtr, ok := m.metrics[metricsKey(t.Path, t.Branch)]; ok {
 			it.Metrics = mtr
 			it.HasMetrics = true
 			it.BaseMerged = m.prByBranch[mtr.Base].State == gh.StateMerged
@@ -589,9 +612,9 @@ func (m *Model) sortedWorktrees() []git.Worktree {
 		case sortAttention:
 			return m.worktreeAttention(ta.Path) > m.worktreeAttention(tb.Path)
 		case sortAhead:
-			return m.metrics[ta.Path].Ahead > m.metrics[tb.Path].Ahead
+			return m.metrics[metricsKey(ta.Path, ta.Branch)].Ahead > m.metrics[metricsKey(tb.Path, tb.Branch)].Ahead
 		case sortBehind:
-			return m.metrics[ta.Path].Behind > m.metrics[tb.Path].Behind
+			return m.metrics[metricsKey(ta.Path, ta.Branch)].Behind > m.metrics[metricsKey(tb.Path, tb.Branch)].Behind
 		case sortPR:
 			return m.prByBranch[ta.Branch].Number > m.prByBranch[tb.Branch].Number
 		case sortActivity:

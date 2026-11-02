@@ -331,10 +331,6 @@ func AddWorktreeNewBranch(dir, path, branch, base string) error {
 	if strings.HasPrefix(base, "-") {
 		return fmt.Errorf("%w: %q", ErrInvalidWorktreeBase, base)
 	}
-	recordedBase := base
-	if recordedBase == "" || recordedBase == "HEAD" {
-		recordedBase, _ = run(dir, "symbolic-ref", "--quiet", "--short", "HEAD")
-	}
 	args := []string{"worktree", "add", "-b", branch, "--", path}
 	if base != "" {
 		args = append(args, base)
@@ -342,11 +338,9 @@ func AddWorktreeNewBranch(dir, path, branch, base string) error {
 	if _, err := run(dir, args...); err != nil {
 		return err
 	}
-	if recordedBase != "" {
-		if _, err := run(dir, "config", "--local", "branch."+branch+".bonsaiBase", recordedBase); err != nil {
-			return fmt.Errorf("record worktree base: %w", err)
-		}
-	}
+	// The worktree already exists; a missing base only degrades the list to
+	// its ancestry guess, so it must not report the creation as failed.
+	_ = RecordWorktreeBase(dir, branch, base)
 	return nil
 }
 

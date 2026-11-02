@@ -60,8 +60,8 @@ func TestSortedWorktreesByAhead(t *testing.T) {
 		{Path: "/low", Branch: "low"},
 		{Path: "/high", Branch: "high"},
 	}
-	m.metrics["/low"] = git.Metrics{Ahead: 1}
-	m.metrics["/high"] = git.Metrics{Ahead: 9}
+	m.metrics[metricsKey("/low", "low")] = git.Metrics{Ahead: 1}
+	m.metrics[metricsKey("/high", "high")] = git.Metrics{Ahead: 9}
 	m.sort = sortAhead
 	got := m.sortedWorktrees()
 	if !got[0].IsMain {
