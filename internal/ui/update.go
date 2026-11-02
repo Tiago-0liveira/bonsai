@@ -519,7 +519,7 @@ func (m *Model) rebuildItems() {
 	trees := m.sortedWorktrees()
 	items := make([]worktreelist.Item, len(trees))
 	for i, t := range trees {
-		it := worktreelist.Item{WT: t}
+		it := worktreelist.Item{WT: t, Base: config.BaseBranch(m.upstreamFor(t.Branch)), DefaultBase: config.BaseBranch(m.cfg.Upstream)}
 		if mtr, ok := m.metrics[t.Path]; ok {
 			it.Metrics = mtr
 			it.HasMetrics = true

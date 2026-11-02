@@ -176,10 +176,10 @@ func TestAgentsIndexMatchesWorktrees(t *testing.T) {
 			e.fb.Sessions.Add(tc.mutate(e))
 			e.relist(t)
 			row := e.rowOf(tc.branch)
-			if got := strings.Contains(row, "▶1"); got != tc.present {
+			if got := strings.Contains(row, "✹1"); got != tc.present {
 				t.Errorf("glyph on %s row = %v, want %v: %q", tc.branch, got, tc.present, row)
 			}
-			if other := e.rowOf("main"); strings.Contains(other, "▶1") {
+			if other := e.rowOf("main"); strings.Contains(other, "✹1") {
 				t.Errorf("glyph leaked onto main: %q", other)
 			}
 		})
@@ -195,16 +195,16 @@ func TestAgentsBadgeContent(t *testing.T) {
 	}{
 		{"two providers in order", config.Prefs{}, func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{e.session("a", "codex", "running", e.wtA), e.session("b", "claude", "starting", e.wtA)}
-		}, "▶2"},
+		}, "✹1 ❃1"},
 		{"count", config.Prefs{}, func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{e.session("a", "claude", "running", e.wtA), e.session("b", "claude", "running", e.wtA)}
-		}, "▶2"},
+		}, "✹2"},
 		{"failed unacknowledged", config.Prefs{}, func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{e.session("a", "claude", "running", e.wtA), e.session("b", "codex", "failed", e.wtA)}
-		}, "▶1 ✗1"},
+		}, "✹1"},
 		{"ascii", config.Prefs{AgentGlyphs: "ascii"}, func(e *agentsEnv) []agentsapi.Session {
 			return []agentsapi.Session{e.session("a", "antigravity", "running", e.wtA)}
-		}, ">1"},
+		}, "A1"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -274,7 +274,7 @@ func TestAgentsEmitRelists(t *testing.T) {
 	}
 	nm, _ = e.m.Update(list)
 	e.m = nm.(Model)
-	if row := e.rowOf("feat-a"); !strings.Contains(row, "▶1") {
+	if row := e.rowOf("feat-a"); !strings.Contains(row, "✹1") {
 		t.Errorf("new session not shown after change: %q", row)
 	}
 }
@@ -313,7 +313,7 @@ func TestAgentsListErrorKeepsLastGoodAndShowsStale(t *testing.T) {
 	if len(e.m.agents.sessions) != 1 || e.m.agents.err == "" {
 		t.Fatalf("error must keep the last list and set err: n=%d err=%q", len(e.m.agents.sessions), e.m.agents.err)
 	}
-	if row := e.rowOf("feat-a"); !strings.Contains(row, "▶1") {
+	if row := e.rowOf("feat-a"); !strings.Contains(row, "✹1") {
 		t.Errorf("glyph lost on list error: %q", row)
 	}
 	if out := e.pane(120, 20); !strings.Contains(out, "Working") || !strings.Contains(out, "⚠ stale") {
@@ -354,12 +354,12 @@ func TestAgentsEmptyListClears(t *testing.T) {
 	e := newAgentsEnv(t, WithAgents(agentsapi.Backend{Sessions: wrap}))
 	fb.Sessions.Add(e.session("s1", "claude", "running", e.wtA))
 	e.relist(t)
-	if !strings.Contains(e.rowOf("feat-a"), "▶1") {
+	if !strings.Contains(e.rowOf("feat-a"), "✹1") {
 		t.Fatal("setup: glyph missing")
 	}
 	wrap.empty = true
 	e.relist(t)
-	if row := e.rowOf("feat-a"); strings.Contains(row, "▶1") || len(e.m.agents.sessions) != 0 {
+	if row := e.rowOf("feat-a"); strings.Contains(row, "✹1") || len(e.m.agents.sessions) != 0 {
 		t.Errorf("successful empty list must clear: %q", row)
 	}
 }
@@ -446,7 +446,7 @@ func TestAgentsNarrowRows(t *testing.T) {
 				t.Errorf("width %d: line is %d cells: %q", w, got, l)
 			}
 		}
-		if row := e.rowOf("feat-a"); !strings.Contains(row, "▶2") {
+		if row := e.rowOf("feat-a"); !strings.Contains(row, "✹1 ❃1") {
 			t.Errorf("width %d: badges missing: %q", w, row)
 		}
 	}

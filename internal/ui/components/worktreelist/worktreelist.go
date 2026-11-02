@@ -4,6 +4,7 @@ package worktreelist
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -20,9 +21,11 @@ import (
 // Item is a worktree row, optionally decorated with ahead/behind metrics and a
 // connected pull-request number.
 type Item struct {
-	WT         git.Worktree
-	Metrics    git.Metrics
-	HasMetrics bool
+	Base        string
+	DefaultBase string
+	WT          git.Worktree
+	Metrics     git.Metrics
+	HasMetrics  bool
 	// PR is the number of a PR whose head is this branch (0 = none).
 	PR int
 	// PRState is the connected PR's state (gh.StateOpen / StateMerged /
@@ -91,7 +94,7 @@ func (i Item) dirtyBadge() string {
 		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("%s%d", TrackedGlyph(false), n)))
 	}
 	if i.Status.Untracked > 0 {
-		parts = append(parts, descStyle.Render(fmt.Sprintf("?%d", i.Status.Untracked)))
+		parts = append(parts, dirtyStyle.Render(fmt.Sprintf("?%d", i.Status.Untracked)))
 	}
 	return strings.Join(parts, " ")
 }
@@ -212,7 +215,7 @@ type itemDelegate struct {
 	home     string
 	ascii    bool
 	// badges returns the pre-styled agent glyphs for a worktree path; nil
-	// means agents are off and rows render exactly as before.
+	// means no active agents are shown.
 	badges func(path string) string
 }
 
@@ -228,74 +231,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	width := m.Width()
 	selected := index == m.Index()
 
-	pointer := "  "
-	nameStyle := normalTitle
-	if selected {
-		pointer = accentStyle.Render("› ")
-		nameStyle = selectedTitle
-	}
-
-	columns := func(row Item) []string {
-		dirty := row.dirtyBadge()
-		if d.ascii {
-			dirty = strings.ReplaceAll(dirty, TrackedGlyph(false), TrackedGlyph(true))
-		}
-		if row.Running > 0 {
-			glyph := RunningGlyph(d.ascii)
-			dirty += " " + runningStyle.Render(fmt.Sprintf("%s%d", glyph, row.Running))
-		}
-		agents := ""
-		if d.badges != nil {
-			agents = d.badges(row.WT.Path)
-		}
-		metrics := ""
-		if row.HasMetrics && (row.Metrics.Ahead > 0 || row.Metrics.Behind > 0) {
-			up, down := AheadBehindGlyphs(d.ascii)
-			metrics = fmt.Sprintf("%s%d %s%d", up, row.Metrics.Ahead, down, row.Metrics.Behind)
-		}
-		return []string{strings.TrimSpace(row.prBadge()), checkGlyph(row.Checks, d.ascii), strings.TrimSpace(dirty), agents, metrics}
-	}
-	cells := columns(it)
-	widths := make([]int, len(cells))
-	for _, li := range m.VisibleItems() {
-		if row, ok := li.(Item); ok {
-			for j, c := range columns(row) {
-				widths[j] = max(widths[j], ansi.StringWidth(c))
-			}
-		}
-	}
-	tailW := 0
-	for _, w := range widths {
-		if w > 0 {
-			tailW += w + 1
-		}
-	}
-	nameW := max(width-2-tailW, 1)
-	tail := ""
-	for j, c := range cells {
-		if widths[j] > 0 {
-			tail += " " + c + strings.Repeat(" ", max(widths[j]-ansi.StringWidth(c), 0))
-		}
-	}
-	title := pointer + nameStyle.Render(ansi.Truncate(it.Title(), nameW, "…"))
-	title += strings.Repeat(" ", max(nameW-ansi.StringWidth(it.Title()), 0)) + tail
-	if width > 0 && ansi.StringWidth(title) > width {
-		// At extreme widths preserve the complete opaque agent badge if it fits.
-		agents := cells[3]
-		if agents != "" && ansi.StringWidth(agents) < width {
-			title = ansi.Truncate(title, max(width-ansi.StringWidth(agents)-1, 0), "…") + " " + agents
-		} else {
-			title = ansi.Truncate(title, width, "…")
-		}
-	}
-	path := it.WT.Path
-	if !selected && d.home != "" && (path == d.home || strings.HasPrefix(path, d.home+"/")) {
-		path = "~" + strings.TrimPrefix(path, d.home)
-	}
-	desc := "  " + descStyle.Render(path)
-	if width > 0 {
-		desc = ansi.Truncate(desc, width, "…")
-	}
+	title, desc := d.renderRow(it, width, selected)
 
 	if d.embedded {
 		bg := theme.Current.Surface
@@ -306,6 +242,138 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		title, desc = row(title), row(desc)
 	}
 	fmt.Fprintf(w, "%s\n%s", title, desc)
+}
+
+// renderRow reserves telemetry before truncating labels so narrow panes keep
+// useful activity visible without splitting provider badges.
+func (d itemDelegate) renderRow(it Item, width int, selected bool) (string, string) {
+	width = max(0, width)
+	gutter := "  "
+	style := normalTitle
+	if selected {
+		gutter = "┃ "
+		if d.ascii {
+			gutter = "| "
+		}
+		style = selectedTitle
+	}
+	ellipsis := "…"
+	if d.ascii {
+		ellipsis = "."
+	}
+	fit := func(left, right string) string {
+		room := max(0, width-2)
+		if lipgloss.Width(right)+2 > room {
+			right = ""
+		}
+		labelWidth := room
+		if right != "" {
+			labelWidth -= lipgloss.Width(right) + 1
+		}
+		left = ansi.Truncate(left, max(0, labelWidth), ellipsis)
+		padding := max(0, width-lipgloss.Width(gutter)-lipgloss.Width(left)-lipgloss.Width(right))
+		return ansi.Truncate(accentStyle.Render(gutter)+left+strings.Repeat(" ", padding)+right, width, "")
+	}
+	agents := ""
+	if d.badges != nil {
+		agents = d.badges(it.WT.Path)
+	}
+	if agents == "" {
+		agents = descStyle.Render("──")
+		if d.ascii {
+			agents = descStyle.Render("--")
+		}
+	}
+	activity := agents
+	if it.Running > 0 {
+		activity = runningStyle.Render(fmt.Sprintf("%s%d", RunningGlyph(d.ascii), it.Running)) + " " + activity
+	}
+	name := it.WT.Branch
+	if name == "" {
+		name = "(detached)"
+	}
+	badge := strings.TrimSpace(it.prBadge())
+	if badge != "" {
+		if prStatusMode != "off" && it.PRState != "" {
+			symbol := "●"
+			if it.PRDraft {
+				symbol = "○"
+			}
+			if it.PRState == gh.StateMerged {
+				symbol = "✓"
+			}
+			if it.PRState == gh.StateClosed {
+				symbol = "×"
+			}
+			if d.ascii {
+				symbol = ""
+			}
+			label, st := it.prStatus()
+			n, _ := it.prNumber()
+			badge = prBadgeStyle.Render(fmt.Sprintf("#%d ", n)) + st.Render(symbol+label)
+		}
+		if check := checkGlyph(it.Checks, d.ascii); check != "" {
+			badge += " " + check
+		}
+		badge = "[" + badge + "]"
+	}
+	// Keep the inline badge after the branch while reserving the activity tail.
+	if lipgloss.Width(activity)+2 > max(0, width-2) {
+		activity = ""
+	}
+	available := max(0, width-2)
+	if activity != "" {
+		available -= lipgloss.Width(activity) + 1
+	}
+	if lipgloss.Width(badge)+2 > available {
+		badge = ""
+	}
+	nameWidth := available
+	if badge != "" {
+		nameWidth -= lipgloss.Width(badge) + 1
+	}
+	left := style.Render(ansi.Truncate(name, max(0, nameWidth), ellipsis))
+	if badge != "" {
+		left += " " + badge
+	}
+	title := fit(left, activity)
+	base := it.Base
+	if base == "" {
+		base = it.DefaultBase
+	}
+	if base == "" && it.WT.IsMain {
+		base = it.WT.Branch
+	}
+	arrow := "↳ "
+	if d.ascii {
+		arrow = "-> "
+	}
+	baseStyle := descStyle
+	if base != "" && base != it.DefaultBase && base != "main" && base != "master" {
+		base = "base: " + base
+		baseStyle = accentStyle
+	}
+	if it.WT.IsMain {
+		base += " (root)"
+	} else if dir := filepath.Base(it.WT.Path); dir != "." && dir != "" && dir != filepath.Base(it.WT.Branch) && dir != strings.ReplaceAll(it.WT.Branch, "/", "-") {
+		base += " (wt: " + dir + ")"
+	}
+	if base == "" {
+		base = "base unknown"
+	}
+	changes := it.dirtyBadge()
+	if d.ascii {
+		changes = strings.ReplaceAll(changes, "±", "+/-")
+	}
+	if changes == "" {
+		changes = descStyle.Render("clean")
+	}
+	telemetry := changes
+	if it.HasMetrics {
+		up, down := AheadBehindGlyphs(d.ascii)
+		telemetry += fmt.Sprintf("  %s%d %s%d", up, it.Metrics.Ahead, down, it.Metrics.Behind)
+	}
+	return title, fit(baseStyle.Render(arrow+base), telemetry)
 }
 
 // Model wraps a bubbles list.

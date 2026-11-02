@@ -41,7 +41,13 @@ stash count), Checks (GitHub Actions runs for the branch), PR (detail, reviews,
 merge/approve/close), Diff, Git Log and Processes tabs. Live dev-server URLs
 (`http://localhost:…`) detected in process output are shown next to each process.
 
-Worktree PR badges show the coloured state word beside the number, without a circle.
+Worktree rows use two lines: the branch and inline PR badge (`[#114 ●open ✗]`)
+with running processes and provider counts aligned right, then the base branch
+and local changes (`±N ?M`, or `clean`) with base-relative ahead/behind counts.
+The selected row has a `┃` gutter on both lines. Root checkouts show `(root)`;
+non-default bases are highlighted. Provider counts are `✹N` Claude, `❃N` Codex
+and `✦N` Antigravity; `──` means no active agents. ASCII glyph preferences
+also apply to these rows. Long labels truncate to preserve telemetry.
 
 The create-worktree flow offers **Start agent here** when agents are enabled.
 `ctrl+a` (`create_agent_toggle`) toggles it without taking a typed character, so

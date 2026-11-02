@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Tiago-0liveira/bonsai/internal/core/agentactivity"
 	"github.com/Tiago-0liveira/bonsai/internal/core/agents"
@@ -340,7 +339,7 @@ func (m *Model) refreshAgentBadges() {
 	ascii := m.agentGlyphsASCII()
 	badges := make(map[string]string, len(m.agents.byTree))
 	for path, idx := range m.agents.byTree {
-		if b := m.agentBadge(idx, ascii); b != "" {
+		if b := m.worktreeProviderBadges(idx, ascii); b != "" {
 			badges[path] = b
 		}
 	}
@@ -373,35 +372,6 @@ func sessionUrgency(s agentsapi.Session) agentUrgency {
 		return urgencyIdle
 	}
 	return urgencyWorking
-}
-
-// agentBadge counts lifecycle states independently of provider identity.
-func (m Model) agentBadge(idx []int, ascii bool) string {
-	counts := [4]int{}
-	for _, i := range idx {
-		s := m.agents.sessions[i]
-		switch {
-		case s.Active():
-			if m.sessionNeedsAttention(s) {
-				counts[1]++
-			} else {
-				counts[0]++
-			}
-		case m.sessionNeedsAttention(s) && s.State == "exited":
-			counts[2]++
-		case m.sessionNeedsAttention(s) && s.State == "failed":
-			counts[3]++
-		}
-	}
-	marks := agentBadgeGlyphs(ascii)
-	colors := []lipgloss.TerminalColor{theme.Current.Text, theme.Current.Warning, theme.Current.Dim, theme.Current.Danger}
-	var parts []string
-	for i, n := range counts {
-		if n > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colors[i]).Render(marks[i]+itoa(n)))
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 // agentNeedsBell compares successful snapshots; initial and stale reads never ring.
@@ -444,4 +414,24 @@ func (m Model) ringBell() tea.Cmd {
 		}
 		return nil
 	}
+}
+
+// worktreeProviderBadges uses only active sessions; ended-session attention
+// remains available through the existing attention navigation and sort.
+func (m Model) worktreeProviderBadges(idx []int, ascii bool) string {
+	counts := map[agents.ProviderID]int{}
+	for _, i := range idx {
+		s := m.agents.sessions[i]
+		if s.Active() {
+			counts[s.Provider]++
+		}
+	}
+	var parts []string
+	for _, provider := range []agents.ProviderID{"claude", "codex", "antigravity"} {
+		if n := counts[provider]; n > 0 {
+			glyph := theme.ProviderGlyph(provider, ascii)
+			parts = append(parts, theme.ProviderStyle(provider).Render(glyph+itoa(n)))
+		}
+	}
+	return strings.Join(parts, " ")
 }

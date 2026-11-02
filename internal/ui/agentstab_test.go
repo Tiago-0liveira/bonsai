@@ -310,8 +310,8 @@ func TestAgentsPicker(t *testing.T) {
 	)
 	e.relist(t)
 	e.openTab(t)
-	if row := e.rowOf("feat-a"); !strings.HasSuffix(strings.TrimRight(row, " "), "✗1") {
-		t.Fatalf("setup: failed marker missing: %q", row)
+	if row := e.rowOf("feat-a"); !strings.HasSuffix(strings.TrimRight(row, " "), "✹1 ❃1") {
+		t.Fatalf("setup: active provider counts missing: %q", row)
 	}
 
 	e.m.width, e.m.height = 140, 40
