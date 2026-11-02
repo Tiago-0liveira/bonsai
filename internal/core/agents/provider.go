@@ -162,6 +162,27 @@ func (o LaunchOptions) Values() map[string]string {
 	return values
 }
 
+// LaunchOptionsFromValues is the inverse of Values: it rebuilds the launch
+// choices recorded for a session. Prompt and PlanFile are never recorded, so
+// they stay empty. Unknown keys and an unparsable full_access are ignored.
+func LaunchOptionsFromValues(model, name string, values map[string]string) LaunchOptions {
+	o := LaunchOptions{
+		Model:          model,
+		DisplayName:    name,
+		PermissionMode: values["permission_mode"],
+		Effort:         values["effort"],
+		Sandbox:        values["sandbox"],
+		Approval:       values["approval"],
+	}
+	if read, err := strconv.ParseBool(values["read_only"]); err == nil {
+		o.ReadOnly = read
+	}
+	if full, err := strconv.ParseBool(values["full_access"]); err == nil {
+		o.FullAccess = &full
+	}
+	return o
+}
+
 type PrepareSessionRequest struct {
 	Account Account
 	Session Session
@@ -170,6 +191,9 @@ type PrepareSessionRequest struct {
 	// Activity, when set, asks the provider to report the session's activity
 	// through hooks it installs for this session only.
 	Activity *ActivityRequest
+	// Resume, when non-nil, continues an earlier conversation instead of
+	// starting a fresh one; the provider must then ignore Launch.Prompt.
+	Resume *ResumeTarget
 }
 
 type PreparedSession struct {
